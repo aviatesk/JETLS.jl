@@ -1,0 +1,10 @@
+name = "JETLS"
+uuid = "a3b70258-0602-4ee2-b5a6-54c2470400db"
+authors = ["Shuhei Kadowaki <aviatesk@gmail.com>"]
+version = "0.0.0"
+
+[deps]
+JET = "c3a54625-cd67-489e-a8e7-0a5a0ff4e31b"
+JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
+JSONRPC = "b9b8584e-8fd3-41f9-ad0c-7255d428e418"
+URIs = "5c2747f8-b7ea-4ff2-ba2e-563bfd36b1d4"
