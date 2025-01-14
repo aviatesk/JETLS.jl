@@ -2,7 +2,7 @@ module JSONRPC
 
 export
     Endpoint, Message, RequestMessage, ResponseMessage, NotificationMessage,
-    ErrorCodes, ResponseError, send
+    ResponseError, send
 
 using JSON
 
