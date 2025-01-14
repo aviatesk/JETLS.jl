@@ -32,8 +32,8 @@ function runserver(callback, in::IO, out::IO)
             elseif isa(msg, NotificationMessage)
                 res = @invokelatest handle_notification_message(state, msg)
             else
-                msg = msg::ResponseMessage
-                error(lazy"got ResponseMessage: $msg")
+                @error "Got ResponseMessage" msg
+                res = msg::ResponseMessage
             end
             if res === nothing
                 continue
@@ -78,8 +78,6 @@ function handle_notification_message(state, msg::NotificationMessage)
     method = msg.method
     if method == "initialized"
         # TODO?
-    elseif method == "workspace/didChangeWatchedFiles"
-        # TODO
     end
     return nothing
 end
@@ -87,21 +85,23 @@ end
 global workspaceUri::URI
 
 function handle_initialize_request(msg::RequestMessage)
-    global workspaceUri = URI(msg.params["rootUri"])
-    return ResponseMessage(msg.id, (;
-        capabilities = (;
-            positionEncoding = "utf-16",
-            diagnosticProvider = (;
-                identifier = "JETLS",
-                interFileDependenciers = true,
-                workspaceDiagnostics= true,
-            )
-        ),
-        serverInfo = (;
-            name = "JETLS",
-            version = "0.0.0",
-        )
-    ))
+    global workspaceUri = URI(msg.params["rootUri"]) # workspaceFolder
+    return ResponseMessage(msg.id,
+        InitializeResult(;
+            capabilities = ServerCapabilities(;
+                positionEncoding = UTF16,
+                textDocumentSync = TextDocumentSyncOptions(;
+                    openClose = true,
+                    change = Incremental,
+                    save = true),
+                diagnosticProvider = DiagnosticOptions(;
+                    identifier = "JETLS",
+                    interFileDependencies = true,
+                    workspaceDiagnostics = true),
+            ),
+            serverInfo = (;
+                name = "JETLS",
+                version = "0.0.0")))
 end
 
 global workspaceDiagnosticsVersion::Int = 0
