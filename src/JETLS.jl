@@ -144,7 +144,7 @@ function jet_to_workspace_diagnostics(result)
             message,
             range = (;
                 start = (; line=report.vst[1].line-1, character=0),
-                var"end" = (; line=report.vst[1].line-1, character=typemax(Int)),
+                var"end" = (; line=report.vst[1].line-1, character=Int(typemax(Int32))),
             )
         ))
     end
