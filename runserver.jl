@@ -13,6 +13,7 @@ catch
     exit(1)
 end
 
-runserver(stdin, stdout) do msg
-    @info "Handling message" msg
+runserver(stdin, stdout) do msg, res
+    # TODO only in debug mode
+    revise()
 end
