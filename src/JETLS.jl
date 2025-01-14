@@ -11,6 +11,7 @@ using JET
 runserver(in::IO, out::IO) = runserver((msg, res)->nothing, in, out)
 function runserver(callback, in::IO, out::IO)
     endpoint = Endpoint(in, out)
+    state = (; uri2diagnostics=Dict{URI,Vector{Any}}())
     shutdown_requested = false
     local exit_code::Int
     try
@@ -26,15 +27,16 @@ function runserver(callback, in::IO, out::IO)
                     res = ResponseMessage(msg.id, ResponseError(
                         JSONRPC.InvalidRequest, "Received request after a shutdown request requested", msg))
                 else
-                    res = @invokelatest handle_request_message(msg)
+                    res = @invokelatest handle_request_message(state, msg)
                 end
             elseif isa(msg, NotificationMessage)
-                res = @invokelatest handle_notification_message(msg)
+                res = @invokelatest handle_notification_message(state, msg)
             else
                 msg = msg::ResponseMessage
                 error(lazy"got ResponseMessage: $msg")
             end
             if res === nothing
+                continue
             elseif isa(res, ResponseMessage)
                 send(endpoint, res)
             else
@@ -56,22 +58,22 @@ function runserver(callback, in::IO, out::IO)
     end
 end
 
-function handle_request_message(msg::RequestMessage)
-    @info "Handling Requests" msg
+function handle_request_message(state, msg::RequestMessage)
+    # @info "Handling RequestMessage" msg
     method = msg.method
     if method == "initialize"
         return handle_initialize_request(msg)
     # elseif method == "textDocument/diagnostic"
     #     return handle_diagnostic_request(msg)
     elseif method == "workspace/diagnostic"
-        return handle_workspace_diagnostic_request(msg)
+        return handle_workspace_diagnostic_request(state, msg)
     else
         @info "unhandled RequestMessage" msg
     end
     return nothing
 end
 
-function handle_notification_message(msg::NotificationMessage)
+function handle_notification_message(state, msg::NotificationMessage)
     @info "Handling NotificationMessage" msg
     method = msg.method
     if method == "initialized"
@@ -102,38 +104,42 @@ function handle_initialize_request(msg::RequestMessage)
     ))
 end
 
-global workspaceDiagnostics::Vector{Any}
+global workspaceDiagnosticsVersion::Int = 0
 
-function handle_workspace_diagnostic_request(msg::RequestMessage)
-    global workspaceUri, workspaceDiagnostics
-    if @isdefined workspaceDiagnostics
-        return ResponseMessage(msg.id, (; items = workspaceDiagnostics))
-    end
-    @assert @isdefined(workspaceUri)
+function handle_workspace_diagnostic_request(state, msg::RequestMessage)
+    global workspaceUri, workspaceDiagnosticsVersion
+    workspaceDiagnosticsVersion += 1
     workspaceDir = uri2filepath(workspaceUri)
     if isnothing(workspaceDir)
         println(stderr, "unexpected uri", workspaceUri)
         return
     end
+    if !isempty(state.uri2diagnostics)
+        diagnostics = Any[]
+        for (uri, _) in state.uri2diagnostics
+            suri = string(uri)
+            push!(diagnostics, (;
+                kind = "unchanged",
+                resultId = suri,
+                uri=suri,
+                version=workspaceDiagnosticsVersion))
+        end
+        return ResponseMessage(msg.id, (; items = diagnostics))
+    end
     pkgname = basename(workspaceDir)
     pkgpath = joinpath(workspaceDir, "src", "$pkgname.jl")
     result = @invokelatest report_file(pkgpath; analyze_from_definitions=true, toplevel_logger=stderr)
-    diagnostics = jet_to_workspace_diagnostics(result)
-    workspaceDiagnostics = diagnostics
+    diagnostics = jet_to_workspace_diagnostics(state, result)
     return ResponseMessage(msg.id, (; items = diagnostics))
 end
 
-global workspaceDiagnosticsVersion::Int = 0
-
-function jet_to_workspace_diagnostics(result)
-    diagnostics = Any[]
-    version = (global workspaceDiagnosticsVersion+=1)
-    uri2items = Dict{URI,Vector{Any}}()
+function jet_to_workspace_diagnostics(state, result)
+    global workspaceDiagnosticsVersion
 
     # TODO result.res.toplevel_error_reports
     for report in result.res.inference_error_reports
         uri = filepath2uri(lowercase(jetpath2abspath(string(report.vst[1].file))))
-        items = get!(()->Any[], uri2items, uri)
+        items = get!(()->Any[], state.uri2diagnostics, uri)
 
         buf = IOBuffer()
         JET.print_report_message(buf, report)
@@ -144,17 +150,18 @@ function jet_to_workspace_diagnostics(result)
             range = (;
                 start = (; line=report.vst[1].line-1, character=0),
                 var"end" = (; line=report.vst[1].line-1, character=Int(typemax(Int32))),
-            )
-        ))
+            )))
     end
 
-    for (uri, items) in uri2items
+    diagnostics = Any[]
+    for (uri, items) in state.uri2diagnostics
+        suri = string(uri)
         push!(diagnostics, (;
-            uri=string(uri),
-            version,
             kind = "full",
+            resultId = suri,
             items,
-        ))
+            uri=suri,
+            version=workspaceDiagnosticsVersion))
     end
 
     return diagnostics
