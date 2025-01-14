@@ -1,14 +1,15 @@
 module JETLS
 
+export runserver
+
 include("JSONRPC.jl")
 using .JSONRPC
 include("LSP/LSP.jl")
 
 using JET
 
-import Base: @invokelatest
-
-function runserver(in::IO, out::IO; callback=()->nothing)
+runserver(in::IO, out::IO) = runserver(msg::Message->nothing, in, out)
+function runserver(callback, in::IO, out::IO)
     endpoint = Endpoint(in, out)
     try
         for msg in endpoint
@@ -25,7 +26,7 @@ function runserver(in::IO, out::IO; callback=()->nothing)
             else
                 error(lazy"expected ResponseMessage but got: $res")
             end
-            callback()
+            callback(msg)
         end
     catch err
         @info "message handling failed" err
@@ -46,9 +47,6 @@ function handle_request_message(msg::RequestMessage)
     #     return handle_diagnostic_request(msg)
     elseif method == "workspace/diagnostic"
         return handle_workspace_diagnostic_request(msg)
-    elseif method == "julia/getModuleAt"
-        # ignore for now
-        return nothing
     elseif method == "shutdown"
         return handle_shutdown_request(msg)
     else

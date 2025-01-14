@@ -2,7 +2,7 @@
 
 module LSPURI
 
-import URIs
+using URIs: URIs
 
 export URI, uri2filepath, filepath2uri, @uri_str
 

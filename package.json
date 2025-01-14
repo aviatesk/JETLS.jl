@@ -1,0 +1,92 @@
+{
+	"name": "jetls-client",
+	"description": "A VSCode client the new Julia language server",
+	"author": "Shuhei Kadowaki",
+	"license": "MIT",
+	"version": "0.0.0",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/aviatesk/JETLS.jl"
+	},
+	"publisher": "aviatesk",
+	"extensionKind": [
+		"workspace"
+	],
+	"categories": [
+		"Programming Languages",
+		"Linters"
+	],
+	"keywords": [
+		"Julia",
+		"language server",
+		"JET"
+	],
+	"engines": {
+		"vscode": "^1.96.0"
+	},
+	"activationEvents": [
+		"onLanguage:julia",
+		"workspaceContains:Project.toml"
+	],
+	"main": "./out/extension",
+	"contributes": {
+		"commands": [
+			{
+				"command": "JETLSClient.restartLanguageServer",
+				"title": "Restart JETLS Language Server"
+			}
+		],
+		"configuration": {
+			"type": "object",
+			"title": "Example configuration",
+			"properties": {
+				"JETLSClient.maxNumberOfProblems": {
+					"scope": "resource",
+					"type": "number",
+					"default": 100,
+					"description": "Controls the maximum number of problems produced by the server."
+				},
+				"JETLSClient.juliaExecutablePath": {
+					"scope": "resource",
+					"type": "string",
+					"default": "julia",
+					"description": "Path to the Julia executable."
+				},
+				"JETLSClient.trace.server": {
+					"scope": "window",
+					"type": "string",
+					"enum": [
+						"off",
+						"messages",
+						"verbose"
+					],
+					"default": "off",
+					"description": "Traces the communication between VS Code and the language server."
+				}
+			}
+		}
+	},
+	"scripts": {
+		"vscode:prepublish": "npm run compile",
+		"compile": "tsc -b",
+		"watch": "tsc -b -w",
+		"lint": "eslint"
+	},
+	"dependencies": {
+		"glob": "^11.0.0",
+		"vscode-languageclient": "^9.0.1"
+	},
+	"devDependencies": {
+		"@eslint/js": "^9.13.0",
+		"@stylistic/eslint-plugin": "^2.9.0",
+		"@types/mocha": "^10.0.6",
+		"@types/node": "^20",
+		"@types/vscode": "^1.75.1",
+		"@vscode/test-electron": "^2.3.9",
+		"eslint": "^9.13.0",
+		"mocha": "^10.3.0",
+		"typescript": "^5.7.2",
+		"typescript-eslint": "^8.16.0"
+	},
+	"private": true
+}
