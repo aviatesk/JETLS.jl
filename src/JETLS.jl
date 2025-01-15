@@ -4,6 +4,7 @@ export runserver
 
 include("JSONRPC.jl")
 using .JSONRPC
+
 include("LSP/LSP.jl")
 
 using JET
@@ -113,11 +114,8 @@ function handle_didsave_notification(state, params)
     end
 end
 
-global workspaceDiagnosticsVersion::Int = 0
-
 function handle_workspace_diagnostic_request(state, msg::RequestMessage)
-    global workspaceUri, workspaceDiagnosticsVersion
-    workspaceDiagnosticsVersion += 1
+    global workspaceUri
     workspaceDir = uri2filepath(workspaceUri)
     if isnothing(workspaceDir)
         return ResponseMessage(msg.id, ResponseError(
@@ -130,8 +128,7 @@ function handle_workspace_diagnostic_request(state, msg::RequestMessage)
             push!(diagnostics, (;
                 kind = "unchanged",
                 resultId = suri,
-                uri=lowercase(suri),
-                version=workspaceDiagnosticsVersion))
+                uri=lowercase(suri)))
         end
         return ResponseMessage(msg.id, (; items = diagnostics))
     end
@@ -143,8 +140,6 @@ function handle_workspace_diagnostic_request(state, msg::RequestMessage)
 end
 
 function jet_to_workspace_diagnostics(state, result)
-    global workspaceDiagnosticsVersion
-
     for file in result.res.included_files
         uri = filepath2uri(jetpath2abspath(file))
         state.uri2diagnostics[uri] = Any[]
@@ -174,8 +169,7 @@ function jet_to_workspace_diagnostics(state, result)
             kind = "full",
             resultId = suri,
             items,
-            uri=suri,
-            version=workspaceDiagnosticsVersion))
+            uri=suri))
     end
 
     return diagnostics
