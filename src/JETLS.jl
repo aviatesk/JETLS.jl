@@ -32,15 +32,14 @@ function runserver(callback, in::IO, out::IO)
             elseif isa(msg, NotificationMessage)
                 res = @invokelatest handle_notification_message(state, msg)
             else
-                @error "Got ResponseMessage" msg
-                res = msg::ResponseMessage
+                res = msg::ResponseMessage # error in the JSONRPC handling
             end
             if res === nothing
                 continue
             elseif isa(res, ResponseMessage)
                 send(endpoint, res)
             else
-                error(lazy"expected ResponseMessage but got: $res")
+                error(lazy"Got unexpected handler result: $res")
             end
             callback(msg, res)
         end
@@ -68,9 +67,9 @@ function handle_request_message(state, msg::RequestMessage)
     elseif method == "workspace/diagnostic"
         return handle_workspace_diagnostic_request(state, msg)
     else
-        @info "unhandled RequestMessage" msg
+        @warn "Unhandled RequestMessage" msg
     end
-    return nothing
+    nothing
 end
 
 function handle_notification_message(state, msg::NotificationMessage)
@@ -78,8 +77,10 @@ function handle_notification_message(state, msg::NotificationMessage)
     method = msg.method
     if method == "initialized"
         # TODO?
+    elseif method == "textDocument/didSave"
+        handle_didsave_notification(state, msg.params)
     end
-    return nothing
+    nothing
 end
 
 global workspaceUri::URI
@@ -104,6 +105,14 @@ function handle_initialize_request(msg::RequestMessage)
                 version = "0.0.0")))
 end
 
+function handle_didsave_notification(state, params)
+    textDocument = params["textDocument"]
+    uri = URI(textDocument["uri"])
+    if haskey(state.uri2diagnostics, uri)
+        empty!(state.uri2diagnostics)
+    end
+end
+
 global workspaceDiagnosticsVersion::Int = 0
 
 function handle_workspace_diagnostic_request(state, msg::RequestMessage)
@@ -111,8 +120,8 @@ function handle_workspace_diagnostic_request(state, msg::RequestMessage)
     workspaceDiagnosticsVersion += 1
     workspaceDir = uri2filepath(workspaceUri)
     if isnothing(workspaceDir)
-        println(stderr, "unexpected uri", workspaceUri)
-        return
+        return ResponseMessage(msg.id, ResponseError(
+            JSONRPC.InternalError, "Unexpected workspaceUri", msg))
     end
     if !isempty(state.uri2diagnostics)
         diagnostics = Any[]
@@ -121,7 +130,7 @@ function handle_workspace_diagnostic_request(state, msg::RequestMessage)
             push!(diagnostics, (;
                 kind = "unchanged",
                 resultId = suri,
-                uri=suri,
+                uri=lowercase(suri),
                 version=workspaceDiagnosticsVersion))
         end
         return ResponseMessage(msg.id, (; items = diagnostics))
@@ -136,9 +145,14 @@ end
 function jet_to_workspace_diagnostics(state, result)
     global workspaceDiagnosticsVersion
 
+    for file in result.res.included_files
+        uri = filepath2uri(jetpath2abspath(file))
+        state.uri2diagnostics[uri] = Any[]
+    end
+
     # TODO result.res.toplevel_error_reports
     for report in result.res.inference_error_reports
-        uri = filepath2uri(lowercase(jetpath2abspath(string(report.vst[1].file))))
+        uri = filepath2uri(jetpath2abspath(String(report.vst[1].file)))
         items = get!(()->Any[], state.uri2diagnostics, uri)
 
         buf = IOBuffer()
@@ -155,7 +169,7 @@ function jet_to_workspace_diagnostics(state, result)
 
     diagnostics = Any[]
     for (uri, items) in state.uri2diagnostics
-        suri = string(uri)
+        suri = lowercase(string(uri))
         push!(diagnostics, (;
             kind = "full",
             resultId = suri,
