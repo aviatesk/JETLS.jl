@@ -61,7 +61,7 @@ end
     Incremental = 2;
 end
 
-@tsdef struct SaveOptions
+@interface struct SaveOptions
     # /**
     #  * The client is supposed to include the content on save.
     #  */
@@ -69,7 +69,7 @@ end
 end
 
 # Define TextDocumentSyncOptions as a struct
-@tsdef struct TextDocumentSyncOptions
+@interface struct TextDocumentSyncOptions
     # /**
     #  * Open and close notifications are sent to the server. If omitted open
     #  * close notification should not be sent.
@@ -104,7 +104,7 @@ end
 #  *
 #  * @since 3.17.0
 #  */
-@tsdef struct DiagnosticOptions
+@interface struct DiagnosticOptions
     # /**
     #  * An optional identifier under which the diagnostics are
     #  * managed by the client.
@@ -125,7 +125,7 @@ end
     workspaceDiagnostics::Bool
 end
 
-@tsdef struct ServerCapabilities
+@interface struct ServerCapabilities
     # /**
     #  * The position encoding the server picked from the encodings offered
     #  * by the client via the client capability `general.positionEncodings`.
@@ -155,7 +155,7 @@ end
     diagnosticProvider::Union{Nothing,DiagnosticOptions,#=DiagnosticRegistrationOptions=#} = nothing
 end
 
-@tsdef struct InitializeResult
+@interface struct InitializeResult
     # /**
     #  * The capabilities the language server provides.
     #  */
@@ -203,20 +203,20 @@ Position in a text document expressed as zero-based line and zero-based characte
 A position is between two characters like an ‘insert’ cursor in an editor.
 Special values like for example -1 to denote the end of a line are not supported.
 """
-@tsdef struct Position
-	"""/**
-	 * Line position in a document (zero-based).
-	 */"""
-	line::UInt;
+@interface struct Position
+    """/**
+     * Line position in a document (zero-based).
+     */"""
+    line::UInt;
 
-	"""/**
-	 * Character offset on a line in a document (zero-based). The meaning of this
-	 * offset is determined by the negotiated `PositionEncodingKind`.
-	 *
-	 * If the character value is greater than the line length it defaults back
-	 * to the line length.
-	 */"""
-	character::UInt;
+    """/**
+     * Character offset on a line in a document (zero-based). The meaning of this
+     * offset is determined by the negotiated `PositionEncodingKind`.
+     *
+     * If the character value is greater than the line length it defaults back
+     * to the line length.
+     */"""
+    character::UInt;
 end
 
 """
@@ -231,35 +231,35 @@ then use an end position denoting the start of the next line. For example:
 }
 ```
 """
-@tsdef struct Range
-	"""/**
-	 * The range's start position.
-	 */"""
-	start::Position;
+@interface struct Range
+    """/**
+     * The range's start position.
+     */"""
+    start::Position;
 
-	"""/**
-	 * The range's end position.
-	 */"""
+    """/**
+     * The range's end position.
+     */"""
     var"end"::Position;
 end
 
 @namespace DiagnosticSeverity begin
-	"""/**
-	 * Reports an error.
-	 */"""
-	Error = 1;
-	"""/**
-	 * Reports a warning.
-	 */"""
-	Warning = 2;
-	"""/**
-	 * Reports an information.
-	 */"""
-	Information = 3;
-	"""/**
-	 * Reports a hint.
-	 */"""
-	Hint = 4;
+    """/**
+     * Reports an error.
+     */"""
+    Error = 1;
+    """/**
+     * Reports a warning.
+     */"""
+    Warning = 2;
+    """/**
+     * Reports an information.
+     */"""
+    Information = 3;
+    """/**
+     * Reports a hint.
+     */"""
+    Hint = 4;
 end
 
 """/**
@@ -267,11 +267,11 @@ end
  *
  * @since 3.16.0
  */"""
-@tsdef struct CodeDescription
-	"""/**
-	 * An URI to open with more information about the diagnostic error.
-	 */"""
-	href :: URI;
+@interface struct CodeDescription
+    """/**
+     * An URI to open with more information about the diagnostic error.
+     */"""
+    href :: URI;
 end
 
 """/**
@@ -280,27 +280,27 @@ end
  * @since 3.15.0
  */"""
 @namespace DiagnosticTag begin
-	"""/**
-	 * Unused or unnecessary code.
-	 *
-	 * Clients are allowed to render diagnostics with this tag faded out
-	 * instead of having an error squiggle.
-	 */"""
-	Unnecessary = 1;
-	"""/**
-	 * Deprecated or obsolete code.
-	 *
-	 * Clients are allowed to rendered diagnostics with this tag strike through.
-	 */"""
-	Deprecated = 2;
+    """/**
+     * Unused or unnecessary code.
+     *
+     * Clients are allowed to render diagnostics with this tag faded out
+     * instead of having an error squiggle.
+     */"""
+    Unnecessary = 1;
+    """/**
+     * Deprecated or obsolete code.
+     *
+     * Clients are allowed to rendered diagnostics with this tag strike through.
+     */"""
+    Deprecated = 2;
 end
 
 """
 Represents a location inside a resource, such as a line inside a text file.
 """
-@tsdef struct Location
-	uri :: DocumentUri;
-	range :: Range;
+@interface struct Location
+    uri :: DocumentUri;
+    range :: Range;
 end
 
 """/**
@@ -308,80 +308,80 @@ end
  * This should be used to point to code locations that cause or are related to
  * a diagnostics, e.g when duplicating a symbol in a scope.
  */"""
-@tsdef struct DiagnosticRelatedInformation
-	"""/**
-	 * The location of this related diagnostic information.
-	 */"""
-	location :: Location;
+@interface struct DiagnosticRelatedInformation
+    """/**
+     * The location of this related diagnostic information.
+     */"""
+    location :: Location;
 
-	"""/**
-	 * The message of this related diagnostic information.
-	 */"""
-	message :: String;
+    """/**
+     * The message of this related diagnostic information.
+     */"""
+    message :: String;
 end
 
 """
 Represents a diagnostic, such as a compiler error or warning.
 Diagnostic objects are only valid in the scope of a resource.
 """
-@tsdef struct Diagnostic
-	"""/**
-	 * The range at which the message applies.
-	 */"""
-	range :: Range;
+@interface struct Diagnostic
+    """/**
+     * The range at which the message applies.
+     */"""
+    range :: Range;
 
     """/**
-	 * The diagnostic's severity. To avoid interpretation mismatches when a
-	 * server is used with different clients it is highly recommended that
-	 * servers always provide a severity value. If omitted, it’s recommended
-	 * for the client to interpret it as an Error severity.
-	 */"""
-	severity :: Union{Nothing, DiagnosticSeverity} = nothing;
+     * The diagnostic's severity. To avoid interpretation mismatches when a
+     * server is used with different clients it is highly recommended that
+     * servers always provide a severity value. If omitted, it’s recommended
+     * for the client to interpret it as an Error severity.
+     */"""
+    severity :: Union{Nothing, DiagnosticSeverity} = nothing;
 
     """/**
-	 * The diagnostic's code, which might appear in the user interface.
-	 */"""
-	code :: Union{Nothing, Int, String};
+     * The diagnostic's code, which might appear in the user interface.
+     */"""
+    code :: Union{Nothing, Int, String};
 
     """/**
-	 * An optional property to describe the error code.
-	 *
-	 * @since 3.16.0
-	 */"""
-	codeDescription :: Union{Nothing, CodeDescription} = nothing;
+     * An optional property to describe the error code.
+     *
+     * @since 3.16.0
+     */"""
+    codeDescription :: Union{Nothing, CodeDescription} = nothing;
 
     """/**
-	 * A human-readable string describing the source of this
-	 * diagnostic, e.g. 'typescript' or 'super lint'.
-	 */"""
-	source :: String;
+     * A human-readable string describing the source of this
+     * diagnostic, e.g. 'typescript' or 'super lint'.
+     */"""
+    source :: String;
 
     """/**
-	 * The diagnostic's message.
-	 */"""
-	message :: String;
+     * The diagnostic's message.
+     */"""
+    message :: String;
 
     """/**
-	 * Additional metadata about the diagnostic.
-	 *
-	 * @since 3.15.0
-	 */"""
-	tags :: Union{Nothing, Vector{DiagnosticTag}} = nothing;
+     * Additional metadata about the diagnostic.
+     *
+     * @since 3.15.0
+     */"""
+    tags :: Union{Nothing, Vector{DiagnosticTag}} = nothing;
 
     """/**
-	 * An array of related diagnostic information, e.g. when symbol-names within
-	 * a scope collide all definitions can be marked via this property.
-	 */"""
-	relatedInformation :: Union{Nothing, Vector{DiagnosticRelatedInformation}} = nothing;
+     * An array of related diagnostic information, e.g. when symbol-names within
+     * a scope collide all definitions can be marked via this property.
+     */"""
+    relatedInformation :: Union{Nothing, Vector{DiagnosticRelatedInformation}} = nothing;
 
-	"""/**
-	 * A data entry field that is preserved between a
-	 * `textDocument/publishDiagnostics` notification and
-	 * `textDocument/codeAction` request.
-	 *
-	 * @since 3.16.0
-	 */"""
-	data :: Union{Nothing, LSPAny} = nothing;
+    """/**
+     * A data entry field that is preserved between a
+     * `textDocument/publishDiagnostics` notification and
+     * `textDocument/codeAction` request.
+     *
+     * @since 3.16.0
+     */"""
+    data :: Union{Nothing, LSPAny} = nothing;
 end
 
 # /**
@@ -389,7 +389,7 @@ end
 #  *
 #  * @since 3.17.0
 #  */
-@tsdef struct FullDocumentDiagnosticReport
+@interface struct FullDocumentDiagnosticReport
     # /**
     #  * A full document diagnostic report.
     #  */
@@ -413,7 +413,7 @@ end
 #  *
 #  * @since 3.17.0
 #  */
-@tsdef struct WorkspaceFullDocumentDiagnosticReport @extends FullDocumentDiagnosticReport
+@interface struct WorkspaceFullDocumentDiagnosticReport @extends FullDocumentDiagnosticReport
     # /**
     #  * The URI for which diagnostic information is reported.
     #  */
@@ -431,6 +431,6 @@ end
  *
  * @since 3.17.0
  */"""
-@tsdef struct WorkspaceDiagnosticReport
+@interface struct WorkspaceDiagnosticReport
     items::Vector{WorkspaceFullDocumentDiagnosticReport};
 end

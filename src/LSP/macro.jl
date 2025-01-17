@@ -46,11 +46,11 @@ macro namespace(Name, ex)
 end
 
 macro extends(Tx)
-	nothing
+    nothing
 end
 
-const _TS_DEFS = Dict{Symbol,Expr}()
-macro tsdef(ex)
+const _INTERFACE_DEFS = Dict{Symbol,Expr}()
+macro interface(ex)
     Meta.isexpr(ex, :struct) || error("Expected :struct expression")
     structbody = ex.args[3]
     Meta.isexpr(structbody, :block) || error("Unexpected `:struct` expression")
@@ -61,8 +61,8 @@ macro tsdef(ex)
         for j = 2:length(structline.args)
             structlineⱼ = structline.args[j]
             structlineⱼ isa Symbol || continue
-            haskey(_TS_DEFS, structlineⱼ) || error("`@extends` unknown definition")
-            extendsex = _TS_DEFS[structlineⱼ]
+            haskey(_INTERFACE_DEFS, structlineⱼ) || error("`@extends` unknown definition")
+            extendsex = _INTERFACE_DEFS[structlineⱼ]
             @assert Meta.isexpr(extendsex, :struct)
             extendsbody = extendsex.args[3]
             @assert Meta.isexpr(extendsbody, :block)
@@ -71,7 +71,7 @@ macro tsdef(ex)
             end
         end
     end
-    _TS_DEFS[ex.args[2]::Symbol] = ex
+    _INTERFACE_DEFS[ex.args[2]::Symbol] = ex
     structdef = :(Base.@kwdef $ex)
     return esc(structdef)
 end
