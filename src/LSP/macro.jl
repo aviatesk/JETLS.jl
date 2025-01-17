@@ -1,131 +1,204 @@
-macro namespace(Name, ex)
-    Meta.isexpr(ex, :block) || error("Expected :block expression")
+const _TYPE_DEFS = Dict{Symbol,Any}(
+    :LSPAny => :Any,
+    :LSPObject => :NamedTuple,
+    :LSPArray => :(Vector{Any}))
 
-    # JSON import
-    JSON = gensym("JSON")
-    jsonimport = :(import JSON as $JSON)
+const _INTERFACE_DEFS = Dict{Symbol,Expr}()
 
-    # `@enum` definition
-    enumbody = Expr(:block)
-    enumdef = Expr(:macrocall, Symbol("@enum"), __source__, Name, enumbody)
+macro lsp(exs...)
+    nexs = length(exs)
+    for i = 1:nexs
+        ex = exs[i]
+        if Meta.isexpr(ex, :export)
+            ex = ex.args[1]
+        end
+        if ex === :namespace
+            nexs == i+2 || error("Invalid `namespace` syntax: ", exs)
+            Name, defex = exs[i+1], exs[i+2]
+            Name isa Symbol || error("Invalid `namespace` syntax: ", exs)
+            Meta.isexpr(defex, :braces) || Meta.isexpr(defex, :bracescat) || error("Invalid `namespace` syntax: ", exs)
+            return namespace(Name, defex, __source__)
+        elseif ex === :interface
+            nexs == i + 2 || nexs == i + 4 || error("Invalid `interface syntax: ", exs)
+            Name = exs[i+1]
+            Name isa Symbol || error("Invalid `interface` syntax: ", exs)
+            if nexs == i + 4
+                exs[i+2] === :extends || error("Invalid `interface` syntax: ", exs)
+                extends = exs[i+3]
+                if extends isa Symbol || (
+                    Meta.isexpr(extends, :tuple) &&
+                    all(@nospecialize(x)->x isa Symbol, extends.args))
+                    defex = exs[i+4]
+                else
+                    error("Invalid `interface` syntax: ", exs)
+                end
+            else
+                extends = nothing
+                defex = exs[i+2]
+            end
+            if Meta.isexpr(defex, :braces)
+                isempty(defex.args) || length(defex.args) == 1 ||
+                    error("Invalid `interface` syntax: ", exs)
+            else
+                Meta.isexpr(defex, :bracescat) || error("Invalid `interface` syntax: ", exs)
+            end
+            _INTERFACE_DEFS[Name] = defex
+            _TYPE_DEFS[Name] = Name
+            return interface(Name, defex, extends, __source__)
+        elseif ex === :type
+            nexs == i + 1 || error("Invalid `type` syntax: ", exs)
+            defex = exs[i+1]
+            Meta.isexpr(defex, :(=)) || error("Invalid `type` syntax: ", exs)
+            Name = defex.args[1]
+            Name isa Symbol || error("Invalid `type` syntax: ", exs)
+            _TYPE_DEFS[Name] = tstype_to_juliatype(defex.args[2])
+            return :(Core.@__doc__ $(QuoteNode(Name)))
+        end
+    end
+    if !(@isdefined kind_idx)
+        error("Unknown LSP syntax: ", exs)
+    end
+end
 
-    # `JSON.lower` definition
-    lowerbody = Expr(:block)
+function namespace(Name::Symbol, defex::Expr, __source__::LineNumberNode)
+    defs = Expr(:block)
 
     # Documentation for enum values
-    enumdocs = Any[]
+    docs = Any[]
 
-    for arg in ex.args
-        if Meta.isexpr(arg, :macrocall)
-            arg.args[1] === GlobalRef(Core, Symbol("@doc")) || error("Unsupported macro call within `@namespace`")
-            arg′ = pop!(arg.args)
-            Meta.isexpr(arg′, :(=)) || error("Invalid `@namespace`")
-            push!(arg.args, arg′.args[1])
-            push!(enumdocs, arg)
-            arg = arg′
-        end
-        if Meta.isexpr(arg, :(=))
-            eval, lval = arg.args
-            push!(enumbody.args, eval)
-            push!(lowerbody.args, :(x === $eval && return $lval))
+    local doc = nothing # documentation for the next enum element
+    for arg in defex.args
+        if arg isa String
+            doc === nothing || error("Unexpected `namespace` syntax: ", defex)
+            doc = arg
+        elseif Meta.isexpr(arg, :row)
+            if arg.args[1] ≠ :(export const)
+                error("Unexpected `namespace` syntax: ", defex)
+            end
+            defline = arg.args[2]
+            if !Meta.isexpr(defline, :(=))
+                error("Invalid `namespace` syntax: ", defex)
+            end
+            n, v = defline.args
+            if Meta.isexpr(n, :call) && n.args[1] === :(:)
+                n = n.args[2]
+            end
+            n isa Symbol || return error("Invalid `namespace` syntax")
+            push!(defs.args, :(const $n = $v))
+            if doc !== nothing
+                push!(docs, :(@doc $doc $n))
+                doc = nothing
+            end
         else
-            push!(enumbody.args, arg)
+            error("Unexpected `namespace` syntax: ", defex)
         end
     end
 
-    push!(lowerbody.args, :(error("Uncovered enum")))
-    lowerdef = Expr(:(=), Expr(:call, :($JSON.lower), :(x::$Name)), lowerbody)
-
-    Namespace = Symbol(Name, "Namespace")
-    modex = Expr(:block, jsonimport, enumdef, enumdocs..., lowerdef)
+    modex = Expr(:block, defs, docs...)
     return esc(Expr(:toplevel,
-        Expr(:module, true, Namespace, modex),
-        :(using .$Namespace: $Namespace, $Name),
-        :(Base.@__doc__ $Namespace),
+        Expr(:module, true, Name, modex),
         :(Base.@__doc__ $Name)))
 end
 
-macro extends(Tx)
-    nothing
-end
+using StructTypes
 
-const _INTERFACE_DEFS = Dict{Symbol,Expr}()
-macro interface(ex)
-    Meta.isexpr(ex, :struct) || error("Expected :struct expression")
-    structbody = ex.args[3]
-    Meta.isexpr(structbody, :block) || error("Unexpected `:struct` expression")
-    for i = 1:length(structbody.args)
-        structline = structbody.args[i]
-        Meta.isexpr(structline, :macrocall) || continue
-        structline.args[1] === Symbol("@extends") || continue
-        for j = 2:length(structline.args)
-            structlineⱼ = structline.args[j]
-            structlineⱼ isa Symbol || continue
-            haskey(_INTERFACE_DEFS, structlineⱼ) || error("`@extends` unknown definition")
-            extendsex = _INTERFACE_DEFS[structlineⱼ]
-            @assert Meta.isexpr(extendsex, :struct)
-            extendsbody = extendsex.args[3]
-            @assert Meta.isexpr(extendsbody, :block)
-            for extendsline in extendsbody.args
-                insert!(structbody.args, i, extendsline)
+function interface(Name::Symbol, defex::Expr, extends, __source__::LineNumberNode)
+    structbody = Expr(:block)
+    structdef = Expr(:struct, false, Name, structbody)
+    nullable_fields = Symbol[]
+    if extends !== nothing
+        if Meta.isexpr(extends, :tuple)
+            for extend in extends.args
+                add_extended_interface!(structbody, extend::Symbol, nullable_fields)
             end
+        else
+            add_extended_interface!(structbody, extends::Symbol, nullable_fields)
         end
     end
-    _INTERFACE_DEFS[ex.args[2]::Symbol] = ex
-    structdef = :(Base.@kwdef $ex)
-    return esc(structdef)
+    process_interface_def!(structbody, defex, nullable_fields)
+    if isempty(nullable_fields)
+        return esc(:(Base.@kwdef $structdef)) # `Base.@kwdef` will attach `Core.__doc__` automatically
+    else
+        omitempties = Tuple(nullable_fields)
+        return quote
+            Base.@kwdef $structdef # `Base.@kwdef` will attach `Core.__doc__` automatically
+            $StructTypes.omitempties(::Type{$Name}) = $omitempties
+        end |> esc
+    end
+    return esc(:(Base.@__doc__ Base.@kwdef $structdef))
 end
 
-# """/**
-#  * A type indicating how positions are encoded,
-#  * specifically what column offsets mean.
-#  *
-#  * @since 3.17.0
-#  */"""
-# @ts export type PositionEncodingKind = string;
+function add_extended_interface!(xbody::Expr, extend::Symbol, nullable_fields::Vector{Symbol})
+    process_interface_def!(xbody, _INTERFACE_DEFS[extend], nullable_fields)
+end
 
-# """/**
-#  * A set of predefined position encoding kinds.
-#  *
-#  * @since 3.17.0
-#  */"""
-# @ts export namespace PositionEncodingKind {
+function process_interface_def!(xbody::Expr, defex::Expr, nullable_fields::Vector{Symbol}, namedtuple::Bool=false)
+    for defline in defex.args
+        if defline isa String # field documentation
+            if !namedtuple
+                push!(xbody.args, defline)
+            end
+        elseif Meta.isexpr(defline, :row) # field var"?:" FieldType
+            length(defline.args) == 3 || error("Unexpected `interface` syntax: ", defex)
+            defline.args[2] === Symbol("?:") || error("Unexpected `interface` syntax: ", defex)
+            fname, ftype = defline.args[1], defline.args[3]
+            ftype = tstype_to_juliatype(ftype)
+            ftype = Expr(:curly, :Union, ftype, :Nothing)
+            fdecl = Expr(:(::), fname, ftype)
+            if namedtuple
+                push!(xbody.args, fdecl)
+            else
+                fdecl = Expr(:(=), Expr(:(::), fname, ftype), :nothing)
+                push!(xbody.args, fdecl)
+            end
+            push!(nullable_fields, fname)
+        elseif Meta.isexpr(defline, :call) # field : FieldType
+            length(defline.args) == 3 || error("Unexpected `interface` syntax: ", defex)
+            defline.args[1] === :(:) || error("Unexpected `interface` syntax: ", defex)
+            fname, ftype = defline.args[2], defline.args[3]
+            ftype = tstype_to_juliatype(ftype)
+            push!(xbody.args, Expr(:(::), fname, ftype))
+        else
+            error("Unexpected `interface` syntax: ", defex)
+        end
+    end
+end
 
-# 	"""/**
-# 	 * Character offsets count UTF-8 code units (e.g bytes).
-# 	 */"""
-# 	UTF8: PositionEncodingKind = "utf-8";
+# TODO Handle nested interface declaration properly
 
-# 	"""/**
-# 	 * Character offsets count UTF-16 code units.
-# 	 *
-# 	 * This is the default and must always be supported
-# 	 * by servers
-# 	 */"""
-# 	UTF16: PositionEncodingKind = "utf-16";
-
-# 	"""/**
-# 	 * Character offsets count UTF-32 code units.
-# 	 *
-# 	 * Implementation note: these are the same as Unicode code points,
-# 	 * so this `PositionEncodingKind` may also be used for an
-# 	 * encoding-agnostic representation of character offsets.
-# 	 */"""
-# 	UTF32: PositionEncodingKind = "utf-32";
-# }
-
-# @ts interface ServerCapabilities {
-
-# 	"""/**
-# 	 * The position encoding the server picked from the encodings offered
-# 	 * by the client via the client capability `general.positionEncodings`.
-# 	 *
-# 	 * If the client didn't provide any position encodings the only valid
-# 	 * value that a server can return is 'utf-16'.
-# 	 *
-# 	 * If omitted it defaults to 'utf-16'.
-# 	 *
-# 	 * @since 3.17.0
-# 	 */"""
-# 	positionEncoding var"?:" PositionEncodingKind;
-# }
+function tstype_to_juliatype(@nospecialize x)
+    if x isa Symbol
+        if x === :integer
+            return :Int
+        elseif x === :string
+            return :String
+        elseif x === :uinteger
+            return :UInt
+        elseif x === :decimal
+            return :Float64
+        elseif x === :boolean
+            return :Bool
+        elseif x === :null
+            return :Nothing
+        end
+        return _TYPE_DEFS[x]
+    elseif Meta.isexpr(x, :call) && length(x.args) == 3 && x.args[1] === :| # t1 | t2 [| t3 ...]
+        return Expr(:curly, :Union, tstype_to_juliatype(x.args[2]), tstype_to_juliatype(x.args[3]))
+    elseif Meta.isexpr(x, :.) && length(x.args) == 2 # kind: DocumentDiagnosticReportKind.Full
+        return tstype_to_juliatype(x.args[1]) # DocumentDiagnosticReportKind
+    elseif Meta.isexpr(x, :ref) && length(x.args) == 1
+        return Expr(:curly, :Vector, tstype_to_juliatype(only(x.args)))
+    elseif Meta.isexpr(x, :braces) || Meta.isexpr(x, :bracescat)
+        if Meta.isexpr(x, :braces)
+            isempty(x.args) || length(x.args) == 1 ||
+                error("Invalid TypeScript type expression: ", exs)
+        else
+            Meta.isexpr(x, :bracescat) || error("Invalid TypeScript type expression: ", exs)
+        end
+        namedtuple = :(@NamedTuple{})
+        process_interface_def!(namedtuple.args[end], x, Symbol[], #=namedtuple=#true)
+        return namedtuple
+    else # literal values
+        return :(typeof($x))
+    end
+end

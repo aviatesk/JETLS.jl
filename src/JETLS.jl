@@ -33,7 +33,7 @@ function runserver(callback, in::IO, out::IO)
             elseif isa(msg, NotificationMessage)
                 res = @invokelatest handle_notification_message(state, msg)
             else
-                res = msg::ResponseMessage # error in the JSONRPC handling
+                error("Handling for ResponseMessage is unimplemented")
             end
             if res === nothing
                 continue
@@ -74,7 +74,7 @@ function handle_request_message(state, msg::RequestMessage)
 end
 
 function handle_notification_message(state, msg::NotificationMessage)
-    @info "Handling NotificationMessage" msg
+    # @info "Handling NotificationMessage" msg
     method = msg.method
     if method == "initialized"
         # TODO?
@@ -91,10 +91,10 @@ function handle_initialize_request(msg::RequestMessage)
     return ResponseMessage(msg.id,
         InitializeResult(;
             capabilities = ServerCapabilities(;
-                positionEncoding = UTF16,
+                positionEncoding = PositionEncodingKind.UTF16,
                 textDocumentSync = TextDocumentSyncOptions(;
                     openClose = true,
-                    change = Incremental,
+                    change = TextDocumentSyncKind.Incremental,
                     save = true),
                 diagnosticProvider = DiagnosticOptions(;
                     identifier = "JETLS",
@@ -166,7 +166,7 @@ function jet_to_workspace_diagnostics(state, result)
     for (uri, items) in state.uri2diagnostics
         suri = lowercase(string(uri))
         push!(diagnostics, (;
-            kind = "full",
+            kind = DocumentDiagnosticReportKind.Full,
             resultId = suri,
             items,
             uri=suri))

@@ -4,9 +4,9 @@ export
     Endpoint, Message, RequestMessage, ResponseMessage, NotificationMessage,
     ResponseError, send
 
-using JSON
+using JSON3, StructTypes
 
-abstract type Message end
+# COMBAK Return `ResponseMessage(_, ResponseError)` instead of `error("...")`?
 
 @enum ErrorCodes begin
     ParseError = -32700;
@@ -99,6 +99,8 @@ abstract type Message end
     #  */
     # lspReservedErrorRangeEnd = -32800;
 end
+StructTypes.StructType(::Type{ErrorCodes}) = StructTypes.NumberType()
+StructTypes.numbertype(::Type{ErrorCodes}) = Int
 
 struct ResponseError <: Exception
     code::ErrorCodes
@@ -118,85 +120,71 @@ function Base.showerror(io::IO, err::ResponseError)
         print(io, ")")
     end
 end
-JSON.lower(code::ErrorCodes) = Int(code)
+
+abstract type Message end
 
 struct RequestMessage <: Message
+    jsonrpc::String
     id::Int
     method::String
     params
     RequestMessage(id::Int, method::String, @nospecialize(params=nothing)) =
-        new(id, method, params)
+        new("2.0", id, method, params)
 end
 
 struct ResponseMessage <: Message
+    jsonrpc::String
     id::Int
     result
     error::ResponseError
-    ResponseMessage(id::Int, @nospecialize(result)) = new(id, result)
-    ResponseMessage(id::Int, error::ResponseError) = new(id, nothing, error)
+    function ResponseMessage(id::Int, @nospecialize(result))
+        if result === nothing
+            error("`ResponseMessage(id::Int, result)` construct expects non-`nothing` `result` argument")
+        end
+        return new("2.0", id, result)
+    end
+    ResponseMessage(id::Int, error::ResponseError) = new("2.0", id, nothing, error)
 end
+StructTypes.omitempties(::Type{ResponseMessage}) = (:result,)
 
 struct NotificationMessage <: Message
+    jsonrpc::String
     method::String
     params
     NotificationMessage(method::String, @nospecialize(params=nothing)) =
-        new(method, params)
+        new("2.0", method, params)
 end
 
-function tomsg(json::Dict{String,Any})
-    if haskey(json, "id")
-        id = json["id"]
+function tomsg(json::Dict{Symbol,Any})
+    if haskey(json, :id)
+        id = json[:id]
         if !isa(id, Int)
-            isa(id, String) || return ResponseMessage(#=id=#-1, # XXX,
-                ResponseError(InvalidRequest, "[Request|Response]Message with invalid id", id))
+            isa(id, String) || error("Non-parseable `id` given")
             id = parse(Int, id)
         end
-        if haskey(json, "method") # this must be a RequestMessage
-            method = json["method"]
-            isa(method, String) || return ResponseMessage(id,
-                ResponseError(InvalidRequest, "RequestMessage with invalid method", method))
-            return RequestMessage(id, method, get(json, "params", nothing))
+        if haskey(json, :method) # this must be a RequestMessage
+            method = json[:method]
+            isa(method, String) || error("RequestMessage must have `:method::String`")
+            return RequestMessage(id, method, get(json, :params, nothing))
         else # this must be a ResponseMessage
-            if haskey(json, "result")
-                return ResponseMessage(id, json["result"])
+            if haskey(json, :result)
+                return ResponseMessage(id, json[:result])
             else
-                haskey(json, "code") || return ResponseMessage(id,
-                    ResponseError(UnknownErrorCode, "ResponseError without code", json))
-                code = json["code"]
-                isa(code, Int) || return ResponseMessage(id,
-                    ResponseError(UnknownErrorCode, "ResponseError with invalid code", code))
-                haskey(json, "message") || return ResponseMessage(id,
-                    ResponseError(UnknownErrorCode, "ResponseError without message", json))
-                message = json["message"]
-                isa(message, String) || return ResponseMessage(id,
-                    ResponseError(UnknownErrorCode, "ResponseError with invalid message", message))
-                error = ResponseError(ErrorCodes(code), message, get(json, "data", nothing))
+                haskey(json, :error) || error("ResponseMessage must have either of `:result` or `:error`")
+                error = json[:error]
+                haskey(error, :code) || error("ResponseError must have `:code::Int`")
+                code = error[:code]
+                isa(code, Int) || error("ResponseError must have `:code::Int`")
+                haskey(error, :message) || error("ResponseError must have `:message::String`")
+                message = json[:message]
+                isa(message, String) || error("ResponseError must have `:message::String`")
+                error = ResponseError(ErrorCodes(code), message, get(json, :data, nothing))
                 return ResponseMessage(id, error)
             end
         end
     else # this must be a NotificationMessage
-        if !haskey(json, "method")
-            return ResponseMessage(#=id=#-1, # XXX,
-                ResponseError(InvalidRequest, "message without method", json))
-        end
-        return NotificationMessage(json["method"], get(json, "params", nothing))
-    end
-end
-
-function JSON.lower(msg::Message)
-    out = Dict{String,Any}()
-    out["jsonrpc"] = "2.0"
-    for fname in fieldnames(typeof(msg))
-        out[string(fname)] = getfield(msg, fname)
-    end
-    return out
-end
-
-function JSON.lower(msg::ResponseMessage)
-    if isdefined(msg, :error)
-        return (; jsonrpc = "2.0", msg.id, msg.error)
-    else
-        return (; jsonrpc = "2.0", msg.id, msg.result)
+        haskey(json, :method) || error("NotificationMessage must have :method")
+        return NotificationMessage(json[:method], get(json, :params, nothing))
     end
 end
 
@@ -215,13 +203,7 @@ mutable struct Endpoint
             while true
                 msg_str = read_transport_layer(in)
                 msg_str === nothing && break
-                if isa(msg_str, ResponseError)
-                    msg = ResponseMessage(#=id=#-1, # XXX,
-                        ResponseError(InvalidRequest, "invalid transport layer", msg_str))
-                    put!(out_msg_queue, msg)
-                    continue
-                end
-                msg_json = JSON.parse(msg_str)
+                msg_json = JSON3.read(msg_str, Dict{Symbol,Any})
                 msg = tomsg(msg_json)
                 put!(in_msg_queue, msg)
             end
@@ -232,7 +214,7 @@ mutable struct Endpoint
         write_task = @async try
             for msg in out_msg_queue
                 if isopen(out)
-                    msg_str = JSON.json(msg)
+                    msg_str = JSON3.write(msg)
                     write_transport_layer(out, msg_str)
                 else
                     @info "failed to send" msg
@@ -262,7 +244,7 @@ function read_transport_layer(io::IO)
         line = chomp(readline(io))
     end
     if !@isdefined(var"Content-Length")
-        return ResponseError(ParseError, "header without Content-Length")
+        error("header without Content-Length")
     end
     message_length = parse(Int, var"Content-Length")
     return String(read(io, message_length))
