@@ -5,5 +5,8 @@
 	"editor.codeActionsOnSave": {
 		"source.fixAll.eslint": "explicit"
 	},
-	"julia.lint.run": false
+	"julia.lint.run": false,
+	"cSpell.words": [
+		"uinteger"
+	]
 }

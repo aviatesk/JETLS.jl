@@ -5,14 +5,22 @@ export runserver
 include("JSONRPC.jl")
 using .JSONRPC
 
-include("LSP/LSP.jl")
+include("utils.jl")
+using .LSPURI
+
+module LSP
+using StructTypes
+function lsptypeof end
+include("LSP.jl")
+end
+using .LSP
 
 using JET
 
 runserver(in::IO, out::IO) = runserver((msg, res)->nothing, in, out)
 function runserver(callback, in::IO, out::IO)
     endpoint = Endpoint(in, out)
-    state = (; uri2diagnostics=Dict{URI,Vector{Any}}())
+    state = (; uri2diagnostics=Dict{URI,Vector{Diagnostic}}())
     shutdown_requested = false
     local exit_code::Int
     try
@@ -122,15 +130,16 @@ function handle_workspace_diagnostic_request(state, msg::RequestMessage)
             JSONRPC.InternalError, "Unexpected workspaceUri", msg))
     end
     if !isempty(state.uri2diagnostics)
-        diagnostics = Any[]
+        diagnostics = WorkspaceUnchangedDocumentDiagnosticReport[]
         for (uri, _) in state.uri2diagnostics
             suri = string(uri)
-            push!(diagnostics, (;
-                kind = "unchanged",
+            push!(diagnostics, WorkspaceUnchangedDocumentDiagnosticReport(;
+                kind = DocumentDiagnosticReportKind.Unchanged,
                 resultId = suri,
-                uri=lowercase(suri)))
+                uri=lowercase(suri),
+                version=nothing))
         end
-        return ResponseMessage(msg.id, (; items = diagnostics))
+        return ResponseMessage(msg.id, WorkspaceDiagnosticReport(; items = diagnostics))
     end
     pkgname = basename(workspaceDir)
     pkgpath = joinpath(workspaceDir, "src", "$pkgname.jl")
@@ -138,40 +147,41 @@ function handle_workspace_diagnostic_request(state, msg::RequestMessage)
         analyze_from_definitions=true, toplevel_logger=stderr,
         concretization_patterns=[:(x_)])
     diagnostics = jet_to_workspace_diagnostics(state, result)
-    return ResponseMessage(msg.id, (; items = diagnostics))
+    return ResponseMessage(msg.id, WorkspaceDiagnosticReport(; items = diagnostics))
 end
 
 function jet_to_workspace_diagnostics(state, result)
     for file in result.res.included_files
         uri = filepath2uri(jetpath2abspath(file))
-        state.uri2diagnostics[uri] = Any[]
+        state.uri2diagnostics[uri] = Diagnostic[]
     end
 
     # TODO result.res.toplevel_error_reports
     for report in result.res.inference_error_reports
         uri = filepath2uri(jetpath2abspath(String(report.vst[1].file)))
-        items = get!(()->Any[], state.uri2diagnostics, uri)
+        items = get!(()->Diagnostic[], state.uri2diagnostics, uri)
 
         buf = IOBuffer()
         JET.print_report_message(buf, report)
         message = String(take!(buf))
 
-        push!(items, (;
+        push!(items, Diagnostic(;
             message,
-            range = (;
-                start = (; line=report.vst[1].line-1, character=0),
-                var"end" = (; line=report.vst[1].line-1, character=Int(typemax(Int32))),
+            range = Range(;
+                start = Position(; line=report.vst[1].line-1, character=0),
+                var"end" = Position(; line=report.vst[1].line-1, character=Int(typemax(Int32))),
             )))
     end
 
-    diagnostics = Any[]
+    diagnostics = WorkspaceFullDocumentDiagnosticReport[]
     for (uri, items) in state.uri2diagnostics
         suri = lowercase(string(uri))
-        push!(diagnostics, (;
+        push!(diagnostics, WorkspaceFullDocumentDiagnosticReport(;
             kind = DocumentDiagnosticReportKind.Full,
             resultId = suri,
             items,
-            uri=suri))
+            uri=suri,
+            version=nothing))
     end
 
     return diagnostics
