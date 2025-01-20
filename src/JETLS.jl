@@ -134,7 +134,9 @@ function handle_workspace_diagnostic_request(state, msg::RequestMessage)
     end
     pkgname = basename(workspaceDir)
     pkgpath = joinpath(workspaceDir, "src", "$pkgname.jl")
-    result = @invokelatest report_file(pkgpath; analyze_from_definitions=true, toplevel_logger=stderr)
+    result = @invokelatest report_file(pkgpath;
+        analyze_from_definitions=true, toplevel_logger=stderr,
+        concretization_patterns=[:(x_)])
     diagnostics = jet_to_workspace_diagnostics(state, result)
     return ResponseMessage(msg.id, (; items = diagnostics))
 end

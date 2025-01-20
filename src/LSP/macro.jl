@@ -191,9 +191,9 @@ function tstype_to_juliatype(@nospecialize x)
     elseif Meta.isexpr(x, :braces) || Meta.isexpr(x, :bracescat)
         if Meta.isexpr(x, :braces)
             isempty(x.args) || length(x.args) == 1 ||
-                error("Invalid TypeScript type expression: ", exs)
+                error("Invalid TypeScript type expression: ", x)
         else
-            Meta.isexpr(x, :bracescat) || error("Invalid TypeScript type expression: ", exs)
+            Meta.isexpr(x, :bracescat) || error("Invalid TypeScript type expression: ", x)
         end
         namedtuple = :(@NamedTuple{})
         process_interface_def!(namedtuple.args[end], x, Symbol[], #=namedtuple=#true)
