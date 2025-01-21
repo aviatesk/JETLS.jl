@@ -22,16 +22,16 @@ const kinds = Dict(
     307 => :toplevel,
 )
 
-const _VAL_DEFS = Dict{Symbol,Any}()
+const VAL_DEFS = Dict{Symbol,Any}()
 
-const _TYPE_DEFS = Dict{Symbol,Union{Symbol,Expr}}(
+const TYPE_DEFS = Dict{Symbol,Union{Symbol,Expr}}(
     :integer => :Int,
     :uinteger => :UInt,
     :decimal => :Float64,
     :LSPAny => :Any,
     :LSPObject => :(Dict{String,Any}),
     :LSPArray => :(Vector{Any}))
-const _PREDEFINED_TYPE_DEFS = keys(_TYPE_DEFS)
+const PREDEFINED_TYPE_DEFS = keys(TYPE_DEFS)
 
 struct InterfaceDefLine
     field::Symbol
@@ -40,7 +40,9 @@ struct InterfaceDefLine
     nullable::Bool
 end
 
-const _INTERFACE_DEFS = Dict{Symbol,Vector{InterfaceDefLine}}()
+const INTERFACE_DEFS = Dict{Symbol,Vector{InterfaceDefLine}}()
+
+const NAMESPACE_DEFS = Set{Symbol}()
 
 const method_dispatcher = Dict{String,Symbol}()
 
@@ -63,7 +65,7 @@ function ts2jl(node, anon_defs=nothing)
     elseif kind === :string
         return :String
     elseif kind === :identifier
-        return _VAL_DEFS[Symbol(node[:escapedText])]
+        return VAL_DEFS[Symbol(node[:escapedText])]
     elseif kind === :type_identifier
         typenode = node[:typeName]
         typekind = typenode[:kind]
@@ -77,7 +79,7 @@ function ts2jl(node, anon_defs=nothing)
             kinds[typekind] === :identifier || error("Unexpected kind: ", typekind, " in ", typenode)
             name = typenode[:escapedText]
         end
-        return _TYPE_DEFS[Symbol(name)]
+        return TYPE_DEFS[Symbol(name)]
     elseif kind === :type_anonymous
         if anon_defs === nothing
             error("Unexpected anonymous type definition in ", node)
@@ -85,7 +87,7 @@ function ts2jl(node, anon_defs=nothing)
         Name = gensym(:AnonymousType)
         append!(anon_defs, process_interface_statement(IOBuffer(), Name, node))
         push!(anon_defs, Base.remove_linenums!(:(Base.convert(::Type{$Name}, nt::NamedTuple) = $Name(;nt...)))) # allows `NamedTuple` to be converted to the anonymous type at the call site
-        return _TYPE_DEFS[Name]
+        return TYPE_DEFS[Name]
     elseif kind === :type_array
         return Expr(:curly, :Vector, ts2jl(node[:elementType], anon_defs))
     elseif kind === :type_union
@@ -130,15 +132,15 @@ end
 function process_type_statement(io, statement)
     Name = Symbol(statement[:name][:escapedText])
     ret = Any[]
-    if Name ∉ _PREDEFINED_TYPE_DEFS
-        if haskey(_TYPE_DEFS, Name)
+    if Name ∉ PREDEFINED_TYPE_DEFS
+        if haskey(TYPE_DEFS, Name)
             error("Duplicated type definition found: ", statement)
         end
         jltype = ts2jl(statement[:type])
         lsptypeofdef = Base.remove_linenums!(:(lsptypeof(::Val{$(QuoteNode(Name))}) = $jltype))
         push!(ret, lsptypeofdef)
         println(io, lsptypeofdef)
-        _TYPE_DEFS[Name] = :(lsptypeof(Val($(QuoteNode(Name)))))
+        TYPE_DEFS[Name] = :(lsptypeof(Val($(QuoteNode(Name)))))
     end
     if haskey(statement, :jsDoc)
         doc = process_jsDoc(statement[:jsDoc])
@@ -164,7 +166,7 @@ function process_interface_statement(io, Name::Symbol, statement)
         for clause in statement[:heritageClauses]
             for typ in clause[:types]
                 extended = Symbol(typ[:expression][:escapedText])
-                append!(deflines, _INTERFACE_DEFS[extended])
+                append!(deflines, INTERFACE_DEFS[extended])
             end
         end
     end
@@ -197,8 +199,8 @@ function process_interface_statement(io, Name::Symbol, statement)
         end
         push!(structbody.args, defline.line)
     end
-    _TYPE_DEFS[Name] = Name
-    _INTERFACE_DEFS[Name] = deflines
+    TYPE_DEFS[Name] = Name
+    INTERFACE_DEFS[Name] = deflines
     structdef = Expr(:macrocall, Symbol("@kwdef"), nothing, structdef)
     nullable_fields = map(i->deflines[i].field, findall(x->x.nullable, deflines))
     omitempties_defs = isempty(nullable_fields) ? () :
@@ -221,6 +223,7 @@ end
 
 function process_namespace_statement(io, statement)
     Name = Symbol(statement[:name][:escapedText])
+    push!(NAMESPACE_DEFS, Name)
     modbody = Expr(:block)
     for bodystatement in statement[:body][:statements]
         decls = bodystatement[:declarationList][:declarations]
@@ -228,7 +231,7 @@ function process_namespace_statement(io, statement)
         decl = only(decls)
         name = Symbol(decl[:name][:escapedText])
         val = ts2jl(decl[:initializer])
-        _VAL_DEFS[name] = val
+        VAL_DEFS[name] = val
         push!(modbody.args, :(const $name = $val))
         if haskey(bodystatement, :jsDoc)
             doc = process_jsDoc(bodystatement[:jsDoc])
@@ -301,8 +304,9 @@ let lsp = JSON3.read(LSP_JSON_FILE)
         println(f, ")")
         # export everything we got
         names = Set{String}()
-        for name in keys(_TYPE_DEFS); push!(names, String(name)); end
-        for name in keys(_INTERFACE_DEFS); push!(names, String(name)); end
+        for name in keys(TYPE_DEFS); push!(names, String(name)); end
+        for name in keys(INTERFACE_DEFS); push!(names, String(name)); end
+        for name in NAMESPACE_DEFS; push!(names, String(name)); end
         names = sort!(collect(names))
         println(f, "export")
         println(f, "    method_dispatcher,")

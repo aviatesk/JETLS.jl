@@ -21,7 +21,7 @@ runserver(in::IO, out::IO; kwargs...) = runserver((msg, res)->nothing, in, out; 
 function runserver(callback, in::IO, out::IO;
                    shutdown_really::Bool=true)
     endpoint = Endpoint(in, out)
-    state = (; uri2diagnostics=Dict{URI,Vector{Diagnostic}}())
+    state = initialize_state()
     shutdown_requested = false
     local exit_code::Int
     try
@@ -31,15 +31,15 @@ function runserver(callback, in::IO, out::IO;
                 res = ResponseMessage(; id=msg.id, result=nothing)
             elseif msg isa ExitNotification
                 exit_code = !shutdown_requested
+                callback(msg, nothing)
                 break
             elseif shutdown_requested
                 res = ResponseMessage(; id=msg.id, error=ResponseError(
-                    JSONRPC.InvalidRequest, "Received request after a shutdown request requested", msg))
+                    ErrorCodes.InvalidRequest, "Received request after a shutdown request requested", msg))
             else
                 res = @invokelatest handle_message(state, msg)
             end
             if res === nothing
-                continue
             elseif isa(res, ResponseMessage)
                 send(endpoint, res)
             else
@@ -62,9 +62,15 @@ function runserver(callback, in::IO, out::IO;
     return endpoint
 end
 
+function initialize_state()
+    return (;
+        workspaceFolders = String[], # TODO support multiple workspace folders properly
+        uri2diagnostics = Dict{URI,Vector{Diagnostic}}())
+end
+
 function handle_message(state, msg)
     if msg isa InitializeRequest
-        return handle_InitializeRequest(msg)
+        return handle_InitializeRequest(state, msg)
     elseif msg isa WorkspaceDiagnosticRequest
         return handle_WorkspaceDiagnosticRequest(state, msg)
     elseif msg isa InitializedNotification
@@ -77,10 +83,20 @@ function handle_message(state, msg)
     end
 end
 
-global workspaceUri::URI
-
-function handle_InitializeRequest(msg::InitializeRequest)
-    global workspaceUri = URI(msg.params.rootUri) # workspaceFolder
+function handle_InitializeRequest(state, msg::InitializeRequest)
+    workspaceFolders = msg.params.workspaceFolders
+    if workspaceFolders !== nothing
+        for workspaceFolder in msg.params.workspaceFolders
+            push!(state.workspaceFolders, workspaceFolder.uri)
+        end
+    else
+        rootUri = msg.params.rootUri
+        if rootUri !== nothing
+            push!(state.workspaceFolders, msg.params.rootUri)
+        else
+            @info "No workspaceFolders or rootUri in InitializeRequest"
+        end
+    end
     return ResponseMessage(; id=msg.id,
         result=InitializeResult(;
             capabilities = ServerCapabilities(;
@@ -108,13 +124,10 @@ function handle_DidSaveTextDocumentNotification(state, msg::DidSaveTextDocumentN
 end
 
 function handle_WorkspaceDiagnosticRequest(state, msg::WorkspaceDiagnosticRequest)
-    global workspaceUri
-    workspaceDir = uri2filepath(workspaceUri)
-    if isnothing(workspaceDir)
-        return ResponseMessage(;
-            id=msg.id,
-            error=ResponseError(JSONRPC.InternalError, "Unexpected workspaceUri", msg))
+    if isempty(state.workspaceFolders)
+        return nothing
     end
+    workspaceDir = uri2filepath(URI(state.workspaceFolders[1]))::String
     if !isempty(state.uri2diagnostics)
         diagnostics = WorkspaceUnchangedDocumentDiagnosticReport[]
         for (uri, _) in state.uri2diagnostics
@@ -134,21 +147,21 @@ function handle_WorkspaceDiagnosticRequest(state, msg::WorkspaceDiagnosticReques
     result = @invokelatest report_file(pkgpath;
         analyze_from_definitions=true, toplevel_logger=stderr,
         concretization_patterns=[:(x_)])
-    diagnostics = jet_to_workspace_diagnostics(state, result)
+    diagnostics = jet_to_workspace_diagnostics(state, workspaceDir, result)
     return ResponseMessage(;
         id=msg.id,
         result=WorkspaceDiagnosticReport(; items = diagnostics))
 end
 
-function jet_to_workspace_diagnostics(state, result)
+function jet_to_workspace_diagnostics(state, workspaceDir, result)
     for file in result.res.included_files
-        uri = filepath2uri(jetpath2abspath(file))
+        uri = filepath2uri(jetpath2abspath(file, workspaceDir))
         state.uri2diagnostics[uri] = Diagnostic[]
     end
 
     # TODO result.res.toplevel_error_reports
     for report in result.res.inference_error_reports
-        uri = filepath2uri(jetpath2abspath(String(report.vst[1].file)))
+        uri = filepath2uri(jetpath2abspath(String(report.vst[1].file), workspaceDir))
         items = get!(()->Diagnostic[], state.uri2diagnostics, uri)
 
         buf = IOBuffer()
@@ -177,9 +190,9 @@ function jet_to_workspace_diagnostics(state, result)
     return diagnostics
 end
 
-function jetpath2abspath(path)
+function jetpath2abspath(path, workspaceDir)
     isabspath(path) && return path
-    return joinpath(workspaceUri.path, path)
+    return joinpath(workspaceDir, path)
 end
 
 # TODO handle standalone toplevel script here

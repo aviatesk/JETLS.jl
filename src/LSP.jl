@@ -790,6 +790,7 @@ export
     DocumentFilter,
     DocumentSelector,
     DocumentUri,
+    ErrorCodes,
     ExitNotification,
     FileOperationFilter,
     FileOperationPattern,

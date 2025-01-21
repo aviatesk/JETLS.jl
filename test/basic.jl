@@ -32,7 +32,8 @@ let in = Base.BufferStream()
     writemsg(in,
         JETLS.LSP.ExitNotification(;
             method="exit"))
-    fetch(t)
-    @test t.result isa JETLS.JSONRPC.Endpoint
-    @test t.result.state === :closed
+    @test take!(result_queue) === nothing
+    result = fetch(t)
+    @test result isa JETLS.JSONRPC.Endpoint
+    @test result.state === :closed
 end
