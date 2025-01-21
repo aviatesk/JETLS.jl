@@ -1,5 +1,8 @@
 # JETLS.jl
 
+[![](https://github.com/aviatesk/JETLS.jl/actions/workflows/ci.yml/badge.svg)](https://github.com/aviatesk/JETLS.jl/actions/workflows/ci.yml)
+[![](https://codecov.io/gh/aviatesk/JETLS.jl/branch/master/graph/badge.svg)](https://codecov.io/gh/aviatesk/JETLS.jl)
+
 A new language server for the Julia programming language. In a nascent stage of development.
 
 ## Development
