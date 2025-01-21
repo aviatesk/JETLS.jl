@@ -10,6 +10,97 @@
 
 @doc "LSP arrays.\n\n# Tags\n\n- since – 3.17.0" LSPArray
 
+lsptypeof(::Val{:array}) = begin
+        Vector{Any}
+    end
+@kwdef struct Message
+        jsonrpc::Core.typeof("2.0") = "2.0"
+    end
+@doc "A general message as defined by JSON-RPC. The language server protocol always uses “2.0” as the jsonrpc version." Message
+
+@kwdef struct RequestMessage
+        jsonrpc::Core.typeof("2.0") = "2.0"
+        "The request id."
+        id::Int
+        "The method to be invoked."
+        method::String
+        "The method's params."
+        params::Union{Any, Nothing} = nothing
+    end
+StructTypes.omitempties(::Type{RequestMessage}) = begin
+        (:params,)
+    end
+@doc "A request message to describe a request between the client and the server. Every processed request must send a response back to the sender of the request." RequestMessage
+
+@kwdef struct ResponseError
+        "A number indicating the error type that occurred."
+        code::Int
+        "A string providing a short description of the error."
+        message::String
+        "A primitive or structured value that contains additional\ninformation about the error. Can be omitted."
+        data::Union{Any, Nothing} = nothing
+    end
+StructTypes.omitempties(::Type{ResponseError}) = begin
+        (:data,)
+    end
+
+@kwdef struct ResponseMessage
+        jsonrpc::Core.typeof("2.0") = "2.0"
+        "The request id."
+        id::Union{Int, Core.typeof(nothing)}
+        "The result of a request. This member is REQUIRED on success.\nThis member MUST NOT exist if there was an error invoking the method."
+        result::Union{Any, Nothing} = nothing
+        "The error object in case a request fails."
+        error::Union{ResponseError, Nothing} = nothing
+    end
+StructTypes.omitempties(::Type{ResponseMessage}) = begin
+        (:result, :error)
+    end
+@doc "A Response Message sent as a result of a request. If a request doesn’t provide a result value the receiver of a request still needs to return a response message to conform to the JSON-RPC specification. The result property of the ResponseMessage should be set to null in this case to signal a successful request." ResponseMessage
+
+module ErrorCodes
+const ParseError = -32700
+const InvalidRequest = -32600
+const MethodNotFound = -32601
+const InvalidParams = -32602
+const InternalError = -32603
+const jsonrpcReservedErrorRangeStart = -32099
+@doc "This is the start range of JSON-RPC reserved error codes.\nIt doesn't denote a real error code. No LSP error codes should\nbe defined between the start and end range. For backwards\ncompatibility the `ServerNotInitialized` and the `UnknownErrorCode`\nare left in the range.\n\n# Tags\n\n- since – 3.16.0" jsonrpcReservedErrorRangeStart
+const serverErrorStart = -32099
+@doc "\n\n# Tags\n\n- deprecated – use jsonrpcReservedErrorRangeStart" serverErrorStart
+const ServerNotInitialized = -32002
+@doc "Error code indicating that a server received a notification or\nrequest before the server has received the `initialize` request." ServerNotInitialized
+const UnknownErrorCode = -32001
+const jsonrpcReservedErrorRangeEnd = -32000
+@doc "This is the end range of JSON-RPC reserved error codes.\nIt doesn't denote a real error code.\n\n# Tags\n\n- since – 3.16.0" jsonrpcReservedErrorRangeEnd
+const serverErrorEnd = -32000
+@doc "\n\n# Tags\n\n- deprecated – use jsonrpcReservedErrorRangeEnd" serverErrorEnd
+const lspReservedErrorRangeStart = -32899
+@doc "This is the start range of LSP reserved error codes.\nIt doesn't denote a real error code.\n\n# Tags\n\n- since – 3.16.0" lspReservedErrorRangeStart
+const RequestFailed = -32803
+@doc "A request failed but it was syntactically correct, e.g the\nmethod name was known and the parameters were valid. The error\nmessage should contain human readable information about why\nthe request failed.\n\n# Tags\n\n- since – 3.17.0" RequestFailed
+const ServerCancelled = -32802
+@doc "The server cancelled the request. This error code should\nonly be used for requests that explicitly support being\nserver cancellable.\n\n# Tags\n\n- since – 3.17.0" ServerCancelled
+const ContentModified = -32801
+@doc "The server detected that the content of a document got\nmodified outside normal conditions. A server should\nNOT send this error code if it detects a content change\nin it unprocessed messages. The result even computed\non an older state might still be useful for the client.\n\nIf a client decides that a result is not of any use anymore\nthe client should cancel the request." ContentModified
+const RequestCancelled = -32800
+@doc "The client has canceled a request and a server has detected\nthe cancel." RequestCancelled
+const lspReservedErrorRangeEnd = -32800
+@doc "This is the end range of LSP reserved error codes.\nIt doesn't denote a real error code.\n\n# Tags\n\n- since – 3.16.0" lspReservedErrorRangeEnd
+end
+
+@kwdef struct NotificationMessage
+        jsonrpc::Core.typeof("2.0") = "2.0"
+        "The method to be invoked."
+        method::String
+        "The notification's params."
+        params::Union{Any, Nothing} = nothing
+    end
+StructTypes.omitempties(::Type{NotificationMessage}) = begin
+        (:params,)
+    end
+@doc "A notification message. A processed notification message must not send a response back. They work like events." NotificationMessage
+
 lsptypeof(::Val{:DocumentUri}) = begin
         String
     end
@@ -23,6 +114,215 @@ lsptypeof(::Val{:URI}) = begin
         character::UInt
     end
 @doc "Position in a text document expressed as zero-based line and zero-based character offset.\nA position is between two characters like an ‘insert’ cursor in an editor.\nSpecial values like for example -1 to denote the end of a line are not supported." Position
+
+@kwdef struct WorkspaceFolder
+        "The associated URI for this workspace folder."
+        uri::lsptypeof(Val(:URI))
+        "The name of the workspace folder. Used to refer to this\nworkspace folder in the user interface."
+        name::String
+    end
+
+lsptypeof(::Val{:ProgressToken}) = begin
+        Union{Int, String}
+    end
+@doc "The base protocol offers also support to report progress in a generic fashion. This mechanism can be used to report any kind of progress including work done progress (usually used to report progress in the user interface using a progress bar) and partial result progress to support streaming of results.\n\nA progress notification has the following properties:\nNotification:\n- method: ‘\$/progress’\n- params: ProgressParams defined as follows:" ProgressToken
+
+@kwdef struct WorkDoneProgressParams
+        "An optional token that a server can use to report work done progress."
+        workDoneToken::Union{lsptypeof(Val(:ProgressToken)), Nothing} = nothing
+    end
+StructTypes.omitempties(::Type{WorkDoneProgressParams}) = begin
+        (:workDoneToken,)
+    end
+
+@kwdef struct PartialResultParams
+        "An optional token that a server can use to report partial results (e.g.\nstreaming) to the client."
+        partialResultToken::Union{lsptypeof(Val(:ProgressToken)), Nothing} = nothing
+    end
+StructTypes.omitempties(::Type{PartialResultParams}) = begin
+        (:partialResultToken,)
+    end
+
+lsptypeof(::Val{:TraceValue}) = begin
+        Union{Core.typeof("off"), Core.typeof("messages"), Core.typeof("verbose")}
+    end
+@doc "A TraceValue represents the level of verbosity with which the server systematically reports its execution trace using \$/logTrace notifications. The initial trace value is set by the client at initialization and can be modified later using the \$/setTrace notification." TraceValue
+
+@kwdef struct var"##AnonymousType#231"
+        "Whether the client supports dynamic registration for file\nrequests/notifications."
+        dynamicRegistration::Union{Bool, Nothing} = nothing
+        "The client has support for sending didCreateFiles notifications."
+        didCreate::Union{Bool, Nothing} = nothing
+        "The client has support for sending willCreateFiles requests."
+        willCreate::Union{Bool, Nothing} = nothing
+        "The client has support for sending didRenameFiles notifications."
+        didRename::Union{Bool, Nothing} = nothing
+        "The client has support for sending willRenameFiles requests."
+        willRename::Union{Bool, Nothing} = nothing
+        "The client has support for sending didDeleteFiles notifications."
+        didDelete::Union{Bool, Nothing} = nothing
+        "The client has support for sending willDeleteFiles requests."
+        willDelete::Union{Bool, Nothing} = nothing
+    end
+StructTypes.omitempties(::Type{var"##AnonymousType#231"}) = begin
+        (:dynamicRegistration, :didCreate, :willCreate, :didRename, :willRename, :didDelete, :willDelete)
+    end
+Base.convert(::Type{var"##AnonymousType#231"}, nt::NamedTuple) = begin
+        var"##AnonymousType#231"(; nt...)
+    end
+@kwdef struct var"##AnonymousType#230"
+        "The client supports applying batch edits\nto the workspace by supporting the request\n'workspace/applyEdit'"
+        applyEdit::Union{Bool, Nothing} = nothing
+        "The client has support for workspace folders.\n\n# Tags\n\n- since – 3.6.0"
+        workspaceFolders::Union{Bool, Nothing} = nothing
+        "The client has support for file requests/notifications.\n\n# Tags\n\n- since – 3.16.0"
+        fileOperations::Union{var"##AnonymousType#231", Nothing} = nothing
+    end
+StructTypes.omitempties(::Type{var"##AnonymousType#230"}) = begin
+        (:applyEdit, :workspaceFolders, :fileOperations)
+    end
+Base.convert(::Type{var"##AnonymousType#230"}, nt::NamedTuple) = begin
+        var"##AnonymousType#230"(; nt...)
+    end
+@kwdef struct ClientCapabilities
+        "Workspace specific client capabilities."
+        workspace::Union{var"##AnonymousType#230", Nothing} = nothing
+        "Experimental client capabilities."
+        experimental::Union{Any, Nothing} = nothing
+    end
+StructTypes.omitempties(::Type{ClientCapabilities}) = begin
+        (:workspace, :experimental)
+    end
+
+module FileOperationPatternKind
+const file = "file"
+@doc "The pattern matches a file only." file
+const folder = "folder"
+@doc "The pattern matches a folder only." folder
+end
+@doc "A pattern kind describing if a glob pattern matches a file a folder or\nboth.\n\n# Tags\n\n- since – 3.16.0" FileOperationPatternKind
+
+lsptypeof(::Val{:FileOperationPatternKind}) = begin
+        Union{Core.typeof("file"), Core.typeof("folder")}
+    end
+@kwdef struct FileOperationPatternOptions
+        "The pattern should be matched ignoring casing."
+        ignoreCase::Union{Bool, Nothing} = nothing
+    end
+StructTypes.omitempties(::Type{FileOperationPatternOptions}) = begin
+        (:ignoreCase,)
+    end
+@doc "Matching options for the file operation pattern.\n\n# Tags\n\n- since – 3.16.0" FileOperationPatternOptions
+
+@kwdef struct FileOperationPattern
+        "The glob pattern to match. Glob patterns can have the following syntax:\n- `*` to match one or more characters in a path segment\n- `?` to match on one character in a path segment\n- `**` to match any number of path segments, including none\n- `{}` to group sub patterns into an OR expression. (e.g. `**\u200b/*.{ts,js}`\n  matches all TypeScript and JavaScript files)\n- `[]` to declare a range of characters to match in a path segment\n  (e.g., `example.[0-9]` to match on `example.0`, `example.1`, …)\n- `[!...]` to negate a range of characters to match in a path segment\n  (e.g., `example.[!0-9]` to match on `example.a`, `example.b`, but\n  not `example.0`)"
+        glob::String
+        "Whether to match files or folders with this pattern.\n\nMatches both if undefined."
+        matches::Union{lsptypeof(Val(:FileOperationPatternKind)), Nothing} = nothing
+        "Additional options used during matching."
+        options::Union{FileOperationPatternOptions, Nothing} = nothing
+    end
+StructTypes.omitempties(::Type{FileOperationPattern}) = begin
+        (:matches, :options)
+    end
+@doc "A pattern to describe in which file operation requests or notifications\nthe server is interested in.\n\n# Tags\n\n- since – 3.16.0" FileOperationPattern
+
+@kwdef struct FileOperationFilter
+        "A Uri like `file` or `untitled`."
+        scheme::Union{String, Nothing} = nothing
+        "The actual file operation pattern."
+        pattern::FileOperationPattern
+    end
+StructTypes.omitempties(::Type{FileOperationFilter}) = begin
+        (:scheme,)
+    end
+@doc "A filter to describe in which file operation requests or notifications\nthe server is interested in.\n\n# Tags\n\n- since – 3.16.0" FileOperationFilter
+
+@kwdef struct FileOperationRegistrationOptions
+        "The actual filters."
+        filters::Vector{FileOperationFilter}
+    end
+@doc "The options to register for file operations.\n\n# Tags\n\n- since – 3.16.0" FileOperationRegistrationOptions
+
+@kwdef struct var"##AnonymousType#232"
+        "The name of the client as defined by the client."
+        name::String
+        "The client's version as defined by the client."
+        version::Union{String, Nothing} = nothing
+    end
+StructTypes.omitempties(::Type{var"##AnonymousType#232"}) = begin
+        (:version,)
+    end
+Base.convert(::Type{var"##AnonymousType#232"}, nt::NamedTuple) = begin
+        var"##AnonymousType#232"(; nt...)
+    end
+@kwdef struct InitializeParams
+        "An optional token that a server can use to report work done progress."
+        workDoneToken::Union{lsptypeof(Val(:ProgressToken)), Nothing} = nothing
+        "The process Id of the parent process that started the server. Is null if\nthe process has not been started by another process. If the parent\nprocess is not alive then the server should exit (see exit notification)\nits process."
+        processId::Union{Int, Core.typeof(nothing)}
+        "Information about the client\n\n# Tags\n\n- since – 3.15.0"
+        clientInfo::Union{var"##AnonymousType#232", Nothing} = nothing
+        "The locale the client is currently showing the user interface\nin. This must not necessarily be the locale of the operating\nsystem.\n\nUses IETF language tags as the value's syntax\n(See https://en.wikipedia.org/wiki/IETF_language_tag)\n\n# Tags\n\n- since – 3.16.0"
+        locale::Union{String, Nothing} = nothing
+        "The rootPath of the workspace. Is null\nif no folder is open.\n\n# Tags\n\n- deprecated – in favour of `rootUri`."
+        rootPath::Union{Union{String, Core.typeof(nothing)}, Nothing} = nothing
+        "The rootUri of the workspace. Is null if no\nfolder is open. If both `rootPath` and `rootUri` are set\n`rootUri` wins.\n\n# Tags\n\n- deprecated – in favour of `workspaceFolders`"
+        rootUri::Union{lsptypeof(Val(:DocumentUri)), Core.typeof(nothing)}
+        "User provided initialization options."
+        initializationOptions::Union{Any, Nothing} = nothing
+        "The capabilities provided by the client (editor or tool)"
+        capabilities::ClientCapabilities
+        "The initial trace setting. If omitted trace is disabled ('off')."
+        trace::Union{lsptypeof(Val(:TraceValue)), Nothing} = nothing
+        "The workspace folders configured in the client when the server starts.\nThis property is only available if the client supports workspace folders.\nIt can be `null` if the client supports workspace folders but none are\nconfigured.\n\n# Tags\n\n- since – 3.6.0"
+        workspaceFolders::Union{Union{Vector{WorkspaceFolder}, Core.typeof(nothing)}, Nothing} = nothing
+    end
+StructTypes.omitempties(::Type{InitializeParams}) = begin
+        (:workDoneToken, :clientInfo, :locale, :rootPath, :initializationOptions, :trace, :workspaceFolders)
+    end
+
+@kwdef struct InitializeRequest
+        jsonrpc::Core.typeof("2.0") = "2.0"
+        "The request id."
+        id::Int
+        method::Core.typeof("initialize")
+        params::InitializeParams
+    end
+@doc "The initialize request is sent as the first request from the client to the server. If the server receives a request or notification before the initialize request it should act as follows:\n- For a request the response should be an error with code: -32002. The message can be picked by the server.\n- Notifications should be dropped, except for the exit notification. This will allow the exit of a server without an initialize request.\nUntil the server has responded to the initialize request with an InitializeResult, the client must not send any additional requests or notifications to the server. In addition the server is not allowed to send any requests or notifications to the client until it has responded with an InitializeResult, with the exception that during the initialize request the server is allowed to send the notifications window/showMessage, window/logMessage and telemetry/event as well as the window/showMessageRequest request to the client. In case the client sets up a progress token in the initialize params (e.g. property workDoneToken) the server is also allowed to use that token (and only that token) using the \$/progress notification sent from the server to the client.\nThe initialize request may only be sent once." InitializeRequest
+
+@kwdef struct InitializedNotification
+        jsonrpc::Core.typeof("2.0") = "2.0"
+        "The notification's params."
+        params::Union{Any, Nothing} = nothing
+        method::Core.typeof("initialized")
+    end
+StructTypes.omitempties(::Type{InitializedNotification}) = begin
+        (:params,)
+    end
+@doc "The initialized notification is sent from the client to the server after the client received the result of the initialize request but before the client is sending any other request or notification to the server. The server can use the initialized notification, for example, to dynamically register capabilities. The initialized notification may only be sent once." InitializedNotification
+
+@kwdef struct ShutdownRequest
+        jsonrpc::Core.typeof("2.0") = "2.0"
+        "The request id."
+        id::Int
+        "The method's params."
+        params::Union{Any, Nothing} = nothing
+        method::Core.typeof("shutdown")
+    end
+StructTypes.omitempties(::Type{ShutdownRequest}) = begin
+        (:params,)
+    end
+
+@kwdef struct ExitNotification
+        jsonrpc::Core.typeof("2.0") = "2.0"
+        "The notification's params."
+        params::Union{Any, Nothing} = nothing
+        method::Core.typeof("exit")
+    end
+StructTypes.omitempties(::Type{ExitNotification}) = begin
+        (:params,)
+    end
 
 lsptypeof(::Val{:PositionEncodingKind}) = begin
         String
@@ -47,6 +347,11 @@ end
     end
 @doc "A range in a text document expressed as (zero-based) start and end positions. A range is comparable to a selection in an editor. Therefore, the end position is exclusive. If you want to specify a range that contains a line including the line ending character(s) then use an end position denoting the start of the next line. For example:\n```json\n{\n\t   start: { line: 5, character: 23 },\n\t\t end : { line: 6, character: 0 }\n}\n```" Range
 
+@kwdef struct TextDocumentIdentifier
+        "The text document's URI."
+        uri::lsptypeof(Val(:DocumentUri))
+    end
+
 module TextDocumentSyncKind
 const None = 0
 @doc "Documents should not be synced at all." None
@@ -66,6 +371,22 @@ lsptypeof(::Val{:TextDocumentSyncKind}) = begin
     end
 StructTypes.omitempties(::Type{SaveOptions}) = begin
         (:includeText,)
+    end
+
+@kwdef struct DidSaveTextDocumentParams
+        "The document that was saved."
+        textDocument::TextDocumentIdentifier
+        "Optional the content when saved. Depends on the includeText value\nwhen the save notification was requested."
+        text::Union{String, Nothing} = nothing
+    end
+StructTypes.omitempties(::Type{DidSaveTextDocumentParams}) = begin
+        (:text,)
+    end
+
+@kwdef struct DidSaveTextDocumentNotification
+        jsonrpc::Core.typeof("2.0") = "2.0"
+        method::Core.typeof("textDocument/didSave")
+        params::DidSaveTextDocumentParams
     end
 
 @kwdef struct TextDocumentSyncOptions
@@ -138,6 +459,17 @@ StructTypes.omitempties(::Type{StaticRegistrationOptions}) = begin
     end
 @doc "General text document registration options." TextDocumentRegistrationOptions
 
+@kwdef struct WorkspaceFoldersServerCapabilities
+        "The server has support for workspace folders"
+        supported::Union{Bool, Nothing} = nothing
+        "Whether the server wants to receive workspace folder\nchange notifications.\n\nIf a string is provided, the string is treated as an ID\nunder which the notification is registered on the client\nside. The ID can be used to unregister for these events\nusing the `client/unregisterCapability` request."
+        changeNotifications::Union{Union{String, Bool}, Nothing} = nothing
+    end
+StructTypes.omitempties(::Type{WorkspaceFoldersServerCapabilities}) = begin
+        (:supported, :changeNotifications)
+    end
+@doc "Since version 3.6.0\n\nMany tools support more than one root folder per workspace. Examples for this are VS Code’s multi-root support, Atom’s project folder support or Sublime’s project support. If a client workspace consists of multiple roots then a server typically needs to know about this. The protocol up to now assumes one root folder which is announced to the server by the rootUri property of the InitializeParams. If the client supports workspace folders and announces them via the corresponding workspaceFolders client capability, the InitializeParams contain an additional property workspaceFolders with the configured workspace folders when the server starts.\n\nThe workspace/workspaceFolders request is sent from the server to the client to fetch the current open list of workspace folders. Returns null in the response if only a single file is open in the tool. Returns an empty array if a workspace is open but no folders are configured." WorkspaceFoldersServerCapabilities
+
 @kwdef struct DiagnosticRegistrationOptions
         "A document selector to identify the scope of the registration. If set to\nnull the document selector provided on the client side will be used."
         documentSelector::Union{lsptypeof(Val(:DocumentSelector)), Core.typeof(nothing)}
@@ -156,6 +488,38 @@ StructTypes.omitempties(::Type{DiagnosticRegistrationOptions}) = begin
     end
 @doc "Diagnostic registration options.\n\n# Tags\n\n- since – 3.17.0" DiagnosticRegistrationOptions
 
+@kwdef struct var"##AnonymousType#234"
+        "The server is interested in receiving didCreateFiles\nnotifications."
+        didCreate::Union{FileOperationRegistrationOptions, Nothing} = nothing
+        "The server is interested in receiving willCreateFiles requests."
+        willCreate::Union{FileOperationRegistrationOptions, Nothing} = nothing
+        "The server is interested in receiving didRenameFiles\nnotifications."
+        didRename::Union{FileOperationRegistrationOptions, Nothing} = nothing
+        "The server is interested in receiving willRenameFiles requests."
+        willRename::Union{FileOperationRegistrationOptions, Nothing} = nothing
+        "The server is interested in receiving didDeleteFiles file\nnotifications."
+        didDelete::Union{FileOperationRegistrationOptions, Nothing} = nothing
+        "The server is interested in receiving willDeleteFiles file\nrequests."
+        willDelete::Union{FileOperationRegistrationOptions, Nothing} = nothing
+    end
+StructTypes.omitempties(::Type{var"##AnonymousType#234"}) = begin
+        (:didCreate, :willCreate, :didRename, :willRename, :didDelete, :willDelete)
+    end
+Base.convert(::Type{var"##AnonymousType#234"}, nt::NamedTuple) = begin
+        var"##AnonymousType#234"(; nt...)
+    end
+@kwdef struct var"##AnonymousType#233"
+        "The server supports workspace folder.\n\n# Tags\n\n- since – 3.6.0"
+        workspaceFolders::Union{WorkspaceFoldersServerCapabilities, Nothing} = nothing
+        "The server is interested in file notifications/requests.\n\n# Tags\n\n- since – 3.16.0"
+        fileOperations::Union{var"##AnonymousType#234", Nothing} = nothing
+    end
+StructTypes.omitempties(::Type{var"##AnonymousType#233"}) = begin
+        (:workspaceFolders, :fileOperations)
+    end
+Base.convert(::Type{var"##AnonymousType#233"}, nt::NamedTuple) = begin
+        var"##AnonymousType#233"(; nt...)
+    end
 @kwdef struct ServerCapabilities
         "The position encoding the server picked from the encodings offered\nby the client via the client capability `general.positionEncodings`.\n\nIf the client didn't provide any position encodings the only valid\nvalue that a server can return is 'utf-16'.\n\nIf omitted it defaults to 'utf-16'.\n\n# Tags\n\n- since – 3.17.0"
         positionEncoding::Union{lsptypeof(Val(:PositionEncodingKind)), Nothing} = nothing
@@ -163,31 +527,65 @@ StructTypes.omitempties(::Type{DiagnosticRegistrationOptions}) = begin
         textDocumentSync::Union{Union{TextDocumentSyncOptions, lsptypeof(Val(:TextDocumentSyncKind))}, Nothing} = nothing
         "The server has support for pull model diagnostics.\n\n# Tags\n\n- since – 3.17.0"
         diagnosticProvider::Union{Union{DiagnosticOptions, DiagnosticRegistrationOptions}, Nothing} = nothing
+        "Workspace specific server capabilities"
+        workspace::Union{var"##AnonymousType#233", Nothing} = nothing
     end
 StructTypes.omitempties(::Type{ServerCapabilities}) = begin
-        (:positionEncoding, :textDocumentSync, :diagnosticProvider)
+        (:positionEncoding, :textDocumentSync, :diagnosticProvider, :workspace)
     end
 
-@kwdef struct var"##AnonymousType#230"
+@kwdef struct var"##AnonymousType#235"
         "The name of the server as defined by the server."
         name::String
         "The server's version as defined by the server."
         version::Union{String, Nothing} = nothing
     end
-StructTypes.omitempties(::Type{var"##AnonymousType#230"}) = begin
+StructTypes.omitempties(::Type{var"##AnonymousType#235"}) = begin
         (:version,)
     end
-Base.convert(::Type{var"##AnonymousType#230"}, nt::NamedTuple) = begin
-        var"##AnonymousType#230"(; nt...)
+Base.convert(::Type{var"##AnonymousType#235"}, nt::NamedTuple) = begin
+        var"##AnonymousType#235"(; nt...)
     end
 @kwdef struct InitializeResult
         "The capabilities the language server provides."
         capabilities::ServerCapabilities
         "Information about the server.\n\n# Tags\n\n- since – 3.15.0"
-        serverInfo::Union{var"##AnonymousType#230", Nothing} = nothing
+        serverInfo::Union{var"##AnonymousType#235", Nothing} = nothing
     end
 StructTypes.omitempties(::Type{InitializeResult}) = begin
         (:serverInfo,)
+    end
+
+module InitializeErrorCodes
+const unknownProtocolVersion = 1
+@doc "If the protocol version provided by the client can't be handled by\nthe server.\n\n# Tags\n\n- deprecated – This initialize error got replaced by client capabilities.\nThere is no version handshake in version 3.0x" unknownProtocolVersion
+end
+@doc "Known error codes for an `InitializeErrorCodes`;" InitializeErrorCodes
+
+lsptypeof(::Val{:InitializeErrorCodes}) = begin
+        Core.typeof(1)
+    end
+@kwdef struct InitializeError
+        "Indicates whether the client execute the following retry logic:\n(1) show the message provided by the ResponseError to the user\n(2) user selects retry or cancel\n(3) if user selected retry the initialize method is sent again."
+        retry::Bool
+    end
+
+@kwdef struct InitializeResponseError
+        "A string providing a short description of the error."
+        message::String
+        code::lsptypeof(Val(:InitializeErrorCodes))
+        data::InitializeError
+    end
+
+@kwdef struct InitializeResponse
+        jsonrpc::Core.typeof("2.0") = "2.0"
+        "The request id."
+        id::Union{Int, Core.typeof(nothing)}
+        result::Union{InitializeResult, Nothing} = nothing
+        error::Union{InitializeResponseError, Nothing} = nothing
+    end
+StructTypes.omitempties(::Type{InitializeResponse}) = begin
+        (:result, :error)
     end
 
 module DocumentDiagnosticReportKind
@@ -330,62 +728,120 @@ lsptypeof(::Val{:WorkspaceDocumentDiagnosticReport}) = begin
     end
 @doc "A workspace diagnostic report.\n\n# Tags\n\n- since – 3.17.0" WorkspaceDiagnosticReport
 
+@kwdef struct PreviousResultId
+        "The URI for which the client knows a\nresult id."
+        uri::lsptypeof(Val(:DocumentUri))
+        "The value of the previous result id."
+        value::String
+    end
+@doc "A previous result id in a workspace pull request.\n\n# Tags\n\n- since – 3.17.0" PreviousResultId
+
+@kwdef struct WorkspaceDiagnosticParams
+        "An optional token that a server can use to report work done progress."
+        workDoneToken::Union{lsptypeof(Val(:ProgressToken)), Nothing} = nothing
+        "An optional token that a server can use to report partial results (e.g.\nstreaming) to the client."
+        partialResultToken::Union{lsptypeof(Val(:ProgressToken)), Nothing} = nothing
+        "The additional identifier provided during registration."
+        identifier::Union{String, Nothing} = nothing
+        "The currently known diagnostic reports with their\nprevious result ids."
+        previousResultIds::Vector{PreviousResultId}
+    end
+StructTypes.omitempties(::Type{WorkspaceDiagnosticParams}) = begin
+        (:workDoneToken, :partialResultToken, :identifier)
+    end
+@doc "Parameters of the workspace diagnostic request.\n\n# Tags\n\n- since – 3.17.0" WorkspaceDiagnosticParams
+
+@kwdef struct WorkspaceDiagnosticRequest
+        jsonrpc::Core.typeof("2.0") = "2.0"
+        "The request id."
+        id::Int
+        method::Core.typeof("workspace/diagnostic")
+        params::WorkspaceDiagnosticParams
+    end
+
+# message dispatcher definition
+const method_dispatcher = Dict{String,DataType}(
+    "exit" => ExitNotification,
+    "initialized" => InitializedNotification,
+    "shutdown" => ShutdownRequest,
+    "initialize" => InitializeRequest,
+    "textDocument/didSave" => DidSaveTextDocumentNotification,
+    "workspace/diagnostic" => WorkspaceDiagnosticRequest,
+)
 export
+    method_dispatcher,
+    ##AnonymousType#230,
+    ##AnonymousType#231,
+    ##AnonymousType#232,
+    ##AnonymousType#233,
+    ##AnonymousType#234,
+    ##AnonymousType#235,
+    ClientCapabilities,
     CodeDescription,
-    Location,
-    Position,
-    WorkspaceUnchangedDocumentDiagnosticReport,
-    WorkspaceFullDocumentDiagnosticReport,
-    FullDocumentDiagnosticReport,
-    uinteger,
-    StaticRegistrationOptions,
-    DocumentDiagnosticReportKind,
-    LSPAny,
-    LSPObject,
-    SaveOptions,
-    DocumentSelector,
-    UnchangedDocumentDiagnosticReport,
-    WorkspaceDiagnosticReport,
-    TextDocumentSyncOptions,
-    TextDocumentRegistrationOptions,
-    ServerCapabilities,
-    WorkspaceDocumentDiagnosticReport,
-    URI,
     Diagnostic,
-    DocumentUri,
-    LSPArray,
-    DocumentFilter,
+    DiagnosticOptions,
     DiagnosticRegistrationOptions,
-    DiagnosticTag,
-    InitializeResult,
     DiagnosticRelatedInformation,
-    Range,
-    PositionEncodingKind,
     DiagnosticSeverity,
-    decimal,
-    TextDocumentSyncKind,
-    integer,
-    ##AnonymousType#230,
-    WorkDoneProgressOptions,
-    DiagnosticOptionsCodeDescription,
-    Location,
-    Position,
-    WorkspaceUnchangedDocumentDiagnosticReport,
-    WorkspaceFullDocumentDiagnosticReport,
-    FullDocumentDiagnosticReport,
-    StaticRegistrationOptions,
-    SaveOptions,
-    UnchangedDocumentDiagnosticReport,
-    WorkspaceDiagnosticReport,
-    TextDocumentRegistrationOptions,
-    TextDocumentSyncOptions,
-    ServerCapabilities,
-    Diagnostic,
-    DiagnosticRegistrationOptions,
+    DiagnosticTag,
+    DidSaveTextDocumentNotification,
+    DidSaveTextDocumentParams,
+    DocumentDiagnosticReportKind,
     DocumentFilter,
+    DocumentSelector,
+    DocumentUri,
+    ExitNotification,
+    FileOperationFilter,
+    FileOperationPattern,
+    FileOperationPatternKind,
+    FileOperationPatternOptions,
+    FileOperationRegistrationOptions,
+    FullDocumentDiagnosticReport,
+    InitializeError,
+    InitializeErrorCodes,
+    InitializeParams,
+    InitializeRequest,
+    InitializeResponse,
+    InitializeResponseError,
     InitializeResult,
-    DiagnosticRelatedInformation,
+    InitializedNotification,
+    LSPAny,
+    LSPArray,
+    LSPObject,
+    Location,
+    Message,
+    NotificationMessage,
+    PartialResultParams,
+    Position,
+    PositionEncodingKind,
+    PreviousResultId,
+    ProgressToken,
     Range,
-    ##AnonymousType#230,
+    RequestMessage,
+    ResponseError,
+    ResponseMessage,
+    SaveOptions,
+    ServerCapabilities,
+    ShutdownRequest,
+    StaticRegistrationOptions,
+    TextDocumentIdentifier,
+    TextDocumentRegistrationOptions,
+    TextDocumentSyncKind,
+    TextDocumentSyncOptions,
+    TraceValue,
+    URI,
+    UnchangedDocumentDiagnosticReport,
     WorkDoneProgressOptions,
-    DiagnosticOptions
+    WorkDoneProgressParams,
+    WorkspaceDiagnosticParams,
+    WorkspaceDiagnosticReport,
+    WorkspaceDiagnosticRequest,
+    WorkspaceDocumentDiagnosticReport,
+    WorkspaceFolder,
+    WorkspaceFoldersServerCapabilities,
+    WorkspaceFullDocumentDiagnosticReport,
+    WorkspaceUnchangedDocumentDiagnosticReport,
+    array,
+    decimal,
+    integer,
+    uinteger

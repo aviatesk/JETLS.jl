@@ -22,8 +22,7 @@ export type decimal = number;
  *
  * @since 3.17.0
  */
-export type LSPAny = LSPObject | LSPArray | string | integer | uinteger |
-	decimal | boolean | null;
+export type LSPAny = any;
 
 /**
  * LSP object definition.
@@ -38,6 +37,182 @@ export type LSPObject = { [key: string]: LSPAny };
  * @since 3.17.0
  */
 export type LSPArray = LSPAny[];
+
+export type array = LSPArray;
+
+/**
+ * A general message as defined by JSON-RPC. The language server protocol always uses “2.0” as the jsonrpc version.
+ */
+interface Message {
+	jsonrpc: '2.0';
+}
+
+/**
+ * A request message to describe a request between the client and the server. Every processed request must send a response back to the sender of the request.
+ */
+interface RequestMessage extends Message {
+
+	/**
+	 * The request id.
+	 */
+	id: integer;
+
+	/**
+	 * The method to be invoked.
+	 */
+	method: string;
+
+	/**
+	 * The method's params.
+	 */
+	params?: LSPAny;
+}
+
+interface ResponseError {
+	/**
+	 * A number indicating the error type that occurred.
+	 */
+	code: integer;
+
+	/**
+	 * A string providing a short description of the error.
+	 */
+	message: string;
+
+	/**
+	 * A primitive or structured value that contains additional
+	 * information about the error. Can be omitted.
+	 */
+	data?: LSPAny;
+}
+
+/**
+ * A Response Message sent as a result of a request. If a request doesn’t provide a result value the receiver of a request still needs to return a response message to conform to the JSON-RPC specification. The result property of the ResponseMessage should be set to null in this case to signal a successful request.
+ */
+interface ResponseMessage extends Message {
+	/**
+	 * The request id.
+	 */
+	id: integer | null;
+
+	/**
+	 * The result of a request. This member is REQUIRED on success.
+	 * This member MUST NOT exist if there was an error invoking the method.
+	 */
+	result?: LSPAny;
+
+	/**
+	 * The error object in case a request fails.
+	 */
+	error?: ResponseError;
+}
+
+export namespace ErrorCodes {
+	// Defined by JSON-RPC
+	export const ParseError: integer = -32700;
+	export const InvalidRequest: integer = -32600;
+	export const MethodNotFound: integer = -32601;
+	export const InvalidParams: integer = -32602;
+	export const InternalError: integer = -32603;
+
+	/**
+	 * This is the start range of JSON-RPC reserved error codes.
+	 * It doesn't denote a real error code. No LSP error codes should
+	 * be defined between the start and end range. For backwards
+	 * compatibility the `ServerNotInitialized` and the `UnknownErrorCode`
+	 * are left in the range.
+	 *
+	 * @since 3.16.0
+	 */
+	export const jsonrpcReservedErrorRangeStart: integer = -32099;
+	/** @deprecated use jsonrpcReservedErrorRangeStart */
+	export const serverErrorStart: integer = jsonrpcReservedErrorRangeStart;
+
+	/**
+	 * Error code indicating that a server received a notification or
+	 * request before the server has received the `initialize` request.
+	 */
+	export const ServerNotInitialized: integer = -32002;
+	export const UnknownErrorCode: integer = -32001;
+
+	/**
+	 * This is the end range of JSON-RPC reserved error codes.
+	 * It doesn't denote a real error code.
+	 *
+	 * @since 3.16.0
+	 */
+	export const jsonrpcReservedErrorRangeEnd = -32000;
+	/** @deprecated use jsonrpcReservedErrorRangeEnd */
+	export const serverErrorEnd: integer = jsonrpcReservedErrorRangeEnd;
+
+	/**
+	 * This is the start range of LSP reserved error codes.
+	 * It doesn't denote a real error code.
+	 *
+	 * @since 3.16.0
+	 */
+	export const lspReservedErrorRangeStart: integer = -32899;
+
+	/**
+	 * A request failed but it was syntactically correct, e.g the
+	 * method name was known and the parameters were valid. The error
+	 * message should contain human readable information about why
+	 * the request failed.
+	 *
+	 * @since 3.17.0
+	 */
+	export const RequestFailed: integer = -32803;
+
+	/**
+	 * The server cancelled the request. This error code should
+	 * only be used for requests that explicitly support being
+	 * server cancellable.
+	 *
+	 * @since 3.17.0
+	 */
+	export const ServerCancelled: integer = -32802;
+
+	/**
+	 * The server detected that the content of a document got
+	 * modified outside normal conditions. A server should
+	 * NOT send this error code if it detects a content change
+	 * in it unprocessed messages. The result even computed
+	 * on an older state might still be useful for the client.
+	 *
+	 * If a client decides that a result is not of any use anymore
+	 * the client should cancel the request.
+	 */
+	export const ContentModified: integer = -32801;
+
+	/**
+	 * The client has canceled a request and a server has detected
+	 * the cancel.
+	 */
+	export const RequestCancelled: integer = -32800;
+
+	/**
+	 * This is the end range of LSP reserved error codes.
+	 * It doesn't denote a real error code.
+	 *
+	 * @since 3.16.0
+	 */
+	export const lspReservedErrorRangeEnd: integer = -32800;
+}
+
+/**
+ * A notification message. A processed notification message must not send a response back. They work like events.
+ */
+interface NotificationMessage extends Message {
+	/**
+	 * The method to be invoked.
+	 */
+	method: string;
+
+	/**
+	 * The notification's params.
+	 */
+	params?: LSPAny;
+}
 
 type DocumentUri = string;
 
@@ -62,6 +237,519 @@ interface Position {
 	 * to the line length.
 	 */
 	character: uinteger;
+}
+
+export interface WorkspaceFolder {
+	/**
+	 * The associated URI for this workspace folder.
+	 */
+	uri: URI;
+
+	/**
+	 * The name of the workspace folder. Used to refer to this
+	 * workspace folder in the user interface.
+	 */
+	name: string;
+}
+
+/**
+ * The base protocol offers also support to report progress in a generic fashion. This mechanism can be used to report any kind of progress including work done progress (usually used to report progress in the user interface using a progress bar) and partial result progress to support streaming of results.
+ *
+ * A progress notification has the following properties:
+ * Notification:
+ * - method: ‘$/progress’
+ * - params: ProgressParams defined as follows:
+ */
+type ProgressToken = integer | string;
+// interface ProgressParams<T> {
+// 	/**
+// 	 * The progress token provided by the client or server.
+// 	 */
+// 	token: ProgressToken;
+
+// 	/**
+// 	 * The progress data.
+// 	 */
+// 	value: T;
+// }
+
+export interface WorkDoneProgressParams {
+	/**
+	 * An optional token that a server can use to report work done progress.
+	 */
+	workDoneToken?: ProgressToken;
+}
+
+
+export interface PartialResultParams {
+	/**
+	 * An optional token that a server can use to report partial results (e.g.
+	 * streaming) to the client.
+	 */
+	partialResultToken?: ProgressToken;
+}
+
+/**
+ * A TraceValue represents the level of verbosity with which the server systematically reports its execution trace using $/logTrace notifications. The initial trace value is set by the client at initialization and can be modified later using the $/setTrace notification.
+ */
+export type TraceValue = 'off' | 'messages' | 'verbose';
+
+// Lifecycle Messages
+// ==================
+
+interface ClientCapabilities {
+	/**
+	 * Workspace specific client capabilities.
+	 */
+	workspace?: {
+		/**
+		 * The client supports applying batch edits
+		 * to the workspace by supporting the request
+		 * 'workspace/applyEdit'
+		 */
+		applyEdit?: boolean;
+
+// 		/**
+// 		 * Capabilities specific to `WorkspaceEdit`s
+// 		 */
+// 		workspaceEdit?: WorkspaceEditClientCapabilities;
+
+// 		/**
+// 		 * Capabilities specific to the `workspace/didChangeConfiguration`
+// 		 * notification.
+// 		 */
+// 		didChangeConfiguration?: DidChangeConfigurationClientCapabilities;
+
+// 		/**
+// 		 * Capabilities specific to the `workspace/didChangeWatchedFiles`
+// 		 * notification.
+// 		 */
+// 		didChangeWatchedFiles?: DidChangeWatchedFilesClientCapabilities;
+
+// 		/**
+// 		 * Capabilities specific to the `workspace/symbol` request.
+// 		 */
+// 		symbol?: WorkspaceSymbolClientCapabilities;
+
+// 		/**
+// 		 * Capabilities specific to the `workspace/executeCommand` request.
+// 		 */
+// 		executeCommand?: ExecuteCommandClientCapabilities;
+
+		/**
+		 * The client has support for workspace folders.
+		 *
+		 * @since 3.6.0
+		 */
+		workspaceFolders?: boolean;
+
+// 		/**
+// 		 * The client supports `workspace/configuration` requests.
+// 		 *
+// 		 * @since 3.6.0
+// 		 */
+// 		configuration?: boolean;
+
+// 		/**
+// 		 * Capabilities specific to the semantic token requests scoped to the
+// 		 * workspace.
+// 		 *
+// 		 * @since 3.16.0
+// 		 */
+// 		 semanticTokens?: SemanticTokensWorkspaceClientCapabilities;
+
+// 		/**
+// 		 * Capabilities specific to the code lens requests scoped to the
+// 		 * workspace.
+// 		 *
+// 		 * @since 3.16.0
+// 		 */
+// 		codeLens?: CodeLensWorkspaceClientCapabilities;
+
+		/**
+		 * The client has support for file requests/notifications.
+		 *
+		 * @since 3.16.0
+		 */
+		fileOperations?: {
+			/**
+			 * Whether the client supports dynamic registration for file
+			 * requests/notifications.
+			 */
+			dynamicRegistration?: boolean;
+
+			/**
+			 * The client has support for sending didCreateFiles notifications.
+			 */
+			didCreate?: boolean;
+
+			/**
+			 * The client has support for sending willCreateFiles requests.
+			 */
+			willCreate?: boolean;
+
+			/**
+			 * The client has support for sending didRenameFiles notifications.
+			 */
+			didRename?: boolean;
+
+			/**
+			 * The client has support for sending willRenameFiles requests.
+			 */
+			willRename?: boolean;
+
+			/**
+			 * The client has support for sending didDeleteFiles notifications.
+			 */
+			didDelete?: boolean;
+
+			/**
+			 * The client has support for sending willDeleteFiles requests.
+			 */
+			willDelete?: boolean;
+		};
+
+// 		/**
+// 		 * Client workspace capabilities specific to inline values.
+// 		 *
+// 		 * @since 3.17.0
+// 		 */
+// 		inlineValue?: InlineValueWorkspaceClientCapabilities;
+
+// 		/**
+// 		 * Client workspace capabilities specific to inlay hints.
+// 		 *
+// 		 * @since 3.17.0
+// 		 */
+// 		inlayHint?: InlayHintWorkspaceClientCapabilities;
+
+// 		/**
+// 		 * Client workspace capabilities specific to diagnostics.
+// 		 *
+// 		 * @since 3.17.0.
+// 		 */
+// 		diagnostics?: DiagnosticWorkspaceClientCapabilities;
+	};
+
+// 	/**
+// 	 * Text document specific client capabilities.
+// 	 */
+// 	textDocument?: TextDocumentClientCapabilities;
+
+// 	/**
+// 	 * Capabilities specific to the notebook document support.
+// 	 *
+// 	 * @since 3.17.0
+// 	 */
+// 	notebookDocument?: NotebookDocumentClientCapabilities;
+
+// 	/**
+// 	 * Window specific client capabilities.
+// 	 */
+// 	window?: {
+// 		/**
+// 		 * It indicates whether the client supports server initiated
+// 		 * progress using the `window/workDoneProgress/create` request.
+// 		 *
+// 		 * The capability also controls Whether client supports handling
+// 		 * of progress notifications. If set servers are allowed to report a
+// 		 * `workDoneProgress` property in the request specific server
+// 		 * capabilities.
+// 		 *
+// 		 * @since 3.15.0
+// 		 */
+// 		workDoneProgress?: boolean;
+
+// 		/**
+// 		 * Capabilities specific to the showMessage request
+// 		 *
+// 		 * @since 3.16.0
+// 		 */
+// 		showMessage?: ShowMessageRequestClientCapabilities;
+
+// 		/**
+// 		 * Client capabilities for the show document request.
+// 		 *
+// 		 * @since 3.16.0
+// 		 */
+// 		showDocument?: ShowDocumentClientCapabilities;
+// 	};
+
+// 	/**
+// 	 * General client capabilities.
+// 	 *
+// 	 * @since 3.16.0
+// 	 */
+// 	general?: {
+// 		/**
+// 		 * Client capability that signals how the client
+// 		 * handles stale requests (e.g. a request
+// 		 * for which the client will not process the response
+// 		 * anymore since the information is outdated).
+// 		 *
+// 		 * @since 3.17.0
+// 		 */
+// 		staleRequestSupport?: {
+// 			/**
+// 			 * The client will actively cancel the request.
+// 			 */
+// 			cancel: boolean;
+
+// 			/**
+// 			 * The list of requests for which the client
+// 			 * will retry the request if it receives a
+// 			 * response with error code `ContentModified``
+// 			 */
+// 			 retryOnContentModified: string[];
+// 		}
+
+// 		/**
+// 		 * Client capabilities specific to regular expressions.
+// 		 *
+// 		 * @since 3.16.0
+// 		 */
+// 		regularExpressions?: RegularExpressionsClientCapabilities;
+
+// 		/**
+// 		 * Client capabilities specific to the client's markdown parser.
+// 		 *
+// 		 * @since 3.16.0
+// 		 */
+// 		markdown?: MarkdownClientCapabilities;
+
+// 		/**
+// 		 * The position encodings supported by the client. Client and server
+// 		 * have to agree on the same position encoding to ensure that offsets
+// 		 * (e.g. character position in a line) are interpreted the same on both
+// 		 * side.
+// 		 *
+// 		 * To keep the protocol backwards compatible the following applies: if
+// 		 * the value 'utf-16' is missing from the array of position encodings
+// 		 * servers can assume that the client supports UTF-16. UTF-16 is
+// 		 * therefore a mandatory encoding.
+// 		 *
+// 		 * If omitted it defaults to ['utf-16'].
+// 		 *
+// 		 * Implementation considerations: since the conversion from one encoding
+// 		 * into another requires the content of the file / line the conversion
+// 		 * is best done where the file is read which is usually on the server
+// 		 * side.
+// 		 *
+// 		 * @since 3.17.0
+// 		 */
+// 		positionEncodings?: PositionEncodingKind[];
+// 	};
+
+	/**
+	 * Experimental client capabilities.
+	 */
+	experimental?: LSPAny;
+}
+
+/**
+ * A pattern kind describing if a glob pattern matches a file a folder or
+ * both.
+ *
+ * @since 3.16.0
+ */
+export namespace FileOperationPatternKind {
+	/**
+	 * The pattern matches a file only.
+	 */
+	export const file: 'file' = 'file';
+
+	/**
+	 * The pattern matches a folder only.
+	 */
+	export const folder: 'folder' = 'folder';
+}
+
+export type FileOperationPatternKind = 'file' | 'folder';
+/**
+ * Matching options for the file operation pattern.
+ *
+ * @since 3.16.0
+ */
+export interface FileOperationPatternOptions {
+
+	/**
+	 * The pattern should be matched ignoring casing.
+	 */
+	ignoreCase?: boolean;
+}
+
+/**
+ * A pattern to describe in which file operation requests or notifications
+ * the server is interested in.
+ *
+ * @since 3.16.0
+ */
+interface FileOperationPattern {
+	/**
+	 * The glob pattern to match. Glob patterns can have the following syntax:
+	 * - `*` to match one or more characters in a path segment
+	 * - `?` to match on one character in a path segment
+	 * - `**` to match any number of path segments, including none
+	 * - `{}` to group sub patterns into an OR expression. (e.g. `**​/*.{ts,js}`
+	 *   matches all TypeScript and JavaScript files)
+	 * - `[]` to declare a range of characters to match in a path segment
+	 *   (e.g., `example.[0-9]` to match on `example.0`, `example.1`, …)
+	 * - `[!...]` to negate a range of characters to match in a path segment
+	 *   (e.g., `example.[!0-9]` to match on `example.a`, `example.b`, but
+	 *   not `example.0`)
+	 */
+	glob: string;
+
+	/**
+	 * Whether to match files or folders with this pattern.
+	 *
+	 * Matches both if undefined.
+	 */
+	matches?: FileOperationPatternKind;
+
+	/**
+	 * Additional options used during matching.
+	 */
+	options?: FileOperationPatternOptions;
+}
+
+/**
+ * A filter to describe in which file operation requests or notifications
+ * the server is interested in.
+ *
+ * @since 3.16.0
+ */
+export interface FileOperationFilter {
+
+	/**
+	 * A Uri like `file` or `untitled`.
+	 */
+	scheme?: string;
+
+	/**
+	 * The actual file operation pattern.
+	 */
+	pattern: FileOperationPattern;
+}
+
+/**
+ * The options to register for file operations.
+ *
+ * @since 3.16.0
+ */
+interface FileOperationRegistrationOptions {
+	/**
+	 * The actual filters.
+	 */
+	filters: FileOperationFilter[];
+}
+
+interface InitializeParams extends WorkDoneProgressParams {
+	/**
+	 * The process Id of the parent process that started the server. Is null if
+	 * the process has not been started by another process. If the parent
+	 * process is not alive then the server should exit (see exit notification)
+	 * its process.
+	 */
+	processId: integer | null;
+
+	/**
+	 * Information about the client
+	 *
+	 * @since 3.15.0
+	 */
+	clientInfo?: {
+		/**
+		 * The name of the client as defined by the client.
+		 */
+		name: string;
+
+		/**
+		 * The client's version as defined by the client.
+		 */
+		version?: string;
+	};
+
+	/**
+	 * The locale the client is currently showing the user interface
+	 * in. This must not necessarily be the locale of the operating
+	 * system.
+	 *
+	 * Uses IETF language tags as the value's syntax
+	 * (See https://en.wikipedia.org/wiki/IETF_language_tag)
+	 *
+	 * @since 3.16.0
+	 */
+	locale?: string;
+
+	/**
+	 * The rootPath of the workspace. Is null
+	 * if no folder is open.
+	 *
+	 * @deprecated in favour of `rootUri`.
+	 */
+	rootPath?: string | null;
+
+	/**
+	 * The rootUri of the workspace. Is null if no
+	 * folder is open. If both `rootPath` and `rootUri` are set
+	 * `rootUri` wins.
+	 *
+	 * @deprecated in favour of `workspaceFolders`
+	 */
+	rootUri: DocumentUri | null;
+
+	/**
+	 * User provided initialization options.
+	 */
+	initializationOptions?: LSPAny;
+
+	/**
+	 * The capabilities provided by the client (editor or tool)
+	 */
+	capabilities: ClientCapabilities;
+
+	/**
+	 * The initial trace setting. If omitted trace is disabled ('off').
+	 */
+	trace?: TraceValue;
+
+	/**
+	 * The workspace folders configured in the client when the server starts.
+	 * This property is only available if the client supports workspace folders.
+	 * It can be `null` if the client supports workspace folders but none are
+	 * configured.
+	 *
+	 * @since 3.6.0
+	 */
+	workspaceFolders?: WorkspaceFolder[] | null;
+}
+
+/**
+ * The initialize request is sent as the first request from the client to the server. If the server receives a request or notification before the initialize request it should act as follows:
+ * - For a request the response should be an error with code: -32002. The message can be picked by the server.
+ * - Notifications should be dropped, except for the exit notification. This will allow the exit of a server without an initialize request.
+ * Until the server has responded to the initialize request with an InitializeResult, the client must not send any additional requests or notifications to the server. In addition the server is not allowed to send any requests or notifications to the client until it has responded with an InitializeResult, with the exception that during the initialize request the server is allowed to send the notifications window/showMessage, window/logMessage and telemetry/event as well as the window/showMessageRequest request to the client. In case the client sets up a progress token in the initialize params (e.g. property workDoneToken) the server is also allowed to use that token (and only that token) using the $/progress notification sent from the server to the client.
+ * The initialize request may only be sent once.
+ */
+interface InitializeRequest extends RequestMessage {
+	method: 'initialize';
+	params: InitializeParams;
+}
+
+/**
+ *  The initialized notification is sent from the client to the server after the client received the result of the initialize request but before the client is sending any other request or notification to the server. The server can use the initialized notification, for example, to dynamically register capabilities. The initialized notification may only be sent once.
+ */
+interface InitializedNotification extends NotificationMessage {
+	method: 'initialized';
+}
+
+interface ShutdownRequest extends RequestMessage {
+	method: 'shutdown';
+}
+
+interface ExitNotification extends NotificationMessage {
+	method: 'exit';
 }
 
 /**
@@ -123,6 +811,13 @@ interface Range {
 	end: Position;
 }
 
+interface TextDocumentIdentifier {
+	/**
+	 * The text document's URI.
+	 */
+	uri: DocumentUri;
+}
+
 /**
  * Defines how the host (editor) should sync document changes to the language
  * server.
@@ -154,6 +849,24 @@ export interface SaveOptions {
 	 * The client is supposed to include the content on save.
 	 */
 	includeText?: boolean;
+}
+
+interface DidSaveTextDocumentParams {
+	/**
+	 * The document that was saved.
+	 */
+	textDocument: TextDocumentIdentifier;
+
+	/**
+	 * Optional the content when saved. Depends on the includeText value
+	 * when the save notification was requested.
+	 */
+	text?: string;
+}
+
+interface DidSaveTextDocumentNotification extends NotificationMessage {
+	method: 'textDocument/didSave';
+	params: DidSaveTextDocumentParams;
 }
 
 export interface TextDocumentSyncOptions {
@@ -279,6 +992,31 @@ export interface TextDocumentRegistrationOptions {
 	 * null the document selector provided on the client side will be used.
 	 */
 	documentSelector: DocumentSelector | null;
+}
+
+/**
+ * Since version 3.6.0
+ *
+ * Many tools support more than one root folder per workspace. Examples for this are VS Code’s multi-root support, Atom’s project folder support or Sublime’s project support. If a client workspace consists of multiple roots then a server typically needs to know about this. The protocol up to now assumes one root folder which is announced to the server by the rootUri property of the InitializeParams. If the client supports workspace folders and announces them via the corresponding workspaceFolders client capability, the InitializeParams contain an additional property workspaceFolders with the configured workspace folders when the server starts.
+ *
+ * The workspace/workspaceFolders request is sent from the server to the client to fetch the current open list of workspace folders. Returns null in the response if only a single file is open in the tool. Returns an empty array if a workspace is open but no folders are configured.
+ */
+export interface WorkspaceFoldersServerCapabilities {
+	/**
+	 * The server has support for workspace folders
+	 */
+	supported?: boolean;
+
+	/**
+	 * Whether the server wants to receive workspace folder
+	 * change notifications.
+	 *
+	 * If a string is provided, the string is treated as an ID
+	 * under which the notification is registered on the client
+	 * side. The ID can be used to unregister for these events
+	 * using the `client/unregisterCapability` request.
+	 */
+	changeNotifications?: string | boolean;
 }
 
 /**
@@ -516,58 +1254,58 @@ interface ServerCapabilities {
 	//  */
 	// workspaceSymbolProvider?: boolean | WorkspaceSymbolOptions;
 
-	// /**
-	//  * Workspace specific server capabilities
-	//  */
-	// workspace?: {
-	// 	/**
-	// 	 * The server supports workspace folder.
-	// 	 *
-	// 	 * @since 3.6.0
-	// 	 */
-	// 	workspaceFolders?: WorkspaceFoldersServerCapabilities;
+	/**
+	 * Workspace specific server capabilities
+	 */
+	workspace?: {
+		/**
+		 * The server supports workspace folder.
+		 *
+		 * @since 3.6.0
+		 */
+		workspaceFolders?: WorkspaceFoldersServerCapabilities;
 
-	// 	/**
-	// 	 * The server is interested in file notifications/requests.
-	// 	 *
-	// 	 * @since 3.16.0
-	// 	 */
-	// 	fileOperations?: {
-	// 		/**
-	// 		 * The server is interested in receiving didCreateFiles
-	// 		 * notifications.
-	// 		 */
-	// 		didCreate?: FileOperationRegistrationOptions;
+		/**
+		 * The server is interested in file notifications/requests.
+		 *
+		 * @since 3.16.0
+		 */
+		fileOperations?: {
+			/**
+			 * The server is interested in receiving didCreateFiles
+			 * notifications.
+			 */
+			didCreate?: FileOperationRegistrationOptions;
 
-	// 		/**
-	// 		 * The server is interested in receiving willCreateFiles requests.
-	// 		 */
-	// 		willCreate?: FileOperationRegistrationOptions;
+			/**
+			 * The server is interested in receiving willCreateFiles requests.
+			 */
+			willCreate?: FileOperationRegistrationOptions;
 
-	// 		/**
-	// 		 * The server is interested in receiving didRenameFiles
-	// 		 * notifications.
-	// 		 */
-	// 		didRename?: FileOperationRegistrationOptions;
+			/**
+			 * The server is interested in receiving didRenameFiles
+			 * notifications.
+			 */
+			didRename?: FileOperationRegistrationOptions;
 
-	// 		/**
-	// 		 * The server is interested in receiving willRenameFiles requests.
-	// 		 */
-	// 		willRename?: FileOperationRegistrationOptions;
+			/**
+			 * The server is interested in receiving willRenameFiles requests.
+			 */
+			willRename?: FileOperationRegistrationOptions;
 
-	// 		/**
-	// 		 * The server is interested in receiving didDeleteFiles file
-	// 		 * notifications.
-	// 		 */
-	// 		didDelete?: FileOperationRegistrationOptions;
+			/**
+			 * The server is interested in receiving didDeleteFiles file
+			 * notifications.
+			 */
+			didDelete?: FileOperationRegistrationOptions;
 
-	// 		/**
-	// 		 * The server is interested in receiving willDeleteFiles file
-	// 		 * requests.
-	// 		 */
-	// 		willDelete?: FileOperationRegistrationOptions;
-	// 	};
-	// };
+			/**
+			 * The server is interested in receiving willDeleteFiles file
+			 * requests.
+			 */
+			willDelete?: FileOperationRegistrationOptions;
+		};
+	};
 
 	// /**
 	//  * Experimental server capabilities.
@@ -597,6 +1335,44 @@ interface InitializeResult {
 		 */
 		version?: string;
 	};
+}
+
+/**
+ * Known error codes for an `InitializeErrorCodes`;
+ */
+export namespace InitializeErrorCodes {
+
+	/**
+	 * If the protocol version provided by the client can't be handled by
+	 * the server.
+	 *
+	 * @deprecated This initialize error got replaced by client capabilities.
+	 * There is no version handshake in version 3.0x
+	 */
+	export const unknownProtocolVersion: 1 = 1;
+}
+
+export type InitializeErrorCodes = 1;
+
+interface InitializeError {
+	/**
+	 * Indicates whether the client execute the following retry logic:
+	 * (1) show the message provided by the ResponseError to the user
+	 * (2) user selects retry or cancel
+	 * (3) if user selected retry the initialize method is sent again.
+	 */
+	retry: boolean;
+}
+
+interface InitializeResponseError extends ResponseError {
+	code: // @ts-ignore
+		InitializeErrorCodes.unknownProtocolVersion;
+	data: InitializeError;
+}
+
+interface InitializeResponse extends ResponseMessage {
+	result?: InitializeResult;
+	error?: InitializeResponseError;
 }
 
 /**
@@ -865,4 +1641,46 @@ export type WorkspaceDocumentDiagnosticReport =
  */
 export interface WorkspaceDiagnosticReport {
 	items: WorkspaceDocumentDiagnosticReport[];
+}
+
+/**
+ * A previous result id in a workspace pull request.
+ *
+ * @since 3.17.0
+ */
+export interface PreviousResultId {
+	/**
+	 * The URI for which the client knows a
+	 * result id.
+	 */
+	uri: DocumentUri;
+
+	/**
+	 * The value of the previous result id.
+	 */
+	value: string;
+}
+
+/**
+ * Parameters of the workspace diagnostic request.
+ *
+ * @since 3.17.0
+ */
+export interface WorkspaceDiagnosticParams extends WorkDoneProgressParams,
+	PartialResultParams {
+	/**
+	 * The additional identifier provided during registration.
+	 */
+	identifier?: string;
+
+	/**
+	 * The currently known diagnostic reports with their
+	 * previous result ids.
+	 */
+	previousResultIds: PreviousResultId[];
+}
+
+export interface WorkspaceDiagnosticRequest extends RequestMessage {
+	method: 'workspace/diagnostic';
+	params: WorkspaceDiagnosticParams;
 }

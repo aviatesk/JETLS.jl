@@ -15,11 +15,14 @@ const kinds = Dict(
     188 => :type_array,
     192 => :type_union,
     201 => :type_literal,
+    224 => :operator,
     264 => :interface,
     265 => :type,
     267 => :namespace,
     307 => :toplevel,
 )
+
+const _VAL_DEFS = Dict{Symbol,Any}()
 
 const _TYPE_DEFS = Dict{Symbol,Union{Symbol,Expr}}(
     :integer => :Int,
@@ -30,7 +33,16 @@ const _TYPE_DEFS = Dict{Symbol,Union{Symbol,Expr}}(
     :LSPArray => :(Vector{Any}))
 const _PREDEFINED_TYPE_DEFS = keys(_TYPE_DEFS)
 
-const _INTERFACE_DEFS = Dict{Symbol,Any}()
+struct InterfaceDefLine
+    field::Symbol
+    doc::Union{Nothing,String}
+    line::Expr
+    nullable::Bool
+end
+
+const _INTERFACE_DEFS = Dict{Symbol,Vector{InterfaceDefLine}}()
+
+const method_dispatcher = Dict{String,Symbol}()
 
 function ts2jl(node, anon_defs=nothing)
     kindidx = node[:kind]
@@ -50,6 +62,8 @@ function ts2jl(node, anon_defs=nothing)
         return :Number
     elseif kind === :string
         return :String
+    elseif kind === :identifier
+        return _VAL_DEFS[Symbol(node[:escapedText])]
     elseif kind === :type_identifier
         typenode = node[:typeName]
         typekind = typenode[:kind]
@@ -79,6 +93,12 @@ function ts2jl(node, anon_defs=nothing)
     elseif kind === :type_literal
         # TODO Can we replicate this literal type information in Julia somehow?
         return Expr(:call, GlobalRef(Core,:typeof), ts2jl(node[:literal], anon_defs))
+    elseif kind === :operator
+        if node[:operator] == 41 # -xxx
+            return Expr(:call, :-, ts2jl(node[:operand], anon_defs))
+        else
+            error("Unimplemented operator: ", node[:operator], " in ", node)
+        end
     else
         error("Unimplemented kind: ", kind, " in ", node)
     end
@@ -94,7 +114,7 @@ end
 
 function process_jsDoc(jsDoc)
     jsDoc = only(jsDoc)
-    doc = jsDoc[:comment]
+    doc = haskey(jsDoc, :comment) ? jsDoc[:comment] : ""
     if haskey(jsDoc, :tags)
         tags = "# Tags\n"
         for tag in jsDoc[:tags]
@@ -138,38 +158,49 @@ end
 function process_interface_statement(io, Name::Symbol, statement)
     structbody = Expr(:block)
     structdef = Expr(:struct, false, Name, structbody)
-    nullable_fields = Symbol[]
+    deflines = InterfaceDefLine[]
+    anon_defs = Any[]
     if haskey(statement, :heritageClauses)
         for clause in statement[:heritageClauses]
             for typ in clause[:types]
                 extended = Symbol(typ[:expression][:escapedText])
-                extended_lines = _INTERFACE_DEFS[extended]
-                append!(structbody.args, extended_lines[1])
-                append!(nullable_fields, extended_lines[2])
+                append!(deflines, _INTERFACE_DEFS[extended])
             end
         end
     end
-    anon_defs = Any[]
     for member in statement[:members]
-        if haskey(member, :jsDoc)
-            doc = process_jsDoc(member[:jsDoc])
-            push!(structbody.args, doc)
-        end
         fname = Symbol(member[:name][:escapedText])
+        deleteat!(deflines, findall(x->x.field===fname, deflines))
+        doc = haskey(member, :jsDoc) ? process_jsDoc(member[:jsDoc]) : nothing
         ftype = ts2jl(member[:type], anon_defs)
+        if fname === :method && kinds[member[:type][:kind]] === :type_literal
+            method = ts2jl(member[:type][:literal])::String
+            method_dispatcher[method] = Name
+        end
         if haskey(member, :questionToken)
             ftype = Expr(:curly, :Union, ftype, :Nothing)
             structline = Expr(:(::), fname, ftype)
             structline = Expr(:(=), structline, :nothing)
-            push!(nullable_fields, fname)
+            nullable = true
         else
             structline = Expr(:(::), fname, ftype)
+            nullable = false
+            if fname === :jsonrpc
+                structline = Expr(:(=), structline, "2.0")
+            end
         end
-        push!(structbody.args, structline)
+        push!(deflines, InterfaceDefLine(fname, doc, structline, nullable))
+    end
+    for defline in deflines
+        if defline.doc !== nothing
+            push!(structbody.args, defline.doc)
+        end
+        push!(structbody.args, defline.line)
     end
     _TYPE_DEFS[Name] = Name
-    _INTERFACE_DEFS[Name] = (structbody.args, nullable_fields)
+    _INTERFACE_DEFS[Name] = deflines
     structdef = Expr(:macrocall, Symbol("@kwdef"), nothing, structdef)
+    nullable_fields = map(i->deflines[i].field, findall(x->x.nullable, deflines))
     omitempties_defs = isempty(nullable_fields) ? () :
         (Base.remove_linenums!(:(StructTypes.omitempties(::Type{$Name}) = $(Tuple(nullable_fields)))),)
     isempty(anon_defs) || (join(io, anon_defs, "\n"), println(io))
@@ -197,6 +228,7 @@ function process_namespace_statement(io, statement)
         decl = only(decls)
         name = Symbol(decl[:name][:escapedText])
         val = ts2jl(decl[:initializer])
+        _VAL_DEFS[name] = val
         push!(modbody.args, :(const $name = $val))
         if haskey(bodystatement, :jsDoc)
             doc = process_jsDoc(bodystatement[:jsDoc])
@@ -259,10 +291,23 @@ let lsp = JSON3.read(LSP_JSON_FILE)
         for (i,statement) in enumerate(lsp[:statements])
             process_statement(f, statement)
         end
+        print(f, """
+        # message dispatcher definition
+        const method_dispatcher = Dict{String,DataType}(
+        """)
+        for (method, TypeName) in method_dispatcher
+            println(f, "    \"$method\" => $TypeName,")
+        end
+        println(f, ")")
         # export everything we got
-        print(f, "export\n    ")
-        join(f, keys(_TYPE_DEFS), ",\n    ")
-        join(f, keys(_INTERFACE_DEFS), ",\n    ")
+        names = Set{String}()
+        for name in keys(_TYPE_DEFS); push!(names, String(name)); end
+        for name in keys(_INTERFACE_DEFS); push!(names, String(name)); end
+        names = sort!(collect(names))
+        println(f, "export")
+        println(f, "    method_dispatcher,")
+        print(f, "    ")
+        join(f, names, ",\n    ")
     end
     @info "Julia LSP definitions written to $LSP_JL_FILE"
 end

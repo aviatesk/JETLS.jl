@@ -2,9 +2,6 @@ module JETLS
 
 export runserver
 
-include("JSONRPC.jl")
-using .JSONRPC
-
 include("utils.jl")
 using .LSPURI
 
@@ -15,33 +12,31 @@ include("LSP.jl")
 end
 using .LSP
 
+include("JSONRPC.jl")
+using .JSONRPC
+
 using JET
 
-runserver(in::IO, out::IO) = runserver((msg, res)->nothing, in, out)
-function runserver(callback, in::IO, out::IO)
+runserver(in::IO, out::IO; kwargs...) = runserver((msg, res)->nothing, in, out; kwargs...)
+function runserver(callback, in::IO, out::IO;
+                   shutdown_really::Bool=true)
     endpoint = Endpoint(in, out)
     state = (; uri2diagnostics=Dict{URI,Vector{Diagnostic}}())
     shutdown_requested = false
     local exit_code::Int
     try
         for msg in endpoint
-            if isa(msg, RequestMessage)
-                if msg.method == "shutdown"
-                    shutdown_requested = true
-                    res = ResponseMessage(msg.id, nothing)
-                elseif msg.method == "exit"
-                    exit_code = !shutdown_requested
-                    break
-                elseif shutdown_requested
-                    res = ResponseMessage(msg.id, ResponseError(
-                        JSONRPC.InvalidRequest, "Received request after a shutdown request requested", msg))
-                else
-                    res = @invokelatest handle_request_message(state, msg)
-                end
-            elseif isa(msg, NotificationMessage)
-                res = @invokelatest handle_notification_message(state, msg)
+            if msg isa ShutdownRequest
+                shutdown_requested = true
+                res = ResponseMessage(; id=msg.id, result=nothing)
+            elseif msg isa ExitNotification
+                exit_code = !shutdown_requested
+                break
+            elseif shutdown_requested
+                res = ResponseMessage(; id=msg.id, error=ResponseError(
+                    JSONRPC.InvalidRequest, "Received request after a shutdown request requested", msg))
             else
-                error("Handling for ResponseMessage is unimplemented")
+                res = @invokelatest handle_message(state, msg)
             end
             if res === nothing
                 continue
@@ -53,7 +48,7 @@ function runserver(callback, in::IO, out::IO)
             callback(msg, res)
         end
     catch err
-        @info "message handling failed" err
+        @info "Message handling failed" err
         io = IOBuffer()
         bt = catch_backtrace()
         Base.display_error(io, err, bt)
@@ -61,43 +56,33 @@ function runserver(callback, in::IO, out::IO)
     finally
         close(endpoint)
     end
-    if @isdefined(exit_code)
+    if @isdefined(exit_code) && shutdown_really
         exit(exit_code)
     end
+    return endpoint
 end
 
-function handle_request_message(state, msg::RequestMessage)
-    # @info "Handling RequestMessage" msg
-    method = msg.method
-    if method == "initialize"
-        return handle_initialize_request(msg)
-    # elseif method == "textDocument/diagnostic"
-    #     return handle_diagnostic_request(msg)
-    elseif method == "workspace/diagnostic"
-        return handle_workspace_diagnostic_request(state, msg)
+function handle_message(state, msg)
+    if msg isa InitializeRequest
+        return handle_InitializeRequest(msg)
+    elseif msg isa WorkspaceDiagnosticRequest
+        return handle_WorkspaceDiagnosticRequest(state, msg)
+    elseif msg isa InitializedNotification
+        return nothing
+    elseif msg isa DidSaveTextDocumentNotification
+        return handle_DidSaveTextDocumentNotification(state, msg)
     else
-        @warn "Unhandled RequestMessage" msg
+        @warn "Unhandled message" msg
+        nothing
     end
-    nothing
-end
-
-function handle_notification_message(state, msg::NotificationMessage)
-    # @info "Handling NotificationMessage" msg
-    method = msg.method
-    if method == "initialized"
-        # TODO?
-    elseif method == "textDocument/didSave"
-        handle_didsave_notification(state, msg.params)
-    end
-    nothing
 end
 
 global workspaceUri::URI
 
-function handle_initialize_request(msg::RequestMessage)
-    global workspaceUri = URI(msg.params["rootUri"]) # workspaceFolder
-    return ResponseMessage(msg.id,
-        InitializeResult(;
+function handle_InitializeRequest(msg::InitializeRequest)
+    global workspaceUri = URI(msg.params.rootUri) # workspaceFolder
+    return ResponseMessage(; id=msg.id,
+        result=InitializeResult(;
             capabilities = ServerCapabilities(;
                 positionEncoding = PositionEncodingKind.UTF16,
                 textDocumentSync = TextDocumentSyncOptions(;
@@ -114,20 +99,21 @@ function handle_initialize_request(msg::RequestMessage)
                 version = "0.0.0")))
 end
 
-function handle_didsave_notification(state, params)
-    textDocument = params["textDocument"]
-    uri = URI(textDocument["uri"])
+function handle_DidSaveTextDocumentNotification(state, msg::DidSaveTextDocumentNotification)
+    uri = URI(msg.params.textDocument.uri)
     if haskey(state.uri2diagnostics, uri)
         empty!(state.uri2diagnostics)
     end
+    return nothing
 end
 
-function handle_workspace_diagnostic_request(state, msg::RequestMessage)
+function handle_WorkspaceDiagnosticRequest(state, msg::WorkspaceDiagnosticRequest)
     global workspaceUri
     workspaceDir = uri2filepath(workspaceUri)
     if isnothing(workspaceDir)
-        return ResponseMessage(msg.id, ResponseError(
-            JSONRPC.InternalError, "Unexpected workspaceUri", msg))
+        return ResponseMessage(;
+            id=msg.id,
+            error=ResponseError(JSONRPC.InternalError, "Unexpected workspaceUri", msg))
     end
     if !isempty(state.uri2diagnostics)
         diagnostics = WorkspaceUnchangedDocumentDiagnosticReport[]
@@ -139,7 +125,9 @@ function handle_workspace_diagnostic_request(state, msg::RequestMessage)
                 uri=lowercase(suri),
                 version=nothing))
         end
-        return ResponseMessage(msg.id, WorkspaceDiagnosticReport(; items = diagnostics))
+        return ResponseMessage(;
+            id=msg.id,
+            result=WorkspaceDiagnosticReport(; items = diagnostics))
     end
     pkgname = basename(workspaceDir)
     pkgpath = joinpath(workspaceDir, "src", "$pkgname.jl")
@@ -147,7 +135,9 @@ function handle_workspace_diagnostic_request(state, msg::RequestMessage)
         analyze_from_definitions=true, toplevel_logger=stderr,
         concretization_patterns=[:(x_)])
     diagnostics = jet_to_workspace_diagnostics(state, result)
-    return ResponseMessage(msg.id, WorkspaceDiagnosticReport(; items = diagnostics))
+    return ResponseMessage(;
+        id=msg.id,
+        result=WorkspaceDiagnosticReport(; items = diagnostics))
 end
 
 function jet_to_workspace_diagnostics(state, result)
