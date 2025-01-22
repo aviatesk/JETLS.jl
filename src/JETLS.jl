@@ -75,6 +75,12 @@ function handle_message(state, msg)
         return handle_WorkspaceDiagnosticRequest(state, msg)
     elseif msg isa InitializedNotification
         return nothing
+    elseif msg isa DidOpenTextDocumentNotification
+        return handle_DidOpenTextDocumentNotification(state, msg)
+    elseif msg isa DidChangeTextDocumentNotification
+        return handle_DidChangeTextDocumentNotification(state, msg)
+    elseif msg isa DidCloseTextDocumentNotification
+        return handle_DidCloseTextDocumentNotification(state, msg)
     elseif msg isa DidSaveTextDocumentNotification
         return handle_DidSaveTextDocumentNotification(state, msg)
     else
@@ -86,7 +92,7 @@ end
 function handle_InitializeRequest(state, msg::InitializeRequest)
     workspaceFolders = msg.params.workspaceFolders
     if workspaceFolders !== nothing
-        for workspaceFolder in msg.params.workspaceFolders
+        for workspaceFolder in workspaceFolders
             push!(state.workspaceFolders, workspaceFolder.uri)
         end
     else
@@ -103,7 +109,7 @@ function handle_InitializeRequest(state, msg::InitializeRequest)
                 positionEncoding = PositionEncodingKind.UTF16,
                 textDocumentSync = TextDocumentSyncOptions(;
                     openClose = true,
-                    change = TextDocumentSyncKind.Incremental,
+                    change = TextDocumentSyncKind.Full,
                     save = true),
                 diagnosticProvider = DiagnosticOptions(;
                     identifier = "JETLS",
@@ -113,6 +119,18 @@ function handle_InitializeRequest(state, msg::InitializeRequest)
             serverInfo = (;
                 name = "JETLS",
                 version = "0.0.0")))
+end
+
+function handle_DidOpenTextDocumentNotification(state, msg::DidOpenTextDocumentNotification)
+    return nothing
+end
+
+function handle_DidChangeTextDocumentNotification(state, msg::DidChangeTextDocumentNotification)
+    return nothing
+end
+
+function handle_DidCloseTextDocumentNotification(state, msg::DidCloseTextDocumentNotification)
+    return nothing
 end
 
 function handle_DidSaveTextDocumentNotification(state, msg::DidSaveTextDocumentNotification)

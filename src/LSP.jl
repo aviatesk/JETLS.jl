@@ -347,10 +347,39 @@ end
     end
 @doc "A range in a text document expressed as (zero-based) start and end positions. A range is comparable to a selection in an editor. Therefore, the end position is exclusive. If you want to specify a range that contains a line including the line ending character(s) then use an end position denoting the start of the next line. For example:\n```json\n{\n\t   start: { line: 5, character: 23 },\n\t\t end : { line: 6, character: 0 }\n}\n```" Range
 
+@kwdef struct TextDocumentItem
+        "The text document's URI."
+        uri::lsptypeof(Val(:DocumentUri))
+        "The text document's language identifier."
+        languageId::String
+        "The version number of this document (it will increase after each\nchange, including undo/redo)."
+        version::Int
+        "The content of the opened text document."
+        text::String
+    end
+@doc "An item to transfer a text document from the client to the server." TextDocumentItem
+
 @kwdef struct TextDocumentIdentifier
         "The text document's URI."
         uri::lsptypeof(Val(:DocumentUri))
     end
+@doc "Text documents are identified using a URI. On the protocol level, URIs are passed as strings. The corresponding JSON structure looks like this:" TextDocumentIdentifier
+
+@kwdef struct VersionedTextDocumentIdentifier
+        "The text document's URI."
+        uri::lsptypeof(Val(:DocumentUri))
+        "The version number of this document.\n\nThe version number of a document will increase after each change,\nincluding undo/redo. The number doesn't need to be consecutive."
+        version::Int
+    end
+@doc "An identifier to denote a specific version of a text document. This information usually flows from the client to the server." VersionedTextDocumentIdentifier
+
+@kwdef struct OptionalVersionedTextDocumentIdentifier
+        "The text document's URI."
+        uri::lsptypeof(Val(:DocumentUri))
+        "The version number of this document. If an optional versioned text document\nidentifier is sent from the server to the client and the file is not\nopen in the editor (the server has not received an open notification\nbefore) the server can send `null` to indicate that the version is\nknown and the content on disk is the master (as specified with document\ncontent ownership).\n\nThe version number of a document will increase after each change,\nincluding undo/redo. The number doesn't need to be consecutive."
+        version::Union{Int, Core.typeof(nothing)}
+    end
+@doc "An identifier which optionally denotes a specific version of a text document. This information usually flows from the server to the client." OptionalVersionedTextDocumentIdentifier
 
 module TextDocumentSyncKind
 const None = 0
@@ -365,6 +394,89 @@ end
 lsptypeof(::Val{:TextDocumentSyncKind}) = begin
         Union{Core.typeof(0), Core.typeof(1), Core.typeof(2)}
     end
+@kwdef struct DocumentFilter
+        "A language id, like `typescript`."
+        language::Union{String, Nothing} = nothing
+        "A Uri scheme, like `file` or `untitled`."
+        scheme::Union{String, Nothing} = nothing
+        "A glob pattern, like `*.{ts,js}`.\n\nGlob patterns can have the following syntax:\n- `*` to match one or more characters in a path segment\n- `?` to match on one character in a path segment\n- `**` to match any number of path segments, including none\n- `{}` to group sub patterns into an OR expression. (e.g. `**\u200b/*.{ts,js}`\n  matches all TypeScript and JavaScript files)\n- `[]` to declare a range of characters to match in a path segment\n  (e.g., `example.[0-9]` to match on `example.0`, `example.1`, …)\n- `[!...]` to negate a range of characters to match in a path segment\n  (e.g., `example.[!0-9]` to match on `example.a`, `example.b`, but\n  not `example.0`)"
+        pattern::Union{String, Nothing} = nothing
+    end
+StructTypes.omitempties(::Type{DocumentFilter}) = begin
+        (:language, :scheme, :pattern)
+    end
+@doc "A document filter denotes a document through properties like language, scheme or pattern. An example is a filter that applies to TypeScript files on disk. Another example is a filter that applies to JSON files with name package.json:\n```json\n{ language: 'typescript', scheme: 'file' }\n{ language: 'json', pattern: '**\\/package.json' }\n```\n\nPlease note that for a document filter to be valid at least one of the properties for language, scheme, or pattern must be set. To keep the type definition simple all properties are marked as optional." DocumentFilter
+
+lsptypeof(::Val{:DocumentSelector}) = begin
+        Vector{DocumentFilter}
+    end
+@doc "A document selector is the combination of one or more document filters." DocumentSelector
+
+@kwdef struct TextDocumentRegistrationOptions
+        "A document selector to identify the scope of the registration. If set to\nnull the document selector provided on the client side will be used."
+        documentSelector::Union{lsptypeof(Val(:DocumentSelector)), Core.typeof(nothing)}
+    end
+@doc "General text document registration options." TextDocumentRegistrationOptions
+
+@kwdef struct DidOpenTextDocumentParams
+        "The document that was opened."
+        textDocument::TextDocumentItem
+    end
+
+@kwdef struct DidOpenTextDocumentNotification
+        jsonrpc::Core.typeof("2.0") = "2.0"
+        method::Core.typeof("textDocument/didOpen")
+        params::DidOpenTextDocumentParams
+    end
+@doc "The document open notification is sent from the client to the server to signal newly opened text documents. The document’s content is now managed by the client and the server must not try to read the document’s content using the document’s Uri. Open in this sense means it is managed by the client. It doesn’t necessarily mean that its content is presented in an editor. An open notification must not be sent more than once without a corresponding close notification send before. This means open and close notification must be balanced and the max open count for a particular textDocument is one. Note that a server’s ability to fulfill requests is independent of whether a text document is open or closed.\n\nThe DidOpenTextDocumentParams contain the language id the document is associated with. If the language id of a document changes, the client needs to send a textDocument/didClose to the server followed by a textDocument/didOpen with the new language id if the server handles the new language id as well." DidOpenTextDocumentNotification
+
+@kwdef struct TextDocumentChangeRegistrationOptions
+        "A document selector to identify the scope of the registration. If set to\nnull the document selector provided on the client side will be used."
+        documentSelector::Union{lsptypeof(Val(:DocumentSelector)), Core.typeof(nothing)}
+        "How documents are synced to the server. See TextDocumentSyncKind.Full\nand TextDocumentSyncKind.Incremental."
+        syncKind::lsptypeof(Val(:TextDocumentSyncKind))
+    end
+@doc "Describe options to be used when registering for text document change events." TextDocumentChangeRegistrationOptions
+
+@kwdef struct TextDocumentContentChangeEvent
+        "The range of the document that changed."
+        range::Union{Range, Nothing} = nothing
+        "The optional length of the range that got replaced.\n\n# Tags\n\n- deprecated – use range instead."
+        rangeLength::Union{UInt, Nothing} = nothing
+        "The new text for the provided range."
+        text::String
+    end
+StructTypes.omitempties(::Type{TextDocumentContentChangeEvent}) = begin
+        (:range, :rangeLength)
+    end
+@doc "An event describing a change to a text document. If only a text is provided\nit is considered to be the full content of the document." TextDocumentContentChangeEvent
+
+@kwdef struct DidChangeTextDocumentParams
+        "The document that did change. The version number points\nto the version after all provided content changes have\nbeen applied."
+        textDocument::VersionedTextDocumentIdentifier
+        "The actual content changes. The content changes describe single state\nchanges to the document. So if there are two content changes c1 (at\narray index 0) and c2 (at array index 1) for a document in state S then\nc1 moves the document from S to S' and c2 from S' to S''. So c1 is\ncomputed on the state S and c2 is computed on the state S'.\n\nTo mirror the content of a document using change events use the following\napproach:\n- start with the same initial content\n- apply the 'textDocument/didChange' notifications in the order you\n  receive them.\n- apply the `TextDocumentContentChangeEvent`s in a single notification\n  in the order you receive them."
+        contentChanges::Vector{TextDocumentContentChangeEvent}
+    end
+
+@kwdef struct DidChangeTextDocumentNotification
+        jsonrpc::Core.typeof("2.0") = "2.0"
+        method::Core.typeof("textDocument/didChange")
+        params::DidChangeTextDocumentParams
+    end
+@doc "The document change notification is sent from the client to the server to signal changes to a text document. Before a client can change a text document it must claim ownership of its content using the textDocument/didOpen notification. In 2.0 the shape of the params has changed to include proper version numbers." DidChangeTextDocumentNotification
+
+@kwdef struct DidCloseTextDocumentParams
+        "The document that was closed."
+        textDocument::TextDocumentIdentifier
+    end
+
+@kwdef struct DidCloseTextDocumentNotification
+        jsonrpc::Core.typeof("2.0") = "2.0"
+        method::Core.typeof("textDocument/didClose")
+        params::DidCloseTextDocumentParams
+    end
+@doc "The document close notification is sent from the client to the server when the document got closed in the client. The document’s master now exists where the document’s Uri points to (e.g. if the document’s Uri is a file Uri the master now exists on disk). As with the open notification the close notification is about managing the document’s content. Receiving a close notification doesn’t mean that the document was open in an editor before. A close notification requires a previous open notification to be sent. Note that a server’s ability to fulfill requests is independent of whether a text document is open or closed." DidCloseTextDocumentNotification
+
 @kwdef struct SaveOptions
         "The client is supposed to include the content on save."
         includeText::Union{Bool, Nothing} = nothing
@@ -426,24 +538,6 @@ StructTypes.omitempties(::Type{DiagnosticOptions}) = begin
     end
 @doc "Diagnostic options.\n\n# Tags\n\n- since – 3.17.0" DiagnosticOptions
 
-@kwdef struct DocumentFilter
-        "A language id, like `typescript`."
-        language::Union{String, Nothing} = nothing
-        "A Uri scheme, like `file` or `untitled`."
-        scheme::Union{String, Nothing} = nothing
-        "A glob pattern, like `*.{ts,js}`.\n\nGlob patterns can have the following syntax:\n- `*` to match one or more characters in a path segment\n- `?` to match on one character in a path segment\n- `**` to match any number of path segments, including none\n- `{}` to group sub patterns into an OR expression. (e.g. `**\u200b/*.{ts,js}`\n  matches all TypeScript and JavaScript files)\n- `[]` to declare a range of characters to match in a path segment\n  (e.g., `example.[0-9]` to match on `example.0`, `example.1`, …)\n- `[!...]` to negate a range of characters to match in a path segment\n  (e.g., `example.[!0-9]` to match on `example.a`, `example.b`, but\n  not `example.0`)"
-        pattern::Union{String, Nothing} = nothing
-    end
-StructTypes.omitempties(::Type{DocumentFilter}) = begin
-        (:language, :scheme, :pattern)
-    end
-@doc "A document filter denotes a document through properties like language, scheme or pattern. An example is a filter that applies to TypeScript files on disk. Another example is a filter that applies to JSON files with name package.json:\n```json\n{ language: 'typescript', scheme: 'file' }\n{ language: 'json', pattern: '**\\/package.json' }\n```\n\nPlease note that for a document filter to be valid at least one of the properties for language, scheme, or pattern must be set. To keep the type definition simple all properties are marked as optional." DocumentFilter
-
-lsptypeof(::Val{:DocumentSelector}) = begin
-        Vector{DocumentFilter}
-    end
-@doc "A document selector is the combination of one or more document filters." DocumentSelector
-
 @kwdef struct StaticRegistrationOptions
         "The id used to register the request. The id can be used to deregister\nthe request again. See also Registration#id."
         id::Union{String, Nothing} = nothing
@@ -452,12 +546,6 @@ StructTypes.omitempties(::Type{StaticRegistrationOptions}) = begin
         (:id,)
     end
 @doc "Static registration options to be returned in the initialize request." StaticRegistrationOptions
-
-@kwdef struct TextDocumentRegistrationOptions
-        "A document selector to identify the scope of the registration. If set to\nnull the document selector provided on the client side will be used."
-        documentSelector::Union{lsptypeof(Val(:DocumentSelector)), Core.typeof(nothing)}
-    end
-@doc "General text document registration options." TextDocumentRegistrationOptions
 
 @kwdef struct WorkspaceFoldersServerCapabilities
         "The server has support for workspace folders"
@@ -762,11 +850,14 @@ StructTypes.omitempties(::Type{WorkspaceDiagnosticParams}) = begin
 # message dispatcher definition
 const method_dispatcher = Dict{String,DataType}(
     "exit" => ExitNotification,
+    "textDocument/didClose" => DidCloseTextDocumentNotification,
     "initialized" => InitializedNotification,
     "shutdown" => ShutdownRequest,
     "initialize" => InitializeRequest,
     "textDocument/didSave" => DidSaveTextDocumentNotification,
+    "textDocument/didOpen" => DidOpenTextDocumentNotification,
     "workspace/diagnostic" => WorkspaceDiagnosticRequest,
+    "textDocument/didChange" => DidChangeTextDocumentNotification,
 )
 export
     method_dispatcher,
@@ -784,6 +875,12 @@ export
     DiagnosticRelatedInformation,
     DiagnosticSeverity,
     DiagnosticTag,
+    DidChangeTextDocumentNotification,
+    DidChangeTextDocumentParams,
+    DidCloseTextDocumentNotification,
+    DidCloseTextDocumentParams,
+    DidOpenTextDocumentNotification,
+    DidOpenTextDocumentParams,
     DidSaveTextDocumentNotification,
     DidSaveTextDocumentParams,
     DocumentDiagnosticReportKind,
@@ -812,6 +909,7 @@ export
     Location,
     Message,
     NotificationMessage,
+    OptionalVersionedTextDocumentIdentifier,
     PartialResultParams,
     Position,
     PositionEncodingKind,
@@ -825,13 +923,17 @@ export
     ServerCapabilities,
     ShutdownRequest,
     StaticRegistrationOptions,
+    TextDocumentChangeRegistrationOptions,
+    TextDocumentContentChangeEvent,
     TextDocumentIdentifier,
+    TextDocumentItem,
     TextDocumentRegistrationOptions,
     TextDocumentSyncKind,
     TextDocumentSyncOptions,
     TraceValue,
     URI,
     UnchangedDocumentDiagnosticReport,
+    VersionedTextDocumentIdentifier,
     WorkDoneProgressOptions,
     WorkDoneProgressParams,
     WorkspaceDiagnosticParams,

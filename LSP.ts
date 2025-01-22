@@ -811,11 +811,72 @@ interface Range {
 	end: Position;
 }
 
+/**
+ * An item to transfer a text document from the client to the server.
+ */
+interface TextDocumentItem {
+	/**
+	 * The text document's URI.
+	 */
+	uri: DocumentUri;
+
+	/**
+	 * The text document's language identifier.
+	 */
+	languageId: string;
+
+	/**
+	 * The version number of this document (it will increase after each
+	 * change, including undo/redo).
+	 */
+	version: integer;
+
+	/**
+	 * The content of the opened text document.
+	 */
+	text: string;
+}
+
+
+/**
+ * Text documents are identified using a URI. On the protocol level, URIs are passed as strings. The corresponding JSON structure looks like this:
+ */
 interface TextDocumentIdentifier {
 	/**
 	 * The text document's URI.
 	 */
 	uri: DocumentUri;
+}
+
+/**
+ * An identifier to denote a specific version of a text document. This information usually flows from the client to the server.
+ */
+interface VersionedTextDocumentIdentifier extends TextDocumentIdentifier {
+	/**
+	 * The version number of this document.
+	 *
+	 * The version number of a document will increase after each change,
+	 * including undo/redo. The number doesn't need to be consecutive.
+	 */
+	version: integer;
+}
+
+/**
+ * An identifier which optionally denotes a specific version of a text document. This information usually flows from the server to the client.
+ */
+interface OptionalVersionedTextDocumentIdentifier extends TextDocumentIdentifier {
+	/**
+	 * The version number of this document. If an optional versioned text document
+	 * identifier is sent from the server to the client and the file is not
+	 * open in the editor (the server has not received an open notification
+	 * before) the server can send `null` to indicate that the version is
+	 * known and the content on disk is the master (as specified with document
+	 * content ownership).
+	 *
+	 * The version number of a document will increase after each change,
+	 * including undo/redo. The number doesn't need to be consecutive.
+	 */
+	version: integer | null;
 }
 
 /**
@@ -843,6 +904,161 @@ export namespace TextDocumentSyncKind {
 }
 
 export type TextDocumentSyncKind = 0 | 1 | 2;
+
+/**
+ * A document filter denotes a document through properties like language, scheme or pattern. An example is a filter that applies to TypeScript files on disk. Another example is a filter that applies to JSON files with name package.json:
+ * ```json
+ * { language: 'typescript', scheme: 'file' }
+ * { language: 'json', pattern: '**\/package.json' }
+ * ```
+ *
+ * Please note that for a document filter to be valid at least one of the properties for language, scheme, or pattern must be set. To keep the type definition simple all properties are marked as optional.
+ */
+export interface DocumentFilter {
+	/**
+	 * A language id, like `typescript`.
+	 */
+	language?: string;
+
+	/**
+	 * A Uri scheme, like `file` or `untitled`.
+	 */
+	scheme?: string;
+
+	/**
+	 * A glob pattern, like `*.{ts,js}`.
+	 *
+	 * Glob patterns can have the following syntax:
+	 * - `*` to match one or more characters in a path segment
+	 * - `?` to match on one character in a path segment
+	 * - `**` to match any number of path segments, including none
+	 * - `{}` to group sub patterns into an OR expression. (e.g. `**​/*.{ts,js}`
+	 *   matches all TypeScript and JavaScript files)
+	 * - `[]` to declare a range of characters to match in a path segment
+	 *   (e.g., `example.[0-9]` to match on `example.0`, `example.1`, …)
+	 * - `[!...]` to negate a range of characters to match in a path segment
+	 *   (e.g., `example.[!0-9]` to match on `example.a`, `example.b`, but
+	 *   not `example.0`)
+	 */
+	pattern?: string;
+}
+
+/**
+ * A document selector is the combination of one or more document filters.
+ */
+export type DocumentSelector = DocumentFilter[];
+
+/**
+ * General text document registration options.
+ */
+export interface TextDocumentRegistrationOptions {
+	/**
+	 * A document selector to identify the scope of the registration. If set to
+	 * null the document selector provided on the client side will be used.
+	 */
+	documentSelector: DocumentSelector | null;
+}
+
+interface DidOpenTextDocumentParams {
+	/**
+	 * The document that was opened.
+	 */
+	textDocument: TextDocumentItem;
+}
+
+/**
+ * The document open notification is sent from the client to the server to signal newly opened text documents. The document’s content is now managed by the client and the server must not try to read the document’s content using the document’s Uri. Open in this sense means it is managed by the client. It doesn’t necessarily mean that its content is presented in an editor. An open notification must not be sent more than once without a corresponding close notification send before. This means open and close notification must be balanced and the max open count for a particular textDocument is one. Note that a server’s ability to fulfill requests is independent of whether a text document is open or closed.
+ *
+ * The DidOpenTextDocumentParams contain the language id the document is associated with. If the language id of a document changes, the client needs to send a textDocument/didClose to the server followed by a textDocument/didOpen with the new language id if the server handles the new language id as well.
+ */
+interface DidOpenTextDocumentNotification extends NotificationMessage {
+	method: 'textDocument/didOpen';
+	params: DidOpenTextDocumentParams;
+}
+
+/**
+ * Describe options to be used when registering for text document change events.
+ */
+export interface TextDocumentChangeRegistrationOptions
+	extends TextDocumentRegistrationOptions {
+	/**
+	 * How documents are synced to the server. See TextDocumentSyncKind.Full
+	 * and TextDocumentSyncKind.Incremental.
+	 */
+	syncKind: TextDocumentSyncKind;
+}
+
+/**
+ * An event describing a change to a text document. If only a text is provided
+ * it is considered to be the full content of the document.
+ */
+export interface TextDocumentContentChangeEvent {
+	/**
+	 * The range of the document that changed.
+	 */
+	range?: Range;
+
+	/**
+	 * The optional length of the range that got replaced.
+	 *
+	 * @deprecated use range instead.
+	 */
+	rangeLength?: uinteger;
+
+	/**
+	 * The new text for the provided range.
+	 */
+	text: string;
+};
+
+interface DidChangeTextDocumentParams {
+	/**
+	 * The document that did change. The version number points
+	 * to the version after all provided content changes have
+	 * been applied.
+	 */
+	textDocument: VersionedTextDocumentIdentifier;
+
+	/**
+	 * The actual content changes. The content changes describe single state
+	 * changes to the document. So if there are two content changes c1 (at
+	 * array index 0) and c2 (at array index 1) for a document in state S then
+	 * c1 moves the document from S to S' and c2 from S' to S''. So c1 is
+	 * computed on the state S and c2 is computed on the state S'.
+	 *
+	 * To mirror the content of a document using change events use the following
+	 * approach:
+	 * - start with the same initial content
+	 * - apply the 'textDocument/didChange' notifications in the order you
+	 *   receive them.
+	 * - apply the `TextDocumentContentChangeEvent`s in a single notification
+	 *   in the order you receive them.
+	 */
+	contentChanges: TextDocumentContentChangeEvent[];
+}
+
+/**
+ * The document change notification is sent from the client to the server to signal changes to a text document. Before a client can change a text document it must claim ownership of its content using the textDocument/didOpen notification. In 2.0 the shape of the params has changed to include proper version numbers.
+ */
+interface DidChangeTextDocumentNotification extends NotificationMessage {
+	method: 'textDocument/didChange';
+	params: DidChangeTextDocumentParams;
+}
+
+interface DidCloseTextDocumentParams {
+	/**
+	 * The document that was closed.
+	 */
+	textDocument: TextDocumentIdentifier;
+}
+
+/**
+ * The document close notification is sent from the client to the server when the document got closed in the client. The document’s master now exists where the document’s Uri points to (e.g. if the document’s Uri is a file Uri the master now exists on disk). As with the open notification the close notification is about managing the document’s content. Receiving a close notification doesn’t mean that the document was open in an editor before. A close notification requires a previous open notification to be sent. Note that a server’s ability to fulfill requests is independent of whether a text document is open or closed.
+ */
+interface DidCloseTextDocumentNotification extends NotificationMessage {
+	method: 'textDocument/didClose';
+	params: DidCloseTextDocumentParams;
+}
 
 export interface SaveOptions {
 	/**
@@ -930,49 +1146,6 @@ export interface DiagnosticOptions extends WorkDoneProgressOptions {
 }
 
 /**
- * A document filter denotes a document through properties like language, scheme or pattern. An example is a filter that applies to TypeScript files on disk. Another example is a filter that applies to JSON files with name package.json:
- * ```json
- * { language: 'typescript', scheme: 'file' }
- * { language: 'json', pattern: '**\/package.json' }
- * ```
- *
- * Please note that for a document filter to be valid at least one of the properties for language, scheme, or pattern must be set. To keep the type definition simple all properties are marked as optional.
- */
-export interface DocumentFilter {
-	/**
-	 * A language id, like `typescript`.
-	 */
-	language?: string;
-
-	/**
-	 * A Uri scheme, like `file` or `untitled`.
-	 */
-	scheme?: string;
-
-	/**
-	 * A glob pattern, like `*.{ts,js}`.
-	 *
-	 * Glob patterns can have the following syntax:
-	 * - `*` to match one or more characters in a path segment
-	 * - `?` to match on one character in a path segment
-	 * - `**` to match any number of path segments, including none
-	 * - `{}` to group sub patterns into an OR expression. (e.g. `**​/*.{ts,js}`
-	 *   matches all TypeScript and JavaScript files)
-	 * - `[]` to declare a range of characters to match in a path segment
-	 *   (e.g., `example.[0-9]` to match on `example.0`, `example.1`, …)
-	 * - `[!...]` to negate a range of characters to match in a path segment
-	 *   (e.g., `example.[!0-9]` to match on `example.a`, `example.b`, but
-	 *   not `example.0`)
-	 */
-	pattern?: string;
-}
-
-/**
- * A document selector is the combination of one or more document filters.
- */
-export type DocumentSelector = DocumentFilter[];
-
-/**
  * Static registration options to be returned in the initialize request.
  */
 export interface StaticRegistrationOptions {
@@ -981,17 +1154,6 @@ export interface StaticRegistrationOptions {
 	 * the request again. See also Registration#id.
 	 */
 	id?: string;
-}
-
-/**
- * General text document registration options.
- */
-export interface TextDocumentRegistrationOptions {
-	/**
-	 * A document selector to identify the scope of the registration. If set to
-	 * null the document selector provided on the client side will be used.
-	 */
-	documentSelector: DocumentSelector | null;
 }
 
 /**
