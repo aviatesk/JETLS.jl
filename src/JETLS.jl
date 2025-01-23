@@ -62,9 +62,15 @@ function runserver(callback, in::IO, out::IO;
     return endpoint
 end
 
+struct FileInfo
+    version::Int
+    text::String
+end
+
 function initialize_state()
     return (;
         workspaceFolders = String[], # TODO support multiple workspace folders properly
+        file_cache = Dict{URI,FileInfo}(), # on-memory virtual file system
         uri2diagnostics = Dict{URI,Vector{Diagnostic}}())
 end
 
@@ -72,6 +78,7 @@ function handle_message(state, msg)
     if msg isa InitializeRequest
         return handle_InitializeRequest(state, msg)
     elseif msg isa WorkspaceDiagnosticRequest
+        return nothing
         return handle_WorkspaceDiagnosticRequest(state, msg)
     elseif msg isa InitializedNotification
         return nothing
@@ -122,14 +129,31 @@ function handle_InitializeRequest(state, msg::InitializeRequest)
 end
 
 function handle_DidOpenTextDocumentNotification(state, msg::DidOpenTextDocumentNotification)
+    textDocument = msg.params.textDocument
+    @assert textDocument.languageId == "julia"
+    uri = URI(textDocument.uri)
+    file_info = FileInfo(textDocument.version, textDocument.text)
+    state.file_cache[uri] = file_info
     return nothing
 end
 
+# TODO switch to incremental updates?
 function handle_DidChangeTextDocumentNotification(state, msg::DidChangeTextDocumentNotification)
+    (;textDocument,contentChanges) = msg.params
+    uri = URI(textDocument.uri)
+    for contentChange in contentChanges
+        @assert contentChange.range === contentChange.rangeLength === nothing # since `change = TextDocumentSyncKind.Full`
+    end
+    text = last(contentChanges).text
+    file_info = FileInfo(textDocument.version, text)
+    state.file_cache[uri] = file_info
     return nothing
 end
 
 function handle_DidCloseTextDocumentNotification(state, msg::DidCloseTextDocumentNotification)
+    textDocument = msg.params.textDocument
+    uri = URI(textDocument.uri)
+    delete!(state.file_cache, uri)
     return nothing
 end
 
