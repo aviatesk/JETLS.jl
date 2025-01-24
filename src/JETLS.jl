@@ -67,19 +67,28 @@ struct FileInfo
     text::String
 end
 
+struct AnalysisCache
+    diagnostics::Dict{URI,Vector{Diagnostic}}
+end
+
+struct AnalysisInstance
+    env_path::String
+    entry_path::String
+    files::Set{URI}
+    cache::AnalysisCache
+end
+
 function initialize_state()
     return (;
-        workspaceFolders = String[], # TODO support multiple workspace folders properly
+        workspaceFolders = URI[], # TODO support multiple workspace folders properly
         file_cache = Dict{URI,FileInfo}(), # on-memory virtual file system
-        uri2diagnostics = Dict{URI,Vector{Diagnostic}}())
+        analysis_instances = AnalysisInstance[],
+        reverse_map = Dict{URI,Set{Int}}())
 end
 
 function handle_message(state, msg)
     if msg isa InitializeRequest
         return handle_InitializeRequest(state, msg)
-    elseif msg isa WorkspaceDiagnosticRequest
-        return nothing
-        return handle_WorkspaceDiagnosticRequest(state, msg)
     elseif msg isa InitializedNotification
         return nothing
     elseif msg isa DidOpenTextDocumentNotification
@@ -90,6 +99,11 @@ function handle_message(state, msg)
         return handle_DidCloseTextDocumentNotification(state, msg)
     elseif msg isa DidSaveTextDocumentNotification
         return handle_DidSaveTextDocumentNotification(state, msg)
+    elseif msg isa TextDocumentDiagnosticRequest
+        return handle_TextDocumentDiagnosticRequest(state, msg)
+    elseif msg isa WorkspaceDiagnosticRequest
+        return nothing
+        return handle_WorkspaceDiagnosticRequest(state, msg)
     else
         @warn "Unhandled message" msg
         nothing
@@ -100,12 +114,12 @@ function handle_InitializeRequest(state, msg::InitializeRequest)
     workspaceFolders = msg.params.workspaceFolders
     if workspaceFolders !== nothing
         for workspaceFolder in workspaceFolders
-            push!(state.workspaceFolders, workspaceFolder.uri)
+            push!(state.workspaceFolders, URI(workspaceFolder.uri))
         end
     else
         rootUri = msg.params.rootUri
         if rootUri !== nothing
-            push!(state.workspaceFolders, msg.params.rootUri)
+            push!(state.workspaceFolders, URI(msg.params.rootUri))
         else
             @info "No workspaceFolders or rootUri in InitializeRequest"
         end
@@ -165,11 +179,15 @@ function handle_DidSaveTextDocumentNotification(state, msg::DidSaveTextDocumentN
     return nothing
 end
 
+function handle_TextDocumentDiagnosticRequest(state, msg::TextDocumentDiagnosticRequest)
+
+end
+
 function handle_WorkspaceDiagnosticRequest(state, msg::WorkspaceDiagnosticRequest)
     if isempty(state.workspaceFolders)
         return nothing
     end
-    workspaceDir = uri2filepath(URI(state.workspaceFolders[1]))::String
+    workspaceDir = uri2filepath(state.workspaceFolders[1])::String
     if !isempty(state.uri2diagnostics)
         diagnostics = WorkspaceUnchangedDocumentDiagnosticReport[]
         for (uri, _) in state.uri2diagnostics
