@@ -201,32 +201,32 @@ function Base.print(io::IO, uri::URI)
     query = uri.query
     fragment = uri.fragment
 
- 	if scheme!==nothing
+     if scheme!==nothing
         print(io, scheme)
         print(io, ':')
- 	end
+     end
 
- 	if authority!==nothing
+     if authority!==nothing
         print(io, "//")
 
-		idx = findfirst("@", authority)
-		if idx !== nothing
-			# <user>@<auth>
-			userinfo = SubString(authority, 1:idx.start-1)
-			host_and_port = SubString(authority, idx.start + 1)
-			encode(io, userinfo, is_rfc3986_userinfo)
+        idx = findfirst("@", authority)
+        if idx !== nothing
+            # <user>@<auth>
+            userinfo = SubString(authority, 1:idx.start-1)
+            host_and_port = SubString(authority, idx.start + 1)
+            encode(io, userinfo, is_rfc3986_userinfo)
             print(io, '@')
         else
             host_and_port = SubString(authority, 1)
-		end
+        end
 
-		idx3 = findfirst(":", host_and_port)
-		if idx3 === nothing
+        idx3 = findfirst(":", host_and_port)
+        if idx3 === nothing
             encode_host(io, host_and_port)
-		else
-			# <auth>:<port>
+        else
+            # <auth>:<port>
             encode_host(io, SubString(host_and_port, 1:idx3.start-1))
-			print(io, SubString(host_and_port, idx3.start))
+            print(io, SubString(host_and_port, idx3.start))
         end
      end
 
@@ -238,7 +238,7 @@ function Base.print(io::IO, uri::URI)
         encode(io, query, is_rfc3986_query)
     end
 
- 	if fragment!==nothing
+     if fragment!==nothing
         print(io, '#')
         encode(io, fragment, is_rfc3986_fragment)
     end
