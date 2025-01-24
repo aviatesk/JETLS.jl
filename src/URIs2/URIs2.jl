@@ -194,7 +194,7 @@ function encode_path(io::IO, s::AbstractString)
     print(io, escapepath(s))
 end
 
-function Base.print(io::IO, uri::URI)
+function Base.show(io::IO, uri::URI)
     scheme = uri.scheme
     authority = uri.authority
     path = uri.path
