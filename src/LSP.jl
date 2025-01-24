@@ -154,7 +154,7 @@ the request failed.
 """
 const RequestFailed = -32803
 """
-The server cancelled the request. This error code should\nonly be used for requests that
+The server cancelled the request. This error code should only be used for requests that
 explicitly support being server cancellable.
 
 # Tags
@@ -1171,7 +1171,7 @@ StructTypes.omitempties(::Type{Diagnostic}) =
 """
 @kwdef struct FullDocumentDiagnosticReport
     "A full document diagnostic report."
-    kind::lsptypeof(Val(:DocumentDiagnosticReportKind))
+    kind::String = DocumentDiagnosticReportKind.Full
     "An optional result id. If provided it will be sent on the next diagnostic request for the same document."
     resultId::Union{String, Nothing} = nothing
     "The actual items."
@@ -1187,7 +1187,7 @@ StructTypes.omitempties(::Type{FullDocumentDiagnosticReport}) = (:resultId,)
 """
 @kwdef struct UnchangedDocumentDiagnosticReport
     "A document diagnostic report indicating no changes to the last result. A server can only return `unchanged` if result ids are provided."
-    kind::lsptypeof(Val(:DocumentDiagnosticReportKind))
+    kind::String = DocumentDiagnosticReportKind.Unchanged
     "A result id which will be sent on the next diagnostic request for the same document."
     resultId::String
 end
@@ -1200,8 +1200,8 @@ A full diagnostic report with a set of related documents.
 """
 @kwdef struct RelatedFullDocumentDiagnosticReport
     "A full document diagnostic report."
-    kind::lsptypeof(Val(:DocumentDiagnosticReportKind))
-    "An optional result id. If provided it will\nbe sent on the next diagnostic request for the same document."
+    kind::String = DocumentDiagnosticReportKind.Full
+    "An optional result id. If provided it will be sent on the next diagnostic request for the same document."
     resultId::Union{String, Nothing} = nothing
     "The actual items."
     items::Vector{Diagnostic}
@@ -1226,10 +1226,10 @@ An unchanged diagnostic report with a set of related documents.
 """
 @kwdef struct RelatedUnchangedDocumentDiagnosticReport
     """
-    A document diagnostic report indicating\nno changes to the last result.
+    A document diagnostic report indicating no changes to the last result.
     A server can only return `unchanged` if result ids are provided.
     """
-    kind::lsptypeof(Val(:DocumentDiagnosticReportKind))
+    kind::String = DocumentDiagnosticReportKind.Unchanged
     "A result id which will be sent on the next diagnostic request for the same document."
     resultId::String
     """
@@ -1244,6 +1244,61 @@ An unchanged diagnostic report with a set of related documents.
     relatedDocuments::Union{Vector{Dict{lsptypeof(Val(:DocumentUri)),Union{FullDocumentDiagnosticReport,UnchangedDocumentDiagnosticReport}}}, Nothing} = nothing
 end
 StructTypes.omitempties(::Type{RelatedUnchangedDocumentDiagnosticReport}) = (:relatedDocuments,)
+
+"""
+Parameters of the document diagnostic request.
+
+# Tags
+- since – 3.17.0
+"""
+@kwdef struct DocumentDiagnosticParams
+    "An optional token that a server can use to report work done progress."
+    workDoneToken::Union{lsptypeof(Val(:ProgressToken)), Nothing} = nothing
+    "An optional token that a server can use to report partial results (e.g. streaming) to the client."
+    partialResultToken::Union{lsptypeof(Val(:ProgressToken)), Nothing} = nothing
+    "The text document."
+    textDocument::TextDocumentIdentifier
+    "The additional identifier provided during registration."
+    identifier::Union{String, Nothing} = nothing
+    "The result id of a previous response if provided."
+    previousResultId::Union{String, Nothing} = nothing
+end
+StructTypes.omitempties(::Type{DocumentDiagnosticParams}) =
+    (:workDoneToken, :partialResultToken, :identifier, :previousResultId)
+
+"""
+The text document diagnostic request is sent from the client to the server to ask the server
+to compute the diagnostics for a given document.
+As with other pull requests the server is asked to compute the diagnostics for the currently synced version of the document.
+"""
+@kwdef struct DocumentDiagnosticRequest
+    jsonrpc::String = "2.0"
+    "The request id."
+    id::Int
+    method::String = "textDocument/diagnostic"
+    params::DocumentDiagnosticParams
+end
+
+"""
+The result of a document diagnostic pull request.
+A report can either be a full report containing all diagnostics for the requested document
+or a unchanged report indicating that nothing has changed in terms of diagnostics in
+comparison to the last pull request.
+
+# Tags
+- since – 3.17.0
+"""
+const DocumentDiagnosticReport = Union{RelatedFullDocumentDiagnosticReport, RelatedUnchangedDocumentDiagnosticReport}
+
+"""
+Cancellation data returned from a diagnostic request.
+
+# Tags
+- since – 3.17.0
+"""
+@kwdef struct DiagnosticServerCancellationData
+    retriggerRequest::Bool
+end
 
 """
 A full document diagnostic report for a workspace diagnostic result.
@@ -1335,61 +1390,6 @@ StructTypes.omitempties(::Type{WorkspaceDiagnosticParams}) =
     params::WorkspaceDiagnosticParams
 end
 
-"""
-Parameters of the document diagnostic request.
-
-# Tags
-- since – 3.17.0
-"""
-@kwdef struct DocumentDiagnosticParams
-    "An optional token that a server can use to report work done progress."
-    workDoneToken::Union{lsptypeof(Val(:ProgressToken)), Nothing} = nothing
-    "An optional token that a server can use to report partial results (e.g. streaming) to the client."
-    partialResultToken::Union{lsptypeof(Val(:ProgressToken)), Nothing} = nothing
-    "The text document."
-    textDocument::TextDocumentIdentifier
-    "The additional identifier  provided during registration."
-    identifier::Union{String, Nothing} = nothing
-    "The result id of a previous response if provided."
-    previousResultId::Union{String, Nothing} = nothing
-end
-StructTypes.omitempties(::Type{DocumentDiagnosticParams}) =
-    (:workDoneToken, :partialResultToken, :identifier, :previousResultId)
-
-"""
-The text document diagnostic request is sent from the client to the server to ask the server
-to compute the diagnostics for a given document.
-As with other pull requests the server is asked to compute the diagnostics for the currently synced version of the document.
-"""
-@kwdef struct DocumentDiagnosticRequest
-    jsonrpc::String = "2.0"
-    "The request id."
-    id::Int
-    method::String = "textDocument/diagnostic"
-    params::DocumentDiagnosticParams
-end
-
-"""
-The result of a document diagnostic pull request.
-A report can either be a full report containing all diagnostics for the requested document
-or a unchanged report indicating that nothing has changed in terms of diagnostics in
-comparison to the last pull request.
-
-# Tags
-- since – 3.17.0
-"""
-const DocumentDiagnosticReport = Union{RelatedFullDocumentDiagnosticReport, RelatedUnchangedDocumentDiagnosticReport}
-
-@kwdef struct DocumentDiagnosticResponse
-    jsonrpc::String = "2.0"
-    "The request id."
-    id::Union{Int, Nothing}
-    "The error object in case a request fails."
-    error::Union{ResponseError, Nothing} = nothing
-    result::DocumentDiagnosticReport
-end
-StructTypes.omitempties(::Type{DocumentDiagnosticResponse}) = (:error,)
-
 # message dispatcher definition
 const method_dispatcher = Dict{String,DataType}(
     "textDocument/diagnostic" => DocumentDiagnosticRequest,
@@ -1411,6 +1411,7 @@ export
     DiagnosticOptions,
     DiagnosticRegistrationOptions,
     DiagnosticRelatedInformation,
+    DiagnosticServerCancellationData,
     DiagnosticSeverity,
     DiagnosticTag,
     DidChangeTextDocumentNotification,
