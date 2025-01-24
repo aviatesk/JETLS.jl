@@ -2,8 +2,8 @@ module JETLS
 
 export runserver
 
-include("utils.jl")
-using .LSPURI
+include("URIs2/URIs2.jl")
+using .URIs2
 
 module LSP
 using StructTypes
@@ -99,8 +99,8 @@ function handle_message(state, msg)
         return handle_DidCloseTextDocumentNotification(state, msg)
     elseif msg isa DidSaveTextDocumentNotification
         return handle_DidSaveTextDocumentNotification(state, msg)
-    elseif msg isa TextDocumentDiagnosticRequest
-        return handle_TextDocumentDiagnosticRequest(state, msg)
+    # elseif msg isa TextDocumentDiagnosticRequest
+    #     return handle_TextDocumentDiagnosticRequest(state, msg)
     elseif msg isa WorkspaceDiagnosticRequest
         return nothing
         return handle_WorkspaceDiagnosticRequest(state, msg)
@@ -179,9 +179,7 @@ function handle_DidSaveTextDocumentNotification(state, msg::DidSaveTextDocumentN
     return nothing
 end
 
-function handle_TextDocumentDiagnosticRequest(state, msg::TextDocumentDiagnosticRequest)
-
-end
+# function handle_TextDocumentDiagnosticRequest(state, msg::TextDocumentDiagnosticRequest) end
 
 function handle_WorkspaceDiagnosticRequest(state, msg::WorkspaceDiagnosticRequest)
     if isempty(state.workspaceFolders)

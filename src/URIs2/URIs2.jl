@@ -1,11 +1,25 @@
-# TODO adapted from LanguageServer.jl, we should share this code
+# Adapted from https://github.com/julia-vscode/JuliaWorkspaces.jl/tree/54069ac444045a9f7bb40cb1e35c5fc237b85d52/src/URIs2
+# TODO publish this as a standalone package and share it between JETLS and JuliaWorkspace.jl
 
-module LSPURI
+module URIs2
 
-using URIs: URIs
+using AutoHashEquals
+
+include("vendored_from_uris.jl")
 
 export URI, uri2filepath, filepath2uri, @uri_str
 
+"""
+    struct URI
+
+Details of a Unified Resource Identifier.
+
+ - scheme::Union{Nothing, String}
+ - authority::Union{Nothing, String}
+ - path::String
+ - query::Union{Nothing, String}
+ - fragment::Union{Nothing, String}
+"""
 struct URI
     scheme::Union{String,Nothing}
     authority::Union{String,Nothing}
@@ -42,10 +56,22 @@ end
             return hash((a.scheme, a.authority, a.path, a.query, a.fragment), h)
         end
     end
+else
+    function Base.:(==)(a::URI, b::URI)
+        return a.scheme == b.scheme &&
+            a.authority == b.authority &&
+            a.path == b.path &&
+            a.query == b.query &&
+            a.fragment == b.fragment
+    end
+
+    function Base.hash(a::URI, h::UInt)
+        return hash((a.scheme, a.authority, a.path, a.query, a.fragment), h)
+    end
 end
 
 function percent_decode(str::AbstractString)
-    return URIs.unescapeuri(str)
+    return unescapeuri(str)
 end
 
 function URI(value::AbstractString)
@@ -165,7 +191,7 @@ end
 
 function encode_path(io::IO, s::AbstractString)
     # TODO Write our own version
-    print(io, URIs.escapepath(s))
+    print(io, escapepath(s))
 end
 
 function Base.print(io::IO, uri::URI)
@@ -175,32 +201,32 @@ function Base.print(io::IO, uri::URI)
     query = uri.query
     fragment = uri.fragment
 
-     if scheme!==nothing
+ 	if scheme!==nothing
         print(io, scheme)
         print(io, ':')
-     end
+ 	end
 
-     if authority!==nothing
+ 	if authority!==nothing
         print(io, "//")
 
-        idx = findfirst("@", authority)
-        if idx !== nothing
-            # <user>@<auth>
-            userinfo = SubString(authority, 1:idx.start-1)
-            host_and_port = SubString(authority, idx.start + 1)
-            encode(io, userinfo, is_rfc3986_userinfo)
+		idx = findfirst("@", authority)
+		if idx !== nothing
+			# <user>@<auth>
+			userinfo = SubString(authority, 1:idx.start-1)
+			host_and_port = SubString(authority, idx.start + 1)
+			encode(io, userinfo, is_rfc3986_userinfo)
             print(io, '@')
         else
             host_and_port = SubString(authority, 1)
-        end
+		end
 
-        idx3 = findfirst(":", host_and_port)
-        if idx3 === nothing
+		idx3 = findfirst(":", host_and_port)
+		if idx3 === nothing
             encode_host(io, host_and_port)
-        else
-            # <auth>:<port>
+		else
+			# <auth>:<port>
             encode_host(io, SubString(host_and_port, 1:idx3.start-1))
-            print(io, SubString(host_and_port, idx3.start))
+			print(io, SubString(host_and_port, idx3.start))
         end
      end
 
@@ -212,7 +238,7 @@ function Base.print(io::IO, uri::URI)
         encode(io, query, is_rfc3986_query)
     end
 
-     if fragment!==nothing
+ 	if fragment!==nothing
         print(io, '#')
         encode(io, fragment, is_rfc3986_fragment)
     end
@@ -232,61 +258,6 @@ macro uri_str(ex)
     return URI(ex)
 end
 
-function uri2filepath(uri::URI)
-    if uri.scheme != "file"
-        return nothing
-    end
-
-    path = uri.path
-    host = uri.authority
-
-    if host!==nothing && host != "" && length(path) > 1
-        # unc path: file://shares/c$/far/boo
-        value = "//$host$path"
-    elseif length(path) >= 3 &&
-            path[1] == '/' &&
-            isascii(path[2]) && isletter(path[2]) &&
-            path[3] == ':'
-        # windows drive letter: file:///c:/far/boo
-        value = lowercase(path[2]) * path[3:end]
-    else
-        # other path
-        value = path
-    end
-
-    if Sys.iswindows()
-        value = replace(value, '/' => '\\')
-    end
-
-    return value
-end
-
-function filepath2uri(path::String)
-    isabspath(path) || error("Relative path `$path` is not valid.")
-
-    path = normpath(path)
-
-    if Sys.iswindows()
-        path = replace(path, "\\" => "/")
-    end
-
-    authority = ""
-
-    if startswith(path, "//")
-        # UNC path //foo/bar/foobar
-        idx = findnext("/", path, 3)
-        if idx===nothing
-            authority = path[3:end]
-            path = "/"
-        else
-            authority = path[3:idx.start-1]
-            path = path[idx.start:end]
-        end
-    elseif length(path)>=2 && isascii(path[1]) && isletter(path[1]) && path[2]==':'
-        path = string('/', lowercase(path[1]), SubString(path, 2))
-    end
-
-    return URI(scheme="file", authority=authority, path=path)
-end
+include("uri_helpers.jl")
 
 end

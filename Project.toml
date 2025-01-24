@@ -4,12 +4,14 @@ authors = ["Shuhei Kadowaki <aviatesk@gmail.com>"]
 version = "0.0.0"
 
 [deps]
+AutoHashEquals = "15f4f7f2-30c1-5605-9d31-71845cf9641f"
 JET = "c3a54625-cd67-489e-a8e7-0a5a0ff4e31b"
 JSON3 = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
 StructTypes = "856f2bd8-1eba-4b0a-8007-ebc267875bd4"
 URIs = "5c2747f8-b7ea-4ff2-ba2e-563bfd36b1d4"
 
 [compat]
+AutoHashEquals = "2.2.0"
 JET = "0.9.12"
 JSON3 = "1.14.1"
 StructTypes = "1.11.0"
