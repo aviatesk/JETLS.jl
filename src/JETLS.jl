@@ -28,7 +28,7 @@ function runserver(callback, in::IO, out::IO;
         for msg in endpoint
             if msg isa ShutdownRequest
                 shutdown_requested = true
-                res = ResponseMessage(; id = msg.id, result = nothing)
+                res = ResponseMessage(; id = msg.id)
             elseif msg isa ExitNotification
                 exit_code = !shutdown_requested
                 callback(msg, nothing)
@@ -49,11 +49,8 @@ function runserver(callback, in::IO, out::IO;
             callback(msg, res)
         end
     catch err
-        @info "Message handling failed" err
-        io = IOBuffer()
-        bt = catch_backtrace()
-        Base.display_error(io, err, bt)
-        print(stderr, String(take!(io)))
+        @error "Message handling failed" err
+        Base.display_error(stderr, err, catch_backtrace())
     finally
         close(endpoint)
     end
@@ -69,26 +66,13 @@ struct FileInfo
     parsed::Union{Expr,JuliaSyntax.ParseError}
 end
 
-mutable struct AnalysisResult
-    staled::Bool
-    last_analysis::Float64
-    ready::Bool
-    const diagnostics::Dict{URI,Vector{Diagnostic}}
-end
-
-struct AnalysisInstance
-    env_path::String
-    entry_path::String
-    files::Set{URI}
-    result::AnalysisResult
-end
-
 function initialize_state()
     return (;
         workspaceFolders = URI[], # TODO support multiple workspace folders properly
         file_cache = Dict{URI,FileInfo}(), # on-memory virtual file system
         analysis_instances = AnalysisInstance[],
-        reverse_map = Dict{URI,BitSet}())
+        reverse_map = Dict{URI,BitSet}(),
+        analysis_interval = 15.0)
 end
 
 function handle_message(state, msg)
@@ -107,8 +91,7 @@ function handle_message(state, msg)
     elseif msg isa DocumentDiagnosticRequest
         return handle_DocumentDiagnosticRequest(state, msg)
     elseif msg isa WorkspaceDiagnosticRequest
-        return nothing
-        return handle_WorkspaceDiagnosticRequest(state, msg)
+        return nothing # TODO? handle_WorkspaceDiagnosticRequest(state, msg)
     else
         @warn "Unhandled message" msg
         nothing
@@ -124,9 +107,9 @@ function handle_InitializeRequest(state, msg::InitializeRequest)
     else
         rootUri = msg.params.rootUri
         if rootUri !== nothing
-            push!(state.workspaceFolders, URI(msg.params.rootUri))
+            push!(state.workspaceFolders, URI(rootUri))
         else
-            @info "No workspaceFolders or rootUri in InitializeRequest"
+            @warn "No workspaceFolders or rootUri in InitializeRequest"
         end
     end
     return ResponseMessage(; id = msg.id,
@@ -136,11 +119,12 @@ function handle_InitializeRequest(state, msg::InitializeRequest)
                 textDocumentSync = TextDocumentSyncOptions(;
                     openClose = true,
                     change = TextDocumentSyncKind.Full,
-                    save = true),
+                    save = SaveOptions(;
+                        includeText = true)),
                 diagnosticProvider = DiagnosticOptions(;
                     identifier = "JETLS",
                     interFileDependencies = true,
-                    workspaceDiagnostics = true),
+                    workspaceDiagnostics = false),
             ),
             serverInfo = (;
                 name = "JETLS",
@@ -174,14 +158,19 @@ function handle_DidChangeTextDocumentNotification(state, msg::DidChangeTextDocum
         @assert contentChange.range === contentChange.rangeLength === nothing # since `change = TextDocumentSyncKind.Full`
     end
     text = last(contentChanges).text
-    file_info = FileInfo(textDocument.version, text, parse_file(text, uri))
+    parsed = parse_file(text, uri)
+    file_info = FileInfo(textDocument.version, text, parsed)
     state.file_cache[uri] = file_info
     idxs = get(state.reverse_map, uri, nothing)
     if idxs !== nothing
         for idx in idxs
             analysis_instance = state.analysis_instances[idx]
             analysis_instance.result.staled = true
-            analysis_instance.result.ready = file_info.parsed isa Expr
+            if parsed isa JuliaSyntax.ParseError
+                analysis_instance.parse_errors[uri] = parsed
+            else
+                delete!(analysis_instance.parse_errors, uri)
+            end
         end
     end
     return nothing
@@ -202,78 +191,110 @@ function handle_DocumentDiagnosticRequest(state, msg::DocumentDiagnosticRequest)
     @assert msg.params.identifier == "JETLS"
     textDocument = msg.params.textDocument
     uri = URI(textDocument.uri)
-    if !haskey(state.file_cache, uri)
+    try
+        _handle_DocumentDiagnosticRequest(state, msg, uri)
+    catch err
+        @error "DocumentDiagnosticRequest handling failed" err
+        Base.display_error(stderr, err, catch_backtrace())
+        clear_analysis_instances!(state)
         return ResponseMessage(;
             id = msg.id,
-            error=ResponseError(
-                code=ErrorCodes.ServerCancelled,
-                message="File cache for the requested document not found",
-                data=DiagnosticServerCancellationData(;
-                    retriggerRequest=true)))
+            error = ResponseError(;
+                code = ErrorCodes.InternalError,
+                message = "Message handling failed",
+                data = DiagnosticServerCancellationData(;
+                    retriggerRequest = false)))
     end
-    file_info = state.file_cache[uri]
-    if file_info.parsed isa JuliaSyntax.ParseError
-        return ResponseMessage(;
-            id = msg.id,
-            result = RelatedFullDocumentDiagnosticReport(;
-                items=parse_error_to_diagnostics(file_info.parsed)))
-    end
-    return ResponseMessage(;
-        id = msg.id,
-        result = RelatedFullDocumentDiagnosticReport(;
-            items = Diagnostic[]))
+end
+
+function clear_analysis_instances!(state)
+    empty!(state.reverse_map)
+    empty!(state.analysis_instances)
+end
+
+function _handle_DocumentDiagnosticRequest(state, msg::DocumentDiagnosticRequest, uri::URI)
     if !haskey(state.reverse_map, uri)
-        analysis_instance = initiate_analysis(uri)
-        if analysis_instance === nothing
-            return nothing
+        res = initiate_analysis!(state, uri)
+        if res isa ResponseError
+            return ResponseMessage(; id = msg.id, error = res)
+        else
+            return ResponseMessage(; id = msg.id, result = res)
         end
-        push!(state.analysis_instances, analysis_instance)
-        state.reverse_map[uri] = push!(BitSet(), length(state.analysis_instances))
     else
-        for idx in state.reverse_map[uri]
-            analysis_instance = state.analysis_instances[idx]
-            refresh_analysis!(analysis_instance)
+        res = refresh_analysis_instances!(state, uri)
+        if res isa ResponseError
+            return ResponseMessage(; id = msg.id, error = res)
+        else
+            return ResponseMessage(; id = msg.id, result = res)
         end
-        return ResponseMessage(;
-            id = msg.id,
-            result = RelatedFullDocumentDiagnosticReport(;
-                items = Diagnostic[]))
     end
-    return nothing
 end
 
 function parse_error_to_diagnostics(err::JuliaSyntax.ParseError)
     diagnostics = Diagnostic[]
-    source = err.source
-    for diagnostic in err.diagnostics
-        severity =
-            diagnostic.level === :error ? DiagnosticSeverity.Error :
-            diagnostic.level === :warning ? DiagnosticSeverity.Warning :
-            diagnostic.level === :note ? DiagnosticSeverity.Information :
-            DiagnosticSeverity.Hint
-        start = let
-            line, col = JuliaSyntax.source_location(source, JuliaSyntax.first_byte(diagnostic))
-            Position(; line = line-1, character = col)
-        end
-        var"end" = let
-            line, col = JuliaSyntax.source_location(source, JuliaSyntax.last_byte(diagnostic))
-            Position(; line = line-1, character = col)
-        end
-        range = Range(; start, var"end")
-        push!(diagnostics, Diagnostic(;
-            severity,
-            source = "JuliaSyntax",
-            message = diagnostic.message,
-            range))
-    end
+    parse_error_to_diagnostics!(diagnostics, err)
     return diagnostics
 end
+function parse_error_to_diagnostics!(diagnostics::Vector{Diagnostic}, err::JuliaSyntax.ParseError)
+    source = err.source
+    for diagnostic in err.diagnostics
+        sline, scol = JuliaSyntax.source_location(source, JuliaSyntax.first_byte(diagnostic))
+        start = Position(; line = sline-1, character = scol)
+        eline, ecol = JuliaSyntax.source_location(source, JuliaSyntax.last_byte(diagnostic))
+        var"end" = Position(; line = eline-1, character = ecol)
+        push!(diagnostics, Diagnostic(;
+            range = Range(; start, var"end"),
+            severity =
+                diagnostic.level === :error ? DiagnosticSeverity.Error :
+                diagnostic.level === :warning ? DiagnosticSeverity.Warning :
+                diagnostic.level === :note ? DiagnosticSeverity.Information :
+                DiagnosticSeverity.Hint,
+            message = diagnostic.message,
+            source = "JuliaSyntax"))
+    end
+end
 
-function initiate_analysis(uri::URI)
+mutable struct AnalysisResult
+    staled::Bool
+    last_analysis::Float64
+    const uri2diagnostics::Dict{URI,Vector{Diagnostic}}
+end
+
+abstract type AnalysisEntry end
+
+struct ScriptAnalysisEntry <: AnalysisEntry
+    uri::URI
+end
+struct ScriptInEnvAnalysisEntry <: AnalysisEntry
+    env_path::String
+    uri::URI
+end
+struct PackageSourceAnalysisEntry <: AnalysisEntry
+    env_path::String
+    pkgfile::String
+    pkgid::Base.PkgId
+end
+struct PackageTestAnalysisEntry <: AnalysisEntry
+    env_path::String
+    runtests::String
+end
+
+struct AnalysisInstance
+    entry::AnalysisEntry
+    files::Set{URI}
+    parse_errors::Dict{URI,JuliaSyntax.ParseError}
+    result::AnalysisResult
+end
+
+function initiate_analysis!(state, uri::URI)
     path = uri2filepath(uri)
     if path === nothing
-        @warn "non file:// URI supported" uri
-        return nothing
+        @warn "Non file:// URI supported" uri
+        return ResponseError(;
+            code = ErrorCodes.ServerCancelled,
+            message = "Non file:// URI supported",
+            data = DiagnosticServerCancellationData(;
+                retriggerRequest = false))
     end
     env_path = find_env_path(path)
     env_toml = env_path === nothing ? nothing : try
@@ -282,76 +303,271 @@ function initiate_analysis(uri::URI)
         err isa Base.TOML.ParseError || rethrow(err)
         nothing
     end
-    if haskey(file_cache, uri)
+    if !haskey(state.file_cache, uri)
         @warn "File cache for the requested document not found" uri
-        return nothing
+        return ResponseError(;
+            code = ErrorCodes.ServerCancelled,
+            message = "File cache for the requested document not found",
+            data = DiagnosticServerCancellationData(;
+                retriggerRequest = false))
     end
-    file_info = file_cache[uri]
+    file_info = state.file_cache[uri]
     parsed = file_info.parsed
     if parsed isa JuliaSyntax.ParseError
-        # translate to diagnostics
-        diagnostics = Dict{URI,Vector{Diagnostic}}()
-    else
-        result = activate_do(env_path) do
-            analyze_from_file(path, env_path, env_toml)
+        diagnostics = parse_error_to_diagnostics(parsed)
+        relatedDocuments = nothing
+    elseif env_path === nothing
+        @label analyze_script
+        if env_path !== nothing
+            entry = ScriptInEnvAnalysisEntry(env_path, uri)
+            result = activate_do(env_path) do
+                JET.analyze_and_report_expr!(JET.JETAnalyzer(), parsed, path;
+                    toplevel_logger=stderr)
+            end
+        else
+            entry = ScriptAnalysisEntry(uri)
+            result = JET.analyze_and_report_expr!(JET.JETAnalyzer(), parsed, path;
+                toplevel_logger=stderr)
+        end
+        analysis_instance = new_analysis_instance(entry, result)
+        @assert uri in analysis_instance.files
+        record_analysis_instance!(state, analysis_instance)
+    elseif env_toml === nothing
+        @goto analyze_script
+    elseif !haskey(env_toml, "name")
+        @goto analyze_script
+    else # this file is likely one within a package
+        filekind, filedir = find_package_directory(path, env_path)
+        if filekind === :script
+            @goto analyze_script
+        elseif filekind === :src
+            pkgname = env_toml["name"]
+            pkgenv = Base.identify_package_env(pkgname)
+            if pkgenv === nothing
+                @warn "Failed to identify package environment" pkgname
+                @goto analyze_script
+            end
+            pkgid, env = pkgenv
+            pkgfile = Base.locate_package(pkgid, env)
+            if pkgfile === nothing
+                @warn "Expected a package to have a source file" pkgname
+                @goto analyze_script
+            end
+            # analyze package source files
+            entry = PackageSourceAnalysisEntry(env_path, pkgfile, pkgid)
+            result = activate_do(env_path) do
+                JET.analyze_and_report_file!(JET.JETAnalyzer(), pkgfile, pkgid;
+                    toplevel_logger=nothing,
+                    analyze_from_definitions=true,
+                    concretization_patterns=[:(x_)])
+            end
+            analysis_instance = new_analysis_instance(entry, result)
+            record_analysis_instance!(state, analysis_instance)
+            if uri ∉ analysis_instance.files
+                @goto analyze_script
+            end
+        elseif filekind === :test
+            # analyze test scripts
+            runtests = joinpath(filedir, "runtests.jl")
+            result = activate_do(env_path) do
+                JET.analyze_and_report_file!(JET.JETAnalyzer(), runtests;
+                    toplevel_logger=stderr)
+            end
+            entry = PackageTestAnalysisEntry(env_path, runtests)
+            analysis_instance = new_analysis_instance(entry, result)
+            record_analysis_instance!(state, analysis_instance)
+            if uri ∉ analysis_instance.files
+                @goto analyze_script
+            end
+        elseif filekind === :docs
+            @goto analyze_script # TODO
+        else
+            @assert filekind === :ext
+            @goto analyze_script # TODO
         end
     end
-    diagnostics = Dict{URI,Vector{Diagnostic}}()
-    diagnostics[uri] = Diagnostic[]
-    result = AnalysisResult(false, time(), false, diagnostics)
-    files = push!(Set{URI}(), uri)
-    return AnalysisInstance(env_path, path, files, result)
+
+    return to_diagnostic_report(analysis_instance.result.uri2diagnostics, uri)
+end
+
+# summarize the result into diagnostics
+function to_diagnostic_report(uri2diagnostics, main_uri)
+    items = uri2diagnostics[main_uri]
+    relatedDocuments = Dict{String,Union{FullDocumentDiagnosticReport,UnchangedDocumentDiagnosticReport}}()
+    for (furi, diagnostics) in uri2diagnostics
+        furi == main_uri && continue
+        relatedDocuments[string(furi)] = FullDocumentDiagnosticReport(;
+            items = diagnostics)
+    end
+    return RelatedFullDocumentDiagnosticReport(;
+        items,
+        relatedDocuments)
+end
+
+function new_analysis_instance(entry::AnalysisEntry, result)
+    files = Set{URI}()
+    for filepath in result.res.included_files
+        push!(files, filepath2uri(filepath)) # `filepath` is an absolute path (since `path` is specified as absolute)
+    end
+    # TODO return something for `toplevel_error_reports`
+    parse_errors = Dict{URI,JuliaSyntax.ParseError}()
+    uri2diagnostics = jet_error_reports_to_diagnostics(result.res.inference_error_reports, files)
+    analysis_result = AnalysisResult(false, time(), uri2diagnostics)
+    return AnalysisInstance(entry, files, parse_errors, analysis_result)
+end
+
+function record_analysis_instance!(state, analysis_instance)
+    push!(state.analysis_instances, analysis_instance)
+    aidx = length(state.analysis_instances)
+    for furi in analysis_instance.files
+        revmap = get!(BitSet, state.reverse_map, furi)
+        push!(revmap, aidx)
+    end
+end
+
+# TODO severity
+function jet_error_reports_to_diagnostics(reports, files::Set{URI})
+    uri2diagnostics = Dict{URI,Vector{Diagnostic}}(furi => Diagnostic[] for furi in files)
+    jet_error_reports_to_diagnostics!(uri2diagnostics, reports, files)
+    return uri2diagnostics
+end
+
+function jet_error_reports_to_diagnostics!(uri2diagnostics::Dict{URI,Vector{Diagnostic}}, reports, files::Set{URI})
+    for report in reports
+        topframe = report.vst[1]
+        furi = filepath2uri(JET.tofullpath(String(topframe.file)))
+        items = uri2diagnostics[furi]
+        message = JET.with_bufferring(:limit=>true) do io
+            JET.print_report_message(io, report)
+        end
+        relatedInformation = DiagnosticRelatedInformation[
+            let frame = report.vst[i],
+                message = sprint(JET.print_frame_sig, frame, JET.PrintConfig())
+                DiagnosticRelatedInformation(;
+                    location = Location(;
+                        uri = string(filepath2uri(JET.tofullpath(String(frame.file)))),
+                        range = jet_frame_to_range(frame)),
+                    message)
+            end
+            for i = 2:length(report.vst)]
+        push!(items, Diagnostic(;
+            range = jet_frame_to_range(topframe),
+            message,
+            source = "JETAnalyzer",
+            relatedInformation))
+    end
+end
+
+function jet_frame_to_range(frame)
+    line = JET.fixed_line_number(frame)
+    line = line == 0 ? line : line - 1
+    start = Position(; line, character=0)
+    var"end" = Position(; line, character=Int(typemax(Int32)))
+    return Range(; start, var"end")
 end
 
 function activate_do(func, env_path::String)
     old_env = Pkg.project().path
     try
-        Pkg.activate(env_path)
+        Pkg.activate(env_path; io=devnull)
         func()
     finally
-        Pkg.activate(old_env.path)
+        Pkg.activate(old_env; io=devnull)
     end
 end
 
-function analyze_from_file(path::String, env_path::String, env_toml::Dict{String,Any})
-    analyzer = JET.JETAnalyzer()
-    if env_toml !== nothing && haskey(env_toml, "name") && is_package_file(path, env_path)
-        pkgname = env_toml["name"]
-        pkgenv = Base.identify_package_env(pkgname)
-        if pkgenv === nothing
-            @warn "Failed to identify package environment" pkgname
-            @goto analyze_script
-        end
-        pkgid, env = pkgenv
-        pkgfile = Base.locate_package(pkgid, env)
-        if pkgfile === nothing
-            @warn "Expected a package to have a source file." pkgname
-            @goto analyze_script
-        end
-        result = JET.analyze_and_report_expr!(analyzer, parsed, path;
-            analyze_from_definitions=true, toplevel_logger=stderr,
-            concretization_patterns=[:(x_)])
-    else
-        @label analyze_script
-        result = JET.analyze_and_report_expr!(analyzer, parsed, path;
-            toplevel_logger=stderr)
-    end
-    return result
-end
-
-function is_package_file(path::String, env_path::String)
+function find_package_directory(path::String, env_path::String)
+    dir = dirname(path)
     env_dir = dirname(env_path)
     src_dir = joinpath(env_dir, "src")
-    dir = dirname(path)
+    test_dir = joinpath(env_dir, "test")
+    docs_dir = joinpath(env_dir, "docs")
+    ext_dir = joinpath(env_dir, "ext")
     while dir != env_dir
-        src_dir == dir && return true
+        dir == src_dir && return :src, src_dir
+        dir == test_dir && return :test, test_dir
+        dir == docs_dir && return :docs, docs_dir
+        dir == ext_dir && return :ext, ext_dir
         dir = dirname(dir)
     end
-    return false
+    return :script, path
 end
 
-function refresh_analysis!(analysis_instance::AnalysisInstance)
-    # TODO
+function refresh_analysis_instances!(state, uri::URI)
+    aidxs = state.reverse_map[uri]
+    if aidxs === nothing
+        @warn "No analysis instance found for the requested document" uri
+        return RelatedFullDocumentDiagnosticReport(;
+            items=Diagnostic[])
+    end
+    # TODO support multiple analysis instances, which can happen if this file is included from multiple different contexts
+    analysis_instance = state.analysis_instances[first(aidxs)]
+    analysis_result = analysis_instance.result
+    if !analysis_result.staled
+        return RelatedUnchangedDocumentDiagnosticReport(;
+            resultId=string(uri))
+    elseif !isempty(analysis_instance.parse_errors)
+        items = Diagnostic[]
+        relatedDocuments = Dict{String,Union{FullDocumentDiagnosticReport,UnchangedDocumentDiagnosticReport}}()
+        for (furi, parse_error) in analysis_instance.parse_errors
+            if furi == uri
+                parse_error_to_diagnostics!(items, parse_error)
+            else
+                relatedDocuments[string(furi)] = FullDocumentDiagnosticReport(;
+                    items = parse_error_to_diagnostics(parse_error))
+            end
+        end
+        return RelatedFullDocumentDiagnosticReport(;
+            items,
+            relatedDocuments)
+    elseif time() - analysis_result.last_analysis < state.analysis_interval
+        return to_diagnostic_report(analysis_instance.result.uri2diagnostics, uri)
+    end
+    entry = analysis_instance.entry
+    if entry isa ScriptAnalysisEntry
+        result = JET.analyze_and_report_file!(JET.JETAnalyzer(), uri2filepath(entry.uri);
+            toplevel_logger=stderr)
+    elseif entry isa ScriptInEnvAnalysisEntry
+        result = activate_do(entry.env_path) do
+            JET.analyze_and_report_file!(JET.JETAnalyzer(), uri2filepath(entry.uri);
+                toplevel_logger=stderr)
+        end
+    elseif entry isa PackageSourceAnalysisEntry
+        result = activate_do(entry.env_path) do
+            JET.analyze_and_report_file!(JET.JETAnalyzer(), entry.pkgfile, entry.pkgid;
+                toplevel_logger=nothing,
+                analyze_from_definitions=true,
+                concretization_patterns=[:(x_)])
+        end
+    elseif entry isa PackageTestAnalysisEntry
+        result = activate_do(entry.env_path) do
+            JET.analyze_and_report_file!(JET.JETAnalyzer(), entry.runtests;
+                toplevel_logger=stderr)
+        end
+    else
+        @warn "Unsupported analysis entry" entry
+        return ResponseError(;
+            code = ErrorCodes.ServerCancelled,
+            message = "Unsupported analysis entry",
+            data = DiagnosticServerCancellationData(;
+                retriggerRequest = false))
+    end
+    update_analysis_instance!(analysis_instance, result)
+    return to_diagnostic_report(analysis_instance.result.uri2diagnostics, uri)
+end
+
+function update_analysis_instance!(analysis_instance, result)
+    files = analysis_instance.files
+    uri2diagnostics = analysis_instance.result.uri2diagnostics
+    for filepath in result.res.included_files
+        uri = filepath2uri(filepath)
+        push!(files, uri) # `filepath` is an absolute path (since `path` is specified as absolute)
+        empty!(get!(()->Diagnostic[], uri2diagnostics, uri))
+    end
+    analysis_instance.result.staled = false
+    analysis_instance.result.last_analysis = time()
+    # TODO return something for `toplevel_error_reports`
+    jet_error_reports_to_diagnostics!(uri2diagnostics, result.res.inference_error_reports, files)
 end
 
 find_env_path(path::String) = search_up_file(path, "Project.toml")
@@ -372,76 +588,76 @@ function search_up_file(path::String, basename::String)
     return nothing
 end
 
-function handle_WorkspaceDiagnosticRequest(state, msg::WorkspaceDiagnosticRequest)
-    if isempty(state.workspaceFolders)
-        return nothing
-    end
-    workspaceDir = uri2filepath(state.workspaceFolders[1])::String
-    if !isempty(state.uri2diagnostics)
-        diagnostics = WorkspaceUnchangedDocumentDiagnosticReport[]
-        for (uri, _) in state.uri2diagnostics
-            suri = string(uri)
-            push!(diagnostics, WorkspaceUnchangedDocumentDiagnosticReport(;
-                kind = DocumentDiagnosticReportKind.Unchanged,
-                resultId = suri,
-                uri=lowercase(suri),
-                version=nothing))
-        end
-        return ResponseMessage(;
-            id = msg.id,
-            result = WorkspaceDiagnosticReport(; items = diagnostics))
-    end
-    pkgname = basename(workspaceDir)
-    pkgpath = joinpath(workspaceDir, "src", "$pkgname.jl")
-    result = @invokelatest report_file(pkgpath;
-        analyze_from_definitions=true, toplevel_logger=stderr,
-        concretization_patterns=[:(x_)])
-    diagnostics = jet_to_workspace_diagnostics(state, workspaceDir, result)
-    return ResponseMessage(;
-        id = msg.id,
-        result = WorkspaceDiagnosticReport(; items = diagnostics))
-end
+# function handle_WorkspaceDiagnosticRequest(state, msg::WorkspaceDiagnosticRequest)
+#     if isempty(state.workspaceFolders)
+#         return nothing
+#     end
+#     workspaceDir = uri2filepath(state.workspaceFolders[1])::String
+#     if !isempty(state.uri2diagnostics)
+#         diagnostics = WorkspaceUnchangedDocumentDiagnosticReport[]
+#         for (uri, _) in state.uri2diagnostics
+#             suri = string(uri)
+#             push!(diagnostics, WorkspaceUnchangedDocumentDiagnosticReport(;
+#                 kind = DocumentDiagnosticReportKind.Unchanged,
+#                 resultId = suri,
+#                 uri=lowercase(suri),
+#                 version=nothing))
+#         end
+#         return ResponseMessage(;
+#             id = msg.id,
+#             result = WorkspaceDiagnosticReport(; items = diagnostics))
+#     end
+#     pkgname = basename(workspaceDir)
+#     pkgpath = joinpath(workspaceDir, "src", "$pkgname.jl")
+#     result = @invokelatest report_file(pkgpath;
+#         analyze_from_definitions=true, toplevel_logger=stderr,
+#         concretization_patterns=[:(x_)])
+#     diagnostics = jet_to_workspace_diagnostics(state, workspaceDir, result)
+#     return ResponseMessage(;
+#         id = msg.id,
+#         result = WorkspaceDiagnosticReport(; items = diagnostics))
+# end
 
-function jet_to_workspace_diagnostics(state, workspaceDir, result)
-    for file in result.res.included_files
-        uri = filepath2uri(jetpath2abspath(file, workspaceDir))
-        state.uri2diagnostics[uri] = Diagnostic[]
-    end
+# function jet_to_workspace_diagnostics(state, workspaceDir, result)
+#     for file in result.res.included_files
+#         uri = filepath2uri(jetpath2abspath(file, workspaceDir))
+#         state.uri2diagnostics[uri] = Diagnostic[]
+#     end
 
-    # TODO result.res.toplevel_error_reports
-    for report in result.res.inference_error_reports
-        uri = filepath2uri(jetpath2abspath(String(report.vst[1].file), workspaceDir))
-        items = get!(()->Diagnostic[], state.uri2diagnostics, uri)
+#     # TODO result.res.toplevel_error_reports
+#     for report in result.res.inference_error_reports
+#         uri = filepath2uri(jetpath2abspath(String(report.vst[1].file), workspaceDir))
+#         items = get!(()->Diagnostic[], state.uri2diagnostics, uri)
 
-        buf = IOBuffer()
-        JET.print_report_message(buf, report)
-        message = String(take!(buf))
+#         buf = IOBuffer()
+#         JET.print_report_message(buf, report)
+#         message = String(take!(buf))
 
-        push!(items, Diagnostic(;
-            message,
-            range = Range(;
-                start = Position(; line=report.vst[1].line-1, character=0),
-                var"end" = Position(; line=report.vst[1].line-1, character=Int(typemax(Int32))),
-            )))
-    end
+#         push!(items, Diagnostic(;
+#             message,
+#             range = Range(;
+#                 start = Position(; line=report.vst[1].line-1, character=0),
+#                 var"end" = Position(; line=report.vst[1].line-1, character=Int(typemax(Int32))),
+#             )))
+#     end
 
-    diagnostics = WorkspaceFullDocumentDiagnosticReport[]
-    for (uri, items) in state.uri2diagnostics
-        suri = lowercase(string(uri))
-        push!(diagnostics, WorkspaceFullDocumentDiagnosticReport(;
-            kind = DocumentDiagnosticReportKind.Full,
-            resultId = suri,
-            items,
-            uri=suri,
-            version=nothing))
-    end
+#     diagnostics = WorkspaceFullDocumentDiagnosticReport[]
+#     for (uri, items) in state.uri2diagnostics
+#         suri = lowercase(string(uri))
+#         push!(diagnostics, WorkspaceFullDocumentDiagnosticReport(;
+#             kind = DocumentDiagnosticReportKind.Full,
+#             resultId = suri,
+#             items,
+#             uri=suri,
+#             version=nothing))
+#     end
 
-    return diagnostics
-end
+#     return diagnostics
+# end
 
-function jetpath2abspath(path, workspaceDir)
-    isabspath(path) && return path
-    return joinpath(workspaceDir, path)
-end
+# function jetpath2abspath(path, workspaceDir)
+#     isabspath(path) && return path
+#     return joinpath(workspaceDir, path)
+# end
 
 end # module JETLS

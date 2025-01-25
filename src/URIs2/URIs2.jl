@@ -77,15 +77,15 @@ end
 function URI(value::AbstractString)
     m = match(r"^(([^:/?#]+?):)?(\/\/([^/?#]*))?([^?#]*)(\?([^#]*))?(#(.*))?", value)
 
-    m===nothing && error("Invalid argument.")
+    m === nothing && error("Invalid input")
 
+    cap4, cap5, cap7, cap9 = m.captures[4], m.captures[5], m.captures[7], m.captures[9]
     return URI(
         m.captures[2],
-        m.captures[4]===nothing ? nothing : percent_decode(m.captures[4]),
-        m.captures[5]===nothing ? nothing : percent_decode(m.captures[5]),
-        m.captures[7]===nothing ? nothing : percent_decode(m.captures[7]),
-        m.captures[9]===nothing ? nothing : percent_decode(m.captures[9])
-    )
+        cap4 === nothing ? nothing : percent_decode(cap4),
+        cap5 === nothing ? nothing : percent_decode(cap5),
+        cap7 === nothing ? nothing : percent_decode(cap7),
+        cap9 === nothing ? nothing : percent_decode(cap9))
 end
 
 URI(uri::URI) = uri

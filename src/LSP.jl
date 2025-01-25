@@ -94,7 +94,7 @@ successful request.
     "The error object in case a request fails."
     error::Union{ResponseError, Nothing} = nothing
 end
-StructTypes.omitempties(::Type{ResponseMessage}) = (:result, :error)
+StructTypes.omitempties(::Type{ResponseMessage}) = (:error,)
 
 module ErrorCodes
 const ParseError = -32700
@@ -1214,7 +1214,7 @@ A full diagnostic report with a set of related documents.
     # Tags
     - since – 3.17.0
     """
-    relatedDocuments::Union{Vector{Dict{lsptypeof(Val(:DocumentUri)),Union{FullDocumentDiagnosticReport,UnchangedDocumentDiagnosticReport}}}, Nothing} = nothing
+    relatedDocuments::Union{Dict{lsptypeof(Val(:DocumentUri)),Union{FullDocumentDiagnosticReport,UnchangedDocumentDiagnosticReport}}, Nothing} = nothing
 end
 StructTypes.omitempties(::Type{RelatedFullDocumentDiagnosticReport}) = (:resultId, :relatedDocuments)
 
@@ -1241,7 +1241,7 @@ An unchanged diagnostic report with a set of related documents.
     # Tags
     - since – 3.17.0
     """
-    relatedDocuments::Union{Vector{Dict{lsptypeof(Val(:DocumentUri)),Union{FullDocumentDiagnosticReport,UnchangedDocumentDiagnosticReport}}}, Nothing} = nothing
+    relatedDocuments::Union{Dict{lsptypeof(Val(:DocumentUri)),Union{FullDocumentDiagnosticReport,UnchangedDocumentDiagnosticReport}}, Nothing} = nothing
 end
 StructTypes.omitempties(::Type{RelatedUnchangedDocumentDiagnosticReport}) = (:relatedDocuments,)
 
