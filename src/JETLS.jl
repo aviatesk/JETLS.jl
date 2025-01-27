@@ -75,6 +75,18 @@ function initialize_state()
         analysis_interval = 15.0)
 end
 
+struct IncludeCallback{State<:NamedTuple} <: Function
+    state::State
+end
+function (include_callback::IncludeCallback)(filepath::String)
+    uri = filepath2uri(filepath)
+    if haskey(include_callback.state.file_cache, uri)
+        return include_callback.state.file_cache[uri].text # TODO use `parsed` instead of `text`
+    end
+    # fallback to the default file-system-based include
+    return read(filepath, String)
+end
+
 function handle_message(state, msg)
     if msg isa InitializeRequest
         return handle_InitializeRequest(state, msg)
@@ -314,20 +326,24 @@ function initiate_analysis!(state, uri::URI)
     file_info = state.file_cache[uri]
     parsed = file_info.parsed
     if parsed isa JuliaSyntax.ParseError
-        diagnostics = parse_error_to_diagnostics(parsed)
-        relatedDocuments = nothing
-    elseif env_path === nothing
+        return RelatedFullDocumentDiagnosticReport(;
+            items = parse_error_to_diagnostics(parsed))
+    end
+    include_callback = IncludeCallback(state)
+    if env_path === nothing
         @label analyze_script
         if env_path !== nothing
             entry = ScriptInEnvAnalysisEntry(env_path, uri)
             result = activate_do(env_path) do
                 JET.analyze_and_report_expr!(JET.JETAnalyzer(), parsed, path;
-                    toplevel_logger=stderr)
+                    toplevel_logger=stderr,
+                    include_callback)
             end
         else
             entry = ScriptAnalysisEntry(uri)
             result = JET.analyze_and_report_expr!(JET.JETAnalyzer(), parsed, path;
-                toplevel_logger=stderr)
+                toplevel_logger=stderr,
+                include_callback)
         end
         analysis_instance = new_analysis_instance(entry, result)
         @assert uri in analysis_instance.files
@@ -356,10 +372,13 @@ function initiate_analysis!(state, uri::URI)
             # analyze package source files
             entry = PackageSourceAnalysisEntry(env_path, pkgfile, pkgid)
             result = activate_do(env_path) do
-                JET.analyze_and_report_file!(JET.JETAnalyzer(), pkgfile, pkgid;
+                pkgfiluri = filepath2uri(pkgfile)
+                analyze_parsed_if_exist(state, pkgfiluri, pkgfile, pkgid;
                     toplevel_logger=nothing,
                     analyze_from_definitions=true,
-                    concretization_patterns=[:(x_)])
+                    target_defined_modules=true,
+                    concretization_patterns=[:(x_)],
+                    include_callback)
             end
             analysis_instance = new_analysis_instance(entry, result)
             record_analysis_instance!(state, analysis_instance)
@@ -371,7 +390,8 @@ function initiate_analysis!(state, uri::URI)
             runtests = joinpath(filedir, "runtests.jl")
             result = activate_do(env_path) do
                 JET.analyze_and_report_file!(JET.JETAnalyzer(), runtests;
-                    toplevel_logger=stderr)
+                    toplevel_logger=stderr,
+                    include_callback)
             end
             entry = PackageTestAnalysisEntry(env_path, runtests)
             analysis_instance = new_analysis_instance(entry, result)
@@ -388,6 +408,15 @@ function initiate_analysis!(state, uri::URI)
     end
 
     return to_diagnostic_report(analysis_instance.result.uri2diagnostics, uri)
+end
+
+function analyze_parsed_if_exist(state, uri, args...; kwargs...)
+    if haskey(state.file_cache, uri)
+        parsed = state.file_cache[uri].parsed
+        return JET.analyze_and_report_expr!(JET.JETAnalyzer(), parsed, args...; kwargs...)
+    else
+        return JET.analyze_and_report_file!(JET.JETAnalyzer(), args...; kwargs...)
+    end
 end
 
 # summarize the result into diagnostics
@@ -524,25 +553,32 @@ function refresh_analysis_instances!(state, uri::URI)
         return to_diagnostic_report(analysis_instance.result.uri2diagnostics, uri)
     end
     entry = analysis_instance.entry
+    include_callback = IncludeCallback(state)
     if entry isa ScriptAnalysisEntry
-        result = JET.analyze_and_report_file!(JET.JETAnalyzer(), uri2filepath(entry.uri);
-            toplevel_logger=stderr)
+        result = analyze_parsed_if_exist(state, entry.uri, uri2filepath(entry.uri);
+            toplevel_logger=stderr,
+            include_callback)
     elseif entry isa ScriptInEnvAnalysisEntry
         result = activate_do(entry.env_path) do
-            JET.analyze_and_report_file!(JET.JETAnalyzer(), uri2filepath(entry.uri);
-                toplevel_logger=stderr)
+            analyze_parsed_if_exist(state, entry.uri, uri2filepath(entry.uri);
+                toplevel_logger=stderr,
+                include_callback)
         end
     elseif entry isa PackageSourceAnalysisEntry
         result = activate_do(entry.env_path) do
-            JET.analyze_and_report_file!(JET.JETAnalyzer(), entry.pkgfile, entry.pkgid;
-                toplevel_logger=nothing,
-                analyze_from_definitions=true,
-                concretization_patterns=[:(x_)])
+            pkgfiluri = filepath2uri(entry.pkgfile)
+            analyze_parsed_if_exist(state, pkgfiluri, entry.pkgfile, entry.pkgid;
+                    toplevel_logger=nothing,
+                    analyze_from_definitions=true,
+                    target_defined_modules=true,
+                    concretization_patterns=[:(x_)],
+                    include_callback)
         end
     elseif entry isa PackageTestAnalysisEntry
         result = activate_do(entry.env_path) do
             JET.analyze_and_report_file!(JET.JETAnalyzer(), entry.runtests;
-                toplevel_logger=stderr)
+                toplevel_logger=stderr,
+                include_callback)
         end
     else
         @warn "Unsupported analysis entry" entry
@@ -553,7 +589,8 @@ function refresh_analysis_instances!(state, uri::URI)
                 retriggerRequest = false))
     end
     update_analysis_instance!(analysis_instance, result)
-    return to_diagnostic_report(analysis_instance.result.uri2diagnostics, uri)
+    res = to_diagnostic_report(analysis_instance.result.uri2diagnostics, uri)
+    return res
 end
 
 function update_analysis_instance!(analysis_instance, result)
