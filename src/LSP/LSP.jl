@@ -66,7 +66,7 @@ end
 A request message to describe a request between the client and the server.
 Every processed request must send a response back to the sender of the request.
 """
-@interface RequestMessage extends Message begin
+@interface RequestMessage @extends Message begin
     "The request id."
     id::Int
 
@@ -191,7 +191,7 @@ a response message to conform to the JSON-RPC specification.
 The result property of the ResponseMessage should be set to null in this case to signal a
 successful request.
 """
-@interface ResponseMessage extends Message begin
+@interface ResponseMessage @extends Message begin
     "The request id."
     id::Union{Int, Nothing}
 
@@ -209,7 +209,7 @@ end
 A notification message. A processed notification message must not send a response back.
 They work like events.
 """
-@interface NotificationMessage extends Message begin
+@interface NotificationMessage @extends Message begin
     "The method to be invoked."
     method::String
 
@@ -406,7 +406,7 @@ The options to register for file operations.
     filters::Vector{FileOperationFilter}
 end
 
-@interface InitializeParams extends WorkDoneProgressParams begin
+@interface InitializeParams @extends WorkDoneProgressParams begin
     """
     The process Id of the parent process that started the server. Is null if the process has
     not been started by another process. If the parent process is not alive then the server
@@ -493,7 +493,7 @@ request to the client. In case the client sets up a progress token in the initia
 (and only that token) using the `\$/progress` notification sent from the server to the client.
 The initialize request may only be sent once.
 """
-@interface InitializeRequest extends RequestMessage begin
+@interface InitializeRequest @extends RequestMessage begin
     method::String = "initialize"
     params::InitializeParams
 end
@@ -504,15 +504,15 @@ the result of the initialize request but before the client is sending any other 
 notification to the server. The server can use the initialized notification, for example,
 to dynamically register capabilities. The initialized notification may only be sent once.
 """
-@interface InitializedNotification extends NotificationMessage begin
+@interface InitializedNotification @extends NotificationMessage begin
     method::String = "initialized"
 end
 
-@interface ShutdownRequest extends RequestMessage begin
+@interface ShutdownRequest @extends RequestMessage begin
     method::String = "shutdown"
 end
 
-@interface ExitNotification extends NotificationMessage begin
+@interface ExitNotification @extends NotificationMessage begin
     method::String = "exit"
 end
 
@@ -592,7 +592,7 @@ end
 An identifier to denote a specific version of a text document.
 This information usually flows from the client to the server.
 """
-@interface VersionedTextDocumentIdentifier extends TextDocumentIdentifier begin
+@interface VersionedTextDocumentIdentifier @extends TextDocumentIdentifier begin
     """
     The version number of this document.
     The version number of a document will increase after each change, including undo/redo.
@@ -605,7 +605,7 @@ end
 An identifier which optionally denotes a specific version of a text document.
 This information usually flows from the server to the client.
 """
-@interface OptionalVersionedTextDocumentIdentifier extends TextDocumentIdentifier begin
+@interface OptionalVersionedTextDocumentIdentifier @extends TextDocumentIdentifier begin
     """
     The version number of this document. If an optional versioned text document identifier
     is sent from the server to the client and the file is not open in the editor (the server
@@ -704,7 +704,7 @@ If the language id of a document changes, the client needs to send a `textDocume
 to the server followed by a `textDocument/didOpen` with the new language id if the server
 handles the new language id as well.
 """
-@interface DidOpenTextDocumentNotification extends NotificationMessage begin
+@interface DidOpenTextDocumentNotification @extends NotificationMessage begin
     method::String = "textDocument/didOpen"
     params::DidOpenTextDocumentParams
 end
@@ -712,7 +712,7 @@ end
 """
 Describe options to be used when registering for text document change events.
 """
-@interface TextDocumentChangeRegistrationOptions extends TextDocumentRegistrationOptions begin
+@interface TextDocumentChangeRegistrationOptions @extends TextDocumentRegistrationOptions begin
     """
     How documents are synced to the server.
     See `TextDocumentSyncKind.Full` and `TextDocumentSyncKind.Incremental`.
@@ -764,7 +764,7 @@ a text document. Before a client can change a text document it must claim owners
 content using the `textDocument/didOpen` notification.
 In 2.0 the shape of the params has changed to include proper version numbers.
 """
-@interface DidChangeTextDocumentNotification extends NotificationMessage begin
+@interface DidChangeTextDocumentNotification @extends NotificationMessage begin
     method::String = "textDocument/didChange"
     params::DidChangeTextDocumentParams
 end
@@ -783,7 +783,7 @@ Receiving a close notification doesn’t mean that the document was open in an e
 A close notification requires a previous open notification to be sent.
 Note that a server’s ability to fulfill requests is independent of whether a text document is open or closed.
 """
-@interface DidCloseTextDocumentNotification extends NotificationMessage begin
+@interface DidCloseTextDocumentNotification @extends NotificationMessage begin
     method::String = "textDocument/didClose"
     params::DidCloseTextDocumentParams
 end
@@ -800,7 +800,7 @@ end
     text::Union{String, Nothing} = nothing
 end
 
-@interface DidSaveTextDocumentNotification extends NotificationMessage begin
+@interface DidSaveTextDocumentNotification @extends NotificationMessage begin
     method::String = "textDocument/didSave"
     params::DidSaveTextDocumentParams
 end
@@ -832,7 +832,7 @@ Diagnostic options.
 # Tags
 - since – 3.17.0
 """
-@interface DiagnosticOptions extends WorkDoneProgressOptions begin
+@interface DiagnosticOptions @extends WorkDoneProgressOptions begin
     "An optional identifier under which the diagnostics are managed by the client."
     identifier::Union{String, Nothing} = nothing
 
@@ -894,7 +894,7 @@ Diagnostic registration options.
 # Tags
 - since – 3.17.0
 """
-@interface DiagnosticRegistrationOptions extends TextDocumentRegistrationOptions,
+@interface DiagnosticRegistrationOptions @extends TextDocumentRegistrationOptions,
     DiagnosticOptions, StaticRegistrationOptions begin
 end
 
@@ -1012,7 +1012,7 @@ end
     data::InitializeError
 end
 
-@interface InitializeResponse extends ResponseMessage begin
+@interface InitializeResponse @extends ResponseMessage begin
     result::Union{InitializeResult, Nothing} = nothing
     error::Union{InitializeResponseError, Nothing} = nothing
 end
@@ -1183,7 +1183,7 @@ A full diagnostic report with a set of related documents.
 # Tags
 - since – 3.17.0
 """
-@interface RelatedFullDocumentDiagnosticReport extends FullDocumentDiagnosticReport begin
+@interface RelatedFullDocumentDiagnosticReport @extends FullDocumentDiagnosticReport begin
     """
     Diagnostics of related documents. This information is useful in programming languages
     where code in a file A can generate diagnostics in a file B which A depends on.
@@ -1202,7 +1202,7 @@ An unchanged diagnostic report with a set of related documents.
 # Tags
 - since – 3.17.0
 """
-@interface RelatedUnchangedDocumentDiagnosticReport extends UnchangedDocumentDiagnosticReport begin
+@interface RelatedUnchangedDocumentDiagnosticReport @extends UnchangedDocumentDiagnosticReport begin
     """
     Diagnostics of related documents. This information is useful in programming languages
     where code in a file A can generate diagnostics in a file B which A depends on.
@@ -1221,7 +1221,7 @@ Parameters of the document diagnostic request.
 # Tags
 - since – 3.17.0
 """
-@interface DocumentDiagnosticParams extends WorkDoneProgressParams, PartialResultParams begin
+@interface DocumentDiagnosticParams @extends WorkDoneProgressParams, PartialResultParams begin
     "The text document."
     textDocument::TextDocumentIdentifier
 
@@ -1237,7 +1237,7 @@ The text document diagnostic request is sent from the client to the server to as
 to compute the diagnostics for a given document.
 As with other pull requests the server is asked to compute the diagnostics for the currently synced version of the document.
 """
-@interface DocumentDiagnosticRequest extends RequestMessage begin
+@interface DocumentDiagnosticRequest @extends RequestMessage begin
     method::String = "textDocument/diagnostic"
     params::DocumentDiagnosticParams
 end
@@ -1270,7 +1270,7 @@ A full document diagnostic report for a workspace diagnostic result.
 # Tags
 - since – 3.17.0
 """
-@interface WorkspaceFullDocumentDiagnosticReport extends FullDocumentDiagnosticReport begin
+@interface WorkspaceFullDocumentDiagnosticReport @extends FullDocumentDiagnosticReport begin
     "The URI for which diagnostic information is reported."
     uri::DocumentUri
 
@@ -1287,7 +1287,7 @@ An unchanged document diagnostic report for a workspace diagnostic result.
 # Tags
 - since – 3.17.0
 """
-@interface WorkspaceUnchangedDocumentDiagnosticReport extends UnchangedDocumentDiagnosticReport begin
+@interface WorkspaceUnchangedDocumentDiagnosticReport @extends UnchangedDocumentDiagnosticReport begin
     "The URI for which diagnostic information is reported."
     uri::DocumentUri
 
@@ -1331,7 +1331,7 @@ Parameters of the workspace diagnostic request.
 # Tags
 - since – 3.17.0
 """
-@interface WorkspaceDiagnosticParams extends WorkDoneProgressParams, PartialResultParams begin
+@interface WorkspaceDiagnosticParams @extends WorkDoneProgressParams, PartialResultParams begin
     "The additional identifier provided during registration."
     identifier::Union{String, Nothing} = nothing
 
@@ -1339,7 +1339,7 @@ Parameters of the workspace diagnostic request.
     previousResultIds::Vector{PreviousResultId}
 end
 
-@interface WorkspaceDiagnosticRequest extends RequestMessage begin
+@interface WorkspaceDiagnosticRequest @extends RequestMessage begin
     method::String = "workspace/diagnostic"
     params::WorkspaceDiagnosticParams
 end

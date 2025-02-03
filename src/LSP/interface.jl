@@ -2,15 +2,14 @@ const _INTERFACE_DEFS = Dict{Symbol,Expr}()
 
 macro interface(exs...)
     nexs = length(exs)
-    nexs == 2 || nexs == 4 || error("`@interface` expected 2 or 4 arguments: ", exs)
-    Name = exs[1]
+    nexs == 2 || error("Invalid `@interface` syntax: ", exs)
+    Name, defex = exs
     Name isa Symbol || error("Invalid `@interface` syntax: ", exs)
-    if nexs == 2
-        extends = nothing
-        defex = exs[2]
-    else
-        exs[2] === :extends || error("Invalid `@interface` syntax: ", exs)
-        extends = exs[3]
+    if Meta.isexpr(defex, :macrocall)
+        length(defex.args) == 4 || error("Invalid `@interface` syntax: ", exs)
+        defex.args[1] === Symbol("@extends") || error("Invalid `@interface` syntax: ", exs)
+        defex.args[2] isa LineNumberNode || error("Invalid `@interface` syntax: ", exs)
+        extends = defex.args[3]
         if extends isa Symbol
             extends = Symbol[extends]
         elseif Meta.isexpr(extends, :tuple) && all(@nospecialize(x)->x isa Symbol, extends.args)
@@ -18,7 +17,9 @@ macro interface(exs...)
         else
             error("Invalid `@interface` syntax: ", exs)
         end
-        defex = exs[4]
+        defex = defex.args[4]
+    else
+        extends = nothing
     end
     Meta.isexpr(defex, :block) || error("Invalid `@interface` syntax: ", exs)
 
