@@ -70,8 +70,7 @@
 		"vscode:prepublish": "npm run compile",
 		"compile": "tsc -b",
 		"watch": "tsc -b -w",
-		"lint": "eslint",
-		"generate": "node ts2json.js && julia json2julia.jl"
+		"lint": "eslint"
 	},
 	"dependencies": {
 		"glob": "^11.0.0",

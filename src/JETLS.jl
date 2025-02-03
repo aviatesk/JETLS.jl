@@ -5,11 +5,7 @@ export runserver
 include("URIs2/URIs2.jl")
 using .URIs2
 
-module LSP
-using StructTypes
-function lsptypeof end
-include("LSP.jl")
-end
+include("LSP/LSP.jl")
 using .LSP
 
 include("JSONRPC.jl")
