@@ -1,44 +1,64 @@
-@doc """
-Defines an integer number in the range of -2^31 to 2^31 - 1.
-""" integer
+module LSP
 
-@doc """
+using StructTypes
+
+const exports = Set{Symbol}()
+const method_dispatcher = Dict{String,DataType}()
+
+include("interface.jl")
+include("namespace.jl")
+
+const boolean = Bool
+const null = Nothing
+const string = String
+
+"""
+Defines an integer number in the range of -2^31 to 2^31 - 1.
+"""
+const integer = Int
+
+"""
 Defines an unsigned integer number in the range of 0 to 2^31 - 1.
-""" uinteger
+"""
+const uinteger = UInt
 
 @doc """
 Defines a decimal number.
 Since decimal numbers are very rare in the language server specification we denote the exact
 range with every decimal using the mathematics interval notation (e.g. `[0, 1]` denotes all
 decimals `d` with `0 <= d <= 1`).
-""" decimal
+"""
+const decimal = Float64
 
 @doc """
 The LSP any type
 
 # Tags
 - since – 3.17.0
-""" LSPAny
+"""
+const LSPAny = Any
 
 @doc """
 LSP object definition.
 
 # Tags
 - since – 3.17.0
-""" LSPObject
+"""
+const LSPObject = Dict{String,Any}
 
 @doc """
 LSP arrays.
 
 # Tags
 - since – 3.17.0
-""" LSPArray
+"""
+const LSPArray = Vector{Any}
 
 """
 A general message as defined by JSON-RPC.
 The language server protocol always uses “2.0” as the jsonrpc version.
 """
-@kwdef struct Message
+@interface Message begin
     jsonrpc::String = "2.0"
 end
 
@@ -46,9 +66,7 @@ end
 A request message to describe a request between the client and the server.
 Every processed request must send a response back to the sender of the request.
 """
-@kwdef struct RequestMessage
-    jsonrpc::String = "2.0"
-
+@interface RequestMessage extends Message begin
     "The request id."
     id::Int
 
@@ -58,19 +76,113 @@ Every processed request must send a response back to the sender of the request.
     "The method's params."
     params::Union{Any, Nothing} = nothing
 end
-StructTypes.omitempties(::Type{RequestMessage}) = (:params,)
 
-@kwdef struct ResponseError
+@namespace ErrorCodes::Int begin
+    ParseError = -32700
+    InvalidRequest = -32600
+    MethodNotFound = -32601
+    InvalidParams = -32602
+    InternalError = -32603
+
+    """
+    This is the start range of JSON-RPC reserved error codes.
+    It doesn't denote a real error code. No LSP error codes should be defined between the start
+    and end range. For backwards compatibility the `ServerNotInitialized` and the
+    `UnknownErrorCode` are left in the range.
+
+    # Tags
+    - since – 3.16.0
+    """
+    jsonrpcReservedErrorRangeStart = -32099
+    """
+    # Tags
+    - deprecated – use jsonrpcReservedErrorRangeStart
+    """
+    serverErrorStart = -32099
+
+    """
+    Error code indicating that a server received a notification or request before the server
+    has received the `initialize` request.
+    """
+    ServerNotInitialized = -32002
+    UnknownErrorCode = -32001
+
+    """
+    This is the end range of JSON-RPC reserved error codes.
+    It doesn't denote a real error code.
+
+    # Tags
+    - since – 3.16.0"
+    """
+    jsonrpcReservedErrorRangeEnd = -32000
+    """
+    # Tags
+    - deprecated – use jsonrpcReservedErrorRangeEnd
+    """
+    serverErrorEnd = -32000
+
+    """
+    This is the start range of LSP reserved error codes.
+    It doesn't denote a real error code.
+
+    # Tags
+    - since – 3.16.0
+    """
+    lspReservedErrorRangeStart = -32899
+
+    """
+    A request failed but it was syntactically correct, e.g the method name was known and the
+    parameters were valid. The error message should contain human readable information about why
+    the request failed.
+
+    # Tags
+    - since – 3.17.0
+    """
+    RequestFailed = -32803
+
+    """
+    The server cancelled the request. This error code should only be used for requests that
+    explicitly support being server cancellable.
+
+    # Tags
+    - since – 3.17.0
+    """
+    ServerCancelled = -32802
+
+    """
+    "The server detected that the content of a document got modified outside normal conditions.
+    A server should NOT send this error code if it detects a content change in it unprocessed
+    messages. The result even computed on an older state might still be useful for the client.
+    If a client decides that a result is not of any use anymore the client should cancel the request.
+    """
+    ContentModified = -32801
+
+    """
+    The client has canceled a request and a server has detected the cancel.
+    """
+    RequestCancelled = -32800
+
+    """
+    This is the end range of LSP reserved error codes. It doesn't denote a real error code.
+
+    # Tags
+    - since – 3.16.0"
+    """
+    lspReservedErrorRangeEnd = -32800
+end # @namespace ErrorCodes
+
+@interface ResponseError begin
     "A number indicating the error type that occurred."
-    code::Int
+    code::ErrorCodes.Ty
 
     "A string providing a short description of the error."
     message::String
 
-    "A primitive or structured value that contains additional\ninformation about the error. Can be omitted."
+    "A primitive or structured value that contains additional information about the error. Can be omitted."
     data::Union{Any, Nothing} = nothing
 end
-StructTypes.omitempties(::Type{ResponseError}) = (:data,)
+
+# TODO Revisit this to correctly lower this struct
 
 """
 A Response Message sent as a result of a request.
@@ -79,9 +191,7 @@ a response message to conform to the JSON-RPC specification.
 The result property of the ResponseMessage should be set to null in this case to signal a
 successful request.
 """
-@kwdef struct ResponseMessage
-    jsonrpc::String = "2.0"
-
+@interface ResponseMessage extends Message begin
     "The request id."
     id::Union{Int, Nothing}
 
@@ -94,117 +204,29 @@ successful request.
     "The error object in case a request fails."
     error::Union{ResponseError, Nothing} = nothing
 end
-StructTypes.omitempties(::Type{ResponseMessage}) = (:error,)
-
-module ErrorCodes
-const ParseError = -32700
-const InvalidRequest = -32600
-const MethodNotFound = -32601
-const InvalidParams = -32602
-const InternalError = -32603
-"""
-This is the start range of JSON-RPC reserved error codes.
-It doesn't denote a real error code. No LSP error codes should be defined between the start
-and end range. For backwards compatibility the `ServerNotInitialized` and the
-`UnknownErrorCode` are left in the range.
-
-# Tags
-- since – 3.16.0
-"""
-const jsonrpcReservedErrorRangeStart = -32099
-"""
-# Tags
-- deprecated – use jsonrpcReservedErrorRangeStart
-"""
-const serverErrorStart = -32099
-"""
-Error code indicating that a server received a notification or request before the server
-has received the `initialize` request.
-"""
-const ServerNotInitialized = -32002
-const UnknownErrorCode = -32001
-"""
-This is the end range of JSON-RPC reserved error codes.
-It doesn't denote a real error code.
-
-# Tags
-- since – 3.16.0"
-"""
-const jsonrpcReservedErrorRangeEnd = -32000
-"""
-# Tags
-- deprecated – use jsonrpcReservedErrorRangeEnd
-"""
-const serverErrorEnd = -32000
-"""
-This is the start range of LSP reserved error codes.
-It doesn't denote a real error code.
-
-# Tags
-- since – 3.16.0
-"""
-const lspReservedErrorRangeStart = -32899
-"""
-A request failed but it was syntactically correct, e.g the method name was known and the
-parameters were valid. The error message should contain human readable information about why
-the request failed.
-
-# Tags
-- since – 3.17.0
-"""
-const RequestFailed = -32803
-"""
-The server cancelled the request. This error code should only be used for requests that
-explicitly support being server cancellable.
-
-# Tags
-- since – 3.17.0
-"""
-const ServerCancelled = -32802
-"""
-"The server detected that the content of a document got modified outside normal conditions.
-A server should NOT send this error code if it detects a content change in it unprocessed
-messages. The result even computed on an older state might still be useful for the client.
-If a client decides that a result is not of any use anymore the client should cancel the request.
-"""
-const ContentModified = -32801
-"""
-The client has canceled a request and a server has detected the cancel.
-"""
-const RequestCancelled = -32800
-"""
-This is the end range of LSP reserved error codes. It doesn't denote a real error code.
-
-# Tags
-- since – 3.16.0"
-"""
-const lspReservedErrorRangeEnd = -32800
-end # module ErrorCodes
 
 """
 A notification message. A processed notification message must not send a response back.
 They work like events.
 """
-@kwdef struct NotificationMessage
-    jsonrpc::String = "2.0"
-
+@interface NotificationMessage extends Message begin
     "The method to be invoked."
     method::String
 
     "The notification's params."
     params::Union{Any, Nothing} = nothing
 end
-StructTypes.omitempties(::Type{NotificationMessage}) = (:params,)
 
-lsptypeof(::Val{:DocumentUri}) = String
-lsptypeof(::Val{:URI}) = String
+const DocumentUri = String
+
+const URI = String
 
 """
 Position in a text document expressed as zero-based line and zero-based character offset.
 A position is between two characters like an ‘insert’ cursor in an editor.
 Special values like for example -1 to denote the end of a line are not supported.
 """
-@kwdef struct Position
+@interface Position begin
     "Line position in a document (zero-based)."
     line::UInt
 
@@ -216,11 +238,11 @@ Special values like for example -1 to denote the end of a line are not supported
     character::UInt
 end
 
-@kwdef struct WorkspaceFolder
+@interface WorkspaceFolder begin
     "The associated URI for this workspace folder."
-    uri::lsptypeof(Val(:URI))
+    uri::URI
 
-    "The name of the workspace folder. Used to refer to this\nworkspace folder in the user interface."
+    "The name of the workspace folder. Used to refer to this workspace folder in the user interface."
     name::String
 end
 
@@ -232,83 +254,79 @@ result progress to support streaming of results.
 
 A progress notification has the following properties:
 """
-ProgressToken
-lsptypeof(::Val{:ProgressToken}) = Union{Int, String}
+const ProgressToken = Union{Int, String}
 
-@kwdef struct WorkDoneProgressParams
+@interface WorkDoneProgressParams begin
     "An optional token that a server can use to report work done progress."
-    workDoneToken::Union{lsptypeof(Val(:ProgressToken)), Nothing} = nothing
+    workDoneToken::Union{ProgressToken, Nothing} = nothing
 end
-StructTypes.omitempties(::Type{WorkDoneProgressParams}) = (:workDoneToken,)
 
-@kwdef struct PartialResultParams
+@interface PartialResultParams begin
     "An optional token that a server can use to report partial results (e.g. streaming) to the client."
-    partialResultToken::Union{lsptypeof(Val(:ProgressToken)), Nothing} = nothing
+    partialResultToken::Union{ProgressToken, Nothing} = nothing
 end
-StructTypes.omitempties(::Type{PartialResultParams}) = (:partialResultToken,)
 
 """
 A TraceValue represents the level of verbosity with which the server systematically reports
 its execution trace using \$/logTrace notifications. The initial trace value is set by the
 client at initialization and can be modified later using the \$/setTrace notification.
 """
-module TraceValue
-const off = "off"
-const messages = "messages"
-const verbose = "verbose"
-end # TraceValue
-lsptypeof(::Val{:TraceValue}) = String
-
-@kwdef struct ClientFileOperations
-    "Whether the client supports dynamic registration for file\nrequests/notifications."
-    dynamicRegistration::Union{Bool, Nothing} = nothing
-    "The client has support for sending didCreateFiles notifications."
-    didCreate::Union{Bool, Nothing} = nothing
-    "The client has support for sending willCreateFiles requests."
-    willCreate::Union{Bool, Nothing} = nothing
-    "The client has support for sending didRenameFiles notifications."
-    didRename::Union{Bool, Nothing} = nothing
-    "The client has support for sending willRenameFiles requests."
-    willRename::Union{Bool, Nothing} = nothing
-    "The client has support for sending didDeleteFiles notifications."
-    didDelete::Union{Bool, Nothing} = nothing
-    "The client has support for sending willDeleteFiles requests."
-    willDelete::Union{Bool, Nothing} = nothing
+@namespace TraceValue::String begin
+    off = "off"
+    messages = "messages"
+    verbose = "verbose"
 end
-StructTypes.omitempties(::Type{ClientFileOperations}) = (:dynamicRegistration, :didCreate, :willCreate, :didRename, :willRename, :didDelete, :willDelete)
-Base.convert(::Type{ClientFileOperations}, nt::NamedTuple) = ClientFileOperations(; nt...)
 
-@kwdef struct ClientWorkspaceCapabilities
-    """
-    The client supports applying batch edits\nto the workspace by supporting the request
-    'workspace/applyEdit'
-    """
-    applyEdit::Union{Bool, Nothing} = nothing
-    """
-    The client has support for workspace folders.
-
-    # Tags
-    - since – 3.6.0
-    """
-    workspaceFolders::Union{Bool, Nothing} = nothing
-    """
-    The client has support for file requests/notifications.
-
-    # Tags
-    - since – 3.16.0
-    """
-    ClientFileOperations::Union{ClientFileOperations, Nothing} = nothing
-end
-StructTypes.omitempties(::Type{ClientWorkspaceCapabilities}) = (:applyEdit, :workspaceFolders, :ClientFileOperations)
-Base.convert(::Type{ClientWorkspaceCapabilities}, nt::NamedTuple) = ClientWorkspaceCapabilities(; nt...)
-
-@kwdef struct ClientCapabilities
+@interface ClientCapabilities begin
     "Workspace specific client capabilities."
-    workspace::Union{ClientWorkspaceCapabilities, Nothing} = nothing
+    workspace::Union{Nothing, @anon_interface begin
+        """
+        The client supports applying batch edits to the workspace by supporting the request
+        'workspace/applyEdit'
+        """
+        applyEdit::Union{Bool, Nothing} = nothing
+
+        """
+        The client has support for workspace folders.
+
+        # Tags
+        - since – 3.6.0
+        """
+        workspaceFolders::Union{Bool, Nothing} = nothing
+
+        """
+        The client has support for file requests/notifications.
+
+        # Tags
+        - since – 3.16.0
+        """
+        fileOperations::Union{Nothing, @anon_interface begin
+            "Whether the client supports dynamic registration for file requests/notifications."
+            dynamicRegistration::Union{Bool, Nothing} = nothing
+
+            "The client has support for sending didCreateFiles notifications."
+            didCreate::Union{Bool, Nothing} = nothing
+
+            "The client has support for sending willCreateFiles requests."
+            willCreate::Union{Bool, Nothing} = nothing
+
+            "The client has support for sending didRenameFiles notifications."
+            didRename::Union{Bool, Nothing} = nothing
+
+            "The client has support for sending willRenameFiles requests."
+            willRename::Union{Bool, Nothing} = nothing
+
+            "The client has support for sending didDeleteFiles notifications."
+            didDelete::Union{Bool, Nothing} = nothing
+
+            "The client has support for sending willDeleteFiles requests."
+            willDelete::Union{Bool, Nothing} = nothing
+        end} = nothing
+    end} = nothing
+
     "Experimental client capabilities."
     experimental::Union{Any, Nothing} = nothing
 end
-StructTypes.omitempties(::Type{ClientCapabilities}) = (:workspace, :experimental)
 
 """
 A pattern kind describing if a glob pattern matches a file a folder or both.
@@ -316,13 +334,13 @@ A pattern kind describing if a glob pattern matches a file a folder or both.
 # Tags
 - since – 3.16.0
 """
-module FileOperationPatternKind
-"""The pattern matches a file only."""
-const file = "file"
-"""The pattern matches a folder only."""
-const folder = "folder"
+@namespace FileOperationPatternKind::String begin
+    "The pattern matches a file only."
+    file = "file"
+
+    "The pattern matches a folder only."
+    folder = "folder"
 end
-lsptypeof(::Val{:FileOperationPatternKind}) = String
 
 """
 Matching options for the file operation pattern.
@@ -330,11 +348,11 @@ Matching options for the file operation pattern.
 # Tags
 - since – 3.16.0
 """
-@kwdef struct FileOperationPatternOptions
+@interface FileOperationPatternOptions begin
+
     "The pattern should be matched ignoring casing."
     ignoreCase::Union{Bool, Nothing} = nothing
 end
-StructTypes.omitempties(::Type{FileOperationPatternOptions}) = (:ignoreCase,)
 
 """
 A pattern to describe in which file operation requests or notifications the server is interested in.
@@ -342,23 +360,24 @@ A pattern to describe in which file operation requests or notifications the serv
 # Tags
 - since – 3.16.0
 """
-@kwdef struct FileOperationPattern
+@interface FileOperationPattern begin
     """
     The glob pattern to match. Glob patterns can have the following syntax:
     - `*` to match one or more characters in a path segment
     - `?` to match on one character in a path segment
     - `**` to match any number of path segments, including none
-    - `{}` to group sub patterns into an OR expression. (e.g. `**\u200b/*.{ts,js}`\n  matches all TypeScript and JavaScript files)
+    - `{}` to group sub patterns into an OR expression. (e.g. `**\u200b/*.{ts,js}` matches all TypeScript and JavaScript files)
     - `[]` to declare a range of characters to match in a path segment (e.g., `example.[0-9]` to match on `example.0`, `example.1`, …)
     - `[!...]` to negate a range of characters to match in a path segment (e.g., `example.[!0-9]` to match on `example.a`, `example.b`, but not `example.0`)
     """
     glob::String
+
     "Whether to match files or folders with this pattern. Matches both if undefined."
-    matches::Union{lsptypeof(Val(:FileOperationPatternKind)), Nothing} = nothing
+    matches::Union{FileOperationPatternKind.Ty, Nothing} = nothing
+
     "Additional options used during matching."
     options::Union{FileOperationPatternOptions, Nothing} = nothing
 end
-StructTypes.omitempties(::Type{FileOperationPattern}) = (:matches, :options)
 
 """
 A filter to describe in which file operation requests or notifications the server is
@@ -367,13 +386,14 @@ interested in.
 # Tags
 - since – 3.16.0
 """
-@kwdef struct FileOperationFilter
+@interface FileOperationFilter begin
+
     "A Uri like `file` or `untitled`."
     scheme::Union{String, Nothing} = nothing
+
     "The actual file operation pattern."
     pattern::FileOperationPattern
 end
-StructTypes.omitempties(::Type{FileOperationFilter}) = (:scheme,)
 
 """
 The options to register for file operations.
@@ -381,35 +401,33 @@ The options to register for file operations.
 # Tags
 - since – 3.16.0
 """
-@kwdef struct FileOperationRegistrationOptions
+@interface FileOperationRegistrationOptions begin
     "The actual filters."
     filters::Vector{FileOperationFilter}
 end
 
-@kwdef struct ClientInfo
-    "The name of the client as defined by the client."
-    name::String
-    "The client's version as defined by the client."
-    version::Union{String, Nothing} = nothing
-end
-StructTypes.omitempties(::Type{ClientInfo}) = (:version,)
-Base.convert(::Type{ClientInfo}, nt::NamedTuple) = ClientInfo(; nt...)
-@kwdef struct InitializeParams
-    "An optional token that a server can use to report work done progress."
-    workDoneToken::Union{lsptypeof(Val(:ProgressToken)), Nothing} = nothing
+@interface InitializeParams extends WorkDoneProgressParams begin
     """
     The process Id of the parent process that started the server. Is null if the process has
     not been started by another process. If the parent process is not alive then the server
     should exit (see exit notification) its process.
     """
     processId::Union{Int, Nothing}
+
     """
     Information about the client
 
     # Tags
     - since – 3.15.0
     """
-    clientInfo::Union{ClientInfo, Nothing} = nothing
+    clientInfo::Union{Nothing, @anon_interface begin
+        "The name of the client as defined by the client."
+        name::String
+
+        "The client's version as defined by the client."
+        version::Union{String, Nothing} = nothing
+    end} = nothing
+
     """
     The locale the client is currently showing the user interface in.
     This must not necessarily be the locale of the operating system.
@@ -420,6 +438,7 @@ Base.convert(::Type{ClientInfo}, nt::NamedTuple) = ClientInfo(; nt...)
     - since – 3.16.0
     """
     locale::Union{String, Nothing} = nothing
+
     """
     The rootPath of the workspace. Is null if no folder is open.
 
@@ -427,6 +446,7 @@ Base.convert(::Type{ClientInfo}, nt::NamedTuple) = ClientInfo(; nt...)
     - deprecated – in favour of `rootUri`.
     """
     rootPath::Union{String, Nothing} = nothing
+
     """
     The rootUri of the workspace. Is null if no folder is open. If both `rootPath` and
     `rootUri` are set `rootUri` wins.
@@ -434,13 +454,17 @@ Base.convert(::Type{ClientInfo}, nt::NamedTuple) = ClientInfo(; nt...)
     # Tags
     - deprecated – in favour of `workspaceFolders`
     """
-    rootUri::Union{lsptypeof(Val(:DocumentUri)), Nothing}
+    rootUri::Union{DocumentUri, Nothing}
+
     "User provided initialization options."
     initializationOptions::Union{Any, Nothing} = nothing
+
     "The capabilities provided by the client (editor or tool)"
     capabilities::ClientCapabilities
+
     "The initial trace setting. If omitted trace is disabled ('off')."
-    trace::Union{lsptypeof(Val(:TraceValue)), Nothing} = nothing
+    trace::Union{TraceValue.Ty, Nothing} = nothing
+
     """
     The workspace folders configured in the client when the server starts.
     This property is only available if the client supports workspace folders.
@@ -451,8 +475,6 @@ Base.convert(::Type{ClientInfo}, nt::NamedTuple) = ClientInfo(; nt...)
     """
     workspaceFolders::Union{Vector{WorkspaceFolder}, Nothing} = nothing
 end
-StructTypes.omitempties(::Type{InitializeParams}) =
-    (:workDoneToken, :clientInfo, :locale, :rootPath, :initializationOptions, :trace, :workspaceFolders)
 
 """
 The initialize request is sent as the first request from the client to the server.
@@ -471,10 +493,7 @@ request to the client. In case the client sets up a progress token in the initia
 (and only that token) using the `\$/progress` notification sent from the server to the client.
 The initialize request may only be sent once.
 """
-@kwdef struct InitializeRequest
-    jsonrpc::String = "2.0"
-    "The request id."
-    id::Int
+@interface InitializeRequest extends RequestMessage begin
     method::String = "initialize"
     params::InitializeParams
 end
@@ -485,33 +504,17 @@ the result of the initialize request but before the client is sending any other 
 notification to the server. The server can use the initialized notification, for example,
 to dynamically register capabilities. The initialized notification may only be sent once.
 """
-@kwdef struct InitializedNotification
-    jsonrpc::String = "2.0"
-    "The notification's params."
-    params::Union{Any, Nothing} = nothing
+@interface InitializedNotification extends NotificationMessage begin
     method::String = "initialized"
 end
-StructTypes.omitempties(::Type{InitializedNotification}) = (:params,)
 
-@kwdef struct ShutdownRequest
-    jsonrpc::String = "2.0"
-    "The request id."
-    id::Int
-    "The method's params."
-    params::Union{Any, Nothing} = nothing
+@interface ShutdownRequest extends RequestMessage begin
     method::String = "shutdown"
 end
-StructTypes.omitempties(::Type{ShutdownRequest}) = (:params,)
 
-@kwdef struct ExitNotification
-    jsonrpc::String = "2.0"
-    "The notification's params."
-    params::Union{Any, Nothing} = nothing
+@interface ExitNotification extends NotificationMessage begin
     method::String = "exit"
 end
-StructTypes.omitempties(::Type{ExitNotification}) = (:params,)
-
-lsptypeof(::Val{:PositionEncodingKind}) = String
 
 """
 A type indicating how positions are encoded, specifically what column offsets mean.
@@ -519,22 +522,24 @@ A type indicating how positions are encoded, specifically what column offsets me
 # Tags
 - since – 3.17.0
 """
-module PositionEncodingKind
-"""
-Character offsets count UTF-8 code units (e.g bytes).
-"""
-const UTF8 = "utf-8"
-"""
-Character offsets count UTF-16 code units.
-This is the default and must always be supported by servers.
-"""
-const UTF16 = "utf-16"
-"""
-Character offsets count UTF-32 code units.
-Implementation note: these are the same as Unicode code points, so this `PositionEncodingKind`
-may also be used for an encoding-agnostic representation of character offsets.
-"""
-const UTF32 = "utf-32"
+@namespace PositionEncodingKind::String begin
+    """
+    Character offsets count UTF-8 code units (e.g bytes).
+    """
+    UTF8 = "utf-8"
+
+    """
+    Character offsets count UTF-16 code units.
+    This is the default and must always be supported by servers.
+    """
+    UTF16 = "utf-16"
+
+    """
+    Character offsets count UTF-32 code units.
+    Implementation note: these are the same as Unicode code points, so this `PositionEncodingKind`
+    may also be used for an encoding-agnostic representation of character offsets.
+    """
+    UTF32 = "utf-32"
 end
 
 """
@@ -549,9 +554,10 @@ then use an end position denoting the start of the next line. For example:
 }
 ```
 """
-@kwdef struct Range
+@interface Range begin
     "The range's start position."
     start::Position
+
     "The range's end position."
     var"end"::Position
 end
@@ -559,13 +565,16 @@ end
 """
 An item to transfer a text document from the client to the server.
 """
-@kwdef struct TextDocumentItem
+@interface TextDocumentItem begin
     "The text document's URI."
-    uri::lsptypeof(Val(:DocumentUri))
+    uri::DocumentUri
+
     "The text document's language identifier."
     languageId::String
+
     "The version number of this document (it will increase after each change, including undo/redo)."
     version::Int
+
     "The content of the opened text document."
     text::String
 end
@@ -574,18 +583,16 @@ end
 Text documents are identified using a URI. On the protocol level, URIs are passed as strings.
 The corresponding JSON structure looks like this:
 """
-@kwdef struct TextDocumentIdentifier
+@interface TextDocumentIdentifier begin
     "The text document's URI."
-    uri::lsptypeof(Val(:DocumentUri))
+    uri::DocumentUri
 end
 
 """
 An identifier to denote a specific version of a text document.
 This information usually flows from the client to the server.
 """
-@kwdef struct VersionedTextDocumentIdentifier
-    "The text document's URI."
-    uri::lsptypeof(Val(:DocumentUri))
+@interface VersionedTextDocumentIdentifier extends TextDocumentIdentifier begin
     """
     The version number of this document.
     The version number of a document will increase after each change, including undo/redo.
@@ -598,9 +605,7 @@ end
 An identifier which optionally denotes a specific version of a text document.
 This information usually flows from the server to the client.
 """
-@kwdef struct OptionalVersionedTextDocumentIdentifier
-    "The text document's URI."
-    uri::lsptypeof(Val(:DocumentUri))
+@interface OptionalVersionedTextDocumentIdentifier extends TextDocumentIdentifier begin
     """
     The version number of this document. If an optional versioned text document identifier
     is sent from the server to the client and the file is not open in the editor (the server
@@ -617,18 +622,19 @@ end
 """
 Defines how the host (editor) should sync document changes to the language server.
 """
-module TextDocumentSyncKind
-"Documents should not be synced at all."
-const None = 0
-"Documents are synced by always sending the full content of the document."
-const Full = 1
-"""
-Documents are synced by sending the full content on open.
-After that only incremental updates to the document are sent.
-"""
-const Incremental = 2
+@namespace TextDocumentSyncKind::Int begin
+    "Documents should not be synced at all."
+    None = 0
+
+    "Documents are synced by always sending the full content of the document."
+    Full = 1
+
+    """
+    Documents are synced by sending the full content on open.
+    After that only incremental updates to the document are sent.
+    """
+    Incremental = 2
 end
-lsptypeof(::Val{:TextDocumentSyncKind}) = Int
 
 """
 A document filter denotes a document through properties like language, scheme or pattern.
@@ -643,24 +649,25 @@ Please note that for a document filter to be valid at least one of the propertie
 language, scheme, or pattern must be set.
 To keep the type definition simple all properties are marked as optional.
 """
-@kwdef struct DocumentFilter
+@interface DocumentFilter begin
     "A language id, like `typescript`."
     language::Union{String, Nothing} = nothing
+
     "A Uri scheme, like `file` or `untitled`."
     scheme::Union{String, Nothing} = nothing
+
     """
     A glob pattern, like `*.{ts,js}`.
     Glob patterns can have the following syntax:
     - `*` to match one or more characters in a path segment
     - `?` to match on one character in a path segment
     - `**` to match any number of path segments, including none
-    - `{}` to group sub patterns into an OR expression. (e.g. `**\u200b/*.{ts,js}`\n  matches all TypeScript and JavaScript files)
+    - `{}` to group sub patterns into an OR expression. (e.g. `**\u200b/*.{ts,js}` matches all TypeScript and JavaScript files)
     - `[]` to declare a range of characters to match in a path segment (e.g., `example.[0-9]` to match on `example.0`, `example.1`, …)
     - `[!...]` to negate a range of characters to match in a path segment (e.g., `example.[!0-9]` to match on `example.a`, `example.b`, but not `example.0`)
     """
     pattern::Union{String, Nothing} = nothing
 end
-StructTypes.omitempties(::Type{DocumentFilter}) = (:language, :scheme, :pattern)
 
 """
 A document selector is the combination of one or more document filters.
@@ -670,7 +677,7 @@ const DocumentSelector = Vector{DocumentFilter}
 """
 General text document registration options.
 """
-@kwdef struct TextDocumentRegistrationOptions
+@interface TextDocumentRegistrationOptions begin
     """
     A document selector to identify the scope of the registration.
     If set to null the document selector provided on the client side will be used.
@@ -678,7 +685,7 @@ General text document registration options.
     documentSelector::Union{Vector{DocumentFilter}, Nothing}
 end
 
-@kwdef struct DidOpenTextDocumentParams
+@interface DidOpenTextDocumentParams begin
     "The document that was opened."
     textDocument::TextDocumentItem
 end
@@ -694,10 +701,10 @@ Note that a server’s ability to fulfill requests is independent of whether a t
 
 The `DidOpenTextDocumentParams` contain the language id the document is associated with.
 If the language id of a document changes, the client needs to send a `textDocument/didClose`
-to the server followed by a `textDocument/didOpen` with the new language id if the server handles the new language id as well.
+to the server followed by a `textDocument/didOpen` with the new language id if the server
+handles the new language id as well.
 """
-@kwdef struct DidOpenTextDocumentNotification
-    jsonrpc::String = "2.0"
+@interface DidOpenTextDocumentNotification extends NotificationMessage begin
     method::String = "textDocument/didOpen"
     params::DidOpenTextDocumentParams
 end
@@ -705,24 +712,19 @@ end
 """
 Describe options to be used when registering for text document change events.
 """
-@kwdef struct TextDocumentChangeRegistrationOptions
-    """
-    A document selector to identify the scope of the registration.
-    If set to null the document selector provided on the client side will be used.
-    """
-    documentSelector::Union{Vector{DocumentFilter}, Nothing}
+@interface TextDocumentChangeRegistrationOptions extends TextDocumentRegistrationOptions begin
     """
     How documents are synced to the server.
     See `TextDocumentSyncKind.Full` and `TextDocumentSyncKind.Incremental`.
     """
-    syncKind::lsptypeof(Val(:TextDocumentSyncKind))
+    syncKind::TextDocumentSyncKind.Ty
 end
 
 """
 An event describing a change to a text document.
 If only a text is provided it is considered to be the full content of the document.
 """
-@kwdef struct TextDocumentContentChangeEvent
+@interface TextDocumentContentChangeEvent begin
     "The range of the document that changed."
     range::Union{Range, Nothing} = nothing
     """
@@ -735,9 +737,8 @@ If only a text is provided it is considered to be the full content of the docume
     "The new text for the provided range."
     text::String
 end
-StructTypes.omitempties(::Type{TextDocumentContentChangeEvent}) = (:range, :rangeLength)
 
-@kwdef struct DidChangeTextDocumentParams
+@interface DidChangeTextDocumentParams begin
     """
     The document that did change.
     The version number points to the version after all provided content changes have been applied.
@@ -763,13 +764,12 @@ a text document. Before a client can change a text document it must claim owners
 content using the `textDocument/didOpen` notification.
 In 2.0 the shape of the params has changed to include proper version numbers.
 """
-@kwdef struct DidChangeTextDocumentNotification
-    jsonrpc::String = "2.0"
+@interface DidChangeTextDocumentNotification extends NotificationMessage begin
     method::String = "textDocument/didChange"
     params::DidChangeTextDocumentParams
 end
 
-@kwdef struct DidCloseTextDocumentParams
+@interface DidCloseTextDocumentParams begin
     "The document that was closed."
     textDocument::TextDocumentIdentifier
 end
@@ -783,33 +783,29 @@ Receiving a close notification doesn’t mean that the document was open in an e
 A close notification requires a previous open notification to be sent.
 Note that a server’s ability to fulfill requests is independent of whether a text document is open or closed.
 """
-@kwdef struct DidCloseTextDocumentNotification
-    jsonrpc::String = "2.0"
+@interface DidCloseTextDocumentNotification extends NotificationMessage begin
     method::String = "textDocument/didClose"
     params::DidCloseTextDocumentParams
 end
 
-@kwdef struct SaveOptions
+@interface SaveOptions begin
     "The client is supposed to include the content on save."
     includeText::Union{Bool, Nothing} = nothing
 end
-StructTypes.omitempties(::Type{SaveOptions}) = (:includeText,)
 
-@kwdef struct DidSaveTextDocumentParams
+@interface DidSaveTextDocumentParams begin
     "The document that was saved."
     textDocument::TextDocumentIdentifier
     "Optional the content when saved. Depends on the includeText value when the save notification was requested."
     text::Union{String, Nothing} = nothing
 end
-StructTypes.omitempties(::Type{DidSaveTextDocumentParams}) = (:text,)
 
-@kwdef struct DidSaveTextDocumentNotification
-    jsonrpc::String = "2.0"
+@interface DidSaveTextDocumentNotification extends NotificationMessage begin
     method::String = "textDocument/didSave"
     params::DidSaveTextDocumentParams
 end
 
-@kwdef struct TextDocumentSyncOptions
+@interface TextDocumentSyncOptions begin
     "Open and close notifications are sent to the server. If omitted open close notification should not be sent."
     openClose::Union{Bool, Nothing} = nothing
     """
@@ -817,7 +813,7 @@ end
     See `TextDocumentSyncKind.None`, `TextDocumentSyncKind.Full` and `TextDocumentSyncKind.Incremental`.
     If omitted it defaults to `TextDocumentSyncKind.None`.
     """
-    change::Union{lsptypeof(Val(:TextDocumentSyncKind)), Nothing} = nothing
+    change::Union{TextDocumentSyncKind.Ty, Nothing} = nothing
     "If present will save notifications are sent to the server. If omitted the notification should not be sent."
     willSave::Union{Bool, Nothing} = nothing
     "If present will save wait until requests are sent to the server. If omitted the request should not be sent."
@@ -825,12 +821,10 @@ end
     "If present save notifications are sent to the server. If omitted the notification should not be sent."
     save::Union{Union{Bool, SaveOptions}, Nothing} = nothing
 end
-StructTypes.omitempties(::Type{TextDocumentSyncOptions}) = (:openClose, :change, :willSave, :willSaveWaitUntil, :save)
 
-@kwdef struct WorkDoneProgressOptions
+@interface WorkDoneProgressOptions begin
     workDoneProgress::Union{Bool, Nothing} = nothing
 end
-StructTypes.omitempties(::Type{WorkDoneProgressOptions}) = (:workDoneProgress,)
 
 """
 Diagnostic options.
@@ -838,29 +832,31 @@ Diagnostic options.
 # Tags
 - since – 3.17.0
 """
-@kwdef struct DiagnosticOptions
-    workDoneProgress::Union{Bool, Nothing} = nothing
+@interface DiagnosticOptions extends WorkDoneProgressOptions begin
     "An optional identifier under which the diagnostics are managed by the client."
     identifier::Union{String, Nothing} = nothing
+
     """
     Whether the language has inter file dependencies meaning that editing code in one file
     can result in a different diagnostic set in another file.
     Inter file dependencies are common for most programming languages and typically uncommon for linters.
     """
     interFileDependencies::Bool
+
     "The server provides support for workspace diagnostics as well."
     workspaceDiagnostics::Bool
 end
-StructTypes.omitempties(::Type{DiagnosticOptions}) = (:workDoneProgress, :identifier)
 
 """
 Static registration options to be returned in the initialize request.
 """
-@kwdef struct StaticRegistrationOptions
-    "The id used to register the request. The id can be used to deregister the request again. See also Registration#id."
+@interface StaticRegistrationOptions begin
+    """
+    The id used to register the request. The id can be used to deregister the request again.
+    See also Registration#id.
+    """
     id::Union{String, Nothing} = nothing
 end
-StructTypes.omitempties(::Type{StaticRegistrationOptions}) = (:id,)
 
 """
 Since version 3.6.0
@@ -879,7 +875,7 @@ current open list of workspace folders.
 Returns null in the response if only a single file is open in the tool.
 Returns an empty array if a workspace is open but no folders are configured.
 """
-@kwdef struct WorkspaceFoldersServerCapabilities
+@interface WorkspaceFoldersServerCapabilities begin
     "The server has support for workspace folders"
     supported::Union{Bool, Nothing} = nothing
     """
@@ -891,7 +887,6 @@ Returns an empty array if a workspace is open but no folders are configured.
     """
     changeNotifications::Union{Union{String, Bool}, Nothing} = nothing
 end
-StructTypes.omitempties(::Type{WorkspaceFoldersServerCapabilities}) = (:supported, :changeNotifications)
 
 """
 Diagnostic registration options.
@@ -899,62 +894,11 @@ Diagnostic registration options.
 # Tags
 - since – 3.17.0
 """
-@kwdef struct DiagnosticRegistrationOptions
-    "A document selector to identify the scope of the registration. If set to null the document selector provided on the client side will be used."
-    documentSelector::Union{Vector{DocumentFilter}, Nothing}
-    workDoneProgress::Union{Bool, Nothing} = nothing
-    "An optional identifier under which the diagnostics are managed by the client."
-    identifier::Union{String, Nothing} = nothing
-    """
-    Whether the language has inter file dependencies meaning that editing code in one file
-    can result in a different diagnostic set in another file. Inter file dependencies are
-    common for most programming languages and typically uncommon for linters.
-    """
-    interFileDependencies::Bool
-    "The server provides support for workspace diagnostics as well."
-    workspaceDiagnostics::Bool
-    "The id used to register the request. The id can be used to deregister the request again. See also Registration#id."
-    id::Union{String, Nothing} = nothing
+@interface DiagnosticRegistrationOptions extends TextDocumentRegistrationOptions,
+    DiagnosticOptions, StaticRegistrationOptions begin
 end
-StructTypes.omitempties(::Type{DiagnosticRegistrationOptions}) = (:workDoneProgress, :identifier, :id)
 
-@kwdef struct ServerFileOperations
-    "The server is interested in receiving didCreateFiles\nnotifications."
-    didCreate::Union{FileOperationRegistrationOptions, Nothing} = nothing
-    "The server is interested in receiving willCreateFiles requests."
-    willCreate::Union{FileOperationRegistrationOptions, Nothing} = nothing
-    "The server is interested in receiving didRenameFiles\nnotifications."
-    didRename::Union{FileOperationRegistrationOptions, Nothing} = nothing
-    "The server is interested in receiving willRenameFiles requests."
-    willRename::Union{FileOperationRegistrationOptions, Nothing} = nothing
-    "The server is interested in receiving didDeleteFiles file\nnotifications."
-    didDelete::Union{FileOperationRegistrationOptions, Nothing} = nothing
-    "The server is interested in receiving willDeleteFiles file\nrequests."
-    willDelete::Union{FileOperationRegistrationOptions, Nothing} = nothing
-end
-StructTypes.omitempties(::Type{ServerFileOperations}) = (:didCreate, :willCreate, :didRename, :willRename, :didDelete, :willDelete)
-Base.convert(::Type{ServerFileOperations}, nt::NamedTuple) = ServerFileOperations(; nt...)
-
-@kwdef struct WorkspaceServerCapabilities
-    """
-    The server supports workspace folder.
-
-    # Tags
-    - since – 3.6.0
-    """
-    workspaceFolders::Union{WorkspaceFoldersServerCapabilities, Nothing} = nothing
-    """
-    The server is interested in file notifications/requests.
-
-    # Tags
-    - since – 3.16.0
-    """
-    ClientFileOperations::Union{ServerFileOperations, Nothing} = nothing
-end
-StructTypes.omitempties(::Type{WorkspaceServerCapabilities}) = (:workspaceFolders, :ClientFileOperations)
-Base.convert(::Type{WorkspaceServerCapabilities}, nt::NamedTuple) = WorkspaceServerCapabilities(; nt...)
-
-@kwdef struct ServerCapabilities
+@interface ServerCapabilities begin
     """
     The position encoding the server picked from the encodings offered by the client via
     the client capability `general.positionEncodings`.
@@ -965,13 +909,15 @@ Base.convert(::Type{WorkspaceServerCapabilities}, nt::NamedTuple) = WorkspaceSer
     # Tags
     - since – 3.17.0
     """
-    positionEncoding::Union{lsptypeof(Val(:PositionEncodingKind)), Nothing} = nothing
+    positionEncoding::Union{PositionEncodingKind.Ty, Nothing} = nothing
+
     """
     Defines how text documents are synced. Is either a detailed structure defining each
     notification or for backwards compatibility the TextDocumentSyncKind number.
     If omitted it defaults to `TextDocumentSyncKind.None`.
     """
-    textDocumentSync::Union{Union{TextDocumentSyncOptions, lsptypeof(Val(:TextDocumentSyncKind))}, Nothing} = nothing
+    textDocumentSync::Union{Union{TextDocumentSyncOptions, TextDocumentSyncKind.Ty}, Nothing} = nothing
+
     """
     The server has support for pull model diagnostics.
 
@@ -979,48 +925,77 @@ Base.convert(::Type{WorkspaceServerCapabilities}, nt::NamedTuple) = WorkspaceSer
     - since – 3.17.0
     """
     diagnosticProvider::Union{Union{DiagnosticOptions, DiagnosticRegistrationOptions}, Nothing} = nothing
+
     "Workspace specific server capabilities"
-    workspace::Union{WorkspaceServerCapabilities, Nothing} = nothing
-end
-StructTypes.omitempties(::Type{ServerCapabilities}) =
-    (:positionEncoding, :textDocumentSync, :diagnosticProvider, :workspace)
+    workspace::Union{Nothing, @anon_interface begin
+        """
+        The server supports workspace folder.
 
-@kwdef struct ServerInfo
-    "The name of the server as defined by the server."
-    name::String
-    "The server's version as defined by the server."
-    version::Union{String, Nothing} = nothing
-end
-StructTypes.omitempties(::Type{ServerInfo}) = (:version,)
-Base.convert(::Type{ServerInfo}, nt::NamedTuple) = ServerInfo(; nt...)
+        # Tags
+        - since – 3.6.0
+        """
+        workspaceFolders::Union{WorkspaceFoldersServerCapabilities, Nothing} = nothing
 
-@kwdef struct InitializeResult
+        """
+        The server is interested in file notifications/requests.
+
+        # Tags
+        - since – 3.16.0
+        """
+        fileOperations::Union{Nothing, @anon_interface begin
+            "The server is interested in receiving didCreateFiles notifications."
+            didCreate::Union{FileOperationRegistrationOptions, Nothing} = nothing
+
+            "The server is interested in receiving willCreateFiles requests."
+            willCreate::Union{FileOperationRegistrationOptions, Nothing} = nothing
+
+            "The server is interested in receiving didRenameFiles notifications."
+            didRename::Union{FileOperationRegistrationOptions, Nothing} = nothing
+
+            "The server is interested in receiving willRenameFiles requests."
+            willRename::Union{FileOperationRegistrationOptions, Nothing} = nothing
+
+            "The server is interested in receiving didDeleteFiles file notifications."
+            didDelete::Union{FileOperationRegistrationOptions, Nothing} = nothing
+
+            "The server is interested in receiving willDeleteFiles file requests."
+            willDelete::Union{FileOperationRegistrationOptions, Nothing} = nothing
+        end}
+    end} = nothing
+end
+
+@interface InitializeResult begin
     "The capabilities the language server provides."
     capabilities::ServerCapabilities
+
     """
     Information about the server.
 
     # Tags
     - since – 3.15.0
     """
-    serverInfo::Union{ServerInfo, Nothing} = nothing
+    serverInfo::Union{Nothing, @anon_interface begin
+        "The name of the server as defined by the server."
+        name::String
+
+        "The server's version as defined by the server."
+        version::Union{String, Nothing} = nothing
+    end} = nothing
 end
-StructTypes.omitempties(::Type{InitializeResult}) = (:serverInfo,)
 
 "Known error codes for an `InitializeErrorCodes`;"
-module InitializeErrorCodes
-"""
-If the protocol version provided by the client can't be handled by the server.
+@namespace InitializeErrorCodes::Int begin
+    """
+    If the protocol version provided by the client can't be handled by the server.
 
-# Tags
-- deprecated – This initialize error got replaced by client capabilities.
-               There is no version handshake in version 3.0x
-"""
-const unknownProtocolVersion = 1
+    # Tags
+    - deprecated – This initialize error got replaced by client capabilities.
+                There is no version handshake in version 3.0x
+    """
+    unknownProtocolVersion = 1
 end
-lsptypeof(::Val{:InitializeErrorCodes}) = Int
 
-@kwdef struct InitializeError
+@interface InitializeError begin
     """
     Indicates whether the client execute the following retry logic:
     (1) show the message provided by the ResponseError to the user
@@ -1030,21 +1005,17 @@ lsptypeof(::Val{:InitializeErrorCodes}) = Int
     retry::Bool
 end
 
-@kwdef struct InitializeResponseError
+@interface InitializeResponseError begin
     "A string providing a short description of the error."
     message::String
-    code::lsptypeof(Val(:InitializeErrorCodes))
+    code::InitializeErrorCodes.Ty
     data::InitializeError
 end
 
-@kwdef struct InitializeResponse
-    jsonrpc::String = "2.0"
-    "The request id."
-    id::Union{Int, Nothing}
+@interface InitializeResponse extends ResponseMessage begin
     result::Union{InitializeResult, Nothing} = nothing
     error::Union{InitializeResponseError, Nothing} = nothing
 end
-StructTypes.omitempties(::Type{InitializeResponse}) = (:result, :error)
 
 """
 The document diagnostic report kinds.
@@ -1052,25 +1023,27 @@ The document diagnostic report kinds.
 # Tags
 - since – 3.17.0
 """
-module DocumentDiagnosticReportKind
-"A diagnostic report with a full set of problems."
-const Full = "full"
-"A report indicating that the last returned report is still accurate."
-const Unchanged = "unchanged"
-end
-lsptypeof(::Val{:DocumentDiagnosticReportKind}) = String
+@namespace DocumentDiagnosticReportKind::String begin
+    "A diagnostic report with a full set of problems."
+    Full = "full"
 
-module DiagnosticSeverity
-"Reports an error."
-const Error = 1
-"Reports a warning."
-const Warning = 2
-"Reports an information."
-const Information = 3
-"Reports a hint."
-const Hint = 4
+    "A report indicating that the last returned report is still accurate."
+    Unchanged = "unchanged"
 end
-lsptypeof(::Val{:DiagnosticSeverity}) = Int
+
+@namespace DiagnosticSeverity::Int begin
+    "Reports an error."
+    Error = 1
+
+    "Reports a warning."
+    Warning = 2
+
+    "Reports an information."
+    Information = 3
+
+    "Reports a hint."
+    Hint = 4
+end
 
 """
 Structure to capture a description for an error code.
@@ -1078,9 +1051,9 @@ Structure to capture a description for an error code.
 # Tags
 - since – 3.16.0
 """
-@kwdef struct CodeDescription
+@interface CodeDescription begin
     "An URI to open with more information about the diagnostic error."
-    href::lsptypeof(Val(:URI))
+    href::URI
 end
 
 """
@@ -1089,19 +1062,22 @@ The diagnostic tags.
 # Tags
 - since – 3.15.0
 """
-module DiagnosticTag
-const Unnecessary = 1
-@doc "Unused or unnecessary code.\n\nClients are allowed to render diagnostics with this tag faded out\ninstead of having an error squiggle." Unnecessary
-const Deprecated = 2
-@doc "Deprecated or obsolete code.\n\nClients are allowed to rendered diagnostics with this tag strike through." Deprecated
+@namespace DiagnosticTag::Int begin
+    """
+    Unused or unnecessary code. Clients are allowed to render diagnostics with this tag
+    faded out instead of having an error squiggle.
+    """
+    Unnecessary = 1
+
+    "Deprecated or obsolete code. Clients are allowed to rendered diagnostics with this tag strike through."
+    Deprecated = 2
 end
-lsptypeof(::Val{:DiagnosticTag}) = Int
 
 """
 Represents a location inside a resource, such as a line inside a text file.
 """
-@kwdef struct Location
-    uri::lsptypeof(Val(:DocumentUri))
+@interface Location begin
+    uri::DocumentUri
     range::Range
 end
 
@@ -1110,25 +1086,29 @@ Represents a related message and source code location for a diagnostic.
 This should be used to point to code locations that cause or are related to a diagnostics,
 e.g when duplicating a symbol in a scope.
 """
-@kwdef struct DiagnosticRelatedInformation
+@interface DiagnosticRelatedInformation begin
     "The location of this related diagnostic information."
     location::Location
+
     "The message of this related diagnostic information."
     message::String
 end
 
-@kwdef struct Diagnostic
+@interface Diagnostic begin
     "The range at which the message applies."
     range::Range
+
     """
     The diagnostic's severity.
     To avoid interpretation mismatches when a server is used with different clients it is
     highly recommended that servers always provide a severity value.
     If omitted, it’s recommended for the client to interpret it as an Error severity.
     """
-    severity::Union{lsptypeof(Val(:DiagnosticSeverity)), Nothing} = nothing
+    severity::Union{DiagnosticSeverity.Ty, Nothing} = nothing
+
     "The diagnostic's code, which might appear in the user interface."
     code::Union{Union{Int, String}, Nothing} = nothing
+
     """
     An optional property to describe the error code.
 
@@ -1136,22 +1116,27 @@ end
     - since – 3.16.0
     """
     codeDescription::Union{CodeDescription, Nothing} = nothing
+
     "A human-readable string describing the source of this diagnostic, e.g. 'typescript' or 'super lint'."
     source::Union{String, Nothing} = nothing
+
     "The diagnostic's message."
     message::String
+
     """
     Additional metadata about the diagnostic.
 
     # Tags
     - since – 3.15.0
     """
-    tags::Union{Vector{lsptypeof(Val(:DiagnosticTag))}, Nothing} = nothing
+    tags::Union{Vector{DiagnosticTag.Ty}, Nothing} = nothing
+
     """
     An array of related diagnostic information, e.g. when symbol-names within
     a scope collide all definitions can be marked via this property.
     """
     relatedInformation::Union{Vector{DiagnosticRelatedInformation}, Nothing} = nothing
+
     """
     A data entry field that is preserved between a `textDocument/publishDiagnostics`
     notification and `textDocument/codeAction` request.
@@ -1161,23 +1146,22 @@ end
     """
     data::Union{Any, Nothing} = nothing
 end
-StructTypes.omitempties(::Type{Diagnostic}) =
-    (:severity, :code, :codeDescription, :source, :tags, :relatedInformation, :data)
 
 """A diagnostic report with a full set of problems.
 
 # Tags
 - since – 3.17.0
 """
-@kwdef struct FullDocumentDiagnosticReport
+@interface FullDocumentDiagnosticReport begin
     "A full document diagnostic report."
-    kind::String = DocumentDiagnosticReportKind.Full
+    kind::DocumentDiagnosticReportKind.Ty = DocumentDiagnosticReportKind.Full
+
     "An optional result id. If provided it will be sent on the next diagnostic request for the same document."
     resultId::Union{String, Nothing} = nothing
+
     "The actual items."
     items::Vector{Diagnostic}
 end
-StructTypes.omitempties(::Type{FullDocumentDiagnosticReport}) = (:resultId,)
 
 """
 "A diagnostic report indicating that the last returned report is still accurate.
@@ -1185,9 +1169,10 @@ StructTypes.omitempties(::Type{FullDocumentDiagnosticReport}) = (:resultId,)
 # Tags
 - since – 3.17.0
 """
-@kwdef struct UnchangedDocumentDiagnosticReport
+@interface UnchangedDocumentDiagnosticReport begin
     "A document diagnostic report indicating no changes to the last result. A server can only return `unchanged` if result ids are provided."
     kind::String = DocumentDiagnosticReportKind.Unchanged
+
     "A result id which will be sent on the next diagnostic request for the same document."
     resultId::String
 end
@@ -1198,13 +1183,7 @@ A full diagnostic report with a set of related documents.
 # Tags
 - since – 3.17.0
 """
-@kwdef struct RelatedFullDocumentDiagnosticReport
-    "A full document diagnostic report."
-    kind::String = DocumentDiagnosticReportKind.Full
-    "An optional result id. If provided it will be sent on the next diagnostic request for the same document."
-    resultId::Union{String, Nothing} = nothing
-    "The actual items."
-    items::Vector{Diagnostic}
+@interface RelatedFullDocumentDiagnosticReport extends FullDocumentDiagnosticReport begin
     """
     Diagnostics of related documents. This information is useful in programming languages
     where code in a file A can generate diagnostics in a file B which A depends on.
@@ -1214,9 +1193,8 @@ A full diagnostic report with a set of related documents.
     # Tags
     - since – 3.17.0
     """
-    relatedDocuments::Union{Dict{lsptypeof(Val(:DocumentUri)),Union{FullDocumentDiagnosticReport,UnchangedDocumentDiagnosticReport}}, Nothing} = nothing
+    relatedDocuments::Union{Dict{DocumentUri,Union{FullDocumentDiagnosticReport,UnchangedDocumentDiagnosticReport}}, Nothing} = nothing
 end
-StructTypes.omitempties(::Type{RelatedFullDocumentDiagnosticReport}) = (:resultId, :relatedDocuments)
 
 """
 An unchanged diagnostic report with a set of related documents.
@@ -1224,14 +1202,7 @@ An unchanged diagnostic report with a set of related documents.
 # Tags
 - since – 3.17.0
 """
-@kwdef struct RelatedUnchangedDocumentDiagnosticReport
-    """
-    A document diagnostic report indicating no changes to the last result.
-    A server can only return `unchanged` if result ids are provided.
-    """
-    kind::String = DocumentDiagnosticReportKind.Unchanged
-    "A result id which will be sent on the next diagnostic request for the same document."
-    resultId::String
+@interface RelatedUnchangedDocumentDiagnosticReport extends UnchangedDocumentDiagnosticReport begin
     """
     Diagnostics of related documents. This information is useful in programming languages
     where code in a file A can generate diagnostics in a file B which A depends on.
@@ -1241,9 +1212,8 @@ An unchanged diagnostic report with a set of related documents.
     # Tags
     - since – 3.17.0
     """
-    relatedDocuments::Union{Dict{lsptypeof(Val(:DocumentUri)),Union{FullDocumentDiagnosticReport,UnchangedDocumentDiagnosticReport}}, Nothing} = nothing
+    relatedDocuments::Union{Dict{DocumentUri,Union{FullDocumentDiagnosticReport,UnchangedDocumentDiagnosticReport}}, Nothing} = nothing
 end
-StructTypes.omitempties(::Type{RelatedUnchangedDocumentDiagnosticReport}) = (:relatedDocuments,)
 
 """
 Parameters of the document diagnostic request.
@@ -1251,30 +1221,23 @@ Parameters of the document diagnostic request.
 # Tags
 - since – 3.17.0
 """
-@kwdef struct DocumentDiagnosticParams
-    "An optional token that a server can use to report work done progress."
-    workDoneToken::Union{lsptypeof(Val(:ProgressToken)), Nothing} = nothing
-    "An optional token that a server can use to report partial results (e.g. streaming) to the client."
-    partialResultToken::Union{lsptypeof(Val(:ProgressToken)), Nothing} = nothing
+@interface DocumentDiagnosticParams extends WorkDoneProgressParams, PartialResultParams begin
     "The text document."
     textDocument::TextDocumentIdentifier
+
     "The additional identifier provided during registration."
     identifier::Union{String, Nothing} = nothing
+
     "The result id of a previous response if provided."
     previousResultId::Union{String, Nothing} = nothing
 end
-StructTypes.omitempties(::Type{DocumentDiagnosticParams}) =
-    (:workDoneToken, :partialResultToken, :identifier, :previousResultId)
 
 """
 The text document diagnostic request is sent from the client to the server to ask the server
 to compute the diagnostics for a given document.
 As with other pull requests the server is asked to compute the diagnostics for the currently synced version of the document.
 """
-@kwdef struct DocumentDiagnosticRequest
-    jsonrpc::String = "2.0"
-    "The request id."
-    id::Int
+@interface DocumentDiagnosticRequest extends RequestMessage begin
     method::String = "textDocument/diagnostic"
     params::DocumentDiagnosticParams
 end
@@ -1288,7 +1251,8 @@ comparison to the last pull request.
 # Tags
 - since – 3.17.0
 """
-const DocumentDiagnosticReport = Union{RelatedFullDocumentDiagnosticReport, RelatedUnchangedDocumentDiagnosticReport}
+const DocumentDiagnosticReport =
+    Union{RelatedFullDocumentDiagnosticReport, RelatedUnchangedDocumentDiagnosticReport}
 
 """
 Cancellation data returned from a diagnostic request.
@@ -1296,7 +1260,7 @@ Cancellation data returned from a diagnostic request.
 # Tags
 - since – 3.17.0
 """
-@kwdef struct DiagnosticServerCancellationData
+@interface DiagnosticServerCancellationData begin
     retriggerRequest::Bool
 end
 
@@ -1306,19 +1270,16 @@ A full document diagnostic report for a workspace diagnostic result.
 # Tags
 - since – 3.17.0
 """
-@kwdef struct WorkspaceFullDocumentDiagnosticReport
-    "A full document diagnostic report."
-    kind::lsptypeof(Val(:DocumentDiagnosticReportKind))
-    "An optional result id. If provided it will be sent on the next diagnostic request for the same document."
-    resultId::Union{String, Nothing} = nothing
-    "The actual items."
-    items::Vector{Diagnostic}
+@interface WorkspaceFullDocumentDiagnosticReport extends FullDocumentDiagnosticReport begin
     "The URI for which diagnostic information is reported."
-    uri::lsptypeof(Val(:DocumentUri))
-    "The version number for which the diagnostics are reported. If the document is not marked as open `null` can be provided."
+    uri::DocumentUri
+
+    """
+    The version number for which the diagnostics are reported.
+    If the document is not marked as open `null` can be provided.
+    """
     version::Union{Int, Nothing}
 end
-StructTypes.omitempties(::Type{WorkspaceFullDocumentDiagnosticReport}) = (:resultId,)
 
 """
 An unchanged document diagnostic report for a workspace diagnostic result.
@@ -1326,14 +1287,14 @@ An unchanged document diagnostic report for a workspace diagnostic result.
 # Tags
 - since – 3.17.0
 """
-@kwdef struct WorkspaceUnchangedDocumentDiagnosticReport
-    "A document diagnostic report indicating no changes to the last result. A server can only return `unchanged` if result ids are provided."
-    kind::lsptypeof(Val(:DocumentDiagnosticReportKind))
-    "A result id which will be sent on the next\ndiagnostic request for the same document."
-    resultId::String
+@interface WorkspaceUnchangedDocumentDiagnosticReport extends UnchangedDocumentDiagnosticReport begin
     "The URI for which diagnostic information is reported."
-    uri::lsptypeof(Val(:DocumentUri))
-    "The version number for which the diagnostics are reported. If the document is not marked as open `null` can be provided."
+    uri::DocumentUri
+
+    """
+    The version number for which the diagnostics are reported.
+    If the document is not marked as open `null` can be provided.
+    """
     version::Union{Int, Nothing}
 end
 
@@ -1346,7 +1307,7 @@ A workspace diagnostic document report.
 const WorkspaceDocumentDiagnosticReport =
     Union{WorkspaceFullDocumentDiagnosticReport, WorkspaceUnchangedDocumentDiagnosticReport}
 
-@kwdef struct WorkspaceDiagnosticReport
+@interface WorkspaceDiagnosticReport begin
     items::Vector{WorkspaceDocumentDiagnosticReport}
 end
 
@@ -1356,9 +1317,10 @@ A previous result id in a workspace pull request.
 # Tags
 - since – 3.17.0
 """
-@kwdef struct PreviousResultId
-    "The URI for which the client knows a\nresult id."
-    uri::lsptypeof(Val(:DocumentUri))
+@interface PreviousResultId begin
+    "The URI for which the client knows a result id."
+    uri::DocumentUri
+
     "The value of the previous result id."
     value::String
 end
@@ -1369,127 +1331,24 @@ Parameters of the workspace diagnostic request.
 # Tags
 - since – 3.17.0
 """
-@kwdef struct WorkspaceDiagnosticParams
-    "An optional token that a server can use to report work done progress."
-    workDoneToken::Union{lsptypeof(Val(:ProgressToken)), Nothing} = nothing
-    "An optional token that a server can use to report partial results (e.g.\nstreaming) to the client."
-    partialResultToken::Union{lsptypeof(Val(:ProgressToken)), Nothing} = nothing
+@interface WorkspaceDiagnosticParams extends WorkDoneProgressParams, PartialResultParams begin
     "The additional identifier provided during registration."
     identifier::Union{String, Nothing} = nothing
+
     "The currently known diagnostic reports with their\nprevious result ids."
     previousResultIds::Vector{PreviousResultId}
 end
-StructTypes.omitempties(::Type{WorkspaceDiagnosticParams}) =
-    (:workDoneToken, :partialResultToken, :identifier)
 
-@kwdef struct WorkspaceDiagnosticRequest
-    jsonrpc::String = "2.0"
-    "The request id."
-    id::Int
+@interface WorkspaceDiagnosticRequest extends RequestMessage begin
     method::String = "workspace/diagnostic"
     params::WorkspaceDiagnosticParams
 end
 
-# message dispatcher definition
-const method_dispatcher = Dict{String,DataType}(
-    "textDocument/diagnostic" => DocumentDiagnosticRequest,
-    "exit" => ExitNotification,
-    "textDocument/didClose" => DidCloseTextDocumentNotification,
-    "initialized" => InitializedNotification,
-    "shutdown" => ShutdownRequest,
-    "initialize" => InitializeRequest,
-    "textDocument/didSave" => DidSaveTextDocumentNotification,
-    "textDocument/didOpen" => DidOpenTextDocumentNotification,
-    "workspace/diagnostic" => WorkspaceDiagnosticRequest,
-    "textDocument/didChange" => DidChangeTextDocumentNotification)
+for name in exports
+    Core.eval(@__MODULE__, Expr(:export, name))
+end
 
 export
-    method_dispatcher,
-    ClientCapabilities,
-    CodeDescription,
-    Diagnostic,
-    DiagnosticOptions,
-    DiagnosticRegistrationOptions,
-    DiagnosticRelatedInformation,
-    DiagnosticServerCancellationData,
-    DiagnosticSeverity,
-    DiagnosticTag,
-    DidChangeTextDocumentNotification,
-    DidChangeTextDocumentParams,
-    DidCloseTextDocumentNotification,
-    DidCloseTextDocumentParams,
-    DidOpenTextDocumentNotification,
-    DidOpenTextDocumentParams,
-    DidSaveTextDocumentNotification,
-    DidSaveTextDocumentParams,
-    DocumentDiagnosticParams,
-    DocumentDiagnosticReport,
-    DocumentDiagnosticReportKind,
-    DocumentDiagnosticRequest,
-    DocumentDiagnosticResponse,
-    DocumentFilter,
-    DocumentSelector,
-    DocumentUri,
-    ErrorCodes,
-    ExitNotification,
-    FileOperationFilter,
-    FileOperationPattern,
-    FileOperationPatternKind,
-    FileOperationPatternOptions,
-    FileOperationRegistrationOptions,
-    FullDocumentDiagnosticReport,
-    InitializeError,
-    InitializeErrorCodes,
-    InitializeParams,
-    InitializeRequest,
-    InitializeResponse,
-    InitializeResponseError,
-    InitializeResult,
-    InitializedNotification,
-    LSPAny,
-    LSPArray,
-    LSPObject,
-    Location,
-    Message,
-    NotificationMessage,
-    OptionalVersionedTextDocumentIdentifier,
-    PartialResultParams,
-    Position,
-    PositionEncodingKind,
-    PreviousResultId,
-    ProgressToken,
-    Range,
-    RelatedFullDocumentDiagnosticReport,
-    RelatedUnchangedDocumentDiagnosticReport,
-    RequestMessage,
-    ResponseError,
-    ResponseMessage,
-    SaveOptions,
-    ServerCapabilities,
-    ShutdownRequest,
-    StaticRegistrationOptions,
-    TextDocumentChangeRegistrationOptions,
-    TextDocumentContentChangeEvent,
-    TextDocumentIdentifier,
-    TextDocumentItem,
-    TextDocumentRegistrationOptions,
-    TextDocumentSyncKind,
-    TextDocumentSyncOptions,
-    TraceValue,
-    URI,
-    UnchangedDocumentDiagnosticReport,
-    VersionedTextDocumentIdentifier,
-    WorkDoneProgressOptions,
-    WorkDoneProgressParams,
-    WorkspaceDiagnosticParams,
-    WorkspaceDiagnosticReport,
-    WorkspaceDiagnosticRequest,
-    WorkspaceDocumentDiagnosticReport,
-    WorkspaceFolder,
-    WorkspaceFoldersServerCapabilities,
-    WorkspaceFullDocumentDiagnosticReport,
-    WorkspaceUnchangedDocumentDiagnosticReport,
-    array,
-    decimal,
-    integer,
-    uinteger
+    method_dispatcher
+
+end # module LSP
