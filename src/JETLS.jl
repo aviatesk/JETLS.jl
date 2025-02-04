@@ -457,11 +457,11 @@ end
 # TODO severity
 function jet_result_to_diagnostics(result, files::Set{URI})
     uri2diagnostics = Dict{URI,Vector{Diagnostic}}(furi => Diagnostic[] for furi in files)
-    jet_error_reports_to_diagnostics!(uri2diagnostics, result, files)
+    jet_result_to_diagnostics!(uri2diagnostics, result, files)
     return uri2diagnostics
 end
 
-function jet_error_reports_to_diagnostics!(uri2diagnostics::Dict{URI,Vector{Diagnostic}}, result, files::Set{URI})
+function jet_result_to_diagnostics!(uri2diagnostics::Dict{URI,Vector{Diagnostic}}, result, files::Set{URI})
     for report in result.res.toplevel_error_reports
         diagnostic = jet_toplevel_error_report_to_diagnostic(report)
         furi = filepath2uri(JET.tofullpath(report.file))
@@ -632,7 +632,7 @@ function update_analysis_instance!(analysis_instance, result)
     end
     analysis_instance.result.staled = false
     analysis_instance.result.last_analysis = time()
-    jet_error_reports_to_diagnostics!(uri2diagnostics, result, files)
+    jet_result_to_diagnostics!(uri2diagnostics, result, files)
 end
 
 find_env_path(path::String) = search_up_file(path, "Project.toml")
