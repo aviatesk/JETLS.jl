@@ -24,7 +24,7 @@ function runserver(callback, in::IO, out::IO;
         for msg in endpoint
             if msg isa ShutdownRequest
                 shutdown_requested = true
-                res = ResponseMessage(; id = msg.id)
+                res = ResponseMessage(; id = msg.id, result=null)
             elseif msg isa ExitNotification
                 exit_code = !shutdown_requested
                 callback(msg, nothing)

@@ -1,7 +1,7 @@
 using Test
 
 using JETLS
-using JETLS.JSONRPC: readmsg, writemsg
+using JETLS.JSONRPC: JSON3, readmsg, writemsg
 
 # test the basic server setup and lifecycle
 let in = Base.BufferStream()
@@ -28,7 +28,14 @@ let in = Base.BufferStream()
         JETLS.LSP.ShutdownRequest(;
             id=2,
             method="shutdown"))
-    @test take!(result_queue).id == 2
+    let res = take!(result_queue)
+        @test res.id == 2
+        # make sure the `ShutdownResponse` follows the `ResponseMessage` specification:
+        # https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#responseMessage
+        des = JSON3.read(JSON3.write(res))
+        @test haskey(des, :result)
+        @test des[:result] === nothing
+    end
     writemsg(in,
         JETLS.LSP.ExitNotification(;
             method="exit"))
