@@ -1161,6 +1161,26 @@ end
     data::Union{Any, Nothing} = nothing
 end
 
+@interface PublishDiagnosticsParams begin
+    "The URI for which diagnostic information is reported."
+    uri::DocumentUri
+
+    """
+    Optional the version number of the document the diagnostics are published for.
+
+    @since 3.15.0
+    """
+    version::Union{Int,Nothing} = nothing
+
+    "An array of diagnostic information items."
+    diagnostics::Vector{Diagnostic}
+end
+
+@interface PublishDiagnosticsNotification @extends NotificationMessage begin
+    method::String = "textDocument/publishDiagnostics"
+    params::PublishDiagnosticsParams
+end
+
 """A diagnostic report with a full set of problems.
 
 # Tags
