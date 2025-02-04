@@ -15,32 +15,35 @@ using Pkg, JuliaSyntax, JET
 
 runserver(in::IO, out::IO; kwargs...) = runserver((msg, res)->nothing, in, out; kwargs...)
 function runserver(callback, in::IO, out::IO;
+                   in_callback = Returns(nothing),
+                   out_callback = Returns(nothing),
                    shutdown_really::Bool=true)
     endpoint = Endpoint(in, out)
-    state = initialize_state()
+    function send(@nospecialize msg)
+        JSONRPC.send(endpoint, msg)
+        out_callback(msg)
+        nothing
+    end
+    state = initialize_state(send)
     shutdown_requested = false
     local exit_code::Int
     try
         for msg in endpoint
+            in_callback(msg)
             if msg isa ShutdownRequest
                 shutdown_requested = true
-                res = ShutdownResponse(; id = msg.id, result = null)
+                send(ShutdownResponse(; id = msg.id, result = null))
             elseif msg isa ExitNotification
                 exit_code = !shutdown_requested
-                callback(msg, nothing)
+                out_callback(nothing) # for testing purpose
                 break
             elseif shutdown_requested
-                res = ResponseMessage(; id = msg.id, error=ResponseError(;
+                send(ResponseMessage(; id = msg.id, error=ResponseError(;
                     code=ErrorCodes.InvalidRequest,
-                    message="Received request after a shutdown request requested"))
+                    message="Received request after a shutdown request requested")))
             else
-                res = @invokelatest handle_message(state, msg)
+                @invokelatest handle_message(state, msg)
             end
-            if res === nothing
-            else
-                send(endpoint, res)
-            end
-            callback(msg, res)
         end
     catch err
         @error "Message handling failed" err
@@ -60,8 +63,9 @@ struct FileInfo
     parsed::Union{Expr,JuliaSyntax.ParseError}
 end
 
-function initialize_state()
+function initialize_state(send)
     return (;
+        send,
         workspaceFolders = URI[], # TODO support multiple workspace folders properly
         file_cache = Dict{URI,FileInfo}(), # on-memory virtual file system
         analysis_instances = AnalysisInstance[],
@@ -137,7 +141,7 @@ function handle_InitializeRequest(state, msg::InitializeRequest)
             ),
             serverInfo = (;
                 name = "JETLS",
-                version = "0.0.0")))
+                version = "0.0.0"))) |> state.send
 end
 
 function parse_file(text::String, uri::URI)
@@ -212,7 +216,7 @@ function handle_DocumentDiagnosticRequest(state, msg::DocumentDiagnosticRequest)
                 code = ErrorCodes.InternalError,
                 message = "Message handling failed",
                 data = DiagnosticServerCancellationData(;
-                    retriggerRequest = false)))
+                    retriggerRequest = false))) |> state.send
     end
 end
 
@@ -224,19 +228,12 @@ end
 function _handle_DocumentDiagnosticRequest(state, msg::DocumentDiagnosticRequest, uri::URI)
     if !haskey(state.reverse_map, uri)
         res = initiate_analysis!(state, uri)
-        if res isa ResponseError
-            return DocumentDiagnosticResponse(; id = msg.id, error = res)
-        else
-            return DocumentDiagnosticResponse(; id = msg.id, result = res)
-        end
     else
         res = refresh_analysis_instances!(state, uri)
-        if res isa ResponseError
-            return DocumentDiagnosticResponse(; id = msg.id, error = res)
-        else
-            return DocumentDiagnosticResponse(; id = msg.id, result = res)
-        end
     end
+    state.send(res isa ResponseError ?
+        DocumentDiagnosticResponse(; id = msg.id, error = res) :
+        DocumentDiagnosticResponse(; id = msg.id, result = res))
 end
 
 function parse_error_to_diagnostics(err::JuliaSyntax.ParseError)

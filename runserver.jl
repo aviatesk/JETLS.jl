@@ -13,7 +13,7 @@ catch
     exit(1)
 end
 
-runserver(stdin, stdout) do msg, res
-    # TODO only in debug mode
-    revise()
+function in_callback(@nospecialize msg)
+    revise() # TODO only in debug mode
 end
+runserver(stdin, stdout; in_callback)
