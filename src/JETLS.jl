@@ -127,10 +127,13 @@ function handle_InitializeRequest(state, msg::InitializeRequest)
                     change = TextDocumentSyncKind.Full,
                     save = SaveOptions(;
                         includeText = true)),
-                diagnosticProvider = DiagnosticOptions(;
+                diagnosticProvider = DiagnosticRegistrationOptions(;
+                    documentSelector = DocumentFilter[
+                        DocumentFilter(;
+                            language = "julia")],
                     identifier = "JETLS",
                     interFileDependencies = true,
-                    workspaceDiagnostics = false),
+                    workspaceDiagnostics = true),
             ),
             serverInfo = (;
                 name = "JETLS",
@@ -244,20 +247,23 @@ end
 function parse_error_to_diagnostics!(diagnostics::Vector{Diagnostic}, err::JuliaSyntax.ParseError)
     source = err.source
     for diagnostic in err.diagnostics
-        sline, scol = JuliaSyntax.source_location(source, JuliaSyntax.first_byte(diagnostic))
-        start = Position(; line = sline-1, character = scol)
-        eline, ecol = JuliaSyntax.source_location(source, JuliaSyntax.last_byte(diagnostic))
-        var"end" = Position(; line = eline-1, character = ecol)
-        push!(diagnostics, Diagnostic(;
-            range = Range(; start, var"end"),
-            severity =
-                diagnostic.level === :error ? DiagnosticSeverity.Error :
-                diagnostic.level === :warning ? DiagnosticSeverity.Warning :
-                diagnostic.level === :note ? DiagnosticSeverity.Information :
-                DiagnosticSeverity.Hint,
-            message = diagnostic.message,
-            source = "JuliaSyntax"))
+        push!(diagnostics, juliasyntax_diagnostic_to_diagnostic(diagnostic, source))
     end
+end
+function juliasyntax_diagnostic_to_diagnostic(diagnostic::JuliaSyntax.Diagnostic, source::JuliaSyntax.SourceFile)
+    sline, scol = JuliaSyntax.source_location(source, JuliaSyntax.first_byte(diagnostic))
+    start = Position(; line = sline-1, character = scol)
+    eline, ecol = JuliaSyntax.source_location(source, JuliaSyntax.last_byte(diagnostic))
+    var"end" = Position(; line = eline-1, character = ecol)
+    return Diagnostic(;
+        range = Range(; start, var"end"),
+        severity =
+            diagnostic.level === :error ? DiagnosticSeverity.Error :
+            diagnostic.level === :warning ? DiagnosticSeverity.Warning :
+            diagnostic.level === :note ? DiagnosticSeverity.Information :
+            DiagnosticSeverity.Hint,
+        message = diagnostic.message,
+        source = "JuliaSyntax")
 end
 
 mutable struct AnalysisResult
@@ -434,7 +440,7 @@ function new_analysis_instance(entry::AnalysisEntry, result)
     end
     # TODO return something for `toplevel_error_reports`
     parse_errors = Dict{URI,JuliaSyntax.ParseError}()
-    uri2diagnostics = jet_error_reports_to_diagnostics(result.res.inference_error_reports, files)
+    uri2diagnostics = jet_result_to_diagnostics(result, files)
     analysis_result = AnalysisResult(false, time(), uri2diagnostics)
     return AnalysisInstance(entry, files, parse_errors, analysis_result)
 end
@@ -449,41 +455,70 @@ function record_analysis_instance!(state, analysis_instance)
 end
 
 # TODO severity
-function jet_error_reports_to_diagnostics(reports, files::Set{URI})
+function jet_result_to_diagnostics(result, files::Set{URI})
     uri2diagnostics = Dict{URI,Vector{Diagnostic}}(furi => Diagnostic[] for furi in files)
-    jet_error_reports_to_diagnostics!(uri2diagnostics, reports, files)
+    jet_error_reports_to_diagnostics!(uri2diagnostics, result, files)
     return uri2diagnostics
 end
 
-function jet_error_reports_to_diagnostics!(uri2diagnostics::Dict{URI,Vector{Diagnostic}}, reports, files::Set{URI})
-    for report in reports
+function jet_error_reports_to_diagnostics!(uri2diagnostics::Dict{URI,Vector{Diagnostic}}, result, files::Set{URI})
+    for report in result.res.toplevel_error_reports
+        diagnostic = jet_toplevel_error_report_to_diagnostic(report)
+        furi = filepath2uri(JET.tofullpath(report.file))
+        items = uri2diagnostics[furi]
+        push!(items, diagnostic)
+    end
+    for report in result.res.inference_error_reports
+        diagnostic = jet_inference_error_report_to_diagnostic(report)
         topframe = report.vst[1]
         furi = filepath2uri(JET.tofullpath(String(topframe.file)))
         items = uri2diagnostics[furi]
-        message = JET.with_bufferring(:limit=>true) do io
-            JET.print_report_message(io, report)
-        end
-        relatedInformation = DiagnosticRelatedInformation[
-            let frame = report.vst[i],
-                message = sprint(JET.print_frame_sig, frame, JET.PrintConfig())
-                DiagnosticRelatedInformation(;
-                    location = Location(;
-                        uri = string(filepath2uri(JET.tofullpath(String(frame.file)))),
-                        range = jet_frame_to_range(frame)),
-                    message)
-            end
-            for i = 2:length(report.vst)]
-        push!(items, Diagnostic(;
-            range = jet_frame_to_range(topframe),
-            message,
-            source = "JETAnalyzer",
-            relatedInformation))
+        push!(items, diagnostic)
     end
+end
+
+function jet_toplevel_error_report_to_diagnostic(@nospecialize report::JET.ToplevelErrorReport)
+    if report isa JET.ParseErrorReport
+        return juliasyntax_diagnostic_to_diagnostic(report.diagnostic, report.source)
+    end
+    message = JET.with_bufferring(:limit=>true) do io
+        JET.print_report(io, report)
+    end
+    return Diagnostic(;
+        range = line_range(report.line),
+        message,
+        source = "JETAnalyzer")
+end
+
+function jet_inference_error_report_to_diagnostic(@nospecialize report::JET.InferenceErrorReport)
+    topframe = report.vst[1]
+    message = JET.with_bufferring(:limit=>true) do io
+        JET.print_report_message(io, report)
+    end
+    relatedInformation = DiagnosticRelatedInformation[
+        let frame = report.vst[i],
+            message = sprint(JET.print_frame_sig, frame, JET.PrintConfig())
+            DiagnosticRelatedInformation(;
+                location = Location(;
+                    uri = string(filepath2uri(JET.tofullpath(String(frame.file)))),
+                    range = jet_frame_to_range(frame)),
+                message)
+        end
+        for i = 2:length(report.vst)]
+    return Diagnostic(;
+        range = jet_frame_to_range(topframe),
+        message,
+        source = "JETAnalyzer",
+        relatedInformation)
 end
 
 function jet_frame_to_range(frame)
     line = JET.fixed_line_number(frame)
     line = line == 0 ? line : line - 1
+    return line_range(line)
+end
+
+function line_range(line::Int)
     start = Position(; line, character=0)
     var"end" = Position(; line, character=Int(typemax(Int32)))
     return Range(; start, var"end")
@@ -597,8 +632,7 @@ function update_analysis_instance!(analysis_instance, result)
     end
     analysis_instance.result.staled = false
     analysis_instance.result.last_analysis = time()
-    # TODO return something for `toplevel_error_reports`
-    jet_error_reports_to_diagnostics!(uri2diagnostics, result.res.inference_error_reports, files)
+    jet_error_reports_to_diagnostics!(uri2diagnostics, result, files)
 end
 
 find_env_path(path::String) = search_up_file(path, "Project.toml")

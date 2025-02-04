@@ -698,7 +698,7 @@ General text document registration options.
     A document selector to identify the scope of the registration.
     If set to null the document selector provided on the client side will be used.
     """
-    documentSelector::Union{Vector{DocumentFilter}, Nothing}
+    documentSelector::Union{DocumentSelector, Nothing}
 end
 
 @interface DidOpenTextDocumentParams begin
