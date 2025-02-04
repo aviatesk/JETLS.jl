@@ -2,7 +2,13 @@ const _INTERFACE_DEFS = Dict{Symbol,Expr}()
 
 macro interface(exs...)
     nexs = length(exs)
-    nexs == 2 || error("Invalid `@interface` syntax: ", exs)
+    if nexs == 1
+        # macro calls are expanded from outermost to innermost, so anonymous `@interface`
+        # won't be expanded unless it's used standalone
+        error("Anonymous `@interface` is only supported within a named `@interface` definition: ", exs)
+    else
+        nexs == 2 || error("Invalid `@interface` syntax: ", exs)
+    end
     Name, defex = exs
     Name isa Symbol || error("Invalid `@interface` syntax: ", exs)
     if Meta.isexpr(defex, :macrocall)
@@ -56,7 +62,7 @@ function process_interface_def!(toplevelblk::Expr, structbody::Expr, nullable_fi
     deleteat!(structbody.args, duplicated_fields)
     is_anon = Name === nothing
     if is_anon
-        Name = gensym("@anon_interface")
+        Name = gensym("anonymous_interface")
     end
     structdef = Expr(:struct, false, Name, structbody)
     push!(toplevelblk.args, :(@kwdef $structdef)) # `@kwdef` will attach `Core.__doc__` automatically
@@ -134,9 +140,9 @@ function _process_interface_def!(toplevelblk::Expr, structbody::Expr, nullable_f
             if Meta.isexpr(fieldtype, :curly) && fieldtype.args[1] === :Union
                 for i = 2:length(fieldtype.args)
                     ufty = fieldtype.args[i]
-                    if Meta.isexpr(ufty, :macrocall) && ufty.args[1] === Symbol("@anon_interface")
+                    if Meta.isexpr(ufty, :macrocall) && ufty.args[1] === Symbol("@interface")
                         anon_defex = ufty.args[end]
-                        Meta.isexpr(anon_defex, :block) || error("Invalid `@anon_interface` syntax: ", ufty)
+                        Meta.isexpr(anon_defex, :block) || error("Invalid `@interface` syntax: ", ufty)
                         fieldtype.args[i] = process_anon_interface_def!(toplevelblk, anon_defex)
                     end
                 end
@@ -158,12 +164,12 @@ function _process_interface_def!(toplevelblk::Expr, structbody::Expr, nullable_f
     return method
 end
 
-function process_anon_interface_def!(toplevelblk::Expr, defex::Expr) # @anon_interface
+function process_anon_interface_def!(toplevelblk::Expr, defex::Expr) # Anonymous @interface
     extended_fields = Dict{Symbol,Vector{Int}}()
     duplicated_fields = Int[]
     res, _ = process_interface_def!(toplevelblk, Expr(:block), Symbol[], extended_fields, duplicated_fields, defex, #=Name=#nothing)
     if !(isempty(extended_fields) && isempty(duplicated_fields))
-        error("`@anon_interface` does not support extension", defex)
+        error("`Anonymous @interface` does not support extension", defex)
     end
     return res
 end

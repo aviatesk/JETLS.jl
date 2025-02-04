@@ -279,7 +279,7 @@ end
 
 @interface ClientCapabilities begin
     "Workspace specific client capabilities."
-    workspace::Union{Nothing, @anon_interface begin
+    workspace::Union{Nothing, @interface begin
         """
         The client supports applying batch edits to the workspace by supporting the request
         'workspace/applyEdit'
@@ -300,7 +300,7 @@ end
         # Tags
         - since – 3.16.0
         """
-        fileOperations::Union{Nothing, @anon_interface begin
+        fileOperations::Union{Nothing, @interface begin
             "Whether the client supports dynamic registration for file requests/notifications."
             dynamicRegistration::Union{Bool, Nothing} = nothing
 
@@ -420,7 +420,7 @@ end
     # Tags
     - since – 3.15.0
     """
-    clientInfo::Union{Nothing, @anon_interface begin
+    clientInfo::Union{Nothing, @interface begin
         "The name of the client as defined by the client."
         name::String
 
@@ -927,7 +927,7 @@ end
     diagnosticProvider::Union{Union{DiagnosticOptions, DiagnosticRegistrationOptions}, Nothing} = nothing
 
     "Workspace specific server capabilities"
-    workspace::Union{Nothing, @anon_interface begin
+    workspace::Union{Nothing, @interface begin
         """
         The server supports workspace folder.
 
@@ -942,7 +942,7 @@ end
         # Tags
         - since – 3.16.0
         """
-        fileOperations::Union{Nothing, @anon_interface begin
+        fileOperations::Union{Nothing, @interface begin
             "The server is interested in receiving didCreateFiles notifications."
             didCreate::Union{FileOperationRegistrationOptions, Nothing} = nothing
 
@@ -974,7 +974,7 @@ end
     # Tags
     - since – 3.15.0
     """
-    serverInfo::Union{Nothing, @anon_interface begin
+    serverInfo::Union{Nothing, @interface begin
         "The name of the server as defined by the server."
         name::String
 
