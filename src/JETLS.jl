@@ -24,7 +24,7 @@ function runserver(callback, in::IO, out::IO;
         for msg in endpoint
             if msg isa ShutdownRequest
                 shutdown_requested = true
-                res = ResponseMessage(; id = msg.id, result=null)
+                res = ShutdownResponse(; id = msg.id, result = null)
             elseif msg isa ExitNotification
                 exit_code = !shutdown_requested
                 callback(msg, nothing)
@@ -37,10 +37,8 @@ function runserver(callback, in::IO, out::IO;
                 res = @invokelatest handle_message(state, msg)
             end
             if res === nothing
-            elseif isa(res, ResponseMessage)
-                send(endpoint, res)
             else
-                error(lazy"Got unexpected handler result: $res")
+                send(endpoint, res)
             end
             callback(msg, res)
         end
@@ -120,7 +118,7 @@ function handle_InitializeRequest(state, msg::InitializeRequest)
             @warn "No workspaceFolders or rootUri in InitializeRequest"
         end
     end
-    return ResponseMessage(; id = msg.id,
+    return InitializeResponse(; id = msg.id,
         result = InitializeResult(;
             capabilities = ServerCapabilities(;
                 positionEncoding = PositionEncodingKind.UTF16,
@@ -200,12 +198,12 @@ function handle_DocumentDiagnosticRequest(state, msg::DocumentDiagnosticRequest)
     textDocument = msg.params.textDocument
     uri = URI(textDocument.uri)
     try
-        _handle_DocumentDiagnosticRequest(state, msg, uri)
+        return _handle_DocumentDiagnosticRequest(state, msg, uri)
     catch err
         @error "DocumentDiagnosticRequest handling failed" err
         Base.display_error(stderr, err, catch_backtrace())
         clear_analysis_instances!(state)
-        return ResponseMessage(;
+        return DocumentDiagnosticResponse(;
             id = msg.id,
             error = ResponseError(;
                 code = ErrorCodes.InternalError,
@@ -224,16 +222,16 @@ function _handle_DocumentDiagnosticRequest(state, msg::DocumentDiagnosticRequest
     if !haskey(state.reverse_map, uri)
         res = initiate_analysis!(state, uri)
         if res isa ResponseError
-            return ResponseMessage(; id = msg.id, error = res)
+            return DocumentDiagnosticResponse(; id = msg.id, error = res)
         else
-            return ResponseMessage(; id = msg.id, result = res)
+            return DocumentDiagnosticResponse(; id = msg.id, result = res)
         end
     else
         res = refresh_analysis_instances!(state, uri)
         if res isa ResponseError
-            return ResponseMessage(; id = msg.id, error = res)
+            return DocumentDiagnosticResponse(; id = msg.id, error = res)
         else
-            return ResponseMessage(; id = msg.id, result = res)
+            return DocumentDiagnosticResponse(; id = msg.id, result = res)
         end
     end
 end

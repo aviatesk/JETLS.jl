@@ -524,6 +524,10 @@ end
     method::String = "shutdown"
 end
 
+@interface ShutdownResponse @extends ResponseMessage begin
+    result::Union{Null, Nothing} = nothing
+end
+
 @interface ExitNotification @extends NotificationMessage begin
     method::String = "exit"
 end
@@ -1017,9 +1021,7 @@ end
     retry::Bool
 end
 
-@interface InitializeResponseError begin
-    "A string providing a short description of the error."
-    message::String
+@interface InitializeResponseError @extends ResponseError begin
     code::InitializeErrorCodes.Ty
     data::InitializeError
 end
@@ -1265,6 +1267,10 @@ comparison to the last pull request.
 """
 const DocumentDiagnosticReport =
     Union{RelatedFullDocumentDiagnosticReport, RelatedUnchangedDocumentDiagnosticReport}
+
+@interface DocumentDiagnosticResponse @extends ResponseMessage begin
+    result::Union{DocumentDiagnosticReport, Nothing} = nothing
+end
 
 """
 Cancellation data returned from a diagnostic request.
