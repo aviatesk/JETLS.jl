@@ -1,7 +1,7 @@
 try
     using Revise
 catch err
-    @info "Revise not found"
+    @warn "Revise not found"
 end
 
 @info "Loading JETLS..."
@@ -9,7 +9,7 @@ end
 try
     using JETLS
 catch
-    @info "JETLS not found"
+    @error "JETLS not found"
     exit(1)
 end
 
