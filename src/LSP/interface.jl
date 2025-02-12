@@ -62,7 +62,7 @@ function process_interface_def!(toplevelblk::Expr, structbody::Expr, nullable_fi
     deleteat!(structbody.args, duplicated_fields)
     is_anon = Name === nothing
     if is_anon
-        Name = gensym("anonymous_interface")
+        Name = Symbol("AnonymousInterface", gensym())
     end
     structdef = Expr(:struct, false, Name, structbody)
     push!(toplevelblk.args, :(@kwdef $structdef)) # `@kwdef` will attach `Core.__doc__` automatically
