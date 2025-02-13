@@ -1,3 +1,12 @@
+function uri2filename(uri::URI)
+    if uri.scheme == "file"
+        return uri2filepath(uri)::String
+    elseif uri.scheme == "untitled"
+        return uri.path
+    end
+    return nothing
+end
+
 function uri2filepath(uri::URI)
     if uri.scheme != "file"
         return nothing
@@ -25,6 +34,13 @@ function uri2filepath(uri::URI)
     end
 
     return value
+end
+
+function filename2uri(filename::String)
+    if startswith(filename, "Untitled")
+        return URI(scheme="untitled", path=filename)
+    end
+    return filepath2uri(filename)
 end
 
 function filepath2uri(path::String)

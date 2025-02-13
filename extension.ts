@@ -25,7 +25,17 @@ function startLanguageServer(context: vscode.ExtensionContext) {
   };
 
   const clientOptions: LanguageClientOptions = {
-    documentSelector: [{ scheme: 'file', language: 'julia' }],
+    // documentSelector: [{ scheme: 'file', language: 'julia' }],
+    documentSelector: [
+      {
+        scheme: 'file',
+        language: 'julia'
+      },
+      {
+        scheme: 'untitled',
+        language: 'julia'
+      }
+    ],
     // synchronize: {
     //   // Notify the server about file changes to '.clientrc files contained in the workspace
     //   fileEvents: vscode.workspace.createFileSystemWatcher('**/.clientrc'),

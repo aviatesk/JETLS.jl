@@ -70,7 +70,7 @@ function initialize_state(send)
         file_cache = Dict{URI,FileInfo}(), # on-memory virtual file system
         analysis_instances = AnalysisInstance[],
         reverse_map = Dict{URI,BitSet}(),
-        analysis_interval = 15.0)
+        analysis_interval = 5)
 end
 
 struct IncludeCallback{State<:NamedTuple} <: Function
@@ -180,9 +180,9 @@ function run_preset_analysis!(state, rooturi::URI)
 
     # analyze package source files
     result = activate_do(env_path) do
-        pkgfiluri = filepath2uri(pkgfile)
+        pkgfileuri = filepath2uri(pkgfile)
         include_callback = IncludeCallback(state)
-        analyze_parsed_if_exist(state, pkgfiluri, pkgfile, pkgid;
+        analyze_parsed_if_exist(state, pkgfileuri, pkgid;
             toplevel_logger=nothing,
             analyze_from_definitions=true,
             target_defined_modules=true,
@@ -220,7 +220,8 @@ function notify_diagnostics!(state, uri2diagnostics)
 end
 
 function parse_file(text::String, uri::URI)
-    filename = uri2filepath(uri)
+    filename = uri2filename(uri)
+    @assert filename !== nothing "Unsupported URI: $uri"
     try
         return JuliaSyntax.parseall(Expr, text; filename, ignore_errors=false)::Expr
     catch err
@@ -340,19 +341,22 @@ struct AnalysisInstance
     result::AnalysisResult
 end
 
-function analyze_parsed_if_exist(state, uri, args...; kwargs...)
+function analyze_parsed_if_exist(state, uri::URI, args...; kwargs...)
     if haskey(state.file_cache, uri)
         parsed = state.file_cache[uri].parsed
-        return JET.analyze_and_report_expr!(JET.JETAnalyzer(), parsed, args...; kwargs...)
+        filename = uri2filename(uri)::String
+        return JET.analyze_and_report_expr!(JET.JETAnalyzer(), parsed, filename, args...; kwargs...)
     else
-        return JET.analyze_and_report_file!(JET.JETAnalyzer(), args...; kwargs...)
+        filepath = uri2filepath(uri)
+        @assert filepath !== nothing "Unsupported URI: $uri"
+        return JET.analyze_and_report_file!(JET.JETAnalyzer(), filepath, args...; kwargs...)
     end
 end
 
 function new_analysis_instance(entry::AnalysisEntry, result)
     files = Set{URI}()
     for filepath in result.res.included_files
-        push!(files, filepath2uri(filepath)) # `filepath` is an absolute path (since `path` is specified as absolute)
+        push!(files, filename2uri(filepath)) # `filepath` is an absolute path (since `path` is specified as absolute)
     end
     # TODO return something for `toplevel_error_reports`
     parse_errors = Dict{URI,JuliaSyntax.ParseError}()
@@ -365,7 +369,7 @@ function update_analysis_instance!(analysis_instance, result)
     files = analysis_instance.files
     uri2diagnostics = analysis_instance.result.uri2diagnostics
     for filepath in result.res.included_files
-        uri = filepath2uri(filepath)
+        uri = filename2uri(filepath)
         push!(files, uri) # `filepath` is an absolute path (since `path` is specified as absolute)
         empty!(get!(()->Diagnostic[], uri2diagnostics, uri))
     end
@@ -400,14 +404,24 @@ end
 function jet_result_to_diagnostics!(uri2diagnostics::Dict{URI,Vector{Diagnostic}}, result, files::Set{URI})
     for report in result.res.toplevel_error_reports
         diagnostic = jet_toplevel_error_report_to_diagnostic(report)
-        uri = filepath2uri(JET.tofullpath(report.file))
+        filename = report.file
+        if startswith(filename, "Untitled")
+            uri = filename2uri(filename)
+        else
+            uri = filepath2uri(JET.tofullpath(filename))
+        end
         items = uri2diagnostics[uri]
         push!(items, diagnostic)
     end
     for report in result.res.inference_error_reports
         diagnostic = jet_inference_error_report_to_diagnostic(report)
         topframe = report.vst[1]
-        uri = filepath2uri(JET.tofullpath(String(topframe.file)))
+        filename = String(topframe.file)
+        if startswith(filename, "Untitled")
+            uri = filename2uri(filename)
+        else
+            uri = filepath2uri(JET.tofullpath(filename))
+        end
         items = uri2diagnostics[uri]
         push!(items, diagnostic)
     end
@@ -506,22 +520,19 @@ function find_package_directory(path::String, env_path::String)
 end
 
 function initiate_analysis!(state, uri::URI)
-    path = uri2filepath(uri)
-    if path === nothing
-        @warn "Non file:// URI supported" uri
-        return ResponseError(;
-            code = ErrorCodes.ServerCancelled,
-            message = "Non file:// URI supported",
-            data = DiagnosticServerCancellationData(;
-                retriggerRequest = false))
-    end
-    env_path = find_env_path(path)
-    env_toml = env_path === nothing ? nothing : try
-        Pkg.TOML.parsefile(env_path)
-    catch err
-        err isa Base.TOML.ParseError || rethrow(err)
-        nothing
-    end
+    if uri.scheme == "file"
+        filename = path = uri2filepath(uri)::String
+        env_path = find_env_path(path)
+        env_toml = env_path === nothing ? nothing : try
+            Pkg.TOML.parsefile(env_path)
+        catch err
+            err isa Base.TOML.ParseError || rethrow(err)
+            nothing
+        end
+    elseif uri.scheme == "untitled"
+        filename = path = uri2filename(uri)::String
+        env_path = env_toml = nothing
+    else @assert false "Unsupported URI: $uri" end
     file_info = state.file_cache[uri]
     parsed = file_info.parsed
     if parsed isa JuliaSyntax.ParseError
@@ -535,13 +546,13 @@ function initiate_analysis!(state, uri::URI)
         if env_path !== nothing
             entry = ScriptInEnvAnalysisEntry(env_path, uri)
             result = activate_do(env_path) do
-                JET.analyze_and_report_expr!(JET.JETAnalyzer(), parsed, path;
+                JET.analyze_and_report_expr!(JET.JETAnalyzer(), parsed, filename;
                     toplevel_logger=stderr,
                     include_callback)
             end
         else
             entry = ScriptAnalysisEntry(uri)
-            result = JET.analyze_and_report_expr!(JET.JETAnalyzer(), parsed, path;
+            result = JET.analyze_and_report_expr!(JET.JETAnalyzer(), parsed, filename;
                 toplevel_logger=stderr,
                 include_callback)
         end
@@ -573,7 +584,7 @@ function initiate_analysis!(state, uri::URI)
             entry = PackageSourceAnalysisEntry(env_path, pkgfile, pkgid)
             result = activate_do(env_path) do
                 pkgfiluri = filepath2uri(pkgfile)
-                analyze_parsed_if_exist(state, pkgfiluri, pkgfile, pkgid;
+                analyze_parsed_if_exist(state, pkgfiluri, pkgid;
                     toplevel_logger=nothing,
                     analyze_from_definitions=true,
                     target_defined_modules=true,
@@ -631,19 +642,19 @@ function refresh_analysis_instances!(state, uri::URI)
     entry = analysis_instance.entry
     include_callback = IncludeCallback(state)
     if entry isa ScriptAnalysisEntry
-        result = analyze_parsed_if_exist(state, entry.uri, uri2filepath(entry.uri);
+        result = analyze_parsed_if_exist(state, entry.uri;
             toplevel_logger=stderr,
             include_callback)
     elseif entry isa ScriptInEnvAnalysisEntry
         result = activate_do(entry.env_path) do
-            analyze_parsed_if_exist(state, entry.uri, uri2filepath(entry.uri);
+            analyze_parsed_if_exist(state, entry.uri;
                 toplevel_logger=stderr,
                 include_callback)
         end
     elseif entry isa PackageSourceAnalysisEntry
         result = activate_do(entry.env_path) do
-            pkgfiluri = filepath2uri(entry.pkgfile)
-            analyze_parsed_if_exist(state, pkgfiluri, entry.pkgfile, entry.pkgid;
+            pkgfileuri = filepath2uri(entry.pkgfile)
+            analyze_parsed_if_exist(state, pkgfileuri, entry.pkgid;
                     toplevel_logger=nothing,
                     analyze_from_definitions=true,
                     target_defined_modules=true,
