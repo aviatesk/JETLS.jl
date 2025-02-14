@@ -68,8 +68,7 @@ function initialize_state(send)
         send,
         workspaceFolders = URI[], # TODO support multiple workspace folders properly
         file_cache = Dict{URI,FileInfo}(), # on-memory virtual file system
-        analysis_instances = AnalysisInstance[],
-        reverse_map = Dict{URI,BitSet}(),
+        reverse_map = Dict{URI,Set{AnalysisInstance}}(),
         analysis_interval = 5)
 end
 
@@ -199,7 +198,7 @@ function run_preset_analysis!(state, rooturi::URI)
     entry = PackageSourceAnalysisEntry(env_path, pkgfile, pkgid)
     analysis_instance = new_analysis_instance(entry, result)
     notify_diagnostics!(state, analysis_instance.result.uri2diagnostics)
-    record_analysis_instance!(state, analysis_instance)
+    record_reverse_map!(state, analysis_instance)
 
     # # analyze test scripts
     # runtests = joinpath(filedir, "runtests.jl")
@@ -241,10 +240,8 @@ function handle_DidOpenTextDocumentNotification(state, msg::DidOpenTextDocumentN
     textDocument = msg.params.textDocument
     @assert textDocument.languageId == "julia"
     uri = URI(textDocument.uri)
-    # @info "opened" uri
     parsed = parse_file(textDocument.text, uri)
-    state.file_cache[uri] =
-        FileInfo(textDocument.version, textDocument.text, parsed)
+    state.file_cache[uri] = FileInfo(textDocument.version, textDocument.text, parsed)
     analyze_opened_document!(state, uri)
     nothing
 end
@@ -253,10 +250,8 @@ function analyze_opened_document!(state, uri)
     if !haskey(state.reverse_map, uri)
         _analyze_opened_document!(state, uri)
     else # this file is tracked by some analysis instance already
-        aidxs = state.reverse_map[uri]
         # TODO support multiple analysis instances, which can happen if this file is included from multiple different contexts
-        aidx = first(aidxs)
-        reanalyze_with_analysis_instance!(state, state.analysis_instances[aidx], aidx)
+        reanalyze_with_analysis_instance!(state, first(state.reverse_map[uri]))
     end
     nothing
 end
@@ -265,18 +260,14 @@ end
 function handle_DidChangeTextDocumentNotification(state, msg::DidChangeTextDocumentNotification)
     (;textDocument,contentChanges) = msg.params
     uri = URI(textDocument.uri)
-    # @info "changed" uri
     for contentChange in contentChanges
         @assert contentChange.range === contentChange.rangeLength === nothing # since `change = TextDocumentSyncKind.Full`
     end
     text = last(contentChanges).text
     parsed = parse_file(text, uri)
-    file_info = FileInfo(textDocument.version, text, parsed)
-    state.file_cache[uri] = file_info
+    state.file_cache[uri] = FileInfo(textDocument.version, text, parsed)
     @assert haskey(state.reverse_map, uri)
-    aidxs = state.reverse_map[uri]
-    for idx in aidxs
-        analysis_instance = state.analysis_instances[idx]
+    for analysis_instance in state.reverse_map[uri]
         analysis_instance.result.staled = true
         if parsed isa JuliaSyntax.ParseError
             analysis_instance.parse_errors[uri] = parsed
@@ -285,15 +276,13 @@ function handle_DidChangeTextDocumentNotification(state, msg::DidChangeTextDocum
         end
     end
     # TODO support multiple analysis instances, which can happen if this file is included from multiple different contexts
-    aidx = first(aidxs)
-    reanalyze_with_analysis_instance!(state, state.analysis_instances[aidx], aidx)
+    reanalyze_with_analysis_instance!(state, first(state.reverse_map[uri]))
     nothing
 end
 
 function handle_DidCloseTextDocumentNotification(state, msg::DidCloseTextDocumentNotification)
     textDocument = msg.params.textDocument
     uri = URI(textDocument.uri)
-    # @info "closed" uri
     delete!(state.file_cache, uri)
     return nothing
 end
@@ -398,19 +387,23 @@ function update_analysis_instance!(analysis_instance, result)
     jet_result_to_diagnostics!(uri2diagnostics, result, files)
 end
 
-function record_analysis_instance!(state, analysis_instance)
-    push!(state.analysis_instances, analysis_instance)
-    aidx = length(state.analysis_instances)
-    for uri in analysis_instance.files
-        revmap = get!(BitSet, state.reverse_map, uri)
-        push!(revmap, aidx)
-    end
-end
-
-function rerecord_analysis_instance!(state, analysis_instance, aidx)
-    for uri in analysis_instance.files
-        revmap = get!(BitSet, state.reverse_map, uri)
-        push!(revmap, aidx)
+# TODO This reverse map recording should respect the changes made in `include` chains
+function record_reverse_map!(state, analysis_instance)
+    afiles = analysis_instance.files
+    for uri in afiles
+        revmap = get!(Set{AnalysisInstance}, state.reverse_map, uri)
+        should_record = true
+        for analysis_instance′ in revmap
+            bfiles = analysis_instance′.files
+            if afiles ≠ bfiles
+                if afiles ⊆ bfiles
+                    should_record = false
+                else # bfiles ⊆ afiles, i.e. now we have a better context to analyze this file
+                    delete!(revmap, analysis_instance′)
+                end
+            end
+        end
+        should_record && push!(revmap, analysis_instance)
     end
 end
 
@@ -587,7 +580,7 @@ function _analyze_opened_document!(state, uri::URI)
         end
         analysis_instance = new_analysis_instance(entry, result)
         @assert uri in analysis_instance.files
-        record_analysis_instance!(state, analysis_instance)
+        record_reverse_map!(state, analysis_instance)
     elseif pkgname === nothing
         @goto analyze_script
     else # this file is likely one within a package
@@ -618,7 +611,7 @@ function _analyze_opened_document!(state, uri::URI)
                     include_callback)
             end
             analysis_instance = new_analysis_instance(entry, result)
-            record_analysis_instance!(state, analysis_instance)
+            record_reverse_map!(state, analysis_instance)
             if uri ∉ analysis_instance.files
                 @goto analyze_script
             end
@@ -632,7 +625,7 @@ function _analyze_opened_document!(state, uri::URI)
             end
             entry = PackageTestAnalysisEntry(env_path, runtests)
             analysis_instance = new_analysis_instance(entry, result)
-            record_analysis_instance!(state, analysis_instance)
+            record_reverse_map!(state, analysis_instance)
             if uri ∉ analysis_instance.files
                 @goto analyze_script
             end
@@ -648,7 +641,7 @@ function _analyze_opened_document!(state, uri::URI)
     nothing
 end
 
-function reanalyze_with_analysis_instance!(state, analysis_instance::AnalysisInstance, aidx::Int)
+function reanalyze_with_analysis_instance!(state, analysis_instance::AnalysisInstance)
     analysis_result = analysis_instance.result
     if !analysis_result.staled
         return nothing
@@ -698,7 +691,7 @@ function reanalyze_with_analysis_instance!(state, analysis_instance::AnalysisIns
     # TODO update reverse_map correctly here (watching the diff of included files)
     update_analysis_instance!(analysis_instance, result)
     notify_diagnostics!(state, analysis_instance.result.uri2diagnostics)
-    rerecord_analysis_instance!(state, analysis_instance, aidx)
+    record_reverse_map!(state, analysis_instance)
     nothing
 end
 
