@@ -86,7 +86,6 @@ function (include_callback::IncludeCallback)(filepath::String)
 end
 
 function handle_message(state, msg)
-    @info "Handling message of " typeof(msg)
     if msg isa InitializeRequest
         return handle_InitializeRequest(state, msg)
     elseif msg isa InitializedNotification
@@ -121,14 +120,22 @@ function handle_InitializeRequest(state, msg::InitializeRequest)
             @warn "No workspaceFolders or rootUri in InitializeRequest"
         end
     end
-    if isempty(state.workspaceFolders)
-    elseif length(state.workspaceFolders) == 1
-        # run_preset_analysis!(state, only(workspaceFolders))
-    else
-        @warn "Multiple workspaceFolders are not supported" state.workspaceFolders
-    end
+    # root_uri = get_root_folder(state)
+    # run_preset_analysis!(state, root_uri)
     res = InitializeResponse(; id = msg.id, result = initialize_result())
     return state.send(res)
+end
+
+function get_root_folder(state)
+    (;workspaceFolders) = state
+    if isempty(workspaceFolders)
+        return nothing
+    elseif length(workspaceFolders) == 1
+        return only(workspaceFolders)
+    else
+        @warn "Multiple workspaceFolders are not supported" workspaceFolders
+        return nothing
+    end
 end
 
 function initialize_result()
@@ -234,6 +241,7 @@ function handle_DidOpenTextDocumentNotification(state, msg::DidOpenTextDocumentN
     textDocument = msg.params.textDocument
     @assert textDocument.languageId == "julia"
     uri = URI(textDocument.uri)
+    # @info "opened" uri
     parsed = parse_file(textDocument.text, uri)
     state.file_cache[uri] =
         FileInfo(textDocument.version, textDocument.text, parsed)
@@ -250,6 +258,7 @@ end
 function handle_DidChangeTextDocumentNotification(state, msg::DidChangeTextDocumentNotification)
     (;textDocument,contentChanges) = msg.params
     uri = URI(textDocument.uri)
+    # @info "changed" uri
     for contentChange in contentChanges
         @assert contentChange.range === contentChange.rangeLength === nothing # since `change = TextDocumentSyncKind.Full`
     end
@@ -274,6 +283,7 @@ end
 function handle_DidCloseTextDocumentNotification(state, msg::DidCloseTextDocumentNotification)
     textDocument = msg.params.textDocument
     uri = URI(textDocument.uri)
+    # @info "closed" uri
     delete!(state.file_cache, uri)
     return nothing
 end
@@ -523,15 +533,24 @@ function initiate_analysis!(state, uri::URI)
     if uri.scheme == "file"
         filename = path = uri2filepath(uri)::String
         env_path = find_env_path(path)
-        env_toml = env_path === nothing ? nothing : try
-            Pkg.TOML.parsefile(env_path)
+        pkgname = env_path === nothing ? nothing : try
+            env_toml = Pkg.TOML.parsefile(env_path)
+            haskey(env_toml, "name") ? env_toml["name"]::String : nothing
         catch err
             err isa Base.TOML.ParseError || rethrow(err)
             nothing
         end
     elseif uri.scheme == "untitled"
         filename = path = uri2filename(uri)::String
-        env_path = env_toml = nothing
+        # try to analyze untitled editors using the root environment
+        root_uri = get_root_folder(state)
+        if root_uri !== nothing
+            root_path = uri2filepath(root_uri)
+            env_path = find_env_path(root_path)
+            pkgname = nothing # to hit the `@goto analyze_script` case
+        else
+            env_path = pkgname = nothing
+        end
     else @assert false "Unsupported URI: $uri" end
     file_info = state.file_cache[uri]
     parsed = file_info.parsed
@@ -559,16 +578,13 @@ function initiate_analysis!(state, uri::URI)
         analysis_instance = new_analysis_instance(entry, result)
         @assert uri in analysis_instance.files
         record_analysis_instance!(state, analysis_instance)
-    elseif env_toml === nothing
-        @goto analyze_script
-    elseif !haskey(env_toml, "name")
+    elseif pkgname === nothing
         @goto analyze_script
     else # this file is likely one within a package
         filekind, filedir = find_package_directory(path, env_path)
         if filekind === :script
             @goto analyze_script
         elseif filekind === :src
-            pkgname = env_toml["name"]
             pkgenv = Base.identify_package_env(pkgname)
             if pkgenv === nothing
                 @warn "Failed to identify package environment" pkgname
