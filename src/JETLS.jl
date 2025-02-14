@@ -164,7 +164,7 @@ function run_preset_analysis!(state, rooturi::URI)
     env_toml = try
         Pkg.TOML.parsefile(env_path)
     catch err
-        err isa Base.TOML.ParseError || rethrow(err)
+        err isa Base.TOML.ParserError || rethrow(err)
         return nothing
     end
     haskey(env_toml, "name") || return nothing
@@ -245,11 +245,18 @@ function handle_DidOpenTextDocumentNotification(state, msg::DidOpenTextDocumentN
     parsed = parse_file(textDocument.text, uri)
     state.file_cache[uri] =
         FileInfo(textDocument.version, textDocument.text, parsed)
+    analyze_opened_document!(state, uri)
+    nothing
+end
+
+function analyze_opened_document!(state, uri)
     if !haskey(state.reverse_map, uri)
-        initiate_analysis!(state, uri)
-        @assert haskey(state.reverse_map, uri)
-    else
-        refresh_analysis_instances!(state, uri)
+        _analyze_opened_document!(state, uri)
+    else # this file is tracked by some analysis instance already
+        aidxs = state.reverse_map[uri]
+        # TODO support multiple analysis instances, which can happen if this file is included from multiple different contexts
+        aidx = first(aidxs)
+        reanalyze_with_analysis_instance!(state, state.analysis_instances[aidx], aidx)
     end
     nothing
 end
@@ -267,7 +274,8 @@ function handle_DidChangeTextDocumentNotification(state, msg::DidChangeTextDocum
     file_info = FileInfo(textDocument.version, text, parsed)
     state.file_cache[uri] = file_info
     @assert haskey(state.reverse_map, uri)
-    for idx in state.reverse_map[uri]
+    aidxs = state.reverse_map[uri]
+    for idx in aidxs
         analysis_instance = state.analysis_instances[idx]
         analysis_instance.result.staled = true
         if parsed isa JuliaSyntax.ParseError
@@ -276,7 +284,9 @@ function handle_DidChangeTextDocumentNotification(state, msg::DidChangeTextDocum
             delete!(analysis_instance.parse_errors, uri)
         end
     end
-    refresh_analysis_instances!(state, uri)
+    # TODO support multiple analysis instances, which can happen if this file is included from multiple different contexts
+    aidx = first(aidxs)
+    reanalyze_with_analysis_instance!(state, state.analysis_instances[aidx], aidx)
     nothing
 end
 
@@ -529,7 +539,7 @@ function find_package_directory(path::String, env_path::String)
     return :script, path
 end
 
-function initiate_analysis!(state, uri::URI)
+function _analyze_opened_document!(state, uri::URI)
     if uri.scheme == "file"
         filename = path = uri2filepath(uri)::String
         env_path = find_env_path(path)
@@ -545,7 +555,7 @@ function initiate_analysis!(state, uri::URI)
         # try to analyze untitled editors using the root environment
         root_uri = get_root_folder(state)
         if root_uri !== nothing
-            root_path = uri2filepath(root_uri)
+            root_path = uri2filepath(root_uri)::String
             env_path = find_env_path(root_path)
             pkgname = nothing # to hit the `@goto analyze_script` case
         else
@@ -638,13 +648,7 @@ function initiate_analysis!(state, uri::URI)
     nothing
 end
 
-function refresh_analysis_instances!(state, uri::URI)
-    @assert haskey(state.reverse_map, uri)
-
-    # TODO support multiple analysis instances, which can happen if this file is included from multiple different contexts
-    aidxs = state.reverse_map[uri]
-    aidx = first(aidxs)
-    analysis_instance = state.analysis_instances[aidx]
+function reanalyze_with_analysis_instance!(state, analysis_instance::AnalysisInstance, aidx::Int)
     analysis_result = analysis_instance.result
     if !analysis_result.staled
         return nothing
