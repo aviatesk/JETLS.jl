@@ -68,7 +68,7 @@ function initialize_state(send)
         send,
         workspaceFolders = URI[], # TODO support multiple workspace folders properly
         file_cache = Dict{URI,FileInfo}(), # on-memory virtual file system
-        reverse_map = Dict{URI,Set{AnalysisInstance}}(),
+        reverse_map = Dict{URI,Set{AnalysisContext}}(),
         analysis_interval = 5)
 end
 
@@ -196,9 +196,9 @@ function run_preset_analysis!(state, rooturi::URI)
             include_callback)
     end
     entry = PackageSourceAnalysisEntry(env_path, pkgfile, pkgid)
-    analysis_instance = new_analysis_instance(entry, result)
-    notify_diagnostics!(state, analysis_instance.result.uri2diagnostics)
-    record_reverse_map!(state, analysis_instance)
+    analysis_context = new_analysis_context(entry, result)
+    notify_diagnostics!(state, analysis_context.result.uri2diagnostics)
+    record_reverse_map!(state, analysis_context)
 
     # # analyze test scripts
     # runtests = joinpath(filedir, "runtests.jl")
@@ -209,8 +209,8 @@ function run_preset_analysis!(state, rooturi::URI)
     #         include_callback)
     # end
     # entry = PackageTestAnalysisEntry(env_path, runtests)
-    # analysis_instance = new_analysis_instance(entry, result)
-    # record_analysis_instance!(state, analysis_instance)
+    # analysis_context = new_analysis_context(entry, result)
+    # record_analysis_context!(state, analysis_context)
 
     nothing
 end
@@ -249,9 +249,9 @@ end
 function analyze_opened_document!(state, uri)
     if !haskey(state.reverse_map, uri)
         _analyze_opened_document!(state, uri)
-    else # this file is tracked by some analysis instance already
-        # TODO support multiple analysis instances, which can happen if this file is included from multiple different contexts
-        reanalyze_with_analysis_instance!(state, first(state.reverse_map[uri]))
+    else # this file is tracked by some analysis context already
+        # TODO support multiple analysis contexts, which can happen if this file is included from multiple different contexts
+        reanalyze_with_context!(state, first(state.reverse_map[uri]))
     end
     nothing
 end
@@ -267,16 +267,16 @@ function handle_DidChangeTextDocumentNotification(state, msg::DidChangeTextDocum
     parsed = parse_file(text, uri)
     state.file_cache[uri] = FileInfo(textDocument.version, text, parsed)
     @assert haskey(state.reverse_map, uri)
-    for analysis_instance in state.reverse_map[uri]
-        analysis_instance.result.staled = true
+    for analysis_context in state.reverse_map[uri]
+        analysis_context.result.staled = true
         if parsed isa JuliaSyntax.ParseError
-            analysis_instance.parse_errors[uri] = parsed
+            analysis_context.parse_errors[uri] = parsed
         else
-            delete!(analysis_instance.parse_errors, uri)
+            delete!(analysis_context.parse_errors, uri)
         end
     end
-    # TODO support multiple analysis instances, which can happen if this file is included from multiple different contexts
-    reanalyze_with_analysis_instance!(state, first(state.reverse_map[uri]))
+    # TODO support multiple analysis contexts, which can happen if this file is included from multiple different contexts
+    reanalyze_with_context!(state, first(state.reverse_map[uri]))
     nothing
 end
 
@@ -318,7 +318,7 @@ function juliasyntax_diagnostic_to_diagnostic(diagnostic::JuliaSyntax.Diagnostic
         source = "JuliaSyntax")
 end
 
-mutable struct AnalysisResult
+mutable struct FullAnalysisResult
     staled::Bool
     last_analysis::Float64
     const uri2diagnostics::Dict{URI,Vector{Diagnostic}}
@@ -343,11 +343,11 @@ struct PackageTestAnalysisEntry <: AnalysisEntry
     runtests::String
 end
 
-struct AnalysisInstance
+struct AnalysisContext
     entry::AnalysisEntry
     files::Set{URI}
     parse_errors::Dict{URI,JuliaSyntax.ParseError}
-    result::AnalysisResult
+    result::FullAnalysisResult
 end
 
 function analyze_parsed_if_exist(state, uri::URI, args...; kwargs...)
@@ -362,7 +362,7 @@ function analyze_parsed_if_exist(state, uri::URI, args...; kwargs...)
     end
 end
 
-function new_analysis_instance(entry::AnalysisEntry, result)
+function new_analysis_context(entry::AnalysisEntry, result)
     files = Set{URI}()
     for filepath in result.res.included_files
         push!(files, filename2uri(filepath)) # `filepath` is an absolute path (since `path` is specified as absolute)
@@ -370,40 +370,41 @@ function new_analysis_instance(entry::AnalysisEntry, result)
     # TODO return something for `toplevel_error_reports`
     parse_errors = Dict{URI,JuliaSyntax.ParseError}()
     uri2diagnostics = jet_result_to_diagnostics(result, files)
-    analysis_result = AnalysisResult(false, time(), uri2diagnostics)
-    return AnalysisInstance(entry, files, parse_errors, analysis_result)
-end
-
-function update_analysis_instance!(analysis_instance, result)
-    files = analysis_instance.files
-    uri2diagnostics = analysis_instance.result.uri2diagnostics
-    for filepath in result.res.included_files
-        uri = filename2uri(filepath)
-        push!(files, uri) # `filepath` is an absolute path (since `path` is specified as absolute)
-        empty!(get!(()->Diagnostic[], uri2diagnostics, uri))
-    end
-    analysis_instance.result.staled = false
-    analysis_instance.result.last_analysis = time()
-    jet_result_to_diagnostics!(uri2diagnostics, result, files)
+    analysis_result = FullAnalysisResult(false, time(), uri2diagnostics)
+    return AnalysisContext(entry, files, parse_errors, analysis_result)
 end
 
 # TODO This reverse map recording should respect the changes made in `include` chains
-function record_reverse_map!(state, analysis_instance)
-    afiles = analysis_instance.files
+function update_analysis_result!(analysis_context, result)
+    files = analysis_context.files
+    uri2diagnostics = analysis_context.result.uri2diagnostics
+    for filepath in result.res.included_files
+        uri = filename2uri(filepath)
+        push!(files, uri)
+        empty!(get!(()->Diagnostic[], uri2diagnostics, uri))
+    end
+    jet_result_to_diagnostics!(uri2diagnostics, result, files)
+    analysis_context.result.staled = false
+    analysis_context.result.last_analysis = time()
+end
+
+# TODO This reverse map recording should respect the changes made in `include` chains
+function record_reverse_map!(state, analysis_context)
+    afiles = analysis_context.files
     for uri in afiles
-        revmap = get!(Set{AnalysisInstance}, state.reverse_map, uri)
+        revmap = get!(Set{AnalysisContext}, state.reverse_map, uri)
         should_record = true
-        for analysis_instance′ in revmap
-            bfiles = analysis_instance′.files
+        for analysis_context′ in revmap
+            bfiles = analysis_context′.files
             if afiles ≠ bfiles
                 if afiles ⊆ bfiles
                     should_record = false
                 else # bfiles ⊆ afiles, i.e. now we have a better context to analyze this file
-                    delete!(revmap, analysis_instance′)
+                    delete!(revmap, analysis_context′)
                 end
             end
         end
-        should_record && push!(revmap, analysis_instance)
+        should_record && push!(revmap, analysis_context)
     end
 end
 
@@ -578,9 +579,9 @@ function _analyze_opened_document!(state, uri::URI)
                 toplevel_logger=stderr,
                 include_callback)
         end
-        analysis_instance = new_analysis_instance(entry, result)
-        @assert uri in analysis_instance.files
-        record_reverse_map!(state, analysis_instance)
+        analysis_context = new_analysis_context(entry, result)
+        @assert uri in analysis_context.files
+        record_reverse_map!(state, analysis_context)
     elseif pkgname === nothing
         @goto analyze_script
     else # this file is likely one within a package
@@ -610,9 +611,9 @@ function _analyze_opened_document!(state, uri::URI)
                     concretization_patterns=[:(x_)],
                     include_callback)
             end
-            analysis_instance = new_analysis_instance(entry, result)
-            record_reverse_map!(state, analysis_instance)
-            if uri ∉ analysis_instance.files
+            analysis_context = new_analysis_context(entry, result)
+            record_reverse_map!(state, analysis_context)
+            if uri ∉ analysis_context.files
                 @goto analyze_script
             end
         elseif filekind === :test
@@ -624,9 +625,9 @@ function _analyze_opened_document!(state, uri::URI)
                     include_callback)
             end
             entry = PackageTestAnalysisEntry(env_path, runtests)
-            analysis_instance = new_analysis_instance(entry, result)
-            record_reverse_map!(state, analysis_instance)
-            if uri ∉ analysis_instance.files
+            analysis_context = new_analysis_context(entry, result)
+            record_reverse_map!(state, analysis_context)
+            if uri ∉ analysis_context.files
                 @goto analyze_script
             end
         elseif filekind === :docs
@@ -637,22 +638,22 @@ function _analyze_opened_document!(state, uri::URI)
         end
     end
 
-    notify_diagnostics!(state, analysis_instance.result.uri2diagnostics)
+    notify_diagnostics!(state, analysis_context.result.uri2diagnostics)
     nothing
 end
 
-function reanalyze_with_analysis_instance!(state, analysis_instance::AnalysisInstance)
-    analysis_result = analysis_instance.result
+function reanalyze_with_context!(state, analysis_context::AnalysisContext)
+    analysis_result = analysis_context.result
     if !analysis_result.staled
         return nothing
-    elseif !isempty(analysis_instance.parse_errors)
+    elseif !isempty(analysis_context.parse_errors)
         notify_diagnostics!(state, (
-            uri => parse_error_to_diagnostics(parse_error) for (uri, parse_error) in analysis_instance.parse_errors))
+            uri => parse_error_to_diagnostics(parse_error) for (uri, parse_error) in analysis_context.parse_errors))
         return nothing
     elseif time() - analysis_result.last_analysis < state.analysis_interval
         return nothing # no update
     end
-    entry = analysis_instance.entry
+    entry = analysis_context.entry
     include_callback = IncludeCallback(state)
     if entry isa ScriptAnalysisEntry
         result = analyze_parsed_if_exist(state, entry.uri;
@@ -688,10 +689,9 @@ function reanalyze_with_analysis_instance!(state, analysis_instance::AnalysisIns
             data = DiagnosticServerCancellationData(;
                 retriggerRequest = false))
     end
-    # TODO update reverse_map correctly here (watching the diff of included files)
-    update_analysis_instance!(analysis_instance, result)
-    notify_diagnostics!(state, analysis_instance.result.uri2diagnostics)
-    record_reverse_map!(state, analysis_instance)
+    update_analysis_result!(analysis_context, result)
+    notify_diagnostics!(state, analysis_context.result.uri2diagnostics)
+    record_reverse_map!(state, analysis_context)
     nothing
 end
 
