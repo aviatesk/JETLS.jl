@@ -488,14 +488,23 @@ function line_range(line::Int)
     return Range(; start, var"end")
 end
 
-find_env_path(path::String) = search_up_file(path, "Project.toml")
+find_env_path(path) = search_up_file(path, "Project.toml")
 
-search_up_file(path::String, basename::String) = search_up_dir(dirname(path), basename)
-function search_up_dir(dir::String, basename::String)
-    while !isempty(dir)
+function search_up_file(path, basename)
+    traverse_dir(dirname(path)) do dir
         project_file = joinpath(dir, basename)
         if isfile(project_file)
             return project_file
+        end
+        return nothing
+    end
+end
+
+function traverse_dir(f, dir)
+    while !isempty(dir)
+        res = f(dir)
+        if res !== nothing
+            return res
         end
         parent = dirname(dir)
         if parent == dir
