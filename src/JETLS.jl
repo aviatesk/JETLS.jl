@@ -51,6 +51,8 @@ struct AnalysisContext
     result::FullAnalysisResult
 end
 
+struct ExternalContext end
+
 struct IncludeCallback{State<:NamedTuple} <: Function
     state::State
 end
@@ -112,7 +114,7 @@ function initialize_state(send)
         send,
         workspaceFolders = URI[], # TODO support multiple workspace folders properly
         file_cache = Dict{URI,FileInfo}(), # on-memory virtual file system
-        uri2contexts = Dict{URI,Set{AnalysisContext}}(),
+        uri2contexts = Dict{URI,Union{Set{AnalysisContext},ExternalContext}}(), # TODO make sure `Set{AnalysisContext}` to be non-empty always
         analysis_interval = 5)
 end
 
@@ -276,9 +278,15 @@ function handle_DidOpenTextDocumentNotification(state, msg::DidOpenTextDocumentN
     state.file_cache[uri] = FileInfo(textDocument.version, textDocument.text, parsed)
     if !haskey(state.uri2contexts, uri)
         initiate_context!(state, uri)
-    else # this file is tracked by some analysis context already
-        # TODO support multiple analysis contexts, which can happen if this file is included from multiple different contexts
-        reanalyze_with_context!(state, first(state.uri2contexts[uri]))
+    else # this file is tracked by some context already
+        contexts = state.uri2contexts[uri]
+        if contexts isa ExternalContext
+            # this file is out of the current project scope, ignore it
+            return nothing
+        else
+            # TODO support multiple analysis contexts, which can happen if this file is included from multiple different contexts
+            reanalyze_with_context!(state, first(contexts))
+        end
     end
     nothing
 end
@@ -294,11 +302,16 @@ function handle_DidChangeTextDocumentNotification(state, msg::DidChangeTextDocum
     parsed = parse_file(text, uri)
     state.file_cache[uri] = FileInfo(textDocument.version, text, parsed)
     if haskey(state.uri2contexts, uri)
-        for analysis_context in state.uri2contexts[uri]
+        contexts = state.uri2contexts[uri]
+        if contexts isa ExternalContext
+            # this file is out of the current project scope, ignore it
+            return nothing
+        end
+        for analysis_context in contexts
             analysis_context.result.staled = true
         end
         # TODO support multiple analysis contexts, which can happen if this file is included from multiple different contexts
-        reanalyze_with_context!(state, first(state.uri2contexts[uri]))
+        reanalyze_with_context!(state, first(contexts))
     else
         initiate_context!(state, uri)
     end
@@ -511,8 +524,8 @@ end
 function issubdir(dir1, dir2)
     dir1 = rstrip(dir1, '/')
     dir2 = rstrip(dir2, '/')
-    something(traverse_dir(dir2) do dir
-        if dir == dir1
+    something(traverse_dir(dir1) do dir
+        if dir == dir2
             return true
         end
         return nothing
@@ -549,6 +562,14 @@ end
 function initiate_context!(state, uri::URI)
     if uri.scheme == "file"
         filename = path = uri2filepath(uri)::String
+        root_uri = get_root_folder(state)
+        if root_uri !== nothing
+            root_path = uri2filepath(root_uri)::String
+            if !issubdir(dirname(path), root_path)
+                state.uri2contexts[uri] = ExternalContext()
+                return nothing
+            end
+        end
         env_path = find_env_path(path)
         pkgname = env_path === nothing ? nothing : try
             env_toml = Pkg.TOML.parsefile(env_path)
