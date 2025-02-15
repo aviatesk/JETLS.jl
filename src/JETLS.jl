@@ -1,6 +1,7 @@
 module JETLS
 
 export runserver
+function runserver end
 
 include("URIs2/URIs2.jl")
 using .URIs2
@@ -12,6 +13,55 @@ include("JSONRPC.jl")
 using .JSONRPC
 
 using Pkg, JuliaSyntax, JET
+
+struct FileInfo
+    version::Int
+    text::String
+    parsed::Union{Expr,JuliaSyntax.ParseError}
+end
+
+abstract type AnalysisEntry end
+
+struct ScriptAnalysisEntry <: AnalysisEntry
+    uri::URI
+end
+struct ScriptInEnvAnalysisEntry <: AnalysisEntry
+    env_path::String
+    uri::URI
+end
+struct PackageSourceAnalysisEntry <: AnalysisEntry
+    env_path::String
+    pkgfile::String
+    pkgid::Base.PkgId
+end
+struct PackageTestAnalysisEntry <: AnalysisEntry
+    env_path::String
+    runtests::String
+end
+
+mutable struct FullAnalysisResult
+    staled::Bool
+    last_analysis::Float64
+    const uri2diagnostics::Dict{URI,Vector{Diagnostic}}
+end
+
+struct AnalysisContext
+    entry::AnalysisEntry
+    files::Set{URI}
+    result::FullAnalysisResult
+end
+
+struct IncludeCallback{State<:NamedTuple} <: Function
+    state::State
+end
+function (include_callback::IncludeCallback)(filepath::String)
+    uri = filepath2uri(filepath)
+    if haskey(include_callback.state.file_cache, uri)
+        return include_callback.state.file_cache[uri].text # TODO use `parsed` instead of `text`
+    end
+    # fallback to the default file-system-based include
+    return read(filepath, String)
+end
 
 runserver(in::IO, out::IO; kwargs...) = runserver((msg, res)->nothing, in, out; kwargs...)
 function runserver(callback, in::IO, out::IO;
@@ -57,12 +107,6 @@ function runserver(callback, in::IO, out::IO;
     return endpoint
 end
 
-struct FileInfo
-    version::Int
-    text::String
-    parsed::Union{Expr,JuliaSyntax.ParseError}
-end
-
 function initialize_state(send)
     return (;
         send,
@@ -70,18 +114,6 @@ function initialize_state(send)
         file_cache = Dict{URI,FileInfo}(), # on-memory virtual file system
         uri2contexts = Dict{URI,Set{AnalysisContext}}(),
         analysis_interval = 5)
-end
-
-struct IncludeCallback{State<:NamedTuple} <: Function
-    state::State
-end
-function (include_callback::IncludeCallback)(filepath::String)
-    uri = filepath2uri(filepath)
-    if haskey(include_callback.state.file_cache, uri)
-        return include_callback.state.file_cache[uri].text # TODO use `parsed` instead of `text`
-    end
-    # fallback to the default file-system-based include
-    return read(filepath, String)
 end
 
 function handle_message(state, msg)
@@ -311,37 +343,6 @@ function juliasyntax_diagnostic_to_diagnostic(diagnostic::JuliaSyntax.Diagnostic
         source = "JuliaSyntax")
 end
 
-mutable struct FullAnalysisResult
-    staled::Bool
-    last_analysis::Float64
-    const uri2diagnostics::Dict{URI,Vector{Diagnostic}}
-end
-
-abstract type AnalysisEntry end
-
-struct ScriptAnalysisEntry <: AnalysisEntry
-    uri::URI
-end
-struct ScriptInEnvAnalysisEntry <: AnalysisEntry
-    env_path::String
-    uri::URI
-end
-struct PackageSourceAnalysisEntry <: AnalysisEntry
-    env_path::String
-    pkgfile::String
-    pkgid::Base.PkgId
-end
-struct PackageTestAnalysisEntry <: AnalysisEntry
-    env_path::String
-    runtests::String
-end
-
-struct AnalysisContext
-    entry::AnalysisEntry
-    files::Set{URI}
-    result::FullAnalysisResult
-end
-
 function analyze_parsed_if_exist(state, uri::URI, args...; kwargs...)
     if haskey(state.file_cache, uri)
         parsed = state.file_cache[uri].parsed
@@ -504,6 +505,18 @@ function traverse_dir(f, dir)
         dir = parent
     end
     return nothing
+end
+
+# check if `dir1` is a subdirectory of `dir2`
+function issubdir(dir1, dir2)
+    dir1 = rstrip(dir1, '/')
+    dir2 = rstrip(dir2, '/')
+    something(traverse_dir(dir2) do dir
+        if dir == dir1
+            return true
+        end
+        return nothing
+    end, false)
 end
 
 function activate_do(func, env_path::String)
