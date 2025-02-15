@@ -264,11 +264,6 @@ function handle_DidChangeTextDocumentNotification(state, msg::DidChangeTextDocum
     if haskey(state.reverse_map, uri)
         for analysis_context in state.reverse_map[uri]
             analysis_context.result.staled = true
-            if parsed isa JuliaSyntax.ParseError
-                analysis_context.parse_errors[uri] = parsed
-            else
-                delete!(analysis_context.parse_errors, uri)
-            end
         end
         # TODO support multiple analysis contexts, which can happen if this file is included from multiple different contexts
         reanalyze_with_context!(state, first(state.reverse_map[uri]))
@@ -344,7 +339,6 @@ end
 struct AnalysisContext
     entry::AnalysisEntry
     files::Set{URI}
-    parse_errors::Dict{URI,JuliaSyntax.ParseError}
     result::FullAnalysisResult
 end
 
@@ -366,10 +360,9 @@ function new_analysis_context(entry::AnalysisEntry, result)
         push!(files, filename2uri(filepath)) # `filepath` is an absolute path (since `path` is specified as absolute)
     end
     # TODO return something for `toplevel_error_reports`
-    parse_errors = Dict{URI,JuliaSyntax.ParseError}()
     uri2diagnostics = jet_result_to_diagnostics(result, files)
     analysis_result = FullAnalysisResult(false, time(), uri2diagnostics)
-    return AnalysisContext(entry, files, parse_errors, analysis_result)
+    return AnalysisContext(entry, files, analysis_result)
 end
 
 # TODO This reverse map recording should respect the changes made in `include` chains
@@ -653,9 +646,21 @@ function reanalyze_with_context!(state, analysis_context::AnalysisContext)
     analysis_result = analysis_context.result
     if !analysis_result.staled
         return nothing
-    elseif !isempty(analysis_context.parse_errors)
+    end
+    parse_errors = nothing
+    for uri in analysis_context.files
+        if haskey(state.file_cache, uri)
+            file_info = state.file_cache[uri]
+            file_info.parsed isa JuliaSyntax.ParseError || continue
+            if parse_errors === nothing
+                parse_errors = Dict{URI,JuliaSyntax.ParseError}()
+            end
+            parse_errors[uri] = file_info.parsed
+        end
+    end
+    if parse_errors !== nothing
         notify_diagnostics!(state, (
-            uri => parse_error_to_diagnostics(parse_error) for (uri, parse_error) in analysis_context.parse_errors))
+            uri => parse_error_to_diagnostics(parse_error) for (uri, parse_error) in parse_errors))
         return nothing
     elseif time() - analysis_result.last_analysis < state.analysis_interval
         return nothing # no update
