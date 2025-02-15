@@ -242,13 +242,8 @@ function handle_DidOpenTextDocumentNotification(state, msg::DidOpenTextDocumentN
     uri = URI(textDocument.uri)
     parsed = parse_file(textDocument.text, uri)
     state.file_cache[uri] = FileInfo(textDocument.version, textDocument.text, parsed)
-    analyze_opened_document!(state, uri)
-    nothing
-end
-
-function analyze_opened_document!(state, uri)
     if !haskey(state.reverse_map, uri)
-        _analyze_opened_document!(state, uri)
+        initiate_context!(state, uri)
     else # this file is tracked by some analysis context already
         # TODO support multiple analysis contexts, which can happen if this file is included from multiple different contexts
         reanalyze_with_context!(state, first(state.reverse_map[uri]))
@@ -266,17 +261,20 @@ function handle_DidChangeTextDocumentNotification(state, msg::DidChangeTextDocum
     text = last(contentChanges).text
     parsed = parse_file(text, uri)
     state.file_cache[uri] = FileInfo(textDocument.version, text, parsed)
-    @assert haskey(state.reverse_map, uri)
-    for analysis_context in state.reverse_map[uri]
-        analysis_context.result.staled = true
-        if parsed isa JuliaSyntax.ParseError
-            analysis_context.parse_errors[uri] = parsed
-        else
-            delete!(analysis_context.parse_errors, uri)
+    if haskey(state.reverse_map, uri)
+        for analysis_context in state.reverse_map[uri]
+            analysis_context.result.staled = true
+            if parsed isa JuliaSyntax.ParseError
+                analysis_context.parse_errors[uri] = parsed
+            else
+                delete!(analysis_context.parse_errors, uri)
+            end
         end
+        # TODO support multiple analysis contexts, which can happen if this file is included from multiple different contexts
+        reanalyze_with_context!(state, first(state.reverse_map[uri]))
+    else
+        initiate_context!(state, uri)
     end
-    # TODO support multiple analysis contexts, which can happen if this file is included from multiple different contexts
-    reanalyze_with_context!(state, first(state.reverse_map[uri]))
     nothing
 end
 
@@ -542,7 +540,7 @@ function find_package_directory(path::String, env_path::String)
     return :script, path
 end
 
-function _analyze_opened_document!(state, uri::URI)
+function initiate_context!(state, uri::URI)
     if uri.scheme == "file"
         filename = path = uri2filepath(uri)::String
         env_path = find_env_path(path)
