@@ -68,7 +68,7 @@ function initialize_state(send)
         send,
         workspaceFolders = URI[], # TODO support multiple workspace folders properly
         file_cache = Dict{URI,FileInfo}(), # on-memory virtual file system
-        reverse_map = Dict{URI,Set{AnalysisContext}}(),
+        uri2contexts = Dict{URI,Set{AnalysisContext}}(),
         analysis_interval = 5)
 end
 
@@ -198,7 +198,7 @@ function run_preset_analysis!(state, rooturi::URI)
     entry = PackageSourceAnalysisEntry(env_path, pkgfile, pkgid)
     analysis_context = new_analysis_context(entry, result)
     notify_diagnostics!(state, analysis_context.result.uri2diagnostics)
-    record_reverse_map!(state, analysis_context)
+    record_context!(state, analysis_context)
 
     # # analyze test scripts
     # runtests = joinpath(filedir, "runtests.jl")
@@ -242,11 +242,11 @@ function handle_DidOpenTextDocumentNotification(state, msg::DidOpenTextDocumentN
     uri = URI(textDocument.uri)
     parsed = parse_file(textDocument.text, uri)
     state.file_cache[uri] = FileInfo(textDocument.version, textDocument.text, parsed)
-    if !haskey(state.reverse_map, uri)
+    if !haskey(state.uri2contexts, uri)
         initiate_context!(state, uri)
     else # this file is tracked by some analysis context already
         # TODO support multiple analysis contexts, which can happen if this file is included from multiple different contexts
-        reanalyze_with_context!(state, first(state.reverse_map[uri]))
+        reanalyze_with_context!(state, first(state.uri2contexts[uri]))
     end
     nothing
 end
@@ -261,12 +261,12 @@ function handle_DidChangeTextDocumentNotification(state, msg::DidChangeTextDocum
     text = last(contentChanges).text
     parsed = parse_file(text, uri)
     state.file_cache[uri] = FileInfo(textDocument.version, text, parsed)
-    if haskey(state.reverse_map, uri)
-        for analysis_context in state.reverse_map[uri]
+    if haskey(state.uri2contexts, uri)
+        for analysis_context in state.uri2contexts[uri]
             analysis_context.result.staled = true
         end
         # TODO support multiple analysis contexts, which can happen if this file is included from multiple different contexts
-        reanalyze_with_context!(state, first(state.reverse_map[uri]))
+        reanalyze_with_context!(state, first(state.uri2contexts[uri]))
     else
         initiate_context!(state, uri)
     end
@@ -380,22 +380,22 @@ function update_analysis_result!(analysis_context, result)
 end
 
 # TODO This reverse map recording should respect the changes made in `include` chains
-function record_reverse_map!(state, analysis_context)
+function record_context!(state, analysis_context)
     afiles = analysis_context.files
     for uri in afiles
-        revmap = get!(Set{AnalysisContext}, state.reverse_map, uri)
+        contexts = get!(Set{AnalysisContext}, state.uri2contexts, uri)
         should_record = true
-        for analysis_context′ in revmap
+        for analysis_context′ in contexts
             bfiles = analysis_context′.files
             if afiles ≠ bfiles
                 if afiles ⊆ bfiles
                     should_record = false
                 else # bfiles ⊆ afiles, i.e. now we have a better context to analyze this file
-                    delete!(revmap, analysis_context′)
+                    delete!(contexts, analysis_context′)
                 end
             end
         end
-        should_record && push!(revmap, analysis_context)
+        should_record && push!(contexts, analysis_context)
     end
 end
 
@@ -581,7 +581,7 @@ function initiate_context!(state, uri::URI)
         end
         analysis_context = new_analysis_context(entry, result)
         @assert uri in analysis_context.files
-        record_reverse_map!(state, analysis_context)
+        record_context!(state, analysis_context)
     elseif pkgname === nothing
         @goto analyze_script
     else # this file is likely one within a package
@@ -612,7 +612,7 @@ function initiate_context!(state, uri::URI)
                     include_callback)
             end
             analysis_context = new_analysis_context(entry, result)
-            record_reverse_map!(state, analysis_context)
+            record_context!(state, analysis_context)
             if uri ∉ analysis_context.files
                 @goto analyze_script
             end
@@ -626,7 +626,7 @@ function initiate_context!(state, uri::URI)
             end
             entry = PackageTestAnalysisEntry(env_path, runtests)
             analysis_context = new_analysis_context(entry, result)
-            record_reverse_map!(state, analysis_context)
+            record_context!(state, analysis_context)
             if uri ∉ analysis_context.files
                 @goto analyze_script
             end
@@ -703,7 +703,7 @@ function reanalyze_with_context!(state, analysis_context::AnalysisContext)
     end
     update_analysis_result!(analysis_context, result)
     notify_diagnostics!(state, analysis_context.result.uri2diagnostics)
-    record_reverse_map!(state, analysis_context)
+    record_context!(state, analysis_context)
     nothing
 end
 
