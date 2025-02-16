@@ -53,13 +53,34 @@ end
 
 struct ExternalContext end
 
-struct IncludeCallback{State<:NamedTuple} <: Function
-    state::State
+struct ServerState{F}
+    send::F
+    workspaceFolders::Vector{URI}
+    file_cache::Dict{URI,FileInfo}
+    uri2contexts::Dict{URI,Union{Set{AnalysisContext},ExternalContext}}
+    analysis_interval::Int
+    root_path::Ref{String}
+    root_env_path::Ref{String}
 end
+function ServerState(send::F) where F
+    return ServerState{F}(
+        send,
+        URI[],
+        Dict{URI,FileInfo}(),
+        Dict{URI,Union{Set{AnalysisContext},ExternalContext}}(),
+        5,
+        Ref{String}(),
+        Ref{String}())
+end
+
+struct IncludeCallback <: Function
+    file_cache::Dict{URI,FileInfo}
+end
+IncludeCallback(state::ServerState) = IncludeCallback(state.file_cache)
 function (include_callback::IncludeCallback)(filepath::String)
     uri = filepath2uri(filepath)
-    if haskey(include_callback.state.file_cache, uri)
-        return include_callback.state.file_cache[uri].text # TODO use `parsed` instead of `text`
+    if haskey(include_callback.file_cache, uri)
+        return include_callback.file_cache[uri].text # TODO use `parsed` instead of `text`
     end
     # fallback to the default file-system-based include
     return read(filepath, String)
@@ -76,7 +97,7 @@ function runserver(callback, in::IO, out::IO;
         out_callback(msg)
         nothing
     end
-    state = initialize_state(send)
+    state = ServerState(send)
     shutdown_requested = false
     local exit_code::Int
     try
@@ -107,15 +128,6 @@ function runserver(callback, in::IO, out::IO;
         exit(exit_code)
     end
     return endpoint
-end
-
-function initialize_state(send)
-    return (;
-        send,
-        workspaceFolders = URI[], # TODO support multiple workspace folders properly
-        file_cache = Dict{URI,FileInfo}(), # on-memory virtual file system
-        uri2contexts = Dict{URI,Union{Set{AnalysisContext},ExternalContext}}(), # TODO make sure `Set{AnalysisContext}` to be non-empty always
-        analysis_interval = 5)
 end
 
 function handle_message(state, msg)
@@ -150,25 +162,32 @@ function handle_InitializeRequest(state, msg::InitializeRequest)
         if rootUri !== nothing
             push!(state.workspaceFolders, URI(rootUri))
         else
-            @warn "No workspaceFolders or rootUri in InitializeRequest"
+            @warn "No workspaceFolders or rootUri in InitializeRequest - some functionality will be limited"
         end
     end
-    # root_uri = get_root_folder(state)
-    # run_preset_analysis!(state, root_uri)
+
+    # Update root information
+    if isempty(state.workspaceFolders)
+        # leave Refs undefined
+    elseif length(state.workspaceFolders) == 1
+        root_uri = only(state.workspaceFolders)
+        root_path = uri2filepath(root_uri)
+        if root_path !== nothing
+            state.root_path[] = root_path
+            env_path = find_env_path(root_path)
+            if env_path !== nothing
+                state.root_env_path[] = env_path
+            end
+        else
+            @warn "Root URI scheme not supported for workspace analysis" root_uri
+        end
+    else
+        @warn "Multiple workspaceFolders are not supported - using limited functionality" state.workspaceFolders
+        # leave Refs undefined
+    end
+
     res = InitializeResponse(; id = msg.id, result = initialize_result())
     return state.send(res)
-end
-
-function get_root_folder(state)
-    (;workspaceFolders) = state
-    if isempty(workspaceFolders)
-        return nothing
-    elseif length(workspaceFolders) == 1
-        return only(workspaceFolders)
-    else
-        @warn "Multiple workspaceFolders are not supported" workspaceFolders
-        return nothing
-    end
 end
 
 function initialize_result()
@@ -429,8 +448,7 @@ function jet_result_to_diagnostics!(uri2diagnostics::Dict{URI,Vector{Diagnostic}
         else
             uri = filepath2uri(JET.tofullpath(filename))
         end
-        items = uri2diagnostics[uri]
-        push!(items, diagnostic)
+        push!(uri2diagnostics[uri], diagnostic)
     end
     for report in result.res.inference_error_reports
         diagnostic = jet_inference_error_report_to_diagnostic(report)
@@ -441,8 +459,7 @@ function jet_result_to_diagnostics!(uri2diagnostics::Dict{URI,Vector{Diagnostic}
         else
             uri = filepath2uri(JET.tofullpath(filename))
         end
-        items = uri2diagnostics[uri]
-        push!(items, diagnostic)
+        push!(uri2diagnostics[uri], diagnostic)
     end
 end
 
@@ -562,10 +579,8 @@ end
 function initiate_context!(state, uri::URI)
     if uri.scheme == "file"
         filename = path = uri2filepath(uri)::String
-        root_uri = get_root_folder(state)
-        if root_uri !== nothing
-            root_path = uri2filepath(root_uri)::String
-            if !issubdir(dirname(path), root_path)
+        if isassigned(state.root_path)
+            if !issubdir(dirname(path), state.root_path[])
                 state.uri2contexts[uri] = ExternalContext()
                 return nothing
             end
@@ -581,14 +596,8 @@ function initiate_context!(state, uri::URI)
     elseif uri.scheme == "untitled"
         filename = path = uri2filename(uri)::String
         # try to analyze untitled editors using the root environment
-        root_uri = get_root_folder(state)
-        if root_uri !== nothing
-            root_path = uri2filepath(root_uri)::String
-            env_path = find_env_path(root_path)
-            pkgname = nothing # to hit the `@goto analyze_script` case
-        else
-            env_path = pkgname = nothing
-        end
+        env_path = isassigned(state.root_env_path) ? state.root_env_path[] : nothing
+        pkgname = nothing # to hit the `@goto analyze_script` case
     else @assert false "Unsupported URI: $uri" end
     file_info = state.file_cache[uri]
     parsed = file_info.parsed
