@@ -251,7 +251,7 @@ function run_preset_analysis!(state, rooturi::URI)
     entry = PackageSourceAnalysisEntry(env_path, pkgfile, pkgid)
     analysis_context = new_analysis_context(entry, result)
     notify_diagnostics!(state, analysis_context.result.uri2diagnostics)
-    record_context!(state, analysis_context)
+    record_reverse_map!(state, analysis_context)
 
     # # analyze test scripts
     # runtests = joinpath(filedir, "runtests.jl")
@@ -320,7 +320,9 @@ function handle_DidChangeTextDocumentNotification(state, msg::DidChangeTextDocum
     text = last(contentChanges).text
     parsed = parse_file(text, uri)
     state.file_cache[uri] = FileInfo(textDocument.version, text, parsed)
-    if haskey(state.uri2contexts, uri)
+    if !haskey(state.uri2contexts, uri)
+        initiate_context!(state, uri)
+    else
         contexts = state.uri2contexts[uri]
         if contexts isa ExternalContext
             # this file is out of the current project scope, ignore it
@@ -331,8 +333,6 @@ function handle_DidChangeTextDocumentNotification(state, msg::DidChangeTextDocum
         end
         # TODO support multiple analysis contexts, which can happen if this file is included from multiple different contexts
         reanalyze_with_context!(state, first(contexts))
-    else
-        initiate_context!(state, uri)
     end
     nothing
 end
@@ -398,22 +398,25 @@ function new_analysis_context(entry::AnalysisEntry, result)
     return AnalysisContext(entry, files, analysis_result)
 end
 
-# TODO This reverse map recording should respect the changes made in `include` chains
 function update_analysis_result!(analysis_context, result)
-    files = analysis_context.files
     uri2diagnostics = analysis_context.result.uri2diagnostics
-    for filepath in result.res.included_files
-        uri = filename2uri(filepath)
-        push!(files, uri)
-        empty!(get!(()->Diagnostic[], uri2diagnostics, uri))
+    cached_files = analysis_context.files
+    new_files = Set{URI}(filename2uri(filepath) for filepath in result.res.included_files)
+    for deleted_file in setdiff(cached_files, new_files)
+        empty!(get!(()->Diagnostic[], uri2diagnostics, deleted_file))
+        delete!(cached_files, deleted_file)
     end
-    jet_result_to_diagnostics!(uri2diagnostics, result, files)
+    for new_file in new_files
+        push!(cached_files, new_file)
+        empty!(get!(()->Diagnostic[], uri2diagnostics, new_file))
+    end
+    jet_result_to_diagnostics!(uri2diagnostics, result)
     analysis_context.result.staled = false
     analysis_context.result.last_analysis = time()
 end
 
 # TODO This reverse map recording should respect the changes made in `include` chains
-function record_context!(state, analysis_context)
+function record_reverse_map!(state, analysis_context)
     afiles = analysis_context.files
     for uri in afiles
         contexts = get!(Set{AnalysisContext}, state.uri2contexts, uri)
@@ -435,11 +438,11 @@ end
 # TODO severity
 function jet_result_to_diagnostics(result, files::Set{URI})
     uri2diagnostics = Dict{URI,Vector{Diagnostic}}(uri => Diagnostic[] for uri in files)
-    jet_result_to_diagnostics!(uri2diagnostics, result, files)
+    jet_result_to_diagnostics!(uri2diagnostics, result)
     return uri2diagnostics
 end
 
-function jet_result_to_diagnostics!(uri2diagnostics::Dict{URI,Vector{Diagnostic}}, result, files::Set{URI})
+function jet_result_to_diagnostics!(uri2diagnostics::Dict{URI,Vector{Diagnostic}}, result)
     for report in result.res.toplevel_error_reports
         diagnostic = jet_toplevel_error_report_to_diagnostic(report)
         filename = report.file
@@ -624,7 +627,7 @@ function initiate_context!(state, uri::URI)
         end
         analysis_context = new_analysis_context(entry, result)
         @assert uri in analysis_context.files
-        record_context!(state, analysis_context)
+        record_reverse_map!(state, analysis_context)
     elseif pkgname === nothing
         @goto analyze_script
     else # this file is likely one within a package
@@ -655,7 +658,7 @@ function initiate_context!(state, uri::URI)
                     include_callback)
             end
             analysis_context = new_analysis_context(entry, result)
-            record_context!(state, analysis_context)
+            record_reverse_map!(state, analysis_context)
             if uri ∉ analysis_context.files
                 @goto analyze_script
             end
@@ -669,7 +672,7 @@ function initiate_context!(state, uri::URI)
             end
             entry = PackageTestAnalysisEntry(env_path, runtests)
             analysis_context = new_analysis_context(entry, result)
-            record_context!(state, analysis_context)
+            record_reverse_map!(state, analysis_context)
             if uri ∉ analysis_context.files
                 @goto analyze_script
             end
@@ -746,7 +749,7 @@ function reanalyze_with_context!(state, analysis_context::AnalysisContext)
     end
     update_analysis_result!(analysis_context, result)
     notify_diagnostics!(state, analysis_context.result.uri2diagnostics)
-    record_context!(state, analysis_context)
+    record_reverse_map!(state, analysis_context)
     nothing
 end
 
