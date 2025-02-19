@@ -3,7 +3,7 @@
 	"typescript.tsc.autoDetect": "off",
 	"typescript.preferences.quoteStyle": "single",
 	"editor.codeActionsOnSave": {
-		"source.fixAll.eslint": "explicit"
+		// "source.fixAll.eslint": "explicit"
 	},
 	"julia.lint.run": false,
 	"cSpell.words": [

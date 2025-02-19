@@ -57,7 +57,7 @@ struct ServerState{F}
     send::F
     workspaceFolders::Vector{URI}
     file_cache::Dict{URI,FileInfo}
-    uri2contexts::Dict{URI,Union{Set{AnalysisContext},ExternalContext}}
+    contexts::Dict{URI,Union{Set{AnalysisContext},ExternalContext}}
     analysis_interval::Int
     root_path::Ref{String}
     root_env_path::Ref{String}
@@ -130,7 +130,7 @@ function runserver(callback, in::IO, out::IO;
     return endpoint
 end
 
-function handle_message(state, msg)
+function handle_message(state::ServerState, msg)
     if msg isa InitializeRequest
         return handle_InitializeRequest(state, msg)
     elseif msg isa InitializedNotification
@@ -151,7 +151,7 @@ function handle_message(state, msg)
     end
 end
 
-function handle_InitializeRequest(state, msg::InitializeRequest)
+function handle_InitializeRequest(state::ServerState, msg::InitializeRequest)
     workspaceFolders = msg.params.workspaceFolders
     if workspaceFolders !== nothing
         for workspaceFolder in workspaceFolders
@@ -205,7 +205,7 @@ function initialize_result()
             version = "0.0.0"))
 end
 
-function run_preset_analysis!(state, rooturi::URI)
+function run_preset_analysis!(state::ServerState, rooturi::URI)
     rootpath = uri2filepath(rooturi)
     if rootpath === nothing
         @warn "Non file:// URI supported" rooturi
@@ -250,8 +250,8 @@ function run_preset_analysis!(state, rooturi::URI)
     end
     entry = PackageSourceAnalysisEntry(env_path, pkgfile, pkgid)
     analysis_context = new_analysis_context(entry, result)
-    notify_diagnostics!(state, analysis_context.result.uri2diagnostics)
     record_reverse_map!(state, analysis_context)
+    notify_diagnostics!(state)
 
     # # analyze test scripts
     # runtests = joinpath(filedir, "runtests.jl")
@@ -268,7 +268,24 @@ function run_preset_analysis!(state, rooturi::URI)
     nothing
 end
 
-function notify_diagnostics!(state, uri2diagnostics)
+function notify_diagnostics!(state::ServerState)
+    uri2diagnostics = Dict{URI,Vector{Diagnostic}}()
+    for (uri, contexts) in state.contexts
+        if contexts isa ExternalContext
+            continue
+        end
+        diagnostics = get!(Vector{Diagnostic}, uri2diagnostics, uri)
+        for analysis_context in contexts
+            diags = get(analysis_context.result.uri2diagnostics, uri, nothing)
+            if diags !== nothing
+                append!(diagnostics, diags)
+            end
+        end
+    end
+    notify_diagnostics!(state, uri2diagnostics)
+end
+
+function notify_diagnostics!(state::ServerState, uri2diagnostics)
     for (uri, diagnostics) in uri2diagnostics
         state.send(PublishDiagnosticsNotification(;
             params = PublishDiagnosticsParams(;
@@ -289,16 +306,16 @@ function parse_file(text::String, uri::URI)
     end
 end
 
-function handle_DidOpenTextDocumentNotification(state, msg::DidOpenTextDocumentNotification)
+function handle_DidOpenTextDocumentNotification(state::ServerState, msg::DidOpenTextDocumentNotification)
     textDocument = msg.params.textDocument
     @assert textDocument.languageId == "julia"
     uri = URI(textDocument.uri)
     parsed = parse_file(textDocument.text, uri)
     state.file_cache[uri] = FileInfo(textDocument.version, textDocument.text, parsed)
-    if !haskey(state.uri2contexts, uri)
+    if !haskey(state.contexts, uri)
         initiate_context!(state, uri)
     else # this file is tracked by some context already
-        contexts = state.uri2contexts[uri]
+        contexts = state.contexts[uri]
         if contexts isa ExternalContext
             # this file is out of the current project scope, ignore it
             return nothing
@@ -311,7 +328,7 @@ function handle_DidOpenTextDocumentNotification(state, msg::DidOpenTextDocumentN
 end
 
 # TODO switch to incremental updates?
-function handle_DidChangeTextDocumentNotification(state, msg::DidChangeTextDocumentNotification)
+function handle_DidChangeTextDocumentNotification(state::ServerState, msg::DidChangeTextDocumentNotification)
     (;textDocument,contentChanges) = msg.params
     uri = URI(textDocument.uri)
     for contentChange in contentChanges
@@ -320,10 +337,10 @@ function handle_DidChangeTextDocumentNotification(state, msg::DidChangeTextDocum
     text = last(contentChanges).text
     parsed = parse_file(text, uri)
     state.file_cache[uri] = FileInfo(textDocument.version, text, parsed)
-    if !haskey(state.uri2contexts, uri)
+    if !haskey(state.contexts, uri)
         initiate_context!(state, uri)
     else
-        contexts = state.uri2contexts[uri]
+        contexts = state.contexts[uri]
         if contexts isa ExternalContext
             # this file is out of the current project scope, ignore it
             return nothing
@@ -337,14 +354,14 @@ function handle_DidChangeTextDocumentNotification(state, msg::DidChangeTextDocum
     nothing
 end
 
-function handle_DidCloseTextDocumentNotification(state, msg::DidCloseTextDocumentNotification)
+function handle_DidCloseTextDocumentNotification(state::ServerState, msg::DidCloseTextDocumentNotification)
     textDocument = msg.params.textDocument
     uri = URI(textDocument.uri)
     delete!(state.file_cache, uri)
     return nothing
 end
 
-function handle_DidSaveTextDocumentNotification(state, msg::DidSaveTextDocumentNotification)
+function handle_DidSaveTextDocumentNotification(state::ServerState, msg::DidSaveTextDocumentNotification)
     return nothing
 end
 
@@ -375,7 +392,7 @@ function juliasyntax_diagnostic_to_diagnostic(diagnostic::JuliaSyntax.Diagnostic
         source = "JuliaSyntax")
 end
 
-function analyze_parsed_if_exist(state, uri::URI, args...; kwargs...)
+function analyze_parsed_if_exist(state::ServerState, uri::URI, args...; kwargs...)
     if haskey(state.file_cache, uri)
         parsed = state.file_cache[uri].parsed
         filename = uri2filename(uri)::String
@@ -416,10 +433,10 @@ function update_analysis_result!(analysis_context, result)
 end
 
 # TODO This reverse map recording should respect the changes made in `include` chains
-function record_reverse_map!(state, analysis_context)
+function record_reverse_map!(state::ServerState, analysis_context)
     afiles = analysis_context.files
     for uri in afiles
-        contexts = get!(Set{AnalysisContext}, state.uri2contexts, uri)
+        contexts = get!(Set{AnalysisContext}, state.contexts, uri)
         should_record = true
         for analysis_context′ in contexts
             bfiles = analysis_context′.files
@@ -579,12 +596,12 @@ function find_package_directory(path::String, env_path::String)
     return :script, path
 end
 
-function initiate_context!(state, uri::URI)
+function initiate_context!(state::ServerState, uri::URI)
     if uri.scheme == "file"
         filename = path = uri2filepath(uri)::String
         if isassigned(state.root_path)
             if !issubdir(dirname(path), state.root_path[])
-                state.uri2contexts[uri] = ExternalContext()
+                state.contexts[uri] = ExternalContext()
                 return nothing
             end
         end
@@ -684,11 +701,11 @@ function initiate_context!(state, uri::URI)
         end
     end
 
-    notify_diagnostics!(state, analysis_context.result.uri2diagnostics)
+    notify_diagnostics!(state)
     nothing
 end
 
-function reanalyze_with_context!(state, analysis_context::AnalysisContext)
+function reanalyze_with_context!(state::ServerState, analysis_context::AnalysisContext)
     analysis_result = analysis_context.result
     if !analysis_result.staled
         return nothing
@@ -748,8 +765,8 @@ function reanalyze_with_context!(state, analysis_context::AnalysisContext)
                 retriggerRequest = false))
     end
     update_analysis_result!(analysis_context, result)
-    notify_diagnostics!(state, analysis_context.result.uri2diagnostics)
     record_reverse_map!(state, analysis_context)
+    notify_diagnostics!(state)
     nothing
 end
 
