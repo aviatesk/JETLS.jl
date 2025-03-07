@@ -14,7 +14,7 @@ let traceOutputChannel: vscode.OutputChannel;
 
 function startLanguageServer(context: vscode.ExtensionContext) {
   const config = vscode.workspace.getConfiguration('JETLSClient');
-  const juliaExecutable = config.get<string>('executablePath', 'julia');
+  const juliaExecutable = config.get<string>('juliaExecutablePath', 'julia');
 
   const serverScript = context.asAbsolutePath('runserver.jl');
   const serverArgsToRun = ['--startup-file=no', '--project=.', serverScript];
