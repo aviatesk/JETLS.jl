@@ -53,12 +53,14 @@ end
 
 struct ExternalContext end
 
+const DEBOUNCE_INTERVAL = 5.0
+
 struct ServerState{F}
     send::F
     workspaceFolders::Vector{URI}
     file_cache::Dict{URI,FileInfo}
     contexts::Dict{URI,Union{Set{AnalysisContext},ExternalContext}}
-    analysis_interval::Int
+    analysis_interval::Float64
     root_path::Ref{String}
     root_env_path::Ref{String}
 end
@@ -68,7 +70,7 @@ function ServerState(send::F) where F
         URI[],
         Dict{URI,FileInfo}(),
         Dict{URI,Union{Set{AnalysisContext},ExternalContext}}(),
-        5,
+        DEBOUNCE_INTERVAL,
         Ref{String}(),
         Ref{String}())
 end
@@ -349,7 +351,12 @@ function handle_DidChangeTextDocumentNotification(state::ServerState, msg::DidCh
             analysis_context.result.staled = true
         end
         # TODO support multiple analysis contexts, which can happen if this file is included from multiple different contexts
-        reanalyze_with_context!(state, first(contexts))
+
+        if time() - first(contexts).result.last_analysis < state.analysis_interval
+            debounced_reanalyze_with_context!(state, first(contexts))
+        else
+            reanalyze_with_context!(state, first(contexts))
+        end
     end
     nothing
 end
@@ -705,6 +712,22 @@ function initiate_context!(state::ServerState, uri::URI)
     nothing
 end
 
+
+function debounce(f::Function; delay::Float64=DEBOUNCE_INTERVAL)
+    timer = nothing
+    function debounced_func(args...; kwargs...)
+        if timer !== nothing
+            close(timer)
+        end
+        timer = Timer(
+            (timer) ->  f(args...; kwargs...),
+            delay
+        )
+    end
+    return debounced_func
+end
+
+
 function reanalyze_with_context!(state::ServerState, analysis_context::AnalysisContext)
     analysis_result = analysis_context.result
     if !analysis_result.staled
@@ -725,8 +748,6 @@ function reanalyze_with_context!(state::ServerState, analysis_context::AnalysisC
         notify_diagnostics!(state, (
             uri => parse_error_to_diagnostics(parse_error) for (uri, parse_error) in parse_errors))
         return nothing
-    elseif time() - analysis_result.last_analysis < state.analysis_interval
-        return nothing # no update
     end
     entry = analysis_context.entry
     include_callback = IncludeCallback(state)
@@ -769,5 +790,8 @@ function reanalyze_with_context!(state::ServerState, analysis_context::AnalysisC
     notify_diagnostics!(state)
     nothing
 end
+
+debounced_reanalyze_with_context! = debounce(reanalyze_with_context!)
+
 
 end # module JETLS
