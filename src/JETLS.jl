@@ -58,7 +58,6 @@ struct ServerState{F}
     workspaceFolders::Vector{URI}
     file_cache::Dict{URI,FileInfo}
     contexts::Dict{URI,Union{Set{AnalysisContext},ExternalContext}}
-    analysis_interval::Int
     root_path::Ref{String}
     root_env_path::Ref{String}
 end
@@ -68,7 +67,6 @@ function ServerState(send::F) where F
         URI[],
         Dict{URI,FileInfo}(),
         Dict{URI,Union{Set{AnalysisContext},ExternalContext}}(),
-        5,
         Ref{String}(),
         Ref{String}())
 end
@@ -306,6 +304,41 @@ function parse_file(text::String, uri::URI)
     end
 end
 
+let debounced = Dict{Any,Timer}()
+    global function debounce(f, delay, args...; kwargs...)
+        if haskey(debounced, f)
+            close(debounced[f])
+        end
+        debounced[f] = Timer(delay) do _
+            try
+                f(args...; kwargs...)
+            finally
+                delete!(debounced, f)
+            end
+        end
+        return nothing
+    end
+end
+
+let throttled = Dict{Any, Tuple{Timer, Float64}}()
+    global function throttle(f, delay, args...; kwargs...)
+        last_timer, last_time = get(throttled, f, (nothing, 0.0))
+        if last_timer !== nothing
+            close(last_timer)
+        end
+        delay = max(0.0, delay - (time() - last_time))
+        throttled[f] = Timer(delay) do _
+            try
+                f(args...; kwargs...)
+            finally
+                delete!(throttled, f)
+            end
+        end, time()
+        return nothing
+	end
+end
+
+
 function handle_DidOpenTextDocumentNotification(state::ServerState, msg::DidOpenTextDocumentNotification)
     textDocument = msg.params.textDocument
     @assert textDocument.languageId == "julia"
@@ -349,7 +382,7 @@ function handle_DidChangeTextDocumentNotification(state::ServerState, msg::DidCh
             analysis_context.result.staled = true
         end
         # TODO support multiple analysis contexts, which can happen if this file is included from multiple different contexts
-        reanalyze_with_context!(state, first(contexts))
+        debounce(reanalyze_with_context!, 1.5, state, first(contexts))
     end
     nothing
 end
@@ -705,6 +738,8 @@ function initiate_context!(state::ServerState, uri::URI)
     nothing
 end
 
+
+
 function reanalyze_with_context!(state::ServerState, analysis_context::AnalysisContext)
     analysis_result = analysis_context.result
     if !analysis_result.staled
@@ -725,8 +760,6 @@ function reanalyze_with_context!(state::ServerState, analysis_context::AnalysisC
         notify_diagnostics!(state, (
             uri => parse_error_to_diagnostics(parse_error) for (uri, parse_error) in parse_errors))
         return nothing
-    elseif time() - analysis_result.last_analysis < state.analysis_interval
-        return nothing # no update
     end
     entry = analysis_context.entry
     include_callback = IncludeCallback(state)
