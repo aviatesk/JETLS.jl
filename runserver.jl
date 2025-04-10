@@ -1,3 +1,5 @@
+@info "Running JETLS with Julia version" VERSION
+
 try
     using Revise
 catch err

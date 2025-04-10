@@ -738,8 +738,6 @@ function initiate_context!(state::ServerState, uri::URI)
     nothing
 end
 
-
-
 function reanalyze_with_context!(state::ServerState, analysis_context::AnalysisContext)
     analysis_result = analysis_context.result
     if !analysis_result.staled
