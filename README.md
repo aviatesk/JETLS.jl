@@ -11,7 +11,7 @@ A new language server for the Julia programming language. In a nascent stage of 
 
 - VSCode v1.93.0 or higher
 - npm v11.0.0 or higher
-- Julia v1.11: _Julia nightly can not be used since JET is currently incompatible with it_
+- Julia v1.12
 
 ### Steps
 
