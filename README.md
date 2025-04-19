@@ -11,7 +11,9 @@ A new language server for the Julia programming language. In a nascent stage of 
 
 - VSCode v1.93.0 or higher
 - npm v11.0.0 or higher
-- Julia v1.12
+- Julia `v"1.12.0-beta1.11"` or higher:
+  As of April 19, 2025, you need to build Julia from [this branch](https://github.com/JuliaLang/julia/pull/58009)
+  for using this 1.12 beta version.
 
 ### Steps
 
