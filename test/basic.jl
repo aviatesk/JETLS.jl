@@ -8,10 +8,10 @@ let in = Base.BufferStream()
     out = Base.BufferStream()
     in_queue = Channel{Any}(Inf)
     out_queue = Channel{Any}(Inf)
-    in_callback = function (@nospecialize msg)
+    in_callback = function (@nospecialize(msg),)
         put!(in_queue, msg)
     end
-    out_callback = function (@nospecialize msg)
+    out_callback = function (@nospecialize(msg),)
         put!(out_queue, msg)
     end
     t = @async runserver(in, out; in_callback, out_callback, shutdown_really=false)
