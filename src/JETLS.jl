@@ -36,7 +36,7 @@ struct PackageSourceAnalysisEntry <: AnalysisEntry
 end
 struct PackageTestAnalysisEntry <: AnalysisEntry
     env_path::String
-    runtests::String
+    runtestsuri::URI
 end
 
 mutable struct FullAnalysisResult
@@ -714,13 +714,14 @@ function initiate_context!(state::ServerState, uri::URI)
             end
         elseif filekind === :test
             # analyze test scripts
-            runtests = joinpath(filedir, "runtests.jl")
+            runtestsfile = joinpath(filedir, "runtests.jl")
+            runtestsuri = filepath2uri(runtestsfile)
             result = activate_do(env_path) do
-                JET.analyze_and_report_file!(JET.JETAnalyzer(), runtests;
+                analyze_parsed_if_exist(state, runtestsuri;
                     toplevel_logger=stderr,
                     include_callback)
             end
-            entry = PackageTestAnalysisEntry(env_path, runtests)
+            entry = PackageTestAnalysisEntry(env_path, runtestsuri)
             analysis_context = new_analysis_context(entry, result)
             record_reverse_map!(state, analysis_context)
             if uri ∉ analysis_context.files
@@ -783,7 +784,7 @@ function reanalyze_with_context!(state::ServerState, analysis_context::AnalysisC
         end
     elseif entry isa PackageTestAnalysisEntry
         result = activate_do(entry.env_path) do
-            JET.analyze_and_report_file!(JET.JETAnalyzer(), entry.runtests;
+            analyze_parsed_if_exist(state, entry.runtestsuri;
                 toplevel_logger=stderr,
                 include_callback)
         end
