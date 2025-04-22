@@ -5,8 +5,8 @@ using StructTypes
 const exports = Set{Symbol}()
 const method_dispatcher = Dict{String,DataType}()
 
-include("interface.jl")
-include("namespace.jl")
+include("utils/interface.jl")
+include("utils/namespace.jl")
 
 """
 A special object representing `null` value.
