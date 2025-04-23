@@ -158,6 +158,9 @@ end
 end
 
 include("diagnostics.jl")
+include("capabilities/server.jl")
+include("capabilities/client.jl")
+include("initialize.jl")
 
 for name in exports
     Core.eval(@__MODULE__, Expr(:export, name))

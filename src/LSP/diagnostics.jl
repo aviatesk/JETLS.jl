@@ -150,6 +150,17 @@ Diagnostic options.
 end
 
 """
+Static registration options to be returned in the initialize request.
+"""
+@interface StaticRegistrationOptions begin
+    """
+    The id used to register the request. The id can be used to deregister the request again.
+    See also Registration#id.
+    """
+    id::Union{String, Nothing} = nothing
+end
+
+"""
 Diagnostic registration options.
 
 # Tags

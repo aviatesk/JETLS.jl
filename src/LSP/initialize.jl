@@ -91,17 +91,6 @@ The initialize request may only be sent once.
 end
 
 """
-Static registration options to be returned in the initialize request.
-"""
-@interface StaticRegistrationOptions begin
-    """
-    The id used to register the request. The id can be used to deregister the request again.
-    See also Registration#id.
-    """
-    id::Union{String, Nothing} = nothing
-end
-
-"""
 The initialized notification is sent from the client to the server after the client received
 the result of the initialize request but before the client is sending any other request or
 notification to the server. The server can use the initialized notification, for example,
