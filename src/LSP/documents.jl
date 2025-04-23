@@ -67,6 +67,17 @@ then use an end position denoting the start of the next line. For example:
 end
 
 # ------------------------------------------------------------------------------------------
+# Folders.
+
+@interface WorkspaceFolder begin
+    "The associated URI for this workspace folder."
+    uri::URI
+
+    "The name of the workspace folder. Used to refer to this workspace folder in the user interface."
+    name::String
+end
+
+# ------------------------------------------------------------------------------------------
 # Documents.
 
 const DocumentUri = String
