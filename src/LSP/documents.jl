@@ -86,6 +86,14 @@ end
 const DocumentUri = String
 
 """
+Represents a location inside a resource, such as a line inside a text file.
+"""
+@interface Location begin
+    uri::DocumentUri
+    range::Range
+end
+
+"""
 A document filter denotes a document through properties like language, scheme or pattern.
 An example is a filter that applies to TypeScript files on disk. Another example is a filter
 that applies to JSON files with name package.json:

@@ -58,14 +58,6 @@ The diagnostic tags.
 end
 
 """
-Represents a location inside a resource, such as a line inside a text file.
-"""
-@interface Location begin
-    uri::DocumentUri
-    range::Range
-end
-
-"""
 Represents a related message and source code location for a diagnostic.
 This should be used to point to code locations that cause or are related to a diagnostics,
 e.g when duplicating a symbol in a scope.
