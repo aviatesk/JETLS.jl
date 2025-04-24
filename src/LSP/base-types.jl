@@ -11,7 +11,6 @@ StructTypes.lower(::Null) = nothing
 push!(exports, :Null, :null)
 
 const boolean = Bool
-# const null = Nothing
 const string = String
 
 """
