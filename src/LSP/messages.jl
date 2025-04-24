@@ -10,14 +10,15 @@
 
     """
     This is the start range of JSON-RPC reserved error codes.
-    It doesn't denote a real error code. No LSP error codes should be defined between the start
-    and end range. For backwards compatibility the `ServerNotInitialized` and the
-    `UnknownErrorCode` are left in the range.
+    It doesn't denote a real error code. No LSP error codes should be defined between
+    the start and end range. For backwards compatibility the `ServerNotInitialized` and
+    the `UnknownErrorCode` are left in the range.
 
     # Tags
     - since – 3.16.0
     """
     jsonrpcReservedErrorRangeStart = -32099
+
     """
     # Tags
     - deprecated – use jsonrpcReservedErrorRangeStart
@@ -39,6 +40,7 @@
     - since – 3.16.0"
     """
     jsonrpcReservedErrorRangeEnd = -32000
+
     """
     # Tags
     - deprecated – use jsonrpcReservedErrorRangeEnd
@@ -56,8 +58,8 @@
 
     """
     A request failed but it was syntactically correct, e.g the method name was known and the
-    parameters were valid. The error message should contain human readable information about why
-    the request failed.
+    parameters were valid. The error message should contain human readable information about
+    why the request failed.
 
     # Tags
     - since – 3.17.0
@@ -74,10 +76,11 @@
     ServerCancelled = -32802
 
     """
-    "The server detected that the content of a document got modified outside normal conditions.
-    A server should NOT send this error code if it detects a content change in it unprocessed
-    messages. The result even computed on an older state might still be useful for the client.
-    If a client decides that a result is not of any use anymore the client should cancel the request.
+    The server detected that the content of a document got modified outside normal
+    conditions. A server should NOT send this error code if it detects a content change
+    in it unprocessed messages. The result even computed on an older state might still be
+    useful for the client. If a client decides that a result is not of any use anymore
+    the client should cancel the request.
     """
     ContentModified = -32801
 
@@ -90,21 +93,10 @@
     This is the end range of LSP reserved error codes. It doesn't denote a real error code.
 
     # Tags
-    - since – 3.16.0"
+    - since – 3.16.0
     """
     lspReservedErrorRangeEnd = -32800
-end # @namespace ErrorCodes
-
-@interface ResponseError begin
-    "A number indicating the error type that occurred."
-    code::ErrorCodes.Ty
-
-    "A string providing a short description of the error."
-    message::String
-
-    "A primitive or structured value that contains additional information about the error. Can be omitted."
-    data::Union{Any, Nothing} = nothing
-end
+end  # @namespace ErrorCodes
 
 # ------------------------------------------------------------------------------------------
 # Messages.
@@ -116,6 +108,9 @@ The language server protocol always uses “2.0” as the jsonrpc version.
 @interface Message begin
     jsonrpc::String = "2.0"
 end
+
+# --------------------------------------------
+# Request.
 
 """
 A request message to describe a request between the client and the server.
@@ -132,8 +127,24 @@ Every processed request must send a response back to the sender of the request.
     params::Union{Any, Nothing} = nothing
 end
 
-# TODO Revisit this to correctly lower this struct
+# --------------------------------------------
+# Response.
 
+@interface ResponseError begin
+    "A number indicating the error type that occurred."
+    code::ErrorCodes.Ty
+
+    "A string providing a short description of the error."
+    message::String
+
+    """
+    A primitive or structured value that contains additional information about the error.
+    Can be omitted.
+    """
+    data::Union{Any, Nothing} = nothing
+end
+
+# TODO Revisit this to correctly lower this struct
 """
 A Response Message sent as a result of a request.
 If a request doesn’t provide a result value the receiver of a request still needs to return
@@ -154,6 +165,9 @@ successful request.
     "The error object in case a request fails."
     error::Union{ResponseError, Nothing} = nothing
 end
+
+# --------------------------------------------
+# Notification.
 
 """
 A notification message. A processed notification message must not send a response back.
