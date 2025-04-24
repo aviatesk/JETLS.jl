@@ -50,7 +50,10 @@ The diagnostic tags.
     """
     Unnecessary = 1
 
-    "Deprecated or obsolete code. Clients are allowed to rendered diagnostics with this tag strike through."
+    """
+    Deprecated or obsolete code. Clients are allowed to rendered diagnostics with this tag
+    strike through.
+    """
     Deprecated = 2
 end
 
@@ -98,7 +101,10 @@ end
     """
     codeDescription::Union{CodeDescription, Nothing} = nothing
 
-    "A human-readable string describing the source of this diagnostic, e.g. 'typescript' or 'super lint'."
+    """
+    A human-readable string describing the source of this diagnostic, e.g. 'typescript'
+    or 'super lint'.
+    """
     source::Union{String, Nothing} = nothing
 
     "The diagnostic's message."
@@ -141,7 +147,8 @@ Diagnostic options.
     """
     Whether the language has inter file dependencies meaning that editing code in one file
     can result in a different diagnostic set in another file.
-    Inter file dependencies are common for most programming languages and typically uncommon for linters.
+    Inter file dependencies are common for most programming languages and typically uncommon
+    for linters.
     """
     interFileDependencies::Bool
 
@@ -167,8 +174,8 @@ Diagnostic registration options.
 - since – 3.17.0
 """
 @interface DiagnosticRegistrationOptions @extends TextDocumentRegistrationOptions,
-    DiagnosticOptions, StaticRegistrationOptions begin
-    end
+DiagnosticOptions, StaticRegistrationOptions begin
+end
 
 @interface PublishDiagnosticsParams begin
     "The URI for which diagnostic information is reported."
@@ -199,7 +206,10 @@ end
     "A full document diagnostic report."
     kind::DocumentDiagnosticReportKind.Ty = DocumentDiagnosticReportKind.Full
 
-    "An optional result id. If provided it will be sent on the next diagnostic request for the same document."
+    """
+    An optional result id. If provided it will be sent on the next diagnostic request
+    for the same document.
+    """
     resultId::Union{String, Nothing} = nothing
 
     "The actual items."
@@ -213,7 +223,10 @@ end
 - since – 3.17.0
 """
 @interface UnchangedDocumentDiagnosticReport begin
-    "A document diagnostic report indicating no changes to the last result. A server can only return `unchanged` if result ids are provided."
+    """
+    A document diagnostic report indicating no changes to the last result.
+    A server can only return `unchanged` if result ids are provided.
+    """
     kind::String = DocumentDiagnosticReportKind.Unchanged
 
     "A result id which will be sent on the next diagnostic request for the same document."
@@ -236,7 +249,10 @@ A full diagnostic report with a set of related documents.
     # Tags
     - since – 3.17.0
     """
-    relatedDocuments::Union{Dict{DocumentUri,Union{FullDocumentDiagnosticReport,UnchangedDocumentDiagnosticReport}}, Nothing} = nothing
+    relatedDocuments::Union{Dict{DocumentUri,
+                                 Union{FullDocumentDiagnosticReport,
+                                       UnchangedDocumentDiagnosticReport}},
+                            Nothing} = nothing
 end
 
 """
@@ -255,7 +271,10 @@ An unchanged diagnostic report with a set of related documents.
     # Tags
     - since – 3.17.0
     """
-    relatedDocuments::Union{Dict{DocumentUri,Union{FullDocumentDiagnosticReport,UnchangedDocumentDiagnosticReport}}, Nothing} = nothing
+    relatedDocuments::Union{Dict{DocumentUri,
+                                 Union{FullDocumentDiagnosticReport,
+                                       UnchangedDocumentDiagnosticReport}},
+                            Nothing} = nothing
 end
 
 """
@@ -264,7 +283,8 @@ Parameters of the document diagnostic request.
 # Tags
 - since – 3.17.0
 """
-@interface DocumentDiagnosticParams @extends WorkDoneProgressParams, PartialResultParams begin
+@interface DocumentDiagnosticParams @extends WorkDoneProgressParams,
+PartialResultParams begin
     "The text document."
     textDocument::TextDocumentIdentifier
 
@@ -277,8 +297,8 @@ end
 
 """
 The text document diagnostic request is sent from the client to the server to ask the server
-to compute the diagnostics for a given document.
-As with other pull requests the server is asked to compute the diagnostics for the currently synced version of the document.
+to compute the diagnostics for a given document. As with other pull requests the server
+is asked to compute the diagnostics for the currently synced version of the document.
 """
 @interface DocumentDiagnosticRequest @extends RequestMessage begin
     method::String = "textDocument/diagnostic"
@@ -378,7 +398,8 @@ Parameters of the workspace diagnostic request.
 # Tags
 - since – 3.17.0
 """
-@interface WorkspaceDiagnosticParams @extends WorkDoneProgressParams, PartialResultParams begin
+@interface WorkspaceDiagnosticParams @extends WorkDoneProgressParams,
+PartialResultParams begin
     "The additional identifier provided during registration."
     identifier::Union{String, Nothing} = nothing
 

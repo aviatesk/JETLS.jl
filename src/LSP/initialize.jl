@@ -24,7 +24,8 @@
     The locale the client is currently showing the user interface in.
     This must not necessarily be the locale of the operating system.
 
-    Uses IETF language tags as the value's syntax (See https://en.wikipedia.org/wiki/IETF_language_tag)
+    Uses IETF language tags as the value's syntax
+    (see https://en.wikipedia.org/wiki/IETF_language_tag).
 
     # Tags
     - since – 3.16.0
@@ -70,9 +71,12 @@ end
 
 """
 The initialize request is sent as the first request from the client to the server.
-If the server receives a request or notification before the initialize request it should act as follows:
-- For a request the response should be an error with code: -32002. The message can be picked by the server.
-- Notifications should be dropped, except for the exit notification. This will allow the exit of a server without an initialize request.
+If the server receives a request or notification before the initialize request it should act
+as follows:
+   - For a request the response should be an error with code: -32002. The message
+     can be picked by the server.
+   - Notifications should be dropped, except for the exit notification. This will allow
+     the exit of a server without an initialize request.
 
 Until the server has responded to the initialize request with an `InitializeResult`,
 the client must not send any additional requests or notifications to the server.
@@ -82,7 +86,8 @@ initialize request the server is allowed to send the notifications `window/showM
 `window/logMessage` and `telemetry/event` as well as the `window/showMessageRequest`
 request to the client. In case the client sets up a progress token in the initialize params
 (e.g. property `workDoneToken`) the server is also allowed to use that token
-(and only that token) using the `\$/progress` notification sent from the server to the client.
+(and only that token) using the `\$/progress` notification sent from the server to the
+client.
 The initialize request may only be sent once.
 """
 @interface InitializeRequest @extends RequestMessage begin
@@ -119,7 +124,7 @@ end
     end} = nothing
 end
 
-"Known error codes for an `InitializeErrorCodes`;"
+"Known error codes for an `InitializeErrorCodes`."
 @namespace InitializeErrorCodes::Int begin
     """
     If the protocol version provided by the client can't be handled by the server.
@@ -134,8 +139,8 @@ end
 @interface InitializeError begin
     """
     Indicates whether the client execute the following retry logic:
-    (1) show the message provided by the ResponseError to the user
-    (2) user selects retry or cancel
+    (1) show the message provided by the ResponseError to the user;
+    (2) user selects retry or cancel;
     (3) if user selected retry the initialize method is sent again.
     """
     retry::Bool

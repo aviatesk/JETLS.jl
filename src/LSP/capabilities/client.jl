@@ -22,7 +22,9 @@
         - since – 3.16.0
         """
         fileOperations::Union{Nothing, @interface begin
-            "Whether the client supports dynamic registration for file requests/notifications."
+            """
+            Whether the client supports dynamic registration for file requests/notifications.
+            """
             dynamicRegistration::Union{Bool, Nothing} = nothing
 
             "The client has support for sending didCreateFiles notifications."

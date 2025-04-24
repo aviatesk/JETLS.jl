@@ -73,7 +73,10 @@ end
     "The associated URI for this workspace folder."
     uri::URI
 
-    "The name of the workspace folder. Used to refer to this workspace folder in the user interface."
+    """
+    The name of the workspace folder. Used to refer to this workspace folder in the user
+    interface.
+    """
     name::String
 end
 
@@ -108,9 +111,12 @@ To keep the type definition simple all properties are marked as optional.
     - `*` to match one or more characters in a path segment
     - `?` to match on one character in a path segment
     - `**` to match any number of path segments, including none
-    - `{}` to group sub patterns into an OR expression. (e.g. `**\u200b/*.{ts,js}` matches all TypeScript and JavaScript files)
-    - `[]` to declare a range of characters to match in a path segment (e.g., `example.[0-9]` to match on `example.0`, `example.1`, …)
-    - `[!...]` to negate a range of characters to match in a path segment (e.g., `example.[!0-9]` to match on `example.a`, `example.b`, but not `example.0`)
+    - `{}` to group sub patterns into an OR expression. (e.g. `**\u200b/*.{ts,js}` matches
+      all TypeScript and JavaScript files)
+    - `[]` to declare a range of characters to match in a path segment (e.g.,
+      `example.[0-9]` to match on `example.0`, `example.1`, …)
+    - `[!...]` to negate a range of characters to match in a path segment (e.g.,
+      `example.[!0-9]` to match on `example.a`, `example.b`, but not `example.0`)
     """
     pattern::Union{String, Nothing} = nothing
 end
@@ -221,13 +227,14 @@ end
 end
 
 """
-The document open notification is sent from the client to the server to signal newly opened text documents.
-The document’s content is now managed by the client and the server must not try to read the document’s content using the document’s Uri.
-Open in this sense means it is managed by the client.
-It doesn’t necessarily mean that its content is presented in an editor.
-An open notification must not be sent more than once without a corresponding close notification send before.
-This means open and close notification must be balanced and the max open count for a particular textDocument is one.
-Note that a server’s ability to fulfill requests is independent of whether a text document is open or closed.
+The document open notification is sent from the client to the server to signal newly opened
+text documents. The document’s content is now managed by the client and the server must not
+try to read the document’s content using the document’s Uri. Open in this sense means it is
+managed by the client. It doesn’t necessarily mean that its content is presented in an
+editor. An open notification must not be sent more than once without a corresponding close
+notification send before. This means open and close notification must be balanced and the
+max open count for a particular textDocument is one. Note that a server’s ability to
+fulfill requests is independent of whether a text document is open or closed.
 
 The `DidOpenTextDocumentParams` contain the language id the document is associated with.
 If the language id of a document changes, the client needs to send a `textDocument/didClose`
@@ -250,11 +257,11 @@ end
 """
 The document close notification is sent from the client to the server when the document got
 closed in the client. The document’s master now exists where the document’s Uri points to
-(e.g. if the document’s Uri is a file Uri the master now exists on disk).
-As with the open notification the close notification is about managing the document’s content.
+(e.g. if the document’s Uri is a file Uri the master now exists on disk). As with the open
+notification the close notification is about managing the document’s content.
 Receiving a close notification doesn’t mean that the document was open in an editor before.
-A close notification requires a previous open notification to be sent.
-Note that a server’s ability to fulfill requests is independent of whether a text document is open or closed.
+A close notification requires a previous open notification to be sent. Note that a server’s
+ability to fulfill requests is independent of whether a text document is open or closed.
 """
 @interface DidCloseTextDocumentNotification @extends NotificationMessage begin
     method::String = "textDocument/didClose"
@@ -282,6 +289,7 @@ If only a text is provided it is considered to be the full content of the docume
 @interface TextDocumentContentChangeEvent begin
     "The range of the document that changed."
     range::Union{Range, Nothing} = nothing
+
     """
     The optional length of the range that got replaced.
 
@@ -289,26 +297,29 @@ If only a text is provided it is considered to be the full content of the docume
     - deprecated – use range instead.
     """
     rangeLength::Union{UInt, Nothing} = nothing
+
     "The new text for the provided range."
     text::String
 end
 
 @interface DidChangeTextDocumentParams begin
     """
-    The document that did change.
-    The version number points to the version after all provided content changes have been applied.
+    The document that did change. The version number points to the version after all
+    provided content changes have been applied.
     """
     textDocument::VersionedTextDocumentIdentifier
+
     """
-    The actual content changes. The content changes describe single state changes to the document.
-    So if there are two content changes c1 (at array index 0) and c2 (at array index 1) for
-    a document in state S then c1 moves the document from S to S' and c2 from S' to S''.
-    So c1 is computed on the state S and c2 is computed on the state S'.
+    The actual content changes. The content changes describe single state changes to the
+    document. So if there are two content changes c1 (at array index 0) and c2 (at array
+    index 1) for a document in state S then c1 moves the document from S to S' and c2 from
+    S' to S''. So c1 is computed on the state S and c2 is computed on the state S'.
 
     To mirror the content of a document using change events use the following approach:
     - start with the same initial content
     - apply the 'textDocument/didChange' notifications in the order you receive them.
-    - apply the `TextDocumentContentChangeEvent`s in a single notification in the order you receive them.
+    - apply the `TextDocumentContentChangeEvent`s in a single notification in the order you
+      receive them.
     """
     contentChanges::Vector{TextDocumentContentChangeEvent}
 end
@@ -335,7 +346,11 @@ end
 @interface DidSaveTextDocumentParams begin
     "The document that was saved."
     textDocument::TextDocumentIdentifier
-    "Optional the content when saved. Depends on the includeText value when the save notification was requested."
+
+    """
+    Optional the content when saved. Depends on the includeText value when the save
+    notification was requested.
+    """
     text::Union{String, Nothing} = nothing
 end
 
@@ -348,19 +363,35 @@ end
 # Sync.
 
 @interface TextDocumentSyncOptions begin
-    "Open and close notifications are sent to the server. If omitted open close notification should not be sent."
-    openClose::Union{Bool, Nothing} = nothing
     """
-    Change notifications are sent to the server.
-    See `TextDocumentSyncKind.None`, `TextDocumentSyncKind.Full` and `TextDocumentSyncKind.Incremental`.
+    Open and close notifications are sent to the server.
+    If omitted open close notification should not be sent.
+    """
+    openClose::Union{Bool, Nothing} = nothing
+
+    """
+    Change notifications are sent to the server. See `TextDocumentSyncKind.None`,
+    `TextDocumentSyncKind.Full` and `TextDocumentSyncKind.Incremental`.
     If omitted it defaults to `TextDocumentSyncKind.None`.
     """
     change::Union{TextDocumentSyncKind.Ty, Nothing} = nothing
-    "If present will save notifications are sent to the server. If omitted the notification should not be sent."
+
+    """
+    If present will save notifications are sent to the server.
+    If omitted the notification should not be sent.
+    """
     willSave::Union{Bool, Nothing} = nothing
-    "If present will save wait until requests are sent to the server. If omitted the request should not be sent."
+
+    """
+    If present will save wait until requests are sent to the server.
+    If omitted the request should not be sent.
+    """
     willSaveWaitUntil::Union{Bool, Nothing} = nothing
-    "If present save notifications are sent to the server. If omitted the notification should not be sent."
+
+    """
+    If present save notifications are sent to the server.
+    If omitted the notification should not be sent.
+    """
     save::Union{Union{Bool, SaveOptions}, Nothing} = nothing
 end
 
@@ -388,13 +419,13 @@ Matching options for the file operation pattern.
 - since – 3.16.0
 """
 @interface FileOperationPatternOptions begin
-
     "The pattern should be matched ignoring casing."
     ignoreCase::Union{Bool, Nothing} = nothing
 end
 
 """
-A pattern to describe in which file operation requests or notifications the server is interested in.
+A pattern to describe in which file operation requests or notifications the server is
+interested in.
 
 # Tags
 - since – 3.16.0
@@ -405,9 +436,12 @@ A pattern to describe in which file operation requests or notifications the serv
     - `*` to match one or more characters in a path segment
     - `?` to match on one character in a path segment
     - `**` to match any number of path segments, including none
-    - `{}` to group sub patterns into an OR expression. (e.g. `**\u200b/*.{ts,js}` matches all TypeScript and JavaScript files)
-    - `[]` to declare a range of characters to match in a path segment (e.g., `example.[0-9]` to match on `example.0`, `example.1`, …)
-    - `[!...]` to negate a range of characters to match in a path segment (e.g., `example.[!0-9]` to match on `example.a`, `example.b`, but not `example.0`)
+    - `{}` to group sub patterns into an OR expression. (e.g. `**\u200b/*.{ts,js}`
+      matches all TypeScript and JavaScript files)
+    - `[]` to declare a range of characters to match in a path segment (e.g.,
+      `example.[0-9]` to match on `example.0`, `example.1`, …)
+    - `[!...]` to negate a range of characters to match in a path segment (e.g.,
+      `example.[!0-9]` to match on `example.a`, `example.b`, but not `example.0`)
     """
     glob::String
 
@@ -426,7 +460,6 @@ interested in.
 - since – 3.16.0
 """
 @interface FileOperationFilter begin
-
     "A Uri like `file` or `untitled`."
     scheme::Union{String, Nothing} = nothing
 
