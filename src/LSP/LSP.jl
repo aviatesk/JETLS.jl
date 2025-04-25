@@ -9,12 +9,9 @@ include("utils/interface.jl")
 include("utils/namespace.jl")
 
 include("base-protocol.jl")
-
-# Language server protocol
-# ========================
+include("basic-json-structures.jl")
 
 include("documents.jl")
-include("progress.jl")
 include("diagnostics.jl")
 include("capabilities/server.jl")
 include("capabilities/client.jl")
