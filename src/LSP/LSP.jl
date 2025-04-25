@@ -5,13 +5,10 @@ using StructTypes
 const exports = Set{Symbol}()
 const method_dispatcher = Dict{String,DataType}()
 
-# Base protocol
-# =============
-
-include("base-types.jl")
 include("utils/interface.jl")
 include("utils/namespace.jl")
-include("messages.jl")
+
+include("base-protocol.jl")
 
 # Language server protocol
 # ========================
