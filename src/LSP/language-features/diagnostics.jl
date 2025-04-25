@@ -143,10 +143,7 @@ A full diagnostic report with a set of related documents.
     # Tags
     - since – 3.17.0
     """
-    relatedDocuments::Union{Dict{DocumentUri,
-                                 Union{FullDocumentDiagnosticReport,
-                                       UnchangedDocumentDiagnosticReport}},
-                            Nothing} = nothing
+    relatedDocuments::Union{Dict{DocumentUri, Union{FullDocumentDiagnosticReport, UnchangedDocumentDiagnosticReport}}, Nothing} = nothing
 end
 
 """
@@ -165,10 +162,7 @@ An unchanged diagnostic report with a set of related documents.
     # Tags
     - since – 3.17.0
     """
-    relatedDocuments::Union{Dict{DocumentUri,
-                                 Union{FullDocumentDiagnosticReport,
-                                       UnchangedDocumentDiagnosticReport}},
-                            Nothing} = nothing
+    relatedDocuments::Union{Dict{DocumentUri, Union{FullDocumentDiagnosticReport, UnchangedDocumentDiagnosticReport}}, Nothing} = nothing
 end
 
 """

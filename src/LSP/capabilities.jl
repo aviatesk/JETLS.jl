@@ -16,9 +16,7 @@
     notification or for backwards compatibility the TextDocumentSyncKind number.
     If omitted it defaults to `TextDocumentSyncKind.None`.
     """
-    textDocumentSync::Union{Union{TextDocumentSyncOptions,
-                                  TextDocumentSyncKind.Ty},
-                            Nothing} = nothing
+    textDocumentSync::Union{Union{TextDocumentSyncOptions, TextDocumentSyncKind.Ty}, Nothing} = nothing
 
     """
     The server has support for pull model diagnostics.
@@ -26,9 +24,7 @@
     # Tags
     - since – 3.17.0
     """
-    diagnosticProvider::Union{Union{DiagnosticOptions,
-                                    DiagnosticRegistrationOptions},
-                              Nothing} = nothing
+    diagnosticProvider::Union{Union{DiagnosticOptions, DiagnosticRegistrationOptions}, Nothing} = nothing
 
     "Workspace specific server capabilities"
     workspace::Union{Nothing, @interface begin
