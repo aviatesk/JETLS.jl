@@ -1,5 +1,5 @@
-# ------------------------------------------------------------------------------------------
-# Position and range.
+# Position and range
+# ==================
 
 """
 Position in a text document expressed as zero-based line and zero-based character offset.
@@ -66,8 +66,8 @@ then use an end position denoting the start of the next line. For example:
     var"end"::Position
 end
 
-# ------------------------------------------------------------------------------------------
-# Folders.
+# Folders
+# =======
 
 @interface WorkspaceFolder begin
     "The associated URI for this workspace folder."
@@ -80,8 +80,8 @@ end
     name::String
 end
 
-# ------------------------------------------------------------------------------------------
-# Documents.
+# Documents
+# =========
 
 const DocumentUri = String
 
@@ -134,8 +134,8 @@ A document selector is the combination of one or more document filters.
 """
 const DocumentSelector = Vector{DocumentFilter}
 
-# -------------------------------------------------------------------
-# Text documents.
+# Text documents
+# --------------
 
 """
 An item to transfer a text document from the client to the server.
@@ -226,8 +226,7 @@ General text document registration options.
     documentSelector::Union{DocumentSelector, Nothing}
 end
 
-# --------------------------------------------
-# Open.
+# Open
 
 @interface DidOpenTextDocumentParams begin
     "The document that was opened."
@@ -254,8 +253,7 @@ handles the new language id as well.
     params::DidOpenTextDocumentParams
 end
 
-# --------------------------------------------
-# Close.
+# Close
 
 @interface DidCloseTextDocumentParams begin
     "The document that was closed."
@@ -276,8 +274,7 @@ ability to fulfill requests is independent of whether a text document is open or
     params::DidCloseTextDocumentParams
 end
 
-# --------------------------------------------
-# Change.
+# Change
 
 """
 Describe options to be used when registering for text document change events.
@@ -343,8 +340,7 @@ In 2.0 the shape of the params has changed to include proper version numbers.
     params::DidChangeTextDocumentParams
 end
 
-# --------------------------------------------
-# Save.
+# Save
 
 @interface SaveOptions begin
     "The client is supposed to include the content on save."
@@ -367,8 +363,7 @@ end
     params::DidSaveTextDocumentParams
 end
 
-# --------------------------------------------
-# Sync.
+# Sync
 
 @interface TextDocumentSyncOptions begin
     """
@@ -403,8 +398,8 @@ end
     save::Union{Union{Bool, SaveOptions}, Nothing} = nothing
 end
 
-# ------------------------------------------------------------------------------------------
-# Files.
+# Files
+# =====
 
 """
 A pattern kind describing if a glob pattern matches a file a folder or both.

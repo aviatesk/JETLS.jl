@@ -1,5 +1,5 @@
-# ------------------------------------------------------------------------------------------
-# Errors.
+# Errors
+# ======
 
 @namespace ErrorCodes::Int begin
     ParseError = -32700
@@ -98,8 +98,8 @@
     lspReservedErrorRangeEnd = -32800
 end  # @namespace ErrorCodes
 
-# ------------------------------------------------------------------------------------------
-# Messages.
+# Messages
+# ========
 
 """
 A general message as defined by JSON-RPC.
@@ -109,8 +109,8 @@ The language server protocol always uses “2.0” as the jsonrpc version.
     jsonrpc::String = "2.0"
 end
 
-# --------------------------------------------
-# Request.
+# Request
+# -------
 
 """
 A request message to describe a request between the client and the server.
@@ -127,8 +127,8 @@ Every processed request must send a response back to the sender of the request.
     params::Union{Any, Nothing} = nothing
 end
 
-# --------------------------------------------
-# Response.
+# Response
+# --------
 
 @interface ResponseError begin
     "A number indicating the error type that occurred."
@@ -166,8 +166,8 @@ successful request.
     error::Union{ResponseError, Nothing} = nothing
 end
 
-# --------------------------------------------
-# Notification.
+# Notification
+# ------------
 
 """
 A notification message. A processed notification message must not send a response back.
