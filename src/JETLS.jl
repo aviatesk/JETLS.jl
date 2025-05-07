@@ -12,6 +12,8 @@ using .LSP
 include("JSONRPC.jl")
 using .JSONRPC
 
+include("utils.jl")
+
 using Pkg, JuliaSyntax, JET
 
 struct FileInfo
@@ -304,41 +306,6 @@ function parse_file(text::String, uri::URI)
     end
 end
 
-let debounced = Dict{Any,Timer}()
-    global function debounce(f, delay, args...; kwargs...)
-        if haskey(debounced, f)
-            close(debounced[f])
-        end
-        debounced[f] = Timer(delay) do _
-            try
-                f(args...; kwargs...)
-            finally
-                delete!(debounced, f)
-            end
-        end
-        return nothing
-    end
-end
-
-let throttled = Dict{Any, Tuple{Timer, Float64}}()
-    global function throttle(f, delay, args...; kwargs...)
-        last_timer, last_time = get(throttled, f, (nothing, 0.0))
-        if last_timer !== nothing
-            close(last_timer)
-        end
-        delay = max(0.0, delay - (time() - last_time))
-        throttled[f] = Timer(delay) do _
-            try
-                f(args...; kwargs...)
-            finally
-                delete!(throttled, f)
-            end
-        end, time()
-        return nothing
-	end
-end
-
-
 function handle_DidOpenTextDocumentNotification(state::ServerState, msg::DidOpenTextDocumentNotification)
     textDocument = msg.params.textDocument
     @assert textDocument.languageId == "julia"
@@ -354,7 +321,11 @@ function handle_DidOpenTextDocumentNotification(state::ServerState, msg::DidOpen
             return nothing
         else
             # TODO support multiple analysis contexts, which can happen if this file is included from multiple different contexts
-            reanalyze_with_context!(state, first(contexts))
+            context = first(contexts)
+            id = hash(reanalyze_with_context!, hash(context))
+            throttle(id, 3.0) do
+                reanalyze_with_context!(state, context)
+            end
         end
     end
     nothing
@@ -382,7 +353,13 @@ function handle_DidChangeTextDocumentNotification(state::ServerState, msg::DidCh
             analysis_context.result.staled = true
         end
         # TODO support multiple analysis contexts, which can happen if this file is included from multiple different contexts
-        debounce(reanalyze_with_context!, 1.5, state, first(contexts))
+        context = first(contexts)
+        id = hash(reanalyze_with_context!, hash(context))
+        throttle(id, 3.0) do
+            debounce(id, 1.5) do
+                reanalyze_with_context!(state, context)
+            end
+        end
     end
     nothing
 end
