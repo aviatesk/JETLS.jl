@@ -1,7 +1,10 @@
 name = "JETLS"
 uuid = "a3b70258-0602-4ee2-b5a6-54c2470400db"
-authors = ["Shuhei Kadowaki <aviatesk@gmail.com>"]
 version = "0.0.0"
+authors = ["Shuhei Kadowaki <aviatesk@gmail.com>"]
+
+[workspace]
+projects = ["test"]
 
 [deps]
 AutoHashEquals = "15f4f7f2-30c1-5605-9d31-71845cf9641f"
@@ -12,15 +15,15 @@ Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
 StructTypes = "856f2bd8-1eba-4b0a-8007-ebc267875bd4"
 URIs = "5c2747f8-b7ea-4ff2-ba2e-563bfd36b1d4"
 
+[sources]
+JET = {url = "https://github.com/aviatesk/JET.jl#master"} # use the very latest JET version
+
 [compat]
 AutoHashEquals = "2.2.0"
-JET = "0.10.3"
+JET = "0.10.5"
 JSON3 = "1.14.1"
 JuliaSyntax = "1.0"
 Pkg = "1.11.0"
 StructTypes = "1.11.0"
 URIs = "1.5"
 julia = "1.12"
-
-[workspace]
-projects = ["test"]
