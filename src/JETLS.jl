@@ -17,7 +17,8 @@ using Pkg, JuliaSyntax, JET
 struct FileInfo
     version::Int
     text::String
-    parsed::Union{Expr,JuliaSyntax.ParseError}
+    filename::String
+    parsed_stream::Union{JuliaSyntax.ParseStream}
 end
 
 abstract type AnalysisEntry end
@@ -293,15 +294,10 @@ function notify_diagnostics!(state::ServerState, uri2diagnostics)
     end
 end
 
-function parse_file(text::String, uri::URI)
-    filename = uri2filename(uri)
-    @assert filename !== nothing "Unsupported URI: $uri"
-    try
-        return JuliaSyntax.parseall(Expr, text; filename, ignore_errors=false)::Expr
-    catch err
-        err isa JuliaSyntax.ParseError || rethrow(err)
-        return err
-    end
+function parseall(text::String)
+    stream = JuliaSyntax.ParseStream(text)
+    JuliaSyntax.parse!(stream; rule=:all)
+    return stream
 end
 
 let debounced = Dict{Any,Timer}()
@@ -343,8 +339,10 @@ function handle_DidOpenTextDocumentNotification(state::ServerState, msg::DidOpen
     textDocument = msg.params.textDocument
     @assert textDocument.languageId == "julia"
     uri = URI(textDocument.uri)
-    parsed = parse_file(textDocument.text, uri)
-    state.file_cache[uri] = FileInfo(textDocument.version, textDocument.text, parsed)
+    filename = uri2filename(uri)
+    @assert filename !== nothing "Unsupported URI: $uri"
+    parsed_stream = parseall(textDocument.text)
+    state.file_cache[uri] = FileInfo(textDocument.version, textDocument.text, filename, parsed_stream)
     if !haskey(state.contexts, uri)
         initiate_context!(state, uri)
     else # this file is tracked by some context already
@@ -368,8 +366,10 @@ function handle_DidChangeTextDocumentNotification(state::ServerState, msg::DidCh
         @assert contentChange.range === contentChange.rangeLength === nothing # since `change = TextDocumentSyncKind.Full`
     end
     text = last(contentChanges).text
-    parsed = parse_file(text, uri)
-    state.file_cache[uri] = FileInfo(textDocument.version, text, parsed)
+    filename = uri2filename(uri)
+    @assert filename !== nothing "Unsupported URI: $uri"
+    parsed_stream = parseall(text)
+    state.file_cache[uri] = FileInfo(textDocument.version, text, filename, parsed_stream)
     if !haskey(state.contexts, uri)
         initiate_context!(state, uri)
     else
@@ -398,14 +398,14 @@ function handle_DidSaveTextDocumentNotification(state::ServerState, msg::DidSave
     return nothing
 end
 
-function parse_error_to_diagnostics(err::JuliaSyntax.ParseError)
+function parsed_stream_to_diagnostics(parsed_stream::JuliaSyntax.ParseStream, filename::String)
     diagnostics = Diagnostic[]
-    parse_error_to_diagnostics!(diagnostics, err)
+    parsed_stream_to_diagnostics!(diagnostics, parsed_stream, filename)
     return diagnostics
 end
-function parse_error_to_diagnostics!(diagnostics::Vector{Diagnostic}, err::JuliaSyntax.ParseError)
-    source = err.source
-    for diagnostic in err.diagnostics
+function parsed_stream_to_diagnostics!(diagnostics::Vector{Diagnostic}, parsed_stream::JuliaSyntax.ParseStream, filename::String)
+    source = JuliaSyntax.SourceFile(parsed_stream; filename)
+    for diagnostic in parsed_stream.diagnostics
         push!(diagnostics, juliasyntax_diagnostic_to_diagnostic(diagnostic, source))
     end
 end
@@ -427,9 +427,11 @@ end
 
 function analyze_parsed_if_exist(state::ServerState, uri::URI, args...; kwargs...)
     if haskey(state.file_cache, uri)
-        parsed = state.file_cache[uri].parsed
+        file_info = state.file_cache[uri]
+        parsed_stream = file_info.parsed_stream
         filename = uri2filename(uri)::String
-        return JET.analyze_and_report_expr!(JET.JETAnalyzer(), parsed, filename, args...; kwargs...)
+        parsed_expr = JuliaSyntax.build_tree(Expr, parsed_stream; filename)
+        return JET.analyze_and_report_expr!(JET.JETAnalyzer(), parsed_expr, filename, args...; kwargs...)
     else
         filepath = uri2filepath(uri)
         @assert filepath !== nothing "Unsupported URI: $uri"
@@ -653,25 +655,27 @@ function initiate_context!(state::ServerState, uri::URI)
         pkgname = nothing # to hit the `@goto analyze_script` case
     else @assert false "Unsupported URI: $uri" end
     file_info = state.file_cache[uri]
-    parsed = file_info.parsed
-    if parsed isa JuliaSyntax.ParseError
-        diagnostics = parse_error_to_diagnostics(parsed)
+    parsed_stream = file_info.parsed_stream
+    if !isempty(parsed_stream.diagnostics)
+        diagnostics = parsed_stream_to_diagnostics(parsed_stream, file_info.filename)
         notify_diagnostics!(state, (uri => diagnostics,))
         return nothing
     end
     include_callback = IncludeCallback(state)
     if env_path === nothing
         @label analyze_script
+        filename = file_info.filename
+        parsed_expr = JuliaSyntax.build_tree(Expr, parsed_stream; filename)
         if env_path !== nothing
             entry = ScriptInEnvAnalysisEntry(env_path, uri)
             result = activate_do(env_path) do
-                JET.analyze_and_report_expr!(JET.JETAnalyzer(), parsed, filename;
+                JET.analyze_and_report_expr!(JET.JETAnalyzer(), parsed_expr, filename;
                     toplevel_logger=stderr,
                     include_callback)
             end
         else
             entry = ScriptAnalysisEntry(uri)
-            result = JET.analyze_and_report_expr!(JET.JETAnalyzer(), parsed, filename;
+            result = JET.analyze_and_report_expr!(JET.JETAnalyzer(), parsed_expr, filename;
                 toplevel_logger=stderr,
                 include_callback)
         end
@@ -744,20 +748,21 @@ function reanalyze_with_context!(state::ServerState, analysis_context::AnalysisC
     if !analysis_result.staled
         return nothing
     end
-    parse_errors = nothing
+    parse_failed = nothing
     for uri in analysis_context.files
         if haskey(state.file_cache, uri)
             file_info = state.file_cache[uri]
-            file_info.parsed isa JuliaSyntax.ParseError || continue
-            if parse_errors === nothing
-                parse_errors = Dict{URI,JuliaSyntax.ParseError}()
+            parsed_stream = file_info.parsed_stream
+            isempty(parsed_stream.diagnostics) && continue
+            if parse_failed === nothing
+                parse_failed = Dict{URI,FileInfo}()
             end
-            parse_errors[uri] = file_info.parsed
+            parse_failed[uri] = file_info
         end
     end
-    if parse_errors !== nothing
+    if parse_failed !== nothing
         notify_diagnostics!(state, (
-            uri => parse_error_to_diagnostics(parse_error) for (uri, parse_error) in parse_errors))
+            uri => parsed_stream_to_diagnostics(file_info.parsed_stream, file_info.filename) for (uri, file_info) in parse_failed))
         return nothing
     end
     entry = analysis_context.entry
