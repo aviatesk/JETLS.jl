@@ -59,8 +59,8 @@ struct ExternalContext end
 struct ServerState{F}
     send::F
     workspaceFolders::Vector{URI}
-    file_cache::Dict{URI,FileInfo}
-    contexts::Dict{URI,Union{Set{AnalysisContext},ExternalContext}}
+    file_cache::Dict{URI,FileInfo} # syntactic analysis cache
+    contexts::Dict{URI,Union{Set{AnalysisContext},ExternalContext}} # entry points for the full analysis (currently not cached really)
     root_path::Ref{String}
     root_env_path::Ref{String}
 end
