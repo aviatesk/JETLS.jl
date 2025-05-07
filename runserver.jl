@@ -1,18 +1,29 @@
 @info "Running JETLS with Julia version" VERSION
 
-try
-    using Revise
-catch err
-    @warn "Revise not found"
-end
+using Pkg
 
-@info "Loading JETLS..."
+let old_env = Pkg.project().path
+    try
+        Pkg.activate(@__DIR__)
 
-try
-    using JETLS
-catch
-    @error "JETLS not found"
-    exit(1)
+        # load Revise with JuliaInterpreter used by JETLS
+        try
+            using Revise
+        catch err
+            @warn "Revise not found"
+        end
+
+        @info "Loading JETLS..."
+
+        try
+            using JETLS
+        catch
+            @error "JETLS not found"
+            exit(1)
+        end
+    finally
+        Pkg.activate(old_env)
+    end
 end
 
 function in_callback(@nospecialize msg)
