@@ -26,7 +26,7 @@ Defines an unsigned integer number in the range of 0 to 2^31 - 1.
 """
 const uinteger = UInt
 
-@doc """
+"""
 Defines a decimal number.
 Since decimal numbers are very rare in the language server specification we denote the exact
 range with every decimal using the mathematics interval notation (e.g. `[0, 1]` denotes all
@@ -34,7 +34,7 @@ decimals `d` with `0 <= d <= 1`).
 """
 const decimal = Float64
 
-@doc """
+"""
 The LSP any type
 
 # Tags
@@ -42,7 +42,7 @@ The LSP any type
 """
 const LSPAny = Any
 
-@doc """
+"""
 LSP object definition.
 
 # Tags
@@ -50,7 +50,7 @@ LSP object definition.
 """
 const LSPObject = Dict{String,Any}
 
-@doc """
+"""
 LSP arrays.
 
 # Tags

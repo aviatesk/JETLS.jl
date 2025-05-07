@@ -224,8 +224,7 @@ Parameters of the workspace diagnostic request.
 # Tags
 - since – 3.17.0
 """
-@interface WorkspaceDiagnosticParams @extends WorkDoneProgressParams,
-PartialResultParams begin
+@interface WorkspaceDiagnosticParams @extends WorkDoneProgressParams, PartialResultParams begin
     "The additional identifier provided during registration."
     identifier::Union{String, Nothing} = nothing
 
