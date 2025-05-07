@@ -26,6 +26,8 @@
     """
     diagnosticProvider::Union{Union{DiagnosticOptions, DiagnosticRegistrationOptions}, Nothing} = nothing
 
+    completionProvider::Union{CompletionOptions, Nothing} = nothing
+
     "Workspace specific server capabilities"
     workspace::Union{Nothing, @interface begin
         """
