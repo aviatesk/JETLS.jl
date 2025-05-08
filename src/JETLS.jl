@@ -20,7 +20,7 @@ struct FileInfo
     version::Int
     text::String
     filename::String
-    parsed_stream::Union{JuliaSyntax.ParseStream}
+    parsed_stream::JuliaSyntax.ParseStream
 end
 
 abstract type AnalysisEntry end
