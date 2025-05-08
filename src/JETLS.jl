@@ -131,6 +131,8 @@ function runserver(callback, in::IO, out::IO;
     return endpoint
 end
 
+include("requests/document-symbol.jl")
+
 function handle_message(state::ServerState, msg)
     if msg isa InitializeRequest
         return handle_InitializeRequest(state, msg)
@@ -144,6 +146,8 @@ function handle_message(state::ServerState, msg)
         return handle_DidCloseTextDocumentNotification(state, msg)
     elseif msg isa DidSaveTextDocumentNotification
         return handle_DidSaveTextDocumentNotification(state, msg)
+    elseif msg isa DocumentSymbolRequest
+        return handle_DocumentSymbolRequest(state, msg)
     elseif msg isa DocumentDiagnosticRequest || msg isa WorkspaceDiagnosticRequest
         @assert false
     else
@@ -200,6 +204,7 @@ function initialize_result()
                 change = TextDocumentSyncKind.Full,
                 save = SaveOptions(;
                     includeText = true)),
+            documentSymbolProvider = DocumentSymbolOptions(),
         ),
         serverInfo = (;
             name = "JETLS",

@@ -18,6 +18,8 @@
     """
     textDocumentSync::Union{Union{TextDocumentSyncOptions, TextDocumentSyncKind.Ty}, Nothing} = nothing
 
+    documentSymbolProvider::Union{Union{Bool, DocumentSymbolOptions}, Nothing} = nothing
+
     """
     The server has support for pull model diagnostics.
 
@@ -112,6 +114,11 @@ end
             willDelete::Union{Bool, Nothing} = nothing
         end} = nothing
     end} = nothing
+
+    """
+    Text document specific client capabilities.
+    """
+    textDocument::Union{TextDocumentClientCapabilities, Nothing} = nothing
 
     "Experimental client capabilities."
     experimental::Union{Any, Nothing} = nothing
