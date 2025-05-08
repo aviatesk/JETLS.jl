@@ -140,6 +140,18 @@ This information usually flows from the server to the client.
 end
 
 """
+A parameter literal used in requests to pass a text document and a position
+inside that document. It is up to the client to decide how a selection is
+converted into a position when issuing a request for a text document. The client
+can for example honor or ignore the selection direction to make LSP request
+    consistent with features implemented internally.
+"""
+@interface TextDocumentPositionParams begin
+    textDocument::TextDocumentIdentifier
+    position::Position
+end
+
+"""
 A document filter denotes a document through properties like language, scheme or pattern.
 An example is a filter that applies to TypeScript files on disk. Another example is a filter
 that applies to JSON files with name package.json:
@@ -179,6 +191,63 @@ end
 A document selector is the combination of one or more document filters.
 """
 const DocumentSelector = Vector{DocumentFilter}
+
+# Text Edit
+# ==========
+
+@interface TextEdit begin
+    "The range of the text document to be manipulated. To insert
+    text into a document create a range where start === end."
+    range::Range
+
+    "The string to be inserted. For delete operations use an
+    empty string."
+    newText::String
+end
+
+"""
+Additional information that describes document changes.
+
+@since 3.16.0
+"""
+@interface ChangeAnnotation begin
+    """
+    A human-readable string describing the actual change. The string
+    is rendered prominent in the user interface.
+     """
+    label::String
+
+    """
+    A flag which indicates that user confirmation is needed
+    before applying the change.
+     """
+    needsConfirmation::Union{Bool, Nothing} = nothing
+
+    """
+    A human-readable string which is rendered less prominent in
+    the user interface.
+     """
+    description::Union{String, Nothing} = nothing
+end
+
+"""
+An identifier referring to a change annotation managed by a workspace
+edit.
+
+# Tags
+- since - 3.16.0.
+"""
+const ChangeAnnotationIdentifier = String
+
+"""
+A special text edit with an additional change annotation.
+
+# Tags
+- since - 3.16.0.
+"""
+@interface AnnotatedTextEdit @extends TextEdit begin
+    annotationId::ChangeAnnotationIdentifier
+end
 
 """
 Represents a location inside a resource, such as a line inside a text file.
@@ -247,6 +316,23 @@ Structure to capture a description for an error code.
 @interface CodeDescription begin
     "An URI to open with more information about the diagnostic error."
     href::URI
+end
+
+"""
+Represents a reference to a command. Provides a title which will be used to
+represent a command in the UI. Commands are identified by a string
+identifier. The recommended way to handle commands is to implement their
+execution on the server side if the client and server provides the corresponding
+capabilities. Alternatively the tool extension code could handle the
+command. The protocol currently doesn’t specify a set of well-known commands.
+"""
+@interface Command begin
+    "Title of the command, like `save`."
+    title::String
+    "The identifier of the actual command handler."
+    command::String
+    "Arguments that the command handler should be invoked with"
+    arguments::Union{Vector{Any}, Nothing} = nothing
 end
 
 """
