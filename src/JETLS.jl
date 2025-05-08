@@ -145,6 +145,8 @@ function runserver(callback, in::IO, out::IO)
     return (; exit_code, endpoint)
 end
 
+include("requests/document-symbol.jl")
+
 function handle_message(state::ServerState, msg)
     if JETLS_DEV_MODE
         try
@@ -170,6 +172,8 @@ function _handle_message(state::ServerState, msg)
         return handle_DidCloseTextDocumentNotification(state, msg)
     elseif msg isa DidSaveTextDocumentNotification
         return handle_DidSaveTextDocumentNotification(state, msg)
+    elseif msg isa DocumentSymbolRequest
+        return handle_DocumentSymbolRequest(state, msg)
     elseif msg isa DocumentDiagnosticRequest || msg isa WorkspaceDiagnosticRequest
         @assert false "Document and workspace diagnostics are not enabled"
     elseif msg isa CompletionRequest
@@ -234,6 +238,7 @@ function initialize_result()
                 resolveProvider = true,
                 completionItem = (;
                     labelDetailsSupport = true)),
+            documentSymbolProvider = DocumentSymbolOptions(),
         ),
         serverInfo = (;
             name = "JETLS",
