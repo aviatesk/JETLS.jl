@@ -12,8 +12,6 @@ using .LSP
 include("JSONRPC.jl")
 using .JSONRPC
 
-include("utils.jl")
-
 using Pkg, JuliaSyntax, JET
 
 struct FileInfo
@@ -74,6 +72,7 @@ function ServerState(send::F) where F
         Ref{String}())
 end
 
+include("utils.jl")
 include("completions.jl")
 
 struct IncludeCallback <: Function
@@ -149,7 +148,6 @@ function handle_message(state::ServerState, msg)
     elseif msg isa DocumentDiagnosticRequest || msg isa WorkspaceDiagnosticRequest
         @assert false
     elseif msg isa CompletionRequest
-        @info "CompletionRequest" msg
         try
             return handle_CompletionRequest(state, msg)
         catch e
