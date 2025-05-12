@@ -74,6 +74,8 @@ function ServerState(send::F) where F
         Ref{String}())
 end
 
+include("completions.jl")
+
 struct IncludeCallback <: Function
     file_cache::Dict{URI,FileInfo}
 end
@@ -146,6 +148,15 @@ function handle_message(state::ServerState, msg)
         return handle_DidSaveTextDocumentNotification(state, msg)
     elseif msg isa DocumentDiagnosticRequest || msg isa WorkspaceDiagnosticRequest
         @assert false
+    elseif msg isa CompletionRequest
+        @info "CompletionRequest" msg
+        try
+            return handle_CompletionRequest(state, msg)
+        catch e
+            @info "Completion request failed:"
+            Base.display_error(stderr, e, catch_backtrace())
+        end
+        return nothing
     else
         @warn "Unhandled message" msg
         return nothing
@@ -200,6 +211,8 @@ function initialize_result()
                 change = TextDocumentSyncKind.Full,
                 save = SaveOptions(;
                     includeText = true)),
+            completionProvider = CompletionOptions(resolveProvider=false,
+                                                   completionItem=(; labelDetailsSupport=true)),
         ),
         serverInfo = (;
             name = "JETLS",
