@@ -86,9 +86,6 @@ request is triggered.
     triggerCharacter::Union{String, Nothing} = nothing
 end
 
-"""
-Request method: textDocument/completion
-"""
 @interface CompletionParams @extends TextDocumentPositionParams, WorkDoneProgressParams, PartialResultParams begin
     """
     The completion context. This is only available if the client specifies
@@ -96,6 +93,11 @@ Request method: textDocument/completion
     `completion.contextSupport === true`
     """
     context::Union{CompletionContext, Nothing} = nothing
+end
+
+@interface CompletionRequest @extends RequestMessage begin
+    method::String = "textDocument/completion"
+    params::CompletionParams
 end
 
 """
@@ -274,8 +276,7 @@ end
     detail::Union{String, Nothing} = nothing
 
     "A human-readable string that represents a doc-comment."
-    # documentation::Union{Union{MarkupContent, String}, Nothing} = nothing
-    documentation::Union{String, Nothing} = nothing
+    documentation::Union{MarkupContent, String, Nothing} = nothing
 
     """
     Indicates if this item is deprecated.
@@ -498,4 +499,160 @@ presented in the editor.
     The completion items.
     """
     items::Vector{CompletionItem}
+end
+
+@interface CompletionClientCapabilities begin
+    """
+    Whether completion supports dynamic registration.
+    """
+    dynamicRegistration::Union{Nothing, Bool} = nothing
+
+    """
+    The client supports the following `CompletionItem` specific
+    capabilities.
+    """
+    completionItem::Union{Nothing, @interface begin
+        """
+        Client supports snippets as insert text.
+
+        A snippet can define tab stops and placeholders with `\$1`, `\$2`
+        and `\${3:foo}`. `\$0` defines the final tab stop, it defaults to
+        the end of the snippet. Placeholders with equal identifiers are
+        linked, that is typing in one will update others too.
+        """
+        snippetSupport::Union{Nothing, Bool} = nothing
+
+        """
+        Client supports commit characters on a completion item.
+        """
+        commitCharactersSupport::Union{Nothing, Bool} = nothing
+
+        """
+        Client supports the follow content formats for the documentation
+        property. The order describes the preferred format of the client.
+        """
+        documentationFormat::Union{Nothing, Vector{MarkupKind.Ty}} = nothing
+
+        """
+        Client supports the deprecated property on a completion item.
+        """
+        deprecatedSupport::Union{Nothing, Bool} = nothing
+
+        """
+        Client supports the preselect property on a completion item.
+        """
+        preselectSupport::Union{Nothing, Bool} = nothing
+
+        """
+        Client supports the tag property on a completion item. Clients
+        supporting tags have to handle unknown tags gracefully. Clients
+        especially need to preserve unknown tags when sending a completion
+        item back to the server in a resolve call.
+
+        # Tags
+        - since - 3.15.0
+        """
+        tagSupport::Union{Nothing, @interface begin
+            """
+            The tags supported by the client.
+            """
+            valueSet::Vector{CompletionItemTag.Ty}
+        end} = nothing
+
+        """
+        Client supports insert replace edit to control different behavior if
+        a completion item is inserted in the text or should replace text.
+
+        # Tags
+        - since - 3.16.0
+        """
+        insertReplaceSupport::Union{Nothing, Bool} = nothing
+
+        """
+        Indicates which properties a client can resolve lazily on a
+        completion item. Before version 3.16.0 only the predefined properties
+        `documentation` and `detail` could be resolved lazily.
+
+        # Tags
+        - since - 3.16.0
+        """
+        resolveSupport::Union{Nothing, @interface begin
+            """
+            The properties that a client can resolve lazily.
+            """
+            properties::Vector{String}
+        end} = nothing
+
+        """
+        The client supports the `insertTextMode` property on
+        a completion item to override the whitespace handling mode
+        as defined by the client (see `insertTextMode`).
+
+        # Tags
+        - since - 3.16.0
+        """
+        insertTextModeSupport::Union{Nothing, @interface begin
+            valueSet::Vector{InsertTextMode.Ty}
+        end} = nothing
+
+        """
+        The client has support for completion item label
+        details (see also `CompletionItemLabelDetails`).
+
+        # Tags
+        - since - 3.17.0
+        """
+        labelDetailsSupport::Union{Nothing, Bool} = nothing
+    end} = nothing
+
+    completionItemKind::Union{Nothing, @interface begin
+        """
+        The completion item kind values the client supports. When this
+        property exists the client also guarantees that it will
+        handle values outside its set gracefully and falls back
+        to a default value when unknown.
+
+        If this property is not present the client only supports
+        the completion items kinds from `Text` to `Reference` as defined in
+        the initial version of the protocol.
+        """
+        valueSet::Union{Nothing, Vector{CompletionItemKind.Ty}} = nothing
+    end} = nothing
+
+    """
+    The client supports to send additional context information for a
+    `textDocument/completion` request.
+    """
+    contextSupport::Union{Nothing, Bool} = nothing
+
+    """
+    The client's default when the completion item doesn't provide a
+    `insertTextMode` property.
+
+    # Tags
+    - since - 3.17.0
+    """
+    insertTextMode::Union{Nothing, InsertTextMode.Ty} = nothing
+
+    """
+    The client supports the following `CompletionList` specific
+    capabilities.
+
+    # Tags
+    - since - 3.17.0
+    """
+    completionList::Union{Nothing, @interface begin
+        """
+        The client supports the following itemDefaults on
+        a completion list.
+
+        The value lists the supported property names of the
+        `CompletionList.itemDefaults` object. If omitted
+        no properties are supported.
+
+        # Tags
+        - since - 3.17.0
+        """
+        itemDefaults::Union{Nothing, Vector{String}} = nothing
+    end} = nothing
 end
