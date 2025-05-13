@@ -48,9 +48,11 @@ end
 
 struct AnalysisContext
     entry::AnalysisEntry
-    files::Set{URI}
+    analyzed_file_infos::Dict{URI,JET.AnalyzedFileInfo}
     result::FullAnalysisResult
 end
+
+analyzed_file_uris(context::AnalysisContext) = keys(context.analyzed_file_infos)
 
 struct ExternalContext end
 
@@ -428,27 +430,28 @@ function analyze_parsed_if_exist(state::ServerState, uri::URI, args...; kwargs..
 end
 
 function new_analysis_context(entry::AnalysisEntry, result)
-    files = Set{URI}()
-    for filepath in result.res.included_files
-        push!(files, filename2uri(filepath)) # `filepath` is an absolute path (since `path` is specified as absolute)
-    end
+    analyzed_file_infos = Dict{URI,JET.AnalyzedFileInfo}(
+        # `filepath` is an absolute path (since `path` is specified as absolute)
+        filename2uri(filepath) => analyzed_file_info for (filepath, analyzed_file_info) in result.res.analyzed_files)
     # TODO return something for `toplevel_error_reports`
-    uri2diagnostics = jet_result_to_diagnostics(result, files)
+    uri2diagnostics = jet_result_to_diagnostics(result, keys(analyzed_file_infos))
     analysis_result = FullAnalysisResult(false, time(), uri2diagnostics)
-    return AnalysisContext(entry, files, analysis_result)
+    return AnalysisContext(entry, analyzed_file_infos, analysis_result)
 end
 
-function update_analysis_result!(analysis_context, result)
+function update_analysis_result!(analysis_context::AnalysisContext, result)
     uri2diagnostics = analysis_context.result.uri2diagnostics
-    cached_files = analysis_context.files
-    new_files = Set{URI}(filename2uri(filepath) for filepath in result.res.included_files)
-    for deleted_file in setdiff(cached_files, new_files)
-        empty!(get!(()->Diagnostic[], uri2diagnostics, deleted_file))
-        delete!(cached_files, deleted_file)
+    cached_file_infos = analysis_context.analyzed_file_infos
+    new_file_infos = Dict{URI,JET.AnalyzedFileInfo}(
+        # `filepath` is an absolute path (since `path` is specified as absolute)
+        filename2uri(filepath) => analyzed_file_info for (filepath, analyzed_file_info) in result.res.analyzed_files)
+    for deleted_file_uri in setdiff(keys(cached_file_infos), keys(new_file_infos))
+        empty!(get!(()->Diagnostic[], uri2diagnostics, deleted_file_uri))
+        delete!(cached_file_infos, deleted_file_uri)
     end
-    for new_file in new_files
-        push!(cached_files, new_file)
-        empty!(get!(()->Diagnostic[], uri2diagnostics, new_file))
+    for (new_file_uri, analyzed_file_info) in new_file_infos
+        cached_file_infos[new_file_uri] = analyzed_file_info
+        empty!(get!(()->Diagnostic[], uri2diagnostics, new_file_uri))
     end
     jet_result_to_diagnostics!(uri2diagnostics, result)
     analysis_context.result.staled = false
@@ -456,13 +459,13 @@ function update_analysis_result!(analysis_context, result)
 end
 
 # TODO This reverse map recording should respect the changes made in `include` chains
-function record_reverse_map!(state::ServerState, analysis_context)
-    afiles = analysis_context.files
+function record_reverse_map!(state::ServerState, analysis_context::AnalysisContext)
+    afiles = analyzed_file_uris(analysis_context)
     for uri in afiles
         contexts = get!(Set{AnalysisContext}, state.contexts, uri)
         should_record = true
         for analysis_context′ in contexts
-            bfiles = analysis_context′.files
+            bfiles = analyzed_file_uris(analysis_context′)
             if afiles ≠ bfiles
                 if afiles ⊆ bfiles
                     should_record = false
@@ -476,8 +479,8 @@ function record_reverse_map!(state::ServerState, analysis_context)
 end
 
 # TODO severity
-function jet_result_to_diagnostics(result, files::Set{URI})
-    uri2diagnostics = Dict{URI,Vector{Diagnostic}}(uri => Diagnostic[] for uri in files)
+function jet_result_to_diagnostics(result, file_uris)
+    uri2diagnostics = Dict{URI,Vector{Diagnostic}}(uri => Diagnostic[] for uri in file_uris)
     jet_result_to_diagnostics!(uri2diagnostics, result)
     return uri2diagnostics
 end
@@ -668,7 +671,7 @@ function initiate_context!(state::ServerState, uri::URI)
                 include_callback)
         end
         analysis_context = new_analysis_context(entry, result)
-        @assert uri in analysis_context.files
+        @assert uri in analyzed_file_uris(analysis_context)
         record_reverse_map!(state, analysis_context)
     elseif pkgname === nothing
         @goto analyze_script
@@ -701,7 +704,7 @@ function initiate_context!(state::ServerState, uri::URI)
             end
             analysis_context = new_analysis_context(entry, result)
             record_reverse_map!(state, analysis_context)
-            if uri ∉ analysis_context.files
+            if uri ∉ analyzed_file_uris(analysis_context)
                 @goto analyze_script
             end
         elseif filekind === :test
@@ -716,7 +719,7 @@ function initiate_context!(state::ServerState, uri::URI)
             entry = PackageTestAnalysisEntry(env_path, runtestsuri)
             analysis_context = new_analysis_context(entry, result)
             record_reverse_map!(state, analysis_context)
-            if uri ∉ analysis_context.files
+            if uri ∉ analyzed_file_uris(analysis_context)
                 @goto analyze_script
             end
         elseif filekind === :docs
@@ -737,7 +740,7 @@ function reanalyze_with_context!(state::ServerState, analysis_context::AnalysisC
         return nothing
     end
     parse_failed = nothing
-    for uri in analysis_context.files
+    for uri in analyzed_file_uris(analysis_context)
         if haskey(state.file_cache, uri)
             file_info = state.file_cache[uri]
             parsed_stream = file_info.parsed_stream
