@@ -296,7 +296,7 @@ function handle_CompletionRequest(s::ServerState, msg::CompletionRequest)
 
     # show local completions first, and then global completions
     items = CompletionItem[]
-    # local_completions!(items, s, uri, msg.params.position)
+    local_completions!(items, s, uri, msg.params.position)
     # global_completions!(items, s, uri, msg.params.position)
 
     return s.send(
