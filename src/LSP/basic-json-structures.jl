@@ -319,23 +319,6 @@ Structure to capture a description for an error code.
 end
 
 """
-Represents a reference to a command. Provides a title which will be used to
-represent a command in the UI. Commands are identified by a string
-identifier. The recommended way to handle commands is to implement their
-execution on the server side if the client and server provides the corresponding
-capabilities. Alternatively the tool extension code could handle the
-command. The protocol currently doesn’t specify a set of well-known commands.
-"""
-@interface Command begin
-    "Title of the command, like `save`."
-    title::String
-    "The identifier of the actual command handler."
-    command::String
-    "Arguments that the command handler should be invoked with"
-    arguments::Union{Vector{Any}, Nothing} = nothing
-end
-
-"""
 Represents a diagnostic, such as a compiler error or warning.
 Diagnostic objects are only valid in the scope of a resource.
 """
@@ -393,6 +376,71 @@ Diagnostic objects are only valid in the scope of a resource.
     - since – 3.16.0
     """
     data::Union{Any, Nothing} = nothing
+end
+
+"""
+Describes the content type that a client supports in various
+result literals like `Hover`, `ParameterInfo` or `CompletionItem`.
+Please note that `MarkupKinds` must not start with a `\$`. This kinds
+are reserved for internal usage.
+"""
+@namespace MarkupKind::String begin
+    "Plain text is supported as a content format"
+    PlainText = "plaintext"
+    "Markdown is supported as a content format"
+    Markdown = "markdown"
+end
+
+"""
+A `MarkupContent` literal represents a string value which content is
+interpreted base on its kind flag. Currently the protocol supports
+`plaintext` and `markdown` as markup kinds.
+
+If the kind is `markdown` then the value can contain fenced code blocks like
+in GitHub issues.
+
+Here is an example how such a string can be constructed using
+JavaScript / TypeScript:
+```typescript
+let markdown: MarkdownContent = {
+    kind: MarkupKind.Markdown,
+    value: [
+        '# Header',
+        'Some text',
+        '```typescript',
+        'someCode();',
+        '```',
+    ].join('\n')
+};
+```
+
+*Please Note* that clients might sanitize the return markdown. A client could
+decide to remove HTML from the markdown to avoid script execution.
+ */
+"""
+@interface MarkupContent begin
+    "The type of the Markup"
+    kind::MarkupKind.Ty
+
+    "The content itself"
+    value::String
+end
+
+"""
+Represents a reference to a command. Provides a title which will be used to
+represent a command in the UI. Commands are identified by a string
+identifier. The recommended way to handle commands is to implement their
+execution on the server side if the client and server provides the corresponding
+capabilities. Alternatively the tool extension code could handle the
+command. The protocol currently doesn’t specify a set of well-known commands.
+"""
+@interface Command begin
+    "Title of the command, like `save`."
+    title::String
+    "The identifier of the actual command handler."
+    command::String
+    "Arguments that the command handler should be invoked with"
+    arguments::Union{Vector{Any}, Nothing} = nothing
 end
 
 # Work done progress
