@@ -41,10 +41,6 @@ function byte_ancestors(st0::SyntaxTree, b::Int, b2=b)
         return l
     end
 
-    if !(b in JS.byte_range(st0))
-        # @info "byte_ancestors found no parent at byte $b !"
-        return JL.SyntaxList(st0._graph)
-    end
     # delete later duplicates when sorted parent->child
     out = deduplicate_syntaxlist(byte_ancestors_(st0, JL.SyntaxList(st0._graph, [st0._id])))
     return reverse(out)
