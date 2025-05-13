@@ -276,8 +276,7 @@ end
     detail::Union{String, Nothing} = nothing
 
     "A human-readable string that represents a doc-comment."
-    # documentation::Union{Union{MarkupContent, String}, Nothing} = nothing
-    documentation::Union{String, Nothing} = nothing
+    documentation::Union{MarkupContent, String, Nothing} = nothing
 
     """
     Indicates if this item is deprecated.
@@ -528,11 +527,11 @@ end
         """
         commitCharactersSupport::Union{Nothing, Bool} = nothing
 
-        # """
-        # Client supports the follow content formats for the documentation
-        # property. The order describes the preferred format of the client.
-        # """
-        # documentationFormat::Union{Nothing, Vector{MarkupKind}} = nothing
+        """
+        Client supports the follow content formats for the documentation
+        property. The order describes the preferred format of the client.
+        """
+        documentationFormat::Union{Nothing, Vector{MarkupKind.Ty}} = nothing
 
         """
         Client supports the deprecated property on a completion item.

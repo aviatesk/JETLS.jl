@@ -42,10 +42,8 @@ end
 """
 Fetch cached FileInfo given an LSclient-provided structure with a URI
 """
-function get_fileinfo(s::ServerState, t::TextDocumentIdentifier)
-    uri = URI(t.uri)
-    return haskey(s.file_cache, uri) ? s.file_cache[uri] : nothing
-end
+get_fileinfo(s::ServerState, uri::URI) = haskey(s.file_cache, uri) ? s.file_cache[uri] : nothing
+get_fileinfo(s::ServerState, t::TextDocumentIdentifier) = get_fileinfo(s, URI(t.uri))
 
 # JuliaLowering uses byte offsets; LSP uses lineno and UTF-* character offset.
 # These functions do the conversion.

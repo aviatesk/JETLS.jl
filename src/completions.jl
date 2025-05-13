@@ -1,8 +1,8 @@
 import JuliaLowering: SyntaxTree, JuliaLowering as JL
 import JuliaSyntax: @K_str, @KSet_str, JuliaSyntax as JS
 
-# get_fileinfo(s::ServerState, t::TextDocumentPositionParams) = get_fileinfo(s, t.textDocument)
-get_fileinfo(s::ServerState, t::CompletionParams) = get_fileinfo(s, t.textDocument)
+# local completions
+# =================
 
 """
 Like `Base.unique`, but over node ids, and with this comment promising that the
@@ -238,13 +238,66 @@ function test_handle_CompletionRequest(s::String, b::Int)
     map(o->to_completion(o[1], o[2], o[3]), out)
 end
 
+function local_completions!(items::Vector{CompletionItem}, s::ServerState, uri::URI, pos::Position)
+    fi = get_fileinfo(s, uri)
+    fi === nothing && return items
+    st0 = JuliaSyntax.build_tree(SyntaxTree, fi.parsed_stream)
+    for o in cursor_bindings(st0, xy_to_offset(fi, pos))
+        push!(items, to_completion(o[1], o[2]))
+    end
+    return items
+end
+
+# global completions
+# ==================
+
+function find_file_module(state::ServerState, uri::URI, pos::Position)
+    haskey(state.contexts, uri) || return Main
+    contexts = state.contexts[uri]
+    context = first(contexts)
+    for ctx in contexts
+        # prioritize `PackageSourceAnalysisEntry` if exists
+        if isa(context.entry, PackageSourceAnalysisEntry)
+            context = ctx
+            break
+        end
+    end
+    haskey(context.analyzed_file_infos, uri) || return Main
+    analyzed_file_info = context.analyzed_file_infos[uri]
+    curline = Int(pos.line) + 1
+    _, idx = findmin(analyzed_file_info.module_range_infos) do (range, mod)
+        curline in range || return typemax(Int)
+        return last(range) - first(range)
+    end
+    return last(analyzed_file_info.module_range_infos[idx])
+end
+
+function global_completions!(items::Vector{CompletionItem}, state::ServerState, uri::URI, pos::Position)
+    mod = find_file_module(state, uri, pos)
+    for name in names(mod; all=true, imported=true, usings=true)
+        s = String(name)
+        startswith(s, "#") && continue
+        push!(items, CompletionItem(
+            ; label = s,
+            labelDetails = CompletionItemLabelDetails(
+                ; description = "global"),
+            kind = CompletionItemKind.Variable,
+            documentation = nothing))
+    end
+    return items
+end
+
+
+# request handler
+# ===============
 
 function handle_CompletionRequest(s::ServerState, msg::CompletionRequest)
-    fi = get_fileinfo(s, msg.params)
-    b = xy_to_offset(fi, msg.params.position)
+    uri = URI(msg.params.textDocument.uri)
 
-    st0 = JuliaSyntax.build_tree(SyntaxTree, fi.parsed_stream)
-    out = map(o->to_completion(o[1], o[2]), cursor_bindings(st0, b))
+    # show local completions first, and then global completions
+    items = CompletionItem[]
+    # local_completions!(items, s, uri, msg.params.position)
+    # global_completions!(items, s, uri, msg.params.position)
 
     return s.send(
         ResponseMessage(
@@ -252,10 +305,11 @@ function handle_CompletionRequest(s::ServerState, msg::CompletionRequest)
             result =
                 CompletionList(
                     ; isIncomplete = true,
-                    items = out,
-                    itemDefaults = (
-                        ; data = (
-                            ; position = msg.params.position,
-                            translated_pos = b,
-                            untranslated_pos = offset_to_xy(fi, b))))))
+                    items,
+                    # itemDefaults = (
+                    #     ; data = (
+                    #         ; position = msg.params.position,
+                    #         translated_pos = b,
+                    #         untranslated_pos = offset_to_xy(fi, b)))
+                    )))
 end
