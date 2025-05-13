@@ -8,7 +8,7 @@ import JuliaSyntax: @K_str, @KSet_str, JuliaSyntax as JS
 Like `Base.unique`, but over node ids, and with this comment promising that the
 lowest-index copy of each node is kept.
 """
-function unique(sl::JL.SyntaxList)
+function deduplicate_syntaxlist(sl::JL.SyntaxList)
     sl2 = JL.SyntaxList(sl.graph)
     seen = Set{JL.NodeId}()
     for st in sl
@@ -46,7 +46,7 @@ function byte_ancestors(st0::SyntaxTree, b::Int, b2=b)
         return JL.SyntaxList(st0._graph)
     end
     # delete later duplicates when sorted parent->child
-    out = unique(byte_ancestors_(st0, JL.SyntaxList(st0._graph, [st0._id])))
+    out = deduplicate_syntaxlist(byte_ancestors_(st0, JL.SyntaxList(st0._graph, [st0._id])))
     return reverse(out)
 end
 
@@ -306,10 +306,5 @@ function handle_CompletionRequest(s::ServerState, msg::CompletionRequest)
                 CompletionList(
                     ; isIncomplete = true,
                     items,
-                    # itemDefaults = (
-                    #     ; data = (
-                    #         ; position = msg.params.position,
-                    #         translated_pos = b,
-                    #         untranslated_pos = offset_to_xy(fi, b)))
                     )))
 end
