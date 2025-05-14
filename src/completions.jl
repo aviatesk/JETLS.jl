@@ -17,7 +17,7 @@ function deduplicate_syntaxlist(sl::JL.SyntaxList)
             push!(seen, st._id)
         end
     end
-    sl2
+    return sl2
 end
 
 """
@@ -25,24 +25,24 @@ Get a list of `SyntaxTree`s containing certain bytes.  Output should be
 topologically sorted, children first.
 
 If we know that parent ranges contain all child ranges, and that siblings don't
-have overlapping ranges (this is not true after lowering, but appears to be true
+have overlapping ranges (this is not true after lowering, but appear to be true
 after parsing), each tree in the result will be a child of the next.
 """
-function byte_ancestors(st0::SyntaxTree, b::Int, b2=b)
+function byte_ancestors(st::SyntaxTree, b::Int, b2=b)
 
-    function byte_ancestors_(st0, l::JL.SyntaxList)
-        (JS.numchildren(st0) === 0) && return l
+    function byte_ancestors_(st, l::JL.SyntaxList)
+        (JS.numchildren(st) === 0) && return l
         cis = findall(ci -> (b in JS.byte_range(ci) && b2 in JS.byte_range(ci)),
-                      JS.children(st0))
-        append!(l, map(ci -> st0[ci], cis))
-        for c in JS.children(st0)
+                      JS.children(st))
+        append!(l, map(ci -> st[ci], cis))
+        for c in JS.children(st)
             byte_ancestors_(c, l)
         end
         return l
     end
 
     # delete later duplicates when sorted parent->child
-    out = deduplicate_syntaxlist(byte_ancestors_(st0, JL.SyntaxList(st0._graph, [st0._id])))
+    out = deduplicate_syntaxlist(byte_ancestors_(st, JL.SyntaxList(st._graph, [st._id])))
     return reverse(out)
 end
 
@@ -222,16 +222,6 @@ function to_completion(binding::JL.BindingInfo,
                    kind=getproperty(CompletionItemKind, label_kind),
                    detail,
                    documentation)
-end
-
-function test_handle_CompletionRequest(s::String, b::Int)
-    ps = JS.ParseStream(s)
-    JS.parse!(ps; rule=:statement)
-    st0 = JS.build_tree(SyntaxTree, ps)
-
-    out = cursor_bindings(st0, b)
-    @info out
-    map(o->to_completion(o[1], o[2], o[3]), out)
 end
 
 function local_completions!(items::Vector{CompletionItem}, s::ServerState, uri::URI, pos::Position)
