@@ -316,7 +316,7 @@ function handle_CompletionRequest(s::ServerState, msg::CompletionRequest)
         ResponseMessage(;
             id = msg.id,
             result = CompletionList(;
-                isIncomplete = true,
+                isIncomplete = false,
                 items)))
 end
 
