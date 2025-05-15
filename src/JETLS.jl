@@ -152,7 +152,7 @@ function handle_message(state::ServerState, msg)
     elseif msg isa DidSaveTextDocumentNotification
         return handle_DidSaveTextDocumentNotification(state, msg)
     elseif msg isa DocumentDiagnosticRequest || msg isa WorkspaceDiagnosticRequest
-        @assert false
+        @assert false "Document and workspace diagnostics are not enabled"
     elseif msg isa CompletionRequest
         try
             return handle_CompletionRequest(state, msg)
@@ -224,9 +224,9 @@ function initialize_result()
                 save = SaveOptions(;
                     includeText = true)),
             completionProvider = CompletionOptions(;
-                resolveProvider=true,
-                completionItem=(;
-                    labelDetailsSupport=true)),
+                resolveProvider = true,
+                completionItem = (;
+                    labelDetailsSupport = true)),
         ),
         serverInfo = (;
             name = "JETLS",
