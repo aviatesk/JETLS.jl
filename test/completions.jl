@@ -2,8 +2,8 @@ using Test
 using JETLS: unique, byte_ancestors, greatest_lowerable, is_relevant,
     cursor_bindings, to_completion, CompletionItem
 
-import JuliaLowering: SyntaxTree, JuliaLowering as JL
-import JuliaSyntax as JS
+using JETLS.JuliaLowering: JuliaLowering as JL
+using JETLS.JuliaSyntax: JuliaSyntax as JS
 
 function get_completions(s::String, b::Int)
     ps = JS.ParseStream(s)
