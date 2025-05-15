@@ -1,5 +1,4 @@
-import JuliaLowering: SyntaxTree, JuliaLowering as JL
-import JuliaSyntax: @K_str, @KSet_str, JuliaSyntax as JS
+using .JS: @K_str, @KSet_str
 
 # local completions
 # =================
@@ -28,8 +27,7 @@ If we know that parent ranges contain all child ranges, and that siblings don't
 have overlapping ranges (this is not true after lowering, but appear to be true
 after parsing), each tree in the result will be a child of the next.
 """
-function byte_ancestors(st::SyntaxTree, b::Int, b2=b)
-
+function byte_ancestors(st::JL.SyntaxTree, b::Int, b2::Int=b)
     function byte_ancestors_(st, l::JL.SyntaxList)
         (JS.numchildren(st) === 0) && return l
         cis = findall(ci -> (b in JS.byte_range(ci) && b2 in JS.byte_range(ci)),
@@ -46,14 +44,14 @@ function byte_ancestors(st::SyntaxTree, b::Int, b2=b)
     return reverse(out)
 end
 
-byte_ancestors(st0::SyntaxTree, r::UnitRange{Int}) = byte_ancestors(st0, r.start, r.stop)
+byte_ancestors(st0::JL.SyntaxTree, r::UnitRange{Int}) = byte_ancestors(st0, r.start, r.stop)
 
 """
 Find any largest lowerable tree containing the cursor and the cursor's position
 within it.  For local completions; something like least_unlowerable would be
 more helpful for globals.
 """
-function greatest_lowerable(st0::SyntaxTree, b::Int)
+function greatest_lowerable(st0::JL.SyntaxTree, b::Int)
     bas = byte_ancestors(st0, b)
     i = findfirst(st -> JL.kind(st) in KSet"toplevel module inert", bas)
     if isempty(bas) || i === 1
@@ -89,7 +87,7 @@ JuliaLowering throws away the mapping from scopes to bindings (scopes are stored
 as an ephemeral stack.)  We work around this by taking all available bindings
 and filtering out any that aren't declared in a scope containing the cursor.
 """
-function cursor_bindings(st0_top::SyntaxTree, b_top::Int)
+function cursor_bindings(st0_top::JL.SyntaxTree, b_top::Int)
     st0, b = greatest_lowerable(st0_top, b_top)
     if isnothing(st0)
         return [] # nothing we can lower
@@ -105,7 +103,7 @@ function cursor_bindings(st0_top::SyntaxTree, b_top::Int)
     binfos = filter(binfo -> is_relevant(ctx3, binfo, b), ctx3.bindings.info)
 
     # for each binding: binfo, all syntaxtrees containing it, and the scope it belongs to
-    bscopeinfos::Vector{Tuple{JL.BindingInfo, JL.SyntaxList, Union{SyntaxTree, Nothing}}} =
+    bscopeinfos::Vector{Tuple{JL.BindingInfo, JL.SyntaxList, Union{JL.SyntaxTree, Nothing}}} =
         map(binfo -> begin
                 # TODO: find tree parents instead of byte parents?
                 bas = byte_ancestors(st2, JS.byte_range(JL.binding_ex(ctx3, binfo.id)))
@@ -119,14 +117,14 @@ function cursor_bindings(st0_top::SyntaxTree, b_top::Int)
     cursor_scopes = byte_ancestors(st2, b)
 
     # ignore scopes we aren't in
-    filter!(((binfo, _, bs),)-> isnothing(bs) || bs._id in cursor_scopes.ids,
+    filter!(((binfo, _, bs),) -> isnothing(bs) || bs._id in cursor_scopes.ids,
             bscopeinfos)
 
     # Now eliminate duplicates by name.
     # - Prefer any local binding belonging to a tighter scope (lower bdistance)
     # - If a static parameter and a local of the same name exist in the same
     #   scope (impossible in julia), the local is internal and should be ignored
-    bdistances = map(((_, _, bs),)-> if isnothing(bs)
+    bdistances = map(((_, _, bs),) -> if isnothing(bs)
                          lastindex(cursor_scopes.ids) + 1
                      else
                          findfirst(cs -> bs._id === cs, cursor_scopes.ids)
@@ -185,7 +183,7 @@ Sending (4) and (5) to the client can happen eagerly in response to <TAB>
 in later versions.
 """
 function to_completion(binding::JL.BindingInfo,
-                       st::SyntaxTree,
+                       st::JL.SyntaxTree,
                        lb::Union{Nothing, JL.LambdaBindingInfo}=nothing)
     label_kind = CompletionItemKind.Variable
     label_detail = nothing
@@ -229,7 +227,7 @@ end
 function local_completions!(items::Vector{CompletionItem}, s::ServerState, uri::URI, pos::Position)
     fi = get_fileinfo(s, uri)
     fi === nothing && return items
-    st0 = JuliaSyntax.build_tree(SyntaxTree, fi.parsed_stream)
+    st0 = JS.build_tree(JL.SyntaxTree, fi.parsed_stream)
     for o in cursor_bindings(st0, xy_to_offset(fi, pos))
         push!(items, to_completion(o[1], o[2]))
     end

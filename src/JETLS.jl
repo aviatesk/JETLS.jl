@@ -13,12 +13,14 @@ include("JSONRPC.jl")
 using .JSONRPC
 
 using Pkg, JuliaSyntax, JET
+using JuliaSyntax: JuliaSyntax as JS
+using JuliaLowering: JuliaLowering as JL
 
 struct FileInfo
     version::Int
     text::String
     filename::String
-    parsed_stream::JuliaSyntax.ParseStream
+    parsed_stream::JS.ParseStream
 end
 
 abstract type AnalysisEntry end
@@ -322,8 +324,8 @@ function notify_diagnostics!(state::ServerState, uri2diagnostics)
 end
 
 function parseall(text::String)
-    stream = JuliaSyntax.ParseStream(text)
-    JuliaSyntax.parse!(stream; rule=:all)
+    stream = JS.ParseStream(text)
+    JS.parse!(stream; rule=:all)
     return stream
 end
 
@@ -400,21 +402,21 @@ function handle_DidSaveTextDocumentNotification(state::ServerState, msg::DidSave
     return nothing
 end
 
-function parsed_stream_to_diagnostics(parsed_stream::JuliaSyntax.ParseStream, filename::String)
+function parsed_stream_to_diagnostics(parsed_stream::JS.ParseStream, filename::String)
     diagnostics = Diagnostic[]
     parsed_stream_to_diagnostics!(diagnostics, parsed_stream, filename)
     return diagnostics
 end
-function parsed_stream_to_diagnostics!(diagnostics::Vector{Diagnostic}, parsed_stream::JuliaSyntax.ParseStream, filename::String)
-    source = JuliaSyntax.SourceFile(parsed_stream; filename)
+function parsed_stream_to_diagnostics!(diagnostics::Vector{Diagnostic}, parsed_stream::JS.ParseStream, filename::String)
+    source = JS.SourceFile(parsed_stream; filename)
     for diagnostic in parsed_stream.diagnostics
         push!(diagnostics, juliasyntax_diagnostic_to_diagnostic(diagnostic, source))
     end
 end
-function juliasyntax_diagnostic_to_diagnostic(diagnostic::JuliaSyntax.Diagnostic, source::JuliaSyntax.SourceFile)
-    sline, scol = JuliaSyntax.source_location(source, JuliaSyntax.first_byte(diagnostic))
+function juliasyntax_diagnostic_to_diagnostic(diagnostic::JS.Diagnostic, source::JS.SourceFile)
+    sline, scol = JS.source_location(source, JS.first_byte(diagnostic))
     start = Position(; line = sline-1, character = scol)
-    eline, ecol = JuliaSyntax.source_location(source, JuliaSyntax.last_byte(diagnostic))
+    eline, ecol = JS.source_location(source, JS.last_byte(diagnostic))
     var"end" = Position(; line = eline-1, character = ecol)
     return Diagnostic(;
         range = Range(; start, var"end"),
@@ -432,7 +434,7 @@ function analyze_parsed_if_exist(state::ServerState, uri::URI, args...; kwargs..
         file_info = state.file_cache[uri]
         parsed_stream = file_info.parsed_stream
         filename = uri2filename(uri)::String
-        parsed_expr = JuliaSyntax.build_tree(Expr, parsed_stream; filename)
+        parsed_expr = JS.build_tree(Expr, parsed_stream; filename)
         return JET.analyze_and_report_expr!(JET.JETAnalyzer(), parsed_expr, filename, args...; kwargs...)
     else
         filepath = uri2filepath(uri)
@@ -668,7 +670,7 @@ function initiate_context!(state::ServerState, uri::URI)
     if env_path === nothing
         @label analyze_script
         filename = file_info.filename
-        parsed_expr = JuliaSyntax.build_tree(Expr, parsed_stream; filename)
+        parsed_expr = JS.build_tree(Expr, parsed_stream; filename)
         if env_path !== nothing
             entry = ScriptInEnvAnalysisEntry(env_path, uri)
             result = activate_do(env_path) do
