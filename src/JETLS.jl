@@ -63,6 +63,7 @@ struct ServerState{F}
     contexts::Dict{URI,Union{Set{AnalysisContext},ExternalContext}} # entry points for the full analysis (currently not cached really)
     root_path::Ref{String}
     root_env_path::Ref{String}
+    completion_module::Ref{Module}
 end
 function ServerState(send::F) where F
     return ServerState{F}(
@@ -71,7 +72,8 @@ function ServerState(send::F) where F
         Dict{URI,FileInfo}(),
         Dict{URI,Union{Set{AnalysisContext},ExternalContext}}(),
         Ref{String}(),
-        Ref{String}())
+        Ref{String}(),
+        Ref{Module}())
 end
 
 include("utils.jl")
@@ -157,6 +159,14 @@ function handle_message(state::ServerState, msg)
             Base.display_error(stderr, e, catch_backtrace())
         end
         return nothing
+    elseif msg isa CompletionResolveRequest
+        try
+            return handle_CompletionResolveRequest(state, msg)
+        catch e
+            @info "Completion resolve request failed:"
+            Base.display_error(stderr, e, catch_backtrace())
+        end
+        return nothing
     else
         @warn "Unhandled message" msg
         return nothing
@@ -211,8 +221,10 @@ function initialize_result()
                 change = TextDocumentSyncKind.Full,
                 save = SaveOptions(;
                     includeText = true)),
-            completionProvider = CompletionOptions(resolveProvider=false,
-                                                   completionItem=(; labelDetailsSupport=true)),
+            completionProvider = CompletionOptions(;
+                resolveProvider=true,
+                completionItem=(;
+                    labelDetailsSupport=true)),
         ),
         serverInfo = (;
             name = "JETLS",

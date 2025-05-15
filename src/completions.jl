@@ -187,16 +187,16 @@ in later versions.
 function to_completion(binding::JL.BindingInfo,
                        st::SyntaxTree,
                        lb::Union{Nothing, JL.LambdaBindingInfo}=nothing)
-    label_kind = :Variable
+    label_kind = CompletionItemKind.Variable
     label_detail = nothing
     label_desc = nothing
     detail = nothing
     documentation = nothing
 
     if binding.is_const
-        label_kind = :Constant
+        label_kind = CompletionItemKind.Constant
     elseif binding.kind === :static_parameter
-        label_kind = :TypeParameter
+        label_kind = CompletionItemKind.TypeParameter
     end
 
     if binding.kind in [:argument, :local, :global]
@@ -210,18 +210,20 @@ function to_completion(binding::JL.BindingInfo,
     end
 
     if !isnothing(lb) && lb.is_called
-        label_kind = :Function
+        label_kind = CompletionItemKind.Function
     end
 
     detail = sprint(JL.showprov, st)
 
-    CompletionItem(;label = binding.name,
-                   labelDetails = CompletionItemLabelDetails(
-                       ; detail = label_detail,
-                       description = label_desc),
-                   kind=getproperty(CompletionItemKind, label_kind),
-                   detail,
-                   documentation)
+    CompletionItem(;
+        label = binding.name,
+        labelDetails = CompletionItemLabelDetails(;
+            detail = label_detail,
+            description = label_desc),
+        kind = label_kind,
+        detail,
+        documentation,
+        data = CompletionData(#=needs_resolve=#false))
 end
 
 function local_completions!(items::Vector{CompletionItem}, s::ServerState, uri::URI, pos::Position)
@@ -237,6 +239,11 @@ end
 # global completions
 # ==================
 
+function find_file_module!(state::ServerState, uri::URI, pos::Position)
+    mod = find_file_module(state, uri, pos)
+    state.completion_module[] = mod
+    return mod
+end
 function find_file_module(state::ServerState, uri::URI, pos::Position)
     haskey(state.contexts, uri) || return Main
     contexts = state.contexts[uri]
@@ -259,20 +266,42 @@ function find_file_module(state::ServerState, uri::URI, pos::Position)
 end
 
 function global_completions!(items::Vector{CompletionItem}, state::ServerState, uri::URI, pos::Position)
-    mod = find_file_module(state, uri, pos)
+    mod = find_file_module!(state, uri, pos)
     for name in names(mod; all=true, imported=true, usings=true)
         s = String(name)
         startswith(s, "#") && continue
-        push!(items, CompletionItem(
-            ; label = s,
-            labelDetails = CompletionItemLabelDetails(
-                ; description = "global"),
+        push!(items, CompletionItem(;
+            label = s,
+            labelDetails = CompletionItemLabelDetails(;
+                description = "global"),
             kind = CompletionItemKind.Variable,
-            documentation = nothing))
+            documentation = nothing,
+            data = CompletionData(#=needs_resolve=#true)))
     end
     return items
 end
 
+# completion resolver
+# ===================
+
+function resolve_completion_item(state::ServerState, item::CompletionItem)
+    isassigned(state.completion_module) || return item
+    data = item.data
+    data isa CompletionData || return item
+    data.needs_resolve || return item
+    mod = state.completion_module[]
+    name = Symbol(item.label)
+    binding = Base.Docs.Binding(mod, name)
+    docs = Base.Docs.doc(binding)
+    return CompletionItem(;
+        label = item.label,
+        labelDetails = item.labelDetails,
+        kind = item.kind,
+        detail = item.detail,
+        documentation = MarkupContent(;
+            kind = MarkupKind.Markdown,
+            value = string(docs)))
+end
 
 # request handler
 # ===============
@@ -283,14 +312,19 @@ function handle_CompletionRequest(s::ServerState, msg::CompletionRequest)
     # show local completions first, and then global completions
     items = CompletionItem[]
     local_completions!(items, s, uri, msg.params.position)
-    # global_completions!(items, s, uri, msg.params.position)
+    global_completions!(items, s, uri, msg.params.position)
 
     return s.send(
-        ResponseMessage(
-            ; id = msg.id,
-            result =
-                CompletionList(
-                    ; isIncomplete = true,
-                    items,
-                    )))
+        ResponseMessage(;
+            id = msg.id,
+            result = CompletionList(;
+                isIncomplete = true,
+                items)))
+end
+
+function handle_CompletionResolveRequest(s::ServerState, msg::CompletionResolveRequest)
+    return s.send(
+        ResponseMessage(;
+            id = msg.id,
+            result = resolve_completion_item(s, msg.params)))
 end
