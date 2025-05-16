@@ -3,8 +3,6 @@
 
 module URIs2
 
-using AutoHashEquals
-
 include("vendored_from_uris.jl")
 
 export URI, uri2filename, uri2filepath, filename2uri, filepath2uri, @uri_str
