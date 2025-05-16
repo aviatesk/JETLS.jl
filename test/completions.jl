@@ -22,9 +22,10 @@ end
 function cv_has(cs::Vector{CompletionItem}, expected, kind=nothing)
     cdict = Dict(zip(map(c -> c.label, cs), cs))
     for e in expected
-        @test haskey(cdict, String(e))
-        if !isnothing(kind)
-            @test completion_is(get(cdict, e, nothing), kind)
+        c = get(cdict, e, nothing)
+        @test !isnothing(c)
+        if !isnothing(kind) && !isnothing(c)
+            @test completion_is(c, kind)
         end
     end
 end
@@ -52,7 +53,7 @@ for "x" in "let x = 1; abc|; end"
 function test_cv(code::String, cursor::String, expected::String=""; kwargs...)
     b = findfirst(cursor, code).start
     @assert !isnothing(b) "test_cv requires a cursor \"$cursor\" in code \"$code\""
-    test_cv(replace(code, cursor=>"", count=1), b, expected; kwargs...)
+    return test_cv(replace(code, cursor=>"", count=1), b, expected; kwargs...)
 end
 function test_cv(code::String,
                  b::Int,
@@ -62,6 +63,7 @@ function test_cv(code::String,
     cv = get_completions(code, b)
     cv_has(cv, split(expected), kind)
     cvnhas(cv, split(not))
+    return cv
 end
 
 @testset "sanity" begin
@@ -155,6 +157,7 @@ function f(x)
             x = 2 # otherwise we would filter this completion out
             #2
             local x
+            x
         end
     end
 end

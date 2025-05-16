@@ -70,11 +70,15 @@ xy_to_offset(fi::FileInfo, pos::Position) = xy_to_offset(fi.parsed_stream.textbu
 """
 Convert a 1-based byte offset to a 0-based line and character number
 """
-function offset_to_xy(ps::Union{AbstractString, JuliaSyntax.ParseStream}, b::Integer)
-    sf = JS.SourceFile(ps)
+function offset_to_xy(ps::JS.ParseStream, b::Integer)
+    # ps must be parsed already
     @assert b in JS.first_byte(ps):JS.last_byte(ps) + 1
+    sf = JS.SourceFile(ps)
     l, c = JuliaSyntax.source_location(sf, b)
     return Position(;line = l-1, character = c-1)
 end
-offset_to_xy(code::Vector{UInt8}, b::Integer) = offset_to_xy(String(copy(code)), b)
+function offset_to_xy(code::Union{AbstractString, Vector{UInt8}}, b::Integer)
+    ps = JS.parse!(JS.ParseStream(code), rule=:all)
+    return offset_to_xy(ps, b)
+end
 offset_to_xy(fi::FileInfo, b::Integer) = offset_to_xy(fi.parsed_stream, b)
