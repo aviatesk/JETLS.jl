@@ -1,5 +1,8 @@
 using .JS: @K_str, @KSet_str
 
+const SORT_TEXT_0 = "00000000"
+const SORT_TEXT_1 = "00000001"
+
 # local completions
 # =================
 
@@ -226,6 +229,7 @@ function to_completion(binding::JL.BindingInfo,
         kind = label_kind,
         detail,
         documentation,
+        sortText = SORT_TEXT_0, # show local completions first
         data = CompletionData(#=needs_resolve=#false))
 end
 
@@ -279,6 +283,7 @@ function global_completions!(items::Vector{CompletionItem}, state::ServerState, 
                 description = "global"),
             kind = CompletionItemKind.Variable,
             documentation = nothing,
+            sortText = SORT_TEXT_1,
             data = CompletionData(#=needs_resolve=#true)))
     end
     return items
@@ -301,6 +306,7 @@ function resolve_completion_item(state::ServerState, item::CompletionItem)
         labelDetails = item.labelDetails,
         kind = item.kind,
         detail = item.detail,
+        sortText = item.sortText,
         documentation = MarkupContent(;
             kind = MarkupKind.Markdown,
             value = string(docs)))
@@ -313,20 +319,9 @@ const SORTTEXT_WIDTH = 8
 
 function handle_CompletionRequest(s::ServerState, msg::CompletionRequest)
     uri = URI(msg.params.textDocument.uri)
-
     items = CompletionItem[]
     local_completions!(items, s, uri, msg.params.position)
     global_completions!(items, s, uri, msg.params.position)
-
-    # show local completions first, and then global completions
-    fnames = fieldnames(CompletionItem)
-    for idx in eachindex(items)
-        # Hack to set fields on an immutable CompletionItem...
-        mutable_ci = Dict(zip(fnames, [getfield(items[idx], f) for f in fnames]))
-        mutable_ci[:sortText] = lpad(string(idx), SORTTEXT_WIDTH, '0')
-        items[idx] = CompletionItem([get(mutable_ci, f, nothing) for f in fnames]...)
-    end
-
     return s.send(
         ResponseMessage(;
             id = msg.id,
