@@ -1,8 +1,8 @@
 using Test
 using JETLS: JL, JS
-using JETLS: cursor_bindings, to_completion, CompletionItem
+using JETLS: cursor_bindings, to_completion, CompletionItem, completion_is
 
-function get_completions(s::String, b::Int)
+function get_local_completions(s::String, b::Int)
     ps = JS.ParseStream(s)
     JS.parse!(ps; rule=:all)
     st0 = JS.build_tree(JL.SyntaxTree, ps)
@@ -10,13 +10,6 @@ function get_completions(s::String, b::Int)
     out = cursor_bindings(st0, b)
     # @info out
     map(o->to_completion(o[1], o[2], o[3]), out)
-end
-
-function completion_is(ci::CompletionItem, ckind::Symbol)
-    # `ckind` is :global, :local, :argument, or :sparam.  Implementation likely
-    # to change with changes to the information we put in CompletionItem.
-    ci.labelDetails.description === String(ckind) ||
-        (ci.labelDetails.description === "argument" && ckind === :local)
 end
 
 function cv_has(cs::Vector{CompletionItem}, expected, kind=nothing)
@@ -60,7 +53,7 @@ function test_cv(code::String,
                  expected::String="";
                  kind=nothing,
                  not::String="",)
-    cv = get_completions(code, b)
+    cv = get_local_completions(code, b)
     cv_has(cv, split(expected), kind)
     cvnhas(cv, split(not))
     return cv

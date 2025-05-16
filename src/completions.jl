@@ -3,6 +3,16 @@ using .JS: @K_str, @KSet_str
 const SORT_TEXT_0 = "00000000"
 const SORT_TEXT_1 = "00000001"
 
+# completion utils
+# ================
+
+function completion_is(ci::CompletionItem, ckind::Symbol)
+    # `ckind` is :global, :local, :argument, or :sparam.  Implementation likely
+    # to change with changes to the information we put in CompletionItem.
+    ci.labelDetails.description === String(ckind) ||
+        (ci.labelDetails.description === "argument" && ckind === :local)
+end
+
 # local completions
 # =================
 
@@ -76,11 +86,6 @@ function is_relevant(ctx::JL.AbstractLoweringContext,
                      binding::JL.BindingInfo,
                      cursor::Int)
     !binding.is_internal &&
-
-        # TODO: Temporary restriction to prevent duplicate completions
-        # This is too strict; we miss locally-declared globals.
-        binding.kind !== :global &&
-
         (binding.kind === :global
          # || we could relax this for locals defined before the end of the
          #    largest for/while containing the cursor
@@ -231,14 +236,22 @@ function to_completion(binding::JL.BindingInfo,
         data = CompletionData(#=needs_resolve=#false))
 end
 
-function local_completions!(items::Vector{CompletionItem}, s::ServerState, uri::URI, pos::Position)
+function local_completions!(items::Dict{String, CompletionItem},
+                            s::ServerState, uri::URI, pos::Position)
     fi = get_fileinfo(s, uri)
     fi === nothing && return items
     st0 = JS.build_tree(JL.SyntaxTree, fi.parsed_stream)
     cbs = cursor_bindings(st0, xy_to_offset(fi, pos))
     cbs === nothing && return items
-    for (bi, st) in cbs
-        push!(items, to_completion(bi, st))
+    for (bi, st, lb) in cbs
+        ci = to_completion(bi, st, lb)
+        prev_ci = get(items, ci.label, nothing)
+        # Name collisions: overrule existing global completions with our own,
+        # unless our completion is also a global, in which case the existing
+        # completion from JET will have more information.
+        if isnothing(prev_ci) || (completion_is(prev_ci, :global) && !completion_is(ci, :global))
+            items[ci.label] = ci
+        end
     end
     return items
 end
@@ -272,19 +285,19 @@ function find_file_module(state::ServerState, uri::URI, pos::Position)
     return last(analyzed_file_info.module_range_infos[idx])
 end
 
-function global_completions!(items::Vector{CompletionItem}, state::ServerState, uri::URI, pos::Position)
+function global_completions!(items::Dict{String, CompletionItem}, state::ServerState, uri::URI, pos::Position)
     mod = find_file_module!(state, uri, pos)
     for name in names(mod; all=true, imported=true, usings=true)
         s = String(name)
         startswith(s, "#") && continue
-        push!(items, CompletionItem(;
+        items[s] = CompletionItem(;
             label = s,
             labelDetails = CompletionItemLabelDetails(;
                 description = "global"),
             kind = CompletionItemKind.Variable,
             documentation = nothing,
             sortText = SORT_TEXT_1,
-            data = CompletionData(#=needs_resolve=#true)))
+            data = CompletionData(#=needs_resolve=#true))
     end
     return items
 end
@@ -316,10 +329,11 @@ end
 # ===============
 
 function get_completion_items(state::ServerState, uri::URI, pos::Position)
-    items = CompletionItem[]
-    local_completions!(items, state, uri, pos)
+    items = Dict{String, CompletionItem}()
+    # order matters; see local_completions!
     global_completions!(items, state, uri, pos)
-    return items
+    local_completions!(items, state, uri, pos)
+    return collect(values(items))
 end
 
 function handle_CompletionRequest(s::ServerState, msg::CompletionRequest)
