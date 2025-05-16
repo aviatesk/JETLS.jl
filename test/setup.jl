@@ -32,7 +32,7 @@ function withserver(f;
                     rootPath,
                     rootUri,
                     capabilities=ClientCapabilities())))
-        @test take!(out_queue).id == id
+        @test take_with_timeout!(out_queue).id == id
     end
     try
         return f(in, out, in_queue, out_queue, id_counter)
@@ -42,7 +42,7 @@ function withserver(f;
             writemsg(in,
                 ShutdownRequest(;
                     id))
-            res = take!(out_queue)
+            res = take_with_timeout!(out_queue)
             @test res.id == id
             # make sure the `ShutdownResponse` follows the `ResponseMessage` specification:
             # https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#responseMessage
@@ -52,9 +52,20 @@ function withserver(f;
         end
         writemsg(in,
             ExitNotification())
-        @test take!(out_queue) === nothing
+        @test take_with_timeout!(out_queue) === nothing
         result = fetch(t)
         @test result isa JETLS.JSONRPC.Endpoint
         @test result.state === :closed
     end
+end
+
+function take_with_timeout!(chn::Channel; interval=1, limit=60)
+    while limit > 0
+        if isready(chn)
+            return take!(chn)
+        end
+        sleep(interval)
+        limit -= 1
+    end
+    error("Timeout waiting for message")
 end

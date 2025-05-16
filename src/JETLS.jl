@@ -12,6 +12,7 @@ using .LSP
 include("JSONRPC.jl")
 using .JSONRPC
 
+using REPL # loading REPL is necessary to make `Base.Docs.doc(::Base.Docs.Binding)` work
 using Pkg, JuliaSyntax, JET
 using JuliaSyntax: JuliaSyntax as JS
 using JuliaLowering: JuliaLowering as JL

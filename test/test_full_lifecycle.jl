@@ -1,10 +1,12 @@
-module completions2
+module test_complex_lifecycle
 
 include("setup.jl")
 let rootPath = normpath(FIXTURES_DIR, "CompletionTest")
+
     withserver(; rootPath) do in, out, in_queue, out_queue, id_counter
         filepath = normpath(rootPath, "src", "CompletionTest.jl")
         uri = string(JETLS.URIs2.filepath2uri(filepath))
+
         # open the file, and fill in the file cache
         writemsg(in,
             DidOpenTextDocumentNotification(;
@@ -13,9 +15,8 @@ let rootPath = normpath(FIXTURES_DIR, "CompletionTest")
                         uri,
                         languageId = "julia",
                         version = 1,
-                        text = read(filepath, String))
-                    )))
-        out = take!(out_queue)
+                        text = read(filepath, String)))))
+        out = take_with_timeout!(out_queue; limit=300) # wait for 5 minutes
         @test out isa PublishDiagnosticsNotification
 
         id = id_counter[] += 1
@@ -25,7 +26,7 @@ let rootPath = normpath(FIXTURES_DIR, "CompletionTest")
                 params =  CompletionParams(;
                     textDocument = TextDocumentIdentifier(; uri),
                     position = Position(; line = 7, character = 4))))
-        out = take!(out_queue)
+        out = take_with_timeout!(out_queue)
         @test out isa ResponseMessage
         @test out.id == id
         result = out.result
@@ -37,22 +38,24 @@ let rootPath = normpath(FIXTURES_DIR, "CompletionTest")
             data = item.data
             @test data isa CompletionData && data.needs_resolve
             @test isnothing(item.documentation)
-            let id = id_counter[] += 1,
-                out
+
+            let id = id_counter[] += 1, out, result
                 writemsg(in,
                     CompletionResolveRequest(;
                         id,
                         params =  item))
-                out = take!(out_queue)
+                out = take_with_timeout!(out_queue)
                 @test out isa ResponseMessage
                 @test out.id == id
                 result = out.result
                 @test result isa CompletionItem
                 documentation = result.documentation
-                @test documentation isa MarkupContent && documentation.kind == "markdown" && occursin("greetings", documentation.value)
+                @test documentation isa MarkupContent &&
+                    documentation.kind == "markdown" &&
+                    occursin("greetings", documentation.value)
             end
         end
     end
 end
 
-end
+end # test_complex_lifecycle

@@ -1,9 +1,6 @@
 using Test
-using JETLS: unique, byte_ancestors, greatest_lowerable, is_relevant,
-    cursor_bindings, to_completion, CompletionItem
-
-using JETLS.JuliaLowering: JuliaLowering as JL
-using JETLS.JuliaSyntax: JuliaSyntax as JS
+using JETLS: JL, JS
+using JETLS: cursor_bindings, to_completion, CompletionItem
 
 function get_completions(s::String, b::Int)
     ps = JS.ParseStream(s)
