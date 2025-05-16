@@ -73,6 +73,11 @@ function is_relevant(ctx::JL.AbstractLoweringContext,
                      binding::JL.BindingInfo,
                      cursor::Int)
     !binding.is_internal &&
+
+        # TODO: Temporary restriction to prevent duplicate completions
+        # This is too strict; we miss locally-declared globals.
+        binding.kind !== :global &&
+
         (binding.kind === :global
          # || we could relax this for locals defined before the end of the
          #    largest for/while containing the cursor

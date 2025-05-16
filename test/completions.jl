@@ -8,7 +8,7 @@ using JETLS.JuliaSyntax: JuliaSyntax as JS
 function get_completions(s::String, b::Int)
     ps = JS.ParseStream(s)
     JS.parse!(ps; rule=:all)
-    st0 = JS.build_tree(SyntaxTree, ps)
+    st0 = JS.build_tree(JL.SyntaxTree, ps)
 
     out = cursor_bindings(st0, b)
     # @info out
