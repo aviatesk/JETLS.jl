@@ -17,8 +17,8 @@ StructTypes = "856f2bd8-1eba-4b0a-8007-ebc267875bd4"
 URIs = "5c2747f8-b7ea-4ff2-ba2e-563bfd36b1d4"
 
 [sources]
-# JET = {url = "https://github.com/aviatesk/JET.jl#master"}
-# JuliaLowering = {url = "https://github.com/mlechu/JuliaLowering.jl#fix-nightly"}
+JET = {url = "https://github.com/aviatesk/JET.jl", rev = "master"}
+JuliaLowering = {url = "https://github.com/mlechu/JuliaLowering.jl", rev = "fix-nightly"}
 
 [compat]
 JET = "0.10.5"
