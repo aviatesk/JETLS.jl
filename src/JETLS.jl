@@ -372,7 +372,7 @@ function handle_DidChangeTextDocumentNotification(state::ServerState, msg::DidCh
     text = last(contentChanges).text
     filename = uri2filename(uri)
     @assert filename !== nothing "Unsupported URI: $uri"
-    cache_file_info!(state, uri, textDocument.version, text, filename, parsed_stream)
+    cache_file_info!(state, uri, textDocument.version, text, filename)
     if !haskey(state.contexts, uri)
         initiate_context!(state, uri)
     else
