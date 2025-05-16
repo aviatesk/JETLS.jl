@@ -189,7 +189,7 @@ let state = JETLS.ServerState(identity)
         return out
     end
 
-    nothing
+    nothing # TODO remove this line when the correct implementation of https://github.com/aviatesk/JET.jl/pull/707 is available
 end
 """)
     @test length(curpos1) == 1

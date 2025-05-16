@@ -1,10 +1,10 @@
-module test_complex_lifecycle
+module test_full_lifecycle
 
 include("setup.jl")
-let rootPath = normpath(FIXTURES_DIR, "CompletionTest")
+let rootPath = normpath(FIXTURES_DIR, "TestFullLifecycle")
 
     withserver(; rootPath) do in, out, in_queue, out_queue, id_counter
-        filepath = normpath(rootPath, "src", "CompletionTest.jl")
+        filepath = normpath(rootPath, "src", "TestFullLifecycle.jl")
         uri = string(JETLS.URIs2.filepath2uri(filepath))
 
         # open the file, and fill in the file cache
@@ -58,4 +58,4 @@ let rootPath = normpath(FIXTURES_DIR, "CompletionTest")
     end
 end
 
-end # test_complex_lifecycle
+end # test_full_lifecycle
