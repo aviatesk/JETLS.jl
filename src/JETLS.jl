@@ -324,10 +324,16 @@ function notify_diagnostics!(state::ServerState, uri2diagnostics)
     end
 end
 
-function parseall(text::String)
+function cache_file_info!(state::ServerState, uri::URI, version::Int, text::String, filename::String)
+    state.file_cache[uri] = parsefile(version, text, filename)
+end
+function cache_file_info!(state::ServerState, uri::URI, file_info::FileInfo)
+    state.file_cache[uri] = file_info
+end
+function parsefile(version::Int, text::String, filename::String)
     stream = JS.ParseStream(text)
     JS.parse!(stream; rule=:all)
-    return stream
+    return FileInfo(version, text, filename, stream)
 end
 
 function handle_DidOpenTextDocumentNotification(state::ServerState, msg::DidOpenTextDocumentNotification)
@@ -336,8 +342,7 @@ function handle_DidOpenTextDocumentNotification(state::ServerState, msg::DidOpen
     uri = URI(textDocument.uri)
     filename = uri2filename(uri)
     @assert filename !== nothing "Unsupported URI: $uri"
-    parsed_stream = parseall(textDocument.text)
-    state.file_cache[uri] = FileInfo(textDocument.version, textDocument.text, filename, parsed_stream)
+    cache_file_info!(state, uri, textDocument.version, textDocument.text, filename)
     if !haskey(state.contexts, uri)
         initiate_context!(state, uri)
     else # this file is tracked by some context already
@@ -367,8 +372,7 @@ function handle_DidChangeTextDocumentNotification(state::ServerState, msg::DidCh
     text = last(contentChanges).text
     filename = uri2filename(uri)
     @assert filename !== nothing "Unsupported URI: $uri"
-    parsed_stream = parseall(text)
-    state.file_cache[uri] = FileInfo(textDocument.version, text, filename, parsed_stream)
+    cache_file_info!(state, uri, textDocument.version, text, filename, parsed_stream)
     if !haskey(state.contexts, uri)
         initiate_context!(state, uri)
     else

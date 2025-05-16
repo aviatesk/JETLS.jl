@@ -315,13 +315,16 @@ end
 # request handler
 # ===============
 
-const SORTTEXT_WIDTH = 8
+function get_completion_items(state::ServerState, uri::URI, pos::Position)
+    items = CompletionItem[]
+    local_completions!(items, state, uri, pos)
+    global_completions!(items, state, uri, pos)
+    return items
+end
 
 function handle_CompletionRequest(s::ServerState, msg::CompletionRequest)
     uri = URI(msg.params.textDocument.uri)
-    items = CompletionItem[]
-    local_completions!(items, s, uri, msg.params.position)
-    global_completions!(items, s, uri, msg.params.position)
+    items = get_completion_items(s, uri, msg.params.position)
     return s.send(
         ResponseMessage(;
             id = msg.id,

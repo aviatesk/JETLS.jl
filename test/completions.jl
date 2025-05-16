@@ -163,3 +163,53 @@ end
     # broken. JuliaLowering bug?
     # test_cv(code, "#2", "x", kind=:local)
 end
+
+# unit tests including local/global completions
+function get_text_and_positions(text::String)
+    positions = JETLS.Position[]
+    lines = split(text, '\n')
+    for (i, line) in enumerate(lines)
+        for m in eachmatch(r"#=cursor=#", line)
+            # Position is 0-based
+            push!(positions, JETLS.Position(; line=i-1, character=m.match.offset-1))
+            lines[i] = replace(line, r"#=cursor=#" => "")
+        end
+    end
+    return join(lines, '\n'), positions
+end
+
+let state = JETLS.ServerState(identity)
+    text, curpos1 = get_text_and_positions("""module Foo
+    struct Bar
+        x::Int
+    end
+    function getx(bar::Bar)
+        out = bar.x
+        #=cursor=#
+        return out
+    end
+
+    nothing
+end
+""")
+    @test length(curpos1) == 1
+    pos = only(curpos1)
+    filename = abspath("foo.jl")
+    uri = JETLS.filename2uri(filename)
+    JETLS.cache_file_info!(state, uri, #=version=#1, text, filename)
+    JETLS.initiate_context!(state, uri)
+    # XXX `@invokelatest` is required for `names` to return all the symbols of the `Foo`, in particular `:Bar`
+    items = @invokelatest JETLS.get_completion_items(state, uri, pos)
+    @test any(items) do item
+        item.label == "bar"
+    end
+    @test any(items) do item
+        item.label == "out"
+    end
+    @test any(items) do item
+        item.label == "Bar"
+    end
+    @test any(items) do item
+        item.label == "sin"
+    end
+end
