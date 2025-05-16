@@ -31,13 +31,13 @@ have overlapping ranges (this is not true after lowering, but appear to be true
 after parsing), each tree in the result will be a child of the next.
 """
 function byte_ancestors(st::JL.SyntaxTree, b::Int, b2::Int=b)
-    function byte_ancestors_(st, l::JL.SyntaxList)
+    function byte_ancestors_(st::JL.SyntaxTree, l::JL.SyntaxList)
         (JS.numchildren(st) === 0) && return l
         cis = findall(ci -> (b in JS.byte_range(ci) && b2 in JS.byte_range(ci)),
                       JS.children(st))
         append!(l, map(ci -> st[ci], cis))
         for c in JS.children(st)
-            byte_ancestors_(c, l)
+            var"#self#"(c, l)
         end
         return l
     end
@@ -98,29 +98,29 @@ and filtering out any that aren't declared in a scope containing the cursor.
 function cursor_bindings(st0_top::JL.SyntaxTree, b_top::Int)
     st0, b = greatest_lowerable(st0_top, b_top)
     if isnothing(st0)
-        return [] # nothing we can lower
+        return nothing # nothing we can lower
     end
     # julia does require knowing what module we're lowering in, but it isn't
     # needed for reasonable completions
-    ctx1, st1 = JL.expand_forms_1(Module(), st0)
-    ctx2, st2 = JL.expand_forms_2(ctx1, st1)
-    ctx3, st3 = JL.resolve_scopes(ctx2, st2)
+    ctx1, st1 = JL.expand_forms_1(Module(), st0);
+    ctx2, st2 = JL.expand_forms_2(ctx1, st1);
+    ctx3, st3 = JL.resolve_scopes(ctx2, st2);
 
     # Note that ctx.bindings are only available after resolve_scopes, and
     # scope-blocks are not present in st3 after resolve_scopes.
     binfos = filter(binfo -> is_relevant(ctx3, binfo, b), ctx3.bindings.info)
 
     # for each binding: binfo, all syntaxtrees containing it, and the scope it belongs to
-    bscopeinfos::Vector{Tuple{JL.BindingInfo, JL.SyntaxList, Union{JL.SyntaxTree, Nothing}}} =
-        map(binfo -> begin
-                # TODO: find tree parents instead of byte parents?
-                bas = byte_ancestors(st2, JS.byte_range(JL.binding_ex(ctx3, binfo.id)))
-                # find the innermost hard scope containing this binding decl.  we shouldn't
-                # be in multiple overlapping scopes that are not direct ancestors; that
-                # should indicate a provenance failure
-                i = findfirst(ba -> JS.kind(ba) in KSet"scope_block lambda module toplevel", bas)
-                return (binfo, bas, isnothing(i) ? nothing : bas[i])
-            end, binfos)
+    bscopeinfos = Tuple{JL.BindingInfo, JL.SyntaxList, Union{JL.SyntaxTree, Nothing}}[]
+    for binfo in binfos
+        # TODO: find tree parents instead of byte parents?
+        bas = byte_ancestors(st2, JS.byte_range(JL.binding_ex(ctx3, binfo.id)))
+        # find the innermost hard scope containing this binding decl.  we shouldn't
+        # be in multiple overlapping scopes that are not direct ancestors; that
+        # should indicate a provenance failure
+        i = findfirst(ba -> JS.kind(ba) in KSet"scope_block lambda module toplevel", bas)
+        push!(bscopeinfos, (binfo, bas, isnothing(i) ? nothing : bas[i]))
+    end
 
     cursor_scopes = byte_ancestors(st2, b)
 
@@ -155,17 +155,15 @@ function cursor_bindings(st0_top::JL.SyntaxTree, b_top::Int)
 
     # TODO sort by bdistance?
 
-    out = []
-    for (_, i) in seen
+    return map(values(seen)) do i
         (binfo, bas, _) = bscopeinfos[i]
 
         # Get LambdaBindingInfo from nearest lambda, if any
         ba_lam = findfirst(st -> kind(st) === K"lambda", bas)
         lbs = isnothing(ba_lam) ? nothing : get(bas[ba_lam], :lambda_bindings, nothing)
         lb = isnothing(lbs)     ? nothing : get(lbs.bindings, binfo.id, nothing)
-        push!(out, (binfo, JL.binding_ex(ctx3, binfo.id), lb))
+        return (binfo, JL.binding_ex(ctx3, binfo.id), lb)
     end
-    return out
 end
 
 """
@@ -237,8 +235,10 @@ function local_completions!(items::Vector{CompletionItem}, s::ServerState, uri::
     fi = get_fileinfo(s, uri)
     fi === nothing && return items
     st0 = JS.build_tree(JL.SyntaxTree, fi.parsed_stream)
-    for o in cursor_bindings(st0, xy_to_offset(fi, pos))
-        push!(items, to_completion(o[1], o[2]))
+    cbs = cursor_bindings(st0, xy_to_offset(fi, pos))
+    cbs === nothing && return items
+    for (bi, st) in cbs
+        push!(items, to_completion(bi, st))
     end
     return items
 end
