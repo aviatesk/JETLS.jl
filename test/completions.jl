@@ -160,6 +160,14 @@ end
     # test_cv(code, "#2", "x", kind=:local)
 end
 
+@testset "cursor in new symbol" begin
+    # Don't suggest a symbol which appears for the first time right before the cursor
+    code = "function f(); global g1; g2|; end"
+    test_cv(code, "|", "g1", not="g2")
+    code = "function f(); global g1; g|2; end"
+    test_cv(code, "|", "g1", not="g g2")
+end
+
 # unit tests including local/global completions
 function get_text_and_positions(text::String)
     positions = JETLS.Position[]
