@@ -29,15 +29,23 @@ A new language server for the Julia programming language. In a nascent stage of 
 In JETLS, since we need to use packages that aren’t yet registered
 (e.g., [JuliaLowering.jl](https://github.com/c42f/JuliaLowering.jl)) or specific branches of
 [JET.jl](https://github.com/c42f/JuliaLowering.jl) and [JuliaSyntax.jl](https://github.com/JuliaLang/JuliaSyntax.jl),
-the [Project.toml](./Project.toml) includes a `[sources]` section.
-The `[sources]` section allows simply running `Pkg.instantiate()` to install the required
-versions of these packages on any environment.
+the [Project.toml](./Project.toml) includes [`[sources]` section](https://pkgdocs.julialang.org/v1/toml-files/#The-[sources]-section).
+The `[sources]` section allows simply running `Pkg.instantiate()` to install all the
+required versions of these packages on any environment, including the CI setup especially.
 
-However, when developing JETLS while making changes on the packages listed in `[sources]`,
-it can be more convenient to use the local package directory (especially in order to reflect
-changes immediately with Revise). In that case, temporarily comment out the `[sources]`
-section and run `Pkg.develop("JET")`. This lets you use any local JET implementation.
-After running `develop`, you can restore the `[sources]` section without issues.
+On the other hand, it can sometimes be convenient to `Pkg.develop` some of the packages
+listed in the `[sources]` section and edit their source code while developing JETLS.
+In particular, to have Revise immediately pick up changes made to those packages,
+we may need to keep them in locally editable directories.
+However, we cannot run `Pkg.develop` directly on packages listed in the `[sources]` section, e.g.:
+```julia
+julia> Pkg.develop("JET")
+ERROR: `path` and `url` are conflicting specifications
+...
+```
+To workaround this, you can temporarily comment out the `[sources]` section and run `Pkg.develop("JET")`.
+This lets you use any local JET implementation. After running `Pkg.develop("JET")`,
+you can restore the `[sources]` section, and perform any most of `Pkg` operations without any issues onward.
 The same applies to the other packages listed in `[sources]`.
 
 ## Structure
