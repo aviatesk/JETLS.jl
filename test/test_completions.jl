@@ -1,4 +1,7 @@
+module test_completions
+
 using Test
+using JETLS
 using JETLS: JL, JS
 using JETLS: cursor_bindings, to_completion, CompletionItem, completion_is
 
@@ -6,9 +9,7 @@ function get_local_completions(s::String, b::Int)
     ps = JS.ParseStream(s)
     JS.parse!(ps; rule=:all)
     st0 = JS.build_tree(JL.SyntaxTree, ps)
-
     out = cursor_bindings(st0, b)
-    # @info out
     map(o->to_completion(o[1], o[2], o[3]), out)
 end
 
@@ -168,7 +169,9 @@ end
     test_cv(code, "|", "g1", not="g g2")
 end
 
-# unit tests including local/global completions
+# get_completion_items
+# ====================
+
 function get_text_and_positions(text::String)
     positions = JETLS.Position[]
     lines = split(text, '\n')
@@ -182,20 +185,24 @@ function get_text_and_positions(text::String)
     return join(lines, '\n'), positions
 end
 
-let state = JETLS.ServerState(identity)
-    text, curpos1 = get_text_and_positions("""module Foo
-    struct Bar
-        x::Int
-    end
-    function getx(bar::Bar)
-        out = bar.x
-        #=cursor=#
-        return out
-    end
+@testset "get_completion_items" begin
+    state = JETLS.ServerState(identity)
+    text, curpos1 = get_text_and_positions("""
+    module Foo
 
-    nothing # TODO remove this line when the correct implementation of https://github.com/aviatesk/JET.jl/pull/707 is available
-end
-""")
+        struct Bar
+            x::Int
+        end
+        function getx(bar::Bar)
+            out = bar.x
+            #=cursor=#
+            return out
+        end
+
+        nothing # TODO remove this line when the correct implementation of https://github.com/aviatesk/JET.jl/pull/707 is available
+
+    end # module Foo
+    """)
     @test length(curpos1) == 1
     pos = only(curpos1)
     filename = abspath("foo.jl")
@@ -217,3 +224,5 @@ end
         item.label == "sin"
     end
 end
+
+end # module test_completions

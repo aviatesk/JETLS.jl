@@ -7,7 +7,7 @@ include("setup.jl")
 end
 
 @testset "JETLS" begin
-    @testset "utils" include("utils.jl")
-    @testset "completions" include("completions.jl")
+    @testset "utils" include("test_utils.jl")
+    @testset "completions" include("test_completions.jl")
     @testset "full lifecycle" include("test_full_lifecycle.jl")
 end

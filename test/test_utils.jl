@@ -1,17 +1,7 @@
+module test_utils
+
 using Test
 using JETLS
-
-fake_files = [
-"",
-"1",
-"\n\n\n",
-"""
-aaa
-b
-ccc
-Αα,Ββ,Γγ,Δδ,Εε,Ζζ,Ηη,Θθ,Ιι,Κκ,Λλ,Μμ,Νν,Ξξ,Οο,Ππ,Ρρ,Σσς,Ττ,Υυ,Φφ,Χχ,Ψψ,Ωω
-""",
-]
 
 function test_string_positions(s)
     v = Vector{UInt8}(s)
@@ -28,9 +18,22 @@ function test_string_positions(s)
 end
 
 @testset "Cursor file position <-> byte" begin
+    fake_files = [
+        "",
+        "1",
+        "\n\n\n",
+        """
+        aaa
+        b
+        ccc
+        Αα,Ββ,Γγ,Δδ,Εε,Ζζ,Ηη,Θθ,Ιι,Κκ,Λλ,Μμ,Νν,Ξξ,Οο,Ππ,Ρρ,Σσς,Ττ,Υυ,Φφ,Χχ,Ψψ,Ωω
+        """
+    ]
     for i in eachindex(fake_files)
         @testset "fake_files[$i]" begin
             test_string_positions(fake_files[i])
         end
     end
 end
+
+end # module test_utils
