@@ -150,7 +150,6 @@ item insertion
     adjustIndentation = 2
 end
 
-
 """
 The kind of a completion entry.
 """
@@ -194,7 +193,6 @@ completion item.
     Deprecated = 1
 end
 
-
 """
 A special text edit to provide an insert and a replace operation.
 
@@ -234,6 +232,12 @@ Additional details for a completion item label
     description::Union{String, Nothing} = nothing
 end
 
+# our own data structure for `data` field of `CompletionItem`
+struct CompletionData
+    needs_resolve::Bool
+end
+export CompletionData
+
 @interface CompletionItem begin
 
     """
@@ -254,7 +258,6 @@ end
     - since - 3.17.0
     """
     labelDetails::Union{CompletionItemLabelDetails, Nothing} = nothing
-
 
     """
     The kind of this completion item. Based of the kind
@@ -417,7 +420,7 @@ end
     A data entry field that is preserved on a completion item between
     a completion and a completion resolve request.
     """
-    data::Union{Any, Nothing} = nothing
+    data::Union{CompletionData, Nothing} = nothing
 end
 
 """
@@ -492,13 +495,21 @@ presented in the editor.
         # Tags
         - since - 3.17.0
         """
-        data::Union{Any, Nothing} = nothing
+        data::Union{CompletionData, Nothing} = nothing
     end} = nothing
 
     """
     The completion items.
     """
     items::Vector{CompletionItem}
+end
+
+"""
+The request is sent from the client to the server to resolve additional information for a given completion item.
+"""
+@interface CompletionResolveRequest @extends RequestMessage begin
+    method::String = "completionItem/resolve"
+    params::CompletionItem
 end
 
 @interface CompletionClientCapabilities begin
