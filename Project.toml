@@ -23,8 +23,8 @@ rev = "avi/analyzed-file-contexts"
 url = "https://github.com/mlechu/JuliaLowering.jl"
 rev = "fix-nightly"
 [sources.JuliaSyntax]
-url = "https://github.com/mlechu/JuliaSyntax.jl"
-rev = "newline-eof-tweak"
+url = "https://github.com/JuliaLang/JuliaSyntax.jl"
+rev = "main"
 
 [compat]
 JET = "0.10.5"
