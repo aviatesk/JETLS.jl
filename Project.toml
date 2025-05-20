@@ -12,19 +12,15 @@ JSON3 = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
 JuliaLowering = "f3c80556-a63f-4383-b822-37d64f81a311"
 JuliaSyntax = "70703baa-626e-46a2-a12c-08ffd08c73b4"
 Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
+Preferences = "21216c6a-2e73-6563-6e65-726566657250"
 REPL = "3fa0cd96-eef1-5676-8a61-b3b8758bbffb"
 StructTypes = "856f2bd8-1eba-4b0a-8007-ebc267875bd4"
 URIs = "5c2747f8-b7ea-4ff2-ba2e-563bfd36b1d4"
 
-[sources.JET]
-url = "https://github.com/aviatesk/JET.jl"
-rev = "avi/analyzed-file-contexts"
-[sources.JuliaLowering]
-url = "https://github.com/mlechu/JuliaLowering.jl"
-rev = "fix-nightly"
-[sources.JuliaSyntax]
-url = "https://github.com/JuliaLang/JuliaSyntax.jl"
-rev = "main"
+[sources]
+JET = {rev = "avi/analyzed-file-contexts", url = "https://github.com/aviatesk/JET.jl"}
+JuliaLowering = {rev = "fix-nightly", url = "https://github.com/mlechu/JuliaLowering.jl"}
+JuliaSyntax = {rev = "main", url = "https://github.com/JuliaLang/JuliaSyntax.jl"}
 
 [compat]
 JET = "0.10.5"
@@ -32,6 +28,7 @@ JSON3 = "1.14.1"
 JuliaLowering = "1.0.0"
 JuliaSyntax = "1.0"
 Pkg = "1.11.0"
+Preferences = "1.4.3"
 REPL = "1.11.0"
 StructTypes = "1.11.0"
 URIs = "1.5"

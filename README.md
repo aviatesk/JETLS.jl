@@ -39,6 +39,8 @@ Minimal Emacs (eglot client) setup:
 
 ### Notes
 
+#### `[sources]` dependencies
+
 In JETLS, since we need to use packages that aren’t yet registered
 (e.g., [JuliaLowering.jl](https://github.com/c42f/JuliaLowering.jl)) or specific branches of
 [JET.jl](https://github.com/c42f/JuliaLowering.jl) and [JuliaSyntax.jl](https://github.com/JuliaLang/JuliaSyntax.jl),
@@ -60,6 +62,26 @@ To workaround this, you can temporarily comment out the `[sources]` section and 
 This lets you use any local JET implementation. After running `Pkg.develop("JET")`,
 you can restore the `[sources]` section, and perform any most of `Pkg` operations without any issues onward.
 The same applies to the other packages listed in `[sources]`.
+
+#### `JETLS_DEV_MODE`
+
+JETLS has a development mode that can be enabled through the `JETLS_DEV_MODE`
+[preference](https://github.com/JuliaPackaging/Preferences.jl).
+When this mode is enabled, the language server enables several features to aid in development:
+- Automatic loading of Revise when starting the server, allowing changes to be applied without restarting
+- `try`/`catch` block is added for the top-level handler of non-lifecycle-related messages,
+  allowing the server to continue running even if an error occurs in each message handler,
+  showing error messages and stack traces in the output panel
+
+You can control this setting through Preferences.jl's mechanism:
+```julia
+using Preferences
+# Disable development mode
+Preferences.set_preferences!("JETLS", "JETLS_DEV_MODE" => false; force=true)
+```
+
+`JETLS_DEV_MODE` is enabled by default when running the server at this moment of prototyping,
+but also note that it is enabled when running the test suite.
 
 ## Structure
 
