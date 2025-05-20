@@ -169,6 +169,16 @@ end
     test_cv(code, "|", "g1", not="g g2")
 end
 
+# completion for code including macros
+let code = """
+    function foo(x)
+        #=cursor=#
+        return @inline typeof(x)
+    end
+    """
+    test_cv(code, "#=cursor=#", "x")
+end
+
 # get_completion_items
 # ====================
 
@@ -187,7 +197,7 @@ end
 
 @testset "get_completion_items" begin
     state = JETLS.ServerState(identity)
-    text, curpos1 = get_text_and_positions("""
+    text, curpos2 = get_text_and_positions("""
     module Foo
 
         struct Bar
@@ -199,29 +209,54 @@ end
             return out
         end
 
+        macro weirdmacro(x::Symbol, v)
+            name = Symbol(string(x, "_var"))
+            return :(\$(esc(name)) = \$v)
+        end
+        function foo(x)
+            @weirdmacro y 1
+            #=cursor=# # show `y_var` ideally
+            return @inline typeof(y_var)
+        end
+
         nothing # TODO remove this line when the correct implementation of https://github.com/aviatesk/JET.jl/pull/707 is available
 
     end # module Foo
     """)
-    @test length(curpos1) == 1
-    pos = only(curpos1)
+    @test length(curpos2) == 2
+    pos1, pos2  = curpos2
     filename = abspath("foo.jl")
     uri = JETLS.filename2uri(filename)
     JETLS.cache_file_info!(state, uri, #=version=#1, text, filename)
     JETLS.initiate_context!(state, uri)
     # XXX `@invokelatest` is required for `names` to return all the symbols of the `Foo`, in particular `:Bar`
-    items = @invokelatest JETLS.get_completion_items(state, uri, pos)
-    @test any(items) do item
-        item.label == "bar"
+    let items = @invokelatest JETLS.get_completion_items(state, uri, pos1)
+        @test any(items) do item
+            item.label == "bar"
+        end
+        @test any(items) do item
+            item.label == "out"
+        end
+        @test any(items) do item
+            item.label == "Bar"
+        end
+        @test any(items) do item
+            item.label == "sin"
+        end
     end
-    @test any(items) do item
-        item.label == "out"
-    end
-    @test any(items) do item
-        item.label == "Bar"
-    end
-    @test any(items) do item
-        item.label == "sin"
+    let items = @invokelatest JETLS.get_completion_items(state, uri, pos2)
+        @test any(items) do item
+            item.label == "foo"
+        end
+        @test any(items) do item
+            item.label == "x"
+        end
+        @test !any(items) do item
+            item.label == "y"
+        end
+        @test_broken any(items) do item
+            item.label == "y_var"
+        end
     end
 end
 
