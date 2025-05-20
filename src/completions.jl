@@ -322,7 +322,7 @@ end
 
 function global_completions!(items::Dict{String, CompletionItem}, state::ServerState, uri::URI, pos::Position)
     mod = find_file_module!(state, uri, pos)
-    for name in names(mod; all=true, imported=true, usings=true)
+    for name in @invokelatest(names(mod; all=true, imported=true, usings=true))::Vector{Symbol}
         s = String(name)
         startswith(s, "#") && continue
         items[s] = CompletionItem(;

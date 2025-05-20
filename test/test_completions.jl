@@ -249,8 +249,7 @@ end
     uri = JETLS.filename2uri(filename)
     JETLS.cache_file_info!(state, uri, #=version=#1, text, filename)
     JETLS.initiate_context!(state, uri)
-    # XXX `@invokelatest` is required for `names` to return all the symbols of the `Foo`, in particular `:Bar`
-    let items = @invokelatest JETLS.get_completion_items(state, uri, pos1)
+    let items = JETLS.get_completion_items(state, uri, pos1)
         @test any(items) do item
             item.label == "bar"
         end
