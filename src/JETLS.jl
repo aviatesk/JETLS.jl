@@ -88,6 +88,7 @@ end
 
 include("utils.jl")
 include("completions.jl")
+include("document-symbols.jl")
 
 struct IncludeCallback <: Function
     file_cache::Dict{URI,FileInfo}
@@ -144,8 +145,6 @@ function runserver(callback, in::IO, out::IO)
     end
     return (; exit_code, endpoint)
 end
-
-include("requests/document-symbol.jl")
 
 function handle_message(state::ServerState, msg)
     if JETLS_DEV_MODE
