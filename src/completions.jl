@@ -193,7 +193,7 @@ function cursor_bindings(st0_top::JL.SyntaxTree, b_top::Int)
             || bdistances[i] < bdistances[prev]
             || binfo.kind === :static_parameter)
             seen[binfo.name] = i
-        else
+        elseif JETLS_DEV_MODE
             @info "Found two bindings with the same name:" binfo bscopeinfos[prev][1]
         end
     end
