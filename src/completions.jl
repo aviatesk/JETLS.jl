@@ -1,7 +1,5 @@
 using .JS: @K_str, @KSet_str
-
-const SORT_TEXT_0 = "00000000"
-const SORT_TEXT_1 = "00000001"
+using .JL: @ast
 
 # completion utils
 # ================
@@ -11,6 +9,19 @@ function completion_is(ci::CompletionItem, ckind::Symbol)
     # to change with changes to the information we put in CompletionItem.
     ci.labelDetails.description === String(ckind) ||
         (ci.labelDetails.description === "argument" && ckind === :local)
+end
+
+let sort_texts = Dict{Int, String}()
+    for i = 1:1000
+        sort_texts[i] = lpad(i, 4, '0')
+    end
+    _, max_sort_text = maximum(sort_texts)
+    global function get_sort_text(ckind::Symbol, offset::Int)
+        if ckind === :global
+            return max_sort_text
+        end
+        return get(sort_texts, offset, max_sort_text)
+    end
 end
 
 # local completions
@@ -96,9 +107,24 @@ function is_relevant(ctx::JL.AbstractLoweringContext,
          || cursor > start)
 end
 
+# TODO: Macro expansion requires we know the module we're lowering in, and that
+# JuliaLowering sees the macro definition.  Ignore them in local completions for now.
+function remove_macrocalls(st0::JL.SyntaxTree)
+    ctx = JL.MacroExpansionContext(JL.syntax_graph(st0), JL.Bindings(),
+                                   JL.ScopeLayer[], JL.ScopeLayer(1, Module(), false))
+    if kind(st0) === K"macrocall"
+        @ast ctx st0 "nothing"::K"core"
+    elseif JS.is_leaf(st0)
+        st0
+    else
+        k = kind(st0)
+        @ast ctx st0 [k (map(remove_macrocalls, JS.children(st0)))...]
+    end
+end
+
 """
-Find the list of (JL.BindingInfo, JL.LambdaBindingInfo|nothing, SyntaxTree)
-to suggest as completions given a parsed SyntaxTree and a cursor position.
+Find the list of (BindingInfo, SyntaxTree, distance::Int) to suggest as
+completions given a parsed SyntaxTree and a cursor position.
 
 JuliaLowering throws away the mapping from scopes to bindings (scopes are stored
 as an ephemeral stack.)  We work around this by taking all available bindings
@@ -109,9 +135,7 @@ function cursor_bindings(st0_top::JL.SyntaxTree, b_top::Int)
     if isnothing(st0)
         return nothing # nothing we can lower
     end
-    # julia does require knowing what module we're lowering in, but it isn't
-    # needed for reasonable completions
-    ctx1, st1 = JL.expand_forms_1(Module(), st0);
+    ctx1, st1 = JL.expand_forms_1(Module(), remove_macrocalls(st0));
     ctx2, st2 = JL.expand_forms_2(ctx1, st1);
     ctx3, st3 = JL.resolve_scopes(ctx2, st2);
 
@@ -162,16 +186,11 @@ function cursor_bindings(st0_top::JL.SyntaxTree, b_top::Int)
         end
     end
 
-    # TODO sort by bdistance?
-
     return map(values(seen)) do i
-        (binfo, bas, _) = bscopeinfos[i]
-
-        # Get LambdaBindingInfo from nearest lambda, if any
-        ba_lam = findfirst(st -> kind(st) === K"lambda", bas)
-        lbs = isnothing(ba_lam) ? nothing : get(bas[ba_lam], :lambda_bindings, nothing)
-        lb = isnothing(lbs)     ? nothing : get(lbs.bindings, binfo.id, nothing)
-        return (binfo, JL.binding_ex(ctx3, binfo.id), lb)
+        (binfo, _, _) = bscopeinfos[i]
+        # distance from the cursor
+        dist = abs(b - JS.last_byte(JL.binding_ex(ctx3, binfo.id)))
+        return (binfo, JL.binding_ex(ctx3, binfo.id), dist)
     end
 end
 
@@ -189,7 +208,7 @@ to|
 (1) Icon corresponding to CompletionItem's `ci.kind`
 (2) `ci.labelDetails.detail`
 (3) `ci.labelDetails.description`
-(4) `ci.detail`
+(4) `ci.detail` (possibly at (3))
 (5) `ci.documentation`
 
 Sending (4) and (5) to the client can happen eagerly in response to <TAB>
@@ -199,7 +218,7 @@ in later versions.
 """
 function to_completion(binding::JL.BindingInfo,
                        st::JL.SyntaxTree,
-                       lb::Union{Nothing, JL.LambdaBindingInfo}=nothing)
+                       sort_offset::Int=0)
     label_kind = CompletionItemKind.Variable
     label_detail = nothing
     label_desc = nothing
@@ -222,11 +241,9 @@ function to_completion(binding::JL.BindingInfo,
         label_detail = "::" * JL.sourcetext(binding.type)
     end
 
-    if !isnothing(lb) && lb.is_called
-        label_kind = CompletionItemKind.Function
-    end
-
-    detail = sprint(JL.showprov, st)
+    documentation = MarkupContent(;
+        kind = MarkupKind.Markdown,
+        value = "```julia\n" * sprint(JL.showprov, st) * "\n```")
 
     CompletionItem(;
         label = binding.name,
@@ -236,7 +253,7 @@ function to_completion(binding::JL.BindingInfo,
         kind = label_kind,
         detail,
         documentation,
-        sortText = SORT_TEXT_0, # show local completions first
+        sortText = get_sort_text(:local, sort_offset),
         data = CompletionData(#=needs_resolve=#false))
 end
 
@@ -247,8 +264,8 @@ function local_completions!(items::Dict{String, CompletionItem},
     st0 = JS.build_tree(JL.SyntaxTree, fi.parsed_stream)
     cbs = cursor_bindings(st0, xy_to_offset(fi, pos))
     cbs === nothing && return items
-    for (bi, st, lb) in cbs
-        ci = to_completion(bi, st, lb)
+    for (bi, st, dist) in cbs
+        ci = to_completion(bi, st, dist)
         prev_ci = get(items, ci.label, nothing)
         # Name collisions: overrule existing global completions with our own,
         # unless our completion is also a global, in which case the existing
@@ -300,7 +317,7 @@ function global_completions!(items::Dict{String, CompletionItem}, state::ServerS
                 description = "global"),
             kind = CompletionItemKind.Variable,
             documentation = nothing,
-            sortText = SORT_TEXT_1,
+            sortText = get_sort_text(:global, 0),
             data = CompletionData(#=needs_resolve=#true))
     end
     return items
