@@ -138,7 +138,7 @@ function runserver(callback, in::IO, out::IO;
                     message="Received request after a shutdown request requested")))
             else
                 # handle general messages
-                @invokelatest handle_message(state, msg)
+                handle_message(state, msg)
             end
         end
     catch err
@@ -156,7 +156,9 @@ end
 function handle_message(state::ServerState, msg)
     if JETLS_DEV_MODE
         try
-            return _handle_message(state, msg)
+            # `@invokelatest` for allowing changes maded by Revise to be reflected without
+            # terminating the `runserver` loop
+            return @invokelatest _handle_message(state, msg)
         catch err
             @error "Message handling failed for" typeof(err)
             Base.display_error(stderr, err, catch_backtrace())
