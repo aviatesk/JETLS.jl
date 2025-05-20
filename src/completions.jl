@@ -11,10 +11,17 @@ function completion_is(ci::CompletionItem, ckind::Symbol)
         (ci.labelDetails.description === "argument" && ckind === :local)
 end
 
-function get_sort_text(ckind::Symbol, offset::Int)
-    # show non-global completions first in the list
-    n = ckind === :global ? (10000000 + offset) : offset
-    lpad(n, 8, '0')
+let sort_texts = Dict{Int, String}()
+    for i = 1:1000
+        sort_texts[i] = lpad(i, 4, '0')
+    end
+    _, max_sort_text = maximum(sort_texts)
+    global function get_sort_text(ckind::Symbol, offset::Int)
+        if ckind === :global
+            return max_sort_text
+        end
+        return get(sort_texts, offset, max_sort_text)
+    end
 end
 
 # local completions
