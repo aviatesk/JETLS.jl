@@ -113,7 +113,6 @@ function get_symbols!(ex::JL.SyntaxTree, symbols::Vector{DocumentSymbol})
             symbol = _DocumentSymbol(b.name,
                                      JL.binding_ex(ctx, b.id),
                                      SymbolKind.Variable)
-            symbol in symbols && continue  # Only include the same symbol once.
             push!(symbols, symbol)
         end
     end
@@ -215,11 +214,6 @@ function get_function_name(ex::JL.SyntaxTree)
         return get_function_name(call_ex)
     end
 end
-
-# This is necessary in order to avoid symbol clutter. Two symbols are "equal" if they
-# have the same name and the same kind.
-Base.:(==)(s1::DocumentSymbol, s2::DocumentSymbol) =
-    s1.name == s2.name && s1.kind == s2.kind
 
 # Request handler
 # ===============
