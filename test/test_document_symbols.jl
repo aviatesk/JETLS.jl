@@ -18,7 +18,7 @@ function test_symbol(s::DocumentSymbol,
     @test s.range.start == Position(; line = start_pos[1], character = start_pos[2])
     @test s.range.var"end" == Position(; line = end_pos[1], character = end_pos[2])
     if children_len == 0
-        @test isnothing(s.children)
+        @test isnothing(s.children) || isempty(s.children)
     else
         @test !isnothing(s.children)
         @test length(s.children) == children_len
@@ -41,7 +41,7 @@ end
 
 @testset "Simple expressions" begin
     src = """
-    function f(x::Int)
+    function f(x::Int)::Int
         y = 1
         return x + y
     end
@@ -56,6 +56,12 @@ end
     y_symbol = f_symbol.children[2]
     test_symbol(x_symbol, "x", SymbolKind.Variable, (0, 11), (0, 12), 0)
     test_symbol(y_symbol, "y", SymbolKind.Variable, (1, 4), (1, 5), 0)
+
+    src = "function f end"
+    st = JS.parsestmt(JL.SyntaxTree, src)
+    symbols = get_symbols(st)
+    @test length(symbols) == 1
+    test_symbol(symbols[1], "f", SymbolKind.Function, (0, 0), (0, 14), 0)
 
     src = """
     struct S{T}
@@ -78,7 +84,8 @@ end
 
     src = """
     macro m(x)
-        return :( println(x) )
+        e = :( println(\$x) )
+        esc(e)
     end
     """
     st = JS.parsestmt(JL.SyntaxTree, src)
@@ -86,9 +93,11 @@ end
     @test length(symbols) == 1
     m_symbol = symbols[1]
     # TODO: Fix after changing the kind to something more appropriate?
-    test_symbol_end(m_symbol, "m", SymbolKind.Function, (0, 0), (2, 2), 1)
+    test_symbol_end(m_symbol, "m", SymbolKind.Function, (0, 0), (3, 2), 2)
     x_symbol = m_symbol.children[1]
     test_symbol(x_symbol, "x", SymbolKind.Variable, (0, 8), (0, 9), 0)
+    e_symbol = m_symbol.children[2]
+    test_symbol(e_symbol, "e", SymbolKind.Variable, (1, 4), (1, 5), 0)
 
     src = """
     if true
