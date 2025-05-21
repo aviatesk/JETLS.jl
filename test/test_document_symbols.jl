@@ -46,8 +46,7 @@ end
         return x + y
     end
     """
-    st = JS.parsestmt(JL.SyntaxTree, src)
-    symbols = get_symbols(st)
+    symbols = get_symbols(JS.parsestmt(JL.SyntaxTree, src))
     @test length(symbols) == 1
     f_symbol = symbols[1]
     test_symbol_end(f_symbol, "f", SymbolKind.Function, (0, 0), (3, 2), 2)
@@ -58,8 +57,7 @@ end
     test_symbol(y_symbol, "y", SymbolKind.Variable, (1, 4), (1, 5), 0)
 
     src = "function f end"
-    st = JS.parsestmt(JL.SyntaxTree, src)
-    symbols = get_symbols(st)
+    symbols = get_symbols(JS.parsestmt(JL.SyntaxTree, src))
     @test length(symbols) == 1
     test_symbol(symbols[1], "f", SymbolKind.Function, (0, 0), (0, 14), 0)
 
@@ -68,8 +66,7 @@ end
         x::T
     end
     """
-    st = JS.parsestmt(JL.SyntaxTree, src)
-    symbols = get_symbols(st)
+    symbols = get_symbols(JS.parsestmt(JL.SyntaxTree, src))
     @test length(symbols) == 1
     s_symbol = symbols[1]
     # TODO: Should have 2 children, but fields are duplicated for some reason.
@@ -88,8 +85,7 @@ end
         esc(e)
     end
     """
-    st = JS.parsestmt(JL.SyntaxTree, src)
-    symbols = get_symbols(st)
+    symbols = get_symbols(JS.parsestmt(JL.SyntaxTree, src))
     @test length(symbols) == 1
     m_symbol = symbols[1]
     # TODO: Fix after changing the kind to something more appropriate?
@@ -106,8 +102,7 @@ end
         a = 2
     end
     """
-    st = JS.parsestmt(JL.SyntaxTree, src)
-    symbols = get_symbols(st)
+    symbols = get_symbols(JS.parsestmt(JL.SyntaxTree, src))
     # The only symbol is `a`.
     @test length(symbols) == 1
     test_symbol(symbols[1], "a", SymbolKind.Variable, (1, 4), (1, 5), 0)
@@ -125,8 +120,7 @@ end
         end
     end
     """
-    st = JS.parseall(JL.SyntaxTree, src)
-    symbols = get_symbols(st)
+    symbols = get_symbols(JS.parseall(JL.SyntaxTree, src))
     @test length(symbols) == 2
     g_symbol = symbols[1]
     test_symbol(g_symbol, "g", SymbolKind.Variable, (0, 0), (0, 1), 0)
