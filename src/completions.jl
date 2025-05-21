@@ -16,8 +16,8 @@ let sort_texts = Dict{Int, String}()
         sort_texts[i] = lpad(i, 4, '0')
     end
     _, max_sort_text = maximum(sort_texts)
-    global function get_sort_text(ckind::Symbol, offset::Int)
-        if ckind === :global
+    global function get_sort_text(offset::Int, isglobal::Bool)
+        if isglobal
             return max_sort_text
         end
         return get(sort_texts, offset, max_sort_text)
@@ -122,6 +122,15 @@ function remove_macrocalls(st0::JL.SyntaxTree)
     end
 end
 
+let lowering_module = Module()
+    global function jl_lower_for_completion(st0)
+        ctx1, st1 = JL.expand_forms_1(lowering_module, remove_macrocalls(st0));
+        ctx2, st2 = JL.expand_forms_2(ctx1, st1);
+        ctx3, st3 = JL.resolve_scopes(ctx2, st2);
+        return ctx3, st2
+    end
+end
+
 """
 Find the list of (BindingInfo, SyntaxTree, distance::Int) to suggest as
 completions given a parsed SyntaxTree and a cursor position.
@@ -135,9 +144,12 @@ function cursor_bindings(st0_top::JL.SyntaxTree, b_top::Int)
     if isnothing(st0)
         return nothing # nothing we can lower
     end
-    ctx1, st1 = JL.expand_forms_1(Module(), remove_macrocalls(st0));
-    ctx2, st2 = JL.expand_forms_2(ctx1, st1);
-    ctx3, st3 = JL.resolve_scopes(ctx2, st2);
+    ctx3, st2 = try
+        jl_lower_for_completion(st0)
+    catch err
+        # @info "Error in lowering" err
+        return nothing # lowering failed, e.g. because of incomplete input
+    end
 
     # Note that ctx.bindings are only available after resolve_scopes, and
     # scope-blocks are not present in st3 after resolve_scopes.
@@ -181,7 +193,7 @@ function cursor_bindings(st0_top::JL.SyntaxTree, b_top::Int)
             || bdistances[i] < bdistances[prev]
             || binfo.kind === :static_parameter)
             seen[binfo.name] = i
-        else
+        elseif JETLS_DEV_MODE
             @info "Found two bindings with the same name:" binfo bscopeinfos[prev][1]
         end
     end
@@ -253,7 +265,7 @@ function to_completion(binding::JL.BindingInfo,
         kind = label_kind,
         detail,
         documentation,
-        sortText = get_sort_text(:local, sort_offset),
+        sortText = get_sort_text(sort_offset, #=isglobal=#false),
         data = CompletionData(#=needs_resolve=#false))
 end
 
@@ -261,6 +273,8 @@ function local_completions!(items::Dict{String, CompletionItem},
                             s::ServerState, uri::URI, pos::Position)
     fi = get_fileinfo(s, uri)
     fi === nothing && return items
+    # NOTE don't bail out even if `length(fi.parsed_stream.diagnostics) ≠ 0`
+    # so that we can get some completions even for incomplete code
     st0 = JS.build_tree(JL.SyntaxTree, fi.parsed_stream)
     cbs = cursor_bindings(st0, xy_to_offset(fi, pos))
     cbs === nothing && return items
@@ -308,7 +322,7 @@ end
 
 function global_completions!(items::Dict{String, CompletionItem}, state::ServerState, uri::URI, pos::Position)
     mod = find_file_module!(state, uri, pos)
-    for name in names(mod; all=true, imported=true, usings=true)
+    for name in @invokelatest(names(mod; all=true, imported=true, usings=true))::Vector{Symbol}
         s = String(name)
         startswith(s, "#") && continue
         items[s] = CompletionItem(;
@@ -317,7 +331,7 @@ function global_completions!(items::Dict{String, CompletionItem}, state::ServerS
                 description = "global"),
             kind = CompletionItemKind.Variable,
             documentation = nothing,
-            sortText = get_sort_text(:global, 0),
+            sortText = get_sort_text(0, #=isglobal=#true),
             data = CompletionData(#=needs_resolve=#true))
     end
     return items

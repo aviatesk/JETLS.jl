@@ -1,0 +1,3 @@
+# disable the `try/catch` in `handle_message` when testing
+[JETLS]
+JETLS_DEV_MODE = false

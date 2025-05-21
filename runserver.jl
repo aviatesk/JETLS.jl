@@ -6,6 +6,7 @@ let old_env = Pkg.project().path
     try
         Pkg.activate(@__DIR__)
 
+        # TODO load Revise only when `JETLS_DEV_MODE` is true
         # load Revise with JuliaInterpreter used by JETLS
         try
             using Revise
@@ -26,7 +27,7 @@ let old_env = Pkg.project().path
     end
 end
 
-function in_callback(@nospecialize msg)
-    revise() # TODO only in debug mode
+function in_callback(@nospecialize(msg),)
+    JETLS.JETLS_DEV_MODE && Revise.revise()
 end
 runserver(stdin, stdout; in_callback)

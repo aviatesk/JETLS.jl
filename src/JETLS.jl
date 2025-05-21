@@ -1,5 +1,13 @@
 module JETLS
 
+using Preferences: Preferences
+# TODO turn off `JETLS_DEV_MODE` by default when releasing
+const JETLS_DEV_MODE = Preferences.@load_preference("JETLS_DEV_MODE", true)
+
+function __init__()
+    @info "Running JETLS with" JETLS_DEV_MODE
+end
+
 export runserver
 function runserver end
 
@@ -112,7 +120,12 @@ function runserver(callback, in::IO, out::IO;
     try
         for msg in endpoint
             in_callback(msg)
-            if msg isa ShutdownRequest
+            # handle lifecycle-related messages
+            if msg isa InitializeRequest
+                handle_InitializeRequest(state, msg)
+            elseif msg isa InitializedNotification
+                continue
+            elseif msg isa ShutdownRequest
                 shutdown_requested = true
                 send(ShutdownResponse(; id = msg.id, result = null))
             elseif msg isa ExitNotification
@@ -124,7 +137,8 @@ function runserver(callback, in::IO, out::IO;
                     code=ErrorCodes.InvalidRequest,
                     message="Received request after a shutdown request requested")))
             else
-                @invokelatest handle_message(state, msg)
+                # handle general messages
+                handle_message(state, msg)
             end
         end
     catch err
@@ -140,11 +154,23 @@ function runserver(callback, in::IO, out::IO;
 end
 
 function handle_message(state::ServerState, msg)
-    if msg isa InitializeRequest
-        return handle_InitializeRequest(state, msg)
-    elseif msg isa InitializedNotification
-        return nothing
-    elseif msg isa DidOpenTextDocumentNotification
+    if JETLS_DEV_MODE
+        try
+            # `@invokelatest` for allowing changes maded by Revise to be reflected without
+            # terminating the `runserver` loop
+            return @invokelatest _handle_message(state, msg)
+        catch err
+            @error "Message handling failed for" typeof(err)
+            Base.display_error(stderr, err, catch_backtrace())
+            return nothing
+        end
+    else
+        return _handle_message(state, msg)
+    end
+end
+
+function _handle_message(state::ServerState, msg)
+    if msg isa DidOpenTextDocumentNotification
         return handle_DidOpenTextDocumentNotification(state, msg)
     elseif msg isa DidChangeTextDocumentNotification
         return handle_DidChangeTextDocumentNotification(state, msg)
@@ -155,21 +181,9 @@ function handle_message(state::ServerState, msg)
     elseif msg isa DocumentDiagnosticRequest || msg isa WorkspaceDiagnosticRequest
         @assert false "Document and workspace diagnostics are not enabled"
     elseif msg isa CompletionRequest
-        try
-            return handle_CompletionRequest(state, msg)
-        catch e
-            @info "Completion request failed:"
-            Base.display_error(stderr, e, catch_backtrace())
-        end
-        return nothing
+        return handle_CompletionRequest(state, msg)
     elseif msg isa CompletionResolveRequest
-        try
-            return handle_CompletionResolveRequest(state, msg)
-        catch e
-            @info "Completion resolve request failed:"
-            Base.display_error(stderr, e, catch_backtrace())
-        end
-        return nothing
+        return handle_CompletionResolveRequest(state, msg)
     else
         @warn "Unhandled message" msg
         return nothing

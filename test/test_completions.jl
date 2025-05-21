@@ -5,12 +5,15 @@ using JETLS
 using JETLS: JL, JS
 using JETLS: cursor_bindings, to_completion, CompletionItem, completion_is
 
-function get_local_completions(s::String, b::Int)
+function get_cursor_bindings(s::String, b::Int)
     ps = JS.ParseStream(s)
     JS.parse!(ps; rule=:all)
     st0 = JS.build_tree(JL.SyntaxTree, ps)
-    out = cursor_bindings(st0, b)
-    map(o->to_completion(o[1], o[2], o[3]), out)
+    return cursor_bindings(st0, b)
+end
+
+function get_local_completions(s::String, b::Int)
+    return map(o->to_completion(o[1], o[2], o[3]), get_cursor_bindings(s, b))
 end
 
 function cv_has(cs::Vector{CompletionItem}, expected, kind=nothing)
@@ -179,6 +182,23 @@ let code = """
     test_cv(code, "#=cursor=#", "x")
 end
 
+# local completion for incomplete code shouldn't crash
+let code = """
+    function fo#=cursor=#
+    """
+    b = first(findfirst("#=cursor=#", code))
+    @test get_cursor_bindings(code, b) === nothing
+end
+let # XXX somehow wrapping within `module A ... end` is necessary to get `xx` completion for this incomplete code
+    s = """
+    module A
+    function foo(xx, y=x#=cursor=#)
+    end
+    """
+    b = first(findfirst("#=cursor=#", s))
+    test_cv(s, b, "xx", kind=:local)
+end
+
 # get_completion_items
 # ====================
 
@@ -229,8 +249,7 @@ end
     uri = JETLS.filename2uri(filename)
     JETLS.cache_file_info!(state, uri, #=version=#1, text, filename)
     JETLS.initiate_context!(state, uri)
-    # XXX `@invokelatest` is required for `names` to return all the symbols of the `Foo`, in particular `:Bar`
-    let items = @invokelatest JETLS.get_completion_items(state, uri, pos1)
+    let items = JETLS.get_completion_items(state, uri, pos1)
         @test any(items) do item
             item.label == "bar"
         end
