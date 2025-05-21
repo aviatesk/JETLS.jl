@@ -7,8 +7,8 @@ let old_env = Pkg.project().path
         Pkg.activate(@__DIR__)
 
         # TODO load Revise only when `JETLS_DEV_MODE` is true
-        # load Revise with JuliaInterpreter used by JETLS
         try
+            # load Revise with JuliaInterpreter used by JETLS
             using Revise
         catch err
             @warn "Revise not found"
@@ -30,4 +30,15 @@ end
 function in_callback(@nospecialize(msg),)
     JETLS.JETLS_DEV_MODE && Revise.revise()
 end
-runserver(stdin, stdout; in_callback)
+let res = runserver(stdin, stdout) do state::Symbol, msg
+        @nospecialize msg
+        if JETLS.JETLS_DEV_MODE
+            # allow Revise to apply changes with the dev mode enabled
+            if state === :received
+                Revise.revise()
+            end
+        end
+    end
+    @info "JETLS server stopped" res.exit_code
+    exit(res.exit_code)
+end

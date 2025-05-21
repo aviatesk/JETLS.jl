@@ -3,7 +3,7 @@ module test_full_lifecycle
 include("setup.jl")
 let rootPath = normpath(FIXTURES_DIR, "TestFullLifecycle")
 
-    withserver(; rootPath) do in, out, in_queue, out_queue, id_counter
+    withserver(; rootPath) do in, _, _, sent_queue, id_counter
         filepath = normpath(rootPath, "src", "TestFullLifecycle.jl")
         uri = string(JETLS.URIs2.filepath2uri(filepath))
 
@@ -16,7 +16,7 @@ let rootPath = normpath(FIXTURES_DIR, "TestFullLifecycle")
                         languageId = "julia",
                         version = 1,
                         text = read(filepath, String)))))
-        out = take_with_timeout!(out_queue; limit=300) # wait for 5 minutes
+        out = take_with_timeout!(sent_queue; limit=300) # wait for 5 minutes
         @test out isa PublishDiagnosticsNotification
 
         id = id_counter[] += 1
@@ -26,7 +26,7 @@ let rootPath = normpath(FIXTURES_DIR, "TestFullLifecycle")
                 params =  CompletionParams(;
                     textDocument = TextDocumentIdentifier(; uri),
                     position = Position(; line = 7, character = 4))))
-        out = take_with_timeout!(out_queue)
+        out = take_with_timeout!(sent_queue)
         @test out isa ResponseMessage
         @test out.id == id
         result = out.result
@@ -44,7 +44,7 @@ let rootPath = normpath(FIXTURES_DIR, "TestFullLifecycle")
                     CompletionResolveRequest(;
                         id,
                         params =  item))
-                out = take_with_timeout!(out_queue)
+                out = take_with_timeout!(sent_queue)
                 @test out isa ResponseMessage
                 @test out.id == id
                 result = out.result

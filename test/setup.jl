@@ -11,15 +11,16 @@ function withserver(f;
                     rootUri="file://$rootPath",)
     in = Base.BufferStream()
     out = Base.BufferStream()
-    in_queue = Channel{Any}(Inf)
-    out_queue = Channel{Any}(Inf)
-    in_callback = function (@nospecialize(msg),)
-        put!(in_queue, msg)
+    received_queue = Channel{Any}(Inf)
+    sent_queue = Channel{Any}(Inf)
+    t = @async runserver(in, out) do state::Symbol, msg
+        @nospecialize msg
+        if state === :received
+            put!(received_queue, msg)
+        elseif state === :sent
+            put!(sent_queue, msg)
+        end
     end
-    out_callback = function (@nospecialize(msg),)
-        put!(out_queue, msg)
-    end
-    t = @async runserver(in, out; in_callback, out_callback, shutdown_really=false)
     id_counter = Ref(0)
     old_env = Pkg.project().path
     Pkg.activate(rootPath; io=devnull)
@@ -32,17 +33,17 @@ function withserver(f;
                     rootPath,
                     rootUri,
                     capabilities=ClientCapabilities())))
-        @test take_with_timeout!(out_queue).id == id
+        @test take_with_timeout!(sent_queue).id == id
     end
     try
-        return f(in, out, in_queue, out_queue, id_counter)
+        return f(in, out, received_queue, sent_queue, id_counter)
     finally
         Pkg.activate(old_env; io=devnull)
         let id = id_counter[] += 1
             writemsg(in,
                 ShutdownRequest(;
                     id))
-            res = take_with_timeout!(out_queue)
+            res = take_with_timeout!(sent_queue)
             @test res.id == id
             # make sure the `ShutdownResponse` follows the `ResponseMessage` specification:
             # https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#responseMessage
@@ -52,10 +53,10 @@ function withserver(f;
         end
         writemsg(in,
             ExitNotification())
-        @test take_with_timeout!(out_queue) === nothing
         result = fetch(t)
-        @test result isa JETLS.JSONRPC.Endpoint
-        @test result.state === :closed
+        @test result isa @NamedTuple{exit_code::Int, endpoint::JETLS.JSONRPC.Endpoint}
+        @test result.exit_code == 0
+        @test result.endpoint.state === :closed
     end
 end
 

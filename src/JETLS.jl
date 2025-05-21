@@ -103,23 +103,20 @@ function (include_callback::IncludeCallback)(filepath::String)
     return read(filepath, String)
 end
 
-runserver(in::IO, out::IO; kwargs...) = runserver((msg, res)->nothing, in, out; kwargs...)
-function runserver(callback, in::IO, out::IO;
-                   in_callback = Returns(nothing),
-                   out_callback = Returns(nothing),
-                   shutdown_really::Bool=true)
+runserver(in::IO, out::IO) = runserver(Returns(nothing), in, out)
+function runserver(callback, in::IO, out::IO)
     endpoint = Endpoint(in, out)
     function send(@nospecialize msg)
         JSONRPC.send(endpoint, msg)
-        out_callback(msg)
+        callback(:sent, msg)
         nothing
     end
     state = ServerState(send)
     shutdown_requested = false
-    local exit_code::Int
+    local exit_code::Int = 1
     try
         for msg in endpoint
-            in_callback(msg)
+            callback(:received, msg)
             # handle lifecycle-related messages
             if msg isa InitializeRequest
                 handle_InitializeRequest(state, msg)
@@ -130,7 +127,6 @@ function runserver(callback, in::IO, out::IO;
                 send(ShutdownResponse(; id = msg.id, result = null))
             elseif msg isa ExitNotification
                 exit_code = !shutdown_requested
-                out_callback(nothing) # for testing purpose
                 break
             elseif shutdown_requested
                 send(ResponseMessage(; id = msg.id, error=ResponseError(;
@@ -142,15 +138,12 @@ function runserver(callback, in::IO, out::IO;
             end
         end
     catch err
-        @error "Message handling failed" err
+        @error "Message handling loop failed"
         Base.display_error(stderr, err, catch_backtrace())
     finally
         close(endpoint)
     end
-    if @isdefined(exit_code) && shutdown_really
-        exit(exit_code)
-    end
-    return endpoint
+    return (; exit_code, endpoint)
 end
 
 function handle_message(state::ServerState, msg)
@@ -160,7 +153,7 @@ function handle_message(state::ServerState, msg)
             # terminating the `runserver` loop
             return @invokelatest _handle_message(state, msg)
         catch err
-            @error "Message handling failed for" typeof(err)
+            @error "Message handling failed for" typeof(msg)
             Base.display_error(stderr, err, catch_backtrace())
             return nothing
         end

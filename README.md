@@ -53,7 +53,7 @@ listed in the `[sources]` section and edit their source code while developing JE
 In particular, to have Revise immediately pick up changes made to those packages,
 we may need to keep them in locally editable directories.
 However, we cannot run `Pkg.develop` directly on packages listed in the `[sources]` section, e.g.:
-```julia
+```julia-repl
 julia> Pkg.develop("JET")
 ERROR: `path` and `url` are conflicting specifications
 ...
@@ -74,10 +74,10 @@ When this mode is enabled, the language server enables several features to aid i
   showing error messages and stack traces in the output panel
 
 You can control this setting through Preferences.jl's mechanism:
-```julia
-using Preferences
-# Disable development mode
-Preferences.set_preferences!("JETLS", "JETLS_DEV_MODE" => false; force=true)
+```julia-repl
+julia> using Preferences
+
+julia> Preferences.set_preferences!("JETLS", "JETLS_DEV_MODE" => false; force=true) # disable the dev mode
 ```
 
 `JETLS_DEV_MODE` is enabled by default when running the server at this moment of prototyping,

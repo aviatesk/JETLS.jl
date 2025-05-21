@@ -13,7 +13,7 @@ mutable struct Endpoint
     write_task::Task
     state::Symbol
 
-    function Endpoint(in::IO, out::IO, err_handler = nothing)
+    function Endpoint(err_handler, in::IO, out::IO)
         in_msg_queue = Channel{Any}(Inf)
         out_msg_queue = Channel{Any}(Inf)
 
@@ -24,7 +24,7 @@ mutable struct Endpoint
                 put!(in_msg_queue, msg)
             end
         catch err
-            handle_err(err, err_handler)
+            err_handler(#=isread=#true, err, catch_backtrace())
         end
 
         write_task = @async try
@@ -38,18 +38,28 @@ mutable struct Endpoint
                 end
             end
         catch err
-            handle_err(err, err_handler)
+            err_handler(#=isread=#false, err, catch_backtrace())
         end
 
         return new(in_msg_queue, out_msg_queue, read_task, write_task, :open)
     end
 end
 
+function Endpoint(in::IO, out::IO)
+    Endpoint(in, out) do isread::Bool, err, bt
+        @nospecialize err
+        @error "Error in Endpoint $(isread ? "reading" : "writing") task"
+        Base.display_error(stderr, err, bt)
+    end
+end
+
+const Parsed = @NamedTuple{method::Union{Nothing,String}}
+
 function readmsg(io::IO)
     msg_str = read_transport_layer(io)
     msg_str === nothing && return nothing
     parsed = JSON3.read(msg_str, Parsed)
-    return reparse(parsed, msg_str)
+    return reparse_msg_str(parsed, msg_str)
 end
 
 function read_transport_layer(io::IO)
@@ -72,11 +82,11 @@ function read_transport_layer(io::IO)
     return String(read(io, message_length))
 end
 
-const Parsed = @NamedTuple{id::Union{Nothing,Int}, method::Union{Nothing,String}}
-function reparse(parsed::Parsed, msg_str::String)
-    if parsed.method !== nothing
-        if haskey(method_dispatcher, parsed.method)
-            return JSON3.read(msg_str, method_dispatcher[parsed.method])
+function reparse_msg_str(parsed::Parsed, msg_str::String)
+    parsed_method = parsed.method
+    if parsed_method !== nothing
+        if haskey(method_dispatcher, parsed_method)
+            return JSON3.read(msg_str, method_dispatcher[parsed_method])
         end
         return JSON3.read(msg_str, Dict{Symbol,Any})
     else # TODO parse to ResponseMessage?
@@ -96,16 +106,6 @@ function write_transport_layer(io::IO, response::String)
     write(io, response_utf8)
     flush(io)
     return n
-end
-
-function handle_err(err, handler)
-    @nospecialize err handler
-    bt = catch_backtrace()
-    if handler !== nothing
-        handler(err, bt)
-    else
-        Base.display_error(stderr, err, bt)
-    end
 end
 
 function Base.close(endpoint::Endpoint)
