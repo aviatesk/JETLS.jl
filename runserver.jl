@@ -27,9 +27,6 @@ let old_env = Pkg.project().path
     end
 end
 
-function in_callback(@nospecialize(msg),)
-    JETLS.JETLS_DEV_MODE && Revise.revise()
-end
 let res = runserver(stdin, stdout) do state::Symbol, msg
         @nospecialize msg
         if JETLS.JETLS_DEV_MODE
