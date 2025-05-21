@@ -1,4 +1,3 @@
-# TODO: Remove unnecessary kinds?
 """
 A symbol kind.
 """
