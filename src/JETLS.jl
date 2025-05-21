@@ -9,7 +9,6 @@ function __init__()
 end
 
 export runserver
-function runserver end
 
 include("URIs2/URIs2.jl")
 using .URIs2
