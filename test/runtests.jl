@@ -9,5 +9,6 @@ end
 @testset "JETLS" begin
     @testset "utils" include("test_utils.jl")
     @testset "completions" include("test_completions.jl")
+    @testset "document symbols" include("test_document_symbols.jl")
     @testset "full lifecycle" include("test_full_lifecycle.jl")
 end
