@@ -18,6 +18,9 @@
     """
     textDocumentSync::Union{Union{TextDocumentSyncOptions, TextDocumentSyncKind.Ty}, Nothing} = nothing
 
+    """
+    The server provides document symbol support.
+    """
     documentSymbolProvider::Union{Union{Bool, DocumentSymbolOptions}, Nothing} = nothing
 
     """

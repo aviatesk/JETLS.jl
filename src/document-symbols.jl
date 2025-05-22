@@ -299,10 +299,8 @@ function handle_DocumentSymbolRequest(state::ServerState, msg::DocumentSymbolReq
     file_uri = URI(msg.params.textDocument.uri)
     file_info = get_fileinfo(state, file_uri)
     isnothing(file_info) &&
-        # TODO: Send error/warning/diagnostic?
         return state.send(DocumentSymbolResponse(; id = msg.id, result = DocumentSymbol[]))
     stream = file_info.parsed_stream
-    # TODO: Guard for malformed stream.
 
     ex = JS.build_tree(JL.SyntaxTree, stream)
     symbols = DocumentSymbol[]
