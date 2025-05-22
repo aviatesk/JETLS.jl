@@ -7,13 +7,16 @@ using .JS: children, kind
 Search for all symbols in a `SyntaxTree` and store them as an array of
 `LSP.DocumentSymbol`s.
 """
+function get_toplevel_symbols!(ex::JL.SyntaxTree, symbols::Vector{DocumentSymbol})
+    for c in children(ex)
+        get_symbols!(c, symbols)
+    end
+    return symbols
+end
+
 function get_symbols!(ex::JL.SyntaxTree, symbols::Vector{DocumentSymbol})
     k = kind(ex)
-    if k === K"toplevel"
-        for c in children(ex)
-            get_symbols!(c, symbols)
-        end
-    elseif k === K"module"
+    if k === K"module"
         module_symbols = DocumentSymbol[]
         for c in children(children(ex)[2])
             get_symbols!(c, module_symbols)
@@ -24,6 +27,93 @@ function get_symbols!(ex::JL.SyntaxTree, symbols::Vector{DocumentSymbol})
                                         SymbolKind.Module,
                                         module_symbols)
         push!(symbols, module_symbol)
+    elseif k === K"function" || k === K"macro"
+        # Since there is no special kind for macros, macro definitions can be treated like
+        # function definitions.
+        fun_children = DocumentSymbol[]
+
+        fun_call_ex = ex[1]
+        type_ex = nothing
+        if kind(fun_call_ex) === K"::"
+            type_ex = fun_call_ex[2]
+            fun_call_ex = fun_call_ex[1]
+        end
+
+        # Get argument symbols.
+        arg_exs = JL.SyntaxTree[]
+        if kind(fun_call_ex) === K"call"
+            push_args!(arg_exs, fun_call_ex, 2)
+        elseif kind(fun_call_ex) === K"tuple"  # Anonymous function.
+            push_args!(arg_exs, fun_call_ex, 1)
+        end
+        for arg_ex in arg_exs
+            # TODO: Should function args have a different kind than `SymbolKind.Variable`?
+            get_symbols!(arg_ex, fun_children)
+        end
+
+        # Get body symbols.
+        if length(children(ex)) > 1
+            body_exs = kind(ex[2]) === K"block" ? children(ex[2]) : [ex[2]]
+            for body_ex in body_exs
+                get_symbols!(body_ex, fun_children)
+            end
+        end
+
+        # Create the return type symbol, if any.
+        if !isnothing(type_ex)
+            type_symbol = _DocumentSymbol(get_type_name(type_ex),
+                                          type_ex,
+                                          SymbolKind.Struct)
+            push!(fun_children, type_symbol)
+        end
+
+        # Create the function symbol.
+        name = get_function_name(fun_call_ex)
+        if k === K"macro"
+            name = "@" * name
+        end
+        fun_symbol = _DocumentSymbol(name,
+                                     ex,
+                                     SymbolKind.Function,
+                                     fun_children)
+        push!(symbols, fun_symbol)
+
+
+    elseif k === K"call"
+        if JS.is_infix_op_call(ex)
+            fun_symbol = _DocumentSymbol(ex[2].name_val,
+                                         ex[2],
+                                         SymbolKind.Function)
+            push!(symbols, fun_symbol)
+            args = [ex[1], ex[3:end]...]
+            for arg in args
+                get_symbols!(arg, symbols)
+            end
+        else
+            if JS.is_identifier(ex[1])
+                fun_symbol = _DocumentSymbol(ex[1].name_val,
+                                             ex[1],
+                                             SymbolKind.Function)
+                push!(symbols, fun_symbol)
+            end
+            if length(children(ex)) >= 2
+                for arg in ex[2:end]
+                    get_symbols!(arg, symbols)
+                end
+            end
+        end
+    elseif k === K"macrocall"
+        # TODO: For now, macro calls are are treated similarly to function calls. This
+        #       should be changed after `JuliaLowering` handles macro expansion.
+        macro_symbol = _DocumentSymbol(ex[1].name_val,
+                                       ex[1],
+                                       SymbolKind.Function)
+        push!(symbols, macro_symbol)
+        if length(children(ex)) > 1
+            for c in ex[2:end]
+                get_symbols!(c, symbols)
+            end
+        end
     elseif k === K"struct"
         binfos, ctx = lower_and_get_bindings(ex)
         struct_children = DocumentSymbol[]
@@ -53,60 +143,28 @@ function get_symbols!(ex::JL.SyntaxTree, symbols::Vector{DocumentSymbol})
                                         SymbolKind.Struct,
                                         struct_children)
         push!(symbols, struct_symbol)
-    elseif k === K"function"
-        binfos, ctx = lower_and_get_bindings(ex)
-        fun_children = DocumentSymbol[]
-
-        arg_bindings = filter(binfo -> binfo.kind === :argument, binfos)
-        for ab in arg_bindings
-            arg_symbol = _DocumentSymbol(ab.name,
-                                         JL.binding_ex(ctx, ab.id),
-                                         SymbolKind.Variable)
-            push!(fun_children, arg_symbol)
+    elseif k === K"::"
+        if JS.is_prefix_op_call(ex)
+            type_symbol = _DocumentSymbol(get_type_name(ex[1]),
+                                          ex[1],
+                                          SymbolKind.Struct)
+            push!(symbols, type_symbol)
+        else
+            get_symbols!(ex[1], symbols)
+            type_symbol = _DocumentSymbol(get_type_name(ex[2]),
+                                          ex[2],
+                                          SymbolKind.Struct)
+            push!(symbols, type_symbol)
         end
-        local_bindings = filter(binfo -> binfo.kind === :local, binfos)
-        for lb in local_bindings
-            local_symbol = _DocumentSymbol(lb.name,
-                                           JL.binding_ex(ctx, lb.id),
-                                           SymbolKind.Variable)
-            push!(fun_children, local_symbol)
+    elseif k === K"if" || k === K"block"
+        for c in children(ex)
+            get_symbols!(c, symbols)
         end
-
-        fun_call_ex = children(ex)[1]
-        fun_name = get_function_name(fun_call_ex)
-        fun_symbol = _DocumentSymbol(fun_name,
-                                     ex,
-                                     SymbolKind.Function,
-                                     fun_children)
-        push!(symbols, fun_symbol)
-    elseif k === K"macro"
-        binfos, ctx = lower_and_get_bindings(ex)
-        macro_children = DocumentSymbol[]
-
-        arg_bindings =
-            filter(binfo -> binfo.kind === :argument && binfo.name != "__context__", binfos)
-        for ab in arg_bindings
-            arg_symbol = _DocumentSymbol(ab.name,
-                                         JL.binding_ex(ctx, ab.id),
-                                         SymbolKind.Variable)
-            push!(macro_children, arg_symbol)
-        end
-        local_bindings = filter(binfo -> binfo.kind === :local, binfos)
-        for lb in local_bindings
-            local_symbol = _DocumentSymbol(lb.name,
-                                           JL.binding_ex(ctx, lb.id),
-                                           SymbolKind.Variable)
-            push!(macro_children, local_symbol)
-        end
-
-        # TODO: Is this correct for any macro definition?
-        # TODO: Not a function. What is the most appropriate kind?
-        macro_name = children(children(ex)[1])[1].name_val
-        macro_symbol = _DocumentSymbol(macro_name,
-                                       ex,
-                                       SymbolKind.Function,
-                                       macro_children)
-        push!(symbols, macro_symbol)
+    elseif k === K"for" || k === K"while" || k === K"="
+        get_symbols!(ex[1], symbols)
+        get_symbols!(ex[2], symbols)
+    elseif k === K"const" || k === K"return"
+        get_symbols!(ex[1], symbols)
     else
         binfos, ctx = lower_and_get_bindings(ex)
         for b in binfos
@@ -116,7 +174,6 @@ function get_symbols!(ex::JL.SyntaxTree, symbols::Vector{DocumentSymbol})
             push!(symbols, symbol)
         end
     end
-    # TODO: Treat `const` specially (use the `Constant` kind)?
 
     return symbols
 end
@@ -215,6 +272,26 @@ function get_function_name(ex::JL.SyntaxTree)
     end
 end
 
+function push_args!(arg_exs, fun_call_ex, start)
+    for arg_ex in fun_call_ex[start:end]
+        kind(arg_ex) === K"parameters" ?
+            push!(arg_exs, arg_ex[1])  :
+            push!(arg_exs, arg_ex)
+    end
+    return arg_exs
+end
+
+"""
+Get the type name from the rhs of a `::` node.
+  - `::T`      -> "T"
+  - `::T1{T2}` -> "T1{T2}"
+"""
+function get_type_name(ex::JL.SyntaxTree)
+    return JS.is_identifier(ex) ?
+        ex.name_val             :
+        ex[1].name_val * "{" * get_type_name(ex[2]) * "}"
+end
+
 # Request handler
 # ===============
 
@@ -229,7 +306,7 @@ function handle_DocumentSymbolRequest(state::ServerState, msg::DocumentSymbolReq
 
     ex = JS.build_tree(JL.SyntaxTree, stream)
     symbols = DocumentSymbol[]
-    get_symbols!(ex, symbols)
+    get_toplevel_symbols!(ex, symbols)
 
     res = DocumentSymbolResponse(; id = msg.id, result = symbols)
     return state.send(res)
