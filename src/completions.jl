@@ -313,11 +313,12 @@ function find_file_module(state::ServerState, uri::URI, pos::Position)
     haskey(context.analyzed_file_infos, uri) || return Main
     analyzed_file_info = context.analyzed_file_infos[uri]
     curline = Int(pos.line) + 1
-    _, idx = findmin(analyzed_file_info.module_range_infos) do (range, mod)
-        curline in range || return typemax(Int)
-        return last(range) - first(range)
+    curmod = Main
+    for (range, mod) in analyzed_file_info.module_range_infos
+        curline in range || continue
+        curmod = mod
     end
-    return last(analyzed_file_info.module_range_infos[idx])
+    return curmod
 end
 
 function global_completions!(items::Dict{String, CompletionItem}, state::ServerState, uri::URI, pos::Position)

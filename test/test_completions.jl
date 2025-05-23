@@ -238,9 +238,6 @@ end
             #=cursor=# # show `y_var` ideally
             return @inline typeof(y_var)
         end
-
-        nothing # TODO remove this line when the correct implementation of https://github.com/aviatesk/JET.jl/pull/707 is available
-
     end # module Foo
     """)
     @test length(curpos2) == 2
