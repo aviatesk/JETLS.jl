@@ -166,7 +166,13 @@ function get_symbols!(ex::JL.SyntaxTree, symbols::Vector{DocumentSymbol})
     elseif k === K"const" || k === K"return"
         get_symbols!(ex[1], symbols)
     else
-        binfos, ctx = lower_and_get_bindings(ex)
+        ctx, _ = try
+            jl_lower_for_completion(ex)
+        catch err
+            # @info "Error in lowering" err
+            return symbols
+        end
+        binfos = filter(binfo -> !binfo.is_internal, ctx.bindings.info)
         for b in binfos
             symbol = _DocumentSymbol(b.name,
                                      JL.binding_ex(ctx, b.id),
