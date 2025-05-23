@@ -165,6 +165,8 @@ function get_symbols!(ex::JL.SyntaxTree, symbols::Vector{DocumentSymbol})
         get_symbols!(ex[2], symbols)
     elseif k === K"const" || k === K"return"
         get_symbols!(ex[1], symbols)
+    elseif k === K"doc"
+        get_symbols!(ex[2], symbols)
     else
         ctx, _ = try
             jl_lower_for_completion(ex)
