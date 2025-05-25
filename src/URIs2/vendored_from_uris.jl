@@ -6,6 +6,7 @@
 
 """
     _bytes(s::String)
+
 Get a `Vector{UInt8}`, a vector of bytes of a string.
 """
 function _bytes end
@@ -15,7 +16,6 @@ _bytes(s::Union{Vector{UInt8}, Base.CodeUnits}) = _bytes(String(s))
 _bytes(s::AbstractString) = codeunits(s)
 
 _bytes(s::Vector{UInt8}) = s
-
 
 utf8_chars(str::AbstractString) = (Char(c) for c in _bytes(str))
 
@@ -38,6 +38,7 @@ escapeuri(v::Symbol) = escapeuri(string(v))
 """
     escapeuri(key, value)
     escapeuri(query_vals)
+
 Percent-encode and concatenate a value pair(s) as they would conventionally be
 encoded within the query part of a URI.
 """

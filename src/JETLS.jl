@@ -519,6 +519,7 @@ function jet_result_to_diagnostics!(uri2diagnostics::Dict{URI,Vector{Diagnostic}
     for report in result.res.toplevel_error_reports
         diagnostic = jet_toplevel_error_report_to_diagnostic(report)
         filename = report.file
+        filename === :none && continue
         if startswith(filename, "Untitled")
             uri = filename2uri(filename)
         else
@@ -529,6 +530,7 @@ function jet_result_to_diagnostics!(uri2diagnostics::Dict{URI,Vector{Diagnostic}
     for report in result.res.inference_error_reports
         diagnostic = jet_inference_error_report_to_diagnostic(report)
         topframe = report.vst[1]
+        topframe.file === :none && continue # TODO Figure out why this is necessary
         filename = String(topframe.file)
         if startswith(filename, "Untitled")
             uri = filename2uri(filename)
