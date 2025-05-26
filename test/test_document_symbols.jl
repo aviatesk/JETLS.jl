@@ -3,10 +3,7 @@ module test_document_symbols
 using Test
 using JETLS
 using JETLS: JL, JS
-using JETLS: DocumentSymbol, SymbolKind, Position, get_toplevel_symbols!, get_symbols!
-
-get_toplevel_symbols(ex::JL.SyntaxTree) = get_toplevel_symbols!(ex, DocumentSymbol[])
-get_symbols(ex::JL.SyntaxTree) = get_symbols!(ex, DocumentSymbol[])
+using JETLS: DocumentSymbol, SymbolKind, Position, symbols
 
 function test_symbol(s::DocumentSymbol,
                      name::String,
@@ -49,9 +46,9 @@ end
             return x + y
         end
         """
-        symbols = get_symbols(JS.parsestmt(JL.SyntaxTree, src))
-        @test length(symbols) == 1
-        f_symbol = symbols[1]
+        syms = symbols(JS.parsestmt(JL.SyntaxTree, src))
+        @test length(syms) == 1
+        f_symbol = syms[1]
         test_symbol_end(f_symbol, "f", SymbolKind.Function, (0, 0), (4, 2), 2)
         # Symbols should be ordered by appearance.
         x_symbol1 = f_symbol.children[1]
@@ -62,9 +59,9 @@ end
 
     let
         src = "function f end"
-        symbols = get_symbols(JS.parsestmt(JL.SyntaxTree, src))
-        @test length(symbols) == 1
-        test_symbol(symbols[1], "f", SymbolKind.Function, (0, 0), (0, 14), 0)
+        syms = symbols(JS.parsestmt(JL.SyntaxTree, src))
+        @test length(syms) == 1
+        test_symbol(syms[1], "f", SymbolKind.Function, (0, 0), (0, 14), 0)
     end
 
     let
@@ -73,18 +70,14 @@ end
             x::T
         end
         """
-        symbols = get_symbols(JS.parsestmt(JL.SyntaxTree, src))
-        @test length(symbols) == 1
-        s_symbol = symbols[1]
-        # TODO: Should have 2 children, but fields are duplicated for some reason.
-        test_symbol_end(s_symbol, "S", SymbolKind.Struct, (0, 0), (2, 2), 3)
+        syms = symbols(JS.parsestmt(JL.SyntaxTree, src))
+        @test length(syms) == 1
+        s_symbol = syms[1]
+        test_symbol_end(s_symbol, "S", SymbolKind.Struct, (0, 0), (2, 2), 2)
         t_symbol = s_symbol.children[1]
         x_symbol = s_symbol.children[2]
         test_symbol(t_symbol, "T", SymbolKind.TypeParameter, (0, 9), (0, 10), 0)
         test_symbol(x_symbol, "x", SymbolKind.Field, (1, 4), (1, 5), 0)
-        # TODO: Remove once field duplication is fixed.
-        # Check that the extra symbol is the duplicated field, not something else
-        @test s_symbol.children[3].name == "x"
     end
 
     let
@@ -94,11 +87,12 @@ end
             esc(e)
         end
         """
-        symbols = get_symbols(JS.parsestmt(JL.SyntaxTree, src))
-        @test length(symbols) == 1
-        m_symbol = symbols[1]
+        syms = symbols(JS.parsestmt(JL.SyntaxTree, src))
+        @test length(syms) == 1
+        m_symbol = syms[1]
         # TODO: Fix after changing the kind to something more appropriate?
-        test_symbol_end(m_symbol, "@m", SymbolKind.Function, (0, 0), (3, 2), 2)
+        # Two explicit children (`x` and `e`) + `__context__`.
+        test_symbol_end(m_symbol, "@m", SymbolKind.Function, (0, 0), (3, 2), 3)
     end
 
     let
@@ -109,9 +103,9 @@ end
             a = 2
         end
         """
-        symbols = get_symbols(JS.parsestmt(JL.SyntaxTree, src))
-        @test length(symbols) == 1
-        test_symbol(symbols[1], "a", SymbolKind.Variable, (1, 4), (1, 5), 0)
+        syms = symbols(JS.parsestmt(JL.SyntaxTree, src))
+        @test length(syms) == 2
+        test_symbol(syms[1], "a", SymbolKind.Variable, (1, 4), (1, 5), 0)
     end
 end
 
@@ -128,11 +122,11 @@ end
             end
         end
         """
-        symbols = get_toplevel_symbols(JS.parseall(JL.SyntaxTree, src))
-        @test length(symbols) == 2
-        g_symbol = symbols[1]
-        test_symbol(g_symbol, "g", SymbolKind.Variable, (0, 6), (0, 7), 0)
-        m_symbol = symbols[2]
+        syms = symbols(JS.children(JS.parseall(JL.SyntaxTree, src)))
+        @test length(syms) == 2
+        g_symbol = syms[1]
+        test_symbol(g_symbol, "g", SymbolKind.Constant, (0, 6), (0, 7), 0)
+        m_symbol = syms[2]
         # # TODO: I don't know why there is no binding for `g` in `Main.g`.
         # test_symbol_end(m_symbol, "M", SymbolKind.Module, (2, 0), (8, 2), 3)
         # # Function definition.
