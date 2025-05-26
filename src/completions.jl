@@ -57,22 +57,23 @@ If we know that parent ranges contain all child ranges, and that siblings don't
 have overlapping ranges (this is not true after lowering, but appear to be true
 after parsing), each tree in the result will be a child of the next.
 """
-function byte_ancestors(st0::JL.SyntaxTree, r::UnitRange{Int})
-    function byte_ancestors_(st::JL.SyntaxTree, l::JL.SyntaxList)
-        (JS.numchildren(st) === 0) && return l
+function byte_ancestors(st0::JL.SyntaxTree, rng::UnitRange{Int})
+    sl = JL.SyntaxList(st0._graph, [st0._id])
+    stack = [st0]
+    while !isempty(stack)
+        st = pop!(stack)
+        if JS.numchildren(st) === 0
+            continue
+        end
         for ci in JS.children(st)
-            if r ⊆ JS.byte_range(ci)
-                push!(l, ci)
+            if rng ⊆ JS.byte_range(ci)
+                push!(sl, ci)
             end
+            push!(stack, ci)
         end
-        for c in JS.children(st)
-            var"#self#"(c, l)
-        end
-        return l
     end
     # delete later duplicates when sorted parent->child
-    out = deduplicate_syntaxlist(byte_ancestors_(st0, JL.SyntaxList(st0._graph, [st0._id])))
-    return reverse!(out)
+    return reverse!(deduplicate_syntaxlist(sl))
 end
 byte_ancestors(st0::JL.SyntaxTree, byte::Int) = byte_ancestors(st0, byte:byte)
 
