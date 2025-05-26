@@ -24,18 +24,20 @@ A new language server for the Julia programming language. In a nascent stage of 
 - Press `▷` to run the launch configuration (<kbd>F5</kbd>).
 - In the [Extension Development Host](https://code.visualstudio.com/api/get-started/your-first-extension#:~:text=Then%2C%20inside%20the%20editor%2C%20press%20F5.%20This%20will%20compile%20and%20run%20the%20extension%20in%20a%20new%20Extension%20Development%20Host%20window.) instance of VSCode, open a Julia file.
 
-#### Other editors
+## Other editors
 
-Minimal Emacs (eglot client) setup:
-```lisp
-(add-to-list 'eglot-server-programs
-             '(((julia-mode :language-id "julia")
-                (julia-ts-mode :language-id "julia"))
-               "julia"
-               "--startup-file=no"
-               "--project=/path/to/JETLS.jl"
-               "/path/to/JETLS.jl/runserver.jl"))
-```
+- Minimal Emacs (eglot client) setup:
+  ```lisp
+  (add-to-list 'eglot-server-programs
+               '(((julia-mode :language-id "julia")
+                  (julia-ts-mode :language-id "julia"))
+                 "julia"
+                 "--startup-file=no"
+                 "--project=/path/to/JETLS.jl"
+                 "/path/to/JETLS.jl/runserver.jl"))
+  ```
+
+- [Zed](https://zed.dev/) extension for Julia/JETLS is available: See [aviatesk/zed-julia](https://github.com/aviatesk/zed-julia/tree/avi/JETLS)
 
 ### Notes
 
