@@ -3,156 +3,166 @@ using .JS: children, kind
 # Symbols search
 # ==============
 
-"""
-Search for all symbols in a `SyntaxTree` and store them as an array of
-`LSP.DocumentSymbol`s.
-"""
-function get_toplevel_symbols!(ex::JL.SyntaxTree, symbols::Vector{DocumentSymbol})
-    for c in children(ex)
-        get_symbols!(c, symbols)
-    end
-    return symbols
-end
-
-# TODO: Use explicit stack.
-function get_symbols!(ex::JL.SyntaxTree,
-                      symbols::Vector{DocumentSymbol};
-                      ignore_duplicates=true)
-    k = kind(ex)
+function symbols(st::JL.SyntaxTree)::Vector{DocumentSymbol}
+    k = kind(st)
     if k === K"module"
-        module_symbols = DocumentSymbol[]
-        for c in children(children(ex)[2])
-            get_symbols!(c, module_symbols; ignore_duplicates)
-        end
-        module_name_ex = children(ex)[1]
-        module_symbol = _DocumentSymbol(module_name_ex.name_val,
-                                        ex,
-                                        SymbolKind.Module,
-                                        module_symbols)
-        push!(symbols, module_symbol)
-    elseif k === K"function" || k === K"macro"
-        # Since there is no special kind for macros, macro definitions can be treated like
-        # function definitions.
-        ctx, _ = try
-            jl_lower_for_completion(ex)
-        catch err
-            # @info "Error in lowering" err
-            return symbols
-        end
-        binfos = filter(binfo -> !binfo.is_internal, ctx.bindings.info)
-
-        fun_children = DocumentSymbol[]
-        # Get argument symbols.
-        arg_bindings = filter(binfo -> binfo.kind === :argument, binfos)
-        for arg_binding in arg_bindings
-            # TODO: Is there a better way to not include this binding? Does filtering by
-            #       `!binfo.is_always_defined` make sense?
-            arg_binding.name == "__context__" && continue
-            arg_symbol = _DocumentSymbol(arg_binding.name,
-                                         JL.binding_ex(ctx, arg_binding.id),
-                                         SymbolKind.Variable)
-            push!(fun_children, arg_symbol)
-        end
-
-        # Get local symbols.
-        local_bindings = filter(binfo -> binfo.kind === :local, binfos)
-        for local_binding in local_bindings
-            local_symbol = _DocumentSymbol(local_binding.name,
-                                           JL.binding_ex(ctx, local_binding.id),
-                                           SymbolKind.Variable)
-            push!(fun_children, local_symbol)
-        end
-
-        # Create the function symbol.
-        # TODO: Is the function binding always first in a function definition?
-        fun_binding = binfos[1]
-        fun_symbol = _DocumentSymbol(fun_binding.name,
-                                     ex,
-                                     SymbolKind.Function,
-                                     fun_children)
-        push!(symbols, fun_symbol)
-    elseif k === K"call" || k === K"macrocall"
-        # Skip.
+        sts = symbols(children(st[2]))
+        return [_DocumentSymbol(children(st)[1].name_val, st, SymbolKind.Module, sts)]
     elseif k === K"struct"
-        ctx, _ = try
-            jl_lower_for_completion(ex)
-        catch err
-            # @info "Error in lowering" err
-            return symbols
-        end
-        binfos = filter(binfo -> !binfo.is_internal, ctx.bindings.info)
+        lowering_res = lower_and_get_bindings(st)
+        isnothing(lowering_res) && return DocumentSymbol[]
 
+        ctx, binfos = lowering_res
         struct_children = DocumentSymbol[]
+        # Type parameters.
         type_param_bindings = filter(binfo -> binfo.kind === :static_parameter, binfos)
-        for tpb in type_param_bindings
-            tpb_symbol = _DocumentSymbol(tpb.name,
-                                         JL.binding_ex(ctx, tpb.id),
+        for b in type_param_bindings
+            tpb_symbol = _DocumentSymbol(b.name,
+                                         JL.binding_ex(ctx, b.id),
                                          SymbolKind.TypeParameter)
             push!(struct_children, tpb_symbol)
         end
-        # TODO: Find out why the fields are duplicated.
-        field_bindings = filter(binfo -> binfo.kind === :argument, binfos)
-        for fb in field_bindings
-            fb_symbol = _DocumentSymbol(fb.name,
-                                        JL.binding_ex(ctx, fb.id),
-                                        SymbolKind.Field)
-            push!(struct_children, fb_symbol)
+        # Fields and inner constructors.
+        for c in children(st[2])
+            kc = kind(c)
+            if JS.is_identifier(c)
+                push!(struct_children, _DocumentSymbol(c.name_val,
+                                                       c,
+                                                       SymbolKind.Field))
+            elseif kc === K"::"
+                push!(struct_children, _DocumentSymbol(c[1].name_val,
+                                                       c[1],
+                                                       SymbolKind.Field))
+            elseif kc === K"function"
+                append!(struct_children, symbols(c))
+            end
         end
-
-        struct_name_ex = children(ex)[1]
-        if kind(struct_name_ex) === K"curly"
-            struct_name_ex = children(struct_name_ex)[1]
-        end
-        struct_name = struct_name_ex.name_val
-        struct_symbol = _DocumentSymbol(struct_name,
-                                        ex,
+        # Struct symbol.
+        struct_name_st, _, _ = JL.analyze_type_sig(ctx, st[1])
+        struct_symbol = _DocumentSymbol(struct_name_st.name_val,
+                                        st,
                                         SymbolKind.Struct,
                                         struct_children)
-        push!(symbols, struct_symbol)
-    elseif k === K"::"
-        # Don't include the type symbol, but include the lhs symbol, if any.
-        if !JS.is_prefix_op_call(ex)
-            get_symbols!(ex[1], symbols; ignore_duplicates)
+        return [struct_symbol]
+    elseif k === K"function" || k === K"macro"
+        lowering_res = lower_and_get_bindings(st)
+        isnothing(lowering_res) && return DocumentSymbol[]
+
+        ctx, binfos = lowering_res
+        fun_children = DocumentSymbol[]
+        # Argument symbols.
+        # TODO: This gives wrong results for functions with inner function defs.
+        arg_bindings = filter(binfo -> binfo.kind === :argument, binfos)
+        for b in arg_bindings
+            b_symbol = _DocumentSymbol(b.name,
+                                       JL.binding_ex(ctx, b.id),
+                                       SymbolKind.Variable)
+            push!(fun_children, b_symbol)
         end
-    elseif k === K"const" || k === K"="
-        get_symbols!(ex[1], symbols; ignore_duplicates=false)
+        if length(children(st)) == 1  # `function f end`
+            fun_symbol = _DocumentSymbol(st[1].name_val,
+                                         st,
+                                         SymbolKind.Function,
+                                         fun_children)
+            return [fun_symbol]
+        end
+        # Body symbols.
+        append!(fun_children, symbols(children(st[2])))
+        # Function symbol.
+        fun_name_st = JL.assigned_function_name(st[1])
+        fun_name = isnothing(fun_name_st) ? "anonymous" : fun_name_st.name_val
+        if k === K"macro"
+            fun_name = "@" * fun_name
+        end
+        fun_symbol = _DocumentSymbol(fun_name, st, SymbolKind.Function, fun_children)
+        return [fun_symbol]
     elseif k === K"doc"
-        get_symbols!(ex[2], symbols; ignore_duplicates)
+        return symbols(st[2])
+    elseif JS.is_syntactic_assignment(st)
+        return symbols_assignment_lhs(st[1], SymbolKind.Variable)
+    elseif k === K"const"
+        return symbols_assignment_lhs(st[1][1], SymbolKind.Constant)
+    elseif k === K"if" || k === K"elseif"
+        return symbols(children(st)[2:end])
+    elseif k === K"block"
+        return symbols(children(st))
+    elseif k === K"for"
+        iteration_var_st = st[1][1][1]
+        lowering_res = lower_and_get_bindings(iteration_var_st)
+        isnothing(lowering_res) && return DocumentSymbol[]
+
+        iteration_var_ctx, iteration_var_binfos = lowering_res
+        # Iteration variable symbols.
+        syms = DocumentSymbol[]
+        for b in iteration_var_binfos
+            push!(syms, _DocumentSymbol(b.name,
+                                        JL.binding_ex(iteration_var_ctx, b.id),
+                                        SymbolKind.Variable))
+        end
+        # Body symbols.
+        append!(syms, symbols(children(st[2])))
+        return syms
+    elseif k === K"while"
+        return symbols(children(st[2]))
     else
-        ctx, _ = try
-            jl_lower_for_completion(ex)
-        catch err
-            # @info "Error in lowering" err
-            return symbols
+        lowering_res = lower_and_get_bindings(st)
+        isnothing(lowering_res) && return DocumentSymbol[]
+
+        ctx, binfos = lowering_res
+        local_bindings = filter(binfo -> binfo.kind === :local, binfos)
+        syms = DocumentSymbol[]
+        for b in local_bindings
+            push!(syms, _DocumentSymbol(b.name,
+                                        JL.binding_ex(ctx, b.id),
+                                        SymbolKind.Variable))
         end
-        binfos = filter(binfo -> !binfo.is_internal, ctx.bindings.info)
-        for b in binfos
-            if ignore_duplicates &&
-                !isnothing(findfirst(s -> s.name == b.name && s.kind == SymbolKind.Variable,
-                                     symbols))
-                continue
-            end
-            symbol = _DocumentSymbol(b.name,
-                                     JL.binding_ex(ctx, b.id),
-                                     SymbolKind.Variable)
-            push!(symbols, symbol)
+        return syms
+    end
+end
+
+symbols(sts::JL.SyntaxList)::Vector{DocumentSymbol} =
+    reduce(vcat, map(symbols, sts); init=DocumentSymbol[])
+
+function symbols_assignment_lhs(st_lhs::JL.SyntaxTree, sym_kind::SymbolKind.Ty)
+    syms = DocumentSymbol[]
+    if kind(st_lhs) === K"tuple"
+        for st in children(st_lhs)
+            syms_c = symbols_assignment_lhs(st, sym_kind)
+            append!(syms, syms_c)
         end
+    elseif kind(st_lhs) === K"::"
+        return [_DocumentSymbol(st_lhs[1].name_val, st_lhs[1], sym_kind)]
+    elseif JS.is_identifier(st_lhs)
+        sym = _DocumentSymbol(st_lhs.name_val, st_lhs, sym_kind)
+        push!(syms, sym)
     end
 
-    return symbols
+    return syms
 end
 
 # Symbols search utils
 # --------------------
 
+function lower_and_get_bindings(ex::JL.SyntaxTree)
+    ctx, _ = try
+        jl_lower_for_completion(ex)
+    catch err
+        # @info "Error in lowering" err
+        return nothing
+    end
+    binfos = filter(binfo -> !binfo.is_internal, ctx.bindings.info)
+
+    return ctx, binfos
+end
+
 """
 Helper constructor for a `LSP.DocumentSymbol` from a `SyntaxTree`.
 """
 function _DocumentSymbol(name::String,
-                         ex::JL.SyntaxTree,
+                         st::JL.SyntaxTree,
                          kind::SymbolKind.Ty,
                          children=nothing)
-    range = get_range(ex)
+    range = get_range(st)
     return DocumentSymbol(;
                           name = name,
                           kind = kind,
@@ -165,12 +175,12 @@ end
 """
 Get the `LSP.Range` of a `SyntaxTree`.
 """
-function get_range(ex::JL.SyntaxTree)
-    (line, col) = JS.source_location(ex)
+function get_range(st::JL.SyntaxTree)
+    (line, col) = JS.source_location(st)
     start_position = Position(; line = line - 1, character = col - 1)
     # Calculate the end position from the byte range and the line start byte.
-    line_starts = JS.sourcefile(ex).line_starts
-    byte_range = JS.byte_range(ex)
+    line_starts = JS.sourcefile(st).line_starts
+    byte_range = JS.byte_range(st)
     if length(line_starts) == line || byte_range.stop < line_starts[line + 1]
         # `ex` does not span multiple lines.
         # TODO: Calculate the last column in terms of characters, not bytes.
@@ -196,6 +206,9 @@ function get_range(ex::JL.SyntaxTree)
         # End position.
         end_position = Position(; line = end_line - 1, character = end_col - 1)
     end
+    # code = JS.sourcetext(st)
+    # start_position = offset_to_xy(code, byte_range.start)
+    # end_position = offset_to_xy(code, byte_range.stop)
 
     return Range(; start = start_position, var"end" = end_position)
 end
@@ -210,10 +223,9 @@ function handle_DocumentSymbolRequest(state::ServerState, msg::DocumentSymbolReq
         return state.send(DocumentSymbolResponse(; id = msg.id, result = DocumentSymbol[]))
     stream = file_info.parsed_stream
 
-    ex = JS.build_tree(JL.SyntaxTree, stream)
-    symbols = DocumentSymbol[]
-    get_toplevel_symbols!(ex, symbols)
+    st = JS.build_tree(JL.SyntaxTree, stream)
+    syms = symbols(children(st))
 
-    res = DocumentSymbolResponse(; id = msg.id, result = symbols)
+    res = DocumentSymbolResponse(; id = msg.id, result = syms)
     return state.send(res)
 end
