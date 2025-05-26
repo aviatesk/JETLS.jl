@@ -36,4 +36,18 @@ end
     end
 end
 
+@testset "Guard against invalid positions" begin
+    let code = """
+        sin
+        @nospecialize
+        cos(
+        """ |> Vector{UInt8}
+        ok = true
+        for i = 0:10, j = 0:10
+            ok &= JETLS.xy_to_offset(code, JETLS.Position(i, j)) isa Int
+        end
+        @test ok
+    end
+end
+
 end # module test_utils
