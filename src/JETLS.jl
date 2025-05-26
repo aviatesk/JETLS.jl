@@ -712,28 +712,33 @@ function initiate_context!(state::ServerState, uri::URI)
         if filekind === :script
             @goto analyze_script
         elseif filekind === :src
-            pkgenv = Base.identify_package_env(pkgname)
-            if pkgenv === nothing
-                @warn "Failed to identify package environment" pkgname
-                @goto analyze_script
-            end
-            pkgid, env = pkgenv
-            pkgfile = Base.locate_package(pkgid, env)
-            if pkgfile === nothing
-                @warn "Expected a package to have a source file" pkgname
-                @goto analyze_script
-            end
             # analyze package source files
-            entry = PackageSourceAnalysisEntry(env_path, pkgfile, pkgid)
-            result = activate_do(env_path) do
+            entry_result = activate_do(env_path) do
+                pkgenv = Base.identify_package_env(pkgname)
+                if pkgenv === nothing
+                    @warn "Failed to identify package environment" pkgname
+                    return nothing
+                end
+                pkgid, env = pkgenv
+                pkgfile = Base.locate_package(pkgid, env)
+                if pkgfile === nothing
+                    @warn "Expected a package to have a source file" pkgname
+                    return nothing
+                end
                 pkgfiluri = filepath2uri(pkgfile)
-                analyze_parsed_if_exist(state, pkgfiluri, pkgid;
+                entry = PackageSourceAnalysisEntry(env_path, pkgfile, pkgid)
+                res = analyze_parsed_if_exist(state, pkgfiluri, pkgid;
                     toplevel_logger=nothing,
                     analyze_from_definitions=true,
                     target_defined_modules=true,
                     concretization_patterns=[:(x_)],
                     include_callback)
+                return entry, res
             end
+            if entry_result === nothing
+                @goto analyze_script
+            end
+            entry, result = entry_result
             analysis_context = new_analysis_context(entry, result)
             record_reverse_map!(state, analysis_context)
             if uri ∉ analyzed_file_uris(analysis_context)
