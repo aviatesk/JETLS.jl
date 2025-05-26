@@ -277,13 +277,13 @@ function to_completion(binding::JL.BindingInfo,
 end
 
 function local_completions!(items::Dict{String, CompletionItem},
-                            s::ServerState, uri::URI, pos::Position)
+                            s::ServerState, uri::URI, params::CompletionParams)
     fi = get_fileinfo(s, uri)
     fi === nothing && return items
     # NOTE don't bail out even if `length(fi.parsed_stream.diagnostics) ≠ 0`
     # so that we can get some completions even for incomplete code
     st0 = JS.build_tree(JL.SyntaxTree, fi.parsed_stream)
-    cbs = cursor_bindings(st0, xy_to_offset(fi, pos))
+    cbs = cursor_bindings(st0, xy_to_offset(fi, params.position))
     cbs === nothing && return items
     for (bi, st, dist) in cbs
         ci = to_completion(bi, st, dist)
@@ -328,21 +328,45 @@ function find_file_module(state::ServerState, uri::URI, pos::Position)
     return curmod
 end
 
-function global_completions!(items::Dict{String, CompletionItem}, state::ServerState, uri::URI, pos::Position)
+function global_completions!(items::Dict{String, CompletionItem}, state::ServerState, uri::URI, params::CompletionParams)
+    pos = params.position
+    is_macro_invoke = let context = params.context
+        !isnothing(context) && let triggerCharacter = context.triggerCharacter
+            !isnothing(triggerCharacter) && triggerCharacter == "@"
+        end
+    end
     mod = find_file_module!(state, uri, pos)
+    fi = get_fileinfo(state, uri)
+    if !is_macro_invoke && !isnothing(fi)
+        # check if the cursor is within the macro name context `@xxx|`
+        curbyte = xy_to_offset(fi, pos)
+        sn0 = JS.build_tree(JS.SyntaxNode, fi.parsed_stream)
+        curnode = first(byte_ancestors(sn0, curbyte-1))
+        is_macro_invoke = JS.kind(curnode) === K"MacroName"
+    end
     for name in @invokelatest(names(mod; all=true, imported=true, usings=true))::Vector{Symbol}
         s = String(name)
         startswith(s, "#") && continue
+        insertText = nothing
+        if startswith(s, "@")
+            insertText = s[2:end]
+        elseif is_macro_invoke
+            continue
+        end
         items[s] = CompletionItem(;
             label = s,
             labelDetails = CompletionItemLabelDetails(;
                 description = "global"),
             kind = CompletionItemKind.Variable,
             documentation = nothing,
+            insertText,
             sortText = get_sort_text(0, #=isglobal=#true),
             data = CompletionData(#=needs_resolve=#true))
     end
-    return items
+    # if we are in macro name context, then we don't need any local completions
+    # as macros are always defined top-level
+    is_completed = is_macro_invoke
+    return is_completed
 end
 
 # completion resolver
@@ -371,17 +395,17 @@ end
 # request handler
 # ===============
 
-function get_completion_items(state::ServerState, uri::URI, pos::Position)
+function get_completion_items(state::ServerState, uri::URI, params::CompletionParams)
     items = Dict{String, CompletionItem}()
     # order matters; see local_completions!
-    global_completions!(items, state, uri, pos)
-    local_completions!(items, state, uri, pos)
+    is_completed = global_completions!(items, state, uri, params)
+    is_completed || local_completions!(items, state, uri, params)
     return collect(values(items))
 end
 
 function handle_CompletionRequest(s::ServerState, msg::CompletionRequest)
     uri = URI(msg.params.textDocument.uri)
-    items = get_completion_items(s, uri, msg.params.position)
+    items = get_completion_items(s, uri, msg.params)
     return s.send(
         ResponseMessage(;
             id = msg.id,

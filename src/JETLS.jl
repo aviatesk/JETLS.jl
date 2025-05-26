@@ -237,6 +237,7 @@ function initialize_result()
                     includeText = true)),
             completionProvider = CompletionOptions(;
                 resolveProvider = true,
+                triggerCharacters = ["@"],
                 completionItem = (;
                     labelDetailsSupport = true)),
         ),
