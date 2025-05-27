@@ -11,17 +11,20 @@ function completion_is(ci::CompletionItem, ckind::Symbol)
         (ci.labelDetails.description === "argument" && ckind === :local)
 end
 
-let sort_texts = Dict{Int, String}()
+# TODO use `let` block when Revise can handle it...
+const sort_texts, max_sort_text = let
+    sort_texts = Dict{Int, String}()
     for i = 1:1000
         sort_texts[i] = lpad(i, 4, '0')
     end
     _, max_sort_text = maximum(sort_texts)
-    global function get_sort_text(offset::Int, isglobal::Bool)
-        if isglobal
-            return max_sort_text
-        end
-        return get(sort_texts, offset, max_sort_text)
+    sort_texts, max_sort_text
+end
+function get_sort_text(offset::Int, isglobal::Bool)
+    if isglobal
+        return max_sort_text
     end
+    return get(sort_texts, offset, max_sort_text)
 end
 
 # local completions
@@ -44,31 +47,35 @@ function deduplicate_syntaxlist(sl::JL.SyntaxList)
 end
 
 """
-Get a list of `SyntaxTree`s containing certain bytes.  Output should be
-topologically sorted, children first.
+    byte_ancestors(st::JL.SyntaxTree, rng::UnitRange{Int})
+    byte_ancestors(st::JL.SyntaxTree, byte::Int)
+
+Get a list of `SyntaxTree`s containing certain bytes.
+Output should be topologically sorted, children first.
 
 If we know that parent ranges contain all child ranges, and that siblings don't
 have overlapping ranges (this is not true after lowering, but appear to be true
 after parsing), each tree in the result will be a child of the next.
 """
-function byte_ancestors(st::JL.SyntaxTree, b::Int, b2::Int=b)
-    function byte_ancestors_(st::JL.SyntaxTree, l::JL.SyntaxList)
-        (JS.numchildren(st) === 0) && return l
-        cis = findall(ci -> (b in JS.byte_range(ci) && b2 in JS.byte_range(ci)),
-                      JS.children(st))
-        append!(l, map(ci -> st[ci], cis))
-        for c in JS.children(st)
-            var"#self#"(c, l)
+function byte_ancestors(st0::JL.SyntaxTree, rng::UnitRange{Int})
+    sl = JL.SyntaxList(st0._graph, [st0._id])
+    stack = [st0]
+    while !isempty(stack)
+        st = pop!(stack)
+        if JS.numchildren(st) === 0
+            continue
         end
-        return l
+        for ci in JS.children(st)
+            if rng ⊆ JS.byte_range(ci)
+                push!(sl, ci)
+            end
+            push!(stack, ci)
+        end
     end
-
     # delete later duplicates when sorted parent->child
-    out = deduplicate_syntaxlist(byte_ancestors_(st, JL.SyntaxList(st._graph, [st._id])))
-    return reverse(out)
+    return reverse!(deduplicate_syntaxlist(sl))
 end
-
-byte_ancestors(st0::JL.SyntaxTree, r::UnitRange{Int}) = byte_ancestors(st0, r.start, r.stop)
+byte_ancestors(st0::JL.SyntaxTree, byte::Int) = byte_ancestors(st0, byte:byte)
 
 """
 Find any largest lowerable tree containing the cursor and the cursor's position
