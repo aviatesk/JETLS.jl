@@ -123,17 +123,20 @@ end
 symbols(sts::JL.SyntaxList)::Vector{DocumentSymbol} =
     reduce(vcat, map(symbols, sts); init=DocumentSymbol[])
 
-function symbols_assignment_lhs(st_lhs::JL.SyntaxTree, sym_kind::SymbolKind.Ty)
+function symbols_assignment_lhs(st::JL.SyntaxTree, sym_kind::SymbolKind.Ty)
     syms = DocumentSymbol[]
-    if kind(st_lhs) === K"tuple"
-        for st in children(st_lhs)
-            syms_c = symbols_assignment_lhs(st, sym_kind)
+    if kind(st) === K"tuple"
+        for c in children(st)
+            syms_c = symbols_assignment_lhs(c, sym_kind)
             append!(syms, syms_c)
         end
-    elseif kind(st_lhs) === K"::"
-        return [_DocumentSymbol(st_lhs[1].name_val, st_lhs[1], sym_kind)]
-    elseif JS.is_identifier(st_lhs)
-        sym = _DocumentSymbol(st_lhs.name_val, st_lhs, sym_kind)
+    elseif kind(st) === K"::"
+        return [_DocumentSymbol(st[1].name_val, st[1], sym_kind)]
+    elseif kind(st) === K"curly"
+        type_name = st.source.file.code[JS.byte_range(st)]
+        return [_DocumentSymbol(string(type_name), st, sym_kind)]
+    elseif JS.is_identifier(st)
+        sym = _DocumentSymbol(st.name_val, st, sym_kind)
         push!(syms, sym)
     end
 

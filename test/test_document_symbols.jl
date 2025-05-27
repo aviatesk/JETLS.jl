@@ -107,6 +107,13 @@ end
         @test length(syms) == 2
         test_symbol(syms[1], "a", SymbolKind.Variable, (1, 4), (1, 5), 0)
     end
+
+    let
+        src = "const T1{T2, 1} = Array{T, 1}"
+        syms = symbols(JS.parsestmt(JL.SyntaxTree, src))
+        @test length(syms) == 1
+        test_symbol(syms[1], "T1{T2, 1}", SymbolKind.Constant, (0, 6), (0, 15), 0)
+    end
 end
 
 @testset "Toplevel statements" begin
