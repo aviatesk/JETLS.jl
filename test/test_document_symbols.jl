@@ -37,9 +37,15 @@ function test_symbol_end(s::DocumentSymbol,
     return test_symbol(s, name, kind, start_pos, end_pos, children_len)
 end
 
+# Symbols should be ordered by appearance.
 @testset "Simple expressions" begin
     let
         src = """
+        \"""
+            f(x)
+
+        Some docsting.
+        \"""
         function f(x::Int)::Int
             y = 1
             println(y)
@@ -49,12 +55,11 @@ end
         syms = symbols(JS.parsestmt(JL.SyntaxTree, src))
         @test length(syms) == 1
         f_symbol = syms[1]
-        test_symbol_end(f_symbol, "f", SymbolKind.Function, (0, 0), (4, 2), 2)
-        # Symbols should be ordered by appearance.
+        test_symbol_end(f_symbol, "f", SymbolKind.Function, (5, 0), (9, 2), 2)
         x_symbol1 = f_symbol.children[1]
-        test_symbol(x_symbol1, "x", SymbolKind.Variable, (0, 11), (0, 12), 0)
+        test_symbol(x_symbol1, "x", SymbolKind.Variable, (5, 11), (5, 12), 0)
         y_symbol = f_symbol.children[2]
-        test_symbol(y_symbol, "y", SymbolKind.Variable, (1, 4), (1, 5), 0)
+        test_symbol(y_symbol, "y", SymbolKind.Variable, (6, 4), (6, 5), 0)
     end
 
     let
@@ -75,9 +80,26 @@ end
         s_symbol = syms[1]
         test_symbol_end(s_symbol, "S", SymbolKind.Struct, (0, 0), (2, 2), 2)
         t_symbol = s_symbol.children[1]
-        x_symbol = s_symbol.children[2]
         test_symbol(t_symbol, "T", SymbolKind.TypeParameter, (0, 9), (0, 10), 0)
+        x_symbol = s_symbol.children[2]
         test_symbol(x_symbol, "x", SymbolKind.Field, (1, 4), (1, 5), 0)
+    end
+
+    let
+        src = """
+        struct S
+            x
+            S(x) = new(x)
+        end
+        """
+        syms = symbols(JS.parsestmt(JL.SyntaxTree, src))
+        @test length(syms) == 1
+        s_symbol = syms[1]
+        test_symbol_end(s_symbol, "S", SymbolKind.Struct, (0, 0), (3, 2), 2)
+        x_symbol = s_symbol.children[1]
+        test_symbol(x_symbol, "x", SymbolKind.Field, (1, 4), (1, 5), 0)
+        constructor_symbol = s_symbol.children[2]
+        test_symbol(constructor_symbol, "S", SymbolKind.Function, (2, 4), (2, 17), 1)
     end
 
     let
@@ -118,29 +140,39 @@ end
     let
         src = """
         a = b = begin
-            c = 2
-            f(x) = 3
+            c, d = 2, 3
+            f(x) = 4
+            f(c)
         end
         """
         syms = symbols(JS.parsestmt(JL.SyntaxTree, src))
-        @test length(syms) == 4
+        @test length(syms) == 5
         test_symbol(syms[1], "a", SymbolKind.Variable, (0, 0), (0, 1), 0)
         test_symbol(syms[2], "b", SymbolKind.Variable, (0, 4), (0, 5), 0)
         test_symbol(syms[3], "c", SymbolKind.Variable, (1, 4), (1, 5), 0)
-        test_symbol(syms[4], "f", SymbolKind.Function, (2, 4), (2, 12), 1)
+        test_symbol(syms[4], "d", SymbolKind.Variable, (1, 7), (1, 8), 0)
+        test_symbol(syms[5], "f", SymbolKind.Function, (2, 4), (2, 12), 1)
     end
 end
 
 @testset "Toplevel statements" begin
     let
         src = """
-        const g = [1]
+        const g::AbstractVector = [1]
 
         module M
             f(x) = 2
 
             for x in Main.g
                 f(x)
+                while cond
+                    h() = f
+                    h()(x)
+                end
+            end
+
+            let
+                a = "a"
             end
         end
         """
@@ -149,19 +181,20 @@ end
         g_symbol = syms[1]
         test_symbol(g_symbol, "g", SymbolKind.Constant, (0, 6), (0, 7), 0)
         m_symbol = syms[2]
-        # # TODO: I don't know why there is no binding for `g` in `Main.g`.
-        # test_symbol_end(m_symbol, "M", SymbolKind.Module, (2, 0), (8, 2), 3)
-        # # Function definition.
-        # fdef_symbol = m_symbol.children[1]
-        # test_symbol(fdef_symbol, "f", SymbolKind.Function, (3, 4), (3, 12), 1)
-        # farg_symbol = fdef_symbol.children[1]
-        # test_symbol(farg_symbol, "x", SymbolKind.Variable, (3, 6), (3, 7), 0)
-        # # For loop.
-        # # TODO: I don't know why JuliaLowering returns the `Main` binding before `x`.
-        # main_symbol = m_symbol.children[2]
-        # test_symbol(main_symbol, "Main", SymbolKind.Variable, (5, 13), (5, 17), 0)
-        # x_symbol = m_symbol.children[3]
-        # test_symbol(x_symbol, "x", SymbolKind.Variable, (5, 8), (5, 9), 0)
+        test_symbol_end(m_symbol, "M", SymbolKind.Module, (2, 0), (16, 2), 4)
+        # Function definition (`f`).
+        fdef_symbol = m_symbol.children[1]
+        test_symbol(fdef_symbol, "f", SymbolKind.Function, (3, 4), (3, 12), 1)
+        farg_symbol = fdef_symbol.children[1]
+        test_symbol(farg_symbol, "x", SymbolKind.Variable, (3, 6), (3, 7), 0)
+        # For loop.
+        x_symbol = m_symbol.children[2]
+        test_symbol(x_symbol, "x", SymbolKind.Variable, (5, 8), (5, 9), 0)
+        h_symbol = m_symbol.children[3]
+        test_symbol(h_symbol, "h", SymbolKind.Function, (8, 12), (8, 19), 0)
+        # Let.
+        a_symbol = m_symbol.children[4]
+        test_symbol(a_symbol, "a", SymbolKind.Variable, (14, 8), (14, 9), 0)
     end
 end
 
