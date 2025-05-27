@@ -79,9 +79,9 @@ function symbols(st::JL.SyntaxTree)::Vector{DocumentSymbol}
     elseif k === K"doc"
         return symbols(st[2])
     elseif JS.is_syntactic_assignment(st)
-        return symbols_assignment_lhs(st[1], SymbolKind.Variable)
+        return symbols_assignment(st, SymbolKind.Variable)
     elseif k === K"const"
-        return symbols_assignment_lhs(st[1][1], SymbolKind.Constant)
+        return symbols_assignment(st[1], SymbolKind.Constant)
     elseif k === K"if" || k === K"elseif"
         return symbols(children(st)[2:end])
     elseif k === K"block"
@@ -123,20 +123,27 @@ end
 symbols(sts::JL.SyntaxList)::Vector{DocumentSymbol} =
     reduce(vcat, map(symbols, sts); init=DocumentSymbol[])
 
-function symbols_assignment_lhs(st::JL.SyntaxTree, sym_kind::SymbolKind.Ty)
+function symbols_assignment(st::JL.SyntaxTree, sym_kind::SymbolKind.Ty)
+    syms = symbols_assignment_lhs(st[1], sym_kind)
+    append!(syms, symbols(st[2]))
+
+    return syms
+end
+
+function symbols_assignment_lhs(lhs::JL.SyntaxTree, sym_kind::SymbolKind.Ty)
     syms = DocumentSymbol[]
-    if kind(st) === K"tuple"
-        for c in children(st)
+    if kind(lhs) === K"tuple"
+        for c in children(lhs)
             syms_c = symbols_assignment_lhs(c, sym_kind)
             append!(syms, syms_c)
         end
-    elseif kind(st) === K"::"
-        return [_DocumentSymbol(st[1].name_val, st[1], sym_kind)]
-    elseif kind(st) === K"curly"
-        type_name = st.source.file.code[JS.byte_range(st)]
-        return [_DocumentSymbol(string(type_name), st, sym_kind)]
-    elseif JS.is_identifier(st)
-        sym = _DocumentSymbol(st.name_val, st, sym_kind)
+    elseif kind(lhs) === K"::"
+        return [_DocumentSymbol(lhs[1].name_val, lhs[1], sym_kind)]
+    elseif kind(lhs) === K"curly"
+        type_name = lhs.source.file.code[JS.byte_range(lhs)]
+        return [_DocumentSymbol(string(type_name), lhs, sym_kind)]
+    elseif JS.is_identifier(lhs)
+        sym = _DocumentSymbol(lhs.name_val, lhs, sym_kind)
         push!(syms, sym)
     end
 

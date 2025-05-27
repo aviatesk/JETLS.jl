@@ -114,6 +114,21 @@ end
         @test length(syms) == 1
         test_symbol(syms[1], "T1{T2, 1}", SymbolKind.Constant, (0, 6), (0, 15), 0)
     end
+
+    let
+        src = """
+        a = b = begin
+            c = 2
+            f(x) = 3
+        end
+        """
+        syms = symbols(JS.parsestmt(JL.SyntaxTree, src))
+        @test length(syms) == 4
+        test_symbol(syms[1], "a", SymbolKind.Variable, (0, 0), (0, 1), 0)
+        test_symbol(syms[2], "b", SymbolKind.Variable, (0, 4), (0, 5), 0)
+        test_symbol(syms[3], "c", SymbolKind.Variable, (1, 4), (1, 5), 0)
+        test_symbol(syms[4], "f", SymbolKind.Function, (2, 4), (2, 12), 1)
+    end
 end
 
 @testset "Toplevel statements" begin
