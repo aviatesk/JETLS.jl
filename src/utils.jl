@@ -80,20 +80,45 @@ end
 xy_to_offset(fi::FileInfo, pos::Position) = xy_to_offset(fi.parsed_stream.textbuf, pos)
 
 """
-    offset_to_xy(ps::JS.ParseStream, b::Integer)
-    offset_to_xy(fi::FileInfo, b::Integer)
+    offset_to_xy(ps::JS.ParseStream, byte::Int)
+    offset_to_xy(fi::FileInfo, byte::Int)
 
 Convert a 1-based byte offset to a 0-based line and character number
 """
-function offset_to_xy(ps::JS.ParseStream, b::Integer)
+function offset_to_xy(ps::JS.ParseStream, byte::Int)
     # ps must be parsed already
-    @assert b in JS.first_byte(ps):JS.last_byte(ps) + 1
+    @assert byte in JS.first_byte(ps):JS.last_byte(ps) + 1
     sf = JS.SourceFile(ps)
-    l, c = JuliaSyntax.source_location(sf, b)
+    l, c = JuliaSyntax.source_location(sf, byte)
     return Position(;line = l-1, character = c-1)
 end
-function offset_to_xy(code::Union{AbstractString, Vector{UInt8}}, b::Integer) # used by tests
+function offset_to_xy(code::Union{AbstractString, Vector{UInt8}}, byte::Int) # used by tests
     ps = JS.parse!(JS.ParseStream(code), rule=:all)
-    return offset_to_xy(ps, b)
+    return offset_to_xy(ps, byte)
 end
-offset_to_xy(fi::FileInfo, b::Integer) = offset_to_xy(fi.parsed_stream, b)
+offset_to_xy(fi::FileInfo, byte::Int) = offset_to_xy(fi.parsed_stream, byte)
+
+"""
+    byte_ancestors(sn::JS.SyntaxNode, rng::UnitRange{Int})
+    byte_ancestors(sn::JS.SyntaxNode, byte::Int)
+
+Get a list of `SyntaxNode`s containing certain bytes.
+Output should be topologically sorted, children first.
+"""
+function byte_ancestors(sn::JS.SyntaxNode, rng::UnitRange{Int})
+    out = JS.SyntaxNode[]
+    stack = JS.SyntaxNode[sn]
+    while !isempty(stack)
+        cursn = pop!(stack)
+        (JS.numchildren(cursn) === 0) && continue
+        for i = JS.numchildren(cursn):-1:1
+            childsn = cursn[i]
+            push!(stack, childsn)
+            if rng ⊆ JS.byte_range(childsn)
+                push!(out, childsn)
+            end
+        end
+    end
+    return reverse!(out)
+end
+byte_ancestors(sn::JS.SyntaxNode, byte::Int) = byte_ancestors(sn, byte:byte)

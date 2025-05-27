@@ -4,6 +4,7 @@ using Test
 using JETLS
 using JETLS: JL, JS
 using JETLS: cursor_bindings, to_completion, CompletionItem, completion_is
+using JETLS.LSP
 
 function get_cursor_bindings(s::String, b::Int)
     ps = JS.ParseStream(s)
@@ -246,7 +247,10 @@ end
     uri = JETLS.filename2uri(filename)
     JETLS.cache_file_info!(state, uri, #=version=#1, text, filename)
     JETLS.initiate_context!(state, uri)
-    let items = JETLS.get_completion_items(state, uri, pos1)
+    let params = CompletionParams(;
+            textDocument=TextDocumentIdentifier(string(uri)),
+            position=pos1)
+        items = JETLS.get_completion_items(state, uri, params)
         @test any(items) do item
             item.label == "bar"
         end
@@ -260,7 +264,10 @@ end
             item.label == "sin"
         end
     end
-    let items = @invokelatest JETLS.get_completion_items(state, uri, pos2)
+    let params = CompletionParams(;
+            textDocument=TextDocumentIdentifier(string(uri)),
+            position=pos2)
+        items = JETLS.get_completion_items(state, uri, params)
         @test any(items) do item
             item.label == "foo"
         end
@@ -272,6 +279,75 @@ end
         end
         @test_broken any(items) do item
             item.label == "y_var"
+        end
+    end
+end
+
+@testset "macro completion" begin
+    state = JETLS.ServerState(identity)
+    filename = "filename.jl"
+    uri = JETLS.URI(filename)
+
+    # `@`-mark should trigger completion of macro names
+    let text = """
+        function foo(xxx, yyy)
+            @
+        end
+        """
+        JETLS.cache_file_info!(state, uri, 1, text, filename)
+        params = CompletionParams(;
+            textDocument=TextDocumentIdentifier(string(uri)),
+            position=Position(;line=1,character=5),
+            context=CompletionContext(;
+                triggerKind=CompletionTriggerKind.TriggerCharacter,
+                triggerCharacter="@"))
+        items = JETLS.get_completion_items(state, uri, params)
+        @test any(items) do item
+            item.label == "@nospecialize" &&
+            item.insertText == "nospecialize"
+        end
+        @test !any(items) do item
+            item.label == "foo" || item.label == "xxx" || item.label == "yyy"
+        end
+    end
+
+    # completion for macro names
+    let text = """
+        function foo(xxx, yyy)
+            @no
+        end
+        """
+        JETLS.cache_file_info!(state, uri, 2, text, filename)
+        params = CompletionParams(;
+            textDocument=TextDocumentIdentifier(string(uri)),
+            position=Position(;line=1,character=7),
+            context=CompletionContext(;
+                triggerKind=CompletionTriggerKind.TriggerCharacter))
+        items = JETLS.get_completion_items(state, uri, params)
+        @test any(items) do item
+            item.label == "@nospecialize" &&
+            item.insertText == "nospecialize"
+        end
+        @test !any(items) do item
+            item.label == "foo" || item.label == "xxx" || item.label == "yyy"
+        end
+    end
+
+    # completion within macro call context
+    let text = """
+        function foo(xxx, yyy)
+            @nospecialize xxx y
+        end
+        """
+        JETLS.cache_file_info!(state, uri, 3, text, filename)
+        params = CompletionParams(;
+            textDocument=TextDocumentIdentifier(string(uri)),
+            position=Position(;line=1,character=20),
+            context=CompletionContext(;
+                triggerKind=CompletionTriggerKind.TriggerCharacter))
+        items = JETLS.get_completion_items(state, uri, params)
+        @test any(items) do item
+            item.label == "yyy"
         end
     end
 end
