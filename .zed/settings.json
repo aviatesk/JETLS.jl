@@ -1,0 +1,18 @@
+// Folder-specific settings
+//
+// For a full list of overridable settings, and general information on folder-specific settings,
+// see the documentation: https://zed.dev/docs/configuring-zed#settings-files
+{
+  "languages": {
+    "Markdown": {
+      "tab_size": 2,
+      "wrap_guides": [80],
+      "preferred_line_length": 80
+    },
+    "Julia": {
+      "tab_size": 4,
+      "wrap_guides": [92],
+      "preferred_line_length": 92
+    }
+  }
+}

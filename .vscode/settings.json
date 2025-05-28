@@ -2,10 +2,14 @@
 	"editor.insertSpaces": false,
 	"typescript.tsc.autoDetect": "off",
 	"typescript.preferences.quoteStyle": "single",
-	"editor.codeActionsOnSave": {
-		// "source.fixAll.eslint": "explicit"
+	"[julia]": {
+		"editor.rulers": [92],
+		"editor.tabSize": 4
 	},
-	"julia.lint.run": false,
+	"[markdown]": {
+		"editor.rulers": [80],
+		"editor.tabSize": 2
+	},
 	"cSpell.words": [
 		"uinteger"
 	]
