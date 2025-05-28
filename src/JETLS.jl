@@ -59,15 +59,20 @@ mutable struct FullAnalysisResult
     staled::Bool
     last_analysis::Float64
     const uri2diagnostics::Dict{URI,Vector{Diagnostic}}
+    const analyzed_file_infos::Dict{URI,JET.AnalyzedFileInfo}
+    const successfully_analyzed_file_infos::Dict{URI,JET.AnalyzedFileInfo}
 end
 
 struct AnalysisContext
     entry::AnalysisEntry
-    analyzed_file_infos::Dict{URI,JET.AnalyzedFileInfo}
     result::FullAnalysisResult
 end
 
-analyzed_file_uris(context::AnalysisContext) = keys(context.analyzed_file_infos)
+analyzed_file_uris(context::AnalysisContext) = keys(context.result.analyzed_file_infos)
+
+function successfully_analyzed_file_info(context::AnalysisContext, uri::URI)
+    return get(context.result.successfully_analyzed_file_infos, uri, nothing)
+end
 
 struct ExternalContext end
 
@@ -460,28 +465,42 @@ function analyze_parsed_if_exist(state::ServerState, uri::URI, args...; kwargs..
     end
 end
 
+function is_full_analysis_successful(result)
+    return isempty(result.res.toplevel_error_reports)
+end
+
 function new_analysis_context(entry::AnalysisEntry, result)
     analyzed_file_infos = Dict{URI,JET.AnalyzedFileInfo}(
         # `filepath` is an absolute path (since `path` is specified as absolute)
         filename2uri(filepath) => analyzed_file_info for (filepath, analyzed_file_info) in result.res.analyzed_files)
     # TODO return something for `toplevel_error_reports`
     uri2diagnostics = jet_result_to_diagnostics(result, keys(analyzed_file_infos))
-    analysis_result = FullAnalysisResult(false, time(), uri2diagnostics)
-    return AnalysisContext(entry, analyzed_file_infos, analysis_result)
+    successfully_analyzed_file_infos = copy(analyzed_file_infos)
+    is_full_analysis_successful(result) ||
+        empty!(successfully_analyzed_file_infos)
+    analysis_result = FullAnalysisResult(false, time(), uri2diagnostics, analyzed_file_infos, successfully_analyzed_file_infos)
+    return AnalysisContext(entry, analysis_result)
 end
 
-function update_analysis_result!(analysis_context::AnalysisContext, result)
+function update_analysis_context!(analysis_context::AnalysisContext, result)
     uri2diagnostics = analysis_context.result.uri2diagnostics
-    cached_file_infos = analysis_context.analyzed_file_infos
+    cached_file_infos = analysis_context.result.analyzed_file_infos
+    cached_successfully_analyzed_file_infos = analysis_context.result.successfully_analyzed_file_infos
     new_file_infos = Dict{URI,JET.AnalyzedFileInfo}(
         # `filepath` is an absolute path (since `path` is specified as absolute)
         filename2uri(filepath) => analyzed_file_info for (filepath, analyzed_file_info) in result.res.analyzed_files)
     for deleted_file_uri in setdiff(keys(cached_file_infos), keys(new_file_infos))
         empty!(get!(()->Diagnostic[], uri2diagnostics, deleted_file_uri))
         delete!(cached_file_infos, deleted_file_uri)
+        if is_full_analysis_successful(result)
+            delete!(cached_successfully_analyzed_file_infos, deleted_file_uri)
+        end
     end
     for (new_file_uri, analyzed_file_info) in new_file_infos
         cached_file_infos[new_file_uri] = analyzed_file_info
+        if is_full_analysis_successful(result)
+            cached_successfully_analyzed_file_infos[new_file_uri] = analyzed_file_info
+        end
         empty!(get!(()->Diagnostic[], uri2diagnostics, new_file_uri))
     end
     jet_result_to_diagnostics!(uri2diagnostics, result)
@@ -830,7 +849,7 @@ function reanalyze_with_context!(state::ServerState, analysis_context::AnalysisC
             data = DiagnosticServerCancellationData(;
                 retriggerRequest = false))
     end
-    update_analysis_result!(analysis_context, result)
+    update_analysis_context!(analysis_context, result)
     record_reverse_map!(state, analysis_context)
     notify_diagnostics!(state)
     nothing

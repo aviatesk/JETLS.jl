@@ -59,9 +59,9 @@ If we know that parent ranges contain all child ranges, and that siblings don't
 have overlapping ranges (this is not true after lowering, but appear to be true
 after parsing), each tree in the result will be a child of the next.
 """
-function byte_ancestors(st0::JL.SyntaxTree, rng::UnitRange{Int})
-    sl = JL.SyntaxList(st0._graph, [st0._id])
-    stack = [st0]
+function byte_ancestors(st::JL.SyntaxTree, rng::UnitRange{Int})
+    sl = JL.SyntaxList(st._graph, [st._id])
+    stack = [st]
     while !isempty(stack)
         st = pop!(stack)
         if JS.numchildren(st) === 0
@@ -77,7 +77,7 @@ function byte_ancestors(st0::JL.SyntaxTree, rng::UnitRange{Int})
     # delete later duplicates when sorted parent->child
     return reverse!(deduplicate_syntaxlist(sl))
 end
-byte_ancestors(st0::JL.SyntaxTree, byte::Int) = byte_ancestors(st0, byte:byte)
+byte_ancestors(st::JL.SyntaxTree, byte::Int) = byte_ancestors(st, byte:byte)
 
 """
 Find any largest lowerable tree containing the cursor and the cursor's position
@@ -317,11 +317,11 @@ function find_file_module(state::ServerState, uri::URI, pos::Position)
             break
         end
     end
-    haskey(context.analyzed_file_infos, uri) || return Main
-    analyzed_file_info = context.analyzed_file_infos[uri]
+    safi = successfully_analyzed_file_info(context, uri)
+    isnothing(safi) && return Main
     curline = Int(pos.line) + 1
     curmod = Main
-    for (range, mod) in analyzed_file_info.module_range_infos
+    for (range, mod) in safi.module_range_infos
         curline in range || continue
         curmod = mod
     end
@@ -340,8 +340,8 @@ function global_completions!(items::Dict{String, CompletionItem}, state::ServerS
     if !is_macro_invoke && !isnothing(fi)
         # check if the cursor is within the macro name context `@xxx|`
         curbyte = xy_to_offset(fi, pos)
-        sn0 = JS.build_tree(JS.SyntaxNode, fi.parsed_stream)
-        curnode = first(byte_ancestors(sn0, curbyte-1))
+        sn = JS.build_tree(JS.SyntaxNode, fi.parsed_stream)
+        curnode = first(byte_ancestors(sn, curbyte-1))
         is_macro_invoke = JS.kind(curnode) === K"MacroName"
     end
     for name in @invokelatest(names(mod; all=true, imported=true, usings=true))::Vector{Symbol}
