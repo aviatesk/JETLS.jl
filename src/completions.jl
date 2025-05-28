@@ -7,8 +7,10 @@ using .JL: @ast
 function completion_is(ci::CompletionItem, ckind::Symbol)
     # `ckind` is :global, :local, :argument, or :sparam.  Implementation likely
     # to change with changes to the information we put in CompletionItem.
-    ci.labelDetails.description === String(ckind) ||
-        (ci.labelDetails.description === "argument" && ckind === :local)
+    labelDetails = ci.labelDetails
+    @assert labelDetails !== nothing
+    return (labelDetails.description === String(ckind) ||
+        (labelDetails.description === "argument" && ckind === :local))
 end
 
 # TODO use `let` block when Revise can handle it...
@@ -241,7 +243,6 @@ function to_completion(binding::JL.BindingInfo,
     label_kind = CompletionItemKind.Variable
     label_detail = nothing
     label_desc = nothing
-    detail = nothing
     documentation = nothing
 
     if binding.is_const
@@ -270,7 +271,6 @@ function to_completion(binding::JL.BindingInfo,
             detail = label_detail,
             description = label_desc),
         kind = label_kind,
-        detail,
         documentation,
         sortText = get_sort_text(sort_offset, #=isglobal=#false),
         data = CompletionData(#=needs_resolve=#false))
