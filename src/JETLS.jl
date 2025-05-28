@@ -476,10 +476,8 @@ function new_analysis_context(entry::AnalysisEntry, result)
     # TODO return something for `toplevel_error_reports`
     uri2diagnostics = jet_result_to_diagnostics(result, keys(analyzed_file_infos))
     successfully_analyzed_file_infos = copy(analyzed_file_infos)
-    if is_full_analysis_successful(result)
-        # register analyzed file info for successful analysis only
+    is_full_analysis_successful(result) ||
         empty!(successfully_analyzed_file_infos)
-    end
     analysis_result = FullAnalysisResult(false, time(), uri2diagnostics, analyzed_file_infos, successfully_analyzed_file_infos)
     return AnalysisContext(entry, analysis_result)
 end

@@ -70,3 +70,16 @@ function take_with_timeout!(chn::Channel; interval=1, limit=60)
     end
     error("Timeout waiting for message")
 end
+
+function get_text_and_positions(text::String)
+    positions = Position[]
+    lines = split(text, '\n')
+    for (i, line) in enumerate(lines)
+        for m in eachmatch(r"#=cursor=#", line)
+            # Position is 0-based
+            push!(positions, JETLS.Position(; line=i-1, character=m.match.offset-1))
+            lines[i] = replace(line, r"#=cursor=#" => "")
+        end
+    end
+    return join(lines, '\n'), positions
+end
