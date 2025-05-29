@@ -24,8 +24,12 @@ using .LSP
 include("JSONRPC.jl")
 using .JSONRPC
 
+include("analysis/analysis.jl")
+using .Analysis
+
 using REPL # loading REPL is necessary to make `Base.Docs.doc(::Base.Docs.Binding)` work
-using Pkg, JuliaSyntax, JET
+using Pkg, JuliaSyntax
+using JET: JET
 using JuliaSyntax: JuliaSyntax as JS
 using JuliaLowering: JuliaLowering as JL
 
@@ -312,7 +316,7 @@ function run_preset_analysis!(state::ServerState, rooturi::URI)
     # runtests = joinpath(filedir, "runtests.jl")
     # result = activate_do(env_path) do
     #     include_callback = IncludeCallback(state)
-    #     JET.analyze_and_report_file!(JET.JETAnalyzer(), runtests;
+    #     JET.analyze_and_report_file!(JETLSAnalyzer(), runtests;
     #         toplevel_logger=stderr,
     #         include_callback)
     # end
@@ -466,11 +470,11 @@ function analyze_parsed_if_exist(state::ServerState, uri::URI, args...; kwargs..
         parsed_stream = file_info.parsed_stream
         filename = uri2filename(uri)::String
         parsed = JS.build_tree(JS.SyntaxNode, parsed_stream; filename)
-        return JET.analyze_and_report_expr!(JET.JETAnalyzer(), parsed, filename, args...; kwargs...)
+        return JET.analyze_and_report_expr!(JETLSAnalyzer(), parsed, filename, args...; kwargs...)
     else
         filepath = uri2filepath(uri)
         @assert filepath !== nothing "Unsupported URI: $uri"
-        return JET.analyze_and_report_file!(JET.JETAnalyzer(), filepath, args...; kwargs...)
+        return JET.analyze_and_report_file!(JETLSAnalyzer(), filepath, args...; kwargs...)
     end
 end
 
@@ -721,13 +725,13 @@ function initiate_context!(state::ServerState, uri::URI)
         if env_path !== nothing
             entry = ScriptInEnvAnalysisEntry(env_path, uri)
             result = activate_do(env_path) do
-                JET.analyze_and_report_expr!(JET.JETAnalyzer(), parsed, filename;
+                JET.analyze_and_report_expr!(JETLSAnalyzer(), parsed, filename;
                     toplevel_logger=stderr,
                     include_callback)
             end
         else
             entry = ScriptAnalysisEntry(uri)
-            result = JET.analyze_and_report_expr!(JET.JETAnalyzer(), parsed, filename;
+            result = JET.analyze_and_report_expr!(JETLSAnalyzer(), parsed, filename;
                 toplevel_logger=stderr,
                 include_callback)
         end
