@@ -186,10 +186,10 @@ function _handle_message(state::ServerState, msg)
         return handle_CompletionRequest(state, msg)
     elseif msg isa CompletionResolveRequest
         return handle_CompletionResolveRequest(state, msg)
-    else
+    elseif JETLS_DEV_MODE
         @warn "Unhandled message" msg
-        return nothing
     end
+    nothing
 end
 
 function handle_InitializeRequest(state::ServerState, msg::InitializeRequest)
