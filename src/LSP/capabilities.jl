@@ -28,6 +28,8 @@
 
     completionProvider::Union{CompletionOptions, Nothing} = nothing
 
+    signatureHelpProvider::Union{SignatureHelpOptions, Nothing} = nothing
+
     "Workspace specific server capabilities"
     workspace::Union{Nothing, @interface begin
         """

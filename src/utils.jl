@@ -45,6 +45,34 @@ Fetch cached FileInfo given an LSclient-provided structure with a URI
 get_fileinfo(s::ServerState, uri::URI) = haskey(s.file_cache, uri) ? s.file_cache[uri] : nothing
 get_fileinfo(s::ServerState, t::TextDocumentIdentifier) = get_fileinfo(s, URI(t.uri))
 
+
+function find_file_module!(state::ServerState, uri::URI, pos::Position)
+    mod = find_file_module(state, uri, pos)
+    state.completion_module[] = mod
+    return mod
+end
+function find_file_module(state::ServerState, uri::URI, pos::Position)
+    haskey(state.contexts, uri) || return Main
+    contexts = state.contexts[uri]
+    context = first(contexts)
+    for ctx in contexts
+        # prioritize `PackageSourceAnalysisEntry` if exists
+        if isa(context.entry, PackageSourceAnalysisEntry)
+            context = ctx
+            break
+        end
+    end
+    haskey(context.analyzed_file_infos, uri) || return Main
+    analyzed_file_info = context.analyzed_file_infos[uri]
+    curline = Int(pos.line) + 1
+    curmod = Main
+    for (range, mod) in analyzed_file_info.module_range_infos
+        curline in range || continue
+        curmod = mod
+    end
+    return curmod
+end
+
 # JuliaLowering uses byte offsets; LSP uses lineno and UTF-* character offset.
 # These functions do the conversion.
 
@@ -99,12 +127,57 @@ end
 offset_to_xy(fi::FileInfo, byte::Int) = offset_to_xy(fi.parsed_stream, byte)
 
 """
+Like `Base.unique`, but over node ids, and with this comment promising that the
+lowest-index copy of each node is kept.
+"""
+function deduplicate_syntaxlist(sl::JL.SyntaxList)
+    sl2 = JL.SyntaxList(sl.graph)
+    seen = Set{JL.NodeId}()
+    for st in sl
+        if !(st._id in seen)
+            push!(sl2, st._id)
+            push!(seen, st._id)
+        end
+    end
+    return sl2
+end
+
+"""
+    byte_ancestors(st::JL.SyntaxTree, rng::UnitRange{Int})
+    byte_ancestors(st::JL.SyntaxTree, byte::Int)
+
+Get a SyntaxList of `SyntaxTree`s containing certain bytes.
+
     byte_ancestors(sn::JS.SyntaxNode, rng::UnitRange{Int})
     byte_ancestors(sn::JS.SyntaxNode, byte::Int)
 
 Get a list of `SyntaxNode`s containing certain bytes.
-Output should be topologically sorted, children first.
+
+Output should be topologically sorted, children first.  If we know that parent
+ranges contain all child ranges, and that siblings don't have overlapping ranges
+(this is not true after lowering, but appears to be true after parsing), each
+tree in the result will be a child of the next.
 """
+function byte_ancestors(st::JL.SyntaxTree, rng::UnitRange{Int})
+    sl = JL.SyntaxList(st._graph, [st._id])
+    stack = [st]
+    while !isempty(stack)
+        st = pop!(stack)
+        if JS.numchildren(st) === 0
+            continue
+        end
+        for ci in JS.children(st)
+            if rng ⊆ JS.byte_range(ci)
+                push!(sl, ci)
+            end
+            push!(stack, ci)
+        end
+    end
+    # delete later duplicates when sorted parent->child
+    return reverse!(deduplicate_syntaxlist(sl))
+end
+byte_ancestors(st::JL.SyntaxTree, byte::Int) = byte_ancestors(st, byte:byte)
+
 function byte_ancestors(sn::JS.SyntaxNode, rng::UnitRange{Int})
     out = JS.SyntaxNode[]
     stack = JS.SyntaxNode[sn]

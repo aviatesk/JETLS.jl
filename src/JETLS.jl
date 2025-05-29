@@ -98,6 +98,7 @@ end
 
 include("utils.jl")
 include("completions.jl")
+include("signature-help.jl")
 
 struct IncludeCallback <: Function
     file_cache::Dict{URI,FileInfo}
@@ -186,6 +187,8 @@ function _handle_message(state::ServerState, msg)
         return handle_CompletionRequest(state, msg)
     elseif msg isa CompletionResolveRequest
         return handle_CompletionResolveRequest(state, msg)
+    elseif msg isa SignatureHelpRequest
+        return handle_SignatureHelpRequest(state, msg)
     elseif JETLS_DEV_MODE
         @warn "Unhandled message" msg
     end
@@ -245,6 +248,8 @@ function initialize_result()
                 triggerCharacters = ["@"],
                 completionItem = (;
                     labelDetailsSupport = true)),
+            signatureHelpProvider = SignatureHelpOptions(;
+                triggerCharacters = ["(", ","]),
         ),
         serverInfo = (;
             name = "JETLS",
