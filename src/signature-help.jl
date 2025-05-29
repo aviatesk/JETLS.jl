@@ -1,6 +1,160 @@
 using .JS
 using .JL
 
+# utils
+# =====
+
+"""
+Resolve a name's value given a root module and an expression like `M1.M2.M3.f`,
+which parses to `(. (. (. M1 M2) M3) f)`.  If we hit something undefined, return
+nothing.  This doesn't support some cases, e.g. `(print("hi"); Base).print`
+"""
+function resolve_property(mod::Module, st0::JL.SyntaxTree)
+    if JS.is_leaf(st0)
+        # Would otherwise throw an unhelpful error.  Is this true of all leaf nodes?
+        @assert JL.hasattr(st0, :name_val)
+        s = Symbol(st0.name_val)
+        !isdefined(mod, s) && return nothing
+        return getproperty(mod, s)
+    elseif kind(st0) === K"."
+        @assert JS.numchildren(st0) === 2
+        lhs = resolve_property(mod, st0[1])
+        return resolve_property(lhs, st0[2])
+    end
+    JETLS_DEV_MODE && @info "resolve_property couldn't handle form:" mod st0
+    return nothing
+end
+
+"""
+Return (args, first_kwarg_i), one SyntaxTree per argument to call.  Ignore function
+name and K"error" (e.g. missing closing paren)
+"""
+function flatten_args(call::JL.SyntaxTree)
+    if kind(call) === K"where"
+        return flatten_args(call[1])
+    end
+    @assert kind(call) === K"call" || kind(call) === K"dotcall"
+    usable = (arg::JL.SyntaxTree) -> kind(arg) != K"error"
+    orig = filter(usable, JS.children(call)[2:end])
+
+    args = JL.SyntaxTree[]
+    kw_i = 1
+    for i in eachindex(orig)
+        iskw = kind(orig[i]) === K"parameters"
+        if !iskw
+            push!(args, orig[i])
+            kw_i += 1
+        elseif i === lastindex(orig) && iskw
+            for p in filter(usable, JS.children(orig[i]))
+                push!(args, p)
+            end
+        end
+    end
+    return args, kw_i
+end
+
+"""
+Get K"Identifier" tree from a kwarg tree (child of K"call" or K"parameters").
+`sig`: treat this as a signature rather than a call
+               a => a
+         (= a 1) => a
+  (= (:: a T) 1) => a  # only when sig=true
+"""
+function kwname(a::JL.SyntaxTree; sig=false)
+    if kind(a) === K"Identifier"
+        return a
+    elseif kind(a) === K"=" && kind(a[1]) === K"Identifier"
+        return a[1]
+    elseif sig && kind(a) === K"=" && kind(a[1]) === K"::" && kind(a[1][1]) === K"Identifier"
+        return a[1][1]
+    elseif kind(a) === K"..."
+        return nothing
+    end
+    JETLS_DEV_MODE && @info "Unknown kwarg form" a
+    return nothing
+end
+
+"""
+Best-effort mapping of kwname to position in `args`.  args[kw_i] and later are
+after the semicolon.  False negatives are fine here; false positives would hide
+signatures.
+
+If `sig`, then K"=" trees before the semicolon should be interpreted as optional
+positional args instead of kwargs.
+"""
+function find_kws(args::Vector{JL.SyntaxTree}, kw_i::Int; sig=false)
+    out = Dict{String, Int}()
+    for i in (sig ? (kw_i:lastindex(args)) : eachindex(args))
+        (kind(args[i]) != K"=") && i < kw_i && continue
+        n = kwname(args[i]; sig)
+        if !isnothing(n)
+            out[n.name_val] = i
+        end
+    end
+    return out
+end
+
+"""
+Information from one call's arguments for filtering signatures.
+- args: Every valid child of the K"call" and its K"parameters" if present
+- kw_i: One plus the number of args not in K"parameters" (semicolon)
+- pos_map: Map from position in `args` to (min, max) possible positional arg
+           e.g. f(a, k=1, b..., c) --> a => (1, 1), c => (2, nothing)
+- kw_map: kwname => position in `args`
+
+TODO: types
+"""
+struct CallArgs
+    args::Vector{JL.SyntaxTree}
+    kw_i::Int
+    pos_map::Dict{Int, Tuple{Int, Union{Int, Nothing}}}
+    pos_args_lb::Int
+    pos_args_ub::Union{Int, Nothing}
+    kw_map::Dict{String, Int}
+end
+
+function CallArgs(st0::JL.SyntaxTree)
+    args, kw_i = flatten_args(st0)
+    pos_map = Dict{Int, Tuple{Int, Union{Int, Nothing}}}()
+    lb = 0; ub = 0
+    for i in eachindex(args[1:kw_i-1])
+        if kind(args[i]) === K"..."
+            ub = nothing
+        elseif kind(args[i]) != K"="
+            lb += 1
+            !isnothing(ub) && (ub += 1)
+            pos_map[i] = (lb, ub)
+        end
+    end
+    kw_map = find_kws(args, kw_i; sig=false)
+    CallArgs(args, kw_i, pos_map, lb, ub, kw_map)
+end
+
+"""
+Return false if we can definitely rule out `f(args...|` from being a call to `m`
+"""
+function compatible_call(m::Method, ca::CallArgs)
+    # TODO: (later) This should use type information from args (which we already
+    # have from m's params).  For now, just parse the method signature like we
+    # do in make_siginfo.
+
+    mstr = sprint(show, m)
+    mnode = JS.parsestmt(JL.SyntaxTree, mstr; ignore_errors=true)[1]
+
+    params, kwp_i = flatten_args(mnode)
+    has_var_params = kwp_i > 1 && kind(params[kwp_i - 1]) === K"..."
+    has_var_kwp = kwp_i <= length(params) && kind(params[end]) === K"..."
+
+    kwp_map = find_kws(params, kwp_i; sig=true)
+
+    !has_var_params && (ca.pos_args_lb >= kwp_i) && return false
+    !has_var_kwp && !(keys(ca.kw_map) ⊆ keys(kwp_map)) && return false
+    return true
+end
+
+# LSP objects and handler
+# =======================
+
 function make_paraminfo(p::JL.SyntaxTree)
     # A parameter's `label` is either a string the client searches for, or
     # an inclusive-exclusive range within in the signature.
@@ -16,7 +170,7 @@ function make_paraminfo(p::JL.SyntaxTree)
         documentation = nothing
     elseif kind(p) === K"="
         @assert JS.numchildren(p) === 2
-        label = kwname(p, #=msig=#true) # TODO kwname should return syntaxtree
+        label = kwname(p; sig=true).name_val
     elseif kind(p) === K"::"
         if JS.numchildren(p) === 1
             documentation = "(unused) " * documentation
@@ -34,141 +188,71 @@ function make_paraminfo(p::JL.SyntaxTree)
     return ParameterInformation(; label, documentation)
 end
 
-"""
-Return (args, first_kwarg_i), one SyntaxTree per argument to call.  Ignore function
-name and K"error" (e.g. missing closing paren)
-"""
-function flatten_call_args(call::JL.SyntaxTree)
-    if kind(call) === K"where"
-        return flatten_call_args(call[1])
-    end
-    @assert kind(call) === K"call" || kind(call) === K"dotcall"
-    usable = (arg::JL.SyntaxTree) -> (kind(arg) != K"parameters" && kind(arg) != K"error")
-    args_lhs = filter(usable, JS.children(call)[2:end])
-    args_rhs = kind(call[end]) === K"parameters" ?
-        filter(usable, JS.children(call[end])) : JL.SyntaxTree[]
-    return vcat(args_lhs, args_rhs), length(args_lhs) + 1
-end
-
-# a, (= a 1), (= (:: a T) 1)
-function kwname(a::JL.SyntaxTree, msig=false)
-    if kind(a) === K"Identifier"
-        return a.name_val
-    elseif kind(a) === K"=" && kind(a[1]) === K"Identifier"
-        return a[1].name_val
-    elseif msig && kind(a) === K"=" && kind(a[1]) === K"::" && kind(a[1][1]) === K"Identifier"
-        return a[1][1].name_val
-    end
-    JETLS_DEV_MODE && (@info "Unknown kwarg form" a)
-    return nothing
-end
-
-# False negatives are fine here;  false positives would hide signatures.
-"""
-Map kwname to position in `args`.  args[kw_i] and later are after the semicolon.
-If `msig`, then K"=" before the semicolon should be interpreted as optional
-positional args instead of kwargs.
-"""
-function find_kws(args::Vector{JL.SyntaxTree}, kw_i::Int, msig=false)
-    out = Dict{String, Int}()
-    for i in (msig ? (kw_i:lastindex(args)) : eachindex(args))
-        (kind(args[i]) != K"=") && i < kw_i && continue
-        n = kwname(args[i])
-        if !isnothing(n)
-            out[n] = i
-        end
-    end
-    return out
-end
-
-function make_siginfo(m::Method, active_arg::Union{String, Int, Nothing})
+# active_arg is either an argument index, or :next (available pos. arg), or :none
+function make_siginfo(m::Method, ca::CallArgs, active_arg::Union{Int, Symbol})
     # methodshow prints "f(x::T) [unparseable stuff]"
     # parse the first part and put the remainder in documentation
     mstr = sprint(show, m)
     mnode = JS.parsestmt(JL.SyntaxTree, mstr; ignore_errors=true)[1]
-    label, documentation = let b = JS.last_byte(mnode)
-        mstr[1:b], string(strip(mstr[b+1:end]))
+    label, documentation = let lb = JS.last_byte(mnode)
+        mstr[1:lb], string(strip(mstr[lb+1:end]))
     end
 
     # We could show the full docs, but there isn't(?) a way to separate by
-    # method (or resolve one at a time), and the user may have seen this already
-    # in the completions UI.
+    # method (or resolve items lazily like completions), so we would be sending
+    # many copies.  The user may have seen this already in the completions UI,
+    # too.
     # documentation = MarkupContent(;
     #     kind = MarkupKind.Markdown,
     #     value = string(Base.Docs.doc(Base.Docs.Binding(m.var"module", m.name))))
 
-    f_params, kw_i = flatten_call_args(mnode)
-    activeParameter = if isnothing(active_arg)
-        nothing
-    elseif active_arg isa String
-        kwmap = find_kws(f_params, kw_i, #=msig=#true)
-        get(kwmap, active_arg, nothing) - 1 # TODO post-semicolon vararg
-    elseif active_arg isa Int && active_arg >= kw_i
-        # @assert
-        nothing # TODO pre-semicolon vararg
-    elseif active_arg isa Int
-        active_arg - 1
-    end
-    @info "active param calculated:" active_arg activeParameter
+    params, kwp_i = flatten_args(mnode)
+    maybe_var_params = kwp_i > 1 && kind(params[kwp_i - 1]) === K"..." ?
+        kwp_i - 1 : nothing
+    maybe_var_kwp = kwp_i <= length(params) && kind(params[end]) === K"..." ?
+        lastindex(params) : nothing
+    kwp_map = find_kws(params, kwp_i; sig=true)
 
-    parameters = map(make_paraminfo, f_params)
+    # Map active arg to active param, or nothing
+    activeParameter = let i = active_arg
+        if i === :none
+            nothing
+        elseif i === :next # next pos arg if able
+            kwp_i > ca.kw_i ? ca.kw_i : nothing
+        elseif kind(ca.args[i]) === K"..."
+            # vararg if we can, nothing if not
+            i >= kwp_i ? maybe_var_kwp : nothing
+        elseif i in keys(ca.pos_map)
+            lb, ub = get(ca.pos_map, i, (1, nothing))
+            if !isnothing(maybe_var_params) && lb >= maybe_var_params
+                maybe_var_params
+            else
+                lb === ub ? lb : nothing
+            end
+        elseif kind(ca.args[i]) === K"=" || i >= ca.kw_i
+            n = kwname(ca.args[i]).name_val # we don't have a backwards mapping
+            out = get(kwp_map, n, nothing)
+            isnothing(out) ? maybe_var_kwp : out
+        else
+            JETLS_DEV_MODE && @info "No active arg" i ca.args[i] call
+            nothing
+        end
+    end
+
+    !isnothing(activeParameter) && (activeParameter -= 1) # shift to 0-based
+    parameters = map(make_paraminfo, params)
     return SignatureInformation(; label, documentation, parameters, activeParameter)
 end
 
-"""
-Return false if we can definitely rule out `f(args...|` from being a call to `m`
-"""
-function compatible_call(m::Method, args::Vector{JL.SyntaxTree}, used_kws, pos_map)
-    # TODO: (later) This should use type information from args (which we already
-    # have from m's params).  For now, just parse the method signature like we
-    # do in make_siginfo.
-
-    mstr = sprint(show, m)
-    mnode = JS.parsestmt(JL.SyntaxTree, mstr; ignore_errors=true)[1]
-    params, kw_i = flatten_call_args(mnode)
-    has_kw_splat = kw_i <= length(params) &&
-        length(params) >= 1 &&
-        kind(params[end]) === K"..."
-    kwp_map = find_kws(params, kw_i, #=msig=#true)
-
-    (length(pos_map) >= kw_i) && return false
-    !has_kw_splat && !(keys(used_kws) ⊆ keys(kwp_map)) && return false
-    return true
-end
-
-"""
-Resolve a name's value given a root module and an expression like `M1.M2.M3.f`,
-which parses to `(. (. (. M1 M2) M3) f)`.  If we hit something undefined, return
-nothing.  This doesn't support some cases, e.g. `(print("hi"); Base).print`
-"""
-function resolve_property(mod::Module, rhs::JL.SyntaxTree)
-    if JS.is_leaf(rhs)
-        # Would otherwise throw an unhelpful error.  Is this true of all leaf nodes?
-        @assert JL.hasattr(rhs, :name_val)
-        s = Symbol(rhs.name_val)
-        !isdefined(mod, s) && return nothing
-        return getproperty(mod, s)
-    elseif kind(rhs) === K"."
-        @assert JS.numchildren(rhs) === 2
-        lhs = resolve_property(mod, rhs[1])
-        return resolve_property(lhs, rhs[2])
-    elseif JETLS_DEV_MODE
-        @info "resolve_property couldn't handle form:" mod rhs
-    end
-end
-
-function get_siginfos(s::ServerState, msg::SignatureHelpRequest)
-    uri = URI(msg.params.textDocument.uri)
-    fi = get_fileinfo(s, uri)
-    mod = find_file_module!(s, uri, msg.params.position)
-    b = xy_to_offset(fi, msg.params.position)
+function cursor_siginfos(mod::Module, ps::JS.ParseStream, b::Int)
     out = SignatureInformation[]
-
-    call = let st0 = JS.build_tree(JL.SyntaxTree, fi.parsed_stream; ignore_errors=true)
-        bas = byte_ancestors(st0, b)
+    call, after_semicolon = let st0 = JS.build_tree(JL.SyntaxTree, ps; ignore_errors=true)
+        # tolerate one-past-last byte. TODO: go back to closest non-whitespace
+        bas = byte_ancestors(st0, b-1)
         i = findfirst(st -> JS.kind(st) === K"call", bas)
         i === nothing && return out
-        bas[i]
+        after_semicolon = i > 1 && kind(bas[i-1]) === K"parameters" && b > JS.first_byte(bas[i-1])
+        bas[i], after_semicolon
     end
     # TODO: dotcall support
     JS.numchildren(call) === 0 && return out
@@ -179,40 +263,28 @@ function get_siginfos(s::ServerState, msg::SignatureHelpRequest)
     fn = resolve_property(mod, call[1])
     !isa(fn, Function) && return out
 
-    args, kw_i = flatten_call_args(call)
-    @info "flatten_call_args" args kw_i
+    ca = CallArgs(call)
 
-    pos_map = Int[] # which positional arg => position in `args`
-    for i in eachindex(args[1:kw_i-1])
-        if kind(args[i]) === K"..."
-            break # don't know beyond here
-        elseif kind(args[i]) === K"="
-            continue
+    # Influence parameter highlighting by selecting the active argument (which
+    # may be mapped to a parameter in make_siginfo).  If cursor is after all
+    # pos. args and not after semicolon, ask for the next param, which may not
+    # exist.  Otherwise, highlight the param for the arg we're in.
+    #
+    # We don't keep commas---do we want the green node here?
+    active_arg = let no_args = ca.kw_i === 1,
+        past_pos_args = !no_args && b > JS.last_byte(ca.args[ca.kw_i - 1]) + 1
+        if past_pos_args && !after_semicolon
+            :next
         else
-            push!(pos_map, i)
+            arg_i = findfirst(a -> JS.first_byte(a) <= b <= JS.last_byte(a) + 1, ca.args)
+            isnothing(arg_i) ? :none : arg_i
         end
     end
-
-    # we don't keep commas---do we want the green node here?
-    active_arg = let i = findfirst(a -> JS.byte_range(a).stop + 1 >= b, args)
-        if isnothing(i) || kind(args[i]) === K"..."
-            nothing
-        elseif kind(args[i]) === K"=" || i >= kw_i
-            kwname(args[i])
-        elseif i in pos_map
-            findfirst(x -> x === i, pos_map)
-        else
-            JETLS_DEV_MODE && (@info "No active arg" i args[i] call)
-            nothing
-        end
-    end
-
-    used_kws = find_kws(args, kw_i)
-
+    
     for m in methods(fn)
-        if compatible_call(m, args, used_kws, pos_map)
+        if compatible_call(m, ca)
             # TODO: don't suggest signature we are currently editing
-            push!(out, make_siginfo(m, active_arg))
+            push!(out, make_siginfo(m, ca, active_arg))
         end
     end
     return out
@@ -223,7 +295,11 @@ textDocument/signatureHelp is requested when one of the negotiated trigger
 characters is typed.  Eglot (emacs) requests it more frequently.
 """
 function handle_SignatureHelpRequest(s::ServerState, msg::SignatureHelpRequest)
-    signatures = get_siginfos(s, msg)
+    uri = URI(msg.params.textDocument.uri)
+    fi = get_fileinfo(s, uri)
+    mod = find_file_module!(s, uri, msg.params.position)
+    b = xy_to_offset(fi, msg.params.position)
+    signatures = cursor_siginfos(mod, fi.parsed_stream, b)
     activeSignature = 0
     activeParameter = nothing
     return s.send(

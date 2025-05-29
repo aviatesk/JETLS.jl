@@ -254,33 +254,6 @@ end
 # global completions
 # ==================
 
-function find_file_module!(state::ServerState, uri::URI, pos::Position)
-    mod = find_file_module(state, uri, pos)
-    state.completion_module[] = mod
-    return mod
-end
-function find_file_module(state::ServerState, uri::URI, pos::Position)
-    haskey(state.contexts, uri) || return Main
-    contexts = state.contexts[uri]
-    context = first(contexts)
-    for ctx in contexts
-        # prioritize `PackageSourceAnalysisEntry` if exists
-        if isa(context.entry, PackageSourceAnalysisEntry)
-            context = ctx
-            break
-        end
-    end
-    safi = successfully_analyzed_file_info(context, uri)
-    isnothing(safi) && return Main
-    curline = Int(pos.line) + 1
-    curmod = Main
-    for (range, mod) in safi.module_range_infos
-        curline in range || continue
-        curmod = mod
-    end
-    return curmod
-end
-
 function global_completions!(items::Dict{String, CompletionItem}, state::ServerState, uri::URI, params::CompletionParams)
     pos = params.position
     is_macro_invoke = let context = params.context

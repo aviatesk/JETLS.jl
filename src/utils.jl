@@ -45,7 +45,6 @@ Fetch cached FileInfo given an LSclient-provided structure with a URI
 get_fileinfo(s::ServerState, uri::URI) = haskey(s.file_cache, uri) ? s.file_cache[uri] : nothing
 get_fileinfo(s::ServerState, t::TextDocumentIdentifier) = get_fileinfo(s, URI(t.uri))
 
-
 function find_file_module!(state::ServerState, uri::URI, pos::Position)
     mod = find_file_module(state, uri, pos)
     state.completion_module[] = mod
@@ -62,11 +61,11 @@ function find_file_module(state::ServerState, uri::URI, pos::Position)
             break
         end
     end
-    haskey(context.analyzed_file_infos, uri) || return Main
-    analyzed_file_info = context.analyzed_file_infos[uri]
+    safi = successfully_analyzed_file_info(context, uri)
+    isnothing(safi) && return Main
     curline = Int(pos.line) + 1
     curmod = Main
-    for (range, mod) in analyzed_file_info.module_range_infos
+    for (range, mod) in safi.module_range_infos
         curline in range || continue
         curmod = mod
     end
