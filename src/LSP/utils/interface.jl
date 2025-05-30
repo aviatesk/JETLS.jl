@@ -68,6 +68,15 @@ function process_interface_def!(toplevelblk::Expr, structbody::Expr, nullable_fi
     push!(toplevelblk.args, :(@kwdef $structdef)) # `@kwdef` will attach `Core.__doc__` automatically
     if !isempty(nullable_fields)
         omitempties = Tuple(nullable_fields)
+        if Name === :InitializeParams
+            # HACK: In the write->read roundtrip of `InitializationRequest` in the
+            # `withserver` test, empty `workspaceFolders` needs to be serialized without
+            # being omitted. So override the `omitempties` for `InitializeParams`.
+            # In the normal lifecycle of a language server, `InitializeParams` is never
+            # serialized, so adding this hack doesn't affect the language server's behavior
+            # (except in the tests)
+            omitempties = ()
+        end
         push!(toplevelblk.args, :(StructTypes.omitempties(::Type{$Name}) = $omitempties))
     end
     if is_anon
