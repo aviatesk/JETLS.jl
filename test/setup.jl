@@ -47,7 +47,10 @@ function withserver(f;
                     capabilities=ClientCapabilities(),
                     rootUri,
                     workspaceFolders)))
-        @test take_with_timeout!(sent_queue).id == id
+        req = take_with_timeout!(received_queue)
+        @test req isa InitializeRequest && req.params.workspaceFolders == workspaceFolders
+        res = take_with_timeout!(sent_queue)
+        @test res isa InitializeResponse && res.id == id
     end
     try
         return f(in, out, received_queue, sent_queue, id_counter)
