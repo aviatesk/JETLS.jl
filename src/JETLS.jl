@@ -103,6 +103,10 @@ end
 include("utils.jl")
 include("completions.jl")
 
+const SYNTAX_DIAGNOSTIC_SOURCE = "JETLS - syntax"
+const TOPLEVEL_DIAGNOSTIC_SOURCE = "JETLS - top-level"
+const INFERENCE_DIAGNOSTIC_SOURCE = "JETLS - inference"
+
 struct IncludeCallback <: Function
     file_cache::Dict{URI,FileInfo}
 end
@@ -461,7 +465,7 @@ function juliasyntax_diagnostic_to_diagnostic(diagnostic::JS.Diagnostic, source:
             diagnostic.level === :note ? DiagnosticSeverity.Information :
             DiagnosticSeverity.Hint,
         message = diagnostic.message,
-        source = "JuliaSyntax")
+        source = SYNTAX_DIAGNOSTIC_SOURCE)
 end
 
 function analyze_parsed_if_exist(state::ServerState, uri::URI, args...; kwargs...)
@@ -584,7 +588,7 @@ function jet_toplevel_error_report_to_diagnostic(@nospecialize report::JET.Tople
     return Diagnostic(;
         range = line_range(report.line),
         message,
-        source = "JETAnalyzer")
+        source = TOPLEVEL_DIAGNOSTIC_SOURCE)
 end
 
 function jet_inference_error_report_to_diagnostic(@nospecialize report::JET.InferenceErrorReport)
@@ -605,7 +609,7 @@ function jet_inference_error_report_to_diagnostic(@nospecialize report::JET.Infe
     return Diagnostic(;
         range = jet_frame_to_range(topframe),
         message,
-        source = "JETAnalyzer",
+        source = INFERENCE_DIAGNOSTIC_SOURCE,
         relatedInformation)
 end
 
