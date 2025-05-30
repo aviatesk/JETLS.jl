@@ -48,6 +48,26 @@
   end
   ```
 
+# Running Test Code
+Please make sure to test new code when you wrote.
+When running tests, use the [`./julia`](./julia) script if it exists in the root
+directory of this repository.
+If it doesn't exist, simply use the `julia` command.
+
+If explicit test file or code is provided, prioritize running that.
+Otherwise, you can run the entire test suite for the JETLS project by executing
+`using Pkg; Pkg.test()` from the root directory of this repository.
+
+For example, if you receive a prompt like this:
+> Improve the error message of diagnostics.
+> Use test/test_diagnostics for the test cases.
+And if `./julia` exists, the command you should run is:
+```
+$ ./julia --startup-file=no -e `using Test; @testset "test_diagnostics" include("test/test_diagnostics")`
+```
+Note that the usage of the `--startup-file=no` flag, which avoids loading
+unnecessary startup utilities.
+
 # About Test Code
 Testing language server functionality is challenging.
 To fully test such functionality, you need to start a server loop,
