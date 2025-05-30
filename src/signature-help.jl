@@ -247,10 +247,21 @@ end
 function cursor_siginfos(mod::Module, ps::JS.ParseStream, b::Int)
     out = SignatureInformation[]
     call, after_semicolon = let st0 = JS.build_tree(JL.SyntaxTree, ps; ignore_errors=true)
-        # tolerate one-past-last byte. TODO: go back to closest non-whitespace
+        # tolerate one-past-last byte. TODO: go back to closest non-whitespace?
         bas = byte_ancestors(st0, b-1)
         i = findfirst(st -> JS.kind(st) === K"call", bas)
         i === nothing && return out
+
+        # If parents of our call are like (function (where (where ... (call |) ...))),
+        # we're actually in a declaration, and shouldn't show signature help.
+        # Are there other cases this misses?
+        @info st0
+        j = i + 1
+        while j + 1 <= lastindex(bas) && kind(bas[j+1]) === K"where"
+            j += 1
+        end
+        j <= lastindex(bas) && kind(bas[j]) === K"function" && return out
+
         after_semicolon = i > 1 && kind(bas[i-1]) === K"parameters" && b > JS.first_byte(bas[i-1])
         bas[i], after_semicolon
     end
