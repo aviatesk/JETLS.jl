@@ -147,7 +147,9 @@ end
             found_diagnostic = false
             for diag in out.params.diagnostics
                 if (diag.source == JETLS.INFERENCE_DIAGNOSTIC_SOURCE &&
-                    occursin("y` is not defined", diag.message))
+                    # this also tests that JETLS doesn't show the nonsensical `var"..."`
+                    # string caused by JET's internal details
+                    occursin("`TestPackageAnalysis.BadModule.y` is not defined", diag.message))
                     found_diagnostic = true
                     break
                 end

@@ -553,8 +553,9 @@ function jet_result_to_diagnostics(result, file_uris)
 end
 
 function jet_result_to_diagnostics!(uri2diagnostics::Dict{URI,Vector{Diagnostic}}, result)
+    postprocessor = JET.PostProcessor(result.res.actual2virtual)
     for report in result.res.toplevel_error_reports
-        diagnostic = jet_toplevel_error_report_to_diagnostic(report)
+        diagnostic = jet_toplevel_error_report_to_diagnostic(postprocessor, report)
         filename = report.file
         filename === :none && continue
         if startswith(filename, "Untitled")
@@ -565,7 +566,7 @@ function jet_result_to_diagnostics!(uri2diagnostics::Dict{URI,Vector{Diagnostic}
         push!(uri2diagnostics[uri], diagnostic)
     end
     for report in result.res.inference_error_reports
-        diagnostic = jet_inference_error_report_to_diagnostic(report)
+        diagnostic = jet_inference_error_report_to_diagnostic(postprocessor, report)
         topframe = report.vst[1]
         topframe.file === :none && continue # TODO Figure out why this is necessary
         filename = String(topframe.file)
@@ -578,24 +579,24 @@ function jet_result_to_diagnostics!(uri2diagnostics::Dict{URI,Vector{Diagnostic}
     end
 end
 
-function jet_toplevel_error_report_to_diagnostic(@nospecialize report::JET.ToplevelErrorReport)
+function jet_toplevel_error_report_to_diagnostic(postprocessor::JET.PostProcessor, @nospecialize report::JET.ToplevelErrorReport)
     if report isa JET.ParseErrorReport
         return juliasyntax_diagnostic_to_diagnostic(report.diagnostic, report.source)
     end
     message = JET.with_bufferring(:limit=>true) do io
         JET.print_report(io, report)
-    end
+    end |> postprocessor
     return Diagnostic(;
         range = line_range(report.line),
         message,
         source = TOPLEVEL_DIAGNOSTIC_SOURCE)
 end
 
-function jet_inference_error_report_to_diagnostic(@nospecialize report::JET.InferenceErrorReport)
+function jet_inference_error_report_to_diagnostic(postprocessor::JET.PostProcessor, @nospecialize report::JET.InferenceErrorReport)
     topframe = report.vst[1]
     message = JET.with_bufferring(:limit=>true) do io
         JET.print_report_message(io, report)
-    end
+    end |> postprocessor
     relatedInformation = DiagnosticRelatedInformation[
         let frame = report.vst[i],
             message = sprint(JET.print_frame_sig, frame, JET.PrintConfig())
