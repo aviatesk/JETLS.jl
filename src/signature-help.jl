@@ -255,7 +255,6 @@ function cursor_siginfos(mod::Module, ps::JS.ParseStream, b::Int)
         # If parents of our call are like (function (where (where ... (call |) ...))),
         # we're actually in a declaration, and shouldn't show signature help.
         # Are there other cases this misses?
-        @info st0
         j = i + 1
         while j + 1 <= lastindex(bas) && kind(bas[j+1]) === K"where"
             j += 1
