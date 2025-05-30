@@ -55,7 +55,7 @@ In JETLS, since we need to use packages that aren’t yet registered
 specific branches of [JET.jl](https://github.com/c42f/JuliaLowering.jl) and
 [JuliaSyntax.jl](https://github.com/JuliaLang/JuliaSyntax.jl),
 the [Project.toml](./Project.toml) includes [`[sources]` section](https://pkgdocs.julialang.org/v1/toml-files/#The-[sources]-section).
-The `[sources]` section allows simply running `Pkg.instantiate()` to installall
+The `[sources]` section allows simply running `Pkg.instantiate()` to install all
 the required versions of these packages on any environment, including the CI
 setup especially.
 
@@ -70,7 +70,7 @@ julia> Pkg.develop("JET")
 ERROR: `path` and `url` are conflicting specifications
 ...
 ```
-To workaround this, you can temporarily comment out the `[sources]` section and
+To work around this, you can temporarily comment out the `[sources]` section and
 run `Pkg.develop("JET")`.
 This lets you use any local JET implementation. After running `Pkg.develop("JET")`,
 you can restore the `[sources]` section, and perform any most of `Pkg`
