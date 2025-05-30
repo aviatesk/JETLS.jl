@@ -2,33 +2,6 @@ module test_full_lifecycle
 
 include("setup.jl")
 
-using Pkg
-function with_package(test_func, pkgname::AbstractString,
-                      pkgcode::AbstractString;
-                      pkg_setup=function ()
-                          Pkg.precompile(; io=devnull)
-                      end,
-                      env_setup=function () end)
-    old = Pkg.project().path
-    mktempdir() do tempdir
-        try
-            pkgpath = normpath(tempdir, pkgname)
-            Pkg.generate(pkgpath; io=devnull)
-            Pkg.activate(pkgpath; io=devnull)
-            pkgfile = normpath(pkgpath, "src", "$pkgname.jl")
-            write(pkgfile, string(pkgcode))
-            pkg_setup()
-
-            Pkg.activate(; temp=true, io=devnull)
-            env_setup()
-
-            test_func(pkgpath)
-        finally
-            Pkg.activate(old; io=devnull)
-        end
-    end
-end
-
 let (pkgcode, positions) = get_text_and_positions("""
     module TestFullLifecycle
 
@@ -46,11 +19,11 @@ let (pkgcode, positions) = get_text_and_positions("""
     @test length(positions) == 1
     pos1 = only(positions)
 
-    with_package("TestFullLifecycle", pkgcode) do pkgpath
-        rootPath = pkgpath
-        filepath = normpath(rootPath, "src", "TestFullLifecycle.jl")
+    withpackage("TestFullLifecycle", pkgcode) do pkgpath
+        filepath = normpath(pkgpath, "src", "TestFullLifecycle.jl")
         uri = string(JETLS.URIs2.filepath2uri(filepath))
-        withserver(; rootPath) do in, _, _, sent_queue, id_counter
+
+        test_full_cycle = function (in, _, _, sent_queue, id_counter)
             # open the file, and fill in the file cache
             writemsg(in,
                 DidOpenTextDocumentNotification(;
@@ -100,6 +73,19 @@ let (pkgcode, positions) = get_text_and_positions("""
                 end
             end
         end
+
+        rootUri = string(JETLS.URIs2.filepath2uri(pkgpath))
+
+        # test clients that give workspaceFolders
+        let workspaceFolders = [WorkspaceFolder(; uri=rootUri, name="TestFullLifecycle")]
+            withserver(test_full_cycle; workspaceFolders)
+        end
+
+        # test clients that give rootUri
+        withserver(test_full_cycle; rootUri)
+
+        # also test cases when external script is open
+        withserver(test_full_cycle)
     end
 end
 

@@ -2,13 +2,12 @@ using Test
 using Pkg
 using JETLS
 using JETLS.LSP
+using JETLS.URIs2
 using JETLS.JSONRPC: JSON3, readmsg, writemsg
 
-const FIXTURES_DIR = normpath(pkgdir(JETLS), "test", "fixtures")
-
 function withserver(f;
-                    rootPath=dirname(@__DIR__),
-                    rootUri="file://$rootPath",)
+                    workspaceFolders::Union{Nothing,Vector{WorkspaceFolder}}=nothing,
+                    rootUri::Union{Nothing,String}=nothing)
     in = Base.BufferStream()
     out = Base.BufferStream()
     received_queue = Channel{Any}(Inf)
@@ -23,16 +22,31 @@ function withserver(f;
     end
     id_counter = Ref(0)
     old_env = Pkg.project().path
-    Pkg.activate(rootPath; io=devnull)
+    root_path = nothing
+    if workspaceFolders !== nothing
+        if isempty(workspaceFolders)
+            root_path = uri2filepath(URI(first(workspaceFolders).uri))
+        end
+    elseif rootUri !== nothing
+        root_path = uri2filepath(URI(rootUri))
+    end
+    if root_path === nothing
+        Pkg.activate(; temp=true, io=devnull)
+    else
+        Pkg.activate(root_path; io=devnull)
+    end
+    if workspaceFolders === nothing && rootUri === nothing
+        workspaceFolders = WorkspaceFolder[] # initialize empty workspace by default
+    end
     let id = id_counter[] += 1
         writemsg(in,
             InitializeRequest(;
                 id,
                 params=InitializeParams(;
                     processId=getpid(),
-                    rootPath,
+                    capabilities=ClientCapabilities(),
                     rootUri,
-                    capabilities=ClientCapabilities())))
+                    workspaceFolders)))
         @test take_with_timeout!(sent_queue).id == id
     end
     try
@@ -69,6 +83,47 @@ function take_with_timeout!(chn::Channel; interval=1, limit=60)
         limit -= 1
     end
     error("Timeout waiting for message")
+end
+
+function withpackage(test_func, pkgname::AbstractString,
+                     pkgcode::AbstractString;
+                     pkg_setup=function ()
+                         Pkg.precompile(; io=devnull)
+                     end,
+                     env_setup=function () end)
+    old = Pkg.project().path
+    mktempdir() do tempdir
+        try
+            pkgpath = normpath(tempdir, pkgname)
+            Pkg.generate(pkgpath; io=devnull)
+            Pkg.activate(pkgpath; io=devnull)
+            pkgfile = normpath(pkgpath, "src", "$pkgname.jl")
+            write(pkgfile, string(pkgcode))
+            pkg_setup()
+
+            Pkg.activate(; temp=true, io=devnull)
+            env_setup()
+
+            test_func(pkgpath)
+        finally
+            Pkg.activate(old; io=devnull)
+        end
+    end
+end
+
+function withscript(test_func, scriptcode::AbstractString;
+                    env_setup=function () end)
+    old = Pkg.project().path
+    mktemp() do scriptpath, io
+        try
+            write(scriptpath, scriptcode)
+            Pkg.activate(; temp=true, io=devnull)
+            env_setup()
+            test_func(scriptpath)
+        finally
+            Pkg.activate(old; io=devnull)
+        end
+    end
 end
 
 function get_text_and_positions(text::String)
