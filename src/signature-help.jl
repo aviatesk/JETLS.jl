@@ -183,7 +183,7 @@ function make_paraminfo(p::JL.SyntaxTree)
     end
     # do clients tolerate string labels better?
     # if !isa(label, String)
-    #     label = string(p.source.file[label[1]:label[2]])
+    #     label = string(p.source.file[label[1]+1:label[2]])
     # end
     return ParameterInformation(; label, documentation)
 end
@@ -221,7 +221,7 @@ function make_siginfo(m::Method, ca::CallArgs, active_arg::Union{Int, Symbol})
             kwp_i > ca.kw_i ? ca.kw_i : nothing
         elseif kind(ca.args[i]) === K"..."
             # vararg if we can, nothing if not
-            i >= kwp_i ? maybe_var_kwp : nothing
+            i >= ca.kw_i ? maybe_var_kwp : nothing
         elseif i in keys(ca.pos_map)
             lb, ub = get(ca.pos_map, i, (1, nothing))
             if !isnothing(maybe_var_params) && lb >= maybe_var_params
@@ -294,7 +294,6 @@ function cursor_siginfos(mod::Module, ps::JS.ParseStream, b::Int)
     
     for m in methods(fn)
         if compatible_call(m, ca)
-            # TODO: don't suggest signature we are currently editing
             push!(out, make_siginfo(m, ca, active_arg))
         end
     end
