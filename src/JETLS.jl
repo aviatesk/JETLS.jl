@@ -241,7 +241,7 @@ function initialize_result()
                 save = SaveOptions(;
                     includeText = true)),
             completionProvider = CompletionOptions(;
-                triggerCharacters = ["\\", "@"],
+                triggerCharacters = COMPLETION_TRIGGER_CHARACTERS,
                 resolveProvider = true,
                 completionItem = (;
                     labelDetailsSupport = true)),
