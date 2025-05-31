@@ -367,6 +367,9 @@ end
     end
 end
 
+# Latex&emoji
+# ===========
+
 function test_backslash_offset(code::String, expected_offset=nothing)
     text, positions = get_text_and_positions(code, r"#=cursor=#")
     @assert length(positions) == 1 "test_backslash_offset requires exactly one cursor marker"
@@ -539,6 +542,58 @@ end
     end
     let code = "angle = \\phi#=cursor=#"
         test_backslash_offset(code, 9)
+    end
+end
+
+@testset "Latex/emoji completion" begin
+    state = JETLS.ServerState(identity)
+    filename = "test_latex_emoji.jl"
+    uri = JETLS.URI(filename)
+
+    # `\`-mark should trigger latex completion
+    let text = """
+        function foo(α, β)
+            \\
+        end
+        """
+        JETLS.cache_file_info!(state, uri, 1, text, filename)
+        params = CompletionParams(;
+            textDocument=TextDocumentIdentifier(string(uri)),
+            position=Position(;line=1,character=5),
+            context=CompletionContext(;
+                triggerKind=CompletionTriggerKind.TriggerCharacter,
+                triggerCharacter="\\"))
+        items = JETLS.get_completion_items(state, uri, params)
+        @test any(items) do item
+            item.label == "\\alpha"
+        end
+        @test !any(items) do item
+            item.label == "foo" || # should not include global completions
+            item.label == "β"      # should not include local completions
+        end
+    end
+
+    let text = """
+        function foo(α, β)
+            \\:
+        end
+        """
+        JETLS.cache_file_info!(state, uri, 2, text, filename)
+        params = CompletionParams(;
+            textDocument=TextDocumentIdentifier(string(uri)),
+            position=Position(;line=1,character=6),
+            context=CompletionContext(;
+                triggerKind=CompletionTriggerKind.TriggerCharacter,
+                triggerCharacter=":"))
+        items = JETLS.get_completion_items(state, uri, params)
+        @test any(items) do item
+            item.label == "\\:pizza:"
+        end
+        @test !any(items) do item
+            item.label == "foo" || # should not include global completions
+            item.label == "α"      # should not include local completions
+            item.label == "β"      # should not include local completions
+        end
     end
 end
 
