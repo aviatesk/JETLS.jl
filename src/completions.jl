@@ -342,7 +342,7 @@ function global_completions!(items::Dict{String, CompletionItem}, state::ServerS
         curbyte = xy_to_offset(fi, pos)
         sn = JS.build_tree(JS.SyntaxNode, fi.parsed_stream)
         ancestors = byte_ancestors(sn, curbyte-1)
-        if !isempty(ancestors) 
+        if !isempty(ancestors)
             curnode = first(ancestors)
             is_macro_invoke = JS.kind(curnode) === K"MacroName"
         end
@@ -351,8 +351,14 @@ function global_completions!(items::Dict{String, CompletionItem}, state::ServerS
         s = String(name)
         startswith(s, "#") && continue
         insertText = nothing
+        filterText = s
         if startswith(s, "@")
-            insertText = s[2:end]
+            # TODO need to use `textEdit` instead? (for VSCode)
+            insertText = filterText = lstrip(s, '@')
+            if !is_macro_invoke
+                # allow `nospecialize|` (without `@`-mark) to complete to `@nospecialize`
+                insertText = s
+            end
         elseif is_macro_invoke
             continue
         end
@@ -363,6 +369,7 @@ function global_completions!(items::Dict{String, CompletionItem}, state::ServerS
             kind = CompletionItemKind.Variable,
             documentation = nothing,
             insertText,
+            filterText,
             sortText = get_sort_text(0, #=isglobal=#true),
             data = CompletionData(#=needs_resolve=#true))
     end
@@ -448,17 +455,18 @@ function add_emoji_latex_completions!(items::Dict{String,CompletionItem}, state:
     backslash_pos = offset_to_xy(fi, backslash_offset)
 
     function create_ci(key, val, is_emoji::Bool)
-        key = lstrip(key, '\\')
+        sortText = label = lstrip(key, '\\')
         if is_emoji
-            key = lstrip(key, ':')
+            sortText = rstrip(lstrip(sortText, ':'), ':')
         end
         description = is_emoji ? "emoji" : "latex-symbol"
         return CompletionItem(;
-            label=key,
+            label,
             labelDetails=CompletionItemLabelDetails(;
                 description),
             kind=CompletionItemKind.Snippet,
             documentation=val,
+            sortText,
             textEdit=TextEdit(;
                 range = Range(;
                     start = backslash_pos,

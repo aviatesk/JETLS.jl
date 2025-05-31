@@ -364,10 +364,11 @@ end
             textDocument=TextDocumentIdentifier(string(uri)),
             position=Position(;line=1,character=7),
             context=CompletionContext(;
-                triggerKind=CompletionTriggerKind.TriggerCharacter))
+                triggerKind=CompletionTriggerKind.Invoked))
         items = JETLS.get_completion_items(state, uri, params)
         @test any(items) do item
             item.label == "@nospecialize" &&
+            item.filterText == "nospecialize" &&
             item.insertText == "nospecialize"
         end
         @test !any(items) do item
@@ -386,10 +387,30 @@ end
             textDocument=TextDocumentIdentifier(string(uri)),
             position=Position(;line=1,character=20),
             context=CompletionContext(;
-                triggerKind=CompletionTriggerKind.TriggerCharacter))
+                triggerKind=CompletionTriggerKind.Invoked))
         items = JETLS.get_completion_items(state, uri, params)
         @test any(items) do item
             item.label == "yyy"
+        end
+    end
+
+    # allow `nospecia|` complete to `@nospecialize`
+    let text = """
+        function foo(xxx, yyy)
+            nospecia
+        end
+        """
+        JETLS.cache_file_info!(state, uri, 4, text, filename)
+        params = CompletionParams(;
+            textDocument=TextDocumentIdentifier(string(uri)),
+            position=Position(;line=1,character=12),
+            context=CompletionContext(;
+                triggerKind=CompletionTriggerKind.Invoked))
+        items = JETLS.get_completion_items(state, uri, params)
+        @test any(items) do item
+            item.label == "@nospecialize" &&
+            item.filterText == "nospecialize" &&
+            item.insertText == "@nospecialize" # NOTE that `@` is included here
         end
     end
 end
@@ -593,7 +614,8 @@ end
                 triggerCharacter="\\"))
         items = JETLS.get_completion_items(state, uri, params)
         @test any(items) do item
-            item.label == "\\alpha"
+            item.label == "alpha" &&
+            item.sortText == "alpha"
         end
         @test !any(items) do item
             item.label == "foo" || # should not include global completions
@@ -615,13 +637,14 @@ end
                 triggerCharacter=":"))
         items = JETLS.get_completion_items(state, uri, params)
         @test any(items) do item
-            item.label == "\\:pizza:"
+            item.label == ":pizza:" &&
+            item.sortText == "pizza"
         end
         @test !any(items) do item
             item.label == "foo" || # should not include global completions
             item.label == "α"   || # should not include local completions
             item.label == "β"   || # should not include local completions
-            item.label == "\\alpha" # should not even include LaTeX completions
+            item.label == "alpha" # should not even include LaTeX completions
         end
     end
 end
