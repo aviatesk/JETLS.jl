@@ -241,7 +241,11 @@ function initialize_result()
                 save = SaveOptions(;
                     includeText = true)),
             completionProvider = CompletionOptions(;
-                triggerCharacters = ["\\", "@"],
+                triggerCharacters = [
+                    "@",  # macro completion
+                    "\\", # LaTeX completion
+                    ":",  # emoji completion
+                ],
                 resolveProvider = true,
                 completionItem = (;
                     labelDetailsSupport = true)),
