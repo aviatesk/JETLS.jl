@@ -398,8 +398,9 @@ function global_completions!(items::Dict{String, CompletionItem}, state::ServerS
         # check if the cursor is within the macro name context `@xxx|`
         curbyte = xy_to_offset(fi, pos)
         sn = JS.build_tree(JS.SyntaxNode, fi.parsed_stream)
-        if !isempty(sn.children) 
-            curnode = first(byte_ancestors(sn, curbyte-1))
+        ancestors = byte_ancestors(sn, curbyte-1)
+        if !isempty(ancestors) 
+            curnode = first(ancestors)
             is_macro_invoke = JS.kind(curnode) === K"MacroName"
         end
     end
