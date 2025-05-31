@@ -593,7 +593,8 @@ end
                 triggerCharacter="\\"))
         items = JETLS.get_completion_items(state, uri, params)
         @test any(items) do item
-            item.label == "\\alpha"
+            item.label == "alpha" &&
+            item.sortText == "alpha"
         end
         @test !any(items) do item
             item.label == "foo" || # should not include global completions
@@ -615,13 +616,14 @@ end
                 triggerCharacter=":"))
         items = JETLS.get_completion_items(state, uri, params)
         @test any(items) do item
-            item.label == "\\:pizza:"
+            item.label == ":pizza:" &&
+            item.sortText == "pizza"
         end
         @test !any(items) do item
             item.label == "foo" || # should not include global completions
             item.label == "α"   || # should not include local completions
             item.label == "β"   || # should not include local completions
-            item.label == "\\alpha" # should not even include LaTeX completions
+            item.label == "alpha" # should not even include LaTeX completions
         end
     end
 end
