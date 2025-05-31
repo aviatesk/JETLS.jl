@@ -1,9 +1,14 @@
-# Coding Rules
-- Use `4 whitespaces` for indentation and generally keep line length under `92`
-  characters.
-  * However, when writing Markdown text, use `2 whitespaces` for indentation,
-    and keep the preferred line length at `80` characters.
+# Formatting
+- When writing Julia code, use `4 whitespaces` for indentation and try to keep
+  the maximum line length under `92` characters.
+- When writing Markdown text, use `2 whitespaces` for indentation and try to
+  keep the maximum line length under `80` characters.
+- When writing commit messages, follow the format `component: brief summary` for
+  the title. In the body of the commit message, provide a brief prose summary of
+  the purpose of the changes made.
+  Also, ensure that the maximum line length never exceeds 72 characters.
 
+# Coding Rules
 - When writing functions, use the most restrictive signature type possible.
   This allows JET to easily catch unintended errors.
   Of course, when prototyping, it's perfectly fine to start with loose type
