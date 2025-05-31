@@ -278,6 +278,11 @@ end
 
 function local_completions!(items::Dict{String, CompletionItem},
                             s::ServerState, uri::URI, params::CompletionParams)
+    let context = params.context
+        !isnothing(context) &&
+            # Don't trigger completion just by typing a numeric character:
+            context.triggerCharacter in NUMERIC_CHARACTERS && return nothing
+    end
     fi = get_fileinfo(s, uri)
     fi === nothing && return nothing
     # NOTE don't bail out even if `length(fi.parsed_stream.diagnostics) ≠ 0`
@@ -330,9 +335,12 @@ end
 
 function global_completions!(items::Dict{String, CompletionItem}, state::ServerState, uri::URI, params::CompletionParams)
     pos = params.position
-    is_macro_invoke = let context = params.context
-        !isnothing(context) && let triggerCharacter = context.triggerCharacter
-            !isnothing(triggerCharacter) && triggerCharacter == "@"
+    is_macro_invoke = false
+    let context = params.context
+        if !isnothing(context)
+            # Don't trigger completion just by typing a numeric character:
+            context.triggerCharacter in NUMERIC_CHARACTERS && return nothing
+            is_macro_invoke = context.triggerCharacter == "@"
         end
     end
     mod = find_file_module!(state, uri, pos)
@@ -512,6 +520,14 @@ end
 
 # request handler
 # ===============
+
+const NUMERIC_CHARACTERS = tuple(string.('0':'9')...)
+const COMPLETION_TRIGGER_CHARACTERS = [
+    "@",  # macro completion
+    "\\", # LaTeX completion
+    ":",  # emoji completion
+    NUMERIC_CHARACTERS..., # allow these characters to be recognized by `CompletionContext.triggerCharacter`
+]
 
 function get_completion_items(state::ServerState, uri::URI, params::CompletionParams)
     items = Dict{String, CompletionItem}()
