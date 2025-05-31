@@ -203,17 +203,32 @@ end
 # get_completion_items
 # ====================
 
-function get_text_and_positions(text::String)
+function get_text_and_positions(text::String, target::Regex=r"#=cursor=#")
     positions = JETLS.Position[]
     lines = split(text, '\n')
+
+    # First pass: collect all positions without modifying text
     for (i, line) in enumerate(lines)
-        for m in eachmatch(r"#=cursor=#", line)
-            # Position is 0-based
-            push!(positions, JETLS.Position(; line=i-1, character=m.match.offset-1))
-            lines[i] = replace(line, r"#=cursor=#" => "")
+        offset = 0  # Track cumulative offset due to previous replacements in same line
+        temp_line = line
+        while true
+            m = match(target, temp_line)
+            if m === nothing
+                break
+            end
+            # Position is 0-based, m.offset is 1-based
+            char_pos = m.offset - 1 + offset
+            push!(positions, JETLS.Position(; line=i-1, character=char_pos))
+
+            # Remove this match and continue searching
+            temp_line = temp_line[1:m.offset-1] * temp_line[m.offset+length(m.match):end]
+            offset += m.offset - 1
         end
     end
-    return join(lines, '\n'), positions
+
+    # Second pass: remove all target occurrences
+    cleaned_text = replace(text, target => "")
+    return cleaned_text, positions
 end
 
 @testset "get_completion_items" begin
@@ -349,6 +364,181 @@ end
         @test any(items) do item
             item.label == "yyy"
         end
+    end
+end
+
+function test_backslash_offset(code::String, expected_offset=nothing)
+    text, positions = get_text_and_positions(code, r"#=cursor=#")
+    @assert length(positions) == 1 "test_backslash_offset requires exactly one cursor marker"
+
+    state = JETLS.ServerState(identity)
+    filename = "test_backslash.jl"
+    uri = JETLS.URI(filename)
+    JETLS.cache_file_info!(state, uri, 1, text, filename)
+
+    offset = JETLS.get_backslash_offset(state, uri, positions[1])
+    @test offset == expected_offset
+end
+@testset "get_backslash_offset" begin
+    # Example 1: Current token is backslash
+    let code = "\\#=cursor=#"
+        test_backslash_offset(code, 1)
+    end
+    let code = "  \\#=cursor=#"
+        test_backslash_offset(code, 3)
+    end
+
+    # Example 2: Previous token is backslash
+    let code = "\\alpha#=cursor=#"
+        test_backslash_offset(code, 1)
+    end
+    let code = "\\beta#=cursor=#"
+        test_backslash_offset(code, 1)
+    end
+    let code = "  \\gamma#=cursor=#"
+        test_backslash_offset(code, 3)
+    end
+    let code = "\\ #=cursor=#"
+        test_backslash_offset(code, nothing)
+    end
+    let code = "\\  #=cursor=#"
+        test_backslash_offset(code, nothing)
+    end
+
+    # Example 3: Backslash followed by colon, then cursor
+    let code = "\\:#=cursor=#"
+        test_backslash_offset(code, 1)
+    end
+    let code = "\\:a#=cursor=#"
+        test_backslash_offset(code, 1)
+    end
+    let code = "\\:abc#=cursor=#"
+        test_backslash_offset(code, 1)
+    end
+    let code = "  \\:test#=cursor=#"
+        test_backslash_offset(code, 3)
+    end
+
+    # Example 4: No relevant backslash (should return nothing)
+    let code = "abc#=cursor=#"
+        test_backslash_offset(code, nothing)
+    end
+    let code = "#=cursor=#"
+        test_backslash_offset(code, nothing)
+    end
+    let code = "#=cursor=#\\alpha"
+        test_backslash_offset(code, nothing)
+    end
+    let code = "\\alpha beta#=cursor=#"
+        test_backslash_offset(code, nothing)
+    end
+    let code = "\\alpha beta gamma#=cursor=#"
+        test_backslash_offset(code, nothing)
+    end
+    let code = "\"\\alpha\"#=cursor=#"
+        test_backslash_offset(code, nothing)
+    end
+    let code = "\\:a b#=cursor=#"
+        test_backslash_offset(code, nothing)
+    end
+
+    # Multiple backslashes - should find the most recent one
+    let code = "\\alpha \\beta#=cursor=#"
+        test_backslash_offset(code, 8)
+    end
+    let code = "\\alpha \\beta \\gamma#=cursor=#"
+        test_backslash_offset(code, 14)
+    end
+
+    # In various syntactic contexts
+    let code = "f(\\alpha#=cursor=#)"
+        test_backslash_offset(code, 3)
+    end
+    let code = "[\\beta#=cursor=#]"
+        test_backslash_offset(code, 2)
+    end
+    let code = "{\\gamma#=cursor=#}"
+        test_backslash_offset(code, 2)
+    end
+
+    # With newlines
+    let code = "x = 1\n\\alpha#=cursor=#"
+        test_backslash_offset(code, 7)
+    end
+    let code = "function f()\n    \\beta#=cursor=#\nend"
+        test_backslash_offset(code, 18)
+    end
+
+    # Complex expressions
+    let code = "f(x) = x^2 + \\sigma#=cursor=#"
+        test_backslash_offset(code, 14)
+    end
+    let code = "result = compute(\\theta#=cursor=#, y)"
+        test_backslash_offset(code, 18)
+    end
+
+    # LaTeX-like sequences
+    let code = "\\alpha#=cursor=#"
+        test_backslash_offset(code, 1)
+    end
+    let code = "\\sum#=cursor=#"
+        test_backslash_offset(code, 1)
+    end
+    let code = "\\infty#=cursor=#"
+        test_backslash_offset(code, 1)
+    end
+    let code = "\\mathbb#=cursor=#"
+        test_backslash_offset(code, 1)
+    end
+
+    # Special colon cases
+    let code = "\\:heart#=cursor=#"
+        test_backslash_offset(code, 1)
+    end
+    let code = "\\:smile#=cursor=#"
+        test_backslash_offset(code, 1)
+    end
+    let code = "\\:+1#=cursor=#"
+        test_backslash_offset(code, 1)
+    end
+
+    # Unicode characters in code before backslash
+    let code = "α = 1; \\beta#=cursor=#"
+        test_backslash_offset(code, ncodeunits("α = 1; \\"))
+    end
+    let code = "# 测试\n\\gamma#=cursor=#"
+        test_backslash_offset(code, ncodeunits("# 测试\n\\"))
+    end
+
+    # Boundary conditions
+    let code = "\\#=cursor=#"
+        test_backslash_offset(code, 1)
+    end
+    let code = "\\a#=cursor=#"
+        test_backslash_offset(code, 1)
+    end
+    let code = "\\:#=cursor=#"
+        test_backslash_offset(code, 1)
+    end
+    let code = "code; \\#=cursor=#"
+        test_backslash_offset(code, 7)
+    end
+
+    # Real-world usage patterns
+    let code = "E = mc^2 + \\hbar#=cursor=#"
+        test_backslash_offset(code, 12)
+    end
+    let code = "function hermite(n, x)\n    return \\psi#=cursor=#\nend"
+        test_backslash_offset(code, 35)
+    end
+    let code = "struct Particle\n    momentum::\\vec#=cursor=#\nend"
+        test_backslash_offset(code, 31)
+    end
+    let code = "[\\theta#=cursor=# for i in 1:n]"
+        test_backslash_offset(code, 2)
+    end
+    let code = "angle = \\phi#=cursor=#"
+        test_backslash_offset(code, 9)
     end
 end
 
