@@ -98,6 +98,7 @@ end
 
 include("utils.jl")
 include("completions.jl")
+include("document-symbols.jl")
 
 struct IncludeCallback <: Function
     file_cache::Dict{URI,FileInfo}
@@ -180,6 +181,8 @@ function _handle_message(state::ServerState, msg)
         return handle_DidCloseTextDocumentNotification(state, msg)
     elseif msg isa DidSaveTextDocumentNotification
         return handle_DidSaveTextDocumentNotification(state, msg)
+    elseif msg isa DocumentSymbolRequest
+        return handle_DocumentSymbolRequest(state, msg)
     elseif msg isa DocumentDiagnosticRequest || msg isa WorkspaceDiagnosticRequest
         @assert false "Document and workspace diagnostics are not enabled"
     elseif msg isa CompletionRequest
@@ -245,6 +248,7 @@ function initialize_result()
                 resolveProvider = true,
                 completionItem = (;
                     labelDetailsSupport = true)),
+            documentSymbolProvider = DocumentSymbolOptions(),
         ),
         serverInfo = (;
             name = "JETLS",
