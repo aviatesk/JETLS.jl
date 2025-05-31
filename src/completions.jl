@@ -35,13 +35,15 @@ consists of a backslash and colon.
 Returns `nothing` if such a token does not exist or if another token appears
 immediately before the cursor.
 
-
 Examples:
-1.  `\\┃ beta`       returns byte offset of `\\`
-2.  `\\alph┃`        returns byte offset of `\\`
-3.  `\\:smile┃       returns byte offset of `\\`
-4.  `alpha┃`         returns `nothing`  (no backslash before cursor)
-5.  `\\alpha  bet┃a` returns `nothing` (no backslash immediately before token with cursor)
+1. `\\┃ beta`       returns byte offset of `\\`
+2. `\\alph┃`        returns byte offset of `\\`
+2. `\\:┃`           returns byte offset of `\\`
+3. `\\:smile┃       returns byte offset of `\\`
+3. `\\:+1┃          returns byte offset of `\\`
+4. `alpha┃`         returns `nothing`  (no backslash before cursor)
+5. `\\alpha  bet┃a` returns `nothing` (no backslash immediately before token with cursor)
+6. `\\  ┃`          returns `nothing` (whitespace before cursor)
 """
 function get_backslash_offset(state::ServerState, uri::URI, pos::Position)
     fi = get_fileinfo(state, uri)
@@ -54,17 +56,35 @@ function get_backslash_offset(state::ServerState, uri::URI, pos::Position)
     if tokens[curr_idx].orig_kind == JS.K"\\"
         return tokens[curr_idx].next_byte - 1
     # example 2
-    elseif curr_idx > 1 && tokens[curr_idx - 1].orig_kind == JS.K"\\"
-        return tokens[curr_idx - 1].next_byte - 1
+    elseif curr_idx > 1 && checkbounds(Bool, tokens, curr_idx-1) && tokens[curr_idx-1].orig_kind == JS.K"\\"
+        if tokens[curr_idx].orig_kind != JS.K"Whitespace"
+            return tokens[curr_idx-1].next_byte - 1
+        else
+            # example 6
+            return nothing
+        end
     # example 3
-    elseif curr_idx > 2 && tokens[curr_idx - 2].orig_kind == JS.K"\\" && tokens[curr_idx - 1].orig_kind == JS.K":"
-        return tokens[curr_idx - 2].next_byte - 1
+    elseif curr_idx > 2
+        # Search backwards for \: pattern
+        i = curr_idx - 1
+        while i >= 2
+            token = tokens[i]
+            token1 = tokens[i-1]
+            if token1.orig_kind == JS.K"\\" && token.orig_kind == JS.K":"
+                return token1.next_byte - 1
+            end
+            # Stop searching if we hit whitespace
+            if token.orig_kind == JS.K"Whitespace" || token.orig_kind == JS.K"NewlineWs"
+                break
+            end
+            i -= 1
+        end
+        return nothing
     # example 4, 5
     else
         return nothing
     end
 end
-
 
 # local completions
 # =================
