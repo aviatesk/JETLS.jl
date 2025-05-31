@@ -298,6 +298,33 @@ end
     end
 end
 
+# completion for empty program should not crash
+@testset "empty completion" begin
+    state = JETLS.ServerState(identity)
+    filename = "empty.jl"
+    uri = JETLS.URI(filename)
+
+    let text = ""
+        JETLS.cache_file_info!(state, uri, 1, text, filename)
+        params = CompletionParams(;
+            textDocument=TextDocumentIdentifier(string(uri)),
+            position=Position(;line=0,character=0))
+        items = JETLS.get_completion_items(state, uri, params)
+        # should not crash and return something
+        @test length(items) > 0
+    end
+
+    let text = "\n \n \n"
+        JETLS.cache_file_info!(state, uri, 2, text, filename)
+        params = CompletionParams(;
+            textDocument=TextDocumentIdentifier(string(uri)),
+            position=Position(;line=3,character=0))
+        items = JETLS.get_completion_items(state, uri, params)
+        # should not crash and return something
+        @test length(items) > 0
+    end
+end
+
 @testset "macro completion" begin
     state = JETLS.ServerState(identity)
     filename = "filename.jl"
