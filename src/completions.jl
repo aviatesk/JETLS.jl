@@ -29,6 +29,63 @@ function get_sort_text(offset::Int, isglobal::Bool)
     return get(sort_texts, offset, max_sort_text)
 end
 
+"""
+Get the byte offset of a backslash if the token immediately before the cursor
+consists of a backslash and colon.
+Returns `nothing` if such a token does not exist or if another token appears
+immediately before the cursor.
+
+Examples:
+1. `\\┃ beta`       returns byte offset of `\\`
+2. `\\alph┃`        returns byte offset of `\\`
+2. `\\:┃`           returns byte offset of `\\`
+3. `\\:smile┃       returns byte offset of `\\`
+3. `\\:+1┃          returns byte offset of `\\`
+4. `alpha┃`         returns `nothing`  (no backslash before cursor)
+5. `\\alpha  bet┃a` returns `nothing` (no backslash immediately before token with cursor)
+6. `\\  ┃`          returns `nothing` (whitespace before cursor)
+"""
+function get_backslash_offset(state::ServerState, uri::URI, pos::Position)
+    fi = get_fileinfo(state, uri)
+    fi === nothing && return nothing
+    pos_offset = xy_to_offset(fi, pos)
+    tokens = fi.parsed_stream.tokens
+    curr_idx = findlast(token -> token.next_byte <= pos_offset, tokens)
+
+    # example 1
+    if tokens[curr_idx].orig_kind == JS.K"\\"
+        return tokens[curr_idx].next_byte - 1
+    # example 2
+    elseif curr_idx > 1 && checkbounds(Bool, tokens, curr_idx-1) && tokens[curr_idx-1].orig_kind == JS.K"\\"
+        if tokens[curr_idx].orig_kind != JS.K"Whitespace"
+            return tokens[curr_idx-1].next_byte - 1
+        else
+            # example 6
+            return nothing
+        end
+    # example 3
+    elseif curr_idx > 2
+        # Search backwards for \: pattern
+        i = curr_idx - 1
+        while i >= 2
+            token = tokens[i]
+            token1 = tokens[i-1]
+            if token1.orig_kind == JS.K"\\" && token.orig_kind == JS.K":"
+                return token1.next_byte - 1
+            end
+            # Stop searching if we hit whitespace
+            if token.orig_kind == JS.K"Whitespace" || token.orig_kind == JS.K"NewlineWs"
+                break
+            end
+            i -= 1
+        end
+        return nothing
+    # example 4, 5
+    else
+        return nothing
+    end
+end
+
 # local completions
 # =================
 
@@ -279,12 +336,12 @@ end
 function local_completions!(items::Dict{String, CompletionItem},
                             s::ServerState, uri::URI, params::CompletionParams)
     fi = get_fileinfo(s, uri)
-    fi === nothing && return items
+    fi === nothing && return nothing
     # NOTE don't bail out even if `length(fi.parsed_stream.diagnostics) ≠ 0`
     # so that we can get some completions even for incomplete code
     st0 = JS.build_tree(JL.SyntaxTree, fi.parsed_stream)
     cbs = cursor_bindings(st0, xy_to_offset(fi, params.position))
-    cbs === nothing && return items
+    cbs === nothing && return nothing
     for (bi, st, dist) in cbs
         ci = to_completion(bi, st, dist)
         prev_ci = get(items, ci.label, nothing)
@@ -365,8 +422,49 @@ function global_completions!(items::Dict{String, CompletionItem}, state::ServerS
     end
     # if we are in macro name context, then we don't need any local completions
     # as macros are always defined top-level
-    is_completed = is_macro_invoke
-    return is_completed
+    return is_macro_invoke ? items : nothing # is_completed
+end
+
+# LaTeX and emoji completions
+# ===========================
+
+# Add LaTeX and emoji completions to the items dictionary and return boolean indicating
+# whether any completions were added.
+function add_emoji_latex_completions!(items::Dict{String,CompletionItem}, state::ServerState, uri::URI, params::CompletionParams)
+    fi = get_fileinfo(state, uri)
+    fi === nothing && return nothing
+
+    pos = params.position
+    backslash_offset = get_backslash_offset(state, uri, pos)
+    backslash_offset === nothing && return nothing
+    backslash_pos = offset_to_xy(fi, backslash_offset)
+
+    function create_ci(key, val, description)
+        return CompletionItem(;
+            label=key,
+            labelDetails=CompletionItemLabelDetails(;
+                description=description
+            ),
+            kind=CompletionItemKind.Snippet,
+            documentation=val,
+            textEdit=TextEdit(;
+                range = Range(;
+                    start = backslash_pos,
+                    var"end" = pos),
+                newText = val),
+            data=CompletionData(false)
+        )
+    end
+
+    for (key, val) in REPL.REPLCompletions.latex_symbols
+        items[key] = create_ci(key, val, "latex-symbol")
+    end
+    for (key, val) in REPL.REPLCompletions.emoji_symbols
+        items[key] = create_ci(key, val, "emoji")
+    end
+
+    # if we reached here, we have added all emoji and latex completions
+    return items
 end
 
 # completion resolver
@@ -398,9 +496,11 @@ end
 function get_completion_items(state::ServerState, uri::URI, params::CompletionParams)
     items = Dict{String, CompletionItem}()
     # order matters; see local_completions!
-    is_completed = global_completions!(items, state, uri, params)
-    is_completed || local_completions!(items, state, uri, params)
-    return collect(values(items))
+    return collect(values(@something(
+        add_emoji_latex_completions!(items, state, uri, params),
+        global_completions!(items, state, uri, params),
+        local_completions!(items, state, uri, params),
+        items)))
 end
 
 function handle_CompletionRequest(s::ServerState, msg::CompletionRequest)
