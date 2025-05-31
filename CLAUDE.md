@@ -63,7 +63,7 @@ For example, if you receive a prompt like this:
 > Use test/test_diagnostics for the test cases.
 And if `./julia` exists, the command you should run is:
 ```
-$ ./julia --startup-file=no -e `using Test; @testset "test_diagnostics" include("test/test_diagnostics")`
+$ ./julia --startup-file=no -e 'using Test; @testset "test_diagnostics" include("test/test_diagnostics")'
 ```
 Note that the usage of the `--startup-file=no` flag, which avoids loading
 unnecessary startup utilities.
@@ -127,19 +127,11 @@ Here, `test_something` is defined at the top level of the `test_completions`
 module because it's a common routine used by multiple test cases, but variables
 like `s` that are created for each test case are localized using `let`.
 
-Conversely, code like the following should be avoided because `s1` or `s2`
-might be unintentionally reused:
-```julia
-module test_completions
-using Test # Each module space needs to explicitly declare the code needed for execution
-function test_something(s::AbstractString)
-    ...
-end
-s1 = "..."
-@test test_something(s1)
-s2 = ""
-@test test_something(s2)
-s3 = ""
-@test test_something(s2) # unintended use of `s2`
-end # module test_completions
-```
+# About Modifications to Code You've Written
+If you, as an AI agent, add or modify code, and the user appears to have made
+further manual changes to that code after your response, please respect those
+modifications as much as possible.
+For example, if the user has deleted a function you wrote, do not reintroduce
+that function in subsequent code generation.
+If you believe that changes made by the user are potentially problematic,
+please clearly explain your concerns and ask the user for clarification.
