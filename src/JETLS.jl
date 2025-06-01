@@ -156,6 +156,7 @@ function runserver(callback, in::IO, out::IO)
 end
 
 function handle_message(state::ServerState, msg)
+    @nospecialize msg
     if JETLS_DEV_MODE
         try
             # `@invokelatest` for allowing changes maded by Revise to be reflected without
@@ -172,6 +173,7 @@ function handle_message(state::ServerState, msg)
 end
 
 function _handle_message(state::ServerState, msg)
+    @nospecialize msg
     if msg isa DidOpenTextDocumentNotification
         return handle_DidOpenTextDocumentNotification(state, msg)
     elseif msg isa DidChangeTextDocumentNotification
@@ -187,7 +189,14 @@ function _handle_message(state::ServerState, msg)
     elseif msg isa CompletionResolveRequest
         return handle_CompletionResolveRequest(state, msg)
     elseif JETLS_DEV_MODE
-        @warn "Unhandled message" msg
+        if isdefined(msg, :method)
+            id = getfield(msg, :method)
+        elseif msg isa Dict{Symbol,Any}
+            id = get(()->get(msg, :id, nothing), msg, :method)
+        else
+            id = typeof(msg)
+        end
+        @warn "Unhandled message" msg _id=id maxlog=1
     end
     nothing
 end
