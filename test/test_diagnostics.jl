@@ -29,7 +29,7 @@ end
 
     withscript(scriptcode) do script_path
         uri = string(JETLS.URIs2.filepath2uri(script_path))
-        withserver() do in, _, _, sent_queue, id_counter
+        withserver() do (; in, sent_queue, id_counter)
             writemsg(in, make_DidOpenTextDocumentNotification(uri, scriptcode))
 
             out = take_with_timeout!(sent_queue)
@@ -57,7 +57,7 @@ end
     # Use withscript to create a temporary file and run the test
     withscript(scriptcode) do script_path
         uri = string(JETLS.URIs2.filepath2uri(script_path))
-        withserver() do in, _, _, sent_queue, id_counter
+        withserver() do (; in, sent_queue, id_counter)
             writemsg(in, make_DidOpenTextDocumentNotification(uri, scriptcode))
 
             out = take_with_timeout!(sent_queue)
@@ -90,7 +90,7 @@ end
     # Use withscript to create a temporary file and run the test
     withscript(scriptcode) do script_path
         uri = string(JETLS.URIs2.filepath2uri(script_path))
-        withserver() do in, _, _, sent_queue, id_counter
+        withserver() do (; in, sent_queue, id_counter)
             writemsg(in, make_DidOpenTextDocumentNotification(uri, scriptcode))
 
             out = take_with_timeout!(sent_queue)
@@ -136,7 +136,7 @@ end
         rootUri = string(JETLS.URIs2.filepath2uri(pkg_path))
         src_path = normpath(pkg_path, "src", "TestPackageAnalysis.jl")
         uri = string(JETLS.URIs2.filepath2uri(src_path))
-        withserver(; rootUri) do in, _, _, sent_queue, id_counter
+        withserver(; rootUri) do (; in, sent_queue, id_counter)
             writemsg(in, make_DidOpenTextDocumentNotification(uri, read(src_path, String)))
 
             out = take_with_timeout!(sent_queue; limit=300) # wait for 5 minutes

@@ -8,6 +8,7 @@ end
 
 @testset "JETLS" begin
     @testset "utils" include("test_utils.jl")
+    @testset "registration" include("test_registration.jl")
     @testset "completions" include("test_completions.jl")
     @testset "analysis" include("test_analysis.jl")
     @testset "diagnostics" include("test_diagnostics.jl")

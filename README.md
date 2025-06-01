@@ -121,6 +121,94 @@ julia> Preferences.set_preferences!("JETLS", "JETLS_DEV_MODE" => false; force=tr
 `JETLS_DEV_MODE` is enabled by default when running the server at this moment of
 prototyping, but also note that it is enabled when running the test suite.
 
+### Dynamic Registration
+
+This language server supports
+[dynamic registration](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#client_registerCapability)
+of LSP features.
+
+With dynamic registration, for example, the server can switch the formatting
+engine when users change their preferred formatter, or disable specific LSP
+features upon configuration change, without restarting the server process
+(although neither of these features has been implemented yet).
+
+Dynamic registration is also convenient for language server development.
+When enabling LSP features, the server needs to send various capabilities and
+options to the client during initialization.
+With dynamic registration, we can rewrite these activation options and re-enable
+LSP features dynamically, i.e. without restarting the server process.
+
+For example, you can dynamically add `,` as a `triggerCharacter` for
+"completion" as follows. First, [launch `jetls-client` ](#steps) in VSCode[^vscode],
+then add the following diff to unregister the already enabled completion feature.
+Make a small edit to the file the language server is currently analyzing to send
+some request from the client to the server. This will allow Revise to apply this
+diff to the server process via the dev mode callback (see [runserver.jl](./runserver.jl)),
+which should disable the completion feature:
+```diff
+diff --git a/src/completions.jl b/src/completions.jl
+index 29d0db5..728da8f 100644
+--- a/src/completions.jl
++++ b/src/completions.jl
+@@ -21,6 +21,11 @@ completion_options() = CompletionOptions(;
+ const COMPLETION_REGISTRATION_ID = "jetls-completion"
+ const COMPLETION_REGISTRATION_METHOD = "textDocument/completion"
+
++let unreg = Unregistration(COMPLETION_REGISTRATION_ID, COMPLETION_REGISTRATION_METHOD)
++    unregister(currently_running, unreg)
++end
++
+ function completion_registration()
+     (; triggerCharacters, resolveProvider, completionItem) = completion_options()
+     documentSelector = DocumentFilter[
+```
+
+> [!tip]
+> You can add the diff above anywhere Revise can track and apply changes, i.e.
+> any top-level scope in the `JETLS` module namespace or any subroutine
+> of `_handle_message` that is reachable upon the request handling.
+
+> [!warnng]
+> Note that `currently_running::ServerState` is a global variable that is only
+> defined in `JETLS_DEV_MODE`. The use of this global variable should be limited to such development purposes and should not be included in normal routines.
+
+[^vscode]: Of course, the hack explained here is only possible with clients that
+  support dynamic registration. VSCode is currently one of the frontends that
+  best supports dynamic registration.
+
+After that, delete that diff and add the following diff:
+```diff
+diff --git a/src/completions.jl b/src/completions.jl
+index 29d0db5..7609a6a 100644
+--- a/src/completions.jl
++++ b/src/completions.jl
+@@ -9,6 +9,7 @@ const COMPLETION_TRIGGER_CHARACTERS = [
+     "@",  # macro completion
+     "\\", # LaTeX completion
+     ":",  # emoji completion
++    ",",  # new trigger character
+     NUMERIC_CHARACTERS..., # allow these characters to be recognized by `CompletionContext.triggerCharacter`
+ ]
+
+@@ -36,6 +37,8 @@ function completion_registration()
+             completionItem))
+ end
+
++register(currently_running, completion_registration())
++
+ # completion utils
+ # ================
+```
+
+This should re-enable completion, and now completion will also be triggered when
+you type `,`.
+
+For these reasons, when adding new LSP features, check whether the feature
+supports dynamic/static registration, and if it does, actively opt-in to use it.
+That is, register it via the `client/registerCapability` request in response to
+notifications sent from the client, most likely `InitializedNotification`.
+The `JETLS.register` utility is especially useful for this purpose.
+
 ## Other Editors
 
 - Minimal Emacs (eglot client) setup:

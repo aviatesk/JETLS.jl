@@ -1,25 +1,39 @@
 using Test
 using Pkg
 using JETLS
+using JETLS: ServerState
 using JETLS.LSP
 using JETLS.URIs2
-using JETLS.JSONRPC: JSON3, readmsg, writemsg
+using JETLS.JSONRPC: Endpoint, JSON3, readmsg, writemsg
+
+function take_with_timeout!(chn::Channel; interval=1, limit=60)
+    while limit > 0
+        if isready(chn)
+            return take!(chn)
+        end
+        sleep(interval)
+        limit -= 1
+    end
+    error("Timeout waiting for message")
+end
 
 function withserver(f;
+                    capabilities::ClientCapabilities=ClientCapabilities(),
                     workspaceFolders::Union{Nothing,Vector{WorkspaceFolder}}=nothing,
                     rootUri::Union{Nothing,String}=nothing)
     in = Base.BufferStream()
     out = Base.BufferStream()
     received_queue = Channel{Any}(Inf)
     sent_queue = Channel{Any}(Inf)
-    t = @async runserver(in, out) do state::Symbol, msg
-        @nospecialize msg
-        if state === :received
-            put!(received_queue, msg)
-        elseif state === :sent
-            put!(sent_queue, msg)
+    state = ServerState(Endpoint(in, out)) do s::Symbol, x
+        @nospecialize x
+        if s === :received
+            put!(received_queue, x)
+        elseif s === :sent
+            put!(sent_queue, x)
         end
     end
+    t = @async runserver(state)
     id_counter = Ref(0)
     old_env = Pkg.project().path
     root_path = nothing
@@ -38,22 +52,32 @@ function withserver(f;
     if workspaceFolders === nothing && rootUri === nothing
         workspaceFolders = WorkspaceFolder[] # initialize empty workspace by default
     end
+
+    # do the server initialization
     let id = id_counter[] += 1
         writemsg(in,
             InitializeRequest(;
                 id,
                 params=InitializeParams(;
                     processId=getpid(),
-                    capabilities=ClientCapabilities(),
+                    capabilities,
                     rootUri,
                     workspaceFolders)))
         req = take_with_timeout!(received_queue)
         @test req isa InitializeRequest && req.params.workspaceFolders == workspaceFolders
         res = take_with_timeout!(sent_queue)
         @test res isa InitializeResponse && res.id == id
+
+        writemsg(in, InitializedNotification())
+        @test take_with_timeout!(received_queue) isa InitializedNotification
+        res = take_with_timeout!(sent_queue)
+        @test res isa RegisterCapabilityRequest && res.id isa String
     end
+
+    argnt = (; in, out, state, received_queue, sent_queue, id_counter)
     try
-        return f(in, out, received_queue, sent_queue, id_counter)
+        # do the main callback
+        return f(argnt)
     finally
         Pkg.activate(old_env; io=devnull)
         let id = id_counter[] += 1
@@ -75,17 +99,6 @@ function withserver(f;
         @test result.exit_code == 0
         @test result.endpoint.state === :closed
     end
-end
-
-function take_with_timeout!(chn::Channel; interval=1, limit=60)
-    while limit > 0
-        if isready(chn)
-            return take!(chn)
-        end
-        sleep(interval)
-        limit -= 1
-    end
-    error("Timeout waiting for message")
 end
 
 function withpackage(test_func, pkgname::AbstractString,

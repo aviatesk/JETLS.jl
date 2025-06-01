@@ -1,6 +1,41 @@
 using .JS: @K_str, @KSet_str
 using .JL: @ast
 
+# initialization
+# ==============
+
+const NUMERIC_CHARACTERS = tuple(string.('0':'9')...)
+const COMPLETION_TRIGGER_CHARACTERS = [
+    "@",  # macro completion
+    "\\", # LaTeX completion
+    ":",  # emoji completion
+    NUMERIC_CHARACTERS..., # allow these characters to be recognized by `CompletionContext.triggerCharacter`
+]
+
+completion_options() = CompletionOptions(;
+    triggerCharacters = COMPLETION_TRIGGER_CHARACTERS,
+    resolveProvider = true,
+    completionItem = (;
+        labelDetailsSupport = true))
+
+const COMPLETION_REGISTRATION_ID = "jetls-completion"
+const COMPLETION_REGISTRATION_METHOD = "textDocument/completion"
+
+function completion_registration()
+    (; triggerCharacters, resolveProvider, completionItem) = completion_options()
+    documentSelector = DocumentFilter[
+        DocumentFilter(; language = "julia")
+    ]
+    return Registration(;
+        id = COMPLETION_REGISTRATION_ID,
+        method = COMPLETION_REGISTRATION_METHOD,
+        registerOptions = CompletionRegistrationOptions(;
+            documentSelector,
+            triggerCharacters,
+            resolveProvider,
+            completionItem))
+end
+
 # completion utils
 # ================
 
@@ -308,7 +343,7 @@ end
 
 function find_file_module!(state::ServerState, uri::URI, pos::Position)
     mod = find_file_module(state, uri, pos)
-    state.completion_module[] = mod
+    state.completion_module = mod
     return mod
 end
 function find_file_module(state::ServerState, uri::URI, pos::Position)
@@ -499,11 +534,11 @@ end
 # ===================
 
 function resolve_completion_item(state::ServerState, item::CompletionItem)
-    isassigned(state.completion_module) || return item
+    isdefined(state, :completion_module) || return item
     data = item.data
     data isa CompletionData || return item
     data.needs_resolve || return item
-    mod = state.completion_module[]
+    mod = state.completion_module
     name = Symbol(item.label)
     binding = Base.Docs.Binding(mod, name)
     docs = Base.Docs.doc(binding)
@@ -521,14 +556,6 @@ end
 # request handler
 # ===============
 
-const NUMERIC_CHARACTERS = tuple(string.('0':'9')...)
-const COMPLETION_TRIGGER_CHARACTERS = [
-    "@",  # macro completion
-    "\\", # LaTeX completion
-    ":",  # emoji completion
-    NUMERIC_CHARACTERS..., # allow these characters to be recognized by `CompletionContext.triggerCharacter`
-]
-
 function get_completion_items(state::ServerState, uri::URI, params::CompletionParams)
     items = Dict{String, CompletionItem}()
     # order matters; see local_completions!
@@ -539,10 +566,10 @@ function get_completion_items(state::ServerState, uri::URI, params::CompletionPa
         items)))
 end
 
-function handle_CompletionRequest(s::ServerState, msg::CompletionRequest)
+function handle_CompletionRequest(state::ServerState, msg::CompletionRequest)
     uri = URI(msg.params.textDocument.uri)
-    items = get_completion_items(s, uri, msg.params)
-    return s.send(
+    items = get_completion_items(state, uri, msg.params)
+    return send(state,
         ResponseMessage(;
             id = msg.id,
             result = CompletionList(;
@@ -550,9 +577,9 @@ function handle_CompletionRequest(s::ServerState, msg::CompletionRequest)
                 items)))
 end
 
-function handle_CompletionResolveRequest(s::ServerState, msg::CompletionResolveRequest)
-    return s.send(
+function handle_CompletionResolveRequest(state::ServerState, msg::CompletionResolveRequest)
+    return send(state,
         ResponseMessage(;
             id = msg.id,
-            result = resolve_completion_item(s, msg.params)))
+            result = resolve_completion_item(state, msg.params)))
 end

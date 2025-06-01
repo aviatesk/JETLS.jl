@@ -23,7 +23,7 @@ let (pkgcode, positions) = get_text_and_positions("""
         filepath = normpath(pkgpath, "src", "TestFullLifecycle.jl")
         uri = string(JETLS.URIs2.filepath2uri(filepath))
 
-        test_full_cycle = function (in, _, _, sent_queue, id_counter)
+        test_full_cycle = function ((; in, sent_queue, id_counter),)
             # open the file, and fill in the file cache
             writemsg(in,
                 DidOpenTextDocumentNotification(;

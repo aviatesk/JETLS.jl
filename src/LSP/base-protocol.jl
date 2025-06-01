@@ -78,7 +78,7 @@ Every processed request must send a response back to the sender of the request.
 """
 @interface RequestMessage @extends Message begin
     "The request id."
-    id::Int
+    id::Union{Int, String}
 
     "The method to be invoked."
     method::String
@@ -211,7 +211,7 @@ successful request.
 """
 @interface ResponseMessage @extends Message begin
     "The request id."
-    id::Union{Int, Nothing}
+    id::Union{Int, String, Nothing}
 
     """
     The result of a request. This member is REQUIRED on success.

@@ -80,72 +80,102 @@ end
 
 struct ExternalContext end
 
-struct ServerState{F}
-    send::F
-    workspaceFolders::Vector{URI}
-    file_cache::Dict{URI,FileInfo} # syntactic analysis cache
-    contexts::Dict{URI,Union{Set{AnalysisContext},ExternalContext}} # entry points for the full analysis (currently not cached really)
-    root_path::Ref{String}
-    root_env_path::Ref{String}
-    completion_module::Ref{Module}
+struct Registered
+    id::String
+    method::String
 end
-function ServerState(send::F) where F
-    return ServerState{F}(
-        send,
-        URI[],
-        Dict{URI,FileInfo}(),
-        Dict{URI,Union{Set{AnalysisContext},ExternalContext}}(),
-        Ref{String}(),
-        Ref{String}(),
-        Ref{Module}())
+
+mutable struct ServerState{Callback}
+    const endpoint::Endpoint
+    const callback::Callback
+    const workspaceFolders::Vector{URI}
+    const file_cache::Dict{URI,FileInfo} # syntactic analysis cache
+    const contexts::Dict{URI,Union{Set{AnalysisContext},ExternalContext}} # entry points for the full analysis (currently not cached really)
+    const currently_registered::Set{Registered}
+    root_path::String
+    root_env_path::String
+    completion_module::Module
+    init_params::InitializeParams
+    function ServerState(callback::Callback, endpoint::Endpoint) where Callback
+        return new{Callback}(
+            endpoint,
+            callback,
+            URI[],
+            Dict{URI,FileInfo}(),
+            Dict{URI,Union{Set{AnalysisContext},ExternalContext}}(),
+            Set{Registered}(),
+        )
+    end
+    ServerState(callback) = ServerState(callback, Endpoint(IOBuffer(), IOBuffer()))
 end
 
 include("utils.jl")
+include("registration.jl")
 include("completions.jl")
 include("diagnostics.jl")
 
-struct IncludeCallback <: Function
-    file_cache::Dict{URI,FileInfo}
-end
-IncludeCallback(state::ServerState) = IncludeCallback(state.file_cache)
-function (include_callback::IncludeCallback)(filepath::String)
-    uri = filepath2uri(filepath)
-    if haskey(include_callback.file_cache, uri)
-        return include_callback.file_cache[uri].text # TODO use `parsed` instead of `text`
-    end
-    # fallback to the default file-system-based include
-    return read(filepath, String)
+"""
+    send(state::ServerState, msg)
+
+Send a message to the client through the server `state.endpoint`
+
+This function is used by each handler that processes messages sent from the client,
+as well as for sending requests and notifications from the server to the client.
+"""
+function send(state::ServerState, @nospecialize msg)
+    JSONRPC.send(state.endpoint, msg)
+    state.callback(:sent, msg)
+    nothing
 end
 
-runserver(in::IO, out::IO) = runserver(Returns(nothing), in, out)
-function runserver(callback, in::IO, out::IO)
-    endpoint = Endpoint(in, out)
-    function send(@nospecialize msg)
-        JSONRPC.send(endpoint, msg)
-        callback(:sent, msg)
-        nothing
-    end
-    state = ServerState(send)
+"""
+    runserver([callback,] in::IO, out::IO) -> (; exit_code::Int, endpoint::Endpoint)
+    runserver([callback,] endpoint::Endpoint) -> (; exit_code::Int, endpoint::Endpoint)
+    runserver([callback,] state::ServerState) -> (; exit_code::Int, endpoint::Endpoint)
+
+Run the JETLS language server with the specified input/output streams or endpoint.
+
+The `callback` function is invoked on each message sent or received, with the
+signature `callback(event::Symbol, msg)` where `event` is either `:sent` or
+`:received`. If not specified, a no-op callback is used.
+
+When given IO streams, the function creates an `Endpoint` and then a `ServerState`
+before entering the message handling loop. The function returns after receiving an
+exit notification, with an exit code based on whether shutdown was properly requested.
+"""
+function runserver end
+
+global currently_running::ServerState
+
+runserver(args...) = runserver(Returns(nothing), args...) # no callback specified
+runserver(callback, in::IO, out::IO) = runserver(callback, Endpoint(in, out))
+runserver(callback, endpoint::Endpoint) = runserver(ServerState(callback, endpoint))
+function runserver(state::ServerState)
     shutdown_requested = false
     local exit_code::Int = 1
+    if JETLS_DEV_MODE
+        global currently_running = state
+    end
     try
-        for msg in endpoint
-            callback(:received, msg)
+        for msg in state.endpoint
+            state.callback(:received, msg)
             # handle lifecycle-related messages
             if msg isa InitializeRequest
                 handle_InitializeRequest(state, msg)
             elseif msg isa InitializedNotification
-                continue
+                handle_InitializedNotification(state)
             elseif msg isa ShutdownRequest
                 shutdown_requested = true
-                send(ShutdownResponse(; id = msg.id, result = null))
+                send(state, ShutdownResponse(; id = msg.id, result = null))
             elseif msg isa ExitNotification
                 exit_code = !shutdown_requested
                 break
             elseif shutdown_requested
-                send(ResponseMessage(; id = msg.id, error=ResponseError(;
-                    code=ErrorCodes.InvalidRequest,
-                    message="Received request after a shutdown request requested")))
+                send(state, ResponseMessage(;
+                    id = msg.id,
+                    error=ResponseError(;
+                        code=ErrorCodes.InvalidRequest,
+                        message="Received request after a shutdown request requested")))
             else
                 # handle general messages
                 handle_message(state, msg)
@@ -155,9 +185,9 @@ function runserver(callback, in::IO, out::IO)
         @error "Message handling loop failed"
         Base.display_error(stderr, err, catch_backtrace())
     finally
-        close(endpoint)
+        close(state.endpoint)
     end
-    return (; exit_code, endpoint)
+    return (; exit_code, state.endpoint)
 end
 
 function handle_message(state::ServerState, msg)
@@ -206,14 +236,28 @@ function _handle_message(state::ServerState, msg)
     nothing
 end
 
+"""
+Receives `msg::InitializeRequest` and sets up the server `state` based on `msg.params`.
+As a response to this `msg`, it returns an `InitializeResponse` and performs registration of
+server capabilities and server information that should occur during initialization.
+
+For server capabilities, it's preferable to register those that support dynamic/static
+registration in the `handle_InitializedNotification` handler using `RegisterCapabilityRequest`.
+On the other hand, basic server capabilities such as `textDocumentSync` must be registered here,
+and features that don't extend and support `StaticRegistrationOptions` like "completion"
+need to be registered in this handler in a case when the client does not support
+dynamic registration.
+"""
 function handle_InitializeRequest(state::ServerState, msg::InitializeRequest)
-    workspaceFolders = msg.params.workspaceFolders
+    params = state.init_params = msg.params
+
+    workspaceFolders = params.workspaceFolders
     if workspaceFolders !== nothing
         for workspaceFolder in workspaceFolders
             push!(state.workspaceFolders, URI(workspaceFolder.uri))
         end
     else
-        rootUri = msg.params.rootUri
+        rootUri = params.rootUri
         if rootUri !== nothing
             push!(state.workspaceFolders, URI(rootUri))
         else
@@ -228,10 +272,10 @@ function handle_InitializeRequest(state::ServerState, msg::InitializeRequest)
         root_uri = only(state.workspaceFolders)
         root_path = uri2filepath(root_uri)
         if root_path !== nothing
-            state.root_path[] = root_path
+            state.root_path = root_path
             env_path = find_env_path(root_path)
             if env_path !== nothing
-                state.root_env_path[] = env_path
+                state.root_env_path = env_path
             end
         else
             @warn "Root URI scheme not supported for workspace analysis" root_uri
@@ -241,12 +285,17 @@ function handle_InitializeRequest(state::ServerState, msg::InitializeRequest)
         # leave Refs undefined
     end
 
-    res = InitializeResponse(; id = msg.id, result = initialize_result())
-    return state.send(res)
-end
+    if getpath(params.capabilities,
+        :textDocument, :completion, :dynamicRegistration) !== true
+        completionProvider = completion_options()
+        if JETLS_DEV_MODE
+            @info "Registering completion with `InitializeResponse`"
+        end
+    else
+        completionProvider = nothing # will be registered dynamically
+    end
 
-function initialize_result()
-    return InitializeResult(;
+    result = InitializeResult(;
         capabilities = ServerCapabilities(;
             positionEncoding = PositionEncodingKind.UTF16,
             textDocumentSync = TextDocumentSyncOptions(;
@@ -254,15 +303,42 @@ function initialize_result()
                 change = TextDocumentSyncKind.Full,
                 save = SaveOptions(;
                     includeText = true)),
-            completionProvider = CompletionOptions(;
-                triggerCharacters = COMPLETION_TRIGGER_CHARACTERS,
-                resolveProvider = true,
-                completionItem = (;
-                    labelDetailsSupport = true)),
+            completionProvider,
         ),
         serverInfo = (;
             name = "JETLS",
             version = "0.0.0"))
+
+    return send(state,
+        InitializeResponse(;
+            id = msg.id,
+            result))
+end
+
+"""
+Handler that performs the necessary actions when receiving an `InitializedNotification`.
+Primarily, it registers LSP features that support dynamic/static registration and
+should be enabled by default.
+"""
+function handle_InitializedNotification(state::ServerState)
+    isdefined(state, :init_params) ||
+        error("Initialization process not completed") # to exit the server loop
+
+    registrations = Registration[]
+
+    if getpath(state.init_params.capabilities,
+        :textDocument, :completion, :dynamicRegistration) === true
+        push!(registrations, completion_registration())
+        if JETLS_DEV_MODE
+            @info "Dynamically registering completion upon `InitializedNotification`"
+        end
+    else
+        # NOTE If completion's `dynamicRegistration` is not supported,
+        # it needs to be registered along with initialization in the `InitializeResponse`,
+        # since `CompletionRegistrationOptions` does not extend `StaticRegistrationOptions`.
+    end
+
+    register(state, registrations)
 end
 
 function cache_file_info!(state::ServerState, uri::URI, version::Int, text::String, filename::String)
@@ -491,11 +567,24 @@ function find_package_directory(path::String, env_path::String)
     return :script, path
 end
 
+struct IncludeCallback <: Function
+    file_cache::Dict{URI,FileInfo}
+end
+IncludeCallback(state::ServerState) = IncludeCallback(state.file_cache)
+function (include_callback::IncludeCallback)(filepath::String)
+    uri = filepath2uri(filepath)
+    if haskey(include_callback.file_cache, uri)
+        return include_callback.file_cache[uri].text # TODO use `parsed` instead of `text`
+    end
+    # fallback to the default file-system-based include
+    return read(filepath, String)
+end
+
 function initiate_context!(state::ServerState, uri::URI)
     if uri.scheme == "file"
         filename = path = uri2filepath(uri)::String
-        if isassigned(state.root_path)
-            if !issubdir(dirname(path), state.root_path[])
+        if isdefined(state, :root_path)
+            if !issubdir(dirname(path), state.root_path)
                 state.contexts[uri] = ExternalContext()
                 return nothing
             end
@@ -511,7 +600,7 @@ function initiate_context!(state::ServerState, uri::URI)
     elseif uri.scheme == "untitled"
         filename = path = uri2filename(uri)::String
         # try to analyze untitled editors using the root environment
-        env_path = isassigned(state.root_env_path) ? state.root_env_path[] : nothing
+        env_path = isdefined(state, :root_env_path) ? state.root_env_path : nothing
         pkgname = nothing # to hit the `@goto analyze_script` case
     else @assert false "Unsupported URI: $uri" end
     file_info = state.file_cache[uri]

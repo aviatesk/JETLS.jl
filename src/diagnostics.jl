@@ -129,7 +129,7 @@ end
 
 function notify_diagnostics!(state::ServerState, uri2diagnostics)
     for (uri, diagnostics) in uri2diagnostics
-        state.send(PublishDiagnosticsNotification(;
+        send(state, PublishDiagnosticsNotification(;
             params = PublishDiagnosticsParams(;
                 uri = string(uri),
                 # version = 0,
