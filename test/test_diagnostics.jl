@@ -29,15 +29,14 @@ end
 
     withscript(scriptcode) do script_path
         uri = string(JETLS.URIs2.filepath2uri(script_path))
-        withserver() do (; in, sent_queue, id_counter)
-            writemsg(in, make_DidOpenTextDocumentNotification(uri, scriptcode))
+        withserver() do (; writereadmsg, id_counter)
+            (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, scriptcode))
 
-            out = take_with_timeout!(sent_queue)
-            @test out isa PublishDiagnosticsNotification
-            @test out.params.uri == uri
+            @test raw_res isa PublishDiagnosticsNotification
+            @test raw_res.params.uri == uri
 
             found_diagnostic = false
-            for diag in out.params.diagnostics
+            for diag in raw_res.params.diagnostics
                 if diag.source == JETLS.SYNTAX_DIAGNOSTIC_SOURCE
                     found_diagnostic = true
                     break
@@ -57,15 +56,14 @@ end
     # Use withscript to create a temporary file and run the test
     withscript(scriptcode) do script_path
         uri = string(JETLS.URIs2.filepath2uri(script_path))
-        withserver() do (; in, sent_queue, id_counter)
-            writemsg(in, make_DidOpenTextDocumentNotification(uri, scriptcode))
+        withserver() do (; writereadmsg, id_counter)
+            (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, scriptcode))
 
-            out = take_with_timeout!(sent_queue)
-            @test out isa PublishDiagnosticsNotification
-            @test out.params.uri == uri
+            @test raw_res isa PublishDiagnosticsNotification
+            @test raw_res.params.uri == uri
 
             found_diagnostic = false
-            for diag in out.params.diagnostics
+            for diag in raw_res.params.diagnostics
                 if diag.source == JETLS.TOPLEVEL_DIAGNOSTIC_SOURCE
                     found_diagnostic = true
                     break
@@ -90,15 +88,14 @@ end
     # Use withscript to create a temporary file and run the test
     withscript(scriptcode) do script_path
         uri = string(JETLS.URIs2.filepath2uri(script_path))
-        withserver() do (; in, sent_queue, id_counter)
-            writemsg(in, make_DidOpenTextDocumentNotification(uri, scriptcode))
+        withserver() do (; writereadmsg, id_counter)
+            (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, scriptcode))
 
-            out = take_with_timeout!(sent_queue)
-            @test out isa PublishDiagnosticsNotification
-            @test out.params.uri == uri
+            @test raw_res isa PublishDiagnosticsNotification
+            @test raw_res.params.uri == uri
 
             found_diagnostic = false
-            for diag in out.params.diagnostics
+            for diag in raw_res.params.diagnostics
                 if diag.source == JETLS.INFERENCE_DIAGNOSTIC_SOURCE
                     found_diagnostic = true
                     break
@@ -136,16 +133,15 @@ end
         rootUri = string(JETLS.URIs2.filepath2uri(pkg_path))
         src_path = normpath(pkg_path, "src", "TestPackageAnalysis.jl")
         uri = string(JETLS.URIs2.filepath2uri(src_path))
-        withserver(; rootUri) do (; in, sent_queue, id_counter)
-            writemsg(in, make_DidOpenTextDocumentNotification(uri, read(src_path, String)))
+        withserver(; rootUri) do (; writereadmsg, id_counter)
+            (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, read(src_path, String)))
 
-            out = take_with_timeout!(sent_queue; limit=300) # wait for 5 minutes
-            @test out isa PublishDiagnosticsNotification
-            @test out.params.uri == uri
-            # @test out.params.version == 1
+            @test raw_res isa PublishDiagnosticsNotification
+            @test raw_res.params.uri == uri
+            # @test raw_res.params.version == 1
 
             found_diagnostic = false
-            for diag in out.params.diagnostics
+            for diag in raw_res.params.diagnostics
                 if (diag.source == JETLS.INFERENCE_DIAGNOSTIC_SOURCE &&
                     # this also tests that JETLS doesn't show the nonsensical `var"..."`
                     # string caused by JET's internal details
