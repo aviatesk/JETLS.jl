@@ -249,7 +249,8 @@ function initialize_result()
                 completionItem = (;
                     labelDetailsSupport = true)),
             signatureHelpProvider = SignatureHelpOptions(;
-                triggerCharacters = ["(", ",", ";"]),
+                triggerCharacters = ["(", ",", ";"],
+                retriggerCharacters = ["."]),
         ),
         serverInfo = (;
             name = "JETLS",

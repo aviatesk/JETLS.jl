@@ -71,7 +71,7 @@ end
     @test 1 === n_si(M_filterp, "f4(|1,2,3,4,)")
     @test 1 === n_si(M_filterp, "f4(1,2,3,4; |)")
 
-    # vararg should be assumed empty for filtering purposes
+    # splat should be assumed empty for filtering purposes
     @test 1 === n_si(M_filterp, "f4(1,2,3,4,x...|)")
     @test 1 === n_si(M_filterp, "f4(x...,1,2,3,4,|)")
 
@@ -106,9 +106,41 @@ end
     @test 1 === n_si(M_filterk, "f(kw2=2; kw6|)")
 end
 
+module M_highlight
+f(a0, a1, a2, va3...; kw4=0, kw5=0, kws6...) = 0
+end
 @testset "param highlighting" begin
-    # ap(mod::Module, code::String, cursor::String="|")
-    # TODO
+    function ap(mod::Module, code::String, cursor::String="|")
+        si = siginfos(mod, code, cursor)
+        p = only(si).activeParameter
+        isnothing(p) ? nothing : Int(p)
+    end
+    @test 0 === ap(M_highlight, "f(|)")
+    @test 0 === ap(M_highlight, "f(0|)")
+    @test 1 === ap(M_highlight, "f(0,|)")
+    @test 1 === ap(M_highlight, "f(0, |)")
+
+    # in vararg
+    @test 3 === ap(M_highlight, "f(0, 1, 2, 3|)")
+    @test 3 === ap(M_highlight, "f(0, 1, 2, 3, 3|)")
+    @test 3 === ap(M_highlight, "f(0, 1, 2, 3, x...|)")
+    # splat contains 0 or more args; use what we know
+    @test nothing === ap(M_highlight, "f(x...|, 0, 1, 2, 3, x...)")
+    @test nothing === ap(M_highlight, "f(x..., 0, 1, 2|, 3, x...)")
+    @test 3       === ap(M_highlight, "f(x..., 0, 1, 2, 3|, x...)")
+    @test 3       === ap(M_highlight, "f(x..., 0, 1, 2, 3, x...|)")
+
+    # various kwarg
+    @test 4 === ap(M_highlight, "f(0, 1, 2, 3; kw4|)")
+    @test 4 === ap(M_highlight, "f(0, 1, 2, 3; kw4=0|)")
+    @test 4 === ap(M_highlight, "f(|kw4=0, 0, 1, 2, 3)")
+    @test 0 === ap(M_highlight, "f(kw4=0, 0|, 1, 2, 3)")
+    # any old kwarg can go in `kws6...`
+    @test 6 === ap(M_highlight, "f(0, 1, 2, 3; kwfake|)")
+    @test 6 === ap(M_highlight, "f(0, 1, 2, 3; kwfake=1|)")
+    @test 6 === ap(M_highlight, "f(kwfake=1|, 0, 1, 2, 3)")
+    # splat after semicolon
+    @test 6 === ap(M_highlight, "f(0, 1, 2, 3; kwfake...|)")
 end
 
 module M_nested

@@ -99,7 +99,7 @@ Information from one call's arguments for filtering signatures.
 - args: Every valid child of the K"call" and its K"parameters" if present
 - kw_i: One plus the number of args not in K"parameters" (semicolon)
 - pos_map: Map from position in `args` to (min, max) possible positional arg
-           e.g. f(a, k=1, b..., c) --> a => (1, 1), c => (2, nothing)
+           e.g. f(a, k=1, b..., c) --> a => (1, 1), b => (2, nothing), c => (2, nothing)
 - kw_map: kwname => position in `args`
 
 TODO: types
@@ -120,6 +120,7 @@ function CallArgs(st0::JL.SyntaxTree)
     for i in eachindex(args[1:kw_i-1])
         if kind(args[i]) === K"..."
             ub = nothing
+            pos_map[i] = (lb, ub)
         elseif kind(args[i]) != K"="
             lb += 1
             !isnothing(ub) && (ub += 1)
@@ -219,9 +220,6 @@ function make_siginfo(m::Method, ca::CallArgs, active_arg::Union{Int, Symbol})
             nothing
         elseif i === :next # next pos arg if able
             kwp_i > ca.kw_i ? ca.kw_i : nothing
-        elseif kind(ca.args[i]) === K"..."
-            # vararg if we can, nothing if not
-            i >= ca.kw_i ? maybe_var_kwp : nothing
         elseif i in keys(ca.pos_map)
             lb, ub = get(ca.pos_map, i, (1, nothing))
             if !isnothing(maybe_var_params) && lb >= maybe_var_params
@@ -229,6 +227,9 @@ function make_siginfo(m::Method, ca::CallArgs, active_arg::Union{Int, Symbol})
             else
                 lb === ub ? lb : nothing
             end
+        elseif kind(ca.args[i]) === K"..."
+            # splat after semicolon
+            maybe_var_kwp
         elseif kind(ca.args[i]) === K"=" || i >= ca.kw_i
             n = kwname(ca.args[i]).name_val # we don't have a backwards mapping
             out = get(kwp_map, n, nothing)
@@ -282,7 +283,7 @@ function cursor_siginfos(mod::Module, ps::JS.ParseStream, b::Int)
     #
     # We don't keep commas---do we want the green node here?
     active_arg = let no_args = ca.kw_i === 1,
-        past_pos_args = !no_args && b > JS.last_byte(ca.args[ca.kw_i - 1]) + 1
+        past_pos_args = no_args || b > JS.last_byte(ca.args[ca.kw_i - 1]) + 1
         if past_pos_args && !after_semicolon
             :next
         else
@@ -309,7 +310,7 @@ function handle_SignatureHelpRequest(s::ServerState, msg::SignatureHelpRequest)
     mod = find_file_module!(s, uri, msg.params.position)
     b = xy_to_offset(fi, msg.params.position)
     signatures = cursor_siginfos(mod, fi.parsed_stream, b)
-    activeSignature = 0
+    activeSignature = nothing
     activeParameter = nothing
     return s.send(
         ResponseMessage(;
