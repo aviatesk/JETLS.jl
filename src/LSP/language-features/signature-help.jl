@@ -13,7 +13,7 @@
         Client supports the follow content formats for the documentation
         property. The order describes the preferred format of the client.
         """
-        documentationFormat::Union{Nothing, Vector{MarkupKind}} = nothing
+        documentationFormat::Union{Nothing, Vector{MarkupKind.Ty}} = nothing
 
         """
         Client capabilities specific to parameter information.
