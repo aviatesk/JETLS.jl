@@ -124,9 +124,9 @@ function line_range(line::Int)
     return Range(; start, var"end")
 end
 
-function notify_diagnostics!(state::ServerState)
+function notify_diagnostics!(server::Server)
     uri2diagnostics = Dict{URI,Vector{Diagnostic}}()
-    for (uri, contexts) in state.contexts
+    for (uri, contexts) in server.state.contexts
         if contexts isa ExternalContext
             continue
         end
@@ -138,12 +138,12 @@ function notify_diagnostics!(state::ServerState)
             end
         end
     end
-    notify_diagnostics!(state, uri2diagnostics)
+    notify_diagnostics!(server, uri2diagnostics)
 end
 
-function notify_diagnostics!(state::ServerState, uri2diagnostics)
+function notify_diagnostics!(server::Server, uri2diagnostics)
     for (uri, diagnostics) in uri2diagnostics
-        send(state, PublishDiagnosticsNotification(;
+        send(server, PublishDiagnosticsNotification(;
             params = PublishDiagnosticsParams(;
                 uri = string(uri),
                 # version = 0,

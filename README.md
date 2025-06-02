@@ -169,8 +169,9 @@ index 29d0db5..728da8f 100644
 > of `_handle_message` that is reachable upon the request handling.
 
 > [!warnng]
-> Note that `currently_running::ServerState` is a global variable that is only
-> defined in `JETLS_DEV_MODE`. The use of this global variable should be limited to such development purposes and should not be included in normal routines.
+> Note that `currently_running::Server` is a global variable that is only
+> defined in `JETLS_DEV_MODE`. The use of this global variable should be limited
+> to such development purposes and should not be included in normal routines.
 
 [^vscode]: Of course, the hack explained here is only possible with clients that
   support dynamic registration. VSCode is currently one of the frontends that

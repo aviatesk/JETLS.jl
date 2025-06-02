@@ -232,7 +232,7 @@ function get_text_and_positions(text::String, target::Regex=r"#=cursor=#")
 end
 
 @testset "get_completion_items" begin
-    state = JETLS.ServerState(Returns(nothing))
+    state = JETLS.ServerState()
     text, curpos2 = get_text_and_positions("""
     module Foo
 
@@ -300,7 +300,7 @@ end
 
 # completion for empty program should not crash
 @testset "empty completion" begin
-    state = JETLS.ServerState(Returns(nothing))
+    state = JETLS.ServerState()
     filename = "empty.jl"
     uri = JETLS.URI(filename)
 
@@ -326,7 +326,7 @@ end
 end
 
 @testset "macro completion" begin
-    state = JETLS.ServerState(Returns(nothing))
+    state = JETLS.ServerState()
     filename = "filename.jl"
     uri = JETLS.URI(filename)
 
@@ -422,7 +422,7 @@ function test_backslash_offset(code::String, expected_result)
     text, positions = get_text_and_positions(code, r"#=cursor=#")
     @assert length(positions) == 1 "test_backslash_offset requires exactly one cursor marker"
 
-    state = JETLS.ServerState(Returns(nothing))
+    state = JETLS.ServerState()
     filename = "test_backslash.jl"
     uri = JETLS.URI(filename)
     JETLS.cache_file_info!(state, uri, 1, text, filename)
@@ -595,7 +595,7 @@ end
 end
 
 @testset "Latex/emoji completion" begin
-    state = JETLS.ServerState(Returns(nothing))
+    state = JETLS.ServerState()
     filename = "test_latex_emoji.jl"
     uri = JETLS.URI(filename)
 

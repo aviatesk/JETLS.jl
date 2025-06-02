@@ -85,9 +85,7 @@ struct Registered
     method::String
 end
 
-mutable struct ServerState{Callback}
-    const endpoint::Endpoint
-    const callback::Callback
+mutable struct ServerState
     const workspaceFolders::Vector{URI}
     const file_cache::Dict{URI,FileInfo} # syntactic analysis cache
     const contexts::Dict{URI,Union{Set{AnalysisContext},ExternalContext}} # entry points for the full analysis (currently not cached really)
@@ -96,17 +94,27 @@ mutable struct ServerState{Callback}
     root_env_path::String
     completion_module::Module
     init_params::InitializeParams
-    function ServerState(callback::Callback, endpoint::Endpoint) where Callback
-        return new{Callback}(
-            endpoint,
-            callback,
+    function ServerState()
+        return new(
             URI[],
             Dict{URI,FileInfo}(),
             Dict{URI,Union{Set{AnalysisContext},ExternalContext}}(),
             Set{Registered}(),
         )
     end
-    ServerState(callback) = ServerState(callback, Endpoint(IOBuffer(), IOBuffer()))
+end
+
+struct Server{Callback}
+    endpoint::Endpoint
+    callback::Callback
+    state::ServerState
+    function Server(callback::Callback, endpoint::Endpoint) where Callback
+        return new{Callback}(
+            endpoint,
+            callback,
+            ServerState(),
+        )
+    end
 end
 
 include("utils.jl")
@@ -122,16 +130,16 @@ Send a message to the client through the server `state.endpoint`
 This function is used by each handler that processes messages sent from the client,
 as well as for sending requests and notifications from the server to the client.
 """
-function send(state::ServerState, @nospecialize msg)
-    JSONRPC.send(state.endpoint, msg)
-    state.callback(:sent, msg)
+function send(server::Server, @nospecialize msg)
+    JSONRPC.send(server.endpoint, msg)
+    server.callback(:sent, msg)
     nothing
 end
 
 """
     runserver([callback,] in::IO, out::IO) -> (; exit_code::Int, endpoint::Endpoint)
     runserver([callback,] endpoint::Endpoint) -> (; exit_code::Int, endpoint::Endpoint)
-    runserver([callback,] state::ServerState) -> (; exit_code::Int, endpoint::Endpoint)
+    runserver([callback,] server::Server) -> (; exit_code::Int, endpoint::Endpoint)
 
 Run the JETLS language server with the specified input/output streams or endpoint.
 
@@ -145,84 +153,98 @@ exit notification, with an exit code based on whether shutdown was properly requ
 """
 function runserver end
 
-global currently_running::ServerState
+"""
+    currently_running::Server
+
+A global variable that may hold a reference to the currently running `Server` instance.
+
+This variable is only defined when running with `JETLS_DEV_MODE=true` and is intended
+for development purposes only, particularly for inspection or dynamic registration hacking.
+
+!!! warning
+    This global variable should only be used for development purposes and should NOT
+    be included in production routines and even in test code.
+    In test code, use the `withserver` routine to create a `Server` instance for each
+    individual test.
+"""
+global currently_running::Server
 
 runserver(args...) = runserver(Returns(nothing), args...) # no callback specified
 runserver(callback, in::IO, out::IO) = runserver(callback, Endpoint(in, out))
-runserver(callback, endpoint::Endpoint) = runserver(ServerState(callback, endpoint))
-function runserver(state::ServerState)
+runserver(callback, endpoint::Endpoint) = runserver(Server(callback, endpoint))
+function runserver(server::Server)
     shutdown_requested = false
     local exit_code::Int = 1
     if JETLS_DEV_MODE
-        global currently_running = state
+        global currently_running = server
     end
     try
-        for msg in state.endpoint
-            state.callback(:received, msg)
+        for msg in server.endpoint
+            server.callback(:received, msg)
             # handle lifecycle-related messages
             if msg isa InitializeRequest
-                handle_InitializeRequest(state, msg)
+                handle_InitializeRequest(server, msg)
             elseif msg isa InitializedNotification
-                handle_InitializedNotification(state)
+                handle_InitializedNotification(server)
             elseif msg isa ShutdownRequest
                 shutdown_requested = true
-                send(state, ShutdownResponse(; id = msg.id, result = null))
+                send(server, ShutdownResponse(; id = msg.id, result = null))
             elseif msg isa ExitNotification
                 exit_code = !shutdown_requested
                 break
             elseif shutdown_requested
-                send(state, ResponseMessage(;
+                send(server, ResponseMessage(;
                     id = msg.id,
                     error=ResponseError(;
                         code=ErrorCodes.InvalidRequest,
                         message="Received request after a shutdown request requested")))
             else
                 # handle general messages
-                handle_message(state, msg)
+                handle_message(server, msg)
             end
         end
     catch err
         @error "Message handling loop failed"
         Base.display_error(stderr, err, catch_backtrace())
     finally
-        close(state.endpoint)
+        close(server.endpoint)
     end
-    return (; exit_code, state.endpoint)
+    return (; exit_code, server.endpoint)
 end
 
-function handle_message(state::ServerState, msg)
+function handle_message(server::Server, msg)
     @nospecialize msg
     if JETLS_DEV_MODE
         try
             # `@invokelatest` for allowing changes maded by Revise to be reflected without
             # terminating the `runserver` loop
-            return @invokelatest _handle_message(state, msg)
+            return @invokelatest _handle_message(server, msg)
         catch err
             @error "Message handling failed for" typeof(msg)
             Base.display_error(stderr, err, catch_backtrace())
             return nothing
         end
     else
-        return _handle_message(state, msg)
+        return _handle_message(server, msg)
     end
 end
 
-function _handle_message(state::ServerState, msg)
+function _handle_message(server::Server, msg)
     @nospecialize msg
     if msg isa DidOpenTextDocumentNotification
-        return handle_DidOpenTextDocumentNotification(state, msg)
+        return handle_DidOpenTextDocumentNotification(server, msg)
     elseif msg isa DidChangeTextDocumentNotification
-        return handle_DidChangeTextDocumentNotification(state, msg)
+        return handle_DidChangeTextDocumentNotification(server, msg)
     elseif msg isa DidCloseTextDocumentNotification
-        return handle_DidCloseTextDocumentNotification(state, msg)
+        return handle_DidCloseTextDocumentNotification(server, msg)
     elseif msg isa DidSaveTextDocumentNotification
-        return handle_DidSaveTextDocumentNotification(state, msg)
+        return handle_DidSaveTextDocumentNotification(server, msg)
     elseif msg isa DocumentDiagnosticRequest || msg isa WorkspaceDiagnosticRequest
         @assert false "Document and workspace diagnostics are not enabled"
     elseif msg isa CompletionRequest
-        return handle_CompletionRequest(state, msg)
+        return handle_CompletionRequest(server, msg)
     elseif msg isa CompletionResolveRequest
-        return handle_CompletionResolveRequest(state, msg)
+        return handle_CompletionResolveRequest(server, msg)
     elseif JETLS_DEV_MODE
         if isdefined(msg, :method)
             id = getfield(msg, :method)
@@ -237,7 +259,7 @@ function _handle_message(state::ServerState, msg)
 end
 
 """
-Receives `msg::InitializeRequest` and sets up the server `state` based on `msg.params`.
+Receives `msg::InitializeRequest` and sets up the `server.state` based on `msg.params`.
 As a response to this `msg`, it returns an `InitializeResponse` and performs registration of
 server capabilities and server information that should occur during initialization.
 
@@ -248,7 +270,8 @@ and features that don't extend and support `StaticRegistrationOptions` like "com
 need to be registered in this handler in a case when the client does not support
 dynamic registration.
 """
-function handle_InitializeRequest(state::ServerState, msg::InitializeRequest)
+function handle_InitializeRequest(server::Server, msg::InitializeRequest)
+    state = server.state
     params = state.init_params = msg.params
 
     workspaceFolders = params.workspaceFolders
@@ -309,7 +332,7 @@ function handle_InitializeRequest(state::ServerState, msg::InitializeRequest)
             name = "JETLS",
             version = "0.0.0"))
 
-    return send(state,
+    return send(server,
         InitializeResponse(;
             id = msg.id,
             result))
@@ -320,7 +343,9 @@ Handler that performs the necessary actions when receiving an `InitializedNotifi
 Primarily, it registers LSP features that support dynamic/static registration and
 should be enabled by default.
 """
-function handle_InitializedNotification(state::ServerState)
+function handle_InitializedNotification(server::Server)
+    state = server.state
+
     isdefined(state, :init_params) ||
         error("Initialization process not completed") # to exit the server loop
 
@@ -338,7 +363,7 @@ function handle_InitializedNotification(state::ServerState)
         # since `CompletionRegistrationOptions` does not extend `StaticRegistrationOptions`.
     end
 
-    register(state, registrations)
+    register(server, registrations)
 end
 
 function cache_file_info!(state::ServerState, uri::URI, version::Int, text::String, filename::String)
@@ -353,7 +378,8 @@ function parsefile(version::Int, text::String, filename::String)
     return FileInfo(version, text, filename, stream)
 end
 
-function handle_DidOpenTextDocumentNotification(state::ServerState, msg::DidOpenTextDocumentNotification)
+function handle_DidOpenTextDocumentNotification(server::Server, msg::DidOpenTextDocumentNotification)
+    state = server.state
     textDocument = msg.params.textDocument
     @assert textDocument.languageId == "julia"
     uri = URI(textDocument.uri)
@@ -361,7 +387,12 @@ function handle_DidOpenTextDocumentNotification(state::ServerState, msg::DidOpen
     @assert filename !== nothing "Unsupported URI: $uri"
     cache_file_info!(state, uri, textDocument.version, textDocument.text, filename)
     if !haskey(state.contexts, uri)
-        initiate_context!(state, uri)
+        res = initiate_context!(state, uri)
+        if res === nothing
+            notify_diagnostics!(server)
+        else
+            notify_diagnostics!(server, res)
+        end
     else # this file is tracked by some context already
         contexts = state.contexts[uri]
         if contexts isa ExternalContext
@@ -372,7 +403,12 @@ function handle_DidOpenTextDocumentNotification(state::ServerState, msg::DidOpen
             context = first(contexts)
             id = hash(reanalyze_with_context!, hash(context))
             throttle(id, 3.0) do
-                reanalyze_with_context!(state, context)
+                res = reanalyze_with_context!(state, context)
+                if res === nothing
+                    notify_diagnostics!(server)
+                else
+                    notify_diagnostics!(server, res)
+                end
             end
         end
     end
@@ -380,7 +416,8 @@ function handle_DidOpenTextDocumentNotification(state::ServerState, msg::DidOpen
 end
 
 # TODO switch to incremental updates?
-function handle_DidChangeTextDocumentNotification(state::ServerState, msg::DidChangeTextDocumentNotification)
+function handle_DidChangeTextDocumentNotification(server::Server, msg::DidChangeTextDocumentNotification)
+    state = server.state
     (;textDocument,contentChanges) = msg.params
     uri = URI(textDocument.uri)
     for contentChange in contentChanges
@@ -391,7 +428,12 @@ function handle_DidChangeTextDocumentNotification(state::ServerState, msg::DidCh
     @assert filename !== nothing "Unsupported URI: $uri"
     cache_file_info!(state, uri, textDocument.version, text, filename)
     if !haskey(state.contexts, uri)
-        initiate_context!(state, uri)
+        res = initiate_context!(state, uri)
+        if res === nothing
+            notify_diagnostics!(server)
+        else
+            notify_diagnostics!(server, res)
+        end
     else
         contexts = state.contexts[uri]
         if contexts isa ExternalContext
@@ -406,21 +448,27 @@ function handle_DidChangeTextDocumentNotification(state::ServerState, msg::DidCh
         id = hash(reanalyze_with_context!, hash(context))
         throttle(id, 3.0) do
             debounce(id, 1.5) do
-                reanalyze_with_context!(state, context)
+                res = reanalyze_with_context!(state, context)
+                if res === nothing
+                    notify_diagnostics!(server)
+                else
+                    notify_diagnostics!(server, res)
+                end
             end
         end
     end
     nothing
 end
 
-function handle_DidCloseTextDocumentNotification(state::ServerState, msg::DidCloseTextDocumentNotification)
+function handle_DidCloseTextDocumentNotification(server::Server, msg::DidCloseTextDocumentNotification)
+    state = server.state
     textDocument = msg.params.textDocument
     uri = URI(textDocument.uri)
     delete!(state.file_cache, uri)
     return nothing
 end
 
-function handle_DidSaveTextDocumentNotification(state::ServerState, msg::DidSaveTextDocumentNotification)
+function handle_DidSaveTextDocumentNotification(server::Server, msg::DidSaveTextDocumentNotification)
     return nothing
 end
 
@@ -606,8 +654,7 @@ function initiate_context!(state::ServerState, uri::URI)
     parsed_stream = file_info.parsed_stream
     if !isempty(parsed_stream.diagnostics)
         diagnostics = parsed_stream_to_diagnostics(parsed_stream, file_info.filename)
-        notify_diagnostics!(state, (uri => diagnostics,))
-        return nothing
+        return (uri => diagnostics,)
     end
     include_callback = IncludeCallback(state)
     if env_path === nothing
@@ -692,8 +739,7 @@ function initiate_context!(state::ServerState, uri::URI)
         end
     end
 
-    notify_diagnostics!(state)
-    nothing
+    return nothing
 end
 
 function reanalyze_with_context!(state::ServerState, analysis_context::AnalysisContext)
@@ -714,9 +760,9 @@ function reanalyze_with_context!(state::ServerState, analysis_context::AnalysisC
         end
     end
     if parse_failed !== nothing
-        notify_diagnostics!(state, (
-            uri => parsed_stream_to_diagnostics(file_info.parsed_stream, file_info.filename) for (uri, file_info) in parse_failed))
-        return nothing
+        return (
+            uri => parsed_stream_to_diagnostics(file_info.parsed_stream, file_info.filename)
+            for (uri, file_info) in parse_failed)
     end
     entry = analysis_context.entry
     include_callback = IncludeCallback(state)
@@ -756,8 +802,7 @@ function reanalyze_with_context!(state::ServerState, analysis_context::AnalysisC
     end
     update_analysis_context!(analysis_context, result)
     record_reverse_map!(state, analysis_context)
-    notify_diagnostics!(state)
-    nothing
+    return nothing
 end
 
 end # module JETLS

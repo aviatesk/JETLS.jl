@@ -566,10 +566,10 @@ function get_completion_items(state::ServerState, uri::URI, params::CompletionPa
         items)))
 end
 
-function handle_CompletionRequest(state::ServerState, msg::CompletionRequest)
+function handle_CompletionRequest(server::Server, msg::CompletionRequest)
     uri = URI(msg.params.textDocument.uri)
-    items = get_completion_items(state, uri, msg.params)
-    return send(state,
+    items = get_completion_items(server.state, uri, msg.params)
+    return send(server,
         ResponseMessage(;
             id = msg.id,
             result = CompletionList(;
@@ -577,9 +577,9 @@ function handle_CompletionRequest(state::ServerState, msg::CompletionRequest)
                 items)))
 end
 
-function handle_CompletionResolveRequest(state::ServerState, msg::CompletionResolveRequest)
-    return send(state,
+function handle_CompletionResolveRequest(server::Server, msg::CompletionResolveRequest)
+    return send(server,
         ResponseMessage(;
             id = msg.id,
-            result = resolve_completion_item(state, msg.params)))
+            result = resolve_completion_item(server.state, msg.params)))
 end
