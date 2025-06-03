@@ -169,12 +169,16 @@ for development purposes only, particularly for inspection or dynamic registrati
 """
 global currently_running::Server
 
-runserver(args...) = runserver(Returns(nothing), args...) # no callback specified
-runserver(callback, in::IO, out::IO) = runserver(callback, Endpoint(in, out))
-runserver(callback, endpoint::Endpoint) = runserver(Server(callback, endpoint))
-function runserver(server::Server)
+const SERVER_LOOP_STARTUP_MSG = "Running JETLS server loop"
+const SERVER_LOOP_EXIT_MSG    = "Exited JETLS server loop"
+
+runserver(args...; kwarg...) = runserver(Returns(nothing), args...; kwarg...) # no callback specified
+runserver(callback, in::IO, out::IO; kwarg...) = runserver(callback, Endpoint(in, out); kwarg...)
+runserver(callback, endpoint::Endpoint; kwarg...) = runserver(Server(callback, endpoint); kwarg...)
+function runserver(server::Server; server_loop_log::Bool=true)
     shutdown_requested = false
     local exit_code::Int = 1
+    server_loop_log && @info SERVER_LOOP_STARTUP_MSG
     try
         for msg in server.endpoint
             server.callback !== nothing && server.callback(:received, msg)
@@ -206,6 +210,7 @@ function runserver(server::Server)
     finally
         close(server.endpoint)
     end
+    server_loop_log && @info SERVER_LOOP_EXIT_MSG
     return (; exit_code, server.endpoint)
 end
 

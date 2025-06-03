@@ -17,13 +17,13 @@ jobs:
           # - version: '1' # current stable
           #   os: ubuntu-latest
           #   arch: x64
-          - version: '1.12-nightly' # minimum version supported
+          - version: "1.12-nightly" # minimum version supported
             os: ubuntu-latest
             arch: x64
-          - version: '1.13-nightly' # next release
+          - version: "1.13-nightly" # next release
             os: ubuntu-latest
             arch: x64
-          - version: 'nightly' # dev
+          - version: "nightly" # dev
             os: ubuntu-latest
             arch: x64
           # - version: '1' # x86 ubuntu
@@ -53,3 +53,18 @@ jobs:
       - uses: julia-actions/julia-runtest@latest
       - uses: julia-actions/julia-processcoverage@v1
       - uses: codecov/codecov-action@v5
+
+  # Not working on CI for some reason, so commented out
+  # test_runserver:
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: julia-actions/setup-julia@v1
+  #       with:
+  #         version: "1.12-nightly" # most stable version
+  #         arch: x64
+  #     - uses: julia-actions/julia-buildpkg@latest
+  #     - uses: julia-actions/julia-buildpkg@latest
+  #     - name: run test
+  #       run: |
+  #         julia --startup-file=no --project=./test ./test/test_runserver.jl

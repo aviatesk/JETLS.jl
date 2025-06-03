@@ -32,7 +32,7 @@ function withserver(f;
             put!(sent_queue, x)
         end
     end
-    t = @async runserver(server)
+    t = @async runserver(server; server_loop_log=false)
     id_counter = Ref(0)
     old_env = Pkg.project().path
     root_path = nothing
@@ -153,21 +153,26 @@ function withserver(f;
         # do the main callback
         return f(argnt)
     finally
-        Pkg.activate(old_env; io=devnull)
-        let id = id_counter[] += 1
-            (; raw_res, json_res) = writereadmsg(ShutdownRequest(; id))
-            @test raw_res isa ShutdownResponse && raw_res.id == id
-            # make sure the `ShutdownResponse` follows the `ResponseMessage` specification:
-            # https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#responseMessage
-            @test json_res isa Dict{Symbol,Any} &&
-                haskey(json_res, :result) &&
-                json_res[:result] === nothing
+        try
+            Pkg.activate(old_env; io=devnull)
+            let id = id_counter[] += 1
+                (; raw_res, json_res) = writereadmsg(ShutdownRequest(; id))
+                @test raw_res isa ShutdownResponse && raw_res.id == id
+                # make sure the `ShutdownResponse` follows the `ResponseMessage` specification:
+                # https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#responseMessage
+                @test json_res isa Dict{Symbol,Any} &&
+                    haskey(json_res, :result) &&
+                    json_res[:result] === nothing
+            end
+            writereadmsg(ExitNotification(); read=0)
+            result = fetch(t)
+            @test result isa @NamedTuple{exit_code::Int, endpoint::JETLS.JSONRPC.Endpoint}
+            @test result.exit_code == 0
+            @test result.endpoint.state === :closed
+        finally
+            close(in)
+            close(out)
         end
-        writereadmsg(ExitNotification(); read=0)
-        result = fetch(t)
-        @test result isa @NamedTuple{exit_code::Int, endpoint::JETLS.JSONRPC.Endpoint}
-        @test result.exit_code == 0
-        @test result.endpoint.state === :closed
     end
 end
 

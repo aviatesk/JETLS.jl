@@ -4,7 +4,7 @@ using Pkg
 
 let old_env = Pkg.project().path
     try
-        Pkg.activate(@__DIR__)
+        Pkg.activate(@__DIR__; io=devnull)
 
         # TODO load Revise only when `JETLS_DEV_MODE` is true
         try
@@ -23,7 +23,7 @@ let old_env = Pkg.project().path
             exit(1)
         end
     finally
-        Pkg.activate(old_env)
+        Pkg.activate(old_env; io=devnull)
     end
 end
 
