@@ -1,6 +1,41 @@
 using .JS: @K_str, @KSet_str
 using .JL: @ast
 
+# initialization
+# ==============
+
+const NUMERIC_CHARACTERS = tuple(string.('0':'9')...)
+const COMPLETION_TRIGGER_CHARACTERS = [
+    "@",  # macro completion
+    "\\", # LaTeX completion
+    ":",  # emoji completion
+    NUMERIC_CHARACTERS..., # allow these characters to be recognized by `CompletionContext.triggerCharacter`
+]
+
+completion_options() = CompletionOptions(;
+    triggerCharacters = COMPLETION_TRIGGER_CHARACTERS,
+    resolveProvider = true,
+    completionItem = (;
+        labelDetailsSupport = true))
+
+const COMPLETION_REGISTRATION_ID = "jetls-completion"
+const COMPLETION_REGISTRATION_METHOD = "textDocument/completion"
+
+function completion_registration()
+    (; triggerCharacters, resolveProvider, completionItem) = completion_options()
+    documentSelector = DocumentFilter[
+        DocumentFilter(; language = "julia")
+    ]
+    return Registration(;
+        id = COMPLETION_REGISTRATION_ID,
+        method = COMPLETION_REGISTRATION_METHOD,
+        registerOptions = CompletionRegistrationOptions(;
+            documentSelector,
+            triggerCharacters,
+            resolveProvider,
+            completionItem))
+end
+
 # completion utils
 # ================
 
@@ -231,13 +266,18 @@ end
 
 function local_completions!(items::Dict{String, CompletionItem},
                             s::ServerState, uri::URI, params::CompletionParams)
+    let context = params.context
+        !isnothing(context) &&
+            # Don't trigger completion just by typing a numeric character:
+            context.triggerCharacter in NUMERIC_CHARACTERS && return nothing
+    end
     fi = get_fileinfo(s, uri)
-    fi === nothing && return items
+    fi === nothing && return nothing
     # NOTE don't bail out even if `length(fi.parsed_stream.diagnostics) ≠ 0`
     # so that we can get some completions even for incomplete code
     st0 = JS.build_tree(JL.SyntaxTree, fi.parsed_stream)
     cbs = cursor_bindings(st0, xy_to_offset(fi, params.position))
-    cbs === nothing && return items
+    cbs === nothing && return nothing
     for (bi, st, dist) in cbs
         ci = to_completion(bi, st, dist)
         prev_ci = get(items, ci.label, nothing)
@@ -256,9 +296,12 @@ end
 
 function global_completions!(items::Dict{String, CompletionItem}, state::ServerState, uri::URI, params::CompletionParams)
     pos = params.position
-    is_macro_invoke = let context = params.context
-        !isnothing(context) && let triggerCharacter = context.triggerCharacter
-            !isnothing(triggerCharacter) && triggerCharacter == "@"
+    is_macro_invoke = false
+    let context = params.context
+        if !isnothing(context)
+            # Don't trigger completion just by typing a numeric character:
+            context.triggerCharacter in NUMERIC_CHARACTERS && return nothing
+            is_macro_invoke = context.triggerCharacter == "@"
         end
     end
     mod = find_file_module!(state, uri, pos)
@@ -267,15 +310,24 @@ function global_completions!(items::Dict{String, CompletionItem}, state::ServerS
         # check if the cursor is within the macro name context `@xxx|`
         curbyte = xy_to_offset(fi, pos)
         sn = JS.build_tree(JS.SyntaxNode, fi.parsed_stream)
-        curnode = first(byte_ancestors(sn, curbyte-1))
-        is_macro_invoke = JS.kind(curnode) === K"MacroName"
+        ancestors = byte_ancestors(sn, curbyte-1)
+        if !isempty(ancestors)
+            curnode = first(ancestors)
+            is_macro_invoke = JS.kind(curnode) === K"MacroName"
+        end
     end
     for name in @invokelatest(names(mod; all=true, imported=true, usings=true))::Vector{Symbol}
         s = String(name)
         startswith(s, "#") && continue
         insertText = nothing
+        filterText = s
         if startswith(s, "@")
-            insertText = s[2:end]
+            # TODO need to use `textEdit` instead? (for VSCode)
+            insertText = filterText = lstrip(s, '@')
+            if !is_macro_invoke
+                # allow `nospecialize|` (without `@`-mark) to complete to `@nospecialize`
+                insertText = s
+            end
         elseif is_macro_invoke
             continue
         end
@@ -286,24 +338,133 @@ function global_completions!(items::Dict{String, CompletionItem}, state::ServerS
             kind = CompletionItemKind.Variable,
             documentation = nothing,
             insertText,
+            filterText,
             sortText = get_sort_text(0, #=isglobal=#true),
             data = CompletionData(#=needs_resolve=#true))
     end
     # if we are in macro name context, then we don't need any local completions
     # as macros are always defined top-level
-    is_completed = is_macro_invoke
-    return is_completed
+    return is_macro_invoke ? items : nothing # is_completed
+end
+
+# LaTeX and emoji completions
+# ===========================
+
+"""
+    get_backslash_offset(state::ServerState, uri::URI, pos::Position) -> offset::Int, is_emoji::Bool
+
+Get the byte `offset` of a backslash if the token immediately before the cursor
+consists of a backslash and colon.
+`is_emoji` indicates that a backslash is followed by the emoji completion trigger (`:`).
+Returns `nothing` if such a token does not exist or if another token appears
+immediately before the cursor.
+
+Examples:
+1. `\\┃ beta`       returns byte offset of `\\` and `false`
+2. `\\alph┃`        returns byte offset of `\\` and `false`
+3. `\\  ┃`          returns `nothing` (whitespace before cursor)
+4. `\\:┃`           returns byte offset of `\\` and `true`
+5. `\\:smile┃       returns byte offset of `\\` and `true`
+6. `\\:+1┃          returns byte offset of `\\` and `true`
+7. `alpha┃`         returns `nothing`  (no backslash before cursor)
+8. `\\alpha  bet┃a` returns `nothing` (no backslash immediately before token with cursor)
+"""
+function get_backslash_offset(state::ServerState, uri::URI, pos::Position)
+    fi = get_fileinfo(state, uri)
+    fi === nothing && return nothing
+    pos_offset = xy_to_offset(fi, pos)
+    tokens = fi.parsed_stream.tokens
+    curr_idx = findlast(token -> token.next_byte <= pos_offset, tokens)
+
+    if tokens[curr_idx].orig_kind == JS.K"\\"
+        # case 1
+        return tokens[curr_idx].next_byte - 1, false
+    elseif curr_idx > 1 && checkbounds(Bool, tokens, curr_idx-1) && tokens[curr_idx-1].orig_kind == JS.K"\\"
+        if tokens[curr_idx].orig_kind == JS.K"Whitespace"
+            return nothing # case 3
+        else
+            # Check if current token is colon (emoji pattern)
+            if tokens[curr_idx].orig_kind == JS.K":"
+                # case 4 & case 5
+                return tokens[curr_idx-1].next_byte - 1, true
+            else
+                return tokens[curr_idx-1].next_byte - 1, false
+            end
+        end
+    elseif curr_idx > 2
+        # Search backwards for \: pattern
+        i = curr_idx - 1
+        while i >= 2
+            token = tokens[i]
+            token1 = tokens[i-1]
+            if token1.orig_kind == JS.K"\\" && token.orig_kind == JS.K":"
+                # case 6
+                return token1.next_byte - 1, true
+            end
+            # Stop searching if we hit whitespace
+            if token.orig_kind == JS.K"Whitespace" || token.orig_kind == JS.K"NewlineWs"
+                break
+            end
+            i -= 1
+        end
+    end
+    return nothing # case 7, 8
+end
+
+# Add LaTeX and emoji completions to the items dictionary and return boolean indicating
+# whether any completions were added.
+function add_emoji_latex_completions!(items::Dict{String,CompletionItem}, state::ServerState, uri::URI, params::CompletionParams)
+    fi = get_fileinfo(state, uri)
+    fi === nothing && return nothing
+
+    pos = params.position
+    backslash_offset_emojionly = get_backslash_offset(state, uri, pos)
+    backslash_offset_emojionly === nothing && return nothing
+    backslash_offset, emojionly = backslash_offset_emojionly
+    backslash_pos = offset_to_xy(fi, backslash_offset)
+
+    function create_ci(key, val, is_emoji::Bool)
+        sortText = label = lstrip(key, '\\')
+        if is_emoji
+            sortText = rstrip(lstrip(sortText, ':'), ':')
+        end
+        description = is_emoji ? "emoji" : "latex-symbol"
+        return CompletionItem(;
+            label,
+            labelDetails=CompletionItemLabelDetails(;
+                description),
+            kind=CompletionItemKind.Snippet,
+            documentation=val,
+            sortText,
+            textEdit=TextEdit(;
+                range = Range(;
+                    start = backslash_pos,
+                    var"end" = pos),
+                newText = val),
+            data=CompletionData(false)
+        )
+    end
+
+    emojionly || foreach(REPL.REPLCompletions.latex_symbols) do (key, val)
+        items[key] = create_ci(key, val, false)
+    end
+    foreach(REPL.REPLCompletions.emoji_symbols) do (key, val)
+        items[key] = create_ci(key, val, true)
+    end
+
+    # if we reached here, we have added all emoji and latex completions
+    return items
 end
 
 # completion resolver
 # ===================
 
 function resolve_completion_item(state::ServerState, item::CompletionItem)
-    isassigned(state.completion_module) || return item
+    isdefined(state, :completion_module) || return item
     data = item.data
     data isa CompletionData || return item
     data.needs_resolve || return item
-    mod = state.completion_module[]
+    mod = state.completion_module
     name = Symbol(item.label)
     binding = Base.Docs.Binding(mod, name)
     docs = Base.Docs.doc(binding)
@@ -324,15 +485,17 @@ end
 function get_completion_items(state::ServerState, uri::URI, params::CompletionParams)
     items = Dict{String, CompletionItem}()
     # order matters; see local_completions!
-    is_completed = global_completions!(items, state, uri, params)
-    is_completed || local_completions!(items, state, uri, params)
-    return collect(values(items))
+    return collect(values(@something(
+        add_emoji_latex_completions!(items, state, uri, params),
+        global_completions!(items, state, uri, params),
+        local_completions!(items, state, uri, params),
+        items)))
 end
 
-function handle_CompletionRequest(s::ServerState, msg::CompletionRequest)
+function handle_CompletionRequest(server::Server, msg::CompletionRequest)
     uri = URI(msg.params.textDocument.uri)
-    items = get_completion_items(s, uri, msg.params)
-    return s.send(
+    items = get_completion_items(server.state, uri, msg.params)
+    return send(server,
         ResponseMessage(;
             id = msg.id,
             result = CompletionList(;
@@ -340,9 +503,9 @@ function handle_CompletionRequest(s::ServerState, msg::CompletionRequest)
                 items)))
 end
 
-function handle_CompletionResolveRequest(s::ServerState, msg::CompletionResolveRequest)
-    return s.send(
+function handle_CompletionResolveRequest(server::Server, msg::CompletionResolveRequest)
+    return send(server,
         ResponseMessage(;
             id = msg.id,
-            result = resolve_completion_item(s, msg.params)))
+            result = resolve_completion_item(server.state, msg.params)))
 end

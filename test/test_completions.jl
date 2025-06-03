@@ -203,21 +203,36 @@ end
 # get_completion_items
 # ====================
 
-function get_text_and_positions(text::String)
+function get_text_and_positions(text::String, target::Regex=r"#=cursor=#")
     positions = JETLS.Position[]
     lines = split(text, '\n')
+
+    # First pass: collect all positions without modifying text
     for (i, line) in enumerate(lines)
-        for m in eachmatch(r"#=cursor=#", line)
-            # Position is 0-based
-            push!(positions, JETLS.Position(; line=i-1, character=m.match.offset-1))
-            lines[i] = replace(line, r"#=cursor=#" => "")
+        offset = 0  # Track cumulative offset due to previous replacements in same line
+        temp_line = line
+        while true
+            m = match(target, temp_line)
+            if m === nothing
+                break
+            end
+            # Position is 0-based, m.offset is 1-based
+            char_pos = m.offset - 1 + offset
+            push!(positions, JETLS.Position(; line=i-1, character=char_pos))
+
+            # Remove this match and continue searching
+            temp_line = temp_line[1:m.offset-1] * temp_line[m.offset+length(m.match):end]
+            offset += m.offset - 1
         end
     end
-    return join(lines, '\n'), positions
+
+    # Second pass: remove all target occurrences
+    cleaned_text = replace(text, target => "")
+    return cleaned_text, positions
 end
 
 @testset "get_completion_items" begin
-    state = JETLS.ServerState(identity)
+    state = JETLS.ServerState()
     text, curpos2 = get_text_and_positions("""
     module Foo
 
@@ -283,8 +298,35 @@ end
     end
 end
 
+# completion for empty program should not crash
+@testset "empty completion" begin
+    state = JETLS.ServerState()
+    filename = "empty.jl"
+    uri = JETLS.URI(filename)
+
+    let text = ""
+        JETLS.cache_file_info!(state, uri, 1, text, filename)
+        params = CompletionParams(;
+            textDocument=TextDocumentIdentifier(string(uri)),
+            position=Position(;line=0,character=0))
+        items = JETLS.get_completion_items(state, uri, params)
+        # should not crash and return something
+        @test length(items) > 0
+    end
+
+    let text = "\n \n \n"
+        JETLS.cache_file_info!(state, uri, 2, text, filename)
+        params = CompletionParams(;
+            textDocument=TextDocumentIdentifier(string(uri)),
+            position=Position(;line=3,character=0))
+        items = JETLS.get_completion_items(state, uri, params)
+        # should not crash and return something
+        @test length(items) > 0
+    end
+end
+
 @testset "macro completion" begin
-    state = JETLS.ServerState(identity)
+    state = JETLS.ServerState()
     filename = "filename.jl"
     uri = JETLS.URI(filename)
 
@@ -322,10 +364,11 @@ end
             textDocument=TextDocumentIdentifier(string(uri)),
             position=Position(;line=1,character=7),
             context=CompletionContext(;
-                triggerKind=CompletionTriggerKind.TriggerCharacter))
+                triggerKind=CompletionTriggerKind.Invoked))
         items = JETLS.get_completion_items(state, uri, params)
         @test any(items) do item
             item.label == "@nospecialize" &&
+            item.filterText == "nospecialize" &&
             item.insertText == "nospecialize"
         end
         @test !any(items) do item
@@ -344,10 +387,264 @@ end
             textDocument=TextDocumentIdentifier(string(uri)),
             position=Position(;line=1,character=20),
             context=CompletionContext(;
-                triggerKind=CompletionTriggerKind.TriggerCharacter))
+                triggerKind=CompletionTriggerKind.Invoked))
         items = JETLS.get_completion_items(state, uri, params)
         @test any(items) do item
             item.label == "yyy"
+        end
+    end
+
+    # allow `nospecia|` complete to `@nospecialize`
+    let text = """
+        function foo(xxx, yyy)
+            nospecia
+        end
+        """
+        JETLS.cache_file_info!(state, uri, 4, text, filename)
+        params = CompletionParams(;
+            textDocument=TextDocumentIdentifier(string(uri)),
+            position=Position(;line=1,character=12),
+            context=CompletionContext(;
+                triggerKind=CompletionTriggerKind.Invoked))
+        items = JETLS.get_completion_items(state, uri, params)
+        @test any(items) do item
+            item.label == "@nospecialize" &&
+            item.filterText == "nospecialize" &&
+            item.insertText == "@nospecialize" # NOTE that `@` is included here
+        end
+    end
+end
+
+# Latex&emoji
+# ===========
+
+function test_backslash_offset(code::String, expected_result)
+    text, positions = get_text_and_positions(code, r"#=cursor=#")
+    @assert length(positions) == 1 "test_backslash_offset requires exactly one cursor marker"
+
+    state = JETLS.ServerState()
+    filename = "test_backslash.jl"
+    uri = JETLS.URI(filename)
+    JETLS.cache_file_info!(state, uri, 1, text, filename)
+
+    result = JETLS.get_backslash_offset(state, uri, positions[1])
+    @test result == expected_result
+    return result
+end
+@testset "get_backslash_offset" begin
+    # Example 1: Current token is backslash
+    let code = "\\#=cursor=#"
+        test_backslash_offset(code, (1, false))
+    end
+    let code = "  \\#=cursor=#"
+        test_backslash_offset(code, (ncodeunits("  \\"), false))
+    end
+
+    # Example 2: Previous token is backslash
+    let code = "\\alpha#=cursor=#"
+        test_backslash_offset(code, (1, false))
+    end
+    let code = "\\beta#=cursor=#"
+        test_backslash_offset(code, (1, false))
+    end
+    let code = "  \\gamma#=cursor=#"
+        test_backslash_offset(code, (ncodeunits("  \\"), false))
+    end
+    let code = "\\ #=cursor=#"
+        test_backslash_offset(code, nothing)
+    end
+    let code = "\\  #=cursor=#"
+        test_backslash_offset(code, nothing)
+    end
+
+    # Example 3: Backslash followed by colon, then cursor
+    let code = "\\:#=cursor=#"
+        test_backslash_offset(code, (1, true))
+    end
+    let code = "\\:a#=cursor=#"
+        test_backslash_offset(code, (1, true))
+    end
+    let code = "\\:abc#=cursor=#"
+        test_backslash_offset(code, (1, true))
+    end
+    let code = "  \\:test#=cursor=#"
+        test_backslash_offset(code, (ncodeunits("  \\"), true))
+    end
+
+    # Example 4: No relevant backslash (should return nothing)
+    let code = "abc#=cursor=#"
+        test_backslash_offset(code, nothing)
+    end
+    let code = "#=cursor=#"
+        test_backslash_offset(code, nothing)
+    end
+    let code = "#=cursor=#\\alpha"
+        test_backslash_offset(code, nothing)
+    end
+    let code = "\\alpha beta#=cursor=#"
+        test_backslash_offset(code, nothing)
+    end
+    let code = "\\alpha beta gamma#=cursor=#"
+        test_backslash_offset(code, nothing)
+    end
+    let code = "\"\\alpha\"#=cursor=#"
+        test_backslash_offset(code, nothing)
+    end
+    let code = "\\:a b#=cursor=#"
+        test_backslash_offset(code, nothing)
+    end
+
+    # Multiple backslashes - should find the most recent one
+    let code = "\\alpha \\beta#=cursor=#"
+        test_backslash_offset(code, (ncodeunits("\\alpha \\"), false))
+    end
+    let code = "\\alpha \\beta \\gamma#=cursor=#"
+        test_backslash_offset(code, (ncodeunits("\\alpha \\beta \\"), false))
+    end
+
+    # In various syntactic contexts
+    let code = "f(\\alpha#=cursor=#)"
+        test_backslash_offset(code, (ncodeunits("f(\\"), false))
+    end
+    let code = "[\\beta#=cursor=#]"
+        test_backslash_offset(code, (ncodeunits("[\\"), false))
+    end
+    let code = "{\\gamma#=cursor=#}"
+        test_backslash_offset(code, (ncodeunits("{\\"), false))
+    end
+
+    # With newlines
+    let code = "x = 1\n\\alpha#=cursor=#"
+        test_backslash_offset(code, (ncodeunits("x = 1\n\\"), false))
+    end
+    let code = "function f()\n    \\beta#=cursor=#\nend"
+        test_backslash_offset(code, (ncodeunits("function f()\n    \\"), false))
+    end
+
+    # Complex expressions
+    let code = "f(x) = x^2 + \\sigma#=cursor=#"
+        test_backslash_offset(code, (ncodeunits("f(x) = x^2 + \\"), false))
+    end
+    let code = "result = compute(\\theta#=cursor=#, y)"
+        test_backslash_offset(code, (ncodeunits("result = compute(\\"), false))
+    end
+
+    # LaTeX-like sequences
+    let code = "\\alpha#=cursor=#"
+        test_backslash_offset(code, (1, false))
+    end
+    let code = "\\sum#=cursor=#"
+        test_backslash_offset(code, (1, false))
+    end
+    let code = "\\infty#=cursor=#"
+        test_backslash_offset(code, (1, false))
+    end
+    let code = "\\mathbb#=cursor=#"
+        test_backslash_offset(code, (1, false))
+    end
+
+    # Special colon cases
+    let code = "\\:heart#=cursor=#"
+        test_backslash_offset(code, (1, true))
+    end
+    let code = "\\:smile#=cursor=#"
+        test_backslash_offset(code, (1, true))
+    end
+    let code = "\\:+1#=cursor=#"
+        test_backslash_offset(code, (1, true))
+    end
+
+    # Unicode characters in code before backslash
+    let code = "α = 1; \\beta#=cursor=#"
+        test_backslash_offset(code, (ncodeunits("α = 1; \\"), false))
+    end
+    let code = "# 测试\n\\gamma#=cursor=#"
+        test_backslash_offset(code, (ncodeunits("# 测试\n\\"), false))
+    end
+
+    # Boundary conditions
+    let code = "\\#=cursor=#"
+        test_backslash_offset(code, (1, false))
+    end
+    let code = "\\a#=cursor=#"
+        test_backslash_offset(code, (1, false))
+    end
+    let code = "\\:#=cursor=#"
+        test_backslash_offset(code, (1, true))
+    end
+    let code = "code; \\#=cursor=#"
+        test_backslash_offset(code, (ncodeunits("code; \\"), false))
+    end
+
+    # Real-world usage patterns
+    let code = "E = mc^2 + \\hbar#=cursor=#"
+        test_backslash_offset(code, (ncodeunits("E = mc^2 + \\"), false))
+    end
+    let code = "function hermite(n, x)\n    return \\psi#=cursor=#\nend"
+        test_backslash_offset(code, (ncodeunits("function hermite(n, x)\n    return \\"), false))
+    end
+    let code = "struct Particle\n    momentum::\\vec#=cursor=#\nend"
+        test_backslash_offset(code, (ncodeunits("struct Particle\n    momentum::\\"), false))
+    end
+    let code = "[\\theta#=cursor=# for i in 1:n]"
+        test_backslash_offset(code, (ncodeunits("[\\"), false))
+    end
+    let code = "angle = \\phi#=cursor=#"
+        test_backslash_offset(code, (ncodeunits("angle = \\"), false))
+    end
+end
+
+@testset "Latex/emoji completion" begin
+    state = JETLS.ServerState()
+    filename = "test_latex_emoji.jl"
+    uri = JETLS.URI(filename)
+
+    # `\`-mark should trigger latex completion
+    let text = """
+        function foo(α, β)
+            \\
+        end
+        """
+        JETLS.cache_file_info!(state, uri, 1, text, filename)
+        params = CompletionParams(;
+            textDocument=TextDocumentIdentifier(string(uri)),
+            position=Position(;line=1,character=5),
+            context=CompletionContext(;
+                triggerKind=CompletionTriggerKind.TriggerCharacter,
+                triggerCharacter="\\"))
+        items = JETLS.get_completion_items(state, uri, params)
+        @test any(items) do item
+            item.label == "alpha" &&
+            item.sortText == "alpha"
+        end
+        @test !any(items) do item
+            item.label == "foo" || # should not include global completions
+            item.label == "β"      # should not include local completions
+        end
+    end
+
+    let text = """
+        function foo(α, β)
+            \\:
+        end
+        """
+        JETLS.cache_file_info!(state, uri, 2, text, filename)
+        params = CompletionParams(;
+            textDocument=TextDocumentIdentifier(string(uri)),
+            position=Position(;line=1,character=6),
+            context=CompletionContext(;
+                triggerKind=CompletionTriggerKind.TriggerCharacter,
+                triggerCharacter=":"))
+        items = JETLS.get_completion_items(state, uri, params)
+        @test any(items) do item
+            item.label == ":pizza:" &&
+            item.sortText == "pizza"
+        end
+        @test !any(items) do item
+            item.label == "foo" || # should not include global completions
+            item.label == "α"   || # should not include local completions
+            item.label == "β"   || # should not include local completions
+            item.label == "alpha" # should not even include LaTeX completions
         end
     end
 end

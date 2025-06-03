@@ -4,7 +4,7 @@ using Pkg
 
 let old_env = Pkg.project().path
     try
-        Pkg.activate(@__DIR__)
+        Pkg.activate(@__DIR__; io=devnull)
 
         # TODO load Revise only when `JETLS_DEV_MODE` is true
         try
@@ -23,18 +23,23 @@ let old_env = Pkg.project().path
             exit(1)
         end
     finally
-        Pkg.activate(old_env)
+        Pkg.activate(old_env; io=devnull)
     end
 end
 
-let res = runserver(stdin, stdout) do state::Symbol, msg
-        @nospecialize msg
-        if JETLS.JETLS_DEV_MODE
+let endpoint = Endpoint(stdin, stdout)
+    if JETLS.JETLS_DEV_MODE
+        server = Server(endpoint) do s::Symbol, x
+            @nospecialize x
             # allow Revise to apply changes with the dev mode enabled
-            if state === :received
+            if s === :received
                 Revise.revise()
             end
         end
+        JETLS.currently_running = server
+        res = runserver(server)
+    else
+        res = runserver(endpoint)
     end
     @info "JETLS server stopped" res.exit_code
     exit(res.exit_code)

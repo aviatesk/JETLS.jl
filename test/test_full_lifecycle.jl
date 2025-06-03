@@ -23,30 +23,30 @@ let (pkgcode, positions) = get_text_and_positions("""
         filepath = normpath(pkgpath, "src", "TestFullLifecycle.jl")
         uri = string(JETLS.URIs2.filepath2uri(filepath))
 
-        test_full_cycle = function (in, _, _, sent_queue, id_counter)
+        test_full_cycle = function ((; writereadmsg, id_counter),)
             # open the file, and fill in the file cache
-            writemsg(in,
-                DidOpenTextDocumentNotification(;
-                    params = DidOpenTextDocumentParams(;
-                        textDocument = TextDocumentItem(;
-                            uri,
-                            languageId = "julia",
-                            version = 1,
-                            text = read(filepath, String)))))
-            out = take_with_timeout!(sent_queue; limit=300) # wait for 5 minutes
-            @test out isa PublishDiagnosticsNotification
+            let (; raw_res) = writereadmsg(
+                    DidOpenTextDocumentNotification(;
+                            params = DidOpenTextDocumentParams(;
+                            textDocument = TextDocumentItem(;
+                                uri,
+                                languageId = "julia",
+                                version = 1,
+                                text = read(filepath, String)))))
+                @test raw_res isa PublishDiagnosticsNotification
+            end
 
-            id = id_counter[] += 1
-            writemsg(in,
-                CompletionRequest(;
-                    id,
-                    params = CompletionParams(;
-                        textDocument = TextDocumentIdentifier(; uri),
-                        position = pos1)))
-            out = take_with_timeout!(sent_queue)
-            @test out isa ResponseMessage
-            @test out.id == id
-            result = out.result
+            result = let id = id_counter[] += 1
+                (; raw_res) = writereadmsg(
+                    CompletionRequest(;
+                        id,
+                        params = CompletionParams(;
+                            textDocument = TextDocumentIdentifier(; uri),
+                            position = pos1)))
+                @test raw_res isa ResponseMessage
+                @test raw_res.id == id
+                result = raw_res.result
+            end
             @test result isa CompletionList
             idx = findfirst(x -> x.label == "hello", result.items)
             @test !isnothing(idx)
@@ -56,15 +56,14 @@ let (pkgcode, positions) = get_text_and_positions("""
                 @test data isa CompletionData && data.needs_resolve
                 @test isnothing(item.documentation)
 
-                let id = id_counter[] += 1, out, result
-                    writemsg(in,
+                let id = id_counter[] += 1, raw_res, result
+                    (; raw_res) = writereadmsg(
                         CompletionResolveRequest(;
                             id,
                             params =  item))
-                    out = take_with_timeout!(sent_queue)
-                    @test out isa ResponseMessage
-                    @test out.id == id
-                    result = out.result
+                    @test raw_res isa ResponseMessage
+                    @test raw_res.id == id
+                    result = raw_res.result
                     @test result isa CompletionItem
                     documentation = result.documentation
                     @test documentation isa MarkupContent &&
