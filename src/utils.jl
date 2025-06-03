@@ -56,7 +56,7 @@ get_fileinfo(s::ServerState, t::TextDocumentIdentifier) = get_fileinfo(s, URI(t.
 
 function find_file_module!(state::ServerState, uri::URI, pos::Position)
     mod = find_file_module(state, uri, pos)
-    state.completion_module[] = mod
+    state.completion_module = mod
     return mod
 end
 function find_file_module(state::ServerState, uri::URI, pos::Position)

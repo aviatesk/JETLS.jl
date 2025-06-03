@@ -291,7 +291,7 @@ function cursor_siginfos(mod::Module, ps::JS.ParseStream, b::Int)
             isnothing(arg_i) ? :none : arg_i
         end
     end
-    
+
     for m in methods(fn)
         if compatible_call(m, ca)
             push!(out, make_siginfo(m, ca, active_arg))
@@ -304,15 +304,16 @@ end
 textDocument/signatureHelp is requested when one of the negotiated trigger
 characters is typed.  Eglot (emacs) requests it more frequently.
 """
-function handle_SignatureHelpRequest(s::ServerState, msg::SignatureHelpRequest)
+function handle_SignatureHelpRequest(server::Server, msg::SignatureHelpRequest)
+    state = server.state
     uri = URI(msg.params.textDocument.uri)
-    fi = get_fileinfo(s, uri)
-    mod = find_file_module!(s, uri, msg.params.position)
+    fi = get_fileinfo(state, uri)
+    mod = find_file_module!(state, uri, msg.params.position)
     b = xy_to_offset(fi, msg.params.position)
     signatures = cursor_siginfos(mod, fi.parsed_stream, b)
     activeSignature = nothing
     activeParameter = nothing
-    return s.send(
+    return send(server,
         ResponseMessage(;
             id = msg.id,
             result = isempty(signatures) ?
