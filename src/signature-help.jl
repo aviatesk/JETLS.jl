@@ -190,10 +190,10 @@ function make_paraminfo(p::JL.SyntaxTree)
 end
 
 # active_arg is either an argument index, or :next (available pos. arg), or :none
-function make_siginfo(m::Method, ca::CallArgs, active_arg::Union{Int, Symbol})
+function make_siginfo(m::Method, ca::CallArgs, active_arg::Union{Int, Symbol}, postprocessor::JET.PostProcessor=JET.PostProcessor())
     # methodshow prints "f(x::T) [unparseable stuff]"
     # parse the first part and put the remainder in documentation
-    mstr = sprint(show, m)
+    mstr = postprocessor(sprint(show, m))
     mnode = JS.parsestmt(JL.SyntaxTree, mstr; ignore_errors=true)[1]
     label, documentation = let lb = JS.last_byte(mnode)
         mstr[1:lb], string(strip(mstr[lb+1:end]))
@@ -245,7 +245,7 @@ function make_siginfo(m::Method, ca::CallArgs, active_arg::Union{Int, Symbol})
     return SignatureInformation(; label, documentation, parameters, activeParameter)
 end
 
-function cursor_siginfos(mod::Module, ps::JS.ParseStream, b::Int)
+function cursor_siginfos(mod::Module, ps::JS.ParseStream, b::Int, postprocessor::JET.PostProcessor=JET.PostProcessor())
     out = SignatureInformation[]
     call, after_semicolon = let st0 = JS.build_tree(JL.SyntaxTree, ps; ignore_errors=true)
         # tolerate one-past-last byte. TODO: go back to closest non-whitespace?
@@ -294,7 +294,7 @@ function cursor_siginfos(mod::Module, ps::JS.ParseStream, b::Int)
 
     for m in methods(fn)
         if compatible_call(m, ca)
-            push!(out, make_siginfo(m, ca, active_arg))
+            push!(out, make_siginfo(m, ca, active_arg, postprocessor))
         end
     end
     return out
@@ -308,13 +308,15 @@ function handle_SignatureHelpRequest(server::Server, msg::SignatureHelpRequest)
     state = server.state
     uri = URI(msg.params.textDocument.uri)
     fi = get_fileinfo(state, uri)
-    mod = find_file_module!(state, uri, msg.params.position)
+    mod = find_file_module(state, uri, msg.params.position)
+    context = find_context_for_uri(state, uri)
+    postprocessor = JET.PostProcessor(isnothing(context) ? nothing : context.result.actual2virtual)
     b = xy_to_offset(fi, msg.params.position)
-    signatures = cursor_siginfos(mod, fi.parsed_stream, b)
+    signatures = cursor_siginfos(mod, fi.parsed_stream, b, postprocessor)
     activeSignature = nothing
     activeParameter = nothing
     return send(server,
-        ResponseMessage(;
+        SignatureHelpResponse(;
             id = msg.id,
             result = isempty(signatures) ?
               null

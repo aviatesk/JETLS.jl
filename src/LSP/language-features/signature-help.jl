@@ -249,3 +249,7 @@ end
     method::String = "textDocument/signatureHelp"
     params::SignatureHelpParams
 end
+
+@interface SignatureHelpResponse @extends ResponseMessage begin
+    result::Union{SignatureHelp, Null}
+end

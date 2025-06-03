@@ -7,15 +7,6 @@ using JETLS
 using JETLS: JL, JS
 using JETLS.LSP
 
-function make_DidOpenTextDocumentNotification(uri, text;
-                                              languageId = "julia",
-                                              version = 1)
-    return DidOpenTextDocumentNotification(;
-        params = DidOpenTextDocumentParams(;
-            textDocument = TextDocumentItem(;
-                uri, text, languageId, version)))
-end
-
 @testset "syntax error diagnostics" begin
     # Test with code that has syntax errors
     scriptcode = """

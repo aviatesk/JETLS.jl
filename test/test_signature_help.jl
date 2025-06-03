@@ -22,7 +22,6 @@ module M_sanity
 i_exist(a,b,c) = 0
 end
 @testset "sanity" begin
-
     @test 1 === n_si(M_sanity, "i_exist(|)")
     @test 1 === n_si(M_sanity, "i_exist(1,2,3|)")
     @test 1 === n_si(M_sanity, "i_exist(|1,2,3)")
@@ -31,7 +30,6 @@ end
     @test 0 === n_si(M_sanity, "(|)")
     @test 0 === n_si(M_sanity, "()|")
 end
-
 
 @testset "don't show help in method definitions" begin
     snippets = [
@@ -46,7 +44,6 @@ end
     end
 end
 
-
 module M_filterp
 f4() = 0
 f4(a) = 0
@@ -59,7 +56,6 @@ f1v(a) = 0
 f1v(a, args...) = 0
 end
 @testset "filter by number of positional args" begin
-
     @test 5 === n_si(M_filterp, "f4(|)")
     @test 4 === n_si(M_filterp, "f4(1|)")
     @test 4 === n_si(M_filterp, "f4(1,|)")
@@ -87,7 +83,6 @@ f(;kw1, kw2=2, kw3::Int=3) = 0
 f(x; kw2, kw3, kw4, kw5, kw6) = 0
 end
 @testset "filter by names of kwargs" begin
-
     @test 2 === n_si(M_filterk, "f(|)")
 
     # pre-semicolon
@@ -148,7 +143,6 @@ inner(args...) = 0
 outer(args...) = 0
 end
 @testset "nested" begin
-
     active_si(code) = only(siginfos(M_nested, code)).label
 
     @test startswith(active_si("outer(0,1,inner(|))"), "inner")
@@ -170,6 +164,55 @@ end
     @test 1 === n_si(M_invalid, "f1(,,,,,,,,,|)")
     @test 1 === n_si(M_invalid, "f1(a b c|)")
     @test 1 === n_si(M_invalid, "f1(k=|)")
+end
 
+include("setup.jl")
+
+@testset "signature help request/response cycle" begin
+    script_code = """
+    foo(xxx) = :xxx
+    foo(xxx, yyy) = :xxx_yyy
+    """
+    withscript(script_code) do script_path
+        uri = string(JETLS.URIs2.filepath2uri(script_path))
+        withserver() do (; writereadmsg, id_counter)
+            # run the full analysis first
+            (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, script_code))
+            @test raw_res isa PublishDiagnosticsNotification
+            @test raw_res.params.uri == uri
+
+            edited_code = """
+            foo(xxx) = :xxx
+            foo(xxx, yyy) = :xxx_yyy
+            foo(nothing,) # <- cursor set at `,`
+            """
+            (; raw_res) = writereadmsg(make_DidChangeTextDocumentNotification(uri, edited_code, #=version=#2))
+            @test raw_res isa PublishDiagnosticsNotification
+            @test raw_res.params.uri == uri
+
+            let id = id_counter[] += 1
+                (; raw_res) = writereadmsg(SignatureHelpRequest(;
+                    id,
+                    params = SignatureHelpParams(;
+                        textDocument = TextDocumentIdentifier(; uri),
+                        position = Position(; line=2, character=12))))
+                @test raw_res isa SignatureHelpResponse
+                @test length(raw_res.result.signatures) == 2
+                @test any(raw_res.result.signatures) do siginfo
+                    siginfo.label == "foo(xxx)" &&
+                    # this also tests that JETLS doesn't show the nonsensical `var"..."`
+                    # string caused by JET's internal details
+                    occursin("@ Main $(script_path):1", siginfo.documentation)
+                end
+                @test any(raw_res.result.signatures) do siginfo
+                    siginfo.label == "foo(xxx, yyy)" &&
+                    # this also tests that JETLS doesn't show the nonsensical `var"..."`
+                    # string caused by JET's internal details
+                    occursin("@ Main $(script_path):2", siginfo.documentation)
+                end
+            end
+        end
+    end
 end
-end
+
+end # module test_signature_help

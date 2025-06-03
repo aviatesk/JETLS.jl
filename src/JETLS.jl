@@ -62,6 +62,7 @@ end
 mutable struct FullAnalysisResult
     staled::Bool
     last_analysis::Float64
+    actual2virtual::JET.Actual2Virtual
     const uri2diagnostics::Dict{URI,Vector{Diagnostic}}
     const analyzed_file_infos::Dict{URI,JET.AnalyzedFileInfo}
     const successfully_analyzed_file_infos::Dict{URI,JET.AnalyzedFileInfo}
@@ -506,7 +507,7 @@ function new_analysis_context(entry::AnalysisEntry, result)
     uri2diagnostics = jet_result_to_diagnostics(keys(analyzed_file_infos), result)
     successfully_analyzed_file_infos = copy(analyzed_file_infos)
     is_full_analysis_successful(result) || empty!(successfully_analyzed_file_infos)
-    analysis_result = FullAnalysisResult(false, time(), uri2diagnostics, analyzed_file_infos, successfully_analyzed_file_infos)
+    analysis_result = FullAnalysisResult(false, time(), result.res.actual2virtual, uri2diagnostics, analyzed_file_infos, successfully_analyzed_file_infos)
     return AnalysisContext(entry, analysis_result)
 end
 
@@ -534,6 +535,9 @@ function update_analysis_context!(analysis_context::AnalysisContext, result)
     jet_result_to_diagnostics!(uri2diagnostics, result)
     analysis_context.result.staled = false
     analysis_context.result.last_analysis = time()
+    if is_full_analysis_successful(result)
+        analysis_context.result.actual2virtual = result.res.actual2virtual
+    end
 end
 
 # TODO This reverse map recording should respect the changes made in `include` chains

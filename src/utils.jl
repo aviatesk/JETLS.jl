@@ -60,16 +60,8 @@ function find_file_module!(state::ServerState, uri::URI, pos::Position)
     return mod
 end
 function find_file_module(state::ServerState, uri::URI, pos::Position)
-    haskey(state.contexts, uri) || return Main
-    contexts = state.contexts[uri]
-    context = first(contexts)
-    for ctx in contexts
-        # prioritize `PackageSourceAnalysisEntry` if exists
-        if isa(context.entry, PackageSourceAnalysisEntry)
-            context = ctx
-            break
-        end
-    end
+    context = find_context_for_uri(state, uri)
+    context === nothing && return Main
     safi = successfully_analyzed_file_info(context, uri)
     isnothing(safi) && return Main
     curline = Int(pos.line) + 1
@@ -79,6 +71,21 @@ function find_file_module(state::ServerState, uri::URI, pos::Position)
         curmod = mod
     end
     return curmod
+end
+
+function find_context_for_uri(state::ServerState, uri::URI)
+    haskey(state.contexts, uri) || return nothing
+    contexts = state.contexts[uri]
+    contexts isa ExternalContext && return nothing
+    context = first(contexts)
+    for ctx in contexts
+        # prioritize `PackageSourceAnalysisEntry` if exists
+        if isa(context.entry, PackageSourceAnalysisEntry)
+            context = ctx
+            break
+        end
+    end
+    return context
 end
 
 # JuliaLowering uses byte offsets; LSP uses lineno and UTF-* character offset.
