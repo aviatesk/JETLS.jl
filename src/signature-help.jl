@@ -64,7 +64,7 @@ function flatten_args(call::JL.SyntaxTree)
     usable = (arg::JL.SyntaxTree) -> kind(arg) != K"error"
     orig = filter(usable, JS.children(call)[2:end])
 
-    args = typeof(orig)[]
+    args = JL.SyntaxList(orig.graph)
     kw_i = 1
     for i in eachindex(orig)
         iskw = kind(orig[i]) === K"parameters"
@@ -109,7 +109,7 @@ signatures.
 If `sig`, then K"=" trees before the semicolon should be interpreted as optional
 positional args instead of kwargs.
 """
-function find_kws(args::Vector{JL.SyntaxTree}, kw_i::Int; sig=false)
+function find_kws(args::JL.SyntaxList, kw_i::Int; sig=false)
     out = Dict{String, Int}()
     for i in (sig ? (kw_i:lastindex(args)) : eachindex(args))
         (kind(args[i]) != K"=") && i < kw_i && continue
@@ -132,7 +132,7 @@ Information from one call's arguments for filtering signatures.
 TODO: types
 """
 struct CallArgs
-    args::Vector{JL.SyntaxTree}
+    args::JL.SyntaxList
     kw_i::Int
     pos_map::Dict{Int, Tuple{Int, Union{Int, Nothing}}}
     pos_args_lb::Int
