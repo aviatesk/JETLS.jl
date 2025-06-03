@@ -27,7 +27,8 @@ let old_env = Pkg.project().path
     end
 end
 
-let res = runserver(stdin, stdout) do s::Symbol, x
+let endpoint = JETLS.Endpoint(stdin, stdout)
+    server = JETLS.Server(endpoint) do s::Symbol, x
         @nospecialize x
         if JETLS.JETLS_DEV_MODE
             # allow Revise to apply changes with the dev mode enabled
@@ -36,6 +37,10 @@ let res = runserver(stdin, stdout) do s::Symbol, x
             end
         end
     end
+    if JETLS.JETLS_DEV_MODE
+        JETLS.currently_running = server
+    end
+    res = runserver(server)
     @info "JETLS server stopped" res.exit_code
     exit(res.exit_code)
 end

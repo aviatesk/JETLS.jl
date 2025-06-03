@@ -1,10 +1,9 @@
 using Test
 using Pkg
 using JETLS
-using JETLS: ServerState
 using JETLS.LSP
 using JETLS.URIs2
-using JETLS.JSONRPC: Endpoint, JSON3, readmsg, writemsg
+using JETLS.JSONRPC: JSON3, readmsg, writemsg
 
 function take_with_timeout!(chn::Channel; interval=1, limit=60)
     while limit > 0
@@ -25,7 +24,7 @@ function withserver(f;
     out = Base.BufferStream()
     received_queue = Channel{Any}(Inf)
     sent_queue = Channel{Any}(Inf)
-    state = ServerState(Endpoint(in, out)) do s::Symbol, x
+    server = JETLS.Server(JETLS.JSONRPC.Endpoint(in, out)) do s::Symbol, x
         @nospecialize x
         if s === :received
             put!(received_queue, x)
@@ -33,7 +32,7 @@ function withserver(f;
             put!(sent_queue, x)
         end
     end
-    t = @async runserver(state)
+    t = @async runserver(server)
     id_counter = Ref(0)
     old_env = Pkg.project().path
     root_path = nothing
@@ -74,7 +73,7 @@ function withserver(f;
         @test res isa RegisterCapabilityRequest && res.id isa String
     end
 
-    argnt = (; in, out, state, received_queue, sent_queue, id_counter)
+    argnt = (; in, out, server, received_queue, sent_queue, id_counter)
     try
         # do the main callback
         return f(argnt)
