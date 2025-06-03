@@ -126,11 +126,13 @@ end
     @test 3 === ap(M_highlight, "f(0, 1, 2, 3|)")
     @test 3 === ap(M_highlight, "f(0, 1, 2, 3, 3|)")
     @test 3 === ap(M_highlight, "f(0, 1, 2, 3, x...|)")
+    @test 3 === ap(M_highlight, "f(0, 1, 2, x...|)")
     # splat contains 0 or more args; use what we know
     @test nothing === ap(M_highlight, "f(x...|, 0, 1, 2, 3, x...)")
     @test nothing === ap(M_highlight, "f(x..., 0, 1, 2|, 3, x...)")
     @test 3       === ap(M_highlight, "f(x..., 0, 1, 2, 3|, x...)")
     @test 3       === ap(M_highlight, "f(x..., 0, 1, 2, 3, x...|)")
+    @test 3       === ap(M_highlight, "f(x..., 0, 1, 2, |x...)")
 
     # various kwarg
     @test 4 === ap(M_highlight, "f(0, 1, 2, 3; kw4|)")

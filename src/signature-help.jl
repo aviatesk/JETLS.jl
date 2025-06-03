@@ -130,6 +130,7 @@ Information from one call's arguments for filtering signatures.
 - pos_map: Map from position in `args` to (min, max) possible positional arg
            e.g. f(a, k=1, b..., c)
                  --> a => (1, 1), b => (2, nothing), c => (2, nothing)
+- pos_args_*: lower and upper bounds on # of positional args
 - kw_map: kwname => position in `args`.  Excludes any WIP kw (see find_kws)
 
 TODO: types
@@ -151,7 +152,7 @@ function CallArgs(st0::JL.SyntaxTree, cursor::Int)
     for i in eachindex(args[1:kw_i-1])
         if kind(args[i]) === K"..."
             ub = nothing
-            pos_map[i] = (lb, ub)
+            pos_map[i] = (lb + 1, ub)
         elseif kind(args[i]) != K"="
             lb += 1
             !isnothing(ub) && (ub += 1)
