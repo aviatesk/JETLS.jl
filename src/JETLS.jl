@@ -371,10 +371,9 @@ function new_analysis_context(entry::AnalysisEntry, result)
         # `filepath` is an absolute path (since `path` is specified as absolute)
         filename2uri(filepath) => analyzed_file_info for (filepath, analyzed_file_info) in result.res.analyzed_files)
     # TODO return something for `toplevel_error_reports`
-    uri2diagnostics = jet_result_to_diagnostics(result, keys(analyzed_file_infos))
+    uri2diagnostics = jet_result_to_diagnostics(keys(analyzed_file_infos), result)
     successfully_analyzed_file_infos = copy(analyzed_file_infos)
-    is_full_analysis_successful(result) ||
-        empty!(successfully_analyzed_file_infos)
+    is_full_analysis_successful(result) || empty!(successfully_analyzed_file_infos)
     analysis_result = FullAnalysisResult(false, time(), uri2diagnostics, analyzed_file_infos, successfully_analyzed_file_infos)
     return AnalysisContext(entry, analysis_result)
 end

@@ -2,6 +2,21 @@ using Core.IR
 using JET.JETInterface
 using JET: JET, CC
 
+# JETLS internal interface
+# ========================
+
+function inference_error_report_stack_impl end
+function inference_error_report_stack(@nospecialize report::JET.InferenceErrorReport)
+    ret = inference_error_report_stack_impl(report)
+    if ret isa UnitRange{Int}
+        ret = convert(StepRange{Int,Int}, ret)
+    else
+        ret isa StepRange{Int,Int} ||
+            error("Invalid implementation of `inference_error_report_stack_impl`")
+    end
+    return ret
+end
+
 """
     JETLSAnalyzer <: AbstractAnalyzer
 
@@ -118,6 +133,8 @@ function JETInterface.print_report_message(io::IO, r::UndefVarErrorReport)
         end
     end
 end
+inference_error_report_stack_impl(r::UndefVarErrorReport) = length(r.vst):-1:1
+
 function report_undef_global_var!(analyzer::JETLSAnalyzer,
     sv::CC.InferenceState, binding::Core.Binding, partition::Core.BindingPartition)
     gr = binding.globalref

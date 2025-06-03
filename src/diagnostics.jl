@@ -30,13 +30,14 @@ function juliasyntax_diagnostic_to_diagnostic(diagnostic::JS.Diagnostic, source:
 end
 
 # TODO severity
-function jet_result_to_diagnostics(result, file_uris)
+function jet_result_to_diagnostics(file_uris, result::JET.JETToplevelResult)
     uri2diagnostics = Dict{URI,Vector{Diagnostic}}(uri => Diagnostic[] for uri in file_uris)
     jet_result_to_diagnostics!(uri2diagnostics, result)
     return uri2diagnostics
 end
 
-function jet_result_to_diagnostics!(uri2diagnostics::Dict{URI,Vector{Diagnostic}}, result)
+function jet_result_to_diagnostics!(uri2diagnostics::Dict{URI,Vector{Diagnostic}}, result::JET.JETToplevelResult)
+    analyzed_modules = JET.defined_modules(result.res)
     postprocessor = JET.PostProcessor(result.res.actual2virtual)
     for report in result.res.toplevel_error_reports
         diagnostic = jet_toplevel_error_report_to_diagnostic(postprocessor, report)
@@ -51,7 +52,12 @@ function jet_result_to_diagnostics!(uri2diagnostics::Dict{URI,Vector{Diagnostic}
     end
     for report in result.res.inference_error_reports
         diagnostic = jet_inference_error_report_to_diagnostic(postprocessor, report)
-        topframe = report.vst[1]
+        topframeidx = first(inference_error_report_stack(report))
+        topframe = report.vst[topframeidx]
+        if frame_module(topframe) ∉ analyzed_modules
+            # skip report within dependency packages for now
+            continue
+        end
         topframe.file === :none && continue # TODO Figure out why this is necessary
         filename = String(topframe.file)
         if startswith(filename, "Untitled")
@@ -61,6 +67,13 @@ function jet_result_to_diagnostics!(uri2diagnostics::Dict{URI,Vector{Diagnostic}
         end
         push!(uri2diagnostics[uri], diagnostic)
     end
+end
+
+frame_module(frame) = let def = frame.linfo.def
+    if def isa Method
+        def = def.module
+    end
+    return def
 end
 
 function jet_toplevel_error_report_to_diagnostic(postprocessor::JET.PostProcessor, @nospecialize report::JET.ToplevelErrorReport)
@@ -77,20 +90,21 @@ function jet_toplevel_error_report_to_diagnostic(postprocessor::JET.PostProcesso
 end
 
 function jet_inference_error_report_to_diagnostic(postprocessor::JET.PostProcessor, @nospecialize report::JET.InferenceErrorReport)
-    topframe = report.vst[1]
+    rstack = inference_error_report_stack(report)
+    topframe = report.vst[first(rstack)]
     message = JET.with_bufferring(:limit=>true) do io
         JET.print_report_message(io, report)
     end |> postprocessor
     relatedInformation = DiagnosticRelatedInformation[
-        let frame = report.vst[i],
-            message = sprint(JET.print_frame_sig, frame, JET.PrintConfig())
+        let frame = report.vst[rstack[i]],
+            message = postprocessor(sprint(JET.print_frame_sig, frame, JET.PrintConfig()))
             DiagnosticRelatedInformation(;
                 location = Location(;
                     uri = string(filepath2uri(JET.tofullpath(String(frame.file)))),
                     range = jet_frame_to_range(frame)),
                 message)
         end
-        for i = 2:length(report.vst)]
+        for i = 2:length(rstack)]
     return Diagnostic(;
         range = jet_frame_to_range(topframe),
         message,
