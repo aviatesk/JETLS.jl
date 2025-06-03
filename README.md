@@ -168,7 +168,7 @@ index 29d0db5..728da8f 100644
 > any top-level scope in the `JETLS` module namespace or any subroutine
 > of `_handle_message` that is reachable upon the request handling.
 
-> [!warnng]
+> [!warning]
 > Note that `currently_running::Server` is a global variable that is only
 > defined in `JETLS_DEV_MODE`. The use of this global variable should be limited
 > to such development purposes and should not be included in normal routines.
