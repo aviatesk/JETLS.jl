@@ -142,7 +142,7 @@ end
 end
 
 @interface InitializeResponse @extends ResponseMessage begin
-    result::Union{InitializeResult, Nothing} = nothing
+    result::Union{InitializeResult, Nothing}
     error::Union{InitializeResponseError, Nothing} = nothing
 end
 

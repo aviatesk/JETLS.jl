@@ -127,6 +127,7 @@ withserverprocess() do (; proc, stdin, stdout, stderr)
     shutdown_response === nothing &&
         error("No response received from server (may have terminated)")
     @test occursin("\"id\":2", shutdown_response)
+    @test occursin("\"result\":null", shutdown_response)
     # @info "Server responded to shutdown request"
 
     # Send exit notification
