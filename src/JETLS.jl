@@ -24,8 +24,12 @@ using .LSP
 include("JSONRPC.jl")
 using .JSONRPC
 
+include("analysis/analysis.jl")
+using .Analysis
+
 using REPL # loading REPL is necessary to make `Base.Docs.doc(::Base.Docs.Binding)` work
-using Pkg, JuliaSyntax, JET
+using Pkg, JuliaSyntax
+using JET: JET
 using JuliaSyntax: JuliaSyntax as JS
 using JuliaLowering: JuliaLowering as JL
 
@@ -98,6 +102,7 @@ end
 
 include("utils.jl")
 include("completions.jl")
+include("diagnostics.jl")
 
 struct IncludeCallback <: Function
     file_cache::Dict{URI,FileInfo}
@@ -260,96 +265,6 @@ function initialize_result()
             version = "0.0.0"))
 end
 
-function run_preset_analysis!(state::ServerState, rooturi::URI)
-    rootpath = uri2filepath(rooturi)
-    if rootpath === nothing
-        @warn "Non file:// URI supported" rooturi
-        return nothing
-    end
-    env_path = joinpath(rootpath, "Project.toml")
-    isfile(env_path) || return nothing
-    env_toml = try
-        Pkg.TOML.parsefile(env_path)
-    catch err
-        err isa Base.TOML.ParserError || rethrow(err)
-        return nothing
-    end
-    haskey(env_toml, "name") || return nothing
-
-    pkgname = env_toml["name"]
-    pkgenv = Base.identify_package_env(pkgname)
-    if pkgenv === nothing
-        @warn "Failed to identify package environment" pkgname
-        return nothing
-    end
-    pkgid, env = pkgenv
-    pkgfile = Base.locate_package(pkgid, env)
-    if pkgfile === nothing
-        @warn "Expected a package to have a source file" pkgname
-        return nothing
-    end
-
-    # TODO analyze package source files lazily?
-    # Or perform a simpler analysis here to figure out the included files only?
-
-    # analyze package source files
-    result = activate_do(env_path) do
-        pkgfileuri = filepath2uri(pkgfile)
-        include_callback = IncludeCallback(state)
-        analyze_parsed_if_exist(state, pkgfileuri, pkgid;
-            toplevel_logger=nothing,
-            analyze_from_definitions=true,
-            target_defined_modules=true,
-            concretization_patterns=[:(x_)],
-            include_callback)
-    end
-    entry = PackageSourceAnalysisEntry(env_path, pkgfile, pkgid)
-    analysis_context = new_analysis_context(entry, result)
-    record_reverse_map!(state, analysis_context)
-    notify_diagnostics!(state)
-
-    # # analyze test scripts
-    # runtests = joinpath(filedir, "runtests.jl")
-    # result = activate_do(env_path) do
-    #     include_callback = IncludeCallback(state)
-    #     JET.analyze_and_report_file!(JET.JETAnalyzer(), runtests;
-    #         toplevel_logger=stderr,
-    #         include_callback)
-    # end
-    # entry = PackageTestAnalysisEntry(env_path, runtests)
-    # analysis_context = new_analysis_context(entry, result)
-    # record_analysis_context!(state, analysis_context)
-
-    nothing
-end
-
-function notify_diagnostics!(state::ServerState)
-    uri2diagnostics = Dict{URI,Vector{Diagnostic}}()
-    for (uri, contexts) in state.contexts
-        if contexts isa ExternalContext
-            continue
-        end
-        diagnostics = get!(Vector{Diagnostic}, uri2diagnostics, uri)
-        for analysis_context in contexts
-            diags = get(analysis_context.result.uri2diagnostics, uri, nothing)
-            if diags !== nothing
-                append!(diagnostics, diags)
-            end
-        end
-    end
-    notify_diagnostics!(state, uri2diagnostics)
-end
-
-function notify_diagnostics!(state::ServerState, uri2diagnostics)
-    for (uri, diagnostics) in uri2diagnostics
-        state.send(PublishDiagnosticsNotification(;
-            params = PublishDiagnosticsParams(;
-                uri = string(uri),
-                # version = 0,
-                diagnostics)))
-    end
-end
-
 function cache_file_info!(state::ServerState, uri::URI, version::Int, text::String, filename::String)
     state.file_cache[uri] = parsefile(version, text, filename)
 end
@@ -433,44 +348,17 @@ function handle_DidSaveTextDocumentNotification(state::ServerState, msg::DidSave
     return nothing
 end
 
-function parsed_stream_to_diagnostics(parsed_stream::JS.ParseStream, filename::String)
-    diagnostics = Diagnostic[]
-    parsed_stream_to_diagnostics!(diagnostics, parsed_stream, filename)
-    return diagnostics
-end
-function parsed_stream_to_diagnostics!(diagnostics::Vector{Diagnostic}, parsed_stream::JS.ParseStream, filename::String)
-    source = JS.SourceFile(parsed_stream; filename)
-    for diagnostic in parsed_stream.diagnostics
-        push!(diagnostics, juliasyntax_diagnostic_to_diagnostic(diagnostic, source))
-    end
-end
-function juliasyntax_diagnostic_to_diagnostic(diagnostic::JS.Diagnostic, source::JS.SourceFile)
-    sline, scol = JS.source_location(source, JS.first_byte(diagnostic))
-    start = Position(; line = sline-1, character = scol)
-    eline, ecol = JS.source_location(source, JS.last_byte(diagnostic))
-    var"end" = Position(; line = eline-1, character = ecol)
-    return Diagnostic(;
-        range = Range(; start, var"end"),
-        severity =
-            diagnostic.level === :error ? DiagnosticSeverity.Error :
-            diagnostic.level === :warning ? DiagnosticSeverity.Warning :
-            diagnostic.level === :note ? DiagnosticSeverity.Information :
-            DiagnosticSeverity.Hint,
-        message = diagnostic.message,
-        source = "JuliaSyntax")
-end
-
 function analyze_parsed_if_exist(state::ServerState, uri::URI, args...; kwargs...)
     if haskey(state.file_cache, uri)
         file_info = state.file_cache[uri]
         parsed_stream = file_info.parsed_stream
         filename = uri2filename(uri)::String
         parsed = JS.build_tree(JS.SyntaxNode, parsed_stream; filename)
-        return JET.analyze_and_report_expr!(JET.JETAnalyzer(), parsed, filename, args...; kwargs...)
+        return JET.analyze_and_report_expr!(JETLSAnalyzer(), parsed, filename, args...; kwargs...)
     else
         filepath = uri2filepath(uri)
         @assert filepath !== nothing "Unsupported URI: $uri"
-        return JET.analyze_and_report_file!(JET.JETAnalyzer(), filepath, args...; kwargs...)
+        return JET.analyze_and_report_file!(JETLSAnalyzer(), filepath, args...; kwargs...)
     end
 end
 
@@ -483,10 +371,9 @@ function new_analysis_context(entry::AnalysisEntry, result)
         # `filepath` is an absolute path (since `path` is specified as absolute)
         filename2uri(filepath) => analyzed_file_info for (filepath, analyzed_file_info) in result.res.analyzed_files)
     # TODO return something for `toplevel_error_reports`
-    uri2diagnostics = jet_result_to_diagnostics(result, keys(analyzed_file_infos))
+    uri2diagnostics = jet_result_to_diagnostics(keys(analyzed_file_infos), result)
     successfully_analyzed_file_infos = copy(analyzed_file_infos)
-    is_full_analysis_successful(result) ||
-        empty!(successfully_analyzed_file_infos)
+    is_full_analysis_successful(result) || empty!(successfully_analyzed_file_infos)
     analysis_result = FullAnalysisResult(false, time(), uri2diagnostics, analyzed_file_infos, successfully_analyzed_file_infos)
     return AnalysisContext(entry, analysis_result)
 end
@@ -535,86 +422,6 @@ function record_reverse_map!(state::ServerState, analysis_context::AnalysisConte
         end
         should_record && push!(contexts, analysis_context)
     end
-end
-
-# TODO severity
-function jet_result_to_diagnostics(result, file_uris)
-    uri2diagnostics = Dict{URI,Vector{Diagnostic}}(uri => Diagnostic[] for uri in file_uris)
-    jet_result_to_diagnostics!(uri2diagnostics, result)
-    return uri2diagnostics
-end
-
-function jet_result_to_diagnostics!(uri2diagnostics::Dict{URI,Vector{Diagnostic}}, result)
-    for report in result.res.toplevel_error_reports
-        diagnostic = jet_toplevel_error_report_to_diagnostic(report)
-        filename = report.file
-        filename === :none && continue
-        if startswith(filename, "Untitled")
-            uri = filename2uri(filename)
-        else
-            uri = filepath2uri(JET.tofullpath(filename))
-        end
-        push!(uri2diagnostics[uri], diagnostic)
-    end
-    for report in result.res.inference_error_reports
-        diagnostic = jet_inference_error_report_to_diagnostic(report)
-        topframe = report.vst[1]
-        topframe.file === :none && continue # TODO Figure out why this is necessary
-        filename = String(topframe.file)
-        if startswith(filename, "Untitled")
-            uri = filename2uri(filename)
-        else
-            uri = filepath2uri(JET.tofullpath(filename))
-        end
-        push!(uri2diagnostics[uri], diagnostic)
-    end
-end
-
-function jet_toplevel_error_report_to_diagnostic(@nospecialize report::JET.ToplevelErrorReport)
-    if report isa JET.ParseErrorReport
-        return juliasyntax_diagnostic_to_diagnostic(report.diagnostic, report.source)
-    end
-    message = JET.with_bufferring(:limit=>true) do io
-        JET.print_report(io, report)
-    end
-    return Diagnostic(;
-        range = line_range(report.line),
-        message,
-        source = "JETAnalyzer")
-end
-
-function jet_inference_error_report_to_diagnostic(@nospecialize report::JET.InferenceErrorReport)
-    topframe = report.vst[1]
-    message = JET.with_bufferring(:limit=>true) do io
-        JET.print_report_message(io, report)
-    end
-    relatedInformation = DiagnosticRelatedInformation[
-        let frame = report.vst[i],
-            message = sprint(JET.print_frame_sig, frame, JET.PrintConfig())
-            DiagnosticRelatedInformation(;
-                location = Location(;
-                    uri = string(filepath2uri(JET.tofullpath(String(frame.file)))),
-                    range = jet_frame_to_range(frame)),
-                message)
-        end
-        for i = 2:length(report.vst)]
-    return Diagnostic(;
-        range = jet_frame_to_range(topframe),
-        message,
-        source = "JETAnalyzer",
-        relatedInformation)
-end
-
-function jet_frame_to_range(frame)
-    line = JET.fixed_line_number(frame)
-    line = line == 0 ? line : line - 1
-    return line_range(line)
-end
-
-function line_range(line::Int)
-    start = Position(; line, character=0)
-    var"end" = Position(; line, character=Int(typemax(Int32)))
-    return Range(; start, var"end")
 end
 
 find_env_path(path) = search_up_file(path, "Project.toml")
@@ -721,13 +528,13 @@ function initiate_context!(state::ServerState, uri::URI)
         if env_path !== nothing
             entry = ScriptInEnvAnalysisEntry(env_path, uri)
             result = activate_do(env_path) do
-                JET.analyze_and_report_expr!(JET.JETAnalyzer(), parsed, filename;
+                JET.analyze_and_report_expr!(JETLSAnalyzer(), parsed, filename;
                     toplevel_logger=stderr,
                     include_callback)
             end
         else
             entry = ScriptAnalysisEntry(uri)
-            result = JET.analyze_and_report_expr!(JET.JETAnalyzer(), parsed, filename;
+            result = JET.analyze_and_report_expr!(JETLSAnalyzer(), parsed, filename;
                 toplevel_logger=stderr,
                 include_callback)
         end
