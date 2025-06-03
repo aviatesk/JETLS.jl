@@ -82,10 +82,10 @@ end
     # """
     # hover::Union{HoverClientCapabilities, Nothing} = nothing
 
-    # """
-    # Capabilities specific to the `textDocument/signatureHelp` request.
-    # """
-    # signatureHelp::Union{SignatureHelpClientCapabilities, Nothing} = nothing
+    """
+    Capabilities specific to the `textDocument/signatureHelp` request.
+    """
+    signatureHelp::Union{SignatureHelpClientCapabilities, Nothing} = nothing
 
     # """
     # Capabilities specific to the `textDocument/declaration` request.

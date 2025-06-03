@@ -23,14 +23,11 @@ const COMPLETION_REGISTRATION_METHOD = "textDocument/completion"
 
 function completion_registration()
     (; triggerCharacters, resolveProvider, completionItem) = completion_options()
-    documentSelector = DocumentFilter[
-        DocumentFilter(; language = "julia")
-    ]
     return Registration(;
         id = COMPLETION_REGISTRATION_ID,
         method = COMPLETION_REGISTRATION_METHOD,
         registerOptions = CompletionRegistrationOptions(;
-            documentSelector,
+            documentSelector = DEFAULT_DOCUMENT_SELECTOR,
             triggerCharacters,
             resolveProvider,
             completionItem))

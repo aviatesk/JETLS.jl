@@ -118,6 +118,10 @@ struct Server{Callback}
     end
 end
 
+const DEFAULT_DOCUMENT_SELECTOR = DocumentFilter[
+    DocumentFilter(; language = "julia")
+]
+
 include("utils.jl")
 include("registration.jl")
 include("completions.jl")
@@ -318,10 +322,20 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
         :textDocument, :completion, :dynamicRegistration) !== true
         completionProvider = completion_options()
         if JETLS_DEV_MODE
-            @info "Registering completion with `InitializeResponse`"
+            @info "Registering 'textDocument/completion' with `InitializeResponse`"
         end
     else
         completionProvider = nothing # will be registered dynamically
+    end
+
+    if getpath(params.capabilities,
+        :textDocument, :signatureHelp, :dynamicRegistration) !== true
+        signatureHelpProvider = signature_help_options()
+        if JETLS_DEV_MODE
+            @info "Registering 'textDocument/signatureHelp' with `InitializeResponse`"
+        end
+    else
+        signatureHelpProvider = nothing # will be registered dynamically
     end
 
     result = InitializeResult(;
@@ -333,9 +347,7 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
                 save = SaveOptions(;
                     includeText = true)),
             completionProvider,
-            signatureHelpProvider = SignatureHelpOptions(;
-                triggerCharacters = ["(", ",", ";"],
-                retriggerCharacters = ["."]),
+            signatureHelpProvider,
         ),
         serverInfo = (;
             name = "JETLS",
@@ -364,12 +376,24 @@ function handle_InitializedNotification(server::Server)
         :textDocument, :completion, :dynamicRegistration) === true
         push!(registrations, completion_registration())
         if JETLS_DEV_MODE
-            @info "Dynamically registering completion upon `InitializedNotification`"
+            @info "Dynamically registering 'textDocument/completion' upon `InitializedNotification`"
         end
     else
         # NOTE If completion's `dynamicRegistration` is not supported,
         # it needs to be registered along with initialization in the `InitializeResponse`,
         # since `CompletionRegistrationOptions` does not extend `StaticRegistrationOptions`.
+    end
+
+    if getpath(state.init_params.capabilities,
+        :textDocument, :signatureHelp, :dynamicRegistration) === true
+        push!(registrations, signature_help_registration())
+        if JETLS_DEV_MODE
+            @info "Dynamically registering 'textDocument/signatureHelp' upon `InitializedNotification`"
+        end
+    else
+        # NOTE If completion's `dynamicRegistration` is not supported,
+        # it needs to be registered along with initialization in the `InitializeResponse`,
+        # since `SignatureHelpRegistrationOptions` does not extend `StaticRegistrationOptions`.
     end
 
     register(server, registrations)

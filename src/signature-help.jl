@@ -1,6 +1,27 @@
 using .JS
 using .JL
 
+# initialization
+# ==============
+
+signature_help_options() = SignatureHelpOptions(;
+    triggerCharacters = ["(", ",", ";"],
+    retriggerCharacters = ["."])
+
+const SIGNATURE_HELP_REGISTRATION_ID = "jetls-signature-help"
+const SIGNATURE_HELP_REGISTRATION_METHOD = "textDocument/signatureHelp"
+
+function signature_help_registration()
+    (; triggerCharacters, retriggerCharacters) = signature_help_options()
+    return Registration(;
+        id = SIGNATURE_HELP_REGISTRATION_ID,
+        method = SIGNATURE_HELP_REGISTRATION_METHOD,
+        registerOptions = SignatureHelpRegistrationOptions(;
+            documentSelector = DEFAULT_DOCUMENT_SELECTOR,
+            triggerCharacters,
+            retriggerCharacters))
+end
+
 # utils
 # =====
 
