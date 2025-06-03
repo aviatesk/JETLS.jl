@@ -5,7 +5,7 @@ using .JL
 # ==============
 
 signature_help_options() = SignatureHelpOptions(;
-    triggerCharacters = ["(", ",", ";"],
+    triggerCharacters = ["(", ",", ";", "\"", "="],
     retriggerCharacters = ["."])
 
 const SIGNATURE_HELP_REGISTRATION_ID = "jetls-signature-help"
@@ -108,13 +108,15 @@ signatures.
 
 If `sig`, then K"=" trees before the semicolon should be interpreted as optional
 positional args instead of kwargs.
+
+Keywords should be ignored if `cursor` is within the keyword's name.
 """
-function find_kws(args::JL.SyntaxList, kw_i::Int; sig=false)
+function find_kws(args::JL.SyntaxList, kw_i::Int; sig=false, cursor::Int=-1)
     out = Dict{String, Int}()
     for i in (sig ? (kw_i:lastindex(args)) : eachindex(args))
         (kind(args[i]) != K"=") && i < kw_i && continue
         n = kwname(args[i]; sig)
-        if !isnothing(n)
+        if !isnothing(n) && !(JS.first_byte(n) <= cursor <= JS.last_byte(n) + 1)
             out[n.name_val] = i
         end
     end
@@ -126,8 +128,9 @@ Information from one call's arguments for filtering signatures.
 - args: Every valid child of the K"call" and its K"parameters" if present
 - kw_i: One plus the number of args not in K"parameters" (semicolon)
 - pos_map: Map from position in `args` to (min, max) possible positional arg
-           e.g. f(a, k=1, b..., c) --> a => (1, 1), b => (2, nothing), c => (2, nothing)
-- kw_map: kwname => position in `args`
+           e.g. f(a, k=1, b..., c)
+                 --> a => (1, 1), b => (2, nothing), c => (2, nothing)
+- kw_map: kwname => position in `args`.  Excludes any WIP kw (see find_kws)
 
 TODO: types
 """
@@ -140,7 +143,8 @@ struct CallArgs
     kw_map::Dict{String, Int}
 end
 
-function CallArgs(st0::JL.SyntaxTree)
+function CallArgs(st0::JL.SyntaxTree, cursor::Int)
+    @assert !(-1 in JS.byte_range(st0))
     args, kw_i = flatten_args(st0)
     pos_map = Dict{Int, Tuple{Int, Union{Int, Nothing}}}()
     lb = 0; ub = 0
@@ -154,7 +158,7 @@ function CallArgs(st0::JL.SyntaxTree)
             pos_map[i] = (lb, ub)
         end
     end
-    kw_map = find_kws(args, kw_i; sig=false)
+    kw_map = find_kws(args, kw_i; sig=false, cursor)
     CallArgs(args, kw_i, pos_map, lb, ub, kw_map)
 end
 
@@ -226,10 +230,9 @@ function make_siginfo(m::Method, ca::CallArgs, active_arg::Union{Int, Symbol}, p
         mstr[1:lb], string(strip(mstr[lb+1:end]))
     end
 
-    # We could show the full docs, but there isn't(?) a way to separate by
-    # method (or resolve items lazily like completions), so we would be sending
-    # many copies.  The user may have seen this already in the completions UI,
-    # too.
+    # We could show the full docs, but there isn't a way to resolve items lazily
+    # like completions, so we might be sending many copies.  The user may have
+    # seen this already in the completions UI, too.
     # documentation = MarkupContent(;
     #     kind = MarkupKind.Markdown,
     #     value = string(Base.Docs.doc(Base.Docs.Binding(m.var"module", m.name))))
@@ -301,7 +304,7 @@ function cursor_siginfos(mod::Module, ps::JS.ParseStream, b::Int, postprocessor:
     fn = resolve_property(mod, call[1])
     !isa(fn, Function) && return out
 
-    ca = CallArgs(call)
+    ca = CallArgs(call, b)
 
     # Influence parameter highlighting by selecting the active argument (which
     # may be mapped to a parameter in make_siginfo).  If cursor is after all

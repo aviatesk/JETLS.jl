@@ -90,15 +90,22 @@ end
     @test 1 === n_si(M_filterk, "f(kw1=1|)")
 
     # post-semicolon
-    @test 1 === n_si(M_filterk, "f(;kw1|)")
+    @test 1 === n_si(M_filterk, "f(|;kw1)")
+    @test 1 === n_si(M_filterk, "f(;kw1,|)")
     @test 1 === n_si(M_filterk, "f(;kw1=|)")
     @test 1 === n_si(M_filterk, "f(;kw1=1|)")
 
     # mix
     @test 2 === n_si(M_filterk, "f(kw2=2,kw3=3;|)")
     @test 2 === n_si(M_filterk, "f(kw2=2; kw3=3|)")
-    @test 2 === n_si(M_filterk, "f(kw2=2; kw3|)")
-    @test 1 === n_si(M_filterk, "f(kw2=2; kw6|)")
+    @test 1 === n_si(M_filterk, "f(kw2=2; kw6=6|)")
+
+    # don't filter on a kw if the cursor could be editing it
+    @test 2 === n_si(M_filterk, "f(;kw1|)")
+    @test 2 === n_si(M_filterk, "f(;kw1|=1)")
+    @test 2 === n_si(M_filterk, "f(;kw|1)")
+    @test 2 === n_si(M_filterk, "f(;|kw1)")
+    @test 1 === n_si(M_filterk, "f(;kw1=1, kw1|)")
 end
 
 module M_highlight
