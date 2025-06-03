@@ -1,6 +1,6 @@
 module JETLS
 
-export runserver
+export Server, Endpoint, runserver
 
 const __init__hooks__ = Any[]
 push_init_hooks!(hook) = push!(__init__hooks__, hook)
@@ -132,7 +132,7 @@ as well as for sending requests and notifications from the server to the client.
 """
 function send(server::Server, @nospecialize msg)
     JSONRPC.send(server.endpoint, msg)
-    server.callback(:sent, msg)
+    server.callback !== nothing && server.callback(:sent, msg)
     nothing
 end
 
@@ -175,12 +175,9 @@ runserver(callback, endpoint::Endpoint) = runserver(Server(callback, endpoint))
 function runserver(server::Server)
     shutdown_requested = false
     local exit_code::Int = 1
-    if JETLS_DEV_MODE
-        global currently_running = server
-    end
     try
         for msg in server.endpoint
-            server.callback(:received, msg)
+            server.callback !== nothing && server.callback(:received, msg)
             # handle lifecycle-related messages
             if msg isa InitializeRequest
                 handle_InitializeRequest(server, msg)
