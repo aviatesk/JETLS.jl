@@ -33,16 +33,25 @@ macro interface(exs...)
 
     is_method_dispatchable = false
     structbody = Expr(:block)
-    nullable_fields = Set{Symbol}()
+    omittable_fields = Set{Symbol}()
     extended_fields = Dict{Symbol,Vector{Int}}()
     duplicated_fields = Int[]
     if extends !== nothing
         for extend in extends
             is_method_dispatchable |= extend === :RequestMessage || extend === :NotificationMessage
-            add_extended_interface!(toplevelblk, structbody, nullable_fields, extended_fields, duplicated_fields, extend)
+            add_extended_interface!(toplevelblk, structbody,
+                                    omittable_fields,
+                                    extended_fields,
+                                    duplicated_fields,
+                                    extend)
         end
     end
-    _, method = process_interface_def!(toplevelblk, structbody, nullable_fields, extended_fields, duplicated_fields, defex, Name)
+    _, method = process_interface_def!(toplevelblk, structbody,
+                                       omittable_fields,
+                                       extended_fields,
+                                       duplicated_fields,
+                                       defex,
+                                       Name)
 
     if is_method_dispatchable
         method isa String || error("`method::String` not defined in `@interface` for dispatchable message: ", exs)
@@ -56,9 +65,13 @@ macro interface(exs...)
     return esc(toplevelblk)
 end
 
-function process_interface_def!(toplevelblk::Expr, structbody::Expr, nullable_fields::Set{Symbol}, extended_fields::Dict{Symbol,Vector{Int}}, duplicated_fields::Vector{Int},
-                                defex::Expr, Name::Union{Symbol,Nothing})
-    method = _process_interface_def!(toplevelblk, structbody, nullable_fields, extended_fields, duplicated_fields, defex)
+function process_interface_def!(toplevelblk::Expr, structbody::Expr,
+                                omittable_fields::Set{Symbol},
+                                extended_fields::Dict{Symbol,Vector{Int}},
+                                duplicated_fields::Vector{Int},
+                                defex::Expr,
+                                Name::Union{Symbol,Nothing})
+    method = _process_interface_def!(toplevelblk, structbody, omittable_fields, extended_fields, duplicated_fields, defex)
     deleteat!(structbody.args, duplicated_fields)
     is_anon = Name === nothing
     if is_anon
@@ -66,8 +79,8 @@ function process_interface_def!(toplevelblk::Expr, structbody::Expr, nullable_fi
     end
     structdef = Expr(:struct, false, Name, structbody)
     push!(toplevelblk.args, :(@kwdef $structdef)) # `@kwdef` will attach `Core.__doc__` automatically
-    if !isempty(nullable_fields)
-        omitempties = Tuple(nullable_fields)
+    if !isempty(omittable_fields)
+        omitempties = Tuple(omittable_fields)
         if Name === :InitializeParams
             # HACK: In the write->read roundtrip of `InitializationRequest` in the
             # `withserver` test, empty `workspaceFolders` needs to be serialized without
@@ -88,14 +101,23 @@ function process_interface_def!(toplevelblk::Expr, structbody::Expr, nullable_fi
     return Name, method
 end
 
-function add_extended_interface!(toplevelblk::Expr, structbody::Expr, nullable_fields::Set{Symbol}, extended_fields::Dict{Symbol,Vector{Int}}, duplicated_fields::Vector{Int},
+function add_extended_interface!(toplevelblk::Expr, structbody::Expr,
+                                 omittable_fields::Set{Symbol},
+                                 extended_fields::Dict{Symbol,Vector{Int}},
+                                 duplicated_fields::Vector{Int},
                                  extend::Symbol)
-    return _process_interface_def!(toplevelblk, structbody, nullable_fields, extended_fields, duplicated_fields,
+    return _process_interface_def!(toplevelblk, structbody,
+                                   omittable_fields,
+                                   extended_fields,
+                                   duplicated_fields,
                                    _INTERFACE_DEFS[extend];
                                    extending = true)
 end
 
-function _process_interface_def!(toplevelblk::Expr, structbody::Expr, nullable_fields::Set{Symbol}, extended_fields::Dict{Symbol,Vector{Int}}, duplicated_fields::Vector{Int},
+function _process_interface_def!(toplevelblk::Expr, structbody::Expr,
+                                 omittable_fields::Set{Symbol},
+                                 extended_fields::Dict{Symbol,Vector{Int}},
+                                 duplicated_fields::Vector{Int},
                                  defex::Expr;
                                  extending::Bool = false)
     @assert Meta.isexpr(defex, :block)
@@ -124,7 +146,7 @@ function _process_interface_def!(toplevelblk::Expr, structbody::Expr, nullable_f
                 error("Unsupported syntax found in `@interface`: ", defex)
             end
         end
-        nullable = false
+        omittable = false
         if Meta.isexpr(fieldline, :(=))
             fielddecl, default = fieldline.args
             if Meta.isexpr(fielddecl, :(::))
@@ -133,7 +155,6 @@ function _process_interface_def!(toplevelblk::Expr, structbody::Expr, nullable_f
                 fieldname = fielddecl
             end
             fieldname isa Symbol || error("Invalid `@interface` syntax: ", defex)
-            nullable |= default === :nothing
             if fieldname === :method
                 default isa String || error("Invalid message definition: ", defex)
                 method isa String && error("Duplicated method definition: ", defex)
@@ -152,6 +173,8 @@ function _process_interface_def!(toplevelblk::Expr, structbody::Expr, nullable_f
                         anon_defex = ufty.args[end]
                         Meta.isexpr(anon_defex, :block) || error("Invalid `@interface` syntax: ", ufty)
                         fieldtype.args[i] = process_anon_interface_def!(toplevelblk, anon_defex)
+                    elseif ufty === :Nothing
+                        omittable = true
                     end
                 end
             end
@@ -159,12 +182,12 @@ function _process_interface_def!(toplevelblk::Expr, structbody::Expr, nullable_f
             fieldname = fielddecl
         end
         fieldname isa Symbol || error("Invalid `@interface` syntax: ", defex)
-        if nullable
-            push!(nullable_fields, fieldname)
+        if omittable
+            push!(omittable_fields, fieldname)
         end
         if haskey(extended_fields, fieldname)
             append!(duplicated_fields, extended_fields[fieldname])
-            nullable || delete!(nullable_fields, fieldname)
+            omittable || delete!(omittable_fields, fieldname)
         end
         push!(structbody.args, fieldline)
         if extending
@@ -177,11 +200,11 @@ function _process_interface_def!(toplevelblk::Expr, structbody::Expr, nullable_f
 end
 
 function process_anon_interface_def!(toplevelblk::Expr, defex::Expr) # Anonymous @interface
-    nullable_fields = Set{Symbol}()
+    omittable_fields = Set{Symbol}()
     extended_fields = Dict{Symbol,Vector{Int}}()
     duplicated_fields = Int[]
     res, _ = process_interface_def!(toplevelblk, Expr(:block),
-        nullable_fields, extended_fields, duplicated_fields, defex, #=Name=#nothing)
+        omittable_fields, extended_fields, duplicated_fields, defex, #=Name=#nothing)
     if !(isempty(extended_fields) && isempty(duplicated_fields))
         error("`Anonymous @interface` does not support extension", defex)
     end

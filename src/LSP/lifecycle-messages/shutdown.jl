@@ -13,7 +13,6 @@ If a server receives requests after a shutdown request those requests should err
     method::String = "shutdown"
 end
 
-# TODO: Should this also have an `error::ErrorCodes.Ty` field?
 @interface ShutdownResponse @extends ResponseMessage begin
-    result::Union{Null, Nothing} = nothing
+    result::Union{Null, Nothing}
 end

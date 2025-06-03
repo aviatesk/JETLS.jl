@@ -201,7 +201,6 @@ end  # @namespace ErrorCodes
     data::Union{Any, Nothing} = nothing
 end
 
-# TODO Revisit this to correctly lower this struct
 """
 A Response Message sent as a result of a request.
 If a request doesn’t provide a result value the receiver of a request still needs to return
@@ -216,8 +215,12 @@ successful request.
     """
     The result of a request. This member is REQUIRED on success.
     This member MUST NOT exist if there was an error invoking the method.
+
+    This means that this field should be non-`nothing` on success (i.e. should be `null`
+    if nothing is specified to be returned as `result`),
+    and should be `nothing` on failure with `error` set to be non-`nothing`.
     """
-    result::Union{Any, Nothing} = nothing
+    result::Union{Any, Null, Nothing}
 
     "The error object in case a request fails."
     error::Union{ResponseError, Nothing} = nothing

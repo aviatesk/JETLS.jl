@@ -188,7 +188,7 @@ is asked to compute the diagnostics for the currently synced version of the docu
 end
 
 @interface DocumentDiagnosticResponse @extends ResponseMessage begin
-    result::Union{DocumentDiagnosticReport, Nothing} = nothing
+    result::Union{DocumentDiagnosticReport, Nothing}
 end
 
 """
