@@ -27,11 +27,11 @@ let old_env = Pkg.project().path
     end
 end
 
-let res = runserver(stdin, stdout) do state::Symbol, msg
-        @nospecialize msg
+let res = runserver(stdin, stdout) do s::Symbol, x
+        @nospecialize x
         if JETLS.JETLS_DEV_MODE
             # allow Revise to apply changes with the dev mode enabled
-            if state === :received
+            if s === :received
                 Revise.revise()
             end
         end

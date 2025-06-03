@@ -1,3 +1,12 @@
+function getpath(obj, path::Symbol, paths::Symbol...)
+    nextobj = getfield(obj, path)
+    if nextobj === nothing
+        return nothing
+    end
+    getpath(nextobj, paths...)
+end
+getpath(obj) = obj
+
 # TODO Need to make them thread safe when making the message handling multithreaded
 
 let debounced = Dict{UInt,Timer}()
