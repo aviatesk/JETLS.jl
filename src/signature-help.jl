@@ -41,8 +41,8 @@ function resolve_property(mod::Module, st0::JL.SyntaxTree)
         # Would otherwise throw an unhelpful error.  Is this true of all leaf nodes?
         @assert JL.hasattr(st0, :name_val)
         s = Symbol(st0.name_val)
-        !isdefined(mod, s) && return nothing
-        return getproperty(mod, s)
+        !(@invokelatest isdefinedglobal(mod, s)) && return nothing
+        return @invokelatest getglobal(mod, s)
     elseif kind(st0) === K"."
         @assert JS.numchildren(st0) === 2
         lhs = resolve_property(mod, st0[1])
@@ -64,7 +64,7 @@ function flatten_args(call::JL.SyntaxTree)
     usable = (arg::JL.SyntaxTree) -> kind(arg) != K"error"
     orig = filter(usable, JS.children(call)[2:end])
 
-    args = JL.SyntaxTree[]
+    args = typeof(orig)[]
     kw_i = 1
     for i in eachindex(orig)
         iskw = kind(orig[i]) === K"parameters"
