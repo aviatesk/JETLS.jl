@@ -44,7 +44,7 @@ encoded within the query part of a URI.
 """
 escapeuri(key, value) = string(escapeuri(key), "=", escapeuri(value))
 escapeuri(key, values::Vector) = escapeuri(key => v for v in values)
-escapeuri(query) = isempty(query) ? absent : join((escapeuri(k, v) for (k,v) in query), "&")
+escapeuri(query) = isempty(query) ? "" : join((escapeuri(k, v) for (k,v) in query), "&")
 escapeuri(nt::NamedTuple) = escapeuri(pairs(nt))
 
 """
@@ -61,7 +61,6 @@ Percent-decode a string according to the URI escaping rules.
 function unescapeuri(str)
     occursin("%", str) || return str
     out = IOBuffer()
-    i = 1
     io = IOBuffer(str)
     while !eof(io)
         c = read(io, Char)
