@@ -245,17 +245,7 @@ function Base.show(io::IO, uri::URI)
     return nothing
 end
 
-function Base.string(uri::URI)
-    io = IOBuffer()
-
-    print(io, uri)
-
-    return String(take!(io))
-end
-
-macro uri_str(ex)
-    return URI(ex)
-end
+macro uri_str(s::AbstractString) URI(s) end
 
 include("uri_helpers.jl")
 
