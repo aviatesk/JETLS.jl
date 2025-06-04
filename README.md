@@ -119,7 +119,9 @@ julia> Preferences.set_preferences!("JETLS", "JETLS_DEV_MODE" => false; force=tr
 ```
 
 `JETLS_DEV_MODE` is enabled by default when running the server at this moment of
-prototyping, but also note that it is enabled when running the test suite.
+prototyping, but also note that this mode is always disabled during tests to
+ensure that internal errors are not suppressed by the additional `try`/`catch`
+block (see [test/LocalPreferences.toml](./test/LocalPreferences.toml)).
 
 ### Dynamic Registration
 
