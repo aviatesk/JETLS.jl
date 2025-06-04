@@ -1,4 +1,5 @@
-# Adapted from https://github.com/julia-vscode/JuliaWorkspaces.jl/tree/54069ac444045a9f7bb40cb1e35c5fc237b85d52/src/URIs2
+# Adapted from https://github.com/julia-vscode/JuliaWorkspaces.jl/tree/54069ac444045a9f7bb40cb1e35c5fc237b85d52/src/URIs2,
+# Later, some fixes were added, including corrections for errors discovered by JETLS.
 # TODO publish this as a standalone package and share it between JETLS and JuliaWorkspace.jl
 
 module URIs2
