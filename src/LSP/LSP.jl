@@ -1,7 +1,6 @@
 module LSP
 
 using StructTypes
-using ..URIs2: URI
 
 const exports = Set{Symbol}()
 const method_dispatcher = Dict{String,DataType}()
