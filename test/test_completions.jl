@@ -5,6 +5,7 @@ using JETLS
 using JETLS: JL, JS
 using JETLS: cursor_bindings, to_completion, CompletionItem, completion_is
 using JETLS.LSP
+using JETLS.URIs2
 
 function get_cursor_bindings(s::String, b::Int)
     ps = JS.ParseStream(s)
@@ -259,7 +260,7 @@ end
     @test length(curpos2) == 2
     pos1, pos2  = curpos2
     filename = abspath("foo.jl")
-    uri = JETLS.filename2uri(filename)
+    uri = filename2uri(filename)
     JETLS.cache_file_info!(state, uri, #=version=#1, text, filename)
     JETLS.initiate_context!(state, uri)
     let params = CompletionParams(;
@@ -301,8 +302,8 @@ end
 # completion for empty program should not crash
 @testset "empty completion" begin
     state = JETLS.ServerState()
-    filename = "empty.jl"
-    uri = JETLS.URI(filename)
+    filename = abspath("empty.jl")
+    uri = filename2uri(filename)
 
     let text = ""
         JETLS.cache_file_info!(state, uri, 1, text, filename)
@@ -314,7 +315,7 @@ end
         @test length(items) > 0
     end
 
-    let text = "\n \n \n"
+    let text = "\n\n\n"
         JETLS.cache_file_info!(state, uri, 2, text, filename)
         params = CompletionParams(;
             textDocument=TextDocumentIdentifier(string(uri)),
@@ -327,8 +328,8 @@ end
 
 @testset "macro completion" begin
     state = JETLS.ServerState()
-    filename = "filename.jl"
-    uri = JETLS.URI(filename)
+    filename = abspath("macro_completion.jl")
+    uri = filename2uri(filename)
 
     # `@`-mark should trigger completion of macro names
     let text = """
@@ -423,8 +424,8 @@ function test_backslash_offset(code::String, expected_result)
     @assert length(positions) == 1 "test_backslash_offset requires exactly one cursor marker"
 
     state = JETLS.ServerState()
-    filename = "test_backslash.jl"
-    uri = JETLS.URI(filename)
+    filename = abspath("test_backslash.jl")
+    uri = filename2uri(filename)
     JETLS.cache_file_info!(state, uri, 1, text, filename)
 
     result = JETLS.get_backslash_offset(state, uri, positions[1])
@@ -596,8 +597,8 @@ end
 
 @testset "Latex/emoji completion" begin
     state = JETLS.ServerState()
-    filename = "test_latex_emoji.jl"
-    uri = JETLS.URI(filename)
+    filename = abspath("test_latex_emoji.jl")
+    uri = filename2uri(filename)
 
     # `\`-mark should trigger latex completion
     let text = """

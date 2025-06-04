@@ -44,11 +44,11 @@ function filename2uri(filename::String)
 end
 
 function filepath2uri(path::String)
-    isabspath(path) || error("Relative path `$path` is not valid.")
+    isabspath(path) || error("Non-absolute path `$path` is not supported.")
 
     path = normpath(path)
 
-    if Sys.iswindows()
+    @static if Sys.iswindows()
         path = replace(path, "\\" => "/")
     end
 
