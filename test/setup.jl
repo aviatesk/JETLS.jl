@@ -19,7 +19,7 @@ end
 function withserver(f;
                     capabilities::ClientCapabilities=ClientCapabilities(),
                     workspaceFolders::Union{Nothing,Vector{WorkspaceFolder}}=nothing,
-                    rootUri::Union{Nothing,String}=nothing)
+                    rootUri::Union{Nothing,URI}=nothing)
     in = Base.BufferStream()
     out = Base.BufferStream()
     received_queue = Channel{Any}(Inf)
@@ -38,10 +38,10 @@ function withserver(f;
     root_path = nothing
     if workspaceFolders !== nothing
         if isempty(workspaceFolders)
-            root_path = uri2filepath(URI(first(workspaceFolders).uri))
+            root_path = uri2filepath(first(workspaceFolders).uri)
         end
     elseif rootUri !== nothing
-        root_path = uri2filepath(URI(rootUri))
+        root_path = uri2filepath(rootUri)
     end
     if root_path === nothing
         Pkg.activate(; temp=true, io=devnull)
