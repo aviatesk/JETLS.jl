@@ -19,7 +19,7 @@ using JETLS.LSP
     """
 
     withscript(scriptcode) do script_path
-        uri = JETLS.URIs2.filepath2uri(script_path)
+        uri = string(JETLS.URIs2.filepath2uri(script_path))
         withserver() do (; writereadmsg, id_counter)
             (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, scriptcode))
 
@@ -46,7 +46,7 @@ end
 
     # Use withscript to create a temporary file and run the test
     withscript(scriptcode) do script_path
-        uri = JETLS.URIs2.filepath2uri(script_path)
+        uri = string(JETLS.URIs2.filepath2uri(script_path))
         withserver() do (; writereadmsg, id_counter)
             (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, scriptcode))
 
@@ -78,7 +78,7 @@ end
 
     # Use withscript to create a temporary file and run the test
     withscript(scriptcode) do script_path
-        uri = JETLS.URIs2.filepath2uri(script_path)
+        uri = string(JETLS.URIs2.filepath2uri(script_path))
         withserver() do (; writereadmsg, id_counter)
             (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, scriptcode))
 
@@ -121,9 +121,9 @@ end
     end # module TestPackageAnalysis
     """
     withpackage("TestPackageAnalysis", pkg_code) do pkg_path
-        rootUri = JETLS.URIs2.filepath2uri(pkg_path)
+        rootUri = string(JETLS.URIs2.filepath2uri(pkg_path))
         src_path = normpath(pkg_path, "src", "TestPackageAnalysis.jl")
-        uri = JETLS.URIs2.filepath2uri(src_path)
+        uri = string(JETLS.URIs2.filepath2uri(src_path))
         withserver(; rootUri) do (; writereadmsg, id_counter)
             (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, read(src_path, String)))
 

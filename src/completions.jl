@@ -496,7 +496,7 @@ function get_completion_items(state::ServerState, uri::URI, params::CompletionPa
 end
 
 function handle_CompletionRequest(server::Server, msg::CompletionRequest)
-    uri = msg.params.textDocument.uri
+    uri = URI(msg.params.textDocument.uri)
     items = get_completion_items(server.state, uri, msg.params)
     return send(server,
         ResponseMessage(;

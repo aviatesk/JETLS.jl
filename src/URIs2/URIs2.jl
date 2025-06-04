@@ -69,8 +69,6 @@ else
     end
 end
 
-Base.convert(::Type{URI}, s::AbstractString) = URI(s)
-
 function percent_decode(str::AbstractString)
     return unescapeuri(str)
 end

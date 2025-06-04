@@ -73,7 +73,7 @@ let (pkgcode, positions) = get_text_and_positions("""
             end
         end
 
-        rootUri = JETLS.URIs2.filepath2uri(pkgpath)
+        rootUri = string(JETLS.URIs2.filepath2uri(pkgpath))
 
         # test clients that give workspaceFolders
         let workspaceFolders = [WorkspaceFolder(; uri=rootUri, name="TestFullLifecycle")]
