@@ -8,9 +8,8 @@ function __init__()
     foreach(hook->hook(), __init__hooks__)
 end
 
-# TODO turn off `JETLS_DEV_MODE` by default when releasing
 using Preferences: Preferences
-const JETLS_DEV_MODE = Preferences.@load_preference("JETLS_DEV_MODE", true)
+const JETLS_DEV_MODE = Preferences.@load_preference("JETLS_DEV_MODE", false)
 push_init_hooks!() do
     @info "Running JETLS with" JETLS_DEV_MODE
 end
