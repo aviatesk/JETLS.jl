@@ -2,11 +2,14 @@
 # Later, some fixes were added, including corrections for errors discovered by JETLS.
 # TODO publish this as a standalone package and share it between JETLS and JuliaWorkspace.jl
 
+# TODO Move this under LSP.jl?
 module URIs2
 
-include("vendored_from_uris.jl")
-
 export URI, uri2filename, uri2filepath, filename2uri, filepath2uri, @uri_str
+
+using StructTypes: StructTypes
+
+include("vendored_from_uris.jl")
 
 """
     struct URI
@@ -68,6 +71,11 @@ else
         return hash((a.scheme, a.authority, a.path, a.query, a.fragment), h)
     end
 end
+
+Base.convert(::Type{URI}, s::AbstractString) = URI(s)
+
+# This overload requires `URI(::AbstractString)` as well, which is defined later
+StructTypes.StructType(::Type{URI}) = StructTypes.StringType()
 
 function percent_decode(str::AbstractString)
     return unescapeuri(str)

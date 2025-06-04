@@ -286,12 +286,12 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
     workspaceFolders = params.workspaceFolders
     if workspaceFolders !== nothing
         for workspaceFolder in workspaceFolders
-            push!(state.workspaceFolders, URI(workspaceFolder.uri))
+            push!(state.workspaceFolders, workspaceFolder.uri)
         end
     else
         rootUri = params.rootUri
         if rootUri !== nothing
-            push!(state.workspaceFolders, URI(rootUri))
+            push!(state.workspaceFolders, rootUri)
         else
             @warn "No workspaceFolders or rootUri in InitializeRequest - some functionality will be limited"
         end
@@ -414,7 +414,7 @@ function handle_DidOpenTextDocumentNotification(server::Server, msg::DidOpenText
     state = server.state
     textDocument = msg.params.textDocument
     @assert textDocument.languageId == "julia"
-    uri = URI(textDocument.uri)
+    uri = textDocument.uri
     filename = uri2filename(uri)
     @assert filename !== nothing "Unsupported URI: $uri"
     cache_file_info!(state, uri, textDocument.version, textDocument.text, filename)
@@ -451,7 +451,7 @@ end
 function handle_DidChangeTextDocumentNotification(server::Server, msg::DidChangeTextDocumentNotification)
     state = server.state
     (;textDocument,contentChanges) = msg.params
-    uri = URI(textDocument.uri)
+    uri = textDocument.uri
     for contentChange in contentChanges
         @assert contentChange.range === contentChange.rangeLength === nothing # since `change = TextDocumentSyncKind.Full`
     end
@@ -495,7 +495,7 @@ end
 function handle_DidCloseTextDocumentNotification(server::Server, msg::DidCloseTextDocumentNotification)
     state = server.state
     textDocument = msg.params.textDocument
-    uri = URI(textDocument.uri)
+    uri = textDocument.uri
     delete!(state.file_cache, uri)
     return nothing
 end

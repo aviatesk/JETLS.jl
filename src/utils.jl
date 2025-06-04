@@ -52,7 +52,7 @@ end
 Fetch cached FileInfo given an LSclient-provided structure with a URI
 """
 get_fileinfo(s::ServerState, uri::URI) = haskey(s.file_cache, uri) ? s.file_cache[uri] : nothing
-get_fileinfo(s::ServerState, t::TextDocumentIdentifier) = get_fileinfo(s, URI(t.uri))
+get_fileinfo(s::ServerState, t::TextDocumentIdentifier) = get_fileinfo(s, t.uri)
 
 function find_file_module!(state::ServerState, uri::URI, pos::Position)
     mod = find_file_module(state, uri, pos)

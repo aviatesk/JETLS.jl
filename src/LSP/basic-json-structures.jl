@@ -1,8 +1,31 @@
 # URI
 # ===
 
-const DocumentUri = String
-const URI = String
+const __URI_DOC__ = """
+According to the LSP, any fields declared as `DocumentUri` and `URI` types
+(in the TypeScript definition) are:
+> Over the wire, it will still be transferred as a string, but this guarantees that
+> the contents of that string can be parsed as a valid URI.
+
+In actual language server implementations, the values of such `DocumentUri` and `URI` type
+fields are parsed and used as data structures representing URIs that comply with
+https://datatracker.ietf.org/doc/html/rfc3986,
+having `scheme`, `authority`, `path`, `query`, and `fragment` components.
+
+In JETLS, `URIs2.URI` corresponds to such a data structure.
+
+If we were to strictly adhere to the LSP definition, these fields should be defined as
+`String` type, and `DocumentUri` and `URI` should be aliases to `String`.
+However, in our Julia version of the LSP definition, for implementation simplicity, we
+automatically `convert` URI-representing fields to `URIs2.URI` during JSON3 parsing,
+allowing the language server to directly handle `URIs2.URI`.
+"""
+# const DocumentUri = String
+# const URI = String
+const DocumentUri = URI
+
+@doc __URI_DOC__ DocumentUri
+@doc __URI_DOC__ URI
 
 # Position
 # ========
