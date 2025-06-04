@@ -237,5 +237,19 @@ The `JETLS.register` utility is especially useful for this purpose.
                  "/path/to/JETLS.jl/runserver.jl"))
   ```
 
+- Minimal Neovim setup (requires Neovim v0.11):
+  ```lua
+  vim.lsp.config("jetls", {
+      cmd = {
+         "julia",
+         "--startup-file=no",
+         "--project=/path/to/JETLS.jl",
+         "/path/to/JETLS.jl/runserver.jl",
+      },
+      filetypes = {"julia"},
+  })
+  vim.lsp.enable("jetls")
+  ```
+
 - [Zed](https://zed.dev/) extension for Julia/JETLS is available:
   See [aviatesk/zed-julia#avi/JETLS](https://github.com/aviatesk/zed-julia/tree/avi/JETLS)
