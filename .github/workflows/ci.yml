@@ -63,11 +63,6 @@ jobs:
         with:
           version: "1.12-nightly" # most stable version
           arch: x64
-      - name: set `JETLS_DEV_MODE=false`
-        working-directory: .
-        run: |
-          echo '[JETLS]
-          JETLS_DEV_MODE = false' >> LocalPreferences.toml
       - uses: julia-actions/julia-buildpkg@latest
       - uses: julia-actions/julia-buildpkg@latest
       - name: run test

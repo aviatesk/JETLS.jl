@@ -111,16 +111,28 @@ in development:
   each message handler, showing error messages and stack traces in the output
   panel
 
-You can control this setting through Preferences.jl's mechanism:
+You can configure `JETLS_DEV_MODE` using Preferences.jl:
 ```julia-repl
 julia> using Preferences
 
-julia> Preferences.set_preferences!("JETLS", "JETLS_DEV_MODE" => false; force=true) # disable the dev mode
+julia> Preferences.set_preferences!("JETLS", "JETLS_DEV_MODE" => true; force=true) # enable the dev mode
+```
+Alternatively, you can directly edit the LocalPreferences.toml file.
+
+While `JETLS_DEV_MODE` is disabled by default, we _strongly recommend enabling
+it during JETLS development_. For development work, we suggest creating the
+following LocalPreferences.toml file in the root directory of this repository:
+> LocalPreferences.toml
+```toml
+[JETLS] # enable the dev mode of JETLS
+JETLS_DEV_MODE = true
+
+[JET] # additionally, allow JET to be loaded on nightly
+JET_DEV_MODE = true
 ```
 
-`JETLS_DEV_MODE` is enabled by default when running the server at this moment of
-prototyping, but also note that this mode is always disabled during tests to
-ensure that internal errors are not suppressed by the additional `try`/`catch`
+Note that in tests, this mode is always disabled to ensure that internal errors
+are properly raised rather than being suppressed by the additional `try`/`catch`
 block (see [test/LocalPreferences.toml](./test/LocalPreferences.toml)).
 
 ### Dynamic Registration
