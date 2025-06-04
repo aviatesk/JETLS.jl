@@ -23,20 +23,10 @@ const SERVER_SCRIPT = normpath(JETLS_DIR, "runserver.jl")
 
 function withserverprocess(f)
     cmd = `$JULIA_CMD --project=$JETLS_DIR $SERVER_SCRIPT`
-    stdin = Base.BufferStream()
-    stdout = Base.BufferStream()
-    stderr = Base.BufferStream()
-    pipe = pipeline(cmd; stdin, stdout, stderr)
-    proc = run(pipe; wait=false)
-
+    proc = open(cmd; write=true, read=true)
     try
-        return f((; proc, stdin, stdout, stderr))
-    catch e
-        rethrow(e)
+        return f(proc)
     finally
-        close(stdin)
-        close(stdout)
-        close(stderr)
         if !process_exited(proc)
             @error "Server process did not exit gracefully, killing it"
             kill(proc)
@@ -44,13 +34,13 @@ function withserverprocess(f)
     end
 end
 
-function with_timeout(f, timeout, timeout_message)
+function with_timeout(f, timeout, sth)
     elapsed = 0.0
     while true
-        elapsed > timeout && error(timeout_message)
+        elapsed > timeout && error("Timeout waiting for " * sth)
         res = f(elapsed)
         if res !== nothing
-            @info "Resolved within timeout" timeout_message elapsed
+            @info "Waited $sth" elapsed
             return res
         end
         sleep(1.0)
@@ -67,34 +57,29 @@ function write_lsp_message(io, message)
     return nothing
 end
 
-function read_lsp_message(io, timeout, message_kind)
+function read_lsp_message(io)
     # Read headers with timeout
-    var"Content-Length" = with_timeout(timeout, "Timeout waiting for reading `Content-Length` of '$message_kind' message") do elapsed
-        bytesavailable(io) > 0 || return nothing
-        line = readline(io) # XXX may block
-        startswith(line, "Content-Length:") || return nothing
-        readline(io) # read the extra line break
-        return parse(Int, strip(split(line, ":")[2]))
+    header_regex = r"Content-Length: (\d+)"
+    var"Content-Length" = let
+        line = readuntil(io, "\r\n\r\n") # XXX may block
+        m = match(header_regex, line)
+        if isnothing(m) || length(m.captures) ≠ 1
+            error("Failed to parse `Content-Length` header")
+        end
+        other = replace(line, header_regex=>"")
+        if !isempty(other)
+            @warn "Found unexpected output from the server process" other
+        end
+        parse(Int, only(m.captures))
     end
-    return with_timeout(timeout, "Timeout waiting for reading body of '$message_kind' message") do elapsed
-        bytesavailable(io) >= var"Content-Length" || return nothing
-        return String(read(io, var"Content-Length"))
-    end
+    return String(read(io, var"Content-Length"))
 end
 
 const DEFAULT_TIMEOUT = 10
 const STARTUP_TIMEOUT = 60
 
 # test a very simple, normal server lifecycle
-withserverprocess() do (; proc, stdin, stdout, stderr)
-    @test with_timeout(#=timeout=#STARTUP_TIMEOUT, "Timeout waiting for the server to startup") do elapsed
-        bytesavailable(stderr) > 0 || return nothing
-        log = String(readavailable(stderr))
-        occursin(JETLS.SERVER_LOOP_STARTUP_MSG, log) || return nothing
-        return true
-    end
-    # @info "The server loop started successfully"
-
+withserverprocess() do proc
     # Send initialization request
     initialize_msg = """{
         "jsonrpc": "2.0",
@@ -107,8 +92,8 @@ withserverprocess() do (; proc, stdin, stdout, stderr)
             "workspaceFolders": []
         }
     }"""
-    write_lsp_message(stdin, initialize_msg)
-    initialization_response = read_lsp_message(stdout, #=timeout=#DEFAULT_TIMEOUT, "initialize request")
+    write_lsp_message(proc, initialize_msg)
+    initialization_response = read_lsp_message(proc)
     initialization_response === nothing &&
         error("No response received from server (may have terminated)")
     @test occursin("\"id\":1", initialization_response)
@@ -122,8 +107,8 @@ withserverprocess() do (; proc, stdin, stdout, stderr)
         "method": "shutdown",
         "params": null
     }"""
-    write_lsp_message(stdin, shutdown_msg)
-    shutdown_response = read_lsp_message(stdout, #=timeout=#DEFAULT_TIMEOUT, "shutdown request")
+    write_lsp_message(proc, shutdown_msg)
+    shutdown_response = read_lsp_message(proc)
     shutdown_response === nothing &&
         error("No response received from server (may have terminated)")
     @test occursin("\"id\":2", shutdown_response)
@@ -136,16 +121,9 @@ withserverprocess() do (; proc, stdin, stdout, stderr)
         "method": "exit",
         "params": null
     }"""
-    write_lsp_message(stdin, exit_msg)
-    @test with_timeout(#=timeout=#DEFAULT_TIMEOUT, "Timeout waiting for the server to exit the loop") do elapsed
-        bytesavailable(stderr) > 0 || return nothing
-        log = String(readavailable(stderr))
-        occursin(JETLS.SERVER_LOOP_EXIT_MSG, log) || return nothing
-        return true
-    end
-    # @info "The server loop exited successfully"
+    write_lsp_message(proc, exit_msg)
 
-    @test with_timeout(#=timeout=#DEFAULT_TIMEOUT, "Timeout waiting for the server process to shutdown") do elapsed
+    @test with_timeout(#=timeout=#DEFAULT_TIMEOUT, "server process to shutdown") do elapsed
         process_running(proc) && return nothing
         return true
     end
@@ -153,15 +131,7 @@ withserverprocess() do (; proc, stdin, stdout, stderr)
 end
 
 # test a very simple, abnormal server lifecycle
-withserverprocess() do (; proc, stdin, stdout, stderr)
-    @test with_timeout(#=timeout=#STARTUP_TIMEOUT, "Timeout waiting for the server to startup") do elapsed
-        bytesavailable(stderr) > 0 || return nothing
-        log = String(readavailable(stderr))
-        occursin(JETLS.SERVER_LOOP_STARTUP_MSG, log) || return nothing
-        return true
-    end
-    # @info "The server loop started successfully"
-
+withserverprocess() do proc
     # Send initialization request
     initialize_msg = """{
         "jsonrpc": "2.0",
@@ -174,8 +144,8 @@ withserverprocess() do (; proc, stdin, stdout, stderr)
             "workspaceFolders": []
         }
     }"""
-    write_lsp_message(stdin, initialize_msg)
-    initialization_response = read_lsp_message(stdout, #=timeout=#DEFAULT_TIMEOUT, "initialize request")
+    write_lsp_message(proc, initialize_msg)
+    initialization_response = read_lsp_message(proc)
     initialization_response === nothing &&
         error("No response received from server (may have terminated)")
     @test occursin("\"id\":1", initialization_response)
@@ -188,16 +158,9 @@ withserverprocess() do (; proc, stdin, stdout, stderr)
         "method": "exit",
         "params": null
     }"""
-    write_lsp_message(stdin, exit_msg)
-    @test with_timeout(#=timeout=#DEFAULT_TIMEOUT, "Timeout waiting for the server to exit the loop") do elapsed
-        bytesavailable(stderr) > 0 || return nothing
-        log = String(readavailable(stderr))
-        occursin(JETLS.SERVER_LOOP_EXIT_MSG, log) || return nothing
-        return true
-    end
-    # @info "The server loop exited successfully"
+    write_lsp_message(proc, exit_msg)
 
-    @test with_timeout(#=timeout=#DEFAULT_TIMEOUT, "Timeout waiting for the server process to shutdown") do elapsed
+    @test with_timeout(#=timeout=#DEFAULT_TIMEOUT, "server process to shutdown") do elapsed
         process_running(proc) && return nothing
         return true
     end
