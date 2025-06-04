@@ -195,7 +195,7 @@ function withpackage(test_func, pkgname::AbstractString,
             Pkg.activate(; temp=true, io=devnull)
             env_setup()
 
-            test_func(pkgpath)
+            return test_func(pkgpath)
         finally
             Pkg.activate(old; io=devnull)
         end
@@ -210,7 +210,7 @@ function withscript(test_func, scriptcode::AbstractString;
             write(scriptpath, scriptcode)
             Pkg.activate(; temp=true, io=devnull)
             env_setup()
-            test_func(scriptpath)
+            return test_func(scriptpath)
         finally
             Pkg.activate(old; io=devnull)
         end
@@ -228,4 +228,20 @@ function get_text_and_positions(text::String)
         end
     end
     return join(lines, '\n'), positions
+end
+
+function make_DidOpenTextDocumentNotification(uri, text;
+                                              languageId = "julia",
+                                              version = 1)
+    return DidOpenTextDocumentNotification(;
+        params = DidOpenTextDocumentParams(;
+            textDocument = TextDocumentItem(;
+                uri, text, languageId, version)))
+end
+
+function make_DidChangeTextDocumentNotification(uri, text, version)
+    return DidChangeTextDocumentNotification(;
+        params = DidChangeTextDocumentParams(;
+            textDocument = VersionedTextDocumentIdentifier(; uri, version),
+            contentChanges = [TextDocumentContentChangeEvent(; text)]))
 end

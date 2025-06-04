@@ -28,6 +28,8 @@
 
     completionProvider::Union{CompletionOptions, Nothing} = nothing
 
+    signatureHelpProvider::Union{SignatureHelpOptions, Nothing} = nothing
+
     "Workspace specific server capabilities"
     workspace::Union{Nothing, @interface begin
         """
@@ -80,10 +82,10 @@ end
     # """
     # hover::Union{HoverClientCapabilities, Nothing} = nothing
 
-    # """
-    # Capabilities specific to the `textDocument/signatureHelp` request.
-    # """
-    # signatureHelp::Union{SignatureHelpClientCapabilities, Nothing} = nothing
+    """
+    Capabilities specific to the `textDocument/signatureHelp` request.
+    """
+    signatureHelp::Union{SignatureHelpClientCapabilities, Nothing} = nothing
 
     # """
     # Capabilities specific to the `textDocument/declaration` request.

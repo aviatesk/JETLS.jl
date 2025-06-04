@@ -11,6 +11,7 @@ end
     @testset "URIs2" include("test_URIs2.jl")
     @testset "registration" include("test_registration.jl")
     @testset "completions" include("test_completions.jl")
+    @testset "signature help" include("test_signature_help.jl")
     @testset "analysis" include("test_analysis.jl")
     @testset "diagnostics" include("test_diagnostics.jl")
     @testset "full lifecycle" include("test_full_lifecycle.jl")

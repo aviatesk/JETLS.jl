@@ -23,18 +23,21 @@ const COMPLETION_REGISTRATION_METHOD = "textDocument/completion"
 
 function completion_registration()
     (; triggerCharacters, resolveProvider, completionItem) = completion_options()
-    documentSelector = DocumentFilter[
-        DocumentFilter(; language = "julia")
-    ]
     return Registration(;
         id = COMPLETION_REGISTRATION_ID,
         method = COMPLETION_REGISTRATION_METHOD,
         registerOptions = CompletionRegistrationOptions(;
-            documentSelector,
+            documentSelector = DEFAULT_DOCUMENT_SELECTOR,
             triggerCharacters,
             resolveProvider,
             completionItem))
 end
+
+# For dynamic registrations during development
+# unregister(currently_running, Unregistration(;
+#     id=COMPLETION_REGISTRATION_ID,
+#     method=COMPLETION_REGISTRATION_METHOD))
+# register(currently_running, completion_registration())
 
 # completion utils
 # ================
@@ -66,53 +69,6 @@ end
 
 # local completions
 # =================
-
-"""
-Like `Base.unique`, but over node ids, and with this comment promising that the
-lowest-index copy of each node is kept.
-"""
-function deduplicate_syntaxlist(sl::JL.SyntaxList)
-    sl2 = JL.SyntaxList(sl.graph)
-    seen = Set{JL.NodeId}()
-    for st in sl
-        if !(st._id in seen)
-            push!(sl2, st._id)
-            push!(seen, st._id)
-        end
-    end
-    return sl2
-end
-
-"""
-    byte_ancestors(st::JL.SyntaxTree, rng::UnitRange{Int})
-    byte_ancestors(st::JL.SyntaxTree, byte::Int)
-
-Get a list of `SyntaxTree`s containing certain bytes.
-Output should be topologically sorted, children first.
-
-If we know that parent ranges contain all child ranges, and that siblings don't
-have overlapping ranges (this is not true after lowering, but appear to be true
-after parsing), each tree in the result will be a child of the next.
-"""
-function byte_ancestors(st::JL.SyntaxTree, rng::UnitRange{Int})
-    sl = JL.SyntaxList(st._graph, [st._id])
-    stack = [st]
-    while !isempty(stack)
-        st = pop!(stack)
-        if JS.numchildren(st) === 0
-            continue
-        end
-        for ci in JS.children(st)
-            if rng ⊆ JS.byte_range(ci)
-                push!(sl, ci)
-            end
-            push!(stack, ci)
-        end
-    end
-    # delete later duplicates when sorted parent->child
-    return reverse!(deduplicate_syntaxlist(sl))
-end
-byte_ancestors(st::JL.SyntaxTree, byte::Int) = byte_ancestors(st, byte:byte)
 
 """
 Find any largest lowerable tree containing the cursor and the cursor's position
@@ -340,33 +296,6 @@ end
 
 # global completions
 # ==================
-
-function find_file_module!(state::ServerState, uri::URI, pos::Position)
-    mod = find_file_module(state, uri, pos)
-    state.completion_module = mod
-    return mod
-end
-function find_file_module(state::ServerState, uri::URI, pos::Position)
-    haskey(state.contexts, uri) || return Main
-    contexts = state.contexts[uri]
-    context = first(contexts)
-    for ctx in contexts
-        # prioritize `PackageSourceAnalysisEntry` if exists
-        if isa(context.entry, PackageSourceAnalysisEntry)
-            context = ctx
-            break
-        end
-    end
-    safi = successfully_analyzed_file_info(context, uri)
-    isnothing(safi) && return Main
-    curline = Int(pos.line) + 1
-    curmod = Main
-    for (range, mod) in safi.module_range_infos
-        curline in range || continue
-        curmod = mod
-    end
-    return curmod
-end
 
 function global_completions!(items::Dict{String, CompletionItem}, state::ServerState, uri::URI, params::CompletionParams)
     pos = params.position

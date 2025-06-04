@@ -61,6 +61,7 @@ end
 mutable struct FullAnalysisResult
     staled::Bool
     last_analysis::Float64
+    actual2virtual::JET.Actual2Virtual
     const uri2diagnostics::Dict{URI,Vector{Diagnostic}}
     const analyzed_file_infos::Dict{URI,JET.AnalyzedFileInfo}
     const successfully_analyzed_file_infos::Dict{URI,JET.AnalyzedFileInfo}
@@ -116,9 +117,14 @@ struct Server{Callback}
     end
 end
 
+const DEFAULT_DOCUMENT_SELECTOR = DocumentFilter[
+    DocumentFilter(; language = "julia")
+]
+
 include("utils.jl")
 include("registration.jl")
 include("completions.jl")
+include("signature-help.jl")
 include("diagnostics.jl")
 
 """
@@ -246,6 +252,8 @@ function _handle_message(server::Server, msg)
         return handle_CompletionRequest(server, msg)
     elseif msg isa CompletionResolveRequest
         return handle_CompletionResolveRequest(server, msg)
+    elseif msg isa SignatureHelpRequest
+        return handle_SignatureHelpRequest(server, msg)
     elseif JETLS_DEV_MODE
         if isdefined(msg, :method)
             id = getfield(msg, :method)
@@ -313,10 +321,20 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
         :textDocument, :completion, :dynamicRegistration) !== true
         completionProvider = completion_options()
         if JETLS_DEV_MODE
-            @info "Registering completion with `InitializeResponse`"
+            @info "Registering 'textDocument/completion' with `InitializeResponse`"
         end
     else
         completionProvider = nothing # will be registered dynamically
+    end
+
+    if getpath(params.capabilities,
+        :textDocument, :signatureHelp, :dynamicRegistration) !== true
+        signatureHelpProvider = signature_help_options()
+        if JETLS_DEV_MODE
+            @info "Registering 'textDocument/signatureHelp' with `InitializeResponse`"
+        end
+    else
+        signatureHelpProvider = nothing # will be registered dynamically
     end
 
     result = InitializeResult(;
@@ -328,6 +346,7 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
                 save = SaveOptions(;
                     includeText = true)),
             completionProvider,
+            signatureHelpProvider,
         ),
         serverInfo = (;
             name = "JETLS",
@@ -356,12 +375,24 @@ function handle_InitializedNotification(server::Server)
         :textDocument, :completion, :dynamicRegistration) === true
         push!(registrations, completion_registration())
         if JETLS_DEV_MODE
-            @info "Dynamically registering completion upon `InitializedNotification`"
+            @info "Dynamically registering 'textDocument/completion' upon `InitializedNotification`"
         end
     else
         # NOTE If completion's `dynamicRegistration` is not supported,
         # it needs to be registered along with initialization in the `InitializeResponse`,
         # since `CompletionRegistrationOptions` does not extend `StaticRegistrationOptions`.
+    end
+
+    if getpath(state.init_params.capabilities,
+        :textDocument, :signatureHelp, :dynamicRegistration) === true
+        push!(registrations, signature_help_registration())
+        if JETLS_DEV_MODE
+            @info "Dynamically registering 'textDocument/signatureHelp' upon `InitializedNotification`"
+        end
+    else
+        # NOTE If completion's `dynamicRegistration` is not supported,
+        # it needs to be registered along with initialization in the `InitializeResponse`,
+        # since `SignatureHelpRegistrationOptions` does not extend `StaticRegistrationOptions`.
     end
 
     register(server, registrations)
@@ -499,7 +530,7 @@ function new_analysis_context(entry::AnalysisEntry, result)
     uri2diagnostics = jet_result_to_diagnostics(keys(analyzed_file_infos), result)
     successfully_analyzed_file_infos = copy(analyzed_file_infos)
     is_full_analysis_successful(result) || empty!(successfully_analyzed_file_infos)
-    analysis_result = FullAnalysisResult(false, time(), uri2diagnostics, analyzed_file_infos, successfully_analyzed_file_infos)
+    analysis_result = FullAnalysisResult(false, time(), result.res.actual2virtual, uri2diagnostics, analyzed_file_infos, successfully_analyzed_file_infos)
     return AnalysisContext(entry, analysis_result)
 end
 
@@ -527,6 +558,9 @@ function update_analysis_context!(analysis_context::AnalysisContext, result)
     jet_result_to_diagnostics!(uri2diagnostics, result)
     analysis_context.result.staled = false
     analysis_context.result.last_analysis = time()
+    if is_full_analysis_successful(result)
+        analysis_context.result.actual2virtual = result.res.actual2virtual
+    end
 end
 
 # TODO This reverse map recording should respect the changes made in `include` chains
