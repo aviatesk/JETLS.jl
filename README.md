@@ -261,14 +261,12 @@ See [aviatesk/zed-julia#avi/JETLS](https://github.com/aviatesk/zed-julia/tree/av
 
 Minimal [Helix](https://helix-editor.com/) setup:
 
-Add the following to your `languages.toml` file:
-
+> `languages.toml`
 ```toml
 [[language]]
 name = "julia"
-language-servers = [ "jetls" ] 
+language-servers = [ "jetls" ]
 
 [language-server]
-jetls = { command = "julia",  args = ["--startup-file=no", "--project=/path/to/JETLS.jl", "/path/to/JETLS.jl/runserver.jl"] }
+jetls = { command = "julia", args = ["--startup-file=no", "--project=/path/to/JETLS.jl", "/path/to/JETLS.jl/runserver.jl"] }
 ```
-
