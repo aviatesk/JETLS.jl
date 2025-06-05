@@ -840,4 +840,56 @@ function reanalyze_with_context!(state::ServerState, analysis_context::AnalysisC
     return nothing
 end
 
+function get_text_and_positions(text::AbstractString, matcher::Regex=r"#=cursor=#")
+    positions = Position[]
+    lines = split(text, '\n')
+
+    # First pass to collect positions
+    for (i, line) in enumerate(lines)
+        offset_adjustment = 0
+        for m in eachmatch(matcher, line)
+            # Position is 0-based
+            # Adjust the character position by subtracting the length of previous matches
+            adjusted_offset = m.offset - offset_adjustment
+            push!(positions, Position(; line=i-1, character=adjusted_offset-1))
+            offset_adjustment += length(m.match)
+        end
+    end
+
+    # Second pass to replace all occurrences
+    for (i, line) in enumerate(lines)
+        lines[i] = replace(line, matcher => "")
+    end
+
+    return join(lines, '\n'), positions
+end
+
+using PrecompileTools
+@setup_workload let
+    state = ServerState()
+    text, positions = get_text_and_positions("""
+        struct Bar
+            x::Int
+        end
+        function getx(bar::Bar)
+            out = bar.x
+            #=cursor=#
+            return out
+        end
+    """)
+    position = only(positions)
+    mktemp() do filename, io
+        uri = filepath2uri(filename)
+        @compile_workload let
+            cache_file_info!(state, uri, #=version=#1, text, filename)
+            comp_params = CompletionParams(;
+                textDocument = TextDocumentIdentifier(; uri),
+                position)
+            items = get_completion_items(state, uri, comp_params)
+            any(item->item.label=="out", items) || @warn "completion seems to be broken"
+            any(item->item.label=="bar", items) || @warn "completion seems to be broken"
+        end
+    end
+end
+
 end # module JETLS

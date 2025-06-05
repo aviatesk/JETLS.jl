@@ -264,7 +264,7 @@ end
     JETLS.cache_file_info!(state, uri, #=version=#1, text, filename)
     JETLS.initiate_context!(state, uri)
     let params = CompletionParams(;
-            textDocument=TextDocumentIdentifier(string(uri)),
+            textDocument=TextDocumentIdentifier(; uri),
             position=pos1)
         items = JETLS.get_completion_items(state, uri, params)
         @test any(items) do item
@@ -281,7 +281,7 @@ end
         end
     end
     let params = CompletionParams(;
-            textDocument=TextDocumentIdentifier(string(uri)),
+            textDocument=TextDocumentIdentifier(; uri),
             position=pos2)
         items = JETLS.get_completion_items(state, uri, params)
         @test any(items) do item
@@ -308,7 +308,7 @@ end
     let text = ""
         JETLS.cache_file_info!(state, uri, 1, text, filename)
         params = CompletionParams(;
-            textDocument=TextDocumentIdentifier(string(uri)),
+            textDocument=TextDocumentIdentifier(; uri),
             position=Position(;line=0,character=0))
         items = JETLS.get_completion_items(state, uri, params)
         # should not crash and return something
@@ -318,7 +318,7 @@ end
     let text = "\n\n\n"
         JETLS.cache_file_info!(state, uri, 2, text, filename)
         params = CompletionParams(;
-            textDocument=TextDocumentIdentifier(string(uri)),
+            textDocument=TextDocumentIdentifier(; uri),
             position=Position(;line=3,character=0))
         items = JETLS.get_completion_items(state, uri, params)
         # should not crash and return something
@@ -339,7 +339,7 @@ end
         """
         JETLS.cache_file_info!(state, uri, 1, text, filename)
         params = CompletionParams(;
-            textDocument=TextDocumentIdentifier(string(uri)),
+            textDocument=TextDocumentIdentifier(; uri),
             position=Position(;line=1,character=5),
             context=CompletionContext(;
                 triggerKind=CompletionTriggerKind.TriggerCharacter,
@@ -362,7 +362,7 @@ end
         """
         JETLS.cache_file_info!(state, uri, 2, text, filename)
         params = CompletionParams(;
-            textDocument=TextDocumentIdentifier(string(uri)),
+            textDocument=TextDocumentIdentifier(; uri),
             position=Position(;line=1,character=7),
             context=CompletionContext(;
                 triggerKind=CompletionTriggerKind.Invoked))
@@ -385,7 +385,7 @@ end
         """
         JETLS.cache_file_info!(state, uri, 3, text, filename)
         params = CompletionParams(;
-            textDocument=TextDocumentIdentifier(string(uri)),
+            textDocument=TextDocumentIdentifier(; uri),
             position=Position(;line=1,character=20),
             context=CompletionContext(;
                 triggerKind=CompletionTriggerKind.Invoked))
@@ -403,7 +403,7 @@ end
         """
         JETLS.cache_file_info!(state, uri, 4, text, filename)
         params = CompletionParams(;
-            textDocument=TextDocumentIdentifier(string(uri)),
+            textDocument=TextDocumentIdentifier(; uri),
             position=Position(;line=1,character=12),
             context=CompletionContext(;
                 triggerKind=CompletionTriggerKind.Invoked))
@@ -608,7 +608,7 @@ end
         """
         JETLS.cache_file_info!(state, uri, 1, text, filename)
         params = CompletionParams(;
-            textDocument=TextDocumentIdentifier(string(uri)),
+            textDocument=TextDocumentIdentifier(; uri),
             position=Position(;line=1,character=5),
             context=CompletionContext(;
                 triggerKind=CompletionTriggerKind.TriggerCharacter,
@@ -631,7 +631,7 @@ end
         """
         JETLS.cache_file_info!(state, uri, 2, text, filename)
         params = CompletionParams(;
-            textDocument=TextDocumentIdentifier(string(uri)),
+            textDocument=TextDocumentIdentifier(; uri),
             position=Position(;line=1,character=6),
             context=CompletionContext(;
                 triggerKind=CompletionTriggerKind.TriggerCharacter,

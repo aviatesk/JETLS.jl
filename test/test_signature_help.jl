@@ -9,15 +9,13 @@ using JETLS: cursor_siginfos
 # siginfos(mod, code, cursor="|") -> siginfos
 # nsigs(mod, code, cursor="|")
 
-function siginfos(mod::Module, code::String, cursor::String="|")
+function siginfos(mod::Module, code::AbstractString, cursor::AbstractString="|")
     b = findfirst(cursor, code).start
     ps = JS.ParseStream(replace(code, cursor=>"", count=1)); JS.parse!(ps)
     return cursor_siginfos(mod, ps, b)
 end
 
-n_si(args...) = let si = siginfos(args...)
-    length(si)
-end
+n_si(args...) = length(siginfos(args...))
 
 module M_sanity
 i_exist(a,b,c) = 0
@@ -113,7 +111,7 @@ module M_highlight
 f(a0, a1, a2, va3...; kw4=0, kw5=0, kws6...) = 0
 end
 @testset "param highlighting" begin
-    function ap(mod::Module, code::String, cursor::String="|")
+    function ap(mod::Module, code::AbstractString, cursor::AbstractString="|")
         si = siginfos(mod, code, cursor)
         p = only(si).activeParameter
         isnothing(p) ? nothing : Int(p)

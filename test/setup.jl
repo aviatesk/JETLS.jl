@@ -5,6 +5,8 @@ using JETLS.LSP
 using JETLS.URIs2
 using JETLS: JSONRPC
 
+using JETLS: get_text_and_positions
+
 function take_with_timeout!(chn::Channel; interval=1, limit=60)
     while limit > 0
         if isready(chn)
@@ -215,19 +217,6 @@ function withscript(test_func, scriptcode::AbstractString;
             Pkg.activate(old; io=devnull)
         end
     end
-end
-
-function get_text_and_positions(text::String)
-    positions = Position[]
-    lines = split(text, '\n')
-    for (i, line) in enumerate(lines)
-        for m in eachmatch(r"#=cursor=#", line)
-            # Position is 0-based
-            push!(positions, JETLS.Position(; line=i-1, character=m.match.offset-1))
-            lines[i] = replace(line, r"#=cursor=#" => "")
-        end
-    end
-    return join(lines, '\n'), positions
 end
 
 function make_DidOpenTextDocumentNotification(uri, text;
