@@ -226,30 +226,33 @@ The `JETLS.register` utility is especially useful for this purpose.
 
 ## Other Editors
 
-- Minimal Emacs (eglot client) setup:
-  ```lisp
-  (add-to-list 'eglot-server-programs
-               '(((julia-mode :language-id "julia")
-                  (julia-ts-mode :language-id "julia"))
-                 "julia"
-                 "--startup-file=no"
-                 "--project=/path/to/JETLS.jl"
-                 "/path/to/JETLS.jl/runserver.jl"))
-  ```
+### Emacs
+Minimal Emacs (eglot client) setup:
+```lisp
+(add-to-list 'eglot-server-programs
+              '(((julia-mode :language-id "julia")
+                (julia-ts-mode :language-id "julia"))
+                "julia"
+                "--startup-file=no"
+                "--project=/path/to/JETLS.jl"
+                "/path/to/JETLS.jl/runserver.jl"))
+```
+### Neovim
 
-- Minimal Neovim setup (requires Neovim v0.11):
-  ```lua
-  vim.lsp.config("jetls", {
-      cmd = {
-         "julia",
-         "--startup-file=no",
-         "--project=/path/to/JETLS.jl",
-         "/path/to/JETLS.jl/runserver.jl",
-      },
-      filetypes = {"julia"},
-  })
-  vim.lsp.enable("jetls")
-  ```
+Minimal Neovim setup (requires Neovim v0.11):
+```lua
+vim.lsp.config("jetls", {
+    cmd = {
+        "julia",
+        "--startup-file=no",
+        "--project=/path/to/JETLS.jl",
+        "/path/to/JETLS.jl/runserver.jl",
+    },
+    filetypes = {"julia"},
+})
+vim.lsp.enable("jetls")
+```
 
-- [Zed](https://zed.dev/) extension for Julia/JETLS is available:
-  See [aviatesk/zed-julia#avi/JETLS](https://github.com/aviatesk/zed-julia/tree/avi/JETLS)
+### Zed
+[Zed](https://zed.dev/) extension for Julia/JETLS is available:
+See [aviatesk/zed-julia#avi/JETLS](https://github.com/aviatesk/zed-julia/tree/avi/JETLS).
