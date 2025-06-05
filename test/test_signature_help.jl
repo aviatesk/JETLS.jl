@@ -3,6 +3,7 @@ module test_signature_help
 using Test
 using JETLS
 using JETLS: JL, JS
+using JETLS.URIs2
 using JETLS: cursor_siginfos
 
 # siginfos(mod, code, cursor="|") -> siginfos
@@ -183,7 +184,7 @@ include("setup.jl")
     foo(xxx, yyy) = :xxx_yyy
     """
     withscript(script_code) do script_path
-        uri = string(JETLS.URIs2.filepath2uri(script_path))
+        uri = filepath2uri(script_path)
         withserver() do (; writereadmsg, id_counter)
             # run the full analysis first
             (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, script_code))

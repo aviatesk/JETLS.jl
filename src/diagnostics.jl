@@ -100,7 +100,7 @@ function jet_inference_error_report_to_diagnostic(postprocessor::JET.PostProcess
             message = postprocessor(sprint(JET.print_frame_sig, frame, JET.PrintConfig()))
             DiagnosticRelatedInformation(;
                 location = Location(;
-                    uri = string(filepath2uri(JET.tofullpath(String(frame.file)))),
+                    uri = filepath2uri(JET.tofullpath(String(frame.file))),
                     range = jet_frame_to_range(frame)),
                 message)
         end
@@ -145,7 +145,7 @@ function notify_diagnostics!(server::Server, uri2diagnostics)
     for (uri, diagnostics) in uri2diagnostics
         send(server, PublishDiagnosticsNotification(;
             params = PublishDiagnosticsParams(;
-                uri = string(uri),
+                uri,
                 # version = 0,
                 diagnostics)))
     end
