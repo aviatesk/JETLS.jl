@@ -256,3 +256,19 @@ vim.lsp.enable("jetls")
 ### Zed
 [Zed](https://zed.dev/) extension for Julia/JETLS is available:
 See [aviatesk/zed-julia#avi/JETLS](https://github.com/aviatesk/zed-julia/tree/avi/JETLS).
+
+### Helix
+
+Minimal [Helix](https://helix-editor.com/) setup:
+
+Add the following to your `languages.toml` file:
+
+```toml
+[[language]]
+name = "julia"
+language-servers = [ "jetls" ] 
+
+[language-server]
+jetls = { command = "julia",  args = ["--startup-file=no", "--project=/path/to/JETLS.jl", "/path/to/JETLS.jl/runserver.jl"] }
+```
+
