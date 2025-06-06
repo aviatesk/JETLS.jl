@@ -21,8 +21,7 @@ include("language-features/completions.jl")
 include("language-features/signature-help.jl")
 include("workspace-features/workspace-folders.jl")
 include("workspace-features/files.jl")
-include("capabilities.jl")
-include("lifecycle-messages/initialize.jl") # requires capabilities.jl
+include("lifecycle-messages/initialize.jl")
 
 for name in exports
     Core.eval(@__MODULE__, Expr(:export, name))
