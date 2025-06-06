@@ -245,6 +245,10 @@ end
     context::Union{Nothing, SignatureHelpContext} = nothing
 end
 
+"""
+The signature help request is sent from the client to the server to request signature
+information at a given cursor position.
+"""
 @interface SignatureHelpRequest @extends RequestMessage begin
     method::String = "textDocument/signatureHelp"
     params::SignatureHelpParams
