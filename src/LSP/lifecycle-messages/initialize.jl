@@ -443,13 +443,13 @@ provides text document synchronization (e.g. open, changed and close notificatio
         # """
         # showMessage::Union{ShowMessageRequestClientCapabilities, Nothing} = nothing
 
-        # """
-        # Client capabilities for the show document request.
+        """
+        Client capabilities for the show document request.
 
-        # # Tags
-        # - since – 3.16.0
-        # """
-        # showDocument::Union{ShowDocumentClientCapabilities, Nothing} = nothing
+        # Tags
+        - since – 3.16.0
+        """
+        showDocument::Union{ShowDocumentClientCapabilities, Nothing} = nothing
     end} = nothing
 
     """
