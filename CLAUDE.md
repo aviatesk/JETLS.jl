@@ -7,6 +7,8 @@
   the title. In the body of the commit message, provide a brief prose summary of
   the purpose of the changes made.
   Also, ensure that the maximum line length never exceeds 72 characters.
+  When referencing external GitHub PRs or issues, use proper GitHub interlinking
+  format (e.g., `owner/repo#123` for PRs/issues).
 
 # Coding Rules
 - When writing functions, use the most restrictive signature type possible.
