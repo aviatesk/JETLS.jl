@@ -21,6 +21,7 @@ include("language-features/completions.jl")
 include("language-features/signature-help.jl")
 include("workspace-features/workspace-folders.jl")
 include("workspace-features/files.jl")
+include("workspace-features/execute-command.jl")
 include("lifecycle-messages/initialize.jl")
 
 for name in exports
