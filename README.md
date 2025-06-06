@@ -124,16 +124,38 @@ it during JETLS development_. For development work, we suggest creating the
 following LocalPreferences.toml file in the root directory of this repository:
 > LocalPreferences.toml
 ```toml
-[JETLS] # enable the dev mode of JETLS
-JETLS_DEV_MODE = true
+[JETLS]
+JETLS_DEV_MODE = true # enable the dev mode of JETLS
 
-[JET] # additionally, allow JET to be loaded on nightly
-JET_DEV_MODE = true
+[JET]
+JET_DEV_MODE = true # additionally, allow JET to be loaded on nightly
 ```
 
 Note that in tests, this mode is always disabled to ensure that internal errors
 are properly raised rather than being suppressed by the additional `try`/`catch`
 block (see [test/LocalPreferences.toml](./test/LocalPreferences.toml)).
+
+### Precompilation
+
+JETLS uses [precompilation](https://julialang.github.io/PrecompileTools.jl/stable/)
+to reduce the latency between server startup and the user receiving first
+responses.
+Once you install the JETLS package and precompile it, the language server will
+start up quickly afterward (until you upgrade the JETLS version), providing
+significant benefits from the user's perspective.
+
+However, during development, when you're frequently rewriting JETLS code itself,
+running time-consuming precompilation after each modification might be a waste
+of time. In such cases, you can disable precompilation by adding the following
+settings to your LocalPreferences.toml:
+> LocalPreferences.toml
+```toml
+[JETLS]
+precompile_workload = false # Disable precompilation for JETLS
+
+[JET]
+precompile_workload = false # Also disable precompilation for JET if you're developing it simultaneously
+```
 
 ### Dynamic Registration
 
