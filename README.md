@@ -154,7 +154,7 @@ settings to your LocalPreferences.toml:
 precompile_workload = false # Disable precompilation for JETLS
 
 [JET]
-precompile_workload = false # Also disable precompilation for JET if you're developing it simultaneously
+precompile_workload = false # Optionally disable precompilation for JET if you're developing it simultaneously
 ```
 
 ### Dynamic Registration
