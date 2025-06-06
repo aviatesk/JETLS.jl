@@ -3,13 +3,37 @@
 In this directory, the Julia version of the
 [LSP specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification)
 is defined.
+
 The Julia implementation leverages custom `@interface` and `@namespace` macros
-to faithfully translate the TypeScript LSP specification into idiomatic Julia code.
+to faithfully translate the TypeScript LSP specification into idiomatic Julia code:
+
+- **`@interface` macro**: Creates Julia structs with keyword constructors
+  (`@kwdef`) that mirror TypeScript `interface`s:
+  - Uses `Union{Nothing, Type} = nothing` field to represent TypeScript's optional properties (`field?: Type`)
+  - Supports inheritance through `@extends` to compose interfaces (similar to TypeScript's `extends`)
+  - Enables anonymous interface definitions within `Union` types for inline type specifications
+  - Automatically configures `StructTypes.omitempties()` to omit optional fields during JSON serialization
+  - Creates method dispatchers for `RequestMessage` and `NotificationMessage` types to enable LSP message routing
+
+- **`@namespace` macro**: Creates Julia modules containing typed constants that correspond to TypeScript `namespace`s:
+  - Defines constants with proper type annotations and documentation
+  - Provides a `Ty` type alias for convenient type references: See also the [Caveats](#caveats) section
+
 These macros create Julia types that mirror the original TypeScript interfaces
 while handling type conversions, optional fields, and inheritance relationships.
 This approach ensures that the Julia code maintains semantic equivalence with
 the TypeScript specification while taking advantage of Julia's type system,
 making the implementation both accurate and performant.
+
+## Caveats
+
+- **Namespace Type References**: Due to the design that mimics TypeScript
+  `namespace`s using Julia's `module` system, namespace types must be referenced
+  with the `.Ty` suffix (e.g., `SignatureHelpTriggerKind.Ty` below).
+  This is a constraint of Julia's module scoping rules, where constants and
+  type aliases within modules cannot be accessed without explicit qualification.
+
+## Example conversion
 
 As an example of the conversion, it is shown below how the
 "Signature Help Request" specification is converted to Julia code.
@@ -546,7 +570,8 @@ end
 end
 
 """
-The signature help request is sent from the client to the server to request signature
+The signature help request is sent from the client to the server to request
+signature
 information at a given cursor position.
 """
 @interface SignatureHelpRequest @extends RequestMessage begin
