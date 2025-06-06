@@ -45,8 +45,8 @@ frontends, please refer to the [Other editors](#other-editors) section.
 
 ### Coding Guidelines
 This section contains meta-documentation related to development.
-For more detailed coding guidelines, please refer to [CLAUDE.md](./CLAUDE.md),
-which has been organized to be easily recognized by AI agents (Claude models in particular).
+For more detailed coding guidelines, please refer to [AGENTS.md](./AGENTS.md),
+which has been organized to be easily recognized by AI agents.
 
 ### AI-Assisted Development
 When working with AI agents for development, consider the following tips:
