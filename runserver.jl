@@ -33,7 +33,9 @@ let endpoint = Endpoint(stdin, stdout)
             @nospecialize x
             # allow Revise to apply changes with the dev mode enabled
             if s === :received
-                Revise.revise()
+                if !(x isa JETLS.ShutdownRequest || x isa JETLS.ExitNotification)
+                    Revise.revise()
+                end
             end
         end
         JETLS.currently_running = server
