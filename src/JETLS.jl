@@ -317,7 +317,7 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
         # leave Refs undefined
     end
 
-    if getpath(params.capabilities,
+    if getobjpath(params.capabilities,
         :textDocument, :completion, :dynamicRegistration) !== true
         completionProvider = completion_options()
         if JETLS_DEV_MODE
@@ -327,7 +327,7 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
         completionProvider = nothing # will be registered dynamically
     end
 
-    if getpath(params.capabilities,
+    if getobjpath(params.capabilities,
         :textDocument, :signatureHelp, :dynamicRegistration) !== true
         signatureHelpProvider = signature_help_options()
         if JETLS_DEV_MODE
@@ -371,7 +371,7 @@ function handle_InitializedNotification(server::Server)
 
     registrations = Registration[]
 
-    if getpath(state.init_params.capabilities,
+    if getobjpath(state.init_params.capabilities,
         :textDocument, :completion, :dynamicRegistration) === true
         push!(registrations, completion_registration())
         if JETLS_DEV_MODE
@@ -383,7 +383,7 @@ function handle_InitializedNotification(server::Server)
         # since `CompletionRegistrationOptions` does not extend `StaticRegistrationOptions`.
     end
 
-    if getpath(state.init_params.capabilities,
+    if getobjpath(state.init_params.capabilities,
         :textDocument, :signatureHelp, :dynamicRegistration) === true
         push!(registrations, signature_help_registration())
         if JETLS_DEV_MODE

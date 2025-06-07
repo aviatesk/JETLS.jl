@@ -1,11 +1,66 @@
-function getpath(obj, path::Symbol, paths::Symbol...)
+function getobjpath(obj, path::Symbol, paths::Symbol...)
     nextobj = getfield(obj, path)
     if nextobj === nothing
         return nothing
     end
-    getpath(nextobj, paths...)
+    getobjpath(nextobj, paths...)
 end
-getpath(obj) = obj
+getobjpath(obj) = obj
+
+# path/URI utilities
+# ==================
+
+to_full_path(file::Symbol) = to_full_path(String(file))
+function to_full_path(file::AbstractString)
+    file = Base.fixup_stdlib_path(file)
+    file = something(Base.find_source_file(file), file)
+    return abspath(file)
+end
+
+"""
+    create_source_location_link(filepath::AbstractString; line=nothing, character=nothing)
+
+Create a markdown-style link to a source location that can be displayed in LSP clients.
+
+This function generates links in the format `"[show text](file://path#L#C)"` which, while
+not explicitly stated in the LSP specification, is supported by most LSP clients for
+navigation to specific file locations.
+
+# Arguments
+- `filepath::AbstractString`: The file path to link to
+- `line::Union{Integer,Nothing}=nothing`: Optional 1-based line number
+- `character::Union{Integer,Nothing}=nothing`: Optional character position (requires `line` to be specified)
+
+# Returns
+A markdown-formatted string containing the clickable link.
+
+# Examples
+```julia
+create_source_location_link("/path/to/file.jl")
+# Returns: "[/path/to/file.jl](file:///path/to/file.jl)"
+
+create_source_location_link("/path/to/file.jl", line=42)
+# Returns: "[/path/to/file.jl:42](file:///path/to/file.jl#L42)"
+
+create_source_location_link("/path/to/file.jl", line=42, character=10)
+# Returns: "[/path/to/file.jl:42](file:///path/to/file.jl#L42C10)"
+```
+"""
+function create_source_location_link(filepath::AbstractString;
+                                     line::Union{Integer,Nothing}=nothing,
+                                     character::Union{Integer,Nothing}=nothing)
+    linktext = string(filepath2uri(filepath))
+    showtext = filepath
+    Base.stacktrace_contract_userdir() && (showtext = Base.contractuser(showtext))
+    if line !== nothing
+        linktext *= "#L$line"
+        showtext *= string(":", line)
+        if character !== nothing
+            linktext *= "C$character"
+        end
+    end
+    return "[$showtext]($linktext)"
+end
 
 # TODO Need to make them thread safe when making the message handling multithreaded
 

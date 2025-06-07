@@ -171,8 +171,15 @@ function compatible_call(m::Method, ca::CallArgs)
     # have from m's params).  For now, just parse the method signature like we
     # do in make_siginfo.
 
-    mstr = sprint(show, m)
-    mnode = JS.parsestmt(JL.SyntaxTree, mstr; ignore_errors=true)[1]
+    @static if VERSION ≥ v"1.13.0-DEV.710"
+        msig = sprint(show, m; context=(:compact=>true, :print_method_signature_only=>true))
+    else
+        mstr = sprint(show, m; context=(:compact=>true))
+        msig_locinfo = split(mstr, '@')
+        length(msig_locinfo) == 2 || return false
+        msig = strip(msig_locinfo[1])
+    end
+    mnode = JS.parsestmt(JL.SyntaxTree, msig; ignore_errors=true)
 
     params, kwp_i = flatten_args(mnode)
     has_var_params = kwp_i > 1 && kind(params[kwp_i - 1]) === K"..."
@@ -197,7 +204,7 @@ function make_paraminfo(p::JL.SyntaxTree)
 
     # defaults: whole parameter expression
     label = srcloc(p)
-    documentation = string(JS.sourcetext(p))
+    documentation = string('`', JS.sourcetext(p), '`')
 
     if JS.is_leaf(p)
         documentation = nothing
@@ -218,6 +225,11 @@ function make_paraminfo(p::JL.SyntaxTree)
     # if !isa(label, String)
     #     label = string(p.source.file[label[1]+1:label[2]])
     # end
+    if documentation !== nothing
+        documentation = MarkupContent(;
+            kind = MarkupKind.Markdown,
+            value = documentation)
+    end
     return ParameterInformation(; label, documentation)
 end
 
@@ -226,10 +238,24 @@ function make_siginfo(m::Method, ca::CallArgs, active_arg::Union{Int, Symbol};
                       postprocessor::JET.PostProcessor=JET.PostProcessor())
     # methodshow prints "f(x::T) [unparseable stuff]"
     # parse the first part and put the remainder in documentation
-    mstr = postprocessor(sprint(show, m))
-    mnode = JS.parsestmt(JL.SyntaxTree, mstr; ignore_errors=true)[1]
-    label, documentation = let lb = JS.last_byte(mnode)
-        mstr[1:lb], string(strip(mstr[lb+1:end]))
+    @static if VERSION ≥ v"1.13.0-DEV.710"
+        msig = sprint(show, m; context=(:compact=>true, :print_method_signature_only=>true))
+    else
+        mstr = sprint(show, m; context=(:compact=>true))
+        msig_locinfo = split(mstr, '@')
+        length(msig_locinfo) == 2 || return false
+        msig = strip(msig_locinfo[1])
+    end
+    msig = postprocessor(msig)
+    mnode = JS.parsestmt(JL.SyntaxTree, msig; ignore_errors=true)
+    label = String(msig)
+    documentation = let value
+        mdl = postprocessor(string(Base.parentmodule(m)))
+        file, line = Base.updated_methodloc(m)
+        filepath = to_full_path(file)
+        MarkupContent(;
+            kind = MarkupKind.Markdown,
+            value = "@ `$(mdl)` " * create_source_location_link(filepath; line))
     end
 
     # We could show the full docs, but there isn't a way to resolve items lazily
@@ -327,7 +353,10 @@ function cursor_siginfos(mod::Module, ps::JS.ParseStream, b::Int;
 
     for m in methods(fn)
         if compatible_call(m, ca)
-            push!(out, make_siginfo(m, ca, active_arg; postprocessor))
+            siginfo = make_siginfo(m, ca, active_arg; postprocessor)
+            if siginfo !== nothing
+                push!(out, siginfo)
+            end
         end
     end
     return out
