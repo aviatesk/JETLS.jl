@@ -27,7 +27,7 @@ end
 
 # TODO: memorize this?
 is_definition_links_supported(server::Server) = 
-        getpath(server.state.init_params.capabilities,
+        getobjpath(server.state.init_params.capabilities,
         :textDocument, :definition, :linkSupport) === true
 
 

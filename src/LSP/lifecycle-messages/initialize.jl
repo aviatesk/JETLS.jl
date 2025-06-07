@@ -30,6 +30,8 @@
 
     signatureHelpProvider::Union{SignatureHelpOptions, Nothing} = nothing
 
+    definitionProvider::Union{Union{DefinitionOptions, Bool}, Nothing} = nothing
+
     "Workspace specific server capabilities"
     workspace::Union{Nothing, @interface begin
         """
@@ -97,10 +99,10 @@ end
     # """
     # declaration::Union{DeclarationClientCapabilities, Nothing} = nothing
 
-    # """
-    # Capabilities specific to the `textDocument/definition` request.
-    # """
-    # definition::Union{DefinitionClientCapabilities, Nothing} = nothing
+    """
+    Capabilities specific to the `textDocument/definition` request.
+    """
+    definition::Union{DefinitionClientCapabilities, Nothing} = nothing
 
     # """
     # Capabilities specific to the `textDocument/typeDefinition` request.
