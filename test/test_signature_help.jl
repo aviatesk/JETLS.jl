@@ -210,13 +210,15 @@ include("setup.jl")
                     siginfo.label == "foo(xxx)" &&
                     # this also tests that JETLS doesn't show the nonsensical `var"..."`
                     # string caused by JET's internal details
-                    occursin("@ Main $(script_path):1", siginfo.documentation)
+                    occursin("@ `Main` [$(script_path):1]($(filepath2uri(script_path))#L1)",
+                        (siginfo.documentation::MarkupContent).value)
                 end
                 @test any(raw_res.result.signatures) do siginfo
                     siginfo.label == "foo(xxx, yyy)" &&
                     # this also tests that JETLS doesn't show the nonsensical `var"..."`
                     # string caused by JET's internal details
-                    occursin("@ Main $(script_path):2", siginfo.documentation)
+                    occursin("@ `Main` [$(script_path):2]($(filepath2uri(script_path))#L2)",
+                        (siginfo.documentation::MarkupContent).value)
                 end
             end
         end

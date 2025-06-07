@@ -46,7 +46,7 @@ function jet_result_to_diagnostics!(uri2diagnostics::Dict{URI,Vector{Diagnostic}
         if startswith(filename, "Untitled")
             uri = filename2uri(filename)
         else
-            uri = filepath2uri(JET.tofullpath(filename))
+            uri = filepath2uri(to_full_path(filename))
         end
         push!(uri2diagnostics[uri], diagnostic)
     end
@@ -63,7 +63,7 @@ function jet_result_to_diagnostics!(uri2diagnostics::Dict{URI,Vector{Diagnostic}
         if startswith(filename, "Untitled")
             uri = filename2uri(filename)
         else
-            uri = filepath2uri(JET.tofullpath(filename))
+            uri = filepath2uri(to_full_path(filename))
         end
         push!(uri2diagnostics[uri], diagnostic)
     end
@@ -100,7 +100,7 @@ function jet_inference_error_report_to_diagnostic(postprocessor::JET.PostProcess
             message = postprocessor(sprint(JET.print_frame_sig, frame, JET.PrintConfig()))
             DiagnosticRelatedInformation(;
                 location = Location(;
-                    uri = filepath2uri(JET.tofullpath(String(frame.file))),
+                    uri = filepath2uri(to_full_path(frame.file)),
                     range = jet_frame_to_range(frame)),
                 message)
         end
