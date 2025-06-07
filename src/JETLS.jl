@@ -125,6 +125,7 @@ include("utils.jl")
 include("registration.jl")
 include("completions.jl")
 include("signature-help.jl")
+include("definition.jl")
 include("diagnostics.jl")
 
 """
@@ -254,6 +255,8 @@ function _handle_message(server::Server, msg)
         return handle_CompletionResolveRequest(server, msg)
     elseif msg isa SignatureHelpRequest
         return handle_SignatureHelpRequest(server, msg)
+    elseif msg isa DefinitionRequest
+        return handle_DefinitionRequest(server, msg)
     elseif JETLS_DEV_MODE
         if isdefined(msg, :method)
             id = getfield(msg, :method)
@@ -337,6 +340,16 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
         signatureHelpProvider = nothing # will be registered dynamically
     end
 
+    if getobjpath(params.capabilities,
+        :textDocument, :definition, :dynamicRegistration) !== true
+        definitionProvider = definition_options()
+        if JETLS_DEV_MODE
+            @info "Registering 'textDocument/definition' with `InitializeResponse`"
+        end
+    else
+        definitionProvider = nothing # will be registered dynamically
+    end
+
     result = InitializeResult(;
         capabilities = ServerCapabilities(;
             positionEncoding = PositionEncodingKind.UTF16,
@@ -347,6 +360,7 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
                     includeText = true)),
             completionProvider,
             signatureHelpProvider,
+            definitionProvider,
         ),
         serverInfo = (;
             name = "JETLS",
@@ -393,6 +407,18 @@ function handle_InitializedNotification(server::Server)
         # NOTE If completion's `dynamicRegistration` is not supported,
         # it needs to be registered along with initialization in the `InitializeResponse`,
         # since `SignatureHelpRegistrationOptions` does not extend `StaticRegistrationOptions`.
+    end
+
+    if getobjpath(state.init_params.capabilities,
+        :textDocument, :definition, :dynamicRegistration) === true
+        push!(registrations, definition_registration())
+        if JETLS_DEV_MODE
+            @info "Dynamically registering 'textDocument/definition' upon `InitializedNotification`"
+        end
+    else
+        # NOTE If definition's `dynamicRegistration` is not supported,
+        # it needs to be registered along with initialization in the `InitializeResponse`,
+        # since `DefinitionRegistrationOptions` does not extend `StaticRegistrationOptions`.
     end
 
     register(server, registrations)
