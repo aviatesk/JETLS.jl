@@ -6,7 +6,7 @@
 
     """
     The client supports additional metadata in the form of definition links.
-    
+
     - since 3.14.0
     """
     linkSupport::Union{Bool, Nothing} = nothing

@@ -340,7 +340,7 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
         signatureHelpProvider = nothing # will be registered dynamically
     end
 
-    if getpath(params.capabilities,
+    if getobjpath(params.capabilities,
         :textDocument, :definition, :dynamicRegistration) !== true
         definitionProvider = definition_options()
         if JETLS_DEV_MODE
@@ -409,7 +409,7 @@ function handle_InitializedNotification(server::Server)
         # since `SignatureHelpRegistrationOptions` does not extend `StaticRegistrationOptions`.
     end
 
-    if getpath(state.init_params.capabilities,
+    if getobjpath(state.init_params.capabilities,
         :textDocument, :definition, :dynamicRegistration) === true
         push!(registrations, definition_registration())
         if JETLS_DEV_MODE

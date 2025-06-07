@@ -26,8 +26,8 @@ end
 
 
 # TODO: memorize this?
-is_definition_links_supported(server::Server) = 
-        getpath(server.state.init_params.capabilities,
+is_definition_links_supported(server::Server) =
+        getobjpath(server.state.init_params.capabilities,
         :textDocument, :definition, :linkSupport) === true
 
 
@@ -35,7 +35,7 @@ is_definition_links_supported(server::Server) =
 Determines the "best" node at a given offset in a file.
 No suitable node is found at the offset, it returns `nothing`.
 
-TODO: some heuristic approach like in rust-analyzer? 
+TODO: some heuristic approach like in rust-analyzer?
 ref: https://github.com/rust-lang/rust-analyzer/blob/6acff6c1f8306a0a1d29be8fd1ffa63cff1ad598/crates/ide/src/goto_definition.rs#L47-L62
 """
 function get_best_node(fi::FileInfo, offset::Int)
@@ -98,7 +98,7 @@ function handle_DefinitionRequest(server::Server, msg::DefinitionRequest)
     end
 
     if is_definition_links_supported(server)
-        return send(server, 
+        return send(server,
             DefinitionResponse(;
                 id = msg.id,
                 result = map(
