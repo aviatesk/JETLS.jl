@@ -80,6 +80,7 @@ include("setup.jl")
     fu│nc(1.0)
     si│n(1.0)
 
+    Core.Compiler.tm│eet
     Co│re.Compiler.tmeet
 
     func(1.│0)
@@ -122,9 +123,12 @@ include("setup.jl")
                 candidate.range.start.line == (sin_cand_line - 1)
             end),
 
-        # Co│re.Compiler.tmeet
+        # Core.Compiler.tm│eet
         (result, uri) ->
             (length(result) >= 1),
+
+        # Co│re.Compiler.tmeet
+        (result, uri) -> (result === null),
 
         # func(1.│0)
         (result, uri) -> (result === null),
@@ -136,7 +140,7 @@ include("setup.jl")
         (result, uri) ->
             (length(result) == 1) &&
             (first(result).uri == uri) &&
-            (first(result).range.start.line == 6),
+            (first(result).range.start.line == 7),
 
         # m_│func(1.0)
         (result, uri) -> (result === null),
@@ -145,19 +149,19 @@ include("setup.jl")
         (result, uri) ->
             (length(result) == 1) &&
             (first(result).uri == uri) &&
-            (first(result).range.start.line == 12),
+            (first(result).range.start.line == 13),
 
         # m_│func(1.0) in module M2
         (result, uri) ->
             (length(result) == 1) &&
             (first(result).uri == uri) &&
-            (first(result).range.start.line == 16),
+            (first(result).range.start.line == 17),
 
         # M2.m_│func(1.0)
         (result, uri) ->
             (length(result) == 1) &&
             (first(result).uri == uri) &&
-            (first(result).range.start.line == 18),
+            (first(result).range.start.line == 19),
 
         # Base.co│s(x)
         (result, uri) ->

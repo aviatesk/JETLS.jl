@@ -47,7 +47,13 @@ function select_target_node(st::JL.SyntaxTree, offset::Int)
     (kind(first(bas)) !== K"Identifier") && return nothing
 
     for i in 2:length(bas)
-        if kind(bas[i]) !== K"."
+        if kind(bas[i]) === K"."
+            # doesn't follow child module chain
+            if bas[i][1] === bas[i - 1]
+                return bas[i - 1]
+            end
+        else
+            # finish of module chain
             return bas[i - 1]
         end
     end
