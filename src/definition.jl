@@ -38,8 +38,7 @@ No suitable node is found at the offset, it returns `nothing`.
 TODO: some heuristic approach like in rust-analyzer?
 ref: https://github.com/rust-lang/rust-analyzer/blob/6acff6c1f8306a0a1d29be8fd1ffa63cff1ad598/crates/ide/src/goto_definition.rs#L47-L62
 """
-function get_best_node(fi::FileInfo, offset::Int)
-    st = JS.build_tree(JL.SyntaxTree, fi.parsed_stream)
+function get_best_node(st::JL.SyntaxTree, offset::Int)
     bas = byte_ancestors(st, offset)
 
     (kind(first(bas)) !== K"Identifier") && return nothing
@@ -70,7 +69,8 @@ function method_definition_range(m::Method)
 end
 
 function definition_locations(mod::Module, fi::FileInfo, uri::URI, offset::Int, state::ServerState)
-    node = get_best_node(fi, offset)
+    st = JS.build_tree(JL.SyntaxTree, fi.parsed_stream)
+    node = get_best_node(st, offset)
     node === nothing && return nothing
     obj = resolve_property(mod, node)
 

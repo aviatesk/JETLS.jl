@@ -12,6 +12,7 @@ end
     @testset "registration" include("test_registration.jl")
     @testset "completions" include("test_completions.jl")
     @testset "signature help" include("test_signature_help.jl")
+    @testset "definition" include("test_definition.jl")
     @testset "analysis" include("test_analysis.jl")
     @testset "diagnostics" include("test_diagnostics.jl")
     @testset "full lifecycle" include("test_full_lifecycle.jl")
