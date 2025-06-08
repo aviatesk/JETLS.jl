@@ -3,11 +3,17 @@
 // For a full list of overridable settings, and general information on folder-specific settings,
 // see the documentation: https://zed.dev/docs/configuring-zed#settings-files
 {
+  "file_types": {
+    "TOML": [".editorconfig"]
+  },
   "languages": {
     "Markdown": {
       "tab_size": 2,
       "wrap_guides": [80],
       "preferred_line_length": 80
+    },
+    "JSON": {
+      "tab_size": 2
     },
     "Julia": {
       "tab_size": 4,
