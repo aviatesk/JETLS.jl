@@ -68,7 +68,7 @@ end
     method_range = method_definition_range(test_method)
 
     @test method_range isa JETLS.Location
-    @test endswith(method_range.uri.path, PROGRAM_FILE)
+    @test JETLS.URIs2.uri2filepath(method_range.uri) == @__FILE__
     @test method_range.range.start.line == (linenum - 1)
 end
 
