@@ -32,11 +32,14 @@ is_definition_links_supported(server::Server) =
 
 
 """
-Determines the "best" node at a given offset in a file.
-No suitable node is found at the offset, it returns `nothing`.
+Determines the node that the user most likely intends to navigate to.
+Returns `nothing` if no suitable one is found.
 
-TODO: some heuristic approach like in rust-analyzer?
-ref: https://github.com/rust-lang/rust-analyzer/blob/6acff6c1f8306a0a1d29be8fd1ffa63cff1ad598/crates/ide/src/goto_definition.rs#L47-L62
+Currently, it simply checks the ancestors of the node located at the given offset.
+
+TODO: Apply a heuristic similar to rust-analyzer
+refs: https://github.com/rust-lang/rust-analyzer/blob/6acff6c1f8306a0a1d29be8fd1ffa63cff1ad598/crates/ide/src/goto_definition.rs#L47-L62
+      https://github.com/aviatesk/JETLS.jl/pull/61#discussion_r2134707773
 """
 function get_best_node(st::JL.SyntaxTree, offset::Int)
     bas = byte_ancestors(st, offset)
