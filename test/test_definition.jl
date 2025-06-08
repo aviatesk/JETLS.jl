@@ -3,20 +3,8 @@ module test_definition
 using Test
 using JETLS
 using JETLS: JL, JS, get_best_node, method_definition_range, definition_locations,
-             offset_to_xy
+             get_text_and_positions, xy_to_offset
 
-function get_cursor_positions(code::AbstractString; cursor::AbstractString="│")
-    offsets = Int[]
-    while true
-        pos = findfirst(cursor, code)
-        if pos === nothing
-            break
-        end
-        push!(offsets, pos.start)
-        code = replace(code, cursor => "", count=1)
-    end
-    return offsets, replace(code, cursor => "")
-end
 
 function get_target_node(code::AbstractString, pos::Int)
     parsed_stream = JS.ParseStream(code)
@@ -26,10 +14,10 @@ function get_target_node(code::AbstractString, pos::Int)
     return node
 end
 
-function get_target_node(code::AbstractString, cursor::AbstractString="│")
-    cursor_offsets, clean_code = get_cursor_positions(code; cursor=cursor)
-    @assert length(cursor_offsets) == 1
-    return get_target_node(clean_code, first(cursor_offsets))
+function get_target_node(code::AbstractString, matcher::Regex=r"│")
+    clean_code, positions = get_text_and_positions(code, matcher)
+    @assert length(positions) == 1
+    return get_target_node(clean_code, xy_to_offset(Vector{UInt8}(clean_code), positions[1]))
 end
 
 @testset "get_best_node" begin
@@ -179,7 +167,7 @@ include("setup.jl")
             end)
     ]
 
-    positions, clean_code = get_cursor_positions(script_code; cursor="│")
+    clean_code, positions = get_text_and_positions(script_code, r"│")
     @assert length(positions) == length(testers)
 
     withscript(clean_code) do script_path
@@ -196,7 +184,7 @@ include("setup.jl")
                         id,
                         params = DefinitionParams(;
                             textDocument = TextDocumentIdentifier(; uri),
-                            position = offset_to_xy(clean_code, pos))))
+                            position = pos)))
                     tester(raw_res.result, uri)
                 end
             end
