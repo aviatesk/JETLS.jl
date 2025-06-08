@@ -47,15 +47,18 @@ jobs:
       - uses: julia-actions/cache@v2
       - name: set `JET_DEV_MODE=true`
         working-directory: .
-        run: | # allow JET to be loaded on nightly
-          echo '[JET]
-          JET_DEV_MODE = true' >> LocalPreferences.toml
+        run: |
+          echo '
+          [JET] # allow JET to be loaded on nightly
+          JET_DEV_MODE = true
+          ' > LocalPreferences.toml
       - uses: julia-actions/julia-buildpkg@latest
       - uses: julia-actions/julia-runtest@latest
       - uses: julia-actions/julia-processcoverage@v1
       - uses: codecov/codecov-action@v5
 
-  test_runserver:
+  JETLS_DEV_MODE:
+    name: Test with `JETLS_DEV_MODE = true`
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -63,7 +66,35 @@ jobs:
         with:
           version: "1.12-nightly" # most stable version
           arch: x64
+      - uses: julia-actions/cache@v2
+      - name: set `JET_DEV_MODE=true`
+        working-directory: .
+        run: |
+          echo '
+          [JET] # allow JET to be loaded on nightly
+          JET_DEV_MODE = true
+          ' > LocalPreferences.toml
+      - name: set `JETLS_DEV_MODE=true`
+        working-directory: .
+        run: |
+          echo '
+          [JETLS] # enable JETLS dev mode
+          JET_DEV_MODE = true
+          ' > test/LocalPreferences.toml
       - uses: julia-actions/julia-buildpkg@latest
+      - uses: julia-actions/julia-runtest@latest
+      - uses: julia-actions/julia-processcoverage@v1
+      - uses: codecov/codecov-action@v5
+
+  test_runserver:
+    name: Test runserver.jl
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v1
+        with:
+          version: "1.12-nightly" # most stable version
+          arch: x64
       - uses: julia-actions/julia-buildpkg@latest
       - name: run test
         run: |
