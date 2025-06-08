@@ -2,7 +2,7 @@ module test_definition
 
 using Test
 using JETLS
-using JETLS: JL, JS, get_best_node, method_definition_range, definition_locations,
+using JETLS: JL, JS, select_target_node, method_definition_range, definition_locations,
              get_text_and_positions, xy_to_offset
 
 
@@ -10,7 +10,7 @@ function get_target_node(code::AbstractString, pos::Int)
     parsed_stream = JS.ParseStream(code)
     JS.parse!(parsed_stream; rule=:all)
     st = JS.build_tree(JL.SyntaxTree, parsed_stream)
-    node = get_best_node(st, pos)
+    node = select_target_node(st, pos)
     return node
 end
 
@@ -20,7 +20,7 @@ function get_target_node(code::AbstractString, matcher::Regex=r"│")
     return get_target_node(clean_code, xy_to_offset(Vector{UInt8}(clean_code), positions[1]))
 end
 
-@testset "get_best_node" begin
+@testset "select_target_node" begin
     let code = """
         test_│func(5)
         """

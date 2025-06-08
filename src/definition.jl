@@ -41,7 +41,7 @@ TODO: Apply a heuristic similar to rust-analyzer
 refs: https://github.com/rust-lang/rust-analyzer/blob/6acff6c1f8306a0a1d29be8fd1ffa63cff1ad598/crates/ide/src/goto_definition.rs#L47-L62
       https://github.com/aviatesk/JETLS.jl/pull/61#discussion_r2134707773
 """
-function get_best_node(st::JL.SyntaxTree, offset::Int)
+function select_target_node(st::JL.SyntaxTree, offset::Int)
     bas = byte_ancestors(st, offset)
 
     (kind(first(bas)) !== K"Identifier") && return nothing
@@ -73,7 +73,7 @@ end
 
 function definition_locations(mod::Module, fi::FileInfo, uri::URI, offset::Int, state::ServerState)
     st = JS.build_tree(JL.SyntaxTree, fi.parsed_stream)
-    node = get_best_node(st, offset)
+    node = select_target_node(st, offset)
     node === nothing && return nothing
     obj = resolve_property(mod, node)
 
