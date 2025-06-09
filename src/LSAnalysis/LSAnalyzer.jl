@@ -18,7 +18,7 @@ function inference_error_report_stack(@nospecialize report::JET.InferenceErrorRe
 end
 
 """
-    JETLSAnalyzer <: AbstractAnalyzer
+    LSAnalyzer <: AbstractAnalyzer
 
 This is a code analyzer specially designed for the language server.
 It is implemented using the `JET.AbstractAnalyzer` framework,
@@ -31,41 +31,41 @@ Currently, it analyzes the following errors:
   * [ ] Reports undefined local variables
   * [ ] Reports undefined static parameters
 """
-struct JETLSAnalyzer <: AbstractAnalyzer
+struct LSAnalyzer <: AbstractAnalyzer
     state::AnalyzerState
     analysis_token::AnalysisToken
     method_table::CC.CachedMethodTable{CC.InternalMethodTable}
-    function JETLSAnalyzer(state::AnalyzerState, analysis_token::AnalysisToken)
+    function LSAnalyzer(state::AnalyzerState, analysis_token::AnalysisToken)
         method_table = CC.CachedMethodTable(CC.InternalMethodTable(state.world))
         return new(state, analysis_token, method_table)
     end
-    function JETLSAnalyzer(state::AnalyzerState)
+    function LSAnalyzer(state::AnalyzerState)
         cache_key = JET.compute_hash(state.inf_params)
         analysis_token = get!(AnalysisToken, LS_ANALYZER_CACHE, cache_key)
-        return JETLSAnalyzer(state, analysis_token)
+        return LSAnalyzer(state, analysis_token)
     end
 end
 
 # AbstractInterpreter API
 # =======================
 
-# JETLSAnalyzer does not need any sources, so discard them always
-CC.maybe_compress_codeinfo(::JETLSAnalyzer, ::MethodInstance, ::CodeInfo) = nothing
-CC.may_optimize(::JETLSAnalyzer) = false
-CC.method_table(analyzer::JETLSAnalyzer) = analyzer.method_table
-CC.typeinf_lattice(::JETLSAnalyzer) =
+# LSAnalyzer does not need any sources, so discard them always
+CC.maybe_compress_codeinfo(::LSAnalyzer, ::MethodInstance, ::CodeInfo) = nothing
+CC.may_optimize(::LSAnalyzer) = false
+CC.method_table(analyzer::LSAnalyzer) = analyzer.method_table
+CC.typeinf_lattice(::LSAnalyzer) =
     CC.InferenceLattice(CC.MustAliasesLattice(CC.BaseInferenceLattice.instance))
-CC.ipo_lattice(::JETLSAnalyzer) =
+CC.ipo_lattice(::LSAnalyzer) =
     CC.InferenceLattice(CC.InterMustAliasesLattice(CC.IPOResultLattice.instance))
 
 # AbstractAnalyzer API
 # ====================
 
-JETInterface.AnalyzerState(analyzer::JETLSAnalyzer) = analyzer.state
-function JETInterface.AbstractAnalyzer(analyzer::JETLSAnalyzer, state::AnalyzerState)
-    return JETLSAnalyzer(state, )
+JETInterface.AnalyzerState(analyzer::LSAnalyzer) = analyzer.state
+function JETInterface.AbstractAnalyzer(analyzer::LSAnalyzer, state::AnalyzerState)
+    return LSAnalyzer(state, )
 end
-JETInterface.AnalysisToken(analyzer::JETLSAnalyzer) = analyzer.analysis_token
+JETInterface.AnalysisToken(analyzer::LSAnalyzer) = analyzer.analysis_token
 
 const LS_ANALYZER_CACHE = IdDict{UInt, AnalysisToken}()
 
@@ -73,25 +73,25 @@ const LS_ANALYZER_CACHE = IdDict{UInt, AnalysisToken}()
 # ===================
 
 """
-    bail_out_call(analyzer::JETLSAnalyzer, ...)
+    bail_out_call(analyzer::LSAnalyzer, ...)
 
-This overload makes call inference performed by `JETLSAnalyzer` not bail out even when
+This overload makes call inference performed by `LSAnalyzer` not bail out even when
 inferred return type grows up to `Any` to collect as much error reports as possible.
 That potentially slows down inference performance, but it would stay to be practical
 given that the number of matching methods are limited beforehand.
 """
-CC.bail_out_call(::JETLSAnalyzer, ::CC.InferenceLoopState, ::CC.InferenceState) = false
+CC.bail_out_call(::LSAnalyzer, ::CC.InferenceLoopState, ::CC.InferenceState) = false
 
 """
-    bail_out_toplevel_call(analyzer::JETLSAnalyzer, ...)
+    bail_out_toplevel_call(analyzer::LSAnalyzer, ...)
 
-This overload allows `JETLSAnalyzer` to keep inference going on
+This overload allows `LSAnalyzer` to keep inference going on
 non-concrete call sites in a toplevel frame created by `JET.virtual_process`.
 """
-CC.bail_out_toplevel_call(::JETLSAnalyzer, ::CC.InferenceState) = false
+CC.bail_out_toplevel_call(::LSAnalyzer, ::CC.InferenceState) = false
 
 # TODO Better to factor out and share it with `JET.JETAnalyzer`
-function CC.abstract_eval_globalref(analyzer::JETLSAnalyzer,
+function CC.abstract_eval_globalref(analyzer::LSAnalyzer,
     g::GlobalRef, saw_latestworld::Bool, sv::CC.InferenceState)
     if saw_latestworld
         return CC.RTEffects(Any, Any, CC.generic_getglobal_effects)
@@ -135,7 +135,7 @@ function JETInterface.print_report_message(io::IO, r::UndefVarErrorReport)
 end
 inference_error_report_stack_impl(r::UndefVarErrorReport) = length(r.vst):-1:1
 
-function report_undef_global_var!(analyzer::JETLSAnalyzer,
+function report_undef_global_var!(analyzer::LSAnalyzer,
     sv::CC.InferenceState, binding::Core.Binding, partition::Core.BindingPartition)
     gr = binding.globalref
     # TODO use `abstract_eval_isdefinedglobal` for respecting world age
@@ -161,7 +161,7 @@ end
 # ===========
 
 # the entry constructor
-function JETLSAnalyzer(world::UInt = Base.get_world_counter();
+function LSAnalyzer(world::UInt = Base.get_world_counter();
                     jetconfigs...)
     jetconfigs = JET.kwargs_dict(jetconfigs)
     jetconfigs[:aggressive_constant_propagation] = true
@@ -172,11 +172,11 @@ function JETLSAnalyzer(world::UInt = Base.get_world_counter();
     # make the situation worse.
     jetconfigs[:assume_bindings_static] = true
     state = AnalyzerState(world; jetconfigs...)
-    return JETLSAnalyzer(state)
+    return LSAnalyzer(state)
 end
 
 const LS_ANALYZER_CONFIGURATIONS = Set{Symbol}(())
 
 let valid_keys = JET.GENERAL_CONFIGURATIONS ∪ LS_ANALYZER_CONFIGURATIONS
-    @eval JETInterface.valid_configurations(::JETLSAnalyzer) = $valid_keys
+    @eval JETInterface.valid_configurations(::LSAnalyzer) = $valid_keys
 end
