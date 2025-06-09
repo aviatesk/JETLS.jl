@@ -16,7 +16,7 @@ LSInterpreter(state::ServerState) = LSInterpreter(state.file_cache, LSAnalyzer()
 # `JET.ConcreteInterpreter` interface
 JET.get_state(interp::LSInterpreter) = interp.state
 JET.ConcreteInterpreter(interp::LSInterpreter, state::JET.InterpretationState) = LSInterpreter(interp.file_cache, interp.analyzer, state)
-JET.AbstractAnalyzer(interp::LSInterpreter) = interp.analyzer
+JET.ToplevelAbstractAnalyzer(interp::LSInterpreter) = interp.analyzer
 
 # overloads
 # =========
