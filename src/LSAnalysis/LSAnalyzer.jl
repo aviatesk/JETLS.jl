@@ -1,4 +1,3 @@
-using Core.IR
 using JET.JETInterface
 using JET: JET, CC
 
@@ -50,7 +49,7 @@ end
 # =======================
 
 # LSAnalyzer does not need any sources, so discard them always
-CC.maybe_compress_codeinfo(::LSAnalyzer, ::MethodInstance, ::CodeInfo) = nothing
+CC.maybe_compress_codeinfo(::LSAnalyzer, ::Core.MethodInstance, ::Core.CodeInfo) = nothing
 CC.may_optimize(::LSAnalyzer) = false
 CC.method_table(analyzer::LSAnalyzer) = analyzer.method_table
 CC.typeinf_lattice(::LSAnalyzer) =

@@ -25,7 +25,7 @@ using .JSONRPC
 
 using REPL # loading REPL is necessary to make `Base.Docs.doc(::Base.Docs.Binding)` work
 using Pkg, JuliaSyntax
-using JET: JET
+using JET: CC, JET
 using JuliaSyntax: JuliaSyntax as JS
 using JuliaLowering: JuliaLowering as JL
 
@@ -899,12 +899,13 @@ module __demo__ end
         uri = filepath2uri(filename)
         @compile_workload let
             cache_file_info!(state, uri, #=version=#1, text, filename)
-            comp_params = CompletionParams(;
-                textDocument = TextDocumentIdentifier(; uri),
-                position)
-            items = get_completion_items(state, uri, comp_params)
-            any(item->item.label=="out", items) || @warn "completion seems to be broken"
-            any(item->item.label=="bar", items) || @warn "completion seems to be broken"
+            let comp_params = CompletionParams(;
+                    textDocument = TextDocumentIdentifier(; uri),
+                    position)
+                items = get_completion_items(state, uri, comp_params)
+                any(item->item.label=="out", items) || @warn "completion seems to be broken"
+                any(item->item.label=="bar", items) || @warn "completion seems to be broken"
+            end
 
             # compile `LSInterpreter`
             JET.analyze_and_report_file!(LSInterpreter(state), normpath(pkgdir(JET), "demo.jl");

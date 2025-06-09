@@ -266,7 +266,6 @@ function byte_ancestors(sn::JS.SyntaxNode, rng::UnitRange{Int})
 end
 byte_ancestors(sn::JS.SyntaxNode, byte::Int) = byte_ancestors(sn, byte:byte)
 
-
 """
 Resolve a name's value given a root module and an expression like `M1.M2.M3.f`,
 which parses to `(. (. (. M1 M2) M3) f)`.  If we hit something undefined, return
