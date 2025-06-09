@@ -30,7 +30,7 @@ Currently, it analyzes the following errors:
   * [ ] Reports undefined local variables
   * [ ] Reports undefined static parameters
 """
-struct LSAnalyzer <: AbstractAnalyzer
+struct LSAnalyzer <: ToplevelAbstractAnalyzer
     state::AnalyzerState
     analysis_token::AnalysisToken
     method_table::CC.CachedMethodTable{CC.InternalMethodTable}
@@ -95,7 +95,7 @@ function CC.abstract_eval_globalref(analyzer::LSAnalyzer,
     if saw_latestworld
         return CC.RTEffects(Any, Any, CC.generic_getglobal_effects)
     end
-    (valid_worlds, ret) = CC.scan_leaf_partitions(analyzer, g, sv.world) do analyzer::AbstractAnalyzer, binding::Core.Binding, partition::Core.BindingPartition
+    (valid_worlds, ret) = CC.scan_leaf_partitions(analyzer, g, sv.world) do analyzer::LSAnalyzer, binding::Core.Binding, partition::Core.BindingPartition
         if partition.min_world ≤ sv.world.this ≤ partition.max_world # XXX This should probably be fixed on the Julia side
             report_undef_global_var!(analyzer, sv, binding, partition)
         end
