@@ -66,7 +66,7 @@ function JETInterface.AbstractAnalyzer(analyzer::LSAnalyzer, state::AnalyzerStat
 end
 JETInterface.AnalysisToken(analyzer::LSAnalyzer) = analyzer.analysis_token
 
-const LS_ANALYZER_CACHE = IdDict{UInt, AnalysisToken}()
+const LS_ANALYZER_CACHE = Dict{UInt, AnalysisToken}()
 
 # analysis injections
 # ===================
