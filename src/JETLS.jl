@@ -114,8 +114,8 @@ struct Server{Callback}
     end
 end
 
-include("analysis/analysis.jl")
-using .Analysis
+include("LSAnalysis/LSAnalysis.jl")
+using .LSAnalysis
 
 const DEFAULT_DOCUMENT_SELECTOR = DocumentFilter[
     DocumentFilter(; language = "julia")
@@ -536,11 +536,11 @@ function analyze_parsed_if_exist(state::ServerState, uri::URI, args...; kwargs..
         parsed_stream = file_info.parsed_stream
         filename = uri2filename(uri)::String
         parsed = JS.build_tree(JS.SyntaxNode, parsed_stream; filename)
-        return JET.analyze_and_report_expr!(JETLSInterpreter(state), parsed, filename, args...; kwargs...)
+        return JET.analyze_and_report_expr!(LSInterpreter(state), parsed, filename, args...; kwargs...)
     else
         filepath = uri2filepath(uri)
         @assert filepath !== nothing "Unsupported URI: $uri"
-        return JET.analyze_and_report_file!(JETLSInterpreter(state), filepath, args...; kwargs...)
+        return JET.analyze_and_report_file!(LSInterpreter(state), filepath, args...; kwargs...)
     end
 end
 
@@ -724,12 +724,12 @@ function initiate_context!(state::ServerState, uri::URI)
         if env_path !== nothing
             entry = ScriptInEnvAnalysisEntry(env_path, uri)
             result = activate_do(env_path) do
-                JET.analyze_and_report_expr!(JETLSInterpreter(state), parsed, filename;
+                JET.analyze_and_report_expr!(LSInterpreter(state), parsed, filename;
                     toplevel_logger=stderr)
             end
         else
             entry = ScriptAnalysisEntry(uri)
-            result = JET.analyze_and_report_expr!(JETLSInterpreter(state), parsed, filename;
+            result = JET.analyze_and_report_expr!(LSInterpreter(state), parsed, filename;
                 toplevel_logger=stderr)
         end
         analysis_context = new_analysis_context(entry, result)
@@ -906,8 +906,8 @@ module __demo__ end
             any(item->item.label=="out", items) || @warn "completion seems to be broken"
             any(item->item.label=="bar", items) || @warn "completion seems to be broken"
 
-            # compile `JETLSInterpreter`
-            JET.analyze_and_report_file!(JETLSInterpreter(state), normpath(pkgdir(JET), "demo.jl");
+            # compile `LSInterpreter`
+            JET.analyze_and_report_file!(LSInterpreter(state), normpath(pkgdir(JET), "demo.jl");
                 virtualize=false,
                 context=__demo__,
                 toplevel_logger=nothing)

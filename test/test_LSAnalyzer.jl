@@ -1,15 +1,15 @@
-module test_analysis
+module test_LSAnalyzer
 
 using Test
 include("interactive_utils.jl")
 using JETLS.JET: get_reports
-using JETLS.Analysis: UndefVarErrorReport
+using JETLS.LSAnalysis: UndefVarErrorReport
 
-# test basic analysis abilities of `JETLSAnalyzer`
+# test basic analysis abilities of `LSAnalyzer`
 function report_undef()
     return sin(undefvar)
 end
-@testset "JETLSAnalyzer" begin
+@testset "LSAnalyzer" begin
     let result = analyze_call() do
             sin(undefvar)
         end
@@ -26,4 +26,4 @@ end
     end
 end
 
-end # module test_analysis
+end # module test_LSAnalyzer
