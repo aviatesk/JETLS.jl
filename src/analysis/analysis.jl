@@ -1,7 +1,8 @@
 module Analysis
 
-export JETLSAnalyzer, inference_error_report_stack
+export JETLSAnalyzer, JETLSInterpreter, inference_error_report_stack
 
 include("JETLSAnalyzer.jl")
+include("JETLSInterpreter.jl")
 
 end # Analysis

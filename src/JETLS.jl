@@ -23,9 +23,6 @@ using .LSP
 include("JSONRPC.jl")
 using .JSONRPC
 
-include("analysis/analysis.jl")
-using .Analysis
-
 using REPL # loading REPL is necessary to make `Base.Docs.doc(::Base.Docs.Binding)` work
 using Pkg, JuliaSyntax
 using JET: JET
@@ -116,6 +113,9 @@ struct Server{Callback}
         )
     end
 end
+
+include("analysis/analysis.jl")
+using .Analysis
 
 const DEFAULT_DOCUMENT_SELECTOR = DocumentFilter[
     DocumentFilter(; language = "julia")
@@ -536,11 +536,11 @@ function analyze_parsed_if_exist(state::ServerState, uri::URI, args...; kwargs..
         parsed_stream = file_info.parsed_stream
         filename = uri2filename(uri)::String
         parsed = JS.build_tree(JS.SyntaxNode, parsed_stream; filename)
-        return JET.analyze_and_report_expr!(JETLSAnalyzer(), parsed, filename, args...; kwargs...)
+        return JET.analyze_and_report_expr!(JETLSInterpreter(state), parsed, filename, args...; kwargs...)
     else
         filepath = uri2filepath(uri)
         @assert filepath !== nothing "Unsupported URI: $uri"
-        return JET.analyze_and_report_file!(JETLSAnalyzer(), filepath, args...; kwargs...)
+        return JET.analyze_and_report_file!(JETLSInterpreter(state), filepath, args...; kwargs...)
     end
 end
 
@@ -717,7 +717,6 @@ function initiate_context!(state::ServerState, uri::URI)
         diagnostics = parsed_stream_to_diagnostics(parsed_stream, file_info.filename)
         return (uri => diagnostics,)
     end
-    include_callback = IncludeCallback(state)
     if env_path === nothing
         @label analyze_script
         filename = file_info.filename
@@ -725,15 +724,13 @@ function initiate_context!(state::ServerState, uri::URI)
         if env_path !== nothing
             entry = ScriptInEnvAnalysisEntry(env_path, uri)
             result = activate_do(env_path) do
-                JET.analyze_and_report_expr!(JETLSAnalyzer(), parsed, filename;
-                    toplevel_logger=stderr,
-                    include_callback)
+                JET.analyze_and_report_expr!(JETLSInterpreter(state), parsed, filename;
+                    toplevel_logger=stderr)
             end
         else
             entry = ScriptAnalysisEntry(uri)
-            result = JET.analyze_and_report_expr!(JETLSAnalyzer(), parsed, filename;
-                toplevel_logger=stderr,
-                include_callback)
+            result = JET.analyze_and_report_expr!(JETLSInterpreter(state), parsed, filename;
+                toplevel_logger=stderr)
         end
         analysis_context = new_analysis_context(entry, result)
         @assert uri in analyzed_file_uris(analysis_context)
@@ -764,8 +761,7 @@ function initiate_context!(state::ServerState, uri::URI)
                     toplevel_logger=nothing,
                     analyze_from_definitions=true,
                     target_defined_modules=true,
-                    concretization_patterns=[:(x_)],
-                    include_callback)
+                    concretization_patterns=[:(x_)])
                 return entry, res
             end
             if entry_result === nothing
@@ -783,8 +779,7 @@ function initiate_context!(state::ServerState, uri::URI)
             runtestsuri = filepath2uri(runtestsfile)
             result = activate_do(env_path) do
                 analyze_parsed_if_exist(state, runtestsuri;
-                    toplevel_logger=stderr,
-                    include_callback)
+                    toplevel_logger=stderr)
             end
             entry = PackageTestAnalysisEntry(env_path, runtestsuri)
             analysis_context = new_analysis_context(entry, result)
@@ -826,16 +821,13 @@ function reanalyze_with_context!(state::ServerState, analysis_context::AnalysisC
             for (uri, file_info) in parse_failed)
     end
     entry = analysis_context.entry
-    include_callback = IncludeCallback(state)
     if entry isa ScriptAnalysisEntry
         result = analyze_parsed_if_exist(state, entry.uri;
-            toplevel_logger=stderr,
-            include_callback)
+            toplevel_logger=stderr)
     elseif entry isa ScriptInEnvAnalysisEntry
         result = activate_do(entry.env_path) do
             analyze_parsed_if_exist(state, entry.uri;
-                toplevel_logger=stderr,
-                include_callback)
+                toplevel_logger=stderr)
         end
     elseif entry isa PackageSourceAnalysisEntry
         result = activate_do(entry.env_path) do
@@ -844,14 +836,12 @@ function reanalyze_with_context!(state::ServerState, analysis_context::AnalysisC
                     toplevel_logger=nothing,
                     analyze_from_definitions=true,
                     target_defined_modules=true,
-                    concretization_patterns=[:(x_)],
-                    include_callback)
+                    concretization_patterns=[:(x_)])
         end
     elseif entry isa PackageTestAnalysisEntry
         result = activate_do(entry.env_path) do
             analyze_parsed_if_exist(state, entry.runtestsuri;
-                toplevel_logger=stderr,
-                include_callback)
+                toplevel_logger=stderr)
         end
     else
         @warn "Unsupported analysis entry" entry
@@ -891,6 +881,7 @@ function get_text_and_positions(text::AbstractString, matcher::Regex=r"#=cursor=
 end
 
 using PrecompileTools
+module __demo__ end
 @setup_workload let
     state = ServerState()
     text, positions = get_text_and_positions("""
@@ -914,6 +905,12 @@ using PrecompileTools
             items = get_completion_items(state, uri, comp_params)
             any(item->item.label=="out", items) || @warn "completion seems to be broken"
             any(item->item.label=="bar", items) || @warn "completion seems to be broken"
+
+            # compile `JETLSInterpreter`
+            JET.analyze_and_report_file!(JETLSInterpreter(state), normpath(pkgdir(JET), "demo.jl");
+                virtualize=false,
+                context=__demo__,
+                toplevel_logger=nothing)
         end
     end
 end
