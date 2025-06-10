@@ -439,6 +439,7 @@ function add_emoji_latex_completions!(items::Dict{String,CompletionItem}, state:
             kind=CompletionItemKind.Snippet,
             documentation=val,
             sortText,
+            filterText = key,
             textEdit=TextEdit(;
                 range = Range(;
                     start = backslash_pos,
