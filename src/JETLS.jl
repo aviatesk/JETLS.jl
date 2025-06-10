@@ -59,6 +59,7 @@ mutable struct FullAnalysisResult
     staled::Bool
     last_analysis::Float64
     actual2virtual::JET.Actual2Virtual
+    analyzer # ::LSAnalyzer
     const uri2diagnostics::Dict{URI,Vector{Diagnostic}}
     const analyzed_file_infos::Dict{URI,JET.AnalyzedFileInfo}
     const successfully_analyzed_file_infos::Dict{URI,JET.AnalyzedFileInfo}
@@ -556,7 +557,9 @@ function new_analysis_context(entry::AnalysisEntry, result)
     uri2diagnostics = jet_result_to_diagnostics(keys(analyzed_file_infos), result)
     successfully_analyzed_file_infos = copy(analyzed_file_infos)
     is_full_analysis_successful(result) || empty!(successfully_analyzed_file_infos)
-    analysis_result = FullAnalysisResult(false, time(), result.res.actual2virtual, uri2diagnostics, analyzed_file_infos, successfully_analyzed_file_infos)
+    analysis_result = FullAnalysisResult(
+        false, time(), result.res.actual2virtual, result.analyzer,
+        uri2diagnostics, analyzed_file_infos, successfully_analyzed_file_infos)
     return AnalysisContext(entry, analysis_result)
 end
 
@@ -586,6 +589,7 @@ function update_analysis_context!(analysis_context::AnalysisContext, result)
     analysis_context.result.last_analysis = time()
     if is_full_analysis_successful(result)
         analysis_context.result.actual2virtual = result.res.actual2virtual
+        analysis_context.result.analyzer = result.analyzer
     end
 end
 

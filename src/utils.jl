@@ -286,4 +286,3 @@ function resolve_property(mod::Module, st0::JL.SyntaxTree)
     JETLS_DEV_MODE && @info "resolve_property couldn't handle form:" mod st0
     return nothing
 end
-
