@@ -282,14 +282,15 @@ function make_siginfo(m::Method, ca::CallArgs, active_arg::Union{Int, Symbol};
     return SignatureInformation(; label, documentation, parameters, activeParameter)
 end
 
+const empty_siginfos = SignatureInformation[]
+
 function cursor_siginfos(mod::Module, ps::JS.ParseStream, b::Int;
                          postprocessor::JET.PostProcessor=JET.PostProcessor())
-    out = SignatureInformation[]
     call, after_semicolon = let st0 = JS.build_tree(JL.SyntaxTree, ps; ignore_errors=true)
         # tolerate one-past-last byte. TODO: go back to closest non-whitespace?
         bas = byte_ancestors(st0, b-1)
         i = findfirst(st -> JS.kind(st) === K"call", bas)
-        i === nothing && return out
+        i === nothing && return empty_siginfos
 
         # If parents of our call are like (function (where (where ... (call |) ...))),
         # we're actually in a declaration, and shouldn't show signature help.
@@ -298,19 +299,20 @@ function cursor_siginfos(mod::Module, ps::JS.ParseStream, b::Int;
         while j + 1 <= lastindex(bas) && kind(bas[j+1]) === K"where"
             j += 1
         end
-        j <= lastindex(bas) && kind(bas[j]) === K"function" && return out
+        j <= lastindex(bas) && kind(bas[j]) === K"function" && return empty_siginfos
 
         after_semicolon = i > 1 && kind(bas[i-1]) === K"parameters" && b > JS.first_byte(bas[i-1])
         bas[i], after_semicolon
     end
     # TODO: dotcall support
-    JS.numchildren(call) === 0 && return out
+    JS.numchildren(call) === 0 && return empty_siginfos
 
     # TODO: We could be calling a local variable.  If it shadows a method, our
     # ignoring it is misleading.  We need to either know about local variables
     # in this scope (maybe by caching completion info) or duplicate some work.
     fn = resolve_property(mod, call[1])
-    !isa(fn, Function) && return out
+    candidate_methods = methods(fn)
+    isempty(candidate_methods) && return empty_siginfos
 
     ca = CallArgs(call, b)
 
@@ -330,7 +332,8 @@ function cursor_siginfos(mod::Module, ps::JS.ParseStream, b::Int;
         end
     end
 
-    for m in methods(fn)
+    out = SignatureInformation[]
+    for m in candidate_methods
         if compatible_call(m, ca)
             siginfo = make_siginfo(m, ca, active_arg; postprocessor)
             if siginfo !== nothing
