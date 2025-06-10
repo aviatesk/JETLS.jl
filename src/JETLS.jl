@@ -446,7 +446,7 @@ function handle_DidOpenTextDocumentNotification(server::Server, msg::DidOpenText
     cache_file_info!(state, uri, textDocument.version, textDocument.text, filename)
     if !haskey(state.contexts, uri)
         res = initiate_context!(state, uri)
-        if res === nothing
+        if res === nothing || res isa AnalysisContext
             notify_diagnostics!(server)
         else
             notify_diagnostics!(server, res)
@@ -462,7 +462,7 @@ function handle_DidOpenTextDocumentNotification(server::Server, msg::DidOpenText
             id = hash(reanalyze_with_context!, hash(context))
             throttle(id, 3.0) do
                 res = reanalyze_with_context!(state, context)
-                if res === nothing
+                if res === nothing || res isa AnalysisContext
                     notify_diagnostics!(server)
                 else
                     notify_diagnostics!(server, res)
@@ -487,7 +487,7 @@ function handle_DidChangeTextDocumentNotification(server::Server, msg::DidChange
     cache_file_info!(state, uri, textDocument.version, text, filename)
     if !haskey(state.contexts, uri)
         res = initiate_context!(state, uri)
-        if res === nothing
+        if res === nothing || res isa AnalysisContext
             notify_diagnostics!(server)
         else
             notify_diagnostics!(server, res)
@@ -507,7 +507,7 @@ function handle_DidChangeTextDocumentNotification(server::Server, msg::DidChange
         throttle(id, 3.0) do
             debounce(id, 1.5) do
                 res = reanalyze_with_context!(state, context)
-                if res === nothing
+                if res === nothing || res isa AnalysisContext
                     notify_diagnostics!(server)
                 else
                     notify_diagnostics!(server, res)
@@ -795,7 +795,7 @@ function initiate_context!(state::ServerState, uri::URI)
         end
     end
 
-    return nothing
+    return analysis_context
 end
 
 function reanalyze_with_context!(state::ServerState, analysis_context::AnalysisContext)
@@ -853,7 +853,7 @@ function reanalyze_with_context!(state::ServerState, analysis_context::AnalysisC
     end
     update_analysis_context!(analysis_context, result)
     record_reverse_map!(state, analysis_context)
-    return nothing
+    return analysis_context
 end
 
 function get_text_and_positions(text::AbstractString, matcher::Regex=r"#=cursor=#")
