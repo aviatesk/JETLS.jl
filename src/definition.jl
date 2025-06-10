@@ -87,7 +87,7 @@ end
 function handle_DefinitionRequest(server::Server, msg::DefinitionRequest)
     state = server.state
     origin_position = msg.params.position
-    uri = URI(msg.params.textDocument.uri)
+    uri = msg.params.textDocument.uri
     fi = get_fileinfo(state, uri)
     offset = xy_to_offset(fi, origin_position)
     mod = find_file_module(state, uri, origin_position)
