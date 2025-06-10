@@ -265,24 +265,3 @@ function byte_ancestors(sn::JS.SyntaxNode, rng::UnitRange{Int})
     return reverse!(out)
 end
 byte_ancestors(sn::JS.SyntaxNode, byte::Int) = byte_ancestors(sn, byte:byte)
-
-"""
-Resolve a name's value given a root module and an expression like `M1.M2.M3.f`,
-which parses to `(. (. (. M1 M2) M3) f)`.  If we hit something undefined, return
-nothing.  This doesn't support some cases, e.g. `(print("hi"); Base).print`
-"""
-function resolve_property(mod::Module, st0::JL.SyntaxTree)
-    if JS.is_leaf(st0)
-        # Would otherwise throw an unhelpful error.  Is this true of all leaf nodes?
-        @assert JL.hasattr(st0, :name_val)
-        s = Symbol(st0.name_val)
-        !(@invokelatest isdefinedglobal(mod, s)) && return nothing
-        return @invokelatest getglobal(mod, s)
-    elseif kind(st0) === K"."
-        @assert JS.numchildren(st0) === 2
-        lhs = resolve_property(mod, st0[1])
-        return resolve_property(lhs, st0[2])
-    end
-    JETLS_DEV_MODE && @info "resolve_property couldn't handle form:" mod st0
-    return nothing
-end
