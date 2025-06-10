@@ -19,15 +19,27 @@ n_si(args...) = length(siginfos(args...))
 
 module M_sanity
 i_exist(a,b,c) = 0
+struct SExist1; s; end # just 1 construct (w/o the conversion method)
+struct SExist2; s::String; end # just 1 construct (w/o the conversion method)
+struct SExist3
+    s
+    SExist3(@nospecialize s) = new(s)
+end
 end
 @testset "sanity" begin
-    @test 1 === n_si(M_sanity, "i_exist(|)")
-    @test 1 === n_si(M_sanity, "i_exist(1,2,3|)")
-    @test 1 === n_si(M_sanity, "i_exist(|1,2,3)")
-    @test 0 === n_si(M_sanity, "i_do_not_exist(|)")
-    @test 0 === n_si(M_sanity, "|")
-    @test 0 === n_si(M_sanity, "(|)")
-    @test 0 === n_si(M_sanity, "()|")
+    @test 1 == n_si(M_sanity, "i_exist(|)")
+    @test 1 == n_si(M_sanity, "i_exist(1,2,3|)")
+    @test 1 == n_si(M_sanity, "i_exist(|1,2,3)")
+    @test 0 == n_si(M_sanity, "i_do_not_exist(|)")
+    @test 0 == n_si(M_sanity, "|")
+    @test 0 == n_si(M_sanity, "(|)")
+    @test 0 == n_si(M_sanity, "()|")
+    @test 1 == n_si(M_sanity, "SExist1(|)")
+    @test 0 == n_si(M_sanity, "SExist1(1,2|)")
+    @test 2 == n_si(M_sanity, "SExist2(|)")
+    @test 0 == n_si(M_sanity, "SExist2(1,2|)")
+    @test 1 == n_si(M_sanity, "SExist3(|)")
+    @test 0 == n_si(M_sanity, "SExist3(1,2|)")
 end
 
 @testset "don't show help in method definitions" begin
