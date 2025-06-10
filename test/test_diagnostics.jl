@@ -10,7 +10,7 @@ using JETLS.URIs2
 
 @testset "syntax error diagnostics" begin
     # Test with code that has syntax errors
-    scriptcode = """
+    script_code = """
     function foo()
         x = 1
         if x > 0
@@ -19,22 +19,31 @@ using JETLS.URIs2
     end
     """
 
-    withscript(scriptcode) do script_path
+    withscript(script_code) do script_path
         uri = filepath2uri(script_path)
         withserver() do (; writereadmsg, id_counter)
-            (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, scriptcode))
+            (; raw_res) = writereadmsg(
+                make_DidOpenTextDocumentNotification(uri, script_code);
+                read = 0) # `textDocument/publishDiagnostics` is not notified by the server due to the existence of syntax errors
 
-            @test raw_res isa PublishDiagnosticsNotification
-            @test raw_res.params.uri == uri
+            let id = id_counter[] += 1
+                (; raw_res) = writereadmsg(DocumentDiagnosticRequest(;
+                    id,
+                    params = DocumentDiagnosticParams(;
+                        textDocument = TextDocumentIdentifier(; uri)
+                    )))
+                @test raw_res isa DocumentDiagnosticResponse
+                @test raw_res.result isa RelatedFullDocumentDiagnosticReport
 
-            found_diagnostic = false
-            for diag in raw_res.params.diagnostics
-                if diag.source == JETLS.SYNTAX_DIAGNOSTIC_SOURCE
-                    found_diagnostic = true
-                    break
+                found_diagnostic = false
+                for diag in raw_res.result.items
+                    if diag.source == JETLS.SYNTAX_DIAGNOSTIC_SOURCE
+                        found_diagnostic = true
+                        break
+                    end
                 end
+                @test found_diagnostic
             end
-            @test found_diagnostic
         end
     end
 end

@@ -347,8 +347,8 @@ function cursor_siginfos(mod::Module, ps::JS.ParseStream, b::Int, analyzer::LSAn
 end
 
 """
-textDocument/signatureHelp is requested when one of the negotiated trigger
-characters is typed.  Eglot (emacs) requests it more frequently.
+`textDocument/signatureHelp` is requested when one of the negotiated trigger characters is typed.
+Some clients, e.g. Eglot (emacs), requests it more frequently.
 """
 function handle_SignatureHelpRequest(server::Server, msg::SignatureHelpRequest)
     state = server.state

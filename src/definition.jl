@@ -1,6 +1,6 @@
 using .JS
 
-const DEFINITION_REGISTRATION_ID = "textDocument-definition"
+const DEFINITION_REGISTRATION_ID = "jetls-definition"
 const DEFINITION_REGISTRATION_METHOD = "textDocument/definition"
 
 function definition_options()
@@ -25,7 +25,7 @@ end
 
 # TODO: memorize this?
 is_definition_links_supported(server::Server) =
-        getobjpath(server.state.init_params.capabilities,
+    getobjpath(server.state.init_params.capabilities,
         :textDocument, :definition, :linkSupport) === true
 
 """
