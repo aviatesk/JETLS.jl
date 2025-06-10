@@ -4,6 +4,7 @@ using Test
 using JETLS
 using JETLS: JL, JS
 using JETLS.URIs2
+using JETLS.LSAnalysis: LSAnalyzer
 using JETLS: cursor_siginfos
 
 # siginfos(mod, code, cursor="|") -> siginfos
@@ -12,7 +13,7 @@ using JETLS: cursor_siginfos
 function siginfos(mod::Module, code::AbstractString, cursor::AbstractString="|")
     b = findfirst(cursor, code).start
     ps = JS.ParseStream(replace(code, cursor=>"", count=1)); JS.parse!(ps)
-    return cursor_siginfos(mod, ps, b)
+    return cursor_siginfos(mod, ps, b, LSAnalyzer())
 end
 
 n_si(args...) = length(siginfos(args...))

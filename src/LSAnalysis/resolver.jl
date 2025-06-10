@@ -30,8 +30,8 @@ However, this implementation requires JL to be able to lower arbitrary user code
 which first requires integration of JL into Base.
 """
 resolve_node(analyzer::LSAnalyzer, context_module::Module, s0::Union{JS.SyntaxNode,JL.SyntaxTree}) =
-    resolve_node(Expr(s0))
-function resolve_node(analyzer::LSAnalyzer, context_module::Module, ex::Expr)
+    resolve_node(analyzer, context_module, Expr(s0))
+function resolve_node(analyzer::LSAnalyzer, context_module::Module, @nospecialize ex)
     # TODO use JL once it supports general macro expansion
     if Meta.isexpr(ex, :toplevel)
         return nothing
