@@ -4,7 +4,7 @@ using Test
 using JETLS
 using JETLS: JL, JS
 using JETLS.URIs2
-using JETLS.LSAnalysis: LSAnalyzer
+using JETLS.Analyzer: LSAnalyzer
 using JETLS: cursor_siginfos
 
 # siginfos(mod, code, cursor="|") -> siginfos

@@ -23,11 +23,16 @@ using .LSP
 include("JSONRPC.jl")
 using .JSONRPC
 
-using REPL # loading REPL is necessary to make `Base.Docs.doc(::Base.Docs.Binding)` work
-using Pkg, JuliaSyntax
+using Pkg
 using JET: CC, JET
 using JuliaSyntax: JuliaSyntax as JS
 using JuliaLowering: JuliaLowering as JL
+using REPL: REPL # loading REPL is necessary to make `Base.Docs.doc(::Base.Docs.Binding)` work
+
+include("LSAnalysis/Analyzer.jl")
+using .Analyzer
+include("LSAnalysis/Resolver.jl")
+using .Resolver
 
 struct FileInfo
     version::Int
@@ -59,7 +64,7 @@ mutable struct FullAnalysisResult
     staled::Bool
     last_analysis::Float64
     actual2virtual::JET.Actual2Virtual
-    analyzer # ::LSAnalyzer
+    analyzer::LSAnalyzer
     const uri2diagnostics::Dict{URI,Vector{Diagnostic}}
     const analyzed_file_infos::Dict{URI,JET.AnalyzedFileInfo}
     const successfully_analyzed_file_infos::Dict{URI,JET.AnalyzedFileInfo}
@@ -115,8 +120,8 @@ struct Server{Callback}
     end
 end
 
-include("LSAnalysis/LSAnalysis.jl")
-using .LSAnalysis
+include("LSAnalysis/Interpreter.jl")
+using .Interpreter
 
 const DEFAULT_DOCUMENT_SELECTOR = DocumentFilter[
     DocumentFilter(; language = "julia")

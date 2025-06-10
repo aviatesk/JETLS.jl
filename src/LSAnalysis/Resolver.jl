@@ -1,7 +1,9 @@
-using Core: Const
-using REPL.REPLCompletions: expr_has_error, resolve_toplevel_symbols!
-using ..JETLS: JS, JL
-using .JS: @K_str
+module Resolver
+
+export resolve_node
+
+using ..JETLS: CC, JET, JS, JL, REPL
+using ..JETLS.Analyzer
 
 """
     resolve_node(analyzer::LSAnalyzer, context_module::Module, s0::Union{JS.SyntaxNode,JL.SyntaxTree})
@@ -35,7 +37,7 @@ function resolve_node(analyzer::LSAnalyzer, context_module::Module, @nospecializ
     # TODO use JL once it supports general macro expansion
     if Meta.isexpr(ex, :toplevel)
         return nothing
-    elseif expr_has_error(ex)
+    elseif REPL.REPLCompletions.expr_has_error(ex)
         return nothing
     end
     lwr = try
@@ -52,14 +54,14 @@ function resolve_node(analyzer::LSAnalyzer, context_module::Module, @nospecializ
         if res isa JET.AbstractBindingState
             return isdefined(res, :typ) ? res.typ : nothing
         end
-        return Const(res)
+        return Core.Const(res)
     end
     Meta.isexpr(lwr, :thunk) || return nothing
     length(lwr.args) == 1 || return nothing
     src = only(lwr.args)
     src isa Core.CodeInfo || return nothing
 
-    resolve_toplevel_symbols!(src, context_module)
+    REPL.REPLCompletions.resolve_toplevel_symbols!(src, context_module)
     mi = @ccall jl_method_instance_for_thunk(src::Any, context_module::Any)::Ref{Core.MethodInstance}
 
     interp = JET.ToplevelAbstractAnalyzer(analyzer, falses(length(src.code)))
@@ -72,3 +74,5 @@ function resolve_node(analyzer::LSAnalyzer, context_module::Module, @nospecializ
     result === Union{} && return nothing # for whatever reason, callers expect this as the Bottom and/or Top type instead
     return result
 end
+
+end # module Resolver

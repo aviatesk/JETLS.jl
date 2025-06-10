@@ -36,6 +36,6 @@ function analyze_and_resolve(s::AbstractString;
         i === nothing && error("No resolvable node found")
         node = nodes[i]
 
-        JETLS.resolve_node(analyzer, mod, node)
+        JETLS.Resolver.resolve_node(analyzer, mod, node)
     end
 end
