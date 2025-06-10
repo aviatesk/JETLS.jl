@@ -17,19 +17,16 @@ function definition_registration()
     )
 end
 
-
 # For dynamic registrations during development
 # unregister(currently_running, Unregistration(;
 #     id=DEFINITION_REGISTRATION_ID,
 #     method=DEFINITION_REGISTRATION_METHOD))
 # register(currently_running, definition_resistration())
 
-
 # TODO: memorize this?
 is_definition_links_supported(server::Server) =
         getobjpath(server.state.init_params.capabilities,
         :textDocument, :definition, :linkSupport) === true
-
 
 """
 Determines the node that the user most likely intends to navigate to.
@@ -77,18 +74,14 @@ function method_definition_range(m::Method)
             var"end" = Position(; line = line - 1, character = Int(typemax(Int32)))))
 end
 
-function definition_locations(mod::Module, fi::FileInfo, uri::URI, offset::Int, state::ServerState)
+const empty_methods = Method[]
+
+function definition_target_methods(mod::Module, fi::FileInfo, uri::URI, offset::Int)
     st = JS.build_tree(JL.SyntaxTree, fi.parsed_stream)
     node = select_target_node(st, offset)
-    node === nothing && return nothing
+    node === nothing && return empty_methods
     obj = resolve_property(mod, node)
-
-    # TODO (later): support other objects
-    if isa(obj, Function)
-        return method_definition_range.(methods(obj))
-    else
-        return nothing
-    end
+    return methods(obj)
 end
 
 function handle_DefinitionRequest(server::Server, msg::DefinitionRequest)
@@ -99,28 +92,25 @@ function handle_DefinitionRequest(server::Server, msg::DefinitionRequest)
     offset = xy_to_offset(fi, origin_position)
     mod = find_file_module(state, uri, origin_position)
 
-    locations = definition_locations(mod, fi, uri, offset, state)
+    ms = definition_target_methods(mod, fi, uri, offset)
 
-    if locations === nothing
+    if isempty(ms)
         send(server, DefinitionResponse(; id = msg.id, result = null))
-        return
-    end
-
-    if is_definition_links_supported(server)
-        return send(server,
+    elseif is_definition_links_supported(server)
+        send(server,
             DefinitionResponse(;
                 id = msg.id,
-                result = map(
-                    loc -> LocationLink(;
+                result = map(ms) do m
+                    loc = @inline method_definition_range(m)
+                    LocationLink(;
                         targetUri = loc.uri,
                         targetRange = loc.range,
                         targetSelectionRange = loc.range,
                         originSelectionRange = Range(;
                             start = origin_position,
-                            var"end" = origin_position
-                        )
-                    ), locations)))
+                            var"end" = origin_position))
+                end))
     else
-        send(server, DefinitionResponse(; id = msg.id, result = locations))
+        send(server, DefinitionResponse(; id = msg.id, result = method_definition_range.(ms)))
     end
 end

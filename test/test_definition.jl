@@ -2,9 +2,8 @@ module test_definition
 
 using Test
 using JETLS
-using JETLS: JL, JS, select_target_node, method_definition_range, definition_locations,
+using JETLS: JL, JS, select_target_node, method_definition_range,
              get_text_and_positions, xy_to_offset
-
 
 function get_target_node(code::AbstractString, pos::Int)
     parsed_stream = JS.ParseStream(code)
@@ -76,34 +75,42 @@ include("setup.jl")
 
 @testset "go to definition request/responce cycle" begin
     script_code = """
-    func(x) = 1
-    fu│nc(1.0)
-    si│n(1.0)
-
-    Core.Compiler.tm│eet
-    Co│re.Compiler.tmeet
-
-    func(1.│0)
-    sin(1.│0)
-
-    module M
-        m_func(x) = 1
-        m_│func(1.0)
-    end
-
-    m_│func(1.0)
-    M.m_│func(1.0)
-
-    module M2
-        m_func(x) = 1
-        m_│func(1.0)
-    end
-
-    M2.m_│func(1.0)
-
-    cos(x) = 1
-
-    Base.co│s(x) = 1
+    #= 1=# func(x) = 1
+    #= 2=# fu│nc(1.0)
+    #= 3=# si│n(1.0)
+    #= 4=#
+    #= 5=# Core.Compiler.tm│eet
+    #= 6=# Co│re.Compiler.tmeet
+    #= 7=#
+    #= 8=# func(1.│0)
+    #= 9=# sin(1.│0)
+    #=10=#
+    #=11=# module M
+    #=12=#     m_func(x) = 1
+    #=13=#     m_│func(1.0)
+    #=14=# end
+    #=15=#
+    #=16=# m_│func(1.0)
+    #=17=# M.m_│func(1.0)
+    #=18=#
+    #=19=# module M2
+    #=20=#     m_func(x) = 1
+    #=21=#     m_│func(1.0)
+    #=22=# end
+    #=23=#
+    #=24=# M2.m_│func(1.0)
+    #=25=#
+    #=26=# cos(x) = 1
+    #=27=#
+    #=28=# Base.co│s(x) = 1
+    #=29=#
+    #=30=# struct Hello
+    #=31=#     who::String
+    #=32=#     Hello(who::AbstractString) = new(String(who))
+    #=33=# end
+    #=34=# function say(h::Hel│lo)
+    #=35=#     println("Hello, \$(hello.who)")
+    #=36=# end
     """
 
     sin_cand_file, sin_cand_line = functionloc(first(methods(sin, (Float64,))))
@@ -113,7 +120,7 @@ include("setup.jl")
         (result, uri) ->
             (length(result) == 1) &&
             (first(result).uri == uri) &&
-            (first(result).range.start.line == 0),
+            (first(result).range.start.line == 0)
 
         # si│n(x)
         (result, uri) ->
@@ -121,47 +128,47 @@ include("setup.jl")
             (any(result) do candidate
                 candidate.uri.path == sin_cand_file &&
                 candidate.range.start.line == (sin_cand_line - 1)
-            end),
+            end)
 
         # Core.Compiler.tm│eet
         (result, uri) ->
-            (length(result) >= 1),
+            (length(result) >= 1)
 
         # Co│re.Compiler.tmeet
-        (result, uri) -> (result === null),
+        (result, uri) -> (result === null)
 
         # func(1.│0)
-        (result, uri) -> (result === null),
+        (result, uri) -> (result === null)
 
         # sin(1.│0)
-        (result, uri) -> (result === null),
+        (result, uri) -> (result === null)
 
         # m_│func(1.0) in module M
         (result, uri) ->
             (length(result) == 1) &&
             (first(result).uri == uri) &&
-            (first(result).range.start.line == 7),
+            (first(result).range.start.line == 7)
 
         # m_│func(1.0)
-        (result, uri) -> (result === null),
+        (result, uri) -> (result === null)
 
         # M.m_│func(1.0)
         (result, uri) ->
             (length(result) == 1) &&
             (first(result).uri == uri) &&
-            (first(result).range.start.line == 13),
+            (first(result).range.start.line == 13)
 
         # m_│func(1.0) in module M2
         (result, uri) ->
             (length(result) == 1) &&
             (first(result).uri == uri) &&
-            (first(result).range.start.line == 17),
+            (first(result).range.start.line == 17)
 
         # M2.m_│func(1.0)
         (result, uri) ->
             (length(result) == 1) &&
             (first(result).uri == uri) &&
-            (first(result).range.start.line == 19),
+            (first(result).range.start.line == 19)
 
         # Base.co│s(x)
         (result, uri) ->
@@ -169,6 +176,12 @@ include("setup.jl")
             (all(result) do candidate
                 candidate.uri.path != uri # in `Base`, not `cos(x) = 1`
             end)
+
+        # function say(h::Hel|lo)
+        (result, uri) ->
+            (length(result) == 1) &&
+            (first(result).uri == uri) &&
+            (first(result).range.start.line == 31)
     ]
 
     clean_code, positions = get_text_and_positions(script_code, r"│")
@@ -183,13 +196,14 @@ include("setup.jl")
             @test raw_res.params.uri == uri
 
             for (pos, tester) in zip(positions, testers)
-                let id = id_counter[] += 1
+                @testset let loc = functionloc(only(methods(tester))),
+                             id = id_counter[] += 1
                     (; raw_res) = writereadmsg(DefinitionRequest(;
                         id,
                         params = DefinitionParams(;
                             textDocument = TextDocumentIdentifier(; uri),
                             position = pos)))
-                    tester(raw_res.result, uri)
+                    @test tester(raw_res.result, uri)
                 end
             end
         end
