@@ -299,51 +299,50 @@ end
 
 function global_completions!(items::Dict{String, CompletionItem}, state::ServerState, uri::URI, params::CompletionParams)
     pos = params.position
-    is_macro_invoke = false
-    let context = params.context
-        if !isnothing(context)
-            # Don't trigger completion just by typing a numeric character:
-            context.triggerCharacter in NUMERIC_CHARACTERS && return nothing
-            is_macro_invoke = context.triggerCharacter == "@"
-        end
-    end
-    mod = find_file_module!(state, uri, pos)
     fi = get_fileinfo(state, uri)
-    if !is_macro_invoke && !isnothing(fi)
-        # check if the cursor is within the macro name context `@xxx|`
-        curbyte = xy_to_offset(fi, pos)
-        sn = JS.build_tree(JS.SyntaxNode, fi.parsed_stream)
-        ancestors = byte_ancestors(sn, curbyte-1)
-        if !isempty(ancestors)
-            curnode = first(ancestors)
-            is_macro_invoke = JS.kind(curnode) === K"MacroName"
-        end
+    fi === nothing && return nothing
+    mod = find_file_module!(state, uri, pos)
+    current_token_idx = get_current_token_idx(fi, pos)
+    current_token = fi.parsed_stream.tokens[current_token_idx]
+    current_kind = JS.kind(current_token)
+
+    if current_kind === JS.K"@"
+        edit_start_pos = offset_to_xy(fi, fi.parsed_stream.tokens[current_token_idx - 1].next_byte)
+        is_macro_invoke = true
+    elseif current_kind === JS.K"MacroName"
+        edit_start_pos = offset_to_xy(fi, fi.parsed_stream.tokens[current_token_idx - 2].next_byte)
+        is_macro_invoke = true
+    elseif current_kind === JS.K"TOMBSTONE"
+        edit_start_pos = Position(; line=0, character=0)
+        is_macro_invoke = false
+    else
+        edit_start_pos = offset_to_xy(fi, fi.parsed_stream.tokens[current_token_idx - 1].next_byte)
+        is_macro_invoke = false
     end
+
+    create_edit(newText) = TextEdit(;
+        range = Range(; start = edit_start_pos, var"end" = pos),
+        newText = newText)
+
+
     for name in @invokelatest(names(mod; all=true, imported=true, usings=true))::Vector{Symbol}
         s = String(name)
         startswith(s, "#") && continue
-        insertText = nothing
-        filterText = s
-        if startswith(s, "@")
-            # TODO need to use `textEdit` instead? (for VSCode)
-            insertText = filterText = lstrip(s, '@')
-            if !is_macro_invoke
-                # allow `nospecialize|` (without `@`-mark) to complete to `@nospecialize`
-                insertText = s
-            end
-        elseif is_macro_invoke
+
+        if is_macro_invoke && !startswith(s, "@")
+            # If we are in a macro invocation context, we only want to complete macros.
+            # Conversely, we allow macros to be completed in any context.
             continue
         end
+
         items[s] = CompletionItem(;
-            label = s,
-            labelDetails = CompletionItemLabelDetails(;
-                description = "global"),
-            kind = CompletionItemKind.Variable,
-            documentation = nothing,
-            insertText,
-            filterText,
-            sortText = get_sort_text(0, #=isglobal=#true),
-            data = CompletionData(#=needs_resolve=#true))
+                label = s,
+                kind = CompletionItemKind.Variable,
+                documentation = nothing,
+                sortText = get_sort_text(0, #=isglobal=#true),
+                data = CompletionData(#=needs_resolve=#true),
+                labelDetails = CompletionItemLabelDetails(description = startswith(s, "@") ? "macro" : "global"),
+                textEdit = create_edit(s))
     end
     # if we are in macro name context, then we don't need any local completions
     # as macros are always defined top-level
@@ -373,9 +372,8 @@ Examples:
 8. `\\alpha  bet┃a` returns `nothing` (no backslash immediately before token with cursor)
 """
 function get_backslash_offset(state::ServerState, fi::FileInfo, pos::Position)
-    pos_offset = xy_to_offset(fi, pos)
     tokens = fi.parsed_stream.tokens
-    curr_idx = findlast(token -> token.next_byte <= pos_offset, tokens)
+    curr_idx = get_current_token_idx(fi, pos)
 
     if tokens[curr_idx].orig_kind == JS.K"\\"
         # case 1
@@ -437,7 +435,6 @@ function add_emoji_latex_completions!(items::Dict{String,CompletionItem}, state:
             kind=CompletionItemKind.Snippet,
             documentation=val,
             sortText,
-            filterText = key,
             textEdit=TextEdit(;
                 range = Range(;
                     start = backslash_pos,
@@ -476,6 +473,7 @@ function resolve_completion_item(state::ServerState, item::CompletionItem)
         kind = item.kind,
         detail = item.detail,
         sortText = item.sortText,
+        textEdit = item.textEdit,
         documentation = MarkupContent(;
             kind = MarkupKind.Markdown,
             value = string(docs)))
