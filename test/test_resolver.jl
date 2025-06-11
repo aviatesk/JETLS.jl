@@ -4,8 +4,8 @@ using Test
 using Core: Const
 include("interactive_utils.jl")
 
-# test basic analysis abilities of `resolve_node`
-@testset "resolve_node" begin
+# test basic analysis abilities of `resolve_type`
+@testset "resolve_type" begin
     @test analyze_and_resolve("sin│") === Const(sin)
     @test analyze_and_resolve("sin│(42)") === Const(sin)
     @test analyze_and_resolve("""

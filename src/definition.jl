@@ -87,7 +87,7 @@ function definition_target_methods(state::ServerState, uri::URI, pos::Position)
     mod = find_file_module(state, uri, pos)
     context = find_context_for_uri(state, uri)
     analyzer = isnothing(context) ? LSAnalyzer() : context.result.analyzer
-    objtyp = resolve_node(analyzer, mod, node)
+    objtyp = resolve_type(analyzer, mod, node)
     objtyp isa Core.Const || return empty_methods
 
     return methods(objtyp.val)

@@ -310,7 +310,7 @@ function cursor_siginfos(mod::Module, ps::JS.ParseStream, b::Int, analyzer::LSAn
     # TODO: We could be calling a local variable.  If it shadows a method, our
     # ignoring it is misleading.  We need to either know about local variables
     # in this scope (maybe by caching completion info) or duplicate some work.
-    fntyp = resolve_node(analyzer, mod, call[1])
+    fntyp = resolve_type(analyzer, mod, call[1])
     fntyp isa Core.Const || return empty_siginfos
     fn = fntyp.val
     candidate_methods = methods(fn)

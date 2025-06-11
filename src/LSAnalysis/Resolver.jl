@@ -1,13 +1,13 @@
 module Resolver
 
-export resolve_node
+export resolve_type
 
 using ..JETLS: CC, JET, JS, JL, REPL
 using ..JETLS.Analyzer
 
 """
-    resolve_node(analyzer::LSAnalyzer, context_module::Module, s0::Union{JS.SyntaxNode,JL.SyntaxTree})
-    resolve_node(analyzer::LSAnalyzer, context_module::Module, ex::Expr)
+    resolve_type(analyzer::LSAnalyzer, context_module::Module, s0::Union{JS.SyntaxNode,JL.SyntaxTree})
+    resolve_type(analyzer::LSAnalyzer, context_module::Module, ex::Expr)
 
 Resolves the type of `s0` in the `context_module` that has been analyzed by the `analyzer`.
 When resolution is successful, it returns the type of the `node` in the extended lattice (e.g., `Int`, `Const`),
@@ -20,20 +20,20 @@ Therefore, it may return incorrect results in cases like:
 ```julia
 function foo(x)
     sin = cos
-    y = sin(x) # resolve_node(analyzer, context_module, :(sin)) would return `Const(sin)` instead of `Const(cos)`
+    y = sin(x) # resolve_type(analyzer, context_module, :(sin)) would return `Const(sin)` instead of `Const(cos)`
     return y
 end
 ```
 
 For this reason, significant changes are expected in the near future.
 Specifically, `AnalysisContext` will store type inference results for each method analyzed by `LSAnalyzer`,
-and `resolve_node` will be implemented as a query against these type inference results.
+and `resolve_type` will be implemented as a query against these type inference results.
 However, this implementation requires JL to be able to lower arbitrary user code,
 which first requires integration of JL into Base.
 """
-resolve_node(analyzer::LSAnalyzer, context_module::Module, s0::Union{JS.SyntaxNode,JL.SyntaxTree}) =
-    resolve_node(analyzer, context_module, Expr(s0))
-function resolve_node(analyzer::LSAnalyzer, context_module::Module, @nospecialize ex)
+resolve_type(analyzer::LSAnalyzer, context_module::Module, s0::Union{JS.SyntaxNode,JL.SyntaxTree}) =
+    resolve_type(analyzer, context_module, Expr(s0))
+function resolve_type(analyzer::LSAnalyzer, context_module::Module, @nospecialize ex)
     # TODO use JL once it supports general macro expansion
     if Meta.isexpr(ex, :toplevel)
         return nothing
