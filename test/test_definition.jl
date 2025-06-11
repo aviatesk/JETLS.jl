@@ -111,6 +111,16 @@ include("setup.jl")
     #=34=# function say(h::Hel│lo)
     #=35=#     println("Hello, \$(hello.who)")
     #=36=# end
+    #=37=#
+    #=38=# function say_defarg(h::Hello, s = "Hello")
+    #=39=#     println("\$s, \$(hello.who)")
+    #=40=# end
+    #=41=# say_defar│g
+    #=42=#
+    #=43=# function say_kwarg(h::Hello; s = "Hello")
+    #=44=#     println("\$s, \$(hello.who)")
+    #=45=# end
+    #=46=# say_kwar│g
     """
 
     sin_cand_file, sin_cand_line = functionloc(first(methods(sin, (Float64,))))
@@ -182,6 +192,18 @@ include("setup.jl")
             (length(result) == 1) &&
             (first(result).uri == uri) &&
             (first(result).range.start.line == 31)
+
+        # say_defar│g
+        (result, uri) ->
+            (length(result) == 1) && # aggregation
+            (first(result).uri == uri) &&
+            (first(result).range.start.line == 37)
+
+        # say_kwar│g
+        (result, uri) ->
+            (length(result) == 1) && # aggregation
+            (first(result).uri == uri) &&
+            (first(result).range.start.line == 42)
     ]
 
     clean_code, positions = get_text_and_positions(script_code, r"│")
