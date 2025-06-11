@@ -284,7 +284,7 @@ end
 
 const empty_siginfos = SignatureInformation[]
 
-function cursor_siginfos(mod::Module, ps::JS.ParseStream, b::Int;
+function cursor_siginfos(mod::Module, ps::JS.ParseStream, b::Int, analyzer::LSAnalyzer;
                          postprocessor::JET.PostProcessor=JET.PostProcessor())
     call, after_semicolon = let st0 = JS.build_tree(JL.SyntaxTree, ps; ignore_errors=true)
         # tolerate one-past-last byte. TODO: go back to closest non-whitespace?
@@ -310,7 +310,9 @@ function cursor_siginfos(mod::Module, ps::JS.ParseStream, b::Int;
     # TODO: We could be calling a local variable.  If it shadows a method, our
     # ignoring it is misleading.  We need to either know about local variables
     # in this scope (maybe by caching completion info) or duplicate some work.
-    fn = resolve_property(mod, call[1])
+    fntyp = resolve_type(analyzer, mod, call[1])
+    fntyp isa Core.Const || return empty_siginfos
+    fn = fntyp.val
     candidate_methods = methods(fn)
     isempty(candidate_methods) && return empty_siginfos
 
@@ -355,8 +357,9 @@ function handle_SignatureHelpRequest(server::Server, msg::SignatureHelpRequest)
     mod = find_file_module(state, uri, msg.params.position)
     context = find_context_for_uri(state, uri)
     postprocessor = JET.PostProcessor(isnothing(context) ? nothing : context.result.actual2virtual)
+    analyzer = isnothing(context) ? LSAnalyzer() : context.result.analyzer
     b = xy_to_offset(fi, msg.params.position)
-    signatures = cursor_siginfos(mod, fi.parsed_stream, b; postprocessor)
+    signatures = cursor_siginfos(mod, fi.parsed_stream, b, analyzer; postprocessor)
     activeSignature = nothing
     activeParameter = nothing
     return send(server,

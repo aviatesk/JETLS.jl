@@ -76,23 +76,27 @@ end
 
 const empty_methods = Method[]
 
-function definition_target_methods(mod::Module, fi::FileInfo, uri::URI, offset::Int)
+function definition_target_methods(state::ServerState, uri::URI, pos::Position)
+    fi = get_fileinfo(state, uri)
+    offset = xy_to_offset(fi, pos)
+
     st = JS.build_tree(JL.SyntaxTree, fi.parsed_stream)
     node = select_target_node(st, offset)
     node === nothing && return empty_methods
-    obj = resolve_property(mod, node)
-    return methods(obj)
+
+    mod = find_file_module(state, uri, pos)
+    context = find_context_for_uri(state, uri)
+    analyzer = isnothing(context) ? LSAnalyzer() : context.result.analyzer
+    objtyp = resolve_type(analyzer, mod, node)
+    objtyp isa Core.Const || return empty_methods
+
+    return methods(objtyp.val)
 end
 
 function handle_DefinitionRequest(server::Server, msg::DefinitionRequest)
-    state = server.state
     origin_position = msg.params.position
-    uri = msg.params.textDocument.uri
-    fi = get_fileinfo(state, uri)
-    offset = xy_to_offset(fi, origin_position)
-    mod = find_file_module(state, uri, origin_position)
 
-    ms = definition_target_methods(mod, fi, uri, offset)
+    ms = definition_target_methods(server.state, msg.params.textDocument.uri, origin_position)
 
     if isempty(ms)
         send(server, DefinitionResponse(; id = msg.id, result = null))

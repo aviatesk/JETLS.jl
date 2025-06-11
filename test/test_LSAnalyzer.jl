@@ -3,7 +3,7 @@ module test_LSAnalyzer
 using Test
 include("interactive_utils.jl")
 using JETLS.JET: get_reports
-using JETLS.LSAnalysis: UndefVarErrorReport
+using JETLS.Analyzer: UndefVarErrorReport
 
 # test basic analysis abilities of `LSAnalyzer`
 function report_undef()

@@ -1,3 +1,7 @@
+module Analyzer
+
+export LSAnalyzer, inference_error_report_stack
+
 using JET.JETInterface
 using JET: JET, CC
 
@@ -179,3 +183,5 @@ const LS_ANALYZER_CONFIGURATIONS = Set{Symbol}(())
 let valid_keys = JET.GENERAL_CONFIGURATIONS ∪ LS_ANALYZER_CONFIGURATIONS
     @eval JETInterface.valid_configurations(::LSAnalyzer) = $valid_keys
 end
+
+end # module Analyzer

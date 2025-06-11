@@ -1,6 +1,11 @@
+module Interpreter
+
+export LSInterpreter
+
 using JET: JET
 using ..JETLS: ServerState, FileInfo
 using ..JETLS.URIs2
+using ..JETLS.Analyzer
 
 struct LSInterpreter <: JET.ConcreteInterpreter
     file_cache::Dict{URI,FileInfo}
@@ -29,3 +34,5 @@ function JET.try_read_file(interp::LSInterpreter, include_context::Module, filep
     # fallback to the default file-system-based include
     return read(filepath, String)
 end
+
+end # module Interpreter
