@@ -29,9 +29,9 @@ using JuliaSyntax: JuliaSyntax as JS
 using JuliaLowering: JuliaLowering as JL
 using REPL: REPL # loading REPL is necessary to make `Base.Docs.doc(::Base.Docs.Binding)` work
 
-include("LSAnalysis/Analyzer.jl")
+include("Analysis/Analyzer.jl")
 using .Analyzer
-include("LSAnalysis/Resolver.jl")
+include("Analysis/Resolver.jl")
 using .Resolver
 
 struct FileInfo
@@ -120,7 +120,7 @@ struct Server{Callback}
     end
 end
 
-include("LSAnalysis/Interpreter.jl")
+include("Analysis/Interpreter.jl")
 using .Interpreter
 
 const DEFAULT_DOCUMENT_SELECTOR = DocumentFilter[
