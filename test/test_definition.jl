@@ -147,7 +147,7 @@ include("setup.jl")
         (result, uri) ->
             (length(result) == 1) &&
             (first(result).uri == uri) &&
-            (first(result).range.start.line == 7)
+            (first(result).range.start.line == 11)
 
         # m_│func(1.0)
         (result, uri) -> (result === null)
@@ -156,13 +156,13 @@ include("setup.jl")
         (result, uri) ->
             (length(result) == 1) &&
             (first(result).uri == uri) &&
-            (first(result).range.start.line == 13)
+            (first(result).range.start.line == 11)
 
         # m_│func(1.0) in module M2
         (result, uri) ->
             (length(result) == 1) &&
             (first(result).uri == uri) &&
-            (first(result).range.start.line == 17)
+            (first(result).range.start.line == 19)
 
         # M2.m_│func(1.0)
         (result, uri) ->
@@ -204,7 +204,7 @@ include("setup.jl")
                         params = DefinitionParams(;
                             textDocument = TextDocumentIdentifier(; uri),
                             position = pos)))
-                    @test tester(raw_res.result, uri) broken = i in (7,9,10)
+                    @test tester(raw_res.result, uri)
                 end
             end
         end
