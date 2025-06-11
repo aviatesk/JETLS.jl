@@ -85,6 +85,7 @@ function jet_toplevel_error_report_to_diagnostic(postprocessor::JET.PostProcesso
     end |> postprocessor
     return Diagnostic(;
         range = line_range(report.line),
+        severity = DiagnosticSeverity.Error,
         message,
         source = TOPLEVEL_DIAGNOSTIC_SOURCE)
 end
@@ -107,6 +108,7 @@ function jet_inference_error_report_to_diagnostic(postprocessor::JET.PostProcess
         for i = 2:length(rstack)]
     return Diagnostic(;
         range = jet_frame_to_range(topframe),
+        severity = DiagnosticSeverity.Warning,
         message,
         source = INFERENCE_DIAGNOSTIC_SOURCE,
         relatedInformation)
@@ -124,7 +126,10 @@ function line_range(line::Int)
     return Range(; start, var"end")
 end
 
-function notify_diagnostics!(server::Server)
+# textDocument/publishDiagnostics
+# -------------------------------
+
+function notify_full_diagnostics!(server::Server)
     uri2diagnostics = Dict{URI,Vector{Diagnostic}}()
     for (uri, contexts) in server.state.contexts
         if contexts isa ExternalContext
@@ -132,9 +137,9 @@ function notify_diagnostics!(server::Server)
         end
         diagnostics = get!(Vector{Diagnostic}, uri2diagnostics, uri)
         for analysis_context in contexts
-            diags = get(analysis_context.result.uri2diagnostics, uri, nothing)
-            if diags !== nothing
-                append!(diagnostics, diags)
+            full_diagnostics = get(analysis_context.result.uri2diagnostics, uri, nothing)
+            if full_diagnostics !== nothing
+                append!(diagnostics, full_diagnostics)
             end
         end
     end
@@ -146,7 +151,67 @@ function notify_diagnostics!(server::Server, uri2diagnostics)
         send(server, PublishDiagnosticsNotification(;
             params = PublishDiagnosticsParams(;
                 uri,
-                # version = 0,
                 diagnostics)))
     end
+end
+
+# textDocument/diagnostic
+# -----------------------
+
+const DIAGNOSTIC_REGISTRATION_ID = "jetls-diagnostic"
+const DIAGNOSTIC_REGISTRATION_METHOD = "textDocument/diagnostic"
+
+function diagnostic_options()
+    return DiagnosticOptions(;
+        identifier = "JETLS/textDocument/diagnostic",
+        interFileDependencies = false,
+        workspaceDiagnostics = false)
+end
+
+function diagnostic_registration()
+    (; identifier, interFileDependencies, workspaceDiagnostics) = diagnostic_options()
+    return Registration(;
+        id = DIAGNOSTIC_REGISTRATION_ID,
+        method = DIAGNOSTIC_REGISTRATION_METHOD,
+        registerOptions = DiagnosticRegistrationOptions(;
+            documentSelector = DEFAULT_DOCUMENT_SELECTOR,
+            identifier,
+            interFileDependencies,
+            workspaceDiagnostics)
+    )
+end
+
+# # For dynamic registrations during development
+# unregister(currently_running, Unregistration(;
+#     id=DIAGNOSTIC_REGISTRATION_ID,
+#     method=DIAGNOSTIC_REGISTRATION_METHOD))
+# register(currently_running, diagnostic_resistration())
+
+const empty_diagnostics = Diagnostic[]
+
+function handle_DocumentDiagnosticRequest(server::Server, msg::DocumentDiagnosticRequest)
+    uri = msg.params.textDocument.uri
+    file_info = get_fileinfo(server.state, uri)
+    if file_info === nothing
+        return send(server,
+            DocumentDiagnosticResponse(;
+                id = msg.id,
+                result = nothing,
+                error = ResponseError(;
+                    code = ErrorCodes.ServerCancelled,
+                    message = lazy"File cache for $uri is not initialized",
+                    data = DiagnosticServerCancellationData(;
+                        retriggerRequest = true))))
+    end
+    parsed_stream = file_info.parsed_stream
+    if isempty(parsed_stream.diagnostics)
+        diagnostics = empty_diagnostics
+    else
+        diagnostics = parsed_stream_to_diagnostics(parsed_stream, file_info.filename)
+    end
+    return send(server,
+        DocumentDiagnosticResponse(;
+            id = msg.id,
+            result = RelatedFullDocumentDiagnosticReport(;
+                items = diagnostics)))
 end

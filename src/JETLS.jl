@@ -62,7 +62,6 @@ end
 
 mutable struct FullAnalysisResult
     staled::Bool
-    last_analysis::Float64
     actual2virtual::JET.Actual2Virtual
     analyzer::LSAnalyzer
     const uri2diagnostics::Dict{URI,Vector{Diagnostic}}
@@ -253,8 +252,6 @@ function _handle_message(server::Server, msg)
         return handle_DidCloseTextDocumentNotification(server, msg)
     elseif msg isa DidSaveTextDocumentNotification
         return handle_DidSaveTextDocumentNotification(server, msg)
-    elseif msg isa DocumentDiagnosticRequest || msg isa WorkspaceDiagnosticRequest
-        @assert false "Document and workspace diagnostics are not enabled"
     elseif msg isa CompletionRequest
         return handle_CompletionRequest(server, msg)
     elseif msg isa CompletionResolveRequest
@@ -263,6 +260,10 @@ function _handle_message(server::Server, msg)
         return handle_SignatureHelpRequest(server, msg)
     elseif msg isa DefinitionRequest
         return handle_DefinitionRequest(server, msg)
+    elseif msg isa DocumentDiagnosticRequest
+        return handle_DocumentDiagnosticRequest(server, msg)
+    elseif msg isa WorkspaceDiagnosticRequest
+        @assert false "workspace/diagnostic should not be enabled"
     elseif JETLS_DEV_MODE
         if isdefined(msg, :method)
             id = getfield(msg, :method)
@@ -356,6 +357,16 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
         definitionProvider = nothing # will be registered dynamically
     end
 
+    if getobjpath(params.capabilities,
+        :textDocument, :diagnostic, :dynamicRegistration) !== true
+        diagnosticProvider = diagnostic_options()
+        if JETLS_DEV_MODE
+            @info "Registering 'textDocument/diagnostic' with `InitializeResponse`"
+        end
+    else
+        diagnosticProvider = nothing # will be registered dynamically
+    end
+
     result = InitializeResult(;
         capabilities = ServerCapabilities(;
             positionEncoding = PositionEncodingKind.UTF16,
@@ -363,10 +374,11 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
                 openClose = true,
                 change = TextDocumentSyncKind.Full,
                 save = SaveOptions(;
-                    includeText = true)),
+                    includeText = false)),
             completionProvider,
             signatureHelpProvider,
             definitionProvider,
+            diagnosticProvider,
         ),
         serverInfo = (;
             name = "JETLS",
@@ -427,14 +439,22 @@ function handle_InitializedNotification(server::Server)
         # since `DefinitionRegistrationOptions` does not extend `StaticRegistrationOptions`.
     end
 
+    if getobjpath(state.init_params.capabilities,
+        :textDocument, :diagnostic, :dynamicRegistration) === true
+        push!(registrations, diagnostic_registration())
+        if JETLS_DEV_MODE
+            @info "Dynamically registering 'textDocument/diagnotic' upon `InitializedNotification`"
+        end
+    end
+
     register(server, registrations)
 end
 
 function cache_file_info!(state::ServerState, uri::URI, version::Int, text::String, filename::String)
-    state.file_cache[uri] = parsefile(version, text, filename)
+    return cache_file_info!(state, uri, parsefile(version, text, filename))
 end
 function cache_file_info!(state::ServerState, uri::URI, file_info::FileInfo)
-    state.file_cache[uri] = file_info
+    return state.file_cache[uri] = file_info
 end
 function parsefile(version::Int, text::String, filename::String)
     stream = JS.ParseStream(text)
@@ -442,47 +462,61 @@ function parsefile(version::Int, text::String, filename::String)
     return FileInfo(version, text, filename, stream)
 end
 
-function handle_DidOpenTextDocumentNotification(server::Server, msg::DidOpenTextDocumentNotification)
+const FULL_ANALYSIS_THROTTLE = 3.0
+const FULL_ANALYSIS_DEBOUNCE = 1.0
+const SYNTACTIC_ANALYSIS_DEBOUNCE = 0.5
+
+function run_full_analysis!(server::Server, uri::URI; reanalyze::Bool)
     state = server.state
-    textDocument = msg.params.textDocument
-    @assert textDocument.languageId == "julia"
-    uri = textDocument.uri
-    filename = uri2filename(uri)
-    @assert filename !== nothing "Unsupported URI: $uri"
-    cache_file_info!(state, uri, textDocument.version, textDocument.text, filename)
     if !haskey(state.contexts, uri)
         res = initiate_context!(state, uri)
-        if res === nothing || res isa AnalysisContext
-            notify_diagnostics!(server)
-        else
-            notify_diagnostics!(server, res)
+        if res isa AnalysisContext
+            notify_full_diagnostics!(server)
         end
     else # this file is tracked by some context already
         contexts = state.contexts[uri]
         if contexts isa ExternalContext
             # this file is out of the current project scope, ignore it
-            return nothing
         else
             # TODO support multiple analysis contexts, which can happen if this file is included from multiple different contexts
             context = first(contexts)
-            id = hash(reanalyze_with_context!, hash(context))
-            throttle(id, 3.0) do
+            if reanalyze
+                context.result.staled = true
+            end
+            function task()
                 res = reanalyze_with_context!(state, context)
-                if res === nothing || res isa AnalysisContext
-                    notify_diagnostics!(server)
-                else
-                    notify_diagnostics!(server, res)
+                if res isa AnalysisContext
+                    notify_full_diagnostics!(server)
                 end
+            end
+            id = hash(run_full_analysis!, hash(context))
+            if reanalyze
+                throttle(id, FULL_ANALYSIS_THROTTLE) do
+                    debounce(task, id, FULL_ANALYSIS_DEBOUNCE)
+                end
+            else
+                throttle(task, id, FULL_ANALYSIS_THROTTLE)
             end
         end
     end
     nothing
 end
 
-# TODO switch to incremental updates?
-function handle_DidChangeTextDocumentNotification(server::Server, msg::DidChangeTextDocumentNotification)
+function handle_DidOpenTextDocumentNotification(server::Server, msg::DidOpenTextDocumentNotification)
+    textDocument = msg.params.textDocument
+    @assert textDocument.languageId == "julia"
+    uri = textDocument.uri
+    filename = uri2filename(uri)
+    @assert filename !== nothing "Unsupported URI: $uri"
+
     state = server.state
-    (;textDocument,contentChanges) = msg.params
+    file_info = cache_file_info!(state, uri, textDocument.version, textDocument.text, filename)
+
+    run_full_analysis!(server, uri; reanalyze=false)
+end
+
+function handle_DidChangeTextDocumentNotification(server::Server, msg::DidChangeTextDocumentNotification)
+    (; textDocument, contentChanges) = msg.params
     uri = textDocument.uri
     for contentChange in contentChanges
         @assert contentChange.range === contentChange.rangeLength === nothing # since `change = TextDocumentSyncKind.Full`
@@ -490,50 +524,17 @@ function handle_DidChangeTextDocumentNotification(server::Server, msg::DidChange
     text = last(contentChanges).text
     filename = uri2filename(uri)
     @assert filename !== nothing "Unsupported URI: $uri"
-    cache_file_info!(state, uri, textDocument.version, text, filename)
-    if !haskey(state.contexts, uri)
-        res = initiate_context!(state, uri)
-        if res === nothing || res isa AnalysisContext
-            notify_diagnostics!(server)
-        else
-            notify_diagnostics!(server, res)
-        end
-    else
-        contexts = state.contexts[uri]
-        if contexts isa ExternalContext
-            # this file is out of the current project scope, ignore it
-            return nothing
-        end
-        for analysis_context in contexts
-            analysis_context.result.staled = true
-        end
-        # TODO support multiple analysis contexts, which can happen if this file is included from multiple different contexts
-        context = first(contexts)
-        id = hash(reanalyze_with_context!, hash(context))
-        throttle(id, 3.0) do
-            debounce(id, 1.5) do
-                res = reanalyze_with_context!(state, context)
-                if res === nothing || res isa AnalysisContext
-                    notify_diagnostics!(server)
-                else
-                    notify_diagnostics!(server, res)
-                end
-            end
-        end
-    end
-    nothing
-end
 
-function handle_DidCloseTextDocumentNotification(server::Server, msg::DidCloseTextDocumentNotification)
-    state = server.state
-    textDocument = msg.params.textDocument
-    uri = textDocument.uri
-    delete!(state.file_cache, uri)
-    return nothing
+    file_info = cache_file_info!(server.state, uri, textDocument.version, text, filename)
 end
 
 function handle_DidSaveTextDocumentNotification(server::Server, msg::DidSaveTextDocumentNotification)
-    return nothing
+    run_full_analysis!(server, msg.params.textDocument.uri; reanalyze=true)
+end
+
+function handle_DidCloseTextDocumentNotification(server::Server, msg::DidCloseTextDocumentNotification)
+    delete!(server.state.file_cache, msg.params.textDocument.uri)
+    nothing
 end
 
 function analyze_parsed_if_exist(state::ServerState, uri::URI, args...; kwargs...)
@@ -563,7 +564,7 @@ function new_analysis_context(entry::AnalysisEntry, result)
     successfully_analyzed_file_infos = copy(analyzed_file_infos)
     is_full_analysis_successful(result) || empty!(successfully_analyzed_file_infos)
     analysis_result = FullAnalysisResult(
-        false, time(), result.res.actual2virtual, result.analyzer,
+        #=staled=#false, result.res.actual2virtual, result.analyzer,
         uri2diagnostics, analyzed_file_infos, successfully_analyzed_file_infos)
     return AnalysisContext(entry, analysis_result)
 end
@@ -591,7 +592,6 @@ function update_analysis_context!(analysis_context::AnalysisContext, result)
     end
     jet_result_to_diagnostics!(uri2diagnostics, result)
     analysis_context.result.staled = false
-    analysis_context.result.last_analysis = time()
     if is_full_analysis_successful(result)
         analysis_context.result.actual2virtual = result.res.actual2virtual
         analysis_context.result.analyzer = result.analyzer
@@ -684,20 +684,13 @@ function find_package_directory(path::String, env_path::String)
     return :script, path
 end
 
-struct IncludeCallback <: Function
-    file_cache::Dict{URI,FileInfo}
-end
-IncludeCallback(state::ServerState) = IncludeCallback(state.file_cache)
-function (include_callback::IncludeCallback)(filepath::String)
-    uri = filepath2uri(filepath)
-    if haskey(include_callback.file_cache, uri)
-        return include_callback.file_cache[uri].text # TODO use `parsed` instead of `text`
-    end
-    # fallback to the default file-system-based include
-    return read(filepath, String)
-end
-
 function initiate_context!(state::ServerState, uri::URI)
+    file_info = state.file_cache[uri]
+    parsed_stream = file_info.parsed_stream
+    if !isempty(parsed_stream.diagnostics)
+        return nothing
+    end
+
     if uri.scheme == "file"
         filename = path = uri2filepath(uri)::String
         if isdefined(state, :root_path)
@@ -720,12 +713,7 @@ function initiate_context!(state::ServerState, uri::URI)
         env_path = isdefined(state, :root_env_path) ? state.root_env_path : nothing
         pkgname = nothing # to hit the `@goto analyze_script` case
     else @assert false "Unsupported URI: $uri" end
-    file_info = state.file_cache[uri]
-    parsed_stream = file_info.parsed_stream
-    if !isempty(parsed_stream.diagnostics)
-        diagnostics = parsed_stream_to_diagnostics(parsed_stream, file_info.filename)
-        return (uri => diagnostics,)
-    end
+
     if env_path === nothing
         @label analyze_script
         filename = file_info.filename
@@ -809,26 +797,24 @@ end
 
 function reanalyze_with_context!(state::ServerState, analysis_context::AnalysisContext)
     analysis_result = analysis_context.result
-    if !analysis_result.staled
+    if !(analysis_result.staled)
         return nothing
     end
-    parse_failed = nothing
-    for uri in analyzed_file_uris(analysis_context)
+
+    any_parse_failed = any(analyzed_file_uris(analysis_context)) do uri::URI
         if haskey(state.file_cache, uri)
             file_info = state.file_cache[uri]
-            parsed_stream = file_info.parsed_stream
-            isempty(parsed_stream.diagnostics) && continue
-            if parse_failed === nothing
-                parse_failed = Dict{URI,FileInfo}()
+            if !isempty(file_info.parsed_stream.diagnostics)
+                return true
             end
-            parse_failed[uri] = file_info
         end
+        return false
     end
-    if parse_failed !== nothing
-        return (
-            uri => parsed_stream_to_diagnostics(file_info.parsed_stream, file_info.filename)
-            for (uri, file_info) in parse_failed)
+    if any_parse_failed
+        # TODO Allow running the full analysis even with any parse errors?
+        return nothing
     end
+
     entry = analysis_context.entry
     if entry isa ScriptAnalysisEntry
         result = analyze_parsed_if_exist(state, entry.uri;
@@ -860,8 +846,10 @@ function reanalyze_with_context!(state::ServerState, analysis_context::AnalysisC
             data = DiagnosticServerCancellationData(;
                 retriggerRequest = false))
     end
+
     update_analysis_context!(analysis_context, result)
     record_reverse_map!(state, analysis_context)
+
     return analysis_context
 end
 
