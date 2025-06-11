@@ -350,7 +350,7 @@ characters is typed.  Eglot (emacs) requests it more frequently.
 """
 function handle_SignatureHelpRequest(server::Server, msg::SignatureHelpRequest)
     state = server.state
-    uri = URI(msg.params.textDocument.uri)
+    uri = msg.params.textDocument.uri
     fi = get_fileinfo(state, uri)
     mod = find_file_module(state, uri, msg.params.position)
     context = find_context_for_uri(state, uri)
