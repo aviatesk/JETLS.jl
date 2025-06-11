@@ -1,73 +1,289 @@
 @interface ServerCapabilities begin
     """
-    The position encoding the server picked from the encodings offered by the client via
-    the client capability `general.positionEncodings`.
+    The position encoding the server picked from the encodings offered
+    by the client via the client capability `general.positionEncodings`.
 
-    If the client didn't provide any position encodings the only valid value that a server
-    can return is 'utf-16'. If omitted it defaults to 'utf-16'.
+    If the client didn't provide any position encodings the only valid
+    value that a server can return is 'utf-16'.
+
+    If omitted it defaults to 'utf-16'.
 
     # Tags
-    - since – 3.17.0
+    - since - 3.17.0
     """
-    positionEncoding::Union{PositionEncodingKind.Ty, Nothing} = nothing
+    positionEncoding::Union{Nothing, PositionEncodingKind.Ty} = nothing
 
     """
-    Defines how text documents are synced. Is either a detailed structure defining each
-    notification or for backwards compatibility the TextDocumentSyncKind number.
-    If omitted it defaults to `TextDocumentSyncKind.None`.
+    Defines how text documents are synced. Is either a detailed structure
+    defining each notification or for backwards compatibility the
+    TextDocumentSyncKind number. If omitted it defaults to
+    `TextDocumentSyncKind.None`.
     """
-    textDocumentSync::Union{Union{TextDocumentSyncOptions, TextDocumentSyncKind.Ty}, Nothing} = nothing
+    textDocumentSync::Union{Nothing, TextDocumentSyncOptions, TextDocumentSyncKind.Ty} = nothing
+
+    # """
+    # Defines how notebook documents are synced.
+
+    # # Tags
+    # - since - 3.17.0
+    # """
+    # notebookDocumentSync::Union{Nothing, NotebookDocumentSyncOptions, NotebookDocumentSyncRegistrationOptions} = nothing
+
+    """
+    The server provides completion support.
+    """
+    completionProvider::Union{Nothing, CompletionOptions} = nothing
+
+    # """
+    # The server provides hover support.
+    # """
+    # hoverProvider::Union{Nothing, Bool, HoverOptions} = nothing
+
+    """
+    The server provides signature help support.
+    """
+    signatureHelpProvider::Union{Nothing, SignatureHelpOptions} = nothing
+
+    # """
+    # The server provides go to declaration support.
+
+    # # Tags
+    # - since - 3.14.0
+    # """
+    # declarationProvider::Union{Nothing, Bool, DeclarationOptions, DeclarationRegistrationOptions} = nothing
+
+    """
+    The server provides goto definition support.
+    """
+    definitionProvider::Union{Nothing, Bool, DefinitionOptions} = nothing
+
+    # """
+    # The server provides goto type definition support.
+
+    # # Tags
+    # - since - 3.6.0
+    # """
+    # typeDefinitionProvider::Union{Nothing, Bool, TypeDefinitionOptions, TypeDefinitionRegistrationOptions} = nothing
+
+    # """
+    # The server provides goto implementation support.
+
+    # # Tags
+    # - since - 3.6.0
+    # """
+    # implementationProvider::Union{Nothing, Bool, ImplementationOptions, ImplementationRegistrationOptions} = nothing
+
+    # """
+    # The server provides find references support.
+    # """
+    # referencesProvider::Union{Nothing, Bool, ReferenceOptions} = nothing
+
+    # """
+    # The server provides document highlight support.
+    # """
+    # documentHighlightProvider::Union{Nothing, Bool, DocumentHighlightOptions} = nothing
+
+    # """
+    # The server provides document symbol support.
+    # """
+    # documentSymbolProvider::Union{Nothing, Bool, DocumentSymbolOptions} = nothing
+
+    # """
+    # The server provides code actions. The `CodeActionOptions` return type is
+    # only valid if the client signals code action literal support via the
+    # property `textDocument.codeAction.codeActionLiteralSupport`.
+    # """
+    # codeActionProvider::Union{Nothing, Bool, CodeActionOptions} = nothing
+
+    # """
+    # The server provides code lens.
+    # """
+    # codeLensProvider::Union{Nothing, CodeLensOptions} = nothing
+
+    # """
+    # The server provides document link support.
+    # """
+    # documentLinkProvider::Union{Nothing, DocumentLinkOptions} = nothing
+
+    # """
+    # The server provides color provider support.
+
+    # # Tags
+    # - since - 3.6.0
+    # """
+    # colorProvider::Union{Nothing, Bool, DocumentColorOptions, DocumentColorRegistrationOptions} = nothing
+
+    # """
+    # The server provides document formatting.
+    # """
+    # documentFormattingProvider::Union{Nothing, Bool, DocumentFormattingOptions} = nothing
+
+    # """
+    # The server provides document range formatting.
+    # """
+    # documentRangeFormattingProvider::Union{Nothing, Bool, DocumentRangeFormattingOptions} = nothing
+
+    # """
+    # The server provides document formatting on typing.
+    # """
+    # documentOnTypeFormattingProvider::Union{Nothing, DocumentOnTypeFormattingOptions} = nothing
+
+    # """
+    # The server provides rename support. RenameOptions may only be
+    # specified if the client states that it supports
+    # `prepareSupport` in its initial `initialize` request.
+    # """
+    # renameProvider::Union{Nothing, Bool, RenameOptions} = nothing
+
+    # """
+    # The server provides folding provider support.
+
+    # # Tags
+    # - since - 3.10.0
+    # """
+    # foldingRangeProvider::Union{Nothing, Bool, FoldingRangeOptions, FoldingRangeRegistrationOptions} = nothing
+
+    # """
+    # The server provides execute command support.
+    # """
+    # executeCommandProvider::Union{Nothing, ExecuteCommandOptions} = nothing
+
+    # """
+    # The server provides selection range support.
+
+    # # Tags
+    # - since - 3.15.0
+    # """
+    # selectionRangeProvider::Union{Nothing, Bool, SelectionRangeOptions, SelectionRangeRegistrationOptions} = nothing
+
+    # """
+    # The server provides linked editing range support.
+
+    # # Tags
+    # - since - 3.16.0
+    # """
+    # linkedEditingRangeProvider::Union{Nothing, Bool, LinkedEditingRangeOptions, LinkedEditingRangeRegistrationOptions} = nothing
+
+    # """
+    # The server provides call hierarchy support.
+
+    # # Tags
+    # - since - 3.16.0
+    # """
+    # callHierarchyProvider::Union{Nothing, Bool, CallHierarchyOptions, CallHierarchyRegistrationOptions} = nothing
+
+    # """
+    # The server provides semantic tokens support.
+
+    # # Tags
+    # - since - 3.16.0
+    # """
+    # semanticTokensProvider::Union{Nothing, SemanticTokensOptions, SemanticTokensRegistrationOptions} = nothing
+
+    # """
+    # Whether server provides moniker support.
+
+    # # Tags
+    # - since - 3.16.0
+    # """
+    # monikerProvider::Union{Nothing, Bool, MonikerOptions, MonikerRegistrationOptions} = nothing
+
+    # """
+    # The server provides type hierarchy support.
+
+    # # Tags
+    # - since - 3.17.0
+    # """
+    # typeHierarchyProvider::Union{Nothing, Bool, TypeHierarchyOptions, TypeHierarchyRegistrationOptions} = nothing
+
+    # """
+    # The server provides inline values.
+
+    # # Tags
+    # - since - 3.17.0
+    # """
+    # inlineValueProvider::Union{Nothing, Bool, InlineValueOptions, InlineValueRegistrationOptions} = nothing
+
+    # """
+    # The server provides inlay hints.
+
+    # # Tags
+    # - since - 3.17.0
+    # """
+    # inlayHintProvider::Union{Nothing, Bool, InlayHintOptions, InlayHintRegistrationOptions} = nothing
 
     """
     The server has support for pull model diagnostics.
 
     # Tags
-    - since – 3.17.0
+    - since - 3.17.0
     """
-    diagnosticProvider::Union{Union{DiagnosticOptions, DiagnosticRegistrationOptions}, Nothing} = nothing
+    diagnosticProvider::Union{Nothing, DiagnosticOptions, DiagnosticRegistrationOptions} = nothing
 
-    completionProvider::Union{CompletionOptions, Nothing} = nothing
+    # """
+    # The server provides workspace symbol support.
+    # """
+    # workspaceSymbolProvider::Union{Nothing, Bool, WorkspaceSymbolOptions} = nothing
 
-    signatureHelpProvider::Union{SignatureHelpOptions, Nothing} = nothing
-
-    definitionProvider::Union{Union{DefinitionOptions, Bool}, Nothing} = nothing
-
-    "Workspace specific server capabilities"
+    """
+    Workspace specific server capabilities
+    """
     workspace::Union{Nothing, @interface begin
         """
         The server supports workspace folder.
 
         # Tags
-        - since – 3.6.0
+        - since - 3.6.0
         """
-        workspaceFolders::Union{WorkspaceFoldersServerCapabilities, Nothing} = nothing
+        workspaceFolders::Union{Nothing, WorkspaceFoldersServerCapabilities} = nothing
 
         """
         The server is interested in file notifications/requests.
 
         # Tags
-        - since – 3.16.0
+        - since - 3.16.0
         """
         fileOperations::Union{Nothing, @interface begin
-            "The server is interested in receiving didCreateFiles notifications."
-            didCreate::Union{FileOperationRegistrationOptions, Nothing} = nothing
+            """
+            The server is interested in receiving didCreateFiles
+            notifications.
+            """
+            didCreate::Union{Nothing, FileOperationRegistrationOptions} = nothing
 
-            "The server is interested in receiving willCreateFiles requests."
-            willCreate::Union{FileOperationRegistrationOptions, Nothing} = nothing
+            """
+            The server is interested in receiving willCreateFiles requests.
+            """
+            willCreate::Union{Nothing, FileOperationRegistrationOptions} = nothing
 
-            "The server is interested in receiving didRenameFiles notifications."
-            didRename::Union{FileOperationRegistrationOptions, Nothing} = nothing
+            """
+            The server is interested in receiving didRenameFiles
+            notifications.
+            """
+            didRename::Union{Nothing, FileOperationRegistrationOptions} = nothing
 
-            "The server is interested in receiving willRenameFiles requests."
-            willRename::Union{FileOperationRegistrationOptions, Nothing} = nothing
+            """
+            The server is interested in receiving willRenameFiles requests.
+            """
+            willRename::Union{Nothing, FileOperationRegistrationOptions} = nothing
 
-            "The server is interested in receiving didDeleteFiles file notifications."
-            didDelete::Union{FileOperationRegistrationOptions, Nothing} = nothing
+            """
+            The server is interested in receiving didDeleteFiles file
+            notifications.
+            """
+            didDelete::Union{Nothing, FileOperationRegistrationOptions} = nothing
 
-            "The server is interested in receiving willDeleteFiles file requests."
-            willDelete::Union{FileOperationRegistrationOptions, Nothing} = nothing
-        end}
+            """
+            The server is interested in receiving willDeleteFiles file
+            requests.
+            """
+            willDelete::Union{Nothing, FileOperationRegistrationOptions} = nothing
+        end} = nothing
     end} = nothing
+
+    """
+    Experimental server capabilities.
+    """
+    experimental::Union{Nothing, LSPAny} = nothing
 end
 
 """
@@ -179,10 +395,10 @@ end
     # """
     # rename::Union{RenameClientCapabilities, Nothing} = nothing
 
-    # """
-    # Capabilities specific to the `textDocument/publishDiagnostics` notification.
-    # """
-    # publishDiagnostics::Union{PublishDiagnosticsClientCapabilities, Nothing} = nothing
+    """
+    Capabilities specific to the `textDocument/publishDiagnostics` notification.
+    """
+    publishDiagnostics::Union{PublishDiagnosticsClientCapabilities, Nothing} = nothing
 
     # """
     # Capabilities specific to the `textDocument/foldingRange` request.
@@ -256,13 +472,13 @@ end
     # """
     # inlayHint::Union{InlayHintClientCapabilities, Nothing} = nothing
 
-    # """
-    # Capabilities specific to the diagnostic pull model.
+    """
+    Capabilities specific to the diagnostic pull model.
 
-    # # Tags
-    # - since – 3.17.0
-    # """
-    # diagnostic::Union{DiagnosticClientCapabilities, Nothing} = nothing
+    # Tags
+    - since – 3.17.0
+    """
+    diagnostic::Union{DiagnosticClientCapabilities, Nothing} = nothing
 end
 
 """
@@ -401,13 +617,13 @@ provides text document synchronization (e.g. open, changed and close notificatio
         # """
         # inlayHint::Union{InlayHintWorkspaceClientCapabilities, Nothing} = nothing
 
-        # """
-        # Client workspace capabilities specific to diagnostics.
+        """
+        Client workspace capabilities specific to diagnostics.
 
-        # # Tags
-        # - since – 3.17.0.
-        # """
-        # diagnostics::Union{DiagnosticWorkspaceClientCapabilities, Nothing} = nothing
+        # Tags
+        - since – 3.17.0.
+        """
+        diagnostics::Union{DiagnosticWorkspaceClientCapabilities, Nothing} = nothing
     end} = nothing
 
     "Text document specific client capabilities."
