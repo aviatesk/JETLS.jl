@@ -32,7 +32,7 @@ macro interface(exs...)
     toplevelblk = Expr(:toplevel)
 
     is_method_dispatchable = false
-    structbody = Expr(:block)
+    structbody = Expr(:block, __source__)
     omittable_fields = Set{Symbol}()
     extended_fields = Dict{Symbol,Vector{Int}}()
     duplicated_fields = Int[]
@@ -43,7 +43,8 @@ macro interface(exs...)
                                     omittable_fields,
                                     extended_fields,
                                     duplicated_fields,
-                                    extend)
+                                    extend,
+                                    __source__)
         end
     end
     _, method = process_interface_def!(toplevelblk, structbody,
@@ -51,6 +52,7 @@ macro interface(exs...)
                                        extended_fields,
                                        duplicated_fields,
                                        defex,
+                                       __source__,
                                        Name)
 
     if is_method_dispatchable
@@ -70,15 +72,18 @@ function process_interface_def!(toplevelblk::Expr, structbody::Expr,
                                 extended_fields::Dict{Symbol,Vector{Int}},
                                 duplicated_fields::Vector{Int},
                                 defex::Expr,
+                                __source__::LineNumberNode,
                                 Name::Union{Symbol,Nothing})
-    method = _process_interface_def!(toplevelblk, structbody, omittable_fields, extended_fields, duplicated_fields, defex)
+    method = _process_interface_def!(toplevelblk, structbody, omittable_fields, extended_fields, duplicated_fields, defex, __source__)
     deleteat!(structbody.args, duplicated_fields)
     is_anon = Name === nothing
     if is_anon
+        # Name = Symbol("AnonymousInterface", string(__source__)) # XXX this doesn't work probably due to Julia internal bug
         Name = Symbol("AnonymousInterface", gensym())
     end
     structdef = Expr(:struct, false, Name, structbody)
-    push!(toplevelblk.args, :(@kwdef $structdef)) # `@kwdef` will attach `Core.__doc__` automatically
+    kwdef = Expr(:macrocall, GlobalRef(Base, Symbol("@kwdef")), __source__, structdef) # `@kwdef` will attach `Core.__doc__` automatically
+    push!(toplevelblk.args, kwdef)
     if !isempty(omittable_fields)
         omitempties = Tuple(omittable_fields)
         if Name === :InitializeParams
@@ -105,12 +110,14 @@ function add_extended_interface!(toplevelblk::Expr, structbody::Expr,
                                  omittable_fields::Set{Symbol},
                                  extended_fields::Dict{Symbol,Vector{Int}},
                                  duplicated_fields::Vector{Int},
-                                 extend::Symbol)
+                                 extend::Symbol,
+                                __source__::LineNumberNode)
     return _process_interface_def!(toplevelblk, structbody,
                                    omittable_fields,
                                    extended_fields,
                                    duplicated_fields,
-                                   _INTERFACE_DEFS[extend];
+                                   _INTERFACE_DEFS[extend],
+                                   __source__;
                                    extending = true)
 end
 
@@ -118,7 +125,8 @@ function _process_interface_def!(toplevelblk::Expr, structbody::Expr,
                                  omittable_fields::Set{Symbol},
                                  extended_fields::Dict{Symbol,Vector{Int}},
                                  duplicated_fields::Vector{Int},
-                                 defex::Expr;
+                                 defex::Expr,
+                                 __source__::LineNumberNode;
                                  extending::Bool = false)
     @assert Meta.isexpr(defex, :block)
     extended_idxs = Int[]
@@ -127,6 +135,9 @@ function _process_interface_def!(toplevelblk::Expr, structbody::Expr,
         defarg = defex.args[i]
         fieldline = defarg
         if fieldline isa LineNumberNode || fieldline isa String
+            if fieldline isa LineNumberNode
+                __source__ = fieldline
+            end
             push!(structbody.args, fieldline)
             if extending
                 push!(extended_idxs, length(structbody.args))
@@ -172,7 +183,7 @@ function _process_interface_def!(toplevelblk::Expr, structbody::Expr,
                     if Meta.isexpr(ufty, :macrocall) && ufty.args[1] === Symbol("@interface")
                         anon_defex = ufty.args[end]
                         Meta.isexpr(anon_defex, :block) || error("Invalid `@interface` syntax: ", ufty)
-                        fieldtype.args[i] = process_anon_interface_def!(toplevelblk, anon_defex)
+                        fieldtype.args[i] = process_anon_interface_def!(toplevelblk, anon_defex, __source__)
                     elseif ufty === :Nothing
                         omittable = true
                     end
@@ -199,12 +210,12 @@ function _process_interface_def!(toplevelblk::Expr, structbody::Expr,
     return method
 end
 
-function process_anon_interface_def!(toplevelblk::Expr, defex::Expr) # Anonymous @interface
+function process_anon_interface_def!(toplevelblk::Expr, defex::Expr, __source__::LineNumberNode) # Anonymous @interface
     omittable_fields = Set{Symbol}()
     extended_fields = Dict{Symbol,Vector{Int}}()
     duplicated_fields = Int[]
     res, _ = process_interface_def!(toplevelblk, Expr(:block),
-        omittable_fields, extended_fields, duplicated_fields, defex, #=Name=#nothing)
+        omittable_fields, extended_fields, duplicated_fields, defex, __source__, #=Name=#nothing)
     if !(isempty(extended_fields) && isempty(duplicated_fields))
         error("`Anonymous @interface` does not support extension", defex)
     end
