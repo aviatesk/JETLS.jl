@@ -265,3 +265,13 @@ function byte_ancestors(sn::JS.SyntaxNode, rng::UnitRange{Int})
     return reverse!(out)
 end
 byte_ancestors(sn::JS.SyntaxNode, byte::Int) = byte_ancestors(sn, byte:byte)
+
+# LSP error handling utilities
+# ===========================
+
+function file_cache_error(uri::URI; data=nothing)
+    return ResponseError(;
+        code = ErrorCodes.ServerCancelled,
+        message = lazy"File cache for $uri is not initialized",
+        data)
+end

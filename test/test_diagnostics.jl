@@ -156,4 +156,29 @@ end
     end
 end
 
+@testset "file cache error handling" begin
+    # Test requesting diagnostics for a file that hasn't been opened
+    # (i.e., no file cache exists)
+    withscript("# some code") do script_path
+        uri = filepath2uri(script_path)
+        withserver() do (; writereadmsg, id_counter)
+            # Don't send DidOpenTextDocument notification, so no file cache is created
+            let id = id_counter[] += 1
+                (; raw_res) = writereadmsg(DocumentDiagnosticRequest(;
+                    id,
+                    params = DocumentDiagnosticParams(;
+                        textDocument = TextDocumentIdentifier(; uri)
+                    )))
+                @test raw_res isa DocumentDiagnosticResponse
+                @test raw_res.result === nothing
+                @test raw_res.error isa ResponseError
+                @test raw_res.error.code == ErrorCodes.ServerCancelled
+                @test occursin("File cache for $uri is not initialized", raw_res.error.message)
+                @test raw_res.error.data isa DiagnosticServerCancellationData
+                @test raw_res.error.data.retriggerRequest === true
+            end
+        end
+    end
+end
+
 end # module test_diagnostics

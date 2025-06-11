@@ -76,8 +76,7 @@ end
 
 const empty_methods = Method[]
 
-function definition_target_methods(state::ServerState, uri::URI, pos::Position)
-    fi = get_fileinfo(state, uri)
+function definition_target_methods(state::ServerState, uri::URI, pos::Position, fi::FileInfo)
     offset = xy_to_offset(fi, pos)
 
     st = JS.build_tree(JL.SyntaxTree, fi.parsed_stream)
@@ -95,8 +94,18 @@ end
 
 function handle_DefinitionRequest(server::Server, msg::DefinitionRequest)
     origin_position = msg.params.position
+    uri = msg.params.textDocument.uri
 
-    ms = definition_target_methods(server.state, msg.params.textDocument.uri, origin_position)
+    fi = get_fileinfo(server.state, uri)
+    if fi === nothing
+        return send(server,
+            DefinitionResponse(;
+                id = msg.id,
+                result = nothing,
+                error = file_cache_error(uri)))
+    end
+
+    ms = definition_target_methods(server.state, uri, origin_position, fi)
 
     if isempty(ms)
         send(server, DefinitionResponse(; id = msg.id, result = null))

@@ -354,6 +354,13 @@ function handle_SignatureHelpRequest(server::Server, msg::SignatureHelpRequest)
     state = server.state
     uri = msg.params.textDocument.uri
     fi = get_fileinfo(state, uri)
+    if fi === nothing
+        return send(server,
+            SignatureHelpResponse(;
+                id = msg.id,
+                result = nothing,
+                error = file_cache_error(uri)))
+    end
     mod = find_file_module(state, uri, msg.params.position)
     context = find_context_for_uri(state, uri)
     postprocessor = JET.PostProcessor(isnothing(context) ? nothing : context.result.actual2virtual)

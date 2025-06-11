@@ -354,7 +354,7 @@ end
 # ===========================
 
 """
-    get_backslash_offset(state::ServerState, uri::URI, pos::Position) -> offset::Int, is_emoji::Bool
+    get_backslash_offset(state::ServerState, fi::FileInfo, pos::Position) -> offset::Int, is_emoji::Bool
 
 Get the byte `offset` of a backslash if the token immediately before the cursor
 consists of a backslash and colon.
@@ -372,9 +372,7 @@ Examples:
 7. `alpha┃`         returns `nothing`  (no backslash before cursor)
 8. `\\alpha  bet┃a` returns `nothing` (no backslash immediately before token with cursor)
 """
-function get_backslash_offset(state::ServerState, uri::URI, pos::Position)
-    fi = get_fileinfo(state, uri)
-    fi === nothing && return nothing
+function get_backslash_offset(state::ServerState, fi::FileInfo, pos::Position)
     pos_offset = xy_to_offset(fi, pos)
     tokens = fi.parsed_stream.tokens
     curr_idx = findlast(token -> token.next_byte <= pos_offset, tokens)
@@ -421,7 +419,7 @@ function add_emoji_latex_completions!(items::Dict{String,CompletionItem}, state:
     fi === nothing && return nothing
 
     pos = params.position
-    backslash_offset_emojionly = get_backslash_offset(state, uri, pos)
+    backslash_offset_emojionly = get_backslash_offset(state, fi, pos)
     backslash_offset_emojionly === nothing && return nothing
     backslash_offset, emojionly = backslash_offset_emojionly
     backslash_pos = offset_to_xy(fi, backslash_offset)

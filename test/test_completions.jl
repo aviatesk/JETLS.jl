@@ -426,9 +426,9 @@ function test_backslash_offset(code::String, expected_result)
     state = JETLS.ServerState()
     filename = abspath("test_backslash.jl")
     uri = filename2uri(filename)
-    JETLS.cache_file_info!(state, uri, 1, text, filename)
+    fi = JETLS.cache_file_info!(state, uri, 1, text, filename)
 
-    result = JETLS.get_backslash_offset(state, uri, positions[1])
+    result = JETLS.get_backslash_offset(state, fi, positions[1])
     @test result == expected_result
     return result
 end

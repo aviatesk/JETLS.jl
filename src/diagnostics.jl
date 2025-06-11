@@ -197,11 +197,8 @@ function handle_DocumentDiagnosticRequest(server::Server, msg::DocumentDiagnosti
             DocumentDiagnosticResponse(;
                 id = msg.id,
                 result = nothing,
-                error = ResponseError(;
-                    code = ErrorCodes.ServerCancelled,
-                    message = lazy"File cache for $uri is not initialized",
-                    data = DiagnosticServerCancellationData(;
-                        retriggerRequest = true))))
+                error = file_cache_error(uri;
+                    data = DiagnosticServerCancellationData(; retriggerRequest = true))))
     end
     parsed_stream = file_info.parsed_stream
     if isempty(parsed_stream.diagnostics)
