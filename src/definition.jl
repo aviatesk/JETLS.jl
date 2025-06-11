@@ -89,7 +89,8 @@ function definition_target_methods(state::ServerState, uri::URI, pos::Position, 
     objtyp = resolve_type(analyzer, mod, node)
     objtyp isa Core.Const || return empty_methods
 
-    return methods(objtyp.val)
+    # TODO modify this aggregation logic when we start to use more precise location informaiton
+    return unique(functionloc, methods(objtyp.val))
 end
 
 function handle_DefinitionRequest(server::Server, msg::DefinitionRequest)
