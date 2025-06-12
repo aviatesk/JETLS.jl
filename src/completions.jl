@@ -339,17 +339,17 @@ function global_completions!(items::Dict{String, CompletionItem}, state::ServerS
         end
 
         items[s] = CompletionItem(;
-                label = s,
-                kind = CompletionItemKind.Variable,
-                documentation = nothing,
-                sortText = get_sort_text(0, #=isglobal=#true),
-                data = CompletionData(#=needs_resolve=#true),
-                labelDetails = CompletionItemLabelDetails(description = startswith(s, "@") ? "macro" : "global"),
-                textEdit = TextEdit(;
-                    range = Range(;
-                        start = edit_start_pos,
-                        var"end" = pos),
-                    newText = s))
+            label = s,
+            kind = CompletionItemKind.Variable,
+            documentation = nothing,
+            sortText = get_sort_text(0, #=isglobal=#true),
+            data = CompletionData(#=needs_resolve=#true),
+            labelDetails = CompletionItemLabelDetails(description = startswith(s, "@") ? "macro" : "global"),
+            textEdit = TextEdit(;
+                range = Range(;
+                    start = edit_start_pos,
+                    var"end" = pos),
+                newText = s))
     end
     # if we are in macro name context, then we don't need any local completions
     # as macros are always defined top-level
