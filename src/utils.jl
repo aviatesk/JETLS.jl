@@ -299,8 +299,3 @@ end
 
 get_current_token_idx(fi::FileInfo, pos::Position) =
     get_current_token_idx(fi, xy_to_offset(fi, pos))
-
-
-get_current_token(fi::FileInfo, offset::Int) =
-    get_current_token_idx(fi, offset) === nothing ? nothing :
-    fi.parsed_stream.tokens[get_current_token_idx(fi, offset)]

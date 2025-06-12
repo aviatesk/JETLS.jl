@@ -320,11 +320,6 @@ function global_completions!(items::Dict{String, CompletionItem}, state::ServerS
         is_macro_invoke = false
     end
 
-    create_edit(newText) = TextEdit(;
-        range = Range(; start = edit_start_pos, var"end" = pos),
-        newText = newText)
-
-
     for name in @invokelatest(names(mod; all=true, imported=true, usings=true))::Vector{Symbol}
         s = String(name)
         startswith(s, "#") && continue
@@ -342,7 +337,11 @@ function global_completions!(items::Dict{String, CompletionItem}, state::ServerS
                 sortText = get_sort_text(0, #=isglobal=#true),
                 data = CompletionData(#=needs_resolve=#true),
                 labelDetails = CompletionItemLabelDetails(description = startswith(s, "@") ? "macro" : "global"),
-                textEdit = create_edit(s))
+                textEdit = TextEdit(;
+                    range = Range(;
+                        start = edit_start_pos,
+                        var"end" = pos),
+                    newText = s))
     end
     # if we are in macro name context, then we don't need any local completions
     # as macros are always defined top-level
