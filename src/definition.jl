@@ -55,7 +55,7 @@ function select_target_node(st::JL.SyntaxTree, offset::Int)
     for i in 2:length(bas)
         basᵢ = bas[i]
         if (kind(basᵢ) === K"." &&
-            basᵢ[1] !== target) # don't follow child module chain
+            basᵢ[1] !== target) # e.g. don't allow jumps to `tmeet` from `Base.Compi│ler.tmeet`
             target = basᵢ
         else
             return target
