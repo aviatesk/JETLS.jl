@@ -185,7 +185,7 @@ Convert a 1-based byte offset to a 0-based line and character number
 """
 function offset_to_xy(ps::JS.ParseStream, byte::Integer)
     # ps must be parsed already
-    @assert byte in JS.first_byte(ps):JS.last_byte(ps) + 1 "Byte offset $byte is out of bounds for the parse stream with first byte $(JS.first_byte(ps)) and last byte $(JS.last_byte(ps) + 1)"
+    @assert byte in JS.first_byte(ps):JS.last_byte(ps) + 1 "Byte offset is out of bounds for the parse stream"
     sf = JS.SourceFile(ps)
     l, c = JuliaSyntax.source_location(sf, byte)
     return Position(;line = l-1, character = c-1)
