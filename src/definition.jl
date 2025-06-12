@@ -41,6 +41,11 @@ refs: https://github.com/rust-lang/rust-analyzer/blob/6acff6c1f8306a0a1d29be8fd1
 function select_target_node(st::JL.SyntaxTree, offset::Int)
     bas = byte_ancestors(st, offset)
 
+    # Support cases like `var│`, `func│(5)` 
+    if length(bas) == 1 || kind(first(bas)) == K"call" && offset > 0
+        bas = byte_ancestors(st, offset - 1)
+    end
+
     (kind(first(bas)) !== K"Identifier") && return nothing
 
     for i in 2:length(bas)
