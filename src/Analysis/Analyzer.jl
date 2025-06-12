@@ -5,6 +5,8 @@ export LSAnalyzer, inference_error_report_stack
 using JET.JETInterface
 using JET: JET, CC
 
+using ..JETLS: AnalysisEntry
+
 # JETLS internal interface
 # ========================
 
@@ -42,8 +44,8 @@ struct LSAnalyzer <: ToplevelAbstractAnalyzer
         method_table = CC.CachedMethodTable(CC.InternalMethodTable(state.world))
         return new(state, analysis_token, method_table)
     end
-    function LSAnalyzer(state::AnalyzerState)
-        cache_key = JET.compute_hash(state.inf_params)
+    function LSAnalyzer(entry::AnalysisEntry, state::AnalyzerState)
+        cache_key = JET.compute_hash(entry, state.inf_params)
         analysis_token = get!(AnalysisToken, LS_ANALYZER_CACHE, cache_key)
         return LSAnalyzer(state, analysis_token)
     end
@@ -66,7 +68,8 @@ CC.ipo_lattice(::LSAnalyzer) =
 
 JETInterface.AnalyzerState(analyzer::LSAnalyzer) = analyzer.state
 function JETInterface.AbstractAnalyzer(analyzer::LSAnalyzer, state::AnalyzerState)
-    return LSAnalyzer(state, )
+    # XXX `analyzer.analysis_token` doesn't respect changes in `state.inf_params`
+    return LSAnalyzer(state, analyzer.analysis_token)
 end
 JETInterface.AnalysisToken(analyzer::LSAnalyzer) = analyzer.analysis_token
 
@@ -164,7 +167,8 @@ end
 # ===========
 
 # the entry constructor
-function LSAnalyzer(world::UInt = Base.get_world_counter();
+function LSAnalyzer(entry::AnalysisEntry,
+                    world::UInt = Base.get_world_counter();
                     jetconfigs...)
     jetconfigs = JET.kwargs_dict(jetconfigs)
     jetconfigs[:aggressive_constant_propagation] = true
@@ -175,7 +179,7 @@ function LSAnalyzer(world::UInt = Base.get_world_counter();
     # make the situation worse.
     jetconfigs[:assume_bindings_static] = true
     state = AnalyzerState(world; jetconfigs...)
-    return LSAnalyzer(state)
+    return LSAnalyzer(entry, state)
 end
 
 const LS_ANALYZER_CONFIGURATIONS = Set{Symbol}(())
