@@ -3,7 +3,7 @@ module Interpreter
 export LSInterpreter
 
 using JET: JET
-using ..JETLS: ServerState, FileInfo
+using ..JETLS: AnalysisEntry, FileInfo, ServerState
 using ..JETLS.URIs2
 using ..JETLS.Analyzer
 
@@ -16,7 +16,7 @@ struct LSInterpreter <: JET.ConcreteInterpreter
 end
 
 # The main constructor
-LSInterpreter(state::ServerState) = LSInterpreter(state.file_cache, LSAnalyzer())
+LSInterpreter(state::ServerState, entry::AnalysisEntry) = LSInterpreter(state.file_cache, LSAnalyzer(entry))
 
 # `JET.ConcreteInterpreter` interface
 JET.get_state(interp::LSInterpreter) = interp.state

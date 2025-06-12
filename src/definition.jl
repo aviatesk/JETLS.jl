@@ -41,7 +41,7 @@ refs: https://github.com/rust-lang/rust-analyzer/blob/6acff6c1f8306a0a1d29be8fd1
 function select_target_node(st::JL.SyntaxTree, offset::Int)
     bas = byte_ancestors(st, offset)
 
-    # Support cases like `var│`, `func│(5)` 
+    # Support cases like `var│`, `func│(5)`
     if length(bas) == 1 || kind(first(bas)) == K"call" && offset > 0
         bas = byte_ancestors(st, offset - 1)
     end
@@ -90,7 +90,7 @@ function definition_target_methods(state::ServerState, uri::URI, pos::Position, 
 
     mod = find_file_module(state, uri, pos)
     context = find_context_for_uri(state, uri)
-    analyzer = isnothing(context) ? LSAnalyzer() : context.result.analyzer
+    analyzer = isnothing(context) ? LSAnalyzer(uri) : context.result.analyzer
     objtyp = resolve_type(analyzer, mod, node)
     objtyp isa Core.Const || return empty_methods
 
