@@ -340,11 +340,12 @@ function global_completions!(items::Dict{String, CompletionItem}, state::ServerS
 
         items[s] = CompletionItem(;
             label = s,
+            labelDetails = CompletionItemLabelDetails(;
+                description = startswith(s, "@") ? "macro" : "global"),
             kind = CompletionItemKind.Variable,
             documentation = nothing,
             sortText = get_sort_text(0, #=isglobal=#true),
             data = CompletionData(#=needs_resolve=#true),
-            labelDetails = CompletionItemLabelDetails(description = startswith(s, "@") ? "macro" : "global"),
             textEdit = TextEdit(;
                 range = Range(;
                     start = edit_start_pos,
