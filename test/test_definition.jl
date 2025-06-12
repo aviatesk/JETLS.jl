@@ -122,11 +122,13 @@ include("setup.jl")
     #=45=# end
     #=46=# say_kwar│g
     #=47=#
-    #=48=# func│(1.0)
-    #=49=# func(│1.0)
-    #=50=# │func(1.0)
-    #=51=# M.m_func│(1.0)
-    #=52=# M.│m_func(1.0)
+    #=48=# func│
+    #=49=# func│(1.0)
+    #=50=# func(│1.0)
+    #=51=# │func(1.0)
+    #=52=# M.m_func│(1.0)
+    #=53=# M.│m_func(1.0)
+    #=54=# let; func│; end
     """
 
     sin_cand_file, sin_cand_line = functionloc(first(methods(sin, (Float64,))))
@@ -211,6 +213,12 @@ include("setup.jl")
             (first(result).uri == uri) &&
             (first(result).range.start.line == 42)
 
+        # func│
+        (result, uri) ->
+            (length(result) == 1) &&
+            (first(result).uri == uri) &&
+            (first(result).range.start.line == 0)
+
         # func│(1.0)
         (result, uri) ->
             (length(result) == 1) &&
@@ -237,6 +245,12 @@ include("setup.jl")
             (length(result) == 1) &&
             (first(result).uri == uri) &&
             (first(result).range.start.line == 11)
+
+        # let; func│; end
+        (result, uri) ->
+            (length(result) == 1) &&
+            (first(result).uri == uri) &&
+            (first(result).range.start.line == 0)
     ]
 
     clean_code, positions = get_text_and_positions(script_code, r"│")
