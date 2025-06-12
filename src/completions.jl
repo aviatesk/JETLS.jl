@@ -306,12 +306,15 @@ function global_completions!(items::Dict{String, CompletionItem}, state::ServerS
     current_token = fi.parsed_stream.tokens[current_token_idx]
     current_kind = JS.kind(current_token)
 
+    # Case: `@│`
     if current_kind === JS.K"@"
         edit_start_pos = offset_to_xy(fi, fi.parsed_stream.tokens[current_token_idx - 1].next_byte)
         is_macro_invoke = true
+    # Case: `@macr│`
     elseif current_kind === JS.K"MacroName"
         edit_start_pos = offset_to_xy(fi, fi.parsed_stream.tokens[current_token_idx - 2].next_byte)
         is_macro_invoke = true
+    # Case `│` (empty program)
     elseif current_kind === JS.K"TOMBSTONE"
         edit_start_pos = Position(; line=0, character=0)
         is_macro_invoke = false
