@@ -567,6 +567,13 @@ function is_full_analysis_successful(result)
     return isempty(result.res.toplevel_error_reports)
 end
 
+# update `AnalyzerState(analyzer).world` so that `analyzer` can infer any newly defined methods
+function update_analyzer_world(analyzer::LSAnalyzer)
+    state = JET.AnalyzerState(analyzer)
+    newstate = JET.AnalyzerState(state; world = Base.get_world_counter())
+    return JET.AbstractAnalyzer(analyzer, newstate)
+end
+
 function new_analysis_context(entry::AnalysisEntry, result)
     analyzed_file_infos = Dict{URI,JET.AnalyzedFileInfo}(
         # `filepath` is an absolute path (since `path` is specified as absolute)
@@ -576,7 +583,7 @@ function new_analysis_context(entry::AnalysisEntry, result)
     successfully_analyzed_file_infos = copy(analyzed_file_infos)
     is_full_analysis_successful(result) || empty!(successfully_analyzed_file_infos)
     analysis_result = FullAnalysisResult(
-        #=staled=#false, result.res.actual2virtual, result.analyzer,
+        #=staled=#false, result.res.actual2virtual, update_analyzer_world(result.analyzer),
         uri2diagnostics, analyzed_file_infos, successfully_analyzed_file_infos)
     return AnalysisContext(entry, analysis_result)
 end
@@ -606,7 +613,7 @@ function update_analysis_context!(analysis_context::AnalysisContext, result)
     analysis_context.result.staled = false
     if is_full_analysis_successful(result)
         analysis_context.result.actual2virtual = result.res.actual2virtual
-        analysis_context.result.analyzer = result.analyzer
+        analysis_context.result.analyzer = update_analyzer_world(result.analyzer)
     end
 end
 

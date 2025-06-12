@@ -64,10 +64,11 @@ function resolve_type(analyzer::LSAnalyzer, context_module::Module, @nospecializ
     REPL.REPLCompletions.resolve_toplevel_symbols!(src, context_module)
     mi = @ccall jl_method_instance_for_thunk(src::Any, context_module::Any)::Ref{Core.MethodInstance}
 
-    # interp = JET.ToplevelAbstractAnalyzer(analyzer, falses(length(src.code)))
-    resize!(analyzer.state.concretized, length(src.code))
-    fill!(analyzer.state.concretized, false)
-    interp = analyzer
+    # create a new state with `concretized::BitVector` whose length is appropriate
+    # for inferring this top-level thunk
+    state = JET.AnalyzerState(analyzer)
+    newstate = JET.AnalyzerState(state; concretized=falses(length(src.code)))
+    interp = JET.AbstractAnalyzer(analyzer, newstate)
     result = CC.InferenceResult(mi)
     JET.init_result!(interp, result)
     frame = CC.InferenceState(result, src, #=cache=#:no, interp)
