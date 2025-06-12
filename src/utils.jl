@@ -283,7 +283,7 @@ Get the current token index at a given byte offset in a parsed file.
 This function returns the token at the specified byte offset, or `nothing`
 if the offset is invalid or no token exists at that position.
 
-In insertion mode, current means the token that locates right before the
+In insertion mode, "current" means the token that locates right before the
 given offset.
 
 Example:
