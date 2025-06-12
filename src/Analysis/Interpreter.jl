@@ -19,8 +19,12 @@ end
 LSInterpreter(state::ServerState, entry::AnalysisEntry) = LSInterpreter(state.file_cache, LSAnalyzer(entry))
 
 # `JET.ConcreteInterpreter` interface
-JET.get_state(interp::LSInterpreter) = interp.state
-JET.ConcreteInterpreter(interp::LSInterpreter, state::JET.InterpretationState) = LSInterpreter(interp.file_cache, interp.analyzer, state)
+JET.InterpretationState(interp::LSInterpreter) = interp.state
+function JET.ConcreteInterpreter(interp::LSInterpreter, state::JET.InterpretationState)
+    # add `state` to `interp`, and update `interp.analyzer.cache`
+    initialize_cache!(interp.analyzer, state.res.analyzed_files)
+    return LSInterpreter(interp.file_cache, interp.analyzer, state)
+end
 JET.ToplevelAbstractAnalyzer(interp::LSInterpreter) = interp.analyzer
 
 # overloads
