@@ -183,9 +183,9 @@ xy_to_offset(fi::FileInfo, pos::Position) = xy_to_offset(fi.parsed_stream.textbu
 
 Convert a 1-based byte offset to a 0-based line and character number
 """
-function offset_to_xy(ps::JS.ParseStream, byte::Int)
+function offset_to_xy(ps::JS.ParseStream, byte::Integer)
     # ps must be parsed already
-    @assert byte in JS.first_byte(ps):JS.last_byte(ps) + 1
+    @assert byte in JS.first_byte(ps):JS.last_byte(ps) + 1 "Byte offset $byte is out of bounds for the parse stream with first byte $(JS.first_byte(ps)) and last byte $(JS.last_byte(ps) + 1)"
     sf = JS.SourceFile(ps)
     l, c = JuliaSyntax.source_location(sf, byte)
     return Position(;line = l-1, character = c-1)
@@ -194,7 +194,7 @@ function offset_to_xy(code::Union{AbstractString, Vector{UInt8}}, byte::Int) # u
     ps = JS.parse!(JS.ParseStream(code), rule=:all)
     return offset_to_xy(ps, byte)
 end
-offset_to_xy(fi::FileInfo, byte::Int) = offset_to_xy(fi.parsed_stream, byte)
+offset_to_xy(fi::FileInfo, byte::Integer) = offset_to_xy(fi.parsed_stream, byte)
 
 """
 Like `Base.unique`, but over node ids, and with this comment promising that the
@@ -275,3 +275,27 @@ function file_cache_error(uri::URI; data=nothing)
         message = lazy"File cache for $uri is not initialized",
         data)
 end
+
+"""
+    get_current_token_idx(fi::FileInfo, offset::Int)
+
+Get the current token index at a given byte offset in a parsed file.
+This function returns the token at the specified byte offset, or `nothing`
+if the offset is invalid or no token exists at that position.
+
+In insertion mode, "current" means the token that locates right before the
+given offset.
+
+Example:
+al│pha beta gamma          returns the index of `alpha`
+│alpha beta gamma          returns the index of `alpha`
+alpha│ beta gamma          returns the index of ` ` (whitespace)
+alpha │beta gamma          returns the index of `beta`
+"""
+function get_current_token_idx(fi::FileInfo, offset::Int)
+    fi === nothing && return nothing
+    findfirst(token -> token.next_byte >= offset, fi.parsed_stream.tokens)
+end
+
+get_current_token_idx(fi::FileInfo, pos::Position) =
+    get_current_token_idx(fi, xy_to_offset(fi, pos))

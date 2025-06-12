@@ -347,7 +347,7 @@ end
         items = JETLS.get_completion_items(state, uri, params)
         @test any(items) do item
             item.label == "@nospecialize" &&
-            item.insertText == "nospecialize"
+            item.textEdit.newText == "@nospecialize"
         end
         @test !any(items) do item
             item.label == "foo" || item.label == "xxx" || item.label == "yyy"
@@ -369,8 +369,7 @@ end
         items = JETLS.get_completion_items(state, uri, params)
         @test any(items) do item
             item.label == "@nospecialize" &&
-            item.filterText == "nospecialize" &&
-            item.insertText == "nospecialize"
+            item.textEdit.newText == "@nospecialize"
         end
         @test !any(items) do item
             item.label == "foo" || item.label == "xxx" || item.label == "yyy"
@@ -410,8 +409,7 @@ end
         items = JETLS.get_completion_items(state, uri, params)
         @test any(items) do item
             item.label == "@nospecialize" &&
-            item.filterText == "nospecialize" &&
-            item.insertText == "@nospecialize" # NOTE that `@` is included here
+            item.textEdit.newText == "@nospecialize"
         end
     end
 end
