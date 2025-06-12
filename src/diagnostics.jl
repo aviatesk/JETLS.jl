@@ -37,7 +37,6 @@ function jet_result_to_diagnostics(file_uris, result::JET.JETToplevelResult)
 end
 
 function jet_result_to_diagnostics!(uri2diagnostics::Dict{URI,Vector{Diagnostic}}, result::JET.JETToplevelResult)
-    analyzed_modules = JET.defined_modules(result.res)
     postprocessor = JET.PostProcessor(result.res.actual2virtual)
     for report in result.res.toplevel_error_reports
         diagnostic = jet_toplevel_error_report_to_diagnostic(postprocessor, report)
@@ -54,10 +53,6 @@ function jet_result_to_diagnostics!(uri2diagnostics::Dict{URI,Vector{Diagnostic}
         diagnostic = jet_inference_error_report_to_diagnostic(postprocessor, report)
         topframeidx = first(inference_error_report_stack(report))
         topframe = report.vst[topframeidx]
-        if frame_module(topframe) ∉ analyzed_modules
-            # skip report within dependency packages for now
-            continue
-        end
         topframe.file === :none && continue # TODO Figure out why this is necessary
         filename = String(topframe.file)
         if startswith(filename, "Untitled")

@@ -29,6 +29,8 @@ using JuliaSyntax: JuliaSyntax as JS
 using JuliaLowering: JuliaLowering as JL
 using REPL: REPL # loading REPL is necessary to make `Base.Docs.doc(::Base.Docs.Binding)` work
 
+abstract type AnalysisEntry end
+
 include("Analysis/Analyzer.jl")
 using .Analyzer
 include("Analysis/Resolver.jl")
@@ -41,24 +43,28 @@ struct FileInfo
     parsed_stream::JS.ParseStream
 end
 
-abstract type AnalysisEntry end
+entryuri(entry::AnalysisEntry) = entryuri_impl(entry)::URI
 
 struct ScriptAnalysisEntry <: AnalysisEntry
     uri::URI
 end
+entryuri_impl(entry::ScriptAnalysisEntry) = entry.uri
 struct ScriptInEnvAnalysisEntry <: AnalysisEntry
     env_path::String
     uri::URI
 end
+entryuri_impl(entry::ScriptInEnvAnalysisEntry) = entry.uri
 struct PackageSourceAnalysisEntry <: AnalysisEntry
     env_path::String
-    pkgfile::String
+    pkgfileuri::URI
     pkgid::Base.PkgId
 end
+entryuri_impl(entry::PackageSourceAnalysisEntry) = entry.pkgfileuri
 struct PackageTestAnalysisEntry <: AnalysisEntry
     env_path::String
     runtestsuri::URI
 end
+entryuri_impl(entry::PackageTestAnalysisEntry) = entry.runtestsuri
 
 mutable struct FullAnalysisResult
     staled::Bool
@@ -125,6 +131,10 @@ using .Interpreter
 const DEFAULT_DOCUMENT_SELECTOR = DocumentFilter[
     DocumentFilter(; language = "julia")
 ]
+
+# define fallback constructors for LSAnalyzer
+Analyzer.LSAnalyzer(uri::URI, args...; kwargs...) = LSAnalyzer(ScriptAnalysisEntry(uri), args...; kwargs...)
+Analyzer.LSAnalyzer(args...; kwargs...) = LSAnalyzer(ScriptAnalysisEntry(filepath2uri(@__FILE__)), args...; kwargs...)
 
 include("utils.jl")
 include("registration.jl")
@@ -537,22 +547,31 @@ function handle_DidCloseTextDocumentNotification(server::Server, msg::DidCloseTe
     nothing
 end
 
-function analyze_parsed_if_exist(state::ServerState, uri::URI, args...; kwargs...)
+function analyze_parsed_if_exist(state::ServerState, entry::AnalysisEntry, args...;
+                                 toplevel_logger = nothing, kwargs...)
+    uri = entryuri(entry)
     if haskey(state.file_cache, uri)
         file_info = state.file_cache[uri]
         parsed_stream = file_info.parsed_stream
         filename = uri2filename(uri)::String
         parsed = JS.build_tree(JS.SyntaxNode, parsed_stream; filename)
-        return JET.analyze_and_report_expr!(LSInterpreter(state), parsed, filename, args...; kwargs...)
+        return JET.analyze_and_report_expr!(LSInterpreter(state, entry), parsed, filename, args...; toplevel_logger, kwargs...)
     else
         filepath = uri2filepath(uri)
         @assert filepath !== nothing "Unsupported URI: $uri"
-        return JET.analyze_and_report_file!(LSInterpreter(state), filepath, args...; kwargs...)
+        return JET.analyze_and_report_file!(LSInterpreter(state, entry), filepath, args...; toplevel_logger, kwargs...)
     end
 end
 
 function is_full_analysis_successful(result)
     return isempty(result.res.toplevel_error_reports)
+end
+
+# update `AnalyzerState(analyzer).world` so that `analyzer` can infer any newly defined methods
+function update_analyzer_world(analyzer::LSAnalyzer)
+    state = JET.AnalyzerState(analyzer)
+    newstate = JET.AnalyzerState(state; world = Base.get_world_counter())
+    return JET.AbstractAnalyzer(analyzer, newstate)
 end
 
 function new_analysis_context(entry::AnalysisEntry, result)
@@ -564,7 +583,7 @@ function new_analysis_context(entry::AnalysisEntry, result)
     successfully_analyzed_file_infos = copy(analyzed_file_infos)
     is_full_analysis_successful(result) || empty!(successfully_analyzed_file_infos)
     analysis_result = FullAnalysisResult(
-        #=staled=#false, result.res.actual2virtual, result.analyzer,
+        #=staled=#false, result.res.actual2virtual, update_analyzer_world(result.analyzer),
         uri2diagnostics, analyzed_file_infos, successfully_analyzed_file_infos)
     return AnalysisContext(entry, analysis_result)
 end
@@ -594,7 +613,7 @@ function update_analysis_context!(analysis_context::AnalysisContext, result)
     analysis_context.result.staled = false
     if is_full_analysis_successful(result)
         analysis_context.result.actual2virtual = result.res.actual2virtual
-        analysis_context.result.analyzer = result.analyzer
+        analysis_context.result.analyzer = update_analyzer_world(result.analyzer)
     end
 end
 
@@ -716,18 +735,14 @@ function initiate_context!(state::ServerState, uri::URI)
 
     if env_path === nothing
         @label analyze_script
-        filename = file_info.filename
-        parsed = JS.build_tree(JS.SyntaxNode, parsed_stream; filename)
         if env_path !== nothing
             entry = ScriptInEnvAnalysisEntry(env_path, uri)
             result = activate_do(env_path) do
-                JET.analyze_and_report_expr!(LSInterpreter(state), parsed, filename;
-                    toplevel_logger=stderr)
+                analyze_parsed_if_exist(state, entry)
             end
         else
             entry = ScriptAnalysisEntry(uri)
-            result = JET.analyze_and_report_expr!(LSInterpreter(state), parsed, filename;
-                toplevel_logger=stderr)
+            result = analyze_parsed_if_exist(state, entry)
         end
         analysis_context = new_analysis_context(entry, result)
         @assert uri in analyzed_file_uris(analysis_context)
@@ -752,10 +767,9 @@ function initiate_context!(state::ServerState, uri::URI)
                     @warn "Expected a package to have a source file" pkgname
                     return nothing
                 end
-                pkgfiluri = filepath2uri(pkgfile)
-                entry = PackageSourceAnalysisEntry(env_path, pkgfile, pkgid)
-                res = analyze_parsed_if_exist(state, pkgfiluri, pkgid;
-                    toplevel_logger=nothing,
+                pkgfileuri = filepath2uri(pkgfile)
+                entry = PackageSourceAnalysisEntry(env_path, pkgfileuri, pkgid)
+                res = analyze_parsed_if_exist(state, entry, pkgid;
                     analyze_from_definitions=true,
                     target_defined_modules=true,
                     concretization_patterns=[:(x_)])
@@ -774,11 +788,10 @@ function initiate_context!(state::ServerState, uri::URI)
             # analyze test scripts
             runtestsfile = joinpath(filedir, "runtests.jl")
             runtestsuri = filepath2uri(runtestsfile)
-            result = activate_do(env_path) do
-                analyze_parsed_if_exist(state, runtestsuri;
-                    toplevel_logger=stderr)
-            end
             entry = PackageTestAnalysisEntry(env_path, runtestsuri)
+            result = activate_do(env_path) do
+                analyze_parsed_if_exist(state, entry)
+            end
             analysis_context = new_analysis_context(entry, result)
             record_reverse_map!(state, analysis_context)
             if uri ∉ analyzed_file_uris(analysis_context)
@@ -817,26 +830,21 @@ function reanalyze_with_context!(state::ServerState, analysis_context::AnalysisC
 
     entry = analysis_context.entry
     if entry isa ScriptAnalysisEntry
-        result = analyze_parsed_if_exist(state, entry.uri;
-            toplevel_logger=stderr)
+        result = analyze_parsed_if_exist(state, entry)
     elseif entry isa ScriptInEnvAnalysisEntry
         result = activate_do(entry.env_path) do
-            analyze_parsed_if_exist(state, entry.uri;
-                toplevel_logger=stderr)
+            analyze_parsed_if_exist(state, entry)
         end
     elseif entry isa PackageSourceAnalysisEntry
         result = activate_do(entry.env_path) do
-            pkgfileuri = filepath2uri(entry.pkgfile)
-            analyze_parsed_if_exist(state, pkgfileuri, entry.pkgid;
-                    toplevel_logger=nothing,
+            analyze_parsed_if_exist(state, entry, entry.pkgid;
                     analyze_from_definitions=true,
                     target_defined_modules=true,
                     concretization_patterns=[:(x_)])
         end
     elseif entry isa PackageTestAnalysisEntry
         result = activate_do(entry.env_path) do
-            analyze_parsed_if_exist(state, entry.runtestsuri;
-                toplevel_logger=stderr)
+            analyze_parsed_if_exist(state, entry)
         end
     else
         @warn "Unsupported analysis entry" entry
@@ -905,7 +913,10 @@ module __demo__ end
             end
 
             # compile `LSInterpreter`
-            JET.analyze_and_report_file!(LSInterpreter(state), normpath(pkgdir(JET), "demo.jl");
+            entry = ScriptAnalysisEntry(uri)
+            interp = LSInterpreter(state, entry)
+            filepath = normpath(pkgdir(JET), "demo.jl")
+            JET.analyze_and_report_file!(interp, filepath;
                 virtualize=false,
                 context=__demo__,
                 toplevel_logger=nothing)
