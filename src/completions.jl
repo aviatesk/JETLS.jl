@@ -298,6 +298,11 @@ end
 # ==================
 
 function global_completions!(items::Dict{String, CompletionItem}, state::ServerState, uri::URI, params::CompletionParams)
+    let context = params.context
+        !isnothing(context) &&
+            # Don't trigger completion just by typing a numeric character:
+            context.triggerCharacter in NUMERIC_CHARACTERS && return nothing
+    end
     pos = params.position
     fi = get_fileinfo(state, uri)
     fi === nothing && return nothing
