@@ -34,8 +34,8 @@ making the implementation both accurate and performant.
   type aliases within modules cannot be accessed without explicit qualification.
 
 ## Original specification
-The original LSP specification is managed in [specification.md](./specification.md).
-[specification.md](./specification.md) is just Markdown text.
+The original LSP specification is managed in [specification.md](./specification.md),
+which is just Markdown file.
 By passing the Markdown text of the LSP specification you want to convert
 to an LLM model along with this documentation, you can request automatic
 conversion to Julia LSP definitions.
