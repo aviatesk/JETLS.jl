@@ -77,16 +77,40 @@ more helpful for globals.
 """
 function greatest_lowerable(st0::JL.SyntaxTree, b::Int)
     bas = byte_ancestors(st0, b)
-    i = findfirst(st -> JL.kind(st) in KSet"toplevel module inert", bas)
-    if isempty(bas) || i === 1
-        return (nothing, b)
-    elseif isnothing(i)
-        # shouldn't happen outside of testing (parseall wraps with toplevel)
-        gl = last(bas)
-    else
-        gl = bas[i - 1]
+
+    # Find the first toplevel or module node
+    toplevel_idx = findfirst(st -> JL.kind(st) in KSet"toplevel module", bas)
+    if isnothing(toplevel_idx)
+        # No toplevel/module found, shouldn't happen in normal code
+        return isempty(bas) ? (nothing, b) : (last(bas), b - (JS.first_byte(st0) - 1))
     end
-    return gl, (b - (JS.first_byte(st0) - 1))
+
+    # If we have nodes before the toplevel/module in ancestors
+    if toplevel_idx > 1
+        # Look for a meaningful lowerable unit. Start from the node just before
+        # toplevel/module and walk up until we find something that's not just
+        # a generic block
+        candidate_idx = toplevel_idx - 1
+
+        # If the direct child of toplevel/module is a block, look one level deeper
+        # to find a more specific lowerable unit (like a function)
+        if candidate_idx >= 2 && JL.kind(bas[candidate_idx]) === K"block"
+            # Check if we have a more specific node (like function, let, etc.)
+            # that would be better to lower
+            for i in (candidate_idx-1):-1:1
+                node_kind = JL.kind(bas[i])
+                if node_kind in KSet"function let block for while if try quote"
+                    candidate_idx = i
+                    break
+                end
+            end
+        end
+
+        return bas[candidate_idx], (b - (JS.first_byte(st0) - 1))
+    end
+
+    # If no suitable child found, return nothing
+    return (nothing, b)
 end
 
 """
