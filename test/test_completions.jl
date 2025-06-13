@@ -262,6 +262,7 @@ end
     filename = abspath("foo.jl")
     uri = filename2uri(filename)
     JETLS.cache_file_info!(state, uri, #=version=#1, text, filename)
+    JETLS.cache_saved_file_info!(state, uri, text, filename)
     JETLS.initiate_context!(state, uri)
     let params = CompletionParams(;
             textDocument=TextDocumentIdentifier(; uri),
