@@ -539,7 +539,15 @@ function handle_DidChangeTextDocumentNotification(server::Server, msg::DidChange
 end
 
 function handle_DidSaveTextDocumentNotification(server::Server, msg::DidSaveTextDocumentNotification)
-    run_full_analysis!(server, msg.params.textDocument.uri; reanalyze=true)
+    uri = msg.params.textDocument.uri
+    if !haskey(server.state.file_cache, uri)
+        # Some language client implementations (in this case Zed) appear to be
+        # sending `textDocument/didSave` notifications for arbitrary text documents,
+        # so we add a save guard for such cases.
+        JETLS_DEV_MODE && @warn "Received textDocument/didSave for unopened or unsupported document" uri
+        return nothing
+    end
+    run_full_analysis!(server, uri; reanalyze=true)
 end
 
 function handle_DidCloseTextDocumentNotification(server::Server, msg::DidCloseTextDocumentNotification)
