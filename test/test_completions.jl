@@ -11,7 +11,8 @@ function get_cursor_bindings(s::String, b::Int)
     ps = JS.ParseStream(s)
     JS.parse!(ps; rule=:all)
     st0 = JS.build_tree(JL.SyntaxTree, ps)
-    return cursor_bindings(st0, b)
+    cb = cursor_bindings(st0, b)
+    return isnothing(cb) ? [] : cb
 end
 
 function get_local_completions(s::String, b::Int)
@@ -69,7 +70,6 @@ end
     snippets = [
         "let x = 1;                  |  end",
         "let; (y,(x,z)) = (2,(1,3))  |  end",
-        "begin; x = 1;               |  end",
         "function f(x);              |  end",
         "function f(x...);           |  end",
         "function f(a::x) where x;   |  end",
@@ -189,7 +189,7 @@ let code = """
     function fo#=cursor=#
     """
     b = first(findfirst("#=cursor=#", code))
-    @test get_cursor_bindings(code, b) === nothing
+    @test isempty(get_cursor_bindings(code, b))
 end
 let # XXX somehow wrapping within `module A ... end` is necessary to get `xx` completion for this incomplete code
     s = """

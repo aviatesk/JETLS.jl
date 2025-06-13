@@ -71,22 +71,29 @@ end
 # =================
 
 """
-Find any largest lowerable tree containing the cursor and the cursor's position
-within it.  For local completions; something like least_unlowerable would be
-more helpful for globals.
+    greatest_local(st0, b) -> (st::Union{SyntaxTree, Nothing}, b::Int)
+
+Return the largest tree that can introduce local bindings that are visible to
+the cursor (if any such tree exists), and the cursor's position within it.
 """
-function greatest_lowerable(st0::JL.SyntaxTree, b::Int)
+function greatest_local(st0::JL.SyntaxTree, b::Int)
     bas = byte_ancestors(st0, b)
-    i = findfirst(st -> JL.kind(st) in KSet"toplevel module inert", bas)
-    if isempty(bas) || i === 1
+
+    first_global = findfirst(st -> JL.kind(st) in KSet"toplevel module", bas)
+    @assert !isnothing(first_global)
+    if first_global === 1
         return (nothing, b)
-    elseif isnothing(i)
-        # shouldn't happen outside of testing (parseall wraps with toplevel)
-        gl = last(bas)
-    else
-        gl = bas[i - 1]
     end
-    return gl, (b - (JS.first_byte(st0) - 1))
+
+    i = first_global - 1
+    while JL.kind(bas[i]) === K"block"
+        # bas[i] is a block within a global scope, so can't introduce local
+        # bindings.  Shrink the tree (mostly for performance).
+        i -= 1
+        i < 1 && return (nothing, b)
+    end
+
+    return bas[i], (b - (JS.first_byte(st0) - 1))
 end
 
 """
@@ -145,7 +152,7 @@ as an ephemeral stack.)  We work around this by taking all available bindings
 and filtering out any that aren't declared in a scope containing the cursor.
 """
 function cursor_bindings(st0_top::JL.SyntaxTree, b_top::Int)
-    st0, b = greatest_lowerable(st0_top, b_top)
+    st0, b = greatest_local(st0_top, b_top)
     if isnothing(st0)
         return nothing # nothing we can lower
     end
