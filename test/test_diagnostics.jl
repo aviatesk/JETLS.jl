@@ -65,7 +65,8 @@ end
 
             found_diagnostic = false
             for diag in raw_res.params.diagnostics
-                if diag.source == JETLS.TOPLEVEL_DIAGNOSTIC_SOURCE
+                if (diag.source == JETLS.TOPLEVEL_DIAGNOSTIC_SOURCE &&
+                    diag.range.start.line == 0)
                     found_diagnostic = true
                     break
                 end
