@@ -71,46 +71,29 @@ end
 # =================
 
 """
-Find any largest lowerable tree containing the cursor and the cursor's position
-within it.  For local completions; something like least_unlowerable would be
-more helpful for globals.
+    greatest_local(st0, b) -> (st::Union{SyntaxTree, Nothing}, b::Int)
+
+Return the largest tree that can introduce local bindings that are visible to
+the cursor (if any such tree exists), and the cursor's position within it.
 """
-function greatest_lowerable(st0::JL.SyntaxTree, b::Int)
+function greatest_local(st0::JL.SyntaxTree, b::Int)
     bas = byte_ancestors(st0, b)
 
-    # Find the first toplevel or module node
-    toplevel_idx = findfirst(st -> JL.kind(st) in KSet"toplevel module", bas)
-    if isnothing(toplevel_idx)
-        # No toplevel/module found, shouldn't happen in normal code
-        return isempty(bas) ? (nothing, b) : (last(bas), b - (JS.first_byte(st0) - 1))
+    first_global = findfirst(st -> JL.kind(st) in KSet"toplevel module", bas)
+    @assert !isnothing(first_global)
+    if first_global === 1
+        return (nothing, b)
     end
 
-    # If we have nodes before the toplevel/module in ancestors
-    if toplevel_idx > 1
-        # Look for a meaningful lowerable unit. Start from the node just before
-        # toplevel/module and walk up until we find something that's not just
-        # a generic block
-        candidate_idx = toplevel_idx - 1
-
-        # If the direct child of toplevel/module is a block, look one level deeper
-        # to find a more specific lowerable unit (like a function)
-        if candidate_idx >= 2 && JL.kind(bas[candidate_idx]) === K"block"
-            # Check if we have a more specific node (like function, let, etc.)
-            # that would be better to lower
-            for i in (candidate_idx-1):-1:1
-                node_kind = JL.kind(bas[i])
-                if node_kind in KSet"function let block for while if try quote"
-                    candidate_idx = i
-                    break
-                end
-            end
-        end
-
-        return bas[candidate_idx], (b - (JS.first_byte(st0) - 1))
+    i = first_global - 1
+    while JL.kind(bas[i]) === K"block"
+        # bas[i] is a block within a global scope, so can't introduce local
+        # bindings.  Shrink the tree (mostly for performance).
+        i -= 1
+        i < 1 && return (nothing, b)
     end
 
-    # If no suitable child found, return nothing
-    return (nothing, b)
+    return bas[i], (b - (JS.first_byte(st0) - 1))
 end
 
 """
@@ -169,7 +152,7 @@ as an ephemeral stack.)  We work around this by taking all available bindings
 and filtering out any that aren't declared in a scope containing the cursor.
 """
 function cursor_bindings(st0_top::JL.SyntaxTree, b_top::Int)
-    st0, b = greatest_lowerable(st0_top, b_top)
+    st0, b = greatest_local(st0_top, b_top)
     if isnothing(st0)
         return nothing # nothing we can lower
     end
