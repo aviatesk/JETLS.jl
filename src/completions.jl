@@ -113,7 +113,12 @@ function remove_macrocalls(st0::JL.SyntaxTree)
     ctx = JL.MacroExpansionContext(JL.syntax_graph(st0), JL.Bindings(),
                                    JL.ScopeLayer[], JL.ScopeLayer(1, Module(), false))
     if kind(st0) === K"macrocall"
-        @ast ctx st0 "nothing"::K"core"
+        macroname = st0[1]
+        if hasproperty(macroname, :name_val) && macroname.name_val == "@nospecialize"
+            st0
+        else
+            @ast ctx st0 "nothing"::K"core"
+        end
     elseif JS.is_leaf(st0)
         st0
     else
