@@ -33,20 +33,27 @@ making the implementation both accurate and performant.
   This is a constraint of Julia's module scoping rules, where constants and
   type aliases within modules cannot be accessed without explicit qualification.
 
+## Original specification
+The original LSP specification is managed in [specification.md](./specification.md).
+[specification.md](./specification.md) is just Markdown text.
+By passing the Markdown text of the LSP specification you want to convert
+to an LLM model along with this documentation, you can request automatic
+conversion to Julia LSP definitions.
+
 ## Example conversion
 
 As an example of the conversion, it is shown below how the
 "Signature Help Request" specification is converted to Julia code.
 
-[The original LSP text](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_signatureHelp):
-> # Signature Help Request
+[The original LSP text](./specification.md#signature-help-request):
+> #### Signature Help Request
 >
-> The signature help request is sent from the client to the server to request signature information at a given cursor position.
+> The signature help request is sent from the client to the server to request signature information at a given cursor > position.
 >
 > *Client Capability*:
 >
 > - property name (optional): `textDocument.signatureHelp`
-> - property type: [`SignatureHelpClientCapabilities`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#signatureHelpClientCapabilities) defined as follows:
+> - property type: [`SignatureHelpClientCapabilities`](#capabilities) defined as follows:
 >
 > ```typescript
 > export interface SignatureHelpClientCapabilities {
@@ -103,7 +110,7 @@ As an example of the conversion, it is shown below how the
 > *Server Capability*:
 >
 > - property name (optional): `signatureHelpProvider`
-> - property type: [`SignatureHelpOptions`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#signatureHelpOptions) defined as follows:
+> - property type: [`SignatureHelpOptions`](#signatureHelpOptions) defined as follows: <a id="signatureHelpOptions"></a>
 >
 > ```typescript
 > export interface SignatureHelpOptions extends WorkDoneProgressOptions {
@@ -126,13 +133,12 @@ As an example of the conversion, it is shown below how the
 > }
 > ```
 >
-> *Registration Options*: [`SignatureHelpRegistrationOptions`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#signatureHelpRegistrationOptions) defined as follows:
+> *Registration Options*: [`SignatureHelpRegistrationOptions`](#signatureHelpRegistrationOptions) defined as follows: <a id=> "signatureHelpRegistrationOptions"></a>
 >
 > *Request*:
 >
-> - method: [`textDocument/signatureHelp`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_signatureHelp)
-> - params: [`SignatureHelpParams`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#signatureHelpParams) defined as follows:
->
+> - method: [`textDocument/signatureHelp`](#signature-help-request)
+> - params: [`SignatureHelpParams`](#signatureHelpParams) defined as follows: <a id="signatureHelpParams"></a>
 > ```typescript
 > export interface SignatureHelpParams extends TextDocumentPositionParams,
 > 	WorkDoneProgressParams {
@@ -213,7 +219,7 @@ As an example of the conversion, it is shown below how the
 >
 > *Response*:
 >
-> - result: [`SignatureHelp`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#signatureHelp) | `null` defined as follows:
+> - result: [`SignatureHelp`](#signature-help-request) | `null` defined as follows:
 >
 > ```typescript
 > /**
