@@ -79,7 +79,7 @@ function jet_toplevel_error_report_to_diagnostic(postprocessor::JET.PostProcesso
         JET.print_report(io, report)
     end |> postprocessor
     return Diagnostic(;
-        range = line_range(report.line),
+        range = line_range(fixed_line_number(report.line)),
         severity = DiagnosticSeverity.Error,
         message,
         source = TOPLEVEL_DIAGNOSTIC_SOURCE)
@@ -111,9 +111,10 @@ end
 
 function jet_frame_to_range(frame)
     line = JET.fixed_line_number(frame)
-    line = line == 0 ? line : line - 1
-    return line_range(line)
+    return line_range(fixed_line_number(line))
 end
+
+fixed_line_number(line) = line == 0 ? line : line - 1
 
 function line_range(line::Int)
     start = Position(; line, character=0)
