@@ -152,7 +152,7 @@ function cursor_bindings(st0_top::JL.SyntaxTree, b_top::Int)
     ctx3, st2 = try
         jl_lower_for_completion(st0)
     catch err
-        # @info "Error in lowering" err
+        JETLS_DEV_MODE && @warn "Error in lowering" err
         return nothing # lowering failed, e.g. because of incomplete input
     end
 
