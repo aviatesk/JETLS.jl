@@ -136,6 +136,18 @@ const DEFAULT_DOCUMENT_SELECTOR = DocumentFilter[
 Analyzer.LSAnalyzer(uri::URI, args...; kwargs...) = LSAnalyzer(ScriptAnalysisEntry(uri), args...; kwargs...)
 Analyzer.LSAnalyzer(args...; kwargs...) = LSAnalyzer(ScriptAnalysisEntry(filepath2uri(@__FILE__)), args...; kwargs...)
 
+# Internal `@show` definition for JETLS: outputs information to `stderr` instead of `stdout`,
+# making it usable for LS debugging.
+macro show(exs...)
+    blk = Expr(:block)
+    for ex in exs
+        push!(blk.args, :(println(stderr, $(sprint(Base.show_unquoted,ex)*" = "),
+                                  repr(begin local value = $(esc(ex)) end))))
+    end
+    isempty(exs) || push!(blk.args, :value)
+    return blk
+end
+
 include("utils.jl")
 include("registration.jl")
 include("completions.jl")
