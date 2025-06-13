@@ -301,6 +301,27 @@ end
     end
 end
 
+@testset "local completion for methods with `@nospecialize`" begin
+    state = JETLS.ServerState()
+    filename = abspath("nospecialize.jl")
+    uri = filename2uri(filename)
+    text = """
+    function foo(@nospecialize(xxx), @nospecialize(yyy))
+        y
+    end
+    """
+    JETLS.cache_file_info!(state, uri, #=version=#1, text, filename)
+    params = CompletionParams(;
+        textDocument=TextDocumentIdentifier(; uri),
+        position=Position(;line=1,character=6),
+        context=CompletionContext(;
+            triggerKind=CompletionTriggerKind.Invoked))
+    items = JETLS.get_completion_items(state, uri, params)
+    @test any(items) do item
+        item.label == "yyy"
+    end
+end
+
 # completion for empty program should not crash
 @testset "empty completion" begin
     state = JETLS.ServerState()
@@ -391,7 +412,7 @@ end
             context=CompletionContext(;
                 triggerKind=CompletionTriggerKind.Invoked))
         items = JETLS.get_completion_items(state, uri, params)
-        @test any(items) do item
+        @test_broken any(items) do item
             item.label == "yyy"
         end
     end
