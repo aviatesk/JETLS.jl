@@ -286,6 +286,7 @@ end
 # ================
 
 const ProgressToken = Union{Int, String}
+push!(exports, :ProgressToken)
 
 @interface ProgressParams begin
     "The progress token provided by the client or server."
