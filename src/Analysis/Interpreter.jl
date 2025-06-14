@@ -130,14 +130,19 @@ function JET.virtual_process!(interp::LSInterpreter,
     return res
 end
 
-function JET.try_read_file(interp::LSInterpreter, include_context::Module, filepath::AbstractString)
-    uri = filepath2uri(filepath)
+function JET.try_read_file(interp::LSInterpreter, include_context::Module, filename::AbstractString)
+    uri = filename2uri(filename)
     file_cache = interp.server.state.saved_file_cache
     if haskey(file_cache, uri)
-        return file_cache[uri].text # TODO use `parsed_stream` instead of `text`?
+        parsed_stream = file_cache[uri].parsed_stream
+        if isempty(parsed_stream.diagnostics)
+            return JS.build_tree(JS.SyntaxNode, parsed_stream; filename)
+        else
+            return String(JS.sourcetext(parsed_stream))
+        end
     end
     # fallback to the default file-system-based include
-    return read(filepath, String)
+    return read(filename, String)
 end
 
 end # module Interpreter

@@ -38,12 +38,10 @@ using .Resolver
 
 struct FileInfo
     version::Int
-    text::String
     parsed_stream::JS.ParseStream
 end
 
 struct SavedFileInfo
-    text::String
     parsed_stream::JS.ParseStream
 end
 
@@ -518,7 +516,7 @@ end
 function parsefile(version::Int, text::String)
     stream = JS.ParseStream(text)
     JS.parse!(stream; rule=:all)
-    return FileInfo(version, text, stream)
+    return FileInfo(version, stream)
 end
 
 function cache_saved_file_info!(state::ServerState, uri::URI, text::String)
@@ -530,7 +528,7 @@ end
 function parsesavedfile(text::String)
     stream = JS.ParseStream(text)
     JS.parse!(stream; rule=:all)
-    return SavedFileInfo(text, stream)
+    return SavedFileInfo(stream)
 end
 
 const FULL_ANALYSIS_THROTTLE = 5.0 # 3.0
