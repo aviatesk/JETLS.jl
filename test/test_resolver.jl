@@ -12,7 +12,7 @@ function analyze_and_resolve(s::AbstractString;
     state = server.state
     mktemp() do filename, io
         uri = filename2uri(filename)
-        fileinfo = JETLS.cache_file_info!(state, uri, 1, text, filename)
+        fileinfo = JETLS.cache_file_info!(state, uri, 1, text)
         context = JETLS.initiate_context!(server, uri)
         analyzer = context.result.analyzer
 

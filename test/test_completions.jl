@@ -262,8 +262,8 @@ end
     pos1, pos2  = curpos2
     filename = abspath("foo.jl")
     uri = filename2uri(filename)
-    JETLS.cache_file_info!(state, uri, #=version=#1, text, filename)
-    JETLS.cache_saved_file_info!(state, uri, text, filename)
+    JETLS.cache_file_info!(state, uri, #=version=#1, text)
+    JETLS.cache_saved_file_info!(state, uri, text)
     JETLS.initiate_context!(server, uri)
     let params = CompletionParams(;
             textDocument=TextDocumentIdentifier(; uri),
@@ -308,7 +308,7 @@ end
     uri = filename2uri(filename)
 
     let text = ""
-        JETLS.cache_file_info!(state, uri, 1, text, filename)
+        JETLS.cache_file_info!(state, uri, 1, text)
         params = CompletionParams(;
             textDocument=TextDocumentIdentifier(; uri),
             position=Position(;line=0,character=0))
@@ -318,7 +318,7 @@ end
     end
 
     let text = "\n\n\n"
-        JETLS.cache_file_info!(state, uri, 2, text, filename)
+        JETLS.cache_file_info!(state, uri, 2, text)
         params = CompletionParams(;
             textDocument=TextDocumentIdentifier(; uri),
             position=Position(;line=3,character=0))
@@ -339,7 +339,7 @@ end
             @
         end
         """
-        JETLS.cache_file_info!(state, uri, 1, text, filename)
+        JETLS.cache_file_info!(state, uri, 1, text)
         params = CompletionParams(;
             textDocument=TextDocumentIdentifier(; uri),
             position=Position(;line=1,character=5),
@@ -362,7 +362,7 @@ end
             @no
         end
         """
-        JETLS.cache_file_info!(state, uri, 2, text, filename)
+        JETLS.cache_file_info!(state, uri, 2, text)
         params = CompletionParams(;
             textDocument=TextDocumentIdentifier(; uri),
             position=Position(;line=1,character=7),
@@ -384,7 +384,7 @@ end
             @nospecialize xxx y
         end
         """
-        JETLS.cache_file_info!(state, uri, 3, text, filename)
+        JETLS.cache_file_info!(state, uri, 3, text)
         params = CompletionParams(;
             textDocument=TextDocumentIdentifier(; uri),
             position=Position(;line=1,character=20),
@@ -402,7 +402,7 @@ end
             nospecia
         end
         """
-        JETLS.cache_file_info!(state, uri, 4, text, filename)
+        JETLS.cache_file_info!(state, uri, 4, text)
         params = CompletionParams(;
             textDocument=TextDocumentIdentifier(; uri),
             position=Position(;line=1,character=12),
@@ -426,7 +426,7 @@ function test_backslash_offset(code::String, expected_result)
     state = JETLS.ServerState()
     filename = abspath("test_backslash.jl")
     uri = filename2uri(filename)
-    fi = JETLS.cache_file_info!(state, uri, 1, text, filename)
+    fi = JETLS.cache_file_info!(state, uri, 1, text)
 
     result = JETLS.get_backslash_offset(state, fi, positions[1])
     @test result == expected_result
@@ -606,7 +606,7 @@ end
             \\
         end
         """
-        JETLS.cache_file_info!(state, uri, 1, text, filename)
+        JETLS.cache_file_info!(state, uri, 1, text)
         params = CompletionParams(;
             textDocument=TextDocumentIdentifier(; uri),
             position=Position(;line=1,character=5),
@@ -629,7 +629,7 @@ end
             \\:
         end
         """
-        JETLS.cache_file_info!(state, uri, 2, text, filename)
+        JETLS.cache_file_info!(state, uri, 2, text)
         params = CompletionParams(;
             textDocument=TextDocumentIdentifier(; uri),
             position=Position(;line=1,character=6),
