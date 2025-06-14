@@ -200,7 +200,9 @@ function handle_DocumentDiagnosticRequest(server::Server, msg::DocumentDiagnosti
     if isempty(parsed_stream.diagnostics)
         diagnostics = empty_diagnostics
     else
-        diagnostics = parsed_stream_to_diagnostics(parsed_stream, file_info.filename)
+        filename = uri2filename(uri)
+        @assert !isnothing(filename) "Unsupported URI: $uri"
+        diagnostics = parsed_stream_to_diagnostics(parsed_stream, filename)
     end
     return send(server,
         DocumentDiagnosticResponse(;
