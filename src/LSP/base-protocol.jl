@@ -58,8 +58,8 @@ LSP arrays.
 """
 const LSPArray = Vector{Any}
 
-# Messages
-# ========
+# Abstract Message
+# ================
 
 """
 A general message as defined by JSON-RPC.
@@ -69,8 +69,8 @@ The language server protocol always uses “2.0” as the jsonrpc version.
     jsonrpc::String = "2.0"
 end
 
-# Request message
-# ---------------
+# Request Message
+# ===============
 
 """
 A request message to describe a request between the client and the server.
@@ -87,8 +87,8 @@ Every processed request must send a response back to the sender of the request.
     params::Union{Any, Nothing} = nothing
 end
 
-# Respose message
-# ---------------
+# Respose Message
+# ===============
 
 @namespace ErrorCodes::Int begin
     ParseError = -32700
@@ -226,8 +226,8 @@ successful request.
     error::Union{ResponseError, Nothing} = nothing
 end
 
-# Notification message
-# --------------------
+# Notification Message
+# ====================
 
 """
 A notification message. A processed notification message must not send a response back.
@@ -241,16 +241,78 @@ They work like events.
     params::Union{Any, Nothing} = nothing
 end
 
-# Cancellation support
+# $ Notifications and Requests
+# ============================
+
+"""
+Notification and requests whose methods start with `\$/` are messages which are protocol
+implementation dependent and might not be implementable in all clients or servers.
+For example if the server implementation uses a single threaded synchronous programming
+language then there is little a server can do to react to a `\$/cancelRequest` notification.
+If a server or client receives notifications starting with `\$/` it is free to ignore
+the notification. If a server or client receives a request starting with `\$/`
+it must error the request with error code `MethodNotFound` (e.g. `-32601`).
+"""
+:(dollar_requests)
+
+# Cancellation Support
 # ====================
 
-# Progress support
+@interface CancelParams begin
+    "The request id to cancel."
+    id::Union{Int, String}
+end
+
+"""
+The base protocol offers support for request cancellation.
+To cancel a request, a notification message with the following properties is sent:
+
+Notification:
+- method: `\$/cancelRequest`
+- params: `CancelParams`
+
+A request that got canceled still needs to return from the server and send a response back.
+It can not be left open / hanging. This is in line with the JSON-RPC protocol that requires
+that every request sends a response back. In addition it allows for returning partial results
+on cancel. If the request returns an error response on cancellation it is advised to set the
+error code to `ErrorCodes.RequestCancelled`.
+"""
+@interface CancelRequestNotification @extends NotificationMessage begin
+    method::String = "\$/cancelRequest"
+    params::CancelParams
+end
+
+# Progress Support
 # ================
+
+const ProgressToken = Union{Int, String}
+
+@interface ProgressParams begin
+    "The progress token provided by the client or server."
+    token::ProgressToken
+
+    "The progress data."
+    value::Any
+end
 
 """
 The base protocol offers also support to report progress in a generic fashion.
-This mechanism can be used to report any kind of progress including work done progress
-(usually used to report progress in the user interface using a progress bar) and partial
-result progress to support streaming of results.
+This mechanism can be used to report any kind of progress including [work done progress](@ref work_done_progress)
+(usually used to report progress in the user interface using a progress bar) and
+[partial result progress](@ref partial_result_progress) to support streaming of results.
+
+Notification:
+- method: `\$/progress`
+- params: `ProgressParams`
+
+Progress is reported against a token.
+The token is different than the request ID which allows to report progress out of band
+and also for notification.
+
+# Tags
+- since – 3.15.0
 """
-const ProgressToken = Union{Int, String}
+@interface ProgressNotification @extends NotificationMessage begin
+    method::String = "\$/progress"
+    params::ProgressParams
+end
