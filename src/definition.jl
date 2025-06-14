@@ -23,14 +23,6 @@ end
 #     method=DEFINITION_REGISTRATION_METHOD))
 # register(currently_running, definition_resistration())
 
-# TODO: memorize this?
-function supports_definition_links(server::Server)
-    state = server.state
-    return isdefined(state, :init_params) &&
-        getobjpath(state.init_params.capabilities,
-            :textDocument, :definition, :linkSupport) === true
-end
-
 """
 Determines the node that the user most likely intends to navigate to.
 Returns `nothing` if no suitable one is found.
@@ -120,7 +112,7 @@ function handle_DefinitionRequest(server::Server, msg::DefinitionRequest)
 
     if isempty(ms)
         send(server, DefinitionResponse(; id = msg.id, result = null))
-    elseif supports_definition_links(server)
+    elseif supports(server, :textDocument, :definition, :linkSupport)
         send(server,
             DefinitionResponse(;
                 id = msg.id,

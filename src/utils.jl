@@ -1,3 +1,10 @@
+# TODO memomize computed results?
+function supports(server::Server, paths::Symbol...)
+    state = server.state
+    return isdefined(state, :init_params) &&
+        getobjpath(state.init_params.capabilities, paths...) === true
+end
+
 function getobjpath(obj, path::Symbol, paths::Symbol...)
     nextobj = getfield(obj, path)
     if nextobj === nothing
@@ -64,24 +71,39 @@ end
 
 # TODO Need to make them thread safe when making the message handling multithreaded
 
-let debounced = Dict{UInt,Timer}()
-    global function debounce(f, id::UInt, delay)
+let debounced = Dict{UInt, Timer}(),
+    on_cancels = Dict{UInt, Any}()
+    global function debounce(f, id::UInt, delay; on_cancel=nothing)
         if haskey(debounced, id)
             close(debounced[id])
+            if haskey(on_cancels, id)
+                try
+                    on_cancels[id]()
+                finally
+                    delete!(on_cancels, id)
+                end
+            end
         end
+
+        if on_cancel !== nothing
+            on_cancels[id] = on_cancel
+        end
+
         debounced[id] = Timer(delay) do _
             try
                 f()
             finally
                 delete!(debounced, id)
+                delete!(on_cancels, id)
             end
         end
         nothing
     end
 end
 
-let throttled = Dict{UInt, Tuple{Union{Nothing,Timer}, Float64}}()
-    global function throttle(f, id::UInt, interval)
+let throttled = Dict{UInt, Tuple{Union{Nothing,Timer}, Float64}}(),
+    on_cancels = Dict{UInt, Any}()
+    global function throttle(f, id::UInt, interval; on_cancel=nothing)
         if !haskey(throttled, id)
             f()
             throttled[id] = (nothing, time())
@@ -90,13 +112,26 @@ let throttled = Dict{UInt, Tuple{Union{Nothing,Timer}, Float64}}()
         last_timer, last_time = throttled[id]
         if last_timer !== nothing
             close(last_timer)
+            if haskey(on_cancels, id)
+                try
+                    on_cancels[id]()
+                finally
+                    delete!(on_cancels, id)
+                end
+            end
         end
+
+        if on_cancel !== nothing
+            on_cancels[id] = on_cancel
+        end
+
         delay = max(0.0, interval - (time() - last_time))
         throttled[id] = (Timer(delay) do _
             try
                 f()
             finally
                 throttled[id] = (nothing, time())
+                delete!(on_cancels, id)
             end
         end, last_time)
         nothing
