@@ -24,9 +24,12 @@ end
 # register(currently_running, definition_resistration())
 
 # TODO: memorize this?
-is_definition_links_supported(server::Server) =
-    getobjpath(server.state.init_params.capabilities,
-        :textDocument, :definition, :linkSupport) === true
+function supports_definition_links(server::Server)
+    state = server.state
+    return isdefined(state, :init_params) &&
+        getobjpath(state.init_params.capabilities,
+            :textDocument, :definition, :linkSupport) === true
+end
 
 """
 Determines the node that the user most likely intends to navigate to.
@@ -117,7 +120,7 @@ function handle_DefinitionRequest(server::Server, msg::DefinitionRequest)
 
     if isempty(ms)
         send(server, DefinitionResponse(; id = msg.id, result = null))
-    elseif is_definition_links_supported(server)
+    elseif supports_definition_links(server)
         send(server,
             DefinitionResponse(;
                 id = msg.id,
