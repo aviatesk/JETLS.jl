@@ -310,7 +310,7 @@ end
         y
     end
     """
-    JETLS.cache_file_info!(state, uri, #=version=#1, text, filename)
+    JETLS.cache_file_info!(state, uri, #=version=#1, text)
     params = CompletionParams(;
         textDocument=TextDocumentIdentifier(; uri),
         position=Position(;line=1,character=6),
@@ -412,7 +412,7 @@ end
             context=CompletionContext(;
                 triggerKind=CompletionTriggerKind.Invoked))
         items = JETLS.get_completion_items(state, uri, params)
-        @test_broken any(items) do item
+        @test any(items) do item
             item.label == "yyy"
         end
     end
