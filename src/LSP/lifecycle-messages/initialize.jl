@@ -653,13 +653,13 @@ provides text document synchronization (e.g. open, changed and close notificatio
         """
         workDoneProgress::Union{Bool, Nothing} = nothing
 
-        # """
-        # Capabilities specific to the showMessage request
+        """
+        Capabilities specific to the showMessage request
 
-        # # Tags
-        # - since – 3.16.0
-        # """
-        # showMessage::Union{ShowMessageRequestClientCapabilities, Nothing} = nothing
+        # Tags
+        - since – 3.16.0
+        """
+        showMessage::Union{ShowMessageRequestClientCapabilities, Nothing} = nothing
 
         """
         Client capabilities for the show document request.
