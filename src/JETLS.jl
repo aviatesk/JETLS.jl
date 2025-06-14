@@ -39,13 +39,11 @@ using .Resolver
 struct FileInfo
     version::Int
     text::String
-    filename::String
     parsed_stream::JS.ParseStream
 end
 
 struct SavedFileInfo
     text::String
-    filename::String
     parsed_stream::JS.ParseStream
 end
 
@@ -511,28 +509,28 @@ function handle_requested_response(server::Server, msg::Dict{Symbol,Any},
     end
 end
 
-function cache_file_info!(state::ServerState, uri::URI, version::Int, text::String, filename::String)
-    return cache_file_info!(state, uri, parsefile(version, text, filename))
+function cache_file_info!(state::ServerState, uri::URI, version::Int, text::String)
+    return cache_file_info!(state, uri, parsefile(version, text))
 end
 function cache_file_info!(state::ServerState, uri::URI, file_info::FileInfo)
     return state.file_cache[uri] = file_info
 end
-function parsefile(version::Int, text::String, filename::String)
+function parsefile(version::Int, text::String)
     stream = JS.ParseStream(text)
     JS.parse!(stream; rule=:all)
-    return FileInfo(version, text, filename, stream)
+    return FileInfo(version, text, stream)
 end
 
-function cache_saved_file_info!(state::ServerState, uri::URI, text::String, filename::String)
-    return cache_saved_file_info!(state, uri, parsesavedfile(text, filename))
+function cache_saved_file_info!(state::ServerState, uri::URI, text::String)
+    return cache_saved_file_info!(state, uri, parsesavedfile(text))
 end
 function cache_saved_file_info!(state::ServerState, uri::URI, file_info::SavedFileInfo)
     return state.saved_file_cache[uri] = file_info
 end
-function parsesavedfile(text::String, filename::String)
+function parsesavedfile(text::String)
     stream = JS.ParseStream(text)
     JS.parse!(stream; rule=:all)
-    return SavedFileInfo(text, filename, stream)
+    return SavedFileInfo(text, stream)
 end
 
 const FULL_ANALYSIS_THROTTLE = 5.0 # 3.0
@@ -582,12 +580,10 @@ function handle_DidOpenTextDocumentNotification(server::Server, msg::DidOpenText
     textDocument = msg.params.textDocument
     @assert textDocument.languageId == "julia"
     uri = textDocument.uri
-    filename = uri2filename(uri)
-    @assert filename !== nothing "Unsupported URI: $uri"
 
     state = server.state
-    cache_file_info!(state, uri, textDocument.version, textDocument.text, filename)
-    cache_saved_file_info!(state, uri, textDocument.text, filename)
+    cache_file_info!(state, uri, textDocument.version, textDocument.text)
+    cache_saved_file_info!(state, uri, textDocument.text)
 
     if supports(server, :window, :workDoneProgress)
         id = String(gensym(:WorkDoneProgressCreateRequest_run_full_analysis!))
@@ -610,10 +606,8 @@ function handle_DidChangeTextDocumentNotification(server::Server, msg::DidChange
         @assert contentChange.range === contentChange.rangeLength === nothing # since `change = TextDocumentSyncKind.Full`
     end
     text = last(contentChanges).text
-    filename = uri2filename(uri)
-    @assert filename !== nothing "Unsupported URI: $uri"
 
-    file_info = cache_file_info!(server.state, uri, textDocument.version, text, filename)
+    cache_file_info!(server.state, uri, textDocument.version, text)
 end
 
 function handle_DidSaveTextDocumentNotification(server::Server, msg::DidSaveTextDocumentNotification)
@@ -634,9 +628,7 @@ function handle_DidSaveTextDocumentNotification(server::Server, msg::DidSaveText
         """
         return nothing
     end
-    filename = uri2filename(uri)
-    @assert filename !== nothing "Unsupported URI: $uri"
-    cache_saved_file_info!(server.state, uri, text, filename)
+    cache_saved_file_info!(server.state, uri, text)
 
     if supports(server, :window, :workDoneProgress)
         id = String(gensym(:WorkDoneProgressCreateRequest_run_full_analysis!))
@@ -692,9 +684,9 @@ function analyze_parsed_if_exist(server::Server, info::FullAnalysisInfo, args...
                                  toplevel_logger = nothing, kwargs...)
     uri = entryuri(info.entry)
     if haskey(server.state.saved_file_cache, uri)
-        file_info = server.state.saved_file_cache[uri]
-        parsed_stream = file_info.parsed_stream
-        filename = uri2filename(uri)::String
+        parsed_stream = server.state.saved_file_cache[uri].parsed_stream
+        filename = uri2filename(uri)
+        @assert !isnothing(filename) "Unsupported URI: $uri"
         parsed = JS.build_tree(JS.SyntaxNode, parsed_stream; filename)
         begin_full_analysis_progress(server, info)
         try
@@ -1064,7 +1056,7 @@ module __demo__ end
         uri = filepath2uri(filename)
         @compile_workload let
             state = server.state
-            cache_file_info!(state, uri, #=version=#1, text, filename)
+            cache_file_info!(state, uri, #=version=#1, text)
             let comp_params = CompletionParams(;
                     textDocument = TextDocumentIdentifier(; uri),
                     position)
