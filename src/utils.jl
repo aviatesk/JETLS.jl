@@ -1,8 +1,33 @@
-# TODO memomize computed results?
-function supports(server::Server, paths::Symbol...)
-    state = server.state
-    return isdefined(state, :init_params) &&
-        getobjpath(state.init_params.capabilities, paths...) === true
+# general utilities
+# =================
+
+# Internal `@show` definition for JETLS: outputs information to `stderr` instead of `stdout`,
+# making it usable for LS debugging.
+macro show(exs...)
+    blk = Expr(:block)
+    for ex in exs
+        push!(blk.args, :(println(stderr, $(sprint(Base.show_unquoted,ex)*" = "),
+                                  repr(begin local value = $(esc(ex)) end))))
+    end
+    isempty(exs) || push!(blk.args, :value)
+    return blk
+end
+
+# Internal `@time` definitions for JETLS: outputs information to `stderr` instead of `stdout`,
+# making it usable for LS debugging.
+macro time(ex)
+    quote
+        @time nothing $(esc(ex))
+    end
+end
+macro time(msg, ex)
+    quote
+        local ret = @timed $(esc(ex))
+        local _msg = $(esc(msg))
+        local _msg_str = _msg === nothing ? _msg : string(_msg)
+        Base.time_print(stderr, ret.time*1e9, ret.gcstats.allocd, ret.gcstats.total_time, Base.gc_alloc_count(ret.gcstats), ret.lock_conflicts, ret.compile_time*1e9, ret.recompile_time*1e9, true; msg=_msg_str)
+        ret.value
+    end
 end
 
 function getobjpath(obj, path::Symbol, paths::Symbol...)
@@ -14,60 +39,8 @@ function getobjpath(obj, path::Symbol, paths::Symbol...)
 end
 getobjpath(obj) = obj
 
-# path/URI utilities
-# ==================
-
-to_full_path(file::Symbol) = to_full_path(String(file))
-function to_full_path(file::AbstractString)
-    file = Base.fixup_stdlib_path(file)
-    file = something(Base.find_source_file(file), file)
-    return abspath(file)
-end
-
-"""
-    create_source_location_link(filepath::AbstractString; line=nothing, character=nothing)
-
-Create a markdown-style link to a source location that can be displayed in LSP clients.
-
-This function generates links in the format `"[show text](file://path#L#C)"` which, while
-not explicitly stated in the LSP specification, is supported by most LSP clients for
-navigation to specific file locations.
-
-# Arguments
-- `filepath::AbstractString`: The file path to link to
-- `line::Union{Integer,Nothing}=nothing`: Optional 1-based line number
-- `character::Union{Integer,Nothing}=nothing`: Optional character position (requires `line` to be specified)
-
-# Returns
-A markdown-formatted string containing the clickable link.
-
-# Examples
-```julia
-create_source_location_link("/path/to/file.jl")
-# Returns: "[/path/to/file.jl](file:///path/to/file.jl)"
-
-create_source_location_link("/path/to/file.jl", line=42)
-# Returns: "[/path/to/file.jl:42](file:///path/to/file.jl#L42)"
-
-create_source_location_link("/path/to/file.jl", line=42, character=10)
-# Returns: "[/path/to/file.jl:42](file:///path/to/file.jl#L42C10)"
-```
-"""
-function create_source_location_link(filepath::AbstractString;
-                                     line::Union{Integer,Nothing}=nothing,
-                                     character::Union{Integer,Nothing}=nothing)
-    linktext = string(filepath2uri(filepath))
-    showtext = filepath
-    Base.stacktrace_contract_userdir() && (showtext = Base.contractuser(showtext))
-    if line !== nothing
-        linktext *= "#L$line"
-        showtext *= string(":", line)
-        if character !== nothing
-            linktext *= "C$character"
-        end
-    end
-    return "[$showtext]($linktext)"
-end
+# throttle/debounce
+# =================
 
 # TODO Need to make them thread safe when making the message handling multithreaded
 
@@ -136,6 +109,78 @@ let throttled = Dict{UInt, Tuple{Union{Nothing,Timer}, Float64}}(),
         end, last_time)
         nothing
     end
+end
+
+# Server Interaction
+# ==================
+
+const DEFAULT_FLUSH_INTERVAL = 0.05
+function yield_to_endpoint(interval=DEFAULT_FLUSH_INTERVAL)
+    # HACK: allow JSONRPC endpoint to process queued messages (e.g. work done progress report)
+    yield()
+    sleep(interval)
+end
+
+# TODO memomize computed results?
+function supports(server::Server, paths::Symbol...)
+    state = server.state
+    return isdefined(state, :init_params) &&
+        getobjpath(state.init_params.capabilities, paths...) === true
+end
+
+# path/URI utilities
+# ==================
+
+to_full_path(file::Symbol) = to_full_path(String(file))
+function to_full_path(file::AbstractString)
+    file = Base.fixup_stdlib_path(file)
+    file = something(Base.find_source_file(file), file)
+    return abspath(file)
+end
+
+"""
+    create_source_location_link(filepath::AbstractString; line=nothing, character=nothing)
+
+Create a markdown-style link to a source location that can be displayed in LSP clients.
+
+This function generates links in the format `"[show text](file://path#L#C)"` which, while
+not explicitly stated in the LSP specification, is supported by most LSP clients for
+navigation to specific file locations.
+
+# Arguments
+- `filepath::AbstractString`: The file path to link to
+- `line::Union{Integer,Nothing}=nothing`: Optional 1-based line number
+- `character::Union{Integer,Nothing}=nothing`: Optional character position (requires `line` to be specified)
+
+# Returns
+A markdown-formatted string containing the clickable link.
+
+# Examples
+```julia
+create_source_location_link("/path/to/file.jl")
+# Returns: "[/path/to/file.jl](file:///path/to/file.jl)"
+
+create_source_location_link("/path/to/file.jl", line=42)
+# Returns: "[/path/to/file.jl:42](file:///path/to/file.jl#L42)"
+
+create_source_location_link("/path/to/file.jl", line=42, character=10)
+# Returns: "[/path/to/file.jl:42](file:///path/to/file.jl#L42C10)"
+```
+"""
+function create_source_location_link(filepath::AbstractString;
+                                     line::Union{Integer,Nothing}=nothing,
+                                     character::Union{Integer,Nothing}=nothing)
+    linktext = string(filepath2uri(filepath))
+    showtext = filepath
+    Base.stacktrace_contract_userdir() && (showtext = Base.contractuser(showtext))
+    if line !== nothing
+        linktext *= "#L$line"
+        showtext *= string(":", line)
+        if character !== nothing
+            linktext *= "C$character"
+        end
+    end
+    return "[$showtext]($linktext)"
 end
 
 """
@@ -300,9 +345,6 @@ function byte_ancestors(sn::JS.SyntaxNode, rng::UnitRange{Int})
     return reverse!(out)
 end
 byte_ancestors(sn::JS.SyntaxNode, byte::Int) = byte_ancestors(sn, byte:byte)
-
-# LSP error handling utilities
-# ===========================
 
 function file_cache_error(uri::URI; data=nothing)
     return ResponseError(;
