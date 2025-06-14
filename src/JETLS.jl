@@ -43,6 +43,12 @@ struct FileInfo
     parsed_stream::JS.ParseStream
 end
 
+struct SavedFileInfo
+    text::String
+    filename::String
+    parsed_stream::JS.ParseStream
+end
+
 entryuri(entry::AnalysisEntry) = entryuri_impl(entry)::URI
 
 struct ScriptAnalysisEntry <: AnalysisEntry
@@ -95,7 +101,8 @@ end
 
 mutable struct ServerState
     const workspaceFolders::Vector{URI}
-    const file_cache::Dict{URI,FileInfo} # syntactic analysis cache
+    const file_cache::Dict{URI,FileInfo} # syntactic analysis cache (synced with `textDocument/didChange`)
+    const saved_file_cache::Dict{URI,SavedFileInfo} # syntactic analysis cache (synced with `textDocument/didSave`)
     const contexts::Dict{URI,Union{Set{AnalysisContext},ExternalContext}} # entry points for the full analysis (currently not cached really)
     const currently_registered::Set{Registered}
     root_path::String
@@ -106,6 +113,7 @@ mutable struct ServerState
         return new(
             URI[],
             Dict{URI,FileInfo}(),
+            Dict{URI,SavedFileInfo}(),
             Dict{URI,Union{Set{AnalysisContext},ExternalContext}}(),
             Set{Registered}(),
         )
@@ -396,7 +404,7 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
                 openClose = true,
                 change = TextDocumentSyncKind.Full,
                 save = SaveOptions(;
-                    includeText = false)),
+                    includeText = true)),
             completionProvider,
             signatureHelpProvider,
             definitionProvider,
@@ -484,6 +492,18 @@ function parsefile(version::Int, text::String, filename::String)
     return FileInfo(version, text, filename, stream)
 end
 
+function cache_saved_file_info!(state::ServerState, uri::URI, text::String, filename::String)
+    return cache_saved_file_info!(state, uri, parsesavedfile(text, filename))
+end
+function cache_saved_file_info!(state::ServerState, uri::URI, file_info::SavedFileInfo)
+    return state.saved_file_cache[uri] = file_info
+end
+function parsesavedfile(text::String, filename::String)
+    stream = JS.ParseStream(text)
+    JS.parse!(stream; rule=:all)
+    return SavedFileInfo(text, filename, stream)
+end
+
 const FULL_ANALYSIS_THROTTLE = 3.0
 const FULL_ANALYSIS_DEBOUNCE = 1.0
 const SYNTACTIC_ANALYSIS_DEBOUNCE = 0.5
@@ -532,7 +552,8 @@ function handle_DidOpenTextDocumentNotification(server::Server, msg::DidOpenText
     @assert filename !== nothing "Unsupported URI: $uri"
 
     state = server.state
-    file_info = cache_file_info!(state, uri, textDocument.version, textDocument.text, filename)
+    cache_file_info!(state, uri, textDocument.version, textDocument.text, filename)
+    cache_saved_file_info!(state, uri, textDocument.text, filename)
 
     run_full_analysis!(server, uri; reanalyze=false)
 end
@@ -552,26 +573,39 @@ end
 
 function handle_DidSaveTextDocumentNotification(server::Server, msg::DidSaveTextDocumentNotification)
     uri = msg.params.textDocument.uri
-    if !haskey(server.state.file_cache, uri)
+    if !haskey(server.state.saved_file_cache, uri)
         # Some language client implementations (in this case Zed) appear to be
         # sending `textDocument/didSave` notifications for arbitrary text documents,
         # so we add a save guard for such cases.
         JETLS_DEV_MODE && @warn "Received textDocument/didSave for unopened or unsupported document" uri
         return nothing
     end
+    text = msg.params.text
+    if !(text isa String)
+        @warn """
+        The client is not respecting the `capabilities.textDocumentSync.save.includeText`
+        option specified by this server during initialization. Without the document text
+        content in save notifications, the diagnostics feature cannot function properly.
+        """
+        return nothing
+    end
+    filename = uri2filename(uri)
+    @assert filename !== nothing "Unsupported URI: $uri"
+    cache_saved_file_info!(server.state, uri, text, filename)
     run_full_analysis!(server, uri; reanalyze=true)
 end
 
 function handle_DidCloseTextDocumentNotification(server::Server, msg::DidCloseTextDocumentNotification)
     delete!(server.state.file_cache, msg.params.textDocument.uri)
+    delete!(server.state.saved_file_cache, msg.params.textDocument.uri)
     nothing
 end
 
 function analyze_parsed_if_exist(state::ServerState, entry::AnalysisEntry, args...;
                                  toplevel_logger = nothing, kwargs...)
     uri = entryuri(entry)
-    if haskey(state.file_cache, uri)
-        file_info = state.file_cache[uri]
+    if haskey(state.saved_file_cache, uri)
+        file_info = state.saved_file_cache[uri]
         parsed_stream = file_info.parsed_stream
         filename = uri2filename(uri)::String
         parsed = JS.build_tree(JS.SyntaxNode, parsed_stream; filename)
@@ -724,7 +758,7 @@ function find_package_directory(path::String, env_path::String)
 end
 
 function initiate_context!(state::ServerState, uri::URI)
-    file_info = state.file_cache[uri]
+    file_info = state.saved_file_cache[uri]
     parsed_stream = file_info.parsed_stream
     if !isempty(parsed_stream.diagnostics)
         return nothing
@@ -835,8 +869,8 @@ function reanalyze_with_context!(state::ServerState, analysis_context::AnalysisC
     end
 
     any_parse_failed = any(analyzed_file_uris(analysis_context)) do uri::URI
-        if haskey(state.file_cache, uri)
-            file_info = state.file_cache[uri]
+        if haskey(state.saved_file_cache, uri)
+            file_info = state.saved_file_cache[uri]
             if !isempty(file_info.parsed_stream.diagnostics)
                 return true
             end
