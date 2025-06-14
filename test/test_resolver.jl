@@ -8,11 +8,12 @@ function analyze_and_resolve(s::AbstractString;
     text, positions = JETLS.get_text_and_positions(s, matcher)
     length(positions) == 1 || error("Multiple positions are found")
     position = only(positions)
-    state = JETLS.ServerState()
+    server = JETLS.Server()
+    state = server.state
     mktemp() do filename, io
         uri = filename2uri(filename)
         fileinfo = JETLS.cache_file_info!(state, uri, 1, text, filename)
-        context = JETLS.initiate_context!(state, uri)
+        context = JETLS.initiate_context!(server, uri)
         analyzer = context.result.analyzer
 
         mod = JETLS.find_file_module(state, uri, position)

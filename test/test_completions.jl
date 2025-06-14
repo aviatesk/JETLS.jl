@@ -233,7 +233,8 @@ function get_text_and_positions(text::String, target::Regex=r"#=cursor=#")
 end
 
 @testset "get_completion_items" begin
-    state = JETLS.ServerState()
+    server = JETLS.Server()
+    state = server.state
     text, curpos2 = get_text_and_positions("""
     module Foo
 
@@ -263,7 +264,7 @@ end
     uri = filename2uri(filename)
     JETLS.cache_file_info!(state, uri, #=version=#1, text, filename)
     JETLS.cache_saved_file_info!(state, uri, text, filename)
-    JETLS.initiate_context!(state, uri)
+    JETLS.initiate_context!(server, uri)
     let params = CompletionParams(;
             textDocument=TextDocumentIdentifier(; uri),
             position=pos1)

@@ -50,27 +50,39 @@ struct SavedFileInfo
 end
 
 entryuri(entry::AnalysisEntry) = entryuri_impl(entry)::URI
+entrykind(entry::AnalysisEntry) = entrykind_impl(entry)::String
 
 struct ScriptAnalysisEntry <: AnalysisEntry
     uri::URI
 end
 entryuri_impl(entry::ScriptAnalysisEntry) = entry.uri
+entrykind_impl(entry::ScriptAnalysisEntry) = "script"
 struct ScriptInEnvAnalysisEntry <: AnalysisEntry
     env_path::String
     uri::URI
 end
 entryuri_impl(entry::ScriptInEnvAnalysisEntry) = entry.uri
+entrykind_impl(entry::ScriptInEnvAnalysisEntry) = "script in env"
 struct PackageSourceAnalysisEntry <: AnalysisEntry
     env_path::String
     pkgfileuri::URI
     pkgid::Base.PkgId
 end
 entryuri_impl(entry::PackageSourceAnalysisEntry) = entry.pkgfileuri
+entrykind_impl(entry::PackageSourceAnalysisEntry) = "pkg src"
 struct PackageTestAnalysisEntry <: AnalysisEntry
     env_path::String
     runtestsuri::URI
 end
 entryuri_impl(entry::PackageTestAnalysisEntry) = entry.runtestsuri
+entrykind_impl(entry::PackageTestAnalysisEntry) = "pkg test"
+
+struct FullAnalysisInfo{E<:AnalysisEntry}
+    entry::E
+    token::Union{Nothing,ProgressToken}
+    reanalyze::Bool
+    n_files::Int
+end
 
 mutable struct FullAnalysisResult
     staled::Bool
@@ -94,6 +106,8 @@ end
 
 struct ExternalContext end
 
+abstract type RequestCaller end
+
 struct Registered
     id::String
     method::String
@@ -104,6 +118,7 @@ mutable struct ServerState
     const file_cache::Dict{URI,FileInfo} # syntactic analysis cache (synced with `textDocument/didChange`)
     const saved_file_cache::Dict{URI,SavedFileInfo} # syntactic analysis cache (synced with `textDocument/didSave`)
     const contexts::Dict{URI,Union{Set{AnalysisContext},ExternalContext}} # entry points for the full analysis (currently not cached really)
+    const currently_requested::Dict{String,RequestCaller}
     const currently_registered::Set{Registered}
     root_path::String
     root_env_path::String
@@ -111,11 +126,12 @@ mutable struct ServerState
     init_params::InitializeParams
     function ServerState()
         return new(
-            URI[],
-            Dict{URI,FileInfo}(),
-            Dict{URI,SavedFileInfo}(),
-            Dict{URI,Union{Set{AnalysisContext},ExternalContext}}(),
-            Set{Registered}(),
+            #=workspaceFolders=# URI[],
+            #=file_cache=# Dict{URI,FileInfo}(),
+            #=saved_file_cache=# Dict{URI,SavedFileInfo}(),
+            #=contexts=# Dict{URI,Union{Set{AnalysisContext},ExternalContext}}(),
+            #=currently_requested=# Dict{String,RequestCaller}(),
+            #=currently_registered=# Set{Registered}(),
         )
     end
 end
@@ -132,53 +148,7 @@ struct Server{Callback}
         )
     end
 end
-
-include("Analysis/Interpreter.jl")
-using .Interpreter
-
-const DEFAULT_DOCUMENT_SELECTOR = DocumentFilter[
-    DocumentFilter(; language = "julia")
-]
-
-# define fallback constructors for LSAnalyzer
-Analyzer.LSAnalyzer(uri::URI, args...; kwargs...) = LSAnalyzer(ScriptAnalysisEntry(uri), args...; kwargs...)
-Analyzer.LSAnalyzer(args...; kwargs...) = LSAnalyzer(ScriptAnalysisEntry(filepath2uri(@__FILE__)), args...; kwargs...)
-
-# Internal `@show` definition for JETLS: outputs information to `stderr` instead of `stdout`,
-# making it usable for LS debugging.
-macro show(exs...)
-    blk = Expr(:block)
-    for ex in exs
-        push!(blk.args, :(println(stderr, $(sprint(Base.show_unquoted,ex)*" = "),
-                                  repr(begin local value = $(esc(ex)) end))))
-    end
-    isempty(exs) || push!(blk.args, :value)
-    return blk
-end
-
-# Internal `@time` definitions for JETLS: outputs information to `stderr` instead of `stdout`,
-# making it usable for LS debugging.
-macro time(ex)
-    quote
-        @time nothing $(esc(ex))
-    end
-end
-macro time(msg, ex)
-    quote
-        local ret = @timed $(esc(ex))
-        local _msg = $(esc(msg))
-        local _msg_str = _msg === nothing ? _msg : string(_msg)
-        Base.time_print(stderr, ret.time*1e9, ret.gcstats.allocd, ret.gcstats.total_time, Base.gc_alloc_count(ret.gcstats), ret.lock_conflicts, ret.compile_time*1e9, ret.recompile_time*1e9, true; msg=_msg_str)
-        ret.value
-    end
-end
-
-include("utils.jl")
-include("registration.jl")
-include("completions.jl")
-include("signature-help.jl")
-include("definition.jl")
-include("diagnostics.jl")
+Server() = Server(Returns(nothing), Endpoint(IOBuffer(), IOBuffer())) # used for tests
 
 """
     send(state::ServerState, msg)
@@ -193,6 +163,25 @@ function send(server::Server, @nospecialize msg)
     server.callback !== nothing && server.callback(:sent, msg)
     nothing
 end
+
+include("utils.jl")
+
+include("Analysis/Interpreter.jl")
+using .Interpreter
+
+const DEFAULT_DOCUMENT_SELECTOR = DocumentFilter[
+    DocumentFilter(; language = "julia")
+]
+
+# define fallback constructors for LSAnalyzer
+Analyzer.LSAnalyzer(uri::URI, args...; kwargs...) = LSAnalyzer(ScriptAnalysisEntry(uri), args...; kwargs...)
+Analyzer.LSAnalyzer(args...; kwargs...) = LSAnalyzer(ScriptAnalysisEntry(filepath2uri(@__FILE__)), args...; kwargs...)
+
+include("registration.jl")
+include("completions.jl")
+include("signature-help.jl")
+include("definition.jl")
+include("diagnostics.jl")
 
 """
     runserver([callback,] in::IO, out::IO) -> (; exit_code::Int, endpoint::Endpoint)
@@ -311,7 +300,16 @@ function _handle_message(server::Server, msg)
         return handle_DocumentDiagnosticRequest(server, msg)
     elseif msg isa WorkspaceDiagnosticRequest
         @assert false "workspace/diagnostic should not be enabled"
-    elseif JETLS_DEV_MODE
+    elseif msg isa Dict{Symbol,Any} # response message
+        id = get(msg, :id, nothing)
+        currently_requested = server.state.currently_requested
+        if id isa String && haskey(currently_requested, id)
+            request_caller = currently_requested[id]
+            delete!(currently_requested, id)
+            return handle_requested_response(server, msg, request_caller)
+        end
+    end
+    if JETLS_DEV_MODE
         if isdefined(msg, :method)
             id = getfield(msg, :method)
         elseif msg isa Dict{Symbol,Any}
@@ -497,6 +495,22 @@ function handle_InitializedNotification(server::Server)
     register(server, registrations)
 end
 
+struct RunFullAnalysisCaller <: RequestCaller
+    uri::URI
+    onsave::Bool
+    token::ProgressToken
+end
+
+function handle_requested_response(server::Server, msg::Dict{Symbol,Any},
+                                   @nospecialize request_caller::RequestCaller)
+    if request_caller isa RunFullAnalysisCaller
+        (; uri, onsave, token) = request_caller
+        run_full_analysis!(server, uri; onsave, token)
+    else
+        error("Invalid request caller type")
+    end
+end
+
 function cache_file_info!(state::ServerState, uri::URI, version::Int, text::String, filename::String)
     return cache_file_info!(state, uri, parsefile(version, text, filename))
 end
@@ -521,40 +535,43 @@ function parsesavedfile(text::String, filename::String)
     return SavedFileInfo(text, filename, stream)
 end
 
-const FULL_ANALYSIS_THROTTLE = 3.0
+const FULL_ANALYSIS_THROTTLE = 5.0 # 3.0
 const FULL_ANALYSIS_DEBOUNCE = 1.0
 const SYNTACTIC_ANALYSIS_DEBOUNCE = 0.5
 
-function run_full_analysis!(server::Server, uri::URI; reanalyze::Bool)
-    state = server.state
-    if !haskey(state.contexts, uri)
-        res = initiate_context!(state, uri)
+function run_full_analysis!(server::Server, uri::URI; onsave::Bool=false, token::Union{Nothing,ProgressToken}=nothing)
+    if !haskey(server.state.contexts, uri)
+        res = initiate_context!(server, uri; token)
         if res isa AnalysisContext
             notify_full_diagnostics!(server)
         end
     else # this file is tracked by some context already
-        contexts = state.contexts[uri]
+        contexts = server.state.contexts[uri]
         if contexts isa ExternalContext
             # this file is out of the current project scope, ignore it
         else
             # TODO support multiple analysis contexts, which can happen if this file is included from multiple different contexts
             context = first(contexts)
-            if reanalyze
+            if onsave
                 context.result.staled = true
             end
             function task()
-                res = reanalyze_with_context!(state, context)
+                res = reanalyze_with_context!(server, context; token)
                 if res isa AnalysisContext
                     notify_full_diagnostics!(server)
                 end
             end
             id = hash(run_full_analysis!, hash(context))
-            if reanalyze
-                throttle(id, FULL_ANALYSIS_THROTTLE) do
-                    debounce(task, id, FULL_ANALYSIS_DEBOUNCE)
+            if onsave
+                debounce(id, FULL_ANALYSIS_DEBOUNCE) do
+                    throttle(id, FULL_ANALYSIS_THROTTLE) do
+                        task()
+                    end
                 end
             else
-                throttle(task, id, FULL_ANALYSIS_THROTTLE)
+                throttle(id, FULL_ANALYSIS_THROTTLE) do
+                    task()
+                end
             end
         end
     end
@@ -572,7 +589,18 @@ function handle_DidOpenTextDocumentNotification(server::Server, msg::DidOpenText
     cache_file_info!(state, uri, textDocument.version, textDocument.text, filename)
     cache_saved_file_info!(state, uri, textDocument.text, filename)
 
-    run_full_analysis!(server, uri; reanalyze=false)
+    if supports(server, :window, :workDoneProgress)
+        id = String(gensym(:WorkDoneProgressCreateRequest_run_full_analysis!))
+        token = String(gensym(:WorkDoneProgressCreateRequest_run_full_analysis!))
+        server.state.currently_requested[id] = RunFullAnalysisCaller(uri, #=onsave=#false, token)
+        send(server,
+            WorkDoneProgressCreateRequest(;
+                id,
+                params = WorkDoneProgressCreateParams(;
+                    token = token)))
+    else
+        run_full_analysis!(server, uri)
+    end
 end
 
 function handle_DidChangeTextDocumentNotification(server::Server, msg::DidChangeTextDocumentNotification)
@@ -609,7 +637,19 @@ function handle_DidSaveTextDocumentNotification(server::Server, msg::DidSaveText
     filename = uri2filename(uri)
     @assert filename !== nothing "Unsupported URI: $uri"
     cache_saved_file_info!(server.state, uri, text, filename)
-    run_full_analysis!(server, uri; reanalyze=true)
+
+    if supports(server, :window, :workDoneProgress)
+        id = String(gensym(:WorkDoneProgressCreateRequest_run_full_analysis!))
+        token = String(gensym(:WorkDoneProgressCreateRequest_run_full_analysis!))
+        server.state.currently_requested[id] = RunFullAnalysisCaller(uri, #=onsave=#true, token)
+        send(server,
+            WorkDoneProgressCreateRequest(;
+                id,
+                params = WorkDoneProgressCreateParams(;
+                    token = token)))
+    else
+        run_full_analysis!(server, uri; onsave=true)
+    end
 end
 
 function handle_DidCloseTextDocumentNotification(server::Server, msg::DidCloseTextDocumentNotification)
@@ -618,19 +658,59 @@ function handle_DidCloseTextDocumentNotification(server::Server, msg::DidCloseTe
     nothing
 end
 
-function analyze_parsed_if_exist(state::ServerState, entry::AnalysisEntry, args...;
+function begin_full_analysis_progress(server::Server, info::FullAnalysisInfo)
+    token = info.token
+    if token === nothing
+        return nothing
+    end
+    filepath = uri2filepath(entryuri(info.entry))
+    pre = info.reanalyze ? "Reanalyzing" : "Analyzing"
+    title = "$(pre) $(basename(filepath)) [$(entrykind(info.entry))]"
+    send(server, ProgressNotification(;
+        params = ProgressParams(;
+            token,
+            value = WorkDoneProgressBegin(;
+                title,
+                message = "Full analysis initiated",
+                percentage = 0))))
+    yield_to_endpoint()
+end
+
+function end_full_analysis_progress(server::Server, info::FullAnalysisInfo)
+    token = info.token
+    if token === nothing
+        return nothing
+    end
+    send(server, ProgressNotification(;
+        params = ProgressParams(;
+            token,
+            value = WorkDoneProgressEnd(;
+                message = "Full analysis finished"))))
+end
+
+function analyze_parsed_if_exist(server::Server, info::FullAnalysisInfo, args...;
                                  toplevel_logger = nothing, kwargs...)
-    uri = entryuri(entry)
-    if haskey(state.saved_file_cache, uri)
-        file_info = state.saved_file_cache[uri]
+    uri = entryuri(info.entry)
+    if haskey(server.state.saved_file_cache, uri)
+        file_info = server.state.saved_file_cache[uri]
         parsed_stream = file_info.parsed_stream
         filename = uri2filename(uri)::String
         parsed = JS.build_tree(JS.SyntaxNode, parsed_stream; filename)
-        return JET.analyze_and_report_expr!(LSInterpreter(state, entry), parsed, filename, args...; toplevel_logger, kwargs...)
+        begin_full_analysis_progress(server, info)
+        try
+            return JET.analyze_and_report_expr!(LSInterpreter(server, info), parsed, filename, args...; toplevel_logger, kwargs...)
+        finally
+            end_full_analysis_progress(server, info)
+        end
     else
         filepath = uri2filepath(uri)
         @assert filepath !== nothing "Unsupported URI: $uri"
-        return JET.analyze_and_report_file!(LSInterpreter(state, entry), filepath, args...; toplevel_logger, kwargs...)
+        begin_full_analysis_progress(server, info)
+        try
+            return JET.analyze_and_report_file!(LSInterpreter(server, info), filepath, args...; toplevel_logger, kwargs...)
+        finally
+            end_full_analysis_progress(server, info)
+        end
     end
 end
 
@@ -774,7 +854,8 @@ function find_package_directory(path::String, env_path::String)
     return :script, path
 end
 
-function initiate_context!(state::ServerState, uri::URI)
+function initiate_context!(server::Server, uri::URI; token::Union{Nothing,ProgressToken}=nothing)
+    state = server.state
     file_info = state.saved_file_cache[uri]
     parsed_stream = file_info.parsed_stream
     if !isempty(parsed_stream.diagnostics)
@@ -808,12 +889,14 @@ function initiate_context!(state::ServerState, uri::URI)
         @label analyze_script
         if env_path !== nothing
             entry = ScriptInEnvAnalysisEntry(env_path, uri)
+            info = FullAnalysisInfo(entry, token, #=reanalyze=#false, #=n_files=#0)
             result = activate_do(env_path) do
-                analyze_parsed_if_exist(state, entry)
+                analyze_parsed_if_exist(server, info)
             end
         else
             entry = ScriptAnalysisEntry(uri)
-            result = analyze_parsed_if_exist(state, entry)
+            info = FullAnalysisInfo(entry, token, #=reanalyze=#false, #=n_files=#0)
+            result = analyze_parsed_if_exist(server, info)
         end
         analysis_context = new_analysis_context(entry, result)
         @assert uri in analyzed_file_uris(analysis_context)
@@ -840,9 +923,9 @@ function initiate_context!(state::ServerState, uri::URI)
                 end
                 pkgfileuri = filepath2uri(pkgfile)
                 entry = PackageSourceAnalysisEntry(env_path, pkgfileuri, pkgid)
-                res = analyze_parsed_if_exist(state, entry, pkgid;
+                info = FullAnalysisInfo(entry, token, #=reanalyze=#false, #=n_files=#0)
+                res = analyze_parsed_if_exist(server, info, pkgid;
                     analyze_from_definitions=true,
-                    target_defined_modules=true,
                     concretization_patterns=[:(x_)])
                 return entry, res
             end
@@ -860,8 +943,9 @@ function initiate_context!(state::ServerState, uri::URI)
             runtestsfile = joinpath(filedir, "runtests.jl")
             runtestsuri = filepath2uri(runtestsfile)
             entry = PackageTestAnalysisEntry(env_path, runtestsuri)
+            info = FullAnalysisInfo(entry, token, #=reanalyze=#false, #=n_files=#0)
             result = activate_do(env_path) do
-                analyze_parsed_if_exist(state, entry)
+                analyze_parsed_if_exist(server, info)
             end
             analysis_context = new_analysis_context(entry, result)
             record_reverse_map!(state, analysis_context)
@@ -879,7 +963,8 @@ function initiate_context!(state::ServerState, uri::URI)
     return analysis_context
 end
 
-function reanalyze_with_context!(state::ServerState, analysis_context::AnalysisContext)
+function reanalyze_with_context!(server::Server, analysis_context::AnalysisContext; token::Union{Nothing,ProgressToken}=nothing)
+    state = server.state
     analysis_result = analysis_context.result
     if !(analysis_result.staled)
         return nothing
@@ -900,22 +985,26 @@ function reanalyze_with_context!(state::ServerState, analysis_context::AnalysisC
     end
 
     entry = analysis_context.entry
+    n_files = length(values(analysis_context.result.successfully_analyzed_file_infos))
     if entry isa ScriptAnalysisEntry
-        result = analyze_parsed_if_exist(state, entry)
+        info = FullAnalysisInfo(entry, token, #=reanalyze=#true, n_files)
+        result = analyze_parsed_if_exist(server, info)
     elseif entry isa ScriptInEnvAnalysisEntry
+        info = FullAnalysisInfo(entry, token, #=reanalyze=#true, n_files)
         result = activate_do(entry.env_path) do
-            analyze_parsed_if_exist(state, entry)
+            analyze_parsed_if_exist(server, info)
         end
     elseif entry isa PackageSourceAnalysisEntry
+        info = FullAnalysisInfo(entry, token, #=reanalyze=#true, n_files)
         result = activate_do(entry.env_path) do
-            analyze_parsed_if_exist(state, entry, entry.pkgid;
+            analyze_parsed_if_exist(server, info, entry.pkgid;
                     analyze_from_definitions=true,
-                    target_defined_modules=true,
                     concretization_patterns=[:(x_)])
         end
     elseif entry isa PackageTestAnalysisEntry
+        info = FullAnalysisInfo(entry, token, #=reanalyze=#true, n_files)
         result = activate_do(entry.env_path) do
-            analyze_parsed_if_exist(state, entry)
+            analyze_parsed_if_exist(server, info)
         end
     else
         @warn "Unsupported analysis entry" entry
@@ -959,7 +1048,7 @@ end
 using PrecompileTools
 module __demo__ end
 @setup_workload let
-    state = ServerState()
+    server = Server()
     text, positions = get_text_and_positions("""
         struct Bar
             x::Int
@@ -974,6 +1063,7 @@ module __demo__ end
     mktemp() do filename, io
         uri = filepath2uri(filename)
         @compile_workload let
+            state = server.state
             cache_file_info!(state, uri, #=version=#1, text, filename)
             let comp_params = CompletionParams(;
                     textDocument = TextDocumentIdentifier(; uri),
@@ -985,7 +1075,9 @@ module __demo__ end
 
             # compile `LSInterpreter`
             entry = ScriptAnalysisEntry(uri)
-            interp = LSInterpreter(state, entry)
+            # specify `token::String`?
+            info = FullAnalysisInfo(entry, nothing, #=reanalyze=#false, #=n_files=#0)
+            interp = LSInterpreter(server, info)
             filepath = normpath(pkgdir(JET), "demo.jl")
             JET.analyze_and_report_file!(interp, filepath;
                 virtualize=false,
