@@ -156,6 +156,23 @@ macro show(exs...)
     return blk
 end
 
+# Internal `@time` definitions for JETLS: outputs information to `stderr` instead of `stdout`,
+# making it usable for LS debugging.
+macro time(ex)
+    quote
+        @time nothing $(esc(ex))
+    end
+end
+macro time(msg, ex)
+    quote
+        local ret = @timed $(esc(ex))
+        local _msg = $(esc(msg))
+        local _msg_str = _msg === nothing ? _msg : string(_msg)
+        Base.time_print(stderr, ret.time*1e9, ret.gcstats.allocd, ret.gcstats.total_time, Base.gc_alloc_count(ret.gcstats), ret.lock_conflicts, ret.compile_time*1e9, ret.recompile_time*1e9, true; msg=_msg_str)
+        ret.value
+    end
+end
+
 include("utils.jl")
 include("registration.jl")
 include("completions.jl")
