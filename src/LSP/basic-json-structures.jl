@@ -503,8 +503,117 @@ command. The protocol currently doesn’t specify a set of well-known commands.
     arguments::Union{Vector{Any}, Nothing} = nothing
 end
 
-# Work done progress
+# Work Done Progress
 # ==================
+
+"""
+Work done progress is reported using the generic [`\$/progress` notification](@ref ProgressNotification).
+The value payload of a work done progress notification can be of three different forms.
+"""
+:(work_done_progress)
+
+"""
+To start progress reporting a `\$/progress` notification with the following payload must be sent.
+
+# Tags
+- since – 3.15.0
+"""
+@interface WorkDoneProgressBegin begin
+    kind::String = "begin"
+
+    """
+    Mandatory title of the progress operation. Used to briefly inform about
+    the kind of operation being performed.
+
+    Examples: "Indexing" or "Linking dependencies".
+    """
+    title::String
+
+    """
+    Controls if a cancel button should show to allow the user to cancel the
+    long running operation. Clients that don't support cancellation are
+    allowed to ignore the setting.
+    """
+    cancellable::Union{Bool, Nothing} = nothing
+
+    """
+    Optional, more detailed associated progress message. Contains
+    complementary information to the `title`.
+
+    Examples: "3/25 files", "project/src/module2", "node_modules/some_dep".
+    If unset, the previous progress message (if any) is still valid.
+    """
+    message::Union{String, Nothing} = nothing
+
+    """
+    Optional progress percentage to display (value 100 is considered 100%).
+    If not provided infinite progress is assumed and clients are allowed
+    to ignore the `percentage` value in subsequent report notifications.
+
+    The value should be steadily rising. Clients are free to ignore values
+    that are not following this rule. The value range is [0, 100].
+    """
+    percentage::Union{UInt, Nothing} = nothing
+end
+
+"""
+Reporting progress is done using the following payload.
+
+# Tags
+- since – 3.15.0
+"""
+@interface WorkDoneProgressReport begin
+    kind::String = "report"
+
+    """
+    Controls enablement state of a cancel button. This property is only valid
+    if a cancel button got requested in the `WorkDoneProgressBegin` payload.
+
+    Clients that don't support cancellation or don't support control the
+    button's enablement state are allowed to ignore the setting.
+    """
+    cancellable::Union{Bool, Nothing} = nothing
+
+    """
+    Optional, more detailed associated progress message. Contains
+    complementary information to the `title`.
+
+    Examples: "3/25 files", "project/src/module2", "node_modules/some_dep".
+    If unset, the previous progress message (if any) is still valid.
+    """
+    message::Union{String, Nothing} = nothing
+
+    """
+    Optional progress percentage to display (value 100 is considered 100%).
+    If not provided infinite progress is assumed and clients are allowed
+    to ignore the `percentage` value in subsequent report notifications.
+
+    The value should be steadily rising. Clients are free to ignore values
+    that are not following this rule. The value range is [0, 100].
+    """
+    percentage::Union{UInt, Nothing} = nothing
+end
+
+"""
+Signaling the end of a progress reporting is done using the following payload.
+
+# Tags
+- since – 3.15.0
+"""
+@interface WorkDoneProgressEnd begin
+    kind::String = "end"
+
+    """
+    Optional, a final message indicating to for example indicate the outcome
+    of the operation.
+    """
+    message::Union{String, Nothing} = nothing
+end
+
+"""
+Union type for all work done progress value types.
+"""
+const WorkDoneProgressValue = Union{WorkDoneProgressBegin, WorkDoneProgressReport, WorkDoneProgressEnd}
 
 @interface WorkDoneProgressParams begin
     "An optional token that a server can use to report work done progress."
@@ -515,9 +624,58 @@ end
     workDoneProgress::Union{Bool, Nothing} = nothing
 end
 
-# Partial results
-# ===============
+# Partial Result Progress
+# =======================
 
+"""
+Partial results are also reported using the generic [`\$/progress`](@ref work_done_progress) notification.
+The value payload of a partial result progress notification is in most cases the same as the final result.
+For example the `workspace/symbol` request has `SymbolInformation[]` | `WorkspaceSymbol[]` as the result type.
+Partial result is therefore also of type `SymbolInformation[]` | `WorkspaceSymbol[]`.
+Whether a client accepts partial result notifications for a request is signaled by adding
+a `partialResultToken` to the request parameter.
+For example, a `textDocument/reference` request that supports both work done and
+partial result progress might look like this:
+```json
+{
+	"textDocument": {
+		"uri": "file:///folder/file.ts"
+	},
+	"position": {
+		"line": 9,
+		"character": 5
+	},
+	"context": {
+		"includeDeclaration": true
+	},
+	// The token used to report work done progress.
+	"workDoneToken": "1d546990-40a3-4b77-b134-46622995f6ae",
+	// The token used to report partial result progress.
+	"partialResultToken": "5f6f349e-4f81-4a3b-afff-ee04bff96804"
+}
+```
+
+The `partialResultToken` is then used to report partial results for the find references request.
+
+If a server reports partial result via a corresponding [`\$/progress`](@ref work_done_progress),
+the whole result must be reported using n [`\$/progress`](@ref work_done_progress) notifications.
+Each of the n [`\$/progress`](@ref work_done_progress) notification appends items to the result.
+The final response has to be empty in terms of result values.
+This avoids confusion about how the final result should be interpreted, e.g. as another partial result or as a replacing result.
+
+If the response errors the provided partial results should be treated as follows:
+- the `code` equals to `RequestCancelled`: the client is free to use the provided
+  results but should make clear that the request got canceled and may be incomplete.
+- in all other cases the provided partial results shouldn’t be used.
+
+# Tags
+- since – 3.15.0
+"""
+:(partial_result_progress)
+
+"""
+A parameter literal used to pass a partial result token.
+"""
 @interface PartialResultParams begin
     """
     An optional token that a server can use to report partial results (e.g. streaming)
