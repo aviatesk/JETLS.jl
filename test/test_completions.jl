@@ -264,7 +264,7 @@ end
     uri = filename2uri(filename)
     JETLS.cache_file_info!(state, uri, #=version=#1, text)
     JETLS.cache_saved_file_info!(state, uri, text)
-    JETLS.initiate_context!(server, uri)
+    JETLS.initiate_analysis_unit!(server, uri)
     let params = CompletionParams(;
             textDocument=TextDocumentIdentifier(; uri),
             position=pos1)

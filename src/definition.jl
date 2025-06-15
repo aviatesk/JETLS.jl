@@ -86,8 +86,8 @@ function definition_target_methods(state::ServerState, uri::URI, pos::Position, 
     node === nothing && return empty_methods
 
     mod = find_file_module(state, uri, pos)
-    context = find_context_for_uri(state, uri)
-    analyzer = isnothing(context) ? LSAnalyzer(uri) : context.result.analyzer
+    analysis_unit = find_analysis_unit_for_uri(state, uri)
+    analyzer = isnothing(analysis_unit) ? LSAnalyzer(uri) : analysis_unit.result.analyzer
     objtyp = resolve_type(analyzer, mod, node)
     objtyp isa Core.Const || return empty_methods
 
