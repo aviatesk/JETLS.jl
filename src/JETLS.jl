@@ -507,28 +507,30 @@ function handle_requested_response(server::Server, msg::Dict{Symbol,Any},
     end
 end
 
+function ParseStream!(s::AbstractString)
+    stream = JS.ParseStream(s)
+    JS.parse!(stream; rule=:all)
+    return stream
+end
+function FileInfo(version::Int, text::String)
+    return FileInfo(version, ParseStream!(text))
+end
+function SavedFileInfo(text::String)
+    return SavedFileInfo(ParseStream!(text))
+end
+
 function cache_file_info!(state::ServerState, uri::URI, version::Int, text::String)
-    return cache_file_info!(state, uri, parsefile(version, text))
+    return cache_file_info!(state, uri, FileInfo(version, text))
 end
 function cache_file_info!(state::ServerState, uri::URI, file_info::FileInfo)
     return state.file_cache[uri] = file_info
 end
-function parsefile(version::Int, text::String)
-    stream = JS.ParseStream(text)
-    JS.parse!(stream; rule=:all)
-    return FileInfo(version, stream)
-end
 
 function cache_saved_file_info!(state::ServerState, uri::URI, text::String)
-    return cache_saved_file_info!(state, uri, parsesavedfile(text))
+    return cache_saved_file_info!(state, uri, SavedFileInfo(text))
 end
 function cache_saved_file_info!(state::ServerState, uri::URI, file_info::SavedFileInfo)
     return state.saved_file_cache[uri] = file_info
-end
-function parsesavedfile(text::String)
-    stream = JS.ParseStream(text)
-    JS.parse!(stream; rule=:all)
-    return SavedFileInfo(stream)
 end
 
 const FULL_ANALYSIS_THROTTLE = 5.0 # 3.0
@@ -579,9 +581,9 @@ function handle_DidOpenTextDocumentNotification(server::Server, msg::DidOpenText
     @assert textDocument.languageId == "julia"
     uri = textDocument.uri
 
-    state = server.state
-    cache_file_info!(state, uri, textDocument.version, textDocument.text)
-    cache_saved_file_info!(state, uri, textDocument.text)
+    parsed_stream = ParseStream!(textDocument.text)
+    cache_file_info!(server.state, uri, FileInfo(textDocument.version, parsed_stream))
+    cache_saved_file_info!(server.state, uri, SavedFileInfo(parsed_stream))
 
     if supports(server, :window, :workDoneProgress)
         id = String(gensym(:WorkDoneProgressCreateRequest_run_full_analysis!))
