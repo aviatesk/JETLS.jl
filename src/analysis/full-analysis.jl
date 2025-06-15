@@ -3,28 +3,28 @@ const FULL_ANALYSIS_DEBOUNCE = 1.0
 const SYNTACTIC_ANALYSIS_DEBOUNCE = 0.5
 
 function run_full_analysis!(server::Server, uri::URI; onsave::Bool=false, token::Union{Nothing,ProgressToken}=nothing)
-    if !haskey(server.state.contexts, uri)
-        res = initiate_context!(server, uri; token)
-        if res isa AnalysisContext
+    if !haskey(server.state.analysis_units, uri)
+        res = initiate_analysis_unit!(server, uri; token)
+        if res isa AnalysisUnit
             notify_full_diagnostics!(server)
         end
-    else # this file is tracked by some context already
-        contexts = server.state.contexts[uri]
-        if contexts isa ExternalContext
+    else # this file is tracked by some analysis unit already
+        analysis_units = server.state.analysis_units[uri]
+        if analysis_units isa ExternalUnit
             # this file is out of the current project scope, ignore it
         else
-            # TODO support multiple analysis contexts, which can happen if this file is included from multiple different contexts
-            context = first(contexts)
+            # TODO support multiple analysis units, which can happen if this file is included from multiple different analysis_units
+            analysis_unit = first(analysis_units)
             if onsave
-                context.result.staled = true
+                analysis_unit.result.staled = true
             end
             function task()
-                res = reanalyze_with_context!(server, context; token)
-                if res isa AnalysisContext
+                res = reanalyze!(server, analysis_unit; token)
+                if res isa AnalysisUnit
                     notify_full_diagnostics!(server)
                 end
             end
-            id = hash(run_full_analysis!, hash(context))
+            id = hash(run_full_analysis!, hash(analysis_unit))
             if onsave
                 debounce(id, FULL_ANALYSIS_DEBOUNCE) do
                     throttle(id, FULL_ANALYSIS_THROTTLE) do
@@ -108,7 +108,7 @@ function update_analyzer_world(analyzer::LSAnalyzer)
     return JET.AbstractAnalyzer(analyzer, newstate)
 end
 
-function new_analysis_context(entry::AnalysisEntry, result)
+function new_analysis_unit(entry::AnalysisEntry, result)
     analyzed_file_infos = Dict{URI,JET.AnalyzedFileInfo}(
         # `filepath` is an absolute path (since `path` is specified as absolute)
         filename2uri(filepath) => analyzed_file_info for (filepath, analyzed_file_info) in result.res.analyzed_files)
@@ -119,13 +119,13 @@ function new_analysis_context(entry::AnalysisEntry, result)
     analysis_result = FullAnalysisResult(
         #=staled=#false, result.res.actual2virtual, update_analyzer_world(result.analyzer),
         uri2diagnostics, analyzed_file_infos, successfully_analyzed_file_infos)
-    return AnalysisContext(entry, analysis_result)
+    return AnalysisUnit(entry, analysis_result)
 end
 
-function update_analysis_context!(analysis_context::AnalysisContext, result)
-    uri2diagnostics = analysis_context.result.uri2diagnostics
-    cached_file_infos = analysis_context.result.analyzed_file_infos
-    cached_successfully_analyzed_file_infos = analysis_context.result.successfully_analyzed_file_infos
+function update_analysis_unit!(analysis_unit::AnalysisUnit, result)
+    uri2diagnostics = analysis_unit.result.uri2diagnostics
+    cached_file_infos = analysis_unit.result.analyzed_file_infos
+    cached_successfully_analyzed_file_infos = analysis_unit.result.successfully_analyzed_file_infos
     new_file_infos = Dict{URI,JET.AnalyzedFileInfo}(
         # `filepath` is an absolute path (since `path` is specified as absolute)
         filename2uri(filepath) => analyzed_file_info for (filepath, analyzed_file_info) in result.res.analyzed_files)
@@ -144,34 +144,34 @@ function update_analysis_context!(analysis_context::AnalysisContext, result)
         empty!(get!(()->Diagnostic[], uri2diagnostics, new_file_uri))
     end
     jet_result_to_diagnostics!(uri2diagnostics, result)
-    analysis_context.result.staled = false
+    analysis_unit.result.staled = false
     if is_full_analysis_successful(result)
-        analysis_context.result.actual2virtual = result.res.actual2virtual
-        analysis_context.result.analyzer = update_analyzer_world(result.analyzer)
+        analysis_unit.result.actual2virtual = result.res.actual2virtual
+        analysis_unit.result.analyzer = update_analyzer_world(result.analyzer)
     end
 end
 
 # TODO This reverse map recording should respect the changes made in `include` chains
-function record_reverse_map!(state::ServerState, analysis_context::AnalysisContext)
-    afiles = analyzed_file_uris(analysis_context)
+function record_reverse_map!(state::ServerState, analysis_unit::AnalysisUnit)
+    afiles = analyzed_file_uris(analysis_unit)
     for uri in afiles
-        contexts = get!(Set{AnalysisContext}, state.contexts, uri)
+        analysis_units = get!(Set{AnalysisUnit}, state.analysis_units, uri)
         should_record = true
-        for analysis_context′ in contexts
-            bfiles = analyzed_file_uris(analysis_context′)
+        for analysis_unit′ in analysis_units
+            bfiles = analyzed_file_uris(analysis_unit′)
             if afiles ≠ bfiles
                 if afiles ⊆ bfiles
                     should_record = false
-                else # bfiles ⊆ afiles, i.e. now we have a better context to analyze this file
-                    delete!(contexts, analysis_context′)
+                else # bfiles ⊆ afiles, i.e. now we have a better unit to analyze this file
+                    delete!(analysis_units, analysis_unit′)
                 end
             end
         end
-        should_record && push!(contexts, analysis_context)
+        should_record && push!(analysis_units, analysis_unit)
     end
 end
 
-function initiate_context!(server::Server, uri::URI; token::Union{Nothing,ProgressToken}=nothing)
+function initiate_analysis_unit!(server::Server, uri::URI; token::Union{Nothing,ProgressToken}=nothing)
     state = server.state
     file_info = state.saved_file_cache[uri]
     parsed_stream = file_info.parsed_stream
@@ -183,7 +183,7 @@ function initiate_context!(server::Server, uri::URI; token::Union{Nothing,Progre
         filename = path = uri2filepath(uri)::String
         if isdefined(state, :root_path)
             if !issubdir(dirname(path), state.root_path)
-                state.contexts[uri] = ExternalContext()
+                state.analysis_units[uri] = ExternalUnit()
                 return nothing
             end
         end
@@ -215,9 +215,9 @@ function initiate_context!(server::Server, uri::URI; token::Union{Nothing,Progre
             info = FullAnalysisInfo(entry, token, #=reanalyze=#false, #=n_files=#0)
             result = analyze_parsed_if_exist(server, info)
         end
-        analysis_context = new_analysis_context(entry, result)
-        @assert uri in analyzed_file_uris(analysis_context)
-        record_reverse_map!(state, analysis_context)
+        analysis_unit = new_analysis_unit(entry, result)
+        @assert uri in analyzed_file_uris(analysis_unit)
+        record_reverse_map!(state, analysis_unit)
     elseif pkgname === nothing
         @goto analyze_script
     else # this file is likely one within a package
@@ -250,9 +250,9 @@ function initiate_context!(server::Server, uri::URI; token::Union{Nothing,Progre
                 @goto analyze_script
             end
             entry, result = entry_result
-            analysis_context = new_analysis_context(entry, result)
-            record_reverse_map!(state, analysis_context)
-            if uri ∉ analyzed_file_uris(analysis_context)
+            analysis_unit = new_analysis_unit(entry, result)
+            record_reverse_map!(state, analysis_unit)
+            if uri ∉ analyzed_file_uris(analysis_unit)
                 @goto analyze_script
             end
         elseif filekind === :test
@@ -264,9 +264,9 @@ function initiate_context!(server::Server, uri::URI; token::Union{Nothing,Progre
             result = activate_do(env_path) do
                 analyze_parsed_if_exist(server, info)
             end
-            analysis_context = new_analysis_context(entry, result)
-            record_reverse_map!(state, analysis_context)
-            if uri ∉ analyzed_file_uris(analysis_context)
+            analysis_unit = new_analysis_unit(entry, result)
+            record_reverse_map!(state, analysis_unit)
+            if uri ∉ analyzed_file_uris(analysis_unit)
                 @goto analyze_script
             end
         elseif filekind === :docs
@@ -277,17 +277,17 @@ function initiate_context!(server::Server, uri::URI; token::Union{Nothing,Progre
         end
     end
 
-    return analysis_context
+    return analysis_unit
 end
 
-function reanalyze_with_context!(server::Server, analysis_context::AnalysisContext; token::Union{Nothing,ProgressToken}=nothing)
+function reanalyze!(server::Server, analysis_unit::AnalysisUnit; token::Union{Nothing,ProgressToken}=nothing)
     state = server.state
-    analysis_result = analysis_context.result
+    analysis_result = analysis_unit.result
     if !(analysis_result.staled)
         return nothing
     end
 
-    any_parse_failed = any(analyzed_file_uris(analysis_context)) do uri::URI
+    any_parse_failed = any(analyzed_file_uris(analysis_unit)) do uri::URI
         if haskey(state.saved_file_cache, uri)
             file_info = state.saved_file_cache[uri]
             if !isempty(file_info.parsed_stream.diagnostics)
@@ -301,8 +301,8 @@ function reanalyze_with_context!(server::Server, analysis_context::AnalysisConte
         return nothing
     end
 
-    entry = analysis_context.entry
-    n_files = length(values(analysis_context.result.successfully_analyzed_file_infos))
+    entry = analysis_unit.entry
+    n_files = length(values(analysis_unit.result.successfully_analyzed_file_infos))
     if entry isa ScriptAnalysisEntry
         info = FullAnalysisInfo(entry, token, #=reanalyze=#true, n_files)
         result = analyze_parsed_if_exist(server, info)
@@ -332,8 +332,8 @@ function reanalyze_with_context!(server::Server, analysis_context::AnalysisConte
                 retriggerRequest = false))
     end
 
-    update_analysis_context!(analysis_context, result)
-    record_reverse_map!(state, analysis_context)
+    update_analysis_unit!(analysis_unit, result)
+    record_reverse_map!(state, analysis_unit)
 
-    return analysis_context
+    return analysis_unit
 end

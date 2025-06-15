@@ -19,7 +19,7 @@ end
 ```
 
 For this reason, significant changes are expected in the near future.
-Specifically, `AnalysisContext` will store type inference results for each method analyzed by `LSAnalyzer`,
+Specifically, `AnalysisUnit` will store type inference results for each method analyzed by `LSAnalyzer`,
 and `resolve_type` will be implemented as a query against these type inference results.
 However, this implementation requires JL to be able to lower arbitrary user code,
 which first requires integration of JL into Base.
