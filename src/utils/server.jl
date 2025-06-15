@@ -41,11 +41,11 @@ function find_file_module(state::ServerState, uri::URI, pos::Position)
 end
 
 function find_analysis_unit_for_uri(state::ServerState, uri::URI)
-    haskey(state.analysis_units, uri) || return nothing
-    analysis_units = state.analysis_units[uri]
-    analysis_units isa ExternalUnit && return nothing
-    analysis_unit = first(analysis_units)
-    for analysis_unit′ in analysis_units
+    haskey(state.analysis_cache, uri) || return nothing
+    analysis_info = state.analysis_cache[uri]
+    analysis_info isa OutOfScope && return nothing
+    analysis_unit = first(analysis_info)
+    for analysis_unit′ in analysis_info
         # prioritize `PackageSourceAnalysisEntry` if exists
         if isa(analysis_unit.entry, PackageSourceAnalysisEntry)
             analysis_unit = analysis_unit′

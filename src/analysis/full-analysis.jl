@@ -3,18 +3,18 @@ const FULL_ANALYSIS_DEBOUNCE = 1.0
 const SYNTACTIC_ANALYSIS_DEBOUNCE = 0.5
 
 function run_full_analysis!(server::Server, uri::URI; onsave::Bool=false, token::Union{Nothing,ProgressToken}=nothing)
-    if !haskey(server.state.analysis_units, uri)
+    if !haskey(server.state.analysis_cache, uri)
         res = initiate_analysis_unit!(server, uri; token)
         if res isa AnalysisUnit
             notify_full_diagnostics!(server)
         end
     else # this file is tracked by some analysis unit already
-        analysis_units = server.state.analysis_units[uri]
-        if analysis_units isa ExternalUnit
+        analysis_info = server.state.analysis_cache[uri]
+        if analysis_info isa OutOfScope
             # this file is out of the current project scope, ignore it
         else
             # TODO support multiple analysis units, which can happen if this file is included from multiple different analysis_units
-            analysis_unit = first(analysis_units)
+            analysis_unit = first(analysis_info)
             if onsave
                 analysis_unit.result.staled = true
             end
@@ -155,19 +155,24 @@ end
 function record_reverse_map!(state::ServerState, analysis_unit::AnalysisUnit)
     afiles = analyzed_file_uris(analysis_unit)
     for uri in afiles
-        analysis_units = get!(Set{AnalysisUnit}, state.analysis_units, uri)
+        analysis_info = get!(Set{AnalysisUnit}, state.analysis_cache, uri)
+        if analysis_info isa OutOfScope
+            # this file was previously `OutOfScope`, but now can be analyzed by some unit,
+            # so replace the cache with a set
+            analysis_info = state.analysis_cache[uri] = Set{AnalysisUnit}()
+        end
         should_record = true
-        for analysis_unit′ in analysis_units
+        for analysis_unit′ in analysis_info
             bfiles = analyzed_file_uris(analysis_unit′)
             if afiles ≠ bfiles
                 if afiles ⊆ bfiles
                     should_record = false
                 else # bfiles ⊆ afiles, i.e. now we have a better unit to analyze this file
-                    delete!(analysis_units, analysis_unit′)
+                    delete!(analysis_info, analysis_unit′)
                 end
             end
         end
-        should_record && push!(analysis_units, analysis_unit)
+        should_record && push!(analysis_info, analysis_unit)
     end
 end
 
@@ -183,7 +188,7 @@ function initiate_analysis_unit!(server::Server, uri::URI; token::Union{Nothing,
         filename = path = uri2filepath(uri)::String
         if isdefined(state, :root_path)
             if !issubdir(dirname(path), state.root_path)
-                state.analysis_units[uri] = ExternalUnit()
+                state.analysis_cache[uri] = OutOfScope()
                 return nothing
             end
         end
