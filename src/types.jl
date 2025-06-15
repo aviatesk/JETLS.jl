@@ -51,18 +51,18 @@ mutable struct FullAnalysisResult
     const successfully_analyzed_file_infos::Dict{URI,JET.AnalyzedFileInfo}
 end
 
-struct AnalysisContext
+struct AnalysisUnit
     entry::AnalysisEntry
     result::FullAnalysisResult
 end
 
-analyzed_file_uris(context::AnalysisContext) = keys(context.result.analyzed_file_infos)
+analyzed_file_uris(analysis_unit::AnalysisUnit) = keys(analysis_unit.result.analyzed_file_infos)
 
-function successfully_analyzed_file_info(context::AnalysisContext, uri::URI)
-    return get(context.result.successfully_analyzed_file_infos, uri, nothing)
+function successfully_analyzed_file_info(analysis_unit::AnalysisUnit, uri::URI)
+    return get(analysis_unit.result.successfully_analyzed_file_infos, uri, nothing)
 end
 
-struct ExternalContext end
+struct ExternalUnit end
 
 abstract type RequestCaller end
 
@@ -81,7 +81,7 @@ mutable struct ServerState
     const workspaceFolders::Vector{URI}
     const file_cache::Dict{URI,FileInfo} # syntactic analysis cache (synced with `textDocument/didChange`)
     const saved_file_cache::Dict{URI,SavedFileInfo} # syntactic analysis cache (synced with `textDocument/didSave`)
-    const contexts::Dict{URI,Union{Set{AnalysisContext},ExternalContext}} # entry points for the full analysis (currently not cached really)
+    const analysis_units::Dict{URI,Union{Set{AnalysisUnit},ExternalUnit}} # entry points for the full analysis (currently not cached really)
     const currently_requested::Dict{String,RequestCaller}
     const currently_registered::Set{Registered}
     root_path::String
@@ -93,7 +93,7 @@ mutable struct ServerState
             #=workspaceFolders=# URI[],
             #=file_cache=# Dict{URI,FileInfo}(),
             #=saved_file_cache=# Dict{URI,SavedFileInfo}(),
-            #=contexts=# Dict{URI,Union{Set{AnalysisContext},ExternalContext}}(),
+            #=analysis_units=# Dict{URI,Union{Set{AnalysisUnit},ExternalUnit}}(),
             #=currently_requested=# Dict{String,RequestCaller}(),
             #=currently_registered=# Set{Registered}(),
         )

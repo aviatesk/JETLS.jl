@@ -27,9 +27,9 @@ function find_file_module!(state::ServerState, uri::URI, pos::Position)
     return mod
 end
 function find_file_module(state::ServerState, uri::URI, pos::Position)
-    context = find_context_for_uri(state, uri)
-    context === nothing && return Main
-    safi = successfully_analyzed_file_info(context, uri)
+    analysis_unit = find_analysis_unit_for_uri(state, uri)
+    analysis_unit === nothing && return Main
+    safi = successfully_analyzed_file_info(analysis_unit, uri)
     isnothing(safi) && return Main
     curline = Int(pos.line) + 1
     curmod = Main
@@ -40,17 +40,17 @@ function find_file_module(state::ServerState, uri::URI, pos::Position)
     return curmod
 end
 
-function find_context_for_uri(state::ServerState, uri::URI)
-    haskey(state.contexts, uri) || return nothing
-    contexts = state.contexts[uri]
-    contexts isa ExternalContext && return nothing
-    context = first(contexts)
-    for ctx in contexts
+function find_analysis_unit_for_uri(state::ServerState, uri::URI)
+    haskey(state.analysis_units, uri) || return nothing
+    analysis_units = state.analysis_units[uri]
+    analysis_units isa ExternalUnit && return nothing
+    analysis_unit = first(analysis_units)
+    for analysis_unit′ in analysis_units
         # prioritize `PackageSourceAnalysisEntry` if exists
-        if isa(context.entry, PackageSourceAnalysisEntry)
-            context = ctx
+        if isa(analysis_unit.entry, PackageSourceAnalysisEntry)
+            analysis_unit = analysis_unit′
             break
         end
     end
-    return context
+    return analysis_unit
 end
