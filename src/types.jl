@@ -62,7 +62,9 @@ function successfully_analyzed_file_info(analysis_unit::AnalysisUnit, uri::URI)
     return get(analysis_unit.result.successfully_analyzed_file_infos, uri, nothing)
 end
 
-struct ExternalUnit end
+struct OutOfScope end
+
+const AnalysisInfo = Union{Set{AnalysisUnit},OutOfScope}
 
 abstract type RequestCaller end
 
@@ -81,7 +83,7 @@ mutable struct ServerState
     const workspaceFolders::Vector{URI}
     const file_cache::Dict{URI,FileInfo} # syntactic analysis cache (synced with `textDocument/didChange`)
     const saved_file_cache::Dict{URI,SavedFileInfo} # syntactic analysis cache (synced with `textDocument/didSave`)
-    const analysis_units::Dict{URI,Union{Set{AnalysisUnit},ExternalUnit}} # entry points for the full analysis (currently not cached really)
+    const analysis_cache::Dict{URI,AnalysisInfo} # entry points for the full analysis (currently not cached really)
     const currently_requested::Dict{String,RequestCaller}
     const currently_registered::Set{Registered}
     root_path::String
@@ -93,7 +95,7 @@ mutable struct ServerState
             #=workspaceFolders=# URI[],
             #=file_cache=# Dict{URI,FileInfo}(),
             #=saved_file_cache=# Dict{URI,SavedFileInfo}(),
-            #=analysis_units=# Dict{URI,Union{Set{AnalysisUnit},ExternalUnit}}(),
+            #=analysis_cache=# Dict{URI,AnalysisInfo}(),
             #=currently_requested=# Dict{String,RequestCaller}(),
             #=currently_registered=# Set{Registered}(),
         )
