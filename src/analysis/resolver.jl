@@ -1,10 +1,3 @@
-module Resolver
-
-export resolve_type
-
-using ..JETLS: CC, JET, JS, JL, REPL
-using ..JETLS.Analyzer
-
 """
     resolve_type(analyzer::LSAnalyzer, context_module::Module, s0::Union{JS.SyntaxNode,JL.SyntaxTree})
     resolve_type(analyzer::LSAnalyzer, context_module::Module, ex::Expr)
@@ -78,5 +71,3 @@ function resolve_type(analyzer::LSAnalyzer, context_module::Module, @nospecializ
     result === Union{} && return nothing # for whatever reason, callers expect this as the Bottom and/or Top type instead
     return result
 end
-
-end # module Resolver
