@@ -13,8 +13,8 @@ function analyze_and_resolve(s::AbstractString;
     mktemp() do filename, io
         uri = filename2uri(filename)
         fileinfo = JETLS.cache_file_info!(state, uri, 1, text)
-        context = JETLS.initiate_context!(server, uri)
-        analyzer = context.result.analyzer
+        analysis_unit = JETLS.initiate_analysis_unit!(server, uri)
+        analyzer = analysis_unit.result.analyzer
 
         mod = JETLS.find_file_module(state, uri, position)
 

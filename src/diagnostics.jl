@@ -127,13 +127,13 @@ end
 
 function notify_full_diagnostics!(server::Server)
     uri2diagnostics = Dict{URI,Vector{Diagnostic}}()
-    for (uri, contexts) in server.state.contexts
-        if contexts isa ExternalContext
+    for (uri, analysis_info) in server.state.analysis_cache
+        if analysis_info isa OutOfScope
             continue
         end
         diagnostics = get!(Vector{Diagnostic}, uri2diagnostics, uri)
-        for analysis_context in contexts
-            full_diagnostics = get(analysis_context.result.uri2diagnostics, uri, nothing)
+        for analysis_unit in analysis_info
+            full_diagnostics = get(analysis_unit.result.uri2diagnostics, uri, nothing)
             if full_diagnostics !== nothing
                 append!(diagnostics, full_diagnostics)
             end
