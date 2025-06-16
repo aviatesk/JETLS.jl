@@ -29,6 +29,9 @@ end
 function find_file_module(state::ServerState, uri::URI, pos::Position)
     analysis_unit = find_analysis_unit_for_uri(state, uri)
     analysis_unit === nothing && return Main
+    if analysis_unit isa OutOfScope
+        return isdefined(analysis_unit, :module_context) ? analysis_unit.module_context : Main
+    end
     safi = successfully_analyzed_file_info(analysis_unit, uri)
     isnothing(safi) && return Main
     curline = Int(pos.line) + 1
@@ -43,7 +46,9 @@ end
 function find_analysis_unit_for_uri(state::ServerState, uri::URI)
     haskey(state.analysis_cache, uri) || return nothing
     analysis_info = state.analysis_cache[uri]
-    analysis_info isa OutOfScope && return nothing
+    if analysis_info isa OutOfScope
+        return analysis_info
+    end
     analysis_unit = first(analysis_info)
     for analysis_unit′ in analysis_info
         # prioritize `PackageSourceAnalysisEntry` if exists

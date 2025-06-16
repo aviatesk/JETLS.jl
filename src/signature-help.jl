@@ -363,8 +363,13 @@ function handle_SignatureHelpRequest(server::Server, msg::SignatureHelpRequest)
     end
     mod = find_file_module(state, uri, msg.params.position)
     analysis_unit = find_analysis_unit_for_uri(state, uri)
-    postprocessor = JET.PostProcessor(isnothing(analysis_unit) ? nothing : analysis_unit.result.actual2virtual)
-    analyzer = isnothing(analysis_unit) ? LSAnalyzer(uri) : analysis_unit.result.analyzer
+    if analysis_unit === nothing || analysis_unit isa OutOfScope
+        postprocessor = JET.PostProcessor()
+        analyzer = LSAnalyzer(uri)
+    else
+        postprocessor = JET.PostProcessor(analysis_unit.result.actual2virtual)
+        analyzer = analysis_unit.result.analyzer
+    end
     b = xy_to_offset(fi, msg.params.position)
     signatures = cursor_siginfos(mod, fi.parsed_stream, b, analyzer; postprocessor)
     activeSignature = nothing
