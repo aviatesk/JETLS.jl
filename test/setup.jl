@@ -34,7 +34,7 @@ function withserver(f;
             put!(sent_queue, x)
         end
     end
-    t = @async runserver(server; server_loop_log=false)
+    t = @async runserver(server)
     id_counter = Ref(0)
     old_env = Pkg.project().path
     root_path = nothing
