@@ -37,9 +37,27 @@ function issubdir(dir1, dir2)
     end, false)
 end
 
+"""
+    fix_build_path(path::AbstractString) -> fixed_path::AbstractString
+
+If this Julia is a built one, convert `path` to `fixed_path`, which is a path to the main
+files that are editable (or tracked by git).
+"""
+function fix_build_path(path::AbstractString) end
+let build_dir = normpath(Sys.BINDIR, "..", ".."),
+    share_dir = normpath(Sys.BINDIR, Base.DATAROOTDIR, "julia")
+    global fix_build_path
+    if ispath(normpath(build_dir), "base")
+        fix_build_path(path::AbstractString) = replace(path, share_dir => build_dir)
+    else
+        fix_build_path(path::AbstractString) = path
+    end
+end
+
 to_full_path(file::Symbol) = to_full_path(String(file))
 function to_full_path(file::AbstractString)
     file = Base.fixup_stdlib_path(file)
     file = something(Base.find_source_file(file), file)
-    return abspath(file)
+    # TODO we should probably make this configurable
+    return fix_build_path(abspath(file))
 end

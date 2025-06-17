@@ -69,6 +69,7 @@ For now, it just returns the first line of the method
 """
 function method_definition_range(m::Method)
     file, line = functionloc(m)
+    file = to_full_path(file)
     return Location(;
         uri = filename2uri(file),
         range = Range(;
@@ -87,7 +88,11 @@ function definition_target_methods(state::ServerState, uri::URI, pos::Position, 
 
     mod = find_file_module(state, uri, pos)
     analysis_unit = find_analysis_unit_for_uri(state, uri)
-    analyzer = isnothing(analysis_unit) ? LSAnalyzer(uri) : analysis_unit.result.analyzer
+    if analysis_unit === nothing || analysis_unit isa OutOfScope
+        analyzer = LSAnalyzer(uri)
+    else
+        analyzer = analysis_unit.result.analyzer
+    end
     objtyp = resolve_type(analyzer, mod, node)
     objtyp isa Core.Const || return empty_methods
 

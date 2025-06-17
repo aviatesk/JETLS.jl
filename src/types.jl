@@ -62,7 +62,11 @@ function successfully_analyzed_file_info(analysis_unit::AnalysisUnit, uri::URI)
     return get(analysis_unit.result.successfully_analyzed_file_infos, uri, nothing)
 end
 
-struct OutOfScope end
+struct OutOfScope
+    module_context::Module
+    OutOfScope() = new() # really unknown context
+    OutOfScope(module_context::Module) = new(module_context)
+end
 
 const AnalysisInfo = Union{Set{AnalysisUnit},OutOfScope}
 

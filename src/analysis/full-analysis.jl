@@ -186,6 +186,14 @@ function initiate_analysis_unit!(server::Server, uri::URI; token::Union{Nothing,
 
     if uri.scheme == "file"
         filename = path = uri2filepath(uri)::String
+        # HACK: we should support Base files properly
+        if issubdir(filename, normpath(Sys.BUILD_ROOT_PATH, "base"))
+            state.analysis_cache[uri] = OutOfScope(Base)
+            return nothing
+        elseif issubdir(filename, normpath(Sys.BUILD_ROOT_PATH, "Compiler", "src"))
+            state.analysis_cache[uri] = OutOfScope(CC)
+            return nothing
+        end
         if isdefined(state, :root_path)
             if !issubdir(dirname(path), state.root_path)
                 state.analysis_cache[uri] = OutOfScope()
