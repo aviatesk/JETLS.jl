@@ -61,6 +61,8 @@ function select_target_node(st::JL.SyntaxTree, offset::Int)
     return nothing
 end
 
+is_location_unknown(m) = Base.updated_methodloc(m)[2] <= 0
+
 """
 Get the range of a method. (will be deprecated in the future)
 
@@ -97,7 +99,7 @@ function definition_target_methods(state::ServerState, uri::URI, pos::Position, 
     objtyp isa Core.Const || return empty_methods
 
     # TODO modify this aggregation logic when we start to use more precise location informaiton
-    return unique(functionloc, methods(objtyp.val))
+    return filter(!is_location_unknown, unique(Base.updated_methodloc, methods(objtyp.val)))
 end
 
 function handle_DefinitionRequest(server::Server, msg::DefinitionRequest)
