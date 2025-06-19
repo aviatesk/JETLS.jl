@@ -459,7 +459,7 @@ end
         test_backslash_offset(code, (1, false))
     end
     let code = "  \\#=cursor=#"
-        test_backslash_offset(code, (ncodeunits("  \\"), false))
+        test_backslash_offset(code, (sizeof("  \\"), false))
     end
 
     # Example 2: Previous token is backslash
@@ -470,7 +470,7 @@ end
         test_backslash_offset(code, (1, false))
     end
     let code = "  \\gamma#=cursor=#"
-        test_backslash_offset(code, (ncodeunits("  \\"), false))
+        test_backslash_offset(code, (sizeof("  \\"), false))
     end
     let code = "\\ #=cursor=#"
         test_backslash_offset(code, nothing)
@@ -490,7 +490,7 @@ end
         test_backslash_offset(code, (1, true))
     end
     let code = "  \\:test#=cursor=#"
-        test_backslash_offset(code, (ncodeunits("  \\"), true))
+        test_backslash_offset(code, (sizeof("  \\"), true))
     end
 
     # Example 4: No relevant backslash (should return nothing)
@@ -518,37 +518,37 @@ end
 
     # Multiple backslashes - should find the most recent one
     let code = "\\alpha \\beta#=cursor=#"
-        test_backslash_offset(code, (ncodeunits("\\alpha \\"), false))
+        test_backslash_offset(code, (sizeof("\\alpha \\"), false))
     end
     let code = "\\alpha \\beta \\gamma#=cursor=#"
-        test_backslash_offset(code, (ncodeunits("\\alpha \\beta \\"), false))
+        test_backslash_offset(code, (sizeof("\\alpha \\beta \\"), false))
     end
 
     # In various syntactic contexts
     let code = "f(\\alpha#=cursor=#)"
-        test_backslash_offset(code, (ncodeunits("f(\\"), false))
+        test_backslash_offset(code, (sizeof("f(\\"), false))
     end
     let code = "[\\beta#=cursor=#]"
-        test_backslash_offset(code, (ncodeunits("[\\"), false))
+        test_backslash_offset(code, (sizeof("[\\"), false))
     end
     let code = "{\\gamma#=cursor=#}"
-        test_backslash_offset(code, (ncodeunits("{\\"), false))
+        test_backslash_offset(code, (sizeof("{\\"), false))
     end
 
     # With newlines
     let code = "x = 1\n\\alpha#=cursor=#"
-        test_backslash_offset(code, (ncodeunits("x = 1\n\\"), false))
+        test_backslash_offset(code, (sizeof("x = 1\n\\"), false))
     end
     let code = "function f()\n    \\beta#=cursor=#\nend"
-        test_backslash_offset(code, (ncodeunits("function f()\n    \\"), false))
+        test_backslash_offset(code, (sizeof("function f()\n    \\"), false))
     end
 
     # Complex expressions
     let code = "f(x) = x^2 + \\sigma#=cursor=#"
-        test_backslash_offset(code, (ncodeunits("f(x) = x^2 + \\"), false))
+        test_backslash_offset(code, (sizeof("f(x) = x^2 + \\"), false))
     end
     let code = "result = compute(\\theta#=cursor=#, y)"
-        test_backslash_offset(code, (ncodeunits("result = compute(\\"), false))
+        test_backslash_offset(code, (sizeof("result = compute(\\"), false))
     end
 
     # LaTeX-like sequences
@@ -578,10 +578,10 @@ end
 
     # Unicode characters in code before backslash
     let code = "α = 1; \\beta#=cursor=#"
-        test_backslash_offset(code, (ncodeunits("α = 1; \\"), false))
+        test_backslash_offset(code, (sizeof("α = 1; \\"), false))
     end
     let code = "# 测试\n\\gamma#=cursor=#"
-        test_backslash_offset(code, (ncodeunits("# 测试\n\\"), false))
+        test_backslash_offset(code, (sizeof("# 测试\n\\"), false))
     end
 
     # Boundary conditions
@@ -595,24 +595,32 @@ end
         test_backslash_offset(code, (1, true))
     end
     let code = "code; \\#=cursor=#"
-        test_backslash_offset(code, (ncodeunits("code; \\"), false))
+        test_backslash_offset(code, (sizeof("code; \\"), false))
     end
 
     # Real-world usage patterns
     let code = "E = mc^2 + \\hbar#=cursor=#"
-        test_backslash_offset(code, (ncodeunits("E = mc^2 + \\"), false))
+        test_backslash_offset(code, (sizeof("E = mc^2 + \\"), false))
     end
     let code = "function hermite(n, x)\n    return \\psi#=cursor=#\nend"
-        test_backslash_offset(code, (ncodeunits("function hermite(n, x)\n    return \\"), false))
+        test_backslash_offset(code, (sizeof("function hermite(n, x)\n    return \\"), false))
     end
     let code = "struct Particle\n    momentum::\\vec#=cursor=#\nend"
-        test_backslash_offset(code, (ncodeunits("struct Particle\n    momentum::\\"), false))
+        test_backslash_offset(code, (sizeof("struct Particle\n    momentum::\\"), false))
     end
     let code = "[\\theta#=cursor=# for i in 1:n]"
-        test_backslash_offset(code, (ncodeunits("[\\"), false))
+        test_backslash_offset(code, (sizeof("[\\"), false))
     end
     let code = "angle = \\phi#=cursor=#"
-        test_backslash_offset(code, (ncodeunits("angle = \\"), false))
+        test_backslash_offset(code, (sizeof("angle = \\"), false))
+    end
+
+    # within comment scope
+    let code = "# this is a single line comment \\phi#=cursor=#"
+        test_backslash_offset(code, (sizeof("# this is a single line comment \\"), false))
+    end
+    let code = "#=\nthis is a multi line comment \\phi#=cursor=#\n=#"
+        test_backslash_offset(code, (sizeof("#=\nthis is a multi line comment \\"), false))
     end
 end
 

@@ -381,8 +381,6 @@ end
 # LaTeX and emoji completions
 # ===========================
 
-# TODO allow LaTeX/emoji completions to be triggered within comment scope?
-
 """
     get_backslash_offset(state::ServerState, fi::FileInfo, pos::Position) -> offset::Int, is_emoji::Bool
 
@@ -402,6 +400,7 @@ Examples:
 6. `\\:+1┃          returns byte offset of `\\` and `true`
 7. `alpha┃`         returns `nothing`  (no backslash before cursor)
 8. `\\alpha  bet┃a` returns `nothing` (no backslash immediately before token with cursor)
+9. `# \\┃`          returns byte offset of `\\` and `false` or `true` if followed by `:` (comment scope)
 """
 function get_backslash_offset(state::ServerState, fi::FileInfo, pos::Position)
     parsed_stream = fi.parsed_stream
@@ -409,7 +408,30 @@ function get_backslash_offset(state::ServerState, fi::FileInfo, pos::Position)
     prev_idx = get_prev_token_idx(fi, pos)
     isnothing(prev_idx) && return nothing # case 0
 
-    if tokens[prev_idx].orig_kind == JS.K"\\"
+    if tokens[prev_idx].orig_kind == JS.K"Comment"
+        # Handle completion within comment scope
+
+        comment_start = JS.token_first_byte(parsed_stream, prev_idx)
+        textbuf = parsed_stream.textbuf
+
+        # Search backwards from cursor position for backslash
+        cursor_byte = min(xy_to_offset(fi, pos), length(textbuf)) # `xy_to_offset(fi, pos)` might be invalid, so adding a safe guard
+        i = cursor_byte
+        while i > comment_start
+            if textbuf[i] == UInt8('\\')
+                # case 9
+                if checkbounds(Bool, textbuf, i+1) && textbuf[i+1] == UInt8(':')
+                    return i, true
+                else
+                    return i, false
+                end
+            elseif textbuf[i] == UInt8(' ')
+                break
+            end
+            i -= 1
+        end
+        return nothing
+    elseif tokens[prev_idx].orig_kind == JS.K"\\"
         # case 1
         return JS.token_last_byte(parsed_stream, prev_idx), false
     elseif prev_idx > 1 && checkbounds(Bool, tokens, prev_idx-1) && tokens[prev_idx-1].orig_kind == JS.K"\\"
@@ -432,7 +454,7 @@ function get_backslash_offset(state::ServerState, fi::FileInfo, pos::Position)
             token1 = tokens[i-1]
             if token1.orig_kind == JS.K"\\" && token.orig_kind == JS.K":"
                 # case 6
-                return token1.next_byte - 1, true # JS.token_last_byte(parsed_stream, i-1), true
+                return JS.token_last_byte(parsed_stream, i-1), true
             end
             # Stop searching if we hit whitespace
             if token.orig_kind == JS.K"Whitespace" || token.orig_kind == JS.K"NewlineWs"
