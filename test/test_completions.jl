@@ -615,12 +615,18 @@ end
         test_backslash_offset(code, (sizeof("angle = \\"), false))
     end
 
-    # within comment scope
+    # within comment/string scope
     let code = "# this is a single line comment \\phi#=cursor=#"
         test_backslash_offset(code, (sizeof("# this is a single line comment \\"), false))
     end
+    let code = "# this is a single line comment \\:#=cursor=#"
+        test_backslash_offset(code, (sizeof("# this is a single line comment \\"), true))
+    end
     let code = "#=\nthis is a multi line comment \\phi#=cursor=#\n=#"
         test_backslash_offset(code, (sizeof("#=\nthis is a multi line comment \\"), false))
+    end
+    let code = "\"\\phi#=cursor=#\""
+        test_backslash_offset(code, (sizeof("\"\\"), false))
     end
 end
 
