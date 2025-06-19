@@ -121,6 +121,7 @@ function byte_ancestors(sn::JS.SyntaxNode, rng::UnitRange{Int})
 end
 byte_ancestors(sn::JS.SyntaxNode, byte::Int) = byte_ancestors(sn, byte:byte)
 
+# TODO: Refactor for JuliaLang/JuliaSyntax.jl#560
 """
     get_current_token_idx(fi::FileInfo, offset::Int)
 
@@ -128,19 +129,29 @@ Get the current token index at a given byte offset in a parsed file.
 This function returns the token at the specified byte offset, or `nothing`
 if the offset is invalid or no token exists at that position.
 
-In insertion mode, "current" means the token that locates right before the
-given offset.
-
 Example:
-al│pha beta gamma          returns the index of `alpha`
-│alpha beta gamma          returns the index of `alpha`
-alpha│ beta gamma          returns the index of ` ` (whitespace)
-alpha │beta gamma          returns the index of `beta`
+al│pha beta gamma      (b=3) returns the index of `alpha`
+│alpha beta gamma      (b=1) returns the index of `alpha`
+alpha│ beta gamma      (b=6) returns the index of ` ` (whitespace)
+alpha │beta gamma      (b=7) returns the index of `beta`
 """
-function get_current_token_idx(fi::FileInfo, offset::Int)
-    fi === nothing && return nothing
-    findfirst(token -> token.next_byte >= offset, fi.parsed_stream.tokens)
+function get_current_token_idx(ps::JS.ParseStream, offset::Int)
+    offset < 1 && return nothing
+    findfirst(token -> token.next_byte > offset, ps.tokens)
 end
 
-get_current_token_idx(fi::FileInfo, pos::Position) =
-    get_current_token_idx(fi, xy_to_offset(fi, pos))
+function get_current_token_idx(fi::FileInfo, pos::Position)
+    fi === nothing && return nothing
+    get_current_token_idx(fi.parsed_stream, xy_to_offset(fi, pos))
+end
+
+"""
+Similar to `get_current_token_idx`, but when you need token `a` from `a| b c`
+"""
+function get_prev_token_idx(ps::JS.ParseStream, offset::Int)
+    get_current_token_idx(ps, offset - 1)
+end
+function get_prev_token_idx(fi::FileInfo, pos::Position)
+    fi === nothing && return nothing
+    get_prev_token_idx(fi.parsed_stream, xy_to_offset(fi, pos))
+end
