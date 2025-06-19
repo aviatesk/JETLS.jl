@@ -36,12 +36,23 @@ end
         reports = get_reports(result)
         @test length(reports) == 1
         r = only(reports)
-        @test r isa UndefVarErrorReport && r.var === :x
+        @test r isa UndefVarErrorReport && r.var === :x && !r.maybeundef
+    end
+    let result = analyze_call((Bool,Float64)) do c, x
+            if c
+                y = x
+            end
+            return sin(y)
+        end
+        reports = get_reports(result)
+        @test length(reports) == 1
+        r = only(reports)
+        @test r isa UndefVarErrorReport && r.var === :y && r.maybeundef
     end
     let result = analyze_call((Any,)) do x
             local y = x
             callfunc() do
-                println(y)
+                identity(y)
             end
         end
         @test isempty(get_reports(result))

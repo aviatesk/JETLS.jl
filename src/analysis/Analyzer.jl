@@ -125,6 +125,11 @@ end
 
 analyzed_modules!(analyzer::LSAnalyzer) = _analyzed_modules!(analyzer.cache)
 
+function should_analyze(analyzer::LSAnalyzer, sv::CC.InferenceState)
+    analyzed_modules = analyzed_modules!(analyzer)
+    return isempty(analyzed_modules) || CC.frame_module(sv) ∈ analyzed_modules
+end
+
 # analysis injections
 # ===================
 
@@ -152,9 +157,8 @@ function CC.abstract_eval_globalref(analyzer::LSAnalyzer,
     if saw_latestworld
         return CC.RTEffects(Any, Any, CC.generic_getglobal_effects)
     end
-    analyzed_modules = analyzed_modules!(analyzer)
     (valid_worlds, ret) = CC.scan_leaf_partitions(analyzer, g, sv.world) do analyzer::LSAnalyzer, binding::Core.Binding, partition::Core.BindingPartition
-        if isempty(analyzed_modules) || CC.frame_module(sv) ∈ analyzed_modules
+        if should_analyze(analyzer, sv)
             if partition.min_world ≤ sv.world.this ≤ partition.max_world # XXX This should probably be fixed on the Julia side
                 report_undef_global_var!(analyzer, sv, binding, partition)
             end
@@ -165,25 +169,17 @@ function CC.abstract_eval_globalref(analyzer::LSAnalyzer,
     return ret
 end
 
-function finishinfer!_overload(analyzer::LSAnalyzer, frame::CC.InferenceState)
-    analyzed_modules = analyzed_modules!(analyzer)
-    if isempty(analyzed_modules) || CC.frame_module(frame) ∈ analyzed_modules
-        report_undefined_local_vars!(analyzer, frame)
+# inject report pass for undefined local variables
+function CC.abstract_eval_special_value(analyzer::LSAnalyzer, @nospecialize(e), sstate::CC.StatementState, sv::CC.InferenceState)
+    if should_analyze(analyzer, sv)
+        if e isa SlotNumber
+            vtypes = sstate.vtypes
+            if vtypes !== nothing
+                report_undefined_local_vars!(analyzer, sv, e, vtypes)
+            end
+        end
     end
-end
-
-@static if VERSION ≥ v"1.13.0-DEV.565"
-function CC.finishinfer!(frame::CC.InferenceState, analyzer::LSAnalyzer, cycleid::Int,
-                         opt_cache::IdDict{MethodInstance, CodeInstance})
-    finishinfer!_overload(analyzer, frame)
-    @invoke CC.finishinfer!(frame::CC.InferenceState, analyzer::ToplevelAbstractAnalyzer, cycleid::Int,
-                            opt_cache::IdDict{MethodInstance, CodeInstance})
-end
-else
-function CC.finishinfer!(frame::CC.InferenceState, analyzer::LSAnalyzer, cycleid::Int)
-    finishinfer!_overload(analyzer, frame)
-    @invoke CC.finishinfer!(frame::CC.InferenceState, analyzer::ToplevelAbstractAnalyzer, cycleid::Int)
-end
+    return @invoke CC.abstract_eval_special_value(analyzer::ToplevelAbstractAnalyzer, e::Any, sstate::CC.StatementState, sv::CC.InferenceState)
 end
 
 # analysis
@@ -239,37 +235,35 @@ function report_undef_global_var!(analyzer::LSAnalyzer,
     return true
 end
 
-function report_undefined_local_vars!(analyzer::LSAnalyzer, sv::CC.InferenceState)
-    stmts = sv.src.code
-    nstmts = length(stmts)
-    ssavaluetypes = sv.ssavaluetypes
-    oldpc = sv.currpc
-    for i = 1:nstmts
-        if JET.isconcretized(analyzer, sv, i)
-            continue # no need to be analyzed
-        end
-        if CC.was_reached(sv, i)
-            var = stmts[i]
-            if var isa SlotNumber && ssavaluetypes[i] === Union{}
-                maybeundef = false
-                if !JET.is_constant_propagated(sv)
-                    if isempty(sv.ssavalue_uses[i])
-                        # This case is when an undefined local variable is just declared,
-                        # but such cases can become reachable when constant propagation
-                        # for capturing closures doesn't occur.
-                        # In the future, improvements to the compiler should make such cases
-                        # unreachable in the first place, but for now we completely ignore
-                        # such cases to suppress false positives.
-                        maybeundef = true
-                        continue
-                    end
-                end
-                sv.currpc = i
-                add_new_report!(analyzer, sv.result, UndefVarErrorReport(sv, JET.get_slotname(sv, var), maybeundef))
-                sv.currpc = oldpc
-            end
+function report_undefined_local_vars!(analyzer::LSAnalyzer, sv::CC.InferenceState, var::SlotNumber, vtypes::CC.VarTable)
+    if JET.isconcretized(analyzer, sv)
+        return false # no need to be analyzed
+    end
+    vtype = vtypes[JET.slot_id(var)]
+    vtype.undef || return false
+    if !JET.is_constant_propagated(sv)
+        if isempty(sv.ssavalue_uses[sv.currpc])
+            # This case is when an undefined local variable is just declared,
+            # but such cases can become reachable when constant propagation
+            # for capturing closures doesn't occur.
+            # In the future, improvements to the compiler should make such cases
+            # unreachable in the first place, but for now we completely ignore
+            # such cases to suppress false positives.
+            return false
         end
     end
+    name = JET.get_slotname(sv, var)
+    if name === Symbol("")
+        # Such unnamed local variables are mainly introduced by `try/catch/finally` clauses.
+        # Due to insufficient liveness analysis of the current compiler for such code,
+        # the isdefined-ness of such variables may not be properly determined.
+        # For the time being, until the compiler implementation is improved,
+        # we ignore this case to suppress false positives.
+        return false
+    end
+    maybeundef = vtype.typ !== Union{}
+    add_new_report!(analyzer, sv.result, UndefVarErrorReport(sv, name, maybeundef))
+    return true
 end
 
 # Constructor
