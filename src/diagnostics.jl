@@ -103,7 +103,7 @@ function jet_inference_error_report_to_diagnostic(postprocessor::JET.PostProcess
         for i = 2:length(rstack)]
     return Diagnostic(;
         range = jet_frame_to_range(topframe),
-        severity = DiagnosticSeverity.Warning,
+        severity = inference_error_report_severity(report),
         message,
         source = INFERENCE_DIAGNOSTIC_SOURCE,
         relatedInformation)

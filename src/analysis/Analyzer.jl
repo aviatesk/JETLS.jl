@@ -1,12 +1,13 @@
 module Analyzer
 
-export LSAnalyzer, inference_error_report_stack, initialize_cache!
+export LSAnalyzer, inference_error_report_stack, inference_error_report_severity, initialize_cache!
 
 using Core.IR
 using JET.JETInterface
 using JET: JET, CC
 
 using ..JETLS: AnalysisEntry
+using ..LSP
 
 # JETLS internal interface
 # ========================
@@ -22,6 +23,10 @@ function inference_error_report_stack(@nospecialize report::JET.InferenceErrorRe
     end
     return ret
 end
+inference_error_report_severity_impl(@nospecialize report::JET.InferenceErrorReport) =
+    DiagnosticSeverity.Warning
+inference_error_report_severity(@nospecialize report::JET.InferenceErrorReport) =
+    inference_error_report_severity_impl(report)::DiagnosticSeverity.Ty
 
 """
     InterpretationStateCache
@@ -160,6 +165,14 @@ function CC.abstract_eval_globalref(analyzer::LSAnalyzer,
     return ret
 end
 
+function CC.finishinfer!(frame::CC.InferenceState, analyzer::LSAnalyzer, cycleid::Int)
+    analyzed_modules = analyzed_modules!(analyzer)
+    if isempty(analyzed_modules) || CC.frame_module(frame) ∈ analyzed_modules
+        report_undefined_local_vars!(analyzer, frame)
+    end
+    @invoke CC.finishinfer!(frame::CC.InferenceState, analyzer::ToplevelAbstractAnalyzer, cycleid::Int)
+end
+
 # analysis
 # ========
 
@@ -188,6 +201,8 @@ function JETInterface.print_report_message(io::IO, r::UndefVarErrorReport)
     end
 end
 inference_error_report_stack_impl(r::UndefVarErrorReport) = length(r.vst):-1:1
+inference_error_report_severity_impl(r::UndefVarErrorReport) =
+    r.maybeundef ? DiagnosticSeverity.Information : DiagnosticSeverity.Warning
 
 function report_undef_global_var!(analyzer::LSAnalyzer,
     sv::CC.InferenceState, binding::Core.Binding, partition::Core.BindingPartition)
@@ -209,6 +224,39 @@ function report_undef_global_var!(analyzer::LSAnalyzer,
     end
     add_new_report!(analyzer, sv.result, UndefVarErrorReport(sv, gr, maybeundef))
     return true
+end
+
+function report_undefined_local_vars!(analyzer::LSAnalyzer, sv::CC.InferenceState)
+    stmts = sv.src.code
+    nstmts = length(stmts)
+    ssavaluetypes = sv.ssavaluetypes
+    oldpc = sv.currpc
+    for i = 1:nstmts
+        if JET.isconcretized(analyzer, sv, i)
+            continue # no need to be analyzed
+        end
+        if CC.was_reached(sv, i)
+            var = stmts[i]
+            if var isa SlotNumber && ssavaluetypes[i] === Union{}
+                maybeundef = false
+                if !JET.is_constant_propagated(sv)
+                    if isempty(sv.ssavalue_uses[i])
+                        # This case is when an undefined local variable is just declared,
+                        # but such cases can become reachable when constant propagation
+                        # for capturing closures doesn't occur.
+                        # In the future, improvements to the compiler should make such cases
+                        # unreachable in the first place, but for now we completely ignore
+                        # such cases to suppress false positives.
+                        maybeundef = true
+                        continue
+                    end
+                end
+                sv.currpc = i
+                add_new_report!(analyzer, sv.result, UndefVarErrorReport(sv, JET.get_slotname(sv, var), maybeundef))
+                sv.currpc = oldpc
+            end
+        end
+    end
 end
 
 # Constructor
