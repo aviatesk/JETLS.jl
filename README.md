@@ -1,10 +1,10 @@
-# JETLS.jl
+# JETLS
 
 [![](https://github.com/aviatesk/JETLS.jl/actions/workflows/ci.yml/badge.svg)](https://github.com/aviatesk/JETLS.jl/actions/workflows/ci.yml)
 [![](https://codecov.io/gh/aviatesk/JETLS.jl/branch/master/graph/badge.svg)](https://codecov.io/gh/aviatesk/JETLS.jl)
 
 The goal of this project is to develop a new language server for
-[Julia](https://julialang.org/), currently called "JETLS.jl".
+[Julia](https://julialang.org/), currently called "JETLS".
 This language server aims to enhance developer productivity by providing
 advanced static analysis and seamless integration with the Julia runtime.
 By leveraging tooling technologies like
@@ -16,7 +16,7 @@ diagnostics, macro-aware go-to definition and such.
 
 This repository manages JETLS.jl, a Julia package that implements a language
 server, and jetls-client, a sample VSCode extension that serves as a language
-client for testing JETLS.jl. For information on how to use JETLS.jl with other
+client for testing JETLS. For information on how to use JETLS with other
 frontends, please refer to the [Other editors](#other-editors) section.
 
 ## Requirements
