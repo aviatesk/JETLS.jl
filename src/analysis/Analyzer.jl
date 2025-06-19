@@ -165,12 +165,25 @@ function CC.abstract_eval_globalref(analyzer::LSAnalyzer,
     return ret
 end
 
-function CC.finishinfer!(frame::CC.InferenceState, analyzer::LSAnalyzer, cycleid::Int)
+function finishinfer!_overload(analyzer::LSAnalyzer, frame::CC.InferenceState)
     analyzed_modules = analyzed_modules!(analyzer)
     if isempty(analyzed_modules) || CC.frame_module(frame) ∈ analyzed_modules
         report_undefined_local_vars!(analyzer, frame)
     end
+end
+
+@static if VERSION ≥ v"1.13.0-DEV.565"
+function CC.finishinfer!(frame::CC.InferenceState, analyzer::LSAnalyzer, cycleid::Int,
+                         opt_cache::IdDict{MethodInstance, CodeInstance})
+    finishinfer!_overload(analyzer, frame)
+    @invoke CC.finishinfer!(frame::CC.InferenceState, analyzer::ToplevelAbstractAnalyzer, cycleid::Int,
+                            opt_cache::IdDict{MethodInstance, CodeInstance})
+end
+else
+function CC.finishinfer!(frame::CC.InferenceState, analyzer::LSAnalyzer, cycleid::Int)
+    finishinfer!_overload(analyzer, frame)
     @invoke CC.finishinfer!(frame::CC.InferenceState, analyzer::ToplevelAbstractAnalyzer, cycleid::Int)
+end
 end
 
 # analysis
