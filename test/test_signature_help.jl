@@ -26,6 +26,7 @@ struct SExist3
     s
     SExist3(@nospecialize s) = new(s)
 end
+macro m_exist(x); x; end
 end
 @testset "sanity" begin
     @test 1 == n_si(M_sanity, "i_exist(|)")
@@ -43,6 +44,37 @@ end
     @test 0 == n_si(M_sanity, "SExist3(1,2|)")
 end
 
+module M_macros
+macro m(x, y=1); x; end
+macro v(x...); x; end
+end
+@testset "simple macros" begin
+    @test 2 == n_si(M_macros, "@m(|)")
+    @test 2 == n_si(M_macros, "@m|")
+    @test 2 == n_si(M_macros, "@m |")
+    @test 2 == n_si(M_macros, "@m(1,|)")
+    @test 2 == n_si(M_macros, "@m 1|")
+    @test 1 == n_si(M_macros, "@m(1,2,|)")
+    @test 1 == n_si(M_macros, "@m 1 2|")
+    @test 0 == n_si(M_macros, "@m(1,2,3,|)")
+    @test 0 == n_si(M_macros, "@m 1 2 3|")
+    @test 1 == n_si(M_macros, "@v|")
+    @test 1 == n_si(M_macros, "@v 1 2 3 4|")
+end
+
+module M_dotcall
+f(x) = 0
+end
+@testset "dotcall" begin
+    @test 1 == n_si(M_dotcall, "f.(|)")
+    @test 1 == n_si(M_dotcall, "f.(x|)")
+end
+
+module M_noshow_def
+f(x) = x
+g(x) = x
+macro m(x); x; end
+end
 @testset "don't show help in method definitions" begin
     snippets = [
         "function f(|); end",
@@ -50,10 +82,18 @@ end
         "function f(|) where T where T; end",
         "f(|) = 1",
         "f(|) where T = 1",
+        "|f(x) = g(x)",
+        "f(x|) = g(x)",
+        "f(x)| = g(x)",
+        "f(x::T|) where T = g(x)",
     ]
     for s in snippets
-        @test 0 === n_si(Main, s)
+        @test 0 === n_si(M_noshow_def, s)
     end
+    @test 1 === n_si(M_noshow_def, "f(x) = g(|)")
+    @test 1 === n_si(M_noshow_def, "f(x) = g(x |)")
+    @test 1 === n_si(M_noshow_def, "f(x) where T where U = g(x|)")
+    @test 1 === n_si(M_noshow_def, "f(x) where T where U = @m(x|)")
 end
 
 module M_filterp
@@ -167,11 +207,17 @@ end
     active_si(code) = only(siginfos(M_nested, code)).label
 
     @test startswith(active_si("outer(0,1,inner(|))"), "inner")
-    @test startswith(active_si("outer(0,1,inner()|)"), "inner")
-    @test startswith(active_si("outer(0,1,|inner())"), "outer") # either is fine really
+    @test startswith(active_si("outer(0,1,inner()|)"), "outer")
+    @test startswith(active_si("outer(0,1,|inner())"), "inner") # either is fine really
     @test startswith(active_si("outer(0,1|,inner())"), "outer")
     @test startswith(active_si("outer(0,1,inner(),|)"), "outer")
     @test startswith(active_si("function outer(); inner(|); end"), "inner")
+
+    # see through infix and postfix ops, which are parsed as calls
+    @test startswith(active_si("outer(0,1,2+3|)"), "outer")
+    @test startswith(active_si("outer(0,1,|2+3)"), "outer")
+    @test startswith(active_si("outer(0,1,2:|3)"), "outer")
+    @test startswith(active_si("outer(0,1,3|')"), "outer")
 end
 
 # This depends somewhat on what JuliaSyntax does using `ignore_errors=true`,
@@ -179,12 +225,29 @@ end
 # cases break.
 module M_invalid
 f1(a; k=1) = 0
+macro m(x); x; end
 end
-@testset "tolerate invalid syntax" begin
+@testset "tolerate extra whitespace and invalid syntax" begin
+    # unclosed paren: ignore whitespace
     @test 1 === n_si(M_invalid, "f1(|")
+    @test 1 === n_si(M_invalid, "f1( #=comment=# |")
+    @test 1 === n_si(M_invalid, "f1( \n |")
+    @test 1 === n_si(M_invalid, "@m(|")
+    @test 1 === n_si(M_invalid, "@m( #=comment=# |")
+    @test 1 === n_si(M_invalid, "@m( \n |")
+    # don't ignore whitespace with closed call
+    @test 0 === n_si(M_invalid, "f1( \n ) |")
+    @test 0 === n_si(M_invalid, "@m( \n ) |")
+    # ignore space but not newlines with no-paren macro
+    @test 1 === n_si(M_invalid, "@m   |")
+    @test 0 === n_si(M_invalid, "@m\n|")
+    @test 0 === n_si(M_invalid, "@m \n |")
+
     @test 1 === n_si(M_invalid, "f1(,,,,,,,,,|)")
     @test 1 === n_si(M_invalid, "f1(a b c|)")
     @test 1 === n_si(M_invalid, "f1(k=|)")
+    @test 1 === n_si(M_invalid, "f1(k= \n |)")
+    @test 0 === n_si(M_invalid, "f1(fake= \n |)")
 end
 
 include("setup.jl")
