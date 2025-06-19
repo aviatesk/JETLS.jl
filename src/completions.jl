@@ -335,6 +335,12 @@ function global_completions!(items::Dict{String, CompletionItem}, state::ServerS
     elseif current_kind === JS.K"TOMBSTONE"
         edit_start_pos = Position(; line=0, character=0)
         is_macro_invoke = false
+    elseif current_kind === JS.K"Comment"
+        # When completion is triggered within the scope of a comment, it's difficult to
+        # properly specify `edit_start_pos`.
+        # Simply specify only the `label` and let the client handle it appropriately.
+        edit_start_pos = nothing
+        is_macro_invoke = false
     else
         edit_start_pos = offset_to_xy(fi, fi.parsed_stream.tokens[current_token_idx - 1].next_byte)
         is_macro_invoke = false
@@ -350,6 +356,13 @@ function global_completions!(items::Dict{String, CompletionItem}, state::ServerS
             continue
         end
 
+        textEdit = edit_start_pos === nothing ? nothing :
+            TextEdit(;
+                range = Range(;
+                    start = edit_start_pos,
+                    var"end" = pos),
+                newText = s)
+
         items[s] = CompletionItem(;
             label = s,
             labelDetails = CompletionItemLabelDetails(;
@@ -358,11 +371,7 @@ function global_completions!(items::Dict{String, CompletionItem}, state::ServerS
             documentation = nothing,
             sortText = get_sort_text(0, #=isglobal=#true),
             data = CompletionData(#=needs_resolve=#true),
-            textEdit = TextEdit(;
-                range = Range(;
-                    start = edit_start_pos,
-                    var"end" = pos),
-                newText = s))
+            textEdit)
     end
     # if we are in macro name context, then we don't need any local completions
     # as macros are always defined top-level
@@ -371,6 +380,8 @@ end
 
 # LaTeX and emoji completions
 # ===========================
+
+# TODO allow LaTeX/emoji completions to be triggered within comment scope?
 
 """
     get_backslash_offset(state::ServerState, fi::FileInfo, pos::Position) -> offset::Int, is_emoji::Bool
