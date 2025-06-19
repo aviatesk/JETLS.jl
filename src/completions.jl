@@ -319,30 +319,30 @@ function global_completions!(items::Dict{String, CompletionItem}, state::ServerS
     fi = get_fileinfo(state, uri)
     fi === nothing && return nothing
     mod = find_file_module!(state, uri, pos)
-    current_token_idx = get_current_token_idx(fi, pos)
-    current_token = fi.parsed_stream.tokens[current_token_idx]
-    current_kind = JS.kind(current_token)
+    prev_token_idx = get_prev_token_idx(fi, pos)
+    prev_kind = isnothing(prev_token_idx) ? nothing :
+        JS.kind(fi.parsed_stream.tokens[prev_token_idx])
 
     # Case: `@│`
-    if current_kind === JS.K"@"
-        edit_start_pos = offset_to_xy(fi, fi.parsed_stream.tokens[current_token_idx - 1].next_byte)
+    if prev_kind === JS.K"@"
+        edit_start_pos = offset_to_xy(fi, JS.token_first_byte(fi.parsed_stream, prev_token_idx))
         is_macro_invoke = true
     # Case: `@macr│`
-    elseif current_kind === JS.K"MacroName"
-        edit_start_pos = offset_to_xy(fi, fi.parsed_stream.tokens[current_token_idx - 2].next_byte)
+    elseif prev_kind === JS.K"MacroName"
+        edit_start_pos = offset_to_xy(fi, JS.token_first_byte(fi.parsed_stream, prev_token_idx-1))
         is_macro_invoke = true
     # Case `│` (empty program)
-    elseif current_kind === JS.K"TOMBSTONE"
+    elseif isnothing(prev_token_idx)
         edit_start_pos = Position(; line=0, character=0)
         is_macro_invoke = false
-    elseif current_kind === JS.K"Comment"
+    elseif prev_kind === JS.K"Comment"
         # When completion is triggered within the scope of a comment, it's difficult to
         # properly specify `edit_start_pos`.
         # Simply specify only the `label` and let the client handle it appropriately.
         edit_start_pos = nothing
         is_macro_invoke = false
     else
-        edit_start_pos = offset_to_xy(fi, fi.parsed_stream.tokens[current_token_idx - 1].next_byte)
+        edit_start_pos = offset_to_xy(fi, JS.token_first_byte(fi.parsed_stream, prev_token_idx))
         is_macro_invoke = false
     end
 
@@ -393,6 +393,7 @@ Returns `nothing` if such a token does not exist or if another token appears
 immediately before the cursor.
 
 Examples:
+0. `┃...`           returns `nothing`
 1. `\\┃ beta`       returns byte offset of `\\` and `false`
 2. `\\alph┃`        returns byte offset of `\\` and `false`
 3. `\\  ┃`          returns `nothing` (whitespace before cursor)
@@ -403,33 +404,35 @@ Examples:
 8. `\\alpha  bet┃a` returns `nothing` (no backslash immediately before token with cursor)
 """
 function get_backslash_offset(state::ServerState, fi::FileInfo, pos::Position)
-    tokens = fi.parsed_stream.tokens
-    curr_idx = get_current_token_idx(fi, pos)
+    parsed_stream = fi.parsed_stream
+    tokens = parsed_stream.tokens
+    prev_idx = get_prev_token_idx(fi, pos)
+    isnothing(prev_idx) && return nothing # case 0
 
-    if tokens[curr_idx].orig_kind == JS.K"\\"
+    if tokens[prev_idx].orig_kind == JS.K"\\"
         # case 1
-        return tokens[curr_idx].next_byte - 1, false
-    elseif curr_idx > 1 && checkbounds(Bool, tokens, curr_idx-1) && tokens[curr_idx-1].orig_kind == JS.K"\\"
-        if tokens[curr_idx].orig_kind == JS.K"Whitespace"
+        return JS.token_last_byte(parsed_stream, prev_idx), false
+    elseif prev_idx > 1 && checkbounds(Bool, tokens, prev_idx-1) && tokens[prev_idx-1].orig_kind == JS.K"\\"
+        if tokens[prev_idx].orig_kind == JS.K"Whitespace"
             return nothing # case 3
         else
             # Check if current token is colon (emoji pattern)
-            if tokens[curr_idx].orig_kind == JS.K":"
+            if tokens[prev_idx].orig_kind == JS.K":"
                 # case 4 & case 5
-                return tokens[curr_idx-1].next_byte - 1, true
+                return JS.token_last_byte(parsed_stream, prev_idx-1), true
             else
-                return tokens[curr_idx-1].next_byte - 1, false
+                return JS.token_last_byte(parsed_stream, prev_idx-1), false
             end
         end
-    elseif curr_idx > 2
+    elseif prev_idx > 2
         # Search backwards for \: pattern
-        i = curr_idx - 1
+        i = prev_idx - 1
         while i >= 2
             token = tokens[i]
             token1 = tokens[i-1]
             if token1.orig_kind == JS.K"\\" && token.orig_kind == JS.K":"
                 # case 6
-                return token1.next_byte - 1, true
+                return token1.next_byte - 1, true # JS.token_last_byte(parsed_stream, i-1), true
             end
             # Stop searching if we hit whitespace
             if token.orig_kind == JS.K"Whitespace" || token.orig_kind == JS.K"NewlineWs"
