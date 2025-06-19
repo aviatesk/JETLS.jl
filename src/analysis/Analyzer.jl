@@ -1,12 +1,13 @@
 module Analyzer
 
-export LSAnalyzer, inference_error_report_stack, initialize_cache!
+export LSAnalyzer, inference_error_report_stack, inference_error_report_severity, initialize_cache!
 
 using Core.IR
 using JET.JETInterface
 using JET: JET, CC
 
 using ..JETLS: AnalysisEntry
+using ..LSP
 
 # JETLS internal interface
 # ========================
@@ -22,6 +23,10 @@ function inference_error_report_stack(@nospecialize report::JET.InferenceErrorRe
     end
     return ret
 end
+inference_error_report_severity_impl(@nospecialize report::JET.InferenceErrorReport) =
+    DiagnosticSeverity.Warning
+inference_error_report_severity(@nospecialize report::JET.InferenceErrorReport) =
+    inference_error_report_severity_impl(report)::DiagnosticSeverity.Ty
 
 """
     InterpretationStateCache
@@ -120,6 +125,11 @@ end
 
 analyzed_modules!(analyzer::LSAnalyzer) = _analyzed_modules!(analyzer.cache)
 
+function should_analyze(analyzer::LSAnalyzer, sv::CC.InferenceState)
+    analyzed_modules = analyzed_modules!(analyzer)
+    return isempty(analyzed_modules) || CC.frame_module(sv) ∈ analyzed_modules
+end
+
 # analysis injections
 # ===================
 
@@ -147,9 +157,8 @@ function CC.abstract_eval_globalref(analyzer::LSAnalyzer,
     if saw_latestworld
         return CC.RTEffects(Any, Any, CC.generic_getglobal_effects)
     end
-    analyzed_modules = analyzed_modules!(analyzer)
     (valid_worlds, ret) = CC.scan_leaf_partitions(analyzer, g, sv.world) do analyzer::LSAnalyzer, binding::Core.Binding, partition::Core.BindingPartition
-        if isempty(analyzed_modules) || CC.frame_module(sv) ∈ analyzed_modules
+        if should_analyze(analyzer, sv)
             if partition.min_world ≤ sv.world.this ≤ partition.max_world # XXX This should probably be fixed on the Julia side
                 report_undef_global_var!(analyzer, sv, binding, partition)
             end
@@ -158,6 +167,19 @@ function CC.abstract_eval_globalref(analyzer::LSAnalyzer,
     end
     CC.update_valid_age!(sv, valid_worlds)
     return ret
+end
+
+# inject report pass for undefined local variables
+function CC.abstract_eval_special_value(analyzer::LSAnalyzer, @nospecialize(e), sstate::CC.StatementState, sv::CC.InferenceState)
+    if should_analyze(analyzer, sv)
+        if e isa SlotNumber
+            vtypes = sstate.vtypes
+            if vtypes !== nothing
+                report_undefined_local_vars!(analyzer, sv, e, vtypes)
+            end
+        end
+    end
+    return @invoke CC.abstract_eval_special_value(analyzer::ToplevelAbstractAnalyzer, e::Any, sstate::CC.StatementState, sv::CC.InferenceState)
 end
 
 # analysis
@@ -188,6 +210,8 @@ function JETInterface.print_report_message(io::IO, r::UndefVarErrorReport)
     end
 end
 inference_error_report_stack_impl(r::UndefVarErrorReport) = length(r.vst):-1:1
+inference_error_report_severity_impl(r::UndefVarErrorReport) =
+    r.maybeundef ? DiagnosticSeverity.Information : DiagnosticSeverity.Warning
 
 function report_undef_global_var!(analyzer::LSAnalyzer,
     sv::CC.InferenceState, binding::Core.Binding, partition::Core.BindingPartition)
@@ -208,6 +232,37 @@ function report_undef_global_var!(analyzer::LSAnalyzer,
         maybeundef = true
     end
     add_new_report!(analyzer, sv.result, UndefVarErrorReport(sv, gr, maybeundef))
+    return true
+end
+
+function report_undefined_local_vars!(analyzer::LSAnalyzer, sv::CC.InferenceState, var::SlotNumber, vtypes::CC.VarTable)
+    if JET.isconcretized(analyzer, sv)
+        return false # no need to be analyzed
+    end
+    vtype = vtypes[JET.slot_id(var)]
+    vtype.undef || return false
+    if !JET.is_constant_propagated(sv)
+        if isempty(sv.ssavalue_uses[sv.currpc])
+            # This case is when an undefined local variable is just declared,
+            # but such cases can become reachable when constant propagation
+            # for capturing closures doesn't occur.
+            # In the future, improvements to the compiler should make such cases
+            # unreachable in the first place, but for now we completely ignore
+            # such cases to suppress false positives.
+            return false
+        end
+    end
+    name = JET.get_slotname(sv, var)
+    if name === Symbol("")
+        # Such unnamed local variables are mainly introduced by `try/catch/finally` clauses.
+        # Due to insufficient liveness analysis of the current compiler for such code,
+        # the isdefined-ness of such variables may not be properly determined.
+        # For the time being, until the compiler implementation is improved,
+        # we ignore this case to suppress false positives.
+        return false
+    end
+    maybeundef = vtype.typ !== Union{}
+    add_new_report!(analyzer, sv.result, UndefVarErrorReport(sv, name, maybeundef))
     return true
 end
 

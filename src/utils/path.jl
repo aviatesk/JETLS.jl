@@ -43,7 +43,7 @@ end
 If this Julia is a built one, convert `path` to `fixed_path`, which is a path to the main
 files that are editable (or tracked by git).
 """
-function fix_build_path(path::AbstractString) end
+function fix_build_path end
 let build_dir = normpath(Sys.BINDIR, "..", ".."),
     share_dir = normpath(Sys.BINDIR, Base.DATAROOTDIR, "julia")
     global fix_build_path
