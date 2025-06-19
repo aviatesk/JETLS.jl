@@ -335,7 +335,7 @@ function global_completions!(items::Dict{String, CompletionItem}, state::ServerS
     elseif isnothing(prev_token_idx)
         edit_start_pos = Position(; line=0, character=0)
         is_macro_invoke = false
-    elseif current_kind === JS.K"Comment"
+    elseif prev_kind === JS.K"Comment"
         # When completion is triggered within the scope of a comment, it's difficult to
         # properly specify `edit_start_pos`.
         # Simply specify only the `label` and let the client handle it appropriately.
