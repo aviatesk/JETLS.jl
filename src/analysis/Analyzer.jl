@@ -68,7 +68,7 @@ to detect errors during analysis, along with analyzing types and effects.
 Currently, it analyzes the following errors:
 - `UndefVarErrorReport`: Reports undefined variables:
   * [x] Reports undefined global variables
-  * [ ] Reports undefined local variables
+  * [x] Reports undefined local variables
   * [ ] Reports undefined static parameters
 """
 struct LSAnalyzer <: ToplevelAbstractAnalyzer
