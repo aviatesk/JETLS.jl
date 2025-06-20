@@ -157,7 +157,7 @@ function compatible_method(m::Method, ca::CallArgs)
         msig = sprint(show, m; context=(:compact=>true, :print_method_signature_only=>true))
     else
         mstr = sprint(show, m; context=(:compact=>true))
-        msig_locinfo = split(mstr, '@')
+        msig_locinfo = split(mstr, " @ ")
         length(msig_locinfo) == 2 || return false
         msig = strip(msig_locinfo[1])
     end
@@ -228,7 +228,7 @@ function make_siginfo(m::Method, ca::CallArgs, active_arg::Union{Int, Symbol};
         msig = sprint(show, m; context=(:compact=>true, :print_method_signature_only=>true))
     else
         mstr = sprint(show, m; context=(:compact=>true))
-        msig_locinfo = split(mstr, '@')
+        msig_locinfo = split(mstr, " @ ")
         length(msig_locinfo) == 2 || return false
         msig = strip(msig_locinfo[1])
     end
