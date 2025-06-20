@@ -404,24 +404,22 @@ Examples:
 """
 function get_backslash_offset(state::ServerState, fi::FileInfo, pos::Position)
     # Search backwards from cursor position for backslash
-    cursor_byte = xy_to_offset(fi, pos)-1
-    i = cursor_byte
     textbuf = fi.parsed_stream.textbuf
     separators = (UInt8(' '), UInt8('\t'), UInt8('\n'), UInt8('"'), UInt8('\''))
-    while i > 0
-        if textbuf[i] == UInt8('\\')
-            # Found a backslash, check if it's followed by ':'
-            if checkbounds(Bool, textbuf, i+1) && textbuf[i+1] == UInt8(':')
-                return i, true
-            else
-                return i, false
-            end
-        elseif textbuf[i] in separators
+    semicolon = false
+    cursor_byte = xy_to_offset(fi, pos)-1
+    for i = cursor_byte:-1:1
+        c = textbuf[i]
+        if c == UInt8(':')
+            semicolon = true
+        elseif c == UInt8('\\')
+            return i, semicolon
+        elseif c in separators
             break
+        else
+            semicolon = false
         end
-        i -= 1
     end
-    return nothing
 end
 
 # Add LaTeX and emoji completions to the items dictionary and return boolean indicating
@@ -437,26 +435,19 @@ function add_emoji_latex_completions!(items::Dict{String,CompletionItem}, state:
     backslash_pos = offset_to_xy(fi, backslash_offset)
 
     function create_ci(key, val, is_emoji::Bool)
-        sortText = label = lstrip(key, '\\')
-        if is_emoji
-            sortText = rstrip(lstrip(sortText, ':'), ':')
-        end
         description = is_emoji ? "emoji" : "latex-symbol"
         return CompletionItem(;
-            label,
-            labelDetails=CompletionItemLabelDetails(;
+            label = key,
+            labelDetails = CompletionItemLabelDetails(;
                 description),
-            kind=CompletionItemKind.Snippet,
-            documentation=val,
-            sortText,
-            filterText = key,
-            textEdit=TextEdit(;
+            kind = CompletionItemKind.Snippet,
+            documentation = val,
+            textEdit = TextEdit(;
                 range = Range(;
                     start = backslash_pos,
                     var"end" = pos),
                 newText = val),
-            data=CompletionData(false)
-        )
+            data = CompletionData(false))
     end
 
     emojionly || foreach(REPL.REPLCompletions.latex_symbols) do (key, val)
