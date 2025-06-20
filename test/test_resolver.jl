@@ -13,10 +13,10 @@ function analyze_and_resolve(s::AbstractString;
     mktemp() do filename, io
         uri = filename2uri(filename)
         fileinfo = JETLS.cache_file_info!(state, uri, 1, text)
-        analysis_unit = JETLS.initiate_analysis_unit!(server, uri)
-        analyzer = analysis_unit.result.analyzer
+        JETLS.cache_saved_file_info!(state, uri, text)
+        JETLS.initiate_analysis_unit!(server, uri)
 
-        mod = JETLS.find_file_module(state, uri, position)
+        (; mod, analyzer) = JETLS.get_context_info(state, uri, position)
 
         st_top = JS.build_tree(JL.SyntaxTree, fileinfo.parsed_stream; filename)
         byte = JETLS.xy_to_offset(fileinfo, position)
@@ -28,7 +28,7 @@ function analyze_and_resolve(s::AbstractString;
         i === nothing && error("No resolvable node found")
         node = nodes[i]
 
-        JETLS.Resolver.resolve_type(analyzer, mod, node)
+        JETLS.resolve_type(analyzer, mod, node)
     end
 end
 

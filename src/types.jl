@@ -92,7 +92,7 @@ mutable struct ServerState
     const currently_registered::Set{Registered}
     root_path::String
     root_env_path::String
-    completion_module::Module
+    completion_resolver_info::Tuple{Module,JET.PostProcessor}
     init_params::InitializeParams
     function ServerState()
         return new(

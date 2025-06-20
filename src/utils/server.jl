@@ -21,17 +21,28 @@ Fetch cached FileInfo given an LSclient-provided structure with a URI
 get_fileinfo(s::ServerState, uri::URI) = haskey(s.file_cache, uri) ? s.file_cache[uri] : nothing
 get_fileinfo(s::ServerState, t::TextDocumentIdentifier) = get_fileinfo(s, t.uri)
 
-function find_file_module!(state::ServerState, uri::URI, pos::Position)
-    mod = find_file_module(state, uri, pos)
-    state.completion_module = mod
-    return mod
-end
-function find_file_module(state::ServerState, uri::URI, pos::Position)
+"""
+    get_context_info(state::ServerState, uri::URI, pos::Position) -> (; mod, analyzer, postprocessor)
+
+Extract context information for a given position in a file.
+
+Returns a named tuple containing:
+- `mod::Module`: The module context at the given position
+- `analyzer::LSAnalyzer`: The analyzer instance for the file
+- `postprocessor::JET.PostProcessor`: The post-processor for fixing `var"..."` strings that users don't need
+  to recognize, which are caused by JET implementation details
+"""
+function get_context_info(state::ServerState, uri::URI, pos::Position)
     analysis_unit = find_analysis_unit_for_uri(state, uri)
-    analysis_unit === nothing && return Main
-    if analysis_unit isa OutOfScope
-        return isdefined(analysis_unit, :module_context) ? analysis_unit.module_context : Main
-    end
+    mod = get_context_module(analysis_unit, uri, pos)
+    analyzer = get_context_analyzer(analysis_unit, uri)
+    postprocessor = get_post_processor(analysis_unit)
+    return (; mod, analyzer, postprocessor)
+end
+
+get_context_module(::Nothing, ::URI, ::Position) = Main
+get_context_module(oos::OutOfScope, ::URI, ::Position) = isdefined(oos, :module_context) ? oos.module_context : Main
+function get_context_module(analysis_unit::AnalysisUnit, uri::URI, pos::Position)
     safi = successfully_analyzed_file_info(analysis_unit, uri)
     isnothing(safi) && return Main
     curline = Int(pos.line) + 1
@@ -42,6 +53,14 @@ function find_file_module(state::ServerState, uri::URI, pos::Position)
     end
     return curmod
 end
+
+get_context_analyzer(::Nothing, uri::URI) = LSAnalyzer(uri)
+get_context_analyzer(::OutOfScope, uri::URI) = LSAnalyzer(uri)
+get_context_analyzer(analysis_unit::AnalysisUnit, ::URI) = analysis_unit.result.analyzer
+
+get_post_processor(::Nothing) = JET.PostProcessor()
+get_post_processor(::OutOfScope) = JET.PostProcessor()
+get_post_processor(analysis_unit::AnalysisUnit) = JET.PostProcessor(analysis_unit.result.actual2virtual)
 
 function find_analysis_unit_for_uri(state::ServerState, uri::URI)
     haskey(state.analysis_cache, uri) || return nothing

@@ -318,7 +318,8 @@ function global_completions!(items::Dict{String, CompletionItem}, state::ServerS
     pos = params.position
     fi = get_fileinfo(state, uri)
     fi === nothing && return nothing
-    mod = find_file_module!(state, uri, pos)
+    (; mod, postprocessor) = get_context_info(state, uri, pos)
+    state.completion_resolver_info = (mod, postprocessor)
     prev_token_idx = get_prev_token_idx(fi, pos)
     prev_kind = isnothing(prev_token_idx) ? nothing :
         JS.kind(fi.parsed_stream.tokens[prev_token_idx])
@@ -465,14 +466,14 @@ end
 # ===================
 
 function resolve_completion_item(state::ServerState, item::CompletionItem)
-    isdefined(state, :completion_module) || return item
+    isdefined(state, :completion_resolver_info) || return item
     data = item.data
     data isa CompletionData || return item
     data.needs_resolve || return item
-    mod = state.completion_module
+    mod, postprocessor = state.completion_resolver_info
     name = Symbol(item.label)
     binding = Base.Docs.Binding(mod, name)
-    docs = Base.Docs.doc(binding)
+    docs = postprocessor(string(Base.Docs.doc(binding)))
     return CompletionItem(;
         label = item.label,
         labelDetails = item.labelDetails,
@@ -482,7 +483,7 @@ function resolve_completion_item(state::ServerState, item::CompletionItem)
         textEdit = item.textEdit,
         documentation = MarkupContent(;
             kind = MarkupKind.Markdown,
-            value = string(docs)))
+            value = docs))
 end
 
 # request handler
