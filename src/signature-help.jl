@@ -5,11 +5,12 @@ using .JL
 # ==============
 
 signature_help_options() = SignatureHelpOptions(;
-    triggerCharacters = ["(", ",", ";", "\"", "="],
+    triggerCharacters = ["(", ",", ";", "\"", "=", " "],
     retriggerCharacters = ["."])
 
 const SIGNATURE_HELP_REGISTRATION_ID = "jetls-signature-help"
 const SIGNATURE_HELP_REGISTRATION_METHOD = "textDocument/signatureHelp"
+const CALL_KINDS = KSet"call macrocall dotcall"
 
 function signature_help_registration()
     (; triggerCharacters, retriggerCharacters) = signature_help_options()
@@ -39,7 +40,7 @@ function flatten_args(call::JL.SyntaxTree)
     if kind(call) === K"where"
         return flatten_args(call[1])
     end
-    @assert kind(call) === K"call" || kind(call) === K"dotcall"
+    @assert kind(call) in CALL_KINDS
     usable = (arg::JL.SyntaxTree) -> kind(arg) != K"error"
     orig = filter(usable, JS.children(call)[2:end])
 
@@ -111,6 +112,7 @@ Information from one call's arguments for filtering signatures.
                  --> a => (1, 1), b => (2, nothing), c => (2, nothing)
 - pos_args_*: lower and upper bounds on # of positional args
 - kw_map: kwname => position in `args`.  Excludes any WIP kw (see find_kws)
+- kind: Item in `CALL_KINDS`
 
 TODO: types
 """
@@ -121,6 +123,7 @@ struct CallArgs
     pos_args_lb::Int
     pos_args_ub::Union{Int, Nothing}
     kw_map::Dict{String, Int}
+    kind::JS.Kind
 end
 
 function CallArgs(st0::JL.SyntaxTree, cursor::Int)
@@ -139,13 +142,13 @@ function CallArgs(st0::JL.SyntaxTree, cursor::Int)
         end
     end
     kw_map = find_kws(args, kw_i; sig=false, cursor)
-    CallArgs(args, kw_i, pos_map, lb, ub, kw_map)
+    CallArgs(args, kw_i, pos_map, lb, ub, kw_map, kind(st0))
 end
 
 """
 Return false if we can definitely rule out `f(args...|` from being a call to `m`
 """
-function compatible_call(m::Method, ca::CallArgs)
+function compatible_method(m::Method, ca::CallArgs)
     # TODO: (later) This should use type information from args (which we already
     # have from m's params).  For now, just parse the method signature like we
     # do in make_siginfo.
@@ -154,9 +157,13 @@ function compatible_call(m::Method, ca::CallArgs)
         msig = sprint(show, m; context=(:compact=>true, :print_method_signature_only=>true))
     else
         mstr = sprint(show, m; context=(:compact=>true))
-        msig_locinfo = split(mstr, '@')
+        msig_locinfo = split(mstr, " @ ")
         length(msig_locinfo) == 2 || return false
         msig = strip(msig_locinfo[1])
+    end
+    if ca.kind === K"macrocall" # hack. TODO delete
+        msig = replace(msig, "__source__::LineNumberNode, __module__::Module, "=>"",
+                       "__source__::LineNumberNode, __module__::Module"=>""; count=1)
     end
     mnode = JS.parsestmt(JL.SyntaxTree, msig; ignore_errors=true)
 
@@ -221,9 +228,13 @@ function make_siginfo(m::Method, ca::CallArgs, active_arg::Union{Int, Symbol};
         msig = sprint(show, m; context=(:compact=>true, :print_method_signature_only=>true))
     else
         mstr = sprint(show, m; context=(:compact=>true))
-        msig_locinfo = split(mstr, '@')
+        msig_locinfo = split(mstr, " @ ")
         length(msig_locinfo) == 2 || return false
         msig = strip(msig_locinfo[1])
+    end
+    if ca.kind === K"macrocall"
+        msig = replace(msig, "__source__::LineNumberNode, __module__::Module, "=>"",
+                       "__source__::LineNumberNode, __module__::Module"=>""; count=1)
     end
     msig = postprocessor(msig)
     mnode = JS.parsestmt(JL.SyntaxTree, msig; ignore_errors=true)
@@ -284,28 +295,86 @@ end
 
 const empty_siginfos = SignatureInformation[]
 
-function cursor_siginfos(mod::Module, ps::JS.ParseStream, b::Int, analyzer::LSAnalyzer;
-                         postprocessor::JET.PostProcessor=JET.PostProcessor())
-    call, after_semicolon = let st0 = JS.build_tree(JL.SyntaxTree, ps; ignore_errors=true)
-        # tolerate one-past-last byte. TODO: go back to closest non-whitespace?
-        bas = byte_ancestors(st0, b-1)
-        i = findfirst(st -> JS.kind(st) === K"call", bas)
-        i === nothing && return empty_siginfos
+"""
+Return the last byte at or before `b` that isn't in whitespace or a comment (or
+if `pass_newlines=false`, also isn't a newline).
+"""
+function prev_nontrivia_byte(ps::JS.ParseStream, b::Int; pass_newlines=false)
+    ti = get_current_token_idx(ps, min(JS.last_byte(ps), b))
+    isnothing(ti) && return nothing
+    skip = (i::Int) -> let tok = ps.tokens[i]; k = kind(tok)
+        b < tok.next_byte || JS.is_whitespace(k) && (pass_newlines || k != K"NewlineWs")
+    end
+    while skip(ti)
+        ti -= 1
+        ti < 1 && return nothing
+    end
+    return ps.tokens[ti].next_byte - 1
+end
 
-        # If parents of our call are like (function (where (where ... (call |) ...))),
-        # we're actually in a declaration, and shouldn't show signature help.
-        # Are there other cases this misses?
+function is_relevant_call(call::JL.SyntaxTree)
+    kind(call) in CALL_KINDS &&
+        # don't show help for a+b, M', etc., where call[1] isn't the function
+        !(JS.is_infix_op_call(call) || JS.is_postfix_op_call(call))
+end
+
+"""
+Return the nearest call in `st0` containing cursor byte b (if any).
+
+Some adjustment is done if there's trivia before the cursor in an unterminated
+call expression, e.g. `foo(#=hi=# |`, `@bar |`.  A more accurate description
+would be: return the nearest call in `st0` such that stuff inserted at the
+cursor would be descendents of it.
+"""
+function cursor_call(ps::JS.ParseStream, st0::JL.SyntaxTree, b::Int)
+    # If parents of our call are like (macro/function (where (where... (call |) ...))),
+    # we're actually in a declaration, and shouldn't show signature help.
+    function call_is_decl(_bas::JL.SyntaxList, i::Int)
+        kind(_bas[i]) != K"call" && return false
         j = i + 1
-        while j + 1 <= lastindex(bas) && kind(bas[j+1]) === K"where"
+        while j <= lastindex(_bas) && kind(_bas[j]) === K"where"
             j += 1
         end
-        j <= lastindex(bas) && kind(bas[j]) === K"function" && return empty_siginfos
-
-        after_semicolon = i > 1 && kind(bas[i-1]) === K"parameters" && b > JS.first_byte(bas[i-1])
-        bas[i], after_semicolon
+        return j <= lastindex(_bas) &&
+            kind(_bas[j]) in KSet"macro function" &&
+            # in `f(x) = g(x)`, return true in `f`, false in `g`
+            _bas[j - 1] === _bas[j][1]
     end
-    # TODO: dotcall support
-    JS.numchildren(call) === 0 && return empty_siginfos
+
+    bas = byte_ancestors(st0, b)
+    i = findfirst(is_relevant_call, bas)
+    !isnothing(i) && return call_is_decl(bas, i) ? nothing : bas[i]
+
+    # `i` is nothing.  Eat preceding whitespace and check again.
+    pnb_line = prev_nontrivia_byte(ps, b; pass_newlines=false)
+    pnb = prev_nontrivia_byte(ps, b; pass_newlines=true)
+
+    (isnothing(pnb) || pnb === b) && return nothing
+    bas = byte_ancestors(st0, pnb)
+    # If the previous nontrivia byte is part of a call or macrocall, and it is
+    # missing a closing paren, use that.
+    i = findfirst(st -> is_relevant_call(st) && !noparen_macrocall(st), bas)
+    if !isnothing(i) && JS.is_error(JS.children(bas[i])[end])
+        return call_is_decl(bas, i) ? nothing : bas[i]
+    end
+
+    (isnothing(pnb_line) || pnb_line === b) && return nothing
+    bas = byte_ancestors(st0, pnb_line)
+    # If the previous nontrivia byte within this line is part of an
+    # unparenthesized macrocall, use that.
+    i = findfirst(noparen_macrocall, bas)
+    return isnothing(i) ? nothing : bas[i]
+end
+
+function cursor_siginfos(mod::Module, ps::JS.ParseStream, b::Int, analyzer::LSAnalyzer;
+                         postprocessor::JET.PostProcessor=JET.PostProcessor())
+    st0 = JS.build_tree(JL.SyntaxTree, ps; ignore_errors=true)
+    call = cursor_call(ps, st0, b)
+    isnothing(call) && return empty_siginfos
+    after_semicolon = let
+        params_i = findfirst(st -> kind(st) === K"parameters", JS.children(call))
+        !isnothing(params_i) && b > JS.first_byte(call[params_i])
+    end
 
     # TODO: We could be calling a local variable.  If it shadows a method, our
     # ignoring it is misleading.  We need to either know about local variables
@@ -336,7 +405,7 @@ function cursor_siginfos(mod::Module, ps::JS.ParseStream, b::Int, analyzer::LSAn
 
     out = SignatureInformation[]
     for m in candidate_methods
-        if compatible_call(m, ca)
+        if compatible_method(m, ca)
             siginfo = make_siginfo(m, ca, active_arg; postprocessor)
             if siginfo !== nothing
                 push!(out, siginfo)

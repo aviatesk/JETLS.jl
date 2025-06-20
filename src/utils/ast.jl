@@ -155,3 +155,7 @@ function get_prev_token_idx(fi::FileInfo, pos::Position)
     fi === nothing && return nothing
     get_prev_token_idx(fi.parsed_stream, xy_to_offset(fi, pos))
 end
+
+function noparen_macrocall(st0::JL.SyntaxTree)
+    JS.kind(st0) === JS.K"macrocall" && !JS.has_flags(st0, JS.PARENS_FLAG)
+end
