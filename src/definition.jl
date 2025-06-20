@@ -88,13 +88,7 @@ function definition_target_methods(state::ServerState, uri::URI, pos::Position, 
     node = select_target_node(st, offset)
     node === nothing && return empty_methods
 
-    mod = find_file_module(state, uri, pos)
-    analysis_unit = find_analysis_unit_for_uri(state, uri)
-    if analysis_unit === nothing || analysis_unit isa OutOfScope
-        analyzer = LSAnalyzer(uri)
-    else
-        analyzer = analysis_unit.result.analyzer
-    end
+    (; mod, analyzer) = get_context_info(state, uri, pos)
     objtyp = resolve_type(analyzer, mod, node)
     objtyp isa Core.Const || return empty_methods
 

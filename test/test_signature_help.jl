@@ -243,7 +243,7 @@ include("setup.jl")
                 @test raw_res.params.uri == uri
 
                 # TODO Comment in the following
-                #      The following line doesn't work becuase `find_file_module` isn't synced
+                #      The following line doesn't work becuase `get_context_module` isn't synced
                 #      with `DidChangeTextDocumentNotification`
                 edited_code = """
                 foo(xxx) = :xxx

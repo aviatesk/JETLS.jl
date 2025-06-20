@@ -14,9 +14,8 @@ function analyze_and_resolve(s::AbstractString;
         uri = filename2uri(filename)
         fileinfo = JETLS.cache_file_info!(state, uri, 1, text)
         analysis_unit = JETLS.initiate_analysis_unit!(server, uri)
-        analyzer = analysis_unit.result.analyzer
 
-        mod = JETLS.find_file_module(state, uri, position)
+        mod = JETLS.get_context_module(analysis_unit, uri, position)
 
         st_top = JS.build_tree(JL.SyntaxTree, fileinfo.parsed_stream; filename)
         byte = JETLS.xy_to_offset(fileinfo, position)
