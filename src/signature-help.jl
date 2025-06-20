@@ -5,7 +5,7 @@ using .JL
 # ==============
 
 signature_help_options() = SignatureHelpOptions(;
-    triggerCharacters = ["(", ",", ";", "\"", "="],
+    triggerCharacters = ["(", ",", ";", "\"", "=", " "],
     retriggerCharacters = ["."])
 
 const SIGNATURE_HELP_REGISTRATION_ID = "jetls-signature-help"
