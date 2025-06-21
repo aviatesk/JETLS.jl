@@ -134,6 +134,7 @@ include("setup.jl")
     """
 
     sin_cand_file, sin_cand_line = functionloc(first(methods(sin, (Float64,))))
+    sin_cand_file = JETLS.to_full_path(sin_cand_file)
 
     testers = [
         # fu│nc(1.0)
@@ -146,7 +147,7 @@ include("setup.jl")
         (result, uri) ->
             (length(result) >= 1) &&
             (any(result) do candidate
-                candidate.uri.path == sin_cand_file &&
+                JETLS.uri2filepath(candidate.uri) == sin_cand_file &&
                 candidate.range.start.line == (sin_cand_line - 1)
             end)
 
