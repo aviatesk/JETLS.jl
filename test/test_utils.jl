@@ -51,11 +51,44 @@ end
 end
 
 @testset "to_full_path" begin
-    m = only(methods(sin,(Float64,)))
-    file, line = Base.updated_methodloc(m)
-    filepath = JETLS.to_full_path(file)
-    @test isabspath(filepath) && isfile(filepath)
+    let temp_dir = mktempdir()
+        test_file = joinpath(temp_dir, "test_file.jl")
+        touch(test_file)
+        try
+            @test isabspath(test_file)
+            result = JETLS.to_full_path(test_file)
+            @test isabspath(result)
+            @test result == test_file
+        finally
+            rm(temp_dir, recursive=true, force=true)
+        end
+    end
+
+    # Test with Base function paths
+    @testset "built-in function paths" begin
+        m = only(methods(sin,(Float64,)))
+
+        let file = m.file
+            filepath = JETLS.to_full_path(m.file)
+            @test isabspath(filepath)
+            @test normpath(filepath) == filepath
+            @test isfile(filepath)
+            @test occursin("trig.jl", filepath)
+            # Check that fix_build_path is applied correctly
+            @test !occursin("/usr/share/julia/", filepath)
+        end
+        let (file, line) = Base.updated_methodloc(m)
+            filepath = JETLS.to_full_path(m.file)
+            @test isabspath(filepath)
+            @test normpath(filepath) == filepath
+            @test isfile(filepath)
+            @test occursin("trig.jl", filepath)
+            # Check that fix_build_path is applied correctly
+            @test !occursin("/usr/share/julia/", filepath)
+        end
+    end
 end
+
 @testset "create_source_location_link" begin
     @test JETLS.create_source_location_link("/path/to/file.jl") == "[/path/to/file.jl](file:///path/to/file.jl)"
     @test JETLS.create_source_location_link("/path/to/file.jl", line=42) == "[/path/to/file.jl:42](file:///path/to/file.jl#L42)"

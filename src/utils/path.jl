@@ -44,16 +44,39 @@ If this Julia is a built one, convert `path` to `fixed_path`, which is a path to
 files that are editable (or tracked by git).
 """
 function fix_build_path end
-let build_dir = normpath(Sys.BINDIR, "..", ".."),
-    share_dir = normpath(Sys.BINDIR, Base.DATAROOTDIR, "julia")
+let build_dir = normpath(Sys.BINDIR, "..", ".."), # with path separator at the end
+    share_path = normpath(Sys.BINDIR, Base.DATAROOTDIR, "julia") # without path separator at the end
     global fix_build_path
     if ispath(normpath(build_dir), "base")
-        fix_build_path(path::AbstractString) = replace(path, share_dir => build_dir)
+        build_path = splitdir(build_dir)[1] # remove the path separator
+        fix_build_path(path::AbstractString) = replace(path, share_path => build_path)
     else
         fix_build_path(path::AbstractString) = path
     end
 end
 
+"""
+    to_full_path(file::AbstractString) -> String
+    to_full_path(file::Symbol) -> String
+
+Convert a file path to its full, normalized form suitable for the language server.
+
+This function:
+1. Attempts to find the actual source file location, i.e. converts Base function paths
+   retrieved with `methods` to absolute path
+2. Applies `fix_build_path` to convert from Julia's share directory to build directory if applicable
+3. Returns a normalized absolute path
+
+# Arguments
+- `file`: An absolute file path (preferred), though the function can handle relative paths,
+  stdlib paths, and symbols that may be retrieved with Julia's internal APIs
+
+# Notes
+- While the function can handle relative paths, callers should provide absolute paths when possible
+- For built Julia installations, paths under `/usr/share/julia` are converted to their
+  corresponding paths in the build directory
+- The function always returns an absolute path
+"""
 to_full_path(file::Symbol) = to_full_path(String(file))
 function to_full_path(file::AbstractString)
     file = Base.fixup_stdlib_path(file)
