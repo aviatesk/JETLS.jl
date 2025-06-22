@@ -157,5 +157,10 @@ function get_prev_token_idx(fi::FileInfo, pos::Position)
 end
 
 function noparen_macrocall(st0::JL.SyntaxTree)
-    JS.kind(st0) === JS.K"macrocall" && !JS.has_flags(st0, JS.PARENS_FLAG)
+    JS.kind(st0) === JS.K"macrocall" || return false
+    if JS.numchildren(st0) ≥ 2 && JS.has_flags(st0[2], JS.RAW_STRING_FLAG)
+        # closed string macro
+        return false
+    end
+    return !JS.has_flags(st0, JS.PARENS_FLAG)
 end

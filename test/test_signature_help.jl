@@ -242,6 +242,8 @@ end
     @test 1 === n_si(M_invalid, "@m   |")
     @test 0 === n_si(M_invalid, "@m\n|")
     @test 0 === n_si(M_invalid, "@m \n |")
+    # no-paren macro signature support should not be triggered after closed string macrocall
+    @test 0 === n_si(M_invalid, "r\"xxx\"|")
 
     @test 1 === n_si(M_invalid, "f1(,,,,,,,,,|)")
     @test 1 === n_si(M_invalid, "f1(a b c|)")
