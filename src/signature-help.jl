@@ -341,6 +341,12 @@ function cursor_call(ps::JS.ParseStream, st0::JL.SyntaxTree, b::Int)
             _bas[j - 1] === _bas[j][1]
     end
 
+    # disable signature help if invoked within comment scope
+    prev_token_idx = get_prev_token_idx(ps, b)
+    if !isnothing(prev_token_idx) && JS.kind(ps.tokens[prev_token_idx]) === K"Comment"
+        return nothing
+    end
+
     bas = byte_ancestors(st0, b)
     i = findfirst(is_relevant_call, bas)
     !isnothing(i) && return call_is_decl(bas, i) ? nothing : bas[i]
