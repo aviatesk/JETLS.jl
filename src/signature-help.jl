@@ -349,7 +349,17 @@ function cursor_call(ps::JS.ParseStream, st0::JL.SyntaxTree, b::Int)
 
     bas = byte_ancestors(st0, b)
     i = findfirst(is_relevant_call, bas)
-    !isnothing(i) && return call_is_decl(bas, i) ? nothing : bas[i]
+    if !isnothing(i)
+        if call_is_decl(bas, i)
+            return nothing
+        elseif any(j::Int->JS.is_block_form(bas[j]), 1:i-1)
+            # If any block is contained before reaching the relevant call,
+            # skip signature help for that relevant call:
+            # Consider cases like `@testset begin ... | ... end`
+            return nothing
+        end
+        return bas[i]
+    end
 
     # `i` is nothing.  Eat preceding whitespace and check again.
     pnb_line = prev_nontrivia_byte(ps, b; pass_newlines=false)

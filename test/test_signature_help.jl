@@ -244,6 +244,13 @@ end
     @test 0 === n_si(M_invalid, "@m \n |")
     # no-paren macro signature support should not be triggered after closed string macrocall
     @test 0 === n_si(M_invalid, "r\"xxx\"|")
+    # no-paren macro signature support should not be triggered when the scope surrounding the cursor is a block
+    @test 0 === n_si(M_invalid, """@m begin
+        |
+    end""")
+    @test 1 === n_si(M_invalid, """@m begin
+        f1(|)
+    end""")
 
     @test 1 === n_si(M_invalid, "f1(,,,,,,,,,|)")
     @test 1 === n_si(M_invalid, "f1(a b c|)")
