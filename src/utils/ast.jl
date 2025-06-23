@@ -1,3 +1,6 @@
+using .JS: @K_str, @KSet_str
+using .JL: @ast
+
 # JuliaLowering uses byte offsets; LSP uses lineno and UTF-* character offset.
 # These functions do the conversion.
 
@@ -120,6 +123,54 @@ function byte_ancestors(sn::JS.SyntaxNode, rng::UnitRange{Int})
     return reverse!(out)
 end
 byte_ancestors(sn::JS.SyntaxNode, byte::Int) = byte_ancestors(sn, byte:byte)
+
+
+"""
+    greatest_local(st0, b) -> (st::Union{SyntaxTree, Nothing}, b::Int)
+
+Return the largest tree that can introduce local bindings that are visible to
+the cursor (if any such tree exists), and the cursor's position within it.
+"""
+function greatest_local(st0::JL.SyntaxTree, b::Int)
+    bas = byte_ancestors(st0, b)
+
+    first_global = findfirst(st -> JL.kind(st) in KSet"toplevel module", bas)
+    @assert !isnothing(first_global)
+    if first_global === 1
+        return (nothing, b)
+    end
+
+    i = first_global - 1
+    while JL.kind(bas[i]) === K"block"
+        # bas[i] is a block within a global scope, so can't introduce local
+        # bindings.  Shrink the tree (mostly for performance).
+        i -= 1
+        i < 1 && return (nothing, b)
+    end
+
+    return bas[i], (b - (JS.first_byte(st0) - 1))
+end
+
+# TODO: Macro expansion requires we know the module we're lowering in, and that
+# JuliaLowering sees the macro definition.  Ignore them in local completions for now.
+function remove_macrocalls(st0::JL.SyntaxTree)
+    ctx = JL.MacroExpansionContext(JL.syntax_graph(st0), JL.Bindings(),
+                                   JL.ScopeLayer[], JL.ScopeLayer(1, Module(), false))
+    if kind(st0) === K"macrocall"
+        macroname = st0[1]
+        if hasproperty(macroname, :name_val) && macroname.name_val == "@nospecialize"
+            st0
+        else
+            @ast ctx st0 "nothing"::K"core"
+        end
+    elseif JS.is_leaf(st0)
+        st0
+    else
+        k = kind(st0)
+        @ast ctx st0 [k (map(remove_macrocalls, JS.children(st0)))...]
+    end
+end
+
 
 # TODO: Refactor for JuliaLang/JuliaSyntax.jl#560
 """

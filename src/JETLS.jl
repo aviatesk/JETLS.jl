@@ -46,6 +46,7 @@ include("utils/general.jl")
 include("utils/path.jl")
 include("utils/pkg.jl")
 include("utils/ast.jl")
+include("utils/binding.jl")
 include("utils/lsp.jl")
 include("utils/server.jl")
 
