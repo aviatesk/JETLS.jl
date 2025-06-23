@@ -332,6 +332,16 @@ function call_is_decl(_bas::JL.SyntaxList, i::Int)
         _bas[j - 1] === _bas[j][1]
 end
 
+# Find cases where a macro call is not surrounded by parentheses
+# and the current cursor position is on a different line from the `@` macro call
+function is_crossline_noparen_macrocall(call::JL.SyntaxTree, ps::JS.ParseStream, cursor_byte::Int)
+    return noparen_macrocall(call) && let source_file = JS.sourcefile(call)
+        # Check if cursor is on a different line from the @ symbol
+        JS.numchildren(call) ≥ 1 &&
+            JS.source_line(source_file, JS.first_byte(call[1])) ≠ JS.source_line(source_file, cursor_byte)
+    end
+end
+
 """
 Return the nearest call in `st0` containing cursor byte b (if any).
 
@@ -352,10 +362,11 @@ function cursor_call(ps::JS.ParseStream, st0::JL.SyntaxTree, b::Int)
     if !isnothing(i)
         if call_is_decl(bas, i)
             return nothing
-        elseif any(j::Int->JS.is_block_form(bas[j]), 1:i-1)
-            # If any block is contained before reaching the relevant call,
-            # skip signature help for that relevant call:
-            # Consider cases like `@testset begin ... | ... end`
+        elseif is_crossline_noparen_macrocall(bas[i], ps, b)
+            # Consider cases like:
+            # @testset begin
+            #     ... | ...
+            # end
             return nothing
         end
         return bas[i]
