@@ -18,7 +18,7 @@ end
 
 include("setup.jl")
 
-@testset "go to definition request/responce cycle" begin
+@testset "'Definition' request/responce" begin
     script_code = """
     #= 1=# func(x) = 1
     #= 2=# fu│nc(1.0)
@@ -212,7 +212,7 @@ include("setup.jl")
         uri = filepath2uri(script_path)
         withserver() do (; writereadmsg, id_counter)
             # run the full analysis first
-            (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, clean_code))
+            (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, read(script_path, String)))
             @test raw_res isa PublishDiagnosticsNotification
             @test raw_res.params.uri == uri
 
