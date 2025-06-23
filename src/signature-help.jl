@@ -318,6 +318,30 @@ function is_relevant_call(call::JL.SyntaxTree)
         !(JS.is_infix_op_call(call) || JS.is_postfix_op_call(call))
 end
 
+# If parents of our call are like (macro/function (where (where... (call |) ...))),
+# we're actually in a declaration, and shouldn't show signature help.
+function call_is_decl(_bas::JL.SyntaxList, i::Int)
+    kind(_bas[i]) != K"call" && return false
+    j = i + 1
+    while j <= lastindex(_bas) && kind(_bas[j]) === K"where"
+        j += 1
+    end
+    return j <= lastindex(_bas) &&
+        kind(_bas[j]) in KSet"macro function" &&
+        # in `f(x) = g(x)`, return true in `f`, false in `g`
+        _bas[j - 1] === _bas[j][1]
+end
+
+# Find cases where a macro call is not surrounded by parentheses
+# and the current cursor position is on a different line from the `@` macro call
+function is_crossline_noparen_macrocall(call::JL.SyntaxTree, ps::JS.ParseStream, cursor_byte::Int)
+    return noparen_macrocall(call) && let source_file = JS.sourcefile(call)
+        # Check if cursor is on a different line from the @ symbol
+        JS.numchildren(call) ≥ 1 &&
+            JS.source_line(source_file, JS.first_byte(call[1])) ≠ JS.source_line(source_file, cursor_byte)
+    end
+end
+
 """
 Return the nearest call in `st0` containing cursor byte b (if any).
 
@@ -327,23 +351,26 @@ would be: return the nearest call in `st0` such that stuff inserted at the
 cursor would be descendents of it.
 """
 function cursor_call(ps::JS.ParseStream, st0::JL.SyntaxTree, b::Int)
-    # If parents of our call are like (macro/function (where (where... (call |) ...))),
-    # we're actually in a declaration, and shouldn't show signature help.
-    function call_is_decl(_bas::JL.SyntaxList, i::Int)
-        kind(_bas[i]) != K"call" && return false
-        j = i + 1
-        while j <= lastindex(_bas) && kind(_bas[j]) === K"where"
-            j += 1
-        end
-        return j <= lastindex(_bas) &&
-            kind(_bas[j]) in KSet"macro function" &&
-            # in `f(x) = g(x)`, return true in `f`, false in `g`
-            _bas[j - 1] === _bas[j][1]
+    # disable signature help if invoked within comment scope
+    prev_token_idx = get_prev_token_idx(ps, b)
+    if !isnothing(prev_token_idx) && JS.kind(ps.tokens[prev_token_idx]) === K"Comment"
+        return nothing
     end
 
     bas = byte_ancestors(st0, b)
     i = findfirst(is_relevant_call, bas)
-    !isnothing(i) && return call_is_decl(bas, i) ? nothing : bas[i]
+    if !isnothing(i)
+        if call_is_decl(bas, i)
+            return nothing
+        elseif is_crossline_noparen_macrocall(bas[i], ps, b)
+            # Consider cases like:
+            # @testset begin
+            #     ... | ...
+            # end
+            return nothing
+        end
+        return bas[i]
+    end
 
     # `i` is nothing.  Eat preceding whitespace and check again.
     pnb_line = prev_nontrivia_byte(ps, b; pass_newlines=false)
