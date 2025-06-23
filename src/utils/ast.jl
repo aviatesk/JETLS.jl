@@ -130,10 +130,10 @@ This function returns the token at the specified byte offset, or `nothing`
 if the offset is invalid or no token exists at that position.
 
 Example:
-al│pha beta gamma      (b=3) returns the index of `alpha`
-│alpha beta gamma      (b=1) returns the index of `alpha`
-alpha│ beta gamma      (b=6) returns the index of ` ` (whitespace)
-alpha │beta gamma      (b=7) returns the index of `beta`
+- `al│pha beta gamma` (`b`=3) returns the index of `alpha`
+- `│alpha beta gamma` (`b`=1) returns the index of `alpha`
+- `alpha│ beta gamma` (`b`=6) returns the index of ` ` (whitespace)
+- `alpha │beta gamma` (`b`=7) returns the index of `beta`
 """
 function get_current_token_idx(ps::JS.ParseStream, offset::Int)
     offset < 1 && return nothing
@@ -168,8 +168,9 @@ Returns `nothing` if no suitable one is found.
 Currently, it simply checks the ancestors of the node located at the given offset.
 
 TODO: Apply a heuristic similar to rust-analyzer
-refs: https://github.com/rust-lang/rust-analyzer/blob/6acff6c1f8306a0a1d29be8fd1ffa63cff1ad598/crates/ide/src/goto_definition.rs#L47-L62
-      https://github.com/aviatesk/JETLS.jl/pull/61#discussion_r2134707773
+refs:
+- https://github.com/rust-lang/rust-analyzer/blob/6acff6c1f8306a0a1d29be8fd1ffa63cff1ad598/crates/ide/src/goto_definition.rs#L47-L62
+- https://github.com/aviatesk/JETLS.jl/pull/61#discussion_r2134707773
 """
 function select_target_node(st::JL.SyntaxTree, offset::Int)
     bas = byte_ancestors(st, offset)

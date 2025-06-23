@@ -6,7 +6,7 @@
 
     """
     Client supports the follow content formats if the content
-    property refers to a `literal of type MarkupContent`.
+    property refers to a literal of type [`MarkupContent`](@ref).
     The order describes the preferred format of the client.
     """
     contentFormat::Union{Nothing, Vector{MarkupKind.Ty}} = nothing
@@ -16,11 +16,6 @@ end
 end
 
 @interface HoverRegistrationOptions @extends TextDocumentRegistrationOptions, HoverOptions begin
-end
-
-@interface _MarkedString begin
-    language::String
-    value::String
 end
 
 """
@@ -37,9 +32,12 @@ The pair of a language and a value is an equivalent to markdown:
 Note that markdown strings will be sanitized - that means html will be
 escaped.
 
-@deprecated use MarkupContent instead.
+@deprecated use [`MarkupContent`](@ref) instead.
 """
-const MarkedString = Union{String, _MarkedString}
+const MarkedString = Union{String, @NamedTuple begin
+    language::String
+    value::String
+end}
 
 """
 The result of a hover request.

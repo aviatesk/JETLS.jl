@@ -4756,7 +4756,7 @@ export interface HoverParams extends TextDocumentPositionParams,
 
 *Response*:
 
-- result: [`Hover`](#hover-request) | `null` defined as follows: <a id="markedString"></a>
+- result: [`Hover`](#hover-request) | `null` defined as follows:
 ```typescript
 /**
  * The result of a hover request.
@@ -4775,7 +4775,7 @@ export interface Hover {
 }
 ```
 
-Where [`MarkedString`](#markedString) is defined as follows:
+Where [`MarkedString`](#markedString) is defined as follows: <a id="markedString"></a>
 
 ```typescript
 /**
