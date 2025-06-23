@@ -34,10 +34,10 @@
     """
     completionProvider::Union{Nothing, CompletionOptions} = nothing
 
-    # """
-    # The server provides hover support.
-    # """
-    # hoverProvider::Union{Nothing, Bool, HoverOptions} = nothing
+    """
+    The server provides hover support.
+    """
+    hoverProvider::Union{Nothing, Bool, HoverOptions} = nothing
 
     """
     The server provides signature help support.
@@ -297,10 +297,10 @@ end
     """
     completion::Union{CompletionClientCapabilities, Nothing} = nothing
 
-    # """
-    # Capabilities specific to the `textDocument/hover` request.
-    # """
-    # hover::Union{HoverClientCapabilities, Nothing} = nothing
+    """
+    Capabilities specific to the `textDocument/hover` request.
+    """
+    hover::Union{HoverClientCapabilities, Nothing} = nothing
 
     """
     Capabilities specific to the `textDocument/signatureHelp` request.
