@@ -2,62 +2,7 @@ module test_definition
 
 using Test
 using JETLS
-using JETLS: JL, JS, select_target_node, method_definition_range,
-             get_text_and_positions, xy_to_offset
-
-function get_target_node(code::AbstractString, pos::Int)
-    parsed_stream = JS.ParseStream(code)
-    JS.parse!(parsed_stream; rule=:all)
-    st = JS.build_tree(JL.SyntaxTree, parsed_stream)
-    node = select_target_node(st, pos)
-    return node
-end
-
-function get_target_node(code::AbstractString, matcher::Regex=r"│")
-    clean_code, positions = get_text_and_positions(code, matcher)
-    @assert length(positions) == 1
-    return get_target_node(clean_code, xy_to_offset(Vector{UInt8}(clean_code), positions[1]))
-end
-
-@testset "select_target_node" begin
-    let code = """
-        test_│func(5)
-        """
-
-        node = get_target_node(code)
-        @test (node !== nothing) && (JS.kind(node) === JS.K"Identifier")
-        @test node.name_val == "test_func"
-    end
-
-    let code = """
-        obj.│property = 42
-        """
-
-        node = get_target_node(code)
-        @test node !== nothing
-        @test JS.kind(node) === JS.K"."
-        @test length(JS.children(node)) == 2
-        @test JS.children(node)[1].name_val == "obj"
-        @test JS.children(node)[2].name_val == "property"
-    end
-
-    let code = """
-        function test_func(x)
-            return x │ + 1
-        end
-        """
-
-        node = get_target_node(code)
-        @test node === nothing
-    end
-
-    let code = """
-        │
-        """
-        node = get_target_node(code)
-        @test node === nothing
-    end
-end
+using JETLS: method_definition_range
 
 @testset "method_definition_range" begin
     linenum = @__LINE__; method_for_test_method_definition_range() = 1
@@ -260,7 +205,7 @@ include("setup.jl")
             (length(result) >= 1)
     ]
 
-    clean_code, positions = get_text_and_positions(script_code, r"│")
+    clean_code, positions = JETLS.get_text_and_positions(script_code, r"│")
     @assert length(positions) == length(testers)
 
     withscript(clean_code) do script_path

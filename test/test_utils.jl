@@ -2,6 +2,7 @@ module test_utils
 
 using Test
 using JETLS
+using JETLS: JL, JS
 
 function test_string_positions(s)
     v = Vector{UInt8}(s)
@@ -168,6 +169,102 @@ end
     @test JETLS.create_source_location_link("/path/to/file.jl") == "[/path/to/file.jl](file:///path/to/file.jl)"
     @test JETLS.create_source_location_link("/path/to/file.jl", line=42) == "[/path/to/file.jl:42](file:///path/to/file.jl#L42)"
     @test JETLS.create_source_location_link("/path/to/file.jl", line=42, character=10) == "[/path/to/file.jl:42](file:///path/to/file.jl#L42C10)"
+end
+
+function get_target_node(code::AbstractString, pos::Int)
+    parsed_stream = JS.ParseStream(code)
+    JS.parse!(parsed_stream; rule=:all)
+    st = JS.build_tree(JL.SyntaxTree, parsed_stream)
+    node = JETLS.select_target_node(st, pos)
+    return node
+end
+
+function get_target_node(code::AbstractString, matcher::Regex=r"│")
+    clean_code, positions = JETLS.get_text_and_positions(code, matcher)
+    @assert length(positions) == 1
+    return get_target_node(clean_code, JETLS.xy_to_offset(Vector{UInt8}(clean_code), positions[1]))
+end
+
+@testset "`select_target_node` / `get_source_range`" begin
+    let code = """
+        test_│func(5)
+        """
+        node = get_target_node(code)
+        @test (node !== nothing) && (JS.kind(node) === JS.K"Identifier")
+        @test node.name_val == "test_func"
+        let range = JETLS.get_source_range(node)
+            @test range.start.line == 0 && range.start.character == 0
+            @test range.var"end".line == 0 && range.var"end".character == sizeof("test_func")
+        end
+    end
+
+    let code = """
+        obj.│property = 42
+        """
+        node = get_target_node(code)
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"."
+        @test length(JS.children(node)) == 2
+        @test JS.children(node)[1].name_val == "obj"
+        @test JS.children(node)[2].name_val == "property"
+        let range = JETLS.get_source_range(node)
+            @test range.start.line == 0 && range.start.character == 0
+            @test range.var"end".line == 0 && range.var"end".character == sizeof("obj.property")
+        end
+    end
+
+    let code = """
+        Core.Compiler.tme│et(x)
+        """
+        node = get_target_node(code)
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"."
+        let range = JETLS.get_source_range(node)
+            @test range.start.line == 0 && range.start.character == 0
+            @test range.var"end".line == 0 && range.var"end".character == sizeof("Core.Compiler.tmeet")
+        end
+    end
+
+    let code = """
+        Core.Compi│ler.tmeet(x)
+        """
+        node = get_target_node(code)
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"."
+        let range = JETLS.get_source_range(node)
+            @test range.start.line == 0 && range.start.character == 0
+            @test range.var"end".line == 0 && range.var"end".character == sizeof("Core.Compiler")
+        end
+    end
+
+    let code = """
+        Cor│e.Compiler.tmeet(x)
+        """
+        node = get_target_node(code)
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"Identifier"
+        let range = JETLS.get_source_range(node)
+            @test range.start.line == 0 && range.start.character == 0
+            @test range.var"end".line == 0 && range.var"end".character == sizeof("Core")
+        end
+    end
+
+    let code = """
+        function test_func(x)
+            return x │ + 1
+        end
+        """
+
+        node = get_target_node(code)
+        @test node === nothing
+    end
+
+    let code = """
+        │
+        """
+        node = get_target_node(code)
+        @test node === nothing
+    end
 end
 
 end # module test_utils

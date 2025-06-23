@@ -164,3 +164,59 @@ function noparen_macrocall(st0::JL.SyntaxTree)
     end
     return !JS.has_flags(st0, JS.PARENS_FLAG)
 end
+
+"""
+Determines the node that the user most likely intends to navigate to.
+Returns `nothing` if no suitable one is found.
+
+Currently, it simply checks the ancestors of the node located at the given offset.
+
+TODO: Apply a heuristic similar to rust-analyzer
+refs: https://github.com/rust-lang/rust-analyzer/blob/6acff6c1f8306a0a1d29be8fd1ffa63cff1ad598/crates/ide/src/goto_definition.rs#L47-L62
+      https://github.com/aviatesk/JETLS.jl/pull/61#discussion_r2134707773
+"""
+function select_target_node(st::JL.SyntaxTree, offset::Int)
+    bas = byte_ancestors(st, offset)
+
+    target = first(bas)
+    if JS.kind(target) !== JS.K"Identifier"
+        offset > 0 || return nothing
+        # Support cases like `var│`, `func│(5)`
+        bas = byte_ancestors(st, offset - 1)
+        target = first(bas)
+        if JS.kind(target) !== JS.K"Identifier"
+            return nothing
+        end
+    end
+
+    for i in 2:length(bas)
+        basᵢ = bas[i]
+        if (JS.kind(basᵢ) === JS.K"." &&
+            basᵢ[1] !== target) # e.g. don't allow jumps to `tmeet` from `Base.Compi│ler.tmeet`
+            target = basᵢ
+        else
+            return target
+        end
+    end
+
+    # Unreachable: we always have toplevel node
+    return nothing
+end
+
+"""
+    get_source_range(node::JL.SyntaxTree) -> range::LSP.Range
+
+Returns the position information of `node` in the source file in `LSP.Range` format.
+"""
+function get_source_range(node::JL.SyntaxTree)
+    sourcefile = JS.sourcefile(node)
+    first_line, first_char = JS.source_location(sourcefile, JS.first_byte(node))
+    last_line, last_char = JS.source_location(sourcefile, JS.last_byte(node))
+    return Range(;
+        start = Position(;
+            line = first_line - 1,
+            character = first_char - 1),
+        var"end" = Position(;
+            line = last_line - 1,
+            character = last_char))
+end
