@@ -172,7 +172,7 @@ end
 end
 
 function _parse(T, code::AbstractString;
-                rule=:all, filename=@__FILE__, first_line=@__LINE__)
+                rule::Symbol=:all, filename::AbstractString=@__FILE__, first_line::Int=1)
     parsed_stream = JS.ParseStream(code)
     JS.parse!(parsed_stream; rule)
     return JS.build_tree(T, parsed_stream; filename, first_line)
