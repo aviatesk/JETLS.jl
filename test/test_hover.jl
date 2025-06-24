@@ -138,10 +138,10 @@ end
         (;)
 
         # func│(42)
-        (; pat="Documented method.", brokens=(2,))
+        (; pat="Documented method.")
 
         # M_doc.func│(42)
-        (; pat="Documented method.", brokens=(2,))
+        (; pat="Documented method.")
     ]
 
     clean_code, positions = JETLS.get_text_and_positions(script_code, r"│")
