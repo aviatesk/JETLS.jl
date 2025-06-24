@@ -273,6 +273,17 @@ end
     end
 
     let code = """
+        text│"sin"
+        """
+        node = get_target_node(code)
+        @test node !== nothing
+        let range = JETLS.get_source_range(node)
+            @test range.start.line == 0 && range.start.character == 0
+            @test range.var"end".line == 0 && range.var"end".character == sizeof("text")
+        end
+    end
+
+    let code = """
         function test_func(x)
             return x │ + 1
         end
