@@ -176,20 +176,22 @@ refs: https://github.com/rust-lang/rust-analyzer/blob/6acff6c1f8306a0a1d29be8fd1
       https://github.com/aviatesk/JETLS.jl/pull/61#discussion_r2134707773
 """
 function select_target_node(st::JL.SyntaxTree, offset::Int)
+    is_selectable(x::JL.SyntaxTree) = JS.kind(x) in JS.KSet"Identifier MacroName"
+
     bas = byte_ancestors(st, offset)
 
     target = first(bas)
-    if JS.kind(target) !== JS.K"Identifier"
+    if !is_selectable(target)
         offset > 0 || return nothing
         # Support cases like `var│`, `func│(5)`
         bas = byte_ancestors(st, offset - 1)
         target = first(bas)
-        if JS.kind(target) !== JS.K"Identifier"
+        if !is_selectable(target)
             return nothing
         end
     end
 
-    for i in 2:length(bas)
+    for i = 2:length(bas)
         basᵢ = bas[i]
         if (JS.kind(basᵢ) === JS.K"." &&
             basᵢ[1] !== target) # e.g. don't allow jumps to `tmeet` from `Base.Compi│ler.tmeet`
@@ -208,14 +210,14 @@ end
 
 Returns the position information of `node` in the source file in `LSP.Range` format.
 """
-function get_source_range(node::JL.SyntaxTree)
+function get_source_range(node::JL.SyntaxTree; include_at_mark::Bool=true)
     sourcefile = JS.sourcefile(node)
     first_line, first_char = JS.source_location(sourcefile, JS.first_byte(node))
     last_line, last_char = JS.source_location(sourcefile, JS.last_byte(node))
     return Range(;
         start = Position(;
             line = first_line - 1,
-            character = first_char - 1),
+            character = first_char - 1 - (include_at_mark && JS.kind(node) === JS.K"MacroName")),
         var"end" = Position(;
             line = last_line - 1,
             character = last_char))

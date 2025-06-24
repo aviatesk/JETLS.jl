@@ -250,6 +250,29 @@ end
     end
 
     let code = """
+        @inline│ callsin(x) = sin(x)
+        """
+        node = get_target_node(code)
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"MacroName"
+        let range = JETLS.get_source_range(node)
+            @test range.start.line == 0 && range.start.character == 0 # include at mark
+            @test range.var"end".line == 0 && range.var"end".character == sizeof("@inline")
+        end
+    end
+
+    let code = """
+        Base.@inline│ callsin(x) = sin(x)
+        """
+        node = get_target_node(code)
+        @test node !== nothing
+        let range = JETLS.get_source_range(node)
+            @test range.start.line == 0 && range.start.character == 0
+            @test range.var"end".line == 0 && range.var"end".character == sizeof("Base.@inline")
+        end
+    end
+
+    let code = """
         function test_func(x)
             return x │ + 1
         end
