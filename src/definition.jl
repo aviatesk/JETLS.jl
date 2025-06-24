@@ -39,6 +39,18 @@ function method_definition_range(m::Method)
             var"end" = Position(; line = line - 1, character = Int(typemax(Int32)))))
 end
 
+function module_definition_location(mod::Module)
+    (; file, line) = Base.moduleloc(mod)
+    line ≤ 0 && return nothing
+    file === Symbol("") && return nothing
+    uri = filename2uri(to_full_path(file))
+    return Location(;
+        uri,
+        range = Range(;
+            start = Position(; line = line - 1, character = 0),
+            var"end" = Position(; line = line - 1, character = Int(typemax(Int32)))))
+end
+
 function handle_DefinitionRequest(server::Server, msg::DefinitionRequest)
     origin_position = msg.params.position
     uri = msg.params.textDocument.uri
@@ -65,8 +77,26 @@ function handle_DefinitionRequest(server::Server, msg::DefinitionRequest)
         return send(server, DefinitionResponse(; id = msg.id, result = null))
     end
 
+    obj = objtyp.val
+    if obj isa Module
+        modloc = module_definition_location(obj)
+        if modloc === nothing
+            return send(server, DefinitionResponse(; id = msg.id, result = null))
+        elseif supports(server, :textDocument, :definition, :linkSupport)
+            originSelectionRange = get_source_range(node)
+            result = LocationLink[LocationLink(;
+                targetUri = modloc.uri,
+                targetRange = modloc.range,
+                targetSelectionRange = modloc.range,
+                originSelectionRange)]
+            return send(server, DefinitionResponse(; id = msg.id, result))
+        else
+            return send(server, DefinitionResponse(; id = msg.id, result = modloc))
+        end
+    end
+
     # TODO modify this aggregation logic when we start to use more precise location informaiton
-    ms = filter(!is_location_unknown, unique(Base.updated_methodloc, methods(objtyp.val)))
+    ms = filter(!is_location_unknown, unique(Base.updated_methodloc, methods(obj)))
 
     if isempty(ms)
         send(server, DefinitionResponse(; id = msg.id, result = null))

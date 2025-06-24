@@ -312,7 +312,7 @@ Represents a link between a source and a target location.
     """
     The range that should be selected and revealed when this link is being
     followed, e.g the name of a function. Must be contained by the
-    `targetRange`. See also `DocumentSymbol#range`
+    `targetRange`. See also [`Range`](@ref).
     """
     targetSelectionRange::Range
 end
