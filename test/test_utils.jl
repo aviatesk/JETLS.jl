@@ -171,14 +171,23 @@ end
     @test JETLS.create_source_location_link("/path/to/file.jl", line=42, character=10) == "[/path/to/file.jl:42](file:///path/to/file.jl#L42C10)"
 end
 
-function get_target_node(code::AbstractString, pos::Int)
+function _parse(T, code::AbstractString;
+                rule=:all, filename=@__FILE__, first_line=@__LINE__)
     parsed_stream = JS.ParseStream(code)
-    JS.parse!(parsed_stream; rule=:all)
-    st = JS.build_tree(JL.SyntaxTree, parsed_stream)
-    node = JETLS.select_target_node(st, pos)
-    return node
+    JS.parse!(parsed_stream; rule)
+    return JS.build_tree(T, parsed_stream; filename, first_line)
+end
+jsparse(args...; kwargs...) = _parse(JS.SyntaxNode, args...; kwargs...)
+jlparse(args...; kwargs...) = _parse(JL.SyntaxTree, args...; kwargs...)
+
+@testset "noparen_macrocall" begin
+    @test JETLS.noparen_macrocall(jlparse("@test true"; rule=:statement))
+    @test JETLS.noparen_macrocall(jlparse("@interface AAA begin end"; rule=:statement))
+    @test !JETLS.noparen_macrocall(jlparse("@test(true)"; rule=:statement))
+    @test !JETLS.noparen_macrocall(jlparse("r\"xxx\""; rule=:statement))
 end
 
+get_target_node(code::AbstractString, pos::Int) = JETLS.select_target_node(jlparse(code), pos)
 function get_target_node(code::AbstractString, matcher::Regex=r"│")
     clean_code, positions = JETLS.get_text_and_positions(code, matcher)
     @assert length(positions) == 1
@@ -246,6 +255,40 @@ end
         let range = JETLS.get_source_range(node)
             @test range.start.line == 0 && range.start.character == 0
             @test range.var"end".line == 0 && range.var"end".character == sizeof("Core")
+        end
+    end
+
+    let code = """
+        @inline│ callsin(x) = sin(x)
+        """
+        node = get_target_node(code)
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"MacroName"
+        let range = JETLS.get_source_range(node)
+            @test range.start.line == 0 && range.start.character == 0 # include at mark
+            @test range.var"end".line == 0 && range.var"end".character == sizeof("@inline")
+        end
+    end
+
+    let code = """
+        Base.@inline│ callsin(x) = sin(x)
+        """
+        node = get_target_node(code)
+        @test node !== nothing
+        let range = JETLS.get_source_range(node)
+            @test range.start.line == 0 && range.start.character == 0
+            @test range.var"end".line == 0 && range.var"end".character == sizeof("Base.@inline")
+        end
+    end
+
+    let code = """
+        text│"sin"
+        """
+        node = get_target_node(code)
+        @test node !== nothing
+        let range = JETLS.get_source_range(node)
+            @test range.start.line == 0 && range.start.character == 0
+            @test range.var"end".line == 0 && range.var"end".character == sizeof("text")
         end
     end
 

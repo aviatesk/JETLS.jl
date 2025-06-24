@@ -156,14 +156,10 @@ function get_prev_token_idx(fi::FileInfo, pos::Position)
     get_prev_token_idx(fi.parsed_stream, xy_to_offset(fi, pos))
 end
 
-function noparen_macrocall(st0::JL.SyntaxTree)
-    JS.kind(st0) === JS.K"macrocall" || return false
-    if JS.numchildren(st0) ≥ 2 && JS.has_flags(st0[2], JS.RAW_STRING_FLAG)
-        # closed string macro
-        return false
-    end
-    return !JS.has_flags(st0, JS.PARENS_FLAG)
-end
+noparen_macrocall(st0::JL.SyntaxTree) =
+    JS.kind(st0) === JS.K"macrocall" &&
+    !(JS.numchildren(st0) ≥ 2 && JS.kind(st0[1]) === JS.K"StringMacroName") &&
+    !JS.has_flags(st0, JS.PARENS_FLAG)
 
 """
 Determines the node that the user most likely intends to navigate to.
@@ -179,17 +175,17 @@ function select_target_node(st::JL.SyntaxTree, offset::Int)
     bas = byte_ancestors(st, offset)
 
     target = first(bas)
-    if JS.kind(target) !== JS.K"Identifier"
+    if !JS.is_identifier(target)
         offset > 0 || return nothing
         # Support cases like `var│`, `func│(5)`
         bas = byte_ancestors(st, offset - 1)
         target = first(bas)
-        if JS.kind(target) !== JS.K"Identifier"
+        if !JS.is_identifier(target)
             return nothing
         end
     end
 
-    for i in 2:length(bas)
+    for i = 2:length(bas)
         basᵢ = bas[i]
         if (JS.kind(basᵢ) === JS.K"." &&
             basᵢ[1] !== target) # e.g. don't allow jumps to `tmeet` from `Base.Compi│ler.tmeet`
@@ -208,14 +204,14 @@ end
 
 Returns the position information of `node` in the source file in `LSP.Range` format.
 """
-function get_source_range(node::JL.SyntaxTree)
+function get_source_range(node::JL.SyntaxTree; include_at_mark::Bool=true)
     sourcefile = JS.sourcefile(node)
     first_line, first_char = JS.source_location(sourcefile, JS.first_byte(node))
     last_line, last_char = JS.source_location(sourcefile, JS.last_byte(node))
     return Range(;
         start = Position(;
             line = first_line - 1,
-            character = first_char - 1),
+            character = first_char - 1 - (include_at_mark && JS.kind(node) === JS.K"MacroName")),
         var"end" = Position(;
             line = last_line - 1,
             character = last_char))
