@@ -7,7 +7,7 @@ using JETLS
     linenum = @__LINE__; method_for_test_method_definition_range() = 1
     @assert length(methods(method_for_test_method_definition_range)) == 1
     test_method = first(methods(method_for_test_method_definition_range))
-    method_location = JETLS.method_to_location(test_method)
+    method_location = JETLS.get_method_location(test_method)
     @test method_location isa JETLS.Location
     @test JETLS.URIs2.uri2filepath(method_location.uri) == @__FILE__
     @test method_location.range.start.line == (linenum - 1)
@@ -364,7 +364,7 @@ end
     #=103=#
     #=104=# function not_linear()
     #=105=#     finish = false
-    #=106=#	    @label l1
+    #=106=#     @label l1
     #=107=#     (!finish) && @goto l2
     #=108=#     return x│
     #=109=#     @label l2
@@ -587,7 +587,6 @@ end
 
     # remove prefixes like `#= 1=#` first
     script_code = join(replace.(split(script_code, '\n'), r"#=\s*\d+\s*=#\s" => ""), '\n')
-    @show script_code
     clean_code, positions = JETLS.get_text_and_positions(script_code, r"│")
     @assert length(positions) == length(testers)
 
@@ -605,12 +604,10 @@ end
             (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, clean_code))
             @test raw_res isa PublishDiagnosticsNotification
             @test raw_res.params.uri == uri
-
             for (i, (pos, tester)) in enumerate(zip(positions, testers))
                 @testset let loc = functionloc(only(methods(tester))),
                              id = id_counter[] += 1,
                              i = i
-
                     (; raw_res) = writereadmsg(DefinitionRequest(;
                         id,
                         params = DefinitionParams(;

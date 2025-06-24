@@ -31,7 +31,7 @@ Get the range of a method. (will be deprecated in the future)
 TODO (later): get the correct range of the method definition.
 For now, it just returns the first line of the method
 """
-function method_to_location(m::Method)
+function get_method_location(m::Method)
     file, line = functionloc(m)
     file = to_full_path(file)
     return Location(;
@@ -61,7 +61,7 @@ function definition_target_methods(state::ServerState, uri::URI, pos::Position, 
     return filter(!is_location_unknown, unique(Base.updated_methodloc, methods(objtyp.val)))
 end
 
-function binding_to_location(b::JL.SyntaxTree, uri::URI)
+function get_binding_location(b::JL.SyntaxTree, uri::URI)
     return Location(; uri = uri, range = get_source_range(b))
 end
 
@@ -173,11 +173,11 @@ function handle_DefinitionRequest(server::Server, msg::DefinitionRequest)
             id = msg.id,
             result = vcat(
                 create_definition(ms,
-                    method_to_location,
+                    get_method_location,
                     originSelectionRange,
                     location_link_support),
                 create_definition(lbs,
-                    Base.Fix2(binding_to_location, uri),
+                    Base.Fix2(get_binding_location, uri),
                     originSelectionRange,
                     location_link_support),
             )),
