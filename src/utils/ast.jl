@@ -201,6 +201,30 @@ function select_target_node(st::JL.SyntaxTree, offset::Int)
 end
 
 """
+    select_dotprefix_node(st::JL.SyntaxTree, offset::Int) -> dotprefix::Union{JL.SyntaxTree,Nothing}
+
+If the code at `offset` position is dot accessor code, get the code being dot accessed.
+For example, `Base.show_│` returns the `SyntaxTree` of `Base`.
+If it's not dot accessor code, return `nothing`.
+"""
+function select_dotprefix_node(st::JL.SyntaxTree, offset::Int)
+    bas = byte_ancestors(st, offset-1)
+    dotprefix = nothing
+    for i = 1:length(bas)
+        basᵢ = bas[i]
+        if JS.kind(basᵢ) === JS.K"."
+            dotprefix = basᵢ
+        elseif dotprefix !== nothing
+            break
+        end
+    end
+    if dotprefix !== nothing && JS.numchildren(dotprefix) ≥ 2
+        return dotprefix[1]
+    end
+    return nothing
+end
+
+"""
     get_source_range(node::JL.SyntaxTree) -> range::LSP.Range
 
 Returns the position information of `node` in the source file in `LSP.Range` format.

@@ -235,9 +235,8 @@ end
 @testset "get_completion_items" begin
     server = JETLS.Server()
     state = server.state
-    text, curpos2 = get_text_and_positions("""
+    text, positions = get_text_and_positions("""
     module Foo
-
         struct Bar
             x::Int
         end
@@ -256,10 +255,17 @@ end
             #=cursor=# # show `y_var` ideally
             return @inline typeof(y_var)
         end
+
+        baremodule ModuleCompletion
+        const xxx = nothing
+        end
+        function dot_completion_test(x)
+            ModuleCompletion.x#=cursor=#
+        end
     end # module Foo
     """)
-    @test length(curpos2) == 2
-    pos1, pos2  = curpos2
+    @test length(positions) == 3
+    pos1, pos2, pos3 = positions
     filename = abspath("foo.jl")
     uri = filename2uri(filename)
     JETLS.cache_file_info!(state, uri, #=version=#1, text)
@@ -297,6 +303,18 @@ end
         end
         @test_broken any(items) do item
             item.label == "y_var"
+        end
+    end
+    let params = CompletionParams(;
+            textDocument=TextDocumentIdentifier(; uri),
+            position=pos3)
+        items = JETLS.get_completion_items(state, uri, params)
+        @test any(items) do item
+            item.label == "xxx"
+        end
+        @test !any(items) do item
+            item.label == "getx" ||
+            item.label == "foo"
         end
     end
 end
