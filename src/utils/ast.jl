@@ -176,17 +176,15 @@ refs: https://github.com/rust-lang/rust-analyzer/blob/6acff6c1f8306a0a1d29be8fd1
       https://github.com/aviatesk/JETLS.jl/pull/61#discussion_r2134707773
 """
 function select_target_node(st::JL.SyntaxTree, offset::Int)
-    is_selectable(x::JL.SyntaxTree) = JS.kind(x) in JS.KSet"Identifier MacroName StringMacroName"
-
     bas = byte_ancestors(st, offset)
 
     target = first(bas)
-    if !is_selectable(target)
+    if !JS.is_identifier(target)
         offset > 0 || return nothing
         # Support cases like `var│`, `func│(5)`
         bas = byte_ancestors(st, offset - 1)
         target = first(bas)
-        if !is_selectable(target)
+        if !JS.is_identifier(target)
             return nothing
         end
     end
