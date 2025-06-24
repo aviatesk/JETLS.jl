@@ -309,6 +309,8 @@ end
 # global completions
 # ==================
 
+# TODO support completion of string macros, e.g. `te|` to `text"|"`
+
 function global_completions!(items::Dict{String, CompletionItem}, state::ServerState, uri::URI, params::CompletionParams)
     let context = params.context
         !isnothing(context) &&
@@ -336,14 +338,14 @@ function global_completions!(items::Dict{String, CompletionItem}, state::ServerS
     elseif isnothing(prev_token_idx)
         edit_start_pos = Position(; line=0, character=0)
         is_macro_invoke = false
-    elseif prev_kind in JS.KSet"Comment String"
-        # When completion is triggered within the scope of a comment, it's difficult to
-        # properly specify `edit_start_pos`.
-        # Simply specify only the `label` and let the client handle it appropriately.
-        edit_start_pos = nothing
+    elseif JS.is_identifier(prev_kind)
+        edit_start_pos = offset_to_xy(fi, JS.token_first_byte(fi.parsed_stream, prev_token_idx))
         is_macro_invoke = false
     else
-        edit_start_pos = offset_to_xy(fi, JS.token_first_byte(fi.parsed_stream, prev_token_idx))
+        # When completion is triggered within unknown scope (e.g., comment),
+        # it's difficult to properly specify `edit_start_pos`.
+        # Simply specify only the `label` and let the client handle it appropriately.
+        edit_start_pos = nothing
         is_macro_invoke = false
     end
 
