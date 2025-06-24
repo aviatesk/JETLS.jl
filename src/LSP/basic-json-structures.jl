@@ -476,7 +476,6 @@ let markdown: MarkdownContent = {
 
 *Please Note* that clients might sanitize the return markdown. A client could
 decide to remove HTML from the markdown to avoid script execution.
- */
 """
 @interface MarkupContent begin
     "The type of the Markup"

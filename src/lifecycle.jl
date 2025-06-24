@@ -79,6 +79,16 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
     end
 
     if getobjpath(params.capabilities,
+        :textDocument, :hover, :dynamicRegistration) !== true
+        hoverProvider = hover_options()
+        if JETLS_DEV_MODE
+            @info "Registering 'textDocument/hover' with `InitializeResponse`"
+        end
+    else
+        hoverProvider = nothing # will be registered dynamically
+    end
+
+    if getobjpath(params.capabilities,
         :textDocument, :diagnostic, :dynamicRegistration) !== true
         diagnosticProvider = diagnostic_options()
         if JETLS_DEV_MODE
@@ -99,6 +109,7 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
             completionProvider,
             signatureHelpProvider,
             definitionProvider,
+            hoverProvider,
             diagnosticProvider,
         ),
         serverInfo = (;
@@ -158,6 +169,18 @@ function handle_InitializedNotification(server::Server)
         # NOTE If definition's `dynamicRegistration` is not supported,
         # it needs to be registered along with initialization in the `InitializeResponse`,
         # since `DefinitionRegistrationOptions` does not extend `StaticRegistrationOptions`.
+    end
+
+    if getobjpath(state.init_params.capabilities,
+        :textDocument, :hover, :dynamicRegistration) === true
+        push!(registrations, hover_registration())
+        if JETLS_DEV_MODE
+            @info "Dynamically registering 'textDocument/hover' upon `InitializedNotification`"
+        end
+    else
+        # NOTE If hover's `dynamicRegistration` is not supported,
+        # it needs to be registered along with initialization in the `InitializeResponse`,
+        # since `HoverRegistrationOptions` does not extend `StaticRegistrationOptions`.
     end
 
     if getobjpath(state.init_params.capabilities,

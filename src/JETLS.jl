@@ -59,6 +59,7 @@ include("registration.jl")
 include("completions.jl")
 include("signature-help.jl")
 include("definition.jl")
+include("hover.jl")
 include("diagnostics.jl")
 include("lifecycle.jl")
 
@@ -172,6 +173,8 @@ function _handle_message(server::Server, msg)
         return handle_SignatureHelpRequest(server, msg)
     elseif msg isa DefinitionRequest
         return handle_DefinitionRequest(server, msg)
+    elseif msg isa HoverRequest
+        return handle_HoverRequest(server, msg)
     elseif msg isa DocumentDiagnosticRequest
         return handle_DocumentDiagnosticRequest(server, msg)
     elseif msg isa WorkspaceDiagnosticRequest
