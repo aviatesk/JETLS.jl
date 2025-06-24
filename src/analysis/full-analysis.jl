@@ -71,9 +71,9 @@ function end_full_analysis_progress(server::Server, info::FullAnalysisInfo)
                 message = "Full analysis finished"))))
 end
 
-function analyze_parsed_if_exist(server::Server, info::FullAnalysisInfo, args...;
-                                 toplevel_logger = nothing, kwargs...)
+function analyze_parsed_if_exist(server::Server, info::FullAnalysisInfo, args...)
     uri = entryuri(info.entry)
+    jetconfigs = entryjetconfigs(info.entry)
     if haskey(server.state.saved_file_cache, uri)
         parsed_stream = server.state.saved_file_cache[uri].parsed_stream
         filename = uri2filename(uri)
@@ -81,7 +81,7 @@ function analyze_parsed_if_exist(server::Server, info::FullAnalysisInfo, args...
         parsed = JS.build_tree(JS.SyntaxNode, parsed_stream; filename)
         begin_full_analysis_progress(server, info)
         try
-            return JET.analyze_and_report_expr!(LSInterpreter(server, info), parsed, filename, args...; toplevel_logger, kwargs...)
+            return JET.analyze_and_report_expr!(LSInterpreter(server, info), parsed, filename, args...; jetconfigs...)
         finally
             end_full_analysis_progress(server, info)
         end
@@ -90,7 +90,7 @@ function analyze_parsed_if_exist(server::Server, info::FullAnalysisInfo, args...
         @assert filepath !== nothing "Unsupported URI: $uri"
         begin_full_analysis_progress(server, info)
         try
-            return JET.analyze_and_report_file!(LSInterpreter(server, info), filepath, args...; toplevel_logger, kwargs...)
+            return JET.analyze_and_report_file!(LSInterpreter(server, info), filepath, args...; jetconfigs...)
         finally
             end_full_analysis_progress(server, info)
         end
@@ -254,9 +254,7 @@ function initiate_analysis_unit!(server::Server, uri::URI; token::Union{Nothing,
                 pkgfileuri = filepath2uri(pkgfile)
                 entry = PackageSourceAnalysisEntry(env_path, pkgfileuri, pkgid)
                 info = FullAnalysisInfo(entry, token, #=reanalyze=#false, #=n_files=#0)
-                res = analyze_parsed_if_exist(server, info, pkgid;
-                    analyze_from_definitions=true,
-                    concretization_patterns=[:(x_)])
+                res = analyze_parsed_if_exist(server, info, pkgid)
                 return entry, res
             end
             if entry_result === nothing
@@ -327,9 +325,7 @@ function reanalyze!(server::Server, analysis_unit::AnalysisUnit; token::Union{No
     elseif entry isa PackageSourceAnalysisEntry
         info = FullAnalysisInfo(entry, token, #=reanalyze=#true, n_files)
         result = activate_do(entry.env_path) do
-            analyze_parsed_if_exist(server, info, entry.pkgid;
-                    analyze_from_definitions=true,
-                    concretization_patterns=[:(x_)])
+            analyze_parsed_if_exist(server, info, entry.pkgid)
         end
     elseif entry isa PackageTestAnalysisEntry
         info = FullAnalysisInfo(entry, token, #=reanalyze=#true, n_files)
