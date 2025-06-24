@@ -2,18 +2,29 @@ module test_definition
 
 using Test
 using JETLS
-using JETLS: method_definition_range
 
 @testset "method_definition_range" begin
     linenum = @__LINE__; method_for_test_method_definition_range() = 1
     @assert length(methods(method_for_test_method_definition_range)) == 1
 
     test_method = first(methods(method_for_test_method_definition_range))
-    method_range = method_definition_range(test_method)
+    method_range = JETLS.method_definition_range(test_method)
 
     @test method_range isa JETLS.Location
     @test JETLS.URIs2.uri2filepath(method_range.uri) == @__FILE__
     @test method_range.range.start.line == (linenum - 1)
+end
+
+module TestModuleDefinitionRange
+myidentity(x) = x
+end
+const LINE_TestModuleDefinitionRange = (@__LINE__) - 3
+
+@testset "module_definition_location" begin
+    loc = JETLS.module_definition_location(TestModuleDefinitionRange)
+    @test loc isa JETLS.Location
+    @test JETLS.URIs2.uri2filepath(loc.uri) == @__FILE__
+    @test loc.range.start.line == LINE_TestModuleDefinitionRange-1
 end
 
 include("setup.jl")
@@ -76,6 +87,9 @@ include("setup.jl")
     #=54=# let; func│; end
     #=55=#
     #=56=# 1 +│ 2
+    #=57=#
+    #=58=# M2│.m_func(1.0)
+    #=58=# Core│.isdefined
     """
 
     sin_cand_file, sin_cand_line = functionloc(first(methods(sin, (Float64,))))
@@ -203,6 +217,15 @@ include("setup.jl")
         # 1 +│ 2
         (result, uri) ->
             (length(result) >= 1)
+
+        # M2│.m_func(1.0)
+        (result, uri) ->
+            (result isa Location) &&
+            (result.uri == uri) &&
+            (result.range.start.line == 18)
+
+        # Core│.isdefined
+        (result, uri) -> (result === null) # `Base.moduleloc(Core)` doesn't return anything meaningful
     ]
 
     clean_code, positions = JETLS.get_text_and_positions(script_code, r"│")
