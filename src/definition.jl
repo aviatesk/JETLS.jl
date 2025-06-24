@@ -19,8 +19,10 @@ end
 # unregister(currently_running, Unregistration(;
 #     id=DEFINITION_REGISTRATION_ID,
 #     method=DEFINITION_REGISTRATION_METHOD))
-# register(currently_running, definition_resistration())
+# register(currently_running, definition_registration())
 
+const empty_methods = Method[]
+const empty_bindings = JL.BindingInfo[]
 is_location_unknown(m) = Base.updated_methodloc(m)[2] <= 0
 
 """
@@ -29,7 +31,7 @@ Get the range of a method. (will be deprecated in the future)
 TODO (later): get the correct range of the method definition.
 For now, it just returns the first line of the method
 """
-function method_definition_range(m::Method)
+function method_to_location(m::Method)
     file, line = functionloc(m)
     file = to_full_path(file)
     return Location(;
@@ -49,6 +51,49 @@ function module_definition_location(mod::Module)
         range = Range(;
             start = Position(; line = line - 1, character = 0),
             var"end" = Position(; line = line - 1, character = Int(typemax(Int32)))))
+
+function definition_target_methods(state::ServerState, uri::URI, pos::Position, offset, node)
+    (; mod, analyzer) = get_context_info(state, uri, pos)
+    objtyp = resolve_type(analyzer, mod, node)
+    objtyp isa Core.Const || return empty_methods
+
+    # TODO modify this aggregation logic when we start to use more precise location information
+    return filter(!is_location_unknown, unique(Base.updated_methodloc, methods(objtyp.val)))
+end
+
+function binding_to_location(b::JL.SyntaxTree, uri::URI)
+    return Location(; uri = uri, range = get_source_range(b))
+end
+
+function definition_target_localbindings(offset, st, node)
+    # We can skip lookups including access of outer modules
+    # because we only look for local bindings
+    kind(node) !== K"Identifier" && return empty_bindings
+
+    cbs = cursor_bindings(st, offset)
+    (cbs === nothing || isempty(cbs)) && return empty_bindings
+
+    # TODO: track all assignments to the same name in the current scope
+    matched_bindings = findall(b -> b[1].name == node.name_val, cbs)
+    isempty(matched_bindings) && return empty_bindings
+
+    @assert length(matched_bindings) <= 1 "Multiple bindings found for the same name"
+    return [cbs[first(matched_bindings)][2]]
+end
+
+function create_definition(@nospecialize(objects), obj_to_targetloc, origin_range::Range, locationlink_support::Bool)
+    if locationlink_support
+        return map(objects) do obj
+            loc = @inline obj_to_targetloc(obj)
+            LocationLink(;
+                targetUri = loc.uri,
+                targetRange = loc.range,
+                targetSelectionRange = loc.range,
+                originSelectionRange = origin_range)
+        end
+    else
+        return obj_to_targetloc.(objects)
+    end
 end
 
 function handle_DefinitionRequest(server::Server, msg::DefinitionRequest)
@@ -64,18 +109,23 @@ function handle_DefinitionRequest(server::Server, msg::DefinitionRequest)
                 error = file_cache_error(uri)))
     end
 
-    st = JS.build_tree(JL.SyntaxTree, fi.parsed_stream)
     offset = xy_to_offset(fi, origin_position)
+    st = JS.build_tree(JL.SyntaxTree, fi.parsed_stream)
     node = select_target_node(st, offset)
     if node === nothing
         return send(server, DefinitionResponse(; id = msg.id, result = null))
     end
+    originSelectionRange = get_source_range(node)
 
-    (; mod, analyzer) = get_context_info(server.state, uri, origin_position)
-    objtyp = resolve_type(analyzer, mod, node)
-    if !(objtyp isa Core.Const)
+    ms = definition_target_methods(server.state, uri, origin_position, offset, node)
+    lbs = definition_target_localbindings(offset, st, node)
+
+    location_link_support = supports(server, :textDocument, :definition, :linkSupport)
+
+    if isempty(ms) && isempty(lbs)
         return send(server, DefinitionResponse(; id = msg.id, result = null))
     end
+
 
     obj = objtyp.val
     if obj isa Module
@@ -116,4 +166,20 @@ function handle_DefinitionRequest(server::Server, msg::DefinitionRequest)
     else
         send(server, DefinitionResponse(; id = msg.id, result = method_definition_range.(ms)))
     end
+
+    send(
+        server,
+        DefinitionResponse(;
+            id = msg.id,
+            result = vcat(
+                create_definition(ms,
+                    method_to_location,
+                    originSelectionRange,
+                    location_link_support),
+                create_definition(lbs,
+                    Base.Fix2(binding_to_location, uri),
+                    originSelectionRange,
+                    location_link_support),
+            )),
+    )
 end
