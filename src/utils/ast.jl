@@ -156,14 +156,10 @@ function get_prev_token_idx(fi::FileInfo, pos::Position)
     get_prev_token_idx(fi.parsed_stream, xy_to_offset(fi, pos))
 end
 
-function noparen_macrocall(st0::JL.SyntaxTree)
-    JS.kind(st0) === JS.K"macrocall" || return false
-    if JS.numchildren(st0) ≥ 2 && JS.has_flags(st0[2], JS.RAW_STRING_FLAG)
-        # closed string macro
-        return false
-    end
-    return !JS.has_flags(st0, JS.PARENS_FLAG)
-end
+noparen_macrocall(st0::JL.SyntaxTree) =
+    JS.kind(st0) === JS.K"macrocall" &&
+    !(JS.numchildren(st0) ≥ 2 && JS.kind(st0[1]) === JS.K"StringMacroName") &&
+    !JS.has_flags(st0, JS.PARENS_FLAG)
 
 """
 Determines the node that the user most likely intends to navigate to.
