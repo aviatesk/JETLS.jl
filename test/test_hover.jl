@@ -40,6 +40,9 @@ include("setup.jl")
     func│(42)
     M_Doc.func│(42)
 
+    using Base: Base as B
+    B│.sin(42)
+
     end # module HoverTest
     """
 
@@ -55,6 +58,9 @@ include("setup.jl")
 
         # M_doc.func│(42)
         (; pat="Documented method.")
+
+        # B│.sin(42)
+        (; pat=string(@doc Base))
     ]
 
     clean_code, positions = JETLS.get_text_and_positions(pkg_code, r"│")
