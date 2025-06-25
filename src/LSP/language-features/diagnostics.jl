@@ -386,9 +386,9 @@ If a client receives a diagnostic report for a document in a workspace diagnosti
 for which the client also issues individual document diagnostic pull requests the client
 needs to decide which diagnostics win and should be presented. In general:
 
-    - diagnostics for a higher document version should win over those from a lower document
-      version (e.g. note that document versions are steadily increasing)
-    - diagnostics from a document pull should win over diagnostics from a workspace pull.
+- diagnostics for a higher document version should win over those from a lower document
+    version (e.g. note that document versions are steadily increasing)
+- diagnostics from a document pull should win over diagnostics from a workspace pull.
 """
 @interface WorkspaceDiagnosticRequest @extends RequestMessage begin
     method::String = "workspace/diagnostic"
