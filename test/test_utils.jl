@@ -310,4 +310,41 @@ end
     end
 end
 
+get_dotprefix_node(code::AbstractString, pos::Int) = JETLS.select_dotprefix_node(jlparse(code), pos)
+function get_dotprefix_node(code::AbstractString, matcher::Regex=r"│")
+    clean_code, positions = JETLS.get_text_and_positions(code, matcher)
+    @assert length(positions) == 1
+    return get_dotprefix_node(clean_code, JETLS.xy_to_offset(Vector{UInt8}(clean_code), positions[1]))
+end
+@testset "`select_dotprefix_node`" begin
+    @test isnothing(get_dotprefix_node("isnothing│"))
+    let node = get_dotprefix_node("Base.Sys.│")
+        @test !isnothing(node)
+        @test JS.sourcetext(node) == "Base.Sys"
+    end
+    let node = get_dotprefix_node("Base.Sys.CPU│")
+        @test !isnothing(node)
+        @test JS.sourcetext(node) == "Base.Sys"
+    end
+    let node = get_dotprefix_node("Base.Sy│s")
+        @test !isnothing(node)
+        @test JS.sourcetext(node) == "Base"
+    end
+    let node = get_dotprefix_node("""
+        function foo(x)
+            Core.│
+        end
+        """)
+        @test !isnothing(node)
+        @test JS.sourcetext(node) == "Core"
+    end
+    let node = get_dotprefix_node("""
+        function foo(x = Base.│)
+        end
+        """)
+        @test !isnothing(node)
+        @test JS.sourcetext(node) == "Base"
+    end
+end
+
 end # module test_utils

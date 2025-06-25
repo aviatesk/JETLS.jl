@@ -159,7 +159,7 @@ function cursor_bindings(st0_top::JL.SyntaxTree, b_top::Int)
     ctx3, st2 = try
         jl_lower_for_completion(st0)
     catch err
-        JETLS_DEV_MODE && @warn "Error in lowering" err
+        # JETLS_DEV_MODE && @warn "Error in lowering" err
         return nothing # lowering failed, e.g. because of incomplete input
     end
 
@@ -320,8 +320,23 @@ function global_completions!(items::Dict{String, CompletionItem}, state::ServerS
     pos = params.position
     fi = get_fileinfo(state, uri)
     fi === nothing && return nothing
-    (; mod, postprocessor) = get_context_info(state, uri, pos)
-    state.completion_resolver_info = (mod, postprocessor)
+    (; mod, analyzer, postprocessor) = get_context_info(state, uri, pos)
+    completion_module = mod
+
+    st = JS.build_tree(JL.SyntaxTree, fi.parsed_stream)
+    offset = xy_to_offset(fi, pos)
+    dotprefix = select_dotprefix_node(st, offset)
+    if !isnothing(dotprefix)
+        prefixtyp = resolve_type(analyzer, mod, dotprefix)
+        if prefixtyp isa Core.Const
+            prefixval = prefixtyp.val
+            if prefixval isa Module
+                completion_module = prefixval
+            end
+        end
+    end
+    state.completion_resolver_info = (completion_module, postprocessor)
+
     prev_token_idx = get_prev_token_idx(fi, pos)
     prev_kind = isnothing(prev_token_idx) ? nothing :
         JS.kind(fi.parsed_stream.tokens[prev_token_idx])
@@ -349,7 +364,7 @@ function global_completions!(items::Dict{String, CompletionItem}, state::ServerS
         is_macro_invoke = false
     end
 
-    for name in @invokelatest(names(mod; all=true, imported=true, usings=true))::Vector{Symbol}
+    for name in @invokelatest(names(completion_module; all=true, imported=true, usings=true))::Vector{Symbol}
         s = String(name)
         startswith(s, "#") && continue
 
