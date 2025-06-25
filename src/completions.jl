@@ -60,10 +60,9 @@ const sort_texts, max_sort_text = let
     _, max_sort_text = maximum(sort_texts)
     sort_texts, max_sort_text
 end
-function get_sort_text(offset::Int, isglobal::Bool)
-    if isglobal
-        return max_sort_text
-    end
+const max_sort_text1 = "10000"
+const max_sort_text2 = "100000"
+function get_sort_text(offset::Int)
     return get(sort_texts, offset, max_sort_text)
 end
 
@@ -275,7 +274,7 @@ function to_completion(binding::JL.BindingInfo,
             description = label_desc),
         kind = label_kind,
         documentation,
-        sortText = get_sort_text(sort_offset, #=isglobal=#false))
+        sortText = get_sort_text(sort_offset))
 end
 
 function local_completions!(items::Dict{String, CompletionItem},
@@ -290,7 +289,14 @@ function local_completions!(items::Dict{String, CompletionItem},
     # NOTE don't bail out even if `length(fi.parsed_stream.diagnostics) ≠ 0`
     # so that we can get some completions even for incomplete code
     st0 = JS.build_tree(JL.SyntaxTree, fi.parsed_stream)
-    cbs = cursor_bindings(st0, xy_to_offset(fi, params.position))
+    b = xy_to_offset(fi, params.position)
+    let idx = get_prev_token_idx(fi.parsed_stream, b)
+        if !isnothing(idx) && JS.kind(fi.parsed_stream.tokens[idx]) === JS.K"."
+            # prevent completions of local symbols for cases `JS.|`
+            return nothing
+        end
+    end
+    cbs = cursor_bindings(st0, b)
     cbs === nothing && return nothing
     for (bi, st, dist) in cbs
         ci = to_completion(bi, st, dist)
@@ -361,6 +367,16 @@ function global_completions!(items::Dict{String, CompletionItem}, state::ServerS
         is_macro_invoke = false
     end
 
+    prioritized_names = let s = Set{Symbol}()
+        pnames = @invokelatest(names(completion_module; all=true))::Vector{Symbol}
+        sizehint!(s, length(pnames))
+        for name in pnames
+            startswith(String(name), "#") && continue
+            push!(s, name)
+        end
+        s
+    end
+
     for name in @invokelatest(names(completion_module; all=true, imported=true, usings=true))::Vector{Symbol}
         s = String(name)
         startswith(s, "#") && continue
@@ -374,7 +390,6 @@ function global_completions!(items::Dict{String, CompletionItem}, state::ServerS
         end
 
         resolveName = newText = label = s
-        sortText = get_sort_text(0, #=isglobal=#true)
         filterText = nothing
         insertTextFormat = InsertTextFormat.PlainText
         if startswith_at
@@ -388,13 +403,18 @@ function global_completions!(items::Dict{String, CompletionItem}, state::ServerS
                 else
                     newText = label
                 end
-                sortText = filterText = strname
+                filterText = strname
                 resolveName = s
             else
                 description = "macro"
             end
         else
             description = "global"
+        end
+        if name in prioritized_names
+            sortText = max_sort_text1
+        else
+            sortText = max_sort_text2
         end
         textEdit = isnothing(edit_start_pos) ? nothing :
             TextEdit(;

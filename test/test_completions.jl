@@ -311,9 +311,11 @@ end
     end
     with_completion_items(pos3) do items
         # dot-prefixed global completion
-        @test any(items) do item
-            item.label == "xxx"
-        end
+        xxxidx = findfirst(item->item.label=="xxx", items)
+        @test !isnothing(xxxidx)
+        coreidx = findfirst(item->item.label=="Core", items) # Core is still available for baremodule
+        @test !isnothing(xxxidx)
+        @test items[xxxidx].sortText < items[coreidx].sortText # prioritize showing names defined within the completion context module
         @test !any(items) do item
             item.label == "getx" ||
             item.label == "foo"
