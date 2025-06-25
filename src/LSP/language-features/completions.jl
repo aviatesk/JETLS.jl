@@ -234,7 +234,7 @@ end
 
 # our own data structure for `data` field of `CompletionItem`
 struct CompletionData
-    needs_resolve::Bool
+    name::String
 end
 export CompletionData
 
