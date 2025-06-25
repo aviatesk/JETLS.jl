@@ -192,5 +192,5 @@ end
     If present save notifications are sent to the server.
     If omitted the notification should not be sent.
     """
-    save::Union{Union{Bool, SaveOptions}, Nothing} = nothing
+    save::Union{Bool, SaveOptions, Nothing} = nothing
 end

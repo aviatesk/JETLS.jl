@@ -373,7 +373,7 @@ export CompletionData
     # Tags
     - since - 3.16.0 additional type `InsertReplaceEdit`
     """
-    textEdit::Union{Union{TextEdit, InsertReplaceEdit}, Nothing} = nothing
+    textEdit::Union{TextEdit, InsertReplaceEdit, Nothing} = nothing
 
     """
     The edit text used if the completion item is part of a CompletionList and
@@ -468,7 +468,7 @@ presented in the editor.
         # Tags
         - since - 3.17.0
         """
-        editRange::Union{Union{Range, Nothing}, @interface begin
+        editRange::Union{Range, Nothing, @interface begin
             insert::Range
             replace::Range
         end} = nothing

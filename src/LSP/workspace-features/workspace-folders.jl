@@ -26,7 +26,7 @@ Returns an empty array if a workspace is open but no folders are configured.
     registered on the client side. The ID can be used to unregister for these events using
     the `client/unregisterCapability` request.
     """
-    changeNotifications::Union{Union{String, Bool}, Nothing} = nothing
+    changeNotifications::Union{String, Bool, Nothing} = nothing
 end
 
 @interface WorkspaceFolder begin

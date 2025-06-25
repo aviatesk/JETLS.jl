@@ -395,7 +395,7 @@ Diagnostic objects are only valid in the scope of a resource.
     severity::Union{DiagnosticSeverity.Ty, Nothing} = nothing
 
     "The diagnostic's code, which might appear in the user interface."
-    code::Union{Union{Int, String}, Nothing} = nothing
+    code::Union{Int, String, Nothing} = nothing
 
     """
     An optional property to describe the error code.
