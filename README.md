@@ -48,27 +48,6 @@ This section contains meta-documentation related to development.
 For more detailed coding guidelines, please refer to [AGENTS.md](./AGENTS.md),
 which has been organized to be easily recognized by AI agents.
 
-### AI-Assisted Development
-When working with AI agents for development, consider the following tips:
-- AI agents generally produce highly random code without test code to guide
-  them, yet they often struggle with writing quality test code themselves.
-  Thus the recommended approach is to prepare solid test code yourself first,
-  then ask the agent to implement the functionality based on these tests.
-- AI agents will run the entire JETLS test suite using `Pkg.test()` if not
-  specified otherwise, but as mentioned above, for best results, it's better to
-  include which test code/files to run in your prompt.
-- You can have the `./julia` script in the root directory of this repository to
-  specify which Julia binary should be used by agents. If the script doesn't
-  exist, the agent will default to using the system's `julia` command.
-  For example, you can specify a local Julia build by creating a `./julia`
-  script like this:
-  > ./julia
-  ```bash
-  #!/usr/bin/env bash
-  exec /path/to/julia/usr/bin/julia "$@"
-  ```
-  The `./julia` script is gitignored, so it won't be checked into the git tree.
-
 ### `[sources]` Dependencies
 
 In JETLS, since we need to use packages that aren’t yet registered
@@ -97,6 +76,17 @@ This lets you use any local JET implementation. After running `Pkg.develop("JET"
 you can restore the `[sources]` section, and perform any most of `Pkg`
 operations without any issues onward.
 The same applies to the other packages listed in `[sources]`.
+
+### When Test Fails Locally
+
+Some of JETLS's test cases depend on specific implementation details of dependency packages
+(especially JET and JS/JL), and may fail unless those dependency packages are
+from the exact commits specified in [Project.toml](./Project.toml), as mentioned above.
+
+It should be noted that during development, if the versions of those packages
+already installed in your locally cloned JETLS environment are not updated to
+the latest ones, you may see some tests fail. In such cases, make sure to run
+`Pkg.update()` and re-run the tests.
 
 ### `JETLS_DEV_MODE`
 
@@ -156,6 +146,27 @@ precompile_workload = false # Disable precompilation for JETLS
 [JET]
 precompile_workload = false # Optionally disable precompilation for JET if you're developing it simultaneously
 ```
+
+### AI-Assisted Development
+When working with AI agents for development, consider the following tips:
+- AI agents generally produce highly random code without test code to guide
+  them, yet they often struggle with writing quality test code themselves.
+  Thus the recommended approach is to prepare solid test code yourself first,
+  then ask the agent to implement the functionality based on these tests.
+- AI agents will run the entire JETLS test suite using `Pkg.test()` if not
+  specified otherwise, but as mentioned above, for best results, it's better to
+  include which test code/files to run in your prompt.
+- You can have the `./julia` script in the root directory of this repository to
+  specify which Julia binary should be used by agents. If the script doesn't
+  exist, the agent will default to using the system's `julia` command.
+  For example, you can specify a local Julia build by creating a `./julia`
+  script like this:
+  > ./julia
+  ```bash
+  #!/usr/bin/env bash
+  exec /path/to/julia/usr/bin/julia "$@"
+  ```
+  The `./julia` script is gitignored, so it won't be checked into the git tree.
 
 ### Dynamic Registration
 
