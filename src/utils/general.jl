@@ -101,7 +101,13 @@ end
 
 Takes a type `T` and defines a constructor for `T` as follows:
 ```julia
-T(x::T; f1::T1=x.f1, f2::T2=x.f2, ..., fn::Tn=x.fn) = T(f1, f2, ..., fn)
+function T(x::T;
+           f1::T1 = x.f1,
+           f2::T2 = x.f2,
+           ...,
+           fn::Tn = x.fn)
+    return T(f1, f2, ..., fn)
+end
 ```
 `T` must be overloadable in the macro call context.
 When overloading types from other modules, you can pass `Mod.T`.

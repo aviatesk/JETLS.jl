@@ -259,7 +259,7 @@ end
         baremodule ModuleCompletion
         const xxx = nothing
         end
-        function dot_completion_test(x)
+        function dot_completion_test(xarg)
             ModuleCompletion.x#=cursor=#
         end
 
@@ -310,19 +310,18 @@ end
         end
     end
     with_completion_items(pos3) do items
-        # dot-prefixed global completion
+        # `dot_completion_test`: dot-prefixed global completion
         xxxidx = findfirst(item->item.label=="xxx", items)
         @test !isnothing(xxxidx)
         coreidx = findfirst(item->item.label=="Core", items) # Core is still available for baremodule
         @test !isnothing(xxxidx)
         @test items[xxxidx].sortText < items[coreidx].sortText # prioritize showing names defined within the completion context module
-        @test !any(items) do item
-            item.label == "getx" ||
-            item.label == "foo"
-        end
+        @test isnothing(findfirst(item->item.label=="getx", items))
+        @test isnothing(findfirst(item->item.label=="foo", items))
+        @test isnothing(findfirst(item->item.label=="xarg", items)) # local completion should be disabled
     end
     with_completion_items(pos4) do items
-        # string macro case
+        # `str_macro_test`: string macro case
         @test any(items) do item
             item.label == "text\"\"" &&
             item.data isa CompletionData && item.data.name == "@text_str"

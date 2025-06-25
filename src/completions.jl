@@ -289,14 +289,7 @@ function local_completions!(items::Dict{String, CompletionItem},
     # NOTE don't bail out even if `length(fi.parsed_stream.diagnostics) ≠ 0`
     # so that we can get some completions even for incomplete code
     st0 = JS.build_tree(JL.SyntaxTree, fi.parsed_stream)
-    b = xy_to_offset(fi, params.position)
-    let idx = get_prev_token_idx(fi.parsed_stream, b)
-        if !isnothing(idx) && JS.kind(fi.parsed_stream.tokens[idx]) === JS.K"."
-            # prevent completions of local symbols for cases `JS.|`
-            return nothing
-        end
-    end
-    cbs = cursor_bindings(st0, b)
+    cbs = cursor_bindings(st0, xy_to_offset(fi, params.position))
     cbs === nothing && return nothing
     for (bi, st, dist) in cbs
         ci = to_completion(bi, st, dist)
@@ -326,20 +319,6 @@ function global_completions!(items::Dict{String, CompletionItem}, state::ServerS
     (; mod, analyzer, postprocessor) = get_context_info(state, uri, pos)
     completion_module = mod
 
-    st = JS.build_tree(JL.SyntaxTree, fi.parsed_stream)
-    offset = xy_to_offset(fi, pos)
-    dotprefix = select_dotprefix_node(st, offset)
-    if !isnothing(dotprefix)
-        prefixtyp = resolve_type(analyzer, mod, dotprefix)
-        if prefixtyp isa Core.Const
-            prefixval = prefixtyp.val
-            if prefixval isa Module
-                completion_module = prefixval
-            end
-        end
-    end
-    state.completion_resolver_info = (completion_module, postprocessor)
-
     prev_token_idx = get_prev_token_idx(fi, pos)
     prev_kind = isnothing(prev_token_idx) ? nothing :
         JS.kind(fi.parsed_stream.tokens[prev_token_idx])
@@ -366,6 +345,26 @@ function global_completions!(items::Dict{String, CompletionItem}, state::ServerS
         edit_start_pos = nothing
         is_macro_invoke = false
     end
+
+    # if we are in macro name context, then we don't need the local completions
+    # since macros are always defined top-level
+    is_completed = is_macro_invoke
+
+    st = JS.build_tree(JL.SyntaxTree, fi.parsed_stream)
+    offset = xy_to_offset(fi, pos)
+    dotprefix = select_dotprefix_node(st, offset)
+    if !isnothing(dotprefix)
+        prefixtyp = resolve_type(analyzer, mod, dotprefix)
+        if prefixtyp isa Core.Const
+            prefixval = prefixtyp.val
+            if prefixval isa Module
+                completion_module = prefixval
+            end
+        end
+        # disable local completions for dot-prefixed code for now
+        is_completed |= true
+    end
+    state.completion_resolver_info = (completion_module, postprocessor)
 
     prioritized_names = let s = Set{Symbol}()
         pnames = @invokelatest(names(completion_module; all=true))::Vector{Symbol}
@@ -433,9 +432,8 @@ function global_completions!(items::Dict{String, CompletionItem}, state::ServerS
             textEdit,
             data = CompletionData(#=name=#resolveName))
     end
-    # if we are in macro name context, then we don't need any local completions
-    # as macros are always defined top-level
-    return is_macro_invoke ? items : nothing # is_completed
+
+    return is_completed ? items : nothing
 end
 
 # LaTeX and emoji completions
