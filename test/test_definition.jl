@@ -7,7 +7,7 @@ using JETLS
     linenum = @__LINE__; method_for_test_method_definition_range() = 1
     @assert length(methods(method_for_test_method_definition_range)) == 1
     test_method = first(methods(method_for_test_method_definition_range))
-    method_location = JETLS.get_method_location(test_method)
+    method_location = JETLS.get_location(test_method)
     @test method_location isa JETLS.Location
     @test JETLS.URIs2.uri2filepath(method_location.uri) == @__FILE__
     @test method_location.range.start.line == (linenum - 1)
@@ -19,7 +19,7 @@ end
 const LINE_TestModuleDefinitionRange = (@__LINE__) - 3
 
 @testset "module_definition_location" begin
-    loc = JETLS.module_definition_location(TestModuleDefinitionRange)
+    loc = JETLS.get_location(TestModuleDefinitionRange)
     @test loc isa JETLS.Location
     @test JETLS.URIs2.uri2filepath(loc.uri) == @__FILE__
     @test loc.range.start.line == LINE_TestModuleDefinitionRange-1
@@ -28,7 +28,7 @@ end
 include("setup.jl")
 
 
-@testset "'Definition' request/responce" begin
+@testset "'Definition' for module, method request/responce" begin
     script_code = """
     #= 1=# func(x) = 1
     #= 2=# fu│nc(1.0)
@@ -191,12 +191,11 @@ include("setup.jl")
 
         # │func(1.0)
         (result, uri) ->
-            (length(result) >= 1) &&
-            (any(result) do candidate # Both of binding and method
-                candidate.uri == uri &&
-                candidate.range.start.line == 0 &&
-                candidate.range.start.character == 0
-            end)
+            (length(result) == 1) &&
+            (first(result).uri == uri) &&
+            (first(result).range.start.line == 0) &&
+            (first(result).range.start.character == 0)
+
 
         # M.m_func│(1.0)
         (result, uri) ->
@@ -222,9 +221,10 @@ include("setup.jl")
 
         # M2│.m_func(1.0)
         (result, uri) ->
-            (result isa Location) &&
-            (result.uri == uri) &&
-            (result.range.start.line == 18)
+            (length(result) == 1) &&
+            (first(result) isa Location) &&
+            (first(result).uri == uri) &&
+            (first(result).range.start.line == 18)
 
         # Core│.isdefined
         (result, uri) -> (result === null) # `Base.moduleloc(Core)` doesn't return anything meaningful
@@ -257,7 +257,7 @@ include("setup.jl")
     end
 end
 
-@testset "definition of local binding request/responce cycle" begin
+@testset "'Definition' for local bindings request/responce" begin
     script_code = """
     #= 1=# function func(x)
     #= 2=#     y = x│ + 1
@@ -372,6 +372,10 @@ end
     #=111=#     finish = true
     #=112=#     @goto l1
     #=113=# end
+    #=114=#
+    #=115=# function undefined_var()
+    #=116=#     return x│
+    #=117=# end
     """
 
     testers = [
@@ -583,6 +587,10 @@ end
             (first(result).range.start.character == 4) &&
             (first(result).range.var"end".line == 109) &&
             (first(result).range.var"end".character == 5)
+
+        # return x│
+        (result, uri) ->
+            (result === null)
     ]
 
     # remove prefixes like `#= 1=#` first

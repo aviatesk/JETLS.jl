@@ -133,7 +133,6 @@ the cursor (if any such tree exists), and the cursor's position within it.
 """
 function greatest_local(st0::JL.SyntaxTree, b::Int)
     bas = byte_ancestors(st0, b)
-
     first_global = findfirst(st -> JL.kind(st) in KSet"toplevel module", bas)
     @assert !isnothing(first_global)
     if first_global === 1
