@@ -36,15 +36,34 @@ function handle_HoverRequest(server::Server, msg::HoverRequest)
     end
 
     (; mod, analyzer, postprocessor) = get_context_info(server.state, uri, pos)
-    objtyp = resolve_type(analyzer, mod, node)
+    parentmod = mod
+    identifier_node = node
 
-    if !(objtyp isa Core.Const)
+    # TODO replace this AST hack with a proper abstract interpretation to resolve binding information
+    if JS.kind(node) === JS.K"." && JS.numchildren(node) ≥ 2
+        dotprefix = node[1]
+        dotprefixtyp = resolve_type(analyzer, mod, dotprefix)
+        if dotprefixtyp isa Core.Const
+            dotprefixval = dotprefixtyp.val
+            if dotprefixval isa Module
+                parentmod = dotprefixval
+                identifier_node = node[2]
+            end
+        end
+    end
+    if !JS.is_identifier(identifier_node)
         return send(server, HoverResponse(; id = msg.id, result = null))
     end
+    identifier = Expr(identifier_node)
+    if !(identifier isa Symbol)
+        return send(server, HoverResponse(; id = msg.id, result = null))
+    end
+    documentation = Base.Docs.doc(Base.Docs.Binding(parentmod, identifier))
+    value = postprocessor(string(documentation))
 
     contents = MarkupContent(;
         kind = MarkupKind.Markdown,
-        value = postprocessor(string(Base.Docs.doc(objtyp.val))))
+        value)
     range = get_source_range(node)
     return send(server, HoverResponse(;
         id = msg.id,

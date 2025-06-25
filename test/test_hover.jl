@@ -11,7 +11,9 @@ include("setup.jl")
     module HoverTest
 
     \"\"\"
-    Documented symbol
+        documented_binding
+
+    Documented binding.
     \"\"\"
     global documented_binding = 42
 
@@ -43,10 +45,10 @@ include("setup.jl")
 
     testers = [
         # documented_binding│
-        (; pat="Documented binding", brokens=(2,))
+        (; pat="Documented binding.")
 
         # udocumented_binding│
-        (; pat="No documentation found for", brokens=(2,))
+        (; pat="No documentation found")
 
         # func│(42)
         (; pat="Documented method.")
@@ -98,7 +100,9 @@ end
 @testset "'Hover' request/responce (script)" begin
     script_code = """
     \"\"\"
-    Documented symbol
+        documented_binding
+
+    Documented binding.
     \"\"\"
     global documented_binding = 42
 
@@ -125,23 +129,35 @@ end
     unexisting_binding│
     func│(42)
     M_Doc.func│(42)
+    sinx = @inline│ sin(42)
+    sinx = Base.@inline│ sin(42)
+    rx = r│"foo"
     """
 
     testers = [
         # documented_binding│
-        (; pat="Documented binding", brokens=1:2)
+        (; pat="Documented binding.")
 
         # udocumented_binding│
-        (; pat="No documentation found for", brokens=1:2)
+        (; pat="No documentation found")
 
         # unexisting_binding│
-        (;)
+        (; pat="No documentation found")
 
         # func│(42)
         (; pat="Documented method.")
 
         # M_doc.func│(42)
         (; pat="Documented method.")
+
+        # sinx = @inline│ sin(42)
+        (; pat=string(@doc @inline))
+
+        # sinx = Base.@inline│ sin(42)
+        (; pat=string(@doc @inline))
+
+        # rx = r│"foo"
+        (; pat=string(@doc r""))
     ]
 
     clean_code, positions = JETLS.get_text_and_positions(script_code, r"│")
