@@ -53,7 +53,7 @@ let (pkgcode, positions) = get_text_and_positions("""
             if idx !== nothing
                 item = result.items[idx]
                 data = item.data
-                @test data isa CompletionData && data.needs_resolve
+                @test data isa CompletionData
                 @test isnothing(item.documentation)
 
                 let id = id_counter[] += 1, raw_res, result

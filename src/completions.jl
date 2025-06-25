@@ -275,8 +275,7 @@ function to_completion(binding::JL.BindingInfo,
             description = label_desc),
         kind = label_kind,
         documentation,
-        sortText = get_sort_text(sort_offset, #=isglobal=#false),
-        data = CompletionData(#=needs_resolve=#false))
+        sortText = get_sort_text(sort_offset, #=isglobal=#false))
 end
 
 function local_completions!(items::Dict{String, CompletionItem},
@@ -308,8 +307,6 @@ end
 
 # global completions
 # ==================
-
-# TODO support completion of string macros, e.g. `te|` to `text"|"`
 
 function global_completions!(items::Dict{String, CompletionItem}, state::ServerState, uri::URI, params::CompletionParams)
     let context = params.context
@@ -368,28 +365,53 @@ function global_completions!(items::Dict{String, CompletionItem}, state::ServerS
         s = String(name)
         startswith(s, "#") && continue
 
-        if is_macro_invoke && !startswith(s, "@")
+        startswith_at = startswith(s, "@")
+
+        if is_macro_invoke && !startswith_at
             # If we are in a macro invocation context, we only want to complete macros.
             # Conversely, we allow macros to be completed in any context.
             continue
         end
 
-        textEdit = edit_start_pos === nothing ? nothing :
+        resolveName = newText = label = s
+        sortText = get_sort_text(0, #=isglobal=#true)
+        filterText = nothing
+        insertTextFormat = InsertTextFormat.PlainText
+        if startswith_at
+            if endswith(s, "_str")
+                description = "string macro"
+                strname = replace(lstrip(s, '@'), r"_str$" => "")
+                label = strname * "\"\""
+                if supports(state, :textDocument, :completion, :completionItem, :snippetSupport)
+                    newText = strname * "\"\${1:str}\"\$0" # ${0:flags}?
+                    insertTextFormat = InsertTextFormat.Snippet
+                else
+                    newText = label
+                end
+                sortText = filterText = strname
+                resolveName = s
+            else
+                description = "macro"
+            end
+        else
+            description = "global"
+        end
+        textEdit = isnothing(edit_start_pos) ? nothing :
             TextEdit(;
                 range = Range(;
                     start = edit_start_pos,
                     var"end" = pos),
-                newText = s)
+                newText)
 
         items[s] = CompletionItem(;
-            label = s,
-            labelDetails = CompletionItemLabelDetails(;
-                description = startswith(s, "@") ? "macro" : "global"),
+            label,
+            labelDetails = CompletionItemLabelDetails(; description),
             kind = CompletionItemKind.Variable,
-            documentation = nothing,
-            sortText = get_sort_text(0, #=isglobal=#true),
-            data = CompletionData(#=needs_resolve=#true),
-            textEdit)
+            sortText,
+            filterText,
+            insertTextFormat,
+            textEdit,
+            data = CompletionData(#=name=#resolveName))
     end
     # if we are in macro name context, then we don't need any local completions
     # as macros are always defined top-level
@@ -464,8 +486,7 @@ function add_emoji_latex_completions!(items::Dict{String,CompletionItem}, state:
                 range = Range(;
                     start = backslash_pos,
                     var"end" = pos),
-                newText = val),
-            data = CompletionData(false))
+                newText = val))
     end
 
     emojionly || foreach(REPL.REPLCompletions.latex_symbols) do (key, val)
@@ -482,22 +503,17 @@ end
 # completion resolver
 # ===================
 
+@define_override_constructor LSP.CompletionItem
+
 function resolve_completion_item(state::ServerState, item::CompletionItem)
     isdefined(state, :completion_resolver_info) || return item
     data = item.data
     data isa CompletionData || return item
-    data.needs_resolve || return item
     mod, postprocessor = state.completion_resolver_info
-    name = Symbol(item.label)
+    name = Symbol(data.name)
     binding = Base.Docs.Binding(mod, name)
     docs = postprocessor(string(Base.Docs.doc(binding)))
-    return CompletionItem(;
-        label = item.label,
-        labelDetails = item.labelDetails,
-        kind = item.kind,
-        detail = item.detail,
-        sortText = item.sortText,
-        textEdit = item.textEdit,
+    return CompletionItem(item;
         documentation = MarkupContent(;
             kind = MarkupKind.Markdown,
             value = docs))
