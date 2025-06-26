@@ -106,7 +106,7 @@ function handle_DefinitionRequest(server::Server, msg::DefinitionRequest)
     locationlink_support = supports(server, :textDocument, :definition, :linkSupport)
     originSelectionRange = get_source_range(node)
 
-    lbs = definition_target_localbindings(offset, st, node, uri)
+    lbs = definition_target_localbindings(offset, st0, node, uri)
     if !isnothing(lbs)
         return send(server,
             DefinitionResponse(;
