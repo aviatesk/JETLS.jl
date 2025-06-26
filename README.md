@@ -63,15 +63,16 @@ the list itself is subject to change.
   - [x] LaTeX/Emoji completion
   - [ ] Method signature completion
 - Definition
-  - [x] Global method support
-  - [ ] Global binding support
-  - [ ] Local binding support
-  - [ ] Type-aware definition
+  - [x] Method defintion
+  - [ ] Global binding definition
+  - [ ] Local binding definition
+  - [ ] Type-aware method definition
 - Hover
-  - [x] Global method support
-  - [ ] Global binding support
-  - [ ] Local binding support
-  - [ ] Type on hover
+  - [x] Method documentation
+  - [x] Global binding documentation
+  - [ ] Local binding location
+  - [ ] Type-aware method documentation
+  - [ ] Type of local binding on hover
 - [ ] Formatting
 
 Detailed development notes and progress for this project are collected at https://publish.obsidian.md/jetls,
