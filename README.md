@@ -52,6 +52,8 @@ the list itself is subject to change.
   - [x] Document synchronization
   - [ ] JuliaLowering integration
   - [ ] Incremental analysis
+  - [ ] Recursive analysis for dependencies
+  - [ ] Cross-server-process cache system
 - Diagnostics
   - [x] Report undefined bindings
   - [ ] Report potential `MethodError`
