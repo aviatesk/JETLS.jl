@@ -41,6 +41,40 @@ frontends, please refer to the [Other editors](#other-editors) section.
 - In the [Extension Development Host](https://code.visualstudio.com/api/get-started/your-first-extension#:~:text=Then%2C%20inside%20the%20editor%2C%20press%20F5.%20This%20will%20compile%20and%20run%20the%20extension%20in%20a%20new%20Extension%20Development%20Host%20window.)
   instance of VSCode, open a Julia file.
 
+## Roadmaps
+
+This is a summary of currently implemented features and features that will
+likely be implemented in the near future, for those who want to test this server.
+Please note that not only the progress of the list, but also the structure of
+the list itself is subject to change.
+
+- Full-Analysis
+  - [x] Document synchronization
+  - [ ] JuliaLowering integration
+  - [ ] Incremental analysis
+- Diagnostics
+  - [x] Report undefined bindings
+  - [ ] Report potential `MethodError`
+- Completion
+  - [x] Global symbol completion
+  - [x] Local binding completion
+  - [x] LaTeX/Emoji completion
+  - [ ] Method signature completion
+- Definition
+  - [x] Global method support
+  - [ ] Global binding support
+  - [ ] Local binding support
+  - [ ] Type-aware definition
+- Hover
+  - [x] Global method support
+  - [ ] Global binding support
+  - [ ] Local binding support
+  - [ ] Type on hover
+- [ ] Formatting
+
+Detailed development notes and progress for this project are collected at https://publish.obsidian.md/jetls,
+so those interested might want to take a look.
+
 ## Development Note
 
 ### Coding Guidelines
