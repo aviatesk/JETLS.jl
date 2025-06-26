@@ -26,7 +26,7 @@ function withserver(f;
     out = Base.BufferStream()
     received_queue = Channel{Any}(Inf)
     sent_queue = Channel{Any}(Inf)
-    server = Server(Endpoint(in, out)) do s::Symbol, x
+    server = Server(LSEndpoint(in, out)) do s::Symbol, x
         @nospecialize x
         if s === :received
             put!(received_queue, x)
@@ -83,13 +83,13 @@ function withserver(f;
         if read == 0
         elseif read == 1
             raw_res = take_with_timeout!(sent_queue)
-            json_res = JSONRPC.readmsg(out)
+            json_res = JSONRPC.readmsg(out, method_dispatcher)
         else
             raw_res = Any[]
             json_res = Any[]
             for _ = 1:read
                 push!(raw_res, take_with_timeout!(sent_queue))
-                push!(json_res, JSONRPC.readmsg(out))
+                push!(json_res, JSONRPC.readmsg(out, method_dispatcher))
             end
         end
         @test isempty(received_queue) && isempty(sent_queue)
@@ -119,13 +119,13 @@ function withserver(f;
         if read == 0
         elseif read == 1
             raw_msg = take_with_timeout!(sent_queue)
-            json_msg = JSONRPC.readmsg(out)
+            json_msg = JSONRPC.readmsg(out, method_dispatcher)
         else
             raw_msg = Any[]
             json_msg = Any[]
             for _ = 1:read
                 push!(raw_msg, take_with_timeout!(sent_queue))
-                push!(json_msg, JSONRPC.readmsg(out))
+                push!(json_msg, JSONRPC.readmsg(out, method_dispatcher))
             end
         end
         @test isempty(received_queue) && isempty(sent_queue)

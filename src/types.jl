@@ -132,7 +132,7 @@ struct Server{Callback}
         )
     end
 end
-Server() = Server(Returns(nothing), Endpoint(IOBuffer(), IOBuffer())) # used for tests
+Server() = Server(Returns(nothing), LSEndpoint(IOBuffer(), IOBuffer())) # used for tests
 
 """
     send(state::ServerState, msg)
