@@ -123,8 +123,9 @@ function handle_DefinitionRequest(server::Server, msg::DefinitionRequest)
 
     objtyp isa Core.Const || return send(server, DefinitionResponse(; id = msg.id, result = null))
 
-    if objtyp.val isa Module
-        if is_location_unknown(objtyp.val)
+    objval = objtyp.val
+    if objval isa Module
+        if is_location_unknown(objval)
             return send(server, DefinitionResponse(; id = msg.id, result = null))
         else
             return send(server,
