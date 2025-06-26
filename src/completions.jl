@@ -106,7 +106,7 @@ function is_relevant(ctx::JL.AbstractLoweringContext,
                      cursor::Int)
     (;start, stop) = JS.byte_range(JL.binding_ex(ctx, binding.id))
     !binding.is_internal &&
-        !in(cursor, (start+1):(stop+1)) &&
+        !in(cursor, start:(stop+1)) &&
         (binding.kind === :global
          # || we could relax this for locals defined before the end of the
          #    largest for/while containing the cursor
