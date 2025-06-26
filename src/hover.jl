@@ -28,9 +28,9 @@ end
                 error = file_cache_error(uri)))
     end
 
-    st = JS.build_tree(JL.SyntaxTree, fi.parsed_stream)
+    st0 = JS.build_tree(JL.SyntaxTree, fi.parsed_stream)
     offset = xy_to_offset(fi, pos)
-    node = select_target_node(st, offset)
+    node = select_target_node(st0, offset)
     if node === nothing
         return send(server, HoverResponse(; id = msg.id, result = null))
     end

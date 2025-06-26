@@ -162,8 +162,11 @@ noparen_macrocall(st0::JL.SyntaxTree) =
     !JS.has_flags(st0, JS.PARENS_FLAG)
 
 """
+    select_target_node(st0::JL.SyntaxTree, offset::Int) -> target::Union{JL.SyntaxTree,Nothing}
+
 Determines the node that the user most likely intends to navigate to.
 Returns `nothing` if no suitable one is found.
+Currently `st0` needs to be a `SyntaxTree` before lowering.
 
 Currently, it simply checks the ancestors of the node located at the given offset.
 
@@ -172,14 +175,14 @@ refs:
 - https://github.com/rust-lang/rust-analyzer/blob/6acff6c1f8306a0a1d29be8fd1ffa63cff1ad598/crates/ide/src/goto_definition.rs#L47-L62
 - https://github.com/aviatesk/JETLS.jl/pull/61#discussion_r2134707773
 """
-function select_target_node(st::JL.SyntaxTree, offset::Int)
-    bas = byte_ancestors(st, offset)
+function select_target_node(st0::JL.SyntaxTree, offset::Int)
+    bas = byte_ancestors(st0, offset)
 
     target = first(bas)
     if !JS.is_identifier(target)
         offset > 0 || return nothing
         # Support cases like `var│`, `func│(5)`
-        bas = byte_ancestors(st, offset - 1)
+        bas = byte_ancestors(st0, offset - 1)
         target = first(bas)
         if !JS.is_identifier(target)
             return nothing
