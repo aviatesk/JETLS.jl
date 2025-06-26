@@ -121,7 +121,6 @@ function handle_DefinitionRequest(server::Server, msg::DefinitionRequest)
     (; mod, analyzer) = get_context_info(server.state, uri, origin_position)
     objtyp = resolve_type(analyzer, mod, node)
 
-    objtyp === nothing && return send(server, DefinitionResponse(; id = msg.id, result = null))
     objtyp isa Core.Const || return send(server, DefinitionResponse(; id = msg.id, result = null))
 
     if objtyp.val isa Module
