@@ -17,7 +17,7 @@ function is_relevant(ctx::JL.AbstractLoweringContext,
 end
 
 let lowering_module = Module()
-    global function jl_lower_for_completion(st0)
+    global function jl_lower_for_scope_resolution(st0)
         ctx1, st1 = JL.expand_forms_1(lowering_module, remove_macrocalls(st0));
         ctx2, st2 = JL.expand_forms_2(ctx1, st1);
         ctx3, st3 = JL.resolve_scopes(ctx2, st2);
@@ -39,7 +39,7 @@ function cursor_bindings(st0_top::JL.SyntaxTree, b_top::Int)
         return nothing # nothing we can lower
     end
     ctx3, st2 = try
-        jl_lower_for_completion(st0)
+        jl_lower_for_scope_resolution(st0)
     catch err
         JETLS_DEV_MODE && @warn "Error in lowering" err
         return nothing # lowering failed, e.g. because of incomplete input
