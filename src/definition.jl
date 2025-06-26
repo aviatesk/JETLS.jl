@@ -112,8 +112,8 @@ function handle_DefinitionRequest(server::Server, msg::DefinitionRequest)
             DefinitionResponse(;
                 id = msg.id,
                 result = create_definition.(lbs,
-                Ref(originSelectionRange),
-                Ref(locationlink_support))))
+                    Ref(originSelectionRange),
+                    Ref(locationlink_support))))
     end
 
     (; mod, analyzer) = get_context_info(server.state, uri, origin_position)
@@ -130,8 +130,8 @@ function handle_DefinitionRequest(server::Server, msg::DefinitionRequest)
                 DefinitionResponse(;
                     id = msg.id,
                     result = create_definition(objval,
-                    originSelectionRange,
-                    locationlink_support)))
+                        originSelectionRange,
+                        locationlink_support)))
         end
     else
         target_methods = filter(!is_location_unknown, unique(Base.updated_methodloc, methods(objtyp.val)))
@@ -142,8 +142,8 @@ function handle_DefinitionRequest(server::Server, msg::DefinitionRequest)
                 DefinitionResponse(;
                     id = msg.id,
                     result = create_definition.(target_methods,
-                    Ref(originSelectionRange),
-                    Ref(locationlink_support))))
+                        Ref(originSelectionRange),
+                        Ref(locationlink_support))))
         end
     end
 end
