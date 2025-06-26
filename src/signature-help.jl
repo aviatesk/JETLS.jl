@@ -320,8 +320,8 @@ end
 
 # If parents of our call are like (macro/function (where (where... (call |) ...))),
 # we're actually in a declaration, and shouldn't show signature help.
-function call_is_decl(_bas::JL.SyntaxList, i::Int)
-    kind(_bas[i]) != K"call" && return false
+function call_is_decl(_bas::JL.SyntaxList, i::Int, _basᵢ::JL.SyntaxTree = _bas[i])
+    kind(_basᵢ) != K"call" && return false
     j = i + 1
     while j <= lastindex(_bas) && kind(_bas[j]) === K"where"
         j += 1
@@ -334,7 +334,7 @@ end
 
 # Find cases where a macro call is not surrounded by parentheses
 # and the current cursor position is on a different line from the `@` macro call
-function is_crossline_noparen_macrocall(call::JL.SyntaxTree, ps::JS.ParseStream, cursor_byte::Int)
+function is_crossline_noparen_macrocall(call::JL.SyntaxTree, cursor_byte::Int)
     return noparen_macrocall(call) && let source_file = JS.sourcefile(call)
         # Check if cursor is on a different line from the @ symbol
         JS.numchildren(call) ≥ 1 &&
@@ -360,16 +360,20 @@ function cursor_call(ps::JS.ParseStream, st0::JL.SyntaxTree, b::Int)
     bas = byte_ancestors(st0, b)
     i = findfirst(is_relevant_call, bas)
     if !isnothing(i)
-        if call_is_decl(bas, i)
+        basᵢ = bas[i]
+        if call_is_decl(bas, i, basᵢ)
             return nothing
-        elseif is_crossline_noparen_macrocall(bas[i], ps, b)
+        elseif is_crossline_noparen_macrocall(basᵢ, b)
             # Consider cases like:
             # @testset begin
             #     ... | ...
             # end
             return nothing
+        elseif any(j::Int->JS.kind(bas[j])===JS.K"do", 1:i)
+            # bail out if this is actually within a `do` block
+            return nothing
         end
-        return bas[i]
+        return basᵢ
     end
 
     # `i` is nothing.  Eat preceding whitespace and check again.
@@ -381,8 +385,11 @@ function cursor_call(ps::JS.ParseStream, st0::JL.SyntaxTree, b::Int)
     # If the previous nontrivia byte is part of a call or macrocall, and it is
     # missing a closing paren, use that.
     i = findfirst(st -> is_relevant_call(st) && !noparen_macrocall(st), bas)
-    if !isnothing(i) && JS.is_error(JS.children(bas[i])[end])
-        return call_is_decl(bas, i) ? nothing : bas[i]
+    if !isnothing(i)
+        basᵢ = bas[i]
+        if JS.is_error(JS.children(basᵢ)[end])
+            return call_is_decl(bas, i, basᵢ) ? nothing : basᵢ
+        end
     end
 
     (isnothing(pnb_line) || pnb_line === b) && return nothing

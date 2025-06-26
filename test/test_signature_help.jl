@@ -251,6 +251,13 @@ end
     @test 1 === n_si(M_invalid, """@m begin
         f1(|)
     end""")
+    # signature help should not be triggered when the scope surrounding the cursor is a do block
+    @test 0 === n_si(M_invalid, """identity() do x
+        |
+    end""")
+    @test 1 === n_si(M_invalid, """identity() do x
+        f1(|)
+    end""")
 
     @test 1 === n_si(M_invalid, "f1(,,,,,,,,,|)")
     @test 1 === n_si(M_invalid, "f1(a b c|)")
