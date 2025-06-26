@@ -97,6 +97,39 @@ let throttled = Dict{UInt, Tuple{Union{Nothing,Timer}, Float64}}(),
 end
 
 """
+    @define_override_constructor T
+
+Takes a type `T` and defines a constructor for `T` as follows:
+```julia
+function T(x::T;
+           f1::T1 = x.f1,
+           f2::T2 = x.f2,
+           ...,
+           fn::Tn = x.fn)
+    return T(f1, f2, ..., fn)
+end
+```
+`T` must be overloadable in the macro call context.
+When overloading types from other modules, you can pass `Mod.T`.
+"""
+macro define_override_constructor(Tex)
+    T = Core.eval(__module__, Tex)
+    assignments = Expr[]
+    fieldvalues = Symbol[]
+    for i = 1:fieldcount(T)
+        fname, ftype = fieldname(T, i), fieldtype(T, i)
+        arg = Expr(:(::), fname, ftype)
+        default = Expr(:., :x, QuoteNode(fname))
+        push!(assignments, Expr(:kw, arg, default))
+        push!(fieldvalues, fname)
+    end
+    sig = Expr(:call, Tex, Expr(:parameters, assignments...), Expr(:(::), :x, Tex))
+    new = Expr(:new, Tex, fieldvalues...)
+    body = Expr(:block, __source__, new)
+    return Expr(:(=), sig, body)
+end
+
+"""
     getobjpath(obj, path::Symbo...)
 
 An accessor primarily written for accessing fields of LSP objects whose fields

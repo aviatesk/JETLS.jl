@@ -96,9 +96,9 @@ function handle_DefinitionRequest(server::Server, msg::DefinitionRequest)
                 error = file_cache_error(uri)))
     end
 
-    st = JS.build_tree(JL.SyntaxTree, fi.parsed_stream)
+    st0 = JS.build_tree(JL.SyntaxTree, fi.parsed_stream)
     offset = xy_to_offset(fi, origin_position)
-    node = select_target_node(st, offset)
+    node = select_target_node(st0, offset)
     if node === nothing
         return send(server, DefinitionResponse(; id = msg.id, result = null))
     end

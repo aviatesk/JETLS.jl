@@ -259,22 +259,29 @@ end
         baremodule ModuleCompletion
         const xxx = nothing
         end
-        function dot_completion_test(x)
+        function dot_completion_test(xarg)
             ModuleCompletion.x#=cursor=#
+        end
+
+        function str_macro_test()
+            tex#=cursor=#
         end
     end # module Foo
     """)
-    @test length(positions) == 3
-    pos1, pos2, pos3 = positions
+    @test length(positions) == 4
+    pos1, pos2, pos3, pos4 = positions
     filename = abspath("foo.jl")
     uri = filename2uri(filename)
     JETLS.cache_file_info!(state, uri, #=version=#1, text)
     JETLS.cache_saved_file_info!(state, uri, text)
     JETLS.initiate_analysis_unit!(server, uri)
-    let params = CompletionParams(;
+    function with_completion_items(f, position)
+        params = CompletionParams(;
             textDocument=TextDocumentIdentifier(; uri),
-            position=pos1)
-        items = JETLS.get_completion_items(state, uri, params)
+            position)
+        f(JETLS.get_completion_items(state, uri, params))
+    end
+    with_completion_items(pos1) do items
         @test any(items) do item
             item.label == "bar"
         end
@@ -288,10 +295,7 @@ end
             item.label == "sin"
         end
     end
-    let params = CompletionParams(;
-            textDocument=TextDocumentIdentifier(; uri),
-            position=pos2)
-        items = JETLS.get_completion_items(state, uri, params)
+    with_completion_items(pos2) do items
         @test any(items) do item
             item.label == "foo"
         end
@@ -305,16 +309,22 @@ end
             item.label == "y_var"
         end
     end
-    let params = CompletionParams(;
-            textDocument=TextDocumentIdentifier(; uri),
-            position=pos3)
-        items = JETLS.get_completion_items(state, uri, params)
+    with_completion_items(pos3) do items
+        # `dot_completion_test`: dot-prefixed global completion
+        xxxidx = findfirst(item->item.label=="xxx", items)
+        @test !isnothing(xxxidx)
+        coreidx = findfirst(item->item.label=="Core", items) # Core is still available for baremodule
+        @test !isnothing(xxxidx)
+        @test items[xxxidx].sortText < items[coreidx].sortText # prioritize showing names defined within the completion context module
+        @test isnothing(findfirst(item->item.label=="getx", items))
+        @test isnothing(findfirst(item->item.label=="foo", items))
+        @test isnothing(findfirst(item->item.label=="xarg", items)) # local completion should be disabled
+    end
+    with_completion_items(pos4) do items
+        # `str_macro_test`: string macro case
         @test any(items) do item
-            item.label == "xxx"
-        end
-        @test !any(items) do item
-            item.label == "getx" ||
-            item.label == "foo"
+            item.label == "text\"\"" &&
+            item.data isa CompletionData && item.data.name == "@text_str"
         end
     end
 end

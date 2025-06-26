@@ -57,10 +57,9 @@ const sort_texts, max_sort_text = let
     _, max_sort_text = maximum(sort_texts)
     sort_texts, max_sort_text
 end
-function get_sort_text(offset::Int, isglobal::Bool)
-    if isglobal
-        return max_sort_text
-    end
+const max_sort_text1 = "10000"
+const max_sort_text2 = "100000"
+function get_sort_text(offset::Int)
     return get(sort_texts, offset, max_sort_text)
 end
 
@@ -124,8 +123,7 @@ function to_completion(binding::JL.BindingInfo,
             description = label_desc),
         kind = label_kind,
         documentation,
-        sortText = get_sort_text(sort_offset, #=isglobal=#false),
-        data = CompletionData(#=needs_resolve=#false))
+        sortText = get_sort_text(sort_offset))
 end
 
 function local_completions!(items::Dict{String, CompletionItem},
@@ -158,8 +156,6 @@ end
 # global completions
 # ==================
 
-# TODO support completion of string macros, e.g. `te|` to `text"|"`
-
 function global_completions!(items::Dict{String, CompletionItem}, state::ServerState, uri::URI, params::CompletionParams)
     let context = params.context
         !isnothing(context) &&
@@ -171,20 +167,6 @@ function global_completions!(items::Dict{String, CompletionItem}, state::ServerS
     fi === nothing && return nothing
     (; mod, analyzer, postprocessor) = get_context_info(state, uri, pos)
     completion_module = mod
-
-    st = JS.build_tree(JL.SyntaxTree, fi.parsed_stream)
-    offset = xy_to_offset(fi, pos)
-    dotprefix = select_dotprefix_node(st, offset)
-    if !isnothing(dotprefix)
-        prefixtyp = resolve_type(analyzer, mod, dotprefix)
-        if prefixtyp isa Core.Const
-            prefixval = prefixtyp.val
-            if prefixval isa Module
-                completion_module = prefixval
-            end
-        end
-    end
-    state.completion_resolver_info = (completion_module, postprocessor)
 
     prev_token_idx = get_prev_token_idx(fi, pos)
     prev_kind = isnothing(prev_token_idx) ? nothing :
@@ -213,36 +195,94 @@ function global_completions!(items::Dict{String, CompletionItem}, state::ServerS
         is_macro_invoke = false
     end
 
+    # if we are in macro name context, then we don't need the local completions
+    # since macros are always defined top-level
+    is_completed = is_macro_invoke
+
+    st = JS.build_tree(JL.SyntaxTree, fi.parsed_stream)
+    offset = xy_to_offset(fi, pos)
+    dotprefix = select_dotprefix_node(st, offset)
+    if !isnothing(dotprefix)
+        prefixtyp = resolve_type(analyzer, mod, dotprefix)
+        if prefixtyp isa Core.Const
+            prefixval = prefixtyp.val
+            if prefixval isa Module
+                completion_module = prefixval
+            end
+        end
+        # disable local completions for dot-prefixed code for now
+        is_completed |= true
+    end
+    state.completion_resolver_info = (completion_module, postprocessor)
+
+    prioritized_names = let s = Set{Symbol}()
+        pnames = @invokelatest(names(completion_module; all=true))::Vector{Symbol}
+        sizehint!(s, length(pnames))
+        for name in pnames
+            startswith(String(name), "#") && continue
+            push!(s, name)
+        end
+        s
+    end
+
     for name in @invokelatest(names(completion_module; all=true, imported=true, usings=true))::Vector{Symbol}
         s = String(name)
         startswith(s, "#") && continue
 
-        if is_macro_invoke && !startswith(s, "@")
+        startswith_at = startswith(s, "@")
+
+        if is_macro_invoke && !startswith_at
             # If we are in a macro invocation context, we only want to complete macros.
             # Conversely, we allow macros to be completed in any context.
             continue
         end
 
-        textEdit = edit_start_pos === nothing ? nothing :
+        resolveName = newText = label = s
+        filterText = nothing
+        insertTextFormat = InsertTextFormat.PlainText
+        if startswith_at
+            if endswith(s, "_str")
+                description = "string macro"
+                strname = replace(lstrip(s, '@'), r"_str$" => "")
+                label = strname * "\"\""
+                if supports(state, :textDocument, :completion, :completionItem, :snippetSupport)
+                    newText = strname * "\"\${1:str}\"\$0" # ${0:flags}?
+                    insertTextFormat = InsertTextFormat.Snippet
+                else
+                    newText = label
+                end
+                filterText = strname
+                resolveName = s
+            else
+                description = "macro"
+            end
+        else
+            description = "global"
+        end
+        if name in prioritized_names
+            sortText = max_sort_text1
+        else
+            sortText = max_sort_text2
+        end
+        textEdit = isnothing(edit_start_pos) ? nothing :
             TextEdit(;
                 range = Range(;
                     start = edit_start_pos,
                     var"end" = pos),
-                newText = s)
+                newText)
 
         items[s] = CompletionItem(;
-            label = s,
-            labelDetails = CompletionItemLabelDetails(;
-                description = startswith(s, "@") ? "macro" : "global"),
+            label,
+            labelDetails = CompletionItemLabelDetails(; description),
             kind = CompletionItemKind.Variable,
-            documentation = nothing,
-            sortText = get_sort_text(0, #=isglobal=#true),
-            data = CompletionData(#=needs_resolve=#true),
-            textEdit)
+            sortText,
+            filterText,
+            insertTextFormat,
+            textEdit,
+            data = CompletionData(#=name=#resolveName))
     end
-    # if we are in macro name context, then we don't need any local completions
-    # as macros are always defined top-level
-    return is_macro_invoke ? items : nothing # is_completed
+
+    return is_completed ? items : nothing
 end
 
 # LaTeX and emoji completions
@@ -313,8 +353,7 @@ function add_emoji_latex_completions!(items::Dict{String,CompletionItem}, state:
                 range = Range(;
                     start = backslash_pos,
                     var"end" = pos),
-                newText = val),
-            data = CompletionData(false))
+                newText = val))
     end
 
     emojionly || foreach(REPL.REPLCompletions.latex_symbols) do (key, val)
@@ -331,22 +370,17 @@ end
 # completion resolver
 # ===================
 
+@define_override_constructor LSP.CompletionItem
+
 function resolve_completion_item(state::ServerState, item::CompletionItem)
     isdefined(state, :completion_resolver_info) || return item
     data = item.data
     data isa CompletionData || return item
-    data.needs_resolve || return item
     mod, postprocessor = state.completion_resolver_info
-    name = Symbol(item.label)
+    name = Symbol(data.name)
     binding = Base.Docs.Binding(mod, name)
     docs = postprocessor(string(Base.Docs.doc(binding)))
-    return CompletionItem(;
-        label = item.label,
-        labelDetails = item.labelDetails,
-        kind = item.kind,
-        detail = item.detail,
-        sortText = item.sortText,
-        textEdit = item.textEdit,
+    return CompletionItem(item;
         documentation = MarkupContent(;
             kind = MarkupKind.Markdown,
             value = docs))
