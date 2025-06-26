@@ -172,6 +172,8 @@ end
     test_cv(code, "|", "g1", not="g2")
     code = "function f(); global g1; g|2; end"
     test_cv(code, "|", "g1", not="g g2")
+    code = "function f(); global g1; │g2; end"
+    test_cv(code, "│", "g1", not="g2")
 end
 
 # completion for code including macros
