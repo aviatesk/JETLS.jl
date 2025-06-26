@@ -2,13 +2,14 @@ module test_definition
 
 using Test
 using JETLS
+using JETLS: JS, JL
 
-@testset "method_definition_range" begin
+@testset "method location" begin
     linenum = @__LINE__; method_for_test_method_definition_range() = 1
     @assert length(methods(method_for_test_method_definition_range)) == 1
     test_method = first(methods(method_for_test_method_definition_range))
-    method_location = JETLS.get_location(test_method)
-    @test method_location isa JETLS.Location
+    method_location = JETLS.Location(test_method)
+    @test method_location isa JETLS.LSP.Location
     @test JETLS.URIs2.uri2filepath(method_location.uri) == @__FILE__
     @test method_location.range.start.line == (linenum - 1)
 end
@@ -18,15 +19,40 @@ myidentity(x) = x
 end
 const LINE_TestModuleDefinitionRange = (@__LINE__) - 3
 
-@testset "module_definition_location" begin
-    loc = JETLS.get_location(TestModuleDefinitionRange)
-    @test loc isa JETLS.Location
+@testset "module location" begin
+    loc = JETLS.Location(TestModuleDefinitionRange)
+    @test loc isa JETLS.LSP.Location
     @test JETLS.URIs2.uri2filepath(loc.uri) == @__FILE__
     @test loc.range.start.line == LINE_TestModuleDefinitionRange-1
 end
 
-include("setup.jl")
+include("jsjl_utils.jl")
 
+function with_local_definitions(f, text::AbstractString, matcher::Regex=r"│")
+    clean_code, positions = JETLS.get_text_and_positions(text, r"│")
+    st0_top = jlparse(clean_code)
+    for pos in positions
+        offset = JETLS.xy_to_offset(Vector{UInt8}(clean_code), pos)
+        f(JETLS.local_definitions(st0_top, offset))
+    end
+end
+
+@testset "local definitions" begin
+    with_local_definitions("""
+        function mapfunc(xs)
+            Any[Core.Const(x│)
+                for x in xs]
+        end
+    """) do res
+        @test !isnothing(res)
+        binding, defs = res
+        @test JS.source_line(JL.sourceref(binding)) == 2
+        @test length(defs) == 1
+        @test JS.source_line(JL.sourceref(only(defs))) == 3
+    end
+end
+
+include("setup.jl")
 
 @testset "'Definition' for module, method request/responce" begin
     script_code = """
@@ -414,7 +440,9 @@ end
             (first(result).range.var"end".line == 7) &&
             (first(result).range.var"end".character == 5)
 
-        # return rec│(x + 1)
+        # #=12=# function rec(x)
+        # #=13=#     return rec│(x + 1)
+        # #=14=# end
         (result, uri) ->
             (length(result) >= 1) &&
             (any(result) do candidate
@@ -542,14 +570,28 @@ end
             (first(result).range.var"end".line == 79) &&
             (first(result).range.var"end".character == 9)
 
-        # f = () -> x│ + 1
+        # #=85=# function recapture()
+        # #=86=#     x = 1
+        # #=87=#     f = () -> x│ + 1
+        # #=88=#     x = 2
+        # #=89=#     return f()
+        # #=90=# end
         (result, uri) ->
-            (length(result) == 1) &&
-            (first(result).uri == uri) &&
-            (first(result).range.start.line == 85) &&
-            (first(result).range.start.character == 4) &&
-            (first(result).range.var"end".line == 85) &&
-            (first(result).range.var"end".character == 5)
+            (length(result) == 2) &&
+            any(result) do res
+                res.uri == uri &&
+                res.range.start.line == 85 &&
+                res.range.start.character == 4 &&
+                res.range.var"end".line == 85 &&
+                res.range.var"end".character == 5
+            end &&
+            any(result) do res
+                res.uri == uri &&
+                res.range.start.line == 87 &&
+                res.range.start.character == 4 &&
+                res.range.var"end".line == 87 &&
+                res.range.var"end".character == 5
+            end
 
         # return a│ + b
         (result, uri) ->
@@ -569,6 +611,7 @@ end
             (first(result).range.var"end".line == 91) &&
             (first(result).range.var"end".character == 32)
 
+        # case 22
         # return x│ + 1
         (result, uri) ->
             (length(result) == 1) &&
@@ -599,9 +642,7 @@ end
 
     broken_cases = [
         3,  # y = x│ + 1 (overwriting `x`)`
-        11, # v = [│x^2 for x in 1:5]
         22, # return x│ + 1 (overwriting `x` in inner function)
-        23, # return x│ (control flow including `@goto`)
     ]
 
     withscript(clean_code) do script_path
@@ -627,6 +668,5 @@ end
         end
     end
 end
-
 
 end # module test_definition

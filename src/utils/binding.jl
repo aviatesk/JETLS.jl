@@ -17,11 +17,17 @@ function is_relevant(ctx::JL.AbstractLoweringContext,
 end
 
 let lowering_module = Module()
-    global function jl_lower_for_scope_resolution(st0)
+    global function jl_lower_for_scope_resolution2(st0)
         ctx1, st1 = JL.expand_forms_1(lowering_module, remove_macrocalls(st0));
         ctx2, st2 = JL.expand_forms_2(ctx1, st1);
         ctx3, st3 = JL.resolve_scopes(ctx2, st2);
         return ctx3, st2
+    end
+    global function jl_lower_for_scope_resolution3(st0)
+        ctx1, st1 = JL.expand_forms_1(lowering_module, remove_macrocalls(st0));
+        ctx2, st2 = JL.expand_forms_2(ctx1, st1);
+        ctx3, st3 = JL.resolve_scopes(ctx2, st2);
+        return ctx3, st3
     end
 end
 
@@ -39,7 +45,7 @@ function cursor_bindings(st0_top::JL.SyntaxTree, b_top::Int)
         return nothing # nothing we can lower
     end
     ctx3, st2 = try
-        jl_lower_for_scope_resolution(st0)
+        jl_lower_for_scope_resolution2(st0)
     catch err
         # JETLS_DEV_MODE && @warn "Error in lowering" err
         return nothing # lowering failed, e.g. because of incomplete input
@@ -98,4 +104,50 @@ function cursor_bindings(st0_top::JL.SyntaxTree, b_top::Int)
         dist = abs(b - JS.last_byte(JL.binding_ex(ctx3, binfo.id)))
         return (binfo, JL.binding_ex(ctx3, binfo.id), dist)
     end
+end
+
+function select_target_binding(ctx3, st3::JL.SyntaxTree, offset::Int)
+    function select(st::JL.SyntaxTree)
+        JS.kind(st) === JS.K"BindingId" || return false
+        binfo = JL.lookup_binding(ctx3, st)
+        return !binfo.is_internal
+    end
+    bas = byte_ancestors(st3, offset)
+    i = findfirst(select, bas)
+    if isnothing(i)
+        offset > 0 || return nothing
+        # Support cases like `var│`, `func│(5)`
+        bas = byte_ancestors(st3, offset - 1)
+        i = findfirst(select, bas)
+        if isnothing(i)
+            return nothing
+        end
+    end
+    return bas[i]
+end
+
+is_same_binding(x::JL.SyntaxTree, id::Int) = JS.kind(x) === JS.K"BindingId" && id == JL._binding_id(x)
+
+function _lookup_binding_definitions(st3::JL.SyntaxTree, binding_id::Int)
+    sl = JL.SyntaxList(st3)
+    traverse(st3) do st::JL.SyntaxTree
+        if JS.kind(st) === JS.K"=" && JS.numchildren(st) ≥ 2
+            lhs, rhs = st[1], st[2]
+            if is_same_binding(lhs, binding_id)
+                push!(sl, lhs)
+            end
+        elseif JS.kind(st) === JS.K"function_decl" && JS.numchildren(st) ≥ 1
+            func = st[1]
+            if is_same_binding(func, binding_id)
+                push!(sl, func)
+            end
+        end
+    end
+    return reverse!(deduplicate_syntaxlist(sl))
+end
+function lookup_binding_definitions(st3::JL.SyntaxTree, binfo::JL.BindingInfo)
+    if binfo.kind === :argument
+        return JL.SyntaxList(JL.syntax_graph(st3), [binfo.node_id])
+    end
+    return _lookup_binding_definitions(st3, binfo.id)
 end
