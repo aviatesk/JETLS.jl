@@ -70,18 +70,16 @@ function definition_target_localbindings(offset, st, node, uri)
     return [(cbs[matched_binding][2], uri)]
 end
 
-function create_definition(objects, origin_range::Range, locationlink_support::Bool)
+function create_definition(obj, origin_range::Range, locationlink_support::Bool)
+    loc = @inline get_location(obj)
     if locationlink_support
-        return map(objects) do obj
-            loc = @inline get_location(obj)
-            LocationLink(;
-                targetUri = loc.uri,
-                targetRange = loc.range,
-                targetSelectionRange = loc.range,
-                originSelectionRange = origin_range)
-        end
+        LocationLink(;
+            targetUri = loc.uri,
+            targetRange = loc.range,
+            targetSelectionRange = loc.range,
+            originSelectionRange = origin_range)
     else
-        get_location.(objects)
+        loc
     end
 end
 
@@ -113,9 +111,9 @@ function handle_DefinitionRequest(server::Server, msg::DefinitionRequest)
         return send(server,
             DefinitionResponse(;
                 id = msg.id,
-                result = create_definition(lbs,
-                originSelectionRange,
-                locationlink_support)))
+                result = create_definition.(lbs,
+                Ref(originSelectionRange),
+                Ref(locationlink_support))))
     end
 
     (; mod, analyzer) = get_context_info(server.state, uri, origin_position)
@@ -131,7 +129,7 @@ function handle_DefinitionRequest(server::Server, msg::DefinitionRequest)
             return send(server,
                 DefinitionResponse(;
                     id = msg.id,
-                    result = create_definition([objtyp.val],
+                    result = create_definition(objval,
                     originSelectionRange,
                     locationlink_support)))
         end
@@ -143,9 +141,9 @@ function handle_DefinitionRequest(server::Server, msg::DefinitionRequest)
             return send(server,
                 DefinitionResponse(;
                     id = msg.id,
-                    result = create_definition(target_methods,
-                    originSelectionRange,
-                    locationlink_support)))
+                    result = create_definition.(target_methods,
+                    Ref(originSelectionRange),
+                    Ref(locationlink_support))))
         end
     end
 end

@@ -221,10 +221,9 @@ include("setup.jl")
 
         # M2│.m_func(1.0)
         (result, uri) ->
-            (length(result) == 1) &&
-            (first(result) isa Location) &&
-            (first(result).uri == uri) &&
-            (first(result).range.start.line == 18)
+            (result isa Location) &&
+            (result.uri == uri) &&
+            (result.range.start.line == 18)
 
         # Core│.isdefined
         (result, uri) -> (result === null) # `Base.moduleloc(Core)` doesn't return anything meaningful
