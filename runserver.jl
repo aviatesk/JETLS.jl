@@ -30,7 +30,7 @@ let old_env = Pkg.project().path
 end
 
 function (@main)(args::Vector{String})::Cint
-    endpoint = Endpoint(stdin, stdout)
+    endpoint = LSEndpoint(stdin, stdout)
     if JETLS.JETLS_DEV_MODE
         server = Server(endpoint) do s::Symbol, x
             @nospecialize x
