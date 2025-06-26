@@ -63,7 +63,6 @@ function cursor_bindings(st0_top::JL.SyntaxTree, b_top::Int)
 
     cursor_scopes = byte_ancestors(st2, b)
 
-
     # ignore scopes we aren't in
     filter!(((binfo, _, bs),) -> isnothing(bs) || bs._id in cursor_scopes.ids,
             bscopeinfos)
