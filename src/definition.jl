@@ -19,9 +19,13 @@ end
 # unregister(currently_running, Unregistration(;
 #     id=DEFINITION_REGISTRATION_ID,
 #     method=DEFINITION_REGISTRATION_METHOD))
-# register(currently_running, definition_resistration())
+# register(currently_running, definition_registration())
 
-is_location_unknown(m) = Base.updated_methodloc(m)[2] <= 0
+is_location_unknown(m::Method) = Base.updated_methodloc(m)[2] ≤ 0
+function is_location_unknown(mod::Module)
+    (; file, line) = Base.moduleloc(mod)
+    return line ≤ 0 || file === Symbol("")
+end
 
 """
 Get the range of a method. (will be deprecated in the future)
@@ -29,7 +33,7 @@ Get the range of a method. (will be deprecated in the future)
 TODO (later): get the correct range of the method definition.
 For now, it just returns the first line of the method
 """
-function method_definition_range(m::Method)
+function get_location(m::Method)
     file, line = functionloc(m)
     file = to_full_path(file)
     return Location(;
@@ -39,16 +43,44 @@ function method_definition_range(m::Method)
             var"end" = Position(; line = line - 1, character = Int(typemax(Int32)))))
 end
 
-function module_definition_location(mod::Module)
+function get_location(mod::Module)
     (; file, line) = Base.moduleloc(mod)
-    line ≤ 0 && return nothing
-    file === Symbol("") && return nothing
     uri = filename2uri(to_full_path(file))
     return Location(;
         uri,
         range = Range(;
             start = Position(; line = line - 1, character = 0),
             var"end" = Position(; line = line - 1, character = Int(typemax(Int32)))))
+end
+
+get_location(bind::Tuple{JL.SyntaxTree, URI}) = Location(; uri = bind[2], range = get_source_range(bind[1]))
+
+function definition_target_localbindings(offset, st, node, uri)
+    # We can skip lookups including access of outer modules
+    # because we only look for local bindings
+    kind(node) !== K"Identifier" && return nothing
+    cbs = cursor_bindings(st, offset)
+    (cbs === nothing || isempty(cbs)) && return nothing
+    matched_binding = findfirst(b -> b[1].name == node.name_val, cbs)
+    matched_binding === nothing && return nothing
+
+    # Will return multiple results when we support tracking of multiple assignments.
+    # `SyntaxTree` does not retain URI information because `ParseStream` does not store it
+    # so we explicitly keep it.
+    return [(cbs[matched_binding][2], uri)]
+end
+
+function create_definition(obj, origin_range::Range, locationlink_support::Bool)
+    loc = @inline get_location(obj)
+    if locationlink_support
+        LocationLink(;
+            targetUri = loc.uri,
+            targetRange = loc.range,
+            targetSelectionRange = loc.range,
+            originSelectionRange = origin_range)
+    else
+        loc
+    end
 end
 
 function handle_DefinitionRequest(server::Server, msg::DefinitionRequest)
@@ -71,49 +103,47 @@ function handle_DefinitionRequest(server::Server, msg::DefinitionRequest)
         return send(server, DefinitionResponse(; id = msg.id, result = null))
     end
 
-    (; mod, analyzer) = get_context_info(server.state, uri, origin_position)
-    objtyp = resolve_type(analyzer, mod, node)
-    if !(objtyp isa Core.Const)
-        return send(server, DefinitionResponse(; id = msg.id, result = null))
-    end
+    locationlink_support = supports(server, :textDocument, :definition, :linkSupport)
+    originSelectionRange = get_source_range(node)
 
-    obj = objtyp.val
-    if obj isa Module
-        modloc = module_definition_location(obj)
-        if modloc === nothing
-            return send(server, DefinitionResponse(; id = msg.id, result = null))
-        elseif supports(server, :textDocument, :definition, :linkSupport)
-            originSelectionRange = get_source_range(node)
-            result = LocationLink[LocationLink(;
-                targetUri = modloc.uri,
-                targetRange = modloc.range,
-                targetSelectionRange = modloc.range,
-                originSelectionRange)]
-            return send(server, DefinitionResponse(; id = msg.id, result))
-        else
-            return send(server, DefinitionResponse(; id = msg.id, result = modloc))
-        end
-    end
-
-    # TODO modify this aggregation logic when we start to use more precise location informaiton
-    ms = filter(!is_location_unknown, unique(Base.updated_methodloc, methods(obj)))
-
-    if isempty(ms)
-        send(server, DefinitionResponse(; id = msg.id, result = null))
-    elseif supports(server, :textDocument, :definition, :linkSupport)
-        originSelectionRange = get_source_range(node)
-        send(server,
+    lbs = definition_target_localbindings(offset, st0, node, uri)
+    if !isnothing(lbs)
+        return send(server,
             DefinitionResponse(;
                 id = msg.id,
-                result = map(ms) do m
-                    loc = @inline method_definition_range(m)
-                    LocationLink(;
-                        targetUri = loc.uri,
-                        targetRange = loc.range,
-                        targetSelectionRange = loc.range,
-                        originSelectionRange)
-                end))
+                result = create_definition.(lbs,
+                    Ref(originSelectionRange),
+                    Ref(locationlink_support))))
+    end
+
+    (; mod, analyzer) = get_context_info(server.state, uri, origin_position)
+    objtyp = resolve_type(analyzer, mod, node)
+
+    objtyp isa Core.Const || return send(server, DefinitionResponse(; id = msg.id, result = null))
+
+    objval = objtyp.val
+    if objval isa Module
+        if is_location_unknown(objval)
+            return send(server, DefinitionResponse(; id = msg.id, result = null))
+        else
+            return send(server,
+                DefinitionResponse(;
+                    id = msg.id,
+                    result = create_definition(objval,
+                        originSelectionRange,
+                        locationlink_support)))
+        end
     else
-        send(server, DefinitionResponse(; id = msg.id, result = method_definition_range.(ms)))
+        target_methods = filter(!is_location_unknown, unique(Base.updated_methodloc, methods(objtyp.val)))
+        if isempty(target_methods)
+            return send(server, DefinitionResponse(; id = msg.id, result = null))
+        else
+            return send(server,
+                DefinitionResponse(;
+                    id = msg.id,
+                    result = create_definition.(target_methods,
+                        Ref(originSelectionRange),
+                        Ref(locationlink_support))))
+        end
     end
 end

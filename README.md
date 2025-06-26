@@ -65,7 +65,7 @@ the list itself is subject to change.
 - Definition
   - [x] Method defintion
   - [ ] Global binding definition
-  - [ ] Local binding definition
+  - [x] Local binding definition
   - [ ] Type-aware method definition
 - Hover
   - [x] Method documentation
