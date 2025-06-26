@@ -62,6 +62,10 @@ the list itself is subject to change.
   - [x] Local binding completion
   - [x] LaTeX/Emoji completion
   - [ ] Method signature completion
+- Signature Help
+  - [x] Basic implementation
+  - [x] Macro support
+  - [ ] Argument type based suggestion
 - Definition
   - [x] Method defintion
   - [ ] Global binding definition
