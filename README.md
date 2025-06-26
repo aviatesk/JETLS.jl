@@ -41,7 +41,7 @@ frontends, please refer to the [Other editors](#other-editors) section.
 - In the [Extension Development Host](https://code.visualstudio.com/api/get-started/your-first-extension#:~:text=Then%2C%20inside%20the%20editor%2C%20press%20F5.%20This%20will%20compile%20and%20run%20the%20extension%20in%20a%20new%20Extension%20Development%20Host%20window.)
   instance of VSCode, open a Julia file.
 
-## Roadmaps
+## Roadmap
 
 This is a summary of currently implemented features and features that will
 likely be implemented in the near future, for those who want to test this server.
