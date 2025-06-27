@@ -91,9 +91,10 @@ end
                 @test !isnothing(res)
                 binding, defs = res
                 @test JS.source_line(JL.sourceref(binding)) == 3
-                @test length(defs) == 1
-                # The definition should be x = 1 on line 2, not the parameter x on line 1
-                @test JS.source_line(JL.sourceref(only(defs))) == 2 broken=true
+                @test length(defs) == 2 # Both parameter x and local x = 1
+                # The definitions should include both x = 1 on line 2 and the parameter x on line 1
+                @test any(d -> JS.source_line(JL.sourceref(d)) == 1, defs) # parameter
+                @test any(d -> JS.source_line(JL.sourceref(d)) == 2, defs) # local assignment
                 cnt += 1
             elseif i == 2 # y│
                 @test !isnothing(res)

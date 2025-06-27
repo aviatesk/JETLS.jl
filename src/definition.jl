@@ -130,7 +130,7 @@ function handle_DefinitionRequest(server::Server, msg::DefinitionRequest)
         else
             local result = Location(objval)
             if locationlink_support
-                result = LocationLink(result, originSelectionRange)
+                result = LocationLink[LocationLink(result, originSelectionRange)] # only `result::Vector{LocationLink}` is supported
             end
             return send(server,
                 DefinitionResponse(;

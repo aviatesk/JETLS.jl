@@ -106,7 +106,16 @@ function cursor_bindings(st0_top::JL.SyntaxTree, b_top::Int)
     end
 end
 
-function select_target_binding(ctx3, st3::JL.SyntaxTree, offset::Int)
+"""
+    select_target_binding(ctx3::JL.VariableAnalysisContext, st3::JL.SyntaxTree, offset::Int) -> target_binding::Union{Nothing,JL.SyntaxTree}
+
+For the same purpose as [`select_target_node`](@ref), returns the `target_binding::JL.SyntaxTree`
+closest to the cursor at the `offset` position.
+Note that `st3::JL.SyntaxTree` has been processed by `JL.resolve_scopes` and corresponds to
+`ctx3::JL.VariableAnalysisContext`.
+It is guaranteed that `target_binding` satisfies `JS.kind(target_binding) === JS.K"BindingId"`.
+"""
+function select_target_binding(ctx3::JL.VariableAnalysisContext, st3::JL.SyntaxTree, offset::Int)
     function select(st::JL.SyntaxTree)
         JS.kind(st) === JS.K"BindingId" || return false
         binfo = JL.lookup_binding(ctx3, st)
@@ -128,8 +137,26 @@ end
 
 is_same_binding(x::JL.SyntaxTree, id::Int) = JS.kind(x) === JS.K"BindingId" && id == JL._binding_id(x)
 
-function _lookup_binding_definitions(st3::JL.SyntaxTree, binding_id::Int)
-    sl = JL.SyntaxList(st3)
+"""
+    lookup_binding_definitions(st3::JL.SyntaxTree, binfo::JL.BindingInfo) -> definitions::JL.SyntaxList
+
+Find all definition sites for a given binding in the syntax tree. Returns a `JL.SyntaxList`
+containing the syntax nodes where the binding may be defined.
+
+This function traverses the syntax tree to collect `definitions` that tracks all the
+assignment expressions (`=`) and function declarations where the binding may be defined.
+For `:argument` bindings, `definitions` also includes the argument declaration itself.
+"""
+function lookup_binding_definitions(st3::JL.SyntaxTree, binfo::JL.BindingInfo)
+    if binfo.kind === :argument
+        sl = JL.SyntaxList(JL.syntax_graph(st3), [binfo.node_id])
+    else
+        sl = JL.SyntaxList(st3)
+    end
+    return _lookup_binding_definitions!(sl, st3, binfo.id)
+end
+
+function _lookup_binding_definitions!(sl::JL.SyntaxList, st3::JL.SyntaxTree, binding_id::Int)
     traverse(st3) do st::JL.SyntaxTree
         if JS.kind(st) === JS.K"=" && JS.numchildren(st) ≥ 2
             lhs, rhs = st[1], st[2]
@@ -144,10 +171,4 @@ function _lookup_binding_definitions(st3::JL.SyntaxTree, binding_id::Int)
         end
     end
     return reverse!(deduplicate_syntaxlist(sl))
-end
-function lookup_binding_definitions(st3::JL.SyntaxTree, binfo::JL.BindingInfo)
-    if binfo.kind === :argument
-        return JL.SyntaxList(JL.syntax_graph(st3), [binfo.node_id])
-    end
-    return _lookup_binding_definitions(st3, binfo.id)
 end
