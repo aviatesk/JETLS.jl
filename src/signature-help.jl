@@ -239,7 +239,7 @@ function make_siginfo(m::Method, ca::CallArgs, active_arg::Union{Int, Symbol};
     msig = postprocessor(msig)
     mnode = JS.parsestmt(JL.SyntaxTree, msig; ignore_errors=true)
     label = String(msig)
-    documentation = let value
+    documentation = let
         mdl = postprocessor(string(Base.parentmodule(m)))
         file, line = Base.updated_methodloc(m)
         filepath = to_full_path(file)

@@ -37,12 +37,11 @@ end
 function jlnode(g::JL.SyntaxGraph, i::JL.NodeId)
     t = JL.SyntaxTree(g, i)
     # show(stdout, MIME("text/x.sexpression"), t)
-    t
+    return t
 end
 function jlnode(st::JL.SyntaxTree, i::JL.NodeId)
-    t = JL.SyntaxTree(st._graph, i)
-    t
+    return JL.SyntaxTree(st._graph, i)
 end
 function jlnode(ctx::T where {T<:JL.AbstractLoweringContext}, i::JL.NodeId)
-    t = JL.SyntaxTree(ctx.graph, i)
+    return JL.SyntaxTree(ctx.graph, i)
 end
