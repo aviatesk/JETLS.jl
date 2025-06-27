@@ -10,7 +10,7 @@ signature_help_options() = SignatureHelpOptions(;
 
 const SIGNATURE_HELP_REGISTRATION_ID = "jetls-signature-help"
 const SIGNATURE_HELP_REGISTRATION_METHOD = "textDocument/signatureHelp"
-const CALL_KINDS = KSet"call macrocall dotcall"
+const CALL_KINDS = JS.KSet"call macrocall dotcall"
 
 function signature_help_registration()
     (; triggerCharacters, retriggerCharacters) = signature_help_options()
@@ -321,13 +321,13 @@ end
 # If parents of our call are like (macro/function (where (where... (call |) ...))),
 # we're actually in a declaration, and shouldn't show signature help.
 function call_is_decl(_bas::JL.SyntaxList, i::Int, _basᵢ::JL.SyntaxTree = _bas[i])
-    kind(_basᵢ) != K"call" && return false
+    kind(_basᵢ) != JS.K"call" && return false
     j = i + 1
-    while j <= lastindex(_bas) && kind(_bas[j]) === K"where"
+    while j <= lastindex(_bas) && kind(_bas[j]) === JS.K"where"
         j += 1
     end
     return j <= lastindex(_bas) &&
-        kind(_bas[j]) in KSet"macro function" &&
+        kind(_bas[j]) in JS.KSet"macro function" &&
         # in `f(x) = g(x)`, return true in `f`, false in `g`
         _bas[j - 1] === _bas[j][1]
 end

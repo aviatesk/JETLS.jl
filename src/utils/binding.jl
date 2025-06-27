@@ -63,7 +63,7 @@ function cursor_bindings(st0_top::JL.SyntaxTree, b_top::Int)
         # find the innermost hard scope containing this binding decl.  we shouldn't
         # be in multiple overlapping scopes that are not direct ancestors; that
         # should indicate a provenance failure
-        i = findfirst(ba -> JS.kind(ba) in KSet"scope_block lambda module toplevel", bas)
+        i = findfirst(ba -> JS.kind(ba) in JS.KSet"scope_block lambda module toplevel", bas)
         push!(bscopeinfos, (binfo, bas, isnothing(i) ? nothing : bas[i]))
     end
 
