@@ -39,7 +39,8 @@ function compute_binding_usages!(tracked::Dict{JL.BindingInfo,Bool},
                                  ctx3::JL.VariableAnalysisContext, st3::JL.SyntaxTree;
                                  include_decls::Bool = false,
                                  skip_tracking::Union{Nothing,Set{JL.BindingInfo}}=nothing)
-    stack = [st3]
+    stack = JL.SyntaxList(st3)
+    push!(stack, st3)
     infunc = false
     while !isempty(stack)
         st = pop!(stack)

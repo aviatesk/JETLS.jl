@@ -68,7 +68,8 @@ function deduplicate_syntaxlist(sl::JL.SyntaxList)
 end
 
 function traverse(@specialize(callback), st::JL.SyntaxTree)
-    stack = [st]
+    stack = JL.SyntaxList(st)
+    push!(stack, st)
     while !isempty(stack)
         st = pop!(stack)
         if JS.numchildren(st) === 0
