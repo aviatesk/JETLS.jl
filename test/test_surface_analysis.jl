@@ -55,11 +55,11 @@ end
             return x
         end
         """)
-        @test_broken length(diagnostics) == 1
-        # diagnostic = only(diagnostics)
-        # @test diagnostic.message == "Unused argument `y`"
-        # @test diagnostic.range.start.line == 0
-        # @test diagnostic.range.var"end".line == 0
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.message == "Unused argument `y`"
+        @test diagnostic.range.start.line == 0
+        @test diagnostic.range.var"end".line == 0
     end
 
     let diagnostics = get_lowered_diagnostics("""
@@ -67,7 +67,7 @@ end
             return x, y
         end
         """)
-        @test_broken isempty(diagnostics)
+        @test isempty(diagnostics)
     end
 
     let diagnostics = get_lowered_diagnostics("""

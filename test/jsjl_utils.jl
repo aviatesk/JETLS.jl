@@ -6,13 +6,13 @@ function parsedstream(s::AbstractString, rule::Symbol=:all)
     return stream
 end
 
-function jsparse(s::AbstractString; ignore_errors=true, kws...)
-    JS.build_tree(JS.SyntaxNode, parsedstream(s); filename=@__FILE__, ignore_errors, kws...)
-end
+jsparse(s::AbstractString) = jsparse(parsedstream(s))
+jsparse(parsed_stream::JS.ParseStream; filename::AbstractString=@__FILE__) =
+    JS.build_tree(JS.SyntaxNode, parsed_stream; filename)
 
-function jlparse(s::AbstractString; ignore_errors=true, kws...)
-    JS.build_tree(JL.SyntaxTree, parsedstream(s); filename=@__FILE__, ignore_errors, kws...)
-end
+jlparse(s::AbstractString) = jlparse(parsedstream(s))
+jlparse(parsed_stream::JS.ParseStream; filename::AbstractString=@__FILE__) =
+    JS.build_tree(JL.SyntaxTree, parsed_stream; filename)
 
 # For interactive use
 # ===================

@@ -32,12 +32,20 @@ function compute_binding_usages(ctx3::JL.VariableAnalysisContext, st3::JL.Syntax
         return tracked
     end
 
+    return compute_binding_usages!(tracked, ctx3, st3)
+end
+
+function compute_binding_usages!(tracked::Dict{JL.BindingInfo,Bool},
+                                 ctx3::JL.VariableAnalysisContext, st3::JL.SyntaxTree;
+                                 include_decls::Bool = false)
     stack = [st3]
     while !isempty(stack)
         st = pop!(stack)
         k = JS.kind(st)
         if k === JS.K"local" # || k === JS.K"function_decl"
-            continue
+            if !include_decls
+                continue
+            end
         end
 
         if k === JS.K"BindingId"
@@ -48,15 +56,41 @@ function compute_binding_usages(ctx3::JL.VariableAnalysisContext, st3::JL.Syntax
         end
 
         i = 1
+        n = JS.numchildren(st)
         if k === JS.K"lambda"
             i = 2 # the first block, i.e. the argument declaration does not account for usage
+            if n ≥ 1
+                arglist = st[1]
+                is_kwcall = JS.numchildren(arglist) ≥ 3 &&
+                    let arg1info = JL.lookup_binding(ctx3, arglist[1])
+                        arg1info.is_internal && arg1info.name == "#self#"
+                    end &&
+                    let arg2info = JL.lookup_binding(ctx3, arglist[2])
+                        arg2info.is_internal && arg2info.name == "kws"
+                    end &&
+                    let arg3info = JL.lookup_binding(ctx3, arglist[3])
+                        arg3info.is_internal && arg3info.name == "#self#"
+                    end
+                if is_kwcall
+                    # This is `kwcall` method -- now need to perform some special case
+                    # Julia checks whether keyword arguments are assigned in `kwcall` methods,
+                    # but JL actually introduces local bindings for those keyword arguments for reflection purposes:
+                    # https://github.com/c42f/JuliaLowering.jl/blob/4b12ab19dad40c64767558be0a8a338eb4cc9172/src/desugaring.jl#L2633-L2637
+                    # These bindings are never actually used, so simply recursing would cause
+                    # this pass to report them as unused local bindings.
+                    # We avoid this problem by setting `include_decls` when recursing.
+                    for j = 1:n
+                        compute_binding_usages!(tracked, ctx3, st[j]; include_decls=true)
+                    end
+                end
+            end
         elseif k === JS.K"="
             i = 2 # the left hand side, i.e. "definition", does not account for usage
         end
-        for j = i:JS.numchildren(st)
+        for j = i:n
             push!(stack, st[j])
         end
     end
 
-    tracked
+    return tracked
 end
