@@ -107,6 +107,15 @@ function compute_binding_usages!(tracked::Dict{JL.BindingInfo,Bool},
             end
         elseif k === JS.K"="
             i = 2 # the left hand side, i.e. "definition", does not account for usage
+            if n ≥ 2
+                eq2 = st[2]
+                # In struct definitions, `local struct_name` is somehow introduced,
+                # so special case it here: https://github.com/c42f/JuliaLowering.jl/blob/4b12ab19dad40c64767558be0a8a338eb4cc9172/src/desugaring.jl#L3833
+                # TODO investigate why this local binding introduction is necessary on the JL side
+                if JS.kind(eq2) === JS.K"BindingId" && JL.lookup_binding(ctx3, eq2).name == "struct_type"
+                    i = 1
+                end
+            end
         end
         for j = n:-1:i # since we use `pop!`
             push!(stack, st[j])

@@ -135,6 +135,34 @@ end
         @test isempty(diagnostics)
     end
 
+    @testset "struct definition" begin
+        @test isempty(get_lowered_diagnostics("struct A end"))
+        @test isempty(get_lowered_diagnostics("struct A; x::Int; end"))
+        @test isempty(get_lowered_diagnostics("struct A{T}; x::T; end"))
+        let diagnostics = get_lowered_diagnostics("""
+            struct A
+                x::Int
+                A(x::Int, y::Int) = new(x)
+            end
+            """)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.message == "Unused argument `y`"
+            @test diagnostic.range.start.line == 2
+        end
+        let diagnostics = get_lowered_diagnostics("""
+            struct A{T}
+                x::T
+                A(x::T, y::Int) where T = new{T}(x)
+            end
+            """)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.message == "Unused argument `y`"
+            @test diagnostic.range.start.line == 2
+        end
+    end
+
     @testset "module splitter" begin
         diagnostics = get_lowered_diagnostics("""
         module TestModuleSplit
