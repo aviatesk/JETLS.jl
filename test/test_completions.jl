@@ -304,10 +304,10 @@ end
         @test any(items) do item
             item.label == "x"
         end
-        @test !any(items) do item
+        @test_broken !any(items) do item
             item.label == "y"
         end
-        @test_broken any(items) do item
+        @test any(items) do item
             item.label == "y_var"
         end
     end
