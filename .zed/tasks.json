@@ -11,5 +11,15 @@
       "$ZED_FILENAME",
       "$ZED_FILE"
     ]
+  },
+  {
+    "label": "JETLS: runtests (project)",
+    "command": "./julia",
+    "args": [
+      "--startup-file=no",
+      "--project=.",
+      "-e",
+      "'using Pkg; Pkg.test()'"
+    ]
   }
 ]
