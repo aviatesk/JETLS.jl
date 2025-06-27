@@ -83,6 +83,58 @@ end
         @test diagnostic.range.var"end".line == 1
     end
 
+    @testset "unued inner function" begin
+        diagnostics = get_lowered_diagnostics("""
+        function foo(x)
+            function inner(y)
+                x + y
+            end
+            return 2x
+        end
+        """)
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.message == "Unused local binding `inner`"
+        @test diagnostic.range.start.line == 1
+        @test diagnostic.range.var"end".line == 1
+    end
+
+    @testset "unued inner function (nested)" begin
+        diagnostics = get_lowered_diagnostics("""
+        function foo(x)
+            function inner(y)
+                function innernested()
+                    x + y
+                end
+            end
+            return 2x
+        end
+        """)
+        @test length(diagnostics) == 2
+        @test any(diagnostics) do diagnostic
+            diagnostic.message == "Unused local binding `inner`" &&
+            diagnostic.range.start.line == 1 &&
+            diagnostic.range.var"end".line == 1
+        end
+        @test any(diagnostics) do diagnostic
+            diagnostic.message == "Unused local binding `innernested`" &&
+            diagnostic.range.start.line == 2 &&
+            diagnostic.range.var"end".line == 2
+        end
+    end
+
+    @testset "used inner function" begin
+        diagnostics = get_lowered_diagnostics("""
+        function foo(x)
+            function inner(y)
+                x + y
+            end
+            return 2inner(x)
+        end
+        """)
+        @test isempty(diagnostics)
+    end
+
     @testset "module splitter" begin
         diagnostics = get_lowered_diagnostics("""
         module TestModuleSplit

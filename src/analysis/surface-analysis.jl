@@ -37,8 +37,10 @@ end
 
 function compute_binding_usages!(tracked::Dict{JL.BindingInfo,Bool},
                                  ctx3::JL.VariableAnalysisContext, st3::JL.SyntaxTree;
-                                 include_decls::Bool = false)
+                                 include_decls::Bool = false,
+                                 skip_tracking::Union{Nothing,Set{JL.BindingInfo}}=nothing)
     stack = [st3]
+    infunc = false
     while !isempty(stack)
         st = pop!(stack)
         k = JS.kind(st)
@@ -50,14 +52,31 @@ function compute_binding_usages!(tracked::Dict{JL.BindingInfo,Bool},
 
         if k === JS.K"BindingId"
             binfo = JL.lookup_binding(ctx3, st)
-            if haskey(tracked, binfo)
+            if haskey(tracked, binfo) && (isnothing(skip_tracking) || binfo ∉ skip_tracking)
                 tracked[binfo] |= true
             end
         end
 
         i = 1
         n = JS.numchildren(st)
-        if k === JS.K"lambda"
+        if k === JS.K"function_decl"
+            infunc = true
+        elseif infunc && k === JS.K"block" && n ≥ 1
+            blk1 = st[1]
+            if JS.kind(blk1) === JS.K"function_decl" && infunc && JS.numchildren(blk1) ≥ 1
+                # This is an inner function definition -- the binding of this inner function
+                # is "used" in the language constructs required to define the method,
+                # but what we're interested in is whether it's actually used in the outer scope.
+                # We add this inner function to `skip_tracking` and recurse.
+                func = blk1[1]
+                if JS.kind(func) === JS.K"BindingId"
+                    innerfuncinfo = JL.lookup_binding(ctx3, func)
+                    compute_binding_usages!(tracked, ctx3, st;
+                        skip_tracking = Set((innerfuncinfo,)))
+                    continue
+                end
+            end
+        elseif k === JS.K"lambda"
             i = 2 # the first block, i.e. the argument declaration does not account for usage
             if n ≥ 1
                 arglist = st[1]
@@ -82,12 +101,13 @@ function compute_binding_usages!(tracked::Dict{JL.BindingInfo,Bool},
                     for j = 1:n
                         compute_binding_usages!(tracked, ctx3, st[j]; include_decls=true)
                     end
+                    continue
                 end
             end
         elseif k === JS.K"="
             i = 2 # the left hand side, i.e. "definition", does not account for usage
         end
-        for j = i:n
+        for j = n:-1:i # since we use `pop!`
             push!(stack, st[j])
         end
     end
