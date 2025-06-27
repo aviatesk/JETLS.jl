@@ -10,11 +10,11 @@ function analyze_lowered_code!(diagnostics::Vector{Diagnostic},
         else
             message = "Unused local binding `$(binfo.name)`"
         end
-        diagnostic = jsobj_to_diagnostic(binding, sourcefile,
+        push!(diagnostics, jsobj_to_diagnostic(binding, sourcefile,
             message,
             #=severity=#DiagnosticSeverity.Information,
-            #=source=#LOWERING_DIAGNOSTIC_SOURCE)
-        push!(diagnostics, diagnostic)
+            #=source=#LOWERING_DIAGNOSTIC_SOURCE;
+            tags = DiagnosticTag.Ty[DiagnosticTag.Unnecessary]))
     end
     return diagnostics
 end

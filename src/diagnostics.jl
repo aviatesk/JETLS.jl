@@ -27,7 +27,8 @@ end
 function jsobj_to_diagnostic(obj, sourcefile::JS.SourceFile,
                              message::AbstractString,
                              severity::DiagnosticSeverity.Ty,
-                             source::String)
+                             source::String;
+                             tags::Union{Nothing,Vector{DiagnosticTag.Ty}}=nothing)
     sline, scol = JS.source_location(sourcefile, JS.first_byte(obj))
     eline, ecol = JS.source_location(sourcefile, JS.last_byte(obj))
     range = Range(;
@@ -37,7 +38,8 @@ function jsobj_to_diagnostic(obj, sourcefile::JS.SourceFile,
         range,
         severity,
         message,
-        source)
+        source,
+        tags)
 end
 
 # TODO severity
