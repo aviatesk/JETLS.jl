@@ -1,0 +1,15 @@
+// Project tasks configuration. See https://zed.dev/docs/tasks for documentation.
+
+[
+  {
+    "label": "JETLS: runtest (script)",
+    "command": "./julia",
+    "args": [
+      "--startup-file=no",
+      "--project=./test",
+      ".zed/runtest.jl",
+      "$ZED_FILENAME",
+      "$ZED_FILE"
+    ]
+  }
+]
