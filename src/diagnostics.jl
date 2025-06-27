@@ -1,4 +1,5 @@
 const SYNTAX_DIAGNOSTIC_SOURCE = "JETLS - syntax"
+const LOWERING_DIAGNOSTIC_SOURCE = "JETLS - lowering"
 const TOPLEVEL_DIAGNOSTIC_SOURCE = "JETLS - top-level"
 const INFERENCE_DIAGNOSTIC_SOURCE = "JETLS - inference"
 
@@ -13,20 +14,30 @@ function parsed_stream_to_diagnostics!(diagnostics::Vector{Diagnostic}, parsed_s
         push!(diagnostics, juliasyntax_diagnostic_to_diagnostic(diagnostic, source))
     end
 end
-function juliasyntax_diagnostic_to_diagnostic(diagnostic::JS.Diagnostic, source::JS.SourceFile)
-    sline, scol = JS.source_location(source, JS.first_byte(diagnostic))
-    start = Position(; line = sline-1, character = scol)
-    eline, ecol = JS.source_location(source, JS.last_byte(diagnostic))
-    var"end" = Position(; line = eline-1, character = ecol)
+function juliasyntax_diagnostic_to_diagnostic(diagnostic::JS.Diagnostic, sourcefile::JS.SourceFile)
+    severity =
+        diagnostic.level === :error ? DiagnosticSeverity.Error :
+        diagnostic.level === :warning ? DiagnosticSeverity.Warning :
+        diagnostic.level === :note ? DiagnosticSeverity.Information :
+        DiagnosticSeverity.Hint
+    source = SYNTAX_DIAGNOSTIC_SOURCE
+    return jsobj_to_diagnostic(diagnostic, sourcefile, diagnostic.message, severity, source)
+end
+
+function jsobj_to_diagnostic(obj, sourcefile::JS.SourceFile,
+                             message::AbstractString,
+                             severity::DiagnosticSeverity.Ty,
+                             source::String)
+    sline, scol = JS.source_location(sourcefile, JS.first_byte(obj))
+    eline, ecol = JS.source_location(sourcefile, JS.last_byte(obj))
+    range = Range(;
+        start = Position(; line = sline-1, character = scol-1),
+        var"end" = Position(; line = eline-1, character = ecol))
     return Diagnostic(;
-        range = Range(; start, var"end"),
-        severity =
-            diagnostic.level === :error ? DiagnosticSeverity.Error :
-            diagnostic.level === :warning ? DiagnosticSeverity.Warning :
-            diagnostic.level === :note ? DiagnosticSeverity.Information :
-            DiagnosticSeverity.Hint,
-        message = diagnostic.message,
-        source = SYNTAX_DIAGNOSTIC_SOURCE)
+        range,
+        severity,
+        message,
+        source)
 end
 
 # TODO severity
@@ -122,6 +133,36 @@ function line_range(line::Int)
     return Range(; start, var"end")
 end
 
+# TODO use something like `JuliaInterpreter.ExprSplitter`
+
+function lowering_diagnostics(parsed_stream::JS.ParseStream, filename::AbstractString)
+    st0_top = JS.build_tree(JL.SyntaxTree, parsed_stream)
+    diagnostics = Diagnostic[]
+    sourcefile = JS.SourceFile(parsed_stream; filename)
+    sl = JL.SyntaxList(st0_top)
+    push!(sl, st0_top)
+    while !isempty(sl)
+        st0 = pop!(sl)
+        if JS.kind(st0) === JS.K"toplevel"
+            for cl0 in JS.children(st0)
+                push!(sl, cl0)
+            end
+        elseif JS.kind(st0) === JS.K"module"
+            for cl0 in JS.children(st0)
+                push!(sl, cl0)
+            end
+        else
+            ctx3, st3 = try
+                jl_lower_for_scope_resolution3(st0)
+            catch # err
+                continue
+            end
+            analyze_lowered_code!(diagnostics, ctx3, st3, sourcefile)
+        end
+    end
+    return diagnostics
+end
+
 # textDocument/publishDiagnostics
 # -------------------------------
 
@@ -183,8 +224,6 @@ end
 #     method=DIAGNOSTIC_REGISTRATION_METHOD))
 # register(currently_running, diagnostic_resistration())
 
-const empty_diagnostics = Diagnostic[]
-
 function handle_DocumentDiagnosticRequest(server::Server, msg::DocumentDiagnosticRequest)
     uri = msg.params.textDocument.uri
     file_info = get_fileinfo(server.state, uri)
@@ -197,11 +236,11 @@ function handle_DocumentDiagnosticRequest(server::Server, msg::DocumentDiagnosti
                     data = DiagnosticServerCancellationData(; retriggerRequest = true))))
     end
     parsed_stream = file_info.parsed_stream
+    filename = uri2filename(uri)
+    @assert !isnothing(filename) "Unsupported URI: $uri"
     if isempty(parsed_stream.diagnostics)
-        diagnostics = empty_diagnostics
+        diagnostics = lowering_diagnostics(parsed_stream, filename)
     else
-        filename = uri2filename(uri)
-        @assert !isnothing(filename) "Unsupported URI: $uri"
         diagnostics = parsed_stream_to_diagnostics(parsed_stream, filename)
     end
     return send(server,
