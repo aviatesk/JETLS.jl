@@ -70,6 +70,20 @@ function deduplicate_syntaxlist(sl::JL.SyntaxList)
     return sl2
 end
 
+function traverse(@specialize(callback), st::JL.SyntaxTree)
+    stack = [st]
+    while !isempty(stack)
+        st = pop!(stack)
+        if JS.numchildren(st) === 0
+            continue
+        end
+        for ci in JS.children(st)
+            callback(ci)
+            push!(stack, ci)
+        end
+    end
+end
+
 """
     byte_ancestors(st::JL.SyntaxTree, rng::UnitRange{Int})
     byte_ancestors(st::JL.SyntaxTree, byte::Int)
@@ -88,17 +102,9 @@ tree in the result will be a child of the next.
 """
 function byte_ancestors(st::JL.SyntaxTree, rng::UnitRange{Int})
     sl = JL.SyntaxList(st._graph, [st._id])
-    stack = [st]
-    while !isempty(stack)
-        st = pop!(stack)
-        if JS.numchildren(st) === 0
-            continue
-        end
-        for ci in JS.children(st)
-            if rng ⊆ JS.byte_range(ci)
-                push!(sl, ci)
-            end
-            push!(stack, ci)
+    traverse(st) do st′
+        if rng ⊆ JS.byte_range(st′)
+            push!(sl, st′)
         end
     end
     # delete later duplicates when sorted parent->child
