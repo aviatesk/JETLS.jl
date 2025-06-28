@@ -1,3 +1,5 @@
+module ___JETLSEntryPoint___
+
 @info "Running JETLS with Julia version" VERSION
 
 using Pkg
@@ -27,7 +29,8 @@ let old_env = Pkg.project().path
     end
 end
 
-let endpoint = Endpoint(stdin, stdout)
+function (@main)(args::Vector{String})::Cint
+    endpoint = Endpoint(stdin, stdout)
     if JETLS.JETLS_DEV_MODE
         server = Server(endpoint) do s::Symbol, x
             @nospecialize x
@@ -44,5 +47,9 @@ let endpoint = Endpoint(stdin, stdout)
         res = runserver(endpoint)
     end
     @info "JETLS server stopped" res.exit_code
-    exit(res.exit_code)
+    return res.exit_code
 end
+
+end # ___JETLSEntryPoint___
+
+using .___JETLSEntryPoint___: main
