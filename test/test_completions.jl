@@ -479,7 +479,7 @@ function test_backslash_offset(code::String, expected_result)
     uri = filename2uri(filename)
     fi = JETLS.cache_file_info!(state, uri, 1, text)
 
-    result = JETLS.get_backslash_offset(state, fi, positions[1])
+    result = JETLS.get_backslash_offset(fi, positions[1])
     @test result == expected_result
     return result
 end

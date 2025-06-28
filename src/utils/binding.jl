@@ -46,7 +46,7 @@ function cursor_bindings(st0_top::JL.SyntaxTree, b_top::Int)
     end
     ctx3, st2 = try
         jl_lower_for_scope_resolution2(st0)
-    catch err
+    catch # err
         # JETLS_DEV_MODE && @warn "Error in lowering" err
         return nothing # lowering failed, e.g. because of incomplete input
     end
@@ -70,7 +70,7 @@ function cursor_bindings(st0_top::JL.SyntaxTree, b_top::Int)
     cursor_scopes = byte_ancestors(st2, b)
 
     # ignore scopes we aren't in
-    filter!(((binfo, _, bs),) -> isnothing(bs) || bs._id in cursor_scopes.ids,
+    filter!(((_, _, bs),) -> isnothing(bs) || bs._id in cursor_scopes.ids,
             bscopeinfos)
 
     # Now eliminate duplicates by name.
@@ -159,7 +159,7 @@ end
 function _lookup_binding_definitions!(sl::JL.SyntaxList, st3::JL.SyntaxTree, binding_id::Int)
     traverse(st3) do st::JL.SyntaxTree
         if JS.kind(st) === JS.K"=" && JS.numchildren(st) ≥ 2
-            lhs, rhs = st[1], st[2]
+            lhs = st[1]
             if is_same_binding(lhs, binding_id)
                 push!(sl, lhs)
             end
