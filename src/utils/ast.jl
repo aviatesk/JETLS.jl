@@ -127,7 +127,6 @@ function byte_ancestors(sn::JS.SyntaxNode, rng::UnitRange{Int})
 end
 byte_ancestors(sn::JS.SyntaxNode, byte::Int) = byte_ancestors(sn, byte:byte)
 
-
 """
     greatest_local(st0, b) -> (st::Union{SyntaxTree, Nothing}, b::Int)
 

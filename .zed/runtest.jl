@@ -1,6 +1,6 @@
 using Test
 
-function @main(args)
+function (@main)(args)
     if length(args) < 2
         error("Usage: runtest.jl <testset_name> <testfile>")
     end
