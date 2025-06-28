@@ -27,7 +27,7 @@ let old_env = Pkg.project().path
     end
 end
 
-let endpoint = Endpoint(stdin, stdout)
+let endpoint = LSEndpoint(stdin, stdout)
     if JETLS.JETLS_DEV_MODE
         server = Server(endpoint) do s::Symbol, x
             @nospecialize x

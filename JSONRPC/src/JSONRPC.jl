@@ -4,8 +4,6 @@ export Endpoint, send
 
 using JSON3
 
-using ..JETLS.LSP: method_dispatcher
-
 mutable struct Endpoint
     in_msg_queue::Channel{Any}
     out_msg_queue::Channel{Any}
@@ -13,13 +11,13 @@ mutable struct Endpoint
     write_task::Task
     state::Symbol
 
-    function Endpoint(err_handler, in::IO, out::IO)
+    function Endpoint(err_handler, in::IO, out::IO, method_dispatcher)
         in_msg_queue = Channel{Any}(Inf)
         out_msg_queue = Channel{Any}(Inf)
 
         read_task = @async try
             while true
-                msg = readmsg(in)
+                msg = readmsg(in, method_dispatcher)
                 msg === nothing && break
                 put!(in_msg_queue, msg)
             end
@@ -45,8 +43,8 @@ mutable struct Endpoint
     end
 end
 
-function Endpoint(in::IO, out::IO)
-    Endpoint(in, out) do isread::Bool, err, bt
+function Endpoint(in::IO, out::IO, method_dispatcher)
+    Endpoint(in, out, method_dispatcher) do isread::Bool, err, bt
         @nospecialize err
         @error "Error in Endpoint $(isread ? "reading" : "writing") task"
         Base.display_error(stderr, err, bt)
@@ -55,11 +53,11 @@ end
 
 const Parsed = @NamedTuple{method::Union{Nothing,String}}
 
-function readmsg(io::IO)
+function readmsg(io::IO, method_dispatcher)
     msg_str = read_transport_layer(io)
     msg_str === nothing && return nothing
     parsed = JSON3.read(msg_str, Parsed)
-    return reparse_msg_str(parsed, msg_str)
+    return reparse_msg_str(parsed, msg_str, method_dispatcher)
 end
 
 function read_transport_layer(io::IO)
@@ -80,7 +78,7 @@ function read_transport_layer(io::IO)
     return String(read(io, message_length))
 end
 
-function reparse_msg_str(parsed::Parsed, msg_str::String)
+function reparse_msg_str(parsed::Parsed, msg_str::String, method_dispatcher)
     parsed_method = parsed.method
     if parsed_method !== nothing
         if haskey(method_dispatcher, parsed_method)
