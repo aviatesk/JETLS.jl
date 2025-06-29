@@ -17,5 +17,6 @@ end
     @testset "hover" include("test_hover.jl")
     @testset "LSAnalyzer" include("test_LSAnalyzer.jl")
     @testset "diagnostics" include("test_diagnostics.jl")
+    @testset "document symbols" include("test_document_symbols.jl")
     @testset "full lifecycle" include("test_full_lifecycle.jl")
 end
