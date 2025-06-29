@@ -139,7 +139,9 @@ function runserver(server::Server)
     return (; exit_code, server.endpoint)
 end
 
-function handle_message(server::Server, msg)
+include("requests/document-symbol.jl")
+
+function handle_message(state::ServerState, msg)
     @nospecialize msg
     if JETLS_DEV_MODE
         try
@@ -176,6 +178,8 @@ function _handle_message(server::Server, msg)
         return handle_DefinitionRequest(server, msg)
     elseif msg isa HoverRequest
         return handle_HoverRequest(server, msg)
+    elseif msg isa DocumentSymbolRequest
+        return handle_DocumentSymbolRequest(server, msg)
     elseif msg isa DocumentDiagnosticRequest
         return handle_DocumentDiagnosticRequest(server, msg)
     elseif msg isa WorkspaceDiagnosticRequest
