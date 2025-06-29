@@ -1,4 +1,5 @@
 using .JS: children, kind
+using .JL: @ast
 
 # Symbols search
 # ==============
@@ -16,12 +17,10 @@ function symbols(st::JL.SyntaxTree)::Vector{DocumentSymbol}
         struct_children = DocumentSymbol[]
         # Type parameters.
         type_param_bindings = filter(binfo -> binfo.kind === :static_parameter, binfos)
-        for b in type_param_bindings
-            tpb_symbol = _DocumentSymbol(b.name,
-                                         JL.binding_ex(ctx, b.id),
-                                         SymbolKind.TypeParameter)
-            push!(struct_children, tpb_symbol)
-        end
+        type_param_names = [b.name for b in type_param_bindings]
+        type_params_str = isempty(type_param_names) ?
+            "" :
+            "{" * join(type_param_names, ", ") * "}"
         # Fields and inner constructors.
         for c in children(st[2])
             kc = kind(c)
@@ -34,12 +33,25 @@ function symbols(st::JL.SyntaxTree)::Vector{DocumentSymbol}
                                                        c[1],
                                                        SymbolKind.Field))
             elseif kc === K"function"
-                append!(struct_children, symbols(c))
+                if !isempty(type_param_bindings)
+                    c = remove_type_param(c)
+                end
+                constructor_symbol = symbols(c)[1]
+                constructor_name = constructor_symbol.name * type_params_str
+                constructor_symbol =
+                    DocumentSymbol(;
+                                   name = constructor_name,
+                                   kind = constructor_symbol.kind,
+                                   range = constructor_symbol.range,
+                                   selectionRange = constructor_symbol.selectionRange,
+                                   children = constructor_symbol.children)
+                push!(struct_children, constructor_symbol)
             end
         end
         # Struct symbol.
         struct_name_st, _, _ = JL.analyze_type_sig(ctx, st[1])
-        struct_symbol = _DocumentSymbol(struct_name_st.name_val,
+        struct_name = struct_name_st.name_val * type_params_str
+        struct_symbol = _DocumentSymbol(struct_name,
                                         st,
                                         SymbolKind.Struct,
                                         struct_children)
@@ -163,6 +175,21 @@ function lower_and_get_bindings(ex::JL.SyntaxTree)
     binfos = filter(binfo -> !binfo.is_internal, ctx.bindings.info)
 
     return ctx, binfos
+end
+
+"""
+Remove the type parameters from an inner constructor in order ot make it lowerable.
+"""
+function remove_type_param(st::JL.SyntaxTree)
+    call = st[1][1]  # Skip the `where`.
+    constr_name = call[1][1]
+    body = st[2]
+
+    # TODO: Does it matter what context we have here?
+    ctx = JL.MacroExpansionContext(JL.syntax_graph(st), JL.Bindings(),
+                                   JL.ScopeLayer[], JL.ScopeLayer(1, Module(), false))
+    k = kind(st)
+    return @ast ctx st [k [K"call" constr_name call[2:end]...] body]
 end
 
 """

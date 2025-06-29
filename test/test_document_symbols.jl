@@ -78,10 +78,8 @@ end
         syms = symbols(JS.parsestmt(JL.SyntaxTree, src))
         @test length(syms) == 1
         s_symbol = syms[1]
-        test_symbol_end(s_symbol, "S", SymbolKind.Struct, (0, 0), (2, 2), 2)
-        t_symbol = s_symbol.children[1]
-        test_symbol(t_symbol, "T", SymbolKind.TypeParameter, (0, 9), (0, 10), 0)
-        x_symbol = s_symbol.children[2]
+        test_symbol_end(s_symbol, "S{T}", SymbolKind.Struct, (0, 0), (2, 2), 1)
+        x_symbol = s_symbol.children[1]
         test_symbol(x_symbol, "x", SymbolKind.Field, (1, 4), (1, 5), 0)
     end
 
@@ -100,6 +98,22 @@ end
         test_symbol(x_symbol, "x", SymbolKind.Field, (1, 4), (1, 5), 0)
         constructor_symbol = s_symbol.children[2]
         test_symbol(constructor_symbol, "S", SymbolKind.Function, (2, 4), (2, 17), 1)
+    end
+
+    let
+        src = """
+        struct S{T1, T2}
+            x::T1
+            y::T2
+            S{T1, T2}(x, y) where {T1, T2} = new(x, y)
+        end
+        """
+        syms = symbols(JS.parsestmt(JL.SyntaxTree, src))
+        @test length(syms) == 1
+        s_symbol = syms[1]
+        test_symbol_end(s_symbol, "S{T1, T2}", SymbolKind.Struct, (0, 0), (4, 2), 3)
+        constructor_symbol = s_symbol.children[3]
+        test_symbol(constructor_symbol, "S{T1, T2}", SymbolKind.Function, (3, 4), (3, 46), 2)
     end
 
     let
