@@ -63,6 +63,7 @@ include("definition.jl")
 include("hover.jl")
 include("diagnostics.jl")
 include("lifecycle.jl")
+include("document-symbols.jl")
 
 """
     runserver([callback,] in::IO, out::IO) -> (; exit_code::Int, endpoint::Endpoint)
@@ -138,8 +139,6 @@ function runserver(server::Server)
     JETLS_DEV_MODE && @info "Exited JETLS server loop"
     return (; exit_code, server.endpoint)
 end
-
-include("requests/document-symbol.jl")
 
 function handle_message(state::ServerState, msg)
     @nospecialize msg
