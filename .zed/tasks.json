@@ -27,6 +27,7 @@
     "command": "testrunner",
     "args": [
       "--project=./test",
+      "--verbose",
       "$ZED_FILE",
       "\":($ZED_CUSTOM_JULIA_TEST_EXPR)\"",
       "--filter-lines=$ZED_ROW"
@@ -38,6 +39,7 @@
     "command": "testrunner",
     "args": [
       "--project=./test",
+      "--verbose",
       "$ZED_FILE",
       "\":($ZED_CUSTOM_JULIA_TESTRUNNER_EXPR)\"",
       "--filter-lines=$ZED_ROW"
