@@ -6,6 +6,33 @@ using JETLS.LSP
 
 include("setup.jl")
 
+include("jsjl_utils.jl")
+
+function with_local_hover(f, text::AbstractString, matcher::Regex=r"│")
+    clean_code, positions = JETLS.get_text_and_positions(text, matcher)
+    st0_top = jlparse(clean_code)
+    for (i, pos) in enumerate(positions)
+        offset = JETLS.xy_to_offset(Vector{UInt8}(clean_code), pos)
+        f(i, JETLS.local_hover(st0_top, offset))
+    end
+end
+
+# TODO enrich test cases once we implement a proper hover support for local bindings
+@testset "local hover" begin
+    with_local_hover("""
+        function mapfunc(xs)
+            Any[Core.Const(x│)
+                for x in xs]
+        end
+    """) do _, res
+        @test !isnothing(res)
+        binding, defs = res
+        @test JS.source_line(JL.sourceref(binding)) == 2
+        @test length(defs) == 1
+        @test JS.source_line(JL.sourceref(only(defs))) == 3
+    end
+end
+
 @testset "'Hover' request/responce (pkg)" begin
     pkg_code = """
     module HoverTest

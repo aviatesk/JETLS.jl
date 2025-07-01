@@ -15,6 +15,22 @@ function hover_registration()
     )
 end
 
+function local_hover(st0_top::JL.SyntaxTree, offset::Int)
+    st0, b = greatest_local(st0_top, offset)
+    isnothing(st0) && return nothing
+    ctx3, st3 = try
+        jl_lower_for_scope_resolution3(st0)
+    catch
+        return nothing
+    end
+    binding = select_target_binding(ctx3, st3, b)
+    isnothing(binding) && return nothing
+    binfo = JL.lookup_binding(ctx3, binding)
+    definitions = lookup_binding_definitions(st3, binfo)
+    isempty(definitions) && return nothing
+    return binding, definitions
+end
+
 function handle_HoverRequest(server::Server, msg::HoverRequest)
     pos = msg.params.position
     uri = msg.params.textDocument.uri
@@ -28,9 +44,33 @@ function handle_HoverRequest(server::Server, msg::HoverRequest)
                 error = file_cache_error(uri)))
     end
 
-    st0 = JS.build_tree(JL.SyntaxTree, fi.parsed_stream)
+    st0_top = JS.build_tree(JL.SyntaxTree, fi.parsed_stream)
     offset = xy_to_offset(fi, pos)
-    node = select_target_node(st0, offset)
+
+    target_binding_definitions = local_hover(st0_top, offset)
+    if !isnothing(target_binding_definitions)
+        # TODO Ideally we would want to show the type of this local binding,
+        # but for now we'll just show the location of the local binding
+        target_binding, definitions = target_binding_definitions
+        io = IOBuffer()
+        println(io, "```julia")
+        for definition in definitions
+            JL.showprov(io, definition)
+            println(io)
+        end
+        println(io, "```")
+        value = String(take!(io))
+        contents = MarkupContent(;
+            kind = MarkupKind.Markdown,
+            value)
+        return send(server, HoverResponse(;
+            id = msg.id,
+            result = Hover(;
+                contents,
+                range = get_source_range(target_binding))))
+    end
+
+    node = select_target_node(st0_top, offset)
     if node === nothing
         return send(server, HoverResponse(; id = msg.id, result = null))
     end
