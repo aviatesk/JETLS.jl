@@ -20,13 +20,12 @@ n_si(args...) = length(siginfos(args...))
 
 module M_sanity
 i_exist(a,b,c) = 0
-struct SExist1; s; end # just 1 construct (w/o the conversion method)
-struct SExist2; s::String; end # just 1 construct (w/o the conversion method)
-struct SExist3
+struct StrctExist1; s; end # just 1 construct (w/o the conversion method)
+struct StrctExist2; s::String; end # just 1 construct (w/o the conversion method)
+struct StrctExist3
     s
-    SExist3(@nospecialize s) = new(s)
+    StrctExist3(@nospecialize s) = new(s)
 end
-macro m_exist(x); x; end
 end
 @testset "sanity" begin
     @test 1 == n_si(M_sanity, "i_exist(|)")
@@ -36,12 +35,12 @@ end
     @test 0 == n_si(M_sanity, "|")
     @test 0 == n_si(M_sanity, "(|)")
     @test 0 == n_si(M_sanity, "()|")
-    @test 1 == n_si(M_sanity, "SExist1(|)")
-    @test 0 == n_si(M_sanity, "SExist1(1,2|)")
-    @test 2 == n_si(M_sanity, "SExist2(|)")
-    @test 0 == n_si(M_sanity, "SExist2(1,2|)")
-    @test 1 == n_si(M_sanity, "SExist3(|)")
-    @test 0 == n_si(M_sanity, "SExist3(1,2|)")
+    @test 1 == n_si(M_sanity, "StrctExist1(|)")
+    @test 0 == n_si(M_sanity, "StrctExist1(1,2|)")
+    @test 2 == n_si(M_sanity, "StrctExist2(|)")
+    @test 0 == n_si(M_sanity, "StrctExist2(1,2|)")
+    @test 1 == n_si(M_sanity, "StrctExist3(|)")
+    @test 0 == n_si(M_sanity, "StrctExist3(1,2|)")
 end
 
 module M_macros
