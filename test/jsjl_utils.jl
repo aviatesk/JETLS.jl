@@ -6,13 +6,13 @@ function parsedstream(s::AbstractString, rule::Symbol=:all)
     return stream
 end
 
-function jsparse(s::AbstractString; ignore_errors=true, kws...)
-    JS.build_tree(JS.SyntaxNode, parsedstream(s); filename=@__FILE__, ignore_errors, kws...)
-end
+jsparse(s::AbstractString) = jsparse(parsedstream(s))
+jsparse(parsed_stream::JS.ParseStream; filename::AbstractString=@__FILE__) =
+    JS.build_tree(JS.SyntaxNode, parsed_stream; filename)
 
-function jlparse(s::AbstractString; ignore_errors=true, kws...)
-    JS.build_tree(JL.SyntaxTree, parsedstream(s); filename=@__FILE__, ignore_errors, kws...)
-end
+jlparse(s::AbstractString) = jlparse(parsedstream(s))
+jlparse(parsed_stream::JS.ParseStream; filename::AbstractString=@__FILE__) =
+    JS.build_tree(JL.SyntaxTree, parsed_stream; filename)
 
 # For interactive use
 # ===================
@@ -37,12 +37,11 @@ end
 function jlnode(g::JL.SyntaxGraph, i::JL.NodeId)
     t = JL.SyntaxTree(g, i)
     # show(stdout, MIME("text/x.sexpression"), t)
-    t
+    return t
 end
 function jlnode(st::JL.SyntaxTree, i::JL.NodeId)
-    t = JL.SyntaxTree(st._graph, i)
-    t
+    return JL.SyntaxTree(st._graph, i)
 end
 function jlnode(ctx::T where {T<:JL.AbstractLoweringContext}, i::JL.NodeId)
-    t = JL.SyntaxTree(ctx.graph, i)
+    return JL.SyntaxTree(ctx.graph, i)
 end

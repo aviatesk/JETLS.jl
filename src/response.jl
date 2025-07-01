@@ -22,7 +22,7 @@ function handle_ResponseMessage(server::Server, msg::Dict{Symbol,Any})
     return false
 end
 
-function handle_requested_response(server::Server, msg::Dict{Symbol,Any},
+function handle_requested_response(server::Server, #=msg=#::Dict{Symbol,Any},
                                    @nospecialize request_caller::RequestCaller)
     if request_caller isa RunFullAnalysisCaller
         (; uri, onsave, token) = request_caller

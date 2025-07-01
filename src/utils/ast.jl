@@ -13,7 +13,7 @@ Note that the byte offset returned in such cases has almost no meaning.
 """
 function xy_to_offset(code::Vector{UInt8}, pos::Position)
     b = 0
-    for z in 1:pos.line
+    for _ in 1:pos.line
         nextb = findnext(isequal(UInt8('\n')), code, b + 1)
         if isnothing(nextb) # guard against invalid `pos`
             break
@@ -24,7 +24,7 @@ function xy_to_offset(code::Vector{UInt8}, pos::Position)
     lend = isnothing(lend) ? lastindex(code) + 1 : lend
     curline = String(code[b+1:lend-1]) # current line, containing no newlines
     line_b = 1
-    for i in 1:pos.character
+    for _ in 1:pos.character
         checkbounds(Bool, curline, line_b) || break # guard against invalid `pos`
         line_b = nextind(curline, line_b)
     end
@@ -68,7 +68,8 @@ function deduplicate_syntaxlist(sl::JL.SyntaxList)
 end
 
 function traverse(@specialize(callback), st::JL.SyntaxTree)
-    stack = [st]
+    stack = JL.SyntaxList(st)
+    push!(stack, st)
     while !isempty(stack)
         st = pop!(stack)
         if JS.numchildren(st) === 0

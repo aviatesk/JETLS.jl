@@ -56,6 +56,7 @@ the list itself is subject to change.
   - [ ] Cross-server-process cache system
 - Diagnostics
   - [x] Report undefined bindings
+  - [x] Report unused bindings
   - [ ] Report potential `MethodError`
 - Completion
   - [x] Global symbol completion

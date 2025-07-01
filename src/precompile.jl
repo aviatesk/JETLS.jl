@@ -15,7 +15,7 @@ module __demo__ end
         end
     """)
     position = only(positions)
-    mktemp() do filename, io
+    mktemp() do filename, _
         uri = filepath2uri(filename)
         @compile_workload let
             state = server.state

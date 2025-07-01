@@ -309,7 +309,7 @@ Examples:
 8. `\\alpha  bet┃a` returns `nothing` (no backslash immediately before token with cursor)
 9. `# \\┃`          returns byte offset of `\\` and `false` or `true` if followed by `:` (comment scope)
 """
-function get_backslash_offset(state::ServerState, fi::FileInfo, pos::Position)
+function get_backslash_offset(fi::FileInfo, pos::Position)
     # Search backwards from cursor position for backslash
     textbuf = fi.parsed_stream.textbuf
     separators = (UInt8(' '), UInt8('\t'), UInt8('\n'), UInt8('"'), UInt8('\''))
@@ -336,7 +336,7 @@ function add_emoji_latex_completions!(items::Dict{String,CompletionItem}, state:
     fi === nothing && return nothing
 
     pos = params.position
-    backslash_offset_emojionly = get_backslash_offset(state, fi, pos)
+    backslash_offset_emojionly = get_backslash_offset(fi, pos)
     backslash_offset_emojionly === nothing && return nothing
     backslash_offset, emojionly = backslash_offset_emojionly
     backslash_pos = offset_to_xy(fi, backslash_offset)
