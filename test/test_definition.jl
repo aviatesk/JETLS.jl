@@ -475,7 +475,7 @@ end
 include("setup.jl")
 
 # Helper to run a single global definition test
-function test_global_definition(text::AbstractString, tester::Function)
+function test_global_definition(tester::Function, text::AbstractString)
     clean_code, positions = JETLS.get_text_and_positions(text, r"│")
 
     withscript(clean_code) do script_path
@@ -504,12 +504,12 @@ end
         test_global_definition("""
             func(x) = 1
             fu│nc(1.0)
-        """, (i, result, uri) -> begin
+        """) do i, result, uri
             @test length(result) == 1
             @test first(result).uri == uri
             @test first(result).range.start.line == 0
             cnt += 1
-        end)
+        end
         @test cnt == 1
     end
 
@@ -517,10 +517,10 @@ end
         cnt = 0
         test_global_definition("""
             Base.Compiler.tm│eet
-        """, (i, result, uri) -> begin
+        """) do i, result, uri
             @test length(result) >= 1
             cnt += 1
-        end)
+        end
         @test cnt == 1
 
         sin_cand_file, sin_cand_line = functionloc(first(methods(sin, (Float64,))))
@@ -529,24 +529,24 @@ end
         cnt = 0
         test_global_definition("""
             si│n(1.0)
-        """, (i, result, uri) -> begin
+        """) do i, result, uri
             @test length(result) >= 1
             @test any(result) do candidate
                 JETLS.uri2filepath(candidate.uri) == sin_cand_file &&
                 candidate.range.start.line == (sin_cand_line - 1)
             end
             cnt += 1
-        end)
+        end
         @test cnt == 1
     end
     @testset "Base function with invalid location" begin
         cnt = 0
         test_global_definition("""
             1 +│ 2
-        """, (i, result, uri) -> begin
+        """) do i, result, uri
             @test length(result) >= 1
             cnt += 1
-        end)
+        end
         @test cnt == 1
     end
 
@@ -555,10 +555,10 @@ end
         test_global_definition("""
             func(x) = 1
             func(1.│0)
-        """, (i, result, uri) -> begin
+        """) do i, result, uri
             @test result === null
             cnt += 1
-        end)
+        end
         @test cnt == 1
     end
 
@@ -571,7 +571,7 @@ end
             end
             m_│func(1.0)
             M.m_│func(1.0)
-        """, (i, result, uri) -> begin
+        """) do i, result, uri
             if i == 1
                 @test length(result) == 1
                 @test first(result).uri == uri
@@ -586,7 +586,7 @@ end
                 @test first(result).range.start.line == 1
                 cnt += 1
             end
-        end)
+        end
         @test cnt == 3
     end
 
@@ -595,13 +595,13 @@ end
         test_global_definition("""
             cos(x) = 1
             Base.co│s(x) = 1
-        """, (i, result, uri) -> begin
+        """) do i, result, uri
             @test length(result) >= 1
             @test all(result) do candidate
                 candidate.uri.path != uri # in `Base`, not `cos(x) = 1`
             end
             cnt += 1
-        end)
+        end
         @test cnt == 1
     end
 
@@ -615,12 +615,12 @@ end
             function say(h::Hel│lo)
                 println("Hello, \$(h.who)")
             end
-        """, (i, result, uri) -> begin
+        """) do i, result, uri
             @test length(result) == 1
             @test first(result).uri == uri
             @test first(result).range.start.line == 2
             cnt += 1
-        end)
+        end
         @test cnt == 1
     end
 
@@ -634,12 +634,12 @@ end
                 println("\$s, \$(h.who)")
             end
             say_defar│g
-        """, (i, result, uri) -> begin
+        """) do i, result, uri
             @test length(result) == 1
             @test first(result).uri == uri
             @test first(result).range.start.line == 3
             cnt += 1
-        end)
+        end
         @test cnt == 1
     end
 
@@ -653,12 +653,12 @@ end
                 println("\$s, \$(h.who)")
             end
             say_kwar│g
-        """, (i, result, uri) -> begin
+        """) do i, result, uri
             @test length(result) == 1
             @test first(result).uri == uri
             @test first(result).range.start.line == 3
             cnt += 1
-        end)
+        end
         @test cnt == 1
     end
 
@@ -669,7 +669,7 @@ end
             func│ # bare function
             func│(1.0) # right edge
             │func(1.0) # left edge
-        """, (i, result, uri) -> begin
+        """) do i, result, uri
             if i == 1
                 @test length(result) == 1
                 @test first(result).uri == uri
@@ -686,7 +686,7 @@ end
                 @test first(result).range.start.line == 0
                 cnt += 1
             end
-        end)
+        end
         @test cnt == 3
     end
 
@@ -698,7 +698,7 @@ end
             end
             M.m_func│(1.0)
             M.│m_func(1.0)
-        """, (i, result, uri) -> begin
+        """) do i, result, uri
             if i == 1
                 @test length(result) == 1
                 @test first(result).uri == uri
@@ -710,7 +710,7 @@ end
                 @test first(result).range.start.line == 1
                 cnt += 1
             end
-        end)
+        end
         @test cnt == 2
     end
 
@@ -719,12 +719,12 @@ end
         test_global_definition("""
             func(x) = 1
             let; func│; end
-        """, (i, result, uri) -> begin
+        """) do i, result, uri
             @test length(result) == 1
             @test first(result).uri == uri
             @test first(result).range.start.line == 0
             cnt += 1
-        end)
+        end
         @test cnt == 1
     end
 
@@ -735,12 +735,12 @@ end
                 m_func(x) = 1
             end
             M2│.m_func(1.0)
-        """, (i, result, uri) -> begin
+        """) do i, result, uri
             @test result isa Location
             @test result.uri == uri
             @test result.range.start.line == 0
             cnt += 1
-        end)
+        end
         @test cnt == 1
     end
 
@@ -748,10 +748,10 @@ end
         cnt = 0
         test_global_definition("""
             Core│.isdefined
-        """, (i, result, uri) -> begin
+        """) do i, result, uri
             @test result === null # `Base.moduleloc(Core)` doesn't return anything meaningful
             cnt += 1
-        end)
+        end
         @test cnt == 1
     end
 end
