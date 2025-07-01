@@ -2,24 +2,46 @@
 
 [
   {
-    "label": "JETLS: runtest (script)",
-    "command": "./julia",
+    "label": "JETLS: Run test file (TestRunner.jl)",
+    "command": "testrunner",
     "args": [
-      "--startup-file=no",
       "--project=./test",
-      ".zed/runtest.jl",
-      "$ZED_FILENAME",
+      "--verbose",
       "$ZED_FILE"
     ]
   },
   {
-    "label": "JETLS: runtests (project)",
-    "command": "./julia",
+    "label": "JETLS: Run `@testset` (TestRunner.jl)",
+    "command": "testrunner",
     "args": [
-      "--startup-file=no",
-      "--project=.",
-      "-e",
-      "'using Pkg; Pkg.test()'"
-    ]
+      "--project=./test",
+      "--verbose",
+      "$ZED_FILE",
+      "$ZED_CUSTOM_JULIA_TESTSET_NAME",
+      "--filter-lines=$ZED_ROW"
+    ],
+    "tags": ["julia-testset"]
+  },
+  {
+    "label": "JETLS: Run `@test` case (TestRunner.jl)",
+    "command": "testrunner",
+    "args": [
+      "--project=./test",
+      "$ZED_FILE",
+      "\":($ZED_CUSTOM_JULIA_TEST_EXPR)\"",
+      "--filter-lines=$ZED_ROW"
+    ],
+    "tags": ["julia-test"]
+  },
+  {
+    "label": "JETLS: Run `[TESTRUNNER]` expression (TestRunner.jl)",
+    "command": "testrunner",
+    "args": [
+      "--project=./test",
+      "$ZED_FILE",
+      "\":($ZED_CUSTOM_JULIA_TESTRUNNER_EXPR)\"",
+      "--filter-lines=$ZED_ROW"
+    ],
+    "tags": ["julia-testrunner"]
   }
 ]
