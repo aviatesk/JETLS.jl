@@ -29,7 +29,7 @@ end
 include("jsjl_utils.jl")
 
 function with_local_definitions(f, text::AbstractString, matcher::Regex=r"│")
-    clean_code, positions = JETLS.get_text_and_positions(text, r"│")
+    clean_code, positions = JETLS.get_text_and_positions(text, matcher)
     st0_top = jlparse(clean_code)
     for (i, pos) in enumerate(positions)
         offset = JETLS.xy_to_offset(Vector{UInt8}(clean_code), pos)
