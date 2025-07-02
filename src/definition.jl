@@ -53,25 +53,6 @@ function LSP.Location(mod::Module)
             var"end" = Position(; line = line - 1, character = Int(typemax(Int32)))))
 end
 
-function local_definitions(st0_top::JL.SyntaxTree, offset::Int)
-    # We can skip lookups including access of outer modules
-    # because we only look for local bindings
-    st0, b = greatest_local(st0_top, offset)
-    isnothing(st0) && return nothing
-    ctx3, st3 = try
-        jl_lower_for_scope_resolution3(st0)
-    catch err
-        err
-        return nothing
-    end
-    target_binding = select_target_binding(ctx3, st3, b)
-    isnothing(target_binding) && return nothing
-    binfo = JL.lookup_binding(ctx3, target_binding)
-    definitions = lookup_binding_definitions(st3, binfo)
-    isempty(definitions) && return nothing
-    return target_binding, definitions
-end
-
 LSP.LocationLink(loc::Location, originSelectionRange::Range) =
     LocationLink(;
         targetUri = loc.uri,
@@ -97,7 +78,7 @@ function handle_DefinitionRequest(server::Server, msg::DefinitionRequest)
 
     locationlink_support = supports(server, :textDocument, :definition, :linkSupport)
 
-    target_binding_definitions = local_definitions(st0, offset)
+    target_binding_definitions = select_target_binding_definitions(st0, offset)
     if !isnothing(target_binding_definitions)
         target_binding, definitions = target_binding_definitions
         local result = Location[

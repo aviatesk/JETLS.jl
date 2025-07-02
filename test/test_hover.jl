@@ -17,22 +17,6 @@ function with_local_hover(f, text::AbstractString, matcher::Regex=r"│")
     end
 end
 
-# TODO enrich test cases once we implement a proper hover support for local bindings
-@testset "local hover" begin
-    with_local_hover("""
-        function mapfunc(xs)
-            Any[Core.Const(x│)
-                for x in xs]
-        end
-    """) do _, res
-        @test !isnothing(res)
-        binding, defs = res
-        @test JS.source_line(JL.sourceref(binding)) == 2
-        @test length(defs) == 1
-        @test JS.source_line(JL.sourceref(only(defs))) == 3
-    end
-end
-
 @testset "'Hover' request/responce (pkg)" begin
     pkg_code = """
     module HoverTest
@@ -90,6 +74,7 @@ end
 
         # B│.sin(42)
         (; pat=string(@doc Base))
+
         # nothing│
         (; pat=string(@doc nothing))
     ]
@@ -169,6 +154,11 @@ end
     sinx = @inline│ sin(42)
     sinx = Base.@inline│ sin(42)
     rx = r│"foo"
+
+    let xs = collect(1:10)
+        Any[Core.Const(x│)
+            for x in xs]
+    end
     """
 
     testers = [
@@ -195,6 +185,9 @@ end
 
         # rx = r│"foo"
         (; pat=string(@doc r""))
+
+        # Any[Core.Const(x│)
+        (; pat="for x in xs") # local source location
     ]
 
     clean_code, positions = JETLS.get_text_and_positions(script_code, r"│")
