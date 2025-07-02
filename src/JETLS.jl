@@ -65,6 +65,7 @@ include("definition.jl")
 include("hover.jl")
 include("diagnostics.jl")
 include("lifecycle.jl")
+include("document-symbols.jl")
 
 """
     runserver([callback,] in::IO, out::IO) -> (; exit_code::Int, endpoint::Endpoint)
@@ -141,7 +142,7 @@ function runserver(server::Server)
     return (; exit_code, server.endpoint)
 end
 
-function handle_message(server::Server, msg)
+function handle_message(state::ServerState, msg)
     @nospecialize msg
     if JETLS_DEV_MODE
         try
@@ -178,6 +179,8 @@ function _handle_message(server::Server, msg)
         return handle_DefinitionRequest(server, msg)
     elseif msg isa HoverRequest
         return handle_HoverRequest(server, msg)
+    elseif msg isa DocumentSymbolRequest
+        return handle_DocumentSymbolRequest(server, msg)
     elseif msg isa DocumentDiagnosticRequest
         return handle_DocumentDiagnosticRequest(server, msg)
     elseif msg isa WorkspaceDiagnosticRequest

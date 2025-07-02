@@ -83,10 +83,10 @@
     # """
     # documentHighlightProvider::Union{Nothing, Bool, DocumentHighlightOptions} = nothing
 
-    # """
-    # The server provides document symbol support.
-    # """
-    # documentSymbolProvider::Union{Nothing, Bool, DocumentSymbolOptions} = nothing
+    """
+    The server provides document symbol support.
+    """
+    documentSymbolProvider::Union{Nothing, Bool, DocumentSymbolOptions} = nothing
 
     # """
     # The server provides code actions. The `CodeActionOptions` return type is
@@ -346,10 +346,10 @@ end
     # """
     # documentHighlight::Union{DocumentHighlightClientCapabilities, Nothing} = nothing
 
-    # """
-    # Capabilities specific to the `textDocument/documentSymbol` request.
-    # """
-    # documentSymbol::Union{DocumentSymbolClientCapabilities, Nothing} = nothing
+    """
+    Capabilities specific to the `textDocument/documentSymbol` request.
+    """
+    documentSymbol::Union{DocumentSymbolClientCapabilities, Nothing} = nothing
 
     # """
     # Capabilities specific to the `textDocument/codeAction` request.
