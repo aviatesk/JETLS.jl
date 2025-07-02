@@ -3,7 +3,7 @@ module test_binding
 using Test
 using JETLS: JETLS
 
-include("jsjl_utils.jl")
+include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
 
 function with_target_binding_definitions(f, text::AbstractString, matcher::Regex=r"│")
     clean_code, positions = JETLS.get_text_and_positions(text, matcher)
