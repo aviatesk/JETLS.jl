@@ -80,7 +80,7 @@ function file_cache_error(uri::URI; data=nothing)
         data)
 end
 
-function get_text_and_positions(text::AbstractString, matcher::Regex=r"#=cursor=#")
+function get_text_and_positions(text::AbstractString, matcher::Regex=r"│")
     positions = Position[]
     lines = split(text, '\n')
 

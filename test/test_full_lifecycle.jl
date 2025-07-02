@@ -11,7 +11,7 @@ let (pkgcode, positions) = get_text_and_positions("""
     end
 
     function targetfunc(x)
-        #=cursor=#
+        │
     end
 
     end # module TestFullLifecycle
