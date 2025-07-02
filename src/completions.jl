@@ -90,7 +90,8 @@ in later versions.
 """
 function to_completion(binding::JL.BindingInfo,
                        st::JL.SyntaxTree,
-                       sort_offset::Int=0)
+                       sort_offset::Int,
+                       uri::URI)
     label_kind = CompletionItemKind.Variable
     label_detail = nothing
     label_desc = nothing
@@ -112,9 +113,19 @@ function to_completion(binding::JL.BindingInfo,
         label_detail = "::" * JL.sourcetext(binding.type)
     end
 
+    io = IOBuffer()
+    println(io, "```julia")
+    JL.showprov(io, st; include_location=false)
+    println(io)
+    println(io, "```")
+    filepath = uri2filepath(uri)
+    line, character = JS.source_location(st)
+    showtext = "`@ " * simple_loc_text(filepath; line) * "`"
+    println(io, create_source_location_link(filepath, showtext; line, character))
+    value = String(take!(io))
     documentation = MarkupContent(;
         kind = MarkupKind.Markdown,
-        value = "```julia\n" * sprint(JL.showprov, st) * "\n```")
+        value)
 
     CompletionItem(;
         label = binding.name,
@@ -141,7 +152,7 @@ function local_completions!(items::Dict{String, CompletionItem},
     cbs = cursor_bindings(st0, xy_to_offset(fi, params.position))
     cbs === nothing && return nothing
     for (bi, st, dist) in cbs
-        ci = to_completion(bi, st, dist)
+        ci = to_completion(bi, st, dist, uri)
         prev_ci = get(items, ci.label, nothing)
         # Name collisions: overrule existing global completions with our own,
         # unless our completion is also a global, in which case the existing

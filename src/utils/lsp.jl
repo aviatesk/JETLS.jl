@@ -5,7 +5,8 @@ const DEFAULT_DOCUMENT_SELECTOR = DocumentFilter[
 ]
 
 """
-    create_source_location_link(filepath::AbstractString; line=nothing, character=nothing)
+    create_source_location_link(filepath::AbstractString, [showtext::AbstractString];
+                                line=nothing, character=nothing)
 
 Create a markdown-style link to a source location that can be displayed in LSP clients.
 
@@ -15,6 +16,8 @@ navigation to specific file locations.
 
 # Arguments
 - `filepath::AbstractString`: The file path to link to
+- `showtext::AbstractString`: Optional display text for the link. If not provided,
+  defaults to the filepath with optional line number
 - `line::Union{Integer,Nothing}=nothing`: Optional 1-based line number
 - `character::Union{Integer,Nothing}=nothing`: Optional character position (requires `line` to be specified)
 
@@ -33,20 +36,41 @@ create_source_location_link("/path/to/file.jl", line=42, character=10)
 # Returns: "[/path/to/file.jl:42](file:///path/to/file.jl#L42C10)"
 ```
 """
-function create_source_location_link(filepath::AbstractString;
+function create_source_location_link(filepath::AbstractString, showtext::AbstractString;
                                      line::Union{Integer,Nothing}=nothing,
                                      character::Union{Integer,Nothing}=nothing)
     linktext = string(filepath2uri(filepath))
-    showtext = filepath
-    Base.stacktrace_contract_userdir() && (showtext = Base.contractuser(showtext))
     if line !== nothing
         linktext *= "#L$line"
-        showtext *= string(":", line)
         if character !== nothing
             linktext *= "C$character"
         end
     end
     return "[$showtext]($linktext)"
+end
+
+function create_source_location_link(filepath::AbstractString;
+                                     line::Union{Integer,Nothing}=nothing,
+                                     character::Union{Integer,Nothing}=nothing)
+    create_source_location_link(filepath, full_loc_text(filepath; line); line, character)
+end
+
+function full_loc_text(filepath::AbstractString;
+                       line::Union{Integer,Nothing}=nothing)
+    loctext = filepath
+    Base.stacktrace_contract_userdir() && (loctext = Base.contractuser(loctext))
+    if line !== nothing
+        loctext *= string(":", line)
+    end
+    return loctext
+end
+
+function simple_loc_text(filepath::AbstractString; line::Union{Integer,Nothing}=nothing)
+    loctext = basename(filepath)
+    if line !== nothing
+        loctext *= string(":", line)
+    end
+    return loctext
 end
 
 function file_cache_error(uri::URI; data=nothing)

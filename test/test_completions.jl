@@ -16,7 +16,8 @@ function get_cursor_bindings(s::String, b::Int)
 end
 
 function get_local_completions(s::String, b::Int)
-    return map(o->to_completion(o[1], o[2], o[3]), get_cursor_bindings(s, b))
+    uri = JETLS.URIs2.filepath2uri(@__FILE__)
+    return map(o->to_completion(o[1], o[2], o[3], uri), get_cursor_bindings(s, b))
 end
 
 function cv_has(cs::Vector{CompletionItem}, expected, kind=nothing)
