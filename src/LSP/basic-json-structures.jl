@@ -215,9 +215,12 @@ A document selector is the combination of one or more document filters.
 """
 const DocumentSelector = Vector{DocumentFilter}
 
-# Text Edit
-# ==========
+# TextEdit & AnnotatedTextEdit
+# ============================
 
+"""
+A textual edit applicable to a text document.
+"""
 @interface TextEdit begin
     "The range of the text document to be manipulated. To insert
     text into a document create a range where start === end."
@@ -230,6 +233,18 @@ end
 
 """
 Additional information that describes document changes.
+
+Since 3.16.0 there is also the concept of an annotated text edit which supports to add
+an annotation to a text edit.
+The annotation can add information describing the change to the text edit.
+
+Usually clients provide options to group the changes along the annotations they are
+associated with. To support this in the protocol an edit or resource operation refers
+to a change annotation using an identifier and not the change annotation literal
+directly. This allows servers to use the identical annotation across multiple edits or
+resource operations which then allows clients to group the operations under that change
+annotation. The actual change annotations together with their identifiers are managed
+by the workspace edit via the new property `changeAnnotations`.
 
 @since 3.16.0
 """
@@ -273,13 +288,57 @@ A special text edit with an additional change annotation.
 end
 
 """
+Complex text manipulations are described with an array of [`TextEdit`](#textedit[])'s or
+[`AnnotatedTextEdit`](#annotatedTextEdit)'s, representing a single change to the
+document.
+
+All text edits ranges refer to positions in the document they are computed on. They
+therefore move a document from state S1 to S2 without describing any intermediate
+state. Text edits ranges must never overlap, that means no part of the original
+document must be manipulated by more than one edit. However, it is possible that
+multiple edits have the same start position: multiple inserts, or any number of
+inserts followed by a single remove or replace edit. If multiple inserts have the same
+position, the order in the array defines the order in which the inserted strings
+appear in the resulting text.
+"""
+var"TextEdit[]"
+
+"""
+New in version 3.16: support for [`AnnotatedTextEdit`](@ref). The support
+is guarded by the client capability `workspace.workspaceEdit.changeAnnotationSupport`.
+If a client doesn't signal the capability, servers shouldn't send
+[`AnnotatedTextEdit`](@ref) literals back to the client.
+
+Describes textual changes on a single text document. The text document is referred to as
+a [`OptionalVersionedTextDocumentIdentifier`](@ref) to allow clients to check the text
+document version before an edit is applied. A [`TextDocumentEdit`](@ref) describes all
+changes on a version Si and after they are applied move the document to version Si+1.
+So the creator of a [`TextDocumentEdit`](@ref) doesn't need to sort the array of edits
+or do any kind of ordering. However the edits must be non overlapping.
+"""
+@interface TextDocumentEdit begin
+    """
+    The text document to change.
+    """
+    textDocument::OptionalVersionedTextDocumentIdentifier
+
+    """
+    The edits to be applied.
+
+    # Tags
+    - since - 3.16.0 - support for AnnotatedTextEdit. This is guarded by the
+      client capability `workspace.workspaceEdit.changeAnnotationSupport`
+    """
+    edits::Vector{Union{TextEdit, AnnotatedTextEdit}}
+end
+
+"""
 Represents a location inside a resource, such as a line inside a text file.
 """
 @interface Location begin
     uri::DocumentUri
     range::Range
 end
-
 
 """
 Represents a link between a source and a target location.
@@ -500,6 +559,308 @@ command. The protocol currently doesn’t specify a set of well-known commands.
     command::String
     "Arguments that the command handler should be invoked with"
     arguments::Union{Vector{Any}, Nothing} = nothing
+end
+
+# File Resource changes
+# =====================
+
+"""
+New in version 3.13. Since version 3.16 file resource changes can carry an additional
+property `changeAnnotation` to describe the actual change in more detail. Whether a
+client has support for change annotations is guarded by the client capability
+`workspace.workspaceEdit.changeAnnotationSupport`.
+
+File resource changes allow servers to create, rename and delete files and folders via
+the client. Note that the names talk about files but the operations are supposed to
+work on files and folders. This is in line with other naming in the Language Server
+Protocol (see file watchers which can watch files and folders). The corresponding
+change literals look as follows:
+"""
+
+@interface CreateFileOptions begin
+    """
+    Overwrite existing file. Overwrite wins over `ignoreIfExists`
+    """
+    overwrite::Union{Nothing, Bool} = nothing
+
+    """
+    Ignore if exists.
+    """
+    ignoreIfExists::Union{Nothing, Bool} = nothing
+end
+
+"""
+Create file operation
+"""
+@interface CreateFile begin
+    """
+    A create
+    """
+    kind::String = "create"
+
+    """
+    The resource to create.
+    """
+    uri::DocumentUri
+
+    """
+    Additional options
+    """
+    options::Union{Nothing, CreateFileOptions} = nothing
+
+    """
+    An optional annotation identifier describing the operation.
+
+    # Tags
+    - since - 3.16.0
+    """
+    annotationId::Union{Nothing, ChangeAnnotationIdentifier} = nothing
+end
+
+@interface RenameFileOptions begin
+    """
+    Overwrite target if existing. Overwrite wins over `ignoreIfExists`
+    """
+    overwrite::Union{Nothing, Bool} = nothing
+
+    """
+    Ignores if target exists.
+    """
+    ignoreIfExists::Union{Nothing, Bool} = nothing
+end
+
+"""
+Rename file operation
+"""
+@interface RenameFile begin
+    """
+    A rename
+    """
+    kind::String = "rename"
+
+    """
+    The old (existing) location.
+    """
+    oldUri::DocumentUri
+
+    """
+    The new location.
+    """
+    newUri::DocumentUri
+
+    """
+    Rename options.
+    """
+    options::Union{Nothing, RenameFileOptions} = nothing
+
+    """
+    An optional annotation identifier describing the operation.
+
+    # Tags
+    - since - 3.16.0
+    """
+    annotationId::Union{Nothing, ChangeAnnotationIdentifier} = nothing
+end
+
+@interface DeleteFileOptions begin
+    """
+    Delete the content recursively if a folder is denoted.
+    """
+    recursive::Union{Nothing, Bool} = nothing
+
+    """
+    Ignore the operation if the file doesn't exist.
+    """
+    ignoreIfNotExists::Union{Nothing, Bool} = nothing
+end
+
+"""
+Delete file operation
+"""
+@interface DeleteFile begin
+    """
+    A delete
+    """
+    kind::String = "delete"
+
+    """
+    The resource to delete.
+    """
+    uri::DocumentUri
+
+    """
+    Delete options.
+    """
+    options::Union{Nothing, DeleteFileOptions} = nothing
+
+    """
+    An optional annotation identifier describing the operation.
+
+    # Tags
+    - since - 3.16.0
+    """
+    annotationId::Union{Nothing, ChangeAnnotationIdentifier} = nothing
+end
+
+@namespace ResourceOperationKind::String begin
+    """
+    Supports creating new files and folders.
+    """
+    Create = "create"
+
+    """
+    Supports renaming existing files and folders.
+    """
+    Rename = "rename"
+
+    """
+    Supports deleting existing files and folders.
+    """
+    Delete = "delete"
+end
+
+@namespace FailureHandlingKind::String begin
+    """
+    Applying the workspace change is simply aborted if one of the changes
+    provided fails. All operations executed before the failing operation
+    stay executed.
+    """
+    Abort = "abort"
+
+    """
+    All operations are executed transactional. That means they either all
+    succeed or no changes at all are applied to the workspace.
+    """
+    Transactional = "transactional"
+
+    """
+    If the workspace edit contains only textual file changes they are
+    executed transactional. If resource changes (create, rename or delete
+    file) are part of the change the failure handling strategy is abort.
+    """
+    TextOnlyTransactional = "textOnlyTransactional"
+
+    """
+    The client tries to undo the operations already executed. But there is no
+    guarantee that this is succeeding.
+    """
+    Undo = "undo"
+end
+
+# Workspace Edit
+# ==============
+
+"""
+A workspace edit represents changes to many resources managed in the workspace.
+The edit should either provide `changes` or `documentChanges`.
+If the client can handle versioned document edits and if `documentChanges` are present,
+the latter are preferred over `changes`.
+
+Since version 3.13.0 a workspace edit can contain resource operations
+(create, delete or rename files and folders) as well.
+If resource operations are present clients need to execute the operations in the order
+in which they are provided. So a workspace edit for example can consist of the
+following two changes: (1) create file a.txt and (2) a text document edit which insert
+text into file a.txt. An invalid sequence (e.g. (1) delete file a.txt and (2) insert
+text into file a.txt) will cause failure of the operation. How the client recovers from
+the failure is described by the client capability:
+`workspace.workspaceEdit.failureHandling`
+"""
+@interface WorkspaceEdit begin
+    """
+    Holds changes to existing resources.
+    """
+    changes::Union{Nothing, Dict{DocumentUri, Vector{TextEdit}}} = nothing
+
+    """
+    Depending on the client capability
+    `workspace.workspaceEdit.resourceOperations` document changes are either
+    an array of `TextDocumentEdit`s to express changes to n different text
+    documents where each text document edit addresses a specific version of
+    a text document. Or it can contain above `TextDocumentEdit`s mixed with
+    create, rename and delete file / folder operations.
+
+    Whether a client supports versioned document edits is expressed via
+    `workspace.workspaceEdit.documentChanges` client capability.
+
+    If a client neither supports `documentChanges` nor
+    `workspace.workspaceEdit.resourceOperations` then only plain `TextEdit`s
+    using the `changes` property are supported.
+    """
+    documentChanges::Union{Nothing, Vector{Union{TextDocumentEdit, CreateFile, RenameFile, DeleteFile}}} = nothing
+
+    """
+    A map of change annotations that can be referenced in
+    `AnnotatedTextEdit`s or create, rename and delete file / folder
+    operations.
+
+    Whether clients honor this property depends on the client capability
+    `workspace.changeAnnotationSupport`.
+
+    # Tags
+    - since - 3.16.0
+    """
+    changeAnnotations::Union{Nothing, Dict{ChangeAnnotationIdentifier, ChangeAnnotation}} = nothing
+end
+
+"""
+New in version 3.13: [`ResourceOperationKind`](@ref) and [`FailureHandlingKind`](@ref)
+and the client capability `workspace.workspaceEdit.resourceOperations` as well as
+`workspace.workspaceEdit.failureHandling`.
+
+The capabilities of a workspace edit has evolved over the time. Clients can describe
+their support using the following client capability:
+"""
+@interface WorkspaceEditClientCapabilities begin
+    """
+    The client supports versioned document changes in `WorkspaceEdit`s
+    """
+    documentChanges::Union{Nothing, Bool} = nothing
+
+    """
+    The resource operations the client supports. Clients should at least
+    support 'create', 'rename' and 'delete' files and folders.
+
+    # Tags
+    - since - 3.13.0
+    """
+    resourceOperations::Union{Nothing, Vector{ResourceOperationKind.Ty}} = nothing
+
+    """
+    The failure handling strategy of a client if applying the workspace edit
+    fails.
+
+    # Tags
+    - since - 3.13.0
+    """
+    failureHandling::Union{Nothing, FailureHandlingKind.Ty} = nothing
+
+    """
+    Whether the client normalizes line endings to the client specific
+    setting.
+    If set to `true` the client will normalize line ending characters
+    in a workspace edit to the client specific new line character(s).
+
+    # Tags
+    - since - 3.16.0
+    """
+    normalizesLineEndings::Union{Nothing, Bool} = nothing
+
+    """
+    Whether the client in general supports change annotations on text edits,
+    create file, rename file and delete file changes.
+
+    # Tags
+    - since - 3.16.0
+    """
+    changeAnnotationSupport::Union{Nothing, @interface begin
+        """
+        Whether the client groups edits with equal labels into tree nodes,
+        for instance all edits labelled with "Changes in Strings" would
+        be a tree node.
+        """
+        groupsOnLabel::Union{Nothing, Bool} = nothing
+    end} = nothing
 end
 
 # Work Done Progress

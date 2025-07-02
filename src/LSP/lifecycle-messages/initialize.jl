@@ -88,17 +88,17 @@
     # """
     # documentSymbolProvider::Union{Nothing, Bool, DocumentSymbolOptions} = nothing
 
-    # """
-    # The server provides code actions. The `CodeActionOptions` return type is
-    # only valid if the client signals code action literal support via the
-    # property `textDocument.codeAction.codeActionLiteralSupport`.
-    # """
-    # codeActionProvider::Union{Nothing, Bool, CodeActionOptions} = nothing
+    """
+    The server provides code actions. The `CodeActionOptions` return type is
+    only valid if the client signals code action literal support via the
+    property `textDocument.codeAction.codeActionLiteralSupport`.
+    """
+    codeActionProvider::Union{Nothing, Bool, CodeActionOptions} = nothing
 
-    # """
-    # The server provides code lens.
-    # """
-    # codeLensProvider::Union{Nothing, CodeLensOptions} = nothing
+    """
+    The server provides code lens.
+    """
+    codeLensProvider::Union{Nothing, CodeLensOptions} = nothing
 
     # """
     # The server provides document link support.
@@ -351,15 +351,15 @@ end
     # """
     # documentSymbol::Union{DocumentSymbolClientCapabilities, Nothing} = nothing
 
-    # """
-    # Capabilities specific to the `textDocument/codeAction` request.
-    # """
-    # codeAction::Union{CodeActionClientCapabilities, Nothing} = nothing
+    """
+    Capabilities specific to the `textDocument/codeAction` request.
+    """
+    codeAction::Union{CodeActionClientCapabilities, Nothing} = nothing
 
-    # """
-    # Capabilities specific to the `textDocument/codeLens` request.
-    # """
-    # codeLens::Union{CodeLensClientCapabilities, Nothing} = nothing
+    """
+    Capabilities specific to the `textDocument/codeLens` request.
+    """
+    codeLens::Union{CodeLensClientCapabilities, Nothing} = nothing
 
     # """
     # Capabilities specific to the `textDocument/documentLink` request.
@@ -508,10 +508,10 @@ provides text document synchronization (e.g. open, changed and close notificatio
         """
         applyEdit::Union{Bool, Nothing} = nothing
 
-        # """
-        # Capabilities specific to `WorkspaceEdit`s
-        # """
-        # workspaceEdit::Union{WorkspaceEditClientCapabilities, Nothing} = nothing
+        """
+        Capabilities specific to `WorkspaceEdit`s
+        """
+        workspaceEdit::Union{WorkspaceEditClientCapabilities, Nothing} = nothing
 
         # """
         # Capabilities specific to the `workspace/didChangeConfiguration`
@@ -560,14 +560,14 @@ provides text document synchronization (e.g. open, changed and close notificatio
         # """
         # semanticTokens::Union{SemanticTokensWorkspaceClientCapabilities, Nothing} = nothing
 
-        # """
-        # Capabilities specific to the code lens requests scoped to the
-        # workspace.
+        """
+        Capabilities specific to the code lens requests scoped to the
+        workspace.
 
-        # # Tags
-        # - since – 3.16.0
-        # """
-        # codeLens::Union{CodeLensWorkspaceClientCapabilities, Nothing} = nothing
+        # Tags
+        - since – 3.16.0
+        """
+        codeLens::Union{CodeLensWorkspaceClientCapabilities, Nothing} = nothing
 
         """
         # The client has support for file requests/notifications.

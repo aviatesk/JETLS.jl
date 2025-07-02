@@ -180,14 +180,24 @@ function _process_interface_def!(toplevelblk::Expr, structbody::Expr,
             if Meta.isexpr(fieldtype, :curly) && fieldtype.args[1] === :Union
                 for i = 2:length(fieldtype.args)
                     ufty = fieldtype.args[i]
+                    if ufty === :Nothing
+                        omittable = true
+                    end
+                end
+            end
+            if Meta.isexpr(fieldtype, :curly)
+                for i = 1:length(fieldtype.args)
+                    ufty = fieldtype.args[i]
                     if Meta.isexpr(ufty, :macrocall) && ufty.args[1] === Symbol("@interface")
                         anon_defex = ufty.args[end]
                         Meta.isexpr(anon_defex, :block) || error("Invalid `@interface` syntax: ", ufty)
                         fieldtype.args[i] = process_anon_interface_def!(toplevelblk, anon_defex, __source__)
-                    elseif ufty === :Nothing
-                        omittable = true
                     end
                 end
+            elseif Meta.isexpr(fieldtype, :macrocall) && fieldtype.args[1] === Symbol("@interface")
+                anon_defex = fieldtype.args[end]
+                Meta.isexpr(anon_defex, :block) || error("Invalid `@interface` syntax: ", fieldtype)
+                fielddecl.args[2] = process_anon_interface_def!(toplevelblk, anon_defex, __source__)
             end
         else
             fieldname = fielddecl
