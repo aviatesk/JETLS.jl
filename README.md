@@ -75,7 +75,7 @@ the list itself is subject to change.
 - Hover
   - [x] Method documentation
   - [x] Global binding documentation
-  - [ ] Local binding location
+  - [x] Local binding location
   - [ ] Type-aware method documentation
   - [ ] Type of local binding on hover
 - [ ] Formatting
