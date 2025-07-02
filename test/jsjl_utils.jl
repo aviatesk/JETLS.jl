@@ -1,18 +1,18 @@
 using JETLS: JS, JL
 
-function parsedstream(s::AbstractString, rule::Symbol=:all)
+function parsedstream(s::AbstractString; rule::Symbol=:all)
     stream = JS.ParseStream(s)
     JS.parse!(stream; rule)
     return stream
 end
 
-jsparse(s::AbstractString) = jsparse(parsedstream(s))
-jsparse(parsed_stream::JS.ParseStream; filename::AbstractString=@__FILE__) =
-    JS.build_tree(JS.SyntaxNode, parsed_stream; filename)
+jsparse(s::AbstractString; rule::Symbol=:all, kwargs...) = jsparse(parsedstream(s; rule); kwargs...)
+jsparse(parsed_stream::JS.ParseStream; filename::AbstractString=@__FILE__, first_line::Int=1) =
+    JS.build_tree(JS.SyntaxNode, parsed_stream; filename, first_line)
 
-jlparse(s::AbstractString) = jlparse(parsedstream(s))
-jlparse(parsed_stream::JS.ParseStream; filename::AbstractString=@__FILE__) =
-    JS.build_tree(JL.SyntaxTree, parsed_stream; filename)
+jlparse(s::AbstractString; rule::Symbol=:all, kwargs...) = jlparse(parsedstream(s; rule); kwargs...)
+jlparse(parsed_stream::JS.ParseStream; filename::AbstractString=@__FILE__, first_line::Int=1) =
+    JS.build_tree(JL.SyntaxTree, parsed_stream; filename, first_line)
 
 # For interactive use
 # ===================
