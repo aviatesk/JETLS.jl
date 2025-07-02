@@ -37,12 +37,22 @@ function handle_HoverRequest(server::Server, msg::HoverRequest)
         # but for now we'll just show the location of the local binding
         target_binding, definitions = target_binding_definitions
         io = IOBuffer()
-        println(io, "```julia")
-        for definition in definitions
-            JL.showprov(io, definition)
+        n = length(definitions)
+        filepath = uri2filepath(uri)
+        for (i, definition) in enumerate(definitions)
+            println(io, "```julia")
+            JL.showprov(io, definition; include_location=false)
             println(io)
+            println(io, "```")
+            line, character = JS.source_location(definition)
+            showtext = "`@ " * simple_loc_text(filepath; line) * "`"
+            println(io, create_source_location_link(filepath, showtext; line, character))
+            if i ≠ n
+                println(io, "\n---\n") # separator
+            else
+                println(io)
+            end
         end
-        println(io, "```")
         value = String(take!(io))
         contents = MarkupContent(;
             kind = MarkupKind.Markdown,
