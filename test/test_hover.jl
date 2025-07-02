@@ -6,6 +6,17 @@ using JETLS.LSP
 
 include("setup.jl")
 
+include("jsjl_utils.jl")
+
+function with_local_hover(f, text::AbstractString, matcher::Regex=r"│")
+    clean_code, positions = JETLS.get_text_and_positions(text, matcher)
+    st0_top = jlparse(clean_code)
+    for (i, pos) in enumerate(positions)
+        offset = JETLS.xy_to_offset(Vector{UInt8}(clean_code), pos)
+        f(i, JETLS.local_hover(st0_top, offset))
+    end
+end
+
 @testset "'Hover' request/responce (pkg)" begin
     pkg_code = """
     module HoverTest
@@ -63,6 +74,7 @@ include("setup.jl")
 
         # B│.sin(42)
         (; pat=string(@doc Base))
+
         # nothing│
         (; pat=string(@doc nothing))
     ]
@@ -142,6 +154,11 @@ end
     sinx = @inline│ sin(42)
     sinx = Base.@inline│ sin(42)
     rx = r│"foo"
+
+    let xs = collect(1:10)
+        Any[Core.Const(x│)
+            for x in xs]
+    end
     """
 
     testers = [
@@ -168,6 +185,9 @@ end
 
         # rx = r│"foo"
         (; pat=string(@doc r""))
+
+        # Any[Core.Const(x│)
+        (; pat="for x in xs") # local source location
     ]
 
     clean_code, positions = JETLS.get_text_and_positions(script_code, r"│")

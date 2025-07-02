@@ -28,9 +28,33 @@ function handle_HoverRequest(server::Server, msg::HoverRequest)
                 error = file_cache_error(uri)))
     end
 
-    st0 = JS.build_tree(JL.SyntaxTree, fi.parsed_stream)
+    st0_top = JS.build_tree(JL.SyntaxTree, fi.parsed_stream)
     offset = xy_to_offset(fi, pos)
-    node = select_target_node(st0, offset)
+
+    target_binding_definitions = select_target_binding_definitions(st0_top, offset)
+    if !isnothing(target_binding_definitions)
+        # TODO Ideally we would want to show the type of this local binding,
+        # but for now we'll just show the location of the local binding
+        target_binding, definitions = target_binding_definitions
+        io = IOBuffer()
+        println(io, "```julia")
+        for definition in definitions
+            JL.showprov(io, definition)
+            println(io)
+        end
+        println(io, "```")
+        value = String(take!(io))
+        contents = MarkupContent(;
+            kind = MarkupKind.Markdown,
+            value)
+        return send(server, HoverResponse(;
+            id = msg.id,
+            result = Hover(;
+                contents,
+                range = get_source_range(target_binding))))
+    end
+
+    node = select_target_node(st0_top, offset)
     if node === nothing
         return send(server, HoverResponse(; id = msg.id, result = null))
     end

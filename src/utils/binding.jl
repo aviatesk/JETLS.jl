@@ -135,6 +135,33 @@ function select_target_binding(ctx3::JL.VariableAnalysisContext, st3::JL.SyntaxT
     return bas[i]
 end
 
+"""
+    select_target_binding_definitions(st0_top::JL.SyntaxTree, offset::Int) ->
+        nothing or (binding::JL.SyntaxTree, definitions::JL.SyntaxList)
+
+Find the binding at the cursor position and return all of its definition sites.
+
+Returns `nothing` if lowering fails, no binding is found at the cursor, or the binding
+has no definitions. Otherwise returns a tuple of `(binding, definitions)` where:
+- `binding` is the `JL.SyntaxTree` node representing the binding at the cursor
+- `definitions` is a `JL.SyntaxList` containing all definition sites for that binding
+"""
+function select_target_binding_definitions(st0_top::JL.SyntaxTree, offset::Int)
+    st0, b = greatest_local(st0_top, offset)
+    isnothing(st0) && return nothing
+    ctx3, st3 = try
+        jl_lower_for_scope_resolution3(st0)
+    catch
+        return nothing
+    end
+    binding = select_target_binding(ctx3, st3, b)
+    isnothing(binding) && return nothing
+    binfo = JL.lookup_binding(ctx3, binding)
+    definitions = lookup_binding_definitions(st3, binfo)
+    isempty(definitions) && return nothing
+    return binding, definitions
+end
+
 is_same_binding(x::JL.SyntaxTree, id::Int) = JS.kind(x) === JS.K"BindingId" && id == JL._binding_id(x)
 
 """
