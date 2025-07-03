@@ -64,7 +64,7 @@ function handle_DefinitionRequest(server::Server, msg::DefinitionRequest)
     origin_position = msg.params.position
     uri = msg.params.textDocument.uri
 
-    fi = get_fileinfo(server.state, uri)
+    fi = get_file_info(server.state, uri)
     if fi === nothing
         return send(server,
             DefinitionResponse(;

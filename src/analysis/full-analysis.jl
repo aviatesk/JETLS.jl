@@ -74,7 +74,7 @@ end
 function analyze_parsed_if_exist(server::Server, info::FullAnalysisInfo, args...)
     uri = entryuri(info.entry)
     jetconfigs = entryjetconfigs(info.entry)
-    fi = get_saved_fileinfo(server.state, uri)
+    fi = get_saved_file_info(server.state, uri)
     if !isnothing(fi)
         parsed_stream = fi.parsed_stream
         filename = uri2filename(uri)
@@ -179,7 +179,7 @@ end
 
 function initiate_analysis_unit!(server::Server, uri::URI; token::Union{Nothing,ProgressToken}=nothing)
     state = server.state
-    fi = get_saved_fileinfo(state, uri)
+    fi = get_saved_file_info(state, uri)
     if isnothing(fi)
         error(lazy"`initiate_analysis_unit!` called before saved file cache is created for $uri")
     end
@@ -303,7 +303,7 @@ function reanalyze!(server::Server, analysis_unit::AnalysisUnit; token::Union{No
     end
 
     any_parse_failed = any(analyzed_file_uris(analysis_unit)) do uri::URI
-        fi = get_saved_fileinfo(state, uri)
+        fi = get_saved_file_info(state, uri)
         if !isnothing(fi) && !isempty(fi.parsed_stream.diagnostics)
             return true
         end
