@@ -10,7 +10,7 @@ module __demo__ end
         end
         function getx(bar::Bar)
             out = bar.x
-            #=cursor=#
+            │
             return out
         end
     """)

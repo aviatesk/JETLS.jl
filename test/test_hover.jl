@@ -79,7 +79,7 @@ end
         (; pat=string(@doc nothing))
     ]
 
-    clean_code, positions = JETLS.get_text_and_positions(pkg_code, r"│")
+    clean_code, positions = JETLS.get_text_and_positions(pkg_code)
     @assert length(positions) == length(testers)
 
     withpackage("HoverTest", clean_code) do pkg_path
@@ -190,7 +190,7 @@ end
         (; pat="for x in xs") # local source location
     ]
 
-    clean_code, positions = JETLS.get_text_and_positions(script_code, r"│")
+    clean_code, positions = JETLS.get_text_and_positions(script_code)
     @assert length(positions) == length(testers)
 
     withscript(clean_code) do script_path
