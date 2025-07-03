@@ -68,5 +68,5 @@ information at a given text document position.
 end
 
 @interface HoverResponse @extends ResponseMessage begin
-    result::Union{Hover, Null}
+    result::Union{Hover, Null, Nothing}
 end

@@ -72,7 +72,7 @@ for a given text document.
 end
 
 @interface CodeLensResponse @extends ResponseMessage begin
-    result::Union{Vector{CodeLens}, Null}
+    result::Union{Vector{CodeLens}, Null, Nothing}
 end
 
 """
@@ -85,7 +85,7 @@ command for a given code lens item.
 end
 
 @interface CodeLensResolveResponse @extends ResponseMessage begin
-    result::CodeLens
+    result::Union{CodeLens, Nothing}
 end
 
 """
@@ -106,5 +106,5 @@ is currently not visible.
 end
 
 @interface CodeLensRefreshResponse @extends ResponseMessage begin
-    result::Null
+    result::Union{Null, Nothing}
 end

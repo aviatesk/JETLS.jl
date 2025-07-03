@@ -388,7 +388,7 @@ edits with a code action then that mode should be used.
 end
 
 @interface CodeActionResponse @extends ResponseMessage begin
-    result::Union{Vector{Union{Command, CodeAction}}, Null}
+    result::Union{Vector{Union{Command, CodeAction}}, Null, Nothing}
 end
 
 """
@@ -416,5 +416,5 @@ before it can be applied.
 end
 
 @interface CodeActionResolveResponse @extends ResponseMessage begin
-    result::CodeAction
+    result::Union{CodeAction, Nothing}
 end

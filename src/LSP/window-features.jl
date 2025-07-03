@@ -181,7 +181,7 @@ particular resource referenced by a URI in the user interface.
 end
 
 @interface ShowDocumentResponse @extends ResponseMessage begin
-    result::ShowDocumentResult
+    result::Union{ShowDocumentResult, Nothing}
 end
 
 # LogMessage Notification
@@ -228,7 +228,7 @@ the client to create a work done progress.
 end
 
 @interface WorkDoneProgressCreateResponse @extends ResponseMessage begin
-    result::Nothing = nothing
+    result::Union{Null, Nothing}
 
     """
     code and message set in case an exception happens during the `window/workDoneProgress/create` request.

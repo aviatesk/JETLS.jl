@@ -505,7 +505,7 @@ end
   'workspace/diagnostic/refresh' request
 """
 @interface WorkspaceDiagnosticRefreshResponse @extends ResponseMessage begin
-    result::Nothing
+    result::Union{Null, Nothing}
 end
 
 # Implementation Considerations
