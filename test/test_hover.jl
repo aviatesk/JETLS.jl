@@ -73,10 +73,10 @@ end
         (; pat="Documented method.")
 
         # B│.sin(42)
-        (; pat=string(@doc Base))
+        (; pat=JETLS.lsrender(@doc Base))
 
         # nothing│
-        (; pat=string(@doc nothing))
+        (; pat=JETLS.lsrender(@doc nothing))
     ]
 
     clean_code, positions = JETLS.get_text_and_positions(pkg_code)
@@ -178,13 +178,13 @@ end
         (; pat="Documented method.")
 
         # sinx = @inline│ sin(42)
-        (; pat=string(@doc @inline))
+        (; pat=JETLS.lsrender(@doc @inline))
 
         # sinx = Base.@inline│ sin(42)
-        (; pat=string(@doc @inline))
+        (; pat=JETLS.lsrender(@doc @inline))
 
         # rx = r│"foo"
-        (; pat=string(@doc r""))
+        (; pat=JETLS.lsrender(@doc r""))
 
         # Any[Core.Const(x│)
         (; pat="for x in xs") # local source location

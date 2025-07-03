@@ -1,5 +1,6 @@
-# server interaction utilties
+# server interaction utilities
 # ===========================
+using Markdown
 
 const DEFAULT_FLUSH_INTERVAL = 0.05
 function yield_to_endpoint(interval=DEFAULT_FLUSH_INTERVAL)
@@ -66,13 +67,49 @@ function get_context_module(analysis_unit::AnalysisUnit, uri::URI, pos::Position
     return curmod
 end
 
+const JULIA_LIKE_LANGUAGES = [
+    "julia",
+    "julia-repl",
+    "jldoctest"
+]
+
+"""
+    lsrender(md) -> String
+
+Render Markdown for LSP display with the following conversions:
+- Code blocks with Julia-like languages (see `JULIA_LIKE_LANGUAGES`) normalized to "julia"
+
+TODO: Handle `@ref` correctly
+"""
+lsrender(md::Union{Markdown.MarkdownElement, Markdown.MD}) = sprint(lsrender, md)
+lsrender(io::IO, md::Markdown.MarkdownElement) = Markdown.plain(io, md)
+
+function lsrender(io::IO, md::Markdown.MD)
+    isempty(md.content) && return
+    for md in md.content[1:end-1]
+        lsrender(io, md)
+        println(io)
+    end
+    lsrender(io, md.content[end])
+end
+
+function lsrender(io::IO, code::Markdown.Code)
+    n = mapreduce(m -> length(m.match), max, eachmatch(r"^`+"m, code.code); init=2) + 1
+    println(io, "`" ^ n, code.language in JULIA_LIKE_LANGUAGES ? "julia" : code.language)
+    println(io, code.code)
+    println(io, "`" ^ n)
+end
+
+(processor::LSPostProcessor)(md::Markdown.MD) = processor.inner(lsrender(md))
+(processor::LSPostProcessor)(s::AbstractString) = processor.inner(s)
+
 get_context_analyzer(::Nothing, uri::URI) = LSAnalyzer(uri)
 get_context_analyzer(::OutOfScope, uri::URI) = LSAnalyzer(uri)
 get_context_analyzer(analysis_unit::AnalysisUnit, ::URI) = analysis_unit.result.analyzer
 
-get_post_processor(::Nothing) = JET.PostProcessor()
-get_post_processor(::OutOfScope) = JET.PostProcessor()
-get_post_processor(analysis_unit::AnalysisUnit) = JET.PostProcessor(analysis_unit.result.actual2virtual)
+get_post_processor(::Nothing) = LSPostProcessor(JET.PostProcessor())
+get_post_processor(::OutOfScope) = LSPostProcessor(JET.PostProcessor())
+get_post_processor(analysis_unit::AnalysisUnit) = LSPostProcessor(JET.PostProcessor(analysis_unit.result.actual2virtual))
 
 function find_analysis_unit_for_uri(state::ServerState, uri::URI)
     haskey(state.analysis_cache, uri) || return nothing

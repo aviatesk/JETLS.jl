@@ -221,7 +221,7 @@ end
 
 # active_arg is either an argument index, or :next (available pos. arg), or :none
 function make_siginfo(m::Method, ca::CallArgs, active_arg::Union{Int, Symbol};
-                      postprocessor::JET.PostProcessor=JET.PostProcessor())
+                      postprocessor::LSPostProcessor=LSPostProcessor())
     # methodshow prints "f(x::T) [unparseable stuff]"
     # parse the first part and put the remainder in documentation
     @static if VERSION ≥ v"1.13.0-DEV.710"
@@ -401,7 +401,7 @@ function cursor_call(ps::JS.ParseStream, st0::JL.SyntaxTree, b::Int)
 end
 
 function cursor_siginfos(mod::Module, ps::JS.ParseStream, b::Int, analyzer::LSAnalyzer;
-                         postprocessor::JET.PostProcessor=JET.PostProcessor())
+                         postprocessor::LSPostProcessor=LSPostProcessor())
     st0 = JS.build_tree(JL.SyntaxTree, ps; ignore_errors=true)
     call = cursor_call(ps, st0, b)
     isnothing(call) && return empty_siginfos

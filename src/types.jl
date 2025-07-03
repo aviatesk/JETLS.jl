@@ -97,6 +97,13 @@ struct Registered
     method::String
 end
 
+struct LSPostProcessor
+    inner::JET.PostProcessor
+    LSPostProcessor(inner::JET.PostProcessor) = new(inner)
+end
+
+LSPostProcessor() = LSPostProcessor(JET.PostProcessor())
+
 mutable struct ServerState
     const workspaceFolders::Vector{URI}
     const file_cache::Dict{URI,FileInfo} # syntactic analysis cache (synced with `textDocument/didChange`)
@@ -106,7 +113,7 @@ mutable struct ServerState
     const currently_registered::Set{Registered}
     root_path::String
     root_env_path::String
-    completion_resolver_info::Tuple{Module,JET.PostProcessor}
+    completion_resolver_info::Tuple{Module,LSPostProcessor}
     init_params::InitializeParams
     function ServerState()
         return new(
