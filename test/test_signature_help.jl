@@ -299,6 +299,7 @@ end
         foo(xxx, yyy) = :xxx_yyy
         foo(nothing,│)
         """
+        cnt = 0
         with_signature_help_request(text) do i, result, uri, script_path
             @test length(result.signatures) == 2
             @test any(result.signatures) do siginfo
@@ -315,7 +316,9 @@ end
                 occursin("@ `Main` [$(script_path):2]($(filepath2uri(script_path))#L2)",
                     (siginfo.documentation::MarkupContent).value)
             end
+            cnt += 1
         end
+        @test cnt == 1
     end
 
     # Test with DidChangeTextDocumentNotification (broken test preserved)

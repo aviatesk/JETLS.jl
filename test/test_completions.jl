@@ -104,17 +104,22 @@ module M
     end
 end
 """
+    cnt = 0
     with_completion(code) do i, cv
         if i == 1
             cv_nhas(cv, ["a", "b", "c", "x", "y", "z"])
+            cnt += 1
         elseif i == 2
             cv_has(cv, ["x", "y", "z"], kind=:local)
             cv_nhas(cv, ["a", "b", "c"])
+            cnt += 1
         elseif i == 3
             cv_has(cv, ["a", "b", "c"], kind=:local)
             cv_nhas(cv, ["x", "y", "z"])
+            cnt += 1
         end
     end
+    @test cnt == 3
 end
 
 @testset "nested and adjacent scopes" begin
@@ -149,17 +154,23 @@ function f()
 end
 """
 
+    cnt = 0
     with_completion(code) do i, cv
         if i == 1
             cv_has(cv, ["g"], kind=:global)
+            cnt += 1
         elseif i == 2
             cv_has(cv, ["g"], kind=:global)
+            cnt += 1
         elseif i == 3
             cv_has(cv, ["g"], kind=:local)
+            cnt += 1
         elseif i == 4
             cv_has(cv, ["g"], kind=:local)
+            cnt += 1
         end
     end
+    @test cnt == 4
 
     # global/local decl below cursor
     code = """
@@ -177,14 +188,18 @@ function f(x)
     end
 end
 """
+    cnt = 0
     with_completion(code) do i, cv
         if i == 1
             cv_has(cv, ["x"], kind=:global)
+            cnt += 1
         elseif i == 2
             # broken. JuliaLowering bug?
             # cv_has(cv, ["x"], kind=:local)
+            cnt += 1
         end
     end
+    @test cnt == 2
 end
 
 @testset "cursor in new symbol" begin
@@ -290,6 +305,7 @@ end
     end # module Foo
     """
 
+    cnt = 0
     with_completion_request(program) do i, result, uri
         items = result.items
         if i == 1
@@ -305,6 +321,7 @@ end
             @test any(items) do item
                 item.label == "sin"
             end
+            cnt += 1
         elseif i == 2
             @test any(items) do item
                 item.label == "foo"
@@ -318,6 +335,7 @@ end
             @test any(items) do item
                 item.label == "y_var"
             end
+            cnt += 1
         elseif i == 3
             # `dot_completion_test`: dot-prefixed global completion
             xxxidx = findfirst(item->item.label=="xxx", items)
@@ -328,14 +346,17 @@ end
             @test isnothing(findfirst(item->item.label=="getx", items))
             @test isnothing(findfirst(item->item.label=="foo", items))
             @test isnothing(findfirst(item->item.label=="xarg", items)) # local completion should be disabled
+            cnt += 1
         elseif i == 4
             # `str_macro_test`: string macro case
             @test any(items) do item
                 item.label == "text\"\"" &&
                 item.data isa CompletionData && item.data.name == "@text_str"
             end
+            cnt += 1
         end
     end
+    @test cnt == 4
 end
 
 @testset "local completion for methods with `@nospecialize`" begin
@@ -346,30 +367,39 @@ end
     """
 
     context = CompletionContext(; triggerKind=CompletionTriggerKind.Invoked)
+    cnt = 0
     with_completion_request(text; context=context) do i, result, uri
         items = result.items
         @test any(items) do item
             item.label == "yyy"
         end
+        cnt += 1
     end
+    @test cnt == 1
 end
 
 # completion for empty program should not crash
 @testset "empty completion" begin
     let text = "│"
+        cnt = 0
         with_completion_request(text) do i, result, uri
             items = result.items
             # should not crash and return something
             @test length(items) > 0
+            cnt += 1
         end
+        @test cnt == 1
     end
 
     let text = "\n\n\n│"
+        cnt = 0
         with_completion_request(text) do i, result, uri
             items = result.items
             # should not crash and return something
             @test length(items) > 0
+            cnt += 1
         end
+        @test cnt == 1
     end
 end
 
@@ -383,6 +413,7 @@ end
         context = CompletionContext(;
             triggerKind=CompletionTriggerKind.TriggerCharacter,
             triggerCharacter="@")
+        cnt = 0
         with_completion_request(text; context=context) do i, result, uri
             items = result.items
             @test any(items) do item
@@ -392,7 +423,9 @@ end
             @test !any(items) do item
                 item.label == "foo" || item.label == "xxx" || item.label == "yyy"
             end
+            cnt += 1
         end
+        @test cnt == 1
     end
 
     # completion for macro names
@@ -402,6 +435,7 @@ end
         end
         """
         context = CompletionContext(; triggerKind=CompletionTriggerKind.Invoked)
+        cnt = 0
         with_completion_request(text; context=context) do i, result, uri
             items = result.items
             @test any(items) do item
@@ -411,7 +445,9 @@ end
             @test !any(items) do item
                 item.label == "foo" || item.label == "xxx" || item.label == "yyy"
             end
+            cnt += 1
         end
+        @test cnt == 1
     end
 
     # completion within macro call context
@@ -421,12 +457,15 @@ end
         end
         """
         context = CompletionContext(; triggerKind=CompletionTriggerKind.Invoked)
+        cnt = 0
         with_completion_request(text; context=context) do i, result, uri
             items = result.items
             @test any(items) do item
                 item.label == "yyy"
             end
+            cnt += 1
         end
+        @test cnt == 1
     end
 
     # allow `nospecia│` complete to `@nospecialize`
@@ -436,13 +475,16 @@ end
         end
         """
         context = CompletionContext(; triggerKind=CompletionTriggerKind.Invoked)
+        cnt = 0
         with_completion_request(text; context=context) do i, result, uri
             items = result.items
             @test any(items) do item
                 item.label == "@nospecialize" &&
                 item.textEdit.newText == "@nospecialize"
             end
+            cnt += 1
         end
+        @test cnt == 1
     end
 end
 
@@ -650,6 +692,7 @@ end
         context = CompletionContext(;
             triggerKind=CompletionTriggerKind.TriggerCharacter,
             triggerCharacter="\\")
+        cnt = 0
         with_completion_request(text; context=context) do i, result, uri
             items = result.items
             @test any(items) do item
@@ -659,7 +702,9 @@ end
                 item.label == "foo" || # should not include global completions
                 item.label == "β"      # should not include local completions
             end
+            cnt += 1
         end
+        @test cnt == 1
     end
 
     let text = """
@@ -670,6 +715,7 @@ end
         context = CompletionContext(;
             triggerKind=CompletionTriggerKind.TriggerCharacter,
             triggerCharacter=":")
+        cnt = 0
         with_completion_request(text; context=context) do i, result, uri
             items = result.items
             @test any(items) do item
@@ -681,7 +727,9 @@ end
                 item.label == "β"   || # should not include local completions
                 item.label == "alpha" # should not even include LaTeX completions
             end
+            cnt += 1
         end
+        @test cnt == 1
     end
 end
 
