@@ -143,10 +143,10 @@
     # """
     # foldingRangeProvider::Union{Nothing, Bool, FoldingRangeOptions, FoldingRangeRegistrationOptions} = nothing
 
-    # """
-    # The server provides execute command support.
-    # """
-    # executeCommandProvider::Union{Nothing, ExecuteCommandOptions} = nothing
+    """
+    The server provides execute command support.
+    """
+    executeCommandProvider::Union{Nothing, ExecuteCommandOptions} = nothing
 
     # """
     # The server provides selection range support.
