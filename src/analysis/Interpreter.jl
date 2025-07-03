@@ -136,7 +136,7 @@ function JET.try_read_file(interp::LSInterpreter, include_context::Module, filen
     if !isnothing(fi)
         parsed_stream = fi.parsed_stream
         if isempty(parsed_stream.diagnostics)
-            return build_tree!(JS.SyntaxNode, fi)
+            return build_tree!(JS.SyntaxNode, fi; filename)
         else
             return String(JS.sourcetext(parsed_stream))
         end
