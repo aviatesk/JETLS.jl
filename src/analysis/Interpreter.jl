@@ -6,7 +6,7 @@ using JuliaSyntax: JuliaSyntax as JS
 using JET: CC, JET
 using ..JETLS:
     AnalysisEntry, FullAnalysisInfo, SavedFileInfo, Server,
-    JETLS_DEV_MODE, yield_to_endpoint, send
+    JETLS_DEV_MODE, get_saved_fileinfo, yield_to_endpoint, send
 using ..JETLS.URIs2
 using ..JETLS.LSP
 using ..JETLS.Analyzer
@@ -132,9 +132,9 @@ end
 
 function JET.try_read_file(interp::LSInterpreter, include_context::Module, filename::AbstractString)
     uri = filename2uri(filename)
-    file_cache = interp.server.state.saved_file_cache
-    if haskey(file_cache, uri)
-        parsed_stream = file_cache[uri].parsed_stream
+    fi = get_saved_fileinfo(interp.server.state, uri)
+    if !isnothing(fi)
+        parsed_stream = fi.parsed_stream
         if isempty(parsed_stream.diagnostics)
             return JS.build_tree(JS.SyntaxNode, parsed_stream; filename)
         else
