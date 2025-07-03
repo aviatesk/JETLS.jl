@@ -74,8 +74,9 @@ end
 function analyze_parsed_if_exist(server::Server, info::FullAnalysisInfo, args...)
     uri = entryuri(info.entry)
     jetconfigs = entryjetconfigs(info.entry)
-    if haskey(server.state.saved_file_cache, uri)
-        parsed_stream = server.state.saved_file_cache[uri].parsed_stream
+    fi = get_saved_fileinfo(server.state, uri)
+    if !isnothing(fi)
+        parsed_stream = fi.parsed_stream
         filename = uri2filename(uri)
         @assert !isnothing(filename) "Unsupported URI: $uri"
         parsed = JS.build_tree(JS.SyntaxNode, parsed_stream; filename)
@@ -178,8 +179,11 @@ end
 
 function initiate_analysis_unit!(server::Server, uri::URI; token::Union{Nothing,ProgressToken}=nothing)
     state = server.state
-    file_info = state.saved_file_cache[uri]
-    parsed_stream = file_info.parsed_stream
+    fi = get_saved_fileinfo(state, uri)
+    if isnothing(fi)
+        error(lazy"`initiate_analysis_unit!` called before saved file cache is created for $uri")
+    end
+    parsed_stream = fi.parsed_stream
     if !isempty(parsed_stream.diagnostics)
         return nothing
     end
@@ -299,11 +303,9 @@ function reanalyze!(server::Server, analysis_unit::AnalysisUnit; token::Union{No
     end
 
     any_parse_failed = any(analyzed_file_uris(analysis_unit)) do uri::URI
-        if haskey(state.saved_file_cache, uri)
-            file_info = state.saved_file_cache[uri]
-            if !isempty(file_info.parsed_stream.diagnostics)
-                return true
-            end
+        fi = get_saved_fileinfo(state, uri)
+        if !isnothing(fi) && !isempty(fi.parsed_stream.diagnostics)
+            return true
         end
         return false
     end
