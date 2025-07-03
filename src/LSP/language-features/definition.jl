@@ -27,5 +27,5 @@ end
 end
 
 @interface DefinitionResponse @extends ResponseMessage begin
-    result::Union{Location, Vector{Location}, Vector{LocationLink}, Null}
+    result::Union{Location, Vector{Location}, Vector{LocationLink}, Null, Nothing}
 end

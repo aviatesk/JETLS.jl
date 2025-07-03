@@ -586,6 +586,6 @@ information at a given cursor position.
 end
 
 @interface SignatureHelpResponse @extends ResponseMessage begin
-    result::Union{SignatureHelp, Null}
+    result::Union{SignatureHelp, Null, Nothing}
 end
 ```

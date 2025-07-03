@@ -42,5 +42,5 @@ to the client.
 end
 
 @interface ExecuteCommandResponse @extends ResponseMessage begin
-    result::LSPAny
+    result::Union{LSPAny, Nothing}
 end
