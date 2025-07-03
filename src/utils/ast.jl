@@ -70,14 +70,19 @@ end
 function traverse(@specialize(callback), st::JL.SyntaxTree)
     stack = JL.SyntaxList(st)
     push!(stack, st)
+    _traverse!(callback, stack)
+end
+traverse(@specialize(callback), sn::JL.SyntaxNode) = _traverse!(callback, JS.SyntaxNode[sn])
+
+function _traverse!(@specialize(callback), stack)
     while !isempty(stack)
-        st = pop!(stack)
-        if JS.numchildren(st) === 0
+        x = pop!(stack)
+        callback(x)
+        if JS.numchildren(x) === 0
             continue
         end
-        for ci in JS.children(st)
-            callback(ci)
-            push!(stack, ci)
+        for i = JS.numchildren(x):-1:1
+            push!(stack, x[i])
         end
     end
 end
@@ -112,16 +117,9 @@ byte_ancestors(st::JL.SyntaxTree, byte::Int) = byte_ancestors(st, byte:byte)
 
 function byte_ancestors(sn::JS.SyntaxNode, rng::UnitRange{Int})
     out = JS.SyntaxNode[]
-    stack = JS.SyntaxNode[sn]
-    while !isempty(stack)
-        cursn = pop!(stack)
-        (JS.numchildren(cursn) === 0) && continue
-        for i = JS.numchildren(cursn):-1:1
-            childsn = cursn[i]
-            push!(stack, childsn)
-            if rng ⊆ JS.byte_range(childsn)
-                push!(out, childsn)
-            end
+    traverse(sn) do sn′
+        if rng ⊆ JS.byte_range(sn′)
+            push!(out, sn′)
         end
     end
     return reverse!(out)
