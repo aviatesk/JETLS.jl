@@ -456,7 +456,7 @@ Some clients, e.g. Eglot (emacs), requests it more frequently.
 function handle_SignatureHelpRequest(server::Server, msg::SignatureHelpRequest)
     state = server.state
     uri = msg.params.textDocument.uri
-    fi = get_fileinfo(state, uri)
+    fi = get_file_info(state, uri)
     if fi === nothing
         return send(server,
             SignatureHelpResponse(;

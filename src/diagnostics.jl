@@ -228,7 +228,7 @@ end
 
 function handle_DocumentDiagnosticRequest(server::Server, msg::DocumentDiagnosticRequest)
     uri = msg.params.textDocument.uri
-    file_info = get_fileinfo(server.state, uri)
+    file_info = get_file_info(server.state, uri)
     if file_info === nothing
         return send(server,
             DocumentDiagnosticResponse(;

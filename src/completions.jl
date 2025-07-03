@@ -144,7 +144,7 @@ function local_completions!(items::Dict{String, CompletionItem},
             # Don't trigger completion just by typing a numeric character:
             context.triggerCharacter in NUMERIC_CHARACTERS && return nothing
     end
-    fi = get_fileinfo(s, uri)
+    fi = get_file_info(s, uri)
     fi === nothing && return nothing
     # NOTE don't bail out even if `length(fi.parsed_stream.diagnostics) ≠ 0`
     # so that we can get some completions even for incomplete code
@@ -174,7 +174,7 @@ function global_completions!(items::Dict{String, CompletionItem}, state::ServerS
             context.triggerCharacter in NUMERIC_CHARACTERS && return nothing
     end
     pos = params.position
-    fi = get_fileinfo(state, uri)
+    fi = get_file_info(state, uri)
     fi === nothing && return nothing
     (; mod, analyzer, postprocessor) = get_context_info(state, uri, pos)
     completion_module = mod
@@ -343,7 +343,7 @@ end
 # Add LaTeX and emoji completions to the items dictionary and return boolean indicating
 # whether any completions were added.
 function add_emoji_latex_completions!(items::Dict{String,CompletionItem}, state::ServerState, uri::URI, params::CompletionParams)
-    fi = get_fileinfo(state, uri)
+    fi = get_file_info(state, uri)
     fi === nothing && return nothing
 
     pos = params.position
