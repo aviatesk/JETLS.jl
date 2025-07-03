@@ -1,27 +1,91 @@
+"""
+    clear_cache!(fi::Union{FileInfo,SavedFileInfo})
+
+Clear the cached syntax node and syntax tree from the given file info object.
+This should be called when the underlying parsed stream is updated to ensure
+that stale cached representations are removed.
+"""
+function clear_cache!(fi::Union{FileInfo,SavedFileInfo})
+    empty!(fi.syntax_node)
+    empty!(fi.syntax_tree0)
+    return fi
+end
+
+"""
+    build_tree!(::Type{JS.SyntaxNode}, fi::Union{FileInfo,SavedFileInfo}; kwargs...)
+
+Build and cache a `JS.SyntaxNode` for the given file info object.
+Returns the cached syntax node if it already exists, otherwise builds a new one
+from the parsed stream and caches it.
+The cache is separated by `kwargs`.
+"""
+function build_tree!(::Type{JS.SyntaxNode}, fi::Union{FileInfo,SavedFileInfo}; kwargs...)
+    return get!(fi.syntax_node, kwargs) do
+        JS.build_tree(JS.SyntaxNode, fi.parsed_stream; kwargs...)
+    end
+end
+
+"""
+    build_tree!(::Type{JL.SyntaxTree}, fi::Union{FileInfo,SavedFileInfo}; kwargs...)
+
+Build and cache a `JL.SyntaxTree` for the given file info object.
+Returns the cached syntax tree if it already exists, otherwise builds a new one
+from the parsed stream and caches it.
+The cache is separated by `kwargs`.
+"""
+function build_tree!(::Type{JL.SyntaxTree}, fi::Union{FileInfo,SavedFileInfo}; kwargs...)
+    return get!(fi.syntax_tree0, kwargs) do
+        JS.build_tree(JL.SyntaxTree, fi.parsed_stream; kwargs...)
+    end
+end
+
 function ParseStream!(s::AbstractString)
     stream = JS.ParseStream(s)
     JS.parse!(stream; rule=:all)
     return stream
 end
-function FileInfo(version::Int, text::String)
-    return FileInfo(version, ParseStream!(text))
-end
-function SavedFileInfo(text::String)
-    return SavedFileInfo(ParseStream!(text))
+
+"""
+    cache_file_info!(state::ServerState, uri::URI, version::Int, text::String)
+    cache_file_info!(state::ServerState, uri::URI, version::Int, parsed_stream::JS.ParseStream)
+
+Cache or update file information in the server state's file cache.
+If the file already exists in the cache, updates its version and parsed stream,
+then clears any cached syntax representations. Otherwise, creates a new `FileInfo`
+entry in the cache.
+"""
+cache_file_info!(state::ServerState, uri::URI, version::Int, text::String) =
+    cache_file_info!(state, uri, version, ParseStream!(text))
+function cache_file_info!(state::ServerState, uri::URI, version::Int, parsed_stream::JS.ParseStream)
+    if haskey(state.file_cache, uri)
+        fi = state.file_cache[uri]
+        fi.version = version
+        fi.parsed_stream = parsed_stream
+        return clear_cache!(fi)
+    else
+        return state.file_cache[uri] = FileInfo(version, parsed_stream)
+    end
 end
 
-function cache_file_info!(state::ServerState, uri::URI, version::Int, text::String)
-    return cache_file_info!(state, uri, FileInfo(version, text))
-end
-function cache_file_info!(state::ServerState, uri::URI, file_info::FileInfo)
-    return state.file_cache[uri] = file_info
-end
+"""
+    cache_saved_file_info!(state::ServerState, uri::URI, text::String)
+    cache_saved_file_info!(state::ServerState, uri::URI, parsed_stream::JS.ParseStream)
 
-function cache_saved_file_info!(state::ServerState, uri::URI, text::String)
-    return cache_saved_file_info!(state, uri, SavedFileInfo(text))
-end
-function cache_saved_file_info!(state::ServerState, uri::URI, file_info::SavedFileInfo)
-    return state.saved_file_cache[uri] = file_info
+Cache or update saved file information in the server state's saved file cache.
+This is used to track the last saved state of a file. If the file already exists
+in the cache, updates its parsed stream and clears cached syntax representations.
+Otherwise, creates a new `SavedFileInfo` entry in the cache.
+"""
+cache_saved_file_info!(state::ServerState, uri::URI, text::String) =
+    cache_saved_file_info!(state, uri, ParseStream!(text))
+function cache_saved_file_info!(state::ServerState, uri::URI, parsed_stream::JS.ParseStream)
+    if haskey(state.saved_file_cache, uri)
+        fi = state.saved_file_cache[uri]
+        fi.parsed_stream = parsed_stream
+        return clear_cache!(fi)
+    else
+        return state.saved_file_cache[uri] = SavedFileInfo(parsed_stream)
+    end
 end
 
 function handle_DidOpenTextDocumentNotification(server::Server, msg::DidOpenTextDocumentNotification)
@@ -30,8 +94,8 @@ function handle_DidOpenTextDocumentNotification(server::Server, msg::DidOpenText
     uri = textDocument.uri
 
     parsed_stream = ParseStream!(textDocument.text)
-    cache_file_info!(server.state, uri, FileInfo(textDocument.version, parsed_stream))
-    cache_saved_file_info!(server.state, uri, SavedFileInfo(parsed_stream))
+    cache_file_info!(server.state, uri, textDocument.version, parsed_stream)
+    cache_saved_file_info!(server.state, uri, parsed_stream)
 
     if supports(server, :window, :workDoneProgress)
         id = String(gensym(:WorkDoneProgressCreateRequest_run_full_analysis!))

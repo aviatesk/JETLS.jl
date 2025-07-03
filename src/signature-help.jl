@@ -400,10 +400,10 @@ function cursor_call(ps::JS.ParseStream, st0::JL.SyntaxTree, b::Int)
     return isnothing(i) ? nothing : bas[i]
 end
 
-function cursor_siginfos(mod::Module, ps::JS.ParseStream, b::Int, analyzer::LSAnalyzer;
+function cursor_siginfos(mod::Module, fi::FileInfo, b::Int, analyzer::LSAnalyzer;
                          postprocessor::JET.PostProcessor=JET.PostProcessor())
-    st0 = JS.build_tree(JL.SyntaxTree, ps; ignore_errors=true)
-    call = cursor_call(ps, st0, b)
+    st0 = build_tree!(JL.SyntaxTree, fi)
+    call = cursor_call(fi.parsed_stream, st0, b)
     isnothing(call) && return empty_siginfos
     after_semicolon = let
         params_i = findfirst(st -> kind(st) === K"parameters", JS.children(call))
@@ -466,7 +466,7 @@ function handle_SignatureHelpRequest(server::Server, msg::SignatureHelpRequest)
     end
     (; mod, analyzer, postprocessor) = get_context_info(state, uri, msg.params.position)
     b = xy_to_offset(fi, msg.params.position)
-    signatures = cursor_siginfos(mod, fi.parsed_stream, b, analyzer; postprocessor)
+    signatures = cursor_siginfos(mod, fi, b, analyzer; postprocessor)
     activeSignature = nothing
     activeParameter = nothing
     return send(server,

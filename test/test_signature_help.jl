@@ -16,7 +16,8 @@ function siginfos(mod::Module, code::AbstractString, cursor::Regex=r"│")
     position = only(positions)
     b = JETLS.xy_to_offset(Vector{UInt8}(clean_code), position)
     ps = JS.ParseStream(clean_code); JS.parse!(ps)
-    return cursor_siginfos(mod, ps, b, LSAnalyzer())
+    fi = JETLS.FileInfo(0, ps)
+    return cursor_siginfos(mod, fi, b, LSAnalyzer())
 end
 
 n_si(args...) = length(siginfos(args...))
