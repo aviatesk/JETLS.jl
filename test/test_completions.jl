@@ -56,11 +56,9 @@ end
 
 # shorthand for testing single cursor completion
 function test_single_cv(code::String, expected::Vector{String}; matcher::Regex = r"│", unexpected::Vector{String} = String[], kind=nothing)
-    text, positions = JETLS.get_text_and_positions(code, matcher)
-    @assert length(positions) == 1 "test_single_cv requires exactly one cursor marker"
-    position = only(positions)
-    with_completion(text) do _, cv
-        cv_has(cv, expected, kind)
+    @assert count(matcher, code) == 1 "test_single_cv requires exactly one cursor marker"
+    with_completion(code, matcher) do _, cv
+        cv_has(cv, expected, kind=kind)
         cv_nhas(cv, unexpected)
     end
 end
