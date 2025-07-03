@@ -48,54 +48,54 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
         # leave Refs undefined
     end
 
-    if getobjpath(params.capabilities,
-        :textDocument, :completion, :dynamicRegistration) !== true
+    if supports(server,
+        :textDocument, :completion, :dynamicRegistration)
+        completionProvider = nothing # will be registered dynamically
+    else
         completionProvider = completion_options()
         if JETLS_DEV_MODE
             @info "Registering 'textDocument/completion' with `InitializeResponse`"
         end
-    else
-        completionProvider = nothing # will be registered dynamically
     end
 
-    if getobjpath(params.capabilities,
-        :textDocument, :signatureHelp, :dynamicRegistration) !== true
+    if supports(server,
+        :textDocument, :signatureHelp, :dynamicRegistration)
+        signatureHelpProvider = nothing # will be registered dynamically
+    else
         signatureHelpProvider = signature_help_options()
         if JETLS_DEV_MODE
             @info "Registering 'textDocument/signatureHelp' with `InitializeResponse`"
         end
-    else
-        signatureHelpProvider = nothing # will be registered dynamically
     end
 
-    if getobjpath(params.capabilities,
-        :textDocument, :definition, :dynamicRegistration) !== true
+    if supports(server,
+        :textDocument, :definition, :dynamicRegistration)
+        definitionProvider = nothing # will be registered dynamically
+    else
         definitionProvider = definition_options()
         if JETLS_DEV_MODE
             @info "Registering 'textDocument/definition' with `InitializeResponse`"
         end
-    else
-        definitionProvider = nothing # will be registered dynamically
     end
 
-    if getobjpath(params.capabilities,
-        :textDocument, :hover, :dynamicRegistration) !== true
+    if supports(server,
+        :textDocument, :hover, :dynamicRegistration)
+        hoverProvider = nothing # will be registered dynamically
+    else
         hoverProvider = hover_options()
         if JETLS_DEV_MODE
             @info "Registering 'textDocument/hover' with `InitializeResponse`"
         end
-    else
-        hoverProvider = nothing # will be registered dynamically
     end
 
-    if getobjpath(params.capabilities,
-        :textDocument, :diagnostic, :dynamicRegistration) !== true
+    if supports(server,
+        :textDocument, :diagnostic, :dynamicRegistration)
+        diagnosticProvider = nothing # will be registered dynamically
+    else
         diagnosticProvider = diagnostic_options()
         if JETLS_DEV_MODE
             @info "Registering 'textDocument/diagnostic' with `InitializeResponse`"
         end
-    else
-        diagnosticProvider = nothing # will be registered dynamically
     end
 
     result = InitializeResult(;
@@ -135,8 +135,8 @@ function handle_InitializedNotification(server::Server)
 
     registrations = Registration[]
 
-    if getobjpath(state.init_params.capabilities,
-        :textDocument, :completion, :dynamicRegistration) === true
+    if supports(server,
+        :textDocument, :completion, :dynamicRegistration)
         push!(registrations, completion_registration())
         if JETLS_DEV_MODE
             @info "Dynamically registering 'textDocument/completion' upon `InitializedNotification`"
@@ -147,8 +147,8 @@ function handle_InitializedNotification(server::Server)
         # since `CompletionRegistrationOptions` does not extend `StaticRegistrationOptions`.
     end
 
-    if getobjpath(state.init_params.capabilities,
-        :textDocument, :signatureHelp, :dynamicRegistration) === true
+    if supports(server,
+        :textDocument, :signatureHelp, :dynamicRegistration)
         push!(registrations, signature_help_registration())
         if JETLS_DEV_MODE
             @info "Dynamically registering 'textDocument/signatureHelp' upon `InitializedNotification`"
@@ -159,8 +159,8 @@ function handle_InitializedNotification(server::Server)
         # since `SignatureHelpRegistrationOptions` does not extend `StaticRegistrationOptions`.
     end
 
-    if getobjpath(state.init_params.capabilities,
-        :textDocument, :definition, :dynamicRegistration) === true
+    if supports(server,
+        :textDocument, :definition, :dynamicRegistration)
         push!(registrations, definition_registration())
         if JETLS_DEV_MODE
             @info "Dynamically registering 'textDocument/definition' upon `InitializedNotification`"
@@ -171,8 +171,8 @@ function handle_InitializedNotification(server::Server)
         # since `DefinitionRegistrationOptions` does not extend `StaticRegistrationOptions`.
     end
 
-    if getobjpath(state.init_params.capabilities,
-        :textDocument, :hover, :dynamicRegistration) === true
+    if supports(server,
+        :textDocument, :hover, :dynamicRegistration)
         push!(registrations, hover_registration())
         if JETLS_DEV_MODE
             @info "Dynamically registering 'textDocument/hover' upon `InitializedNotification`"
@@ -183,8 +183,8 @@ function handle_InitializedNotification(server::Server)
         # since `HoverRegistrationOptions` does not extend `StaticRegistrationOptions`.
     end
 
-    if getobjpath(state.init_params.capabilities,
-        :textDocument, :diagnostic, :dynamicRegistration) === true
+    if supports(server,
+        :textDocument, :diagnostic, :dynamicRegistration)
         push!(registrations, diagnostic_registration())
         if JETLS_DEV_MODE
             @info "Dynamically registering 'textDocument/diagnotic' upon `InitializedNotification`"
