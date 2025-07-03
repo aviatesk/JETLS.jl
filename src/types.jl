@@ -1,11 +1,27 @@
-struct FileInfo
+const SyntaxTree0 = typeof(JS.build_tree(JL.SyntaxTree, JS.ParseStream("")))
+
+# TODO separate cache by `kwargs`?
+
+mutable struct FileInfo
     version::Int
     parsed_stream::JS.ParseStream
+    # filled after cached
+    syntax_node::Dict{Any,JS.SyntaxNode}
+    syntax_tree0::Dict{Any,SyntaxTree0}
+    FileInfo(version::Int, parsed_stream::JS.ParseStream) =
+        new(version, parsed_stream, Dict{Any,JS.SyntaxNode}(), Dict{Any,SyntaxTree0}())
 end
 
-struct SavedFileInfo
+mutable struct SavedFileInfo
     parsed_stream::JS.ParseStream
+    # filled after cached
+    syntax_node::Dict{Any,JS.SyntaxNode}
+    syntax_tree0::Dict{Any,SyntaxTree0}
+    SavedFileInfo(parsed_stream::JS.ParseStream) =
+        new(parsed_stream, Dict{Any,JS.SyntaxNode}(), Dict{Any,SyntaxTree0}())
 end
+
+function build_tree! end
 
 entryuri(entry::AnalysisEntry) = entryuri_impl(entry)::URI
 entrykind(entry::AnalysisEntry) = entrykind_impl(entry)::String
