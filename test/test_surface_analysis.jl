@@ -4,10 +4,9 @@ using Test
 using JETLS
 using JETLS: JL, JS
 
-include("jsjl_utils.jl")
-
 function get_lowered_diagnostics(text::AbstractString; filename::AbstractString = @__FILE__)
-    return JETLS.lowering_diagnostics(parsedstream(text), filename)
+    fi = JETLS.FileInfo(0, JETLS.ParseStream!(text))
+    return JETLS.lowering_diagnostics(fi, filename)
 end
 
 @testset "unused binding detection" begin
