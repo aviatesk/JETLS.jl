@@ -333,14 +333,7 @@ function reanalyze!(server::Server, analysis_unit::AnalysisUnit; token::Union{No
         result = activate_do(entry.env_path) do
             analyze_parsed_if_exist(server, info)
         end
-    else
-        @warn "Unsupported analysis entry" entry
-        return ResponseError(;
-            code = ErrorCodes.ServerCancelled,
-            message = "Unsupported analysis entry",
-            data = DiagnosticServerCancellationData(;
-                retriggerRequest = false))
-    end
+    else error("Unsupported analysis entry $entry") end
 
     update_analysis_unit!(analysis_unit, result)
     record_reverse_map!(state, analysis_unit)
