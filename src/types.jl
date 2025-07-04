@@ -78,11 +78,13 @@ struct FullAnalysisInfo{E<:AnalysisEntry}
     n_files::Int
 end
 
+const URI2Diagnostics = Dict{URI,Vector{Diagnostic}}
+
 mutable struct FullAnalysisResult
     staled::Bool
     actual2virtual::JET.Actual2Virtual
     analyzer::LSAnalyzer
-    const uri2diagnostics::Dict{URI,Vector{Diagnostic}}
+    const uri2diagnostics::URI2Diagnostics
     const analyzed_file_infos::Dict{URI,JET.AnalyzedFileInfo}
     const successfully_analyzed_file_infos::Dict{URI,JET.AnalyzedFileInfo}
 end

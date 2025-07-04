@@ -44,12 +44,12 @@ end
 
 # TODO severity
 function jet_result_to_diagnostics(file_uris, result::JET.JETToplevelResult)
-    uri2diagnostics = Dict{URI,Vector{Diagnostic}}(uri => Diagnostic[] for uri in file_uris)
+    uri2diagnostics = URI2Diagnostics(uri => Diagnostic[] for uri in file_uris)
     jet_result_to_diagnostics!(uri2diagnostics, result)
     return uri2diagnostics
 end
 
-function jet_result_to_diagnostics!(uri2diagnostics::Dict{URI,Vector{Diagnostic}}, result::JET.JETToplevelResult)
+function jet_result_to_diagnostics!(uri2diagnostics::URI2Diagnostics, result::JET.JETToplevelResult)
     postprocessor = JET.PostProcessor(result.res.actual2virtual)
     for report in result.res.toplevel_error_reports
         diagnostic = jet_toplevel_error_report_to_diagnostic(postprocessor, report)
@@ -75,6 +75,7 @@ function jet_result_to_diagnostics!(uri2diagnostics::Dict{URI,Vector{Diagnostic}
         end
         push!(uri2diagnostics[uri], diagnostic)
     end
+    return uri2diagnostics
 end
 
 frame_module(frame) = let def = frame.linfo.def
@@ -169,7 +170,7 @@ end
 # -------------------------------
 
 function notify_full_diagnostics!(server::Server)
-    uri2diagnostics = Dict{URI,Vector{Diagnostic}}()
+    uri2diagnostics = URI2Diagnostics()
     for (uri, analysis_info) in server.state.analysis_cache
         if analysis_info isa OutOfScope
             continue
