@@ -10,8 +10,9 @@ end
 
 using Preferences: Preferences
 const JETLS_DEV_MODE = Preferences.@load_preference("JETLS_DEV_MODE", false)
+const JETLS_TEST_MODE = Preferences.@load_preference("JETLS_TEST_MODE", false)
 push_init_hooks!() do
-    @info "Running JETLS with" JETLS_DEV_MODE
+    @info "Running JETLS with" JETLS_DEV_MODE JETLS_TEST_MODE
 end
 
 include("URIs2/URIs2.jl")
@@ -143,7 +144,7 @@ end
 
 function handle_message(server::Server, msg)
     @nospecialize msg
-    if JETLS_DEV_MODE
+    if JETLS_DEV_MODE || !JETLS_TEST_MODE
         try
             # `@invokelatest` for allowing changes maded by Revise to be reflected without
             # terminating the `runserver` loop
