@@ -26,6 +26,7 @@ include("language-features/code-action.jl")
 include("workspace-features/workspace-folders.jl")
 include("workspace-features/files.jl")
 include("workspace-features/execute-command.jl")
+include("workspace-features/apply-edit.jl")
 include("window-features.jl")
 include("lifecycle-messages/initialize.jl")
 
