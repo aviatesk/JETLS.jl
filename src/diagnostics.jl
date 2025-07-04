@@ -137,10 +137,10 @@ end
 
 # TODO use something like `JuliaInterpreter.ExprSplitter`
 
-function lowering_diagnostics(parsed_stream::JS.ParseStream, filename::AbstractString)
-    st0_top = JS.build_tree(JL.SyntaxTree, parsed_stream)
+function lowering_diagnostics(file_info::FileInfo, filename::AbstractString)
+    st0_top = build_tree!(JL.SyntaxTree, file_info)
     diagnostics = Diagnostic[]
-    sourcefile = JS.SourceFile(parsed_stream; filename)
+    sourcefile = JS.SourceFile(file_info.parsed_stream; filename)
     sl = JL.SyntaxList(st0_top)
     push!(sl, st0_top)
     while !isempty(sl)
@@ -241,7 +241,7 @@ function handle_DocumentDiagnosticRequest(server::Server, msg::DocumentDiagnosti
     filename = uri2filename(uri)
     @assert !isnothing(filename) "Unsupported URI: $uri"
     if isempty(parsed_stream.diagnostics)
-        diagnostics = lowering_diagnostics(parsed_stream, filename)
+        diagnostics = lowering_diagnostics(file_info, filename)
     else
         diagnostics = parsed_stream_to_diagnostics(parsed_stream, filename)
     end
