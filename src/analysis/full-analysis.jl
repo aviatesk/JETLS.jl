@@ -187,36 +187,18 @@ function initiate_analysis_unit!(server::Server, uri::URI; token::Union{Nothing,
         return nothing
     end
 
-    if uri.scheme == "file"
-        filename = path = uri2filepath(uri)::String
-        # HACK: we should support Base files properly
-        if issubdir(filename, normpath(Sys.BUILD_ROOT_PATH, "base"))
-            state.analysis_cache[uri] = OutOfScope(Base)
-            return nothing
-        elseif issubdir(filename, normpath(Sys.BUILD_ROOT_PATH, "Compiler", "src"))
-            state.analysis_cache[uri] = OutOfScope(CC)
-            return nothing
-        end
-        if isdefined(state, :root_path)
-            if !issubdir(dirname(path), state.root_path)
-                state.analysis_cache[uri] = OutOfScope()
-                return nothing
-            end
-        end
-        env_path = find_env_path(path)
-        pkgname = env_path === nothing ? nothing : try
-            env_toml = Pkg.TOML.parsefile(env_path)
-            haskey(env_toml, "name") ? env_toml["name"]::String : nothing
-        catch err
-            err isa Base.TOML.ParseError || rethrow(err)
-            nothing
-        end
+    env_path = find_analysis_env_path(state, uri)
+    if env_path isa OutOfScope
+        state.analysis_cache[uri] = env_path
+        return nothing
+    end
+    if isnothing(env_path)
+        pkgname = nothing
     elseif uri.scheme == "untitled"
-        filename = path = uri2filename(uri)::String
-        # try to analyze untitled editors using the root environment
-        env_path = isdefined(state, :root_env_path) ? state.root_env_path : nothing
-        pkgname = nothing # to hit the `@goto analyze_script` case
-    else @assert false "Unsupported URI: $uri" end
+        pkgname = nothing
+    else
+        pkgname = find_pkg_name(env_path)
+    end
 
     if env_path === nothing
         @label analyze_script
@@ -237,7 +219,8 @@ function initiate_analysis_unit!(server::Server, uri::URI; token::Union{Nothing,
     elseif pkgname === nothing
         @goto analyze_script
     else # this file is likely one within a package
-        filekind, filedir = find_package_directory(path, env_path)
+        filepath = uri2filepath(uri)
+        filekind, filedir = find_package_directory(filepath, env_path)
         if filekind === :script
             @goto analyze_script
         elseif filekind === :src
@@ -315,22 +298,24 @@ function reanalyze!(server::Server, analysis_unit::AnalysisUnit; token::Union{No
 
     entry = analysis_unit.entry
     n_files = length(values(analysis_unit.result.successfully_analyzed_file_infos))
+
+    # manually dispatch here for the maximum inferrability
     if entry isa ScriptAnalysisEntry
         info = FullAnalysisInfo(entry, token, #=reanalyze=#true, n_files)
         result = analyze_parsed_if_exist(server, info)
     elseif entry isa ScriptInEnvAnalysisEntry
         info = FullAnalysisInfo(entry, token, #=reanalyze=#true, n_files)
-        result = activate_do(entry.env_path) do
+        result = activate_do(entryenvpath(entry)) do
             analyze_parsed_if_exist(server, info)
         end
     elseif entry isa PackageSourceAnalysisEntry
         info = FullAnalysisInfo(entry, token, #=reanalyze=#true, n_files)
-        result = activate_do(entry.env_path) do
+        result = activate_do(entryenvpath(entry)) do
             analyze_parsed_if_exist(server, info, entry.pkgid)
         end
     elseif entry isa PackageTestAnalysisEntry
         info = FullAnalysisInfo(entry, token, #=reanalyze=#true, n_files)
-        result = activate_do(entry.env_path) do
+        result = activate_do(entryenvpath(entry)) do
             analyze_parsed_if_exist(server, info)
         end
     else error("Unsupported analysis entry $entry") end

@@ -24,9 +24,11 @@ end
 function build_tree! end
 
 entryuri(entry::AnalysisEntry) = entryuri_impl(entry)::URI
+entryenvpath(entry::AnalysisEntry) = entryenvpath_impl(entry)::Union{Nothing,String}
 entrykind(entry::AnalysisEntry) = entrykind_impl(entry)::String
 entryjetconfigs(entry::AnalysisEntry) = entryjetconfigs_impl(entry)::Dict{Symbol,Any}
 
+entryenvpath_impl(::AnalysisEntry) = nothing
 let default_jetconfigs = Dict{Symbol,Any}(
         :toplevel_logger => nothing,
         # force concretization of documentation
@@ -38,20 +40,23 @@ struct ScriptAnalysisEntry <: AnalysisEntry
     uri::URI
 end
 entryuri_impl(entry::ScriptAnalysisEntry) = entry.uri
-entrykind_impl(entry::ScriptAnalysisEntry) = "script"
+entryenvpath_impl(::ScriptAnalysisEntry) = nothing
+entrykind_impl(::ScriptAnalysisEntry) = "script"
 struct ScriptInEnvAnalysisEntry <: AnalysisEntry
     env_path::String
     uri::URI
 end
 entryuri_impl(entry::ScriptInEnvAnalysisEntry) = entry.uri
-entrykind_impl(entry::ScriptInEnvAnalysisEntry) = "script in env"
+entryenvpath_impl(entry::ScriptInEnvAnalysisEntry) = entry.env_path
+entrykind_impl(::ScriptInEnvAnalysisEntry) = "script in env"
 struct PackageSourceAnalysisEntry <: AnalysisEntry
     env_path::String
     pkgfileuri::URI
     pkgid::Base.PkgId
 end
 entryuri_impl(entry::PackageSourceAnalysisEntry) = entry.pkgfileuri
-entrykind_impl(entry::PackageSourceAnalysisEntry) = "pkg src"
+entryenvpath_impl(entry::PackageSourceAnalysisEntry) = entry.env_path
+entrykind_impl(::PackageSourceAnalysisEntry) = "pkg src"
 let jetconfigs = Dict{Symbol,Any}(
         :toplevel_logger => nothing,
         :analyze_from_definitions => true,
@@ -63,7 +68,8 @@ struct PackageTestAnalysisEntry <: AnalysisEntry
     runtestsuri::URI
 end
 entryuri_impl(entry::PackageTestAnalysisEntry) = entry.runtestsuri
-entrykind_impl(entry::PackageTestAnalysisEntry) = "pkg test"
+entryenvpath_impl(entry::PackageTestAnalysisEntry) = entry.env_path
+entrykind_impl(::PackageTestAnalysisEntry) = "pkg test"
 
 struct FullAnalysisInfo{E<:AnalysisEntry}
     entry::E
