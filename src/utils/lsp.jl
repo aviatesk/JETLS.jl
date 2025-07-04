@@ -108,3 +108,66 @@ function get_text_and_positions(text::AbstractString, matcher::Regex=r"│")
 
     return join(lines, '\n'), positions
 end
+
+"""
+    show_error_message(server::Server, message::String)
+
+Send an error notification to the client using window/showMessage.
+"""
+function show_error_message(server::Server, message::String)
+    send(server, ShowMessageNotification(;
+        params = ShowMessageParams(;
+            type = MessageType.Error,
+            message)))
+end
+
+"""
+    show_info_message(server::Server, message::String)
+
+Send an info notification to the client using window/showMessage.
+"""
+function show_info_message(server::Server, message::String)
+    send(server, ShowMessageNotification(;
+        params = ShowMessageParams(;
+            type = MessageType.Info,
+            message)))
+end
+
+"""
+    show_warning_message(server::Server, message::String)
+
+Send a warning notification to the client using window/showMessage.
+"""
+function show_warning_message(server::Server, message::String)
+    send(server, ShowMessageNotification(;
+        params = ShowMessageParams(;
+            type = MessageType.Warning,
+            message)))
+end
+
+"""
+    show_log_message(server::Server, message::String)
+
+Send a log message to the client using window/logMessage.
+This appears in the client's output channel rather than as a popup.
+"""
+function show_log_message(server::Server, message::String)
+    send(server, LogMessageNotification(;
+        params = LogMessageParams(;
+            type = MessageType.Log,
+            message)))
+end
+
+"""
+    show_debug_message(server::Server, message::String)
+
+Send a debug message to the client using window/logMessage.
+This appears in the client's output channel and is typically only shown
+when the client is in debug/verbose mode.
+"""
+function show_debug_message(server::Server, message::String)
+    send(server, LogMessageNotification(;
+        params = LogMessageParams(;
+            type = MessageType.Debug,
+            message)))
+end
