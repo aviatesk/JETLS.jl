@@ -74,9 +74,14 @@ function simple_loc_text(filepath::AbstractString; line::Union{Integer,Nothing}=
 end
 
 function file_cache_error(uri::URI; data=nothing)
+    message = lazy"File cache for $uri is not initialized"
+    return request_failed_error(message; data)
+end
+
+function request_failed_error(message::AbstractString; data=nothing)
     return ResponseError(;
-        code = ErrorCodes.ServerCancelled,
-        message = lazy"File cache for $uri is not initialized",
+        code = ErrorCodes.RequestFailed,
+        message,
         data)
 end
 
