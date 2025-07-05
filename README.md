@@ -41,53 +41,6 @@ frontends, please refer to the [Other editors](#other-editors) section.
 - In the [Extension Development Host](https://code.visualstudio.com/api/get-started/your-first-extension#:~:text=Then%2C%20inside%20the%20editor%2C%20press%20F5.%20This%20will%20compile%20and%20run%20the%20extension%20in%20a%20new%20Extension%20Development%20Host%20window.)
   instance of VSCode, open a Julia file.
 
-## Roadmap
-
-This is a summary of currently implemented features and features that will
-likely be implemented in the near future, for those who want to test this server.
-Please note that not only the progress of the list, but also the structure of
-the list itself is subject to change.
-
-- Full-Analysis
-  - [x] Document synchronization
-  - [ ] JuliaLowering integration
-  - [ ] Incremental analysis
-  - [ ] Recursive analysis for dependencies
-  - [ ] Cross-server-process cache system
-- Diagnostics
-  - [x] Report undefined bindings
-  - [x] Report unused bindings
-  - [ ] Report potential `MethodError`
-- Completion
-  - [x] Global symbol completion
-  - [x] Local binding completion
-  - [x] LaTeX/Emoji completion
-  - [ ] Method signature completion
-- Signature Help
-  - [x] Basic implementation
-  - [x] Macro support
-  - [ ] Argument type based suggestion
-- Definition
-  - [x] Method defintion
-  - [ ] Global binding definition
-  - [x] Local binding definition
-  - [ ] Type-aware method definition
-- Hover
-  - [x] Method documentation
-  - [x] Global binding documentation
-  - [x] Local binding location
-  - [ ] Type-aware method documentation
-  - [ ] Type of local binding on hover
-- [ ] Formatting
-
-Detailed development notes and progress for this project are collected at https://publish.obsidian.md/jetls,
-so those interested might want to take a look.
-
-## Development Notes
-
-- [DEVELOPMENT.md](./DEVELOPMENT.md): Developer notes
-- [AGENTS.md](./AGENTS.md): Specific coding rules (recommended reading for human developers as well)
-
 ## Other Editors
 
 ### Emacs
@@ -134,3 +87,161 @@ language-servers = [ "jetls" ]
 [language-server]
 jetls = { command = "julia", args = ["--startup-file=no", "--project=/path/to/JETLS.jl", "/path/to/JETLS.jl/runserver.jl"] }
 ```
+
+## Roadmap
+
+This is a summary of currently implemented features and features that will
+likely be implemented in the near future, for those who want to test this server.
+Please note that not only the progress of the list, but also the structure of
+the list itself is subject to change.
+
+- Full-Analysis
+  - [x] Document synchronization
+  - [ ] JuliaLowering integration
+  - [ ] Incremental analysis
+  - [ ] Recursive analysis for dependencies
+  - [ ] Cross-server-process cache system
+- Diagnostics
+  - [x] Report undefined bindings
+  - [x] Report unused bindings
+  - [ ] Report potential `MethodError`
+- Completion
+  - [x] Global symbol completion
+  - [x] Local binding completion
+  - [x] LaTeX/Emoji completion
+  - [ ] Method signature completion
+- Signature Help
+  - [x] Basic implementation
+  - [x] Macro support
+  - [ ] Argument type based suggestion
+- Definition
+  - [x] Method defintion
+  - [ ] Global binding definition
+  - [x] Local binding definition
+  - [ ] Type-aware method definition
+- Hover
+  - [x] Method documentation
+  - [x] Global binding documentation
+  - [x] Local binding location
+  - [ ] Type-aware method documentation
+  - [ ] Type of local binding on hover
+- [ ] Formatting
+- TestRunner.jl integration
+  - [x] Code lens for running individual `@testset`s
+  - [x] Code actions for running individual `@testset`s
+  - [x] Inline test result diagnostics
+  - [x] Work done progress during test execution
+
+Detailed development notes and progress for this project are collected at
+<https://publish.obsidian.md/jetls>, so those interested might want to take a look.
+
+## TestRunner Integration
+
+JETLS integrates with [TestRunner.jl](https://github.com/aviatesk/TestRunner.jl)
+to provide an enhanced testing experience directly within your editor. This
+feature allows you to run individual `@testset` blocks directly from your
+development environment.
+
+### Prerequisites
+
+To use this feature, you need to install the `testrunner` executable:
+
+```bash
+julia -e 'using Pkg; Pkg.Apps.add(url="https://github.com/aviatesk/TestRunner.jl")'
+```
+
+Note that you need to manually make `~/.julia/bin` available on the `PATH`
+environment for the `testrunner` executable to be accessible.
+See <https://pkgdocs.julialang.org/dev/apps/> for the details.
+
+### Features
+
+#### Code Lens
+
+When you open a Julia file containing `@testset` blocks, JETLS displays
+interactive code lenses above each `@testset`:
+
+- **`▶ Run "testset_name"`**: Run the testset for the first time
+> ![TestRunner Code Lens](./assets/testrunner-code-lens.png)
+
+After running tests, the code lens is refreshed as follows:
+- **`▶ Rerun "testset_name" [summary]`**: Re-run a testset that has previous
+  results
+- **`☰ Open logs`**: View the detailed test output in a new editor tab
+- **`✓ Clear result`**: Remove the test results and inline diagnostics
+> ![TestRunner Code Lens with Results](./assets/testrunner-code-lens-refreshed.png)
+
+#### Code Actions
+
+You can also trigger test runs via "code actions" when the code action range is
+requested inside a `@testset` block:
+> ![TestRunner Code Actions](./assets/testrunner-code-actions.png)
+
+#### Test Diagnostics
+
+Failed tests are displayed as diagnostics (red squiggly lines) at the exact
+lines where the failures occurred, making it easy to identify and fix issues:
+> ![TestRunner Diagnostics](./assets/testrunner-diagnostics.png)
+
+#### Progress Notifications
+
+For clients that support work done progress, JETLS shows progress notifications
+while tests are running, keeping you informed about long-running test suites.
+
+### Supported Patterns
+
+The TestRunner integration currently supports named `@testset` blocks like:
+
+```julia
+using Test
+
+# supported: named `@testset`
+@testset "foo" begin
+    @test sin(0) == 0
+    @test sin(Inf) == 0
+    @test_throws ErrorException sin(Inf) == 0
+    @test cos(π) == -1
+
+    # supported: nested named `@testset`
+    @testset "bar" begin
+        @test sin(π) == 0
+        @test sin(0) == 1
+        @test cos(Inf) == -1
+    end
+end
+
+# unsupported: `@testset` inside function definition
+function test_func1()
+    @testset "inside function" begin
+        @test true
+    end
+end
+
+# supported: this pattern is fine
+function test_func2()
+    @testset "inside function" begin
+        @test true
+    end
+end
+@testset "test_func2" test_func2()
+```
+
+See the [README.md](https://github.com/aviatesk/TestRunner.jl) of TestRunner.jl
+for more details.
+
+### Troubleshooting
+
+If you see an error about `testrunner` not being found:
+1. Ensure you've installed TestRunner.jl as described above
+2. Check that `testrunner` is in your system PATH by running `which testrunner`:
+   otherwise you may need to add `~/.julia/bin` to `PATH`
+3. Restart your editor to ensure it picks up the updated PATH
+
+Test execution requires that your file is saved and matches the on-disk version.
+If you see a message asking you to save the file first, make sure to save your
+changes before running tests.
+
+## Development Note
+
+- [DEVELOPMENT.md](./DEVELOPMENT.md): Developer notes
+- [AGENTS.md](./AGENTS.md): Specific coding rules (recommended reading for human developers as well)
