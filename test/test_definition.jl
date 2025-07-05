@@ -3,6 +3,16 @@ module test_definition
 using Test
 using JETLS
 
+@testset "method location" begin
+    linenum = @__LINE__; method_for_test_method_definition_range() = 1
+    @assert length(methods(method_for_test_method_definition_range)) == 1
+    test_method = first(methods(method_for_test_method_definition_range))
+    method_location = JETLS.Location(test_method)
+    @test method_location isa JETLS.LSP.Location
+    @test JETLS.URIs2.uri2filepath(method_location.uri) == @__FILE__
+    @test method_location.range.start.line == (linenum - 1)
+end
+
 module TestModuleDefinitionRange
 myidentity(x) = x
 end
@@ -324,16 +334,6 @@ end
         end
         @test cnt == 1
     end
-end
-
-@testset "method location" begin
-    linenum = @__LINE__; method_for_test_method_definition_range() = 1
-    @assert length(methods(method_for_test_method_definition_range)) == 1
-    test_method = first(methods(method_for_test_method_definition_range))
-    method_location = JETLS.Location(test_method)
-    @test method_location isa JETLS.LSP.Location
-    @test JETLS.URIs2.uri2filepath(method_location.uri) == @__FILE__
-    @test method_location.range.start.line == (linenum - 1)
 end
 
 end # module test_definition
