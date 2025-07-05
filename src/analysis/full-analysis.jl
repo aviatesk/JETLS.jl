@@ -6,7 +6,7 @@ function run_full_analysis!(server::Server, uri::URI; onsave::Bool=false, token:
     if !haskey(server.state.analysis_cache, uri)
         res = initiate_analysis_unit!(server, uri; token)
         if res isa AnalysisUnit
-            notify_full_diagnostics!(server)
+            notify_diagnostics!(server)
         end
     else # this file is tracked by some analysis unit already
         analysis_info = server.state.analysis_cache[uri]
@@ -21,7 +21,7 @@ function run_full_analysis!(server::Server, uri::URI; onsave::Bool=false, token:
             function task()
                 res = reanalyze!(server, analysis_unit; token)
                 if res isa AnalysisUnit
-                    notify_full_diagnostics!(server)
+                    notify_diagnostics!(server)
                 end
             end
             id = hash(run_full_analysis!, hash(analysis_unit))

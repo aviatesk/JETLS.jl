@@ -145,3 +145,17 @@ function getobjpath(obj, path::Symbol, paths::Symbol...)
     getobjpath(nextobj, paths...)
 end
 getobjpath(obj) = obj
+
+function format_duration(duration::Float64)
+    if duration < 1
+        "$(round(duration * 1000, digits=1))ms"
+    elseif duration < 60
+        "$(round(duration, digits=2))s"
+    else
+        minutes = floor(Int, duration / 60)
+        seconds = round(duration % 60, digits=1)
+        "$(minutes)m $(seconds)s"
+    end
+end
+
+rlstrip(s::AbstractString, args...) = lstrip(rstrip(s, args...), args...)

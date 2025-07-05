@@ -1,3 +1,12 @@
+import Base: isless, ∈
+
+Base.isless(pos1::Position, pos2::Position) =
+    pos1.line < pos2.line || (pos1.line == pos2.line && pos1.character < pos2.character)
+
+rng1::Range ∈ rng2::Range = rng2.start ≤ rng1.start && rng1.var"end" ≤ rng2.var"end"
+
+overlap(rng1::Range, rng2::Range) = max(rng1.start, rng2.start) <= min(rng1.var"end", rng2.var"end")
+
 # LSP utilities
 
 const DEFAULT_DOCUMENT_SELECTOR = DocumentFilter[
@@ -74,7 +83,7 @@ function simple_loc_text(filepath::AbstractString; line::Union{Integer,Nothing}=
 end
 
 function file_cache_error(uri::URI; data=nothing)
-    message = lazy"File cache for $uri is not initialized"
+    message = lazy"File cache for $uri is not found"
     return request_failed_error(message; data)
 end
 

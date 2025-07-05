@@ -174,7 +174,7 @@ end
                 @test raw_res.result === nothing
                 @test raw_res.error isa ResponseError
                 @test raw_res.error.code == ErrorCodes.RequestFailed
-                @test occursin("File cache for $uri is not initialized", raw_res.error.message)
+                @test occursin("File cache for $uri is not found", raw_res.error.message)
                 @test raw_res.error.data isa DiagnosticServerCancellationData
                 @test raw_res.error.data.retriggerRequest === true
             end

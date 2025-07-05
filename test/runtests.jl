@@ -8,6 +8,7 @@ end
 
 @testset "JETLS" begin
     @testset "utils" begin
+        @testset "general" include("utils/test_general.jl")
         @testset "ast" include("utils/test_ast.jl")
         @testset "binding" include("utils/test_binding.jl")
         @testset "lsp" include("utils/test_lsp.jl")
@@ -23,5 +24,6 @@ end
     @testset "surface analysis" include("test_surface_analysis.jl")
     @testset "LSAnalyzer" include("test_LSAnalyzer.jl")
     @testset "diagnostics" include("test_diagnostics.jl")
+    @testset "testrunner" include("test_testrunner.jl")
     @testset "full lifecycle" include("test_full_lifecycle.jl")
 end

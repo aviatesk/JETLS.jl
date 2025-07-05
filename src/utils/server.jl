@@ -90,3 +90,11 @@ function find_analysis_unit_for_uri(state::ServerState, uri::URI)
     end
     return analysis_unit
 end
+
+function clear_extra_diagnostics!(server::Server, key)
+    if haskey(server.state.extra_diagnostics, key)
+        delete!(server.state.extra_diagnostics, key)
+        return true
+    end
+    return false
+end

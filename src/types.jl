@@ -1,6 +1,11 @@
 const SyntaxTree0 = typeof(JS.build_tree(JL.SyntaxTree, JS.ParseStream("")))
 
-# TODO separate cache by `kwargs`?
+struct TestsetInfo
+    st0::SyntaxTree0
+    result::TestRunnerResult
+    TestsetInfo(st0::SyntaxTree0) = new(st0)
+    TestsetInfo(st0::SyntaxTree0, result::TestRunnerResult) = new(st0, result)
+end
 
 mutable struct FileInfo
     version::Int
@@ -8,8 +13,9 @@ mutable struct FileInfo
     # filled after cached
     syntax_node::Dict{Any,JS.SyntaxNode}
     syntax_tree0::Dict{Any,SyntaxTree0}
+    testsetinfos::Vector{TestsetInfo} # synced by code lens, or code actions
     FileInfo(version::Int, parsed_stream::JS.ParseStream) =
-        new(version, parsed_stream, Dict{Any,JS.SyntaxNode}(), Dict{Any,SyntaxTree0}())
+        new(version, parsed_stream, Dict{Any,JS.SyntaxNode}(), Dict{Any,SyntaxTree0}(), TestsetInfo[])
 end
 
 mutable struct SavedFileInfo
@@ -121,11 +127,15 @@ struct Registered
     method::String
 end
 
+abstract type ExtraDiagnosticsKey end
+to_file_info(key::ExtraDiagnosticsKey) = to_file_info_impl(key)::FileInfo
+
 mutable struct ServerState
     const workspaceFolders::Vector{URI}
     const file_cache::Dict{URI,FileInfo} # syntactic analysis cache (synced with `textDocument/didChange`)
     const saved_file_cache::Dict{URI,SavedFileInfo} # syntactic analysis cache (synced with `textDocument/didSave`)
     const analysis_cache::Dict{URI,AnalysisInfo} # entry points for the full analysis (currently not cached really)
+    const extra_diagnostics::Dict{ExtraDiagnosticsKey,URI2Diagnostics}
     const currently_requested::Dict{String,RequestCaller}
     const currently_registered::Set{Registered}
     root_path::String
@@ -138,6 +148,7 @@ mutable struct ServerState
             #=file_cache=# Dict{URI,FileInfo}(),
             #=saved_file_cache=# Dict{URI,SavedFileInfo}(),
             #=analysis_cache=# Dict{URI,AnalysisInfo}(),
+            #=extra_diagnostics=# Dict{FileInfo,URI2Diagnostics}(),
             #=currently_requested=# Dict{String,RequestCaller}(),
             #=currently_registered=# Set{Registered}(),
         )
