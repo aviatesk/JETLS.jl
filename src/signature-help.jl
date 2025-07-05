@@ -221,7 +221,7 @@ end
 
 # active_arg is either an argument index, or :next (available pos. arg), or :none
 function make_siginfo(m::Method, ca::CallArgs, active_arg::Union{Int, Symbol};
-                      postprocessor::LSPostProcessor=LSPostProcessor())
+                      postprocessor::LSPostProcessor = LSPostProcessor())
     # methodshow prints "f(x::T) [unparseable stuff]"
     # parse the first part and put the remainder in documentation
     @static if VERSION ≥ v"1.13.0-DEV.710"
