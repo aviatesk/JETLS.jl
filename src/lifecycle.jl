@@ -98,6 +98,32 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
         end
     end
 
+    if supports(server,
+        :textDocument, :codeLens, :dynamicRegistration)
+        codeLensProvider = nothing # will be registered dynamically
+    else
+        codeLensProvider = code_lens_options()
+        if JETLS_DEV_MODE
+            @info "Registering 'textDocument/codeLens' with `InitializeResponse`"
+        end
+    end
+
+    if supports(server,
+        :textDocument, :codeAction, :dynamicRegistration)
+        codeActionProvider = nothing # will be registered dynamically
+    else
+        codeActionProvider = code_action_options()
+        if JETLS_DEV_MODE
+            @info "Registering 'textDocument/codeAction' with `InitializeResponse`"
+        end
+    end
+
+    # No support for dynamic registration
+    executeCommandProvider = execute_command_options()
+    if JETLS_DEV_MODE
+        @info "Registering 'workspace/executeCommand' with `InitializeResponse`"
+    end
+
     result = InitializeResult(;
         capabilities = ServerCapabilities(;
             positionEncoding = PositionEncodingKind.UTF16,
@@ -111,6 +137,9 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
             definitionProvider,
             hoverProvider,
             diagnosticProvider,
+            codeLensProvider,
+            codeActionProvider,
+            executeCommandProvider,
         ),
         serverInfo = (;
             name = "JETLS",
@@ -189,6 +218,30 @@ function handle_InitializedNotification(server::Server)
         if JETLS_DEV_MODE
             @info "Dynamically registering 'textDocument/diagnotic' upon `InitializedNotification`"
         end
+    end
+
+    if supports(server,
+        :textDocument, :codeLens, :dynamicRegistration)
+        push!(registrations, code_lens_registration())
+        if JETLS_DEV_MODE
+            @info "Dynamically registering 'textDocument/codeLens' upon `InitializedNotification`"
+        end
+    else
+        # NOTE If codeLens's `dynamicRegistration` is not supported,
+        # it needs to be registered along with initialization in the `InitializeResponse`,
+        # since `CodeLensRegistrationOptions` does not extend `StaticRegistrationOptions`.
+    end
+
+    if supports(server,
+        :textDocument, :codeAction, :dynamicRegistration)
+        push!(registrations, code_action_registration())
+        if JETLS_DEV_MODE
+            @info "Dynamically registering 'textDocument/codeAction' upon `InitializedNotification`"
+        end
+    else
+        # NOTE If codeAction's `dynamicRegistration` is not supported,
+        # it needs to be registered along with initialization in the `InitializeResponse`,
+        # since `CodeActionRegistrationOptions` does not extend `StaticRegistrationOptions`.
     end
 
     register(server, registrations)

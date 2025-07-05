@@ -41,6 +41,7 @@ Analyzer.LSAnalyzer(args...; kwargs...) = LSAnalyzer(ScriptAnalysisEntry(filepat
 
 include("analysis/resolver.jl")
 
+include("testrunner-types.jl")
 include("types.jl")
 
 include("utils/general.jl")
@@ -58,13 +59,18 @@ include("analysis/surface-analysis.jl")
 
 include("document-synchronization.jl")
 include("analysis/full-analysis.jl")
-include("response.jl")
 include("registration.jl")
+include("apply-edit.jl")
+include("execute-command.jl")
 include("completions.jl")
 include("signature-help.jl")
 include("definition.jl")
 include("hover.jl")
 include("diagnostics.jl")
+include("code-lens.jl")
+include("code-action.jl")
+include("testrunner.jl")
+include("response.jl")
 include("lifecycle.jl")
 
 """
@@ -183,6 +189,12 @@ function _handle_message(server::Server, msg)
         return handle_DocumentDiagnosticRequest(server, msg)
     elseif msg isa WorkspaceDiagnosticRequest
         @assert false "workspace/diagnostic should not be enabled"
+    elseif msg isa CodeLensRequest
+        return handle_CodeLensRequest(server, msg)
+    elseif msg isa CodeActionRequest
+        return handle_CodeActionRequest(server, msg)
+    elseif msg isa ExecuteCommandRequest
+        return handle_ExecuteCommandRequest(server, msg)
     elseif msg isa Dict{Symbol,Any} # response message
         if handle_ResponseMessage(server, msg)
             return nothing

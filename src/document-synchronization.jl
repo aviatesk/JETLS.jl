@@ -1,15 +1,21 @@
 """
-    clear_cache!(fi::Union{FileInfo,SavedFileInfo})
+    clear_file_info_cache!(fi::Union{FileInfo,SavedFileInfo})
 
 Clear the cached syntax node and syntax tree from the given file info object.
 This should be called when the underlying parsed stream is updated to ensure
 that stale cached representations are removed.
 """
-function clear_cache!(fi::Union{FileInfo,SavedFileInfo})
+function clear_file_info_cache!(fi::Union{FileInfo,SavedFileInfo})
     empty!(fi.syntax_node)
     empty!(fi.syntax_tree0)
     return fi
 end
+
+function cleanup_file_info!(fi::FileInfo)
+    clear_file_info_cache!(fi)
+    empty!(fi.testsetinfos)
+end
+cleanup_file_info!(fi::SavedFileInfo) = clear_file_info_cache!(fi)
 
 """
     build_tree!(::Type{JS.SyntaxNode}, fi::Union{FileInfo,SavedFileInfo}; kwargs...)
@@ -61,7 +67,7 @@ function cache_file_info!(state::ServerState, uri::URI, version::Int, parsed_str
         fi = state.file_cache[uri]
         fi.version = version
         fi.parsed_stream = parsed_stream
-        return clear_cache!(fi)
+        return clear_file_info_cache!(fi)
     else
         return state.file_cache[uri] = FileInfo(version, parsed_stream)
     end
@@ -82,7 +88,7 @@ function cache_saved_file_info!(state::ServerState, uri::URI, parsed_stream::JS.
     if haskey(state.saved_file_cache, uri)
         fi = state.saved_file_cache[uri]
         fi.parsed_stream = parsed_stream
-        return clear_cache!(fi)
+        return clear_file_info_cache!(fi)
     else
         return state.saved_file_cache[uri] = SavedFileInfo(parsed_stream)
     end
@@ -157,7 +163,25 @@ function handle_DidSaveTextDocumentNotification(server::Server, msg::DidSaveText
 end
 
 function handle_DidCloseTextDocumentNotification(server::Server, msg::DidCloseTextDocumentNotification)
-    delete!(server.state.file_cache, msg.params.textDocument.uri)
-    delete!(server.state.saved_file_cache, msg.params.textDocument.uri)
+    uri = msg.params.textDocument.uri
+    fi = get(server.state.file_cache, uri, nothing)
+    if !isnothing(fi)
+        delete!(server.state.file_cache, fi)
+        any_deleted = false
+        for key in keys(server.state.extra_diagnostics)
+            keyfi = to_file_info(key)
+            if keyfi === fi
+                delete!(server.state.extra_diagnostics, key)
+                any_deleted |= true
+            end
+        end
+        any_deleted && notify_diagnostics!(server)
+        cleanup_file_info!(fi)
+    end
+    sfi = get(server.state.saved_file_cache, uri, nothing)
+    if !isnothing(sfi)
+        delete!(server.state.saved_file_cache, fi)
+        cleanup_file_info!(sfi)
+    end
     nothing
 end

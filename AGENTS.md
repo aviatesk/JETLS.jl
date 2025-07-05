@@ -36,7 +36,7 @@
   ...
   ```
 
-- Only include comments where truly necessary.
+- For AI agents: **ONLY INCLUDE COMMENTS WHERE TRULY NECESSARY**.
   When the function name or implementation clearly indicates its purpose or
   behavior, redundant comments are unnecessary.
 
@@ -67,8 +67,8 @@ For example, if you receive a prompt like this:
 > Use test/test_diagnostics for the test cases.
 
 The command you should run is:
-```
-$ julia --startup-file=no -e 'using Test; @testset "test_diagnostics" include("test/test_diagnostics")'
+```bash
+julia --startup-file=no -e 'using Test; @testset "test_diagnostics" include("test/test_diagnostics")'
 ```
 Note that the usage of the `--startup-file=no` flag, which avoids loading
 unnecessary startup utilities.
@@ -105,32 +105,68 @@ And `test/test_completions.jl` is included from `test/runtests.jl` like this:
 > test/runtests.jl
 ```julia
 @testset "JETLS.jl" begin
-   ...
-   @testset "completions" include("test_completions.jl")
-   ...
+    ...
+    @testset "completions" include("test_completions.jl")
+    ...
 end
 ```
 
+Also, in each test file, `@testset "testset name"` is encouraged to be used to
+organize our tests cleanly.
+For code clarity, unless specifically necessary, avoid using `using`, `import`,
+and `struct` definitions  inside `@testset` blocks,
+and instead place them at the top level.
+
 Also, in each test file, you are encouraged to use `let`-blocks to ensure that
-names aren't unintentionally reused between multiple test cases:
+names aren't unintentionally reused between multiple test cases.
+For example, here is what good test code looks like:
 > test/test_completions.jl
 ```julia
 module test_completions
+
 using Test # Each module space needs to explicitly declare the code needed for execution
-function test_something(s::AbstractString)
+using JETLS: some_completion_func
+
+function testcase_util(s::AbstractString)
     ...
 end
-let s = "..."
-    @test test_something(s)
+function with_testcase(s::AbstractString)
+    ...
 end
-let s = "..."
-    @test test_something(s)
+
+@testset "some_completion_func" begin
+    let s = "..."
+        ret = some_completion_func(testcase_util(s))
+        @test test_with(ret)
+    end
+    let s = "..."
+        ret = some_completion_func(testcase_util(s))
+        @test test_with(ret)
+    end
+
+    # or `let` is unnecessary when testing with function scope
+    with_testcase(s) do case
+        ret = some_completion_func(case)
+        @test test_with(ret)
+    end
 end
+
 end # module test_completions
 ```
-Here, `test_something` is defined at the top level of the `test_completions`
-module because it's a common routine used by multiple test cases, but variables
-like `s` that are created for each test case are localized using `let`.
+
+Additionally, by using `@testset` as shown above, not only are tests hierarchized,
+but through integration with [TestRunner.jl](https://github.com/aviatesk/TestRunner.jl),
+you can also selectively execute specific `@testset`s, without executing the
+entire test file or test suite.
+If you're using this language server for development as well, you can run tests
+from code lenses or code actions within test files. If you need to run them from
+the command line, you can use commands like the following
+(assuming the `testrunner` executable is installed):
+```bash
+testrunner --verbose test/test_completions "some_completion_func"
+```
+Note that TestRunner.jl is still experimental.
+The most reliable way to run tests is still to execute test files standalone.
 
 # About Modifications to Code You've Written
 If you, as an AI agent, add or modify code, and the user appears to have made

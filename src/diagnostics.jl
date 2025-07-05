@@ -169,7 +169,7 @@ end
 # textDocument/publishDiagnostics
 # -------------------------------
 
-function notify_full_diagnostics!(server::Server)
+function get_full_diagnostics(server::Server)
     uri2diagnostics = URI2Diagnostics()
     for (uri, analysis_info) in server.state.analysis_cache
         if analysis_info isa OutOfScope
@@ -183,10 +183,24 @@ function notify_full_diagnostics!(server::Server)
             end
         end
     end
-    notify_diagnostics!(server, uri2diagnostics)
+    merge_extra_diagnostics!(uri2diagnostics, server)
+    return uri2diagnostics
 end
 
-function notify_diagnostics!(server::Server, uri2diagnostics)
+function merge_extra_diagnostics!(uri2diagnostics::URI2Diagnostics, server::Server)
+    for (_, extra_uri2diagnostics) in server.state.extra_diagnostics
+        for (uri, diagnostics) in extra_uri2diagnostics
+            append!(get!(Vector{Diagnostic}, uri2diagnostics, uri), diagnostics)
+        end
+    end
+    return uri2diagnostics
+end
+
+function notify_diagnostics!(server::Server)
+    notify_diagnostics!(server, get_full_diagnostics(server))
+end
+
+function notify_diagnostics!(server::Server, uri2diagnostics::URI2Diagnostics)
     for (uri, diagnostics) in uri2diagnostics
         send(server, PublishDiagnosticsNotification(;
             params = PublishDiagnosticsParams(;
