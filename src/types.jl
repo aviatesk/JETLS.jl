@@ -1,16 +1,40 @@
-struct FileInfo
+const SyntaxTree0 = typeof(JS.build_tree(JL.SyntaxTree, JS.ParseStream("")))
+
+struct TestsetInfo
+    st0::SyntaxTree0
+    result::TestRunnerResult
+    TestsetInfo(st0::SyntaxTree0) = new(st0)
+    TestsetInfo(st0::SyntaxTree0, result::TestRunnerResult) = new(st0, result)
+end
+
+mutable struct FileInfo
     version::Int
     parsed_stream::JS.ParseStream
+    # filled after cached
+    syntax_node::Dict{Any,JS.SyntaxNode}
+    syntax_tree0::Dict{Any,SyntaxTree0}
+    testsetinfos::Vector{TestsetInfo} # synced by code lens, or code actions
+    FileInfo(version::Int, parsed_stream::JS.ParseStream) =
+        new(version, parsed_stream, Dict{Any,JS.SyntaxNode}(), Dict{Any,SyntaxTree0}(), TestsetInfo[])
 end
 
-struct SavedFileInfo
+mutable struct SavedFileInfo
     parsed_stream::JS.ParseStream
+    # filled after cached
+    syntax_node::Dict{Any,JS.SyntaxNode}
+    syntax_tree0::Dict{Any,SyntaxTree0}
+    SavedFileInfo(parsed_stream::JS.ParseStream) =
+        new(parsed_stream, Dict{Any,JS.SyntaxNode}(), Dict{Any,SyntaxTree0}())
 end
+
+function build_tree! end
 
 entryuri(entry::AnalysisEntry) = entryuri_impl(entry)::URI
+entryenvpath(entry::AnalysisEntry) = entryenvpath_impl(entry)::Union{Nothing,String}
 entrykind(entry::AnalysisEntry) = entrykind_impl(entry)::String
 entryjetconfigs(entry::AnalysisEntry) = entryjetconfigs_impl(entry)::Dict{Symbol,Any}
 
+entryenvpath_impl(::AnalysisEntry) = nothing
 let default_jetconfigs = Dict{Symbol,Any}(
         :toplevel_logger => nothing,
         # force concretization of documentation
@@ -22,20 +46,23 @@ struct ScriptAnalysisEntry <: AnalysisEntry
     uri::URI
 end
 entryuri_impl(entry::ScriptAnalysisEntry) = entry.uri
-entrykind_impl(entry::ScriptAnalysisEntry) = "script"
+entryenvpath_impl(::ScriptAnalysisEntry) = nothing
+entrykind_impl(::ScriptAnalysisEntry) = "script"
 struct ScriptInEnvAnalysisEntry <: AnalysisEntry
     env_path::String
     uri::URI
 end
 entryuri_impl(entry::ScriptInEnvAnalysisEntry) = entry.uri
-entrykind_impl(entry::ScriptInEnvAnalysisEntry) = "script in env"
+entryenvpath_impl(entry::ScriptInEnvAnalysisEntry) = entry.env_path
+entrykind_impl(::ScriptInEnvAnalysisEntry) = "script in env"
 struct PackageSourceAnalysisEntry <: AnalysisEntry
     env_path::String
     pkgfileuri::URI
     pkgid::Base.PkgId
 end
 entryuri_impl(entry::PackageSourceAnalysisEntry) = entry.pkgfileuri
-entrykind_impl(entry::PackageSourceAnalysisEntry) = "pkg src"
+entryenvpath_impl(entry::PackageSourceAnalysisEntry) = entry.env_path
+entrykind_impl(::PackageSourceAnalysisEntry) = "pkg src"
 let jetconfigs = Dict{Symbol,Any}(
         :toplevel_logger => nothing,
         :analyze_from_definitions => true,
@@ -47,7 +74,8 @@ struct PackageTestAnalysisEntry <: AnalysisEntry
     runtestsuri::URI
 end
 entryuri_impl(entry::PackageTestAnalysisEntry) = entry.runtestsuri
-entrykind_impl(entry::PackageTestAnalysisEntry) = "pkg test"
+entryenvpath_impl(entry::PackageTestAnalysisEntry) = entry.env_path
+entrykind_impl(::PackageTestAnalysisEntry) = "pkg test"
 
 struct FullAnalysisInfo{E<:AnalysisEntry}
     entry::E
@@ -56,11 +84,13 @@ struct FullAnalysisInfo{E<:AnalysisEntry}
     n_files::Int
 end
 
+const URI2Diagnostics = Dict{URI,Vector{Diagnostic}}
+
 mutable struct FullAnalysisResult
     staled::Bool
     actual2virtual::JET.Actual2Virtual
     analyzer::LSAnalyzer
-    const uri2diagnostics::Dict{URI,Vector{Diagnostic}}
+    const uri2diagnostics::URI2Diagnostics
     const analyzed_file_infos::Dict{URI,JET.AnalyzedFileInfo}
     const successfully_analyzed_file_infos::Dict{URI,JET.AnalyzedFileInfo}
 end
@@ -97,11 +127,13 @@ struct Registered
     method::String
 end
 
+abstract type ExtraDiagnosticsKey end
+to_file_info(key::ExtraDiagnosticsKey) = to_file_info_impl(key)::FileInfo
+
 struct LSPostProcessor
     inner::JET.PostProcessor
     LSPostProcessor(inner::JET.PostProcessor) = new(inner)
 end
-
 LSPostProcessor() = LSPostProcessor(JET.PostProcessor())
 
 mutable struct ServerState
@@ -109,6 +141,7 @@ mutable struct ServerState
     const file_cache::Dict{URI,FileInfo} # syntactic analysis cache (synced with `textDocument/didChange`)
     const saved_file_cache::Dict{URI,SavedFileInfo} # syntactic analysis cache (synced with `textDocument/didSave`)
     const analysis_cache::Dict{URI,AnalysisInfo} # entry points for the full analysis (currently not cached really)
+    const extra_diagnostics::Dict{ExtraDiagnosticsKey,URI2Diagnostics}
     const currently_requested::Dict{String,RequestCaller}
     const currently_registered::Set{Registered}
     root_path::String
@@ -121,6 +154,7 @@ mutable struct ServerState
             #=file_cache=# Dict{URI,FileInfo}(),
             #=saved_file_cache=# Dict{URI,SavedFileInfo}(),
             #=analysis_cache=# Dict{URI,AnalysisInfo}(),
+            #=extra_diagnostics=# Dict{FileInfo,URI2Diagnostics}(),
             #=currently_requested=# Dict{String,RequestCaller}(),
             #=currently_registered=# Set{Registered}(),
         )

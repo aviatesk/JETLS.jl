@@ -6,7 +6,7 @@ function run_full_analysis!(server::Server, uri::URI; onsave::Bool=false, token:
     if !haskey(server.state.analysis_cache, uri)
         res = initiate_analysis_unit!(server, uri; token)
         if res isa AnalysisUnit
-            notify_full_diagnostics!(server)
+            notify_diagnostics!(server)
         end
     else # this file is tracked by some analysis unit already
         analysis_info = server.state.analysis_cache[uri]
@@ -21,7 +21,7 @@ function run_full_analysis!(server::Server, uri::URI; onsave::Bool=false, token:
             function task()
                 res = reanalyze!(server, analysis_unit; token)
                 if res isa AnalysisUnit
-                    notify_full_diagnostics!(server)
+                    notify_diagnostics!(server)
                 end
             end
             id = hash(run_full_analysis!, hash(analysis_unit))
@@ -74,12 +74,11 @@ end
 function analyze_parsed_if_exist(server::Server, info::FullAnalysisInfo, args...)
     uri = entryuri(info.entry)
     jetconfigs = entryjetconfigs(info.entry)
-    fi = get_saved_fileinfo(server.state, uri)
+    fi = get_saved_file_info(server.state, uri)
     if !isnothing(fi)
-        parsed_stream = fi.parsed_stream
         filename = uri2filename(uri)
         @assert !isnothing(filename) "Unsupported URI: $uri"
-        parsed = JS.build_tree(JS.SyntaxNode, parsed_stream; filename)
+        parsed = build_tree!(JS.SyntaxNode, fi; filename)
         begin_full_analysis_progress(server, info)
         try
             return JET.analyze_and_report_expr!(LSInterpreter(server, info), parsed, filename, args...; jetconfigs...)
@@ -179,7 +178,7 @@ end
 
 function initiate_analysis_unit!(server::Server, uri::URI; token::Union{Nothing,ProgressToken}=nothing)
     state = server.state
-    fi = get_saved_fileinfo(state, uri)
+    fi = get_saved_file_info(state, uri)
     if isnothing(fi)
         error(lazy"`initiate_analysis_unit!` called before saved file cache is created for $uri")
     end
@@ -188,36 +187,18 @@ function initiate_analysis_unit!(server::Server, uri::URI; token::Union{Nothing,
         return nothing
     end
 
-    if uri.scheme == "file"
-        filename = path = uri2filepath(uri)::String
-        # HACK: we should support Base files properly
-        if issubdir(filename, normpath(Sys.BUILD_ROOT_PATH, "base"))
-            state.analysis_cache[uri] = OutOfScope(Base)
-            return nothing
-        elseif issubdir(filename, normpath(Sys.BUILD_ROOT_PATH, "Compiler", "src"))
-            state.analysis_cache[uri] = OutOfScope(CC)
-            return nothing
-        end
-        if isdefined(state, :root_path)
-            if !issubdir(dirname(path), state.root_path)
-                state.analysis_cache[uri] = OutOfScope()
-                return nothing
-            end
-        end
-        env_path = find_env_path(path)
-        pkgname = env_path === nothing ? nothing : try
-            env_toml = Pkg.TOML.parsefile(env_path)
-            haskey(env_toml, "name") ? env_toml["name"]::String : nothing
-        catch err
-            err isa Base.TOML.ParseError || rethrow(err)
-            nothing
-        end
+    env_path = find_analysis_env_path(state, uri)
+    if env_path isa OutOfScope
+        state.analysis_cache[uri] = env_path
+        return nothing
+    end
+    if isnothing(env_path)
+        pkgname = nothing
     elseif uri.scheme == "untitled"
-        filename = path = uri2filename(uri)::String
-        # try to analyze untitled editors using the root environment
-        env_path = isdefined(state, :root_env_path) ? state.root_env_path : nothing
-        pkgname = nothing # to hit the `@goto analyze_script` case
-    else @assert false "Unsupported URI: $uri" end
+        pkgname = nothing
+    else
+        pkgname = find_pkg_name(env_path)
+    end
 
     if env_path === nothing
         @label analyze_script
@@ -238,7 +219,8 @@ function initiate_analysis_unit!(server::Server, uri::URI; token::Union{Nothing,
     elseif pkgname === nothing
         @goto analyze_script
     else # this file is likely one within a package
-        filekind, filedir = find_package_directory(path, env_path)
+        filepath = uri2filepath(uri)
+        filekind, filedir = find_package_directory(filepath, env_path)
         if filekind === :script
             @goto analyze_script
         elseif filekind === :src
@@ -303,7 +285,7 @@ function reanalyze!(server::Server, analysis_unit::AnalysisUnit; token::Union{No
     end
 
     any_parse_failed = any(analyzed_file_uris(analysis_unit)) do uri::URI
-        fi = get_saved_fileinfo(state, uri)
+        fi = get_saved_file_info(state, uri)
         if !isnothing(fi) && !isempty(fi.parsed_stream.diagnostics)
             return true
         end
@@ -316,32 +298,27 @@ function reanalyze!(server::Server, analysis_unit::AnalysisUnit; token::Union{No
 
     entry = analysis_unit.entry
     n_files = length(values(analysis_unit.result.successfully_analyzed_file_infos))
+
+    # manually dispatch here for the maximum inferrability
     if entry isa ScriptAnalysisEntry
         info = FullAnalysisInfo(entry, token, #=reanalyze=#true, n_files)
         result = analyze_parsed_if_exist(server, info)
     elseif entry isa ScriptInEnvAnalysisEntry
         info = FullAnalysisInfo(entry, token, #=reanalyze=#true, n_files)
-        result = activate_do(entry.env_path) do
+        result = activate_do(entryenvpath(entry)) do
             analyze_parsed_if_exist(server, info)
         end
     elseif entry isa PackageSourceAnalysisEntry
         info = FullAnalysisInfo(entry, token, #=reanalyze=#true, n_files)
-        result = activate_do(entry.env_path) do
+        result = activate_do(entryenvpath(entry)) do
             analyze_parsed_if_exist(server, info, entry.pkgid)
         end
     elseif entry isa PackageTestAnalysisEntry
         info = FullAnalysisInfo(entry, token, #=reanalyze=#true, n_files)
-        result = activate_do(entry.env_path) do
+        result = activate_do(entryenvpath(entry)) do
             analyze_parsed_if_exist(server, info)
         end
-    else
-        @warn "Unsupported analysis entry" entry
-        return ResponseError(;
-            code = ErrorCodes.ServerCancelled,
-            message = "Unsupported analysis entry",
-            data = DiagnosticServerCancellationData(;
-                retriggerRequest = false))
-    end
+    else error("Unsupported analysis entry $entry") end
 
     update_analysis_unit!(analysis_unit, result)
     record_reverse_map!(state, analysis_unit)

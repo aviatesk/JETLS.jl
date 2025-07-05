@@ -64,7 +64,7 @@ function handle_DefinitionRequest(server::Server, msg::DefinitionRequest)
     origin_position = msg.params.position
     uri = msg.params.textDocument.uri
 
-    fi = get_fileinfo(server.state, uri)
+    fi = get_file_info(server.state, uri)
     if fi === nothing
         return send(server,
             DefinitionResponse(;
@@ -73,7 +73,7 @@ function handle_DefinitionRequest(server::Server, msg::DefinitionRequest)
                 error = file_cache_error(uri)))
     end
 
-    st0 = JS.build_tree(JL.SyntaxTree, fi.parsed_stream)
+    st0 = build_tree!(JL.SyntaxTree, fi)
     offset = xy_to_offset(fi, origin_position)
 
     locationlink_support = supports(server, :textDocument, :definition, :linkSupport)

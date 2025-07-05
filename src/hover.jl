@@ -19,7 +19,7 @@ function handle_HoverRequest(server::Server, msg::HoverRequest)
     pos = msg.params.position
     uri = msg.params.textDocument.uri
 
-    fi = get_fileinfo(server.state, uri)
+    fi = get_file_info(server.state, uri)
     if fi === nothing
         return send(server,
             HoverResponse(;
@@ -28,7 +28,7 @@ function handle_HoverRequest(server::Server, msg::HoverRequest)
                 error = file_cache_error(uri)))
     end
 
-    st0_top = JS.build_tree(JL.SyntaxTree, fi.parsed_stream)
+    st0_top = build_tree!(JL.SyntaxTree, fi)
     offset = xy_to_offset(fi, pos)
 
     target_binding_definitions = select_target_binding_definitions(st0_top, offset)

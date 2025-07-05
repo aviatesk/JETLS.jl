@@ -44,12 +44,12 @@ end
 
 # TODO severity
 function jet_result_to_diagnostics(file_uris, result::JET.JETToplevelResult)
-    uri2diagnostics = Dict{URI,Vector{Diagnostic}}(uri => Diagnostic[] for uri in file_uris)
+    uri2diagnostics = URI2Diagnostics(uri => Diagnostic[] for uri in file_uris)
     jet_result_to_diagnostics!(uri2diagnostics, result)
     return uri2diagnostics
 end
 
-function jet_result_to_diagnostics!(uri2diagnostics::Dict{URI,Vector{Diagnostic}}, result::JET.JETToplevelResult)
+function jet_result_to_diagnostics!(uri2diagnostics::URI2Diagnostics, result::JET.JETToplevelResult)
     postprocessor = JET.PostProcessor(result.res.actual2virtual)
     for report in result.res.toplevel_error_reports
         diagnostic = jet_toplevel_error_report_to_diagnostic(postprocessor, report)
@@ -75,6 +75,7 @@ function jet_result_to_diagnostics!(uri2diagnostics::Dict{URI,Vector{Diagnostic}
         end
         push!(uri2diagnostics[uri], diagnostic)
     end
+    return uri2diagnostics
 end
 
 frame_module(frame) = let def = frame.linfo.def
@@ -137,10 +138,10 @@ end
 
 # TODO use something like `JuliaInterpreter.ExprSplitter`
 
-function lowering_diagnostics(parsed_stream::JS.ParseStream, filename::AbstractString)
-    st0_top = JS.build_tree(JL.SyntaxTree, parsed_stream)
+function lowering_diagnostics(file_info::FileInfo, filename::AbstractString)
+    st0_top = build_tree!(JL.SyntaxTree, file_info)
     diagnostics = Diagnostic[]
-    sourcefile = JS.SourceFile(parsed_stream; filename)
+    sourcefile = JS.SourceFile(file_info.parsed_stream; filename)
     sl = JL.SyntaxList(st0_top)
     push!(sl, st0_top)
     while !isempty(sl)
@@ -168,8 +169,8 @@ end
 # textDocument/publishDiagnostics
 # -------------------------------
 
-function notify_full_diagnostics!(server::Server)
-    uri2diagnostics = Dict{URI,Vector{Diagnostic}}()
+function get_full_diagnostics(server::Server)
+    uri2diagnostics = URI2Diagnostics()
     for (uri, analysis_info) in server.state.analysis_cache
         if analysis_info isa OutOfScope
             continue
@@ -182,10 +183,24 @@ function notify_full_diagnostics!(server::Server)
             end
         end
     end
-    notify_diagnostics!(server, uri2diagnostics)
+    merge_extra_diagnostics!(uri2diagnostics, server)
+    return uri2diagnostics
 end
 
-function notify_diagnostics!(server::Server, uri2diagnostics)
+function merge_extra_diagnostics!(uri2diagnostics::URI2Diagnostics, server::Server)
+    for (_, extra_uri2diagnostics) in server.state.extra_diagnostics
+        for (uri, diagnostics) in extra_uri2diagnostics
+            append!(get!(Vector{Diagnostic}, uri2diagnostics, uri), diagnostics)
+        end
+    end
+    return uri2diagnostics
+end
+
+function notify_diagnostics!(server::Server)
+    notify_diagnostics!(server, get_full_diagnostics(server))
+end
+
+function notify_diagnostics!(server::Server, uri2diagnostics::URI2Diagnostics)
     for (uri, diagnostics) in uri2diagnostics
         send(server, PublishDiagnosticsNotification(;
             params = PublishDiagnosticsParams(;
@@ -228,7 +243,7 @@ end
 
 function handle_DocumentDiagnosticRequest(server::Server, msg::DocumentDiagnosticRequest)
     uri = msg.params.textDocument.uri
-    file_info = get_fileinfo(server.state, uri)
+    file_info = get_file_info(server.state, uri)
     if file_info === nothing
         return send(server,
             DocumentDiagnosticResponse(;
@@ -241,7 +256,7 @@ function handle_DocumentDiagnosticRequest(server::Server, msg::DocumentDiagnosti
     filename = uri2filename(uri)
     @assert !isnothing(filename) "Unsupported URI: $uri"
     if isempty(parsed_stream.diagnostics)
-        diagnostics = lowering_diagnostics(parsed_stream, filename)
+        diagnostics = lowering_diagnostics(file_info, filename)
     else
         diagnostics = parsed_stream_to_diagnostics(parsed_stream, filename)
     end

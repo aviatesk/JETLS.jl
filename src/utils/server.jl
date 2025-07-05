@@ -17,22 +17,22 @@ function supports(state::ServerState, paths::Symbol...)
 end
 
 """
-    get_fileinfo(s::ServerState, uri::URI) -> fi::Union{Nothing,FileInfo}
-    get_fileinfo(s::ServerState, t::TextDocumentIdentifier) -> fi::Union{Nothing,FileInfo}
+    get_file_info(s::ServerState, uri::URI) -> fi::Union{Nothing,FileInfo}
+    get_file_info(s::ServerState, t::TextDocumentIdentifier) -> fi::Union{Nothing,FileInfo}
 
 Fetch cached FileInfo given an LSclient-provided structure with a URI
 """
-get_fileinfo(s::ServerState, uri::URI) = haskey(s.file_cache, uri) ? s.file_cache[uri] : nothing
-get_fileinfo(s::ServerState, t::TextDocumentIdentifier) = get_fileinfo(s, t.uri)
+get_file_info(s::ServerState, uri::URI) = get(s.file_cache, uri, nothing)
+get_file_info(s::ServerState, t::TextDocumentIdentifier) = get_file_info(s, t.uri)
 
 """
-    get_saved_fileinfo(s::ServerState, uri::URI) -> fi::Union{Nothing,SavedFileInfo}
-    get_saved_fileinfo(s::ServerState, t::TextDocumentIdentifier) -> fi::Union{Nothing,SavedFileInfo}
+    get_saved_file_info(s::ServerState, uri::URI) -> fi::Union{Nothing,SavedFileInfo}
+    get_saved_file_info(s::ServerState, t::TextDocumentIdentifier) -> fi::Union{Nothing,SavedFileInfo}
 
 Fetch cached saved FileInfo given an LSclient-provided structure with a URI
 """
-get_saved_fileinfo(s::ServerState, uri::URI) = haskey(s.saved_file_cache, uri) ? s.saved_file_cache[uri] : nothing
-get_saved_fileinfo(s::ServerState, t::TextDocumentIdentifier) = get_saved_fileinfo(s, t.uri)
+get_saved_file_info(s::ServerState, uri::URI) = get(s.saved_file_cache, uri, nothing)
+get_saved_file_info(s::ServerState, t::TextDocumentIdentifier) = get_saved_file_info(s, t.uri)
 
 """
     get_context_info(state::ServerState, uri::URI, pos::Position) -> (; mod, analyzer, postprocessor)
@@ -126,4 +126,12 @@ function find_analysis_unit_for_uri(state::ServerState, uri::URI)
         end
     end
     return analysis_unit
+end
+
+function clear_extra_diagnostics!(server::Server, key)
+    if haskey(server.state.extra_diagnostics, key)
+        delete!(server.state.extra_diagnostics, key)
+        return true
+    end
+    return false
 end

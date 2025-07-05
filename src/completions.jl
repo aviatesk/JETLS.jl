@@ -144,11 +144,11 @@ function local_completions!(items::Dict{String, CompletionItem},
             # Don't trigger completion just by typing a numeric character:
             context.triggerCharacter in NUMERIC_CHARACTERS && return nothing
     end
-    fi = get_fileinfo(s, uri)
+    fi = get_file_info(s, uri)
     fi === nothing && return nothing
     # NOTE don't bail out even if `length(fi.parsed_stream.diagnostics) ≠ 0`
     # so that we can get some completions even for incomplete code
-    st0 = JS.build_tree(JL.SyntaxTree, fi.parsed_stream)
+    st0 = build_tree!(JL.SyntaxTree, fi)
     cbs = cursor_bindings(st0, xy_to_offset(fi, params.position))
     cbs === nothing && return nothing
     for (bi, st, dist) in cbs
@@ -174,7 +174,7 @@ function global_completions!(items::Dict{String, CompletionItem}, state::ServerS
             context.triggerCharacter in NUMERIC_CHARACTERS && return nothing
     end
     pos = params.position
-    fi = get_fileinfo(state, uri)
+    fi = get_file_info(state, uri)
     fi === nothing && return nothing
     (; mod, analyzer, postprocessor) = get_context_info(state, uri, pos)
     completion_module = mod
@@ -210,7 +210,7 @@ function global_completions!(items::Dict{String, CompletionItem}, state::ServerS
     # since macros are always defined top-level
     is_completed = is_macro_invoke
 
-    st = JS.build_tree(JL.SyntaxTree, fi.parsed_stream)
+    st = build_tree!(JL.SyntaxTree, fi)
     offset = xy_to_offset(fi, pos)
     dotprefix = select_dotprefix_node(st, offset)
     if !isnothing(dotprefix)
@@ -343,7 +343,7 @@ end
 # Add LaTeX and emoji completions to the items dictionary and return boolean indicating
 # whether any completions were added.
 function add_emoji_latex_completions!(items::Dict{String,CompletionItem}, state::ServerState, uri::URI, params::CompletionParams)
-    fi = get_fileinfo(state, uri)
+    fi = get_file_info(state, uri)
     fi === nothing && return nothing
 
     pos = params.position
