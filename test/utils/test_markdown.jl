@@ -1,11 +1,8 @@
 module test_markdown
 
 using Test
-using Markdown
 using JETLS
-using JETLS: JL, JS
-
-include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
+using JETLS: JL, JS, Markdown
 
 @testset "Better Markdown Appearance" begin
     let text = """
