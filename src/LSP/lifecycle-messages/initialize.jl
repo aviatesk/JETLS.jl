@@ -698,21 +698,21 @@ provides text document synchronization (e.g. open, changed and close notificatio
             retryOnContentModified::Vector{String}
         end} = nothing
 
-        # """
-        # Client capabilities specific to regular expressions.
+        """
+        Client capabilities specific to regular expressions.
 
-        # # Tags
-        # - since – 3.16.0
-        # """
-        # regularExpressions::Union{RegularExpressionsClientCapabilities, Nothing} = nothing
+        # Tags
+        - since – 3.16.0
+        """
+        regularExpressions::Union{RegularExpressionsClientCapabilities, Nothing} = nothing
 
-        # """
-        # Client capabilities specific to the client's markdown parser.
+        """
+        Client capabilities specific to the client's markdown parser.
 
-        # # Tags
-        # - since – 3.16.0
-        # """
-        # markdown::Union{MarkdownClientCapabilities, Nothing} = nothing
+        # Tags
+        - since – 3.16.0
+        """
+        markdown::Union{MarkdownClientCapabilities, Nothing} = nothing
 
         """
         The position encodings supported by the client. Client and server

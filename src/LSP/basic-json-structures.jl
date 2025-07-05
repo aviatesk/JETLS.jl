@@ -27,6 +27,24 @@ const DocumentUri = URI
 @doc __URI_DOC__ DocumentUri
 @doc __URI_DOC__ URI
 
+# Regular Expressions
+# ===================
+
+"""
+Client capabilities specific to regular expressions.
+"""
+@interface RegularExpressionsClientCapabilities begin
+    """
+    The engine's name.
+    """
+    engine::String
+
+    """
+    The engine's version.
+    """
+    version::Union{String, Nothing} = nothing
+end
+
 # Position
 # ========
 
@@ -497,6 +515,29 @@ Diagnostic objects are only valid in the scope of a resource.
     data::Union{Any, Nothing} = nothing
 end
 
+# Command
+# =======
+
+"""
+Represents a reference to a command. Provides a title which will be used to
+represent a command in the UI. Commands are identified by a string
+identifier. The recommended way to handle commands is to implement their
+execution on the server side if the client and server provides the corresponding
+capabilities. Alternatively the tool extension code could handle the
+command. The protocol currently doesn’t specify a set of well-known commands.
+"""
+@interface Command begin
+    "Title of the command, like `save`."
+    title::String
+    "The identifier of the actual command handler."
+    command::String
+    "Arguments that the command handler should be invoked with"
+    arguments::Union{Vector{Any}, Nothing} = nothing
+end
+
+# MarkupContent
+# =============
+
 """
 Describes the content type that a client supports in various
 result literals like `Hover`, `ParameterInfo` or `CompletionItem`.
@@ -545,20 +586,40 @@ decide to remove HTML from the markdown to avoid script execution.
 end
 
 """
-Represents a reference to a command. Provides a title which will be used to
-represent a command in the UI. Commands are identified by a string
-identifier. The recommended way to handle commands is to implement their
-execution on the server side if the client and server provides the corresponding
-capabilities. Alternatively the tool extension code could handle the
-command. The protocol currently doesn’t specify a set of well-known commands.
+Client capabilities specific to the used markdown parser.
+
+In addition clients should signal the markdown parser they are using via the client
+capability general.markdown introduced in version 3.16.0 defined as follows.
+
+Known markdown parsers used by clients right now are:
+
+| Parser | Version | Documentation |
+| --- | --- | --- |
+| marked | 1.1.0 | [Marked Documentation](https://marked.js.org/) |
+| Python-Markdown | 3.2.2 | [Python-Markdown Documentation](https://python-markdown.github.io/) |
+
+# Tags
+- since – 3.16.0
 """
-@interface Command begin
-    "Title of the command, like `save`."
-    title::String
-    "The identifier of the actual command handler."
-    command::String
-    "Arguments that the command handler should be invoked with"
-    arguments::Union{Vector{Any}, Nothing} = nothing
+@interface MarkdownClientCapabilities begin
+    """
+    The name of the parser.
+    """
+    parser::String
+
+    """
+    The version of the parser.
+    """
+    version::Union{String, Nothing} = nothing
+
+    """
+    A list of HTML tags that the client allows / supports in
+    Markdown.
+
+    # Tags
+    - since – 3.17.0
+    """
+    allowedTags::Union{Vector{String}, Nothing} = nothing
 end
 
 # File Resource changes
