@@ -31,7 +31,7 @@ testset_line(testset::JL.SyntaxTree) = JS.source_line(testset[2])
 
 function update_testsetinfos!(server::Server, fi::FileInfo)
     st0_top = build_tree!(JL.SyntaxTree, fi)
-    testsets = find_named_testsets(st0_top)
+    testsets = find_executable_testsets(st0_top)
     if length(fi.testsetinfos) ≠ length(testsets)
         invalidate_testsetinfos!(server, fi, testsets)
     elseif any(1:length(testsets)) do i::Int
@@ -52,9 +52,16 @@ function update_testsetinfos!(server::Server, fi::FileInfo)
     return fi.testsetinfos
 end
 
-function find_named_testsets(st0_top::SyntaxTree0)
+function find_executable_testsets(st0_top::SyntaxTree0)
     testsets = JL.SyntaxList(st0_top)
-    traverse(st0_top) do st0::JL.SyntaxTree
+    stack = JL.SyntaxList(st0_top)
+    push!(stack, st0_top)
+    while !isempty(stack)
+        st0 = pop!(stack)
+        if JS.kind(st0) in JS.KSet"function macro"
+            # avoid `@testset`s inside function scope
+            continue
+        end
         if JS.kind(st0) === JS.K"macrocall" && JS.numchildren(st0) ≥ 2
             macroname = st0[1]
             if JS.kind(macroname) === JS.K"MacroName" && macroname.name_val == "@testset"
@@ -64,8 +71,11 @@ function find_named_testsets(st0_top::SyntaxTree0)
                 end
             end
         end
+        for i = JS.numchildren(st0):-1:1
+            push!(stack, st0[i])
+        end
     end
-    return testsets # parent first
+    return testsets
 end
 
 function invalidate_testsetinfos!(server::Server, fi::FileInfo, newtestsets::JL.SyntaxList)

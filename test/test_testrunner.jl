@@ -7,7 +7,7 @@ using JETLS.LSP
 
 include("jsjl_utils.jl")
 
-@testset "find_named_testsets" begin
+@testset "find_executable_testsets" begin
     let st0 = """
         @testset "foo" begin
             @test 10 > 0
@@ -18,7 +18,7 @@ include("jsjl_utils.jl")
             @testset "baz" include("somefile.jl")
         end
         """ |> jlparse
-        testsets = JETLS.find_named_testsets(st0)
+        testsets = JETLS.find_executable_testsets(st0)
         @test length(testsets) == 3
         @test JETLS.testset_name(testsets[1]) == "\"foo\""
         @test JETLS.testset_line(testsets[1]) == 1
@@ -36,10 +36,21 @@ include("jsjl_utils.jl")
             @test 10 > 0
         end
         """ |> jlparse
-        testsets = JETLS.find_named_testsets(st0)
+        testsets = JETLS.find_executable_testsets(st0)
         @test length(testsets) == 1
         @test JETLS.testset_name(testsets[1]) == "\"\$foo\""
         @test JETLS.testset_line(testsets[1]) == 1
+    end
+
+    let st0 = """
+        function test_simple_func()
+            @testset "simple" begin
+                @test 10 > 0
+            end
+        end
+        test_simple_func()
+        """ |> jlparse
+        @test isempty(JETLS.find_executable_testsets(st0))
     end
 end
 
@@ -94,7 +105,7 @@ end
         """
         fi = JETLS.FileInfo(1, parsedstream(test_code))
         st0 = JETLS.build_tree!(JL.SyntaxTree, fi)
-        testsets = JETLS.find_named_testsets(st0)
+        testsets = JETLS.find_executable_testsets(st0)
         @test length(testsets) == 1
 
         fi.testsetinfos = [JETLS.TestsetInfo(testsets[1])]
@@ -122,7 +133,7 @@ end
         """
         fi = JETLS.FileInfo(1, parsedstream(test_code))
         st0 = JETLS.build_tree!(JL.SyntaxTree, fi)
-        testsets = JETLS.find_named_testsets(st0)
+        testsets = JETLS.find_executable_testsets(st0)
         @test length(testsets) == 2
 
         stats = JETLS.TestRunnerStats(;
@@ -183,7 +194,7 @@ end
 
         fi = JETLS.FileInfo(1, parsedstream(test_code))
         st0 = JETLS.build_tree!(JL.SyntaxTree, fi)
-        testsets = JETLS.find_named_testsets(st0)
+        testsets = JETLS.find_executable_testsets(st0)
         @test length(testsets) == 2
 
         fi.testsetinfos = [
@@ -263,7 +274,7 @@ end
 
         fi = JETLS.FileInfo(1, parsedstream(test_code))
         st0 = JETLS.build_tree!(JL.SyntaxTree, fi)
-        testsets = JETLS.find_named_testsets(st0)
+        testsets = JETLS.find_executable_testsets(st0)
 
         stats = JETLS.TestRunnerStats(;
             n_passed=3,
