@@ -1,5 +1,6 @@
-# server interaction utilties
+# server interaction utilities
 # ===========================
+using Markdown
 
 const DEFAULT_FLUSH_INTERVAL = 0.05
 function yield_to_endpoint(interval=DEFAULT_FLUSH_INTERVAL)
@@ -70,9 +71,9 @@ get_context_analyzer(::Nothing, uri::URI) = LSAnalyzer(uri)
 get_context_analyzer(::OutOfScope, uri::URI) = LSAnalyzer(uri)
 get_context_analyzer(analysis_unit::AnalysisUnit, ::URI) = analysis_unit.result.analyzer
 
-get_post_processor(::Nothing) = JET.PostProcessor()
-get_post_processor(::OutOfScope) = JET.PostProcessor()
-get_post_processor(analysis_unit::AnalysisUnit) = JET.PostProcessor(analysis_unit.result.actual2virtual)
+get_post_processor(::Nothing) = LSPostProcessor(JET.PostProcessor())
+get_post_processor(::OutOfScope) = LSPostProcessor(JET.PostProcessor())
+get_post_processor(analysis_unit::AnalysisUnit) = LSPostProcessor(JET.PostProcessor(analysis_unit.result.actual2virtual))
 
 function find_analysis_unit_for_uri(state::ServerState, uri::URI)
     haskey(state.analysis_cache, uri) || return nothing

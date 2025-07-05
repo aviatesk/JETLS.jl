@@ -29,6 +29,7 @@ using JET: CC, JET
 using JuliaSyntax: JuliaSyntax as JS
 using JuliaLowering: JuliaLowering as JL
 using REPL: REPL # loading REPL is necessary to make `Base.Docs.doc(::Base.Docs.Binding)` work
+using Markdown: Markdown
 
 abstract type AnalysisEntry end # used by `Analyzer.LSAnalyzer`
 

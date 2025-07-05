@@ -93,7 +93,7 @@ function handle_HoverRequest(server::Server, msg::HoverRequest)
         return send(server, HoverResponse(; id = msg.id, result = null))
     end
     documentation = Base.Docs.doc(DocsBinding(parentmod, identifier))
-    value = postprocessor(string(documentation))
+    value = postprocessor(documentation)
 
     contents = MarkupContent(;
         kind = MarkupKind.Markdown,

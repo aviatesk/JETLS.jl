@@ -390,7 +390,7 @@ function resolve_completion_item(state::ServerState, item::CompletionItem)
     mod, postprocessor = state.completion_resolver_info
     name = Symbol(data.name)
     binding = Base.Docs.Binding(mod, name)
-    docs = postprocessor(string(Base.Docs.doc(binding)))
+    docs = postprocessor(Base.Docs.doc(binding))
     return CompletionItem(item;
         documentation = MarkupContent(;
             kind = MarkupKind.Markdown,
