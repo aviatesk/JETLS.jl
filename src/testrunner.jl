@@ -101,9 +101,7 @@ function testrunner_code_lenses(uri::URI, fi::FileInfo, testsetinfos::Vector{Tes
 end
 
 function testrunner_code_lenses!(code_lenses::Vector{CodeLens}, uri::URI, fi::FileInfo, idx::Int, testsetinfo::TestsetInfo)
-    range = Range(;
-        start = offset_to_xy(fi, JS.first_byte(testsetinfo.st0)),
-        var"end" = offset_to_xy(fi, JS.last_byte(testsetinfo.st0)))
+    range = source_range(fi, testsetinfo.st0)
     tsn = testset_name(testsetinfo)
     clear_arguments = run_arguments = Any[uri, idx, tsn]
     if isdefined(testsetinfo, :result)
@@ -155,10 +153,8 @@ function testrunner_code_actions(uri::URI, fi::FileInfo, testsetinfos::Vector{Te
 end
 
 function testrunner_code_actions!(code_actions::Vector{Union{CodeAction,Command}}, uri::URI, fi::FileInfo, idx::Int, testsetinfo::TestsetInfo, action_range::Range)
-    tsrange = Range(;
-        start = offset_to_xy(fi, JS.first_byte(testsetinfo.st0)),
-        var"end" = offset_to_xy(fi, JS.last_byte(testsetinfo.st0)+1)) # +1 to support cases like `@testset "xxx" begin ... end│`
-    overlap(action_range, tsrange) || return nothing
+    tsr = source_range(fi, testsetinfo.st0; adjust_last=1) # +1 to support cases like `@testset "xxx" begin ... end│`
+    overlap(action_range, tsr) || return nothing
     tsn = testset_name(testsetinfo)
     clear_arguments = run_arguments = Any[uri, idx, tsn]
     if isdefined(testsetinfo, :result)
@@ -298,7 +294,7 @@ function testrunner_run_testset(server::Server, uri::URI, fi::FileInfo, idx::Int
     if isnothing(Sys.which("testrunner"))
         show_error_message(server, """
             `testrunner` executable is not found on the `PATH`.
-            Follow [this instruction](https://github.com/aviatesk/TestRunner.jl#installation)
+            Follow this [instruction](https://github.com/aviatesk/JETLS.jl#prerequisites)
             to install the `testrunner` app.
             """)
         return token !== nothing && end_testrunner_progress(server, token, "TestRunner not installed")

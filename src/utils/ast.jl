@@ -51,6 +51,13 @@ function offset_to_xy(code::Union{AbstractString, Vector{UInt8}}, byte::Int) # u
 end
 offset_to_xy(fi::FileInfo, byte::Integer) = offset_to_xy(fi.parsed_stream, byte)
 
+function source_range(fi::FileInfo, x::Union{JS.SyntaxNode,JL.SyntaxTree};
+                      adjust_first::Int=0, adjust_last::Int=0)
+    return Range(;
+        start = offset_to_xy(fi, JS.first_byte(x)+adjust_first),
+        var"end" = offset_to_xy(fi, JS.last_byte(x)+adjust_last))
+end
+
 """
 Like `Base.unique`, but over node ids, and with this comment promising that the
 lowest-index copy of each node is kept.
