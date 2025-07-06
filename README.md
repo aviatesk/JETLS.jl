@@ -129,6 +129,7 @@ the list itself is subject to change.
 - TestRunner.jl integration
   - [x] Code lens for running individual `@testset`s
   - [x] Code actions for running individual `@testset`s
+  - [x] Code actions for running individual `@test` cases
   - [x] Inline test result diagnostics
   - [x] Work done progress during test execution
 
@@ -175,10 +176,19 @@ After running tests, the code lens is refreshed as follows:
 
 #### Code Actions
 
-You can also trigger test runs via "code actions" when the code action range is
-requested inside a `@testset` block:
+You can trigger test runs via "code actions" when the code action range is
+requested:
+- Inside a `@testset` block: Run the entire testset
 > ![TestRunner Code Actions](./assets/testrunner-code-actions-dark.png#gh-dark-mode-only)
 > ![TestRunner Code Actions](./assets/testrunner-code-actions-light.png#gh-light-mode-only)
+
+- On an individual `@test` macro: Run just that specific test case
+> ![TestRunner Code Actions `@test` case](./assets/testrunner-code-actions-test-case-dark.png#gh-dark-mode-only)
+> ![TestRunner Code Actions `@test` case](./assets/testrunner-code-actions-test-case-light.png#gh-light-mode-only)
+
+Note that when running individual `@test` cases, the error results are displayed
+as temporary diagnostics for 10 seconds. Click `☰ Open logs` button in the
+pop up message to view detailed error messages that persist.
 
 #### Test Diagnostics
 
@@ -194,8 +204,9 @@ while tests are running, keeping you informed about long-running test suites.
 
 ### Supported Patterns
 
-The TestRunner integration currently supports named `@testset` blocks like:
+The TestRunner integration supports:
 
+1. **Named `@testset` blocks** (via code lens or code actions):
 ```julia
 using Test
 
@@ -228,6 +239,25 @@ function test_func2()
     end
 end
 @testset "test_func2" test_func2()
+```
+
+2. **Individual `@test` macros** (via code actions only):
+```julia
+# Run individual tests directly
+@test 1 + 1 == 2
+@test sqrt(4) ≈ 2.0
+
+# Also works inside testsets
+@testset "math tests" begin
+    @test sin(0) == 0  # Can run just this test
+    @test cos(π) == -1  # Or just this one
+end
+
+# Multi-line `@test` expressions are just fine
+@test begin
+    x = complex_calculation()
+    validate(x)
+end
 ```
 
 See the [README.md](https://github.com/aviatesk/TestRunner.jl) of TestRunner.jl

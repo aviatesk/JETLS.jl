@@ -163,6 +163,7 @@ function testrunner_testset_code_actions!(code_actions::Vector{Union{CodeAction,
     for (idx, testsetinfo) in enumerate(testsetinfos)
         testrunner_testset_code_actions!(code_actions, uri, fi, idx, testsetinfo, action_range)
     end
+    testrunner_testcase_code_actions!(code_actions, uri, fi, action_range)
     return code_actions
 end
 
@@ -213,6 +214,31 @@ function testrunner_testset_code_actions!(code_actions::Vector{Union{CodeAction,
     return code_actions
 end
 
+function testrunner_testcase_code_actions!(code_actions::Vector{Union{CodeAction,Command}}, uri::URI, fi::FileInfo, action_range::Range)
+    st0_top = build_tree!(JL.SyntaxTree, fi)
+    traverse_skip_func_scope(st0_top) do st0::SyntaxTree0
+        if JS.kind(st0) === JS.K"macrocall" && JS.numchildren(st0) ≥ 1
+            macroname = st0[1]
+            if JS.kind(macroname) === JS.K"MacroName" && macroname.name_val == "@test"
+                tcr = get_source_range(st0; adjust_last=1) # +1 to support cases like `@test ...│`
+                overlap(action_range, tcr) || return nothing
+                tcl = JS.source_line(st0)
+                tct = "`" * JS.sourcetext(st0) * "`"
+                run_arguments = Any[uri, tcl, tct]
+                title = "$TESTRUNNER_RUN_TITLE $tct"
+                push!(code_actions, CodeAction(;
+                    title,
+                    command = Command(;
+                        title,
+                        command = COMMAND_TESTRUNNER_RUN_TESTCASE,
+                        arguments = run_arguments)))
+            end
+        end
+    end
+    return code_actions
+end
+
+# `@testset` execution
 function testrunner_cmd(filepath::String, tsn::String, tsl::Int, test_env_path::Union{Nothing,String})
     tsn = rlstrip(tsn, '"')
     testrunner_exe = Sys.which("testrunner")
@@ -220,6 +246,16 @@ function testrunner_cmd(filepath::String, tsn::String, tsl::Int, test_env_path::
         return `$testrunner_exe --verbose --json $filepath $tsn --filter-lines=$tsl`
     else
         return `$testrunner_exe --verbose --project=$test_env_path --json $filepath $tsn --filter-lines=$tsl`
+    end
+end
+
+# `@test` execution
+function testrunner_cmd(filepath::String, tcl::Int, test_env_path::Union{Nothing,String})
+    testrunner_exe = Sys.which("testrunner")
+    if isnothing(test_env_path)
+        return `$testrunner_exe --verbose --json $filepath L$tcl`
+    else
+        return `$testrunner_exe --verbose --project=$test_env_path --json $filepath L$tcl`
     end
 end
 
@@ -252,9 +288,14 @@ struct TestRunnerMessageRequestCaller4 <: RequestCaller
 end
 
 function show_testrunner_result_in_message(server::Server, result::TestRunnerResult,
-                                           tsn::String, next_info)
+                                           title::String;
+                                           next_info=nothing,
+                                           extra_message::Union{Nothing,String}=nothing)
     summary = summary_testrunner_result(result)
-    message = "Test results for '$tsn': $summary"
+    message = "Test results for $title: $summary"
+    if !isnothing(extra_message)
+        message *= extra_message
+    end
 
     (; n_failed, n_errored, n_broken) = result.stats
     msg_type = if n_failed > 0 || n_errored > 0
@@ -269,7 +310,7 @@ function show_testrunner_result_in_message(server::Server, result::TestRunnerRes
         actions = MessageActionItem[
             MessageActionItem(; title = TESTRUNNER_OPEN_LOGS_TITLE)
         ]
-        request_caller = TestRunnerMessageRequestCaller2(tsn, result.logs)
+        request_caller = TestRunnerMessageRequestCaller2(title, result.logs)
     else
         actions = MessageActionItem[
             MessageActionItem(; title = TESTRUNNER_RERUN_TITLE)
@@ -277,7 +318,7 @@ function show_testrunner_result_in_message(server::Server, result::TestRunnerRes
             MessageActionItem(; title = TESTRUNNER_CLEAR_RESULT_TITLE)
         ]
         (; uri, idx) = next_info
-        request_caller = TestRunnerMessageRequestCaller4(tsn, uri, idx, result.logs)
+        request_caller = TestRunnerMessageRequestCaller4(title, uri, idx, result.logs)
     end
 
     id = String(gensym(:ShowMessageRequest))
@@ -362,7 +403,7 @@ function _testrunner_run_testset(server::Server, uri::URI, fi::FileInfo, idx::In
     if !is_testsetinfo_valid(fi, idx, tsn)
         # If the file state has changed during test execution, it's difficult to apply results to the file:
         # Simply show only the option to open logs
-        show_testrunner_result_in_message(server, result, tsn, nothing)
+        show_testrunner_result_in_message(server, result, tsn)
         return ret
     end
 
@@ -381,6 +422,80 @@ function _testrunner_run_testset(server::Server, uri::URI, fi::FileInfo, idx::In
     show_testrunner_result_in_message(server, result, tsn, (; uri, idx))
 
     return ret
+end
+
+function testrunner_run_testcase(server::Server, uri::URI, tcl::Int, tct::String, filepath::String;
+                                 token::Union{Nothing,ProgressToken}=nothing)
+    if isnothing(Sys.which("testrunner"))
+        show_error_message(server, """
+            `testrunner` executable is not found on the `PATH`.
+            Follow [this instruction](https://github.com/aviatesk/TestRunner.jl#installation)
+            to install the `testrunner` app.
+            """)
+        return token !== nothing && end_testrunner_progress(server, token, "TestRunner not installed")
+    end
+
+    if token !== nothing
+        send(server, ProgressNotification(;
+            params = ProgressParams(;
+                token,
+                value = WorkDoneProgressBegin(;
+                    title = "Running test case $tct at L$tcl",
+                    cancellable = false))))
+    end
+
+    local result::String
+    try
+        result = _testrunner_run_testcase(server, uri, tcl, tct, filepath)
+    catch err
+        result = sprint(Base.showerror, err, catch_backtrace())
+        @error "Error from testrunner executor" err
+        show_error_message(server, """
+            An unexpected error occurred while setting up TestRunner.jl or handling the result:
+            See the server log for details.
+            """)
+    finally
+        @assert @isdefined(result) "`result` should be defined at this point"
+        if token !== nothing
+            end_testrunner_progress(server, token, result)
+        end
+    end
+end
+
+function _testrunner_run_testcase(server::Server, uri::URI, tcl::Int, tct::String, filepath::String)
+    test_env_path = find_uri_env_path(server.state, uri)
+    cmd = testrunner_cmd(filepath, tcl, test_env_path)
+    testrunnerproc = open(cmd; read=true)
+    wait(testrunnerproc)
+    result = try
+        JSONRPC.JSON3.read(testrunnerproc, TestRunnerResult)
+    catch err
+        @error "Error from testrunner process" err
+        show_error_message(server, """
+            An unexpected error occurred while executing TestRunner.jl:
+            See the server log for details.
+            """)
+        return "Test execution failed"
+    end
+
+    # Show the results of this `@test` case temporarily as diagnostics:
+    # The `Server` (or `FileInfo`) doesn't track the state of each `@test`,
+    # so we can't map editor state to diagnostics.
+    # Show error information to the user as temporary diagnostics.
+    uri2diagnostics = testrunner_result_to_diagnostics(result)
+    notify_temporary_diagnostics!(server, uri2diagnostics)
+    @async begin
+        sleep(10)
+        notify_diagnostics!(server) # refresh diagnostics after 5 sec
+    end
+
+    extra_message = isempty(uri2diagnostics) ? nothing : """\n
+        Test failures are shown as temporary diagnostics in the editor for 10 seconds.
+        Open logs to view detailed error messages that persist."""
+
+    show_testrunner_result_in_message(server, result, "$tct"; extra_message)
+
+    return summary_testrunner_result(result)
 end
 
 function end_testrunner_progress(server::Server, token::ProgressToken, message::String)
@@ -469,6 +584,42 @@ function testrunner_run_testset_from_uri(server::Server, uri::URI, idx::Int, tsn
         send(server, WorkDoneProgressCreateRequest(; id, params))
     else
         @async testrunner_run_testset(server, uri, fi, idx, tsn, filepath)
+    end
+    return nothing
+end
+
+struct TestRunnerTestcaseProgressCaller <: RequestCaller
+    uri::URI
+    testcase_line::Int
+    testcase_text::String
+    filepath::String
+    token::ProgressToken
+end
+
+function testrunner_run_testcase_from_uri(server::Server, uri::URI, tcl::Int, tct::String)
+    fi = get_file_info(server.state, uri)
+    if fi === nothing
+        return "File is no longer available in the editor"
+    end
+    sfi = get_saved_file_info(server.state, uri)
+    if sfi === nothing
+        return "The file appears not to exist on disk. Save the file first to run tests."
+    elseif JS.sourcetext(fi.parsed_stream) ≠ JS.sourcetext(sfi.parsed_stream)
+        return "The editor state differs from the saved file. Save the file first to run tests."
+    end
+    filepath = uri2filepath(uri)
+    if isnothing(filepath)
+        return "Cannot determine file path for the URI"
+    end
+
+    if supports(server, :window, :workDoneProgress)
+        id = String(gensym(:WorkDoneProgressCreateRequest_testrunner))
+        token = String(gensym(:TestRunnerProgress))
+        server.state.currently_requested[id] = TestRunnerTestcaseProgressCaller(uri, tcl, tct, filepath, token)
+        params = WorkDoneProgressCreateParams(; token)
+        send(server, WorkDoneProgressCreateRequest(; id, params))
+    else
+        @async testrunner_run_testcase(server, uri, tcl, tct, filepath)
     end
     return nothing
 end

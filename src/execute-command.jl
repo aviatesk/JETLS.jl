@@ -2,11 +2,13 @@ const EXECUTE_COMMAND_REGISTRATION_ID = "jetls-execute-command"
 const EXECUTE_COMMAND_REGISTRATION_METHOD = "workspace/executeCommand"
 
 const COMMAND_TESTRUNNER_RUN_TESTSET = "JETLS.TestRunner.run@testset"
+const COMMAND_TESTRUNNER_RUN_TESTCASE = "JETLS.TestRunner.run@test"
 const COMMAND_TESTRUNNER_CLEAR_RESULT = "JETLS.TestRunner.clearResult"
 const COMMAND_TESTRUNNER_OPEN_LOGS = "JETLS.TestRunner.openLogs"
 
 const SUPPORTED_COMMANDS = [
     COMMAND_TESTRUNNER_RUN_TESTSET,
+    COMMAND_TESTRUNNER_RUN_TESTCASE,
     COMMAND_TESTRUNNER_OPEN_LOGS,
     COMMAND_TESTRUNNER_CLEAR_RESULT,
 ]
@@ -34,6 +36,8 @@ function handle_ExecuteCommandRequest(server::Server, msg::ExecuteCommandRequest
     command = msg.params.command
     if command == COMMAND_TESTRUNNER_RUN_TESTSET
         return execute_testrunner_run_testset_command(server, msg)
+    elseif command == COMMAND_TESTRUNNER_RUN_TESTCASE
+        return execute_testrunner_run_testcase_command(server, msg)
     elseif command == COMMAND_TESTRUNNER_OPEN_LOGS
         return execute_testrunner_open_logs_command(server, msg)
     elseif command == COMMAND_TESTRUNNER_CLEAR_RESULT
@@ -83,6 +87,25 @@ function execute_testrunner_run_testset_command(server::Server, msg::ExecuteComm
     idx = @tryparsearg server msg[2]::Int
     tsn = @tryparsearg server msg[3]::String
     error_msg = testrunner_run_testset_from_uri(server, uri, idx, tsn)
+    if error_msg !== nothing
+        show_error_message(server, error_msg)
+        return send(server,
+            ExecuteCommandResponse(;
+                id = msg.id,
+                result = nothing,
+                error = request_failed_error(error_msg)))
+    end
+    return send(server,
+        ExecuteCommandResponse(;
+            id = msg.id,
+            result = null))
+end
+
+function execute_testrunner_run_testcase_command(server::Server, msg::ExecuteCommandRequest)
+    uri = convert(URI, @tryparsearg server msg[1]::String)
+    tcl = @tryparsearg server msg[2]::Int
+    tct = @tryparsearg server msg[3]::String
+    error_msg = testrunner_run_testcase_from_uri(server, uri, tcl, tct)
     if error_msg !== nothing
         show_error_message(server, error_msg)
         return send(server,

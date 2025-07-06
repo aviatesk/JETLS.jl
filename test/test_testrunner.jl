@@ -179,11 +179,15 @@ end
             var"end" = positions[1])
 
         code_actions = JETLS.testrunner_code_actions(uri, fi, fi.testsetinfos, first_testset_range)
-        @test length(code_actions) == 1
+        @test length(code_actions) == 2  # Now includes both @testset and @test actions
         tsn1 = JETLS.testset_name(fi.testsetinfos[1])
         @test code_actions[1].title == "$(JETLS.TESTRUNNER_RUN_TITLE) $tsn1"
         @test code_actions[1].command.command == JETLS.COMMAND_TESTRUNNER_RUN_TESTSET
         @test code_actions[1].command.arguments == [uri, 1, tsn1]
+        # Check @test action
+        @test code_actions[2].title == "$(JETLS.TESTRUNNER_RUN_TITLE) `@test true`"
+        @test code_actions[2].command.command == JETLS.COMMAND_TESTRUNNER_RUN_TESTCASE
+        @test code_actions[2].command.arguments == [uri, 2, "`@test true`"]
 
         # Test action at position inside second testset
         second_testset_range = LSP.Range(;
@@ -203,7 +207,7 @@ end
             var"end" = positions[2])
 
         code_actions = JETLS.testrunner_code_actions(uri, fi, fi.testsetinfos, multi_range)
-        @test length(code_actions) == 2
+        @test length(code_actions) == 3  # Two @testset actions and one @test action (true)
         tsn1 = JETLS.testset_name(fi.testsetinfos[1])
         tsn2 = JETLS.testset_name(fi.testsetinfos[2])
         @test code_actions[1].title == "$(JETLS.TESTRUNNER_RUN_TITLE) $tsn1"
@@ -212,6 +216,9 @@ end
         @test code_actions[2].title == "$(JETLS.TESTRUNNER_RUN_TITLE) $tsn2"
         @test code_actions[2].command.command == JETLS.COMMAND_TESTRUNNER_RUN_TESTSET
         @test code_actions[2].command.arguments == [uri, 2, tsn2]
+        @test code_actions[3].title == "$(JETLS.TESTRUNNER_RUN_TITLE) `@test true`"
+        @test code_actions[3].command.command == JETLS.COMMAND_TESTRUNNER_RUN_TESTCASE
+        @test code_actions[3].command.arguments == [uri, 2, "`@test true`"]
 
         # Test action at position right after testset end
         after_end_range = LSP.Range(;
@@ -272,6 +279,65 @@ end
         @test code_actions[3].title == JETLS.TESTRUNNER_CLEAR_RESULT_TITLE
         @test code_actions[3].command.command == JETLS.COMMAND_TESTRUNNER_CLEAR_RESULT
         @test code_actions[3].command.arguments == [uri, 1, tsn]
+    end
+
+    # Test individual @test macro code actions
+    let server = JETLS.Server()
+        test_code_with_positions = """
+        # Single @test outside testset
+        @test 1 ==│ 1
+
+        @testset "tests with multiple @test macros" begin
+            @test 2 + │2 == 4
+        end
+
+        # Edge case with complex expression
+        @test begin
+            x = 5│
+            x^2 == 25
+        end
+        """
+        test_code, positions = JETLS.get_text_and_positions(test_code_with_positions)
+        @test length(positions) == 3
+
+        fi = JETLS.FileInfo(1, parsedstream(test_code))
+        JETLS.update_testsetinfos!(server, fi; notify_server=false)
+        uri = LSP.URI("file:///test.jl")
+
+        # Test action on standalone @test (outside any testset)
+        standalone_range = LSP.Range(;
+            start = positions[1],
+            var"end" = positions[1])
+        code_actions = JETLS.testrunner_code_actions(uri, fi, fi.testsetinfos, standalone_range)
+        @test length(code_actions) == 1
+        @test code_actions[1].title == "$(JETLS.TESTRUNNER_RUN_TITLE) `@test 1 == 1`"
+        @test code_actions[1].command.command == JETLS.COMMAND_TESTRUNNER_RUN_TESTCASE
+        @test code_actions[1].command.arguments == [uri, 2, "`@test 1 == 1`"]
+
+        # Test action on first @test inside testset
+        # Now shows both testset and @test actions
+        first_test_range = LSP.Range(;
+            start = positions[2],
+            var"end" = positions[2])
+        code_actions = JETLS.testrunner_code_actions(uri, fi, fi.testsetinfos, first_test_range)
+        @test length(code_actions) == 2  # Both testset and test actions
+        # First should be testset action
+        @test occursin("tests with multiple @test macros", code_actions[1].title)
+        @test code_actions[1].command.command == JETLS.COMMAND_TESTRUNNER_RUN_TESTSET
+        # Second should be @test action
+        @test code_actions[2].title == "$(JETLS.TESTRUNNER_RUN_TITLE) `@test 2 + 2 == 4`"
+        @test code_actions[2].command.command == JETLS.COMMAND_TESTRUNNER_RUN_TESTCASE
+        @test code_actions[2].command.arguments == [uri, 5, "`@test 2 + 2 == 4`"]
+
+        # Test action on multi-line @test (outside any testset)
+        multiline_range = LSP.Range(;
+            start = positions[3],
+            var"end" = positions[3])
+        code_actions = JETLS.testrunner_code_actions(uri, fi, fi.testsetinfos, multiline_range)
+        @test length(code_actions) == 1
+        @test occursin("@test begin", code_actions[1].title)
+        @test code_actions[1].command.command == JETLS.COMMAND_TESTRUNNER_RUN_TESTCASE
+        @test code_actions[1].command.arguments[2] == 9  # Line number of the @test
     end
 end
 

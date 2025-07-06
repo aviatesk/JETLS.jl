@@ -189,9 +189,14 @@ end
 
 function merge_extra_diagnostics!(uri2diagnostics::URI2Diagnostics, server::Server)
     for (_, extra_uri2diagnostics) in server.state.extra_diagnostics
-        for (uri, diagnostics) in extra_uri2diagnostics
-            append!(get!(Vector{Diagnostic}, uri2diagnostics, uri), diagnostics)
-        end
+        merge_diagnostics!(uri2diagnostics, extra_uri2diagnostics)
+    end
+    return uri2diagnostics
+end
+
+function merge_diagnostics!(uri2diagnostics::URI2Diagnostics, other_uri2diagnostics::URI2Diagnostics)
+    for (uri, diagnostics) in other_uri2diagnostics
+        append!(get!(Vector{Diagnostic}, uri2diagnostics, uri), diagnostics)
     end
     return uri2diagnostics
 end
@@ -207,6 +212,12 @@ function notify_diagnostics!(server::Server, uri2diagnostics::URI2Diagnostics)
                 uri,
                 diagnostics)))
     end
+end
+
+function notify_temporary_diagnostics!(server::Server, temp_uri2diagnostics::URI2Diagnostics)
+    uri2diagnostics = get_full_diagnostics(server)
+    merge_diagnostics!(uri2diagnostics, temp_uri2diagnostics)
+    notify_diagnostics!(server, uri2diagnostics)
 end
 
 # textDocument/diagnostic
