@@ -111,14 +111,13 @@ And `test/test_completions.jl` is included from `test/runtests.jl` like this:
 end
 ```
 
-Also, in each test file, `@testset "testset name"` is encouraged to be used to
-organize our tests cleanly.
-For code clarity, unless specifically necessary, avoid using `using`, `import`,
-and `struct` definitions  inside `@testset` blocks,
-and instead place them at the top level.
+In each test file, you are encouraged to use `@testset "testset name"` to
+organize our tests cleanly. For code clarity, unless specifically necessary,
+avoid using `using`, `import`, and `struct` definitions  inside `@testset`
+blocks, and instead place them at the top level.
 
-Also, in each test file, you are encouraged to use `let`-blocks to ensure that
-names aren't unintentionally reused between multiple test cases.
+Also, you are encouraged to use `let`-blocks to ensure that names aren't
+unintentionally reused between multiple test cases.
 For example, here is what good test code looks like:
 > test/test_completions.jl
 ```julia
