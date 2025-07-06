@@ -51,6 +51,8 @@ function handle_requested_response(server::Server, msg::Dict{Symbol,Any},
         handle_test_runner_message_response4(server, msg, request_caller)
     elseif request_caller isa TestRunnerTestsetProgressCaller
         handle_testrunner_testset_progress_response(server, msg, request_caller)
+    elseif request_caller isa TestRunnerTestcaseProgressCaller
+        handle_testrunner_testcase_progress_response(server, msg, request_caller)
     elseif request_caller isa CodeLensRefreshRequestCaller
         handle_code_lens_refresh_response(server, msg, request_caller)
     else
@@ -139,6 +141,15 @@ function handle_testrunner_testset_progress_response(server::Server, msg::Dict{S
     # If successful, run the test with progress reporting
     (; uri, fi, idx, testset_name, filepath, token) = request_caller
     @async testrunner_run_testset(server, uri, fi, idx, testset_name, filepath; token)
+end
+
+function handle_testrunner_testcase_progress_response(server::Server, msg::Dict{Symbol,Any}, request_caller::TestRunnerTestcaseProgressCaller)
+    if handle_response_error(server, msg, "create work done progress")
+        return
+    end
+    # If successful, run the test with progress reporting
+    (; uri, testcase_line, testcase_text, filepath, token) = request_caller
+    @async testrunner_run_testcase(server, uri, testcase_line, testcase_text, filepath; token)
 end
 
 function handle_code_lens_refresh_response(server::Server, msg::Dict{Symbol,Any}, ::CodeLensRefreshRequestCaller)
