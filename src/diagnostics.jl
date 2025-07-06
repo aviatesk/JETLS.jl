@@ -254,6 +254,26 @@ end
 
 function handle_DocumentDiagnosticRequest(server::Server, msg::DocumentDiagnosticRequest)
     uri = msg.params.textDocument.uri
+
+    # This `previousResultId` calculation is mostly meaningless, but it might help the
+    # client accurately update these diagnostics.
+    # In particular, there seem to be cases where syntax error diagnostics remain in Zed
+    # when this field is not set.
+    previousResultid = msg.params.previousResultId
+    if isnothing(previousResultid)
+        resultId = "1"
+    else
+        resultId = tryparse(Int, previousResultid)
+        if isnothing(resultId)
+            return send(server,
+                DocumentDiagnosticResponse(;
+                    id = msg.id,
+                    result = nothing,
+                    error = request_failed_error("Invalid previousResultId given")))
+        end
+        resultId = string(resultId+1)
+    end
+
     file_info = get_file_info(server.state, uri)
     if file_info === nothing
         return send(server,
@@ -275,5 +295,6 @@ function handle_DocumentDiagnosticRequest(server::Server, msg::DocumentDiagnosti
         DocumentDiagnosticResponse(;
             id = msg.id,
             result = RelatedFullDocumentDiagnosticReport(;
+                resultId,
                 items = diagnostics)))
 end
