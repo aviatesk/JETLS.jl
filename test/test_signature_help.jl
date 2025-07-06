@@ -322,7 +322,7 @@ end
         @test cnt == 1
     end
 
-    # Test with DidChangeTextDocumentNotification (broken test preserved)
+    # Test with DidChangeTextDocumentNotification
     let script_code = """
         foo(xxx) = :xxx
         foo(xxx, yyy) = :xxx_yyy
@@ -354,15 +354,15 @@ end
                             textDocument = TextDocumentIdentifier(; uri),
                             position = Position(; line=2, character=12))))
                     @test raw_res isa SignatureHelpResponse
-                    @test_broken length(raw_res.result.signatures) == 2
-                    @test_broken any(raw_res.result.signatures) do siginfo
+                    @test length(raw_res.result.signatures) == 2
+                    @test any(raw_res.result.signatures) do siginfo
                         siginfo.label == "foo(xxx)" &&
                         # this also tests that JETLS doesn't show the nonsensical `var"..."`
                         # string caused by JET's internal details
                         occursin("@ `Main` [$(script_path):1]($(filepath2uri(script_path))#L1)",
                             (siginfo.documentation::MarkupContent).value)
                     end
-                    @test_broken any(raw_res.result.signatures) do siginfo
+                    @test any(raw_res.result.signatures) do siginfo
                         siginfo.label == "foo(xxx, yyy)" &&
                         # this also tests that JETLS doesn't show the nonsensical `var"..."`
                         # string caused by JET's internal details
