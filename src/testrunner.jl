@@ -67,16 +67,27 @@ function update_testsetinfos!(server::Server, fi::FileInfo; notify_server::Bool=
     return fi.testsetinfos
 end
 
-function find_executable_testsets(st0_top::SyntaxTree0)
+function traverse_skip_func_scope(@specialize(callback), st0_top::SyntaxTree0)
     testsets = JL.SyntaxList(st0_top)
     stack = JL.SyntaxList(st0_top)
     push!(stack, st0_top)
     while !isempty(stack)
         st0 = pop!(stack)
         if JS.kind(st0) in JS.KSet"function macro"
-            # avoid `@testset`s inside function scope
+            # avoid visit inside function scope
             continue
         end
+        callback(st0)
+        for i = JS.numchildren(st0):-1:1
+            push!(stack, st0[i])
+        end
+    end
+    return testsets
+end
+
+function find_executable_testsets(st0_top::SyntaxTree0)
+    testsets = JL.SyntaxList(st0_top)
+    traverse_skip_func_scope(st0_top) do st0::SyntaxTree0
         if JS.kind(st0) === JS.K"macrocall" && JS.numchildren(st0) ≥ 2
             macroname = st0[1]
             if JS.kind(macroname) === JS.K"MacroName" && macroname.name_val == "@testset"
@@ -85,9 +96,6 @@ function find_executable_testsets(st0_top::SyntaxTree0)
                     push!(testsets, st0)
                 end
             end
-        end
-        for i = JS.numchildren(st0):-1:1
-            push!(stack, st0[i])
         end
     end
     return testsets
@@ -102,7 +110,7 @@ function testrunner_code_lenses(uri::URI, fi::FileInfo, testsetinfos::Vector{Tes
 end
 
 function testrunner_code_lenses!(code_lenses::Vector{CodeLens}, uri::URI, fi::FileInfo, idx::Int, testsetinfo::TestsetInfo)
-    range = source_range(fi, testsetinfo.st0)
+    range = get_source_range(testsetinfo.st0)
     tsn = testset_name(testsetinfo)
     clear_arguments = run_arguments = Any[uri, idx, tsn]
     if isdefined(testsetinfo, :result)
@@ -147,14 +155,19 @@ end
 
 function testrunner_code_actions(uri::URI, fi::FileInfo, testsetinfos::Vector{TestsetInfo}, action_range::Range)
     code_actions = Union{CodeAction,Command}[]
+    testrunner_testset_code_actions!(code_actions, uri, fi, testsetinfos, action_range)
+    return code_actions
+end
+
+function testrunner_testset_code_actions!(code_actions::Vector{Union{CodeAction,Command}}, uri::URI, fi::FileInfo, testsetinfos::Vector{TestsetInfo}, action_range::Range)
     for (idx, testsetinfo) in enumerate(testsetinfos)
-        testrunner_code_actions!(code_actions, uri, fi, idx, testsetinfo, action_range)
+        testrunner_testset_code_actions!(code_actions, uri, fi, idx, testsetinfo, action_range)
     end
     return code_actions
 end
 
-function testrunner_code_actions!(code_actions::Vector{Union{CodeAction,Command}}, uri::URI, fi::FileInfo, idx::Int, testsetinfo::TestsetInfo, action_range::Range)
-    tsr = source_range(fi, testsetinfo.st0; adjust_last=1) # +1 to support cases like `@testset "xxx" begin ... end│`
+function testrunner_testset_code_actions!(code_actions::Vector{Union{CodeAction,Command}}, uri::URI, fi::FileInfo, idx::Int, testsetinfo::TestsetInfo, action_range::Range)
+    tsr = get_source_range(testsetinfo.st0; adjust_last=1) # +1 to support cases like `@testset "xxx" begin ... end│`
     overlap(action_range, tsr) || return nothing
     tsn = testset_name(testsetinfo)
     clear_arguments = run_arguments = Any[uri, idx, tsn]
@@ -278,18 +291,6 @@ function show_testrunner_result_in_message(server::Server, result::TestRunnerRes
             actions)))
 end
 
-struct TestRunnerProgressCaller <: RequestCaller
-    uri::URI
-    fi::FileInfo
-    idx::Int
-    testset_name::String
-    filepath::String
-    token::ProgressToken
-end
-
-# TODO make this thread-safe:
-# we should take a server state lock, and validate the state before actually making the
-# modifications to it.
 function testrunner_run_testset(server::Server, uri::URI, fi::FileInfo, idx::Int, tsn::String, filepath::String;
                                 token::Union{Nothing,ProgressToken}=nothing)
     if isnothing(Sys.which("testrunner"))
@@ -428,6 +429,15 @@ function open_testsetinfo_logs!(server::Server, tsn::String, logs::String)
     end
 end
 
+struct TestRunnerTestsetProgressCaller <: RequestCaller
+    uri::URI
+    fi::FileInfo
+    idx::Int
+    testset_name::String
+    filepath::String
+    token::ProgressToken
+end
+
 """
     testrunner_run_testset_from_uri(server::Server, uri::URI, idx::Int) -> Union{Nothing, String}
 
@@ -454,7 +464,7 @@ function testrunner_run_testset_from_uri(server::Server, uri::URI, idx::Int, tsn
     if supports(server, :window, :workDoneProgress)
         id = String(gensym(:WorkDoneProgressCreateRequest_testrunner))
         token = String(gensym(:TestRunnerProgress))
-        server.state.currently_requested[id] = TestRunnerProgressCaller(uri, fi, idx, tsn, filepath, token)
+        server.state.currently_requested[id] = TestRunnerTestsetProgressCaller(uri, fi, idx, tsn, filepath, token)
         params = WorkDoneProgressCreateParams(; token)
         send(server, WorkDoneProgressCreateRequest(; id, params))
     else

@@ -49,8 +49,8 @@ function handle_requested_response(server::Server, msg::Dict{Symbol,Any},
         handle_test_runner_message_response2(server, msg, request_caller)
     elseif request_caller isa TestRunnerMessageRequestCaller4
         handle_test_runner_message_response4(server, msg, request_caller)
-    elseif request_caller isa TestRunnerProgressCaller
-        handle_test_runner_progress_response(server, msg, request_caller)
+    elseif request_caller isa TestRunnerTestsetProgressCaller
+        handle_testrunner_testset_progress_response(server, msg, request_caller)
     elseif request_caller isa CodeLensRefreshRequestCaller
         handle_code_lens_refresh_response(server, msg, request_caller)
     else
@@ -132,7 +132,7 @@ function handle_test_runner_message_response4(server::Server, msg::Dict{Symbol,A
     # If user cancelled (result is null), do nothing
 end
 
-function handle_test_runner_progress_response(server::Server, msg::Dict{Symbol,Any}, request_caller::TestRunnerProgressCaller)
+function handle_testrunner_testset_progress_response(server::Server, msg::Dict{Symbol,Any}, request_caller::TestRunnerTestsetProgressCaller)
     if handle_response_error(server, msg, "create work done progress")
         return
     end

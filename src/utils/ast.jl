@@ -51,13 +51,6 @@ function offset_to_xy(code::Union{AbstractString, Vector{UInt8}}, byte::Int) # u
 end
 offset_to_xy(fi::FileInfo, byte::Integer) = offset_to_xy(fi.parsed_stream, byte)
 
-function source_range(fi::FileInfo, x::Union{JS.SyntaxNode,JL.SyntaxTree};
-                      adjust_first::Int=0, adjust_last::Int=0)
-    return Range(;
-        start = offset_to_xy(fi, JS.first_byte(x)+adjust_first),
-        var"end" = offset_to_xy(fi, JS.last_byte(x)+adjust_last))
-end
-
 """
 Like `Base.unique`, but over node ids, and with this comment promising that the
 lowest-index copy of each node is kept.
@@ -288,14 +281,18 @@ function select_dotprefix_node(st::JL.SyntaxTree, offset::Int)
 end
 
 """
-    get_source_range(node::JL.SyntaxTree) -> range::LSP.Range
+    get_source_range(node::JL.SyntaxTree;
+                     include_at_mark::Bool = true,
+                     adjust_first::Int = 0, adjust_last::Int = 0) -> range::LSP.Range
 
 Returns the position information of `node` in the source file in `LSP.Range` format.
 """
-function get_source_range(node::JL.SyntaxTree; include_at_mark::Bool=true)
+function get_source_range(node::JL.SyntaxTree;
+                          include_at_mark::Bool = true,
+                          adjust_first::Int = 0, adjust_last::Int = 0)
     sourcefile = JS.sourcefile(node)
-    first_line, first_char = JS.source_location(sourcefile, JS.first_byte(node))
-    last_line, last_char = JS.source_location(sourcefile, JS.last_byte(node))
+    first_line, first_char = JS.source_location(sourcefile, JS.first_byte(node)+adjust_first)
+    last_line, last_char = JS.source_location(sourcefile, JS.last_byte(node)+adjust_last)
     return Range(;
         start = Position(;
             line = first_line - 1,
