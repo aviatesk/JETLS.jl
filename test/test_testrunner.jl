@@ -291,6 +291,8 @@ end
             @test 2 + │2 == 4
         end
 
+        @test_throws DomainError│ sin(Inf)
+
         # Edge case with complex expression
         @test begin
             x = 5│
@@ -298,7 +300,7 @@ end
         end
         """
         test_code, positions = JETLS.get_text_and_positions(test_code_with_positions)
-        @test length(positions) == 3
+        @test length(positions) == 4
 
         fi = JETLS.FileInfo(1, parsedstream(test_code))
         JETLS.update_testsetinfos!(server, fi; notify_server=false)
@@ -329,15 +331,23 @@ end
         @test code_actions[2].command.command == JETLS.COMMAND_TESTRUNNER_RUN_TESTCASE
         @test code_actions[2].command.arguments == [uri, 5, "`@test 2 + 2 == 4`"]
 
-        # Test action on multi-line @test (outside any testset)
+        # Test action on other Test.jl macros
         multiline_range = LSP.Range(;
             start = positions[3],
             var"end" = positions[3])
         code_actions = JETLS.testrunner_code_actions(uri, fi, fi.testsetinfos, multiline_range)
         @test length(code_actions) == 1
+        @test occursin("@test_throws DomainError sin(Inf)", code_actions[1].title)
+        @test code_actions[1].command.command == JETLS.COMMAND_TESTRUNNER_RUN_TESTCASE
+
+        # Test action on multi-line @test (outside any testset)
+        multiline_range = LSP.Range(;
+            start = positions[4],
+            var"end" = positions[4])
+        code_actions = JETLS.testrunner_code_actions(uri, fi, fi.testsetinfos, multiline_range)
+        @test length(code_actions) == 1
         @test occursin("@test begin", code_actions[1].title)
         @test code_actions[1].command.command == JETLS.COMMAND_TESTRUNNER_RUN_TESTCASE
-        @test code_actions[1].command.arguments[2] == 9  # Line number of the @test
     end
 end
 

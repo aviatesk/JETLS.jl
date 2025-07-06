@@ -258,6 +258,9 @@ end
     x = complex_calculation()
     validate(x)
 end
+
+# Other Test.jl macros are supported too
+@test_throws DomainErrors sin(Inf)
 ```
 
 See the [README.md](https://github.com/aviatesk/TestRunner.jl) of TestRunner.jl

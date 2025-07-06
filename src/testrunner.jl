@@ -5,6 +5,18 @@ const TESTRUNNER_RERUN_TITLE = "▶ Rerun"
 const TESTRUNNER_OPEN_LOGS_TITLE = "☰ Open logs"
 const TESTRUNNER_CLEAR_RESULT_TITLE = "✓ Clear result"
 
+const TEST_MACROS = [
+    "@inferred",
+    "@test",
+    "@test_broken",
+    "@test_deprecated",
+    "@test_logs",
+    "@test_nowarn",
+    "@test_skip",
+    "@test_throws",
+    "@test_warn"
+]
+
 function summary_testrunner_result(result::TestRunnerResult)
     (; n_passed, n_failed, n_errored, n_broken, duration) = result.stats
     n_total = n_passed + n_failed + n_errored + n_broken
@@ -219,7 +231,7 @@ function testrunner_testcase_code_actions!(code_actions::Vector{Union{CodeAction
     traverse_skip_func_scope(st0_top) do st0::SyntaxTree0
         if JS.kind(st0) === JS.K"macrocall" && JS.numchildren(st0) ≥ 1
             macroname = st0[1]
-            if JS.kind(macroname) === JS.K"MacroName" && macroname.name_val == "@test"
+            if JS.kind(macroname) === JS.K"MacroName" && macroname.name_val in TEST_MACROS
                 tcr = get_source_range(st0; adjust_last=1) # +1 to support cases like `@test ...│`
                 overlap(action_range, tcr) || return nothing
                 tcl = JS.source_line(st0)
@@ -288,7 +300,7 @@ struct TestRunnerMessageRequestCaller4 <: RequestCaller
 end
 
 function show_testrunner_result_in_message(server::Server, result::TestRunnerResult,
-                                           title::String;
+                                           title::String, request_key::String=title;
                                            next_info=nothing,
                                            extra_message::Union{Nothing,String}=nothing)
     summary = summary_testrunner_result(result)
@@ -310,7 +322,7 @@ function show_testrunner_result_in_message(server::Server, result::TestRunnerRes
         actions = MessageActionItem[
             MessageActionItem(; title = TESTRUNNER_OPEN_LOGS_TITLE)
         ]
-        request_caller = TestRunnerMessageRequestCaller2(title, result.logs)
+        request_caller = TestRunnerMessageRequestCaller2(request_key, result.logs)
     else
         actions = MessageActionItem[
             MessageActionItem(; title = TESTRUNNER_RERUN_TITLE)
@@ -318,7 +330,7 @@ function show_testrunner_result_in_message(server::Server, result::TestRunnerRes
             MessageActionItem(; title = TESTRUNNER_CLEAR_RESULT_TITLE)
         ]
         (; uri, idx) = next_info
-        request_caller = TestRunnerMessageRequestCaller4(title, uri, idx, result.logs)
+        request_caller = TestRunnerMessageRequestCaller4(request_key, uri, idx, result.logs)
     end
 
     id = String(gensym(:ShowMessageRequest))
@@ -493,7 +505,7 @@ function _testrunner_run_testcase(server::Server, uri::URI, tcl::Int, tct::Strin
         Test failures are shown as temporary diagnostics in the editor for 10 seconds.
         Open logs to view detailed error messages that persist."""
 
-    show_testrunner_result_in_message(server, result, "$tct"; extra_message)
+    show_testrunner_result_in_message(server, result, "$tct", #=request_key=#""; extra_message)
 
     return summary_testrunner_result(result)
 end
