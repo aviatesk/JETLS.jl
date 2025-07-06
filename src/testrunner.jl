@@ -5,12 +5,6 @@ const TESTRUNNER_RERUN_TITLE = "▶ Rerun"
 const TESTRUNNER_OPEN_LOGS_TITLE = "☰ Open logs"
 const TESTRUNNER_CLEAR_RESULT_TITLE = "✓ Clear result"
 
-struct TestsetDiagnosticsKey <: ExtraDiagnosticsKey
-    idx::Int
-    fi::FileInfo
-end
-to_file_info_impl(key::TestsetDiagnosticsKey) = key.fi
-
 function summary_testrunner_result(result::TestRunnerResult)
     (; n_passed, n_failed, n_errored, n_broken, duration) = result.stats
     n_total = n_passed + n_failed + n_errored + n_broken
@@ -29,25 +23,46 @@ testset_name(testset::JL.SyntaxTree) = JS.sourcetext(testset[2])
 testset_line(testsetinfo::TestsetInfo) = testset_line(testsetinfo.st0)
 testset_line(testset::JL.SyntaxTree) = JS.source_line(testset[2])
 
-function update_testsetinfos!(server::Server, fi::FileInfo)
+function update_testsetinfos!(server::Server, fi::FileInfo; notify_server::Bool=true)
     st0_top = build_tree!(JL.SyntaxTree, fi)
     testsets = find_executable_testsets(st0_top)
-    if length(fi.testsetinfos) ≠ length(testsets)
-        invalidate_testsetinfos!(server, fi, testsets)
-    elseif any(1:length(testsets)) do i::Int
-            testset_name(fi.testsetinfos[i]) ≠ testset_name(testsets[i])
-        end
-        invalidate_testsetinfos!(server, fi, testsets)
-    else
-        # update the `@testset` syntax tree only
-        for i = 1:length(fi.testsetinfos)
-            testsetsᵢ = fi.testsetinfos[i]
-            if isdefined(testsetsᵢ, :result)
-                fi.testsetinfos[i] = TestsetInfo(testsets[i], testsetsᵢ.result)
+    m, n = length(testsets), length(fi.testsetinfos)
+    if m == n == 0
+        return fi.testsetinfos # nothing to do
+    end
+    any_deleted = false
+    for i = 1:max(m, n)
+        if i ≤ m
+            testsetᵢ = testsets[i]
+            if i ≤ n
+                testsetinfoᵢ = fi.testsetinfos[i]
+                if isdefined(testsetinfoᵢ, :result)
+                    key = testsetinfoᵢ.result.key
+                    if testset_name(testsetᵢ) == key.testset_name
+                        # this `@testset` is likely still begin mapped to the original
+                        # testset, so let's keep the result and diagnostics
+                        fi.testsetinfos[i] = TestsetInfo(testsetᵢ, testsetinfoᵢ.result)
+                    else
+                        any_deleted |= clear_extra_diagnostics!(server, key) # === true
+                        fi.testsetinfos[i] = TestsetInfo(testsetᵢ)
+                    end
+                else
+                    fi.testsetinfos[i] = TestsetInfo(testsetᵢ)
+                end
             else
-                fi.testsetinfos[i] = TestsetInfo(testsets[i])
+                push!(fi.testsetinfos, TestsetInfo(testsetᵢ))
             end
+        else # i > m && i ≤ n
+            testsetinfoᵢ = fi.testsetinfos[i]
+            if isdefined(testsetinfoᵢ, :result)
+                any_deleted |= clear_extra_diagnostics!(server, testsetinfoᵢ.result.key) # === true
+            end
+            # `fi.testsetinfos[i]` will be erased by the following `resize!`
         end
+    end
+    resize!(fi.testsetinfos, m)
+    if notify_server && any_deleted
+        notify_diagnostics!(server)
     end
     return fi.testsetinfos
 end
@@ -78,20 +93,6 @@ function find_executable_testsets(st0_top::SyntaxTree0)
     return testsets
 end
 
-function invalidate_testsetinfos!(server::Server, fi::FileInfo, newtestsets::JL.SyntaxList)
-    resize!(fi.testsetinfos, length(newtestsets))
-    for i = 1:length(newtestsets)
-        fi.testsetinfos[i] = TestsetInfo(newtestsets[i])
-    end
-    any_deleted = false
-    for key in keys(server.state.extra_diagnostics)
-        if key isa TestsetDiagnosticsKey && key.fi === fi
-            any_deleted |= clear_extra_diagnostics!(server, key)
-        end
-    end
-    any_deleted && notify_diagnostics!(server)
-end
-
 function testrunner_code_lenses(uri::URI, fi::FileInfo, testsetinfos::Vector{TestsetInfo})
     code_lenses = CodeLens[]
     for (idx, testsetinfo) in enumerate(testsetinfos)
@@ -105,7 +106,7 @@ function testrunner_code_lenses!(code_lenses::Vector{CodeLens}, uri::URI, fi::Fi
     tsn = testset_name(testsetinfo)
     clear_arguments = run_arguments = Any[uri, idx, tsn]
     if isdefined(testsetinfo, :result)
-        prev_result = testsetinfo.result
+        prev_result = testsetinfo.result.result
         let summary = summary_testrunner_result(prev_result)
             command = Command(;
                 title = "$TESTRUNNER_RERUN_TITLE $tsn $summary",
@@ -158,7 +159,7 @@ function testrunner_code_actions!(code_actions::Vector{Union{CodeAction,Command}
     tsn = testset_name(testsetinfo)
     clear_arguments = run_arguments = Any[uri, idx, tsn]
     if isdefined(testsetinfo, :result)
-        prev_result = testsetinfo.result
+        prev_result = testsetinfo.result.result
         let summary = summary_testrunner_result(prev_result)
             title = "$TESTRUNNER_RERUN_TITLE $tsn $summary"
             command = Command(;
@@ -364,8 +365,8 @@ function _testrunner_run_testset(server::Server, uri::URI, fi::FileInfo, idx::In
         return ret
     end
 
-    fi.testsetinfos[idx] = TestsetInfo(fi.testsetinfos[idx].st0, result)
-    key = TestsetDiagnosticsKey(idx, fi)
+    key = TestsetDiagnosticsKey(tsn, idx, fi)
+    fi.testsetinfos[idx] = TestsetInfo(fi.testsetinfos[idx].st0, TestsetResult(result, key))
     if !isempty(result.diagnostics)
         server.state.extra_diagnostics[key] = testrunner_result_to_diagnostics(result)
     elseif haskey(server.state.extra_diagnostics, key)
@@ -481,7 +482,7 @@ function try_clear_testrunner_result!(server::Server, uri::URI, idx::Int, tsn::S
     end
 
     fi.testsetinfos[idx] = TestsetInfo(fi.testsetinfos[idx].st0)
-    if clear_extra_diagnostics!(server, TestsetDiagnosticsKey(idx, fi))
+    if clear_extra_diagnostics!(server, TestsetDiagnosticsKey(tsn, idx, fi))
         notify_diagnostics!(server)
     end
 

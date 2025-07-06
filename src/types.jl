@@ -1,10 +1,26 @@
 const SyntaxTree0 = typeof(JS.build_tree(JL.SyntaxTree, JS.ParseStream("")))
 
-struct TestsetInfo
-    st0::SyntaxTree0
+abstract type ExtraDiagnosticsKey end
+to_file_info(key::ExtraDiagnosticsKey) = to_file_info_impl(key)::FileInfo
+@eval to_key(key::ExtraDiagnosticsKey) = hash(key, $(rand(UInt)))
+
+struct _TestsetDiagnosticsKey{FileInfo} <: ExtraDiagnosticsKey
+    testset_name::String
+    idx::Int
+    fi::FileInfo
+end
+to_file_info_impl(key::_TestsetDiagnosticsKey) = key.fi
+
+struct _TestsetResult{FileInfo}
     result::TestRunnerResult
-    TestsetInfo(st0::SyntaxTree0) = new(st0)
-    TestsetInfo(st0::SyntaxTree0, result::TestRunnerResult) = new(st0, result)
+    key::_TestsetDiagnosticsKey{FileInfo}
+end
+
+struct _TestsetInfo{FileInfo}
+    st0::SyntaxTree0
+    result::_TestsetResult{FileInfo}
+    _TestsetInfo{FileInfo}(st0::SyntaxTree0) where {FileInfo} = new{FileInfo}(st0)
+    _TestsetInfo{FileInfo}(st0::SyntaxTree0, result::_TestsetResult{FileInfo}) where {FileInfo} = new{FileInfo}(st0, result)
 end
 
 mutable struct FileInfo
@@ -13,10 +29,14 @@ mutable struct FileInfo
     # filled after cached
     syntax_node::Dict{Any,JS.SyntaxNode}
     syntax_tree0::Dict{Any,SyntaxTree0}
-    testsetinfos::Vector{TestsetInfo} # synced by code lens, or code actions
+    testsetinfos::Vector{_TestsetInfo{FileInfo}} # synced by code lens, or code actions
     FileInfo(version::Int, parsed_stream::JS.ParseStream) =
         new(version, parsed_stream, Dict{Any,JS.SyntaxNode}(), Dict{Any,SyntaxTree0}(), TestsetInfo[])
 end
+
+const TestsetDiagnosticsKey = _TestsetDiagnosticsKey{FileInfo}
+const TestsetResult = _TestsetResult{FileInfo}
+const TestsetInfo = _TestsetInfo{FileInfo}
 
 mutable struct SavedFileInfo
     parsed_stream::JS.ParseStream
@@ -127,10 +147,6 @@ struct Registered
     method::String
 end
 
-abstract type ExtraDiagnosticsKey end
-to_file_info(key::ExtraDiagnosticsKey) = to_file_info_impl(key)::FileInfo
-@eval to_key(key::ExtraDiagnosticsKey) = hash(key, $(rand(UInt)))
-
 struct ExtraDiagnostics
     keys::Dict{UInt,ExtraDiagnosticsKey}
     values::Dict{UInt,URI2Diagnostics}
@@ -223,8 +239,7 @@ mutable struct ServerState
             #=analysis_cache=# Dict{URI,AnalysisInfo}(),
             #=extra_diagnostics=# ExtraDiagnostics(),
             #=currently_requested=# Dict{String,RequestCaller}(),
-            #=currently_registered=# Set{Registered}(),
-        )
+            #=currently_registered=# Set{Registered}())
     end
 end
 
@@ -236,8 +251,7 @@ struct Server{Callback}
         return new{Callback}(
             endpoint,
             callback,
-            ServerState(),
-        )
+            ServerState())
     end
 end
 Server() = Server(Returns(nothing), Endpoint(IOBuffer(), IOBuffer())) # used for tests
