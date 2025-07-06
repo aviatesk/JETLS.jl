@@ -168,6 +168,13 @@ testrunner --verbose test/test_completions "some_completion_func"
 Note that TestRunner.jl is still experimental.
 The most reliable way to run tests is still to execute test files standalone.
 
+# Environment-Related Issues
+For AI agents: **NEVER MODIFY [Project.toml](./Project.toml) OR  [test/Project.toml](./test/Project.toml) BY YOURSELF**.
+If you encounter errors that seem to be environment-related when running tests,
+in most cases this is due to working directory issues, so first `cd` to the root directory of this project
+and re-run the tests. Never attempt to fix environment-related issues yourself.
+If you cannot resolve the problem, inform the human engineer and ask for instructions.
+
 # About Modifications to Code You've Written
 If you, as an AI agent, add or modify code, and the user appears to have made
 further manual changes to that code after your response, please respect those
