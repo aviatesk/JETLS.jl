@@ -1,6 +1,8 @@
 module LSP
 
 using StructTypes: StructTypes
+
+include("URIs2/URIs2.jl")
 using ..URIs2: URI
 
 const exports = Set{Symbol}()

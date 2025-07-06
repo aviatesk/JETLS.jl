@@ -11,6 +11,7 @@ JET = "c3a54625-cd67-489e-a8e7-0a5a0ff4e31b"
 JSON3 = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
 JuliaLowering = "f3c80556-a63f-4383-b822-37d64f81a311"
 JuliaSyntax = "70703baa-626e-46a2-a12c-08ffd08c73b4"
+LSP = "880dcf91-6fde-4251-87fc-bfd84012291a"
 Markdown = "d6f4376e-aef5-505a-96c1-9c027394607a"
 Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
 PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
@@ -22,6 +23,7 @@ StructTypes = "856f2bd8-1eba-4b0a-8007-ebc267875bd4"
 JET = {rev = "master", url = "https://github.com/aviatesk/JET.jl"}
 JuliaLowering = {rev = "avi/JETLS", url = "https://github.com/aviatesk/JuliaLowering.jl"}
 JuliaSyntax = {rev = "eceaa39", url = "https://github.com/JuliaLang/JuliaSyntax.jl"}
+LSP = {path = "LSP"}
 
 [compat]
 JET = "0.10.5"
