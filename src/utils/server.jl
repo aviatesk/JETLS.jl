@@ -92,10 +92,23 @@ function find_analysis_unit_for_uri(state::ServerState, uri::URI)
     return analysis_unit
 end
 
-function clear_extra_diagnostics!(server::Server, key)
-    if haskey(server.state.extra_diagnostics, key)
-        delete!(server.state.extra_diagnostics, key)
+clear_extra_diagnostics!(server::Server, args...) = clear_extra_diagnostics!(server.state, args...)
+clear_extra_diagnostics!(state::ServerState, args...) = clear_extra_diagnostics!(state.extra_diagnostics, args...)
+function clear_extra_diagnostics!(extra_diagnostics::ExtraDiagnostics, key::ExtraDiagnosticsKey)
+    if haskey(extra_diagnostics, key)
+        delete!(extra_diagnostics, key)
         return true
     end
     return false
+end
+function clear_extra_diagnostics!(extra_diagnostics::ExtraDiagnostics, fi::FileInfo) # bulk deletion
+    any_deleted = false
+    for key in keys(extra_diagnostics)
+        keyfi = to_file_info(key)
+        if keyfi === fi
+            delete!(extra_diagnostics, key)
+            any_deleted |= true
+        end
+    end
+    return any_deleted
 end

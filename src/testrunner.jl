@@ -5,20 +5,20 @@ const TESTRUNNER_RERUN_TITLE = "▶ Rerun"
 const TESTRUNNER_OPEN_LOGS_TITLE = "☰ Open logs"
 const TESTRUNNER_CLEAR_RESULT_TITLE = "✓ Clear result"
 
-struct TRDiagKey <: ExtraDiagnosticsKey
+struct TestsetDiagnosticsKey <: ExtraDiagnosticsKey
     idx::Int
     fi::FileInfo
 end
-to_file_info_impl(key::TRDiagKey) = key.fi
+to_file_info_impl(key::TestsetDiagnosticsKey) = key.fi
 
 function summary_testrunner_result(result::TestRunnerResult)
     (; n_passed, n_failed, n_errored, n_broken, duration) = result.stats
     n_total = n_passed + n_failed + n_errored + n_broken
     summary = "[ Total: $n_total"
-    iszero(n_passed) || (summary *= " | Pass: $n_passed")
-    iszero(n_failed) || (summary *= " | Fail: $n_failed")
+    iszero(n_passed)  || (summary *= " | Pass: $n_passed")
+    iszero(n_failed)  || (summary *= " | Fail: $n_failed")
     iszero(n_errored) || (summary *= " | Error: $n_errored")
-    iszero(n_broken) || (summary *= " | Broken: $n_broken")
+    iszero(n_broken)  || (summary *= " | Broken: $n_broken")
     duration_str = format_duration(duration)
     summary *= " | Time: $duration_str ]"
     return summary
@@ -85,7 +85,7 @@ function invalidate_testsetinfos!(server::Server, fi::FileInfo, newtestsets::JL.
     end
     any_deleted = false
     for key in keys(server.state.extra_diagnostics)
-        if key isa TRDiagKey && key.fi === fi
+        if key isa TestsetDiagnosticsKey && key.fi === fi
             any_deleted |= clear_extra_diagnostics!(server, key)
         end
     end
@@ -365,7 +365,7 @@ function _testrunner_run_testset(server::Server, uri::URI, fi::FileInfo, idx::In
     end
 
     fi.testsetinfos[idx] = TestsetInfo(fi.testsetinfos[idx].st0, result)
-    key = TRDiagKey(idx, fi)
+    key = TestsetDiagnosticsKey(idx, fi)
     if !isempty(result.diagnostics)
         server.state.extra_diagnostics[key] = testrunner_result_to_diagnostics(result)
     elseif haskey(server.state.extra_diagnostics, key)
@@ -481,7 +481,7 @@ function try_clear_testrunner_result!(server::Server, uri::URI, idx::Int, tsn::S
     end
 
     fi.testsetinfos[idx] = TestsetInfo(fi.testsetinfos[idx].st0)
-    if clear_extra_diagnostics!(server, TRDiagKey(idx, fi))
+    if clear_extra_diagnostics!(server, TestsetDiagnosticsKey(idx, fi))
         notify_diagnostics!(server)
     end
 

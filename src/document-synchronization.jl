@@ -167,15 +167,9 @@ function handle_DidCloseTextDocumentNotification(server::Server, msg::DidCloseTe
     fi = get(server.state.file_cache, uri, nothing)
     if !isnothing(fi)
         delete!(server.state.file_cache, fi)
-        any_deleted = false
-        for key in keys(server.state.extra_diagnostics)
-            keyfi = to_file_info(key)
-            if keyfi === fi
-                delete!(server.state.extra_diagnostics, key)
-                any_deleted |= true
-            end
+        if clear_extra_diagnostics!(server, fi)
+            notify_diagnostics!(server)
         end
-        any_deleted && notify_diagnostics!(server)
         cleanup_file_info!(fi)
     end
     sfi = get(server.state.saved_file_cache, uri, nothing)
