@@ -129,6 +129,73 @@ end
 
 abstract type ExtraDiagnosticsKey end
 to_file_info(key::ExtraDiagnosticsKey) = to_file_info_impl(key)::FileInfo
+@eval to_key(key::ExtraDiagnosticsKey) = hash(key, $(rand(UInt)))
+
+struct ExtraDiagnostics
+    keys::Dict{UInt,ExtraDiagnosticsKey}
+    values::Dict{UInt,URI2Diagnostics}
+end
+ExtraDiagnostics() = ExtraDiagnostics(Dict{UInt,ExtraDiagnosticsKey}(), Dict{UInt,URI2Diagnostics}())
+
+Base.haskey(extra_diagnostics::ExtraDiagnostics, key::ExtraDiagnosticsKey) =
+    haskey(extra_diagnostics.keys, to_key(key))
+Base.getindex(extra_diagnostics::ExtraDiagnostics, key::ExtraDiagnosticsKey) =
+    extra_diagnostics.values[to_key(key)]
+function Base.setindex!(extra_diagnostics::ExtraDiagnostics, val::URI2Diagnostics, key::ExtraDiagnosticsKey)
+    k = to_key(key)
+    extra_diagnostics.keys[k] = key
+    return extra_diagnostics.values[k] = val
+end
+function Base.get(extra_diagnostics::ExtraDiagnostics, key::ExtraDiagnosticsKey, default)
+    if haskey(extra_diagnostics, key)
+        return extra_diagnostics[key]
+    end
+    return default
+end
+function Base.get(f, extra_diagnostics::ExtraDiagnostics, key::ExtraDiagnosticsKey)
+    if haskey(extra_diagnostics, key)
+        return extra_diagnostics[key]
+    end
+    return f()
+end
+function Base.get!(extra_diagnostics::ExtraDiagnostics, key::ExtraDiagnosticsKey, default::URI2Diagnostics)
+    if haskey(extra_diagnostics, key)
+        return extra_diagnostics[key]
+    end
+    return extra_diagnostics[key] = default
+end
+function Base.get!(f, extra_diagnostics::ExtraDiagnostics, key::ExtraDiagnosticsKey)
+    if haskey(extra_diagnostics, key)
+        return extra_diagnostics[key]
+    end
+    return extra_diagnostics[key] = f()
+end
+Base.keys(extra_diagnostics::ExtraDiagnostics) = values(extra_diagnostics.keys)
+Base.values(extra_diagnostics::ExtraDiagnostics) = values(extra_diagnostics.values)
+function Base.push!(extra_diagnostics::ExtraDiagnostics, (key, val)::Pair{ExtraDiagnosticsKey,URI2Diagnostics})
+    k = to_key(key)
+    push!(extra_diagnostics.keys, k => val)
+    push!(extra_diagnostics.values, k => val)
+end
+function Base.delete!(extra_diagnostics::ExtraDiagnostics, key::ExtraDiagnosticsKey)
+    k = to_key(key)
+    delete!(extra_diagnostics.keys, k)
+    delete!(extra_diagnostics.values, k)
+end
+
+Base.length(extra_diagnostics::ExtraDiagnostics) = length(extra_diagnostics.keys)
+Base.eltype(::Type{ExtraDiagnostics}) = Pair{ExtraDiagnosticsKey,URI2Diagnostics}
+Base.keytype(::Type{ExtraDiagnostics}) = ExtraDiagnosticsKey
+Base.valtype(::Type{ExtraDiagnostics}) = URI2Diagnostics
+function Base.iterate(extra_diagnostics::ExtraDiagnostics, keysiter=(keys(extra_diagnostics.keys),))
+    next = iterate(keysiter...)
+    next === nothing && return nothing
+    k, nextstate = next
+    nextkeysiter = (keysiter[1], nextstate)
+    key = extra_diagnostics.keys[k]
+    val = extra_diagnostics.values[k]
+    return (key => val, nextkeysiter)
+end
 
 struct LSPostProcessor
     inner::JET.PostProcessor
@@ -141,7 +208,7 @@ mutable struct ServerState
     const file_cache::Dict{URI,FileInfo} # syntactic analysis cache (synced with `textDocument/didChange`)
     const saved_file_cache::Dict{URI,SavedFileInfo} # syntactic analysis cache (synced with `textDocument/didSave`)
     const analysis_cache::Dict{URI,AnalysisInfo} # entry points for the full analysis (currently not cached really)
-    const extra_diagnostics::Dict{ExtraDiagnosticsKey,URI2Diagnostics}
+    const extra_diagnostics::ExtraDiagnostics
     const currently_requested::Dict{String,RequestCaller}
     const currently_registered::Set{Registered}
     root_path::String
@@ -154,7 +221,7 @@ mutable struct ServerState
             #=file_cache=# Dict{URI,FileInfo}(),
             #=saved_file_cache=# Dict{URI,SavedFileInfo}(),
             #=analysis_cache=# Dict{URI,AnalysisInfo}(),
-            #=extra_diagnostics=# Dict{FileInfo,URI2Diagnostics}(),
+            #=extra_diagnostics=# ExtraDiagnostics(),
             #=currently_requested=# Dict{String,RequestCaller}(),
             #=currently_registered=# Set{Registered}(),
         )

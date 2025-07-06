@@ -15,6 +15,7 @@ end
         @testset "path" include("utils/test_path.jl")
         @testset "markdown" include("utils/test_markdown.jl")
     end
+    @testset "types" include("test_types.jl")
     @testset "URIs2" include("test_URIs2.jl")
     @testset "registration" include("test_registration.jl")
     @testset "resolver" include("test_resolver.jl")
