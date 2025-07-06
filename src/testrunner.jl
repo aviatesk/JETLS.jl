@@ -360,7 +360,7 @@ function testrunner_run_testset(server::Server, uri::URI, fi::FileInfo, idx::Int
             params = ProgressParams(;
                 token,
                 value = WorkDoneProgressBegin(;
-                    title = "Running tests for '$tsn'",
+                    title = "Running tests for $tsn",
                     cancellable = false))))
     end
 
@@ -549,7 +549,7 @@ function open_testsetinfo_logs!(server::Server, tsn::String, logs::String)
         end
         uri = filepath2uri(temp_path)
         show_info_message(server, """
-        Test logs for '$tsn' saved to:
+        Test logs for $tsn saved to:
 
         [$temp_path]($uri)
         """)
