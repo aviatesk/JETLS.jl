@@ -15,11 +15,8 @@ push_init_hooks!() do
     @info "Running JETLS with" JETLS_DEV_MODE JETLS_TEST_MODE
 end
 
-include("URIs2/URIs2.jl")
-using .URIs2
-
-include("LSP/LSP.jl")
-using .LSP
+using LSP
+using LSP.URIs2
 
 include("JSONRPC/JSONRPC.jl")
 using .JSONRPC

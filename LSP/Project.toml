@@ -1,0 +1,10 @@
+name = "LSP"
+uuid = "880dcf91-6fde-4251-87fc-bfd84012291a"
+version = "0.1.0"
+authors = ["Shuhei Kadowaki <aviatesk@gmail.com>"]
+
+[deps]
+StructTypes = "856f2bd8-1eba-4b0a-8007-ebc267875bd4"
+
+[compat]
+StructTypes = "1.11.0"
