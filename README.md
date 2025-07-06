@@ -162,26 +162,30 @@ When you open a Julia file containing `@testset` blocks, JETLS displays
 interactive code lenses above each `@testset`:
 
 - **`▶ Run "testset_name"`**: Run the testset for the first time
-> ![TestRunner Code Lens](./assets/testrunner-code-lens.png)
+> ![TestRunner Code Lens](./assets/testrunner-code-lens-dark.png#gh-dark-mode-only)
+> ![TestRunner Code Lens](./assets/testrunner-code-lens-light.png#gh-light-mode-only)
 
 After running tests, the code lens is refreshed as follows:
 - **`▶ Rerun "testset_name" [summary]`**: Re-run a testset that has previous
   results
 - **`☰ Open logs`**: View the detailed test output in a new editor tab
 - **`✓ Clear result`**: Remove the test results and inline diagnostics
-> ![TestRunner Code Lens with Results](./assets/testrunner-code-lens-refreshed.png)
+> ![TestRunner Code Lens with Results](./assets/testrunner-code-lens-refreshed-dark.png#gh-dark-mode-only)
+> ![TestRunner Code Lens with Results](./assets/testrunner-code-lens-refreshed-light.png#gh-light-mode-only)
 
 #### Code Actions
 
 You can also trigger test runs via "code actions" when the code action range is
 requested inside a `@testset` block:
-> ![TestRunner Code Actions](./assets/testrunner-code-actions.png)
+> ![TestRunner Code Actions](./assets/testrunner-code-actions-dark.png#gh-dark-mode-only)
+> ![TestRunner Code Actions](./assets/testrunner-code-actions-light.png#gh-light-mode-only)
 
 #### Test Diagnostics
 
 Failed tests are displayed as diagnostics (red squiggly lines) at the exact
 lines where the failures occurred, making it easy to identify and fix issues:
-> ![TestRunner Diagnostics](./assets/testrunner-diagnostics.png)
+> ![TestRunner Diagnostics](./assets/testrunner-diagnostics-dark.png#gh-dark-mode-only)
+> ![TestRunner Diagnostics](./assets/testrunner-diagnostics-light.png#gh-light-mode-only)
 
 #### Progress Notifications
 
