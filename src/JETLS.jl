@@ -1,6 +1,6 @@
 module JETLS
 
-export Server, Endpoint, runserver
+export Server, LSEndpoint, runserver
 
 const __init__hooks__ = Any[]
 push_init_hooks!(hook) = push!(__init__hooks__, hook)
@@ -18,8 +18,9 @@ end
 using LSP
 using LSP.URIs2
 
-include("JSONRPC/JSONRPC.jl")
-using .JSONRPC
+using JSONRPC: JSONRPC, Endpoint
+# constructor of `Endpoint` with LSP method dispatcher
+LSEndpoint(args...) = Endpoint(args..., method_dispatcher)
 
 using Pkg
 using JET: CC, JET
@@ -105,7 +106,7 @@ for development purposes only, particularly for inspection or dynamic registrati
 global currently_running::Server
 
 runserver(args...) = runserver(Returns(nothing), args...) # no callback specified
-runserver(callback, in::IO, out::IO) = runserver(callback, Endpoint(in, out))
+runserver(callback, in::IO, out::IO) = runserver(callback, LSEndpoint(in, out))
 runserver(callback, endpoint::Endpoint) = runserver(Server(callback, endpoint))
 function runserver(server::Server)
     shutdown_requested = false
