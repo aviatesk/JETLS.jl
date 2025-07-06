@@ -403,7 +403,7 @@ function _testrunner_run_testset(server::Server, uri::URI, fi::FileInfo, idx::In
     if !is_testsetinfo_valid(fi, idx, tsn)
         # If the file state has changed during test execution, it's difficult to apply results to the file:
         # Simply show only the option to open logs
-        show_testrunner_result_in_message(server, result, tsn)
+        show_testrunner_result_in_message(server, result, #=title=#tsn)
         return ret
     end
 
@@ -419,7 +419,7 @@ function _testrunner_run_testset(server::Server, uri::URI, fi::FileInfo, idx::In
     if supports(server, :workspace, :codeLens, :refreshSupport)
         request_codelens_refresh!(server)
     end
-    show_testrunner_result_in_message(server, result, tsn, (; uri, idx))
+    show_testrunner_result_in_message(server, result, #=title=#tsn; next_info=(; uri, idx))
 
     return ret
 end
