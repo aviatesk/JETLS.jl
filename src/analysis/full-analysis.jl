@@ -124,20 +124,20 @@ end
 
 function update_analysis_unit!(analysis_unit::AnalysisUnit, result)
     uri2diagnostics = analysis_unit.result.uri2diagnostics
-    cached_file_infos = analysis_unit.result.analyzed_file_infos
+    cached_analyzed_file_infos = analysis_unit.result.analyzed_file_infos
     cached_successfully_analyzed_file_infos = analysis_unit.result.successfully_analyzed_file_infos
-    new_file_infos = Dict{URI,JET.AnalyzedFileInfo}(
+    new_analyzed_file_infos = Dict{URI,JET.AnalyzedFileInfo}(
         # `filepath` is an absolute path (since `path` is specified as absolute)
         filename2uri(filepath) => analyzed_file_info for (filepath, analyzed_file_info) in result.res.analyzed_files)
-    for deleted_file_uri in setdiff(keys(cached_file_infos), keys(new_file_infos))
+    for deleted_file_uri in setdiff(keys(cached_analyzed_file_infos), keys(new_analyzed_file_infos))
         empty!(get!(()->Diagnostic[], uri2diagnostics, deleted_file_uri))
-        delete!(cached_file_infos, deleted_file_uri)
+        delete!(cached_analyzed_file_infos, deleted_file_uri)
         if is_full_analysis_successful(result)
             delete!(cached_successfully_analyzed_file_infos, deleted_file_uri)
         end
     end
-    for (new_file_uri, analyzed_file_info) in new_file_infos
-        cached_file_infos[new_file_uri] = analyzed_file_info
+    for (new_file_uri, analyzed_file_info) in new_analyzed_file_infos
+        cached_analyzed_file_infos[new_file_uri] = analyzed_file_info
         if is_full_analysis_successful(result)
             cached_successfully_analyzed_file_infos[new_file_uri] = analyzed_file_info
         end
