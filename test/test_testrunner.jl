@@ -60,36 +60,34 @@ end
 end
 
 @testset "summary_testrunner_result" begin
-    let result = mock_testrunner_result(n_passed=10, duration=1.5)
+    let result = mock_testrunner_result(; n_passed=10, duration=1.5)
         @test JETLS.summary_testrunner_result(result) == "[ Total: 10 | Pass: 10 | Time: 1.5s ]"
     end
 
-    let result = mock_testrunner_result(n_passed=5, n_failed=2, n_errored=1, n_broken=1, duration=0.123)
+    let result = mock_testrunner_result(; n_passed=5, n_failed=2, n_errored=1, n_broken=1, duration=0.123)
         expected = "[ Total: 9 | Pass: 5 | Fail: 2 | Error: 1 | Broken: 1 | Time: 123.0ms ]"
         @test JETLS.summary_testrunner_result(result) == expected
     end
 
-    let result = mock_testrunner_result(n_passed=0, duration=0.0)
+    let result = mock_testrunner_result(; n_passed=0, duration=0.0)
         @test JETLS.summary_testrunner_result(result) == "[ Total: 0 | Time: 0.0ms ]"
     end
 
-    let result = mock_testrunner_result(n_passed=100, duration=125.5)
+    let result = mock_testrunner_result(; n_passed=100, duration=125.5)
         @test JETLS.summary_testrunner_result(result) == "[ Total: 100 | Pass: 100 | Time: 2m 5.5s ]"
     end
 end
 
 @testset "testrunner_code_lenses" begin
-    let test_code = """
+    let server = JETLS.Server()
+        test_code = """
         @testset "my_tests" begin
             @test true
         end
         """
         fi = JETLS.FileInfo(1, parsedstream(test_code))
-        st0 = JETLS.build_tree!(JL.SyntaxTree, fi)
-        testsets = JETLS.find_executable_testsets(st0)
-        @test length(testsets) == 1
-
-        fi.testsetinfos = [JETLS.TestsetInfo(testsets[1])]
+        JETLS.update_testsetinfos!(server, fi; notify_server=false)
+        @test length(fi.testsetinfos) == 1
         uri = LSP.URI("file:///test.jl")
 
         code_lenses = JETLS.testrunner_code_lenses(uri, fi, fi.testsetinfos)
@@ -103,7 +101,8 @@ end
         @test first_lens.range isa LSP.Range
     end
 
-    let test_code = """
+    let server = JETLS.Server()
+        test_code = """
         @testset "my_tests" begin
             @test true
         end
@@ -113,16 +112,13 @@ end
         end
         """
         fi = JETLS.FileInfo(1, parsedstream(test_code))
-        st0 = JETLS.build_tree!(JL.SyntaxTree, fi)
-        testsets = JETLS.find_executable_testsets(st0)
-        @test length(testsets) == 2
+        JETLS.update_testsetinfos!(server, fi; notify_server=false)
+        @test length(fi.testsetinfos) == 2
 
-        result = mock_testrunner_result(n_passed=1)
+        result = mock_testrunner_result(; n_passed=1)
         key = JETLS.TestsetDiagnosticsKey("\"my_tests\"", 1, fi)
-        fi.testsetinfos = [
-            JETLS.TestsetInfo(testsets[1], JETLS.TestsetResult(result, key)),
-            JETLS.TestsetInfo(testsets[2])
-        ]
+        fi.testsetinfos[1] = JETLS.TestsetInfo(fi.testsetinfos[1].st0, JETLS.TestsetResult(result, key))
+
         uri = LSP.URI("file:///test.jl")
 
         code_lenses = JETLS.testrunner_code_lenses(uri, fi, fi.testsetinfos)
@@ -156,7 +152,8 @@ end
 end
 
 @testset "testrunner_code_actions" begin
-    let test_code_with_positions = """
+    let server = JETLS.Server()
+        test_code_with_positions = """
         @testset "first_test" begin
             @test tr│ue
         end
@@ -171,14 +168,9 @@ end
         @test length(positions) == 4
 
         fi = JETLS.FileInfo(1, parsedstream(test_code))
-        st0 = JETLS.build_tree!(JL.SyntaxTree, fi)
-        testsets = JETLS.find_executable_testsets(st0)
-        @test length(testsets) == 2
+        JETLS.update_testsetinfos!(server, fi; notify_server=false)
+        @test length(fi.testsetinfos) == 2
 
-        fi.testsetinfos = [
-            JETLS.TestsetInfo(testsets[1]),
-            JETLS.TestsetInfo(testsets[2])
-        ]
         uri = LSP.URI("file:///test.jl")
 
         # Test action at position inside first testset
@@ -242,7 +234,8 @@ end
         @test isempty(code_actions)
     end
 
-    let test_code_with_positions = """
+    let server = JETLS.Server()
+        test_code_with_positions = """
         @testset "test_wi│th_results" begin
             @test true
         end
@@ -251,12 +244,12 @@ end
         @test length(positions) == 1
 
         fi = JETLS.FileInfo(1, parsedstream(test_code))
-        st0 = JETLS.build_tree!(JL.SyntaxTree, fi)
-        testsets = JETLS.find_executable_testsets(st0)
+        JETLS.update_testsetinfos!(server, fi; notify_server=false)
+        @test length(fi.testsetinfos) == 1
 
-        result = mock_testrunner_result(n_passed=1, duration=0.5)
+        result = mock_testrunner_result(; n_passed=1, duration=0.5)
         key = JETLS.TestsetDiagnosticsKey("\"test_with_results\"", 1, fi)
-        fi.testsetinfos = [JETLS.TestsetInfo(testsets[1], JETLS.TestsetResult(result, key))]
+        fi.testsetinfos[1] = JETLS.TestsetInfo(fi.testsetinfos[1].st0, JETLS.TestsetResult(result, key))
         uri = LSP.URI("file:///test.jl")
 
         testset_range = LSP.Range(;
@@ -283,7 +276,8 @@ end
 end
 
 @testset "update_testsetinfos!" begin
-    let test_code = """
+    let server = JETLS.Server()
+        test_code = """
         @testset "foo" begin
             @test 10 > 0
         end
@@ -293,25 +287,22 @@ end
         end
         """
         fi = JETLS.FileInfo(1, parsedstream(test_code))
+        JETLS.update_testsetinfos!(server, fi; notify_server=false)
+        @test length(fi.testsetinfos) == 2
 
-        st0 = JETLS.build_tree!(JL.SyntaxTree, fi)
-        testsets = JETLS.find_executable_testsets(st0)
-        @test length(testsets) == 2
-
-        result1 = mock_testrunner_result(n_passed=1)
+        result1 = mock_testrunner_result(; n_passed=1)
         key1 = JETLS.TestsetDiagnosticsKey("\"foo\"", 1, fi)
-
-        result2 = mock_testrunner_result(n_passed=0, n_failed=1)
+        result2 = mock_testrunner_result(; n_passed=0, n_failed=1)
         key2 = JETLS.TestsetDiagnosticsKey("\"bar\"", 2, fi)
-
         fi.testsetinfos = [
-            JETLS.TestsetInfo(testsets[1], JETLS.TestsetResult(result1, key1)),
-            JETLS.TestsetInfo(testsets[2], JETLS.TestsetResult(result2, key2))
+            JETLS.TestsetInfo(fi.testsetinfos[1].st0, JETLS.TestsetResult(result1, key1)),
+            JETLS.TestsetInfo(fi.testsetinfos[2].st0, JETLS.TestsetResult(result2, key2))
         ]
 
-        server = JETLS.Server()
+        fi.parsed_stream = parsedstream(test_code)
+        fi.version = 2
+        JETLS.clear_file_info_cache!(fi)
         JETLS.update_testsetinfos!(server, fi; notify_server=false)
-
         @test length(fi.testsetinfos) == 2
         @test isdefined(fi.testsetinfos[1], :result)
         @test isdefined(fi.testsetinfos[2], :result)
@@ -319,7 +310,8 @@ end
         @test fi.testsetinfos[2].result.result === result2
     end
 
-    let test_code = """
+    let server = JETLS.Server()
+        test_code = """
         @testset "foo" begin
             @test 10 > 0
         end
@@ -329,17 +321,12 @@ end
         end
         """
         fi = JETLS.FileInfo(1, parsedstream(test_code))
+        JETLS.update_testsetinfos!(server, fi; notify_server=false)
+        @test length(fi.testsetinfos) == 2
 
-        st0 = JETLS.build_tree!(JL.SyntaxTree, fi)
-        testsets = JETLS.find_executable_testsets(st0)
-
-        result = mock_testrunner_result(n_passed=1)
+        result = mock_testrunner_result(; n_passed=1)
         key = JETLS.TestsetDiagnosticsKey("\"foo\"", 1, fi)
-
-        fi.testsetinfos = [
-            JETLS.TestsetInfo(testsets[1], JETLS.TestsetResult(result, key)),
-            JETLS.TestsetInfo(testsets[2])
-        ]
+        fi.testsetinfos[1] = JETLS.TestsetInfo(fi.testsetinfos[1].st0, JETLS.TestsetResult(result, key))
 
         new_test_code = """
         @testset "baz" begin
@@ -353,29 +340,25 @@ end
         fi.parsed_stream = parsedstream(new_test_code)
         fi.version = 2
         JETLS.clear_file_info_cache!(fi)
-
-        server = JETLS.Server()
         JETLS.update_testsetinfos!(server, fi; notify_server=false)
-
         @test length(fi.testsetinfos) == 2
         @test !isdefined(fi.testsetinfos[1], :result) # name changed from "foo" to "baz"
         @test !isdefined(fi.testsetinfos[2], :result)
     end
 
-    let test_code = """
+    let server = JETLS.Server()
+        test_code = """
         @testset "foo" begin
             @test 10 > 0
         end
         """
         fi = JETLS.FileInfo(1, parsedstream(test_code))
+        JETLS.update_testsetinfos!(server, fi; notify_server=false)
+        @test length(fi.testsetinfos) == 1
 
-        st0 = JETLS.build_tree!(JL.SyntaxTree, fi)
-        testsets = JETLS.find_executable_testsets(st0)
-
-        result = mock_testrunner_result(n_passed=1)
+        result = mock_testrunner_result(; n_passed=1)
         key = JETLS.TestsetDiagnosticsKey("\"foo\"", 1, fi)
-
-        fi.testsetinfos = [JETLS.TestsetInfo(testsets[1], JETLS.TestsetResult(result, key))]
+        fi.testsetinfos[1] = JETLS.TestsetInfo(fi.testsetinfos[1].st0, JETLS.TestsetResult(result, key))
 
         new_test_code = """
         @testset "foo" begin
@@ -389,10 +372,7 @@ end
         fi.parsed_stream = parsedstream(new_test_code)
         fi.version = 2
         JETLS.clear_file_info_cache!(fi)
-
-        server = JETLS.Server()
         JETLS.update_testsetinfos!(server, fi; notify_server=false)
-
         @test length(fi.testsetinfos) == 2
         @test isdefined(fi.testsetinfos[1], :result)
         @test fi.testsetinfos[1].result.result === result

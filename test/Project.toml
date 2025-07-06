@@ -9,6 +9,7 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [sources]
 JET = {rev = "master", url = "https://github.com/aviatesk/JET.jl"}
+JETLS = {path = "."}
 JuliaLowering = {rev = "avi/JETLS", url = "https://github.com/aviatesk/JuliaLowering.jl"}
 JuliaSyntax = {rev = "eceaa39", url = "https://github.com/JuliaLang/JuliaSyntax.jl"}
 
