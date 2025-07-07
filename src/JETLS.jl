@@ -151,9 +151,13 @@ function handle_message(server::Server, msg)
     @nospecialize msg
     if JETLS_DEV_MODE || !JETLS_TEST_MODE
         try
-            # `@invokelatest` for allowing changes maded by Revise to be reflected without
-            # terminating the `runserver` loop
-            return @invokelatest _handle_message(server, msg)
+            if JETLS_DEV_MODE
+                # `@invokelatest` for allowing changes maded by Revise to be reflected without
+                # terminating the `runserver` loop
+                return @invokelatest _handle_message(server, msg)
+            else
+                return _handle_message(server, msg)
+            end
         catch err
             @error "Message handling failed for" typeof(msg)
             Base.display_error(stderr, err, catch_backtrace())
