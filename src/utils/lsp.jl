@@ -14,59 +14,71 @@ const DEFAULT_DOCUMENT_SELECTOR = DocumentFilter[
 ]
 
 """
-    create_source_location_link(filename::AbstractString, [showtext::AbstractString];
-                                line=nothing, character=nothing)
+    create_source_location_link(uri::URI, showtext::Union{Nothing,AbstractString}=nothing;
+                                line::Union{Integer,Nothing}=nothing,
+                                character::Union{Integer,Nothing}=nothing)
 
 Create a markdown-style link to a source location that can be displayed in LSP clients.
 
-This function generates links in the format `"[show text](file://path#L#C)"` which, while
-not explicitly stated in the LSP specification, is supported by most LSP clients for
-navigation to specific file locations.
+This function generates clickable links in the format `[display text](uri#L<line>C<character>)`
+that LSP clients can use to navigate to specific file locations. While not explicitly part of
+the LSP specification, this markdown link format is widely supported by LSP clients including
+VS Code, Neovim, and others.
 
 # Arguments
-- `filename::AbstractString`: The file path to link to
-- `showtext::AbstractString`: Optional display text for the link. If not provided,
-  defaults to the filename with optional line number
-- `line::Union{Integer,Nothing}=nothing`: Optional 1-based line number
-- `character::Union{Integer,Nothing}=nothing`: Optional character position (requires `line` to be specified)
+- `uri::URI`: The file URI to link to
+- `showtext::Union{Nothing,AbstractString}`: Optional display text for the link.
+  If unspecified, automatically generated using `full_loc_text` from the URI's filename.
+- `line::Union{Integer,Nothing}=nothing`: Optional 1-based line number to link to
+- `character::Union{Integer,Nothing}=nothing`: Optional 1-based character position within the line.
+  Note: `character` is only used when `line` is also specified.
 
 # Returns
-A markdown-formatted string containing the clickable link.
+A markdown-formatted string containing the clickable link that can be rendered in hover
+documentation, completion items, or other LSP responses supporting markdown content.
+
+[remote file](http://example.com/file.jl#L5)
 
 # Examples
 ```julia
-create_source_location_link("/path/to/file.jl")
-# Returns: "[/path/to/file.jl](file:///path/to/file.jl)"
+# Basic file link
+uri = URI("file:///path/to/file.jl")
+create_source_location_link(uri, "file.jl")
+# Returns: "[file.jl](file:///path/to/file.jl)"
 
-create_source_location_link("/path/to/file.jl", line=42)
+# Link with line number
+create_source_location_link(uri, "file.jl:42"; line=42)
+# Returns: "[file.jl:42](file:///path/to/file.jl#L42)"
+
+# Link with line and character position
+create_source_location_link(uri, "file.jl:42:10"; line=42, character=10)
+# Returns: "[file.jl:42:10](file:///path/to/file.jl#L42C10)"
+
+# Using URI with automatic display text
+uri = URI("file:///path/to/file.jl")
+create_source_location_link(uri; line=42)
 # Returns: "[/path/to/file.jl:42](file:///path/to/file.jl#L42)"
-
-create_source_location_link("/path/to/file.jl", line=42, character=10)
-# Returns: "[/path/to/file.jl:42](file:///path/to/file.jl#L42C10)"
 ```
 """
-function create_source_location_link(filename::AbstractString, showtext::AbstractString;
+function create_source_location_link(uri::URI,
+                                     showtext::Union{Nothing,AbstractString};
                                      line::Union{Integer,Nothing}=nothing,
                                      character::Union{Integer,Nothing}=nothing)
-    linktext = string(filename2uri(filename))
+    linktext = string(uri)
     if line !== nothing
         linktext *= "#L$line"
         if character !== nothing
             linktext *= "C$character"
         end
     end
+    if isnothing(showtext)
+        showtext = full_loc_text(uri; line)
+    end
     return "[$showtext]($linktext)"
 end
 
-function create_source_location_link(filename::AbstractString;
-                                     line::Union{Integer,Nothing}=nothing,
-                                     character::Union{Integer,Nothing}=nothing)
-    create_source_location_link(filename, full_loc_text(filename; line); line, character)
-end
-
-function full_loc_text(filename::AbstractString;
-                       line::Union{Integer,Nothing}=nothing)
-    loctext = filename
+function full_loc_text(uri::URI; line::Union{Integer,Nothing}=nothing)
+    loctext = uri2filename(uri)
     Base.stacktrace_contract_userdir() && (loctext = Base.contractuser(loctext))
     if line !== nothing
         loctext *= string(":", line)
@@ -74,8 +86,8 @@ function full_loc_text(filename::AbstractString;
     return loctext
 end
 
-function simple_loc_text(filename::AbstractString; line::Union{Integer,Nothing}=nothing)
-    loctext = basename(filename)
+function simple_loc_text(uri::URI; line::Union{Integer,Nothing}=nothing)
+    loctext = basename(uri2filename(uri))
     if line !== nothing
         loctext *= string(":", line)
     end

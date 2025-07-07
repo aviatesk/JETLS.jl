@@ -118,10 +118,9 @@ function to_completion(binding::JL.BindingInfo,
     JL.showprov(io, st; include_location=false)
     println(io)
     println(io, "```")
-    filepath = uri2filename(uri)
     line, character = JS.source_location(st)
-    showtext = "`@ " * simple_loc_text(filepath; line) * "`"
-    println(io, create_source_location_link(filepath, showtext; line, character))
+    showtext = "`@ " * simple_loc_text(uri; line) * "`"
+    println(io, create_source_location_link(uri, showtext; line, character))
     value = String(take!(io))
     documentation = MarkupContent(;
         kind = MarkupKind.Markdown,

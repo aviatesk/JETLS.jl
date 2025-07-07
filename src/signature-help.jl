@@ -242,10 +242,10 @@ function make_siginfo(m::Method, ca::CallArgs, active_arg::Union{Int, Symbol};
     documentation = let
         mdl = postprocessor(string(Base.parentmodule(m)))
         file, line = Base.updated_methodloc(m)
-        filepath = to_full_path(file)
+        filename = to_full_path(file)
         MarkupContent(;
             kind = MarkupKind.Markdown,
-            value = "@ `$(mdl)` " * create_source_location_link(filepath; line))
+            value = "@ `$(mdl)` " * create_source_location_link(filename2uri(filename); line))
     end
 
     # We could show the full docs, but there isn't a way to resolve items lazily
