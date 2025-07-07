@@ -203,14 +203,14 @@ function initiate_analysis_unit!(server::Server, uri::URI; token::Union{Nothing,
     if env_path === nothing
         @label analyze_script
         if env_path !== nothing
-            entry = ScriptInEnvAnalysisEntry(env_path, uri)
-            info = FullAnalysisInfo(entry, token, #=reanalyze=#false, #=n_files=#0)
+            local entry = ScriptInEnvAnalysisEntry(env_path, uri)
+            local info = FullAnalysisInfo(entry, token, #=reanalyze=#false, #=n_files=#0)
             result = activate_do(env_path) do
                 analyze_parsed_if_exist(server, info)
             end
         else
-            entry = ScriptAnalysisEntry(uri)
-            info = FullAnalysisInfo(entry, token, #=reanalyze=#false, #=n_files=#0)
+            local entry = ScriptAnalysisEntry(uri)
+            local info = FullAnalysisInfo(entry, token, #=reanalyze=#false, #=n_files=#0)
             result = analyze_parsed_if_exist(server, info)
         end
         analysis_unit = new_analysis_unit(entry, result)
@@ -238,8 +238,8 @@ function initiate_analysis_unit!(server::Server, uri::URI; token::Union{Nothing,
                     return nothing
                 end
                 pkgfileuri = filepath2uri(pkgfile)
-                entry = PackageSourceAnalysisEntry(env_path, pkgfileuri, pkgid)
-                info = FullAnalysisInfo(entry, token, #=reanalyze=#false, #=n_files=#0)
+                local entry = PackageSourceAnalysisEntry(env_path, pkgfileuri, pkgid)
+                local info = FullAnalysisInfo(entry, token, #=reanalyze=#false, #=n_files=#0)
                 res = analyze_parsed_if_exist(server, info, pkgid)
                 return entry, res
             end
@@ -256,8 +256,8 @@ function initiate_analysis_unit!(server::Server, uri::URI; token::Union{Nothing,
             # analyze test scripts
             runtestsfile = joinpath(filedir, "runtests.jl")
             runtestsuri = filepath2uri(runtestsfile)
-            entry = PackageTestAnalysisEntry(env_path, runtestsuri)
-            info = FullAnalysisInfo(entry, token, #=reanalyze=#false, #=n_files=#0)
+            local entry = PackageTestAnalysisEntry(env_path, runtestsuri)
+            local info = FullAnalysisInfo(entry, token, #=reanalyze=#false, #=n_files=#0)
             result = activate_do(env_path) do
                 analyze_parsed_if_exist(server, info)
             end
