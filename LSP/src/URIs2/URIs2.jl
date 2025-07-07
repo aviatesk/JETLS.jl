@@ -86,11 +86,11 @@ function URI(value::AbstractString)
 
     m === nothing && error("Invalid input")
 
-    cap4, cap5, cap7, cap9 = m.captures[4], m.captures[5], m.captures[7], m.captures[9]
+    cap2, cap4, cap5, cap7, cap9 = m.captures[2], m.captures[4], m.captures[5], m.captures[7], m.captures[9]
     return URI(
-        m.captures[2],
+        cap2,
         cap4 === nothing ? nothing : percent_decode(cap4),
-        cap5 === nothing ? nothing : percent_decode(cap5),
+        percent_decode(cap5::AbstractString),
         cap7 === nothing ? nothing : percent_decode(cap7),
         cap9 === nothing ? nothing : percent_decode(cap9))
 end
