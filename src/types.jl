@@ -29,7 +29,7 @@ mutable struct FileInfo
     # filled after cached
     syntax_node::Dict{Any,JS.SyntaxNode}
     syntax_tree0::Dict{Any,SyntaxTree0}
-    testsetinfos::Vector{_TestsetInfo{FileInfo}} # synced by code lens, or code actions
+    testsetinfos::Vector{_TestsetInfo{FileInfo}}
     FileInfo(version::Int, parsed_stream::JS.ParseStream) =
         new(version, parsed_stream, Dict{Any,JS.SyntaxNode}(), Dict{Any,SyntaxTree0}(), TestsetInfo[])
 end

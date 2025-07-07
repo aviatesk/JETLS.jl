@@ -124,8 +124,8 @@ function handle_DidChangeTextDocumentNotification(server::Server, msg::DidChange
         @assert contentChange.range === contentChange.rangeLength === nothing # since `change = TextDocumentSyncKind.Full`
     end
     text = last(contentChanges).text
-
-    cache_file_info!(server.state, uri, textDocument.version, text)
+    fi = cache_file_info!(server.state, uri, textDocument.version, text)
+    update_testsetinfos!(server, fi)
 end
 
 function handle_DidSaveTextDocumentNotification(server::Server, msg::DidSaveTextDocumentNotification)
