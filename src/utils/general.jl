@@ -193,9 +193,10 @@ function lsrender(io::IO, code::Markdown.Code)
     println(io, "`" ^ n)
 end
 
-# TODO remove these definitions after JuliaLang/julia#58916.
+@static if VERSION < v"1.13.0-DEV.823" # JuliaLang/julia#58916
 lsrender(io::IO, table::Markdown.Table) = Markdown.plain(io, table)
 lsrender(io::IO, latex::Markdown.LaTeX) = Markdown.plain(io, latex)
+end
 
 (processor::LSPostProcessor)(md::Markdown.MD) = processor.inner(lsrender(md))
 (processor::LSPostProcessor)(s::AbstractString) = processor.inner(s)
