@@ -27,6 +27,7 @@ let lowering_module = Module()
         ctx1, st1 = JL.expand_forms_1(lowering_module, remove_macrocalls(st0));
         ctx2, st2 = JL.expand_forms_2(ctx1, st1);
         ctx3, st3 = JL.resolve_scopes(ctx2, st2);
+        @assert !isnothing(st3)
         return ctx3, st3
     end
 end

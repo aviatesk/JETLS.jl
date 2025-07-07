@@ -384,7 +384,7 @@ function cursor_call(ps::JS.ParseStream, st0::JL.SyntaxTree, b::Int)
     bas = byte_ancestors(st0, pnb)
     # If the previous nontrivia byte is part of a call or macrocall, and it is
     # missing a closing paren, use that.
-    i = findfirst(st -> is_relevant_call(st) && !noparen_macrocall(st), bas)
+    i = findfirst(st::JL.SyntaxTree -> is_relevant_call(st) && !noparen_macrocall(st), bas)
     if !isnothing(i)
         basᵢ = bas[i]
         if JS.is_error(JS.children(basᵢ)[end])

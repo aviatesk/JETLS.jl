@@ -17,7 +17,7 @@ function find_analysis_env_path(state::ServerState, uri::URI)
         # try to analyze untitled editors using the root environment
         return isdefined(state, :root_env_path) ? state.root_env_path : nothing
     end
-    error("Unsupported URI: $uri")
+    error(lazy"Unsupported URI: $uri")
 end
 
 function find_uri_env_path(state::ServerState, uri::URI)
@@ -28,7 +28,7 @@ function find_uri_env_path(state::ServerState, uri::URI)
         # try to analyze untitled editors using the root environment
         return isdefined(state, :root_env_path) ? state.root_env_path : nothing
     end
-    error("Unsupported URI: $uri")
+    error(lazy"Unsupported URI: $uri")
 end
 
 function find_pkg_name(env_path::AbstractString)

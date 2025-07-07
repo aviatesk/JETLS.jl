@@ -35,6 +35,7 @@ For now, it just returns the first line of the method
 """
 function LSP.Location(m::Method)
     file, line = functionloc(m)
+    file = file::String
     file = to_full_path(file)
     return Location(;
         uri = filename2uri(file),
