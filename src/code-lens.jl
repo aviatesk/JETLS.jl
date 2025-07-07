@@ -31,14 +31,8 @@ function handle_CodeLensRequest(server::Server, msg::CodeLensRequest)
                 result = nothing,
                 error = file_cache_error(uri)))
     end
-    testsetinfos = update_testsetinfos!(server, fi)
-    if isempty(testsetinfos)
-        return send(server,
-            CodeLensResponse(;
-                id = msg.id,
-                result = null))
-    end
-    code_lenses = testrunner_code_lenses(uri, fi, testsetinfos)
+    code_lenses = CodeLens[]
+    testrunner_code_lenses!(code_lenses, uri, fi)
     return send(server,
         CodeLensResponse(;
             id = msg.id,
