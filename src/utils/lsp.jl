@@ -61,7 +61,7 @@ create_source_location_link(uri; line=42)
 ```
 """
 function create_source_location_link(uri::URI,
-                                     showtext::Union{Nothing,AbstractString};
+                                     showtext::Union{Nothing,AbstractString} = nothing;
                                      line::Union{Integer,Nothing}=nothing,
                                      character::Union{Integer,Nothing}=nothing)
     linktext = string(uri)
