@@ -23,6 +23,23 @@ struct _TestsetInfo{FileInfo}
     _TestsetInfo{FileInfo}(st0::SyntaxTree0, result::_TestsetResult{FileInfo}) where {FileInfo} = new{FileInfo}(st0, result)
 end
 
+struct _ReportTrimDiagnosticsKey{FileInfo} <: ExtraDiagnosticsKey
+    fi::FileInfo
+end
+to_file_info_impl(key::_ReportTrimDiagnosticsKey) = key.fi
+
+struct _ReportTrimInfo{FileInfo}
+    result::ReportTrimResult
+    key::_ReportTrimDiagnosticsKey{FileInfo}
+end
+
+struct _EntrypointInfo{FileInfo}
+    st0::SyntaxTree0
+    result::_ReportTrimInfo{FileInfo}
+    _EntrypointInfo{FileInfo}(st0::SyntaxTree0) where {FileInfo} = new{FileInfo}(st0)
+    _EntrypointInfo{FileInfo}(st0::SyntaxTree0, result::_ReportTrimInfo{FileInfo}) where {FileInfo} = new{FileInfo}(st0, result)
+end
+
 mutable struct FileInfo
     version::Int
     parsed_stream::JS.ParseStream
@@ -30,13 +47,18 @@ mutable struct FileInfo
     syntax_node::Dict{Any,JS.SyntaxNode}
     syntax_tree0::Dict{Any,SyntaxTree0}
     testsetinfos::Vector{_TestsetInfo{FileInfo}}
+    entrypointinfo::Union{Nothing,_EntrypointInfo{FileInfo}}
     FileInfo(version::Int, parsed_stream::JS.ParseStream) =
-        new(version, parsed_stream, Dict{Any,JS.SyntaxNode}(), Dict{Any,SyntaxTree0}(), TestsetInfo[])
+        new(version, parsed_stream, Dict{Any,JS.SyntaxNode}(), Dict{Any,SyntaxTree0}(), TestsetInfo[], nothing)
 end
 
 const TestsetDiagnosticsKey = _TestsetDiagnosticsKey{FileInfo}
 const TestsetResult = _TestsetResult{FileInfo}
 const TestsetInfo = _TestsetInfo{FileInfo}
+
+const ReportTrimDiagnosticsKey = _ReportTrimDiagnosticsKey{FileInfo}
+const ReportTrimInfo = _ReportTrimInfo{FileInfo}
+const EntrypointInfo = _EntrypointInfo{FileInfo}
 
 mutable struct SavedFileInfo
     parsed_stream::JS.ParseStream
