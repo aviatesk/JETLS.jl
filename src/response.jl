@@ -55,6 +55,10 @@ function handle_requested_response(server::Server, msg::Dict{Symbol,Any},
         handle_testrunner_testcase_progress_response(server, msg, request_caller)
     elseif request_caller isa CodeLensRefreshRequestCaller
         handle_code_lens_refresh_response(server, msg, request_caller)
+    elseif request_caller isa ReportTrimMessageRequestCaller
+        handle_report_trim_message_response(server, msg, request_caller)
+    elseif request_caller isa ReportTrimProgressCaller
+        handle_report_trim_progress_response(server, msg, request_caller)
     else
         error("Unknown request caller type")
     end
@@ -157,4 +161,34 @@ function handle_code_lens_refresh_response(server::Server, msg::Dict{Symbol,Any}
     else
         # just valid request response cycle
     end
+end
+
+
+function handle_report_trim_message_response(server::Server, msg::Dict{Symbol,Any}, request_caller::ReportTrimMessageRequestCaller)
+    if handle_response_error(server, msg, "show TrimAnalyzer action")
+        return
+    elseif haskey(msg, :result) && msg[:result] !== nothing
+        selected = msg[:result] # ::MessageActionItem
+        title = get(selected, "title", "")
+        (; uri, fi) = request_caller
+        if title == REPORT_TRIM_RERUN_TITLE
+            error_msg = report_trim_run_from_uri(server, uri)
+            if error_msg !== nothing
+                show_error_message(server, error_msg)
+            end
+        elseif title == REPORT_TRIM_CLEAR_RESULT_TITLE
+            try_clear_report_trim_result!(server, uri)
+        else
+            error(lazy"Unknown action: $title")
+        end
+    end
+end
+
+function handle_report_trim_progress_response(server::Server, msg::Dict{Symbol,Any}, request_caller::ReportTrimProgressCaller)
+    if handle_response_error(server, msg, "create work done progress")
+        return
+    end
+    # If successful, run TrimAnalyzer with progress reporting
+    (; uri, fi, filepath, token) = request_caller
+    @async report_trim_run(server, uri, fi, filepath; token)
 end

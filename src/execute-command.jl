@@ -6,11 +6,16 @@ const COMMAND_TESTRUNNER_RUN_TESTCASE = "JETLS.TestRunner.run@test"
 const COMMAND_TESTRUNNER_CLEAR_RESULT = "JETLS.TestRunner.clearResult"
 const COMMAND_TESTRUNNER_OPEN_LOGS = "JETLS.TestRunner.openLogs"
 
+const COMMAND_REPORT_TRIM_RUN = "JETLS.ReportTrim.run"
+const COMMAND_REPORT_TRIM_CLEAR_RESULT = "JETLS.ReportTrim.clearResult"
+
 const SUPPORTED_COMMANDS = [
     COMMAND_TESTRUNNER_RUN_TESTSET,
     COMMAND_TESTRUNNER_RUN_TESTCASE,
     COMMAND_TESTRUNNER_OPEN_LOGS,
     COMMAND_TESTRUNNER_CLEAR_RESULT,
+    COMMAND_REPORT_TRIM_RUN,
+    COMMAND_REPORT_TRIM_CLEAR_RESULT,
 ]
 
 function execute_command_options()
@@ -42,6 +47,10 @@ function handle_ExecuteCommandRequest(server::Server, msg::ExecuteCommandRequest
         return execute_testrunner_open_logs_command(server, msg)
     elseif command == COMMAND_TESTRUNNER_CLEAR_RESULT
         return execute_testrunner_clear_result_command(server, msg)
+    elseif command == COMMAND_REPORT_TRIM_RUN
+        return execute_report_trim_run_command(server, msg)
+    elseif command == COMMAND_REPORT_TRIM_CLEAR_RESULT
+        return execute_report_trim_clear_result_command(server, msg)
     end
     return send(server,
         invalid_execute_command_response(msg, "Unknown execution command: $command"))
@@ -135,6 +144,33 @@ function execute_testrunner_clear_result_command(server::Server, msg::ExecuteCom
     idx = @tryparsearg server msg[2]::Int
     tsn = @tryparsearg server msg[3]::String
     try_clear_testrunner_result!(server, uri, idx, tsn)
+    return send(server,
+        ExecuteCommandResponse(;
+            id = msg.id,
+            result = null))
+end
+
+function execute_report_trim_run_command(server::Server, msg::ExecuteCommandRequest)
+    uri = convert(URI, @tryparsearg server msg[1]::String)
+    error_msg = report_trim_run_from_uri(server, uri)
+    if error_msg !== nothing
+        show_error_message(server, error_msg)
+        return send(server,
+            ExecuteCommandResponse(;
+                id = msg.id,
+                result = nothing,
+                error = request_failed_error(error_msg)))
+    end
+    return send(server,
+        ExecuteCommandResponse(;
+            id = msg.id,
+            result = null))
+end
+
+
+function execute_report_trim_clear_result_command(server::Server, msg::ExecuteCommandRequest)
+    uri = convert(URI, @tryparsearg server msg[1]::String)
+    try_clear_report_trim_result!(server, uri)
     return send(server,
         ExecuteCommandResponse(;
             id = msg.id,
