@@ -176,6 +176,13 @@ end
         @test diagnostic.range.start.line == 1
         @test diagnostic.range.var"end".line == 1
     end
+
+    @testset "Edge case" begin
+        diagnostics = get_lowered_diagnostics("""
+        func(::Nothing, x) = x
+        """)
+        @test isempty(diagnostics)
+    end
 end
 
 end # module test_surface_analysis

@@ -82,12 +82,15 @@ function compute_binding_usages!(tracked::Dict{JL.BindingInfo,Bool},
             if n ≥ 1
                 arglist = st[1]
                 is_kwcall = JS.numchildren(arglist) ≥ 3 &&
+                    JS.kind(arglist[1]) === JS.K"BindingId" &&
                     let arg1info = JL.lookup_binding(ctx3, arglist[1])
                         arg1info.is_internal && arg1info.name == "#self#"
                     end &&
+                    JS.kind(arglist[2]) === JS.K"BindingId" &&
                     let arg2info = JL.lookup_binding(ctx3, arglist[2])
                         arg2info.is_internal && arg2info.name == "kws"
                     end &&
+                    JS.kind(arglist[3]) === JS.K"BindingId" &&
                     let arg3info = JL.lookup_binding(ctx3, arglist[3])
                         arg3info.is_internal && arg3info.name == "#self#"
                     end
