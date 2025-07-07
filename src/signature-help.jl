@@ -146,7 +146,7 @@ function CallArgs(st0::JL.SyntaxTree, cursor::Int)
 end
 
 """
-Return false if we can definitely rule out `f(args...|` from being a call to `m`
+Return `false` if we can definitely rule out `f(args...|` from being a call to `m`
 """
 function compatible_method(m::Method, ca::CallArgs)
     # TODO: (later) This should use type information from args (which we already

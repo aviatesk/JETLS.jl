@@ -20,7 +20,7 @@ REPL = "3fa0cd96-eef1-5676-8a61-b3b8758bbffb"
 
 [sources]
 JET = {rev = "master", url = "https://github.com/aviatesk/JET.jl"}
-JSONRPC = { path = "JSONRPC" }
+JSONRPC = {path = "JSONRPC"}
 JuliaLowering = {rev = "avi/JETLS", url = "https://github.com/aviatesk/JuliaLowering.jl"}
 JuliaSyntax = {rev = "eceaa39", url = "https://github.com/JuliaLang/JuliaSyntax.jl"}
 LSP = {path = "LSP"}
