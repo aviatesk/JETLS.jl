@@ -158,6 +158,8 @@ function CC.abstract_call_gf_by_type(analyzer::LSAnalyzer,
         func::Any, arginfo::CC.ArgInfo, si::CC.StmtInfo, atype::Any, sv::CC.InferenceState, max_methods::Int)
     if !should_analyze(analyzer, sv)
         return ret
+    elseif func === Base.copy! # FIXME disable errors from `@testset`
+        return ret
     end
     atype′ = Ref{Any}(atype)
     function after_abstract_call_gf_by_type(analyzer′::LSAnalyzer, sv′::CC.InferenceState)
