@@ -116,7 +116,7 @@ end
 byte_ancestors(st::JL.SyntaxTree, byte::Int) = byte_ancestors(st, byte:byte)
 
 function byte_ancestors(sn::JS.SyntaxNode, rng::UnitRange{Int})
-    out = JS.SyntaxNode[]
+    out = JS.SyntaxNode[sn]
     traverse(sn) do sn′
         if rng ⊆ JS.byte_range(sn′)
             push!(out, sn′)
@@ -228,14 +228,14 @@ refs:
 - https://github.com/rust-lang/rust-analyzer/blob/6acff6c1f8306a0a1d29be8fd1ffa63cff1ad598/crates/ide/src/goto_definition.rs#L47-L62
 - https://github.com/aviatesk/JETLS.jl/pull/61#discussion_r2134707773
 """
-function select_target_node(st0::JL.SyntaxTree, offset::Int)
-    bas = byte_ancestors(st0, offset)
+function select_target_node(node0::Union{JS.SyntaxNode,JL.SyntaxTree}, offset::Int)
+    bas = byte_ancestors(node0, offset)
 
     target = first(bas)
     if !JS.is_identifier(target)
         offset > 0 || return nothing
         # Support cases like `var│`, `func│(5)`
-        bas = byte_ancestors(st0, offset - 1)
+        bas = byte_ancestors(node0, offset - 1)
         target = first(bas)
         if !JS.is_identifier(target)
             return nothing
@@ -281,13 +281,13 @@ function select_dotprefix_node(st::JL.SyntaxTree, offset::Int)
 end
 
 """
-    get_source_range(node::JL.SyntaxTree;
+    get_source_range(node::Union{JS.SyntaxNode,JL.SyntaxTree};
                      include_at_mark::Bool = true,
                      adjust_first::Int = 0, adjust_last::Int = 0) -> range::LSP.Range
 
 Returns the position information of `node` in the source file in `LSP.Range` format.
 """
-function get_source_range(node::JL.SyntaxTree;
+function get_source_range(node::Union{JS.SyntaxNode,JL.SyntaxTree};
                           include_at_mark::Bool = true,
                           adjust_first::Int = 0, adjust_last::Int = 0)
     sourcefile = JS.sourcefile(node)
