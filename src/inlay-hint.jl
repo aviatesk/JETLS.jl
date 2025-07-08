@@ -116,9 +116,17 @@ function return_type_inlay_hints!(inlay_hints::Vector{InlayHint}, state::ServerS
             overlap(get_source_range(arglist), range) || continue
             position = offset_to_xy(fi, JS.last_byte(arglist)+1)
             label = "::" * postprocessor(string(CC.widenconst(result.result.result)))
+            tooltip = let codeinfostr =
+                postprocessor(sprint(io->show(io, result.result.src; debuginfo=:none)))
+                value = "```\n" * codeinfostr * "\n```"
+                MarkupContent(;
+                    kind = MarkupKind.Markdown,
+                    value)
+            end
             push!(inlay_hints, InlayHint(;
                 position,
                 label,
+                tooltip,
                 kind = InlayHintKind.Type,
                 paddingLeft = true))
         end
