@@ -204,13 +204,13 @@
     # """
     # inlineValueProvider::Union{Nothing, Bool, InlineValueOptions, InlineValueRegistrationOptions} = nothing
 
-    # """
-    # The server provides inlay hints.
+    """
+    The server provides inlay hints.
 
-    # # Tags
-    # - since - 3.17.0
-    # """
-    # inlayHintProvider::Union{Nothing, Bool, InlayHintOptions, InlayHintRegistrationOptions} = nothing
+    # Tags
+    - since - 3.17.0
+    """
+    inlayHintProvider::Union{Nothing, Bool, InlayHintOptions, InlayHintRegistrationOptions} = nothing
 
     """
     The server has support for pull model diagnostics.
@@ -464,13 +464,13 @@ end
     # """
     # inlineValue::Union{InlineValueClientCapabilities, Nothing} = nothing
 
-    # """
-    # Capabilities specific to the `textDocument/inlayHint` request.
+    """
+    Capabilities specific to the `textDocument/inlayHint` request.
 
-    # # Tags
-    # - since – 3.17.0
-    # """
-    # inlayHint::Union{InlayHintClientCapabilities, Nothing} = nothing
+    # Tags
+    - since – 3.17.0
+    """
+    inlayHint::Union{InlayHintClientCapabilities, Nothing} = nothing
 
     """
     Capabilities specific to the diagnostic pull model.
@@ -609,13 +609,13 @@ provides text document synchronization (e.g. open, changed and close notificatio
         # """
         # inlineValue::Union{InlineValueWorkspaceClientCapabilities, Nothing} = nothing
 
-        # """
-        # Client workspace capabilities specific to inlay hints.
+        """
+        Client workspace capabilities specific to inlay hints.
 
-        # # Tags
-        # - since – 3.17.0
-        # """
-        # inlayHint::Union{InlayHintWorkspaceClientCapabilities, Nothing} = nothing
+        # Tags
+        - since – 3.17.0
+        """
+        inlayHint::Union{InlayHintWorkspaceClientCapabilities, Nothing} = nothing
 
         """
         Client workspace capabilities specific to diagnostics.
