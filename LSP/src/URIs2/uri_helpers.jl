@@ -3,8 +3,9 @@ function uri2filename(uri::URI)
         return uri2filepath(uri)::String
     elseif uri.scheme == "untitled"
         return uri.path
+    else
+        error(lazy"Unsupported uri: $uri")
     end
-    return nothing
 end
 
 function uri2filepath(uri::URI)

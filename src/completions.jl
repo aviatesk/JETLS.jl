@@ -118,10 +118,9 @@ function to_completion(binding::JL.BindingInfo,
     JL.showprov(io, st; include_location=false)
     println(io)
     println(io, "```")
-    filepath = uri2filepath(uri)
     line, character = JS.source_location(st)
-    showtext = "`@ " * simple_loc_text(filepath; line) * "`"
-    println(io, create_source_location_link(filepath, showtext; line, character))
+    showtext = "`@ " * simple_loc_text(uri; line) * "`"
+    println(io, create_source_location_link(uri, showtext; line, character))
     value = String(take!(io))
     documentation = MarkupContent(;
         kind = MarkupKind.Markdown,
@@ -185,18 +184,18 @@ function global_completions!(items::Dict{String, CompletionItem}, state::ServerS
 
     # Case: `@│`
     if prev_kind === JS.K"@"
-        edit_start_pos = offset_to_xy(fi, JS.token_first_byte(fi.parsed_stream, prev_token_idx))
+        edit_start_pos = offset_to_xy(fi, JS.token_first_byte(fi.parsed_stream, prev_token_idx::Int))
         is_macro_invoke = true
     # Case: `@macr│`
     elseif prev_kind === JS.K"MacroName"
-        edit_start_pos = offset_to_xy(fi, JS.token_first_byte(fi.parsed_stream, prev_token_idx-1))
+        edit_start_pos = offset_to_xy(fi, JS.token_first_byte(fi.parsed_stream, prev_token_idx::Int-1))
         is_macro_invoke = true
     # Case `│` (empty program)
     elseif isnothing(prev_token_idx)
         edit_start_pos = Position(; line=0, character=0)
         is_macro_invoke = false
     elseif JS.is_identifier(prev_kind)
-        edit_start_pos = offset_to_xy(fi, JS.token_first_byte(fi.parsed_stream, prev_token_idx))
+        edit_start_pos = offset_to_xy(fi, JS.token_first_byte(fi.parsed_stream, prev_token_idx::Int))
         is_macro_invoke = false
     else
         # When completion is triggered within unknown scope (e.g., comment),

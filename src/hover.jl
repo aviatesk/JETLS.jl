@@ -38,15 +38,14 @@ function handle_HoverRequest(server::Server, msg::HoverRequest)
         target_binding, definitions = target_binding_definitions
         io = IOBuffer()
         n = length(definitions)
-        filepath = uri2filepath(uri)
         for (i, definition) in enumerate(definitions)
             println(io, "```julia")
             JL.showprov(io, definition; include_location=false)
             println(io)
             println(io, "```")
             line, character = JS.source_location(definition)
-            showtext = "`@ " * simple_loc_text(filepath; line) * "`"
-            println(io, create_source_location_link(filepath, showtext; line, character))
+            showtext = "`@ " * simple_loc_text(uri; line) * "`"
+            println(io, create_source_location_link(uri, showtext; line, character))
             if i ≠ n
                 println(io, "\n---\n") # separator
             else

@@ -46,9 +46,9 @@ function begin_full_analysis_progress(server::Server, info::FullAnalysisInfo)
     if token === nothing
         return nothing
     end
-    filepath = uri2filepath(entryuri(info.entry))
+    filename = uri2filename(entryuri(info.entry))
     pre = info.reanalyze ? "Reanalyzing" : "Analyzing"
-    title = "$(pre) $(basename(filepath)) [$(entrykind(info.entry))]"
+    title = "$(pre) $(basename(filename)) [$(entrykind(info.entry))]"
     send(server, ProgressNotification(;
         params = ProgressParams(;
             token,
@@ -77,7 +77,7 @@ function analyze_parsed_if_exist(server::Server, info::FullAnalysisInfo, args...
     fi = get_saved_file_info(server.state, uri)
     if !isnothing(fi)
         filename = uri2filename(uri)
-        @assert !isnothing(filename) "Unsupported URI: $uri"
+        @assert !isnothing(filename) lazy"Unsupported URI: $uri"
         parsed = build_tree!(JS.SyntaxNode, fi; filename)
         begin_full_analysis_progress(server, info)
         try
@@ -87,7 +87,7 @@ function analyze_parsed_if_exist(server::Server, info::FullAnalysisInfo, args...
         end
     else
         filepath = uri2filepath(uri)
-        @assert filepath !== nothing "Unsupported URI: $uri"
+        @assert filepath !== nothing lazy"Unsupported URI: $uri"
         begin_full_analysis_progress(server, info)
         try
             return JET.analyze_and_report_file!(LSInterpreter(server, info), filepath, args...; jetconfigs...)
@@ -117,7 +117,7 @@ function new_analysis_unit(entry::AnalysisEntry, result)
     successfully_analyzed_file_infos = copy(analyzed_file_infos)
     is_full_analysis_successful(result) || empty!(successfully_analyzed_file_infos)
     analysis_result = FullAnalysisResult(
-        #=staled=#false, result.res.actual2virtual, update_analyzer_world(result.analyzer),
+        #=staled=#false, result.res.actual2virtual::JET.Actual2Virtual, update_analyzer_world(result.analyzer),
         uri2diagnostics, analyzed_file_infos, successfully_analyzed_file_infos)
     return AnalysisUnit(entry, analysis_result)
 end
@@ -219,7 +219,7 @@ function initiate_analysis_unit!(server::Server, uri::URI; token::Union{Nothing,
     elseif pkgname === nothing
         @goto analyze_script
     else # this file is likely one within a package
-        filepath = uri2filepath(uri)
+        filepath = uri2filepath(uri)::String # uri.scheme === "file"
         filekind, filedir = find_package_directory(filepath, env_path)
         if filekind === :script
             @goto analyze_script

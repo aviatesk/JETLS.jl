@@ -285,7 +285,7 @@ function handle_DocumentDiagnosticRequest(server::Server, msg::DocumentDiagnosti
     end
     parsed_stream = file_info.parsed_stream
     filename = uri2filename(uri)
-    @assert !isnothing(filename) "Unsupported URI: $uri"
+    @assert !isnothing(filename) lazy"Unsupported URI: $uri"
     if isempty(parsed_stream.diagnostics)
         diagnostics = lowering_diagnostics(file_info, filename)
     else
