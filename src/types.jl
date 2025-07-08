@@ -110,6 +110,7 @@ mutable struct FullAnalysisResult
     staled::Bool
     actual2virtual::JET.Actual2Virtual
     analyzer::LSAnalyzer
+    interp
     const uri2diagnostics::URI2Diagnostics
     const analyzed_file_infos::Dict{URI,JET.AnalyzedFileInfo}
     const successfully_analyzed_file_infos::Dict{URI,JET.AnalyzedFileInfo}

@@ -75,8 +75,9 @@ function analyze_parsed_if_exist(server::Server, info::FullAnalysisInfo, args...
         @assert !isnothing(filename) lazy"Unsupported URI: $uri"
         parsed = build_tree!(JS.SyntaxNode, fi; filename)
         begin_full_analysis_progress(server, info)
+        interp = LSInterpreter(server, info)
         try
-            return JET.analyze_and_report_expr!(LSInterpreter(server, info), parsed, filename, args...; jetconfigs...)
+            return interp, JET.analyze_and_report_expr!(interp, parsed, filename, args...; jetconfigs...)
         finally
             end_full_analysis_progress(server, info)
         end
@@ -84,8 +85,9 @@ function analyze_parsed_if_exist(server::Server, info::FullAnalysisInfo, args...
         filepath = uri2filepath(uri)
         @assert filepath !== nothing lazy"Unsupported URI: $uri"
         begin_full_analysis_progress(server, info)
+        interp = LSInterpreter(server, info)
         try
-            return JET.analyze_and_report_file!(LSInterpreter(server, info), filepath, args...; jetconfigs...)
+            return interp, JET.analyze_and_report_file!(interp, filepath, args...; jetconfigs...)
         finally
             end_full_analysis_progress(server, info)
         end
@@ -103,7 +105,7 @@ function update_analyzer_world(analyzer::LSAnalyzer)
     return JET.AbstractAnalyzer(analyzer, newstate)
 end
 
-function new_analysis_unit(entry::AnalysisEntry, result)
+function new_analysis_unit(entry::AnalysisEntry, (interp, result))
     analyzed_file_infos = Dict{URI,JET.AnalyzedFileInfo}(
         # `filepath` is an absolute path (since `path` is specified as absolute)
         filename2uri(filepath) => analyzed_file_info for (filepath, analyzed_file_info) in result.res.analyzed_files)
@@ -112,12 +114,12 @@ function new_analysis_unit(entry::AnalysisEntry, result)
     successfully_analyzed_file_infos = copy(analyzed_file_infos)
     is_full_analysis_successful(result) || empty!(successfully_analyzed_file_infos)
     analysis_result = FullAnalysisResult(
-        #=staled=#false, result.res.actual2virtual::JET.Actual2Virtual, update_analyzer_world(result.analyzer),
+        #=staled=#false, result.res.actual2virtual::JET.Actual2Virtual, update_analyzer_world(result.analyzer), interp,
         uri2diagnostics, analyzed_file_infos, successfully_analyzed_file_infos)
     return AnalysisUnit(entry, analysis_result)
 end
 
-function update_analysis_unit!(analysis_unit::AnalysisUnit, result)
+function update_analysis_unit!(analysis_unit::AnalysisUnit, (interp, result))
     uri2diagnostics = analysis_unit.result.uri2diagnostics
     cached_analyzed_file_infos = analysis_unit.result.analyzed_file_infos
     cached_successfully_analyzed_file_infos = analysis_unit.result.successfully_analyzed_file_infos
@@ -143,6 +145,7 @@ function update_analysis_unit!(analysis_unit::AnalysisUnit, result)
     if is_full_analysis_successful(result)
         analysis_unit.result.actual2virtual = result.res.actual2virtual
         analysis_unit.result.analyzer = update_analyzer_world(result.analyzer)
+        analysis_unit.result.interp = interp
     end
 end
 
