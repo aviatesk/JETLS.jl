@@ -48,6 +48,8 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
         # leave Refs undefined
     end
 
+    initialize_config!(server)
+
     if supports(server,
         :textDocument, :completion, :dynamicRegistration)
         completionProvider = nothing # will be registered dynamically
@@ -115,6 +117,16 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
         codeActionProvider = code_action_options()
         if JETLS_DEV_MODE
             @info "Registering 'textDocument/codeAction' with `InitializeResponse`"
+        end
+    end
+
+    if supports(server,
+        :workspace, :didChangeWatchedFiles, :dynamicRegistration)
+        didChangeWatchedFilesProvider = nothing # will be registered dynamically
+    else
+        didChangeWatchedFilesProvider = did_change_watched_files_options()
+        if JETLS_DEV_MODE
+            @info "Registering 'workspace/didChangeWatchedFiles' with `InitializeResponse`"
         end
     end
 
@@ -242,6 +254,14 @@ function handle_InitializedNotification(server::Server)
         # NOTE If codeAction's `dynamicRegistration` is not supported,
         # it needs to be registered along with initialization in the `InitializeResponse`,
         # since `CodeActionRegistrationOptions` does not extend `StaticRegistrationOptions`.
+    end
+
+    if supports(server,
+        :workspace, :didChangeWatchedFiles, :dynamicRegistration)
+        push!(registrations, did_change_watched_files_registration())
+        if JETLS_DEV_MODE
+            @info "Dynamically registering 'workspace/didChangeWatchedFiles' upon `InitializedNotification`"
+        end
     end
 
     register(server, registrations)

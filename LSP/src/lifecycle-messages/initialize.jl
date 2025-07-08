@@ -519,11 +519,11 @@ provides text document synchronization (e.g. open, changed and close notificatio
         # """
         # didChangeConfiguration::Union{DidChangeConfigurationClientCapabilities, Nothing} = nothing
 
-        # """
-        # Capabilities specific to the `workspace/didChangeWatchedFiles`
-        # notification.
-        # """
-        # didChangeWatchedFiles::Union{DidChangeWatchedFilesClientCapabilities, Nothing} = nothing
+        """
+        Capabilities specific to the `workspace/didChangeWatchedFiles`
+        notification.
+        """
+        didChangeWatchedFiles::Union{DidChangeWatchedFilesClientCapabilities, Nothing} = nothing
 
         # """
         # Capabilities specific to the `workspace/symbol` request.

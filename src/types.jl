@@ -219,6 +219,12 @@ struct LSPostProcessor
 end
 LSPostProcessor() = LSPostProcessor(JET.PostProcessor())
 
+struct ConfigManager
+    actual_config::Dict{String,Any} # Configuration that actually used by the server
+    latest_config::Dict{String,Any} # Latest configuration written to the file
+    watching_files::Set{String}
+end
+
 mutable struct ServerState
     const workspaceFolders::Vector{URI}
     const file_cache::Dict{URI,FileInfo} # syntactic analysis cache (synced with `textDocument/didChange`)
@@ -231,6 +237,7 @@ mutable struct ServerState
     root_env_path::String
     completion_resolver_info::Tuple{Module,LSPostProcessor}
     init_params::InitializeParams
+    config_manager::ConfigManager
     function ServerState()
         return new(
             #=workspaceFolders=# URI[],
