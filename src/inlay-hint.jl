@@ -36,6 +36,7 @@ function handle_InlayHintRequest(server::Server, msg::InlayHintRequest)
 
     inlay_hints = InlayHint[]
     syntactic_inlay_hints!(inlay_hints, fi, range)
+    return_type_inlay_hints!(inlay_hints, server.state, uri, fi)
 
     return send(server, InlayHintResponse(;
         id = msg.id,
@@ -88,3 +89,40 @@ function syntactic_inlay_hints!(inlay_hints::Vector{InlayHint}, fi::FileInfo, ra
     return inlay_hints
 end
 syntactic_inlay_hints(args...) = syntactic_inlay_hints!(InlayHint[], args...) # used by tests
+
+function return_type_inlay_hints!(inlay_hints::Vector{InlayHint}, state::ServerState, uri::URI, fi::FileInfo)
+    sfi = @something get_saved_file_info(state, uri) return nothing
+    if JS.sourcetext(fi.parsed_stream) ≠ JS.sourcetext(sfi.parsed_stream)
+        return nothing
+    end
+
+    filename = uri2filename(uri)
+    analysis_unit = find_analysis_unit_for_uri(state, uri)
+    interp = get_context_interpreter(analysis_unit)
+    postprocessor = get_post_processor(analysis_unit)
+    if !isnothing(interp)
+        for result in interp.results
+            filename == result.filename || continue
+            isdefined(result, :result) || continue
+            methodnode = result.node
+            if JS.kind(methodnode) === JS.K"doc"
+                JS.numchildren(methodnode) ≥ 2 || continue
+                methodnode = methodnode[2]
+            end
+            JS.kind(methodnode) === JS.K"function" || continue
+            JS.numchildren(methodnode) ≥ 2 || continue
+            arglist = methodnode[1]
+            JS.kind(arglist) === JS.K"call" || continue
+            overlap(get_source_range(arglist), range) || continue
+            position = offset_to_xy(fi, JS.last_byte(arglist)+1)
+            label = "::" * postprocessor(string(CC.widenconst(result.result.result)))
+            push!(inlay_hints, InlayHint(;
+                position,
+                label,
+                kind = InlayHintKind.Type,
+                paddingLeft = true))
+        end
+    end
+    return inlay_hints
+end
+return_type_inlay_hints(args...) = return_type_inlay_hints!(InlayHint[], args...) # used by tests
