@@ -104,7 +104,13 @@ ranges contain all child ranges, and that siblings don't have overlapping ranges
 tree in the result will be a child of the next.
 """
 function byte_ancestors(st::JL.SyntaxTree, rng::UnitRange{Int})
-    sl = JL.SyntaxList(st._graph, [st._id])
+    sl = JL.SyntaxList(st)
+    if rng ⊆ JS.byte_range(st)
+        push!(sl, st)
+    else
+        # Children of a lowered SyntaxTree don't necessarily fall within their parent's range,
+        # so we continue traversing
+    end
     traverse(st) do st′
         if rng ⊆ JS.byte_range(st′)
             push!(sl, st′)
@@ -116,7 +122,10 @@ end
 byte_ancestors(st::JL.SyntaxTree, byte::Int) = byte_ancestors(st, byte:byte)
 
 function byte_ancestors(sn::JS.SyntaxNode, rng::UnitRange{Int})
-    out = JS.SyntaxNode[sn]
+    out = JS.SyntaxNode[]
+    if rng ⊆ JS.byte_range(sn)
+        push!(out, sn)
+    end
     traverse(sn) do sn′
         if rng ⊆ JS.byte_range(sn′)
             push!(out, sn′)
@@ -231,11 +240,14 @@ refs:
 function select_target_node(node0::Union{JS.SyntaxNode,JL.SyntaxTree}, offset::Int)
     bas = byte_ancestors(node0, offset)
 
+    isempty(bas) && @goto minus1
     target = first(bas)
     if !JS.is_identifier(target)
+        @label minus1
         offset > 0 || return nothing
         # Support cases like `var│`, `func│(5)`
         bas = byte_ancestors(node0, offset - 1)
+        isempty(bas) && return nothing
         target = first(bas)
         if !JS.is_identifier(target)
             return nothing
