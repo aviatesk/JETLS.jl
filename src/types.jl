@@ -218,6 +218,14 @@ struct LSPostProcessor
 end
 LSPostProcessor() = LSPostProcessor(JET.PostProcessor())
 
+struct ConfigManager
+    actual_config::Dict{String,Any} # Configuration that actually used by the server
+    latest_config::Dict{String,Any} # Latest configuration written to the file to suppress excessive messages
+    watching_files::Set{String}
+end
+
+default_configmanager() = ConfigManager(deepcopy(JETLS.DEFAULT_CONFIG), deepcopy(JETLS.DEFAULT_CONFIG), Set{String}())
+
 mutable struct ServerState
     const workspaceFolders::Vector{URI}
     const file_cache::Dict{URI,FileInfo} # syntactic analysis cache (synced with `textDocument/didChange`)
@@ -226,6 +234,7 @@ mutable struct ServerState
     const extra_diagnostics::ExtraDiagnostics
     const currently_requested::Dict{String,RequestCaller}
     const currently_registered::Set{Registered}
+    const config_manager::ConfigManager
     root_path::String
     root_env_path::String
     completion_resolver_info::Tuple{Module,LSPostProcessor}
@@ -238,7 +247,8 @@ mutable struct ServerState
             #=analysis_cache=# Dict{URI,AnalysisInfo}(),
             #=extra_diagnostics=# ExtraDiagnostics(),
             #=currently_requested=# Dict{String,RequestCaller}(),
-            #=currently_registered=# Set{Registered}())
+            #=currently_registered=# Set{Registered}(),
+            #=config_manager=# default_configmanager())
     end
 end
 
