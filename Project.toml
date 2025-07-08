@@ -26,7 +26,7 @@ JuliaSyntax = {rev = "eceaa39", url = "https://github.com/JuliaLang/JuliaSyntax.
 LSP = {path = "LSP"}
 
 [compat]
-JET = "0.10.5"
+JET = "0.10.6"
 JSONRPC = "0.1"
 JuliaLowering = "1.0.0"
 JuliaSyntax = "1.0"
