@@ -118,6 +118,16 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
         end
     end
 
+    if supports(server,
+        :textDocument, :inlayHint, :dynamicRegistration)
+        inlayHintProvider = nothing # will be registered dynamically
+    else
+        inlayHintProvider = inlay_hint_options()
+        if JETLS_DEV_MODE
+            @info "Registering 'textDocument/inlayHint' with `InitializeResponse`"
+        end
+    end
+
     # No support for dynamic registration
     executeCommandProvider = execute_command_options()
     if JETLS_DEV_MODE
@@ -139,6 +149,7 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
             diagnosticProvider,
             codeLensProvider,
             codeActionProvider,
+            inlayHintProvider,
             executeCommandProvider,
         ),
         serverInfo = (;
@@ -242,6 +253,18 @@ function handle_InitializedNotification(server::Server)
         # NOTE If codeAction's `dynamicRegistration` is not supported,
         # it needs to be registered along with initialization in the `InitializeResponse`,
         # since `CodeActionRegistrationOptions` does not extend `StaticRegistrationOptions`.
+    end
+
+    if supports(server,
+        :textDocument, :inlayHint, :dynamicRegistration)
+        push!(registrations, inlay_hint_registration())
+        if JETLS_DEV_MODE
+            @info "Dynamically registering 'textDocument/inlayHint' upon `InitializedNotification`"
+        end
+    else
+        # NOTE If inlayHint's `dynamicRegistration` is not supported,
+        # it needs to be registered along with initialization in the `InitializeResponse`,
+        # since `InlayHintRegistrationOptions` does not extend `StaticRegistrationOptions`.
     end
 
     register(server, registrations)
