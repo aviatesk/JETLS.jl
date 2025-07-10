@@ -106,23 +106,63 @@ function request_failed_error(message::AbstractString; data=nothing)
         data)
 end
 
+"""
+    get_text_and_positions(text::AbstractString, matcher::Regex=r"│") -> (clean_text::String, positions::Vector{Position})
+
+Extract positions of markers in text and return the cleaned text with markers removed.
+
+This function is primarily used in tests to mark specific positions in code snippets.
+It finds all occurrences of the marker pattern, records their positions as LSP-compatible
+`Position` objects, and returns the text with all markers removed.
+
+# Arguments
+- `text::AbstractString`: The input text containing position markers
+- `matcher::Regex=r"│"`: The regex pattern to match position markers (default: `│`)
+
+# Returns
+`(clean_text::String, positions::Vector{Position})`:
+- `clean_text::String`: The input text with all markers removed
+- `positions::Vector{Position}`: LSP Position objects (0-based line and character indices)
+
+# Notes
+- Character positions are calculated correctly for multi-byte characters (e.g., Unicode)
+- The function properly converts byte offsets to character offsets as required by LSP
+- Positions are 0-based as per LSP specification
+
+# Example
+```julia
+text = \"\"\"
+function foo()
+    return x│ + 1
+end
+\"\"\"
+clean_text, positions = get_text_and_positions(text)
+# clean_text: "function foo()\\n    return x + 1\\nend\\n"
+# positions: [Position(line=1, character=11)]
+```
+"""
 function get_text_and_positions(text::AbstractString, matcher::Regex=r"│")
     positions = Position[]
     lines = split(text, '\n')
 
-    # First pass to collect positions
     for (i, line) in enumerate(lines)
-        offset_adjustment = 0
+        char_offset_adjustment = 0
         for m in eachmatch(matcher, line)
-            # Position is 0-based
-            # Adjust the character position by subtracting the length of previous matches
-            adjusted_offset = m.offset - offset_adjustment
-            push!(positions, Position(; line=i-1, character=adjusted_offset-1))
-            offset_adjustment += length(m.match)
+            # Convert byte offset to character offset
+            # Count the number of characters before the match
+            char_offset = 0
+            byte_pos = 1
+            while byte_pos < m.offset
+                char_offset += 1
+                byte_pos = nextind(line, byte_pos)
+            end
+
+            adjusted_char_offset = char_offset - char_offset_adjustment
+            push!(positions, Position(; line=i-1, character=adjusted_char_offset))
+            char_offset_adjustment += length(m.match)
         end
     end
 
-    # Second pass to replace all occurrences
     for (i, line) in enumerate(lines)
         lines[i] = replace(line, matcher => "")
     end

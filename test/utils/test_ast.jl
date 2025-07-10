@@ -53,6 +53,111 @@ end
     end
 end
 
+@testset "`get_text_and_positions`" begin
+    # Test with simple ASCII text
+    let text = "hello │world"
+        clean_text, positions = JETLS.get_text_and_positions(text)
+        @test clean_text == "hello world"
+        @test length(positions) == 1
+        @test positions[1] == JETLS.Position(; line=0, character=length("hello "))
+    end
+
+    # Test with multiple markers on same line
+    let text = "a│b│c│d"
+        clean_text, positions = JETLS.get_text_and_positions(text)
+        @test clean_text == "abcd"
+        @test length(positions) == 3
+        @test positions[1] == JETLS.Position(; line=0, character=length("a"))
+        @test positions[2] == JETLS.Position(; line=0, character=length("ab"))
+        @test positions[3] == JETLS.Position(; line=0, character=length("abc"))
+    end
+
+    # Test with multi-line text
+    let text = """
+        line1│
+        line2
+        │line3│
+        """
+        clean_text, positions = JETLS.get_text_and_positions(text)
+        @test clean_text == """
+        line1
+        line2
+        line3
+        """
+        @test length(positions) == 3
+        @test positions[1] == JETLS.Position(; line=0, character=length("line1"))
+        @test positions[2] == JETLS.Position(; line=2, character=length(""))
+        @test positions[3] == JETLS.Position(; line=2, character=length("line3"))
+    end
+
+    # Test with multi-byte characters (Greek letters)
+    let text = "α│β│γ"
+        clean_text, positions = JETLS.get_text_and_positions(text)
+        @test clean_text == "αβγ"
+        @test length(positions) == 2
+        @test positions[1] == JETLS.Position(; line=0, character=length("α"))
+        @test positions[2] == JETLS.Position(; line=0, character=length("αβ"))
+    end
+
+    # Test with mixed ASCII and multi-byte characters
+    let text = "hello α│β world │γ"
+        clean_text, positions = JETLS.get_text_and_positions(text)
+        @test clean_text == "hello αβ world γ"
+        @test length(positions) == 2
+        @test positions[1] == JETLS.Position(; line=0, character=length("hello α"))
+        @test positions[2] == JETLS.Position(; line=0, character=length("hello αβ world "))
+    end
+
+    # Test with emoji (4-byte UTF-8 characters)
+    let text = "😀│😎│🎉"
+        clean_text, positions = JETLS.get_text_and_positions(text)
+        @test clean_text == "😀😎🎉"
+        @test length(positions) == 2
+        @test positions[1] == JETLS.Position(; line=0, character=length("😀"))
+        @test positions[2] == JETLS.Position(; line=0, character=length("😀😎"))
+    end
+
+    # Test with custom marker
+    let text = "foo<HERE>bar<HERE>baz"
+        clean_text, positions = JETLS.get_text_and_positions(text, r"<HERE>")
+        @test clean_text == "foobarbaz"
+        @test length(positions) == 2
+        @test positions[1] == JETLS.Position(; line=0, character=length("foo"))
+        @test positions[2] == JETLS.Position(; line=0, character=length("foobar"))
+    end
+
+    # Test empty text
+    let text = ""
+        clean_text, positions = JETLS.get_text_and_positions(text)
+        @test clean_text == ""
+        @test isempty(positions)
+    end
+
+    # Test text with no markers
+    let text = "no markers here"
+        clean_text, positions = JETLS.get_text_and_positions(text)
+        @test clean_text == "no markers here"
+        @test isempty(positions)
+    end
+
+    # Test markers at beginning and end
+    let text = "│start middle end│"
+        clean_text, positions = JETLS.get_text_and_positions(text)
+        @test clean_text == "start middle end"
+        @test length(positions) == 2
+        @test positions[1] == JETLS.Position(; line=0, character=0)
+        @test positions[2] == JETLS.Position(; line=0, character=length("start middle end"))
+    end
+
+    # Test complex multi-byte scenario matching our byte_ancestors test
+    let text = "α = β + │γ"
+        clean_text, positions = JETLS.get_text_and_positions(text)
+        @test clean_text == "α = β + γ"
+        @test length(positions) == 1
+        @test positions[1] == JETLS.Position(; line=0, character=length("α = β + "))
+    end
+end
+
 @testset "`byte_ancestors`" begin
     # Test with a simple function
     let code = """
@@ -174,23 +279,42 @@ end
     end
 
     # Test with multi-byte characters
-    let code = """
-        α = β + │γ
-        """
+    let code = "α = β + │γ"
         clean_code, positions = JETLS.get_text_and_positions(code, r"│")
         @test length(positions) == 1
-        # TODO We probably need to fix `JETLS.get_text_and_positions` or `JETLS.xy_to_offset`
-        # `γ_pos` should be 11 instead of 13 (current value)
         γ_pos = JETLS.xy_to_offset(Vector{UInt8}(clean_code), positions[1])
+        @test γ_pos == sizeof("α = β + ")+1
 
-        # Test that we correctly find the identifier at the multi-byte position
         st = jlparse(clean_code)
         ancestors_st = JETLS.byte_ancestors(st, γ_pos)
-        @test_broken any(node -> JS.kind(node) === JS.K"Identifier" && JS.sourcetext(node) == "γ", ancestors_st)
+        @test any(node -> JS.kind(node) === JS.K"Identifier" && JS.sourcetext(node) == "γ", ancestors_st)
 
         sn = jsparse(clean_code)
         ancestors_sn = JETLS.byte_ancestors(sn, γ_pos)
-        @test_broken any(node -> JS.kind(node) === JS.K"Identifier" && JS.sourcetext(node) == "γ", ancestors_sn)
+        @test any(node -> JS.kind(node) === JS.K"Identifier" && JS.sourcetext(node) == "γ", ancestors_sn)
+    end
+
+    # Test with multiple multi-byte characters and positions
+    let code = """
+        αβγ = │δεζ + ηθι│
+        """
+        clean_code, positions = JETLS.get_text_and_positions(code, r"│")
+        @test length(positions) == 2
+
+        pos1 = JETLS.xy_to_offset(Vector{UInt8}(clean_code), positions[1])
+        @test pos1 == sizeof("αβγ = ")+1
+
+        # Second position after 'ηθι'
+        pos2 = JETLS.xy_to_offset(Vector{UInt8}(clean_code), positions[2])
+        @test pos2 == sizeof("αβγ = δεζ + ηθι")+1 # including newline
+
+        st = jlparse(clean_code)
+
+        ancestors1 = JETLS.byte_ancestors(st, pos1)
+        @test any(node -> JS.kind(node) === JS.K"Identifier" && JS.sourcetext(node) == "δεζ", ancestors1)
+
+        ancestors2 = JETLS.byte_ancestors(st, pos2-1)
+        @test any(node -> JS.kind(node) === JS.K"Identifier" && JS.sourcetext(node) == "ηθι", ancestors2)
     end
 end
 
