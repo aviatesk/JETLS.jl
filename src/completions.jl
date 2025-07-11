@@ -390,8 +390,6 @@ end
 # completion resolver
 # ===================
 
-@define_override_constructor LSP.CompletionItem
-
 function resolve_completion_item(state::ServerState, item::CompletionItem)
     isdefined(state, :completion_resolver_info) || return item
     data = item.data
