@@ -73,6 +73,49 @@ end
     @test pos_same_line_2 == pos_same_line_3
     @test pos_same_line_2 <= pos_same_line_3
     @test pos_same_line_2 >= pos_same_line_3
+
+    # Test `pos::Position ∈ rng::Range`
+    let rng1 = Range(;
+            start = Position(; line=1, character=5),
+            var"end" = Position(; line=3, character=10))
+
+        # Positions inside the range
+        @test Position(; line=2, character=0) ∈ rng1
+        @test Position(; line=2, character=7) ∈ rng1
+        @test Position(; line=1, character=10) ∈ rng1
+
+        # Positions at the boundaries (inclusive)
+        @test Position(; line=1, character=5) ∈ rng1   # start position
+        @test Position(; line=3, character=10) ∈ rng1  # end position
+
+        # Positions outside the range
+        @test Position(; line=0, character=0) ∉ rng1    # before start line
+        @test Position(; line=1, character=4) ∉ rng1    # same line, before start character
+        @test Position(; line=3, character=11) ∉ rng1   # same line, after end character
+        @test Position(; line=4, character=0) ∉ rng1    # after end line
+    end
+    # Test with zero-width range
+    let zero_width_rng = Range(;
+            start = Position(; line=2, character=5),
+            var"end" = Position(; line=2, character=5))
+
+        @test Position(; line=2, character=5) ∈ zero_width_rng
+        @test !(Position(; line=2, character=4) ∈ zero_width_rng)
+        @test !(Position(; line=2, character=6) ∈ zero_width_rng)
+
+        # Test with single-line range
+        single_line_rng = Range(;
+            start = Position(; line=5, character=10),
+            var"end" = Position(; line=5, character=20))
+
+        @test Position(; line=5, character=10) ∈ single_line_rng
+        @test Position(; line=5, character=15) ∈ single_line_rng
+        @test Position(; line=5, character=20) ∈ single_line_rng
+        @test Position(; line=5, character=9) ∉ single_line_rng
+        @test Position(; line=5, character=21) ∉ single_line_rng
+        @test Position(; line=4, character=15) ∉ single_line_rng
+        @test Position(; line=6, character=15) ∉ single_line_rng
+    end
 end
 
 @testset "Range containment (∈)" begin

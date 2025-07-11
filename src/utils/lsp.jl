@@ -3,6 +3,8 @@ import Base: isless, ∈
 Base.isless(pos1::Position, pos2::Position) =
     pos1.line < pos2.line || (pos1.line == pos2.line && pos1.character < pos2.character)
 
+pos::Position ∈ rng::Range = rng.start ≤ pos ≤ rng.var"end"
+
 rng1::Range ∈ rng2::Range = rng2.start ≤ rng1.start && rng1.var"end" ≤ rng2.var"end"
 
 overlap(rng1::Range, rng2::Range) = max(rng1.start, rng2.start) <= min(rng1.var"end", rng2.var"end")
