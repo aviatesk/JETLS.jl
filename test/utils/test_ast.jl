@@ -309,6 +309,43 @@ end
     end
 end
 
+@testset "token_at_offset / token_before_offset" begin
+    # Test token_at_offset with simple identifiers
+    let code = "alpha beta gamma"
+        ps = parsedstream(code)
+        @test String(ps.textbuf[JETLS.byte_range(@something(JETLS.token_at_offset(ps, 1)))]) == "alpha"
+        @test String(ps.textbuf[JETLS.byte_range(@something(JETLS.token_at_offset(ps, 3)))]) == "alpha"
+        @test String(ps.textbuf[JETLS.byte_range(@something(JETLS.token_at_offset(ps, 5)))]) == "alpha"
+        @test String(ps.textbuf[JETLS.byte_range(@something(JETLS.token_at_offset(ps, 6)))]) == " "
+        @test String(ps.textbuf[JETLS.byte_range(@something(JETLS.token_at_offset(ps, 8)))]) == "beta"
+        @test isnothing(JETLS.token_at_offset(ps, 100))
+    end
+    let code = "foo(bar)"
+        ps = parsedstream(code)
+        @test String(ps.textbuf[JETLS.byte_range(@something(JETLS.token_at_offset(ps, 2)))]) == "foo"
+        @test String(ps.textbuf[JETLS.byte_range(@something(JETLS.token_at_offset(ps, 4)))]) == "("
+        @test String(ps.textbuf[JETLS.byte_range(@something(JETLS.token_at_offset(ps, 6)))]) == "bar"
+    end
+
+    # Test token_before_offset
+    let code = "a + b"
+        ps = parsedstream(code)
+        @test String(ps.textbuf[JETLS.byte_range(@something(JETLS.token_before_offset(ps, 2)))]) == "a"
+        @test String(ps.textbuf[JETLS.byte_range(@something(JETLS.token_before_offset(ps, 3)))]) == " "
+        @test String(ps.textbuf[JETLS.byte_range(@something(JETLS.token_before_offset(ps, 4)))]) == "+"
+        @test JETLS.token_before_offset(ps, 1) !== nothing  # COMBAK should probably return nothing instead
+    end
+
+    # Test with multi-byte characters
+    let code = "α + β"
+        ps = parsedstream(code)
+        @test String(ps.textbuf[JETLS.byte_range(@something(JETLS.token_at_offset(ps, 1)))]) == "α"
+        @test String(ps.textbuf[JETLS.byte_range(@something(JETLS.token_at_offset(ps, sizeof("α"))))]) == "α"
+        @test String(ps.textbuf[JETLS.byte_range(@something(JETLS.token_at_offset(ps, sizeof("α")+1)))]) == " "
+        @test String(ps.textbuf[JETLS.byte_range(@something(JETLS.token_before_offset(ps, sizeof("α")+1)))]) == "α"
+    end
+end
+
 @testset "noparen_macrocall" begin
     @test JETLS.noparen_macrocall(jlparse("@test true"; rule=:statement))
     @test JETLS.noparen_macrocall(jlparse("@interface AAA begin end"; rule=:statement))
