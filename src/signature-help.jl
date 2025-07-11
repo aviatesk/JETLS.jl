@@ -327,7 +327,7 @@ function call_is_decl(_bas::JL.SyntaxList, i::Int, _basᵢ::JL.SyntaxTree = _bas
     return j <= lastindex(_bas) &&
         kind(_bas[j]) in JS.KSet"macro function" &&
         # in `f(x) = g(x)`, return true in `f`, false in `g`
-        _bas[j - 1]._id === _bas[j][1]._id
+        _bas[j - 1]._id == _bas[j][1]._id
 end
 
 # Find cases where a macro call is not surrounded by parentheses
