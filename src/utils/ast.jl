@@ -208,11 +208,16 @@ TokenCursor(ps::JS.ParseStream) =
     out = (s_pos + 1, s_byte + tc.tokens[s_pos + 1].byte_span)
     return TokenCursor(tc.tokens, out...), out
 end
+Base.IteratorEltype(::Type{TokenCursor}) = Base.HasEltype()
+Base.eltype(::Type{TokenCursor}) = TokenCursor
+Base.IteratorSize(::Type{TokenCursor}) = Base.HasLength()
+Base.length(tc::TokenCursor) = length(tc.tokens)
 next_tok(tc::TokenCursor) = Base.iterate(tc, (tc.position, tc.next_byte))[1]
 prev_tok(tc::TokenCursor) = tc.position <= 1 ? nothing :
     TokenCursor(tc.tokens, tc.position - 1, tc.next_byte - tc.tokens[tc.position].byte_span)
 first_byte(tc::TokenCursor) = tc.position <= 1 ? UInt32(1) : prev_tok(tc).next_byte
 last_byte(tc::TokenCursor) = tc.next_byte - UInt32(1)
+byte_range(tc::TokenCursor) = first_byte(tc):last_byte(tc)
 this(tc::TokenCursor) = tc.tokens[tc.position]
 
 """
