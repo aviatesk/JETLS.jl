@@ -234,7 +234,6 @@ function token_at_offset(ps::JS.ParseStream, offset::Int)
 end
 
 function token_at_offset(fi::FileInfo, pos::Position)
-    fi === nothing && return nothing
     token_at_offset(fi.parsed_stream, xy_to_offset(fi, pos))
 end
 
@@ -245,7 +244,6 @@ function token_before_offset(ps::JS.ParseStream, offset::Int)
     token_at_offset(ps, offset - 1)
 end
 function token_before_offset(fi::FileInfo, pos::Position)
-    fi === nothing && return nothing
     token_before_offset(fi.parsed_stream, xy_to_offset(fi, pos))
 end
 
