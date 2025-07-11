@@ -178,24 +178,23 @@ function global_completions!(items::Dict{String, CompletionItem}, state::ServerS
     (; mod, analyzer, postprocessor) = get_context_info(state, uri, pos)
     completion_module = mod
 
-    prev_token_idx = get_prev_token_idx(fi, pos)
-    prev_kind = isnothing(prev_token_idx) ? nothing :
-        JS.kind(fi.parsed_stream.tokens[prev_token_idx])
+    prev_token = token_before_offset(fi, pos)
+    prev_kind = isnothing(prev_token) ? nothing : JS.kind(this(prev_token))
 
     # Case: `@│`
     if prev_kind === JS.K"@"
-        edit_start_pos = offset_to_xy(fi, JS.token_first_byte(fi.parsed_stream, prev_token_idx::Int))
+        edit_start_pos = offset_to_xy(fi, first_byte(prev_token))
         is_macro_invoke = true
     # Case: `@macr│`
     elseif prev_kind === JS.K"MacroName"
-        edit_start_pos = offset_to_xy(fi, JS.token_first_byte(fi.parsed_stream, prev_token_idx::Int-1))
+        edit_start_pos = offset_to_xy(fi, first_byte(prev_tok(prev_token)))
         is_macro_invoke = true
     # Case `│` (empty program)
-    elseif isnothing(prev_token_idx)
+    elseif isnothing(prev_token)
         edit_start_pos = Position(; line=0, character=0)
         is_macro_invoke = false
     elseif JS.is_identifier(prev_kind)
-        edit_start_pos = offset_to_xy(fi, JS.token_first_byte(fi.parsed_stream, prev_token_idx::Int))
+        edit_start_pos = offset_to_xy(fi, first_byte(prev_token))
         is_macro_invoke = false
     else
         # When completion is triggered within unknown scope (e.g., comment),

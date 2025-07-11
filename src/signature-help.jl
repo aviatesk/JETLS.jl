@@ -300,16 +300,14 @@ Return the last byte at or before `b` that isn't in whitespace or a comment (or
 if `pass_newlines=false`, also isn't a newline).
 """
 function prev_nontrivia_byte(ps::JS.ParseStream, b::Int; pass_newlines=false)
-    ti = get_current_token_idx(ps, min(JS.last_byte(ps), b))
-    isnothing(ti) && return nothing
-    skip = (i::Int) -> let tok = ps.tokens[i]; k = kind(tok)
-        b < tok.next_byte || JS.is_whitespace(k) && (pass_newlines || k != K"NewlineWs")
+    tc = token_at_offset(ps, min(JS.last_byte(ps), b))
+    isnothing(tc) && return nothing
+    while (JS.is_whitespace(kind(this(tc))) && (pass_newlines || kind(this(tc)) != K"NewlineWs"))
+        b < tc.next_byte && return b # in the middle of a token
+        tc = prev_tok(tc)
+        isnothing(tc) && return nothing
     end
-    while skip(ti)
-        ti -= 1
-        ti < 1 && return nothing
-    end
-    return ps.tokens[ti].next_byte - 1
+    return Int(last_byte(tc))
 end
 
 function is_relevant_call(call::JL.SyntaxTree)
@@ -329,7 +327,7 @@ function call_is_decl(_bas::JL.SyntaxList, i::Int, _basᵢ::JL.SyntaxTree = _bas
     return j <= lastindex(_bas) &&
         kind(_bas[j]) in JS.KSet"macro function" &&
         # in `f(x) = g(x)`, return true in `f`, false in `g`
-        _bas[j - 1] === _bas[j][1]
+        _bas[j - 1]._id == _bas[j][1]._id
 end
 
 # Find cases where a macro call is not surrounded by parentheses
@@ -352,8 +350,8 @@ cursor would be descendents of it.
 """
 function cursor_call(ps::JS.ParseStream, st0::JL.SyntaxTree, b::Int)
     # disable signature help if invoked within comment scope
-    prev_token_idx = get_prev_token_idx(ps, b)
-    if !isnothing(prev_token_idx) && JS.kind(ps.tokens[prev_token_idx]) === K"Comment"
+    tc = token_before_offset(ps, b)
+    if !isnothing(tc) && JS.kind(this(tc)) === K"Comment"
         return nothing
     end
 
