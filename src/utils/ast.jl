@@ -212,7 +212,8 @@ Base.IteratorEltype(::Type{TokenCursor}) = Base.HasEltype()
 Base.eltype(::Type{TokenCursor}) = TokenCursor
 Base.IteratorSize(::Type{TokenCursor}) = Base.HasLength()
 Base.length(tc::TokenCursor) = length(tc.tokens)
-next_tok(tc::TokenCursor) = Base.iterate(tc, (tc.position, tc.next_byte))[1]
+next_tok(tc::TokenCursor) =
+    @something(Base.iterate(tc, (tc.position, tc.next_byte)), return nothing)[1]
 prev_tok(tc::TokenCursor) = tc.position <= 1 ? nothing :
     TokenCursor(tc.tokens, tc.position - 1, tc.next_byte - tc.tokens[tc.position].byte_span)
 first_byte(tc::TokenCursor) = tc.position <= 1 ? UInt32(1) : prev_tok(tc).next_byte
@@ -250,6 +251,76 @@ function token_before_offset(ps::JS.ParseStream, offset::Int)
 end
 function token_before_offset(fi::FileInfo, pos::Position)
     token_before_offset(fi.parsed_stream, xy_to_offset(fi, pos))
+end
+
+"""
+    next_nontrivia_byte(ps::JS.ParseStream, b::Int; pass_newlines=false)
+
+Return the first byte position of the next non-trivia token at or after byte `b`.
+Returns `nothing` if no non-trivia token is found or if `b` is beyond the input.
+
+Trivia includes whitespace and comments. When `pass_newlines=false` (default),
+newlines are treated as non-trivia and will stop the search.
+
+# Example
+```julia
+# Given: "x  # comment\\ny"
+#         ^  ^          ^
+#         1  4          14
+next_nontrivia_byte(ps, 1)  # returns 1 (already at 'x')
+next_nontrivia_byte(ps, 2)  # returns 13 (newline - comment is trivia)
+next_nontrivia_byte(ps, 4)  # returns 13 (from within comment)
+next_nontrivia_byte(ps, 4; pass_newlines=true)  # returns 14 (skip to 'y')
+next_nontrivia_byte(ps, 15)  # returns nothing (beyond input)
+```
+"""
+next_nontrivia_byte(ps::JS.ParseStream, b::Int; pass_newlines=false) =
+    first_byte(@something next_nontrivia(ps, b; pass_newlines) return nothing)
+
+"""
+    next_nontrivia(ps::JS.ParseStream, b::Int; pass_newlines=false)
+
+Find the next non-trivia token at or after byte position `b`.
+Returns the `tc::TokenCursor` for that token, or `nothing` if no non-trivia token is found
+or if `b` is beyond the input.
+
+Trivia includes whitespace and comments. When `pass_newlines=false` (default),
+newlines are treated as non-trivia and will stop the search.
+
+# Example
+```julia
+# Given: "x # comment\\ny #= block =# z"
+#         ^ ^          ^ ^           ^
+#         1 3         13 15          27
+
+# From position 1 (at 'x'):
+next_nontrivia(ps, 1)  # returns TokenCursor for 'x'
+
+# From position 3 (in comment):
+next_nontrivia(ps, 3)  # returns TokenCursor for newline (stops at newline)
+next_nontrivia(ps, 3; pass_newlines=true)  # returns TokenCursor for 'y'
+
+# From position 15 (in block comment):
+next_nontrivia(ps, 15)  # returns TokenCursor for 'z' (comments are trivia)
+
+# Beyond the input:
+next_nontrivia(ps, 40)  # returns nothing
+```
+"""
+function next_nontrivia(ps::JS.ParseStream, b::Int; pass_newlines=false)
+    JS.last_byte(ps) < b && return nothing
+    tc = token_at_offset(ps, b)
+    isnothing(tc) && return nothing
+    while is_trivia(tc, pass_newlines)
+        tc = next_tok(tc)
+        isnothing(tc) && return nothing
+    end
+    return tc
+end
+
+function is_trivia(tc::TokenCursor, pass_newlines::Bool)
+    k = kind(this(tc))
+    JS.is_whitespace(k) && (pass_newlines || k !== JS.K"NewlineWs")
 end
 
 noparen_macrocall(st0::JL.SyntaxTree) =
