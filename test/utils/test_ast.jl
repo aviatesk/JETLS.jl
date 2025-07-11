@@ -53,6 +53,262 @@ end
     end
 end
 
+@testset "`get_text_and_positions`" begin
+    # Test with simple ASCII text
+    let text = "hello │world"
+        clean_text, positions = JETLS.get_text_and_positions(text)
+        @test clean_text == "hello world"
+        @test length(positions) == 1
+        @test positions[1] == JETLS.Position(; line=0, character=length("hello "))
+    end
+
+    # Test with multiple markers on same line
+    let text = "a│b│c│d"
+        clean_text, positions = JETLS.get_text_and_positions(text)
+        @test clean_text == "abcd"
+        @test length(positions) == 3
+        @test positions[1] == JETLS.Position(; line=0, character=length("a"))
+        @test positions[2] == JETLS.Position(; line=0, character=length("ab"))
+        @test positions[3] == JETLS.Position(; line=0, character=length("abc"))
+    end
+
+    # Test with multi-line text
+    let text = """
+        line1│
+        line2
+        │line3│
+        """
+        clean_text, positions = JETLS.get_text_and_positions(text)
+        @test clean_text == """
+        line1
+        line2
+        line3
+        """
+        @test length(positions) == 3
+        @test positions[1] == JETLS.Position(; line=0, character=length("line1"))
+        @test positions[2] == JETLS.Position(; line=2, character=length(""))
+        @test positions[3] == JETLS.Position(; line=2, character=length("line3"))
+    end
+
+    # Test with multi-byte characters (Greek letters)
+    let text = "α│β│γ"
+        clean_text, positions = JETLS.get_text_and_positions(text)
+        @test clean_text == "αβγ"
+        @test length(positions) == 2
+        @test positions[1] == JETLS.Position(; line=0, character=length("α"))
+        @test positions[2] == JETLS.Position(; line=0, character=length("αβ"))
+    end
+
+    # Test with mixed ASCII and multi-byte characters
+    let text = "hello α│β world │γ"
+        clean_text, positions = JETLS.get_text_and_positions(text)
+        @test clean_text == "hello αβ world γ"
+        @test length(positions) == 2
+        @test positions[1] == JETLS.Position(; line=0, character=length("hello α"))
+        @test positions[2] == JETLS.Position(; line=0, character=length("hello αβ world "))
+    end
+
+    # Test with emoji (4-byte UTF-8 characters)
+    let text = "😀│😎│🎉"
+        clean_text, positions = JETLS.get_text_and_positions(text)
+        @test clean_text == "😀😎🎉"
+        @test length(positions) == 2
+        @test positions[1] == JETLS.Position(; line=0, character=length("😀"))
+        @test positions[2] == JETLS.Position(; line=0, character=length("😀😎"))
+    end
+
+    # Test with custom marker
+    let text = "foo<HERE>bar<HERE>baz"
+        clean_text, positions = JETLS.get_text_and_positions(text, r"<HERE>")
+        @test clean_text == "foobarbaz"
+        @test length(positions) == 2
+        @test positions[1] == JETLS.Position(; line=0, character=length("foo"))
+        @test positions[2] == JETLS.Position(; line=0, character=length("foobar"))
+    end
+
+    # Test empty text
+    let text = ""
+        clean_text, positions = JETLS.get_text_and_positions(text)
+        @test clean_text == ""
+        @test isempty(positions)
+    end
+
+    # Test text with no markers
+    let text = "no markers here"
+        clean_text, positions = JETLS.get_text_and_positions(text)
+        @test clean_text == "no markers here"
+        @test isempty(positions)
+    end
+
+    # Test markers at beginning and end
+    let text = "│start middle end│"
+        clean_text, positions = JETLS.get_text_and_positions(text)
+        @test clean_text == "start middle end"
+        @test length(positions) == 2
+        @test positions[1] == JETLS.Position(; line=0, character=0)
+        @test positions[2] == JETLS.Position(; line=0, character=length("start middle end"))
+    end
+
+    # Test complex multi-byte scenario matching our byte_ancestors test
+    let text = "α = β + │γ"
+        clean_text, positions = JETLS.get_text_and_positions(text)
+        @test clean_text == "α = β + γ"
+        @test length(positions) == 1
+        @test positions[1] == JETLS.Position(; line=0, character=length("α = β + "))
+    end
+end
+
+@testset "`byte_ancestors`" begin
+    # Test with a simple function
+    let code = """
+        function foo(x)
+            return x│ + 1
+        end
+        """
+        clean_code, positions = JETLS.get_text_and_positions(code, r"│")
+        return_pos = JETLS.xy_to_offset(Vector{UInt8}(clean_code), positions[1])
+
+        st = jlparse(clean_code)
+        let ancestors = JETLS.byte_ancestors(st, 1)
+            @test length(ancestors) >= 2
+            @test JS.kind(ancestors[1]) === JS.K"function"
+            @test JS.kind(ancestors[end]) === JS.K"toplevel"
+        end
+        let ancestors = JETLS.byte_ancestors(st, return_pos)
+            @test length(ancestors) >= 4
+            @test JS.kind(ancestors[1]) === JS.K"call"  # x + 1
+            @test JS.kind(ancestors[2]) === JS.K"return"
+            @test JS.kind(ancestors[3]) === JS.K"block"
+            @test JS.kind(ancestors[4]) === JS.K"function"
+            @test JS.kind(ancestors[end]) === JS.K"toplevel"
+        end
+
+        sn = jsparse(clean_code)
+        let ancestors = JETLS.byte_ancestors(sn, 1)
+            @test length(ancestors) >= 2
+            @test JS.kind(ancestors[1]) === JS.K"function"
+            @test JS.kind(ancestors[end]) === JS.K"toplevel"
+        end
+        let ancestors = JETLS.byte_ancestors(sn, return_pos)
+            @test length(ancestors) >= 4
+            @test JS.kind(ancestors[1]) === JS.K"call"  # x + 1
+            @test JS.kind(ancestors[2]) === JS.K"return"
+            @test JS.kind(ancestors[3]) === JS.K"block"
+            @test JS.kind(ancestors[4]) === JS.K"function"
+            @test JS.kind(ancestors[end]) === JS.K"toplevel"
+        end
+    end
+
+    # Test with range
+    let code = """
+        module MyModule
+            function test()
+                println("h│ell│o")
+            end
+        end
+        """
+        clean_code, positions = JETLS.get_text_and_positions(code, r"│")
+        @assert length(positions) == 2
+        hello_start = JETLS.xy_to_offset(Vector{UInt8}(clean_code), positions[1])
+        hello_end = JETLS.xy_to_offset(Vector{UInt8}(clean_code), positions[2]) - 1
+
+        let st = jlparse(clean_code),
+            ancestors = JETLS.byte_ancestors(st, hello_start:hello_end)
+            @test any(node -> JS.kind(node) === JS.K"string" && JS.sourcetext(node) == "\"hello\"", ancestors)
+            @test any(node -> JS.kind(node) === JS.K"call", ancestors)
+            @test any(node -> JS.kind(node) === JS.K"function", ancestors)
+            @test any(node -> JS.kind(node) === JS.K"module", ancestors)
+        end
+        let sn = jsparse(clean_code),
+            ancestors = JETLS.byte_ancestors(sn, hello_start:hello_end)
+            @test any(node -> JS.kind(node) === JS.K"string" && JS.sourcetext(node) == "\"hello\"", ancestors)
+            @test any(node -> JS.kind(node) === JS.K"call", ancestors)
+            @test any(node -> JS.kind(node) === JS.K"function", ancestors)
+            @test any(node -> JS.kind(node) === JS.K"module", ancestors)
+        end
+    end
+
+    # Test edge cases
+    let code = """
+        # comment
+        │x = 1
+        """
+        clean_code, positions = JETLS.get_text_and_positions(code, r"│")
+        x_pos = JETLS.xy_to_offset(Vector{UInt8}(clean_code), positions[1])
+
+        st = jlparse(clean_code)
+        sn = jsparse(clean_code)
+
+        # Test at position beyond code length should return empty
+        @test isempty(JETLS.byte_ancestors(st, 1000))
+        @test isempty(JETLS.byte_ancestors(sn, 1000))
+
+        # Test at exact boundaries
+        let ancestors = JETLS.byte_ancestors(st, x_pos)
+            @test any(node -> JS.kind(node) === JS.K"Identifier" && JS.sourcetext(node) == "x", ancestors)
+        end
+        let ancestors = JETLS.byte_ancestors(sn, x_pos)
+            @test any(node -> JS.kind(node) === JS.K"Identifier" && JS.sourcetext(node) == "x", ancestors)
+        end
+    end
+
+    let code = """
+        a = b + │c
+        """
+        clean_code, positions = JETLS.get_text_and_positions(code, r"│")
+        @test length(positions) == 1
+        c_pos = JETLS.xy_to_offset(Vector{UInt8}(clean_code), positions[1])
+
+        let st = jlparse(clean_code),
+            ancestors = JETLS.byte_ancestors(st, c_pos)
+            @test any(node -> JS.kind(node) === JS.K"Identifier" && JS.sourcetext(node) == "c", ancestors)
+        end
+
+        let sn = jsparse(clean_code),
+            ancestors = JETLS.byte_ancestors(sn, c_pos)
+            @test any(node -> JS.kind(node) === JS.K"Identifier" && JS.sourcetext(node) == "c", ancestors)
+        end
+    end
+
+    # Test with multi-byte characters
+    let code = "α = β + │γ"
+        clean_code, positions = JETLS.get_text_and_positions(code, r"│")
+        @test length(positions) == 1
+        γ_pos = JETLS.xy_to_offset(Vector{UInt8}(clean_code), positions[1])
+        @test γ_pos == sizeof("α = β + ")+1
+
+        let st = jlparse(clean_code),
+            ancestors = JETLS.byte_ancestors(st, γ_pos)
+            @test any(node -> JS.kind(node) === JS.K"Identifier" && JS.sourcetext(node) == "γ", ancestors)
+        end
+
+        let sn = jsparse(clean_code)
+            ancestors = JETLS.byte_ancestors(sn, γ_pos)
+            @test any(node -> JS.kind(node) === JS.K"Identifier" && JS.sourcetext(node) == "γ", ancestors)
+        end
+    end
+
+    # Test with multiple multi-byte characters and positions
+    let code = """
+        αβγ = │δεζ + ηθι│
+        """
+        clean_code, positions = JETLS.get_text_and_positions(code, r"│")
+        @test length(positions) == 2
+
+        pos1 = JETLS.xy_to_offset(Vector{UInt8}(clean_code), positions[1])
+        @test pos1 == sizeof("αβγ = ")+1
+
+        pos2 = JETLS.xy_to_offset(Vector{UInt8}(clean_code), positions[2])
+        @test pos2 == sizeof("αβγ = δεζ + ηθι")+1
+
+        st = jlparse(clean_code)
+        ancestors1 = JETLS.byte_ancestors(st, pos1)
+        @test any(node -> JS.kind(node) === JS.K"Identifier" && JS.sourcetext(node) == "δεζ", ancestors1)
+        ancestors2 = JETLS.byte_ancestors(st, pos2-1)
+        @test any(node -> JS.kind(node) === JS.K"Identifier" && JS.sourcetext(node) == "ηθι", ancestors2)
+    end
+end
+
 @testset "noparen_macrocall" begin
     @test JETLS.noparen_macrocall(jlparse("@test true"; rule=:statement))
     @test JETLS.noparen_macrocall(jlparse("@interface AAA begin end"; rule=:statement))

@@ -41,10 +41,7 @@ as an ephemeral stack.)  We work around this by taking all available bindings
 and filtering out any that aren't declared in a scope containing the cursor.
 """
 function cursor_bindings(st0_top::JL.SyntaxTree, b_top::Int)
-    st0, b = greatest_local(st0_top, b_top)
-    if isnothing(st0)
-        return nothing # nothing we can lower
-    end
+    st0, b = @something greatest_local(st0_top, b_top) return nothing # nothing we can lower
     ctx3, st2 = try
         jl_lower_for_scope_resolution2(st0)
     catch # err
@@ -148,8 +145,7 @@ has no definitions. Otherwise returns a tuple of `(binding, definitions)` where:
 - `definitions` is a `JL.SyntaxList` containing all definition sites for that binding
 """
 function select_target_binding_definitions(st0_top::JL.SyntaxTree, offset::Int)
-    st0, b = greatest_local(st0_top, offset)
-    isnothing(st0) && return nothing
+    st0, b = @something greatest_local(st0_top, offset) return nothing # nothing we can lower
     ctx3, st3 = try
         jl_lower_for_scope_resolution3(st0)
     catch
