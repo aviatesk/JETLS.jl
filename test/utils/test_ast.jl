@@ -168,41 +168,35 @@ end
         clean_code, positions = JETLS.get_text_and_positions(code, r"│")
         return_pos = JETLS.xy_to_offset(Vector{UInt8}(clean_code), positions[1])
 
-        # Test with JL.SyntaxTree
         st = jlparse(clean_code)
+        let ancestors = JETLS.byte_ancestors(st, 1)
+            @test length(ancestors) >= 2
+            @test JS.kind(ancestors[1]) === JS.K"function"
+            @test JS.kind(ancestors[end]) === JS.K"toplevel"
+        end
+        let ancestors = JETLS.byte_ancestors(st, return_pos)
+            @test length(ancestors) >= 4
+            @test JS.kind(ancestors[1]) === JS.K"call"  # x + 1
+            @test JS.kind(ancestors[2]) === JS.K"return"
+            @test JS.kind(ancestors[3]) === JS.K"block"
+            @test JS.kind(ancestors[4]) === JS.K"function"
+            @test JS.kind(ancestors[end]) === JS.K"toplevel"
+        end
 
-        # Test at the beginning of "function"
-        ancestors = JETLS.byte_ancestors(st, 1)
-        @test length(ancestors) >= 2
-        @test JS.kind(ancestors[1]) === JS.K"function"
-        @test JS.kind(ancestors[end]) === JS.K"toplevel"
-
-        # Test after "return x"
-        ancestors = JETLS.byte_ancestors(st, return_pos)
-        @test length(ancestors) >= 4
-        @test JS.kind(ancestors[1]) === JS.K"call"  # x + 1
-        @test JS.kind(ancestors[2]) === JS.K"return"
-        @test JS.kind(ancestors[3]) === JS.K"block"
-        @test JS.kind(ancestors[4]) === JS.K"function"
-        @test JS.kind(ancestors[end]) === JS.K"toplevel"
-
-        # Test with JS.SyntaxNode
         sn = jsparse(clean_code)
-
-        # Test at the beginning of "function"
-        ancestors = JETLS.byte_ancestors(sn, 1)
-        @test length(ancestors) >= 2
-        @test JS.kind(ancestors[1]) === JS.K"function"
-        @test JS.kind(ancestors[end]) === JS.K"toplevel"
-
-        # Test after "return x"
-        ancestors = JETLS.byte_ancestors(sn, return_pos)
-        @test length(ancestors) >= 4
-        @test JS.kind(ancestors[1]) === JS.K"call"  # x + 1
-        @test JS.kind(ancestors[2]) === JS.K"return"
-        @test JS.kind(ancestors[3]) === JS.K"block"
-        @test JS.kind(ancestors[4]) === JS.K"function"
-        @test JS.kind(ancestors[end]) === JS.K"toplevel"
+        let ancestors = JETLS.byte_ancestors(sn, 1)
+            @test length(ancestors) >= 2
+            @test JS.kind(ancestors[1]) === JS.K"function"
+            @test JS.kind(ancestors[end]) === JS.K"toplevel"
+        end
+        let ancestors = JETLS.byte_ancestors(sn, return_pos)
+            @test length(ancestors) >= 4
+            @test JS.kind(ancestors[1]) === JS.K"call"  # x + 1
+            @test JS.kind(ancestors[2]) === JS.K"return"
+            @test JS.kind(ancestors[3]) === JS.K"block"
+            @test JS.kind(ancestors[4]) === JS.K"function"
+            @test JS.kind(ancestors[end]) === JS.K"toplevel"
+        end
     end
 
     # Test with range
@@ -218,22 +212,20 @@ end
         hello_start = JETLS.xy_to_offset(Vector{UInt8}(clean_code), positions[1])
         hello_end = JETLS.xy_to_offset(Vector{UInt8}(clean_code), positions[2]) - 1
 
-        st = jlparse(clean_code)
-        sn = jsparse(clean_code)
-
-        # JL.SyntaxTree with range
-        ancestors = JETLS.byte_ancestors(st, hello_start:hello_end)
-        @test any(node -> JS.kind(node) === JS.K"string" && JS.sourcetext(node) == "\"hello\"", ancestors)
-        @test any(node -> JS.kind(node) === JS.K"call", ancestors)
-        @test any(node -> JS.kind(node) === JS.K"function", ancestors)
-        @test any(node -> JS.kind(node) === JS.K"module", ancestors)
-
-        # JS.SyntaxNode with range
-        ancestors = JETLS.byte_ancestors(sn, hello_start:hello_end)
-        @test any(node -> JS.kind(node) === JS.K"string" && JS.sourcetext(node) == "\"hello\"", ancestors)
-        @test any(node -> JS.kind(node) === JS.K"call", ancestors)
-        @test any(node -> JS.kind(node) === JS.K"function", ancestors)
-        @test any(node -> JS.kind(node) === JS.K"module", ancestors)
+        let st = jlparse(clean_code),
+            ancestors = JETLS.byte_ancestors(st, hello_start:hello_end)
+            @test any(node -> JS.kind(node) === JS.K"string" && JS.sourcetext(node) == "\"hello\"", ancestors)
+            @test any(node -> JS.kind(node) === JS.K"call", ancestors)
+            @test any(node -> JS.kind(node) === JS.K"function", ancestors)
+            @test any(node -> JS.kind(node) === JS.K"module", ancestors)
+        end
+        let sn = jsparse(clean_code),
+            ancestors = JETLS.byte_ancestors(sn, hello_start:hello_end)
+            @test any(node -> JS.kind(node) === JS.K"string" && JS.sourcetext(node) == "\"hello\"", ancestors)
+            @test any(node -> JS.kind(node) === JS.K"call", ancestors)
+            @test any(node -> JS.kind(node) === JS.K"function", ancestors)
+            @test any(node -> JS.kind(node) === JS.K"module", ancestors)
+        end
     end
 
     # Test edge cases
@@ -248,18 +240,16 @@ end
         sn = jsparse(clean_code)
 
         # Test at position beyond code length should return empty
-        ancestors = JETLS.byte_ancestors(st, 1000)
-        @test isempty(ancestors)
-
-        ancestors = JETLS.byte_ancestors(sn, 1000)
-        @test isempty(ancestors)
+        @test isempty(JETLS.byte_ancestors(st, 1000))
+        @test isempty(JETLS.byte_ancestors(sn, 1000))
 
         # Test at exact boundaries
-        ancestors = JETLS.byte_ancestors(st, x_pos)
-        @test any(node -> JS.kind(node) === JS.K"Identifier" && JS.sourcetext(node) == "x", ancestors)
-
-        ancestors = JETLS.byte_ancestors(sn, x_pos)
-        @test any(node -> JS.kind(node) === JS.K"Identifier" && JS.sourcetext(node) == "x", ancestors)
+        let ancestors = JETLS.byte_ancestors(st, x_pos)
+            @test any(node -> JS.kind(node) === JS.K"Identifier" && JS.sourcetext(node) == "x", ancestors)
+        end
+        let ancestors = JETLS.byte_ancestors(sn, x_pos)
+            @test any(node -> JS.kind(node) === JS.K"Identifier" && JS.sourcetext(node) == "x", ancestors)
+        end
     end
 
     let code = """
@@ -269,13 +259,15 @@ end
         @test length(positions) == 1
         c_pos = JETLS.xy_to_offset(Vector{UInt8}(clean_code), positions[1])
 
-        st = jlparse(clean_code)
-        ancestors_st = JETLS.byte_ancestors(st, c_pos)
-        @test any(node -> JS.kind(node) === JS.K"Identifier" && JS.sourcetext(node) == "c", ancestors_st)
+        let st = jlparse(clean_code),
+            ancestors = JETLS.byte_ancestors(st, c_pos)
+            @test any(node -> JS.kind(node) === JS.K"Identifier" && JS.sourcetext(node) == "c", ancestors)
+        end
 
-        sn = jsparse(clean_code)
-        ancestors_sn = JETLS.byte_ancestors(sn, c_pos)
-        @test any(node -> JS.kind(node) === JS.K"Identifier" && JS.sourcetext(node) == "c", ancestors_sn)
+        let sn = jsparse(clean_code),
+            ancestors = JETLS.byte_ancestors(sn, c_pos)
+            @test any(node -> JS.kind(node) === JS.K"Identifier" && JS.sourcetext(node) == "c", ancestors)
+        end
     end
 
     # Test with multi-byte characters
@@ -285,13 +277,15 @@ end
         γ_pos = JETLS.xy_to_offset(Vector{UInt8}(clean_code), positions[1])
         @test γ_pos == sizeof("α = β + ")+1
 
-        st = jlparse(clean_code)
-        ancestors_st = JETLS.byte_ancestors(st, γ_pos)
-        @test any(node -> JS.kind(node) === JS.K"Identifier" && JS.sourcetext(node) == "γ", ancestors_st)
+        let st = jlparse(clean_code),
+            ancestors = JETLS.byte_ancestors(st, γ_pos)
+            @test any(node -> JS.kind(node) === JS.K"Identifier" && JS.sourcetext(node) == "γ", ancestors)
+        end
 
-        sn = jsparse(clean_code)
-        ancestors_sn = JETLS.byte_ancestors(sn, γ_pos)
-        @test any(node -> JS.kind(node) === JS.K"Identifier" && JS.sourcetext(node) == "γ", ancestors_sn)
+        let sn = jsparse(clean_code)
+            ancestors = JETLS.byte_ancestors(sn, γ_pos)
+            @test any(node -> JS.kind(node) === JS.K"Identifier" && JS.sourcetext(node) == "γ", ancestors)
+        end
     end
 
     # Test with multiple multi-byte characters and positions
@@ -304,15 +298,12 @@ end
         pos1 = JETLS.xy_to_offset(Vector{UInt8}(clean_code), positions[1])
         @test pos1 == sizeof("αβγ = ")+1
 
-        # Second position after 'ηθι'
         pos2 = JETLS.xy_to_offset(Vector{UInt8}(clean_code), positions[2])
-        @test pos2 == sizeof("αβγ = δεζ + ηθι")+1 # including newline
+        @test pos2 == sizeof("αβγ = δεζ + ηθι")+1
 
         st = jlparse(clean_code)
-
         ancestors1 = JETLS.byte_ancestors(st, pos1)
         @test any(node -> JS.kind(node) === JS.K"Identifier" && JS.sourcetext(node) == "δεζ", ancestors1)
-
         ancestors2 = JETLS.byte_ancestors(st, pos2-1)
         @test any(node -> JS.kind(node) === JS.K"Identifier" && JS.sourcetext(node) == "ηθι", ancestors2)
     end

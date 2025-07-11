@@ -125,6 +125,8 @@ function byte_ancestors(sn::JS.SyntaxNode, rng::UnitRange{Int})
     out = JS.SyntaxNode[]
     if rng ⊆ JS.byte_range(sn)
         push!(out, sn)
+    else
+        return out
     end
     traverse(sn) do sn′
         if rng ⊆ JS.byte_range(sn′)
@@ -143,10 +145,11 @@ the cursor (if any such tree exists), and the cursor's position within it.
 """
 function greatest_local(st0::JL.SyntaxTree, b::Int)
     bas = byte_ancestors(st0, b)
-    first_global = findfirst(st -> JL.kind(st) in JS.KSet"toplevel module", bas)
-    @assert !isnothing(first_global)
-    if first_global === 1
-        return (nothing, b)
+    first_global = findfirst(st::JL.SyntaxTree -> JL.kind(st) in JS.KSet"toplevel module", bas)
+    isnothing(first_global) && return nothing
+
+    if first_global == 1
+        return nothing
     end
 
     i = first_global - 1
@@ -154,7 +157,7 @@ function greatest_local(st0::JL.SyntaxTree, b::Int)
         # bas[i] is a block within a global scope, so can't introduce local
         # bindings.  Shrink the tree (mostly for performance).
         i -= 1
-        i < 1 && return (nothing, b)
+        i < 1 && return nothing
     end
 
     return bas[i], (b - (JS.first_byte(st0) - 1))

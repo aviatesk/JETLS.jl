@@ -346,9 +346,7 @@ function add_emoji_latex_completions!(items::Dict{String,CompletionItem}, state:
     fi === nothing && return nothing
 
     pos = params.position
-    backslash_offset_emojionly = get_backslash_offset(fi, pos)
-    backslash_offset_emojionly === nothing && return nothing
-    backslash_offset, emojionly = backslash_offset_emojionly
+    backslash_offset, emojionly = @something get_backslash_offset(fi, pos) return nothing
     backslash_pos = offset_to_xy(fi, backslash_offset)
 
     # HACK Certain clients cannot properly sort/filter completion items that contain
