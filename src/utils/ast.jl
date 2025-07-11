@@ -45,10 +45,8 @@ function offset_to_xy(ps::JS.ParseStream, byte::Integer)
     l, c = JuliaSyntax.source_location(sf, byte)
     return Position(;line = l-1, character = c-1)
 end
-function offset_to_xy(code::Union{AbstractString, Vector{UInt8}}, byte::Int) # used by tests
-    ps = JS.parse!(JS.ParseStream(code), rule=:all)
-    return offset_to_xy(ps, byte)
-end
+offset_to_xy(code::Union{AbstractString, Vector{UInt8}}, byte::Integer) = # used by tests
+    offset_to_xy(JS.parse!(JS.ParseStream(code), rule=:all), byte)
 offset_to_xy(fi::FileInfo, byte::Integer) = offset_to_xy(fi.parsed_stream, byte)
 
 """
@@ -103,7 +101,7 @@ ranges contain all child ranges, and that siblings don't have overlapping ranges
 (this is not true after lowering, but appears to be true after parsing), each
 tree in the result will be a child of the next.
 """
-function byte_ancestors(st::JL.SyntaxTree, rng::UnitRange{Int})
+function byte_ancestors(st::JL.SyntaxTree, rng::UnitRange{<:Integer})
     sl = JL.SyntaxList(st)
     if rng ⊆ JS.byte_range(st)
         push!(sl, st)
@@ -119,9 +117,9 @@ function byte_ancestors(st::JL.SyntaxTree, rng::UnitRange{Int})
     # delete later duplicates when sorted parent->child
     return reverse!(deduplicate_syntaxlist(sl))
 end
-byte_ancestors(st::JL.SyntaxTree, byte::Int) = byte_ancestors(st, byte:byte)
+byte_ancestors(st::JL.SyntaxTree, byte::Integer) = byte_ancestors(st, byte:byte)
 
-function byte_ancestors(sn::JS.SyntaxNode, rng::UnitRange{Int})
+function byte_ancestors(sn::JS.SyntaxNode, rng::UnitRange{<:Integer})
     out = JS.SyntaxNode[]
     if rng ⊆ JS.byte_range(sn)
         push!(out, sn)
@@ -135,7 +133,7 @@ function byte_ancestors(sn::JS.SyntaxNode, rng::UnitRange{Int})
     end
     return reverse!(out)
 end
-byte_ancestors(sn::JS.SyntaxNode, byte::Int) = byte_ancestors(sn, byte:byte)
+byte_ancestors(sn::JS.SyntaxNode, byte::Integer) = byte_ancestors(sn, byte:byte)
 
 """
     greatest_local(st0, b) -> (st::Union{SyntaxTree, Nothing}, b::Int)
@@ -238,23 +236,94 @@ function token_at_offset(ps::JS.ParseStream, offset::Int)
     end
     return nothing
 end
-
-function token_at_offset(fi::FileInfo, pos::Position)
+token_at_offset(fi::FileInfo, pos::Position) =
     token_at_offset(fi.parsed_stream, xy_to_offset(fi, pos))
-end
 
 """
 Similar to `token_at_offset`, but when you need token `a` from `a| b c`
 """
-function token_before_offset(ps::JS.ParseStream, offset::Int)
-    token_at_offset(ps, offset - 1)
-end
-function token_before_offset(fi::FileInfo, pos::Position)
+token_before_offset(ps::JS.ParseStream, offset::Int) = token_at_offset(ps, offset - 1)
+token_before_offset(fi::FileInfo, pos::Position) =
     token_before_offset(fi.parsed_stream, xy_to_offset(fi, pos))
+
+"""
+    prev_nontrivia_byte(ps::JS.ParseStream, b::Int; pass_newlines::Bool=false)
+
+Return the last byte position of the previous non-trivia token at or before byte `b`.
+Returns `nothing` if no non-trivia token is found or if `b` is beyond the input or before position 1.
+
+Trivia includes whitespace and comments. When `pass_newlines=false` (default),
+newlines are treated as non-trivia and will stop the search.
+
+# Example
+```julia
+# Given: "x  # comment\\ny"
+#         ^  ^         ^
+#         1  4        14
+prev_nontrivia_byte(ps, 14)  # returns 14 (already at 'y')
+prev_nontrivia_byte(ps, 13)  # returns 13 (newline)
+prev_nontrivia_byte(ps, 13; pass_newlines=true)  # returns 1 ('x')
+prev_nontrivia_byte(ps, 5)  # returns 1 (from within comment)
+prev_nontrivia_byte(ps, 0)  # returns nothing (before input)
+prev_nontrivia_byte(ps, 20)  # returns nothing (beyond input)
+```
+"""
+function prev_nontrivia_byte(ps::JS.ParseStream, b::Int; pass_newlines::Bool=false)
+    last_byte(@something prev_nontrivia(ps, b; pass_newlines) return nothing)
 end
 
 """
-    next_nontrivia_byte(ps::JS.ParseStream, b::Int; pass_newlines=false)
+    prev_nontrivia(ps::JS.ParseStream, b::Int; pass_newlines::Bool=false)
+
+Find the previous non-trivia token at or before byte position `b`.
+Returns the `tc::TokenCursor` for that token, or `nothing` if no non-trivia token is found
+or if `b` is beyond the input or before position 1.
+
+Trivia includes whitespace and comments. When `pass_newlines=false` (default),
+newlines are treated as non-trivia and will stop the search.
+
+# Example
+```julia
+# Given: "x  # comment\\ny"
+#         ^  ^          ^
+#         1  4          14
+
+# From position 14 (at 'y'):
+prev_nontrivia(ps, 14)  # returns TokenCursor for 'y'
+
+# From position 13 (at newline):
+prev_nontrivia(ps, 13)  # returns TokenCursor for newline
+prev_nontrivia(ps, 13; pass_newlines=true)  # returns TokenCursor for 'x'
+
+# From position 5 (in comment):
+prev_nontrivia(ps, 5)  # returns TokenCursor for 'x'
+
+# Out of bounds:
+prev_nontrivia(ps, 0)   # returns nothing (before input)
+prev_nontrivia(ps, 20)  # returns nothing (beyond input)
+```
+"""
+function prev_nontrivia(ps::JS.ParseStream, b::Int; pass_newlines::Bool=false)
+    1 ≤ b ≤ JS.last_byte(ps) || return nothing
+    tc = @something token_at_offset(ps, b) return nothing
+    if !is_trivia(tc, pass_newlines)
+        return tc
+    end
+    while true
+        tc = prev_tok(tc)
+        isnothing(tc) && return nothing
+        # COMBAK Skip TOMBSTONE tokens
+        if JS.kind(this(tc)) === JS.K"TOMBSTONE"
+            continue
+        end
+        if !is_trivia(tc, pass_newlines)
+            return tc
+        end
+    end
+end
+
+"""
+    next_nontrivia_byte(ps::JS.ParseStream, b::Int; pass_newlines::Bool=false)
 
 Return the first byte position of the next non-trivia token at or after byte `b`.
 Returns `nothing` if no non-trivia token is found or if `b` is beyond the input.
@@ -274,7 +343,7 @@ next_nontrivia_byte(ps, 4; pass_newlines=true)  # returns 14 (skip to 'y')
 next_nontrivia_byte(ps, 15)  # returns nothing (beyond input)
 ```
 """
-next_nontrivia_byte(ps::JS.ParseStream, b::Int; pass_newlines=false) =
+next_nontrivia_byte(ps::JS.ParseStream, b::Int; pass_newlines::Bool=false) =
     first_byte(@something next_nontrivia(ps, b; pass_newlines) return nothing)
 
 """
@@ -303,12 +372,13 @@ next_nontrivia(ps, 3; pass_newlines=true)  # returns TokenCursor for 'y'
 # From position 15 (in block comment):
 next_nontrivia(ps, 15)  # returns TokenCursor for 'z' (comments are trivia)
 
-# Beyond the input:
+# Out of bounds:
+next_nontrivia(ps, 0)  # returns nothing
 next_nontrivia(ps, 40)  # returns nothing
 ```
 """
-function next_nontrivia(ps::JS.ParseStream, b::Int; pass_newlines=false)
-    JS.last_byte(ps) < b && return nothing
+function next_nontrivia(ps::JS.ParseStream, b::Int; pass_newlines::Bool=false)
+    1 ≤ b ≤ JS.last_byte(ps) || return nothing
     tc = token_at_offset(ps, b)
     isnothing(tc) && return nothing
     while is_trivia(tc, pass_newlines)

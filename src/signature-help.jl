@@ -295,21 +295,6 @@ end
 
 const empty_siginfos = SignatureInformation[]
 
-"""
-Return the last byte at or before `b` that isn't in whitespace or a comment (or
-if `pass_newlines=false`, also isn't a newline).
-"""
-function prev_nontrivia_byte(ps::JS.ParseStream, b::Int; pass_newlines=false)
-    tc = token_at_offset(ps, min(JS.last_byte(ps), b))
-    isnothing(tc) && return nothing
-    while (JS.is_whitespace(kind(this(tc))) && (pass_newlines || kind(this(tc)) != K"NewlineWs"))
-        b < tc.next_byte && return b # in the middle of a token
-        tc = prev_tok(tc)
-        isnothing(tc) && return nothing
-    end
-    return Int(last_byte(tc))
-end
-
 function is_relevant_call(call::JL.SyntaxTree)
     kind(call) in CALL_KINDS &&
         # don't show help for a+b, M', etc., where call[1] isn't the function
@@ -375,10 +360,8 @@ function cursor_call(ps::JS.ParseStream, st0::JL.SyntaxTree, b::Int)
     end
 
     # `i` is nothing.  Eat preceding whitespace and check again.
-    pnb_line = prev_nontrivia_byte(ps, b; pass_newlines=false)
-    pnb = prev_nontrivia_byte(ps, b; pass_newlines=true)
-
-    (isnothing(pnb) || pnb === b) && return nothing
+    pnb = prev_nontrivia_byte(ps, b-1; pass_newlines=true)
+    (isnothing(pnb) || pnb == b) && return nothing
     bas = byte_ancestors(st0, pnb)
     # If the previous nontrivia byte is part of a call or macrocall, and it is
     # missing a closing paren, use that.
@@ -390,7 +373,8 @@ function cursor_call(ps::JS.ParseStream, st0::JL.SyntaxTree, b::Int)
         end
     end
 
-    (isnothing(pnb_line) || pnb_line === b) && return nothing
+    pnb_line = prev_nontrivia_byte(ps, b-1; pass_newlines=false)
+    (isnothing(pnb_line) || pnb_line == b) && return nothing
     bas = byte_ancestors(st0, pnb_line)
     # If the previous nontrivia byte within this line is part of an
     # unparenthesized macrocall, use that.
