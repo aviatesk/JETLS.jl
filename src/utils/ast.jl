@@ -186,13 +186,39 @@ function remove_macrocalls(st0::JL.SyntaxTree)
     end
 end
 
-# TODO: Refactor for JuliaLang/JuliaSyntax.jl#560
 """
-    get_current_token_idx(fi::FileInfo, offset::Int)
+GreenTreeCursor, but flattened to only include terminal RawGreenNodes.
+
+ParseStream's `.output` is a post-order DFS of the green tree with relative
+positions only.  To interpret this as a linear list of tokens in source order,
+just ignore any non-terminal node, and accumulate the byte lengths of terminals.
+"""
+struct TokenCursor
+    tokens::Vector{JS.RawGreenNode}
+    position::UInt32
+    next_byte::UInt32
+end
+TokenCursor(ps::JS.ParseStream) =
+    TokenCursor(filter(!JS.is_non_terminal, ps.output), 1, 1)
+
+@inline Base.iterate(tc::TokenCursor) = tc, (tc.position, tc.next_byte)
+@inline function Base.iterate(tc::TokenCursor, state)
+    s_pos, s_byte = state
+    s_pos >= lastindex(tc.tokens) && return nothing
+    out = (s_pos + 1, s_byte + tc.tokens[s_pos + 1].byte_span)
+    return TokenCursor(tc.tokens, out...), out
+end
+next_tok(tc::TokenCursor) = Base.iterate(tc, (tc.position, tc.next_byte))[1]
+prev_tok(tc::TokenCursor) = tc.position <= 1 ? nothing :
+    TokenCursor(tc.tokens, tc.position - 1, tc.next_byte - tc.tokens[tc.position].byte_span)
+first_byte(tc::TokenCursor) = tc.position <= 1 ? UInt32(1) : prev_tok(tc).next_byte
+last_byte(tc::TokenCursor) = tc.next_byte - UInt32(1)
+this(tc::TokenCursor) = tc.tokens[tc.position]
+
+"""
+    token_at_offset(fi::FileInfo, offset::Int)
 
 Get the current token index at a given byte offset in a parsed file.
-This function returns the token at the specified byte offset, or `nothing`
-if the offset is invalid or no token exists at that position.
 
 Example:
 - `al│pha beta gamma` (`b`=3) returns the index of `alpha`
@@ -200,25 +226,27 @@ Example:
 - `alpha│ beta gamma` (`b`=6) returns the index of ` ` (whitespace)
 - `alpha │beta gamma` (`b`=7) returns the index of `beta`
 """
-function get_current_token_idx(ps::JS.ParseStream, offset::Int)
-    offset < 1 && return nothing
-    findfirst(token -> token.next_byte > offset, ps.tokens)
+function token_at_offset(ps::JS.ParseStream, offset::Int)
+    for tc in TokenCursor(ps)
+        tc.next_byte > offset && return tc
+    end
+    return nothing
 end
 
-function get_current_token_idx(fi::FileInfo, pos::Position)
+function token_at_offset(fi::FileInfo, pos::Position)
     fi === nothing && return nothing
-    get_current_token_idx(fi.parsed_stream, xy_to_offset(fi, pos))
+    token_at_offset(fi.parsed_stream, xy_to_offset(fi, pos))
 end
 
 """
-Similar to `get_current_token_idx`, but when you need token `a` from `a| b c`
+Similar to `token_at_offset`, but when you need token `a` from `a| b c`
 """
-function get_prev_token_idx(ps::JS.ParseStream, offset::Int)
-    get_current_token_idx(ps, offset - 1)
+function token_before_offset(ps::JS.ParseStream, offset::Int)
+    token_at_offset(ps, offset - 1)
 end
-function get_prev_token_idx(fi::FileInfo, pos::Position)
+function token_before_offset(fi::FileInfo, pos::Position)
     fi === nothing && return nothing
-    get_prev_token_idx(fi.parsed_stream, xy_to_offset(fi, pos))
+    token_before_offset(fi.parsed_stream, xy_to_offset(fi, pos))
 end
 
 noparen_macrocall(st0::JL.SyntaxTree) =
