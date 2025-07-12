@@ -140,8 +140,8 @@ end
     unexisting_binding│
     func│(42)
     M_Doc.func│(42)
-    sinx = @inline│ sin(42)
-    sinx = Base.@inline│ sin(42)
+    sinx = @inlin│e sin(42)
+    sinx = Base.@inlin│e sin(42)
     rx = r│"foo"
 
     let xs = collect(1:10)
@@ -166,10 +166,10 @@ end
         # M_doc.func│(42)
         (; pat="Documented method.")
 
-        # sinx = @inline│ sin(42)
+        # sinx = @inlin│e sin(42)
         (; pat=JETLS.lsrender(@doc @inline))
 
-        # sinx = Base.@inline│ sin(42)
+        # sinx = Base.@inlin│e sin(42)
         (; pat=JETLS.lsrender(@doc @inline))
 
         # rx = r│"foo"
