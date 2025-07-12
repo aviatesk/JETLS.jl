@@ -47,7 +47,7 @@ and filtering out any that aren't declared in a scope containing the cursor.
 function cursor_bindings(st0_top::JL.SyntaxTree, b_top::Int, mod::LoweringModule)
     st0, b = @something greatest_local(st0_top, b_top) return nothing # nothing we can lower
     ctx3, st2 = try
-        jl_lower_for_scope_resolution2(st0)
+        jl_lower_for_scope_resolution2(st0, mod)
     catch # err
         # JETLS_DEV_MODE && @warn "Error in lowering" err
         return nothing # lowering failed, e.g. because of incomplete input
