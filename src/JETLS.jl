@@ -43,6 +43,7 @@ include("analysis/resolver.jl")
 include("testrunner-types.jl")
 include("types.jl")
 
+include("utils/jl_syntax_macros.jl")
 include("utils/general.jl")
 include("utils/path.jl")
 include("utils/pkg.jl")

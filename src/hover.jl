@@ -29,8 +29,9 @@ function handle_HoverRequest(server::Server, msg::HoverRequest)
 
     st0_top = build_tree!(JL.SyntaxTree, fi)
     offset = xy_to_offset(fi, pos)
+    (; mod, analyzer, postprocessor) = get_context_info(server.state, uri, pos)
 
-    target_binding_definitions = select_target_binding_definitions(st0_top, offset)
+    target_binding_definitions = select_target_binding_definitions(st0_top, offset, mod)
     if !isnothing(target_binding_definitions)
         # TODO Ideally we would want to show the type of this local binding,
         # but for now we'll just show the location of the local binding
@@ -66,7 +67,6 @@ function handle_HoverRequest(server::Server, msg::HoverRequest)
         return send(server, HoverResponse(; id = msg.id, result = null))
     end
 
-    (; mod, analyzer, postprocessor) = get_context_info(server.state, uri, pos)
     parentmod = mod
     identifier_node = node
 

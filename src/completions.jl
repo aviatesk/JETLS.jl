@@ -147,7 +147,8 @@ function local_completions!(items::Dict{String, CompletionItem},
     # NOTE don't bail out even if `length(fi.parsed_stream.diagnostics) ≠ 0`
     # so that we can get some completions even for incomplete code
     st0 = build_tree!(JL.SyntaxTree, fi)
-    cbs = @something cursor_bindings(st0, xy_to_offset(fi, params.position)) return nothing
+    (; mod) = get_context_info(s, uri, params.position)
+    cbs = @something cursor_bindings(st0, xy_to_offset(fi, params.position), mod) return nothing
     for (bi, st, dist) in cbs
         ci = to_completion(bi, st, dist, uri)
         prev_ci = get(items, ci.label, nothing)

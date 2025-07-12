@@ -162,29 +162,6 @@ function greatest_local(st0::JL.SyntaxTree, b::Int)
     return bas[i], (b - (JS.first_byte(st0) - 1))
 end
 
-# HACK: Replace macrocalls (except @nospecialize) with block expressions containing
-# their arguments as they are. This preserves local binding information for better
-# completion and definition features, though it's not a complete fix.
-# Once a full macro expansion support in JuliaLowering is landed,
-# this function can just removed.
-function remove_macrocalls(st0::JL.SyntaxTree)
-    ctx = JL.MacroExpansionContext(JL.syntax_graph(st0), JL.Bindings(),
-                                   JL.ScopeLayer[], JL.ScopeLayer(1, Module(), false))
-    if JS.kind(st0) === JS.K"macrocall"
-        macroname = st0[1]
-        if hasproperty(macroname, :name_val) && macroname.name_val == "@nospecialize"
-            st0
-        else
-            JL.@ast ctx st0 [JS.K"block" (map(remove_macrocalls, JS.children(st0)))...]
-        end
-    elseif JS.is_leaf(st0)
-        st0
-    else
-        k = JS.kind(st0)
-        JL.@ast ctx st0 [k (map(remove_macrocalls, JS.children(st0)))...]
-    end
-end
-
 """
 GreenTreeCursor, but flattened to only include terminal RawGreenNodes.
 
