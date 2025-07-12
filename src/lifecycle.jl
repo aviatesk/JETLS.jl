@@ -124,6 +124,23 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
         @info "Registering 'workspace/executeCommand' with `InitializeResponse`"
     end
 
+    # if getcapability(server,
+    #     :textDocument, :inlayHint, :dynamicRegistration) isa Bool
+    #     inlayHintProvider = nothing # will be registered dynamically (static registration not supported)
+    # NOTE Although `InlayHintRegistrationOptions` extends `StaticRegistrationOptions`
+    # and ideally we would want to perform static registration, it seems that some
+    # clients do not support static registration during `InitializedNotification` properly,
+    # so we are forced to register here instead
+    if supports(server,
+        :textDocument, :inlayHint, :dynamicRegistration)
+        inlayHintProvider = nothing # will be registered dynamically
+    else
+        inlayHintProvider = inlay_hint_options()
+        if JETLS_DEV_MODE
+            @info "Registering 'textDocument/inlayHint' with `InitializeResponse`"
+        end
+    end
+
     result = InitializeResult(;
         capabilities = ServerCapabilities(;
             positionEncoding = PositionEncodingKind.UTF16,
@@ -140,6 +157,7 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
             codeLensProvider,
             codeActionProvider,
             executeCommandProvider,
+            inlayHintProvider,
         ),
         serverInfo = (;
             name = "JETLS",
@@ -242,6 +260,22 @@ function handle_InitializedNotification(server::Server)
         # NOTE If codeAction's `dynamicRegistration` is not supported,
         # it needs to be registered along with initialization in the `InitializeResponse`,
         # since `CodeActionRegistrationOptions` does not extend `StaticRegistrationOptions`.
+    end
+
+    if getcapability(server,
+        :textDocument, :inlayHint, :dynamicRegistration) === true
+        push!(registrations, inlay_hint_registration(#=static=#false))
+        if JETLS_DEV_MODE
+            @info "Dynamically registering 'textDocument/inlayHint' upon `InitializedNotification`"
+        end
+    # elseif getcapability(server,
+    #     :textDocument, :inlayHint, :dynamicRegistration) === false
+    #     # `InlayHintRegistrationOptions` extends `StaticRegistrationOptions`,
+    #     # prefer it over the registration with `InitializeResponse` if the client supports it
+    #     push!(registrations, inlay_hint_registration(#=static=#true))
+    #     if JETLS_DEV_MODE
+    #         @info "Statically registering 'textDocument/inlayHint' upon `InitializedNotification`"
+    #     end
     end
 
     register(server, registrations)
