@@ -333,7 +333,7 @@ end
         @test String(ps.textbuf[JETLS.byte_range(@something(JETLS.token_before_offset(ps, 2)))]) == "a"
         @test String(ps.textbuf[JETLS.byte_range(@something(JETLS.token_before_offset(ps, 3)))]) == " "
         @test String(ps.textbuf[JETLS.byte_range(@something(JETLS.token_before_offset(ps, 4)))]) == "+"
-        @test JETLS.token_before_offset(ps, 1) !== nothing  # COMBAK should probably return nothing instead
+        @test isnothing(JETLS.token_before_offset(ps, 1))
     end
 
     # Test with multi-byte characters
@@ -343,6 +343,20 @@ end
         @test String(ps.textbuf[JETLS.byte_range(@something(JETLS.token_at_offset(ps, sizeof("α"))))]) == "α"
         @test String(ps.textbuf[JETLS.byte_range(@something(JETLS.token_at_offset(ps, sizeof("α")+1)))]) == " "
         @test String(ps.textbuf[JETLS.byte_range(@something(JETLS.token_before_offset(ps, sizeof("α")+1)))]) == "α"
+    end
+end
+
+@testset "TokenCursor" begin
+    let tc = JETLS.TokenCursor(parsedstream(""))
+        @test isempty(tc) == iszero(length(tc))
+    end
+    let code = "abc def"
+        ps = parsedstream(code)
+        toks = collect(JETLS.TokenCursor(ps))
+        @test length(toks) == 3
+        @test String(ps.textbuf[JETLS.byte_range(toks[1])]) == "abc"
+        @test String(ps.textbuf[JETLS.byte_range(toks[2])]) == " "
+        @test String(ps.textbuf[JETLS.byte_range(toks[3])]) == "def"
     end
 end
 

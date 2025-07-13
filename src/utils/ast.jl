@@ -196,10 +196,16 @@ struct TokenCursor
     position::UInt32
     next_byte::UInt32
 end
-TokenCursor(ps::JS.ParseStream) =
-    TokenCursor(filter(!JS.is_non_terminal, ps.output), 1, 1)
+function TokenCursor(ps::JS.ParseStream)
+    tokens = filter(tok::JS.RawGreenNode -> !JS.is_non_terminal(tok) && JS.kind(tok) !== JS.K"TOMBSTONE", ps.output)
+    next_byte = 1
+    if !isempty(tokens)
+        next_byte += tokens[1].byte_span
+    end
+    return TokenCursor(tokens, 1, next_byte)
+end
 
-@inline Base.iterate(tc::TokenCursor) = tc, (tc.position, tc.next_byte)
+@inline Base.iterate(tc::TokenCursor) = isempty(tc.tokens) ? nothing : (tc, (tc.position, tc.next_byte))
 @inline function Base.iterate(tc::TokenCursor, state)
     s_pos, s_byte = state
     s_pos >= lastindex(tc.tokens) && return nothing
@@ -232,7 +238,10 @@ Example:
 """
 function token_at_offset(ps::JS.ParseStream, offset::Int)
     for tc in TokenCursor(ps)
-        tc.next_byte > offset && return tc
+        start_byte = tc.next_byte - this(tc).byte_span
+        if start_byte ≤ offset < tc.next_byte
+            return tc
+        end
     end
     return nothing
 end
@@ -304,18 +313,12 @@ prev_nontrivia(ps, 20)  # returns nothing (beyond input)
 ```
 """
 function prev_nontrivia(ps::JS.ParseStream, b::Int; pass_newlines::Bool=false)
-    1 ≤ b ≤ JS.last_byte(ps) || return nothing
     tc = @something token_at_offset(ps, b) return nothing
     if !is_trivia(tc, pass_newlines)
         return tc
     end
     while true
-        tc = prev_tok(tc)
-        isnothing(tc) && return nothing
-        # COMBAK Skip TOMBSTONE tokens
-        if JS.kind(this(tc)) === JS.K"TOMBSTONE"
-            continue
-        end
+        tc = @something prev_tok(tc) return nothing
         if !is_trivia(tc, pass_newlines)
             return tc
         end
@@ -378,9 +381,7 @@ next_nontrivia(ps, 40)  # returns nothing
 ```
 """
 function next_nontrivia(ps::JS.ParseStream, b::Int; pass_newlines::Bool=false)
-    1 ≤ b ≤ JS.last_byte(ps) || return nothing
-    tc = token_at_offset(ps, b)
-    isnothing(tc) && return nothing
+    tc = @something token_at_offset(ps, b) return nothing
     while is_trivia(tc, pass_newlines)
         tc = next_tok(tc)
         isnothing(tc) && return nothing
