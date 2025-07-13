@@ -60,7 +60,7 @@ end
         # Test when no Project.toml exists above
         no_proj_dir = joinpath(temp_root, "no_project", "deep", "path")
         mkpath(no_proj_dir)
-        @test JETLS.find_env_path(joinpath(no_proj_dir, "file.jl")) === nothing
+        @test isnothing(JETLS.find_env_path(joinpath(no_proj_dir, "file.jl")))
     end
 end
 
@@ -78,7 +78,7 @@ end
         # Search for files going up the tree
         @test JETLS.search_up_file(dir2, "middle.txt") == joinpath(dir1, "middle.txt")
         @test JETLS.search_up_file(dir2, "root.txt") == joinpath(temp_root, "root.txt")
-        @test JETLS.search_up_file(dir2, "nonexistent.txt") === nothing
+        @test isnothing(JETLS.search_up_file(dir2, "nonexistent.txt"))
 
         # Test with file in the same directory
         touch(joinpath(dir2, "same.txt"))

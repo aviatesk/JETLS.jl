@@ -17,8 +17,7 @@ mutable struct Endpoint
 
         read_task = @async try
             while true
-                msg = readmsg(in, method_dispatcher)
-                msg === nothing && break
+                msg = @something readmsg(in, method_dispatcher) break
                 put!(in_msg_queue, msg)
             end
         catch err
@@ -54,8 +53,7 @@ end
 const Parsed = @NamedTuple{method::Union{Nothing,String}}
 
 function readmsg(io::IO, method_dispatcher)
-    msg_str = read_transport_layer(io)
-    msg_str === nothing && return nothing
+    msg_str = @something read_transport_layer(io) return nothing
     parsed = JSON3.read(msg_str, Parsed)
     return reparse_msg_str(parsed, msg_str, method_dispatcher)
 end

@@ -263,8 +263,7 @@ function handle_DocumentDiagnosticRequest(server::Server, msg::DocumentDiagnosti
     if isnothing(previousResultid)
         resultId = "1"
     else
-        resultId = tryparse(Int, previousResultid)
-        if isnothing(resultId)
+        resultId = @something tryparse(Int, previousResultid) begin
             return send(server,
                 DocumentDiagnosticResponse(;
                     id = msg.id,
@@ -274,8 +273,7 @@ function handle_DocumentDiagnosticRequest(server::Server, msg::DocumentDiagnosti
         resultId = string(resultId+1)
     end
 
-    file_info = get_file_info(server.state, uri)
-    if file_info === nothing
+    file_info = @something get_file_info(server.state, uri) begin
         return send(server,
             DocumentDiagnosticResponse(;
                 id = msg.id,
@@ -283,6 +281,7 @@ function handle_DocumentDiagnosticRequest(server::Server, msg::DocumentDiagnosti
                 error = file_cache_error(uri;
                     data = DiagnosticServerCancellationData(; retriggerRequest = true))))
     end
+
     parsed_stream = file_info.parsed_stream
     filename = uri2filename(uri)
     @assert !isnothing(filename) lazy"Unsupported URI: $uri"

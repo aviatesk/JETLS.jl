@@ -19,8 +19,7 @@ function handle_HoverRequest(server::Server, msg::HoverRequest)
     pos = msg.params.position
     uri = msg.params.textDocument.uri
 
-    fi = get_file_info(server.state, uri)
-    if fi === nothing
+    fi = @something get_file_info(server.state, uri) begin
         return send(server,
             HoverResponse(;
                 id = msg.id,
@@ -63,8 +62,7 @@ function handle_HoverRequest(server::Server, msg::HoverRequest)
                 range = get_source_range(target_binding))))
     end
 
-    node = select_target_node(st0_top, offset)
-    if node === nothing
+    node = @something select_target_node(st0_top, offset) begin
         return send(server, HoverResponse(; id = msg.id, result = null))
     end
 

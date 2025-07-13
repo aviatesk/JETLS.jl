@@ -23,8 +23,7 @@ end
 
 function handle_CodeLensRequest(server::Server, msg::CodeLensRequest)
     uri = msg.params.textDocument.uri
-    fi = get_file_info(server.state, uri)
-    if fi === nothing
+    fi = @something get_file_info(server.state, uri) begin
         return send(server,
             CodeLensResponse(;
                 id = msg.id,

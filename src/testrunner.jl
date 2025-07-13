@@ -272,8 +272,7 @@ end
 function testrunner_result_to_diagnostics(result::TestRunnerResult)
     uri2diagnostics = URI2Diagnostics()
     for diag in result.diagnostics
-        uri = filename2uri(diag.filename)
-        isnothing(uri) && continue
+        uri = @something filename2uri(diag.filename) continue
         diagnostics = get!(Vector{Diagnostic}, uri2diagnostics, uri)
         diagnostic = Diagnostic(;
             range = line_range(fixed_line_number(diag.line)),
@@ -571,20 +570,16 @@ Validates that the file exists, is saved, and matches the on-disk version.
 Returns `nothing` if the test was started successfully, or an error message string otherwise.
 """
 function testrunner_run_testset_from_uri(server::Server, uri::URI, idx::Int, tsn::String)
-    fi = get_file_info(server.state, uri)
-    if fi === nothing
+    fi = @something get_file_info(server.state, uri) begin
         return "File is no longer available in the editor"
     end
-    sfi = get_saved_file_info(server.state, uri)
-    if sfi === nothing
+    sfi = @something get_saved_file_info(server.state, uri) begin
         return "The file appears not to exist on disk. Save the file first to run tests."
-    elseif JS.sourcetext(fi.parsed_stream) ≠ JS.sourcetext(sfi.parsed_stream)
+    end
+    if JS.sourcetext(fi.parsed_stream) ≠ JS.sourcetext(sfi.parsed_stream)
         return "The editor state differs from the saved file. Save the file first to run tests."
     end
-    filepath = uri2filepath(uri)
-    if isnothing(filepath)
-        return "Cannot determine file path for the URI"
-    end
+    filepath = @something uri2filepath(uri) return "Cannot determine file path for the URI"
 
     if supports(server, :window, :workDoneProgress)
         id = String(gensym(:WorkDoneProgressCreateRequest_testrunner))
@@ -607,20 +602,16 @@ struct TestRunnerTestcaseProgressCaller <: RequestCaller
 end
 
 function testrunner_run_testcase_from_uri(server::Server, uri::URI, tcl::Int, tct::String)
-    fi = get_file_info(server.state, uri)
-    if fi === nothing
+    fi = @something get_file_info(server.state, uri) begin
         return "File is no longer available in the editor"
     end
-    sfi = get_saved_file_info(server.state, uri)
-    if sfi === nothing
+    sfi = @something get_saved_file_info(server.state, uri) begin
         return "The file appears not to exist on disk. Save the file first to run tests."
-    elseif JS.sourcetext(fi.parsed_stream) ≠ JS.sourcetext(sfi.parsed_stream)
+    end
+    if JS.sourcetext(fi.parsed_stream) ≠ JS.sourcetext(sfi.parsed_stream)
         return "The editor state differs from the saved file. Save the file first to run tests."
     end
-    filepath = uri2filepath(uri)
-    if isnothing(filepath)
-        return "Cannot determine file path for the URI"
-    end
+    filepath = @something uri2filepath(uri) return "Cannot determine file path for the URI"
 
     if supports(server, :window, :workDoneProgress)
         id = String(gensym(:WorkDoneProgressCreateRequest_testrunner))
@@ -641,12 +632,13 @@ Clear test results for the `@testset` whose name is `tsn` at the given `idx` in 
 Validates that the file exists and the `@testset` result can be mapped to the current editor state.
 """
 function try_clear_testrunner_result!(server::Server, uri::URI, idx::Int, tsn::String)
-    fi = get_file_info(server.state, uri)
-    if fi === nothing
+    fi = @something get_file_info(server.state, uri) begin
         # file is no longer open in the editor, just do nothing and return
         # the clean up should be performed by `handle_DidCloseTextDocumentNotification`
         return nothing
-    elseif !is_testsetinfo_valid(fi, idx, tsn)
+    end
+
+    if !is_testsetinfo_valid(fi, idx, tsn)
         # file is has been modified, just do nothing and return
         # the clean up should be performed by `invalidate_testsetinfos!`
         return nothing

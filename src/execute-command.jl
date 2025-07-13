@@ -67,11 +67,11 @@ macro tryparsearg(server, ex)
                  msg = $(esc(msg)),
                  idx = $(esc(idx)),
                  T = $(esc(T))
-        arguments = msg.params.arguments
-        if isnothing(arguments)
+        arguments = @something msg.params.arguments begin
             return send(server, invalid_execute_command_response(msg,
                 lazy"Expected `arguments` parameter to be set for `workspace/executeCommand` request"))
-        elseif !(1 ≤ idx ≤ length(arguments))
+        end
+        if !(1 ≤ idx ≤ length(arguments))
             return send(server, invalid_execute_command_response(msg,
                 lazy"Expected `1 ≤ $idx ≤ length(arguments)` for `workspace/executeCommand` request"))
         end

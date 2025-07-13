@@ -143,13 +143,11 @@ function local_completions!(items::Dict{String, CompletionItem},
             # Don't trigger completion just by typing a numeric character:
             context.triggerCharacter in NUMERIC_CHARACTERS && return nothing
     end
-    fi = get_file_info(s, uri)
-    fi === nothing && return nothing
+    fi = @something get_file_info(s, uri) return nothing
     # NOTE don't bail out even if `length(fi.parsed_stream.diagnostics) ≠ 0`
     # so that we can get some completions even for incomplete code
     st0 = build_tree!(JL.SyntaxTree, fi)
-    cbs = cursor_bindings(st0, xy_to_offset(fi, params.position))
-    cbs === nothing && return nothing
+    cbs = @something cursor_bindings(st0, xy_to_offset(fi, params.position)) return nothing
     for (bi, st, dist) in cbs
         ci = to_completion(bi, st, dist, uri)
         prev_ci = get(items, ci.label, nothing)
@@ -173,8 +171,7 @@ function global_completions!(items::Dict{String, CompletionItem}, state::ServerS
             context.triggerCharacter in NUMERIC_CHARACTERS && return nothing
     end
     pos = params.position
-    fi = get_file_info(state, uri)
-    fi === nothing && return nothing
+    fi = @something get_file_info(state, uri) return nothing
     (; mod, analyzer, postprocessor) = get_context_info(state, uri, pos)
     completion_module = mod
 
@@ -341,8 +338,7 @@ end
 # Add LaTeX and emoji completions to the items dictionary and return boolean indicating
 # whether any completions were added.
 function add_emoji_latex_completions!(items::Dict{String,CompletionItem}, state::ServerState, uri::URI, params::CompletionParams)
-    fi = get_file_info(state, uri)
-    fi === nothing && return nothing
+    fi = @something get_file_info(state, uri) return nothing
 
     pos = params.position
     backslash_offset, emojionly = @something get_backslash_offset(fi, pos) return nothing

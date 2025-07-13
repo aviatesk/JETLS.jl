@@ -26,8 +26,7 @@ function handle_InlayHintRequest(server::Server, msg::InlayHintRequest)
     uri = msg.params.textDocument.uri
     range = msg.params.range
 
-    fi = get_file_info(server.state, uri)
-    if fi === nothing
+    fi = @something get_file_info(server.state, uri) begin
         return send(server,
             InlayHintResponse(;
                 id = msg.id,
