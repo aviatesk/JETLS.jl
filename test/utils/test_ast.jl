@@ -309,6 +309,191 @@ end
     end
 end
 
+@testset "token_at_offset / token_before_offset" begin
+    # Test token_at_offset with simple identifiers
+    let code = "alpha beta gamma"
+        ps = parsedstream(code)
+        @test String(ps.textbuf[JETLS.byte_range(@something(JETLS.token_at_offset(ps, 1)))]) == "alpha"
+        @test String(ps.textbuf[JETLS.byte_range(@something(JETLS.token_at_offset(ps, 3)))]) == "alpha"
+        @test String(ps.textbuf[JETLS.byte_range(@something(JETLS.token_at_offset(ps, 5)))]) == "alpha"
+        @test String(ps.textbuf[JETLS.byte_range(@something(JETLS.token_at_offset(ps, 6)))]) == " "
+        @test String(ps.textbuf[JETLS.byte_range(@something(JETLS.token_at_offset(ps, 8)))]) == "beta"
+        @test isnothing(JETLS.token_at_offset(ps, 100))
+    end
+    let code = "foo(bar)"
+        ps = parsedstream(code)
+        @test String(ps.textbuf[JETLS.byte_range(@something(JETLS.token_at_offset(ps, 2)))]) == "foo"
+        @test String(ps.textbuf[JETLS.byte_range(@something(JETLS.token_at_offset(ps, 4)))]) == "("
+        @test String(ps.textbuf[JETLS.byte_range(@something(JETLS.token_at_offset(ps, 6)))]) == "bar"
+    end
+
+    # Test token_before_offset
+    let code = "a + b"
+        ps = parsedstream(code)
+        @test String(ps.textbuf[JETLS.byte_range(@something(JETLS.token_before_offset(ps, 2)))]) == "a"
+        @test String(ps.textbuf[JETLS.byte_range(@something(JETLS.token_before_offset(ps, 3)))]) == " "
+        @test String(ps.textbuf[JETLS.byte_range(@something(JETLS.token_before_offset(ps, 4)))]) == "+"
+        @test isnothing(JETLS.token_before_offset(ps, 1))
+    end
+
+    # Test with multi-byte characters
+    let code = "α + β"
+        ps = parsedstream(code)
+        @test String(ps.textbuf[JETLS.byte_range(@something(JETLS.token_at_offset(ps, 1)))]) == "α"
+        @test String(ps.textbuf[JETLS.byte_range(@something(JETLS.token_at_offset(ps, sizeof("α"))))]) == "α"
+        @test String(ps.textbuf[JETLS.byte_range(@something(JETLS.token_at_offset(ps, sizeof("α")+1)))]) == " "
+        @test String(ps.textbuf[JETLS.byte_range(@something(JETLS.token_before_offset(ps, sizeof("α")+1)))]) == "α"
+    end
+end
+
+@testset "TokenCursor" begin
+    let tc = JETLS.TokenCursor(parsedstream(""))
+        @test isempty(tc) == iszero(length(tc))
+    end
+    let code = "abc def"
+        ps = parsedstream(code)
+        toks = collect(JETLS.TokenCursor(ps))
+        @test length(toks) == 3
+        @test String(ps.textbuf[JETLS.byte_range(toks[1])]) == "abc"
+        @test String(ps.textbuf[JETLS.byte_range(toks[2])]) == " "
+        @test String(ps.textbuf[JETLS.byte_range(toks[3])]) == "def"
+    end
+end
+
+@testset "prev_nontrivia" begin
+    # Test that prev_nontrivia correctly finds the previous non-trivia token
+    # at or before a given byte position.
+
+    # Test basic functionality
+    let code = "x   y"
+        ps = parsedstream(code)
+        @test String(ps.textbuf[JETLS.byte_range(@something JETLS.prev_nontrivia(ps, 1))]) == "x"
+        @test String(ps.textbuf[JETLS.byte_range(@something JETLS.prev_nontrivia(ps, 3))]) == "x"
+        @test String(ps.textbuf[JETLS.byte_range(@something JETLS.prev_nontrivia(ps, 5))]) == "y"
+        @test isnothing(JETLS.prev_nontrivia(ps, 0))
+        @test isnothing(JETLS.prev_nontrivia(ps, sizeof(code)+1))
+        @test isnothing(JETLS.prev_nontrivia(ps, 100))
+    end
+
+    # Test with newlines
+    let code = "x\n  y"
+        ps = parsedstream(code)
+        @test JETLS.JS.kind(JETLS.this(@something JETLS.prev_nontrivia(ps, 2))) == JETLS.JS.K"NewlineWs"
+        @test String(ps.textbuf[JETLS.byte_range(@something JETLS.prev_nontrivia(ps, 2; pass_newlines=true))]) == "x"
+        @test String(ps.textbuf[JETLS.byte_range(@something JETLS.prev_nontrivia(ps, sizeof(code)))]) == "y"
+        @test isnothing(JETLS.prev_nontrivia(ps, sizeof(code)+1))  # beyond input
+    end
+
+    # Test with comments
+    let code = "x # comment\ny"
+        ps = parsedstream(code)
+        @test String(ps.textbuf[JETLS.byte_range(@something JETLS.prev_nontrivia(ps, 5))]) == "x"  # from within comment
+        @test JETLS.JS.kind(JETLS.this(@something JETLS.prev_nontrivia(ps, sizeof(code)-1))) == JETLS.JS.K"NewlineWs"  # at newline
+        @test String(ps.textbuf[JETLS.byte_range(@something JETLS.prev_nontrivia(ps, sizeof(code)-1; pass_newlines=true))]) == "x"
+        @test String(ps.textbuf[JETLS.byte_range(@something JETLS.prev_nontrivia(ps, sizeof(code)))]) == "y"
+    end
+
+    # Test with block comments
+    let code = "x #= block\ncomment =# y"
+        ps = parsedstream(code)
+        @test String(ps.textbuf[JETLS.byte_range(@something JETLS.prev_nontrivia(ps, 15))]) == "x"  # from within block comment
+        @test String(ps.textbuf[JETLS.byte_range(@something JETLS.prev_nontrivia(ps, sizeof(code)))]) == "y"
+        @test isnothing(JETLS.prev_nontrivia(ps, sizeof(code)+1))  # beyond input
+    end
+
+    # Test at various positions in non-trivia tokens
+    let code = "foo(bar)"
+        ps = parsedstream(code)
+        @test String(ps.textbuf[JETLS.byte_range(@something JETLS.prev_nontrivia(ps, 1))]) == "foo"  # at start
+        @test String(ps.textbuf[JETLS.byte_range(@something JETLS.prev_nontrivia(ps, 2))]) == "foo"  # in middle
+        @test String(ps.textbuf[JETLS.byte_range(@something JETLS.prev_nontrivia(ps, 3))]) == "foo"  # at end
+        @test String(ps.textbuf[JETLS.byte_range(@something JETLS.prev_nontrivia(ps, 4))]) == "("
+        @test String(ps.textbuf[JETLS.byte_range(@something JETLS.prev_nontrivia(ps, 5))]) == "bar"
+        @test String(ps.textbuf[JETLS.byte_range(@something JETLS.prev_nontrivia(ps, 7))]) == "bar"
+        @test String(ps.textbuf[JETLS.byte_range(@something JETLS.prev_nontrivia(ps, 8))]) == ")"
+    end
+
+    # Test edge cases
+    let code = "   "  # Only spaces
+        ps = parsedstream(code)
+        @test isnothing(JETLS.prev_nontrivia(ps, sizeof(code)))
+        @test isnothing(JETLS.prev_nontrivia(ps, sizeof(code); pass_newlines=true))
+    end
+
+    # Test prev_nontrivia_byte accessor function
+    let code = "a b"
+        ps = parsedstream(code)
+        @test JETLS.prev_nontrivia_byte(ps, 1) == 1
+        @test JETLS.prev_nontrivia_byte(ps, 2) == 1  # from space
+        @test JETLS.prev_nontrivia_byte(ps, 3) == 3
+        @test isnothing(JETLS.prev_nontrivia_byte(ps, 0))
+    end
+
+    # Test with comments and newlines for prev_nontrivia_byte
+    let code = "x  # comment\ny"
+        ps = parsedstream(code)
+        @test JETLS.prev_nontrivia_byte(ps, sizeof(code)) == sizeof(code)  # at 'y'
+        @test JETLS.prev_nontrivia_byte(ps, sizeof(code)-1) == sizeof(code)-1  # at newline
+        @test JETLS.prev_nontrivia_byte(ps, sizeof(code)-1; pass_newlines=true) == 1  # skip newline to 'x'
+        @test JETLS.prev_nontrivia_byte(ps, sizeof(code)-2) == 1   # from end of comment
+        @test JETLS.prev_nontrivia_byte(ps, 5) == 1   # from within comment
+    end
+end
+
+@testset "next_nontrivia" begin
+    # Test that next_nontrivia correctly finds the next non-trivia token
+    # at or after a given byte position.
+
+    # Test basic functionality - when starting on a non-trivia token
+    let code = "x   y"
+        ps = parsedstream(code)
+        @test String(ps.textbuf[JETLS.byte_range(@something JETLS.next_nontrivia(ps, 1))]) == "x"
+        @test String(ps.textbuf[JETLS.byte_range(@something JETLS.next_nontrivia(ps, 2))]) == "y"
+        @test String(ps.textbuf[JETLS.byte_range(@something JETLS.next_nontrivia(ps, sizeof(code)))]) == "y"
+        @test isnothing(JETLS.next_nontrivia(ps, sizeof(code)+1))
+    end
+
+    # Test with pass_newlines=true
+    let code = "x\n  y"
+        ps = parsedstream(code)
+        @test JETLS.JS.kind(JETLS.this(@something JETLS.next_nontrivia(ps, 2))) == JETLS.JS.K"NewlineWs"
+        @test String(ps.textbuf[JETLS.byte_range(@something JETLS.next_nontrivia(ps, 2; pass_newlines=true))]) == "y"
+    end
+
+    # Test with comments (comments are considered trivia)
+    let code = "x # comment\ny"
+        ps = parsedstream(code)
+        @test JETLS.JS.kind(JETLS.this(@something JETLS.next_nontrivia(ps, sizeof("x #")))) == JETLS.JS.K"NewlineWs"
+        @test String(ps.textbuf[JETLS.byte_range(@something JETLS.next_nontrivia(ps, sizeof("x #"); pass_newlines=true))]) == "y"
+
+        code = "x \n#= multi-line\ncomment =#\ny"
+        ps = parsedstream(code)
+        @test JETLS.JS.kind(JETLS.this(@something JETLS.next_nontrivia(ps, sizeof("x \n#")))) == JETLS.JS.K"NewlineWs"
+        @test String(ps.textbuf[JETLS.byte_range(@something JETLS.next_nontrivia(ps, sizeof("x \n#"); pass_newlines=true))]) == "y"
+    end
+
+    let code = "foo(bar)"
+        ps = parsedstream(code)
+        @test String(ps.textbuf[JETLS.byte_range(@something JETLS.next_nontrivia(ps, 1))]) == "foo"
+        @test String(ps.textbuf[JETLS.byte_range(@something JETLS.next_nontrivia(ps, 4))]) == "("
+        @test String(ps.textbuf[JETLS.byte_range(@something JETLS.next_nontrivia(ps, 5))]) == "bar"
+    end
+
+    let code = "   "
+        ps = parsedstream(code)
+        @test isnothing(JETLS.next_nontrivia(ps, 1))
+        @test isnothing(JETLS.next_nontrivia(ps, 1; pass_newlines=true))
+    end
+
+    # Test next_nontrivia_byte accessor function
+    let code = "a b"
+        ps = parsedstream(code)
+        @test JETLS.next_nontrivia_byte(ps, 1) == 1
+        @test JETLS.next_nontrivia_byte(ps, 2) == 3
+        @test JETLS.next_nontrivia_byte(ps, 3) == 3
+    end
+end
+
 @testset "noparen_macrocall" begin
     @test JETLS.noparen_macrocall(jlparse("@test true"; rule=:statement))
     @test JETLS.noparen_macrocall(jlparse("@interface AAA begin end"; rule=:statement))
