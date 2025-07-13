@@ -42,10 +42,7 @@ function run_full_analysis!(server::Server, uri::URI; onsave::Bool=false, token:
 end
 
 function begin_full_analysis_progress(server::Server, info::FullAnalysisInfo)
-    token = info.token
-    if token === nothing
-        return nothing
-    end
+    token = @something info.token return nothing
     filename = uri2filename(entryuri(info.entry))
     pre = info.reanalyze ? "Reanalyzing" : "Analyzing"
     title = "$(pre) $(basename(filename)) [$(entrykind(info.entry))]"
@@ -60,10 +57,8 @@ function begin_full_analysis_progress(server::Server, info::FullAnalysisInfo)
 end
 
 function end_full_analysis_progress(server::Server, info::FullAnalysisInfo)
-    token = info.token
-    if token === nothing
-        return nothing
-    end
+    token = @something info.token return nothing
+
     send(server, ProgressNotification(;
         params = ProgressParams(;
             token,
@@ -226,14 +221,12 @@ function initiate_analysis_unit!(server::Server, uri::URI; token::Union{Nothing,
         elseif filekind === :src
             # analyze package source files
             entry_result = activate_do(env_path) do
-                pkgenv = Base.identify_package_env(pkgname)
-                if pkgenv === nothing
+                pkgenv = @something Base.identify_package_env(pkgname) begin
                     @warn "Failed to identify package environment" pkgname
                     return nothing
                 end
                 pkgid, env = pkgenv
-                pkgfile = Base.locate_package(pkgid, env)
-                if pkgfile === nothing
+                pkgfile = @something Base.locate_package(pkgid, env) begin
                     @warn "Expected a package to have a source file" pkgname
                     return nothing
                 end

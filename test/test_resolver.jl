@@ -24,8 +24,7 @@ function analyze_and_resolve(s::AbstractString;
         # TODO use a proper utility to find "resolvable" node
         # `byte-1` here for allowing `sin│()` to be resolved
         nodes = JETLS.byte_ancestors(st_top, byte-1)
-        i = findlast(n -> JS.kind(n) in JS.KSet"Identifier .", nodes)
-        i === nothing && error("No resolvable node found")
+        i = @something findlast(n -> JS.kind(n) in JS.KSet"Identifier .", nodes) error("No resolvable node found")
         node = nodes[i]
 
         JETLS.resolve_type(analyzer, mod, node)

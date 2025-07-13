@@ -25,8 +25,7 @@ end
 
 function handle_CodeActionRequest(server::Server, msg::CodeActionRequest)
     uri = msg.params.textDocument.uri
-    fi = get_file_info(server.state, uri)
-    if fi === nothing
+    fi = @something get_file_info(server.state, uri) begin
         return send(server,
             CodeActionResponse(;
                 id = msg.id,

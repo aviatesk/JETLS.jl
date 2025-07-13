@@ -65,8 +65,7 @@ function handle_DefinitionRequest(server::Server, msg::DefinitionRequest)
     origin_position = msg.params.position
     uri = msg.params.textDocument.uri
 
-    fi = get_file_info(server.state, uri)
-    if fi === nothing
+    fi = @something get_file_info(server.state, uri) begin
         return send(server,
             DefinitionResponse(;
                 id = msg.id,
@@ -96,8 +95,7 @@ function handle_DefinitionRequest(server::Server, msg::DefinitionRequest)
                 result))
     end
 
-    node = select_target_node(st0, offset)
-    if node === nothing
+    node = @something select_target_node(st0, offset) begin
         return send(server, DefinitionResponse(; id = msg.id, result = null))
     end
     (; mod, analyzer) = get_context_info(server.state, uri, origin_position)

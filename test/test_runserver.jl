@@ -93,9 +93,9 @@ withserverprocess() do proc
         }
     }"""
     write_lsp_message(proc, initialize_msg)
-    initialization_response = read_lsp_message(proc)
-    initialization_response === nothing &&
+    initialization_response = @something read_lsp_message(proc) begin
         error("No response received from server (may have terminated)")
+    end
     @test occursin("\"id\":1", initialization_response)
     @test occursin("\"result\"", initialization_response)
     # @info "Server responded to initialize request successfully"
@@ -108,9 +108,9 @@ withserverprocess() do proc
         "params": null
     }"""
     write_lsp_message(proc, shutdown_msg)
-    shutdown_response = read_lsp_message(proc)
-    shutdown_response === nothing &&
+    shutdown_response = @something read_lsp_message(proc) begin
         error("No response received from server (may have terminated)")
+    end
     @test occursin("\"id\":2", shutdown_response)
     @test occursin("\"result\":null", shutdown_response)
     # @info "Server responded to shutdown request"
@@ -145,9 +145,9 @@ withserverprocess() do proc
         }
     }"""
     write_lsp_message(proc, initialize_msg)
-    initialization_response = read_lsp_message(proc)
-    initialization_response === nothing &&
+    initialization_response = @something read_lsp_message(proc) begin
         error("No response received from server (may have terminated)")
+    end
     @test occursin("\"id\":1", initialization_response)
     @test occursin("\"result\"", initialization_response)
     # @info "Server responded to initialize request successfully"

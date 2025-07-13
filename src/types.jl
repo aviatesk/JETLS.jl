@@ -204,8 +204,7 @@ Base.eltype(::Type{ExtraDiagnostics}) = Pair{ExtraDiagnosticsKey,URI2Diagnostics
 Base.keytype(::Type{ExtraDiagnostics}) = ExtraDiagnosticsKey
 Base.valtype(::Type{ExtraDiagnostics}) = URI2Diagnostics
 function Base.iterate(extra_diagnostics::ExtraDiagnostics, keysiter=(keys(extra_diagnostics.keys),))
-    next = iterate(keysiter...)
-    next === nothing && return nothing
+    next = @something iterate(keysiter...) return nothing
     k, nextstate = next
     nextkeysiter = (keysiter[1], nextstate)
     key = extra_diagnostics.keys[k]

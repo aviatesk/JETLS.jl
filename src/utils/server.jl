@@ -58,8 +58,7 @@ end
 get_context_module(::Nothing, ::URI, ::Position) = Main
 get_context_module(oos::OutOfScope, ::URI, ::Position) = isdefined(oos, :module_context) ? oos.module_context : Main
 function get_context_module(analysis_unit::AnalysisUnit, uri::URI, pos::Position)
-    safi = successfully_analyzed_file_info(analysis_unit, uri)
-    isnothing(safi) && return Main
+    safi = @something successfully_analyzed_file_info(analysis_unit, uri) return Main
     curline = Int(pos.line) + 1
     curmod = Main
     for (range, mod) in safi.module_range_infos

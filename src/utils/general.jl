@@ -138,10 +138,7 @@ Traverses the field chain `paths...` of `obj`, and returns `nothing` if any
 `nothing` field is encountered along the way.
 """
 function getobjpath(obj, path::Symbol, paths::Symbol...)
-    nextobj = getfield(obj, path)
-    if nextobj === nothing
-        return nothing
-    end
+    nextobj = @something getfield(obj, path) return nothing
     getobjpath(nextobj, paths...)
 end
 getobjpath(obj) = obj
