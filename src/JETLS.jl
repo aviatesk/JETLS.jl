@@ -68,6 +68,7 @@ include("hover.jl")
 include("diagnostics.jl")
 include("code-lens.jl")
 include("code-action.jl")
+include("inlay-hint.jl")
 include("testrunner.jl")
 include("response.jl")
 include("lifecycle.jl")
@@ -198,6 +199,8 @@ function _handle_message(server::Server, msg)
         return handle_CodeActionRequest(server, msg)
     elseif msg isa ExecuteCommandRequest
         return handle_ExecuteCommandRequest(server, msg)
+    elseif msg isa InlayHintRequest
+        return handle_InlayHintRequest(server, msg)
     elseif msg isa Dict{Symbol,Any} # response message
         if handle_ResponseMessage(server, msg)
             return nothing

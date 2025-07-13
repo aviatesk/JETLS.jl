@@ -10,10 +10,12 @@ function yield_to_endpoint(interval=DEFAULT_FLUSH_INTERVAL)
 end
 
 # TODO memomize computed results?
-supports(server::Server, paths::Symbol...) = supports(server.state, paths...)
-function supports(state::ServerState, paths::Symbol...)
+supports(args...) = getcapability(args...) === true
+
+getcapability(server::Server, paths::Symbol...) = getcapability(server.state, paths...)
+function getcapability(state::ServerState, paths::Symbol...)
     return isdefined(state, :init_params) &&
-        getobjpath(state.init_params.capabilities, paths...) === true
+        getobjpath(state.init_params.capabilities, paths...)
 end
 
 """
