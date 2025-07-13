@@ -166,7 +166,7 @@ end
         end
         """
         clean_code, positions = JETLS.get_text_and_positions(code, r"│")
-        return_pos = JETLS.xy_to_offset(Vector{UInt8}(clean_code), positions[1])
+        return_pos = JETLS.xy_to_offset(clean_code, positions[1])
 
         st = jlparse(clean_code)
         let ancestors = JETLS.byte_ancestors(st, 1)
@@ -209,8 +209,8 @@ end
         """
         clean_code, positions = JETLS.get_text_and_positions(code, r"│")
         @assert length(positions) == 2
-        hello_start = JETLS.xy_to_offset(Vector{UInt8}(clean_code), positions[1])
-        hello_end = JETLS.xy_to_offset(Vector{UInt8}(clean_code), positions[2]) - 1
+        hello_start = JETLS.xy_to_offset(clean_code, positions[1])
+        hello_end = JETLS.xy_to_offset(clean_code, positions[2]) - 1
 
         let st = jlparse(clean_code),
             ancestors = JETLS.byte_ancestors(st, hello_start:hello_end)
@@ -234,7 +234,7 @@ end
         │x = 1
         """
         clean_code, positions = JETLS.get_text_and_positions(code, r"│")
-        x_pos = JETLS.xy_to_offset(Vector{UInt8}(clean_code), positions[1])
+        x_pos = JETLS.xy_to_offset(clean_code, positions[1])
 
         st = jlparse(clean_code)
         sn = jsparse(clean_code)
@@ -257,7 +257,7 @@ end
         """
         clean_code, positions = JETLS.get_text_and_positions(code, r"│")
         @test length(positions) == 1
-        c_pos = JETLS.xy_to_offset(Vector{UInt8}(clean_code), positions[1])
+        c_pos = JETLS.xy_to_offset(clean_code, positions[1])
 
         let st = jlparse(clean_code),
             ancestors = JETLS.byte_ancestors(st, c_pos)
@@ -274,7 +274,7 @@ end
     let code = "α = β + │γ"
         clean_code, positions = JETLS.get_text_and_positions(code, r"│")
         @test length(positions) == 1
-        γ_pos = JETLS.xy_to_offset(Vector{UInt8}(clean_code), positions[1])
+        γ_pos = JETLS.xy_to_offset(clean_code, positions[1])
         @test γ_pos == sizeof("α = β + ")+1
 
         let st = jlparse(clean_code),
@@ -295,10 +295,10 @@ end
         clean_code, positions = JETLS.get_text_and_positions(code, r"│")
         @test length(positions) == 2
 
-        pos1 = JETLS.xy_to_offset(Vector{UInt8}(clean_code), positions[1])
+        pos1 = JETLS.xy_to_offset(clean_code, positions[1])
         @test pos1 == sizeof("αβγ = ")+1
 
-        pos2 = JETLS.xy_to_offset(Vector{UInt8}(clean_code), positions[2])
+        pos2 = JETLS.xy_to_offset(clean_code, positions[2])
         @test pos2 == sizeof("αβγ = δεζ + ηθι")+1
 
         st = jlparse(clean_code)
@@ -438,6 +438,23 @@ end
         @test JETLS.prev_nontrivia_byte(ps, sizeof(code)-2) == 1   # from end of comment
         @test JETLS.prev_nontrivia_byte(ps, 5) == 1   # from within comment
     end
+
+    # Test with strict=true option
+    let code = "x\n# comment\ny"
+        ps = parsedstream(code)
+        # At 'y'
+        @test JETLS.prev_nontrivia_byte(ps, sizeof(code)) == sizeof(code)
+        @test JETLS.prev_nontrivia_byte(ps, sizeof(code); strict=true) == sizeof(code)-1
+
+        # At the second newline
+        @test JETLS.prev_nontrivia_byte(ps, sizeof(code)-1) == sizeof(code)-1
+        @test JETLS.prev_nontrivia_byte(ps, sizeof(code)-1; strict=true) == 2
+        @test JETLS.prev_nontrivia_byte(ps, sizeof(code)-1; pass_newlines=true, strict=true) == 1
+
+        # At 'x'
+        @test JETLS.prev_nontrivia_byte(ps, 1) == 1
+        @test isnothing(JETLS.prev_nontrivia_byte(ps, 1; strict=true))
+    end
 end
 
 @testset "next_nontrivia" begin
@@ -492,6 +509,38 @@ end
         @test JETLS.next_nontrivia_byte(ps, 2) == 3
         @test JETLS.next_nontrivia_byte(ps, 3) == 3
     end
+
+    # Test with strict=true option
+    let code_til_first_newline = "x # comment\n"
+        code_til_second_newline = code_til_first_newline * "y #= block =#\n"
+        code = code_til_second_newline * "z" # "x # comment\ny #= block =#\nz"
+
+        ps = parsedstream(code)
+        # At 'x'
+        @test JETLS.next_nontrivia_byte(ps, 1) == 1
+        @test JETLS.next_nontrivia_byte(ps, 1; strict=true) == sizeof(code_til_first_newline)
+
+        # At space after 'x'
+        @test JETLS.next_nontrivia_byte(ps, 2) == sizeof(code_til_first_newline)
+        @test JETLS.next_nontrivia_byte(ps, 2; strict=true) == sizeof(code_til_first_newline)
+
+        # At the first newline
+        @test JETLS.next_nontrivia_byte(ps, sizeof(code_til_first_newline)) == sizeof(code_til_first_newline)
+        @test JETLS.next_nontrivia_byte(ps, sizeof(code_til_first_newline); strict=true) == sizeof(code_til_first_newline)+1
+
+        # At `y`
+        @test JETLS.next_nontrivia_byte(ps, sizeof(code_til_first_newline)+1) == sizeof(code_til_first_newline)+1
+        @test JETLS.next_nontrivia_byte(ps, sizeof(code_til_first_newline)+1; strict=true) == sizeof(code_til_second_newline)
+        @test JETLS.next_nontrivia_byte(ps, sizeof(code_til_first_newline)+1; pass_newlines=true, strict=true) == sizeof(code_til_second_newline)+1 # z
+
+        # At the second newline position
+        @test JETLS.next_nontrivia_byte(ps, sizeof(code_til_second_newline)) == sizeof(code_til_second_newline)
+        @test JETLS.next_nontrivia_byte(ps, sizeof(code_til_second_newline); strict=true) == sizeof(code_til_second_newline)+1 # z
+
+        # At 'z'
+        @test JETLS.next_nontrivia_byte(ps, sizeof(code)) == sizeof(code)
+        @test isnothing(JETLS.next_nontrivia_byte(ps, sizeof(code); strict=true))
+    end
 end
 
 @testset "noparen_macrocall" begin
@@ -506,7 +555,7 @@ get_target_node(::Type{JS.SyntaxNode}, code::AbstractString, pos::Int) = JETLS.s
 function get_target_node(::Type{T}, code::AbstractString, matcher::Regex=r"│") where T
     clean_code, positions = JETLS.get_text_and_positions(code, matcher)
     @assert length(positions) == 1
-    return get_target_node(T, clean_code, JETLS.xy_to_offset(Vector{UInt8}(clean_code), positions[1]))
+    return get_target_node(T, clean_code, JETLS.xy_to_offset(clean_code, positions[1]))
 end
 
 @testset "`select_target_node` / `get_source_range`" begin
@@ -630,7 +679,7 @@ get_dotprefix_node(code::AbstractString, pos::Int) = JETLS.select_dotprefix_node
 function get_dotprefix_node(code::AbstractString, matcher::Regex=r"│")
     clean_code, positions = JETLS.get_text_and_positions(code, matcher)
     @assert length(positions) == 1
-    return get_dotprefix_node(clean_code, JETLS.xy_to_offset(Vector{UInt8}(clean_code), positions[1]))
+    return get_dotprefix_node(clean_code, JETLS.xy_to_offset(clean_code, positions[1]))
 end
 @testset "`select_dotprefix_node`" begin
     @test isnothing(get_dotprefix_node("isnothing│"))
