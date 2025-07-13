@@ -49,7 +49,7 @@ end
 function with_completion(f, text::String, matcher::Regex=r"│")
     clean_code, positions = JETLS.get_text_and_positions(text, matcher)
     for (i, pos) in enumerate(positions)
-        cv = get_local_completions(clean_code, JETLS.xy_to_offset(Vector{UInt8}(clean_code), pos))
+        cv = get_local_completions(clean_code, JETLS.xy_to_offset(clean_code, pos))
         f(i, cv)
     end
 end

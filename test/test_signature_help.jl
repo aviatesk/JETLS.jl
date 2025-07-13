@@ -5,7 +5,6 @@ using JETLS
 using JETLS: JL, JS
 using JETLS.URIs2
 using JETLS.Analyzer: LSAnalyzer
-using JETLS: cursor_siginfos, get_text_and_positions, xy_to_offset
 
 # siginfos(mod, code, cursor="│") -> siginfos
 # nsigs(mod, code, cursor="│")
@@ -14,10 +13,10 @@ function siginfos(mod::Module, code::AbstractString, cursor::Regex=r"│")
     clean_code, positions = JETLS.get_text_and_positions(code, cursor)
     @assert length(positions) == 1 "siginfos requires exactly one cursor marker"
     position = only(positions)
-    b = JETLS.xy_to_offset(Vector{UInt8}(clean_code), position)
+    b = JETLS.xy_to_offset(clean_code, position)
     ps = JS.ParseStream(clean_code); JS.parse!(ps)
     fi = JETLS.FileInfo(0, ps)
-    return cursor_siginfos(mod, fi, b, LSAnalyzer())
+    return JETLS.cursor_siginfos(mod, fi, b, LSAnalyzer())
 end
 
 n_si(args...) = length(siginfos(args...))
@@ -55,6 +54,9 @@ end
     @test 2 == n_si(M_macros, "@m(│)")
     @test 2 == n_si(M_macros, "@m│")
     @test 2 == n_si(M_macros, "@m │")
+    @test 2 == n_si(M_macros, "begin\n    @m │\nend")
+    @test 0 == n_si(M_macros, "begin\n    @m 1\n│end")
+    @test 0 == n_si(M_macros, "begin\n    @m 1\n│\nend")
     @test 2 == n_si(M_macros, "@m(1,│)")
     @test 2 == n_si(M_macros, "@m 1│")
     @test 1 == n_si(M_macros, "@m(1,2,│)")
