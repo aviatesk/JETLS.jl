@@ -10,7 +10,7 @@ using JETLS.URIs2
 include("setup.jl")
 include("jsjl_utils.jl")
 
-lowering_module = Module()
+global lowering_module::Module = Module()
 function get_cursor_bindings(s::String, b::Int)
     st0 = jlparse(s)
     cb = cursor_bindings(st0, b, lowering_module)
@@ -270,12 +270,6 @@ function with_completion_request(tester::Function, text::AbstractString; matcher
 end
 
 @testset "get_completion_items" begin
-    Base.include_string(lowering_module, """
-        macro weirdmacro(x::Symbol, v)
-            name = Symbol(string(x, "_var"))
-            return :(\$(esc(name)) = \$v)
-        end""")
-
     program = """
      module Foo
         struct Bar

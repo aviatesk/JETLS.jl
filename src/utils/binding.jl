@@ -17,17 +17,17 @@ function is_relevant(ctx::JL.AbstractLoweringContext,
 end
 
 # Lowering doesn't really require the module apart from looking up macro names.
-# If a feature takes a LoweringModule, most functionality will be present with
-# mod=nothing.
-const LoweringModule = Union{Module, Nothing}
+# If a feature takes a MaybeLoweringModule, most functionality will be present
+# with mod=nothing.
+const MaybeLoweringModule = Union{Module, Nothing}
 let fallback_lowering_module = Module()
-    global function jl_lower_for_scope_resolution2(st0, mod::LoweringModule=nothing)
+    global function jl_lower_for_scope_resolution2(st0, mod::MaybeLoweringModule=nothing)
         ctx1, st1 = JL.expand_forms_1(something(mod, fallback_lowering_module), st0);
         ctx2, st2 = JL.expand_forms_2(ctx1, st1);
         ctx3, st3 = JL.resolve_scopes(ctx2, st2);
         return ctx3, st2
     end
-    global function jl_lower_for_scope_resolution3(st0, mod::LoweringModule=nothing)
+    global function jl_lower_for_scope_resolution3(st0, mod::MaybeLoweringModule=nothing)
         ctx1, st1 = JL.expand_forms_1(something(mod, fallback_lowering_module), st0);
         ctx2, st2 = JL.expand_forms_2(ctx1, st1);
         ctx3, st3 = JL.resolve_scopes(ctx2, st2);
@@ -44,7 +44,7 @@ JuliaLowering throws away the mapping from scopes to bindings (scopes are stored
 as an ephemeral stack.)  We work around this by taking all available bindings
 and filtering out any that aren't declared in a scope containing the cursor.
 """
-function cursor_bindings(st0_top::JL.SyntaxTree, b_top::Int, mod::LoweringModule)
+function cursor_bindings(st0_top::JL.SyntaxTree, b_top::Int, mod::MaybeLoweringModule)
     st0, b = @something greatest_local(st0_top, b_top) return nothing # nothing we can lower
     ctx3, st2 = try
         jl_lower_for_scope_resolution2(st0, mod)
@@ -148,7 +148,7 @@ has no definitions. Otherwise returns a tuple of `(binding, definitions)` where:
 - `binding` is the `JL.SyntaxTree` node representing the binding at the cursor
 - `definitions` is a `JL.SyntaxList` containing all definition sites for that binding
 """
-function select_target_binding_definitions(st0_top::JL.SyntaxTree, offset::Int, mod::LoweringModule)
+function select_target_binding_definitions(st0_top::JL.SyntaxTree, offset::Int, mod::MaybeLoweringModule)
     st0, b = @something greatest_local(st0_top, offset) return nothing # nothing we can lower
 
     bas = byte_ancestors(st0, offset)
