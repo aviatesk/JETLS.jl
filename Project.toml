@@ -21,7 +21,7 @@ REPL = "3fa0cd96-eef1-5676-8a61-b3b8758bbffb"
 [sources]
 JET = {rev = "master", url = "https://github.com/aviatesk/JET.jl"}
 JSONRPC = {path = "JSONRPC"}
-JuliaLowering = {rev = "302fe43", url = "https://github.com/mlechu/JuliaLowering.jl"}
+JuliaLowering = {rev = "jetls-hacking", url = "https://github.com/mlechu/JuliaLowering.jl"}
 JuliaSyntax = {rev = "e02f29f", url = "https://github.com/JuliaLang/JuliaSyntax.jl"}
 LSP = {path = "LSP"}
 
