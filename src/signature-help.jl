@@ -379,7 +379,7 @@ function cursor_call(ps::JS.ParseStream, st0::JL.SyntaxTree, b::Int)
     (isnothing(pnb_line) || pnb_line == b) && return nothing
     # Don't provide completion if the current position is within a newline token and crosses over that newline
     pnt_line = prev_nontrivia(ps, b-1; pass_newlines=false) # include the current token (`strict=false`)
-    if !isnothing(pnt_line) && any(==(UInt8('\n')), ps.textbuf[first_byte(pnt_line):b-1])
+    if !isnothing(pnt_line) && any(==(UInt8('\n')), @view ps.textbuf[first_byte(pnt_line):b-1])
         return nothing
     end
     bas = byte_ancestors(st0, pnb_line)
