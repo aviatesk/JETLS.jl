@@ -177,6 +177,22 @@ end
         @test diagnostic.range.var"end".line == 1
     end
 
+    @testset "macro compatibility issue" begin
+        diagnostics = get_lowered_diagnostics("""
+        function kwargs_dict(@nospecialize configs)
+            return ()
+        end
+        """)
+        isone = length(diagnostics) == 1
+        @test_broken isone
+        if isone
+            diagnostic = only(diagnostics)
+            @test diagnostic.message == "Unused local binding `configs`"
+            @test diagnostic.range.start.line == 1
+            @test diagnostic.range.var"end".line == 1
+        end
+    end
+
     @testset "Edge case" begin
         diagnostics = get_lowered_diagnostics("""
         func(::Nothing, x) = x
