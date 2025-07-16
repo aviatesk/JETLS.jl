@@ -45,7 +45,7 @@ const CLIENT_CAPABILITIES = ClientCapabilities(
             @test raw_res.method == "window/showMessage"
             @test raw_res.params.type == MessageType.Warning
             @test occursin("performance.full_analysis.debounce", raw_res.params.message)
-            @test occursin("Restart", raw_res.params.message)
+            @test occursin("restart", raw_res.params.message)
 
             # Config should not be changed in actual_config (reload required)
             @test server.state.config_manager.actual_config["performance"]["full_analysis"]["debounce"] == 2.0
@@ -96,7 +96,7 @@ const CLIENT_CAPABILITIES = ClientCapabilities(
             @test raw_res.method == "window/showMessage"
             @test raw_res.params.type == MessageType.Warning
             @test occursin("deleted", raw_res.params.message)
-            @test occursin("Restart", raw_res.params.message)
+            @test occursin("restart", raw_res.params.message)
 
             actual_config_before = deepcopy(server.state.config_manager.actual_config)
             latest_config_before = deepcopy(server.state.config_manager.latest_config)
@@ -144,7 +144,7 @@ end
             @test raw_res.method == "window/showMessage"
             @test raw_res.params.type == MessageType.Warning
             @test occursin("performance.full_analysis.debounce", raw_res.params.message)
-            @test occursin("Restart", raw_res.params.message)
+            @test occursin("restart", raw_res.params.message)
             @test server.state.config_manager.actual_config["performance"]["full_analysis"]["debounce"] == JETLS.DEFAULT_CONFIG["performance"]["full_analysis"]["debounce"]
             @test server.state.config_manager.latest_config["performance"]["full_analysis"]["debounce"] == 100.0
             @test server.state.config_manager.actual_config["testrunner"]["executable"] == "mytestrunner"
@@ -165,7 +165,7 @@ end
             @test raw_res.method == "window/showMessage"
             @test raw_res.params.type == MessageType.Warning
             @test occursin("performance.full_analysis.debounce", raw_res.params.message)
-            @test occursin("Restart", raw_res.params.message)
+            @test occursin("restart", raw_res.params.message)
             @test server.state.config_manager.actual_config["performance"]["full_analysis"]["debounce"] == JETLS.DEFAULT_CONFIG["performance"]["full_analysis"]["debounce"]
             @test server.state.config_manager.latest_config["performance"]["full_analysis"]["debounce"] == 200.0
             @test server.state.config_manager.actual_config["testrunner"]["executable"] == "mynewtest"
