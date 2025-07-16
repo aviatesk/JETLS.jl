@@ -58,9 +58,9 @@ function load_config!(on_reload_required, server::Server, path::AbstractString)
         return
     end
 
-    merge_config!(server.state.config_manager,
-                  parsed,
-                  on_reload_required)
+    merge_config!(on_reload_required,
+                  server.state.config_manager,
+                  parsed)
 end
 
 function handle_file_change!(server::Server, change::FileEvent)
