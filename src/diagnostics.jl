@@ -157,7 +157,9 @@ function lowering_diagnostics(file_info::FileInfo, filename::AbstractString)
         else
             ctx3, st3 = try
                 jl_lower_for_scope_resolution3(st0)
-            catch # err
+            catch err
+                JETLS_DEBUG_LOWERING && @warn "Error in lowering" err
+                JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
                 continue
             end
             analyze_lowered_code!(diagnostics, ctx3, st3, sourcefile)

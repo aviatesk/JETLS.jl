@@ -162,7 +162,9 @@ function select_target_binding_definitions(st0_top::JL.SyntaxTree, offset::Int, 
 
     ctx3, st3 = try
         jl_lower_for_scope_resolution3(st0, mod)
-    catch
+    catch err
+        JETLS_DEBUG_LOWERING && @warn "Error in lowering" err
+        JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
         return nothing
     end
     binding = select_target_binding(ctx3, st3, b)
