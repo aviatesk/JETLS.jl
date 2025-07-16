@@ -177,7 +177,16 @@ end
         @test diagnostic.range.var"end".line == 1
     end
 
-    @testset "macro compatibility issue" begin
+    @testset "string macro support" begin
+        diagnostics = get_lowered_diagnostics("""
+        let s = rand(Int)
+            lazy"s = \$s"
+        end
+        """)
+        @test isempty(diagnostics)
+    end
+
+    @testset "@nospecialize macro" begin
         diagnostics = get_lowered_diagnostics("""
         function kwargs_dict(@nospecialize configs)
             return ()
