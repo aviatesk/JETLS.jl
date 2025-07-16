@@ -186,6 +186,20 @@ end
         @test isempty(diagnostics)
     end
 
+    @testset "cmdstring macro support" begin
+        diagnostics = get_lowered_diagnostics("""
+        function testrunner_cmd(filepath::String, tcl::Int, test_env_path::Union{Nothing,String})
+            testrunner_exe = Sys.which("testrunner")
+            if isnothing(test_env_path)
+                return `\$testrunner_exe --verbose --json \$filepath L\$tcl`
+            else
+                return `\$testrunner_exe --verbose --project=\$test_env_path --json \$filepath L\$tcl`
+            end
+        end
+        """)
+        @test isempty(diagnostics)
+    end
+
     @testset "@nospecialize macro" begin
         diagnostics = get_lowered_diagnostics("""
         function kwargs_dict(@nospecialize configs)
