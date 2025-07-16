@@ -6,6 +6,9 @@ const DEFAULT_CONFIG = Dict{String,Any}(
             "throttle" => 5.0
         )
     ),
+    "testrunner" => Dict{String,Any}(
+        "executable" => "testrunner",
+    ),
 )
 
 const CONFIG_RELOAD_REQUIRED = Dict{String,Any}(
@@ -14,6 +17,9 @@ const CONFIG_RELOAD_REQUIRED = Dict{String,Any}(
             "debounce" => true,
             "throttle" => true
         )
+    ),
+    "testrunner" => Dict{String,Any}(
+        "executable" => false,
     ),
 )
 
@@ -88,10 +94,7 @@ function merge_config!(actual_config::AbstractDict, latest_config::AbstractDict,
             merge_config!(actual_config[k], latest_config[k], v, on_reload_required, current_path)
         else
             if is_reload_required_key(current_path)
-                if latest_config[k] !== v
-                    latest_config[k] = v
-                    on_reload_required(current_path)
-                end
+                on_reload_required(actual_config, latest_config, current_path, v)
             else
                 actual_config[k] = v
                 latest_config[k] = v

@@ -249,9 +249,9 @@ function testrunner_testcase_code_actions!(code_actions::Vector{Union{CodeAction
 end
 
 # `@testset` execution
-function testrunner_cmd(filepath::String, tsn::String, tsl::Int, test_env_path::Union{Nothing,String})
+function testrunner_cmd(executable::String, filepath::String, tsn::String, tsl::Int, test_env_path::Union{Nothing,String})
     tsn = rlstrip(tsn, '"')
-    testrunner_exe = Sys.which("testrunner")
+    testrunner_exe = Sys.which(executable)
     if isnothing(test_env_path)
         return `$testrunner_exe --verbose --json $filepath $tsn --filter-lines=$tsl`
     else
@@ -260,8 +260,8 @@ function testrunner_cmd(filepath::String, tsn::String, tsl::Int, test_env_path::
 end
 
 # `@test` execution
-function testrunner_cmd(filepath::String, tcl::Int, test_env_path::Union{Nothing,String})
-    testrunner_exe = Sys.which("testrunner")
+function testrunner_cmd(executable::String, filepath::String, tcl::Int, test_env_path::Union{Nothing,String})
+    testrunner_exe = Sys.which(executable)
     if isnothing(test_env_path)
         return `$testrunner_exe --verbose --json $filepath L$tcl`
     else
@@ -343,7 +343,8 @@ end
 
 function testrunner_run_testset(server::Server, uri::URI, fi::FileInfo, idx::Int, tsn::String, filepath::String;
                                 token::Union{Nothing,ProgressToken}=nothing)
-    if isnothing(Sys.which("testrunner"))
+    testrunner_exe_name = get_config(server.state.config_manager, ["testrunner", "executable"])
+    if isnothing(Sys.which(testrunner_exe_name))
         show_error_message(server, app_notfound_message("testrunner"))
         return token !== nothing && end_testrunner_progress(server, token, "TestRunner not installed")
     end
@@ -389,7 +390,8 @@ function _testrunner_run_testset(server::Server, uri::URI, fi::FileInfo, idx::In
     end
     tsl = testset_line(fi.testsetinfos[idx])
     test_env_path = find_uri_env_path(server.state, uri)
-    cmd = testrunner_cmd(filepath, tsn, tsl, test_env_path)
+    executable = get_config(server.state.config_manager, ["testrunner", "executable"])
+    cmd = testrunner_cmd(executable, filepath, tsn, tsl, test_env_path)
     testrunnerproc = open(cmd; read=true)
     wait(testrunnerproc)
     result = try
@@ -431,7 +433,8 @@ end
 
 function testrunner_run_testcase(server::Server, uri::URI, tcl::Int, tct::String, filepath::String;
                                  token::Union{Nothing,ProgressToken}=nothing)
-    if isnothing(Sys.which("testrunner"))
+    testrunner_exe_name = get_config(server.state.config_manager, ["testrunner", "executable"])
+    if isnothing(Sys.which(testrunner_exe_name))
         show_error_message(server, app_notfound_message("testrunner"))
         return token !== nothing && end_testrunner_progress(server, token, "TestRunner not installed")
     end
@@ -465,7 +468,8 @@ end
 
 function _testrunner_run_testcase(server::Server, uri::URI, tcl::Int, tct::String, filepath::String)
     test_env_path = find_uri_env_path(server.state, uri)
-    cmd = testrunner_cmd(filepath, tcl, test_env_path)
+    executable = get_config(server.state.config_manager, ["testrunner", "executable"])
+    cmd = testrunner_cmd(executable, filepath, tcl, test_env_path)
     testrunnerproc = open(cmd; read=true)
     wait(testrunnerproc)
     result = try
