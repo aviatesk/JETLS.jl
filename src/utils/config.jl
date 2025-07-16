@@ -46,15 +46,23 @@ Note that this function does *not* perform deep structural comparison for keys w
 # Examples
 ```julia-repl
 julia> collect_unmatched_keys(
+            Dict("key1" => Dict("key2" => 0, "key3"  => 0, "key4"  => 0)),
+            Dict("key1" => Dict("key2" => 0, "diff1" => 0, "diff2" => 0))
+        )
+2-element Vector{Vector{String}}:
+ ["key1", "key3"]
+ ["key1", "key4"]
+
+julia> collect_unmatched_keys(
             Dict("key1" => 0, "key2" => 0),
             Dict("key1" => 1, "key2" => 1)
-       )
+        )
 Vector{String}[]
 
 julia> collect_unmatched_keys(
            Dict("key1" => Dict("key2" => 0, "key3" => 0)),
            Dict("diff" => Dict("diff" => 0, "key3" => 0))
-       )
+        )
 1-element Vector{Vector{String}}:
  ["key1"]
 ```

@@ -54,7 +54,6 @@ function get_latest_config(manager::JETLS.ConfigManager, key_path::Vector{String
     return JETLS.access_nested_dict(manager.latest_config, key_path)
 end
 
-
 @testset "configuration utilities" begin
     @testset "dictionary operations" begin
         @test JETLS.access_nested_dict(TEST_DICT, ["test_key1"]) == "test_value1"
