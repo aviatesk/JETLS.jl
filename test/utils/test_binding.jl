@@ -10,7 +10,7 @@ function with_target_binding_definitions(f, text::AbstractString, matcher::Regex
     st0_top = jlparse(clean_code)
     for (i, pos) in enumerate(positions)
         offset = JETLS.xy_to_offset(clean_code, pos)
-        f(i, JETLS.select_target_binding_definitions(st0_top, offset))
+        f(i, JETLS.select_target_binding_definitions(st0_top, offset, nothing))
     end
 end
 

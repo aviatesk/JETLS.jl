@@ -183,14 +183,11 @@ end
             return ()
         end
         """)
-        isone = length(diagnostics) == 1
-        @test_broken isone
-        if isone
-            diagnostic = only(diagnostics)
-            @test diagnostic.message == "Unused local binding `configs`"
-            @test diagnostic.range.start.line == 1
-            @test diagnostic.range.var"end".line == 1
-        end
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.message == "Unused argument `configs`"
+        @test diagnostic.range.start.line == 0
+        @test diagnostic.range.var"end".line == 0
     end
 
     @testset "Edge case" begin

@@ -75,10 +75,11 @@ function handle_DefinitionRequest(server::Server, msg::DefinitionRequest)
 
     st0 = build_tree!(JL.SyntaxTree, fi)
     offset = xy_to_offset(fi, origin_position)
+    (; mod, analyzer) = get_context_info(server.state, uri, origin_position)
 
     locationlink_support = supports(server, :textDocument, :definition, :linkSupport)
 
-    target_binding_definitions = select_target_binding_definitions(st0, offset)
+    target_binding_definitions = select_target_binding_definitions(st0, offset, mod)
     if !isnothing(target_binding_definitions)
         target_binding, definitions = target_binding_definitions
         local result = Location[
@@ -98,7 +99,6 @@ function handle_DefinitionRequest(server::Server, msg::DefinitionRequest)
     node = @something select_target_node(st0, offset) begin
         return send(server, DefinitionResponse(; id = msg.id, result = null))
     end
-    (; mod, analyzer) = get_context_info(server.state, uri, origin_position)
     objtyp = resolve_type(analyzer, mod, node)
     objtyp isa Core.Const || return send(server, DefinitionResponse(; id = msg.id, result = null))
 

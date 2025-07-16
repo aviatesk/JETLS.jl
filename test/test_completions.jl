@@ -10,9 +10,10 @@ using JETLS.URIs2
 include("setup.jl")
 include("jsjl_utils.jl")
 
+global lowering_module::Module = Module()
 function get_cursor_bindings(s::String, b::Int)
     st0 = jlparse(s)
-    cb = cursor_bindings(st0, b)
+    cb = cursor_bindings(st0, b, lowering_module)
     return isnothing(cb) ? [] : cb
 end
 get_cursor_bindings(s::String, b::Position) = get_cursor_bindings(s, JETLS.xy_to_offset(s, b))
@@ -327,7 +328,7 @@ end
             @test any(items) do item
                 item.label == "x"
             end
-            @test_broken !any(items) do item
+            @test !any(items) do item
                 item.label == "y"
             end
             @test any(items) do item

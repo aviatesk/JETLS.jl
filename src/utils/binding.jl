@@ -16,15 +16,19 @@ function is_relevant(ctx::JL.AbstractLoweringContext,
          || cursor > start)
 end
 
-let lowering_module = Module()
-    global function jl_lower_for_scope_resolution2(st0)
-        ctx1, st1 = JL.expand_forms_1(lowering_module, remove_macrocalls(st0));
+# Lowering doesn't really require the module apart from looking up macro names.
+# If a feature takes a MaybeLoweringModule, most functionality will be present
+# with mod=nothing.
+const MaybeLoweringModule = Union{Module, Nothing}
+let fallback_lowering_module = Module()
+    global function jl_lower_for_scope_resolution2(st0, mod::MaybeLoweringModule=nothing)
+        ctx1, st1 = JL.expand_forms_1(something(mod, fallback_lowering_module), st0);
         ctx2, st2 = JL.expand_forms_2(ctx1, st1);
         ctx3, st3 = JL.resolve_scopes(ctx2, st2);
         return ctx3, st2
     end
-    global function jl_lower_for_scope_resolution3(st0)
-        ctx1, st1 = JL.expand_forms_1(lowering_module, remove_macrocalls(st0));
+    global function jl_lower_for_scope_resolution3(st0, mod::MaybeLoweringModule=nothing)
+        ctx1, st1 = JL.expand_forms_1(something(mod, fallback_lowering_module), st0);
         ctx2, st2 = JL.expand_forms_2(ctx1, st1);
         ctx3, st3 = JL.resolve_scopes(ctx2, st2);
         @assert !isnothing(st3)
@@ -40,10 +44,10 @@ JuliaLowering throws away the mapping from scopes to bindings (scopes are stored
 as an ephemeral stack.)  We work around this by taking all available bindings
 and filtering out any that aren't declared in a scope containing the cursor.
 """
-function cursor_bindings(st0_top::JL.SyntaxTree, b_top::Int)
+function cursor_bindings(st0_top::JL.SyntaxTree, b_top::Int, mod::MaybeLoweringModule)
     st0, b = @something greatest_local(st0_top, b_top) return nothing # nothing we can lower
     ctx3, st2 = try
-        jl_lower_for_scope_resolution2(st0)
+        jl_lower_for_scope_resolution2(st0, mod)
     catch # err
         # JETLS_DEV_MODE && @warn "Error in lowering" err
         return nothing # lowering failed, e.g. because of incomplete input
@@ -134,7 +138,7 @@ function select_target_binding(ctx3::JL.VariableAnalysisContext, st3::JL.SyntaxT
 end
 
 """
-    select_target_binding_definitions(st0_top::JL.SyntaxTree, offset::Int) ->
+    select_target_binding_definitions(st0_top::JL.SyntaxTree, offset::Int[, mod]) ->
         nothing or (binding::JL.SyntaxTree, definitions::JL.SyntaxList)
 
 Find the binding at the cursor position and return all of its definition sites.
@@ -144,10 +148,19 @@ has no definitions. Otherwise returns a tuple of `(binding, definitions)` where:
 - `binding` is the `JL.SyntaxTree` node representing the binding at the cursor
 - `definitions` is a `JL.SyntaxList` containing all definition sites for that binding
 """
-function select_target_binding_definitions(st0_top::JL.SyntaxTree, offset::Int)
+function select_target_binding_definitions(st0_top::JL.SyntaxTree, offset::Int, mod::MaybeLoweringModule)
     st0, b = @something greatest_local(st0_top, offset) return nothing # nothing we can lower
+
+    bas = byte_ancestors(st0, offset)
+    macname_i = findfirst(ba->JS.kind(ba)===JS.K"MacroName", bas)
+    if !isnothing(macname_i)
+        # Our definition generally won't be local, and lowering would destroy it
+        # anyway.  Defer to global logic.
+        return nothing
+    end
+
     ctx3, st3 = try
-        jl_lower_for_scope_resolution3(st0)
+        jl_lower_for_scope_resolution3(st0, mod)
     catch
         return nothing
     end
