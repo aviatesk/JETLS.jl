@@ -41,7 +41,8 @@ end
 Loads the configuration from the specified path into the server's config manager.
 
 If the file does not exist or cannot be parsed, current configuration remains unchanged.
-When there are unknown keys in the config file, send error by `workspace/showMessage` and **current configuration is not changed.**
+When there are unknown keys in the config file, send error by `workspace/showMessage`
+and **current configuration is not changed.**
 """
 function load_config!(on_reload_required, server::Server, path::AbstractString)
     isfile(path) || return
@@ -50,7 +51,10 @@ function load_config!(on_reload_required, server::Server, path::AbstractString)
     unknown_keys = collect_unmatched_keys(parsed)
 
     if !isempty(unknown_keys)
-        show_error_message(server, "Configuration file at $path contains unknown keys: $(join(map(x -> join(x, "."), unknown_keys), ", ")).")
+        show_error_message(server, """
+            Configuration file at $path contains unknown keys.
+            unknown keys: $(join(map(x -> join(x, "."), unknown_keys), ", "))
+            """)
         return
     end
 
@@ -68,11 +72,17 @@ function handle_file_change!(server::Server, change::FileEvent)
             k = last(key_path)
             if latest_config[k] !== v
                 latest_config[k] = v
-                show_warning_message(server, "Configuration key `$(join(key_path, "."))` changed. Restarting the server is required to apply the changes.")
+                show_warning_message(server, """
+                    Configuration key `$(join(key_path, "."))` changed.
+                    Restarting the server is required to apply the changes.
+                    """)
             end
         end
     elseif change_type == FileChangeType.Deleted
-        show_warning_message(server, "JETLSConfig.toml deleted. Restarting the server is required to apply the changes.")
+        show_warning_message(server, """
+            JETLSConfig.toml deleted.
+            Restarting the server is required to apply the changes.
+            """)
     end
 end
 

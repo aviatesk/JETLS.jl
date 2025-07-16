@@ -346,7 +346,7 @@ function testrunner_run_testset(server::Server, uri::URI, fi::FileInfo, idx::Int
     testrunner_exe_name = get_config(server.state.config_manager, ["testrunner", "executable"])
     if isnothing(Sys.which(testrunner_exe_name))
         show_error_message(server, """
-            `$testrunner_exe_name` executable is not found on the PATH.
+            `$testrunner_exe_name` executable is not found on the `PATH`.
             Follow [this instruction](https://github.com/aviatesk/TestRunner.jl#installation) to install the testrunner app
             or check your `testrunner.executable` configuration setting.
             """)
@@ -440,7 +440,7 @@ function testrunner_run_testcase(server::Server, uri::URI, tcl::Int, tct::String
     testrunner_exe_name = get_config(server.state.config_manager, ["testrunner", "executable"])
     if isnothing(Sys.which(testrunner_exe_name))
         show_error_message(server, """
-            `$testrunner_exe_name` executable is not found on the PATH.
+            `$testrunner_exe_name` executable is not found on the `PATH``.
             Follow [this instruction](https://github.com/aviatesk/TestRunner.jl#installation) to install the testrunner app
             or check your `testrunner.executable` configuration setting.
             """)
