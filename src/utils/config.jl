@@ -94,12 +94,12 @@ end
 is_config_file(server::Server, path::AbstractString) = path in server.state.config_manager.watching_files
 
 
-function merge_config!(actual_config::AbstractDict, latest_config::AbstractDict,
-                       new_config::AbstractDict, on_reload_required::Function, key_path::Vector{String} = String[])
+function merge_config!(on_reload_required::Function, actual_config::AbstractDict, latest_config::AbstractDict,
+                       new_config::AbstractDict, key_path::Vector{String} = String[])
     for (k, v) in new_config
         current_path = [key_path; k]
         if v isa AbstractDict
-            merge_config!(actual_config[k], latest_config[k], v, on_reload_required, current_path)
+            merge_config!(on_reload_required, actual_config[k], latest_config[k], v, current_path)
         else
             if is_reload_required_key(current_path)
                 on_reload_required(actual_config, latest_config, current_path, v)
@@ -112,7 +112,7 @@ function merge_config!(actual_config::AbstractDict, latest_config::AbstractDict,
 end
 
 """
-    merge_config!(manager::ConfigManager, new_config::AbstractDict, on_reload_required::Function)
+    merge_config!(on_reload_required::Function), manager::ConfigManager, new_config::AbstractDict
 
 Merges `new_config` into the `manager`'s actual and latest configurations.
 If a key in `new_config` requires a reload (as determined by `is_reload_required_key`)
@@ -123,8 +123,8 @@ If the key does not require a reload, it is directly merged into both `actual_co
 
 Assumes `new_config` has the same structure (`collect_unmatched_keys` returns empty vector) as `manager.actual_config` and `manager.latest_config`.
 """
-merge_config!(manager::ConfigManager, new_config::AbstractDict, on_reload_required::Function) =
-    merge_config!(manager.actual_config, manager.latest_config, new_config, on_reload_required)
+merge_config!(on_reload_required::Function, manager::ConfigManager, new_config::AbstractDict) =
+    merge_config!(on_reload_required, manager.actual_config, manager.latest_config, new_config)
 
 get_config(manager::ConfigManager, key_path::Vector{String}) =
     access_nested_dict(manager.actual_config, key_path)
