@@ -118,23 +118,26 @@ Note that `st3::JL.SyntaxTree` has been processed by `JL.resolve_scopes` and cor
 It is guaranteed that `target_binding` satisfies `JS.kind(target_binding) === JS.K"BindingId"`.
 """
 function select_target_binding(ctx3::JL.VariableAnalysisContext, st3::JL.SyntaxTree, offset::Int)
-    function select(st::JL.SyntaxTree)
-        JS.kind(st) === JS.K"BindingId" || return false
-        binfo = JL.lookup_binding(ctx3, st)
-        return !binfo.is_internal
-    end
-    bas = byte_ancestors(st3, offset)
-    i = findfirst(select, bas)
-    if isnothing(i)
+    return @something _select_target_binding(ctx3, byte_ancestors(st3, offset)) begin
         offset > 0 || return nothing
         # Support cases like `var│`, `func│(5)`
-        bas = byte_ancestors(st3, offset - 1)
-        i = findfirst(select, bas)
-        if isnothing(i)
-            return nothing
+        _select_target_binding(ctx3, byte_ancestors(st3, offset - 1))
+    end Some(nothing)
+end
+
+function _select_target_binding(ctx3::JL.VariableAnalysisContext, bas::JL.SyntaxList)
+    for i = 1:length(bas)
+        st = bas[i]
+        if JS.kind(st) === JS.K"BindingId"
+            binfo = JL.lookup_binding(ctx3, st)
+            if !binfo.is_internal
+                return st
+            end
+        elseif JS.kind(st) === JS.K"symbolic_goto" && hasproperty(st, :name_val)
+            return st
         end
     end
-    return bas[i]
+    return nothing
 end
 
 """
@@ -164,18 +167,17 @@ function select_target_binding_definitions(st0_top::JL.SyntaxTree, offset::Int, 
     catch
         return nothing
     end
-    binding = select_target_binding(ctx3, st3, b)
-    isnothing(binding) && return nothing
-    binfo = JL.lookup_binding(ctx3, binding)
-    definitions = lookup_binding_definitions(st3, binfo)
+    binding = @something select_target_binding(ctx3, st3, b) return nothing
+    definitions = lookup_binding_definitions(ctx3, st3, binding)
     isempty(definitions) && return nothing
+    @info definitions
     return binding, definitions
 end
 
 is_same_binding(x::JL.SyntaxTree, id::Int) = JS.kind(x) === JS.K"BindingId" && id == JL._binding_id(x)
 
 """
-    lookup_binding_definitions(st3::JL.SyntaxTree, binfo::JL.BindingInfo) -> definitions::JL.SyntaxList
+    lookup_binding_definitions(ctx3::JL.VariableAnalysisContext, st3::JL.SyntaxTree, binfo::JL.BindingInfo) -> definitions::JL.SyntaxList
 
 Find all definition sites for a given binding in the syntax tree. Returns a `JL.SyntaxList`
 containing the syntax nodes where the binding may be defined.
@@ -184,26 +186,42 @@ This function traverses the syntax tree to collect `definitions` that tracks all
 assignment expressions (`=`) and function declarations where the binding may be defined.
 For `:argument` bindings, `definitions` also includes the argument declaration itself.
 """
-function lookup_binding_definitions(st3::JL.SyntaxTree, binfo::JL.BindingInfo)
-    if binfo.kind === :argument
-        sl = JL.SyntaxList(JL.syntax_graph(st3), [binfo.node_id])
+function lookup_binding_definitions(ctx3::JL.VariableAnalysisContext, st3::JL.SyntaxTree, binding::JL.SyntaxTree)
+    if JS.kind(binding) === JS.K"BindingId"
+        binfo = JL.lookup_binding(ctx3, binding)::JL.BindingInfo
+        if binfo.kind === :argument
+            sl = JL.SyntaxList(JL.syntax_graph(st3), [binfo.node_id])
+        else
+            sl = JL.SyntaxList(st3)
+        end
+        binding_id = binfo.id
     else
+        @assert hasproperty(binding, :name_val)
         sl = JL.SyntaxList(st3)
+        binding_id = binding.name_val::String
     end
-    return _lookup_binding_definitions!(sl, st3, binfo.id)
+    return _lookup_binding_definitions!(sl, ctx3, st3, binding_id)
 end
 
-function _lookup_binding_definitions!(sl::JL.SyntaxList, st3::JL.SyntaxTree, binding_id::Int)
+function _lookup_binding_definitions!(sl::JL.SyntaxList, ctx3::JL.VariableAnalysisContext, st3::JL.SyntaxTree, binding_id::Union{Int,String})
     traverse(st3) do st::JL.SyntaxTree
-        if JS.kind(st) === JS.K"=" && JS.numchildren(st) ≥ 2
-            lhs = st[1]
-            if is_same_binding(lhs, binding_id)
-                push!(sl, lhs)
+        if binding_id isa Int
+            if JS.kind(st) === JS.K"=" && JS.numchildren(st) ≥ 2
+                lhs = st[1]
+                if is_same_binding(lhs, binding_id)
+                    push!(sl, lhs)
+                end
+            elseif JS.kind(st) === JS.K"function_decl" && JS.numchildren(st) ≥ 1
+                func = st[1]
+                if is_same_binding(func, binding_id)
+                    push!(sl, func)
+                end
             end
-        elseif JS.kind(st) === JS.K"function_decl" && JS.numchildren(st) ≥ 1
-            func = st[1]
-            if is_same_binding(func, binding_id)
-                push!(sl, func)
+        elseif binding_id isa String
+            if JS.kind(st) === JS.K"symbolic_label" && hasproperty(st, :name_val)
+                if binding_id == st.name_val
+                    push!(sl, st)
+                end
             end
         end
     end
