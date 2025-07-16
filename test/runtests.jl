@@ -28,5 +28,6 @@ end
     @testset "LSAnalyzer" include("test_LSAnalyzer.jl")
     @testset "diagnostics" include("test_diagnostics.jl")
     @testset "testrunner" include("test_testrunner.jl")
+    @testset "did-change-watched-files" include("test_did-change-watched-files.jl")
     @testset "full lifecycle" include("test_full_lifecycle.jl")
 end
