@@ -73,15 +73,15 @@ function handle_file_change!(server::Server, change::FileEvent)
             if latest_config[k] !== v
                 latest_config[k] = v
                 show_warning_message(server, """
-                    Configuration key `$(join(key_path, "."))` changed.
-                    Restarting the server is required to apply the changes.
+                    Configuration key `$(join(key_path, "."))` was changed.
+                    Please restart the server to apply the changes.
                     """)
             end
         end
     elseif change_type == FileChangeType.Deleted
         show_warning_message(server, """
-            JETLSConfig.toml deleted.
-            Restarting the server is required to apply the changes.
+            $changed_path was deleted.
+            Please restart the server to apply the changes.
             """)
     end
 end
