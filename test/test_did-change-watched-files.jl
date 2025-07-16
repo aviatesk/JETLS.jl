@@ -2,8 +2,6 @@ module test_didchangewatchedfiles
 
 using Test
 using JETLS
-using JETLS: ClientCapabilities, DidChangeWatchedFilesClientCapabilities
-using JETLS.LSP: DidChangeWatchedFilesNotification, DidChangeWatchedFilesParams, FileEvent, FileChangeType
 using TOML
 
 include("setup.jl")
