@@ -84,40 +84,19 @@ end
         @test JETLS.get_config(manager, ["non_existent_key"]) === nothing
 
         changed_reload_required = Set{String}()
-        JETLS.merge_config!(manager, TEST_DICT_DIFFERENT_VALUE, (key_path) ->
-            push!(changed_reload_required, join(key_path, ".")))
+        JETLS.merge_config!(manager, TEST_DICT_DIFFERENT_VALUE) do actual_config, latest_config, key_path, v
+            push!(changed_reload_required, join(key_path, "."))
+        end
 
-        # all values should be changed
-        @test get_latest_config(manager, ["test_key1"]) === "newvalue_1"
-        @test get_latest_config(manager, ["test_key2", "nested_key1"]) === "nested_value1"
-        @test get_latest_config(manager, ["test_key2", "nested_key2", "deep_nested_key1"]) === "newvalue_2"
-        @test get_latest_config(manager, ["test_key2", "nested_key2", "deep_nested_key2"]) === "newvalue_3"
-        @test get_latest_config(manager, ["test_key2", "nested_key2", "deep_nested_key3"]) === nothing
-
-        # keys that require reload should not be changed
-        @test JETLS.get_config(manager, ["test_key1"]) === "test_value1" # unchanged (reload required key)
-        @test JETLS.get_config(manager, ["test_key2", "nested_key1"]) === "nested_value1"
-        @test JETLS.get_config(manager, ["test_key2", "nested_key2", "deep_nested_key1"]) === "deep_nested_value1" # unchanged (reload required key)
-        @test JETLS.get_config(manager, ["test_key2", "nested_key2", "deep_nested_key2"]) === "newvalue_3" # changed (reload not required)
-        @test JETLS.get_config(manager, ["test_key2", "nested_key2", "deep_nested_key3"]) === nothing
-
-        # `on_reload_required` should be called for changed keys
+        # `on_reload_required` should be called for changed keys that require reload
         @test changed_reload_required == Set(["test_key1", "test_key2.nested_key2.deep_nested_key1"])
 
-        next_config = copy(TEST_DICT_DIFFERENT_VALUE)
-        next_config["test_key1"] = "latest_value"
-
-        changed_reload_required = Set{String}()
-        JETLS.merge_config!(manager, next_config, (key_path) ->
-            push!(changed_reload_required, join(key_path, ".")))
-
-        # only `test_key1` is changed, so
-        # - `latest_config` should be updated with it
-        # - `actual_config` should not be changed, because it is not reload required key
-        # - `on_reload_required` should be called only for it
-        @test get_latest_config(manager, ["test_key1"]) === "latest_value"
-        @test JETLS.get_config(manager, ["test_key1"]) === "test_value1" # unchanged (reload required key)
-        @test changed_reload_required == Set(["test_key1"])
+        # non reload_required keys should be changed dynamically
+        @test JETLS.get_config(manager, ["test_key2", "nested_key2", "deep_nested_key2"]) == "newvalue_3"
+        @test get_latest_config(manager, ["test_key2", "nested_key2", "deep_nested_key2"]) == "newvalue_3"
+        # reload_required keys should not be changed dynamically without explicit update
+        @test JETLS.get_config(manager, ["test_key1"]) == "test_value1"
+        @test JETLS.get_config(manager, ["test_key2", "nested_key2", "deep_nested_key1"]) == "deep_nested_value1"
     end
 end
 
