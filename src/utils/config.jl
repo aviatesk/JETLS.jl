@@ -93,7 +93,6 @@ end
 
 is_config_file(server::Server, path::AbstractString) = path in server.state.config_manager.watching_files
 
-
 function merge_config!(on_reload_required::Function, actual_config::AbstractDict, latest_config::AbstractDict,
                        new_config::AbstractDict, key_path::Vector{String} = String[])
     for (k, v) in new_config
@@ -117,7 +116,7 @@ end
 Merges `new_config` into the `manager`'s actual and latest configurations.
 If a key in `new_config` requires a reload (as determined by `is_reload_required_key`)
 and its value differs from the `manager.latest_config`,
-the `on_reload_required` function is called with the key path.
+the `on_reload_required` function is called with the `actual_config`, `latest_config`, the key path, and the new value.
 
 If the key does not require a reload, it is directly merged into both `actual_config` and `latest_config`.
 
