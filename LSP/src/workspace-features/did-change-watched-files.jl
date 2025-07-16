@@ -47,8 +47,40 @@ The kind of watcher events to register for.
     "Interested in change events."
     Change = 2
     "Interested in delete events."
-    Delete = 3
+    Delete = 4
 end
+
+# Type aliases for glob patterns
+const Pattern = String
+
+"""
+A relative pattern is a helper to construct glob patterns that are matched
+relatively to a base URI. The common value for a baseUri is a workspace
+folder root, but it can be another absolute URI as well.
+
+# Tags
+- since – 3.17.0
+"""
+@interface RelativePattern begin
+    """
+    A workspace folder or a base URI to which this pattern will be matched
+    against relatively.
+    """
+    baseUri::Union{WorkspaceFolder, URI}
+
+    """
+    The actual glob pattern.
+    """
+    pattern::Pattern
+end
+
+"""
+The glob pattern. Either a string pattern or a relative pattern.
+
+# Tags
+- since – 3.17.0
+"""
+const GlobPattern = Union{Pattern, RelativePattern}
 
 """
 A glob pattern specifying which files to watch.
@@ -61,14 +93,14 @@ A glob pattern specifying which files to watch.
     # Tags
     - since – 3.17.0 support for relative patterns.
     """
-    globPattern::String
+    globPattern::GlobPattern
 
     """
     The kind of events of interest. If omitted it defaults
     to WatchKind.Create | WatchKind.Change | WatchKind.Delete
     which is 7.
     """
-    kind::Union{Int, Nothing} = nothing
+    kind::Union{WatchKind.Ty, Nothing} = nothing
 end
 
 """
