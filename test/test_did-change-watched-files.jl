@@ -7,7 +7,7 @@ using TOML
 include("setup.jl")
 
 # `workspace/didChangeWatchedFiles` does not support static registration,
-# so we need to allow dynamic registration here test it
+# so we need to allow dynamic registration here to test it
 const CLIENT_CAPABILITIES = ClientCapabilities(
     workspace = (;
         didChangeWatchedFiles = DidChangeWatchedFilesClientCapabilities(
