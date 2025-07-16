@@ -170,7 +170,6 @@ function select_target_binding_definitions(st0_top::JL.SyntaxTree, offset::Int, 
     binding = @something select_target_binding(ctx3, st3, b) return nothing
     definitions = lookup_binding_definitions(ctx3, st3, binding)
     isempty(definitions) && return nothing
-    @info definitions
     return binding, definitions
 end
 
