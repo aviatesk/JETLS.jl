@@ -86,6 +86,31 @@ jobs:
       - uses: julia-actions/julia-processcoverage@v1
       - uses: codecov/codecov-action@v5
 
+  JETLS_DEBUG_LOWERING:
+    name: Test with `JETLS_DEBUG_LOWERING = true`
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v1
+        with:
+          version: "1.12-nightly" # most stable version
+          arch: x64
+      - uses: julia-actions/cache@v2
+      - name: set LocalPreferences.toml
+        working-directory: .
+        run: |
+          echo '
+          [JETLS]
+          JETLS_DEBUG_LOWERING = true
+
+          [JET] # allow JET to be loaded on nightly
+          JET_DEV_MODE = true
+          ' > LocalPreferences.toml
+      - uses: julia-actions/julia-buildpkg@latest
+      - uses: julia-actions/julia-runtest@latest
+      - uses: julia-actions/julia-processcoverage@v1
+      - uses: codecov/codecov-action@v5
+
   test_runserver:
     name: Test runserver.jl
     runs-on: ubuntu-latest
