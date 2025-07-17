@@ -1,3 +1,2 @@
 [JETLS]
-JETLS_DEV_MODE = false  # disable server logs
-JETLS_TEST_MODE = false # disable the `try/catch` in `handle_message` when testing
+JETLS_TEST_MODE = true # disable the `try/catch` in `handle_message` when testing
