@@ -24,7 +24,7 @@ end
 function initialize_config!(server::Server)
     if !isdefined(server.state, :root_path)
         if JETLS_DEV_MODE
-            @info "server.state.root_path is not defined, skipping add JETLSConfig.toml watcher"
+            @info "`server.state.root_path` is not defined, skipping registering JETLSConfig.toml watcher"
         end
         return
     end
@@ -52,8 +52,8 @@ function load_config!(on_reload_required, server::Server, path::AbstractString)
 
     if !isempty(unknown_keys)
         show_error_message(server, """
-            Configuration file at $path contains unknown keys.
-            unknown keys: $(join(map(x -> join(x, "."), unknown_keys), ", "))
+            Configuration file at $path contains unknown keys:
+            $(join(map(x -> join(x, "."), unknown_keys), ", "))
             """)
         return
     end
