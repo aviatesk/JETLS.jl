@@ -55,10 +55,12 @@ When this mode is enabled, the language server enables several features to aid
 in development:
 - Automatic loading of Revise when starting the server, allowing changes to be
   applied without restarting
-- `try`/`catch` block is added for the top-level handler of non-lifecycle-related
-  messages, allowing the server to continue running even if an error occurs in
-  each message handler, showing error messages and stack traces in the output
-  panel
+- Uses `@invokelatest` in message handling to ensure that changes made by Revise
+  are reflected without terminating the `runserver` loop
+
+Note that error handling behavior (whether errors are caught or propagated) is
+controlled by `JETLS_TEST_MODE`, not `JETLS_DEV_MODE`.
+See the "[`JETLS_TEST_MODE`](#jetls_test_mode)" section for details.
 
 You can configure `JETLS_DEV_MODE` using Preferences.jl:
 ```julia-repl
@@ -82,25 +84,20 @@ JET_DEV_MODE = true # additionally, allow JET to be loaded on nightly
 
 ## `JETLS_TEST_MODE`
 
-This language server is currently in a rapid development phase and is not yet
-intended for general user adoption. However, there are cases where interested
-users want to utilize it.
-Having the server loop crash due to a single failure would not be ideal for
-demonstration purposes, although the current `resolve_type` implementation in
-particular is very fragile at the moment.
+JETLS has a test mode that controls error handling behavior during testing.
+When `JETLS_TEST_MODE` is enabled, the server disables the `try`/`catch` error
+recovery in message handling, ensuring that errors are properly raised during
+tests rather than being suppressed.
 
-Therefore, error recovery from message handling failures using `try`/`catch`
-blocks has been temporarily enabled for all use cases _except testing_.
-Specifically, the message handling error recovery is only enabled when
-`JETLS_TEST_MODE` is not activated.
+This mode is configured through LocalPreferences.toml and is automatically
+enabled in the test environment (see [test/LocalPreferences.toml](./test/LocalPreferences.toml)).
 
-This approach ensures that internal errors are properly raised rather than
-being suppressed by the error recovery during testing (see
-[test/LocalPreferences.toml](./test/LocalPreferences.toml)).
+The error handling behavior in `handle_message` follows this logic:
+- When `!JETLS_TEST_MODE`: Errors are caught and logged, allowing the server to continue running
+- When `!!JETLS_TEST_MODE`: Errors are propagated, ensuring test failures are properly detected
 
-For general users, the server will run under `!JETLS_DEV_MODE &&
-!JETLS_TEST_MODE` conditions, where Revise loading and development logs are
-disabled, but the message error handling remains enabled.
+For general users, the server runs with `JETLS_TEST_MODE` disabled by default,
+providing error recovery to prevent server crashes during normal use.
 
 ## Precompilation
 

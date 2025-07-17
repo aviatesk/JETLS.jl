@@ -72,7 +72,7 @@ jobs:
         run: |
           echo '
           [JETLS]
-          JETLS_DEV_MODE = true # enable JETLS dev mode
+          JETLS_DEV_MODE = true
 
           [JET]
           JET_DEV_MODE = true # allow JET to be loaded on nightly
