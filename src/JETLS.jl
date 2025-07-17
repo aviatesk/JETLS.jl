@@ -151,7 +151,7 @@ end
 
 function handle_message(server::Server, msg)
     @nospecialize msg
-    if JETLS_DEV_MODE || !JETLS_TEST_MODE
+    if !JETLS_TEST_MODE
         try
             if JETLS_DEV_MODE
                 # `@invokelatest` for allowing changes maded by Revise to be reflected without
@@ -166,7 +166,13 @@ function handle_message(server::Server, msg)
             return nothing
         end
     else
-        return _handle_message(server, msg)
+        if JETLS_DEV_MODE
+            # `@invokelatest` for allowing changes maded by Revise to be reflected without
+            # terminating the `runserver` loop
+            return @invokelatest _handle_message(server, msg)
+        else
+            return _handle_message(server, msg)
+        end
     end
 end
 

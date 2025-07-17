@@ -45,12 +45,12 @@ jobs:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
       - uses: julia-actions/cache@v2
-      - name: set `JET_DEV_MODE=true`
+      - name: set LocalPreferences.toml
         working-directory: .
         run: |
           echo '
-          [JET] # allow JET to be loaded on nightly
-          JET_DEV_MODE = true
+          [JET]
+          JET_DEV_MODE = true # allow JET to be loaded on nightly
           ' > LocalPreferences.toml
       - uses: julia-actions/julia-buildpkg@latest
       - uses: julia-actions/julia-runtest@latest
@@ -67,20 +67,16 @@ jobs:
           version: "1.12-nightly" # most stable version
           arch: x64
       - uses: julia-actions/cache@v2
-      - name: set `JET_DEV_MODE=true`
+      - name: set LocalPreferences.toml
         working-directory: .
         run: |
           echo '
-          [JET] # allow JET to be loaded on nightly
-          JET_DEV_MODE = true
+          [JETLS]
+          JETLS_DEV_MODE = true # enable JETLS dev mode
+
+          [JET]
+          JET_DEV_MODE = true # allow JET to be loaded on nightly
           ' > LocalPreferences.toml
-      - name: set `JETLS_DEV_MODE=true`
-        working-directory: .
-        run: |
-          echo '
-          [JETLS] # enable JETLS dev mode
-          JET_DEV_MODE = true
-          ' > test/LocalPreferences.toml
       - uses: julia-actions/julia-buildpkg@latest
       - uses: julia-actions/julia-runtest@latest
       - uses: julia-actions/julia-processcoverage@v1
