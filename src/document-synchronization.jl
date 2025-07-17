@@ -126,6 +126,7 @@ function handle_DidChangeTextDocumentNotification(server::Server, msg::DidChange
     text = last(contentChanges).text
     fi = cache_file_info!(server.state, uri, textDocument.version, text)
     update_testsetinfos!(server, fi)
+    update_entrypoint!(server, fi)
 end
 
 function handle_DidSaveTextDocumentNotification(server::Server, msg::DidSaveTextDocumentNotification)

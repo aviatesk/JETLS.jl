@@ -32,6 +32,7 @@ function handle_CodeLensRequest(server::Server, msg::CodeLensRequest)
     end
     code_lenses = CodeLens[]
     testrunner_code_lenses!(code_lenses, uri, fi)
+    report_trim_code_lens!(code_lenses, uri, fi)
     return send(server,
         CodeLensResponse(;
             id = msg.id,
