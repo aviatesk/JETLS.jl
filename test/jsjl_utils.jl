@@ -14,6 +14,20 @@ jlparse(s::AbstractString; rule::Symbol=:all, kwargs...) = jlparse(parsedstream(
 jlparse(parsed_stream::JS.ParseStream; filename::AbstractString=@__FILE__, first_line::Int=1) =
     JS.build_tree(JL.SyntaxTree, parsed_stream; filename, first_line)
 
+macro expect_jl_err(ex)
+    if JETLS.JETLS_DEBUG_LOWERING
+        :(mktemp() do path, io
+            redirect_stderr(io) do
+                $ex
+            end
+            flush(io)
+            @test !isempty(read(path, String))
+        end) |> esc
+    else
+        esc(ex)
+    end
+end
+
 # For interactive use
 # ===================
 

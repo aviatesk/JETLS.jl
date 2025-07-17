@@ -48,8 +48,9 @@ function cursor_bindings(st0_top::JL.SyntaxTree, b_top::Int, mod::MaybeLoweringM
     st0, b = @something greatest_local(st0_top, b_top) return nothing # nothing we can lower
     ctx3, st2 = try
         jl_lower_for_scope_resolution2(st0, mod)
-    catch # err
-        # JETLS_DEV_MODE && @warn "Error in lowering" err
+    catch err
+        JETLS_DEBUG_LOWERING && @warn "Error in lowering" err
+        JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
         return nothing # lowering failed, e.g. because of incomplete input
     end
 
@@ -95,7 +96,7 @@ function cursor_bindings(st0_top::JL.SyntaxTree, b_top::Int, mod::MaybeLoweringM
             || bdistances[i] < bdistances[prev]
             || binfo.kind === :static_parameter)
             seen[binfo.name] = i
-        elseif JETLS_DEV_MODE
+        elseif JETLS_DEBUG_LOWERING
             @info "Found two bindings with the same name:" binfo bscopeinfos[prev][1]
         end
     end
@@ -161,7 +162,9 @@ function select_target_binding_definitions(st0_top::JL.SyntaxTree, offset::Int, 
 
     ctx3, st3 = try
         jl_lower_for_scope_resolution3(st0, mod)
-    catch
+    catch err
+        JETLS_DEBUG_LOWERING && @warn "Error in lowering" err
+        JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
         return nothing
     end
     binding = select_target_binding(ctx3, st3, b)
