@@ -447,6 +447,26 @@ end
         end
         @test cnt == 1
     end
+
+    @testset "@label" begin
+        cnt = 0
+        with_target_binding_definitions("""
+            let b = rand(Bool)
+                b && @goto blk│
+                println("not skipped")
+                @label blk
+                println()
+            end
+        """) do _, res
+            @test !isnothing(res)
+            binding, defs = res
+            @test JS.source_line(JL.sourceref(binding)) == 2
+            @test length(defs) == 1
+            @test JS.source_line(JL.sourceref(only(defs))) == 4
+            cnt += 1
+        end
+        @test cnt == 1
+    end
 end
 
 end # module test_binding
