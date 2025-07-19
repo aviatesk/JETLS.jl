@@ -47,10 +47,6 @@ const TEST_RELOAD_REQUIRED = Dict(
     )
 )
 
-function get_latest_config(manager::JETLS.ConfigManager, key_path::Vector{String})
-    return JETLS.access_nested_dict(manager.latest_config, key_path)
-end
-
 @testset "configuration utilities" begin
     original_default_config = deepcopy(JETLS.DEFAULT_CONFIG)
     original_is_reload_required_key = deepcopy(JETLS.CONFIG_RELOAD_REQUIRED)
@@ -59,11 +55,11 @@ end
         global JETLS.CONFIG_RELOAD_REQUIRED = TEST_RELOAD_REQUIRED
 
         @testset "dictionary operations" begin
-            @test JETLS.access_nested_dict(TEST_DICT, ["test_key1"]) == "test_value1"
-            @test JETLS.access_nested_dict(TEST_DICT, ["test_key2", "nested_key1"]) == "nested_value1"
-            @test JETLS.access_nested_dict(TEST_DICT, ["test_key2", "nested_key2", "deep_nested_key1"]) == "deep_nested_value1"
-            @test JETLS.access_nested_dict(TEST_DICT, ["test_key2", "nested_key2", "deep_nested_key3"]) === nothing
-            @test JETLS.access_nested_dict(TEST_DICT, ["non_existent_key"]) === nothing
+            @test JETLS.access_nested_dict(TEST_DICT, "test_key1") == "test_value1"
+            @test JETLS.access_nested_dict(TEST_DICT, "test_key2", "nested_key1") == "nested_value1"
+            @test JETLS.access_nested_dict(TEST_DICT, "test_key2", "nested_key2", "deep_nested_key1") == "deep_nested_value1"
+            @test JETLS.access_nested_dict(TEST_DICT, "test_key2", "nested_key2", "deep_nested_key3") === nothing
+            @test JETLS.access_nested_dict(TEST_DICT, "non_existent_key") === nothing
 
 
             # It is correct that `test_key2.diffname_2.diffname_3` is not included,
@@ -77,17 +73,35 @@ end
             @test isempty(JETLS.collect_unmatched_keys(TEST_DICT, TEST_DICT_DIFFERENT_VALUE))
         end
 
-        @testset "config manager" begin
-            manager = JETLS.ConfigManager(deepcopy(TEST_DICT), deepcopy(TEST_DICT), Set(["dummy_path"]))
+        @testset "config files priority" begin
+            files = ["/foo/bar/.JETLSConfig.toml", "__DEFAULT_CONFIG__"]
+            @test sort!(files, order=JETLS.ConfigFileOrder()) == [
+               "/foo/bar/.JETLSConfig.toml",       # highest priority
+               "__DEFAULT_CONFIG__"                # lowest priority
+            ]
+        end
 
-            @test JETLS.get_config(manager, ["test_key1"]) === "test_value1"
-            @test JETLS.get_config(manager, ["test_key2", "nested_key1"]) === "nested_value1"
-            @test JETLS.get_config(manager, ["test_key2", "nested_key2", "deep_nested_key1"]) === "deep_nested_value1"
-            @test JETLS.get_config(manager, ["test_key2", "nested_key2", "deep_nested_key3"]) === nothing
-            @test JETLS.get_config(manager, ["non_existent_key"]) === nothing
+
+        @testset "config manager" begin
+            manager = JETLS.ConfigManager()
+            JETLS.register_config!(manager, "/foo/bar/.JETLSConfig.toml", TEST_DICT, TEST_DICT)
+
+            @test JETLS.get_config(manager, "test_key1") === "test_value1"
+            @test JETLS.get_config(manager, "test_key2", "nested_key1") === "nested_value1"
+            @test JETLS.get_config(manager, "test_key2", "nested_key2", "deep_nested_key1") === "deep_nested_value1"
+            @test JETLS.get_config(manager, "test_key2", "nested_key2", "deep_nested_key3") === nothing
+            @test JETLS.get_config(manager, "non_existent_key") === nothing
+
+            JETLS.register_config!(manager, "__DEFAULT_CONFIG__", TEST_DICT_DIFFERENT_VALUE, TEST_DICT_DIFFERENT_VALUE)
+            # __DEFAULT_CONFIG__ has lower priority than the file, so it should not change
+            @test JETLS.get_config(manager, "test_key1") === "test_value1"
+            @test JETLS.get_config(manager, "test_key2", "nested_key1") === "nested_value1"
+            @test JETLS.get_config(manager, "test_key2", "nested_key2", "deep_nested_key1") === "deep_nested_value1"
+            @test JETLS.get_config(manager, "test_key2", "nested_key2", "deep_nested_key3") === nothing
+            @test JETLS.get_config(manager, "non_existent_key") === nothing
 
             changed_reload_required = Set{String}()
-            JETLS.merge_config!(manager, TEST_DICT_DIFFERENT_VALUE) do actual_config, latest_config, key_path, v
+            JETLS.merge_config!(manager, "/foo/bar/.JETLSConfig.toml", TEST_DICT_DIFFERENT_VALUE) do actual_config, latest_config, key_path, v
                 push!(changed_reload_required, join(key_path, "."))
             end
 
@@ -95,11 +109,10 @@ end
             @test changed_reload_required == Set(["test_key1", "test_key2.nested_key2.deep_nested_key1"])
 
             # non reload_required keys should be changed dynamically
-            @test JETLS.get_config(manager, ["test_key2", "nested_key2", "deep_nested_key2"]) == "newvalue_3"
-            @test get_latest_config(manager, ["test_key2", "nested_key2", "deep_nested_key2"]) == "newvalue_3"
+            @test JETLS.get_config(manager,  "test_key2", "nested_key2", "deep_nested_key2") == "newvalue_3"
             # reload_required keys should not be changed dynamically without explicit update
-            @test JETLS.get_config(manager, ["test_key1"]) == "test_value1"
-            @test JETLS.get_config(manager, ["test_key2", "nested_key2", "deep_nested_key1"]) == "deep_nested_value1"
+            @test JETLS.get_config(manager, "test_key1") == "test_value1"
+            @test JETLS.get_config(manager, "test_key2", "nested_key2", "deep_nested_key1") == "deep_nested_value1"
         end
     finally
         global JETLS.DEFAULT_CONFIG = original_default_config
