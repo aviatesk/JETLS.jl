@@ -23,19 +23,17 @@ global CONFIG_RELOAD_REQUIRED::Dict{String,Any} = Dict{String,Any}(
     ),
 )
 
-function access_nested_dict(dict::AbstractDict, key_path::Vector{String})
-    current_dict = dict
-    for key in key_path
-        if haskey(current_dict, key)
-            current_dict = current_dict[key]
-        else
-            return nothing
+function access_nested_dict(dict::AbstractDict, path::String, rest_path::String...)
+    nextobj = @something get(dict, path, nothing) return nothing
+    return access_nested_dict(nextobj, rest_path...)
+end
+access_nested_dict(obj) = obj
         end
     end
     return current_dict
 end
 
-is_reload_required_key(key_path::Vector{String}) = access_nested_dict(CONFIG_RELOAD_REQUIRED, key_path) === true
+is_reload_required_key(key_path::String...) = access_nested_dict(CONFIG_RELOAD_REQUIRED, key_path...) === true
 
 """
     collect_unmatched_keys(sub::AbstractDict, base::AbstractDict) -> Vector{Vector{String}}
