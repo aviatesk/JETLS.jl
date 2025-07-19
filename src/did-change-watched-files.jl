@@ -10,7 +10,7 @@ function did_change_watched_files_registration()
         registerOptions = DidChangeWatchedFilesRegistrationOptions(;
             watchers = [
                 FileSystemWatcher(;
-                    globPattern = "**/JETLSConfig.toml",
+                    globPattern = "**/.JETLSConfig.toml",
                     kind = WatchKind.Create | WatchKind.Change | WatchKind.Delete),
             ]))
 end
@@ -24,11 +24,11 @@ end
 function initialize_config!(server::Server)
     if !isdefined(server.state, :root_path)
         if JETLS_DEV_MODE
-            @info "`server.state.root_path` is not defined, skipping registering JETLSConfig.toml watcher"
+            @info "`server.state.root_path` is not defined, skipping registering .JETLSConfig.toml watcher"
         end
         return
     end
-    config_path = joinpath(server.state.root_path, "JETLSConfig.toml")
+    config_path = joinpath(server.state.root_path, ".JETLSConfig.toml")
     push!(server.state.config_manager.watching_files, config_path)
     load_config!(server, config_path) do actual_config, latest_config, key_path, v
         # at initialization, we can just update the config in both actual and latest configs
