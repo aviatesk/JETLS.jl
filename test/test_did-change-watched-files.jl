@@ -18,7 +18,7 @@ const CLIENT_CAPABILITIES = ClientCapabilities(
 
 @testset "DidChangeWatchedFilesNotification full-cycle" begin
     mktempdir() do tmpdir
-        config_path = joinpath(tmpdir, "JETLSConfig.toml")
+        config_path = joinpath(tmpdir, ".JETLSConfig.toml")
         open(config_path, "w") do io
             write(io, "[performance.full_analysis]\ndebounce = 2.0\n[testrunner]\nexecutable = \"mytestrunner\"\n")
         end
@@ -128,9 +128,9 @@ end
             @test server.state.config_manager.actual_config == JETLS.DEFAULT_CONFIG
             @test server.state.config_manager.latest_config == JETLS.DEFAULT_CONFIG
 
-            # Create a JETLSConfig.toml file should be handled
+            # Create a .JETLSConfig.toml file should be handled
             # as a config file update
-            config_path = joinpath(tmpdir, "JETLSConfig.toml")
+            config_path = joinpath(tmpdir, ".JETLSConfig.toml")
             open(config_path, "w") do io
                 write(io, "[performance.full_analysis]\ndebounce = 100.0\n[testrunner]\nexecutable = \"mytestrunner\"\n")
             end
