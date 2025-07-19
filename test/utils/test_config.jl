@@ -1,0 +1,111 @@
+module test_config
+
+using Test
+using JETLS
+
+const TEST_DICT = Dict(
+    "test_key1" => "test_value1",
+    "test_key2" =>  Dict(
+        "nested_key1" => "nested_value1",
+        "nested_key2" => Dict(
+            "deep_nested_key1" => "deep_nested_value1",
+            "deep_nested_key2" => "deep_nested_value2"
+        )
+    )
+)
+
+const TEST_DICT_DIFFERENT_VALUE = Dict(
+    "test_key1" => "newvalue_1",  # different value (reload required)
+    "test_key2" =>  Dict(
+        "nested_key1" => "nested_value1",
+        "nested_key2" => Dict(
+            "deep_nested_key1" => "newvalue_2", # different value (reload required)
+            "deep_nested_key2" => "newvalue_3"  # different value (reload not required)
+        )
+    )
+)
+
+const TEST_DICT_DIFFERENT_KEY = Dict(
+    "diffname_1" => "test_value1",  # different key name
+    "test_key2" =>  Dict(
+        "nested_key1" => "nested_value1",
+        "diffname_2" => Dict(       # different key name
+            "deep_nested_key1" => "deep_nested_value1",
+            "diffname_3" => "deep_nested_value2" # different key under a different key
+        )
+    ),
+)
+
+const TEST_RELOAD_REQUIRED = Dict(
+    "test_key1" => true,
+    "test_key2" => Dict(
+        "nested_key1" => false,
+        "nested_key2" => Dict(
+            "deep_nested_key1" => true,
+            "deep_nested_key2" => false
+        )
+    )
+)
+
+function get_latest_config(manager::JETLS.ConfigManager, key_path::Vector{String})
+    return JETLS.access_nested_dict(manager.latest_config, key_path)
+end
+
+@testset "configuration utilities" begin
+    original_default_config = deepcopy(JETLS.DEFAULT_CONFIG)
+    original_is_reload_required_key = deepcopy(JETLS.CONFIG_RELOAD_REQUIRED)
+    try
+        global JETLS.DEFAULT_CONFIG = TEST_DICT
+        global JETLS.CONFIG_RELOAD_REQUIRED = TEST_RELOAD_REQUIRED
+
+        @testset "dictionary operations" begin
+            @test JETLS.access_nested_dict(TEST_DICT, ["test_key1"]) == "test_value1"
+            @test JETLS.access_nested_dict(TEST_DICT, ["test_key2", "nested_key1"]) == "nested_value1"
+            @test JETLS.access_nested_dict(TEST_DICT, ["test_key2", "nested_key2", "deep_nested_key1"]) == "deep_nested_value1"
+            @test JETLS.access_nested_dict(TEST_DICT, ["test_key2", "nested_key2", "deep_nested_key3"]) === nothing
+            @test JETLS.access_nested_dict(TEST_DICT, ["non_existent_key"]) === nothing
+
+
+            # It is correct that `test_key2.diffname_2.diffname_3` is not included,
+            # because `collect_unmatched_keys` does not track deeper nested differences in key names.
+            @test Set(JETLS.collect_unmatched_keys(TEST_DICT_DIFFERENT_KEY, TEST_DICT)) == Set([
+                ["diffname_1"],
+                ["test_key2", "diffname_2"],
+            ])
+
+            @test isempty(JETLS.collect_unmatched_keys(TEST_DICT, TEST_DICT))
+            @test isempty(JETLS.collect_unmatched_keys(TEST_DICT, TEST_DICT_DIFFERENT_VALUE))
+        end
+
+        @testset "config manager" begin
+            manager = JETLS.ConfigManager(deepcopy(TEST_DICT), deepcopy(TEST_DICT), Set(["dummy_path"]))
+
+            @test JETLS.get_config(manager, ["test_key1"]) === "test_value1"
+            @test JETLS.get_config(manager, ["test_key2", "nested_key1"]) === "nested_value1"
+            @test JETLS.get_config(manager, ["test_key2", "nested_key2", "deep_nested_key1"]) === "deep_nested_value1"
+            @test JETLS.get_config(manager, ["test_key2", "nested_key2", "deep_nested_key3"]) === nothing
+            @test JETLS.get_config(manager, ["non_existent_key"]) === nothing
+
+            changed_reload_required = Set{String}()
+            JETLS.merge_config!(manager, TEST_DICT_DIFFERENT_VALUE) do actual_config, latest_config, key_path, v
+                push!(changed_reload_required, join(key_path, "."))
+            end
+
+            # `on_reload_required` should be called for changed keys that require reload
+            @test changed_reload_required == Set(["test_key1", "test_key2.nested_key2.deep_nested_key1"])
+
+            # non reload_required keys should be changed dynamically
+            @test JETLS.get_config(manager, ["test_key2", "nested_key2", "deep_nested_key2"]) == "newvalue_3"
+            @test get_latest_config(manager, ["test_key2", "nested_key2", "deep_nested_key2"]) == "newvalue_3"
+            # reload_required keys should not be changed dynamically without explicit update
+            @test JETLS.get_config(manager, ["test_key1"]) == "test_value1"
+            @test JETLS.get_config(manager, ["test_key2", "nested_key2", "deep_nested_key1"]) == "deep_nested_value1"
+        end
+    finally
+        global JETLS.DEFAULT_CONFIG = original_default_config
+        global JETLS.CONFIG_RELOAD_REQUIRED = original_is_reload_required_key
+    end
+end
+
+
+end

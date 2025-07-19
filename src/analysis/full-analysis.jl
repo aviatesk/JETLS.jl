@@ -1,7 +1,3 @@
-const FULL_ANALYSIS_THROTTLE = 5.0 # 3.0
-const FULL_ANALYSIS_DEBOUNCE = 1.0
-const SYNTACTIC_ANALYSIS_DEBOUNCE = 0.5
-
 function run_full_analysis!(server::Server, uri::URI; onsave::Bool=false, token::Union{Nothing,ProgressToken}=nothing)
     if !haskey(server.state.analysis_cache, uri)
         res = initiate_analysis_unit!(server, uri; token)
@@ -26,13 +22,13 @@ function run_full_analysis!(server::Server, uri::URI; onsave::Bool=false, token:
             end
             id = hash(run_full_analysis!, hash(analysis_unit))
             if onsave
-                debounce(id, FULL_ANALYSIS_DEBOUNCE) do
-                    throttle(id, FULL_ANALYSIS_THROTTLE) do
+                debounce(id, get_config(server.state.config_manager, "performance", "full_analysis", "debounce")) do
+                    throttle(id, get_config(server.state.config_manager, "performance", "full_analysis", "throttle")) do
                         task()
                     end
                 end
             else
-                throttle(id, FULL_ANALYSIS_THROTTLE) do
+                throttle(id, get_config(server.state.config_manager, "performance", "full_analysis", "throttle")) do
                     task()
                 end
             end
