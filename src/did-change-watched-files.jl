@@ -22,14 +22,20 @@ end
 # register(currently_running, did_change_watched_files_registration())
 
 function initialize_config!(server::Server)
+    # load default config
+    register_config!(server.state.config_manager, "__DEFAULT_CONFIG__", DEFAULT_CONFIG, DEFAULT_CONFIG)
     if !isdefined(server.state, :root_path)
         if JETLS_DEV_MODE
             @info "`server.state.root_path` is not defined, skipping registering .JETLSConfig.toml watcher"
         end
         return
     end
+
+    # TODO We will need to synchronize
+    # `actual_config` at startup. This is because removing a file may change the
+    # `get_config` results for reload required keys.
     config_path = joinpath(server.state.root_path, ".JETLSConfig.toml")
-    push!(server.state.config_manager.watching_files, config_path)
+    register_config!(server.state.config_manager, config_path)
     load_config!(server, config_path) do actual_config, latest_config, key_path, v
         # at initialization, we can just update the config in both actual and latest configs
         actual_config[last(key_path)] = v
@@ -60,13 +66,14 @@ function load_config!(on_reload_required, server::Server, path::AbstractString)
 
     merge_config!(on_reload_required,
                   server.state.config_manager,
+                  path,
                   parsed)
 end
 
 function handle_file_change!(server::Server, change::FileEvent)
     changed_path = uri2filepath(change.uri)
     change_type = change.type
-    is_config_file(server, changed_path) || return
+    is_watched_file(server.state.config_manager, changed_path) || return
     if change_type == FileChangeType.Created || change_type == FileChangeType.Changed
         load_config!(server, changed_path) do _, latest_config, key_path, v
             k = last(key_path)
@@ -79,9 +86,10 @@ function handle_file_change!(server::Server, change::FileEvent)
             end
         end
     elseif change_type == FileChangeType.Deleted
+        delete!(server.state.config_manager, changed_path)
         show_warning_message(server, """
             $changed_path was deleted.
-            Please restart the server to apply the changes.
+            You may need to restart the server to apply the changes that require restart.
             """)
     end
 end

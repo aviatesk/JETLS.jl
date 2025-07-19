@@ -28,9 +28,49 @@ function access_nested_dict(dict::AbstractDict, path::String, rest_path::String.
     return access_nested_dict(nextobj, rest_path...)
 end
 access_nested_dict(obj) = obj
+
+"""
+    Base.lt(::ConfigFileOrder, path1, path2)
+
+Compare two paths to determine their priority.
+The order is determined by the following rule:
+
+1. "__DEFAULT_CONFIG__" has lower priority than any other path.
+
+This rules defines a total order. (See `is_config_file`)
+"""
+function Base.lt(::ConfigFileOrder, path1, path2)
+    path1 == "__DEFAULT_CONFIG__" && return false
+    path2 == "__DEFAULT_CONFIG__" && return true
+
+    path1 == path2                && return false
+
+    # unreachable
+    return false
+end
+
+# all paths that are considered config files
+is_config_file(filepath::AbstractString) = filepath == "__DEFAULT_CONFIG__" || endswith(filepath, ".JETLSConfig.toml")
+
+function register_config!(manager::ConfigManager,
+                          filepath::AbstractString,
+                          actual_config::Dict{String,Any} = Dict{String,Any}(),
+                          latest_config::Dict{String,Any} = Dict{String,Any}())
+    if !is_config_file(filepath)
+        if JETLS_DEV_MODE
+            @warn "File $filepath is not a recognized config file, skipping."
         end
+        return
     end
-    return current_dict
+
+    if haskey(manager, filepath)
+        if JETLS_DEV_MODE
+            @warn "File $filepath is already being watched, skipping."
+        end
+        return
+    end
+
+    push!(manager, filepath => ConfigState(actual_config, latest_config))
 end
 
 is_reload_required_key(key_path::String...) = access_nested_dict(CONFIG_RELOAD_REQUIRED, key_path...) === true
@@ -73,6 +113,8 @@ end
 
 collect_unmatched_keys(new_config::Dict{String,Any}) = collect_unmatched_keys(new_config, DEFAULT_CONFIG)
 
+is_watched_file(manager::ConfigManager, filepath::AbstractString) = haskey(manager, filepath)
+
 function collect_unmatched_keys!(unknown_keys::Vector{Vector{String}}, sub::AbstractDict, base::AbstractDict, key_path::Vector{String})
     for (k, v) in sub
         current_path = [key_path; k]
@@ -89,16 +131,22 @@ function collect_unmatched_keys!(unknown_keys::Vector{Vector{String}}, sub::Abst
     end
 end
 
-is_config_file(server::Server, path::AbstractString) = path in server.state.config_manager.watching_files
-
 function merge_config!(on_reload_required::Function, actual_config::AbstractDict, latest_config::AbstractDict,
                        new_config::AbstractDict, key_path::Vector{String} = String[])
     for (k, v) in new_config
         current_path = [key_path; k]
         if v isa AbstractDict
-            merge_config!(on_reload_required, actual_config[k], latest_config[k], v, current_path)
+            # `actual_config` and `latest_config` has the same structures,
+            # so it is enough to check `actual_config` only.
+            if haskey(actual_config, k) && actual_config[k] isa AbstractDict
+                merge_config!(on_reload_required, actual_config[k], latest_config[k], v, current_path)
+            else
+                actual_config[k] = Dict{String,Any}()
+                latest_config[k] = Dict{String,Any}()
+                merge_config!(on_reload_required, actual_config[k], latest_config[k], v, current_path)
+            end
         else
-            if is_reload_required_key(current_path)
+            if is_reload_required_key(current_path...)
                 on_reload_required(actual_config, latest_config, current_path, v)
             else
                 actual_config[k] = v
@@ -109,7 +157,7 @@ function merge_config!(on_reload_required::Function, actual_config::AbstractDict
 end
 
 """
-    merge_config!(on_reload_required::Function), manager::ConfigManager, new_config::AbstractDict
+    merge_config!(on_reload_required::Function, manager::ConfigManager, new_config::AbstractDict)
 
 Merges `new_config` into the `manager`'s actual and latest configurations.
 If a key in `new_config` requires a reload (as determined by `is_reload_required_key`)
@@ -117,11 +165,37 @@ and its value differs from the `manager.latest_config`,
 the `on_reload_required` function is called with the `actual_config`, `latest_config`, the key path, and the new value.
 
 If the key does not require a reload, it is directly merged into both `actual_config` and `latest_config`.
-
-Assumes `new_config` has the same structure (`collect_unmatched_keys` returns empty vector) as `manager.actual_config` and `manager.latest_config`.
 """
-merge_config!(on_reload_required::Function, manager::ConfigManager, new_config::AbstractDict) =
-    merge_config!(on_reload_required, manager.actual_config, manager.latest_config, new_config)
+function merge_config!(on_reload_required::Function, manager::ConfigManager, filepath::AbstractString, new_config::AbstractDict)
+    config_state = get(manager, filepath, nothing)
+    if config_state === nothing
+        if JETLS_DEV_MODE
+            @warn "File $filepath is not being watched, skipping merge."
+        end
+        return
+    end
 
-get_config(manager::ConfigManager, key_path::Vector{String}) =
-    access_nested_dict(manager.actual_config, key_path)
+    merge_config!(on_reload_required,
+                  config_state.actual_config,
+                  config_state.latest_config,
+                  new_config)
+end
+
+"""
+    get_config(manager::ConfigManager, key_path...)
+
+Retrieves the current configuration value.
+Among the registered configuration files, fetches the value in order of priority (see `Base.lt(::ConfigFileOrder, path1, path2)`).
+If the key path does not exist in any of the configurations, returns `nothing`.
+"""
+function get_config(manager::ConfigManager, key_path::String...)
+    for config in values(manager)
+        v = access_nested_dict(config.actual_config, key_path...)
+        if v !== nothing
+            return v
+        end
+    end
+
+    return nothing
+end
+

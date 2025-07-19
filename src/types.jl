@@ -218,13 +218,13 @@ struct LSPostProcessor
 end
 LSPostProcessor() = LSPostProcessor(JET.PostProcessor())
 
-struct ConfigManager
+struct ConfigState
     actual_config::Dict{String,Any} # Configuration that actually used by the server
     latest_config::Dict{String,Any} # Latest configuration written to the file to suppress excessive messages
-    watching_files::Set{String}
 end
 
-default_configmanager() = ConfigManager(deepcopy(JETLS.DEFAULT_CONFIG), deepcopy(JETLS.DEFAULT_CONFIG), Set{String}())
+const ConfigManager = SortedDict{String, ConfigState}
+struct ConfigFileOrder <: Base.Ordering end
 
 mutable struct ServerState
     const workspaceFolders::Vector{URI}
@@ -248,7 +248,7 @@ mutable struct ServerState
             #=extra_diagnostics=# ExtraDiagnostics(),
             #=currently_requested=# Dict{String,RequestCaller}(),
             #=currently_registered=# Set{Registered}(),
-            #=config_manager=# default_configmanager())
+            #=config_manager=# ConfigManager(ConfigFileOrder()))
     end
 end
 

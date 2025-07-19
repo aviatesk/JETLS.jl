@@ -7,6 +7,7 @@ authors = ["Shuhei Kadowaki <aviatesk@gmail.com>"]
 projects = ["test"]
 
 [deps]
+DataStructures = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"
 JET = "c3a54625-cd67-489e-a8e7-0a5a0ff4e31b"
 JSONRPC = "a2756949-8476-49a1-a294-231eace0f283"
 JuliaLowering = "f3c80556-a63f-4383-b822-37d64f81a311"
@@ -27,6 +28,7 @@ JuliaSyntax = {rev = "e02f29f", url = "https://github.com/JuliaLang/JuliaSyntax.
 LSP = {path = "LSP"}
 
 [compat]
+DataStructures = "0.18.22"
 JET = "0.10.6"
 JSONRPC = "0.1"
 JuliaLowering = "1.0.0"
