@@ -22,13 +22,13 @@ function run_full_analysis!(server::Server, uri::URI; onsave::Bool=false, token:
             end
             id = hash(run_full_analysis!, hash(analysis_unit))
             if onsave
-                debounce(id, get_config(server.state.config_manager, ["performance", "full_analysis", "debounce"])) do
-                    throttle(id, get_config(server.state.config_manager, ["performance", "full_analysis", "throttle"])) do
+                debounce(id, get_config(server.state.config_manager, "performance", "full_analysis", "debounce")) do
+                    throttle(id, get_config(server.state.config_manager, "performance", "full_analysis", "throttle")) do
                         task()
                     end
                 end
             else
-                throttle(id, get_config(server.state.config_manager, ["performance", "full_analysis", "throttle"])) do
+                throttle(id, get_config(server.state.config_manager, "performance", "full_analysis", "throttle")) do
                     task()
                 end
             end
