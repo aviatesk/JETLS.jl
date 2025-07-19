@@ -1,5 +1,5 @@
 # TODO (later): move this definition to external files
-const DEFAULT_CONFIG = Dict{String,Any}(
+global DEFAULT_CONFIG::Dict{String,Any} = Dict{String,Any}(
     "performance" => Dict{String,Any}(
         "full_analysis" => Dict{String,Any}(
             "debounce" => 1.0,
@@ -11,7 +11,7 @@ const DEFAULT_CONFIG = Dict{String,Any}(
     ),
 )
 
-const CONFIG_RELOAD_REQUIRED = Dict{String,Any}(
+global CONFIG_RELOAD_REQUIRED::Dict{String,Any} = Dict{String,Any}(
     "performance" => Dict{String,Any}(
         "full_analysis" => Dict{String,Any}(
             "debounce" => true,
