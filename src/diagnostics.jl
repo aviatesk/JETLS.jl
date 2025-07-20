@@ -136,33 +136,37 @@ function line_range(line::Int)
     return Range(; start, var"end")
 end
 
+function lowering_diagnostics(st0::JL.SyntaxTree, mod::Module, sourcefile::JS.SourceFile)
+    @assert !in(JS.kind(st0), JS.KSet"toplevel module")
+    (; ctx3, st3) = try
+        jl_lower_for_scope_resolution(st0, mod)
+    catch err
+        JETLS_DEBUG_LOWERING && @warn "Error in lowering" err
+        JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
+        return Diagnostic[]
+    end
+    return analyze_lowered_code!(Diagnostic[], ctx3, st3, sourcefile)
+end
+
 # TODO use something like `JuliaInterpreter.ExprSplitter`
 
-function lowering_diagnostics(file_info::FileInfo, filename::AbstractString)
-    st0_top = build_tree!(JL.SyntaxTree, file_info)
+function toplevel_lowering_diagnostics(server::Server, uri::URI, filename::AbstractString)
     diagnostics = Diagnostic[]
+    file_info = get_file_info(server.state, uri)
+    st0_top = build_tree!(JL.SyntaxTree, file_info)
     sourcefile = JS.SourceFile(file_info.parsed_stream; filename)
     sl = JL.SyntaxList(st0_top)
     push!(sl, st0_top)
     while !isempty(sl)
         st0 = pop!(sl)
-        if JS.kind(st0) === JS.K"toplevel"
-            for cl0 in JS.children(st0)
-                push!(sl, cl0)
-            end
-        elseif JS.kind(st0) === JS.K"module"
+        if JS.kind(st0) in JS.KSet"toplevel module"
             for cl0 in JS.children(st0)
                 push!(sl, cl0)
             end
         else
-            ctx3, st3 = try
-                jl_lower_for_scope_resolution3(st0)
-            catch err
-                JETLS_DEBUG_LOWERING && @warn "Error in lowering" err
-                JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
-                continue
-            end
-            analyze_lowered_code!(diagnostics, ctx3, st3, sourcefile)
+            pos = offset_to_xy(file_info, JS.first_byte(st0))
+            (; mod) = get_context_info(server.state, uri, pos)
+            append!(diagnostics, lowering_diagnostics(st0, mod, sourcefile))
         end
     end
     return diagnostics
@@ -288,7 +292,7 @@ function handle_DocumentDiagnosticRequest(server::Server, msg::DocumentDiagnosti
     filename = uri2filename(uri)
     @assert !isnothing(filename) lazy"Unsupported URI: $uri"
     if isempty(parsed_stream.diagnostics)
-        diagnostics = lowering_diagnostics(file_info, filename)
+        diagnostics = toplevel_lowering_diagnostics(server, uri, filename)
     else
         diagnostics = parsed_stream_to_diagnostics(parsed_stream, filename)
     end

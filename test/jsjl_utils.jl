@@ -17,11 +17,12 @@ jlparse(parsed_stream::JS.ParseStream; filename::AbstractString=@__FILE__, first
 macro expect_jl_err(ex)
     if JETLS.JETLS_DEBUG_LOWERING
         :(mktemp() do path, io
-            redirect_stderr(io) do
+            val = redirect_stderr(io) do
                 $ex
             end
             flush(io)
             @test !isempty(read(path, String))
+            val
         end) |> esc
     else
         esc(ex)

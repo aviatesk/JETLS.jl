@@ -5,12 +5,13 @@ using JETLS: JETLS
 
 include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
 
+global lowering_module::Module = Module()
 function with_target_binding_definitions(f, text::AbstractString, matcher::Regex=r"│")
     clean_code, positions = JETLS.get_text_and_positions(text, matcher)
     st0_top = jlparse(clean_code)
     for (i, pos) in enumerate(positions)
         offset = JETLS.xy_to_offset(clean_code, pos)
-        f(i, JETLS.select_target_binding_definitions(st0_top, offset, nothing))
+        f(i, JETLS.select_target_binding_definitions(st0_top, offset, lowering_module))
     end
 end
 

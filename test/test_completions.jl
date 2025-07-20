@@ -283,10 +283,11 @@ end
 
         macro weirdmacro(x::Symbol, v)
             name = Symbol(string(x, "_var"))
-            return :(\$(esc(name)) = \$v)
+            return :(\$(esc(name)) = \$v; internal_to_macro = 1)
         end
         function foo(x)
             @weirdmacro y 1
+            @timed from_timed = 1
             │ # show `y_var` ideally
             return @inline typeof(y_var)
         end
@@ -333,6 +334,13 @@ end
             end
             @test any(items) do item
                 item.label == "y_var"
+            end
+            @test any(items) do item
+                item.label == "from_timed"
+            end
+            @test !any(items) do item
+                contains(item.label, "internal_to_macro") ||
+                    contains(item.label, "#")
             end
             cnt += 1
         elseif i == 3
