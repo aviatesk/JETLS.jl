@@ -39,11 +39,11 @@ const TESTRUNNER_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
         TESTRUNNER_STARTUP = "testrunner_startup"
         open(config_path, "w") do io
             write(io, """
-            [performance.full_analysis]
-            debounce = $DEBOUNCE_STARTUP
-            [testrunner]
-            executable = \"$TESTRUNNER_STARTUP\"
-            """)
+                [performance.full_analysis]
+                debounce = $DEBOUNCE_STARTUP
+                [testrunner]
+                executable = \"$TESTRUNNER_STARTUP\"
+                """)
         end
         rootUri = filepath2uri(tmpdir)
         withserver(; rootUri, capabilities=CLIENT_CAPABILITIES) do (; writereadmsg, readmsg, id_counter, server)
@@ -57,14 +57,11 @@ const TESTRUNNER_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
 
             @test haskey(manager.watched_files, config_path)
             @test collect(keys(manager.watched_files)) == [config_path, "__DEFAULT_CONFIG__"]
-            @test manager.watched_files["__DEFAULT_CONFIG__"].actual_config == JETLS.DEFAULT_CONFIG
-            @test manager.watched_files["__DEFAULT_CONFIG__"].latest_config == JETLS.DEFAULT_CONFIG
+            @test manager.watched_files["__DEFAULT_CONFIG__"] == JETLS.DEFAULT_CONFIG
 
             jetlstoml_config_state = manager.watched_files[config_path]
-            @test jetlstoml_config_state.actual_config["performance"]["full_analysis"]["debounce"] == DEBOUNCE_STARTUP
-            @test jetlstoml_config_state.latest_config["performance"]["full_analysis"]["debounce"] == DEBOUNCE_STARTUP
-            @test jetlstoml_config_state.actual_config["testrunner"]["executable"] == TESTRUNNER_STARTUP
-            @test jetlstoml_config_state.latest_config["testrunner"]["executable"] == TESTRUNNER_STARTUP
+            @test jetlstoml_config_state["performance"]["full_analysis"]["debounce"] == DEBOUNCE_STARTUP
+            @test jetlstoml_config_state["testrunner"]["executable"] == TESTRUNNER_STARTUP
             @test JETLS.get_config(manager, "performance", "full_analysis", "debounce") == DEBOUNCE_STARTUP
             @test JETLS.get_config(manager, "testrunner", "executable") == TESTRUNNER_STARTUP
 
@@ -72,11 +69,11 @@ const TESTRUNNER_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
             DEBOUNCE_V2 = 200.0
             open(config_path, "w") do io
                 write(io, """
-                [performance.full_analysis]
-                debounce = $DEBOUNCE_V2
-                [testrunner]
-                executable = \"$TESTRUNNER_STARTUP\"
-                """)
+                    [performance.full_analysis]
+                    debounce = $DEBOUNCE_V2
+                    [testrunner]
+                    executable = \"$TESTRUNNER_STARTUP\"
+                    """)
             end
 
             change_notification = DidChangeWatchedFilesNotification(;
@@ -92,21 +89,21 @@ const TESTRUNNER_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
             @test occursin("performance.full_analysis.debounce", raw_res.params.message)
             @test occursin("restart", raw_res.params.message)
 
-            # Config should not be changed in actual_config (reload required)
+            # Config should not be changed (reload required)
             @test JETLS.get_config(manager, "performance", "full_analysis", "debounce") == DEBOUNCE_STARTUP
-            # But latest_config should be updated to avoid showing the same message again
-            @test jetlstoml_config_state.latest_config["performance"]["full_analysis"]["debounce"] == DEBOUNCE_V2
+            # But config dict should be updated to avoid showing the same message again
+            @test jetlstoml_config_state["performance"]["full_analysis"]["debounce"] == DEBOUNCE_V2
 
             THROTTLE_V2 = 300.0
             # Add a new key `performance.full_analysis.throttle`
             open(config_path, "w") do io
                 write(io, """
-                [performance.full_analysis]
-                debounce = $DEBOUNCE_V2
-                throttle = $THROTTLE_V2
-                [testrunner]
-                executable = \"$TESTRUNNER_STARTUP\"
-                """)
+                    [performance.full_analysis]
+                    debounce = $DEBOUNCE_V2
+                    throttle = $THROTTLE_V2
+                    [testrunner]
+                    executable = \"$TESTRUNNER_STARTUP\"
+                    """)
             end
 
             change_notification1 = DidChangeWatchedFilesNotification(;
@@ -130,11 +127,11 @@ const TESTRUNNER_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
             TESTRUNNER_V2 = "testrunner_v2"
             open(config_path, "w") do io
                 write(io, """
-                [performance.full_analysis]
-                debounce = $DEBOUNCE_V2
-                [testrunner]
-                executable = \"$TESTRUNNER_V2\"
-                """)
+                    [performance.full_analysis]
+                    debounce = $DEBOUNCE_V2
+                    [testrunner]
+                    executable = \"$TESTRUNNER_V2\"
+                    """)
             end
 
             change_notification2 = DidChangeWatchedFilesNotification(;
@@ -145,16 +142,15 @@ const TESTRUNNER_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
             writereadmsg(change_notification2; read=0)
 
             # testrunner.executable should be updated in both configs (no reload required)
-            @test jetlstoml_config_state.actual_config["testrunner"]["executable"] == TESTRUNNER_V2
-            @test jetlstoml_config_state.latest_config["testrunner"]["executable"] == TESTRUNNER_V2
+            @test jetlstoml_config_state["testrunner"]["executable"] == TESTRUNNER_V2
             @test JETLS.get_config(manager, "testrunner", "executable") == TESTRUNNER_V2
 
             # unknown keys should be reported
             open(config_path, "w") do io
                 write(io, """
-                [performance]
-                ___unknown_key___ = \"value\"
-                """)
+                    [performance]
+                    ___unknown_key___ = \"value\"
+                    """)
             end
 
             change_notification3 = DidChangeWatchedFilesNotification(;
@@ -198,11 +194,11 @@ const TESTRUNNER_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
             TESTRUNNER_RECREATE = "testrunner_recreate"
             open(config_path, "w") do io
                 write(io, """
-                [performance.full_analysis]
-                debounce = $DEBOUNCE_RECREATE
-                [testrunner]
-                executable = \"$TESTRUNNER_RECREATE\"
-                """)
+                    [performance.full_analysis]
+                    debounce = $DEBOUNCE_RECREATE
+                    [testrunner]
+                    executable = \"$TESTRUNNER_RECREATE\"
+                    """)
             end
 
             re_creation_notification = DidChangeWatchedFilesNotification(;
@@ -221,7 +217,7 @@ const TESTRUNNER_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
             @test haskey(manager.watched_files, config_path)
             # reload required keys should not be changed even if higher priority config file is re-created
             @test JETLS.get_config(manager, "performance", "full_analysis", "debounce") == DEBOUNCE_STARTUP
-            @test JETLS.access_nested_dict(manager.watched_files[config_path].latest_config,
+            @test JETLS.access_nested_dict(manager.watched_files[config_path],
                 "performance", "full_analysis", "debounce") == DEBOUNCE_RECREATE
             # non-reload required keys should be updated
             @test JETLS.get_config(manager, "testrunner", "executable") == TESTRUNNER_RECREATE
@@ -250,19 +246,18 @@ end
             manager = server.state.config_manager
 
             @test collect(keys(manager.watched_files)) == ["__DEFAULT_CONFIG__"]
-            @test manager.watched_files["__DEFAULT_CONFIG__"].actual_config == JETLS.DEFAULT_CONFIG
-            @test manager.watched_files["__DEFAULT_CONFIG__"].latest_config == JETLS.DEFAULT_CONFIG
+            @test manager.watched_files["__DEFAULT_CONFIG__"] == JETLS.DEFAULT_CONFIG
 
             config_path = joinpath(tmpdir, ".JETLSConfig.toml")
             DEBOUNCE_RECREATE = 500.0
             TESTRUNNER_RECREATE = "testrunner_recreate"
             open(config_path, "w") do io
                 write(io, """
-                [performance.full_analysis]
-                debounce = $DEBOUNCE_RECREATE
-                [testrunner]
-                executable = \"$TESTRUNNER_RECREATE\"
-                """)
+                    [performance.full_analysis]
+                    debounce = $DEBOUNCE_RECREATE
+                    [testrunner]
+                    executable = \"$TESTRUNNER_RECREATE\"
+                    """)
             end
             creation_notification = DidChangeWatchedFilesNotification(;
                 params=DidChangeWatchedFilesParams(;
@@ -288,11 +283,11 @@ end
             TESTRUNNER_V2 = "testrunner_v2"
             open(config_path, "w") do io
                 write(io, """
-                [performance.full_analysis]
-                debounce = $DEBOUNCE_V2
-                [testrunner]
-                executable = \"$TESTRUNNER_V2\"
-                """)
+                    [performance.full_analysis]
+                    debounce = $DEBOUNCE_V2
+                    [testrunner]
+                    executable = \"$TESTRUNNER_V2\"
+                    """)
             end
             change_notification = DidChangeWatchedFilesNotification(;
                 params=DidChangeWatchedFilesParams(;

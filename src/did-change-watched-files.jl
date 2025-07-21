@@ -22,7 +22,7 @@ end
 # register(currently_running, did_change_watched_files_registration())
 
 function initialize_config!(server::Server)
-    register_config!(server.state.config_manager, "__DEFAULT_CONFIG__", DEFAULT_CONFIG, DEFAULT_CONFIG)
+    register_config!(server.state.config_manager, "__DEFAULT_CONFIG__", DEFAULT_CONFIG)
 
     if !isdefined(server.state, :root_path)
         if JETLS_DEV_MODE
@@ -36,11 +36,7 @@ function initialize_config!(server::Server)
             end
         else
             register_config!(server.state.config_manager, config_path)
-            load_config!(server, config_path) do actual_config, latest_config, key_path, v
-                # at initialization, we can just update the config in both actual and latest configs
-                actual_config[last(key_path)] = v
-                latest_config[last(key_path)] = v
-            end
+            load_config!(Returns(nothing), server, config_path) # in initialization, no actions are required
         end
     end
 
@@ -64,7 +60,7 @@ function load_config!(on_reload_required, server::Server, path::AbstractString)
         show_error_message(server, """
             Configuration file at $path contains unknown keys:
             $(join(map(x -> join(x, "."), unknown_keys), ", "))
-        """)
+            """)
         return
     end
 
@@ -77,38 +73,32 @@ end
 function handle_file_change!(server::Server, change::FileEvent)
     changed_path = uri2filepath(change.uri)
     change_type = change.type
+    # show message when `changed_path` is a highest priority or
+    # check effective precisely only?
     if change_type == FileChangeType.Created
         register_config!(server.state.config_manager, changed_path)
-        # only show message when `changed_path` is a highest priority?
         show_warning_message(server, """
             Configuration file $changed_path was created.
             Please restart the server to apply the changes that require restart.
-        """)
-        load_config!(server, changed_path) do actual_config, latest_config, key_path, v
-            k = last(key_path)
-            actual_config[k] = v
-            latest_config[k] = v
-        end
+            """)
+        load_config!(Returns(nothing), server, changed_path)
     elseif change_type == FileChangeType.Changed
         is_watched_file(server.state.config_manager, changed_path) || return
-        load_config!(server, changed_path) do _, latest_config, key_path, v
-            k = last(key_path)
-            if !haskey(latest_config, k) || latest_config[k] != v
-                latest_config[k] = v
-                # only show message when `changed_path` is a highest priority?
+        load_config!(server, changed_path) do current_config, new_value, k, path
+            if !haskey(current_config, k) || current_config[k] != new_value
                 show_warning_message(server, """
-                    Configuration key `$(join(key_path, "."))` was changed.
+                    Configuration key `$(join(path, "."))` was changed.
                     Please restart the server to apply the changes that require restart.
-                """)
+                    """)
             end
-        end
+         end
     elseif change_type == FileChangeType.Deleted
         is_watched_file(server.state.config_manager, changed_path) || return
         delete!(server.state.config_manager.watched_files, changed_path)
         show_warning_message(server, """
             $changed_path was deleted.
             You may need to restart the server to apply the changes that require restart.
-        """)
+            """)
     end
 end
 
