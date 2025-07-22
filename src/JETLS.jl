@@ -42,6 +42,7 @@ Analyzer.LSAnalyzer(args...; kwargs...) = LSAnalyzer(ScriptAnalysisEntry(filepat
 include("analysis/resolver.jl")
 
 include("testrunner-types.jl")
+include("report-trim-types.jl")
 include("types.jl")
 
 include("utils/jl_syntax_macros.jl")
@@ -72,6 +73,7 @@ include("code-lens.jl")
 include("code-action.jl")
 include("inlay-hint.jl")
 include("testrunner.jl")
+include("report-trim.jl")
 include("response.jl")
 include("lifecycle.jl")
 
