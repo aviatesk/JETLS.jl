@@ -51,6 +51,35 @@ offset_to_xy(code::Union{AbstractString, Vector{UInt8}}, byte::Integer) = # used
 offset_to_xy(fi::FileInfo, byte::Integer) = offset_to_xy(fi.parsed_stream, byte)
 
 """
+Return a tree where all nodes of `kinds` are removed.  Should not modify any
+nodes, and should not create new nodes unnecessarily.
+"""
+function _without_kinds(st::JL.SyntaxTree, kinds::Tuple)
+    if JS.kind(st) in kinds
+        return (nothing, true)
+    elseif JS.is_leaf(st)
+        return (st, false)
+    end
+    new_children = JL.SyntaxList(JL.syntax_graph(st))
+    changed = false
+    for c in JS.children(st)
+        nc, cc = _without_kinds(c, kinds)
+        changed |= cc
+        isnothing(nc) || push!(new_children, nc)
+    end
+    k = JS.kind(st)
+    new_node = changed ?
+        JL.@ast(JL.syntax_graph(st), st, [k new_children...]) : st
+    return (new_node, changed)
+end
+
+function without_kinds(st::JL.SyntaxTree, kinds::Tuple)
+    return JS.kind(st) in kinds ?
+        JL.@ast(JL.syntax_graph(st), st, [JS.K"TOMBSTONE"]) :
+        _without_kinds(st, kinds)[1]
+end
+
+"""
 Like `Base.unique`, but over node ids, and with this comment promising that the
 lowest-index copy of each node is kept.
 """

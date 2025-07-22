@@ -1,12 +1,19 @@
 module test_surface_analysis
 
+include("setup.jl")
+include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
+
 using Test
 using JETLS
 using JETLS: JL, JS
 
+global lowering_module::Module = Module()
 function get_lowered_diagnostics(text::AbstractString; filename::AbstractString = @__FILE__)
-    fi = JETLS.FileInfo(0, JETLS.ParseStream!(text))
-    return JETLS.lowering_diagnostics(fi, filename)
+    ps = JETLS.ParseStream!(text)
+    st0 = JS.build_tree(JL.SyntaxTree, ps)
+    @assert JS.kind(st0) === JS.K"toplevel"
+    sourcefile = JS.SourceFile(ps; filename)
+    return JETLS.lowering_diagnostics(st0[1], lowering_module, sourcefile)
 end
 
 @testset "unused binding detection" begin
@@ -82,7 +89,34 @@ end
         @test diagnostic.range.var"end".line == 1
     end
 
-    @testset "unued inner function" begin
+    @expect_jl_err @testset "tolerate bad syntax, broken macros" begin
+        diagnostics = get_lowered_diagnostics("""
+        function foo(x)
+            local y
+            @i_do_not_exist
+            return x
+        # no end
+        """)
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.message == "Unused local binding `y`"
+        @test diagnostic.range.start.line == 1
+        @test diagnostic.range.var"end".line == 1
+
+        diagnostics = get_lowered_diagnostics("""
+        function foo(x)
+            local y = x
+            @r_str 1 2 3 4 # methoderror
+        end
+        """)
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.message == "Unused local binding `y`"
+        @test diagnostic.range.start.line == 1
+        @test diagnostic.range.var"end".line == 1
+    end
+
+    @testset "unused inner function" begin
         diagnostics = get_lowered_diagnostics("""
         function foo(x)
             function inner(y)
@@ -98,7 +132,7 @@ end
         @test diagnostic.range.var"end".line == 1
     end
 
-    @testset "unued inner function (nested)" begin
+    @testset "unused inner function (nested)" begin
         diagnostics = get_lowered_diagnostics("""
         function foo(x)
             function inner(y)
@@ -163,18 +197,35 @@ end
     end
 
     @testset "module splitter" begin
-        diagnostics = get_lowered_diagnostics("""
+        script = """
         module TestModuleSplit
         global y::Float64 = let x = 42
             sin(42)
         end
         end # module TestModuleSplit
-        """)
-        @test length(diagnostics) == 1
-        diagnostic = only(diagnostics)
-        @test diagnostic.message == "Unused local binding `x`"
-        @test diagnostic.range.start.line == 1
-        @test diagnostic.range.var"end".line == 1
+        """
+        withscript(script) do script_path
+            uri = filepath2uri(script_path)
+            withserver() do (; writereadmsg, id_counter, server)
+                JETLS.cache_file_info!(server.state, uri, 1, script)
+                JETLS.cache_saved_file_info!(server.state, uri, script)
+                JETLS.initiate_analysis_unit!(server, uri)
+
+                id = id_counter[] += 1
+                (; raw_res) = writereadmsg(DocumentDiagnosticRequest(;
+                    id,
+                    params = DocumentDiagnosticParams(;
+                        textDocument = TextDocumentIdentifier(; uri)
+                    )))
+                @test raw_res isa DocumentDiagnosticResponse
+                @test raw_res.result isa RelatedFullDocumentDiagnosticReport
+                @test length(raw_res.result.items) == 1
+                diagnostic = only(raw_res.result.items)
+                @test diagnostic.message == "Unused local binding `x`"
+                @test diagnostic.range.start.line == 1
+                @test diagnostic.range.var"end".line == 1
+            end
+        end
     end
 
     @testset "string macro support" begin
