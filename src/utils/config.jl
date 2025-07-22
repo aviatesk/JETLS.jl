@@ -36,14 +36,13 @@ function access_nested_dict(dict::Dict{String,Any}, path::String, rest_path::Str
 end
 
 """
-    traverse_merge!(target::Dict{String,Any}, source::Dict{String,Any},
-                          key_path::Vector{String} = String[],
-                          on_leaf::Function = (t, k, v, path) -> t[k] = v)
+    traverse_merge!(on_leaf::Function, target::Dict{String,Any},
+                    source::Dict{String,Any}, key_path::Vector{String})
 
 Recursively merges `source` into `target`, traversing nested dictionaries.
 If a key in `source` is a dictionary, it will recursively merge it into the corresponding key in `target`.
 If a key in `source` is not a dictionary, the `on_leaf` function is called with:
-- `t`: the target dictionary being modified
+- `target`: the target dictionary being modified
 - `k`: the key from `source`
 - `v`: the value from `source`
 - `path`: the current path as a vector of strings
@@ -147,7 +146,7 @@ for this server.
 """
 function fix_reload_required_settings!(manager::ConfigManager)
     for config in Iterators.reverse(collect(values(manager.watched_files)))
-        merge_reload_required_keys!(manager.reload_required_setting, deepcopy(config))
+        merge_reload_required_keys!(manager.reload_required_setting, config)
     end
 end
 
