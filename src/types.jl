@@ -221,7 +221,7 @@ LSPostProcessor() = LSPostProcessor(JET.PostProcessor())
 struct ConfigFileOrder <: Base.Ordering end
 struct ConfigManager
     reload_required_setting::Dict{String,Any}           # settings that are not changed during the server lifetime
-    watched_files::SortedDict{String, Dict{String,Any}} # watched files with their actual and latest configurations
+    watched_files::SortedDict{String, Dict{String,Any}} # watched files with their latest configurations
 end
 ConfigManager() = ConfigManager(Dict{String,Any}(), SortedDict{String, Dict{String,Any}}(ConfigFileOrder()))
 
