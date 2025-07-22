@@ -136,17 +136,18 @@ function line_range(line::Int)
     return Range(; start, var"end")
 end
 
-function lowering_diagnostics(st0::JL.SyntaxTree, mod::Module, sourcefile::JS.SourceFile)
+function lowering_diagnostics!(diagnostics::Vector{Diagnostic}, st0::JL.SyntaxTree, mod::Module, sourcefile::JS.SourceFile)
     @assert !in(JS.kind(st0), JS.KSet"toplevel module")
     (; ctx3, st3) = try
         jl_lower_for_scope_resolution(st0, mod)
     catch err
         JETLS_DEBUG_LOWERING && @warn "Error in lowering" err
         JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
-        return Diagnostic[]
+        return diagnostics
     end
-    return analyze_lowered_code!(Diagnostic[], ctx3, st3, sourcefile)
+    return analyze_lowered_code!(diagnostics, ctx3, st3, sourcefile)
 end
+lowering_diagnostics(args...) = lowering_diagnostics!(Diagnostic[], args...) # used by tests
 
 # TODO use something like `JuliaInterpreter.ExprSplitter`
 
@@ -166,7 +167,7 @@ function toplevel_lowering_diagnostics(server::Server, uri::URI, filename::Abstr
         else
             pos = offset_to_xy(file_info, JS.first_byte(st0))
             (; mod) = get_context_info(server.state, uri, pos)
-            append!(diagnostics, lowering_diagnostics(st0, mod, sourcefile))
+            lowering_diagnostics!(diagnostics, st0, mod, sourcefile)
         end
     end
     return diagnostics
