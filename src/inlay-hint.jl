@@ -36,7 +36,7 @@ function handle_InlayHintRequest(server::Server, msg::InlayHintRequest)
 
     inlay_hints = InlayHint[]
     syntactic_inlay_hints!(inlay_hints, fi, range)
-    return_type_inlay_hints!(inlay_hints, server.state, uri, fi)
+    return_type_inlay_hints!(inlay_hints, server.state, uri, fi, range)
 
     return send(server, InlayHintResponse(;
         id = msg.id,
@@ -90,7 +90,7 @@ function syntactic_inlay_hints!(inlay_hints::Vector{InlayHint}, fi::FileInfo, ra
 end
 syntactic_inlay_hints(args...) = syntactic_inlay_hints!(InlayHint[], args...) # used by tests
 
-function return_type_inlay_hints!(inlay_hints::Vector{InlayHint}, state::ServerState, uri::URI, fi::FileInfo)
+function return_type_inlay_hints!(inlay_hints::Vector{InlayHint}, state::ServerState, uri::URI, fi::FileInfo, range::Range)
     sfi = @something get_saved_file_info(state, uri) return nothing
     if JS.sourcetext(fi.parsed_stream) ≠ JS.sourcetext(sfi.parsed_stream)
         return nothing
