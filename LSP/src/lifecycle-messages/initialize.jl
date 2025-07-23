@@ -113,20 +113,20 @@
     # """
     # colorProvider::Union{Nothing, Bool, DocumentColorOptions, DocumentColorRegistrationOptions} = nothing
 
-    # """
-    # The server provides document formatting.
-    # """
-    # documentFormattingProvider::Union{Nothing, Bool, DocumentFormattingOptions} = nothing
+    """
+    The server provides document formatting.
+    """
+    documentFormattingProvider::Union{Nothing, Bool, DocumentFormattingOptions} = nothing
 
-    # """
-    # The server provides document range formatting.
-    # """
-    # documentRangeFormattingProvider::Union{Nothing, Bool, DocumentRangeFormattingOptions} = nothing
+    """
+    The server provides document range formatting.
+    """
+    documentRangeFormattingProvider::Union{Nothing, Bool, DocumentRangeFormattingOptions} = nothing
 
-    # """
-    # The server provides document formatting on typing.
-    # """
-    # documentOnTypeFormattingProvider::Union{Nothing, DocumentOnTypeFormattingOptions} = nothing
+    """
+    The server provides document formatting on typing.
+    """
+    documentOnTypeFormattingProvider::Union{Nothing, DocumentOnTypeFormattingOptions} = nothing
 
     # """
     # The server provides rename support. RenameOptions may only be
@@ -375,20 +375,20 @@ end
     # """
     # colorProvider::Union{DocumentColorClientCapabilities, Nothing} = nothing
 
-    # """
-    # Capabilities specific to the `textDocument/formatting` request.
-    # """
-    # formatting::Union{DocumentFormattingClientCapabilities, Nothing} = nothing
+    """
+    Capabilities specific to the `textDocument/formatting` request.
+    """
+    formatting::Union{DocumentFormattingClientCapabilities, Nothing} = nothing
 
-    # """
-    # Capabilities specific to the `textDocument/rangeFormatting` request.
-    # """
-    # rangeFormatting::Union{DocumentRangeFormattingClientCapabilities, Nothing} = nothing
+    """
+    Capabilities specific to the `textDocument/rangeFormatting` request.
+    """
+    rangeFormatting::Union{DocumentRangeFormattingClientCapabilities, Nothing} = nothing
 
-    # """
-    # Capabilities specific to the `textDocument/onTypeFormatting` request.
-    # """
-    # onTypeFormatting::Union{DocumentOnTypeFormattingClientCapabilities, Nothing} = nothing
+    """
+    Capabilities specific to the `textDocument/onTypeFormatting` request.
+    """
+    onTypeFormatting::Union{DocumentOnTypeFormattingClientCapabilities, Nothing} = nothing
 
     # """
     # Capabilities specific to the `textDocument/rename` request.
