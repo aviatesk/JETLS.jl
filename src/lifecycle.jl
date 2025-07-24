@@ -124,6 +124,26 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
         @info "Registering 'workspace/executeCommand' with `InitializeResponse`"
     end
 
+    if supports(server,
+        :textDocument, :formatting, :dynamicRegistration)
+        documentFormattingProvider = nothing # will be registered dynamically
+    else
+        documentFormattingProvider = formatting_options()
+        if JETLS_DEV_MODE
+            @info "Registering 'textDocument/formatting' with `InitializeResponse`"
+        end
+    end
+
+    if supports(server,
+        :textDocument, :rangeFormatting, :dynamicRegistration)
+        documentRangeFormattingProvider = nothing # will be registered dynamically
+    else
+        documentRangeFormattingProvider = range_formatting_options()
+        if JETLS_DEV_MODE
+            @info "Registering 'textDocument/rangeFormatting' with `InitializeResponse`"
+        end
+    end
+
     # if getcapability(server,
     #     :textDocument, :inlayHint, :dynamicRegistration) isa Bool
     #     inlayHintProvider = nothing # will be registered dynamically (static registration not supported)
@@ -154,8 +174,10 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
             definitionProvider,
             hoverProvider,
             diagnosticProvider,
-            codeLensProvider,
             codeActionProvider,
+            codeLensProvider,
+            documentFormattingProvider,
+            documentRangeFormattingProvider,
             executeCommandProvider,
             inlayHintProvider,
         ),
@@ -260,6 +282,30 @@ function handle_InitializedNotification(server::Server)
         # NOTE If codeAction's `dynamicRegistration` is not supported,
         # it needs to be registered along with initialization in the `InitializeResponse`,
         # since `CodeActionRegistrationOptions` does not extend `StaticRegistrationOptions`.
+    end
+
+    if supports(server,
+        :textDocument, :formatting, :dynamicRegistration)
+        push!(registrations, formatting_registration())
+        if JETLS_DEV_MODE
+            @info "Dynamically registering 'textDocument/formatting' upon `InitializedNotification`"
+        end
+    else
+        # NOTE If formatting's `dynamicRegistration` is not supported,
+        # it needs to be registered along with initialization in the `InitializeResponse`,
+        # since `DocumentFormattingRegistrationOptions` does not extend `StaticRegistrationOptions`.
+    end
+
+    if supports(server,
+        :textDocument, :rangeFormatting, :dynamicRegistration)
+        push!(registrations, range_formatting_registration())
+        if JETLS_DEV_MODE
+            @info "Dynamically registering 'textDocument/rangeFormatting' upon `InitializedNotification`"
+        end
+    else
+        # NOTE If rangeFormatting's `dynamicRegistration` is not supported,
+        # it needs to be registered along with initialization in the `InitializeResponse`,
+        # since `DocumentRangeFormattingRegistrationOptions` does not extend `StaticRegistrationOptions`.
     end
 
     if getcapability(server,
