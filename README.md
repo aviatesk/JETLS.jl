@@ -126,13 +126,16 @@ the list itself is subject to change.
   - [ ] Type-aware method documentation
   - [ ] Type of local binding on hover
 - Formatting
+  - [ ] Make formatting backend configurable
   - [x] [Runic](https://github.com/fredrikekre/Runic.jl) integration
+  - [ ] [JuliaFormatter](https://github.com/domluna/JuliaFormatter.jl) integration
 - TestRunner.jl integration
   - [x] Code lens for running individual `@testset`s
   - [x] Code actions for running individual `@testset`s
   - [x] Code actions for running individual `@test` cases
   - [x] Inline test result diagnostics
   - [x] Work done progress during test execution
+- [ ] Configuration system
 
 Detailed development notes and progress for this project are collected at
 <https://publish.obsidian.md/jetls>, so those interested might want to take a look.
