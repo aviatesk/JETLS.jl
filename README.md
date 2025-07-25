@@ -44,7 +44,8 @@ frontends, please refer to the [Other editors](#other-editors) section.
 ## Other Editors
 
 ### Emacs
-Minimal Emacs ([eglot](https://github.com/joaotavora/eglot) client) setup:
+Minimal [Emacs](https://www.gnu.org/software/emacs/)
+([eglot](https://github.com/joaotavora/eglot) client) setup:
 ```lisp
 (add-to-list 'eglot-server-programs
               '(((julia-mode :language-id "julia")
