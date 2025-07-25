@@ -68,8 +68,9 @@ include("signature-help.jl")
 include("definition.jl")
 include("hover.jl")
 include("diagnostics.jl")
-include("code-lens.jl")
 include("code-action.jl")
+include("code-lens.jl")
+include("formatting.jl")
 include("inlay-hint.jl")
 include("testrunner.jl")
 include("response.jl")
@@ -209,6 +210,10 @@ function _handle_message(server::Server, msg)
         return handle_ExecuteCommandRequest(server, msg)
     elseif msg isa InlayHintRequest
         return handle_InlayHintRequest(server, msg)
+    elseif msg isa DocumentFormattingRequest
+        return handle_DocumentFormattingRequest(server, msg)
+    elseif msg isa DocumentRangeFormattingRequest
+        return handle_DocumentRangeFormattingRequest(server, msg)
     elseif msg isa Dict{Symbol,Any} # response message
         if handle_ResponseMessage(server, msg)
             return nothing

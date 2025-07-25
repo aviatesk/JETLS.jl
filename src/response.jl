@@ -55,6 +55,10 @@ function handle_requested_response(server::Server, msg::Dict{Symbol,Any},
         handle_testrunner_testcase_progress_response(server, msg, request_caller)
     elseif request_caller isa CodeLensRefreshRequestCaller
         handle_code_lens_refresh_response(server, msg, request_caller)
+    elseif request_caller isa FormattingProgressCaller
+        handle_formatting_progress_response(server, msg, request_caller)
+    elseif request_caller isa RangeFormattingProgressCaller
+        handle_range_formatting_progress_response(server, msg, request_caller)
     else
         error("Unknown request caller type")
     end
@@ -138,7 +142,6 @@ function handle_testrunner_testset_progress_response(server::Server, msg::Dict{S
     if handle_response_error(server, msg, "create work done progress")
         return
     end
-    # If successful, run the test with progress reporting
     (; uri, fi, idx, testset_name, filepath, token) = request_caller
     @async testrunner_run_testset(server, uri, fi, idx, testset_name, filepath; token)
 end
@@ -147,7 +150,6 @@ function handle_testrunner_testcase_progress_response(server::Server, msg::Dict{
     if handle_response_error(server, msg, "create work done progress")
         return
     end
-    # If successful, run the test with progress reporting
     (; uri, testcase_line, testcase_text, filepath, token) = request_caller
     @async testrunner_run_testcase(server, uri, testcase_line, testcase_text, filepath; token)
 end
@@ -157,4 +159,20 @@ function handle_code_lens_refresh_response(server::Server, msg::Dict{Symbol,Any}
     else
         # just valid request response cycle
     end
+end
+
+function handle_formatting_progress_response(server::Server, msg::Dict{Symbol,Any}, request_caller::FormattingProgressCaller)
+    if handle_response_error(server, msg, "create work done progress")
+        return
+    end
+    (; uri, msg_id, token) = request_caller
+    @async do_format_with_progress(server, uri, msg_id, token)
+end
+
+function handle_range_formatting_progress_response(server::Server, msg::Dict{Symbol,Any}, request_caller::RangeFormattingProgressCaller)
+    if handle_response_error(server, msg, "create work done progress")
+        return
+    end
+    (; uri, range, msg_id, token) = request_caller
+    @async do_range_format_with_progress(server, uri, range, msg_id, token)
 end

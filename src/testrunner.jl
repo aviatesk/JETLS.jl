@@ -344,11 +344,7 @@ end
 function testrunner_run_testset(server::Server, uri::URI, fi::FileInfo, idx::Int, tsn::String, filepath::String;
                                 token::Union{Nothing,ProgressToken}=nothing)
     if isnothing(Sys.which("testrunner"))
-        show_error_message(server, """
-            `testrunner` executable is not found on the `PATH`.
-            Follow this [instruction](https://github.com/aviatesk/JETLS.jl#prerequisites)
-            to install the `testrunner` app.
-            """)
+        show_error_message(server, app_notfound_message("testrunner"))
         return token !== nothing && end_testrunner_progress(server, token, "TestRunner not installed")
     end
 
@@ -436,11 +432,7 @@ end
 function testrunner_run_testcase(server::Server, uri::URI, tcl::Int, tct::String, filepath::String;
                                  token::Union{Nothing,ProgressToken}=nothing)
     if isnothing(Sys.which("testrunner"))
-        show_error_message(server, """
-            `testrunner` executable is not found on the `PATH`.
-            Follow [this instruction](https://github.com/aviatesk/TestRunner.jl#installation)
-            to install the `testrunner` app.
-            """)
+        show_error_message(server, app_notfound_message("testrunner"))
         return token !== nothing && end_testrunner_progress(server, token, "TestRunner not installed")
     end
 

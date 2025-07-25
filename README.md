@@ -125,7 +125,8 @@ the list itself is subject to change.
   - [x] Local binding location
   - [ ] Type-aware method documentation
   - [ ] Type of local binding on hover
-- [ ] Formatting
+- Formatting
+  - [x] [Runic](github.com/fredrikekre/Runic.jl) integration
 - TestRunner.jl integration
   - [x] Code lens for running individual `@testset`s
   - [x] Code actions for running individual `@testset`s
