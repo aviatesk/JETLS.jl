@@ -17,8 +17,8 @@ function startLanguageServer(context: vscode.ExtensionContext) {
   const juliaExecutable = config.get<string>('juliaExecutablePath', 'julia');
 
   const serverScript = context.asAbsolutePath('runserver.jl');
-  const serverArgsToRun = ['--startup-file=no', '--project=.', serverScript];
-  const serverArgsToDebug = ['--startup-file=no', '--project=.', serverScript, '--debug=yes'];
+  const serverArgsToRun = ['--startup-file=no', '--history-file=no', '--project=.', serverScript];
+  const serverArgsToDebug = ['--startup-file=no', '--history-file=no', '--project=.', serverScript, '--debug=yes'];
   const serverOptions: ServerOptions = {
     run: { command: juliaExecutable, args: serverArgsToRun },
     debug: { command: juliaExecutable, args: serverArgsToDebug }
