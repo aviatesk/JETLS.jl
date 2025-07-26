@@ -1,3 +1,9 @@
+struct TestRunnerDiagnosticRelatedInformation
+    filename::String
+    line::Int
+    message::String
+end
+
 """
     TestRunnerDiagnostic
 
@@ -13,6 +19,7 @@ struct TestRunnerDiagnostic
     filename::String
     line::Int
     message::String
+    relatedInformation::Union{Nothing,Vector{TestRunnerDiagnosticRelatedInformation}}
 end
 
 """

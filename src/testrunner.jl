@@ -272,14 +272,27 @@ end
 function testrunner_result_to_diagnostics(result::TestRunnerResult)
     uri2diagnostics = URI2Diagnostics()
     for diag in result.diagnostics
-        uri = @something filename2uri(diag.filename) continue
-        diagnostics = get!(Vector{Diagnostic}, uri2diagnostics, uri)
+        uri = filename2uri(to_full_path(diag.filename))
+        relatedInformation = diag.relatedInformation
+        if !isnothing(relatedInformation)
+            relatedInformation′ = DiagnosticRelatedInformation[]
+            for info in relatedInformation
+                info.filename == "none" && continue
+                local uri = filepath2uri(to_full_path(info.filename))
+                local range = line_range(fixed_line_number(info.line))
+                push!(relatedInformation′, DiagnosticRelatedInformation(;
+                    location = Location(; uri, range),
+                    message = info.message))
+            end
+            relatedInformation = relatedInformation′
+        end
         diagnostic = Diagnostic(;
             range = line_range(fixed_line_number(diag.line)),
             severity = DiagnosticSeverity.Error,
             message = diag.message,
-            source = TESTRUNNER_DIAGNOSTIC_SOURCE)
-        push!(diagnostics, diagnostic)
+            source = TESTRUNNER_DIAGNOSTIC_SOURCE,
+            relatedInformation)
+        push!(get!(Vector{Diagnostic}, uri2diagnostics, uri), diagnostic)
     end
     return uri2diagnostics
 end
