@@ -356,9 +356,10 @@ end
 
 function testrunner_run_testset(server::Server, uri::URI, fi::FileInfo, idx::Int, tsn::String, filepath::String;
                                 token::Union{Nothing,ProgressToken}=nothing)
-    testrunner_exe_name = get_config(server.state.config_manager, "testrunner", "executable")
-    if isnothing(Sys.which(testrunner_exe_name))
-        show_error_message(server, app_notfound_message(testrunner_exe_name))
+    executable = get_config(server.state.config_manager, "testrunner", "executable")
+    if isnothing(Sys.which(executable))
+        is_default_setting = executable == "testrunner"
+        show_error_message(server, app_notfound_message(executable, is_default_setting, "testrunner", "executable"))
         return token !== nothing && end_testrunner_progress(server, token, "TestRunner not installed")
     end
 
@@ -373,7 +374,7 @@ function testrunner_run_testset(server::Server, uri::URI, fi::FileInfo, idx::Int
 
     local result::String
     try
-        result = _testrunner_run_testset(server, uri, fi, idx, tsn, filepath)
+        result = _testrunner_run_testset(server, executable, uri, fi, idx, tsn, filepath)
     catch err
         result = sprint(Base.showerror, err, catch_backtrace())
         @error "Error from testrunner executor" err
@@ -393,7 +394,7 @@ end
 is_testsetinfo_valid(fi::FileInfo, idx::Int, tsn::String) =
     checkbounds(Bool, fi.testsetinfos, idx) && testset_name(fi.testsetinfos[idx]) == tsn
 
-function _testrunner_run_testset(server::Server, uri::URI, fi::FileInfo, idx::Int, tsn::String, filepath::String)
+function _testrunner_run_testset(server::Server, executable::AbstractString, uri::URI, fi::FileInfo, idx::Int, tsn::String, filepath::String)
     if !is_testsetinfo_valid(fi, idx, tsn)
         show_warning_message(server, """
             The test structure has changed significantly, so test execution is being cancelled.
@@ -403,7 +404,6 @@ function _testrunner_run_testset(server::Server, uri::URI, fi::FileInfo, idx::In
     end
     tsl = testset_line(fi.testsetinfos[idx])
     test_env_path = find_uri_env_path(server.state, uri)
-    executable = get_config(server.state.config_manager, "testrunner", "executable")
     cmd = testrunner_cmd(executable, filepath, tsn, tsl, test_env_path)
     testrunnerproc = open(cmd; read=true)
     wait(testrunnerproc)
@@ -446,9 +446,10 @@ end
 
 function testrunner_run_testcase(server::Server, uri::URI, tcl::Int, tct::String, filepath::String;
                                  token::Union{Nothing,ProgressToken}=nothing)
-    testrunner_exe_name = get_config(server.state.config_manager, "testrunner", "executable")
-    if isnothing(Sys.which(testrunner_exe_name))
-        show_error_message(server, app_notfound_message(testrunner_exe_name))
+    executable = get_config(server.state.config_manager, "testrunner", "executable")
+    if isnothing(Sys.which(executable))
+        is_default_setting = executable == "testrunner"
+        show_error_message(server, app_notfound_message(executable, is_default_setting, "testrunner", "executable"))
         return token !== nothing && end_testrunner_progress(server, token, "TestRunner not installed")
     end
 
@@ -463,7 +464,7 @@ function testrunner_run_testcase(server::Server, uri::URI, tcl::Int, tct::String
 
     local result::String
     try
-        result = _testrunner_run_testcase(server, uri, tcl, tct, filepath)
+        result = _testrunner_run_testcase(server, executable, uri, tcl, tct, filepath)
     catch err
         result = sprint(Base.showerror, err, catch_backtrace())
         @error "Error from testrunner executor" err
@@ -479,9 +480,8 @@ function testrunner_run_testcase(server::Server, uri::URI, tcl::Int, tct::String
     end
 end
 
-function _testrunner_run_testcase(server::Server, uri::URI, tcl::Int, tct::String, filepath::String)
+function _testrunner_run_testcase(server::Server, executable::AbstractString, uri::URI, tcl::Int, tct::String, filepath::String)
     test_env_path = find_uri_env_path(server.state, uri)
-    executable = get_config(server.state.config_manager, "testrunner", "executable")
     cmd = testrunner_cmd(executable, filepath, tcl, test_env_path)
     testrunnerproc = open(cmd; read=true)
     wait(testrunnerproc)
