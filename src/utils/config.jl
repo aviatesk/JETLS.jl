@@ -54,11 +54,12 @@ function traverse_merge!(on_leaf::Function, target::Dict{String,Any},
     for (k, v) in source
         current_path = [key_path; k]
         if v isa Dict{String,Any}
-            if haskey(target, k) && target[k] isa Dict{String,Any}
-                traverse_merge!(on_leaf, target[k], v, current_path)
+            tv = get(target, k, nothing)
+            if tv isa Dict{String,Any}
+                traverse_merge!(on_leaf, tv, v, current_path)
             else
-                target[k] = Dict{String,Any}()
-                traverse_merge!(on_leaf, target[k], v, current_path)
+                tv = target[k] = Dict{String,Any}()
+                traverse_merge!(on_leaf, tv, v, current_path)
             end
         else
             on_leaf(target, k, v, current_path)
