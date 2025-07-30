@@ -345,7 +345,7 @@ function testrunner_run_testset(server::Server, uri::URI, fi::FileInfo, idx::Int
                                 token::Union{Nothing,ProgressToken}=nothing)
     testrunner_exe_name = get_config(server.state.config_manager, "testrunner", "executable")
     if isnothing(Sys.which(testrunner_exe_name))
-        show_error_message(server, app_notfound_message("testrunner"))
+        show_error_message(server, app_notfound_message(testrunner_exe_name))
         return token !== nothing && end_testrunner_progress(server, token, "TestRunner not installed")
     end
 
@@ -435,7 +435,7 @@ function testrunner_run_testcase(server::Server, uri::URI, tcl::Int, tct::String
                                  token::Union{Nothing,ProgressToken}=nothing)
     testrunner_exe_name = get_config(server.state.config_manager, "testrunner", "executable")
     if isnothing(Sys.which(testrunner_exe_name))
-        show_error_message(server, app_notfound_message("testrunner"))
+        show_error_message(server, app_notfound_message(testrunner_exe_name))
         return token !== nothing && end_testrunner_progress(server, token, "TestRunner not installed")
     end
 
