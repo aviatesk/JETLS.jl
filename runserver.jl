@@ -29,7 +29,7 @@ let old_env = Pkg.project().path
     end
 end
 
-function (@main)(args::Vector{String})::Cint
+function (@main)(_::Vector{String})::Cint
     endpoint = LSEndpoint(stdin, stdout)
     if JETLS.JETLS_DEV_MODE
         server = Server(endpoint) do s::Symbol, x
@@ -50,6 +50,6 @@ function (@main)(args::Vector{String})::Cint
     return res.exit_code
 end
 
-end # var"##JETLSEntryPoint__##"
+end # module var"##JETLSEntryPoint__##"
 
 using .var"##JETLSEntryPoint__##": main
