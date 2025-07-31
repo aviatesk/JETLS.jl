@@ -151,8 +151,7 @@ function runserver(server::Server)
     return (; exit_code, server.endpoint)
 end
 
-function handle_message(server::Server, msg)
-    @nospecialize msg
+function handle_message(server::Server, @nospecialize msg)
     if !JETLS_TEST_MODE
         try
             if JETLS_DEV_MODE
@@ -178,8 +177,7 @@ function handle_message(server::Server, msg)
     end
 end
 
-function _handle_message(server::Server, msg)
-    @nospecialize msg
+function _handle_message(server::Server, @nospecialize msg)
     if msg isa DidOpenTextDocumentNotification
         return handle_DidOpenTextDocumentNotification(server, msg)
     elseif msg isa DidChangeTextDocumentNotification
