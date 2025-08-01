@@ -95,7 +95,7 @@ function compute_binding_usages!(tracked::Dict{JL.BindingInfo,Bool},
                     end &&
                     JS.kind(arglist[3]) === JS.K"BindingId" &&
                     let arg3info = JL.lookup_binding(ctx3, arglist[3])
-                        arg3info.is_internal && arg3info.name == "#self#"
+                        arg3info.is_internal && (arg3info.name == "#self#" || arg3info.name == "#ctor-self#")
                     end
                 if is_kwcall
                     # This is `kwcall` method -- now need to perform some special case

@@ -194,6 +194,26 @@ end
             @test diagnostic.message == "Unused argument `y`"
             @test diagnostic.range.start.line == 2
         end
+        # constructor definition with keyword arguments
+        let diagnostics = get_lowered_diagnostics("""
+            struct A{T}
+                x::T
+                A(x::T; override::Union{Nothing,T}) where T = new{T}(@something override x)
+            end
+            """)
+            @test isempty(diagnostics)
+        end
+        let diagnostics = get_lowered_diagnostics("""
+            struct A{T}
+                x::T
+                A(x::T; override::Union{Nothing,T}) where T = new{T}(x)
+            end
+            """)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.message == "Unused argument `override`"
+            @test diagnostic.range.start.line == 2
+        end
     end
 
     @testset "module splitter" begin
