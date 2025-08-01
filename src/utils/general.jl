@@ -47,9 +47,10 @@ let debounced = Dict{UInt, Timer}(),
             on_cancels[id] = on_cancel
         end
 
-        debounced[id] = Timer(delay) do _
+        debounced[id] = Timer(delay; spawn=true) do _
             try
-                f()
+                Threads.@spawn f()
+                # f()
             finally
                 delete!(debounced, id)
                 delete!(on_cancels, id)
@@ -84,9 +85,9 @@ let throttled = Dict{UInt, Tuple{Union{Nothing,Timer}, Float64}}(),
         end
 
         delay = max(0.0, interval - (time() - last_time))
-        throttled[id] = (Timer(delay) do _
+        throttled[id] = (Timer(delay; spawn=true) do _
             try
-                f()
+                Threads.@spawn f()
             finally
                 throttled[id] = (nothing, time())
                 delete!(on_cancels, id)

@@ -498,7 +498,7 @@ function _testrunner_run_testcase(server::Server, uri::URI, tcl::Int, tct::Strin
     # Show error information to the user as temporary diagnostics.
     uri2diagnostics = testrunner_result_to_diagnostics(result)
     notify_temporary_diagnostics!(server, uri2diagnostics)
-    @async begin
+    Threads.@spawn begin
         sleep(10)
         notify_diagnostics!(server) # refresh diagnostics after 5 sec
     end
@@ -593,7 +593,7 @@ function testrunner_run_testset_from_uri(server::Server, uri::URI, idx::Int, tsn
         params = WorkDoneProgressCreateParams(; token)
         send(server, WorkDoneProgressCreateRequest(; id, params))
     else
-        @async testrunner_run_testset(server, uri, fi, idx, tsn, filepath)
+        Threads.@spawn testrunner_run_testset(server, uri, fi, idx, tsn, filepath)
     end
     return nothing
 end
@@ -625,7 +625,7 @@ function testrunner_run_testcase_from_uri(server::Server, uri::URI, tcl::Int, tc
         params = WorkDoneProgressCreateParams(; token)
         send(server, WorkDoneProgressCreateRequest(; id, params))
     else
-        @async testrunner_run_testcase(server, uri, tcl, tct, filepath)
+        Threads.@spawn testrunner_run_testcase(server, uri, tcl, tct, filepath)
     end
     return nothing
 end

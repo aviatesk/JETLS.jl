@@ -12,24 +12,23 @@ mutable struct Endpoint
     state::Symbol
 
     function Endpoint(err_handler, in::IO, out::IO, method_dispatcher)
+        inl, outl = Lockable(in), Lockable(out)
         in_msg_queue = Channel{Any}(Inf)
         out_msg_queue = Channel{Any}(Inf)
 
-        read_task = @async try
+        read_task = Threads.@spawn :interactive try
             while true
-                msg = @something readmsg(in, method_dispatcher) break
+                msg = @something readmsg(inl, method_dispatcher) break
                 put!(in_msg_queue, msg)
             end
         catch err
             err_handler(#=isread=#true, err, catch_backtrace())
         end
 
-        write_task = @async try
+        write_task = Threads.@spawn :interactive try
             for msg in out_msg_queue
-                if isopen(out)
-                    writemsg(out, msg)
-                else
-                    @info "failed to send" msg
+                @something writemsg(outl, msg) begin
+                    @error "Failed to send" msg
                     # TODO Reconsider at some point whether this should be treated as an error.
                     break
                 end
@@ -52,8 +51,8 @@ end
 
 const Parsed = @NamedTuple{method::Union{Nothing,String}}
 
-function readmsg(io::IO, method_dispatcher)
-    msg_str = @something read_transport_layer(io) return nothing
+function readmsg(iol::Lockable{<:IO}, method_dispatcher)
+    msg_str = @something (@lock iol read_transport_layer(iol[])) return nothing
     parsed = JSON3.read(msg_str, Parsed)
     return reparse_msg_str(parsed, msg_str, method_dispatcher)
 end
@@ -88,9 +87,13 @@ function reparse_msg_str(parsed::Parsed, msg_str::String, method_dispatcher)
     end
 end
 
-function writemsg(io::IO, @nospecialize msg)
-    msg_str = JSON3.write(msg)
-    write_transport_layer(io, msg_str)
+function writemsg(iol::Lockable{<:IO}, @nospecialize msg)
+    @lock iol begin
+        io = iol[]
+        isopen(io) || return nothing
+        msg_str = JSON3.write(msg)
+        write_transport_layer(io, msg_str)
+    end
 end
 
 function write_transport_layer(io::IO, response::String)
