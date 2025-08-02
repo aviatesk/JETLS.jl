@@ -48,6 +48,8 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
         # leave Refs undefined
     end
 
+    initialize_config!(server)
+
     if supports(server,
         :textDocument, :completion, :dynamicRegistration)
         completionProvider = nothing # will be registered dynamically
@@ -179,7 +181,7 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
             documentFormattingProvider,
             documentRangeFormattingProvider,
             executeCommandProvider,
-            inlayHintProvider,
+            inlayHintProvider
         ),
         serverInfo = (;
             name = "JETLS",
@@ -322,6 +324,17 @@ function handle_InitializedNotification(server::Server)
     #     if JETLS_DEV_MODE
     #         @info "Statically registering 'textDocument/inlayHint' upon `InitializedNotification`"
     #     end
+    end
+
+    if supports(server,
+        :workspace, :didChangeWatchedFiles, :dynamicRegistration)
+        push!(registrations, did_change_watched_files_registration())
+        if JETLS_DEV_MODE
+            @info "Dynamically registering 'workspace/didChangeWatchedFiles' upon `InitializedNotification`"
+        end
+    else
+        # NOTE `workspace/didChangeWatchedFiles` is not supported for static registration
+        # so it must be registered dynamically
     end
 
     register(server, registrations)

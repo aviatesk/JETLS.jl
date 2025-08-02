@@ -14,6 +14,7 @@ end
         @testset "lsp" include("utils/test_lsp.jl")
         @testset "path" include("utils/test_path.jl")
         @testset "markdown" include("utils/test_markdown.jl")
+        @testset "config" include("utils/test_config.jl")
     end
     @testset "types" include("test_types.jl")
     @testset "URIs2" include("test_URIs2.jl")
@@ -28,5 +29,6 @@ end
     @testset "LSAnalyzer" include("test_LSAnalyzer.jl")
     @testset "diagnostics" include("test_diagnostics.jl")
     @testset "testrunner" include("test_testrunner.jl")
+    @testset "did-change-watched-files" include("test_did-change-watched-files.jl")
     @testset "full lifecycle" include("test_full_lifecycle.jl")
 end
