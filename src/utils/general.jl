@@ -212,7 +212,7 @@ function check_settings_message(setting_path::String...)
     """
 end
 
-function app_notfound_message(app::AbstractString, is_default_setting::Bool=true, setting_path::String...)
+function app_notfound_message(app::AbstractString, setting_path::String...; is_default_setting::Bool=true)
     msg = """
     `$app` executable is not found on the `PATH`.
     """

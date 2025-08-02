@@ -8,7 +8,7 @@ function did_change_watched_files_registration()
         id = DID_CHANGE_WATCHED_FILES_REGISTRATION_ID,
         method = DID_CHANGE_WATCHED_FILES_REGISTRATION_METHOD,
         registerOptions = DidChangeWatchedFilesRegistrationOptions(;
-            watchers = [
+            watchers = FileSystemWatcher[
                 FileSystemWatcher(;
                     globPattern = "**/.JETLSConfig.toml",
                     kind = WatchKind.Create | WatchKind.Change | WatchKind.Delete),

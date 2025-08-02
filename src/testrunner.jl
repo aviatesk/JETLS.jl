@@ -346,7 +346,7 @@ function testrunner_run_testset(server::Server, uri::URI, fi::FileInfo, idx::Int
     executable = get_config(server.state.config_manager, "testrunner", "executable")
     if isnothing(Sys.which(executable))
         is_default_setting = executable == "testrunner"
-        show_error_message(server, app_notfound_message(executable, is_default_setting, "testrunner", "executable"))
+        show_error_message(server, app_notfound_message(executable, "testrunner", "executable", is_default_setting=is_default_setting))
         return token !== nothing && end_testrunner_progress(server, token, "TestRunner not installed")
     end
 
@@ -436,7 +436,7 @@ function testrunner_run_testcase(server::Server, uri::URI, tcl::Int, tct::String
     executable = get_config(server.state.config_manager, "testrunner", "executable")
     if isnothing(Sys.which(executable))
         is_default_setting = executable == "testrunner"
-        show_error_message(server, app_notfound_message(executable, is_default_setting, "testrunner", "executable"))
+        show_error_message(server, app_notfound_message(executable, "testrunner", "executable", is_default_setting=is_default_setting))
         return token !== nothing && end_testrunner_progress(server, token, "TestRunner not installed")
     end
 
