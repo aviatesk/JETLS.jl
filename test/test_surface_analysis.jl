@@ -177,6 +177,16 @@ end
             @test diagnostic.message == "Unused argument `y`"
             @test diagnostic.range.start.line == 0
         end
+        let diagnostics = get_lowered_diagnostics("""
+            function foo(__module__, name)
+                getglobal(@__MODULE__, name)
+            end
+            """)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.message == "Unused argument `__module__`"
+            @test diagnostic.range.start.line == 0
+        end
     end
 
     @testset "struct definition" begin
