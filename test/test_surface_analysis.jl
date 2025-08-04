@@ -168,6 +168,17 @@ end
         @test isempty(diagnostics)
     end
 
+    @testset "macro definition" begin
+        @test isempty(get_lowered_diagnostics("macro mymacro() end"))
+        @test isempty(get_lowered_diagnostics("macro mymacro(x) x end"))
+        let diagnostics = get_lowered_diagnostics("macro mymacro(x, y) x end")
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.message == "Unused argument `y`"
+            @test diagnostic.range.start.line == 0
+        end
+    end
+
     @testset "struct definition" begin
         @test isempty(get_lowered_diagnostics("struct A end"))
         @test isempty(get_lowered_diagnostics("struct A; x::Int; end"))
