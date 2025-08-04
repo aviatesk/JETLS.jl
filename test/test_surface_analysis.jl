@@ -109,6 +109,35 @@ end
             hasmatch(x::RegexMatch, y::Bool=false) = nothing
             """)
             @test_broken length(diagnostics) == 2
+            @test any(diagnostics) do diagnostic
+                diagnostic.message == "Unused argument `x`" &&
+                diagnostic.range.start.line == 0 &&
+                diagnostic.range.var"end".line == 0
+            end
+            @test any(diagnostics) do diagnostic
+                diagnostic.message == "Unused argument `y`" &&
+                diagnostic.range.start.line == 0 &&
+                diagnostic.range.var"end".line == 0
+            end
+        end
+        let diagnostics = get_lowered_diagnostics("""
+            hasmatch(x::RegexMatch, y::Bool=false) = x
+            """)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.message == "Unused argument `y`"
+            @test diagnostic.range.start.line == 0
+            @test diagnostic.range.var"end".line == 0
+        end
+        let diagnostics = get_lowered_diagnostics("""
+            hasmatch(x::RegexMatch, y::Bool=false) = y
+            """)
+            @test_broken length(diagnostics) == 1
+            @test any(diagnostics) do diagnostic
+                diagnostic.message == "Unused argument `x`" &&
+                diagnostic.range.start.line == 0 &&
+                diagnostic.range.var"end".line == 0
+            end
         end
     end
 
