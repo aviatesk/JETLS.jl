@@ -1,17 +1,19 @@
 function analyze_lowered_code!(diagnostics::Vector{Diagnostic},
                                ctx3::JL.VariableAnalysisContext, st3::JL.SyntaxTree,
                                sourcefile::JS.SourceFile)
-    binding_usages = compute_binding_usages(ctx3, st3)
+    binding_usages, ismacro = compute_binding_usages(ctx3, st3)
     for (binfo, used) in binding_usages
         used && continue
         binding = JL.binding_ex(ctx3, binfo.id)
+        if iszero(JS.first_byte(binding)) || iszero(JS.last_byte(binding))
+            continue
+        elseif ismacro && (binfo.name == "__module__" || binfo.name == "__source__")
+            continue
+        end
         if binfo.kind === :argument
             message = "Unused argument `$(binfo.name)`"
         else
             message = "Unused local binding `$(binfo.name)`"
-        end
-        if iszero(JS.first_byte(binding)) || iszero(JS.last_byte(binding))
-            continue
         end
         push!(diagnostics, jsobj_to_diagnostic(binding, sourcefile,
             message,
@@ -24,6 +26,7 @@ end
 
 function compute_binding_usages(ctx3::JL.VariableAnalysisContext, st3::JL.SyntaxTree)
     tracked = Dict{JL.BindingInfo,Bool}()
+    ismacro = Ref(false)
 
     for binfo = ctx3.bindings.info
         binfo.is_internal && continue
@@ -31,14 +34,14 @@ function compute_binding_usages(ctx3::JL.VariableAnalysisContext, st3::JL.Syntax
         tracked[binfo] = false
     end
 
-    if isempty(tracked)
-        return tracked
+    if !isempty(tracked)
+        compute_binding_usages!(tracked, ismacro, ctx3, st3)
     end
 
-    return compute_binding_usages!(tracked, ctx3, st3)
+    return tracked, ismacro[]
 end
 
-function compute_binding_usages!(tracked::Dict{JL.BindingInfo,Bool},
+function compute_binding_usages!(tracked::Dict{JL.BindingInfo,Bool}, ismacro::Base.RefValue{Bool},
                                  ctx3::JL.VariableAnalysisContext, st3::JL.SyntaxTree;
                                  include_decls::Bool = false,
                                  skip_tracking::Union{Nothing,Set{JL.BindingInfo}}=nothing)
@@ -65,6 +68,14 @@ function compute_binding_usages!(tracked::Dict{JL.BindingInfo,Bool},
         n = JS.numchildren(st)
         if k === JS.K"function_decl"
             infunc = true
+            if n ≥ 1
+                local func = st[1]
+                if JS.kind(func) === JS.K"BindingId"
+                    if startswith(JL.lookup_binding(ctx3, func).name, "@")
+                        ismacro[] = true
+                    end
+                end
+            end
         elseif infunc && k === JS.K"block" && n ≥ 1
             blk1 = st[1]
             if JS.kind(blk1) === JS.K"function_decl" && infunc && JS.numchildren(blk1) ≥ 1
@@ -72,10 +83,10 @@ function compute_binding_usages!(tracked::Dict{JL.BindingInfo,Bool},
                 # is "used" in the language constructs required to define the method,
                 # but what we're interested in is whether it's actually used in the outer scope.
                 # We add this inner function to `skip_tracking` and recurse.
-                func = blk1[1]
+                local func = blk1[1]
                 if JS.kind(func) === JS.K"BindingId"
                     innerfuncinfo = JL.lookup_binding(ctx3, func)
-                    compute_binding_usages!(tracked, ctx3, st;
+                    compute_binding_usages!(tracked, ismacro, ctx3, st;
                         skip_tracking = Set((innerfuncinfo,)))
                     continue
                 end
@@ -106,7 +117,7 @@ function compute_binding_usages!(tracked::Dict{JL.BindingInfo,Bool},
                     # this pass to report them as unused local bindings.
                     # We avoid this problem by setting `include_decls` when recursing.
                     for j = 1:n
-                        compute_binding_usages!(tracked, ctx3, st[j]; include_decls=true)
+                        compute_binding_usages!(tracked, ismacro, ctx3, st[j]; include_decls=true)
                     end
                     continue
                 end
@@ -128,5 +139,5 @@ function compute_binding_usages!(tracked::Dict{JL.BindingInfo,Bool},
         end
     end
 
-    return tracked
+    return tracked, ismacro
 end
