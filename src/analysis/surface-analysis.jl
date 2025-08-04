@@ -28,14 +28,33 @@ function compute_binding_usages(ctx3::JL.VariableAnalysisContext, st3::JL.Syntax
     tracked = Dict{JL.BindingInfo,Bool}()
     ismacro = Ref(false)
 
-    for binfo = ctx3.bindings.info
+    # group together argument bindings with the same name
+    same_arg_bindings = Dict{Symbol,Vector{Int}}()
+
+    for (i, binfo) = enumerate(ctx3.bindings.info)
         binfo.is_internal && continue
-        binfo.kind === :argument || binfo.kind === :local || continue
+        if binfo.kind === :argument
+            push!(get!(Vector{Int}, same_arg_bindings, Symbol(binfo.name)), i)
+        elseif binfo.kind !== :local
+            continue
+        end
         tracked[binfo] = false
     end
 
     if !isempty(tracked)
         compute_binding_usages!(tracked, ismacro, ctx3, st3)
+
+        # Fix up usedness information of arguments that are only used within the argument list.
+        # E.g. this is necessary to avoid reporting "unused variable diagnostics" for `a` in cases like:
+        # ```julia
+        # hasmatch(x::RegexMatch, y::Bool=isempty(x.matches)) = y
+        # ```
+        for (_, idxs) in same_arg_bindings
+            used = any(idx::Int->tracked[ctx3.bindings.info[idx]], idxs)
+            for idx in idxs
+                tracked[ctx3.bindings.info[idx]] = used
+            end
+        end
     end
 
     return tracked, ismacro[]
