@@ -1,19 +1,32 @@
+struct LoweredDiagnosticKey
+    first_byte::UInt
+    last_byte::UInt
+    kind::Symbol
+    name::String
+end
+
 function analyze_lowered_code!(diagnostics::Vector{Diagnostic},
                                ctx3::JL.VariableAnalysisContext, st3::JL.SyntaxTree,
                                sourcefile::JS.SourceFile)
     binding_usages, ismacro = compute_binding_usages(ctx3, st3)
+    reported = Set{LoweredDiagnosticKey}() # to prevent duplicate reports for unused default or keyword arguments
     for (binfo, used) in binding_usages
         used && continue
         binding = JL.binding_ex(ctx3, binfo.id)
-        if iszero(JS.first_byte(binding)) || iszero(JS.last_byte(binding))
+        fb, lb = JS.first_byte(binding), JS.last_byte(binding)
+        bn = binfo.name
+        if iszero(fb) || iszero(lb)
             continue
-        elseif ismacro && (binfo.name == "__module__" || binfo.name == "__source__")
+        elseif ismacro && (bn == "__module__" || bn == "__source__")
             continue
         end
-        if binfo.kind === :argument
-            message = "Unused argument `$(binfo.name)`"
+        bk = binfo.kind
+        key = LoweredDiagnosticKey(fb, lb, bk, bn)
+        key in reported ? continue : push!(reported, key)
+        if bk === :argument
+            message = "Unused argument `$bn`"
         else
-            message = "Unused local binding `$(binfo.name)`"
+            message = "Unused local binding `$bn`"
         end
         push!(diagnostics, jsobj_to_diagnostic(binding, sourcefile,
             message,
