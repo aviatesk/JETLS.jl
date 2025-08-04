@@ -89,6 +89,29 @@ end
         @test diagnostic.range.var"end".line == 1
     end
 
+    @testset "Arguments that are only used within argument list" begin
+        @test isempty(get_lowered_diagnostics("hasmatch(x::RegexMatch, y::Bool=isempty(x.matches)) = y"))
+        @test """
+        function CompletionItem(item::CompletionItem; label::String=item.label, kind::Union{Nothing,Int}=item.kind)
+            return CompletionItem(; label, kind)
+        end
+        """ |> get_lowered_diagnostics |> isempty
+        let diagnostics = get_lowered_diagnostics("""
+            hasmatch(x::RegexMatch, y::Bool=isempty(x.matches)) = nothing
+            """)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.message == "Unused argument `y`"
+            @test diagnostic.range.start.line == 0
+            @test diagnostic.range.var"end".line == 0
+        end
+        let diagnostics = get_lowered_diagnostics("""
+            hasmatch(x::RegexMatch, y::Bool=false) = nothing
+            """)
+            @test_broken length(diagnostics) == 2
+        end
+    end
+
     @expect_jl_err @testset "tolerate bad syntax, broken macros" begin
         diagnostics = get_lowered_diagnostics("""
         function foo(x)
