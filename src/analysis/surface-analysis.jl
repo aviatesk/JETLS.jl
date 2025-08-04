@@ -19,7 +19,8 @@ function analyze_lowered_code!(diagnostics::Vector{Diagnostic},
             message,
             #=severity=#DiagnosticSeverity.Information,
             #=source=#LOWERING_DIAGNOSTIC_SOURCE;
-            tags = DiagnosticTag.Ty[DiagnosticTag.Unnecessary]))
+            tags = DiagnosticTag.Ty[DiagnosticTag.Unnecessary]
+        ))
     end
     return diagnostics
 end
@@ -152,8 +153,26 @@ function compute_binding_usages!(tracked::Dict{JL.BindingInfo,Bool}, ismacro::Ba
                     i = 1
                 end
             end
+        elseif k === JS.K"call" && n ≥ 1
+            arg1 = st[1]
+            if JS.kind(arg1) === JS.K"BindingId" && JL.lookup_binding(ctx3, arg1).name == "#self#"
+                # Don't count self arguments used in self calls as "usage".
+                # This is necessary to issue unused argument diagnostics for `x` in cases like:
+                # ```julia
+                # hasmatch(x::RegexMatch, y::Bool=false) = nothing
+                # ```
+                for j = n:-1:2 # reversed since we use `pop!`
+                    argⱼ = st[j]
+                    if JS.kind(argⱼ) === JS.K"BindingId" && JL.lookup_binding(ctx3, argⱼ).kind === :argument
+                        continue # skip this argument
+                    end
+                    push!(stack, st[j])
+                end
+                push!(stack, arg1)
+                continue
+            end
         end
-        for j = n:-1:i # since we use `pop!`
+        for j = n:-1:i # reversed since we use `pop!`
             push!(stack, st[j])
         end
     end
