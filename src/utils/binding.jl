@@ -48,7 +48,8 @@ let fallback_lowering_module = Module()
 
     Note that ctx objects share mutable information, so we only return ctx3
     """
-    global function jl_lower_for_scope_resolution(st0, mod::MaybeLoweringModule=nothing)
+    global function jl_lower_for_scope_resolution(st0, mod::MaybeLoweringModule=nothing;
+                                                  recover_from_macro_errors::Bool=false)
         if isnothing(mod)
             JETLS_DEBUG_LOWERING && @warn("No lowering module provided; non-Base macrocalls may fail")
             mod = fallback_lowering_module
@@ -57,6 +58,7 @@ let fallback_lowering_module = Module()
         ctx1, st1 = try
             JL.expand_forms_1(mod, st0_used)
         catch err
+            recover_from_macro_errors || rethrow(err)
             JETLS_DEBUG_LOWERING && @warn "Error in macro expansion; trimming and retrying"
             JETLS_DEBUG_LOWERING && showerror(stderr, err)
             JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
@@ -80,7 +82,7 @@ and filtering out any that aren't declared in a scope containing the cursor.
 function cursor_bindings(st0_top::JL.SyntaxTree, b_top::Int, mod::MaybeLoweringModule)
     st0, b = @something greatest_local(st0_top, b_top) return nothing # nothing we can lower
     (; ctx3, st2) = try
-        jl_lower_for_scope_resolution(st0, mod)
+        jl_lower_for_scope_resolution(st0, mod; recover_from_macro_errors=true)
     catch err
         JETLS_DEBUG_LOWERING && @warn "Error in lowering" err
         JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
@@ -194,7 +196,7 @@ function select_target_binding_definitions(st0_top::JL.SyntaxTree, offset::Int, 
     end
 
     (; ctx3, st3) = try
-        jl_lower_for_scope_resolution(st0, mod)
+        jl_lower_for_scope_resolution(st0, mod; recover_from_macro_errors=true)
     catch err
         JETLS_DEBUG_LOWERING && @warn "Error in lowering" err
         JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())

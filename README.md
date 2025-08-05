@@ -106,9 +106,11 @@ the list itself is subject to change.
   - [ ] Recursive analysis for dependencies
   - [ ] Cross-server-process cache system
 - Diagnostics
-  - [x] Report undefined bindings
-  - [x] Report unused bindings
-  - [ ] Report potential `MethodError`
+  - [x] Syntax errors
+  - [x] Lowering errors
+  - [x] Undefined bindings
+  - [x] Unused bindings
+  - [ ] Potential `MethodError`
 - Completion
   - [x] Global symbol completion
   - [x] Local binding completion

@@ -28,8 +28,7 @@ function analyze_lowered_code!(diagnostics::Vector{Diagnostic},
         else
             message = "Unused local binding `$bn`"
         end
-        push!(diagnostics, jsobj_to_diagnostic(binding, sourcefile,
-            message,
+        push!(diagnostics, jsobj_to_diagnostic(binding, sourcefile, message,
             #=severity=#DiagnosticSeverity.Information,
             #=source=#LOWERING_DIAGNOSTIC_SOURCE;
             tags = DiagnosticTag.Ty[DiagnosticTag.Unnecessary]
