@@ -49,7 +49,9 @@ using JETLS.URIs2
     end
 end
 
-macro throw(x) throw(x) end
+macro m_throw(x)
+    throw("show this error message")
+end
 @testset "JuliaLowering error diagnostics" begin
     @testset "lowering error diagnostics" begin
         st = jlparse("macro foo(x, y) \$(x) end")
@@ -66,7 +68,7 @@ macro throw(x) throw(x) end
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
         @test diagnostic.source == JETLS.LOWERING_DIAGNOSTIC_SOURCE
-        @test diagnostic.message == "Macro name `notexisting` not found"
+        @test diagnostic.message == "Macro name `@notexisting` not found"
         @test diagnostic.range.start.line == 0
         @test diagnostic.range.start.character == sizeof("x = @")
         @test diagnostic.range.var"end".line == 0
@@ -74,16 +76,17 @@ macro throw(x) throw(x) end
     end
 
     @testset "macro expansion error diagnostics" begin
-        st = jlparse("x = @throw 42")
+        st = jlparse("x = @m_throw 42")
         diagnostics = JETLS.lowering_diagnostics(st[1], @__MODULE__, JS.sourcefile(st))
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
         @test diagnostic.source == JETLS.LOWERING_DIAGNOSTIC_SOURCE
-        @test diagnostic.message == "Error expanding macro"
+        @show diagnostic.message
+        @test diagnostic.message == "Error expanding macro\n\"show this error message\""
         @test diagnostic.range.start.line == 0
         @test diagnostic.range.start.character == sizeof("x = ")
         @test diagnostic.range.var"end".line == 0
-        @test diagnostic.range.var"end".character == sizeof("x = @throw 42")
+        @test diagnostic.range.var"end".character == sizeof("x = @m_throw 42")
     end
 end
 

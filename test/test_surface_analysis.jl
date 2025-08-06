@@ -140,7 +140,7 @@ end
         end
     end
 
-    @expect_jl_err @testset "tolerate bad syntax, broken macros" begin
+    @testset "tolerate bad syntax, broken macros" begin
         let diagnostics = get_lowered_diagnostics("""
             function foo(x)
                 local y

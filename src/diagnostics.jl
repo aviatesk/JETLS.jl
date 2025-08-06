@@ -185,11 +185,17 @@ function lowering_diagnostics!(diagnostics::Vector{Diagnostic}, st0::JL.SyntaxTr
         elseif err isa JL.MacroExpansionError
             st = scrub_expand_macro_stacktrace(stacktrace(catch_backtrace()))
             msg = err.msg
-            if msg == "Error evaluating macro name"
-                name = JS.sourcetext(err.ex)
-                msg = "Macro name `$name` not found"
-                relatedInformation = nothing
-            else
+            relatedInformation = missing
+            if isdefined(err, :err)
+                inner = err.err
+                if msg == "Error evaluating macro name" && inner isa UndefVarError
+                    msg = "Macro name `$(inner.var)` not found"
+                    relatedInformation = nothing
+                else
+                    msg *= "\n" * sprint(Base.showerror, inner)
+                end
+            end
+            if ismissing(relatedInformation)
                 relatedInformation = stacktrace_to_related_information(st)
             end
             push!(diagnostics, jsobj_to_diagnostic(err.ex, sourcefile, msg,
