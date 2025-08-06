@@ -63,9 +63,14 @@ macro throw(x) throw(x) end
     @testset "macro not found error diagnostics" begin
         st = jlparse("x = @notexisting 42")
         diagnostics = JETLS.lowering_diagnostics(st[1], @__MODULE__, JS.sourcefile(st))
-        @test_broken length(diagnostics) == 1
-        # diagnostic = only(diagnostics)
-        # @test diagnostic.source == JETLS.LOWERING_DIAGNOSTIC_SOURCE
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.source == JETLS.LOWERING_DIAGNOSTIC_SOURCE
+        @test diagnostic.message == "Macro name `notexisting` not found"
+        @test diagnostic.range.start.line == 0
+        @test diagnostic.range.start.character == sizeof("x = @")
+        @test diagnostic.range.var"end".line == 0
+        @test diagnostic.range.var"end".character == sizeof("x = @notexisting")
     end
 
     @testset "macro expansion error diagnostics" begin

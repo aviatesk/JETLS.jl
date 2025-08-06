@@ -35,40 +35,55 @@ end
 # with mod=nothing.
 const MaybeLoweringModule = Union{Module, Nothing}
 
-let fallback_lowering_module = Module()
-    """
-    Perform the first three passes of lowering.  Attempt to handle junk input in
-    the ways a language server should:
-    - Trim parse errors from the tree beforehand
-    - If errors occur during macro expansion, trim macrocalls and retry.  This
-      may happen for several reasons; the analyzer may not have picked up the
-      macro definition yet, or the user could be working on the macrocall.
+module fallback_lowering_module end
 
-    Throw if lowering fails otherwise.
+"""
+    jl_lower_for_scope_resolution(
+            [mod::Module], st0::JL.SyntaxTree;
+            trim_error_nodes::Bool = true,
+            recover_from_macro_errors::Bool = true,
+        ) -> (; st0, st1, st2, st3, ctx3)
 
-    Note that ctx objects share mutable information, so we only return ctx3
-    """
-    global function jl_lower_for_scope_resolution(st0, mod::MaybeLoweringModule=nothing;
-                                                  recover_from_macro_errors::Bool=false)
-        if isnothing(mod)
-            JETLS_DEBUG_LOWERING && @warn("No lowering module provided; non-Base macrocalls may fail")
-            mod = fallback_lowering_module
-        end
-        st0_used = without_kinds(st0, JS.KSet"error")
-        ctx1, st1 = try
-            JL.expand_forms_1(mod, st0_used)
-        catch err
-            recover_from_macro_errors || rethrow(err)
-            JETLS_DEBUG_LOWERING && @warn "Error in macro expansion; trimming and retrying"
-            JETLS_DEBUG_LOWERING && showerror(stderr, err)
-            JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
-            st0_used = without_kinds(st0_used, JS.KSet"macrocall")
-            JL.expand_forms_1(mod, st0_used)
-        end
-        ctx2, st2 = JL.expand_forms_2(ctx1, st1)
-        ctx3, st3 = JL.resolve_scopes(ctx2, st2)
-        return (; st0=st0_used, st1, st2, st3, ctx3)
+Perform the first three passes of lowering.
+Depending on keyword arguments, also attempt to handle junk input in the ways a language server should:
+- `trim_error_nodes`: Trim parse errors from the tree beforehand.
+- `recover_from_macro_errors`: If errors occur during macro expansion, trim macrocalls and retry.
+  This may happen for several reasons; the analyzer may not have picked up the
+  macro definition yet, or the user could be working on the macrocall.
+
+Throw if lowering fails otherwise.
+
+Note that ctx objects share mutable information, so we only return `ctx3`
+"""
+function jl_lower_for_scope_resolution(
+        mod::Module, st0::JL.SyntaxTree;
+        trim_error_nodes::Bool = true,
+        recover_from_macro_errors::Bool = true,
+    )
+    if trim_error_nodes
+        st0 = without_kinds(st0, JS.KSet"error")
     end
+    ctx1, st1 = try
+        JL.expand_forms_1(mod, st0)
+    catch err
+        recover_from_macro_errors || rethrow(err)
+        JETLS_DEBUG_LOWERING && @warn "Error in macro expansion; trimming and retrying"
+        JETLS_DEBUG_LOWERING && showerror(stderr, err)
+        JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
+        st0 = without_kinds(st0, JS.KSet"macrocall")
+        JL.expand_forms_1(mod, st0)
+    end
+    return _jl_lower_for_scope_resolution(ctx1, st0, st1)
+end
+function jl_lower_for_scope_resolution(st0::JL.SyntaxTree; kwargs...)
+    JETLS_DEBUG_LOWERING && @warn "No lowering module provided; non-Base macrocalls may fail"
+    return jl_lower_for_scope_resolution(fallback_lowering_module, st0; kwargs...)
+end
+
+function _jl_lower_for_scope_resolution(ctx1, st0, st1)
+    ctx2, st2 = JL.expand_forms_2(ctx1, st1)
+    ctx3, st3 = JL.resolve_scopes(ctx2, st2)
+    return (; st0, st1, st2, st3, ctx3)
 end
 
 """
@@ -79,10 +94,10 @@ JuliaLowering throws away the mapping from scopes to bindings (scopes are stored
 as an ephemeral stack.)  We work around this by taking all available bindings
 and filtering out any that aren't declared in a scope containing the cursor.
 """
-function cursor_bindings(st0_top::JL.SyntaxTree, b_top::Int, mod::MaybeLoweringModule)
+function cursor_bindings(st0_top::JL.SyntaxTree, b_top::Int, mod::Module)
     st0, b = @something greatest_local(st0_top, b_top) return nothing # nothing we can lower
     (; ctx3, st2) = try
-        jl_lower_for_scope_resolution(st0, mod; recover_from_macro_errors=true)
+        jl_lower_for_scope_resolution(mod, st0)
     catch err
         JETLS_DEBUG_LOWERING && @warn "Error in lowering" err
         JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
@@ -174,7 +189,7 @@ function select_target_binding(ctx3::JL.VariableAnalysisContext, st3::JL.SyntaxT
 end
 
 """
-    select_target_binding_definitions(st0_top::JL.SyntaxTree, offset::Int[, mod]) ->
+    select_target_binding_definitions(st0_top::JL.SyntaxTree, offset::Int, mod::Module) ->
         nothing or (binding::JL.SyntaxTree, definitions::JL.SyntaxList)
 
 Find the binding at the cursor position and return all of its definition sites.
@@ -184,7 +199,7 @@ has no definitions. Otherwise returns a tuple of `(binding, definitions)` where:
 - `binding` is the `JL.SyntaxTree` node representing the binding at the cursor
 - `definitions` is a `JL.SyntaxList` containing all definition sites for that binding
 """
-function select_target_binding_definitions(st0_top::JL.SyntaxTree, offset::Int, mod::MaybeLoweringModule)
+function select_target_binding_definitions(st0_top::JL.SyntaxTree, offset::Int, mod::Module)
     st0, b = @something greatest_local(st0_top, offset) return nothing # nothing we can lower
 
     bas = byte_ancestors(st0, offset)
@@ -196,7 +211,7 @@ function select_target_binding_definitions(st0_top::JL.SyntaxTree, offset::Int, 
     end
 
     (; ctx3, st3) = try
-        jl_lower_for_scope_resolution(st0, mod; recover_from_macro_errors=true)
+        jl_lower_for_scope_resolution(mod, st0)
     catch err
         JETLS_DEBUG_LOWERING && @warn "Error in lowering" err
         JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())

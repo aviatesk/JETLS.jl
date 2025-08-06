@@ -137,6 +137,7 @@ end
 fixed_line_number(line) = line == 0 ? line : line - 1
 
 function line_range(line::Int)
+    line < 0 && (line = 0) # guard against invalid `line`...
     start = Position(; line, character=0)
     var"end" = Position(; line, character=Int(typemax(Int32)))
     return Range(; start, var"end")
@@ -171,9 +172,10 @@ function stacktrace_to_related_information(stacktrace::Vector{Base.StackTraces.S
 end
 
 function lowering_diagnostics!(diagnostics::Vector{Diagnostic}, st0::JL.SyntaxTree, mod::Module, sourcefile::JS.SourceFile)
-    @assert !in(JS.kind(st0), JS.KSet"toplevel module")
+    @assert JS.kind(st0) ∉ JS.KSet"toplevel module"
+
     (; ctx3, st3) = try
-        jl_lower_for_scope_resolution(st0, mod)
+        jl_lower_for_scope_resolution(mod, st0; recover_from_macro_errors=false)
     catch err
         if err isa JL.LoweringError
             push!(diagnostics, jsobj_to_diagnostic(err.ex, sourcefile, err.msg,
@@ -196,11 +198,22 @@ function lowering_diagnostics!(diagnostics::Vector{Diagnostic}, st0::JL.SyntaxTr
                 relatedInformation
             ))
         else
-            JETLS_DEBUG_LOWERING && @warn "Error in lowering" err
+            JETLS_DEBUG_LOWERING && @warn "Error in lowering (with macrocall nodes)"
+            JETLS_DEBUG_LOWERING && showerror(stderr, err)
             JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
         end
-        return diagnostics
+
+        st0 = without_kinds(st0, JS.KSet"error")
+        st0 = without_kinds(st0, JS.KSet"macrocall")
+        try
+            ctx1, st1 = JL.expand_forms_1(mod, st0)
+            _jl_lower_for_scope_resolution(ctx1, st0, st1)
+        catch
+            # The same error has probably already been handled above
+            return diagnostics
+        end
     end
+
     return analyze_lowered_code!(diagnostics, ctx3, st3, sourcefile)
 end
 lowering_diagnostics(args...) = lowering_diagnostics!(Diagnostic[], args...) # used by tests
