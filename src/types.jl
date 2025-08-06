@@ -218,6 +218,13 @@ struct LSPostProcessor
 end
 LSPostProcessor() = LSPostProcessor(JET.PostProcessor())
 
+struct ConfigFileOrder <: Base.Ordering end
+struct ConfigManager
+    reload_required_setting::Dict{String,Any}           # settings that are not changed during the server lifetime
+    watched_files::SortedDict{String, Dict{String,Any}} # watched files with their latest configurations
+end
+ConfigManager() = ConfigManager(Dict{String,Any}(), SortedDict{String, Dict{String,Any}}(ConfigFileOrder()))
+
 mutable struct ServerState
     const workspaceFolders::Vector{URI}
     const file_cache::Dict{URI,FileInfo} # syntactic analysis cache (synced with `textDocument/didChange`)
@@ -226,6 +233,7 @@ mutable struct ServerState
     const extra_diagnostics::ExtraDiagnostics
     const currently_requested::Dict{String,RequestCaller}
     const currently_registered::Set{Registered}
+    const config_manager::ConfigManager
     root_path::String
     root_env_path::String
     completion_resolver_info::Tuple{Module,LSPostProcessor}
@@ -238,7 +246,8 @@ mutable struct ServerState
             #=analysis_cache=# Dict{URI,AnalysisInfo}(),
             #=extra_diagnostics=# ExtraDiagnostics(),
             #=currently_requested=# Dict{String,RequestCaller}(),
-            #=currently_registered=# Set{Registered}())
+            #=currently_registered=# Set{Registered}(),
+            #=config_manager=# ConfigManager())
     end
 end
 

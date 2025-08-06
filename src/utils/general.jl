@@ -198,20 +198,34 @@ end
 (processor::LSPostProcessor)(md::Markdown.MD) = processor.inner(lsrender(md))
 (processor::LSPostProcessor)(s::AbstractString) = processor.inner(s)
 
-function app_notfound_message(app::AbstractString, instruction_url::AbstractString)
+function install_instruction_message(app::AbstractString, instruction_url::AbstractString)
     """
-    `$app` executable is not found on the `PATH`.
     Follow this [instruction]($instruction_url)
     to install the `$app` app.
     """
 end
-function app_notfound_message(app::AbstractString)
+
+function check_settings_message(setting_path::String...)
+    """
+    This value is configured in the `$(join(setting_path, "."))`.
+    Please check the settings.
+    """
+end
+
+function app_notfound_message(app::AbstractString, setting_path::String...; is_default_setting::Bool=true)
+    msg = """
+    `$app` executable is not found on the `PATH`.
+    """
+
+    if !isempty(setting_path) && !is_default_setting
+        return msg * check_settings_message(setting_path...)
+    end
+
     if app == "testrunner"
         instruction_url = "https://github.com/aviatesk/JETLS.jl#prerequisites"
     elseif app == "runic"
         instruction_url = "https://github.com/fredrikekre/Runic.jl#installation"
-    else
-        error(lazy"No instruction URL for $app")
     end
-    return app_notfound_message(app, instruction_url)
+
+    return msg * install_instruction_message(app, instruction_url)
 end

@@ -29,6 +29,7 @@ using JuliaSyntax: JuliaSyntax as JS
 using JuliaLowering: JuliaLowering as JL
 using REPL: REPL # loading REPL is necessary to make `Base.Docs.doc(::Base.Docs.Binding)` work
 using Markdown: Markdown
+using DataStructures: SortedDict
 
 abstract type AnalysisEntry end # used by `Analyzer.LSAnalyzer`
 
@@ -52,6 +53,7 @@ include("utils/ast.jl")
 include("utils/binding.jl")
 include("utils/lsp.jl")
 include("utils/server.jl")
+include("utils/config.jl")
 
 include("analysis/Interpreter.jl")
 using .Interpreter
@@ -73,6 +75,7 @@ include("code-lens.jl")
 include("formatting.jl")
 include("inlay-hint.jl")
 include("testrunner.jl")
+include("did-change-watched-files.jl")
 include("response.jl")
 include("lifecycle.jl")
 
@@ -212,6 +215,8 @@ function _handle_message(server::Server, @nospecialize msg)
         return handle_DocumentFormattingRequest(server, msg)
     elseif msg isa DocumentRangeFormattingRequest
         return handle_DocumentRangeFormattingRequest(server, msg)
+    elseif msg isa DidChangeWatchedFilesNotification
+        return handle_DidChangeWatchedFilesNotification(server, msg)
     elseif msg isa Dict{Symbol,Any} # response message
         if handle_ResponseMessage(server, msg)
             return nothing
