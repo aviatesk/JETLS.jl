@@ -28,7 +28,8 @@ function jsobj_to_diagnostic(obj, sourcefile::JS.SourceFile,
                              message::AbstractString,
                              severity::DiagnosticSeverity.Ty,
                              source::String;
-                             tags::Union{Nothing,Vector{DiagnosticTag.Ty}}=nothing)
+                             tags::Union{Nothing,Vector{DiagnosticTag.Ty}} = nothing,
+                             relatedInformation::Union{Nothing,Vector{DiagnosticRelatedInformation}} = nothing)
     sline, scol = JS.source_location(sourcefile, JS.first_byte(obj))
     eline, ecol = JS.source_location(sourcefile, JS.last_byte(obj))
     range = Range(;
@@ -39,10 +40,10 @@ function jsobj_to_diagnostic(obj, sourcefile::JS.SourceFile,
         severity,
         message,
         source,
-        tags)
+        tags,
+        relatedInformation)
 end
 
-# TODO severity
 function jet_result_to_diagnostics(file_uris, result::JET.JETToplevelResult)
     uri2diagnostics = URI2Diagnostics(uri => Diagnostic[] for uri in file_uris)
     jet_result_to_diagnostics!(uri2diagnostics, result)
@@ -52,6 +53,11 @@ end
 function jet_result_to_diagnostics!(uri2diagnostics::URI2Diagnostics, result::JET.JETToplevelResult)
     postprocessor = JET.PostProcessor(result.res.actual2virtual)
     for report in result.res.toplevel_error_reports
+        if report isa JET.LoweringErrorReport || report isa JET.MacroExpansionErrorReport
+            # the equivalent report should have been reported by `lowering_diagnostics!`
+            # with more precise location information
+            continue
+        end
         diagnostic = jet_toplevel_error_report_to_diagnostic(postprocessor, report)
         filename = report.file
         filename === :none && continue
@@ -131,20 +137,89 @@ end
 fixed_line_number(line) = line == 0 ? line : line - 1
 
 function line_range(line::Int)
+    line < 0 && (line = 0) # guard against invalid `line`...
     start = Position(; line, character=0)
     var"end" = Position(; line, character=Int(typemax(Int32)))
     return Range(; start, var"end")
 end
 
-function lowering_diagnostics!(diagnostics::Vector{Diagnostic}, st0::JL.SyntaxTree, mod::Module, sourcefile::JS.SourceFile)
-    @assert !in(JS.kind(st0), JS.KSet"toplevel module")
-    (; ctx3, st3) = try
-        jl_lower_for_scope_resolution(st0, mod)
-    catch err
-        JETLS_DEBUG_LOWERING && @warn "Error in lowering" err
-        JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
-        return diagnostics
+const JL_MACRO_FILE = only(methods(JL.expand_macro, (JL.MacroExpansionContext,JL.SyntaxTree))).file
+function scrub_expand_macro_stacktrace(stacktrace::Vector{Base.StackTraces.StackFrame})
+    idx = @something findfirst(stacktrace) do stackframe::Base.StackTraces.StackFrame
+        stackframe.func === :expand_macro && stackframe.file === JL_MACRO_FILE
+    end return stacktrace
+    return stacktrace[1:idx-1]
+end
+
+function stacktrace_to_related_information(stacktrace::Vector{Base.StackTraces.StackFrame})
+    relatedInformation = DiagnosticRelatedInformation[]
+    for stackframe in stacktrace
+        stackframe.file === :none && continue
+        uri = filepath2uri(to_full_path(stackframe.file))
+        range = line_range(fixed_line_number(stackframe.line))
+        location = Location(; uri, range)
+        message = let linfo = stackframe.linfo
+            linfo isa Core.CodeInstance && (linfo = linfo.def)
+            if linfo isa Core.MethodInstance
+                sprint(Base.show_tuple_as_call, Symbol(""), linfo.specTypes)
+            else
+                String(stackframe.func)
+            end
+        end
+        push!(relatedInformation, DiagnosticRelatedInformation(; location, message))
     end
+    return relatedInformation
+end
+
+function lowering_diagnostics!(diagnostics::Vector{Diagnostic}, st0::JL.SyntaxTree, mod::Module, sourcefile::JS.SourceFile)
+    @assert JS.kind(st0) ∉ JS.KSet"toplevel module"
+
+    (; ctx3, st3) = try
+        jl_lower_for_scope_resolution(mod, st0; recover_from_macro_errors=false)
+    catch err
+        if err isa JL.LoweringError
+            push!(diagnostics, jsobj_to_diagnostic(err.ex, sourcefile, err.msg,
+                #=severity=#DiagnosticSeverity.Error,
+                #=source=#LOWERING_DIAGNOSTIC_SOURCE;
+            ))
+        elseif err isa JL.MacroExpansionError
+            st = scrub_expand_macro_stacktrace(stacktrace(catch_backtrace()))
+            msg = err.msg
+            relatedInformation = missing
+            if isdefined(err, :err)
+                inner = err.err
+                if msg == "Error evaluating macro name" && inner isa UndefVarError
+                    msg = "Macro name `$(inner.var)` not found"
+                    relatedInformation = nothing
+                else
+                    msg *= "\n" * sprint(Base.showerror, inner)
+                end
+            end
+            if ismissing(relatedInformation)
+                relatedInformation = stacktrace_to_related_information(st)
+            end
+            push!(diagnostics, jsobj_to_diagnostic(err.ex, sourcefile, msg,
+                #=severity=#DiagnosticSeverity.Error,
+                #=source=#LOWERING_DIAGNOSTIC_SOURCE;
+                relatedInformation
+            ))
+        else
+            JETLS_DEBUG_LOWERING && @warn "Error in lowering (with macrocall nodes)"
+            JETLS_DEBUG_LOWERING && showerror(stderr, err)
+            JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
+        end
+
+        st0 = without_kinds(st0, JS.KSet"error")
+        st0 = without_kinds(st0, JS.KSet"macrocall")
+        try
+            ctx1, st1 = JL.expand_forms_1(mod, st0)
+            _jl_lower_for_scope_resolution(ctx1, st0, st1)
+        catch
+            # The same error has probably already been handled above
+            return diagnostics
+        end
+    end
+
     return analyze_lowered_code!(diagnostics, ctx3, st3, sourcefile)
 end
 lowering_diagnostics(args...) = lowering_diagnostics!(Diagnostic[], args...) # used by tests
@@ -161,8 +236,8 @@ function toplevel_lowering_diagnostics(server::Server, uri::URI, filename::Abstr
     while !isempty(sl)
         st0 = pop!(sl)
         if JS.kind(st0) in JS.KSet"toplevel module"
-            for cl0 in JS.children(st0)
-                push!(sl, cl0)
+            for i = JS.numchildren(st0):-1:1 # # reversed since we use `pop!`
+                push!(sl, st0[i])
             end
         else
             pos = offset_to_xy(file_info, JS.first_byte(st0))

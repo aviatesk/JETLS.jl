@@ -7,7 +7,7 @@ using Test
 using JETLS
 using JETLS: JL, JS
 
-global lowering_module::Module = Module()
+module lowering_module end
 function get_lowered_diagnostics(text::AbstractString; filename::AbstractString = @__FILE__)
     ps = JETLS.ParseStream!(text)
     st0 = JS.build_tree(JL.SyntaxTree, ps)
@@ -140,31 +140,35 @@ end
         end
     end
 
-    @expect_jl_err @testset "tolerate bad syntax, broken macros" begin
-        diagnostics = get_lowered_diagnostics("""
-        function foo(x)
-            local y
-            @i_do_not_exist
-            return x
-        # no end
-        """)
-        @test length(diagnostics) == 1
-        diagnostic = only(diagnostics)
-        @test diagnostic.message == "Unused local binding `y`"
-        @test diagnostic.range.start.line == 1
-        @test diagnostic.range.var"end".line == 1
-
-        diagnostics = get_lowered_diagnostics("""
-        function foo(x)
-            local y = x
-            @r_str 1 2 3 4 # methoderror
+    @testset "tolerate bad syntax, broken macros" begin
+        let diagnostics = get_lowered_diagnostics("""
+            function foo(x)
+                local y
+                @i_do_not_exist
+                return x
+            # no end
+            """)
+            @test length(diagnostics) == 2
+            @test any(diagnostics) do diagnostic
+                diagnostic.message == "Unused local binding `y`" &&
+                diagnostic.range.start.line == 1 &&
+                diagnostic.range.var"end".line == 1
+            end
         end
-        """)
-        @test length(diagnostics) == 1
-        diagnostic = only(diagnostics)
-        @test diagnostic.message == "Unused local binding `y`"
-        @test diagnostic.range.start.line == 1
-        @test diagnostic.range.var"end".line == 1
+
+        let diagnostics = get_lowered_diagnostics("""
+            function foo(x)
+                local y = x
+                @r_str 1 2 3 4 # methoderror
+            end
+            """)
+            @test length(diagnostics) == 2
+            @test any(diagnostics) do diagnostic
+                diagnostic.message == "Unused local binding `y`" &&
+                diagnostic.range.start.line == 1 &&
+                diagnostic.range.var"end".line == 1
+            end
+        end
     end
 
     @testset "unused inner function" begin

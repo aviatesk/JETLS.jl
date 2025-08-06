@@ -269,23 +269,24 @@ function testrunner_cmd(executable::String, filepath::String, tcl::Int, test_env
     end
 end
 
+function testrunner_diagnostic_to_related_information(diagnostic::TestRunnerDiagnostic)
+    relatedInformation = DiagnosticRelatedInformation[]
+    for info in @something diagnostic.relatedInformation return nothing
+        info.filename == "none" && continue
+        uri = filepath2uri(to_full_path(info.filename))
+        range = line_range(fixed_line_number(info.line))
+        location = Location(; uri, range)
+        message = info.message
+        push!(relatedInformation, DiagnosticRelatedInformation(; location, message))
+    end
+    return relatedInformation
+end
+
 function testrunner_result_to_diagnostics(result::TestRunnerResult)
     uri2diagnostics = URI2Diagnostics()
     for diag in result.diagnostics
         uri = filename2uri(to_full_path(diag.filename))
-        relatedInformation = diag.relatedInformation
-        if !isnothing(relatedInformation)
-            relatedInformation′ = DiagnosticRelatedInformation[]
-            for info in relatedInformation
-                info.filename == "none" && continue
-                local uri = filepath2uri(to_full_path(info.filename))
-                local range = line_range(fixed_line_number(info.line))
-                push!(relatedInformation′, DiagnosticRelatedInformation(;
-                    location = Location(; uri, range),
-                    message = info.message))
-            end
-            relatedInformation = relatedInformation′
-        end
+        relatedInformation = testrunner_diagnostic_to_related_information(diag)
         diagnostic = Diagnostic(;
             range = line_range(fixed_line_number(diag.line)),
             severity = DiagnosticSeverity.Error,
