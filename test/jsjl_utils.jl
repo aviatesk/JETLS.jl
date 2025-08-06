@@ -18,12 +18,12 @@ macro expect_jl_err(ex)
     if JETLS.JETLS_DEBUG_LOWERING
         :(mktemp() do path, io
             val = redirect_stderr(io) do
-                $ex
+                $(esc(ex))
             end
             flush(io)
             @test !isempty(read(path, String))
             val
-        end) |> esc
+        end)
     else
         esc(ex)
     end
