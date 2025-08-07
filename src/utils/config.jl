@@ -146,7 +146,7 @@ merge them based on priority, and set them as the settings that require a reload
 for this server.
 """
 function fix_reload_required_settings!(manager::ConfigManager)
-    for config in Iterators.reverse(collect(values(manager.watched_files)))
+    for config in Iterators.reverse(values(manager.watched_files))
         merge_reload_required_keys!(manager.reload_required_setting, config)
     end
 end
