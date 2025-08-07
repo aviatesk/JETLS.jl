@@ -178,26 +178,30 @@ function lowering_diagnostics!(diagnostics::Vector{Diagnostic}, st0::JL.SyntaxTr
         jl_lower_for_scope_resolution(mod, st0; recover_from_macro_errors=false)
     catch err
         if err isa JL.LoweringError
-            push!(diagnostics, jsobj_to_diagnostic(err.ex, sourcefile, err.msg,
-                #=severity=#DiagnosticSeverity.Error,
-                #=source=#LOWERING_DIAGNOSTIC_SOURCE;
-            ))
-        elseif err isa JL.MacroExpansionError
-            st = scrub_expand_macro_stacktrace(stacktrace(catch_backtrace()))
-            msg = err.msg
-            inner = err.err
-            if msg == "Macro not found" && inner isa UndefVarError
-                msg = "Macro name `$(inner.var)` not found"
-                relatedInformation = nothing
-            else
-                msg *= "\n" * sprint(Base.showerror, inner)
-                relatedInformation = stacktrace_to_related_information(st)
+            if JS.first_byte(err.ex) ≠ 0 && JS.last_byte(err.ex) ≠ 0
+                push!(diagnostics, jsobj_to_diagnostic(err.ex, sourcefile, err.msg,
+                    #=severity=#DiagnosticSeverity.Error,
+                    #=source=#LOWERING_DIAGNOSTIC_SOURCE;
+                ))
             end
-            push!(diagnostics, jsobj_to_diagnostic(err.ex, sourcefile, msg,
-                #=severity=#DiagnosticSeverity.Error,
-                #=source=#LOWERING_DIAGNOSTIC_SOURCE;
-                relatedInformation
-            ))
+        elseif err isa JL.MacroExpansionError
+            if JS.first_byte(err.ex) ≠ 0 && JS.last_byte(err.ex) ≠ 0
+                st = scrub_expand_macro_stacktrace(stacktrace(catch_backtrace()))
+                msg = err.msg
+                inner = err.err
+                if msg == "Macro not found" && inner isa UndefVarError
+                    msg = "Macro name `$(inner.var)` not found"
+                    relatedInformation = nothing
+                else
+                    msg *= "\n" * sprint(Base.showerror, inner)
+                    relatedInformation = stacktrace_to_related_information(st)
+                end
+                push!(diagnostics, jsobj_to_diagnostic(err.ex, sourcefile, msg,
+                    #=severity=#DiagnosticSeverity.Error,
+                    #=source=#LOWERING_DIAGNOSTIC_SOURCE;
+                    relatedInformation
+                ))
+            end
         else
             JETLS_DEBUG_LOWERING && @warn "Error in lowering (with macrocall nodes)"
             JETLS_DEBUG_LOWERING && showerror(stderr, err)

@@ -11,3 +11,9 @@ function Base.var"@nospecialize"(__context__::JL.MacroContext, ex1, ex2, exs...)
             __context__.macrocall,
             [JS.K"block" map(st->JL._apply_nospecialize(__context__, st), to_nospecialize)...])
 end
+
+function Base.var"@nospecialize"(__context__::JL.MacroContext)
+    JL.@ast(__context__,
+            __context__.macrocall,
+            [JS.K"meta" "nospecialize"::JS.K"Symbol"])
+end
