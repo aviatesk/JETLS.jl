@@ -218,14 +218,14 @@ struct LSPostProcessor
 end
 LSPostProcessor() = LSPostProcessor(JET.PostProcessor())
 
-struct WatchedFiles
+struct WatchedConfigFiles
     files::Vector{String}
     configs::Vector{Dict{String,Any}}
 end
 
-WatchedFiles() = WatchedFiles(String[], Dict{String,Any}[])
+WatchedConfigFiles() = WatchedConfigFiles(String[], Dict{String,Any}[])
 
-function _file_idx(watched_files::WatchedFiles, file::String)
+function _file_idx(watched_files::WatchedConfigFiles, file::String)
     idx = searchsortedfirst(watched_files.files, file, ConfigFileOrder())
     if idx > length(watched_files.files) || watched_files.files[idx] != file
         return nothing
@@ -233,12 +233,13 @@ function _file_idx(watched_files::WatchedFiles, file::String)
     return idx
 end
 
-Base.keys(watched_files::WatchedFiles) = watched_files.files
-Base.values(watched_files::WatchedFiles) = watched_files.configs
-Base.length(watched_files::WatchedFiles) = length(watched_files.files)
-Base.haskey(watched_files::WatchedFiles, file::String) = _file_idx(watched_files, file) !== nothing
+Base.keys(watched_files::WatchedConfigFiles) = watched_files.files
+Base.values(watched_files::WatchedConfigFiles) = watched_files.configs
+Base.length(watched_files::WatchedConfigFiles) = length(watched_files.files)
+Base.haskey(watched_files::WatchedConfigFiles, file::String) = _file_idx(watched_files, file) !== nothing
 
-function Base.delete!(watched_files::WatchedFiles, file::String)
+function Base.delete!(watched_files::WatchedConfigFiles, file::String)
+    file == "__DEFAULT_CONFIG__" && return watched_files # do not delete the default config
     idx = _file_idx(watched_files, file)
     idx === nothing && return watched_files
     deleteat!(watched_files.files, idx)
@@ -246,7 +247,7 @@ function Base.delete!(watched_files::WatchedFiles, file::String)
     return watched_files
 end
 
-function Base.setindex!(watched_files::WatchedFiles, config::Dict{String,Any}, file::String)
+function Base.setindex!(watched_files::WatchedConfigFiles, config::Dict{String,Any}, file::String)
     idx = searchsortedfirst(watched_files.files, file, ConfigFileOrder())
     if 1 <= idx <= length(watched_files.files) && watched_files.files[idx] == file
         watched_files.configs[idx] = config
@@ -257,13 +258,13 @@ function Base.setindex!(watched_files::WatchedFiles, config::Dict{String,Any}, f
     return watched_files
 end
 
-function Base.getindex(watched_files::WatchedFiles, file::String)
+function Base.getindex(watched_files::WatchedConfigFiles, file::String)
     idx = _file_idx(watched_files, file)
     idx === nothing && throw(KeyError(file))
     return watched_files.configs[idx]
 end
 
-function Base.get(watched_files::WatchedFiles, file::String, default)
+function Base.get(watched_files::WatchedConfigFiles, file::String, default)
     idx = _file_idx(watched_files, file)
     idx === nothing && return default
     return watched_files.configs[idx]
@@ -272,9 +273,9 @@ end
 struct ConfigFileOrder <: Base.Ordering end
 struct ConfigManager
     reload_required_setting::Dict{String,Any} # settings that are not changed during the server lifetime
-    watched_files::WatchedFiles               # watched configuration files
+    watched_files::WatchedConfigFiles               # watched configuration files
 end
-ConfigManager() = ConfigManager(Dict{String,Any}(), WatchedFiles())
+ConfigManager() = ConfigManager(Dict{String,Any}(), WatchedConfigFiles())
 
 mutable struct ServerState
     const workspaceFolders::Vector{URI}

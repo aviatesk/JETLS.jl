@@ -47,16 +47,16 @@ const TEST_RELOAD_REQUIRED = Dict{String, Any}(
     )
 )
 
-@testset "WatchedFiles" begin
+@testset "WatchedConfigFiles" begin
     @testset "constructor and basic operations" begin
-        watched = JETLS.WatchedFiles()
+        watched = JETLS.WatchedConfigFiles()
         @test length(watched) == 0
         @test isempty(keys(watched))
         @test isempty(values(watched))
     end
 
     @testset "setindex! and getindex" begin
-        watched = JETLS.WatchedFiles()
+        watched = JETLS.WatchedConfigFiles()
         config1 = Dict{String,Any}("key1" => "value1")
         config2 = Dict{String,Any}("key2" => "value2")
 
@@ -70,7 +70,7 @@ const TEST_RELOAD_REQUIRED = Dict{String, Any}(
     end
 
     @testset "haskey and get" begin
-        watched = JETLS.WatchedFiles()
+        watched = JETLS.WatchedConfigFiles()
         config = Dict{String,Any}("key" => "value")
 
         @test !haskey(watched, "___UNDEFINED___")
@@ -82,7 +82,7 @@ const TEST_RELOAD_REQUIRED = Dict{String, Any}(
     end
 
     @testset "delete!" begin
-        watched = JETLS.WatchedFiles()
+        watched = JETLS.WatchedConfigFiles()
         config1 = Dict{String,Any}("key1" => "value1")
         config2 = Dict{String,Any}("key2" => "value2")
         watched["/project/.JETLSConfig.toml"] = config1
@@ -94,15 +94,20 @@ const TEST_RELOAD_REQUIRED = Dict{String, Any}(
         @test !haskey(watched, "/project/.JETLSConfig.toml")
         @test haskey(watched, "__DEFAULT_CONFIG__")
         @test collect(keys(watched)) == ["__DEFAULT_CONFIG__"]
+
+        # "__DEFAULT_CONFIG__" should not be deleted
+        delete!(watched, "__DEFAULT_CONFIG__")
+        @test length(watched) == 1
+        @test haskey(watched, "__DEFAULT_CONFIG__")
     end
 
     @testset "KeyError handling" begin
-        watched = JETLS.WatchedFiles()
+        watched = JETLS.WatchedConfigFiles()
         @test_throws KeyError watched["/nonexistent/.JETLSConfig.toml"]
     end
 
     @testset "priority with multiple config files" begin
-        watched = JETLS.WatchedFiles()
+        watched = JETLS.WatchedConfigFiles()
         # Add configs in reverse priority order
         watched["__DEFAULT_CONFIG__"] = Dict{String,Any}("source" => "default")
         watched["/home/user/.JETLSConfig.toml"] = Dict{String,Any}("source" => "home")
@@ -117,21 +122,7 @@ const TEST_RELOAD_REQUIRED = Dict{String, Any}(
         @test configs[1]["source"] == "home"
         @test configs[2]["source"] == "default"
     end
-
-    @testset "_file_idx internal function" begin
-        watched = JETLS.WatchedFiles()
-        config = Dict{String,Any}("test" => true)
-
-        @test JETLS._file_idx(watched, "___UNDEFINED___") === nothing
-        watched["/project/.JETLSConfig.toml"] = config
-        idx = JETLS._file_idx(watched, "/project/.JETLSConfig.toml")
-        @test idx !== nothing
-        @test idx == 1
-        @test watched.files[idx] == "/project/.JETLSConfig.toml"
-        @test watched.configs[idx] == config
-    end
 end
-
 
 @testset "`selective_merge!`" begin
     # basic overwrite with no filter (allow all)
