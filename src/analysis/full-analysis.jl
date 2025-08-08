@@ -1,8 +1,11 @@
 function run_full_analysis!(server::Server, uri::URI; onsave::Bool=false, token::Union{Nothing,ProgressToken}=nothing)
     if !haskey(server.state.analysis_cache, uri)
-        res = initiate_analysis_unit!(server, uri; token)
-        if res isa AnalysisUnit
-            notify_diagnostics!(server)
+        Threads.@spawn begin
+            @info "initiate" Threads.threadpool()
+            res = initiate_analysis_unit!(server, uri; token)
+            if res isa AnalysisUnit
+                notify_diagnostics!(server)
+            end
         end
     else # this file is tracked by some analysis unit already
         analysis_info = server.state.analysis_cache[uri]
@@ -15,6 +18,7 @@ function run_full_analysis!(server::Server, uri::URI; onsave::Bool=false, token:
                 analysis_unit.result.staled = true
             end
             function task()
+                @info "reanalyze" Threads.threadpool()
                 res = reanalyze!(server, analysis_unit; token)
                 if res isa AnalysisUnit
                     notify_diagnostics!(server)
