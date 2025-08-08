@@ -45,7 +45,7 @@ function build_tree!(::Type{JL.SyntaxTree}, fi::Union{FileInfo,SavedFileInfo}; k
     end
 end
 
-function ParseStream!(s::AbstractString)
+function ParseStream!(s::Union{AbstractString,Vector{UInt8}})
     stream = JS.ParseStream(s)
     JS.parse!(stream; rule=:all)
     return stream
@@ -69,7 +69,7 @@ function cache_file_info!(state::ServerState, uri::URI, version::Int, parsed_str
         fi.parsed_stream = parsed_stream
         return clear_file_info_cache!(fi)
     else
-        return state.file_cache[uri] = FileInfo(version, parsed_stream)
+        return state.file_cache[uri] = FileInfo(version, parsed_stream, state.encoding)
     end
 end
 

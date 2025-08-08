@@ -10,8 +10,53 @@ function yield_to_endpoint(interval=DEFAULT_FLUSH_INTERVAL)
 end
 
 # TODO memomize computed results?
+
+"""
+    supports(server::Server, paths::Symbol...) -> Bool
+    supports(state::ServerState, paths::Symbol...) -> Bool
+
+Check if the client supports a specific capability.
+
+# Arguments
+- `server::Server` or `state::ServerState`: The server or state containing client capabilities
+- `paths::Symbol...`: Path of symbols to traverse in the client capabilities object
+
+# Returns
+`true` if the capability exists and is explicitly set to `true`, `false` otherwise.
+
+# Examples
+```julia
+supports(server, :textDocument, :completion, :completionItem, :snippetSupport)
+supports(state, :textDocument, :synchronization, :dynamicRegistration)
+```
+
+# See also
+[`getcapability`](@ref) - Get the actual capability value instead of just checking if it's true
+"""
 supports(args...) = getcapability(args...) === true
 
+"""
+    getcapability(server::Server, paths::Symbol...) -> capability
+    getcapability(state::ServerState, paths::Symbol...) -> capability
+
+Get a client capability value by traversing the capability object hierarchy.
+
+# Arguments
+- `server::Server` or `state::ServerState`: The server or state containing client capabilities
+- `paths::Symbol...`: Path of symbols to traverse in the client capabilities object
+
+# Returns
+The capability value at the specified path, or `nothing` if not found.
+
+# Examples
+```julia
+getcapability(server, :textDocument, :completion, :completionItem, :snippetSupport)
+getcapability(state, :general, :positionEncodings)
+```
+
+# See also
+[`supports`](@ref) - Check if a capability is explicitly set to `true`
+"""
 getcapability(server::Server, paths::Symbol...) = getcapability(server.state, paths...)
 function getcapability(state::ServerState, paths::Symbol...)
     return isdefined(state, :init_params) &&

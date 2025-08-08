@@ -3,38 +3,30 @@ const LOWERING_DIAGNOSTIC_SOURCE = "JETLS - lowering"
 const TOPLEVEL_DIAGNOSTIC_SOURCE = "JETLS - top-level"
 const INFERENCE_DIAGNOSTIC_SOURCE = "JETLS - inference"
 
-function parsed_stream_to_diagnostics(parsed_stream::JS.ParseStream, filename::String)
+function parsed_stream_to_diagnostics(fi::FileInfo)
     diagnostics = Diagnostic[]
-    parsed_stream_to_diagnostics!(diagnostics, parsed_stream, filename)
+    for diagnostic in fi.parsed_stream.diagnostics
+        push!(diagnostics, jsdiag_to_diagnostic(diagnostic, fi))
+    end
     return diagnostics
 end
-function parsed_stream_to_diagnostics!(diagnostics::Vector{Diagnostic}, parsed_stream::JS.ParseStream, filename::String)
-    source = JS.SourceFile(parsed_stream; filename)
-    for diagnostic in parsed_stream.diagnostics
-        push!(diagnostics, juliasyntax_diagnostic_to_diagnostic(diagnostic, source))
-    end
-end
-function juliasyntax_diagnostic_to_diagnostic(diagnostic::JS.Diagnostic, sourcefile::JS.SourceFile)
+
+function jsdiag_to_diagnostic(diagnostic::JS.Diagnostic, fi::FileInfo)
     severity =
         diagnostic.level === :error ? DiagnosticSeverity.Error :
         diagnostic.level === :warning ? DiagnosticSeverity.Warning :
         diagnostic.level === :note ? DiagnosticSeverity.Information :
         DiagnosticSeverity.Hint
-    source = SYNTAX_DIAGNOSTIC_SOURCE
-    return jsobj_to_diagnostic(diagnostic, sourcefile, diagnostic.message, severity, source)
+    return jsobj_to_diagnostic(diagnostic, fi, diagnostic.message, severity, #=source=#SYNTAX_DIAGNOSTIC_SOURCE)
 end
 
-function jsobj_to_diagnostic(obj, sourcefile::JS.SourceFile,
-                             message::AbstractString,
-                             severity::DiagnosticSeverity.Ty,
-                             source::String;
-                             tags::Union{Nothing,Vector{DiagnosticTag.Ty}} = nothing,
-                             relatedInformation::Union{Nothing,Vector{DiagnosticRelatedInformation}} = nothing)
-    sline, scol = JS.source_location(sourcefile, JS.first_byte(obj))
-    eline, ecol = JS.source_location(sourcefile, JS.last_byte(obj))
-    range = Range(;
-        start = Position(; line = sline-1, character = scol-1),
-        var"end" = Position(; line = eline-1, character = ecol))
+function jsobj_to_diagnostic(
+        obj, fi::FileInfo,
+        message::AbstractString, severity::DiagnosticSeverity.Ty, source::String;
+        tags::Union{Nothing,Vector{DiagnosticTag.Ty}} = nothing,
+        relatedInformation::Union{Nothing,Vector{DiagnosticRelatedInformation}} = nothing
+    )
+    range = jsobj_to_range(fi, obj)
     return Diagnostic(;
         range,
         severity,
@@ -93,7 +85,9 @@ end
 
 function jet_toplevel_error_report_to_diagnostic(postprocessor::JET.PostProcessor, @nospecialize report::JET.ToplevelErrorReport)
     if report isa JET.ParseErrorReport
-        return juliasyntax_diagnostic_to_diagnostic(report.diagnostic, report.source)
+        # TODO: Pass correct encoding here
+        fi = FileInfo(#=version=#0, ParseStream!(report.source.code), PositionEncodingKind.UTF16)
+        return jsdiag_to_diagnostic(report.diagnostic, fi)
     end
     message = JET.with_bufferring(:limit=>true) do io
         JET.print_report(io, report)
@@ -171,7 +165,9 @@ function stacktrace_to_related_information(stacktrace::Vector{Base.StackTraces.S
     return relatedInformation
 end
 
-function lowering_diagnostics!(diagnostics::Vector{Diagnostic}, st0::JL.SyntaxTree, mod::Module, sourcefile::JS.SourceFile)
+function lowering_diagnostics!(
+        diagnostics::Vector{Diagnostic}, st0::JL.SyntaxTree, mod::Module, fi::FileInfo
+    )
     @assert JS.kind(st0) ∉ JS.KSet"toplevel module"
 
     (; ctx3, st3) = try
@@ -179,10 +175,12 @@ function lowering_diagnostics!(diagnostics::Vector{Diagnostic}, st0::JL.SyntaxTr
     catch err
         if err isa JL.LoweringError
             if JS.first_byte(err.ex) ≠ 0 && JS.last_byte(err.ex) ≠ 0
-                push!(diagnostics, jsobj_to_diagnostic(err.ex, sourcefile, err.msg,
-                    #=severity=#DiagnosticSeverity.Error,
-                    #=source=#LOWERING_DIAGNOSTIC_SOURCE;
-                ))
+                severity = DiagnosticSeverity.Error
+                source = LOWERING_DIAGNOSTIC_SOURCE
+                push!(diagnostics,
+                    jsobj_to_diagnostic(
+                        err.ex, fi,
+                        err.msg, severity, source;))
             end
         elseif err isa JL.MacroExpansionError
             if JS.first_byte(err.ex) ≠ 0 && JS.last_byte(err.ex) ≠ 0
@@ -196,11 +194,13 @@ function lowering_diagnostics!(diagnostics::Vector{Diagnostic}, st0::JL.SyntaxTr
                     msg *= "\n" * sprint(Base.showerror, inner)
                     relatedInformation = stacktrace_to_related_information(st)
                 end
-                push!(diagnostics, jsobj_to_diagnostic(err.ex, sourcefile, msg,
-                    #=severity=#DiagnosticSeverity.Error,
-                    #=source=#LOWERING_DIAGNOSTIC_SOURCE;
-                    relatedInformation
-                ))
+                severity = DiagnosticSeverity.Error
+                source = LOWERING_DIAGNOSTIC_SOURCE
+                push!(diagnostics,
+                    jsobj_to_diagnostic(
+                        err.ex, fi,
+                        msg, severity, source;
+                        relatedInformation))
             end
         else
             JETLS_DEBUG_LOWERING && @warn "Error in lowering (with macrocall nodes)"
@@ -219,17 +219,16 @@ function lowering_diagnostics!(diagnostics::Vector{Diagnostic}, st0::JL.SyntaxTr
         end
     end
 
-    return analyze_lowered_code!(diagnostics, ctx3, st3, sourcefile)
+    return analyze_lowered_code!(diagnostics, ctx3, st3, fi)
 end
 lowering_diagnostics(args...) = lowering_diagnostics!(Diagnostic[], args...) # used by tests
 
 # TODO use something like `JuliaInterpreter.ExprSplitter`
 
-function toplevel_lowering_diagnostics(server::Server, uri::URI, filename::AbstractString)
+function toplevel_lowering_diagnostics(server::Server, uri::URI)
     diagnostics = Diagnostic[]
     file_info = get_file_info(server.state, uri)
     st0_top = build_tree!(JL.SyntaxTree, file_info)
-    sourcefile = JS.SourceFile(file_info.parsed_stream; filename)
     sl = JL.SyntaxList(st0_top)
     push!(sl, st0_top)
     while !isempty(sl)
@@ -241,7 +240,7 @@ function toplevel_lowering_diagnostics(server::Server, uri::URI, filename::Abstr
         else
             pos = offset_to_xy(file_info, JS.first_byte(st0))
             (; mod) = get_context_info(server.state, uri, pos)
-            lowering_diagnostics!(diagnostics, st0, mod, sourcefile)
+            lowering_diagnostics!(diagnostics, st0, mod, file_info)
         end
     end
     return diagnostics
@@ -367,9 +366,9 @@ function handle_DocumentDiagnosticRequest(server::Server, msg::DocumentDiagnosti
     filename = uri2filename(uri)
     @assert !isnothing(filename) lazy"Unsupported URI: $uri"
     if isempty(parsed_stream.diagnostics)
-        diagnostics = toplevel_lowering_diagnostics(server, uri, filename)
+        diagnostics = toplevel_lowering_diagnostics(server, uri)
     else
-        diagnostics = parsed_stream_to_diagnostics(parsed_stream, filename)
+        diagnostics = parsed_stream_to_diagnostics(file_info)
     end
     return send(server,
         DocumentDiagnosticResponse(;

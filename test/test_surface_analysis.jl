@@ -8,12 +8,12 @@ using JETLS
 using JETLS: JL, JS
 
 module lowering_module end
-function get_lowered_diagnostics(text::AbstractString; filename::AbstractString = @__FILE__)
+function get_lowered_diagnostics(text::AbstractString)
     ps = JETLS.ParseStream!(text)
-    st0 = JS.build_tree(JL.SyntaxTree, ps)
+    fi = JETLS.FileInfo(#=version=#0, ps)
+    st0 = JETLS.build_tree!(JL.SyntaxTree, fi)
     @assert JS.kind(st0) === JS.K"toplevel"
-    sourcefile = JS.SourceFile(ps; filename)
-    return JETLS.lowering_diagnostics(st0[1], lowering_module, sourcefile)
+    return JETLS.lowering_diagnostics(st0[1], lowering_module, fi)
 end
 
 @testset "unused binding detection" begin
