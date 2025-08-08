@@ -96,7 +96,7 @@ const TEST_RELOAD_REQUIRED = Dict{String, Any}(
         @test collect(keys(watched)) == ["__DEFAULT_CONFIG__"]
 
         # "__DEFAULT_CONFIG__" should not be deleted
-        delete!(watched, "__DEFAULT_CONFIG__")
+        @test_throws ArgumentError delete!(watched, "__DEFAULT_CONFIG__")
         @test length(watched) == 1
         @test haskey(watched, "__DEFAULT_CONFIG__")
     end

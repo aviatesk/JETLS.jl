@@ -239,7 +239,7 @@ Base.length(watched_files::WatchedConfigFiles) = length(watched_files.files)
 Base.haskey(watched_files::WatchedConfigFiles, file::String) = _file_idx(watched_files, file) !== nothing
 
 function Base.delete!(watched_files::WatchedConfigFiles, file::String)
-    file == "__DEFAULT_CONFIG__" && return watched_files # do not delete the default config
+    file == "__DEFAULT_CONFIG__" && throw(ArgumentError("Cannot delete `__DEFAULT_CONFIG__` file."))
     idx = _file_idx(watched_files, file)
     idx === nothing && return watched_files
     deleteat!(watched_files.files, idx)
