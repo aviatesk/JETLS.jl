@@ -47,6 +47,75 @@ const TEST_RELOAD_REQUIRED = Dict{String, Any}(
     )
 )
 
+@testset "WatchedConfigFiles" begin
+    @testset "constructor and basic operations" begin
+        watched = JETLS.WatchedConfigFiles()
+        @test length(watched) == 1
+        @test keys(watched) == ["__DEFAULT_CONFIG__"]
+        @test watched["__DEFAULT_CONFIG__"] == JETLS.DEFAULT_CONFIG
+    end
+
+    @testset "setindex! and getindex" begin
+        watched = JETLS.WatchedConfigFiles()
+        config = Dict{String,Any}("key1" => "value1")
+
+        watched["/project/.JETLSConfig.toml"] = config
+        @test length(watched) == 2
+        @test watched["__DEFAULT_CONFIG__"] == JETLS.DEFAULT_CONFIG
+        @test watched["/project/.JETLSConfig.toml"] == config
+        files = collect(keys(watched))
+        @test issorted(files, order=JETLS.ConfigFileOrder())
+    end
+
+    @testset "haskey and get" begin
+        watched = JETLS.WatchedConfigFiles()
+        config = Dict{String,Any}("key" => "value")
+
+        @test !haskey(watched, "___UNDEFINED___")
+        @test get(watched, "___UNDEFINED___", "default") == "default"
+        watched["/project/.JETLSConfig.toml"] = config
+        @test haskey(watched, "/project/.JETLSConfig.toml")
+        @test get(watched, "/project/.JETLSConfig.toml", "default") == config
+        @test watched["/project/.JETLSConfig.toml"] == config
+    end
+
+    @testset "delete!" begin
+        watched = JETLS.WatchedConfigFiles()
+        config = Dict{String,Any}("key1" => "value1")
+        watched["/project/.JETLSConfig.toml"] = config
+
+        @test length(watched) == 2
+        delete!(watched, "/project/.JETLSConfig.toml")
+        @test length(watched) == 1
+        @test !haskey(watched, "/project/.JETLSConfig.toml")
+        @test haskey(watched, "__DEFAULT_CONFIG__")
+        @test collect(keys(watched)) == ["__DEFAULT_CONFIG__"]
+
+        # "__DEFAULT_CONFIG__" should not be deleted
+        @test_throws ArgumentError delete!(watched, "__DEFAULT_CONFIG__")
+        @test length(watched) == 1
+        @test haskey(watched, "__DEFAULT_CONFIG__")
+    end
+
+    @testset "KeyError handling" begin
+        watched = JETLS.WatchedConfigFiles()
+        @test_throws KeyError watched["/nonexistent/.JETLSConfig.toml"]
+    end
+
+    @testset "priority with multiple config files" begin
+        watched = JETLS.WatchedConfigFiles()
+        watched["/home/user/.JETLSConfig.toml"] = Dict{String,Any}("source" => "home")
+        files = collect(keys(watched))
+        configs = collect(values(watched))
+
+        # Should be sorted by ConfigFileOrder
+        @test issorted(files, order=JETLS.ConfigFileOrder())
+        # Higher priority config files come first in ConfigFileOrder
+        @test files[1] == "/home/user/.JETLSConfig.toml"
+        @test files[2] == "__DEFAULT_CONFIG__"
+    end
+end
+
 @testset "`selective_merge!`" begin
     # basic overwrite with no filter (allow all)
     dict1 = Dict{String, Any}("a" => 1, "b" => 2)
@@ -458,12 +527,6 @@ end
             @test manager.reload_required_setting["performance"]["full_analysis"]["debounce"] == 2.0
             # testrunner.executable is not reload-required, so should not be in reload_required_setting
             @test !haskey(manager.reload_required_setting, "testrunner")
-        end
-
-        # test empty manager
-        let manager = JETLS.ConfigManager()
-            JETLS.fix_reload_required_settings!(manager)
-            @test isempty(manager.reload_required_setting)
         end
     finally
         global JETLS.DEFAULT_CONFIG = default_config_origin

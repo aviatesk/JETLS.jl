@@ -1,28 +1,3 @@
-# TODO (later): move this definition to external files
-global DEFAULT_CONFIG::Dict{String,Any} = Dict{String,Any}(
-    "performance" => Dict{String,Any}(
-        "full_analysis" => Dict{String,Any}(
-            "debounce" => 1.0,
-            "throttle" => 5.0
-        )
-    ),
-    "testrunner" => Dict{String,Any}(
-        "executable" => "testrunner"
-    ),
-)
-
-global CONFIG_RELOAD_REQUIRED::Dict{String,Any} = Dict{String,Any}(
-    "performance" => Dict{String,Any}(
-        "full_analysis" => Dict{String,Any}(
-            "debounce" => true,
-            "throttle" => true
-        )
-    ),
-    "testrunner" => Dict{String,Any}(
-        "executable" => false
-    ),
-)
-
 function access_nested_dict(dict::Dict{String,Any}, path::String, rest_path::String...)
     nextobj = @something get(dict, path, nothing) return nothing
     if !(nextobj isa Dict{String,Any})
@@ -146,7 +121,7 @@ merge them based on priority, and set them as the settings that require a reload
 for this server.
 """
 function fix_reload_required_settings!(manager::ConfigManager)
-    for config in Iterators.reverse(collect(values(manager.watched_files)))
+    for config in Iterators.reverse(values(manager.watched_files))
         merge_reload_required_keys!(manager.reload_required_setting, config)
     end
 end
