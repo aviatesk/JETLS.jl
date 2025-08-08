@@ -50,21 +50,19 @@ const TEST_RELOAD_REQUIRED = Dict{String, Any}(
 @testset "WatchedConfigFiles" begin
     @testset "constructor and basic operations" begin
         watched = JETLS.WatchedConfigFiles()
-        @test length(watched) == 0
-        @test isempty(keys(watched))
-        @test isempty(values(watched))
+        @test length(watched) == 1
+        @test keys(watched) == ["__DEFAULT_CONFIG__"]
+        @test watched["__DEFAULT_CONFIG__"] == JETLS.DEFAULT_CONFIG
     end
 
     @testset "setindex! and getindex" begin
         watched = JETLS.WatchedConfigFiles()
-        config1 = Dict{String,Any}("key1" => "value1")
-        config2 = Dict{String,Any}("key2" => "value2")
+        config = Dict{String,Any}("key1" => "value1")
 
-        watched["__DEFAULT_CONFIG__"] = config1
-        watched["/project/.JETLSConfig.toml"] = config2
+        watched["/project/.JETLSConfig.toml"] = config
         @test length(watched) == 2
-        @test watched["__DEFAULT_CONFIG__"] == config1
-        @test watched["/project/.JETLSConfig.toml"] == config2
+        @test watched["__DEFAULT_CONFIG__"] == JETLS.DEFAULT_CONFIG
+        @test watched["/project/.JETLSConfig.toml"] == config
         files = collect(keys(watched))
         @test issorted(files, order=JETLS.ConfigFileOrder())
     end
@@ -83,10 +81,8 @@ const TEST_RELOAD_REQUIRED = Dict{String, Any}(
 
     @testset "delete!" begin
         watched = JETLS.WatchedConfigFiles()
-        config1 = Dict{String,Any}("key1" => "value1")
-        config2 = Dict{String,Any}("key2" => "value2")
-        watched["/project/.JETLSConfig.toml"] = config1
-        watched["__DEFAULT_CONFIG__"] = config2
+        config = Dict{String,Any}("key1" => "value1")
+        watched["/project/.JETLSConfig.toml"] = config
 
         @test length(watched) == 2
         delete!(watched, "/project/.JETLSConfig.toml")
@@ -108,8 +104,6 @@ const TEST_RELOAD_REQUIRED = Dict{String, Any}(
 
     @testset "priority with multiple config files" begin
         watched = JETLS.WatchedConfigFiles()
-        # Add configs in reverse priority order
-        watched["__DEFAULT_CONFIG__"] = Dict{String,Any}("source" => "default")
         watched["/home/user/.JETLSConfig.toml"] = Dict{String,Any}("source" => "home")
         files = collect(keys(watched))
         configs = collect(values(watched))
@@ -119,8 +113,6 @@ const TEST_RELOAD_REQUIRED = Dict{String, Any}(
         # Higher priority config files come first in ConfigFileOrder
         @test files[1] == "/home/user/.JETLSConfig.toml"
         @test files[2] == "__DEFAULT_CONFIG__"
-        @test configs[1]["source"] == "home"
-        @test configs[2]["source"] == "default"
     end
 end
 
@@ -535,12 +527,6 @@ end
             @test manager.reload_required_setting["performance"]["full_analysis"]["debounce"] == 2.0
             # testrunner.executable is not reload-required, so should not be in reload_required_setting
             @test !haskey(manager.reload_required_setting, "testrunner")
-        end
-
-        # test empty manager
-        let manager = JETLS.ConfigManager()
-            JETLS.fix_reload_required_settings!(manager)
-            @test isempty(manager.reload_required_setting)
         end
     finally
         global JETLS.DEFAULT_CONFIG = default_config_origin

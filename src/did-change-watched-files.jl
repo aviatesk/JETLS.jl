@@ -22,8 +22,6 @@ end
 # register(currently_running, did_change_watched_files_registration())
 
 function initialize_config!(server::Server)
-    register_config!(server.state.config_manager, "__DEFAULT_CONFIG__", DEFAULT_CONFIG)
-
     if !isdefined(server.state, :root_path)
         if JETLS_DEV_MODE
             @info "`server.state.root_path` is not defined, skip registration at startup."

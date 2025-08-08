@@ -223,7 +223,32 @@ struct WatchedConfigFiles
     configs::Vector{Dict{String,Any}}
 end
 
-WatchedConfigFiles() = WatchedConfigFiles(String[], Dict{String,Any}[])
+# TODO (later): move this definition to external files
+global DEFAULT_CONFIG::Dict{String,Any} = Dict{String,Any}(
+    "performance" => Dict{String,Any}(
+        "full_analysis" => Dict{String,Any}(
+            "debounce" => 1.0,
+            "throttle" => 5.0
+        )
+    ),
+    "testrunner" => Dict{String,Any}(
+        "executable" => "testrunner"
+    ),
+)
+
+global CONFIG_RELOAD_REQUIRED::Dict{String,Any} = Dict{String,Any}(
+    "performance" => Dict{String,Any}(
+        "full_analysis" => Dict{String,Any}(
+            "debounce" => true,
+            "throttle" => true
+        )
+    ),
+    "testrunner" => Dict{String,Any}(
+        "executable" => false
+    ),
+)
+
+WatchedConfigFiles() = WatchedConfigFiles(String["__DEFAULT_CONFIG__"], Dict{String,Any}[DEFAULT_CONFIG])
 
 function _file_idx(watched_files::WatchedConfigFiles, file::String)
     idx = searchsortedfirst(watched_files.files, file, ConfigFileOrder())
