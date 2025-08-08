@@ -114,10 +114,10 @@ function to_completion(binding::JL.BindingInfo,
     end
 
     io = IOBuffer()
-    println(io, "```julia")
+    println(io, "``````julia")
     JL.showprov(io, st; include_location=false)
     println(io)
-    println(io, "```")
+    println(io, "``````")
     line, character = JS.source_location(st)
     showtext = "`@ " * simple_loc_text(uri; line) * "`"
     println(io, create_source_location_link(uri, showtext; line, character))
