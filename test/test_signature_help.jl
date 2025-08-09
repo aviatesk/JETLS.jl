@@ -6,11 +6,11 @@ using JETLS: JL, JS
 using JETLS.URIs2
 using JETLS.Analyzer: LSAnalyzer
 
-# siginfos(mod, code, cursor="│") -> siginfos
-# nsigs(mod, code, cursor="│")
+# siginfos(mod, code) -> siginfos
+# nsigs(mod, code) -> n
 
-function siginfos(mod::Module, code::AbstractString, cursor::Regex=r"│")
-    clean_code, positions = JETLS.get_text_and_positions(code, cursor)
+function siginfos(mod::Module, code::AbstractString; kwargs...)
+    clean_code, positions = JETLS.get_text_and_positions(code; kwargs...)
     @assert length(positions) == 1 "siginfos requires exactly one cursor marker"
     position = only(positions)
     b = JETLS.xy_to_offset(clean_code, position)
@@ -169,8 +169,8 @@ module M_highlight
 f(a0, a1, a2, va3...; kw4=0, kw5=0, kws6...) = 0
 end
 @testset "param highlighting" begin
-    function ap(mod::Module, code::AbstractString, cursor::Regex=r"│")
-        si = siginfos(mod, code, cursor)
+    function ap(mod::Module, code::AbstractString; kwargs...)
+        si = siginfos(mod, code; kwargs...)
         p = only(si).activeParameter
         isnothing(p) ? nothing : Int(p)
     end
@@ -273,8 +273,8 @@ end
 
 include("setup.jl")
 
-function with_signature_help_request(tester::Function, text::AbstractString, matcher::Regex=r"│")
-    clean_code, positions = JETLS.get_text_and_positions(text, matcher)
+function with_signature_help_request(tester::Function, text::AbstractString; kwargs...)
+    clean_code, positions = JETLS.get_text_and_positions(text; kwargs...)
 
     withscript(clean_code) do script_path
         uri = filepath2uri(script_path)

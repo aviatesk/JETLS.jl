@@ -3,7 +3,6 @@ module test_completions
 using Test
 using JETLS
 using JETLS: JL, JS
-using JETLS: cursor_bindings, to_completion, CompletionItem, completion_is, cache_file_info!, cache_saved_file_info!, initiate_analysis_unit!
 using JETLS.LSP
 using JETLS.URIs2
 
@@ -11,18 +10,20 @@ include("setup.jl")
 include("jsjl_utils.jl")
 
 global lowering_module::Module = Module()
-function get_cursor_bindings(s::String, b::Int)
-    st0 = jlparse(s)
-    cb = cursor_bindings(st0, b, lowering_module)
+function get_cursor_bindings(fi::JETLS.FileInfo, b::Int)
+    st0 = JETLS.build_tree!(JL.SyntaxTree, fi)
+    cb = JETLS.cursor_bindings(st0, b, lowering_module)
     return isnothing(cb) ? [] : cb
 end
-get_cursor_bindings(s::String, b::Position) = get_cursor_bindings(s, JETLS.xy_to_offset(s, b))
 
-function get_local_completions(s::String, b::Int)
+function get_local_completions(s::AbstractString, b::Int)
     uri = JETLS.URIs2.filepath2uri(@__FILE__)
-    return map(o->to_completion(o[1], o[2], o[3], uri), get_cursor_bindings(s, b))
+    ps = JETLS.ParseStream!(s)
+    fi = JETLS.FileInfo(#=version=#0, ps)
+    return map(get_cursor_bindings(fi, b)) do ((bi, st, dist))
+        JETLS.to_completion(bi, st, dist, uri, fi)
+    end
 end
-
 
 # Test that completion vector contains CompletionItems with all of `expected`
 # labels (with `kind` if provided).
@@ -34,7 +35,7 @@ function cv_has(cs::Vector{CompletionItem}, expected; kind=nothing)
         c = get(cdict, e, nothing)
         @test !isnothing(c)
         if !isnothing(kind) && !isnothing(c)
-            @test completion_is(c, kind)
+            @test JETLS.completion_is(c, kind)
         end
     end
 end
@@ -47,8 +48,8 @@ function cv_nhas(cs::Vector{CompletionItem}, unexpected)
     end
 end
 
-function with_completion(f, text::String, matcher::Regex=r"│")
-    clean_code, positions = JETLS.get_text_and_positions(text, matcher)
+function with_completion(f, text::String; kwargs...)
+    clean_code, positions = JETLS.get_text_and_positions(text; kwargs...)
     for (i, pos) in enumerate(positions)
         cv = get_local_completions(clean_code, JETLS.xy_to_offset(clean_code, pos))
         f(i, cv)
@@ -56,14 +57,17 @@ function with_completion(f, text::String, matcher::Regex=r"│")
 end
 
 # shorthand for testing single cursor completion
-function test_single_cv(code::String, expected::Vector{String}; matcher::Regex = r"│", unexpected::Vector{String} = String[], kind=nothing)
+function test_single_cv(
+        code::String, expected::Vector{String};
+        unexpected::Vector{String} = String[], kind = nothing,
+        matcher::Regex = r"│", kwargs...
+    )
     @assert count(matcher, code) == 1 "test_single_cv requires exactly one cursor marker"
-    with_completion(code, matcher) do _, cv
-        cv_has(cv, expected, kind=kind)
+    with_completion(code; matcher, kwargs...) do _, cv
+        cv_has(cv, expected; kind)
         cv_nhas(cv, unexpected)
     end
 end
-
 
 @testset "sanity" begin
     snippets = [
@@ -239,8 +243,13 @@ end
 # get_completion_items
 # ====================
 
-function with_completion_request(tester::Function, text::AbstractString; matcher::Regex=r"│", context::Union{Nothing, CompletionContext}=nothing, full_analysis::Bool=false)
-    clean_code, positions = JETLS.get_text_and_positions(text, matcher)
+function with_completion_request(
+        tester::Function, text::AbstractString;
+        context::Union{Nothing, CompletionContext} = nothing,
+        full_analysis::Bool = false,
+        kwargs...
+    )
+    clean_code, positions = JETLS.get_text_and_positions(text; kwargs...)
 
     withscript(clean_code) do script_path
         uri = filepath2uri(script_path)
@@ -375,7 +384,7 @@ end
 
     context = CompletionContext(; triggerKind=CompletionTriggerKind.Invoked)
     cnt = 0
-    with_completion_request(text; context=context) do i, result, uri
+    with_completion_request(text; context) do i, result, uri
         items = result.items
         @test any(items) do item
             item.label == "yyy"
@@ -421,7 +430,7 @@ end
             triggerKind=CompletionTriggerKind.TriggerCharacter,
             triggerCharacter="@")
         cnt = 0
-        with_completion_request(text; context=context) do i, result, uri
+        with_completion_request(text; context) do i, result, uri
             items = result.items
             @test any(items) do item
                 item.label == "@nospecialize" &&
@@ -443,7 +452,7 @@ end
         """
         context = CompletionContext(; triggerKind=CompletionTriggerKind.Invoked)
         cnt = 0
-        with_completion_request(text; context=context) do i, result, uri
+        with_completion_request(text; context) do i, result, uri
             items = result.items
             @test any(items) do item
                 item.label == "@nospecialize" &&
@@ -465,7 +474,7 @@ end
         """
         context = CompletionContext(; triggerKind=CompletionTriggerKind.Invoked)
         cnt = 0
-        with_completion_request(text; context=context) do i, result, uri
+        with_completion_request(text; context) do i, result, uri
             items = result.items
             @test any(items) do item
                 item.label == "yyy"
@@ -483,7 +492,7 @@ end
         """
         context = CompletionContext(; triggerKind=CompletionTriggerKind.Invoked)
         cnt = 0
-        with_completion_request(text; context=context) do i, result, uri
+        with_completion_request(text; context) do i, result, uri
             items = result.items
             @test any(items) do item
                 item.label == "@nospecialize" &&
@@ -499,7 +508,7 @@ end
 # ===========
 
 function test_backslash_offset(code::String, expected_result)
-    text, positions = get_text_and_positions(code)
+    text, positions = JETLS.get_text_and_positions(code)
     @assert length(positions) == 1 "test_backslash_offset requires exactly one cursor marker"
 
     state = JETLS.ServerState()
@@ -700,7 +709,7 @@ end
             triggerKind=CompletionTriggerKind.TriggerCharacter,
             triggerCharacter="\\")
         cnt = 0
-        with_completion_request(text; context=context) do i, result, uri
+        with_completion_request(text; context) do i, result, uri
             items = result.items
             @test any(items) do item
                 item.label == "\\alpha"
@@ -723,7 +732,7 @@ end
             triggerKind=CompletionTriggerKind.TriggerCharacter,
             triggerCharacter=":")
         cnt = 0
-        with_completion_request(text; context=context) do i, result, uri
+        with_completion_request(text; context) do i, result, uri
             items = result.items
             @test any(items) do item
                 item.label == "\\:pizza:"

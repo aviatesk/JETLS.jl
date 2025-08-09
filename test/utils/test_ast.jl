@@ -108,18 +108,19 @@ end
         @test positions[2] == JETLS.Position(; line=0, character=length("hello αβ world "))
     end
 
-    # Test with emoji (4-byte UTF-8 characters)
+    # Test with emoji (4-byte UTF-8 characters, 2 UTF-16 units each)
     let text = "😀│😎│🎉"
         clean_text, positions = JETLS.get_text_and_positions(text)
         @test clean_text == "😀😎🎉"
         @test length(positions) == 2
-        @test positions[1] == JETLS.Position(; line=0, character=length("😀"))
-        @test positions[2] == JETLS.Position(; line=0, character=length("😀😎"))
+        # Each emoji is 2 UTF-16 units (default encoding)
+        @test positions[1] == JETLS.Position(; line=0, character=2)  # After "😀"
+        @test positions[2] == JETLS.Position(; line=0, character=4)  # After "😀😎"
     end
 
     # Test with custom marker
     let text = "foo<HERE>bar<HERE>baz"
-        clean_text, positions = JETLS.get_text_and_positions(text, r"<HERE>")
+        clean_text, positions = JETLS.get_text_and_positions(text; matcher=r"<HERE>")
         @test clean_text == "foobarbaz"
         @test length(positions) == 2
         @test positions[1] == JETLS.Position(; line=0, character=length("foo"))
@@ -165,7 +166,7 @@ end
             return x│ + 1
         end
         """
-        clean_code, positions = JETLS.get_text_and_positions(code, r"│")
+        clean_code, positions = JETLS.get_text_and_positions(code)
         return_pos = JETLS.xy_to_offset(clean_code, positions[1])
 
         st = jlparse(clean_code)
@@ -207,7 +208,7 @@ end
             end
         end
         """
-        clean_code, positions = JETLS.get_text_and_positions(code, r"│")
+        clean_code, positions = JETLS.get_text_and_positions(code)
         @assert length(positions) == 2
         hello_start = JETLS.xy_to_offset(clean_code, positions[1])
         hello_end = JETLS.xy_to_offset(clean_code, positions[2]) - 1
@@ -233,7 +234,7 @@ end
         # comment
         │x = 1
         """
-        clean_code, positions = JETLS.get_text_and_positions(code, r"│")
+        clean_code, positions = JETLS.get_text_and_positions(code)
         x_pos = JETLS.xy_to_offset(clean_code, positions[1])
 
         st = jlparse(clean_code)
@@ -255,7 +256,7 @@ end
     let code = """
         a = b + │c
         """
-        clean_code, positions = JETLS.get_text_and_positions(code, r"│")
+        clean_code, positions = JETLS.get_text_and_positions(code)
         @test length(positions) == 1
         c_pos = JETLS.xy_to_offset(clean_code, positions[1])
 
@@ -272,7 +273,7 @@ end
 
     # Test with multi-byte characters
     let code = "α = β + │γ"
-        clean_code, positions = JETLS.get_text_and_positions(code, r"│")
+        clean_code, positions = JETLS.get_text_and_positions(code)
         @test length(positions) == 1
         γ_pos = JETLS.xy_to_offset(clean_code, positions[1])
         @test γ_pos == sizeof("α = β + ")+1
@@ -292,7 +293,7 @@ end
     let code = """
         αβγ = │δεζ + ηθι│
         """
-        clean_code, positions = JETLS.get_text_and_positions(code, r"│")
+        clean_code, positions = JETLS.get_text_and_positions(code)
         @test length(positions) == 2
 
         pos1 = JETLS.xy_to_offset(clean_code, positions[1])
@@ -550,23 +551,25 @@ end
     @test !JETLS.noparen_macrocall(jlparse("r\"xxx\""; rule=:statement))
 end
 
-get_target_node(::Type{JL.SyntaxTree}, code::AbstractString, pos::Int) = JETLS.select_target_node(jlparse(code), pos)
-get_target_node(::Type{JS.SyntaxNode}, code::AbstractString, pos::Int) = JETLS.select_target_node(jsparse(code), pos)
-function get_target_node(::Type{T}, code::AbstractString, matcher::Regex=r"│") where T
-    clean_code, positions = JETLS.get_text_and_positions(code, matcher)
+select_target_node(::Type{JL.SyntaxTree}, code::AbstractString, pos::Int) = JETLS.select_target_node(jlparse(code), pos)
+select_target_node(::Type{JS.SyntaxNode}, code::AbstractString, pos::Int) = JETLS.select_target_node(jsparse(code), pos)
+function get_target_node(::Type{T}, code::AbstractString; kwargs...) where T
+    clean_code, positions = JETLS.get_text_and_positions(code; kwargs...)
     @assert length(positions) == 1
-    return get_target_node(T, clean_code, JETLS.xy_to_offset(clean_code, positions[1]))
+    fi = JETLS.FileInfo(1, parsedstream(clean_code))
+    target_node = select_target_node(T, clean_code, JETLS.xy_to_offset(clean_code, positions[1]))
+    return fi, target_node
 end
 
-@testset "`select_target_node` / `get_source_range`" begin
+@testset "`select_target_node` / `jsobj_to_range`" begin
     @testset "with $T" for T in (JL.SyntaxTree, JS.SyntaxNode)
         let code = """
             test_│func(5)
             """
-            node = get_target_node(T, code)
+            fi, node = get_target_node(T, code)
             @test (node !== nothing) && (JS.kind(node) === JS.K"Identifier")
             @test JS.sourcetext(node) == "test_func"
-            let range = JETLS.get_source_range(node)
+            let range = JETLS.jsobj_to_range(fi, node)
                 @test range.start.line == 0 && range.start.character == 0
                 @test range.var"end".line == 0 && range.var"end".character == sizeof("test_func")
             end
@@ -575,13 +578,13 @@ end
         let code = """
             obj.│property = 42
             """
-            node = get_target_node(T, code)
+            fi, node = get_target_node(T, code)
             @test node !== nothing
             @test JS.kind(node) === JS.K"."
             @test length(JS.children(node)) == 2
             @test JS.sourcetext(JS.children(node)[1]) == "obj"
             @test JS.sourcetext(JS.children(node)[2]) == "property"
-            let range = JETLS.get_source_range(node)
+            let range = JETLS.jsobj_to_range(fi, node)
                 @test range.start.line == 0 && range.start.character == 0
                 @test range.var"end".line == 0 && range.var"end".character == sizeof("obj.property")
             end
@@ -590,10 +593,10 @@ end
         let code = """
             Core.Compiler.tme│et(x)
             """
-            node = get_target_node(T, code)
+            fi, node = get_target_node(T, code)
             @test node !== nothing
             @test JS.kind(node) === JS.K"."
-            let range = JETLS.get_source_range(node)
+            let range = JETLS.jsobj_to_range(fi, node)
                 @test range.start.line == 0 && range.start.character == 0
                 @test range.var"end".line == 0 && range.var"end".character == sizeof("Core.Compiler.tmeet")
             end
@@ -602,10 +605,10 @@ end
         let code = """
             Core.Compi│ler.tmeet(x)
             """
-            node = get_target_node(T, code)
+            fi, node = get_target_node(T, code)
             @test node !== nothing
             @test JS.kind(node) === JS.K"."
-            let range = JETLS.get_source_range(node)
+            let range = JETLS.jsobj_to_range(fi, node)
                 @test range.start.line == 0 && range.start.character == 0
                 @test range.var"end".line == 0 && range.var"end".character == sizeof("Core.Compiler")
             end
@@ -614,10 +617,10 @@ end
         let code = """
             Cor│e.Compiler.tmeet(x)
             """
-            node = get_target_node(T, code)
+            fi, node = get_target_node(T, code)
             @test node !== nothing
             @test JS.kind(node) === JS.K"Identifier"
-            let range = JETLS.get_source_range(node)
+            let range = JETLS.jsobj_to_range(fi, node)
                 @test range.start.line == 0 && range.start.character == 0
                 @test range.var"end".line == 0 && range.var"end".character == sizeof("Core")
             end
@@ -626,10 +629,10 @@ end
         let code = """
             @inline│ callsin(x) = sin(x)
             """
-            node = get_target_node(T, code)
+            fi, node = get_target_node(T, code)
             @test node !== nothing
             @test JS.kind(node) === JS.K"MacroName"
-            let range = JETLS.get_source_range(node)
+            let range = JETLS.jsobj_to_range(fi, node)
                 @test range.start.line == 0 && range.start.character == 0 # include at mark
                 @test range.var"end".line == 0 && range.var"end".character == sizeof("@inline")
             end
@@ -638,9 +641,9 @@ end
         let code = """
             Base.@inline│ callsin(x) = sin(x)
             """
-            node = get_target_node(T, code)
+            fi, node = get_target_node(T, code)
             @test node !== nothing
-            let range = JETLS.get_source_range(node)
+            let range = JETLS.jsobj_to_range(fi, node)
                 @test range.start.line == 0 && range.start.character == 0
                 @test range.var"end".line == 0 && range.var"end".character == sizeof("Base.@inline")
             end
@@ -649,9 +652,9 @@ end
         let code = """
             text│"sin"
             """
-            node = get_target_node(T, code)
+            fi, node = get_target_node(T, code)
             @test node !== nothing
-            let range = JETLS.get_source_range(node)
+            let range = JETLS.jsobj_to_range(fi, node)
                 @test range.start.line == 0 && range.start.character == 0
                 @test range.var"end".line == 0 && range.var"end".character == sizeof("text")
             end
@@ -662,22 +665,22 @@ end
                 return x │ + 1
             end
             """
-            node = get_target_node(T, code)
+            _, node = get_target_node(T, code)
             @test node === nothing
         end
 
         let code = """
             │
             """
-            node = get_target_node(T, code)
+            _, node = get_target_node(T, code)
             @test node === nothing
         end
     end
 end
 
 get_dotprefix_node(code::AbstractString, pos::Int) = JETLS.select_dotprefix_node(jlparse(code), pos)
-function get_dotprefix_node(code::AbstractString, matcher::Regex=r"│")
-    clean_code, positions = JETLS.get_text_and_positions(code, matcher)
+function get_dotprefix_node(code::AbstractString; kwargs...)
+    clean_code, positions = JETLS.get_text_and_positions(code; kwargs...)
     @assert length(positions) == 1
     return get_dotprefix_node(clean_code, JETLS.xy_to_offset(clean_code, positions[1]))
 end
