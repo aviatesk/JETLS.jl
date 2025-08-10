@@ -92,7 +92,7 @@ function jet_toplevel_error_report_to_diagnostic(postprocessor::JET.PostProcesso
         JET.print_report(io, report)
     end |> postprocessor
     return Diagnostic(;
-        range = line_range(fixed_line_number(report.line)),
+        range = line_range(report.line),
         severity = DiagnosticSeverity.Error,
         message,
         source = TOPLEVEL_DIAGNOSTIC_SOURCE)
@@ -124,13 +124,12 @@ end
 
 function jet_frame_to_range(frame)
     line = JET.fixed_line_number(frame)
-    return line_range(fixed_line_number(line))
+    return line_range(line)
 end
 
-fixed_line_number(line) = line == 0 ? line : line - 1
-
+# 1 based line to LSP-compatible line range
 function line_range(line::Int)
-    line < 0 && (line = 0) # guard against invalid `line`...
+    line = line < 1 ? 0 : line - 1
     start = Position(; line, character=0)
     var"end" = Position(; line, character=Int(typemax(Int32)))
     return Range(; start, var"end")
@@ -149,7 +148,7 @@ function stacktrace_to_related_information(stacktrace::Vector{Base.StackTraces.S
     for stackframe in stacktrace
         stackframe.file === :none && continue
         uri = filepath2uri(to_full_path(stackframe.file))
-        range = line_range(fixed_line_number(stackframe.line))
+        range = line_range(stackframe.line)
         location = Location(; uri, range)
         message = let linfo = stackframe.linfo
             linfo isa Core.CodeInstance && (linfo = linfo.def)

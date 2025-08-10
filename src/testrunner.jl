@@ -284,7 +284,7 @@ function testrunner_diagnostic_to_related_information(diagnostic::TestRunnerDiag
     for info in @something diagnostic.relatedInformation return nothing
         info.filename == "none" && continue
         uri = filepath2uri(to_full_path(info.filename))
-        range = line_range(fixed_line_number(info.line))
+        range = line_range(info.line)
         location = Location(; uri, range)
         message = info.message
         push!(relatedInformation, DiagnosticRelatedInformation(; location, message))
@@ -298,7 +298,7 @@ function testrunner_result_to_diagnostics(result::TestRunnerResult)
         uri = filename2uri(to_full_path(diag.filename))
         relatedInformation = testrunner_diagnostic_to_related_information(diag)
         diagnostic = Diagnostic(;
-            range = line_range(fixed_line_number(diag.line)),
+            range = line_range(diag.line),
             severity = DiagnosticSeverity.Error,
             message = diag.message,
             source = TESTRUNNER_DIAGNOSTIC_SOURCE,
