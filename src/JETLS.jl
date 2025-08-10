@@ -46,6 +46,7 @@ include("types.jl")
 
 include("utils/jl_syntax_macros.jl")
 include("utils/general.jl")
+include("utils/string.jl")
 include("utils/path.jl")
 include("utils/pkg.jl")
 include("utils/ast.jl")

@@ -43,7 +43,7 @@ function handle_HoverRequest(server::Server, msg::HoverRequest)
             JL.showprov(io, definition; include_location=false)
             println(io)
             println(io, "``````")
-            line, character = JS.source_location(definition)
+            (; line, character) = jsobj_to_line_character(definition, fi)
             showtext = "`@ " * simple_loc_text(uri; line) * "`"
             println(io, create_source_location_link(uri, showtext; line, character))
             if i ≠ n
@@ -60,7 +60,7 @@ function handle_HoverRequest(server::Server, msg::HoverRequest)
             id = msg.id,
             result = Hover(;
                 contents,
-                range = get_source_range(target_binding))))
+                range = jsobj_to_range(target_binding, fi))))
     end
 
     node = @something select_target_node(st0_top, offset) begin
@@ -95,7 +95,7 @@ function handle_HoverRequest(server::Server, msg::HoverRequest)
     contents = MarkupContent(;
         kind = MarkupKind.Markdown,
         value)
-    range = get_source_range(node)
+    range = jsobj_to_range(node, fi)
     return send(server, HoverResponse(;
         id = msg.id,
         result = Hover(; contents, range)))

@@ -83,11 +83,11 @@ function handle_DefinitionRequest(server::Server, msg::DefinitionRequest)
     if !isnothing(target_binding_definitions)
         target_binding, definitions = target_binding_definitions
         local result = Location[
-            Location(; uri, range = get_source_range(definition))
+            Location(; uri, range = jsobj_to_range(definition, fi))
             for definition in definitions]
         if locationlink_support
             result = LocationLink[
-                LocationLink(loc, get_source_range(target_binding))
+                LocationLink(loc, jsobj_to_range(target_binding, fi))
                 for loc in result]
         end
         return send(server,
@@ -103,7 +103,7 @@ function handle_DefinitionRequest(server::Server, msg::DefinitionRequest)
     objtyp isa Core.Const || return send(server, DefinitionResponse(; id = msg.id, result = null))
 
     objval = objtyp.val
-    originSelectionRange = get_source_range(node)
+    originSelectionRange = jsobj_to_range(node, fi)
     if objval isa Module
         if is_location_unknown(objval)
             return send(server, DefinitionResponse(; id = msg.id, result = null))

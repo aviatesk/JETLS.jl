@@ -41,11 +41,7 @@ function range_formatting_registration()
 end
 
 document_text(fi::FileInfo) = JS.sourcetext(fi.parsed_stream)
-function document_range(fi::FileInfo)
-    return Range(;
-        start = offset_to_xy(fi, JS.first_byte(fi.parsed_stream)),
-        var"end" = offset_to_xy(fi, JS.last_byte(fi.parsed_stream)+1))
-end
+document_range(fi::FileInfo) = jsobj_to_range(fi.parsed_stream, fi)
 
 function handle_DocumentFormattingRequest(server::Server, msg::DocumentFormattingRequest)
     uri = msg.params.textDocument.uri

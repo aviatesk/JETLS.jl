@@ -54,8 +54,10 @@ macro m_throw(x)
 end
 @testset "JuliaLowering error diagnostics" begin
     @testset "lowering error diagnostics" begin
-        st = jlparse("macro foo(x, y) \$(x) end")
-        diagnostics = JETLS.lowering_diagnostics(st[1], @__MODULE__, JS.sourcefile(st))
+        ps = parsedstream("macro foo(x, y) \$(x) end")
+        st = jlparse(ps)
+        fi = JETLS.FileInfo(#=version=#0, ps)
+        diagnostics = JETLS.lowering_diagnostics(st[1], @__MODULE__, fi)
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
         @test diagnostic.source == JETLS.LOWERING_DIAGNOSTIC_SOURCE
@@ -63,8 +65,10 @@ end
     end
 
     @testset "macro not found error diagnostics" begin
-        st = jlparse("x = @notexisting 42")
-        diagnostics = JETLS.lowering_diagnostics(st[1], @__MODULE__, JS.sourcefile(st))
+        ps = parsedstream("x = @notexisting 42")
+        st = jlparse(ps)
+        fi = JETLS.FileInfo(#=version=#0, ps)
+        diagnostics = JETLS.lowering_diagnostics(st[1], @__MODULE__, fi)
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
         @test diagnostic.source == JETLS.LOWERING_DIAGNOSTIC_SOURCE
@@ -75,9 +79,26 @@ end
         @test diagnostic.range.var"end".character == sizeof("x = @notexisting")
     end
 
+    @testset "string macro not found error diagnostics" begin
+        ps = parsedstream("x = notexisting\"string\"")
+        st = jlparse(ps)
+        fi = JETLS.FileInfo(#=version=#0, ps)
+        diagnostics = JETLS.lowering_diagnostics(st[1], @__MODULE__, fi)
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.source == JETLS.LOWERING_DIAGNOSTIC_SOURCE
+        @test diagnostic.message == "Macro name `@notexisting_str` not found"
+        @test diagnostic.range.start.line == 0
+        @test diagnostic.range.start.character == sizeof("x = ")
+        @test diagnostic.range.var"end".line == 0
+        @test diagnostic.range.var"end".character == sizeof("x = notexisting")
+    end
+
     @testset "macro expansion error diagnostics" begin
-        st = jlparse("x = @m_throw 42")
-        diagnostics = JETLS.lowering_diagnostics(st[1], @__MODULE__, JS.sourcefile(st))
+        ps = parsedstream("x = @m_throw 42")
+        st = jlparse(ps)
+        fi = JETLS.FileInfo(#=version=#0, ps)
+        diagnostics = JETLS.lowering_diagnostics(st[1], @__MODULE__, fi)
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
         @test diagnostic.source == JETLS.LOWERING_DIAGNOSTIC_SOURCE

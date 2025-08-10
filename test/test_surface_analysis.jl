@@ -1,19 +1,19 @@
 module test_surface_analysis
 
-include("setup.jl")
-include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
-
 using Test
 using JETLS
 using JETLS: JL, JS
 
+include(normpath(pkgdir(JETLS), "test", "setup.jl"))
+include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
+
 module lowering_module end
-function get_lowered_diagnostics(text::AbstractString; filename::AbstractString = @__FILE__)
+function get_lowered_diagnostics(text::AbstractString)
     ps = JETLS.ParseStream!(text)
-    st0 = JS.build_tree(JL.SyntaxTree, ps)
+    fi = JETLS.FileInfo(#=version=#0, ps)
+    st0 = JETLS.build_tree!(JL.SyntaxTree, fi)
     @assert JS.kind(st0) === JS.K"toplevel"
-    sourcefile = JS.SourceFile(ps; filename)
-    return JETLS.lowering_diagnostics(st0[1], lowering_module, sourcefile)
+    return JETLS.lowering_diagnostics(st0[1], lowering_module, fi)
 end
 
 @testset "unused binding detection" begin
@@ -360,11 +360,17 @@ end
         @test diagnostic.range.var"end".line == 0
     end
 
-    @testset "Edge case" begin
+    length_utf16(s::AbstractString) = sum(c::Char -> codepoint(c) < 0x10000 ? 1 : 2, collect(s); init=0)
+    @testset "Handle position encoding" begin
         diagnostics = get_lowered_diagnostics("""
-        func(::Nothing, x) = x
+        f(😀, x) = 😀
         """)
-        @test isempty(diagnostics)
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.range.start.line == 0
+        @test diagnostic.range.start.character == length_utf16("f(😀, ")
+        @test diagnostic.range.var"end".line == 0
+        @test diagnostic.range.var"end".character == length_utf16("f(😀, x")
     end
 end
 

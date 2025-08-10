@@ -120,8 +120,10 @@ function testrunner_code_lenses!(code_lenses::Vector{CodeLens}, uri::URI, fi::Fi
     return code_lenses
 end
 
-function testrunner_code_lenses!(code_lenses::Vector{CodeLens}, uri::URI, fi::FileInfo, idx::Int, testsetinfo::TestsetInfo)
-    range = get_source_range(testsetinfo.st0)
+function testrunner_code_lenses!(
+        code_lenses::Vector{CodeLens}, uri::URI, fi::FileInfo, idx::Int, testsetinfo::TestsetInfo
+    )
+    range = jsobj_to_range(testsetinfo.st0, fi)
     tsn = testset_name(testsetinfo)
     clear_arguments = run_arguments = Any[uri, idx, tsn]
     if isdefined(testsetinfo, :result)
@@ -164,21 +166,27 @@ function testrunner_code_lenses!(code_lenses::Vector{CodeLens}, uri::URI, fi::Fi
     return code_lenses
 end
 
-function testrunner_code_actions!(code_actions::Vector{Union{CodeAction,Command}}, uri::URI, fi::FileInfo, action_range::Range)
+function testrunner_code_actions!(
+        code_actions::Vector{Union{CodeAction,Command}}, uri::URI, fi::FileInfo, action_range::Range
+    )
     testrunner_testset_code_actions!(code_actions, uri, fi, action_range)
     testrunner_testcase_code_actions!(code_actions, uri, fi, action_range)
     return code_actions
 end
 
-function testrunner_testset_code_actions!(code_actions::Vector{Union{CodeAction,Command}}, uri::URI, fi::FileInfo, action_range::Range)
+function testrunner_testset_code_actions!(
+        code_actions::Vector{Union{CodeAction, Command}}, uri::URI, fi::FileInfo, action_range::Range
+    )
     for (idx, testsetinfo) in enumerate(fi.testsetinfos)
         testrunner_testset_code_actions!(code_actions, uri, fi, idx, testsetinfo, action_range)
     end
     return code_actions
 end
 
-function testrunner_testset_code_actions!(code_actions::Vector{Union{CodeAction,Command}}, uri::URI, fi::FileInfo, idx::Int, testsetinfo::TestsetInfo, action_range::Range)
-    tsr = get_source_range(testsetinfo.st0; adjust_last=1) # +1 to support cases like `@testset "xxx" begin ... end│`
+function testrunner_testset_code_actions!(
+        code_actions::Vector{Union{CodeAction, Command}}, uri::URI, fi::FileInfo, idx::Int, testsetinfo::TestsetInfo, action_range::Range
+    )
+    tsr = jsobj_to_range(testsetinfo.st0, fi; adjust_last=1) # +1 to support cases like `@testset "xxx" begin ... end│`
     overlap(action_range, tsr) || return nothing
     tsn = testset_name(testsetinfo)
     clear_arguments = run_arguments = Any[uri, idx, tsn]
@@ -224,13 +232,15 @@ function testrunner_testset_code_actions!(code_actions::Vector{Union{CodeAction,
     return code_actions
 end
 
-function testrunner_testcase_code_actions!(code_actions::Vector{Union{CodeAction,Command}}, uri::URI, fi::FileInfo, action_range::Range)
+function testrunner_testcase_code_actions!(
+        code_actions::Vector{Union{CodeAction, Command}}, uri::URI, fi::FileInfo, action_range::Range
+    )
     st0_top = build_tree!(JL.SyntaxTree, fi)
     traverse_skip_func_scope(st0_top) do st0::SyntaxTree0
         if JS.kind(st0) === JS.K"macrocall" && JS.numchildren(st0) ≥ 1
             macroname = st0[1]
             if JS.kind(macroname) === JS.K"MacroName" && macroname.name_val in TEST_MACROS
-                tcr = get_source_range(st0; adjust_last=1) # +1 to support cases like `@test ...│`
+                tcr = jsobj_to_range(st0, fi; adjust_last=1) # +1 to support cases like `@test ...│`
                 overlap(action_range, tcr) || return nothing
                 tcl = JS.source_line(st0)
                 tct = "`" * JS.sourcetext(st0) * "`"
