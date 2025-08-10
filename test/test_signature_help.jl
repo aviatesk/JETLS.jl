@@ -75,6 +75,16 @@ end
     @test 1 == n_si(M_dotcall, "f.(x│)")
 end
 
+module M_edgecases
+kwname(var"end") = var"end"
+end
+@testset "Edge cases" begin
+    @test 1 == n_si(M_edgecases, "kwname(│)")
+    let si = only(siginfos(M_edgecases, "kwname(│)"))
+        @test si.label == "kwname(var\"end\")"
+    end
+end
+
 module M_noshow_def
 f(x) = x
 g(x) = x
