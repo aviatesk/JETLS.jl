@@ -5,9 +5,10 @@ struct LoweredDiagnosticKey
     name::String
 end
 
-function analyze_lowered_code!(diagnostics::Vector{Diagnostic},
-                               ctx3::JL.VariableAnalysisContext, st3::JL.SyntaxTree,
-                               sourcefile::JS.SourceFile)
+function analyze_lowered_code!(
+        diagnostics::Vector{Diagnostic}, ctx3::JL.VariableAnalysisContext, st3::JL.SyntaxTree,
+        fi::FileInfo
+    )
     binding_usages, ismacro = compute_binding_usages(ctx3, st3)
     reported = Set{LoweredDiagnosticKey}() # to prevent duplicate reports for unused default or keyword arguments
     for (binfo, used) in binding_usages
@@ -28,11 +29,10 @@ function analyze_lowered_code!(diagnostics::Vector{Diagnostic},
         else
             message = "Unused local binding `$bn`"
         end
-        push!(diagnostics, jsobj_to_diagnostic(binding, sourcefile, message,
-            #=severity=#DiagnosticSeverity.Information,
-            #=source=#LOWERING_DIAGNOSTIC_SOURCE;
-            tags = DiagnosticTag.Ty[DiagnosticTag.Unnecessary]
-        ))
+        push!(diagnostics, jsobj_to_diagnostic(
+            binding, fi, message,
+            #=severity=#DiagnosticSeverity.Information, #=source=#LOWERING_DIAGNOSTIC_SOURCE;
+            tags = DiagnosticTag.Ty[DiagnosticTag.Unnecessary]))
     end
     return diagnostics
 end

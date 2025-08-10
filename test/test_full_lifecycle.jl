@@ -2,7 +2,7 @@ module test_full_lifecycle
 
 include("setup.jl")
 
-let (pkgcode, positions) = get_text_and_positions("""
+let (pkgcode, positions) = JETLS.get_text_and_positions("""
     module TestFullLifecycle
 
     \"\"\"greetings\"\"\"

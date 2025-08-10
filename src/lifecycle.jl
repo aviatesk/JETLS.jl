@@ -12,15 +12,15 @@ dynamic registration.
 """
 function handle_InitializeRequest(server::Server, msg::InitializeRequest)
     state = server.state
-    params = state.init_params = msg.params
+    init_params = state.init_params = msg.params
 
-    workspaceFolders = params.workspaceFolders
+    workspaceFolders = init_params.workspaceFolders
     if workspaceFolders !== nothing
         for workspaceFolder in workspaceFolders
             push!(state.workspaceFolders, workspaceFolder.uri)
         end
     else
-        rootUri = params.rootUri
+        rootUri = init_params.rootUri
         if rootUri !== nothing
             push!(state.workspaceFolders, rootUri)
         else
@@ -163,9 +163,19 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
         end
     end
 
+    positionEncodings = getcapability(state, :general, :positionEncodings)
+    if isnothing(positionEncodings) || isempty(positionEncodings)
+        positionEncoding = PositionEncodingKind.UTF16
+    elseif PositionEncodingKind.UTF8 in positionEncodings
+        positionEncoding = PositionEncodingKind.UTF8
+    else
+        positionEncoding = first(positionEncodings)
+    end
+    state.encoding = positionEncoding
+
     result = InitializeResult(;
         capabilities = ServerCapabilities(;
-            positionEncoding = PositionEncodingKind.UTF16,
+            positionEncoding,
             textDocumentSync = TextDocumentSyncOptions(;
                 openClose = true,
                 change = TextDocumentSyncKind.Full,
@@ -310,8 +320,8 @@ function handle_InitializedNotification(server::Server)
         # since `DocumentRangeFormattingRegistrationOptions` does not extend `StaticRegistrationOptions`.
     end
 
-    if getcapability(server,
-        :textDocument, :inlayHint, :dynamicRegistration) === true
+    if supports(server,
+        :textDocument, :inlayHint, :dynamicRegistration)
         push!(registrations, inlay_hint_registration(#=static=#false))
         if JETLS_DEV_MODE
             @info "Dynamically registering 'textDocument/inlayHint' upon `InitializedNotification`"

@@ -28,8 +28,8 @@ end
 include("setup.jl")
 
 # Helper to run a single global definition test
-function with_definition_request(tester::Function, text::AbstractString, matcher=r"│")
-    clean_code, positions = JETLS.get_text_and_positions(text, matcher)
+function with_definition_request(tester::Function, text::AbstractString; kwargs...)
+    clean_code, positions = JETLS.get_text_and_positions(text; kwargs...)
 
     withscript(clean_code) do script_path
         uri = filepath2uri(script_path)

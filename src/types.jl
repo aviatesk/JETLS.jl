@@ -26,12 +26,15 @@ end
 mutable struct FileInfo
     version::Int
     parsed_stream::JS.ParseStream
+    const encoding::LSP.PositionEncodingKind.Ty
     # filled after cached
     syntax_node::Dict{Any,JS.SyntaxNode}
     syntax_tree0::Dict{Any,SyntaxTree0}
     testsetinfos::Vector{_TestsetInfo{FileInfo}}
-    FileInfo(version::Int, parsed_stream::JS.ParseStream) =
-        new(version, parsed_stream, Dict{Any,JS.SyntaxNode}(), Dict{Any,SyntaxTree0}(), TestsetInfo[])
+    FileInfo(
+        version::Int, parsed_stream::JS.ParseStream,
+        encoding::LSP.PositionEncodingKind.Ty = LSP.PositionEncodingKind.UTF16
+    ) = new(version, parsed_stream, encoding, Dict{Any,JS.SyntaxNode}(), Dict{Any,SyntaxTree0}(), TestsetInfo[])
 end
 
 const TestsetDiagnosticsKey = _TestsetDiagnosticsKey{FileInfo}
@@ -311,6 +314,7 @@ mutable struct ServerState
     const currently_requested::Dict{String,RequestCaller}
     const currently_registered::Set{Registered}
     const config_manager::ConfigManager
+    encoding::PositionEncodingKind.Ty
     root_path::String
     root_env_path::String
     completion_resolver_info::Tuple{Module,LSPostProcessor}
@@ -324,7 +328,9 @@ mutable struct ServerState
             #=extra_diagnostics=# ExtraDiagnostics(),
             #=currently_requested=# Dict{String,RequestCaller}(),
             #=currently_registered=# Set{Registered}(),
-            #=config_manager=# ConfigManager())
+            #=config_manager=# ConfigManager(),
+            #=encoding=# PositionEncodingKind.UTF16, # initialize with UTF16 (for tests)
+        )
     end
 end
 

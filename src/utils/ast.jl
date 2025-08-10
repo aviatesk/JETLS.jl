@@ -1,55 +1,3 @@
-# JuliaLowering uses byte offsets; LSP uses lineno and UTF-* character offset.
-# These functions do the conversion.
-
-"""
-    xy_to_offset(code::Vector{UInt8}, pos::Position)
-    xy_to_offset(fi::FileInfo, pos::Position)
-
-Convert 0-based `pos::Position` (equivalent to `(; line = y, character = x)`) to a 1-based byte offset.
-Basically, `pos` is expected to be valid with respect to `code`.
-However, some language server clients sometimes send invalid `Position`s,
-so this function is designed not to error on such invalid `Position`s.
-Note that the byte offset returned in such cases has almost no meaning.
-"""
-function xy_to_offset(code::Vector{UInt8}, pos::Position)
-    b = 0
-    for _ in 1:pos.line
-        nextb = findnext(isequal(UInt8('\n')), code, b + 1)
-        if isnothing(nextb) # guard against invalid `pos`
-            break
-        end
-        b = nextb
-    end
-    lend = findnext(isequal(UInt8('\n')), code, b + 1)
-    lend = isnothing(lend) ? lastindex(code) + 1 : lend
-    curline = String(code[b+1:lend-1]) # current line, containing no newlines
-    line_b = 1
-    for _ in 1:pos.character
-        checkbounds(Bool, curline, line_b) || break # guard against invalid `pos`
-        line_b = nextind(curline, line_b)
-    end
-    return b + line_b
-end
-xy_to_offset(fi::FileInfo, pos::Position) = xy_to_offset(fi.parsed_stream.textbuf, pos)
-xy_to_offset(text::AbstractString, pos::Position) = xy_to_offset(Vector{UInt8}(text), pos) # used by tests
-
-"""
-    offset_to_xy(ps::JS.ParseStream, byte::Int)
-    offset_to_xy(fi::FileInfo, byte::Int)
-
-Convert a 1-based byte offset to a 0-based line and character number
-"""
-function offset_to_xy(ps::JS.ParseStream, byte::Integer)
-    # ps must be parsed already
-    @assert byte in JS.first_byte(ps):JS.last_byte(ps) + 1 "Byte offset is out of bounds for the parse stream"
-    sf = JS.SourceFile(ps)
-    l, c = JuliaSyntax.source_location(sf, byte)
-    return Position(;line = l-1, character = c-1)
-end
-offset_to_xy(code::Union{AbstractString, Vector{UInt8}}, byte::Integer) = # used by tests
-    offset_to_xy(JS.parse!(JS.ParseStream(code), rule=:all), byte)
-offset_to_xy(fi::FileInfo, byte::Integer) = offset_to_xy(fi.parsed_stream, byte)
-
 """
 Return a tree where all nodes of `kinds` are removed.  Should not modify any
 nodes, and should not create new nodes unnecessarily.
@@ -502,23 +450,65 @@ function select_dotprefix_node(st::JL.SyntaxTree, offset::Int)
 end
 
 """
-    get_source_range(node::Union{JS.SyntaxNode,JL.SyntaxTree};
-                     include_at_mark::Bool = true,
-                     adjust_first::Int = 0, adjust_last::Int = 0) -> range::LSP.Range
+    jsobj_to_range(
+            obj, fi::FileInfo;
+            include_at_mark::Union{Nothing,Bool} = nothing,
+            adjust_first::Int = 0, adjust_last::Int = 0
+        ) -> range::LSP.Range
 
-Returns the position information of `node` in the source file in `LSP.Range` format.
+Returns the position information of a JuliaSyntax object in the source file in `LSP.Range` format.
+
+# Arguments
+- `obj`: A JuliaSyntax object with byte range information (typically a `SyntaxNode` or `SyntaxTree`,
+  must respond to `JS.first_byte`, `JS.last_byte`, and `JS.kind`)
+- `fi::FileInfo`: The file info containing the parsed content
+
+# Keyword Arguments
+- `include_at_mark::Union{Nothing,Bool} = nothing`: Whether to include the `@` character for macro names.
+  When `nothing` (default), automatically set to `true` for `SyntaxNode` or `SyntaxTree` objects,
+  `false` otherwise
+- `adjust_first::Int = 0`: Adjustment to apply to the first byte position
+- `adjust_last::Int = 0`: Adjustment to apply to the last byte position
+
+# Returns
+`LSP.Range`: The position range of the object in the source file, with character positions
+calculated according to the specified encoding.
+
+# Details
+The function converts byte offsets from JuliaSyntax to LSP-compatible positions using
+the specified encoding. For macro names, it can optionally adjust the start position
+to include the `@` character.
+
+Note that `+1` is added to `JS.last_byte(obj)` when calculating the end position
+(additionally, if `adjust_last` is specified, that value is also added).
+`JS.last_byte(obj)` returns the 1-based byte index of the last byte that belongs to
+the object. To create a range that includes this byte, we need the position after it,
+since LSP uses half-open intervals [start, end) where the end position is exclusive.
+This follows the standard convention where the end position points to the first
+character/byte that is NOT part of the range.
 """
-function get_source_range(node::Union{JS.SyntaxNode,JL.SyntaxTree};
-                          include_at_mark::Bool = true,
-                          adjust_first::Int = 0, adjust_last::Int = 0)
-    sourcefile = JS.sourcefile(node)
-    first_line, first_char = JS.source_location(sourcefile, JS.first_byte(node)+adjust_first)
-    last_line, last_char = JS.source_location(sourcefile, JS.last_byte(node)+adjust_last)
-    return Range(;
-        start = Position(;
-            line = first_line - 1,
-            character = first_char - 1 - (include_at_mark && JS.kind(node) === JS.K"MacroName")),
-        var"end" = Position(;
-            line = last_line - 1,
-            character = last_char))
+function jsobj_to_range(
+        obj, fi::FileInfo;
+        include_at_mark::Union{Nothing,Bool} = nothing,
+        adjust_first::Int = 0, adjust_last::Int = 0
+    )
+    spos = offset_to_xy(fi, JS.first_byte(obj)+adjust_first)
+    epos = offset_to_xy(fi, JS.last_byte(obj)+1+adjust_last)
+    if isnothing(include_at_mark)
+        include_at_mark = obj isa JS.SyntaxNode || obj isa JL.SyntaxTree
+    end
+    if include_at_mark && JS.kind(obj) === JS.K"MacroName"
+        spos = Position(spos; character = spos.character-1)
+    end
+    return Range(; start = spos, var"end" = epos)
+end
+
+function jsobj_to_line_character(obj, fi::FileInfo)
+    fb = JS.first_byte(obj)
+    if iszero(fb)
+        return (; line=JS.source_location(obj)[1], character=0)
+    else
+        (; line, character) = offset_to_xy(fi, fb)
+        return (; line=line+1, character=character+1)
+    end
 end

@@ -3,9 +3,8 @@ module test_resolver
 using JETLS: JET, JETLS, JS, JL
 using JETLS.URIs2
 
-function analyze_and_resolve(s::AbstractString;
-                             matcher::Regex  = r"│")
-    text, positions = JETLS.get_text_and_positions(s, matcher)
+function analyze_and_resolve(s::AbstractString; kwargs...)
+    text, positions = JETLS.get_text_and_positions(s; kwargs...)
     length(positions) == 1 || error("Multiple positions are found")
     position = only(positions)
     server = JETLS.Server()

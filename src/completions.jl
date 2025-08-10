@@ -88,10 +88,10 @@ Sending (4) and (5) to the client can happen eagerly in response to <TAB>
 (completionItem/resolve).  The LSP specification notes that more can be deferred
 in later versions.
 """
-function to_completion(binding::JL.BindingInfo,
-                       st::JL.SyntaxTree,
-                       sort_offset::Int,
-                       uri::URI)
+function to_completion(
+        binding::JL.BindingInfo, st::JL.SyntaxTree, sort_offset::Int,
+        uri::URI, fi::FileInfo
+    )
     label_kind = CompletionItemKind.Variable
     label_detail = nothing
     label_desc = nothing
@@ -118,7 +118,7 @@ function to_completion(binding::JL.BindingInfo,
     JL.showprov(io, st; include_location=false)
     println(io)
     println(io, "``````")
-    line, character = JS.source_location(st)
+    (; line, character) = jsobj_to_line_character(st, fi)
     showtext = "`@ " * simple_loc_text(uri; line) * "`"
     println(io, create_source_location_link(uri, showtext; line, character))
     value = String(take!(io))
@@ -150,7 +150,7 @@ function local_completions!(items::Dict{String, CompletionItem},
     (; mod) = get_context_info(s, uri, params.position)
     cbs = @something cursor_bindings(st0, xy_to_offset(fi, params.position), mod) return nothing
     for (bi, st, dist) in cbs
-        ci = to_completion(bi, st, dist, uri)
+        ci = to_completion(bi, st, dist, uri, fi)
         prev_ci = get(items, ci.label, nothing)
         # Name collisions: overrule existing global completions with our own,
         # unless our completion is also a global, in which case the existing
@@ -296,7 +296,7 @@ end
 # ===========================
 
 """
-    get_backslash_offset(state::ServerState, fi::FileInfo, pos::Position) -> offset::Int, is_emoji::Bool
+    get_backslash_offset(fi::FileInfo, pos::Position) -> offset::Int, is_emoji::Bool
 
 Get the byte `offset` of a backslash if the token immediately before the cursor
 consists of a backslash and colon.
