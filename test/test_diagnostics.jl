@@ -52,6 +52,9 @@ end
 macro m_throw(x)
     throw("show this error message")
 end
+macro m_gen_invalid(n)
+    :([return i for i in 1:$n])
+end
 @testset "JuliaLowering error diagnostics" begin
     @testset "lowering error diagnostics" begin
         ps = parsedstream("macro foo(x, y) \$(x) end")
@@ -102,12 +105,27 @@ end
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
         @test diagnostic.source == JETLS.LOWERING_DIAGNOSTIC_SOURCE
-        @show diagnostic.message
         @test diagnostic.message == "Error expanding macro\n\"show this error message\""
         @test diagnostic.range.start.line == 0
         @test diagnostic.range.start.character == sizeof("x = ")
         @test diagnostic.range.var"end".line == 0
         @test diagnostic.range.var"end".character == sizeof("x = @m_throw 42")
+    end
+
+    @testset "lowering error within macro expanded code" begin
+        ps = parsedstream("""let x = 42
+            println(x)
+            @m_gen_invalid x
+        end""")
+        st = jlparse(ps)
+        fi = JETLS.FileInfo(#=version=#0, ps)
+        diagnostics = JETLS.lowering_diagnostics(st[1], @__MODULE__, fi)
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.source == JETLS.LOWERING_DIAGNOSTIC_SOURCE
+        @test diagnostic.message == "`return` not allowed inside comprehension or generator"
+        @test diagnostic.range.start.line == 2
+        @test diagnostic.range.var"end".line == 2
     end
 end
 

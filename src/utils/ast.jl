@@ -492,23 +492,29 @@ function jsobj_to_range(
         include_at_mark::Union{Nothing,Bool} = nothing,
         adjust_first::Int = 0, adjust_last::Int = 0
     )
-    spos = offset_to_xy(fi, JS.first_byte(obj)+adjust_first)
-    epos = offset_to_xy(fi, JS.last_byte(obj)+1+adjust_last)
-    if isnothing(include_at_mark)
-        include_at_mark = obj isa JS.SyntaxNode || obj isa JL.SyntaxTree
-    end
-    if include_at_mark && JS.kind(obj) === JS.K"MacroName"
-        spos = Position(spos; character = spos.character-1)
-    end
-    return Range(; start = spos, var"end" = epos)
-end
-
-function jsobj_to_line_character(obj, fi::FileInfo)
     fb = JS.first_byte(obj)
+    lb = JS.last_byte(obj)
     if iszero(fb)
-        return (; line=JS.source_location(obj)[1], character=0)
+        line, _ = JS.source_location(obj)
+        rng = line_range(line)
+        if iszero(lb)
+            return rng
+        else
+            return Range(rng; var"end" = offset_to_xy(fi, lb+1+adjust_last))
+        end
     else
-        (; line, character) = offset_to_xy(fi, fb)
-        return (; line=line+1, character=character+1)
+        spos = offset_to_xy(fi, fb+adjust_first)
+        if isnothing(include_at_mark)
+            include_at_mark = obj isa JS.SyntaxNode || obj isa JL.SyntaxTree
+        end
+        if include_at_mark && JS.kind(obj) === JS.K"MacroName"
+            spos = Position(spos; character = spos.character-1)
+        end
+        if iszero(lb)
+            epos = Position(; line=spos.line, character=Int(typemax(Int32)))
+        else
+            epos = offset_to_xy(fi, lb+1+adjust_last)
+        end
+        return Range(; start = spos, var"end" = epos)
     end
 end
