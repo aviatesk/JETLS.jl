@@ -67,17 +67,33 @@ Get K"Identifier" tree from a kwarg tree (child of K"call" or K"parameters").
          (= a 1) => a
   (= (:: a T) 1) => a  # only when sig=true
 """
-function kwname(a::JL.SyntaxTree; sig=false)
-    if kind(a) === K"Identifier"
-        return a
-    elseif kind(a) === K"=" && kind(a[1]) === K"Identifier"
-        return a[1]
-    elseif sig && kind(a) === K"=" && kind(a[1]) === K"::" && kind(a[1][1]) === K"Identifier"
-        return a[1][1]
+function kwname(a::JL.SyntaxTree; sig::Bool=false)
+    ret = identitifier_like(a)
+    isnothing(ret) || return ret
+    if kind(a) === K"="
+        a1 = a[1]
+        ret = identitifier_like(a1)
+        isnothing(ret) || return ret
+        if sig && kind(a1) === K"::"
+            ret = identitifier_like(a1[1])
+            isnothing(ret) || return ret
+        end
     elseif kind(a) === K"..."
         return nothing
     end
-    JETLS_DEV_MODE && @info "Unknown kwarg form" a
+    JETLS_DEBUG_LOWERING && @info "Unknown kwarg form" a
+    return nothing
+end
+
+function identitifier_like(st::JL.SyntaxTree)
+    if kind(st) === K"Identifier"
+        return st
+    elseif kind(st) === K"var"
+        inner = st[1]
+        if kind(inner) === K"Identifier"
+            return inner
+        end
+    end
     return nothing
 end
 
@@ -149,22 +165,7 @@ end
 Return `false` if we can definitely rule out `f(args...|` from being a call to `m`
 """
 function compatible_method(m::Method, ca::CallArgs)
-    # TODO: (later) This should use type information from args (which we already
-    # have from m's params).  For now, just parse the method signature like we
-    # do in make_siginfo.
-
-    @static if VERSION ≥ v"1.13.0-DEV.710"
-        msig = sprint(show, m; context=(:compact=>true, :print_method_signature_only=>true))
-    else
-        mstr = sprint(show, m; context=(:compact=>true))
-        msig_locinfo = split(mstr, " @ ")
-        length(msig_locinfo) == 2 || return false
-        msig = strip(msig_locinfo[1])
-    end
-    if ca.kind === K"macrocall" # hack. TODO delete
-        msig = replace(msig, "__source__::LineNumberNode, __module__::Module, "=>"",
-                       "__source__::LineNumberNode, __module__::Module"=>""; count=1)
-    end
+    msig = @something get_sig_str(m, ca) return false
     mnode = JS.parsestmt(JL.SyntaxTree, msig; ignore_errors=true)
 
     params, kwp_i = flatten_args(mnode)
@@ -176,6 +177,45 @@ function compatible_method(m::Method, ca::CallArgs)
     !has_var_params && (ca.pos_args_lb >= kwp_i) && return false
     !has_var_kwp && !(keys(ca.kw_map) ⊆ keys(kwp_map)) && return false
     return true
+end
+
+const keyword_matchers = let
+    keyword_syms = [
+        :baremodule, :begin, :break, :catch, :ccall, :const, :continue, :do, :else, :elseif,
+        :end, :export, :var"false", :finally, :for, :function, :global, :if, :import,
+        :let, :local, :macro, :module, :public, :quote, :return, :struct, :var"true",
+        :try, :using, :while]
+    map(keyword_syms) do kw::Symbol
+        kws = String(kw)
+        kws => Regex("\\b" * kws * "\\b" * "((?:::[^,)]*)?,?)") => SubstitutionString("var\"$kws\"\\1")
+    end
+end
+
+# TODO: (later) This should use type information from args (which we already
+# have from m's params).  For now, just parse the method signature like we
+# do in make_siginfo.
+function get_sig_str(m::Method, ca::CallArgs)
+    @static if VERSION ≥ v"1.13.0-DEV.710"
+        msig = sprint(show, m; context=(:compact=>true, :print_method_signature_only=>true))
+    else
+        # methodshow prints "f(x::T) [unparseable stuff]"
+        # parse the first part and put the remainder in documentation
+        mstr = sprint(show, m; context=(:compact=>true))
+        msig_locinfo = split(mstr, " @ ")
+        length(msig_locinfo) == 2 || return nothing
+        msig = strip(msig_locinfo[1])
+    end
+    @static if VERSION < v"1.13.0-DEV.5"
+        # HACK: Use JuliaLang/julia#57268 for v1.12. Delete me.
+        for (kws, rep) in keyword_matchers
+            msig = replace(msig, rep)
+        end
+    end
+    if ca.kind === K"macrocall" # hack. TODO delete
+        msig = replace(msig, "__source__::LineNumberNode, __module__::Module, "=>"",
+                       "__source__::LineNumberNode, __module__::Module"=>""; count=1)
+    end
+    return msig
 end
 
 # LSP objects and handler
@@ -222,20 +262,7 @@ end
 # active_arg is either an argument index, or :next (available pos. arg), or :none
 function make_siginfo(m::Method, ca::CallArgs, active_arg::Union{Int, Symbol};
                       postprocessor::LSPostProcessor = LSPostProcessor())
-    # methodshow prints "f(x::T) [unparseable stuff]"
-    # parse the first part and put the remainder in documentation
-    @static if VERSION ≥ v"1.13.0-DEV.710"
-        msig = sprint(show, m; context=(:compact=>true, :print_method_signature_only=>true))
-    else
-        mstr = sprint(show, m; context=(:compact=>true))
-        msig_locinfo = split(mstr, " @ ")
-        length(msig_locinfo) == 2 || return false
-        msig = strip(msig_locinfo[1])
-    end
-    if ca.kind === K"macrocall"
-        msig = replace(msig, "__source__::LineNumberNode, __module__::Module, "=>"",
-                       "__source__::LineNumberNode, __module__::Module"=>""; count=1)
-    end
+    msig = get_sig_str(m, ca)
     msig = postprocessor(msig)
     mnode = JS.parsestmt(JL.SyntaxTree, msig; ignore_errors=true)
     label = String(msig)
@@ -283,7 +310,7 @@ function make_siginfo(m::Method, ca::CallArgs, active_arg::Union{Int, Symbol};
             out = get(kwp_map, n, nothing)
             isnothing(out) ? maybe_var_kwp : out
         else
-            JETLS_DEV_MODE && @info "No active arg" i ca.args[i]
+            JETLS_DEBUG_LOWERING && @info "No active arg" i ca.args[i]
             nothing
         end
     end
