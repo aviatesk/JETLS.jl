@@ -43,7 +43,8 @@ function handle_HoverRequest(server::Server, msg::HoverRequest)
             JL.showprov(io, definition; include_location=false)
             println(io)
             println(io, "``````")
-            (; line, character) = jsobj_to_line_character(definition, fi)
+            (; line, character) = jsobj_to_range(definition, fi; include_at_mark=false).start
+            line += 1; character += 1
             showtext = "`@ " * simple_loc_text(uri; line) * "`"
             println(io, create_source_location_link(uri, showtext; line, character))
             if i ≠ n
