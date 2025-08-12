@@ -187,8 +187,7 @@ function lowering_diagnostics!(
             end
             push!(diagnostics, jsobj_to_diagnostic(err.ex, fi, msg,
                 #=severity=# DiagnosticSeverity.Error, #=source=# LOWERING_DIAGNOSTIC_SOURCE;
-                relatedInformation,
-                include_at_mark = false))
+                relatedInformation))
         else
             JETLS_DEBUG_LOWERING && @warn "Error in lowering (with macrocall nodes)"
             JETLS_DEBUG_LOWERING && showerror(stderr, err)
