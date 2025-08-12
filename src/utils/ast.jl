@@ -452,21 +452,17 @@ end
 """
     jsobj_to_range(
             obj, fi::FileInfo;
-            include_at_mark::Union{Nothing,Bool} = nothing,
             adjust_first::Int = 0, adjust_last::Int = 0
         ) -> range::LSP.Range
 
 Returns the position information of a JuliaSyntax object in the source file in `LSP.Range` format.
 
 # Arguments
-- `obj`: A JuliaSyntax object with byte range information (typically a `SyntaxNode` or `SyntaxTree`,
-  must respond to `JS.first_byte`, `JS.last_byte`, and `JS.kind`)
+- `obj`: A JuliaSyntax object with byte range information (typically a `SyntaxNode` or
+  `SyntaxTree`, must respond to `JS.first_byte`, `JS.last_byte`, and `JS.kind`)
 - `fi::FileInfo`: The file info containing the parsed content
 
 # Keyword Arguments
-- `include_at_mark::Union{Nothing,Bool} = nothing`: Whether to include the `@` character for macro names.
-  When `nothing` (default), automatically set to `true` for `SyntaxNode` or `SyntaxTree` objects,
-  `false` otherwise
 - `adjust_first::Int = 0`: Adjustment to apply to the first byte position
 - `adjust_last::Int = 0`: Adjustment to apply to the last byte position
 
@@ -476,8 +472,7 @@ calculated according to the specified encoding.
 
 # Details
 The function converts byte offsets from JuliaSyntax to LSP-compatible positions using
-the specified encoding. For macro names, it can optionally adjust the start position
-to include the `@` character.
+the encoding specified by `fi`.
 
 Note that `+1` is added to `JS.last_byte(obj)` when calculating the end position
 (additionally, if `adjust_last` is specified, that value is also added).
@@ -489,7 +484,6 @@ character/byte that is NOT part of the range.
 """
 function jsobj_to_range(
         obj, fi::FileInfo;
-        include_at_mark::Union{Nothing,Bool} = nothing,
         adjust_first::Int = 0, adjust_last::Int = 0
     )
     fb = JS.first_byte(obj)
@@ -504,12 +498,6 @@ function jsobj_to_range(
         end
     else
         spos = offset_to_xy(fi, fb+adjust_first)
-        if isnothing(include_at_mark)
-            include_at_mark = obj isa JS.SyntaxNode || obj isa JL.SyntaxTree
-        end
-        if include_at_mark && JS.kind(obj) === JS.K"MacroName"
-            spos = Position(spos; character = spos.character-1)
-        end
         if iszero(lb)
             epos = Position(; line=spos.line, character=Int(typemax(Int32)))
         else

@@ -480,7 +480,7 @@ end
             @test node !== nothing
             @test JS.kind(node) === JS.K"MacroName"
             let range = JETLS.jsobj_to_range(node, fi)
-                @test range.start.line == 0 && range.start.character == 0 # include at mark
+                @test range.start.line == 0 && range.start.character == 1 # not include the @-mark
                 @test range.var"end".line == 0 && range.var"end".character == sizeof("@inline")
             end
         end
