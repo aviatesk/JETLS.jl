@@ -20,11 +20,12 @@ function jsdiag_to_diagnostic(diagnostic::JS.Diagnostic, fi::FileInfo)
     return jsobj_to_diagnostic(diagnostic, fi, diagnostic.message, severity, #=source=#SYNTAX_DIAGNOSTIC_SOURCE)
 end
 
-function jsobj_to_diagnostic(
-        obj, fi::FileInfo, message::AbstractString, severity::DiagnosticSeverity.Ty, source::String;
+function jsobj_to_diagnostic(obj, fi::FileInfo,
+        message::AbstractString, severity::DiagnosticSeverity.Ty, source::String;
         tags::Union{Nothing,Vector{DiagnosticTag.Ty}} = nothing,
         relatedInformation::Union{Nothing,Vector{DiagnosticRelatedInformation}} = nothing,
-        kwargs...)
+        kwargs...
+    )
     range = jsobj_to_range(obj, fi; kwargs...)
     return Diagnostic(;
         range,
@@ -82,7 +83,9 @@ frame_module(frame) = let def = frame.linfo.def
     return def
 end
 
-function jet_toplevel_error_report_to_diagnostic(postprocessor::JET.PostProcessor, @nospecialize report::JET.ToplevelErrorReport)
+function jet_toplevel_error_report_to_diagnostic(
+        postprocessor::JET.PostProcessor, @nospecialize report::JET.ToplevelErrorReport
+    )
     if report isa JET.ParseErrorReport
         # TODO: Pass correct encoding here
         fi = FileInfo(#=version=#0, ParseStream!(report.source.code), PositionEncodingKind.UTF16)
@@ -173,7 +176,7 @@ function lowering_diagnostics!(
     catch err
         if err isa JL.LoweringError
             push!(diagnostics, jsobj_to_diagnostic(err.ex, fi, err.msg,
-                #=severity=# DiagnosticSeverity.Error, #=source=# LOWERING_DIAGNOSTIC_SOURCE))
+                #=severity=#DiagnosticSeverity.Error, #=source=#LOWERING_DIAGNOSTIC_SOURCE))
         elseif err isa JL.MacroExpansionError
             st = scrub_expand_macro_stacktrace(stacktrace(catch_backtrace()))
             msg = err.msg
@@ -186,7 +189,7 @@ function lowering_diagnostics!(
                 relatedInformation = stacktrace_to_related_information(st)
             end
             push!(diagnostics, jsobj_to_diagnostic(err.ex, fi, msg,
-                #=severity=# DiagnosticSeverity.Error, #=source=# LOWERING_DIAGNOSTIC_SOURCE;
+                #=severity=#DiagnosticSeverity.Error, #=source=#LOWERING_DIAGNOSTIC_SOURCE;
                 relatedInformation))
         else
             JETLS_DEBUG_LOWERING && @warn "Error in lowering (with macrocall nodes)"

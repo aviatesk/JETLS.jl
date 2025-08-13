@@ -111,6 +111,7 @@ the list itself is subject to change.
   - [x] Undefined bindings
   - [x] Unused bindings
   - [ ] Potential `MethodError`
+  - [ ] Configuration integration
 - Completion
   - [x] Global symbol completion
   - [x] Local binding completion
@@ -141,7 +142,10 @@ the list itself is subject to change.
   - [x] Code actions for running individual `@test` cases
   - [x] Inline test result diagnostics
   - [x] Work done progress during test execution
-- [ ] Configuration system
+- Configuration system
+  - [x] Prototype implementation
+  - [ ] Documentation
+  - [ ] Schema support
 
 Detailed development notes and progress for this project are collected at
 <https://publish.obsidian.md/jetls>, so those interested might want to take a look.
