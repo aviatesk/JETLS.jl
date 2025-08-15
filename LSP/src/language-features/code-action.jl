@@ -377,8 +377,6 @@ edits with a code action then that mode should be used.
     that information. However it allows them to better group code action for
     example into corresponding menus (e.g. all refactor code actions into a
     refactor menu).
-
-# Tags
 - since - 3.16.0 - a client can offer a server to delay the computation of code
   action properties during a 'textDocument/codeAction' request
 """

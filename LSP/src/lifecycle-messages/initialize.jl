@@ -78,10 +78,10 @@
     # """
     # referencesProvider::Union{Nothing, Bool, ReferenceOptions} = nothing
 
-    # """
-    # The server provides document highlight support.
-    # """
-    # documentHighlightProvider::Union{Nothing, Bool, DocumentHighlightOptions} = nothing
+    """
+    The server provides document highlight support.
+    """
+    documentHighlightProvider::Union{Nothing, Bool, DocumentHighlightOptions} = nothing
 
     # """
     # The server provides document symbol support.
@@ -341,10 +341,10 @@ end
     # """
     # references::Union{ReferenceClientCapabilities, Nothing} = nothing
 
-    # """
-    # Capabilities specific to the `textDocument/documentHighlight` request.
-    # """
-    # documentHighlight::Union{DocumentHighlightClientCapabilities, Nothing} = nothing
+    """
+    Capabilities specific to the `textDocument/documentHighlight` request.
+    """
+    documentHighlight::Union{DocumentHighlightClientCapabilities, Nothing} = nothing
 
     # """
     # Capabilities specific to the `textDocument/documentSymbol` request.
