@@ -19,8 +19,8 @@ end
 
 # For dynamic code lens registrations during development
 # unregister(currently_running, Unregistration(;
-#     id=CODE_ACTION_REGISTRATION_ID,
-#     method=CODE_ACTION_REGISTRATION_METHOD))
+#     id = CODE_ACTION_REGISTRATION_ID,
+#     method = CODE_ACTION_REGISTRATION_METHOD))
 # register(currently_running, code_action_registration())
 
 function handle_CodeActionRequest(server::Server, msg::CodeActionRequest)

@@ -17,8 +17,8 @@ end
 
 # For dynamic registrations during development
 # unregister(currently_running, Unregistration(;
-#     id=DID_CHANGE_WATCHED_FILES_REGISTRATION_ID,
-#     method=DID_CHANGE_WATCHED_FILES_REGISTRATION_METHOD))
+#     id = DID_CHANGE_WATCHED_FILES_REGISTRATION_ID,
+#     method = DID_CHANGE_WATCHED_FILES_REGISTRATION_METHOD))
 # register(currently_running, did_change_watched_files_registration())
 
 function initialize_config!(server::Server)

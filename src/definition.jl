@@ -17,8 +17,8 @@ end
 
 # For dynamic registrations during development
 # unregister(currently_running, Unregistration(;
-#     id=DEFINITION_REGISTRATION_ID,
-#     method=DEFINITION_REGISTRATION_METHOD))
+#     id = DEFINITION_REGISTRATION_ID,
+#     method = DEFINITION_REGISTRATION_METHOD))
 # register(currently_running, definition_registration())
 
 is_location_unknown(m::Method) = Base.updated_methodloc(m)[2] ≤ 0

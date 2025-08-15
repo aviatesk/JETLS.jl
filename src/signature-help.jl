@@ -25,8 +25,8 @@ end
 
 # For dynamic registrations during development
 # unregister(currently_running, Unregistration(;
-#     id=SIGNATURE_HELP_REGISTRATION_ID,
-#     method=SIGNATURE_HELP_REGISTRATION_METHOD))
+#     id = SIGNATURE_HELP_REGISTRATION_ID,
+#     method = SIGNATURE_HELP_REGISTRATION_METHOD))
 # register(currently_running, signature_help_registration())
 
 # utils

@@ -317,8 +317,8 @@ end
 
 # # For dynamic registrations during development
 # unregister(currently_running, Unregistration(;
-#     id=DIAGNOSTIC_REGISTRATION_ID,
-#     method=DIAGNOSTIC_REGISTRATION_METHOD))
+#     id = DIAGNOSTIC_REGISTRATION_ID,
+#     method = DIAGNOSTIC_REGISTRATION_METHOD))
 # register(currently_running, diagnostic_resistration())
 
 function handle_DocumentDiagnosticRequest(server::Server, msg::DocumentDiagnosticRequest)
