@@ -50,8 +50,7 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
 
     initialize_config!(server)
 
-    if supports(server,
-        :textDocument, :completion, :dynamicRegistration)
+    if supports(server, :textDocument, :completion, :dynamicRegistration)
         completionProvider = nothing # will be registered dynamically
     else
         completionProvider = completion_options()
@@ -60,8 +59,7 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
         end
     end
 
-    if supports(server,
-        :textDocument, :signatureHelp, :dynamicRegistration)
+    if supports(server, :textDocument, :signatureHelp, :dynamicRegistration)
         signatureHelpProvider = nothing # will be registered dynamically
     else
         signatureHelpProvider = signature_help_options()
@@ -70,8 +68,7 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
         end
     end
 
-    if supports(server,
-        :textDocument, :definition, :dynamicRegistration)
+    if supports(server, :textDocument, :definition, :dynamicRegistration)
         definitionProvider = nothing # will be registered dynamically
     else
         definitionProvider = definition_options()
@@ -80,8 +77,7 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
         end
     end
 
-    if supports(server,
-        :textDocument, :hover, :dynamicRegistration)
+    if supports(server, :textDocument, :hover, :dynamicRegistration)
         hoverProvider = nothing # will be registered dynamically
     else
         hoverProvider = hover_options()
@@ -100,8 +96,7 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
         end
     end
 
-    if supports(server,
-        :textDocument, :codeLens, :dynamicRegistration)
+    if supports(server, :textDocument, :codeLens, :dynamicRegistration)
         codeLensProvider = nothing # will be registered dynamically
     else
         codeLensProvider = code_lens_options()
@@ -110,8 +105,7 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
         end
     end
 
-    if supports(server,
-        :textDocument, :codeAction, :dynamicRegistration)
+    if supports(server, :textDocument, :codeAction, :dynamicRegistration)
         codeActionProvider = nothing # will be registered dynamically
     else
         codeActionProvider = code_action_options()
@@ -126,8 +120,7 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
         @info "Registering 'workspace/executeCommand' with `InitializeResponse`"
     end
 
-    if supports(server,
-        :textDocument, :formatting, :dynamicRegistration)
+    if supports(server, :textDocument, :formatting, :dynamicRegistration)
         documentFormattingProvider = nothing # will be registered dynamically
     else
         documentFormattingProvider = formatting_options()
@@ -136,8 +129,7 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
         end
     end
 
-    if supports(server,
-        :textDocument, :rangeFormatting, :dynamicRegistration)
+    if supports(server, :textDocument, :rangeFormatting, :dynamicRegistration)
         documentRangeFormattingProvider = nothing # will be registered dynamically
     else
         documentRangeFormattingProvider = range_formatting_options()
@@ -153,8 +145,7 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
     # and ideally we would want to perform static registration, it seems that some
     # clients do not support static registration during `InitializedNotification` properly,
     # so we are forced to register here instead
-    if supports(server,
-        :textDocument, :inlayHint, :dynamicRegistration)
+    if supports(server, :textDocument, :inlayHint, :dynamicRegistration)
         inlayHintProvider = nothing # will be registered dynamically
     else
         inlayHintProvider = inlay_hint_options()
@@ -216,8 +207,7 @@ function handle_InitializedNotification(server::Server)
 
     registrations = Registration[]
 
-    if supports(server,
-        :textDocument, :completion, :dynamicRegistration)
+    if supports(server, :textDocument, :completion, :dynamicRegistration)
         push!(registrations, completion_registration())
         if JETLS_DEV_MODE
             @info "Dynamically registering 'textDocument/completion' upon `InitializedNotification`"
@@ -228,8 +218,7 @@ function handle_InitializedNotification(server::Server)
         # since `CompletionRegistrationOptions` does not extend `StaticRegistrationOptions`.
     end
 
-    if supports(server,
-        :textDocument, :signatureHelp, :dynamicRegistration)
+    if supports(server, :textDocument, :signatureHelp, :dynamicRegistration)
         push!(registrations, signature_help_registration())
         if JETLS_DEV_MODE
             @info "Dynamically registering 'textDocument/signatureHelp' upon `InitializedNotification`"
@@ -240,8 +229,7 @@ function handle_InitializedNotification(server::Server)
         # since `SignatureHelpRegistrationOptions` does not extend `StaticRegistrationOptions`.
     end
 
-    if supports(server,
-        :textDocument, :definition, :dynamicRegistration)
+    if supports(server, :textDocument, :definition, :dynamicRegistration)
         push!(registrations, definition_registration())
         if JETLS_DEV_MODE
             @info "Dynamically registering 'textDocument/definition' upon `InitializedNotification`"
@@ -252,8 +240,7 @@ function handle_InitializedNotification(server::Server)
         # since `DefinitionRegistrationOptions` does not extend `StaticRegistrationOptions`.
     end
 
-    if supports(server,
-        :textDocument, :hover, :dynamicRegistration)
+    if supports(server, :textDocument, :hover, :dynamicRegistration)
         push!(registrations, hover_registration())
         if JETLS_DEV_MODE
             @info "Dynamically registering 'textDocument/hover' upon `InitializedNotification`"
@@ -272,8 +259,7 @@ function handle_InitializedNotification(server::Server)
         end
     end
 
-    if supports(server,
-        :textDocument, :codeLens, :dynamicRegistration)
+    if supports(server, :textDocument, :codeLens, :dynamicRegistration)
         push!(registrations, code_lens_registration())
         if JETLS_DEV_MODE
             @info "Dynamically registering 'textDocument/codeLens' upon `InitializedNotification`"
@@ -284,8 +270,7 @@ function handle_InitializedNotification(server::Server)
         # since `CodeLensRegistrationOptions` does not extend `StaticRegistrationOptions`.
     end
 
-    if supports(server,
-        :textDocument, :codeAction, :dynamicRegistration)
+    if supports(server, :textDocument, :codeAction, :dynamicRegistration)
         push!(registrations, code_action_registration())
         if JETLS_DEV_MODE
             @info "Dynamically registering 'textDocument/codeAction' upon `InitializedNotification`"
@@ -296,8 +281,7 @@ function handle_InitializedNotification(server::Server)
         # since `CodeActionRegistrationOptions` does not extend `StaticRegistrationOptions`.
     end
 
-    if supports(server,
-        :textDocument, :formatting, :dynamicRegistration)
+    if supports(server, :textDocument, :formatting, :dynamicRegistration)
         push!(registrations, formatting_registration())
         if JETLS_DEV_MODE
             @info "Dynamically registering 'textDocument/formatting' upon `InitializedNotification`"
@@ -308,8 +292,7 @@ function handle_InitializedNotification(server::Server)
         # since `DocumentFormattingRegistrationOptions` does not extend `StaticRegistrationOptions`.
     end
 
-    if supports(server,
-        :textDocument, :rangeFormatting, :dynamicRegistration)
+    if supports(server, :textDocument, :rangeFormatting, :dynamicRegistration)
         push!(registrations, range_formatting_registration())
         if JETLS_DEV_MODE
             @info "Dynamically registering 'textDocument/rangeFormatting' upon `InitializedNotification`"
@@ -320,8 +303,7 @@ function handle_InitializedNotification(server::Server)
         # since `DocumentRangeFormattingRegistrationOptions` does not extend `StaticRegistrationOptions`.
     end
 
-    if supports(server,
-        :textDocument, :inlayHint, :dynamicRegistration)
+    if supports(server, :textDocument, :inlayHint, :dynamicRegistration)
         push!(registrations, inlay_hint_registration(#=static=#false))
         if JETLS_DEV_MODE
             @info "Dynamically registering 'textDocument/inlayHint' upon `InitializedNotification`"
@@ -336,8 +318,7 @@ function handle_InitializedNotification(server::Server)
     #     end
     end
 
-    if supports(server,
-        :workspace, :didChangeWatchedFiles, :dynamicRegistration)
+    if supports(server, :workspace, :didChangeWatchedFiles, :dynamicRegistration)
         push!(registrations, did_change_watched_files_registration())
         if JETLS_DEV_MODE
             @info "Dynamically registering 'workspace/didChangeWatchedFiles' upon `InitializedNotification`"
