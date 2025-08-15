@@ -175,9 +175,9 @@ next_tok(tc::TokenCursor) =
     @something(Base.iterate(tc, (tc.position, tc.next_byte)), return nothing)[1]
 prev_tok(tc::TokenCursor) = tc.position <= 1 ? nothing :
     TokenCursor(tc.tokens, tc.position - 1, tc.next_byte - tc.tokens[tc.position].byte_span)
-first_byte(tc::TokenCursor) = tc.position <= 1 ? UInt32(1) : prev_tok(tc).next_byte
-last_byte(tc::TokenCursor) = tc.next_byte - UInt32(1)
-byte_range(tc::TokenCursor) = first_byte(tc):last_byte(tc)
+JS.first_byte(tc::TokenCursor) = tc.position <= 1 ? UInt32(1) : prev_tok(tc).next_byte
+JS.last_byte(tc::TokenCursor) = tc.next_byte - UInt32(1)
+JS.byte_range(tc::TokenCursor) = JS.first_byte(tc):JS.last_byte(tc)
 this(tc::TokenCursor) = tc.tokens[tc.position]
 
 """
@@ -245,7 +245,7 @@ prev_nontrivia_byte(ps, 20)  # returns nothing (beyond input)
 ```
 """
 prev_nontrivia_byte(args...; kwargs...) =
-    last_byte(@something prev_nontrivia(args...; kwargs...) return nothing)
+    JS.last_byte(@something prev_nontrivia(args...; kwargs...) return nothing)
 
 """
     prev_nontrivia(ps::JS.ParseStream, b::Int; pass_newlines::Bool=false, strict::Bool=false)
@@ -319,7 +319,7 @@ next_nontrivia_byte(ps, 40)  # returns nothing
 ```
 """
 next_nontrivia_byte(args...; kwargs...) =
-    first_byte(@something next_nontrivia(args...; kwargs...) return nothing)
+    JS.first_byte(@something next_nontrivia(args...; kwargs...) return nothing)
 
 """
     next_nontrivia(ps::JS.ParseStream, b::Int; pass_newlines=false, strict=false)

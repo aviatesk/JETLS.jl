@@ -61,7 +61,7 @@ function syntactic_inlay_hints!(inlay_hints::Vector{InlayHint}, fi::FileInfo, ra
                 elseif JS.kind(this(nexttc)) === JS.K"NewlineWs"
                     commentrange = bstart:length(fi.parsed_stream.textbuf)
                 else
-                    commentrange = bstart:first_byte(nexttc)-1
+                    commentrange = bstart:JS.first_byte(nexttc)-1
                 end
                 commentstr = String(fi.parsed_stream.textbuf[commentrange])
                 if occursin(modname, commentstr)
