@@ -128,12 +128,12 @@
     """
     documentOnTypeFormattingProvider::Union{Nothing, DocumentOnTypeFormattingOptions} = nothing
 
-    # """
-    # The server provides rename support. RenameOptions may only be
-    # specified if the client states that it supports
-    # `prepareSupport` in its initial `initialize` request.
-    # """
-    # renameProvider::Union{Nothing, Bool, RenameOptions} = nothing
+    """
+    The server provides rename support. RenameOptions may only be
+    specified if the client states that it supports
+    `prepareSupport` in its initial `initialize` request.
+    """
+    renameProvider::Union{Nothing, Bool, RenameOptions} = nothing
 
     # """
     # The server provides folding provider support.
@@ -390,10 +390,10 @@ end
     """
     onTypeFormatting::Union{DocumentOnTypeFormattingClientCapabilities, Nothing} = nothing
 
-    # """
-    # Capabilities specific to the `textDocument/rename` request.
-    # """
-    # rename::Union{RenameClientCapabilities, Nothing} = nothing
+    """
+    Capabilities specific to the `textDocument/rename` request.
+    """
+    rename::Union{RenameClientCapabilities, Nothing} = nothing
 
     """
     Capabilities specific to the `textDocument/publishDiagnostics` notification.
