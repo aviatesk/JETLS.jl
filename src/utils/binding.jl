@@ -1,6 +1,6 @@
 # JuliaLowering also throws away this information in resolve_scopes.  Go
 # backwards through lowering to seach for it.
-function binding_scope_layer(ctx3, binding::JL.BindingInfo)
+function binding_scope_layer(ctx3::JLCtx3, binding::JL.BindingInfo)
     st3 = JL.binding_ex(ctx3, binding.id)
     while get(st3, :source, nothing) isa JL.NodeId
         JL.hasattr(st3, :scope_layer) && return st3.scope_layer
@@ -16,7 +16,7 @@ Heuristic for showing completions.  A binding is relevant when all are true:
 - if nonglobal, it's defined before the cursor
 - (if global) it doesn't contain or immediately precede the cursor
 """
-function is_relevant(ctx3::JL.AbstractLoweringContext,
+function is_relevant(ctx3::JLCtx3,
                      binding::JL.BindingInfo,
                      cursor::Int)
     (;start, stop) = JS.byte_range(JL.binding_ex(ctx3, binding.id))
@@ -56,7 +56,7 @@ Throw if lowering fails otherwise.
 Note that ctx objects share mutable information, so we only return `ctx3`
 """
 function jl_lower_for_scope_resolution(
-        mod::Module, st0::JL.SyntaxTree;
+        mod::Module, st0::SyntaxTree0;
         trim_error_nodes::Bool = true,
         recover_from_macro_errors::Bool = true,
     )
@@ -64,25 +64,25 @@ function jl_lower_for_scope_resolution(
         st0 = without_kinds(st0, JS.KSet"error")
     end
     ctx1, st1 = try
-        JL.expand_forms_1(mod, st0)
+        JL.expand_forms_1(mod, st0)::Tuple{JLCtx1,SyntaxTree1}
     catch err
         recover_from_macro_errors || rethrow(err)
         JETLS_DEBUG_LOWERING && @warn "Error in macro expansion; trimming and retrying"
         JETLS_DEBUG_LOWERING && showerror(stderr, err)
         JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
         st0 = without_kinds(st0, JS.KSet"macrocall")
-        JL.expand_forms_1(mod, st0)
+        JL.expand_forms_1(mod, st0)::Tuple{JLCtx1,SyntaxTree1}
     end
     return _jl_lower_for_scope_resolution(ctx1, st0, st1)
 end
-function jl_lower_for_scope_resolution(st0::JL.SyntaxTree; kwargs...)
+function jl_lower_for_scope_resolution(st0::SyntaxTree0; kwargs...)
     JETLS_DEBUG_LOWERING && @warn "No lowering module provided; non-Base macrocalls may fail"
     return jl_lower_for_scope_resolution(fallback_lowering_module, st0; kwargs...)
 end
 
-function _jl_lower_for_scope_resolution(ctx1, st0, st1)
-    ctx2, st2 = JL.expand_forms_2(ctx1, st1)
-    ctx3, st3 = JL.resolve_scopes(ctx2, st2)
+function _jl_lower_for_scope_resolution(ctx1::JLCtx1, st0::SyntaxTree0, st1::SyntaxTree1)
+    ctx2, st2 = JL.expand_forms_2(ctx1, st1)::Tuple{JLCtx2,SyntaxTree2}
+    ctx3, st3 = JL.resolve_scopes(ctx2, st2)::Tuple{JLCtx3,SyntaxTree3}
     return (; st0, st1, st2, st3, ctx3)
 end
 
@@ -94,7 +94,7 @@ JuliaLowering throws away the mapping from scopes to bindings (scopes are stored
 as an ephemeral stack.)  We work around this by taking all available bindings
 and filtering out any that aren't declared in a scope containing the cursor.
 """
-function cursor_bindings(st0_top::JL.SyntaxTree, b_top::Int, mod::Module)
+function cursor_bindings(st0_top::SyntaxTree0, b_top::Int, mod::Module)
     st0, b = @something greatest_local(st0_top, b_top) return nothing # nothing we can lower
     (; ctx3, st2) = try
         jl_lower_for_scope_resolution(mod, st0)
@@ -109,28 +109,35 @@ function cursor_bindings(st0_top::JL.SyntaxTree, b_top::Int, mod::Module)
     binfos = filter(binfo -> is_relevant(ctx3, binfo, b), ctx3.bindings.info)
 
     # for each binding: binfo, all syntaxtrees containing it, and the scope it belongs to
-    bscopeinfos = Tuple{JL.BindingInfo, JL.SyntaxList, Union{JL.SyntaxTree, Nothing}}[]
+    bscopeinfos = Tuple{JL.BindingInfo, Union{SyntaxTree2, Nothing}}[]
     for binfo in binfos
-        # TODO: find tree parents instead of byte parents?
+        # # TODO: find tree parents instead of byte parents?
+        # bas = byte_ancestors(st2, JS.byte_range(JL.binding_ex(ctx3, binfo.id))) do st2′::JL.SyntaxTree
+        #     # find the innermost hard scope containing this binding decl.  we shouldn't
+        #     # be in multiple overlapping scopes that are not direct ancestors; that
+        #     # should indicate a provenance failure
+        #     JS.kind(st2′) in JS.KSet"scope_block lambda module toplevel"
+        # end
+        # push!(bscopeinfos, (binfo, isempty(bas) ? nothing : first(bas)))
         bas = byte_ancestors(st2, JS.byte_range(JL.binding_ex(ctx3, binfo.id)))
         # find the innermost hard scope containing this binding decl.  we shouldn't
         # be in multiple overlapping scopes that are not direct ancestors; that
         # should indicate a provenance failure
         i = findfirst(ba -> JS.kind(ba) in JS.KSet"scope_block lambda module toplevel", bas)
-        push!(bscopeinfos, (binfo, bas, isnothing(i) ? nothing : bas[i]))
+        push!(bscopeinfos, (binfo, isnothing(i) ? nothing : bas[i]))
     end
 
     cursor_scopes = byte_ancestors(st2, b)
 
     # ignore scopes we aren't in
-    filter!(((_, _, bs),) -> isnothing(bs) || bs._id in cursor_scopes.ids,
+    filter!(((_, bs),) -> isnothing(bs) || bs._id in cursor_scopes.ids,
             bscopeinfos)
 
     # Now eliminate duplicates by name.
     # - Prefer any local binding belonging to a tighter scope (lower bdistance)
     # - If a static parameter and a local of the same name exist in the same
     #   scope (impossible in julia), the local is internal and should be ignored
-    bdistances = map(((_, _, bs),) -> if isnothing(bs)
+    bdistances = map(((_, bs),) -> if isnothing(bs)
                          lastindex(cursor_scopes.ids) + 1
                      else
                          findfirst(cs -> bs._id === cs, cursor_scopes.ids)
@@ -139,7 +146,7 @@ function cursor_bindings(st0_top::JL.SyntaxTree, b_top::Int, mod::Module)
 
     seen = Dict{String, Int}()
     for i in eachindex(bscopeinfos)
-        (binfo, _, _) = bscopeinfos[i]
+        (binfo, _) = bscopeinfos[i]
 
         prev = get(seen, binfo.name, nothing)
         if (isnothing(prev)
@@ -152,7 +159,7 @@ function cursor_bindings(st0_top::JL.SyntaxTree, b_top::Int, mod::Module)
     end
 
     return map(values(seen)) do i
-        (binfo, _, _) = bscopeinfos[i]
+        (binfo, _) = bscopeinfos[i]
         # distance from the cursor
         dist = abs(b - JS.last_byte(JL.binding_ex(ctx3, binfo.id)))
         return (binfo, JL.binding_ex(ctx3, binfo.id), dist)
@@ -271,8 +278,8 @@ function _lookup_binding_definitions!(sl::JL.SyntaxList, st3::JL.SyntaxTree, bin
     return reverse!(deduplicate_syntaxlist(sl))
 end
 
-struct BindingOccurence{Tree3<:JL.SyntaxTree}
-    tree::Tree3
+struct BindingOccurence
+    tree::SyntaxTree3
     kind::Symbol
 end
 
@@ -311,10 +318,10 @@ a set of `BindingOccurence` objects that record where and how the binding appear
     variable diagnostics or comprehensive binding analysis.
 """
 function compute_binding_occurrences(
-        ctx3::JL.VariableAnalysisContext, st3::Tree3;
+        ctx3::JLCtx3, st3::SyntaxTree3;
         ismacro::Union{Nothing,Base.RefValue{Bool}} = nothing
-    ) where Tree3<:JL.SyntaxTree
-    occurrences = Dict{JL.BindingInfo,Set{BindingOccurence{Tree3}}}()
+    )
+    occurrences = Dict{JL.BindingInfo,Set{BindingOccurence}}()
 
     # group together argument bindings with the same name
     same_arg_bindings = Dict{Symbol,Vector{Int}}()
@@ -326,7 +333,7 @@ function compute_binding_occurrences(
         elseif binfo.kind !== :local
             continue
         end
-        occurrences[binfo] = Set{BindingOccurence{Tree3}}()
+        occurrences[binfo] = Set{BindingOccurence}()
     end
 
     if !isempty(occurrences)
@@ -348,10 +355,10 @@ function compute_binding_occurrences(
     return occurrences
 end
 
-function record_occurrence!(occurrences::Dict{JL.BindingInfo,Set{BindingOccurence{Tree3}}},
-        kind::Symbol, st::Tree3, ctx3::JL.VariableAnalysisContext;
+function record_occurrence!(occurrences::Dict{JL.BindingInfo,Set{BindingOccurence}},
+        kind::Symbol, st::SyntaxTree3, ctx3::JLCtx3;
         skip_recording::Union{Nothing,Set{JL.BindingInfo}} = nothing
-    ) where Tree3<:JL.SyntaxTree
+    )
     if JS.kind(st) === JS.K"BindingId"
         binfo = JL.lookup_binding(ctx3, st)
         record_occurrence!(occurrences, kind, st, binfo; skip_recording)
@@ -359,10 +366,10 @@ function record_occurrence!(occurrences::Dict{JL.BindingInfo,Set{BindingOccurenc
     return occurrences
 end
 
-function record_occurrence!(occurrences::Dict{JL.BindingInfo,Set{BindingOccurence{Tree3}}},
-        kind::Symbol, st::Tree3, binfo::JL.BindingInfo;
+function record_occurrence!(occurrences::Dict{JL.BindingInfo,Set{BindingOccurence}},
+        kind::Symbol, st::SyntaxTree3, binfo::JL.BindingInfo;
         skip_recording::Union{Nothing,Set{JL.BindingInfo}} = nothing
-    ) where Tree3<:JL.SyntaxTree
+    )
     if haskey(occurrences, binfo) && (binfo ∉ @something skip_recording ())
         push!(occurrences[binfo], BindingOccurence(st, kind))
     end
@@ -370,12 +377,12 @@ function record_occurrence!(occurrences::Dict{JL.BindingInfo,Set{BindingOccurenc
 end
 
 function compute_binding_occurrences!(
-        occurrences::Dict{JL.BindingInfo,Set{BindingOccurence{Tree3}}},
-        ctx3::JL.VariableAnalysisContext, st3::Tree3;
+        occurrences::Dict{JL.BindingInfo,Set{BindingOccurence}},
+        ctx3::JLCtx3, st3::SyntaxTree3;
         ismacro::Union{Nothing,Base.RefValue{Bool}} = nothing,
         include_decls::Bool = false,
         skip_recording_uses::Union{Nothing,Set{JL.BindingInfo}} = nothing
-    ) where Tree3<:JL.SyntaxTree
+    )
     stack = JL.SyntaxList(st3)
     push!(stack, st3)
     infunc = false

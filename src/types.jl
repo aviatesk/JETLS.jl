@@ -1,4 +1,10 @@
-const SyntaxTree0 = typeof(JS.build_tree(JL.SyntaxTree, JS.parse!(JS.ParseStream(""))))
+const SyntaxTree0, SyntaxTree1, SyntaxTree2, SyntaxTree3, JLCtx1, JLCtx2, JLCtx3 = let
+    st0 = JS.build_tree(JL.SyntaxTree, JS.parse!(JS.ParseStream("")))
+    ctx1, st1 = JL.expand_forms_1(@__MODULE__, st0)
+    ctx2, st2 = JL.expand_forms_2(ctx1, st1)
+    ctx3, st3 = JL.resolve_scopes(ctx2, st2)
+    typeof(st0), typeof(st1), typeof(st2), typeof(st3), typeof(ctx1), typeof(ctx2), typeof(ctx3)
+end
 
 abstract type ExtraDiagnosticsKey end
 to_file_info(key::ExtraDiagnosticsKey) = to_file_info_impl(key)::FileInfo
