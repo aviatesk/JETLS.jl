@@ -178,7 +178,7 @@ function global_completions!(items::Dict{String, CompletionItem}, state::ServerS
     completion_module = mod
 
     prev_token = token_before_offset(fi, pos)
-    prev_kind = isnothing(prev_token) ? nothing : JS.kind(this(prev_token))
+    prev_kind = isnothing(prev_token) ? nothing : JS.kind(prev_token)
 
     # Case: `@│`
     if prev_kind === JS.K"@"

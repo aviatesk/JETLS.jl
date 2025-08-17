@@ -226,7 +226,7 @@ end
     # Test with newlines
     let code = "x\n  y"
         ps = parsedstream(code)
-        @test JETLS.JS.kind(JETLS.this(@something JETLS.prev_nontrivia(ps, 2))) == JETLS.JS.K"NewlineWs"
+        @test JS.kind(@something JETLS.prev_nontrivia(ps, 2)) == JS.K"NewlineWs"
         @test String(ps.textbuf[JS.byte_range(@something JETLS.prev_nontrivia(ps, 2; pass_newlines=true))]) == "x"
         @test String(ps.textbuf[JS.byte_range(@something JETLS.prev_nontrivia(ps, sizeof(code)))]) == "y"
         @test isnothing(JETLS.prev_nontrivia(ps, sizeof(code)+1))  # beyond input
@@ -236,7 +236,7 @@ end
     let code = "x # comment\ny"
         ps = parsedstream(code)
         @test String(ps.textbuf[JS.byte_range(@something JETLS.prev_nontrivia(ps, 5))]) == "x"  # from within comment
-        @test JETLS.JS.kind(JETLS.this(@something JETLS.prev_nontrivia(ps, sizeof(code)-1))) == JETLS.JS.K"NewlineWs"  # at newline
+        @test JS.kind(@something JETLS.prev_nontrivia(ps, sizeof(code)-1)) == JS.K"NewlineWs"  # at newline
         @test String(ps.textbuf[JS.byte_range(@something JETLS.prev_nontrivia(ps, sizeof(code)-1; pass_newlines=true))]) == "x"
         @test String(ps.textbuf[JS.byte_range(@something JETLS.prev_nontrivia(ps, sizeof(code)))]) == "y"
     end
@@ -321,19 +321,19 @@ end
     # Test with pass_newlines=true
     let code = "x\n  y"
         ps = parsedstream(code)
-        @test JETLS.JS.kind(JETLS.this(@something JETLS.next_nontrivia(ps, 2))) == JETLS.JS.K"NewlineWs"
+        @test JS.kind(@something JETLS.next_nontrivia(ps, 2)) == JS.K"NewlineWs"
         @test String(ps.textbuf[JS.byte_range(@something JETLS.next_nontrivia(ps, 2; pass_newlines=true))]) == "y"
     end
 
     # Test with comments (comments are considered trivia)
     let code = "x # comment\ny"
         ps = parsedstream(code)
-        @test JETLS.JS.kind(JETLS.this(@something JETLS.next_nontrivia(ps, sizeof("x #")))) == JETLS.JS.K"NewlineWs"
+        @test JS.kind(@something JETLS.next_nontrivia(ps, sizeof("x #"))) == JS.K"NewlineWs"
         @test String(ps.textbuf[JS.byte_range(@something JETLS.next_nontrivia(ps, sizeof("x #"); pass_newlines=true))]) == "y"
 
         code = "x \n#= multi-line\ncomment =#\ny"
         ps = parsedstream(code)
-        @test JETLS.JS.kind(JETLS.this(@something JETLS.next_nontrivia(ps, sizeof("x \n#")))) == JETLS.JS.K"NewlineWs"
+        @test JS.kind(@something JETLS.next_nontrivia(ps, sizeof("x \n#"))) == JS.K"NewlineWs"
         @test String(ps.textbuf[JS.byte_range(@something JETLS.next_nontrivia(ps, sizeof("x \n#"); pass_newlines=true))]) == "y"
     end
 

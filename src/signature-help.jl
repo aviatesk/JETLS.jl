@@ -363,7 +363,7 @@ cursor would be descendents of it.
 function cursor_call(ps::JS.ParseStream, st0::JL.SyntaxTree, b::Int)
     # disable signature help if invoked within comment scope
     tc = token_before_offset(ps, b)
-    if !isnothing(tc) && JS.kind(this(tc)) === K"Comment"
+    if !isnothing(tc) && JS.kind(tc) === K"Comment"
         return nothing
     end
 

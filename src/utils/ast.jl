@@ -172,13 +172,14 @@ Base.eltype(::Type{TokenCursor}) = TokenCursor
 Base.IteratorSize(::Type{TokenCursor}) = Base.HasLength()
 Base.length(tc::TokenCursor) = length(tc.tokens)
 next_tok(tc::TokenCursor) =
-    @something(Base.iterate(tc, (tc.position, tc.next_byte)), return nothing)[1]
+    @something(iterate(tc, (tc.position, tc.next_byte)), return nothing)[1]
 prev_tok(tc::TokenCursor) = tc.position <= 1 ? nothing :
     TokenCursor(tc.tokens, tc.position - 1, tc.next_byte - tc.tokens[tc.position].byte_span)
+this(tc::TokenCursor) = tc.tokens[tc.position]
 JS.first_byte(tc::TokenCursor) = tc.position <= 1 ? UInt32(1) : prev_tok(tc).next_byte
 JS.last_byte(tc::TokenCursor) = tc.next_byte - UInt32(1)
 JS.byte_range(tc::TokenCursor) = JS.first_byte(tc):JS.last_byte(tc)
-this(tc::TokenCursor) = tc.tokens[tc.position]
+JS.kind(tc::TokenCursor) = JS.kind(this(tc))
 
 """
     token_at_offset(fi::FileInfo, offset::Int)
@@ -371,7 +372,7 @@ function find_nontrivia(prev_or_next::Bool, ps::JS.ParseStream, b::Int; pass_new
 end
 
 function is_trivia(tc::TokenCursor, pass_newlines::Bool)
-    k = kind(this(tc))
+    k = kind(tc)
     JS.is_whitespace(k) && (pass_newlines || k !== JS.K"NewlineWs")
 end
 
