@@ -171,6 +171,10 @@ Base.IteratorEltype(::Type{TokenCursor}) = Base.HasEltype()
 Base.eltype(::Type{TokenCursor}) = TokenCursor
 Base.IteratorSize(::Type{TokenCursor}) = Base.HasLength()
 Base.length(tc::TokenCursor) = length(tc.tokens)
+function Base.show(io::IO, tc::TokenCursor)
+    print(io, "TokenCursor at position ", tc.position, " ")
+    show(io, this(tc))
+end
 next_tok(tc::TokenCursor) =
     @something(iterate(tc, (tc.position, tc.next_byte)), return nothing)[1]
 prev_tok(tc::TokenCursor) = tc.position <= 1 ? nothing :

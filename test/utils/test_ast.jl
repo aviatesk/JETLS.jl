@@ -205,6 +205,9 @@ end
         @test String(ps.textbuf[JS.byte_range(toks[1])]) == "abc"
         @test String(ps.textbuf[JS.byte_range(toks[2])]) == " "
         @test String(ps.textbuf[JS.byte_range(toks[3])]) == "def"
+
+        @test startswith(sprint(show, toks[1]), "TokenCursor at position 1 Identifier")
+        @test startswith(sprint(show, toks[2]), "TokenCursor at position 2 Whitespace")
     end
 end
 
