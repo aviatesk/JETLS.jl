@@ -160,24 +160,31 @@ function cursor_bindings(st0_top::JL.SyntaxTree, b_top::Int, mod::Module)
     end
 end
 
-function __select_target_binding(ctx3::JL.VariableAnalysisContext, st3::JL.SyntaxTree, offset::Int)
-    function select(st::JL.SyntaxTree)
-        JS.kind(st) === JS.K"BindingId" || return false
+function find_target_binding(ctx3::JL.VariableAnalysisContext, st3::JL.SyntaxTree, offset::Int)
+    target_binding = nothing
+    traverse(st3) do st::JL.SyntaxTree
+        k = JS.kind(st)
+        if k === JS.K"lambda" && is_kwcall_lambda(ctx3, st)
+            # Don't select a binding with `kwcall` definition.
+            # What usually interesting to us is information about the main method.
+            return TraversalNoRecurse()
+        end
+        offset in JS.byte_range(st) || return nothing
+        k === JS.K"BindingId" || return nothing
         binfo = JL.lookup_binding(ctx3, st)
-        return !binfo.is_internal && !startswith(binfo.name, "#")
-    end
-
-    bas = byte_ancestors(select, st3, offset)
-    if isempty(bas)
-        offset > 0 || return nothing
-        # Support cases like `var│`, `func│(5)`
-        bas = byte_ancestors(select, st3, offset - 1)
-        if isempty(bas)
+        if binfo.is_internal || startswith(binfo.name, "#")
             return nothing
         end
+        target_binding = st
     end
-    return first(bas)
+    return target_binding
 end
+
+__select_target_binding(ctx3::JL.VariableAnalysisContext, st3::JL.SyntaxTree, offset::Int) =
+    @something(
+        find_target_binding(ctx3, st3, offset),
+        find_target_binding(ctx3, st3, offset-1), # Support cases like `var│`, `func│(5)`
+        return nothing)
 
 function _select_target_binding(st0_top::JL.SyntaxTree, offset::Int, mod::Module)
     st0, b = @something greatest_local(st0_top, offset) return nothing # nothing we can lower
@@ -367,6 +374,26 @@ function record_occurrence!(occurrences::Dict{JL.BindingInfo,Set{BindingOccurenc
     return occurrences
 end
 
+function is_kwcall_lambda(ctx3::JL.VariableAnalysisContext, st3::JL.SyntaxTree)
+    @assert JS.kind(st3) === JS.K"lambda" "Expected `lambda` kind"
+    JS.numchildren(st3) ≥ 1 || return false
+    arglist = st3[1]
+    na = JS.numchildren(arglist)
+    return na ≥ 3 &&
+        JS.kind(arglist[1]) === JS.K"BindingId" &&
+        let arg1info = JL.lookup_binding(ctx3, arglist[1])
+            arg1info.is_internal && arg1info.name == "#self#"
+        end &&
+        JS.kind(arglist[2]) === JS.K"BindingId" &&
+        let arg2info = JL.lookup_binding(ctx3, arglist[2])
+            arg2info.is_internal && arg2info.name == "kws"
+        end &&
+        JS.kind(arglist[3]) === JS.K"BindingId" &&
+        let arg3info = JL.lookup_binding(ctx3, arglist[3])
+            arg3info.is_internal && (arg3info.name == "#self#" || arg3info.name == "#ctor-self#")
+        end
+end
+
 function compute_binding_occurrences!(
         occurrences::Dict{JL.BindingInfo,Set{BindingOccurence{Tree3}}},
         ctx3::JL.VariableAnalysisContext, st3::Tree3;
@@ -430,20 +457,7 @@ function compute_binding_occurrences!(
                 for i = 1:na
                     record_occurrence!(occurrences, :def, arglist[i], ctx3)
                 end
-                is_kwcall = na ≥ 3 &&
-                    JS.kind(arglist[1]) === JS.K"BindingId" &&
-                    let arg1info = JL.lookup_binding(ctx3, arglist[1])
-                        arg1info.is_internal && arg1info.name == "#self#"
-                    end &&
-                    JS.kind(arglist[2]) === JS.K"BindingId" &&
-                    let arg2info = JL.lookup_binding(ctx3, arglist[2])
-                        arg2info.is_internal && arg2info.name == "kws"
-                    end &&
-                    JS.kind(arglist[3]) === JS.K"BindingId" &&
-                    let arg3info = JL.lookup_binding(ctx3, arglist[3])
-                        arg3info.is_internal && (arg3info.name == "#self#" || arg3info.name == "#ctor-self#")
-                    end
-                if is_kwcall
+                if is_kwcall_lambda(ctx3, st)
                     # This is `kwcall` method -- now need to perform some special case
                     # Julia checks whether keyword arguments are assigned in `kwcall` methods,
                     # but JL actually introduces local bindings for those keyword arguments for reflection purposes:

@@ -16,6 +16,15 @@ function with_target_binding(f, text::AbstractString; kwargs...)
     end
 end
 
+function _with_target_binding(f, text::AbstractString; kwargs...)
+    clean_code, positions = JETLS.get_text_and_positions(text; kwargs...)
+    st0_top = jlparse(clean_code)
+    for (i, pos) in enumerate(positions)
+        offset = JETLS.xy_to_offset(clean_code, pos)
+        f(i, JETLS._select_target_binding(st0_top, offset, lowering_module))
+    end
+end
+
 @testset "select_target_binding" begin
     let cnt = 0
         with_target_binding("""
@@ -51,6 +60,28 @@ end
             cnt += 1
         end
         @test cnt == 2
+    end
+
+    # Don't select a binding for keyword argument within `kwcall`
+    let cnt = 0
+        local binfo = nothing
+        _with_target_binding("""
+            function func(x; │kw│=nothing)
+                println(│kw│)
+            end
+            """) do i, (; ctx3, binding)
+            if i in (1, 2)
+                @test JS.sourcetext(binding) == "kw"
+                @test JS.source_line(binding) == 1
+                binfo = JL.lookup_binding(ctx3, binding)
+            else
+                @test JS.sourcetext(binding) == "kw"
+                @test JS.source_line(binding) == 2
+                @test JL.lookup_binding(ctx3, binding).id == binfo.id
+            end
+            cnt += 1
+        end
+        @test cnt == 4
     end
 end
 
