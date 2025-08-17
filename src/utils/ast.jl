@@ -50,10 +50,14 @@ function traverse(@specialize(callback), st::JL.SyntaxTree)
 end
 traverse(@specialize(callback), sn::JL.SyntaxNode) = _traverse!(callback, JS.SyntaxNode[sn])
 
+struct TraversalTerminator end
+struct TraversalNoRecurse end
 function _traverse!(@specialize(callback), stack)
     while !isempty(stack)
         x = pop!(stack)
-        callback(x)
+        ret = callback(x)
+        ret === TraversalTerminator() && break
+        ret === TraversalNoRecurse() && continue
         if JS.numchildren(x) === 0
             continue
         end
