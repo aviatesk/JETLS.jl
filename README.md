@@ -139,6 +139,10 @@ the list itself is subject to change.
   - [ ] Make formatting backend configurable
   - [x] [Runic](https://github.com/fredrikekre/Runic.jl) integration
   - [ ] [JuliaFormatter](https://github.com/domluna/JuliaFormatter.jl) integration
+- Rename
+  - [x] Local binding
+  - [ ] Global binding
+  - [ ] Field name
 - TestRunner.jl integration
   - [x] Code lens for running individual `@testset`s
   - [x] Code actions for running individual `@testset`s
