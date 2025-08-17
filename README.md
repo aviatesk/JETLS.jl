@@ -117,6 +117,7 @@ the list itself is subject to change.
   - [x] Local binding completion
   - [x] LaTeX/Emoji completion
   - [ ] Method signature completion
+  - [ ] Property completion
 - Signature Help
   - [x] Basic implementation
   - [x] Macro support
