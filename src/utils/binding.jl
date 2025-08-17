@@ -109,28 +109,29 @@ function cursor_bindings(st0_top::JL.SyntaxTree, b_top::Int, mod::Module)
     binfos = filter(binfo -> is_relevant(ctx3, binfo, b), ctx3.bindings.info)
 
     # for each binding: binfo, all syntaxtrees containing it, and the scope it belongs to
-    bscopeinfos = Tuple{JL.BindingInfo, JL.SyntaxList, Union{JL.SyntaxTree, Nothing}}[]
+    bscopeinfos = Tuple{JL.BindingInfo, Union{JL.SyntaxTree, Nothing}}[]
     for binfo in binfos
         # TODO: find tree parents instead of byte parents?
-        bas = byte_ancestors(st2, JS.byte_range(JL.binding_ex(ctx3, binfo.id)))
-        # find the innermost hard scope containing this binding decl.  we shouldn't
-        # be in multiple overlapping scopes that are not direct ancestors; that
-        # should indicate a provenance failure
-        i = findfirst(ba -> JS.kind(ba) in JS.KSet"scope_block lambda module toplevel", bas)
-        push!(bscopeinfos, (binfo, bas, isnothing(i) ? nothing : bas[i]))
+        bas = byte_ancestors(st2, JS.byte_range(JL.binding_ex(ctx3, binfo.id))) do st2′::JL.SyntaxTree
+            # find the innermost hard scope containing this binding decl.  we shouldn't
+            # be in multiple overlapping scopes that are not direct ancestors; that
+            # should indicate a provenance failure
+            JS.kind(st2′) in JS.KSet"scope_block lambda module toplevel"
+        end
+        push!(bscopeinfos, (binfo, isempty(bas) ? nothing : first(bas)))
     end
 
     cursor_scopes = byte_ancestors(st2, b)
 
     # ignore scopes we aren't in
-    filter!(((_, _, bs),) -> isnothing(bs) || bs._id in cursor_scopes.ids,
+    filter!(((_, bs),) -> isnothing(bs) || bs._id in cursor_scopes.ids,
             bscopeinfos)
 
     # Now eliminate duplicates by name.
     # - Prefer any local binding belonging to a tighter scope (lower bdistance)
     # - If a static parameter and a local of the same name exist in the same
     #   scope (impossible in julia), the local is internal and should be ignored
-    bdistances = map(((_, _, bs),) -> if isnothing(bs)
+    bdistances = map(((_, bs),) -> if isnothing(bs)
                          lastindex(cursor_scopes.ids) + 1
                      else
                          findfirst(cs -> bs._id === cs, cursor_scopes.ids)
@@ -139,7 +140,7 @@ function cursor_bindings(st0_top::JL.SyntaxTree, b_top::Int, mod::Module)
 
     seen = Dict{String, Int}()
     for i in eachindex(bscopeinfos)
-        (binfo, _, _) = bscopeinfos[i]
+        (binfo, _) = bscopeinfos[i]
 
         prev = get(seen, binfo.name, nothing)
         if (isnothing(prev)
@@ -152,7 +153,7 @@ function cursor_bindings(st0_top::JL.SyntaxTree, b_top::Int, mod::Module)
     end
 
     return map(values(seen)) do i
-        (binfo, _, _) = bscopeinfos[i]
+        (binfo, _) = bscopeinfos[i]
         # distance from the cursor
         dist = abs(b - JS.last_byte(JL.binding_ex(ctx3, binfo.id)))
         return (binfo, JL.binding_ex(ctx3, binfo.id), dist)
@@ -166,26 +167,23 @@ function __select_target_binding(ctx3::JL.VariableAnalysisContext, st3::JL.Synta
         return !binfo.is_internal && !startswith(binfo.name, "#")
     end
 
-    bas = byte_ancestors(st3, offset)
-    i = findfirst(select, bas)
-    if isnothing(i)
+    bas = byte_ancestors(select, st3, offset)
+    if isempty(bas)
         offset > 0 || return nothing
         # Support cases like `var│`, `func│(5)`
-        bas = byte_ancestors(st3, offset - 1)
-        i = findfirst(select, bas)
-        if isnothing(i)
+        bas = byte_ancestors(select, st3, offset - 1)
+        if isempty(bas)
             return nothing
         end
     end
-    return bas[i]
+    return first(bas)
 end
 
 function _select_target_binding(st0_top::JL.SyntaxTree, offset::Int, mod::Module)
     st0, b = @something greatest_local(st0_top, offset) return nothing # nothing we can lower
 
-    bas = byte_ancestors(st0, offset)
-    macname_i = findfirst(ba->JS.kind(ba)===JS.K"MacroName", bas)
-    if !isnothing(macname_i)
+    bas = byte_ancestors(st0′::JL.SyntaxTree->JS.kind(st0′)===JS.K"MacroName", st0, offset)
+    if !isempty(bas)
         # Our definition generally won't be local, and lowering would destroy it
         # anyway.  Defer to global logic.
         return nothing
