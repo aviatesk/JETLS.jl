@@ -159,21 +159,13 @@ function cursor_bindings(st0_top::JL.SyntaxTree, b_top::Int, mod::Module)
     end
 end
 
-"""
-    select_target_binding(ctx3::JL.VariableAnalysisContext, st3::JL.SyntaxTree, offset::Int) -> target_binding::Union{Nothing,JL.SyntaxTree}
-
-For the same purpose as [`select_target_node`](@ref), returns the `target_binding::JL.SyntaxTree`
-closest to the cursor at the `offset` position.
-Note that `st3::JL.SyntaxTree` has been processed by `JL.resolve_scopes` and corresponds to
-`ctx3::JL.VariableAnalysisContext`.
-It is guaranteed that `target_binding` satisfies `JS.kind(target_binding) === JS.K"BindingId"`.
-"""
-function select_target_binding(ctx3::JL.VariableAnalysisContext, st3::JL.SyntaxTree, offset::Int)
+function __select_target_binding(ctx3::JL.VariableAnalysisContext, st3::JL.SyntaxTree, offset::Int)
     function select(st::JL.SyntaxTree)
         JS.kind(st) === JS.K"BindingId" || return false
         binfo = JL.lookup_binding(ctx3, st)
         return !binfo.is_internal
     end
+
     bas = byte_ancestors(st3, offset)
     i = findfirst(select, bas)
     if isnothing(i)
@@ -188,18 +180,7 @@ function select_target_binding(ctx3::JL.VariableAnalysisContext, st3::JL.SyntaxT
     return bas[i]
 end
 
-"""
-    select_target_binding_definitions(st0_top::JL.SyntaxTree, offset::Int, mod::Module) ->
-        nothing or (binding::JL.SyntaxTree, definitions::JL.SyntaxList)
-
-Find the binding at the cursor position and return all of its definition sites.
-
-Returns `nothing` if lowering fails, no binding is found at the cursor, or the binding
-has no definitions. Otherwise returns a tuple of `(binding, definitions)` where:
-- `binding` is the `JL.SyntaxTree` node representing the binding at the cursor
-- `definitions` is a `JL.SyntaxList` containing all definition sites for that binding
-"""
-function select_target_binding_definitions(st0_top::JL.SyntaxTree, offset::Int, mod::Module)
+function _select_target_binding(st0_top::JL.SyntaxTree, offset::Int, mod::Module)
     st0, b = @something greatest_local(st0_top, offset) return nothing # nothing we can lower
 
     bas = byte_ancestors(st0, offset)
@@ -217,8 +198,35 @@ function select_target_binding_definitions(st0_top::JL.SyntaxTree, offset::Int, 
         JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
         return nothing
     end
-    binding = select_target_binding(ctx3, st3, b)
-    isnothing(binding) && return nothing
+    binding = @something __select_target_binding(ctx3, st3, b) return nothing
+    return (; ctx3, st3, binding)
+end
+
+"""
+    select_target_binding(st0_top::JL.SyntaxTree, offset::Int, mod::Module) -> target_binding::Union{Nothing,JL.SyntaxTree}
+
+For the same purpose as [`select_target_node`](@ref), returns the `target_binding::JL.SyntaxTree`
+closest to the cursor at the `offset` position.
+It is guaranteed that `target_binding` satisfies `JS.kind(target_binding) === JS.K"BindingId"`.
+"""
+function select_target_binding(st0_top::JL.SyntaxTree, offset::Int, mod::Module)
+    (; binding) = @something _select_target_binding(st0_top, offset, mod) return nothing
+    return binding
+end
+
+"""
+    select_target_binding_definitions(st0_top::JL.SyntaxTree, offset::Int, mod::Module) ->
+        nothing or (binding::JL.SyntaxTree, definitions::JL.SyntaxList)
+
+Find the binding at the cursor position and return all of its definition sites.
+
+Returns `nothing` if lowering fails, no binding is found at the cursor, or the binding
+has no definitions. Otherwise returns a tuple of `(binding, definitions)` where:
+- `binding` is the `JL.SyntaxTree` node representing the binding at the cursor
+- `definitions` is a `JL.SyntaxList` containing all definition sites for that binding
+"""
+function select_target_binding_definitions(st0_top::JL.SyntaxTree, offset::Int, mod::Module)
+    (; ctx3, st3, binding) = @something _select_target_binding(st0_top, offset, mod) return nothing
     binfo = JL.lookup_binding(ctx3, binding)
     definitions = lookup_binding_definitions(st3, binfo)
     isempty(definitions) && return nothing
@@ -261,4 +269,233 @@ function _lookup_binding_definitions!(sl::JL.SyntaxList, st3::JL.SyntaxTree, bin
         end
     end
     return reverse!(deduplicate_syntaxlist(sl))
+end
+
+struct BindingOccurence{Tree3<:JL.SyntaxTree}
+    tree::Tree3
+    kind::Symbol
+end
+
+"""
+    compute_binding_occurrences(
+            ctx3::JL.VariableAnalysisContext, st3::Tree3;
+            ismacro::Union{Nothing,Base.RefValue{Bool}} = nothing
+        ) where Tree3<:JL.SyntaxTree
+        -> binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurence{Tree3}}}
+
+Analyze a lowered syntax tree to find all occurrences of local and argument bindings.
+
+This function traverses the syntax tree `st3` and records `occurrence::BindingOccurence`s
+for each local and argument binding within `st3`, where `occurrence` have the following
+information:
+- `occurrence.tree::JL.SyntaxTree`: Syntax tree for this occurrence of the binding
+- `occurrence.kind::Symbol`
+  - `:decl` - explicit declarations like `local x`
+  - `:def` - assignments or function arguments
+  - `:use` - references to the binding
+
+# Arguments
+- `ctx3`: Variable analysis context from JuliaLowering containing binding information
+- `st3`: Lowered syntax tree (after scope resolution) to analyze
+- `ismacro`: Optional mutable reference to track if any function binding is a macro
+
+# Returns
+`binding_occurrences` is a dictionary mapping each non-internal local/argument binding to
+a set of `BindingOccurence` objects that record where and how the binding appears.
+
+!!! note "Comparison with `select_target_binding_definitions`"
+    While [`select_target_binding_definitions`](@ref) traces definitions from a specific use
+    point (cursor position), `compute_binding_occurrences` is a more general routine that
+    analyzes all bindings in the entire syntax tree. Use this function when you need
+    comprehensive information about binding declarations and uses, such as for unused
+    variable diagnostics or comprehensive binding analysis.
+"""
+function compute_binding_occurrences(
+        ctx3::JL.VariableAnalysisContext, st3::Tree3;
+        ismacro::Union{Nothing,Base.RefValue{Bool}} = nothing
+    ) where Tree3<:JL.SyntaxTree
+    occurrences = Dict{JL.BindingInfo,Set{BindingOccurence{Tree3}}}()
+
+    # group together argument bindings with the same name
+    same_arg_bindings = Dict{Symbol,Vector{Int}}()
+
+    for (i, binfo) = enumerate(ctx3.bindings.info)
+        binfo.is_internal && continue
+        if binfo.kind === :argument
+            push!(get!(Vector{Int}, same_arg_bindings, Symbol(binfo.name)), i)
+        elseif binfo.kind !== :local
+            continue
+        end
+        occurrences[binfo] = Set{BindingOccurence{Tree3}}()
+    end
+
+    if !isempty(occurrences)
+        compute_binding_occurrences!(occurrences, ctx3, st3; ismacro)
+
+        # Fix up usedness information of arguments that are only used within the argument list.
+        # E.g. this is necessary to avoid reporting "unused variable diagnostics" for `a` in cases like:
+        # ```julia
+        # hasmatch(x::RegexMatch, y::Bool=isempty(x.matches)) = y
+        # ```
+        for (_, idxs) in same_arg_bindings
+            newoccurrences = union!((occurrences[ctx3.bindings.info[idx]] for idx in idxs)...)
+            for idx in idxs
+                occurrences[ctx3.bindings.info[idx]] = newoccurrences
+            end
+        end
+    end
+
+    return occurrences
+end
+
+function record_occurrence!(occurrences::Dict{JL.BindingInfo,Set{BindingOccurence{Tree3}}},
+        kind::Symbol, st::Tree3, ctx3::JL.VariableAnalysisContext;
+        skip_recording::Union{Nothing,Set{JL.BindingInfo}} = nothing
+    ) where Tree3<:JL.SyntaxTree
+    if JS.kind(st) === JS.K"BindingId"
+        binfo = JL.lookup_binding(ctx3, st)
+        record_occurrence!(occurrences, kind, st, binfo; skip_recording)
+    end
+    return occurrences
+end
+
+function record_occurrence!(occurrences::Dict{JL.BindingInfo,Set{BindingOccurence{Tree3}}},
+        kind::Symbol, st::Tree3, binfo::JL.BindingInfo;
+        skip_recording::Union{Nothing,Set{JL.BindingInfo}} = nothing
+    ) where Tree3<:JL.SyntaxTree
+    if haskey(occurrences, binfo) && (binfo ∉ @something skip_recording ())
+        push!(occurrences[binfo], BindingOccurence(st, kind))
+    end
+    return occurrences
+end
+
+function compute_binding_occurrences!(
+        occurrences::Dict{JL.BindingInfo,Set{BindingOccurence{Tree3}}},
+        ctx3::JL.VariableAnalysisContext, st3::Tree3;
+        ismacro::Union{Nothing,Base.RefValue{Bool}} = nothing,
+        include_decls::Bool = false,
+        skip_recording_uses::Union{Nothing,Set{JL.BindingInfo}} = nothing
+    ) where Tree3<:JL.SyntaxTree
+    stack = JL.SyntaxList(st3)
+    push!(stack, st3)
+    infunc = false
+    while !isempty(stack)
+        st = pop!(stack)
+        k = JS.kind(st)
+        n = JS.numchildren(st)
+        if k === JS.K"local" # || k === JS.K"function_decl"
+            if n ≥ 1
+                record_occurrence!(occurrences, :decl, st[1], ctx3)
+                if !include_decls
+                    continue # avoid to recurse to skip recording use
+                end
+            end
+        end
+
+        if k === JS.K"BindingId"
+            record_occurrence!(occurrences, :use, st, ctx3; skip_recording=skip_recording_uses)
+        end
+
+        i = 1
+        if k === JS.K"function_decl"
+            infunc = true
+            if n ≥ 1
+                local func = st[1]
+                if JS.kind(func) === JS.K"BindingId"
+                    binfo = JL.lookup_binding(ctx3, func)
+                    record_occurrence!(occurrences, :decl, func, binfo)
+                    if !isnothing(ismacro)
+                        ismacro[] |= startswith(binfo.name, "@")
+                    end
+                end
+            end
+        elseif infunc && k === JS.K"block" && n ≥ 1
+            blk1 = st[1]
+            if JS.kind(blk1) === JS.K"function_decl" && infunc && JS.numchildren(blk1) ≥ 1
+                # This is an inner function definition -- the binding of this inner function
+                # is "used" in the language constructs required to define the method,
+                # but what we're interested in is whether it's actually used in the outer scope.
+                # We add this inner function to `skip_recording_uses` and recurse.
+                local func = blk1[1]
+                if JS.kind(func) === JS.K"BindingId"
+                    innerfuncinfo = JL.lookup_binding(ctx3, func)
+                    compute_binding_occurrences!(occurrences, ctx3, st; ismacro,
+                        skip_recording_uses = Set((innerfuncinfo,)))
+                    continue
+                end
+            end
+        elseif k === JS.K"lambda"
+            i = 2 # the first block, i.e. the argument declaration does not account for usage
+            if n ≥ 1
+                arglist = st[1]
+                na = JS.numchildren(arglist)
+                for i = 1:na
+                    record_occurrence!(occurrences, :def, arglist[i], ctx3)
+                end
+                is_kwcall = na ≥ 3 &&
+                    JS.kind(arglist[1]) === JS.K"BindingId" &&
+                    let arg1info = JL.lookup_binding(ctx3, arglist[1])
+                        arg1info.is_internal && arg1info.name == "#self#"
+                    end &&
+                    JS.kind(arglist[2]) === JS.K"BindingId" &&
+                    let arg2info = JL.lookup_binding(ctx3, arglist[2])
+                        arg2info.is_internal && arg2info.name == "kws"
+                    end &&
+                    JS.kind(arglist[3]) === JS.K"BindingId" &&
+                    let arg3info = JL.lookup_binding(ctx3, arglist[3])
+                        arg3info.is_internal && (arg3info.name == "#self#" || arg3info.name == "#ctor-self#")
+                    end
+                if is_kwcall
+                    # This is `kwcall` method -- now need to perform some special case
+                    # Julia checks whether keyword arguments are assigned in `kwcall` methods,
+                    # but JL actually introduces local bindings for those keyword arguments for reflection purposes:
+                    # https://github.com/c42f/JuliaLowering.jl/blob/4b12ab19dad40c64767558be0a8a338eb4cc9172/src/desugaring.jl#L2633-L2637
+                    # These bindings are never actually used, so simply recursing would cause
+                    # this pass to report them as unused local bindings.
+                    # We avoid this problem by setting `include_decls` when recursing.
+                    for j = 1:n
+                        compute_binding_occurrences!(occurrences, ctx3, st[j]; ismacro, include_decls=true)
+                    end
+                    continue
+                end
+            end
+        elseif k === JS.K"="
+            i = 2 # the left hand side, i.e. "definition", does not account for usage
+            if n ≥ 1
+                record_occurrence!(occurrences, :def, st[1], ctx3)
+                if n ≥ 2
+                    rhs = st[2]
+                    # In struct definitions, `local struct_name` is somehow introduced,
+                    # so special case it here: https://github.com/c42f/JuliaLowering.jl/blob/4b12ab19dad40c64767558be0a8a338eb4cc9172/src/desugaring.jl#L3833
+                    # TODO investigate why this local binding introduction is necessary on the JL side
+                    if JS.kind(rhs) === JS.K"BindingId" && JL.lookup_binding(ctx3, rhs).name == "struct_type"
+                        i = 1
+                    end
+                end
+            end
+        elseif k === JS.K"call" && n ≥ 1
+            arg1 = st[1]
+            if JS.kind(arg1) === JS.K"BindingId" && JL.lookup_binding(ctx3, arg1).name == "#self#"
+                # Don't count self arguments used in self calls as "usage".
+                # This is necessary to issue unused argument diagnostics for `x` in cases like:
+                # ```julia
+                # hasmatch(x::RegexMatch, y::Bool=false) = nothing
+                # ```
+                for j = n:-1:2 # reversed since we use `pop!`
+                    argⱼ = st[j]
+                    if JS.kind(argⱼ) === JS.K"BindingId" && JL.lookup_binding(ctx3, argⱼ).kind === :argument
+                        continue # skip this argument
+                    end
+                    push!(stack, st[j])
+                end
+                push!(stack, arg1)
+                continue
+            end
+        end
+        for j = n:-1:i # reversed since we use `pop!`
+            push!(stack, st[j])
+        end
+    end
+
+    return occurrences, ismacro
 end

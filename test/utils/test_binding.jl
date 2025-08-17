@@ -6,6 +6,7 @@ using JETLS: JETLS
 include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
 
 global lowering_module::Module = Module()
+
 function with_target_binding_definitions(f, text::AbstractString; kwargs...)
     clean_code, positions = JETLS.get_text_and_positions(text; kwargs...)
     st0_top = jlparse(clean_code)
@@ -447,6 +448,136 @@ end
             cnt += 1
         end
         @test cnt == 1
+    end
+end
+
+with_binding_occurrences(callback, code::AbstractString; kwargs...) =
+    with_binding_occurrences(callback, lowering_module, code; kwargs...)
+function with_binding_occurrences(callback, mod::Module, code::AbstractString;
+                                  ismacro_callback = nothing)
+    st0 = jlparse(code; rule=:statement)
+    (; ctx3, st3) = JETLS.jl_lower_for_scope_resolution(mod, st0)
+    ismacro = isnothing(ismacro_callback) ? nothing : Ref(false)
+    binding_occurrences = JETLS.compute_binding_occurrences(ctx3, st3; ismacro)
+    if !isnothing(ismacro_callback)
+        ismacro_callback(ismacro)
+    end
+    callback(binding_occurrences)
+end
+nomacro_callback(ismacro) = @test !ismacro[]
+ismacro_callback(ismacro) = @test ismacro[]
+
+@testset "compute_binding_occurrences" begin
+    with_binding_occurrences("""
+        function func(x, y, z)
+            local w
+            println(x)
+            return y
+        end
+        """; ismacro_callback = nomacro_callback) do binding_occurrences
+        binfos = collect(keys(binding_occurrences))
+        @test length(binfos) == 4
+        let i = @something findfirst(binfo->binfo.name=="x", binfos)
+            occurrences = binding_occurrences[binfos[i]]
+            @test length(occurrences) == 2
+            @test count(occurrences) do occurrence
+                occurrence.kind === :def &&
+                JS.sourcetext(occurrence.tree) == "x" &&
+                JS.source_line(occurrence.tree) == 1
+            end == 1
+            @test count(occurrences) do occurrence
+                occurrence.kind === :use &&
+                JS.sourcetext(occurrence.tree) == "x" &&
+                JS.source_line(occurrence.tree) == 3
+            end == 1
+        end
+        let i = @something findfirst(binfo->binfo.name=="y", binfos)
+            occurrences = binding_occurrences[binfos[i]]
+            @test length(occurrences) == 2
+            @test count(occurrences) do occurrence
+                occurrence.kind === :def &&
+                JS.sourcetext(occurrence.tree) == "y" &&
+                JS.source_line(occurrence.tree) == 1
+            end == 1
+            @test count(occurrences) do occurrence
+                occurrence.kind === :use &&
+                JS.sourcetext(occurrence.tree) == "y" &&
+                JS.source_line(occurrence.tree) == 4
+            end == 1
+        end
+        let i = @something findfirst(binfo->binfo.name=="z", binfos)
+            occurrences = binding_occurrences[binfos[i]]
+            @test length(occurrences) == 1
+            @test count(occurrences) do occurrence
+                occurrence.kind === :def &&
+                JS.sourcetext(occurrence.tree) == "z" &&
+                JS.source_line(occurrence.tree) == 1
+            end == 1
+        end
+        let i = @something findfirst(binfo->binfo.name=="w", binfos)
+            occurrences = binding_occurrences[binfos[i]]
+            @test length(occurrences) == 1
+            @test count(occurrences) do occurrence
+                occurrence.kind === :decl &&
+                JS.sourcetext(occurrence.tree) == "w" &&
+                JS.source_line(occurrence.tree) == 2
+            end == 1
+        end
+    end
+
+    with_binding_occurrences("""
+        macro m(x, y)
+            return Expr(:block, __source__, esc(x))
+        end
+        """; ismacro_callback = ismacro_callback) do binding_occurrences
+        binfos = collect(keys(binding_occurrences))
+        @test length(binfos) == 4
+        let i = @something findfirst(binfo->binfo.name=="x", binfos)
+            occurrences = binding_occurrences[binfos[i]]
+            @test length(occurrences) == 2
+            @test count(occurrences) do occurrence
+                occurrence.kind === :def &&
+                JS.sourcetext(occurrence.tree) == "x" &&
+                JS.source_line(occurrence.tree) == 1
+            end == 1
+            @test count(occurrences) do occurrence
+                occurrence.kind === :use &&
+                JS.sourcetext(occurrence.tree) == "x" &&
+                JS.source_line(occurrence.tree) == 2
+            end == 1
+        end
+        let i = @something findfirst(binfo->binfo.name=="y", binfos)
+            occurrences = binding_occurrences[binfos[i]]
+            @test length(occurrences) == 1
+            @test count(occurrences) do occurrence
+                occurrence.kind === :def &&
+                JS.sourcetext(occurrence.tree) == "y" &&
+                JS.source_line(occurrence.tree) == 1
+            end == 1
+        end
+        let i = @something findfirst(binfo->binfo.name=="__source__", binfos)
+            occurrences = binding_occurrences[binfos[i]]
+            @test length(occurrences) == 2
+            @test count(occurrences) do occurrence
+                occurrence.kind === :def &&
+                JS.sourcetext(occurrence.tree) == "m(x, y)" &&
+                JS.source_line(occurrence.tree) == 1
+            end == 1
+            @test count(occurrences) do occurrence
+                occurrence.kind === :use &&
+                JS.sourcetext(occurrence.tree) == "__source__" &&
+                JS.source_line(occurrence.tree) == 2
+            end == 1
+        end
+        let i = @something findfirst(binfo->binfo.name=="__module__", binfos)
+            occurrences = binding_occurrences[binfos[i]]
+            @test length(occurrences) == 1
+            @test count(occurrences) do occurrence
+                occurrence.kind === :def &&
+                JS.sourcetext(occurrence.tree) == "m(x, y)" &&
+                JS.source_line(occurrence.tree) == 1
+            end == 1
+        end
     end
 end
 
