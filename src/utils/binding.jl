@@ -163,7 +163,7 @@ function __select_target_binding(ctx3::JL.VariableAnalysisContext, st3::JL.Synta
     function select(st::JL.SyntaxTree)
         JS.kind(st) === JS.K"BindingId" || return false
         binfo = JL.lookup_binding(ctx3, st)
-        return !binfo.is_internal
+        return !binfo.is_internal && !startswith(binfo.name, "#")
     end
 
     bas = byte_ancestors(st3, offset)
