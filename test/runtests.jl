@@ -26,7 +26,6 @@ end
     @testset "definition" include("test_definition.jl")
     @testset "hover" include("test_hover.jl")
     @testset "inlay hint" include("test_inlay_hint.jl")
-    @testset "surface analysis" include("test_surface_analysis.jl")
     @testset "LSAnalyzer" include("test_LSAnalyzer.jl")
     @testset "diagnostics" include("test_diagnostics.jl")
     @testset "testrunner" include("test_testrunner.jl")

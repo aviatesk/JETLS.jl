@@ -1,4 +1,4 @@
-module test_surface_analysis
+module test_lowering_diagnostics
 
 using Test
 using JETLS
@@ -8,12 +8,14 @@ include(normpath(pkgdir(JETLS), "test", "setup.jl"))
 include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
 
 module lowering_module end
-function get_lowered_diagnostics(text::AbstractString)
+
+get_lowered_diagnostics(text::AbstractString) = get_lowered_diagnostics(lowering_module, text)
+function get_lowered_diagnostics(mod::Module, text::AbstractString)
     ps = JETLS.ParseStream!(text)
     fi = JETLS.FileInfo(#=version=#0, ps)
     st0 = JETLS.build_tree!(JL.SyntaxTree, fi)
     @assert JS.kind(st0) === JS.K"toplevel"
-    return JETLS.lowering_diagnostics(st0[1], lowering_module, fi)
+    return JETLS.lowering_diagnostics(st0[1], mod, fi)
 end
 
 @testset "unused binding detection" begin
@@ -374,4 +376,71 @@ end
     end
 end
 
-end # module test_surface_analysis
+macro m_throw(x)
+    throw("show this error message")
+end
+macro m_gen_invalid(n)
+    :([return i for i in 1:$n])
+end
+
+@testset "JuliaLowering error diagnostics" begin
+    @testset "lowering error diagnostics" begin
+        diagnostics = get_lowered_diagnostics(@__MODULE__, "macro foo(x, y) \$(x) end")
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.source == JETLS.LOWERING_DIAGNOSTIC_SOURCE
+        @test diagnostic.message == "`\$` expression outside string or quote block"
+    end
+
+    @testset "macro not found error diagnostics" begin
+        diagnostics = get_lowered_diagnostics(@__MODULE__, "x = @notexisting 42")
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.source == JETLS.LOWERING_DIAGNOSTIC_SOURCE
+        @test diagnostic.message == "Macro name `@notexisting` not found"
+        @test diagnostic.range.start.line == 0
+        @test diagnostic.range.start.character == sizeof("x = @")
+        @test diagnostic.range.var"end".line == 0
+        @test diagnostic.range.var"end".character == sizeof("x = @notexisting")
+    end
+
+    @testset "string macro not found error diagnostics" begin
+        diagnostics = get_lowered_diagnostics(@__MODULE__, "x = notexisting\"string\"")
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.source == JETLS.LOWERING_DIAGNOSTIC_SOURCE
+        @test diagnostic.message == "Macro name `@notexisting_str` not found"
+        @test diagnostic.range.start.line == 0
+        @test diagnostic.range.start.character == sizeof("x = ")
+        @test diagnostic.range.var"end".line == 0
+        @test diagnostic.range.var"end".character == sizeof("x = notexisting")
+    end
+
+    @testset "macro expansion error diagnostics" begin
+        diagnostics = get_lowered_diagnostics(@__MODULE__, "x = @m_throw 42")
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.source == JETLS.LOWERING_DIAGNOSTIC_SOURCE
+        @test diagnostic.message == "Error expanding macro\n\"show this error message\""
+        @test diagnostic.range.start.line == 0
+        @test diagnostic.range.start.character == sizeof("x = ")
+        @test diagnostic.range.var"end".line == 0
+        @test diagnostic.range.var"end".character == sizeof("x = @m_throw 42")
+    end
+
+    @testset "lowering error within macro expanded code" begin
+        diagnostics = get_lowered_diagnostics(@__MODULE__, """let x = 42
+            println(x)
+            @m_gen_invalid x
+        end
+        """)
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.source == JETLS.LOWERING_DIAGNOSTIC_SOURCE
+        @test diagnostic.message == "`return` not allowed inside comprehension or generator"
+        @test diagnostic.range.start.line == 2
+        @test diagnostic.range.var"end".line == 2
+    end
+end
+
+end # module test_lowering_diagnostics
