@@ -77,6 +77,15 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
         end
     end
 
+    if supports(server, :textDocument, :documentHighlight, :dynamicRegistration)
+        documentHighlightProvider = nothing # will be registered dynamically
+    else
+        documentHighlightProvider = document_highlight_options()
+        if JETLS_DEV_MODE
+            @info "Registering 'textDocument/documentHighlight' with `InitializeResponse`"
+        end
+    end
+
     if supports(server, :textDocument, :hover, :dynamicRegistration)
         hoverProvider = nothing # will be registered dynamically
     else
@@ -86,8 +95,7 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
         end
     end
 
-    if supports(server,
-        :textDocument, :diagnostic, :dynamicRegistration)
+    if supports(server, :textDocument, :diagnostic, :dynamicRegistration)
         diagnosticProvider = nothing # will be registered dynamically
     else
         diagnosticProvider = diagnostic_options()
@@ -175,6 +183,7 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
             completionProvider,
             signatureHelpProvider,
             definitionProvider,
+            documentHighlightProvider,
             hoverProvider,
             diagnosticProvider,
             codeActionProvider,
@@ -182,7 +191,7 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
             documentFormattingProvider,
             documentRangeFormattingProvider,
             executeCommandProvider,
-            inlayHintProvider
+            inlayHintProvider,
         ),
         serverInfo = (;
             name = "JETLS",
@@ -240,6 +249,16 @@ function handle_InitializedNotification(server::Server)
         # since `DefinitionRegistrationOptions` does not extend `StaticRegistrationOptions`.
     end
 
+    if supports(server, :textDocument, :documentHighlight, :dynamicRegistration)
+        push!(registrations, document_highlight_registration())
+        if JETLS_DEV_MODE
+            @info "Dynamically registering 'textDocument/documentHighlight' upon `InitializedNotification`"
+        end
+    else
+        # NOTE If documentHighlight's `dynamicRegistration` is not supported,
+        # it needs to be registered along with initialization in the `InitializeResponse`.
+    end
+
     if supports(server, :textDocument, :hover, :dynamicRegistration)
         push!(registrations, hover_registration())
         if JETLS_DEV_MODE
@@ -251,8 +270,7 @@ function handle_InitializedNotification(server::Server)
         # since `HoverRegistrationOptions` does not extend `StaticRegistrationOptions`.
     end
 
-    if supports(server,
-        :textDocument, :diagnostic, :dynamicRegistration)
+    if supports(server, :textDocument, :diagnostic, :dynamicRegistration)
         push!(registrations, diagnostic_registration())
         if JETLS_DEV_MODE
             @info "Dynamically registering 'textDocument/diagnotic' upon `InitializedNotification`"

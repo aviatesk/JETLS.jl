@@ -24,6 +24,7 @@ end
     @testset "completions" include("test_completions.jl")
     @testset "signature help" include("test_signature_help.jl")
     @testset "definition" include("test_definition.jl")
+    @testset "document highlight" include("test_document_highlight.jl")
     @testset "hover" include("test_hover.jl")
     @testset "inlay hint" include("test_inlay_hint.jl")
     @testset "LSAnalyzer" include("test_LSAnalyzer.jl")
