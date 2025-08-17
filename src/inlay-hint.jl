@@ -58,10 +58,10 @@ function syntactic_inlay_hints!(inlay_hints::Vector{InlayHint}, fi::FileInfo, ra
                 nexttc = next_nontrivia(fi.parsed_stream, bstart)
                 if isnothing(nexttc) # no non-trivial token left - include everything left
                     commentrange = bstart:length(fi.parsed_stream.textbuf)
-                elseif JS.kind(this(nexttc)) === JS.K"NewlineWs"
+                elseif JS.kind(nexttc) === JS.K"NewlineWs"
                     commentrange = bstart:length(fi.parsed_stream.textbuf)
                 else
-                    commentrange = bstart:first_byte(nexttc)-1
+                    commentrange = bstart:JS.first_byte(nexttc)-1
                 end
                 commentstr = String(fi.parsed_stream.textbuf[commentrange])
                 if occursin(modname, commentstr)
