@@ -166,6 +166,47 @@ function stacktrace_to_related_information(stacktrace::Vector{Base.StackTraces.S
     return relatedInformation
 end
 
+struct LoweringDiagnosticKey
+    first_byte::UInt
+    last_byte::UInt
+    kind::Symbol
+    name::String
+end
+
+function analyze_lowered_code!(diagnostics::Vector{Diagnostic},
+        ctx3::JL.VariableAnalysisContext, st3::JL.SyntaxTree, fi::FileInfo
+    )
+    ismacro = Ref(false)
+    binding_occurrences = compute_binding_occurrences(ctx3, st3; ismacro)
+    reported = Set{LoweringDiagnosticKey}() # to prevent duplicate reports for unused default or keyword arguments
+    for (binfo, occurrences) in binding_occurrences
+        if any(occurrence::BindingOccurence->occurrence.kind===:use, occurrences)
+            continue
+        end
+        binding = JL.binding_ex(ctx3, binfo.id)
+        fb, lb = JS.first_byte(binding), JS.last_byte(binding)
+        bn = binfo.name
+        if iszero(fb) || iszero(lb)
+            continue
+        elseif ismacro[] && (bn == "__module__" || bn == "__source__")
+            continue
+        end
+        bk = binfo.kind
+        key = LoweringDiagnosticKey(fb, lb, bk, bn)
+        key in reported ? continue : push!(reported, key)
+        if bk === :argument
+            message = "Unused argument `$bn`"
+        else
+            message = "Unused local binding `$bn`"
+        end
+        push!(diagnostics, jsobj_to_diagnostic(
+            binding, fi, message,
+            #=severity=#DiagnosticSeverity.Information, #=source=#LOWERING_DIAGNOSTIC_SOURCE;
+            tags = DiagnosticTag.Ty[DiagnosticTag.Unnecessary]))
+    end
+    return diagnostics
+end
+
 function lowering_diagnostics!(
         diagnostics::Vector{Diagnostic}, st0::JL.SyntaxTree, mod::Module, fi::FileInfo
     )

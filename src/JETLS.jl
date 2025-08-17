@@ -58,8 +58,6 @@ include("utils/config.jl")
 include("analysis/Interpreter.jl")
 using .Interpreter
 
-include("analysis/surface-analysis.jl")
-
 include("document-synchronization.jl")
 include("analysis/full-analysis.jl")
 include("registration.jl")
