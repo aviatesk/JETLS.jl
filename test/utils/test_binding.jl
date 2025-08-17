@@ -7,6 +7,53 @@ include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
 
 global lowering_module::Module = Module()
 
+function with_target_binding(f, text::AbstractString; kwargs...)
+    clean_code, positions = JETLS.get_text_and_positions(text; kwargs...)
+    st0_top = jlparse(clean_code)
+    for (i, pos) in enumerate(positions)
+        offset = JETLS.xy_to_offset(clean_code, pos)
+        f(i, JETLS.select_target_binding(st0_top, offset, lowering_module))
+    end
+end
+
+@testset "select_target_binding" begin
+    let cnt = 0
+        with_target_binding("""
+            let │x│xx│
+                │x│xx│ = 42
+                println(│x│xx│)
+            end
+            """) do i, binding
+            @test JS.sourcetext(binding) == "xxx"
+            if i in (1,2,3)
+                @test JS.source_line(binding) == 1
+            elseif i in (4,5,6)
+                @test JS.source_line(binding) == 2
+            else
+                @test JS.source_line(binding) == 3
+            end
+            cnt += 1
+        end
+        @test cnt == 9
+    end
+
+    # Don't select the internal bindings introduced with kwfunc definitions, where
+    # the binding representing the kwfunc has a range that spans the entire `func(args...; kwargs...)`.
+    # See `!startswith(binfo.name, "#")` within `__select_target_binding`
+    let cnt = 0
+        with_target_binding("""
+            function func(x; │kw│=nothing)
+                println(kw)
+            end
+            """) do i, binding
+            @test JS.sourcetext(binding) == "kw"
+            @test JS.source_line(binding) == 1
+            cnt += 1
+        end
+        @test cnt == 2
+    end
+end
+
 function with_target_binding_definitions(f, text::AbstractString; kwargs...)
     clean_code, positions = JETLS.get_text_and_positions(text; kwargs...)
     st0_top = jlparse(clean_code)
