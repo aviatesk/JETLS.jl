@@ -79,7 +79,20 @@ rename of a symbol.
 end
 
 @interface RenameResponse @extends ResponseMessage begin
+    """
+    [`WorkspaceEdit`](@ref) | `null` describing the modification to the workspace.
+    `null` should be treated the same was as [`WorkspaceEdit`](@ref) with no changes
+    (no change was required).
+    """
     result::Union{WorkspaceEdit, Null, Nothing}
+
+    """
+    Code and message set in case when rename could not be performed for any reason.
+    Examples include: there is nothing at given `position` to rename (like a space),
+    given symbol does not support renaming by the server or the code is invalid
+    (e.g. does not compile).
+    """
+    error::Union{ResponseError, Nothing} = nothing
 end
 
 # Prepare Rename Request
@@ -101,10 +114,18 @@ test the validity of a rename operation at a given location.
 end
 
 @interface PrepareRenameResponse @extends ResponseMessage begin
+    """
+    `Range | { range: Range, placeholder: string } | { defaultBehavior: boolean } | null`
+    describing a [`Range`](@ref) of the string to rename and optionally a placeholder text
+    of the string content to be renamed. If `{ defaultBehavior: boolean }` is returned
+    (since 3.16) the rename position is valid and the client should use its default behavior
+    to compute the rename range. If `null` is returned then it is deemed that a
+    ‘textDocument/rename’ request is not valid at the given position.
+    """
     result::Union{
         Range,
-        @interface(begin; range::Range; placeholder::String; end),
-        @interface(begin; defaultBehavior::Bool; end),
+        @NamedTuple{range::Range, placeholder::String},
+        @NamedTuple{defaultBehavior::Bool},
         Null,
         Nothing
     }
