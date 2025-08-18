@@ -30,16 +30,9 @@ function is_relevant(ctx3::JL.AbstractLoweringContext,
          || cursor > start)
 end
 
-# Lowering doesn't really require the module apart from looking up macro names.
-# If a feature takes a MaybeLoweringModule, most functionality will be present
-# with mod=nothing.
-const MaybeLoweringModule = Union{Module, Nothing}
-
-module fallback_lowering_module end
-
 """
     jl_lower_for_scope_resolution(
-            [mod::Module], st0::JL.SyntaxTree;
+            mod::Module, st0::JL.SyntaxTree;
             trim_error_nodes::Bool = true,
             recover_from_macro_errors::Bool = true,
         ) -> (; st0, st1, st2, st3, ctx3)
@@ -74,10 +67,6 @@ function jl_lower_for_scope_resolution(
         JL.expand_forms_1(mod, st0)
     end
     return _jl_lower_for_scope_resolution(ctx1, st0, st1)
-end
-function jl_lower_for_scope_resolution(st0::JL.SyntaxTree; kwargs...)
-    JETLS_DEBUG_LOWERING && @warn "No lowering module provided; non-Base macrocalls may fail"
-    return jl_lower_for_scope_resolution(fallback_lowering_module, st0; kwargs...)
 end
 
 function _jl_lower_for_scope_resolution(ctx1, st0, st1)
