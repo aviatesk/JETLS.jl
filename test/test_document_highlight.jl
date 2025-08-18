@@ -59,6 +59,34 @@ include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
             end
         end
 
+        @testset "static parameter highlight" begin
+            code = """
+            func(::│TTT│) where │TTT│<:Number = zero(│TTT│)
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 6
+            fi = JETLS.FileInfo(#=version=#0, parsedstream(clean_code))
+            @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+            for pos in positions
+                highlights = JETLS.lowering_document_highlights(fi, pos, @__MODULE__)
+                @test length(highlights) == 3
+                @test any(highlights) do highlight
+                    highlight.range.start == positions[1] &&
+                    highlight.range.var"end" == positions[2]
+                end
+                @test any(highlights) do highlight
+                    highlight.range.start == positions[3] &&
+                    highlight.range.var"end" == positions[4] &&
+                    highlight.kind == DocumentHighlightKind.Write
+                end
+                @test any(highlights) do highlight
+                    highlight.range.start == positions[5] &&
+                    highlight.range.var"end" == positions[6] &&
+                    highlight.kind == DocumentHighlightKind.Read
+                end
+            end
+        end
+
         let code = """
             let │xxx│, │yyy│ = :yyy
                 │xxx│ = :xxx
