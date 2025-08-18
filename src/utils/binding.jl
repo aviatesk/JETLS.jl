@@ -238,10 +238,11 @@ containing the syntax nodes where the binding may be defined.
 
 This function traverses the syntax tree to collect `definitions` that tracks all the
 assignment expressions (`=`) and function declarations where the binding may be defined.
-For `:argument` bindings, `definitions` also includes the argument declaration itself.
+For `:argument` or `:static_parameter` bindings, `definitions` also includes the argument
+or static parameter declaration itself.
 """
 function lookup_binding_definitions(st3::JL.SyntaxTree, binfo::JL.BindingInfo)
-    if binfo.kind === :argument
+    if binfo.kind === :argument || binfo.kind === :static_parameter
         sl = JL.SyntaxList(JL.syntax_graph(st3), [binfo.node_id])
     else
         sl = JL.SyntaxList(st3)

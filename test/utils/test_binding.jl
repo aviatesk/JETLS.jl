@@ -184,6 +184,23 @@ end
         @test cnt == 1
     end
 
+    @testset "static parameter" begin
+        cnt = 0
+        with_target_binding_definitions("""
+            function func(::TTT) where TTT<:Integer
+                return TTT│
+            end
+        """) do _, res
+            @test !isnothing(res)
+            binding, defs = res
+            @test JS.source_line(JL.sourceref(binding)) == 2
+            @test length(defs) == 1
+            @test JS.source_line(JL.sourceref(only(defs))) == 1
+            cnt += 1
+        end
+        @test cnt == 1
+    end
+
     @testset "closure captures" begin
         cnt = 0
         with_target_binding_definitions("""
