@@ -230,6 +230,9 @@ end
 
 is_same_binding(x::JL.SyntaxTree, id::Int) = JS.kind(x) === JS.K"BindingId" && id == JL._binding_id(x)
 
+is_local_binding(binfo::JL.BindingInfo) =
+    binfo.kind === :argument || binfo.kind === :static_parameter || binfo.kind === :local
+
 """
     lookup_binding_definitions(st3::JL.SyntaxTree, binfo::JL.BindingInfo) -> definitions::JL.SyntaxList
 
@@ -312,32 +315,46 @@ function compute_binding_occurrences(
     ) where Tree3<:JL.SyntaxTree
     occurrences = Dict{JL.BindingInfo,Set{BindingOccurence{Tree3}}}()
 
-    # group together argument bindings with the same name
-    same_arg_bindings = Dict{Symbol,Vector{Int}}()
+    same_arg_bindings = Dict{Symbol,Vector{Int}}() # group together argument bindings with the same name
+    same_sparam_bindings = Dict{Symbol,Vector{Int}}() # group together static parameter bindings with the same name
 
     for (i, binfo) = enumerate(ctx3.bindings.info)
         binfo.is_internal && continue
+        is_local_binding(binfo) || continue
         if binfo.kind === :argument
             push!(get!(Vector{Int}, same_arg_bindings, Symbol(binfo.name)), i)
-        elseif binfo.kind !== :local
-            continue
+        elseif binfo.kind === :static_parameter
+            push!(get!(Vector{Int}, same_sparam_bindings, Symbol(binfo.name)), i)
+        elseif binfo.kind === :local
+            # :local static parameter binding is introduced to evaluate signature type
+            push!(get!(Vector{Int}, same_sparam_bindings, Symbol(binfo.name)), i)
         end
         occurrences[binfo] = Set{BindingOccurence{Tree3}}()
     end
 
-    if !isempty(occurrences)
-        compute_binding_occurrences!(occurrences, ctx3, st3; ismacro)
+    isempty(occurrences) && return occurrences
 
-        # Fix up usedness information of arguments that are only used within the argument list.
-        # E.g. this is necessary to avoid reporting "unused variable diagnostics" for `a` in cases like:
-        # ```julia
-        # hasmatch(x::RegexMatch, y::Bool=isempty(x.matches)) = y
-        # ```
-        for (_, idxs) in same_arg_bindings
-            newoccurrences = union!((occurrences[ctx3.bindings.info[idx]] for idx in idxs)...)
-            for idx in idxs
-                occurrences[ctx3.bindings.info[idx]] = newoccurrences
-            end
+    compute_binding_occurrences!(occurrences, ctx3, st3; ismacro)
+
+    # Fix up usedness information of arguments that are only used within the argument list.
+    # E.g. this is necessary to avoid reporting "unused variable diagnostics" for `a` in cases like:
+    # ```julia
+    # hasmatch(x::RegexMatch, y::Bool=isempty(x.matches)) = y
+    # ```
+    for (_, idxs) in same_arg_bindings
+        length(idxs) == 1 && continue
+        newoccurrences = union!((occurrences[ctx3.bindings.info[idx]] for idx in idxs)...)
+        for idx in idxs
+            occurrences[ctx3.bindings.info[idx]] = newoccurrences
+        end
+    end
+    
+    # The same goes for static parameter bindings
+    for (_, idxs) in same_sparam_bindings
+        length(idxs) == 1 && continue
+        newoccurrences = union!((occurrences[ctx3.bindings.info[idx]] for idx in idxs)...)
+        for idx in idxs
+            occurrences[ctx3.bindings.info[idx]] = newoccurrences
         end
     end
 
@@ -441,12 +458,19 @@ function compute_binding_occurrences!(
                 end
             end
         elseif k === JS.K"lambda"
-            i = 2 # the first block, i.e. the argument declaration does not account for usage
-            if n ≥ 1
+            # All blocks except the last one define arguments and static parameters,
+            # so we recurse to avoid counting them as usage
+            i = n ≥ 2 ? n : 0
+            if n ≥ 2
                 arglist = st[1]
-                na = JS.numchildren(arglist)
-                for i = 1:na
+                for i = 1:JS.numchildren(arglist)
                     record_occurrence!(occurrences, :def, arglist[i], ctx3)
+                end
+                if n ≥ 3
+                    sparamlist = st[1]
+                    for i = 1:JS.numchildren(sparamlist)
+                        record_occurrence!(occurrences, :def, sparamlist[i], ctx3)
+                    end
                 end
                 if is_kwcall_lambda(ctx3, st)
                     # This is `kwcall` method -- now need to perform some special case

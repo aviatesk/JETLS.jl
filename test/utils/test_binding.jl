@@ -674,6 +674,67 @@ ismacro_callback(ismacro) = @test ismacro[]
             end == 1
         end
     end
+
+    @testset "static parameter occurrences" begin
+        with_binding_occurrences("""
+            function func1(::TTT1) where TTT1<:Integer
+                return zero(TTT1)
+            end
+            """; ismacro_callback = nomacro_callback) do binding_occurrences
+            binfos = collect(keys(binding_occurrences))
+            # there are two different bindings representing the `TTT1`, one for defineing the
+            # signature type and the other for static parameter binding within the method body
+            @test length(binfos) == 2
+            idxs = findall(binfo->binfo.name=="TTT1", binfos)
+            @test length(idxs) == 2
+            @test binding_occurrences[binfos[idxs[1]]] === binding_occurrences[binfos[idxs[2]]]
+            occurrences = binding_occurrences[binfos[idxs[1]]]
+            @test any(occurrences) do occurrence
+                occurrence.kind === :use &&
+                JS.sourcetext(occurrence.tree) == "TTT1" &&
+                JS.source_line(occurrence.tree) == 2
+            end
+        end
+
+        code1 = """
+        function func2(::TTT1, ::TTT2) where TTT1<:Integer where TTT2<:Integer
+            return zero(TTT1), zero(TTT2)
+        end
+        """
+        code2 = """
+        function func2(::TTT1, ::TTT2) where {TTT1<:Integer, TTT2<:Integer}
+            return zero(TTT1), zero(TTT2)
+        end
+        """
+        for code in (code1, code2)
+            with_binding_occurrences(code; ismacro_callback = nomacro_callback) do binding_occurrences
+                binfos = collect(keys(binding_occurrences))
+                # there are two different bindings representing each for `TTT1` and `TTT2`,
+                # one for defineing the signature type and the other for static parameter binding within the method body
+                @test length(binfos) == 4
+                let idxs = findall(binfo->binfo.name=="TTT1", binfos)
+                    @test length(idxs) == 2
+                    @test binding_occurrences[binfos[idxs[1]]] === binding_occurrences[binfos[idxs[2]]]
+                    occurrences = binding_occurrences[binfos[idxs[1]]]
+                    @test any(occurrences) do occurrence
+                        occurrence.kind === :use &&
+                        JS.sourcetext(occurrence.tree) == "TTT1" &&
+                        JS.source_line(occurrence.tree) == 2
+                    end
+                end
+                let idxs = findall(binfo->binfo.name=="TTT2", binfos)
+                    @test length(idxs) == 2
+                    @test binding_occurrences[binfos[idxs[1]]] === binding_occurrences[binfos[idxs[2]]]
+                    occurrences = binding_occurrences[binfos[idxs[1]]]
+                    @test any(occurrences) do occurrence
+                        occurrence.kind === :use &&
+                        JS.sourcetext(occurrence.tree) == "TTT2" &&
+                        JS.source_line(occurrence.tree) == 2
+                    end
+                end
+            end
+        end
+    end
 end
 
 end # module test_binding
