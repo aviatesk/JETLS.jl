@@ -83,8 +83,8 @@ JuliaLowering throws away the mapping from scopes to bindings (scopes are stored
 as an ephemeral stack.)  We work around this by taking all available bindings
 and filtering out any that aren't declared in a scope containing the cursor.
 """
-function cursor_bindings(st0_top::JL.SyntaxTree, b_top::Int, mod::Module)
-    st0, b = @something greatest_local(st0_top, b_top) return nothing # nothing we can lower
+function cursor_bindings(st0_top::JL.SyntaxTree, offset::Int, mod::Module)
+    st0 = @something greatest_local(st0_top, offset) return nothing # nothing we can lower
     (; ctx3, st2) = try
         jl_lower_for_scope_resolution(mod, st0)
     catch err
@@ -95,7 +95,7 @@ function cursor_bindings(st0_top::JL.SyntaxTree, b_top::Int, mod::Module)
 
     # Note that ctx.bindings are only available after resolve_scopes, and
     # scope-blocks are not present in st3 after resolve_scopes.
-    binfos = filter(binfo -> is_relevant(ctx3, binfo, b), ctx3.bindings.info)
+    binfos = filter(binfo -> is_relevant(ctx3, binfo, offset), ctx3.bindings.info)
 
     # for each binding: binfo, all syntaxtrees containing it, and the scope it belongs to
     bscopeinfos = Tuple{JL.BindingInfo, Union{JL.SyntaxTree, Nothing}}[]
@@ -110,7 +110,7 @@ function cursor_bindings(st0_top::JL.SyntaxTree, b_top::Int, mod::Module)
         push!(bscopeinfos, (binfo, isempty(bas) ? nothing : first(bas)))
     end
 
-    cursor_scopes = byte_ancestors(st2, b)
+    cursor_scopes = byte_ancestors(st2, offset)
 
     # ignore scopes we aren't in
     filter!(((_, bs),) -> isnothing(bs) || bs._id in cursor_scopes.ids,
@@ -144,7 +144,7 @@ function cursor_bindings(st0_top::JL.SyntaxTree, b_top::Int, mod::Module)
     return map(values(seen)) do i
         (binfo, _) = bscopeinfos[i]
         # distance from the cursor
-        dist = abs(b - JS.last_byte(JL.binding_ex(ctx3, binfo.id)))
+        dist = abs(offset - JS.last_byte(JL.binding_ex(ctx3, binfo.id)))
         return (binfo, JL.binding_ex(ctx3, binfo.id), dist)
     end
 end
@@ -176,7 +176,7 @@ __select_target_binding(ctx3::JL.VariableAnalysisContext, st3::JL.SyntaxTree, of
         return nothing)
 
 function _select_target_binding(st0_top::JL.SyntaxTree, offset::Int, mod::Module)
-    st0, b = @something greatest_local(st0_top, offset) return nothing # nothing we can lower
+    st0 = @something greatest_local(st0_top, offset) return nothing # nothing we can lower
 
     bas = byte_ancestors(st0′::JL.SyntaxTree->JS.kind(st0′)===JS.K"MacroName", st0, offset)
     if !isempty(bas)
@@ -192,7 +192,7 @@ function _select_target_binding(st0_top::JL.SyntaxTree, offset::Int, mod::Module
         JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
         return nothing
     end
-    binding = @something __select_target_binding(ctx3, st3, b) return nothing
+    binding = @something __select_target_binding(ctx3, st3, offset) return nothing
     return (; ctx3, st3, binding)
 end
 
