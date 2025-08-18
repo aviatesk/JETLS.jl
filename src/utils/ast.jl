@@ -2,7 +2,7 @@
 Return a tree where all nodes of `kinds` are removed.  Should not modify any
 nodes, and should not create new nodes unnecessarily.
 """
-function _without_kinds(st::JL.SyntaxTree, kinds::Tuple)
+function _without_kinds(st::JL.SyntaxTree, kinds::Tuple{Vararg{JS.Kind}})
     if JS.kind(st) in kinds
         return (nothing, true)
     elseif JS.is_leaf(st)
@@ -21,11 +21,52 @@ function _without_kinds(st::JL.SyntaxTree, kinds::Tuple)
     return (new_node, changed)
 end
 
-function without_kinds(st::JL.SyntaxTree, kinds::Tuple)
+function without_kinds(st::JL.SyntaxTree, kinds::Tuple{Vararg{JS.Kind}})
     return JS.kind(st) in kinds ?
         JL.@ast(JL.syntax_graph(st), st, [JS.K"TOMBSTONE"]) :
         _without_kinds(st, kinds)[1]
 end
+
+function _remove_macrocalls(st::JL.SyntaxTree)
+    if JS.kind(st) === JS.K"macrocall"
+        new_children = JL.SyntaxList(JL.syntax_graph(st))
+        for i = 2:JS.numchildren(st)
+            push!(new_children, _remove_macrocalls(st[i])[1])
+        end
+        return JL.@ast(JL.syntax_graph(st), st, [JS.K"block" new_children...]), true
+    elseif JS.is_leaf(st)
+        return st, false
+    end
+    new_children = JL.SyntaxList(JL.syntax_graph(st))
+    changed = false
+    for c in JS.children(st)
+        nc, cc = _remove_macrocalls(c)
+        changed |= cc
+        push!(new_children, nc)
+    end
+    k = JS.kind(st)
+    new_node = changed ?
+        JL.@ast(JL.syntax_graph(st), st, [k new_children...]) : st
+    return (new_node, changed)
+end
+
+"""
+    remove_macrocalls(st0::JL.SyntaxTree) -> JL.SyntaxTree
+
+Convert `macrocall` nodes to `block` nodes while preserving binding provenance information
+in the arguments passed to macrocalls.
+
+This transformation converts `macrocall children...` to `block children...`, preserving
+the binding provenance information contained within expressions passed as arguments to
+macrocalls. As a result, LSP features that rely on binding source information (primarily
+using surface AST level information) can work in many cases based on binding resolution
+performed on the transformed tree `st0′`.
+
+This enables various LSP features to function correctly with local variables inside
+macrocalls, even when precise provenance information would otherwise be lost during
+macro expansion.
+"""
+remove_macrocalls(st0::JL.SyntaxTree) = first(_remove_macrocalls(st0))
 
 """
 Like `Base.unique`, but over node ids, and with this comment promising that the

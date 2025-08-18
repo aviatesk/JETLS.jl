@@ -186,8 +186,9 @@ function _select_target_binding(st0_top::JL.SyntaxTree, offset::Int, mod::Module
         return nothing
     end
 
+    st0′ = remove_macrocalls(st0)
     (; ctx3, st3) = try
-        jl_lower_for_scope_resolution(mod, st0)
+        jl_lower_for_scope_resolution(mod, st0′)
     catch err
         JETLS_DEBUG_LOWERING && @warn "Error in lowering ($caller)" err
         JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
@@ -348,7 +349,7 @@ function compute_binding_occurrences(
             occurrences[ctx3.bindings.info[idx]] = newoccurrences
         end
     end
-    
+
     # The same goes for static parameter bindings
     for (_, idxs) in same_sparam_bindings
         length(idxs) == 1 && continue

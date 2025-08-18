@@ -217,4 +217,43 @@ end
     end
 end
 
+# Helper to run a single hover test
+function with_hover_request(tester::Function, text::AbstractString; kwargs...)
+    clean_code, positions = JETLS.get_text_and_positions(text; kwargs...)
+    withscript(clean_code) do script_path
+        uri = filepath2uri(script_path)
+        withserver() do (; writereadmsg, id_counter)
+            # run the full analysis first
+            (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, clean_code))
+            @test raw_res isa PublishDiagnosticsNotification
+            @test raw_res.params.uri == uri
+            for (i, pos) in enumerate(positions)
+                (; raw_res) = writereadmsg(HoverRequest(;
+                    id = id_counter[] += 1,
+                    params = HoverParams(;
+                        textDocument = TextDocumentIdentifier(; uri),
+                        position = pos)))
+                tester(i, raw_res.result, uri)
+            end
+        end
+    end
+end
+
+@testset "'hover' for local bindings" begin
+    @testset "local hover with macrocall" begin
+        cnt = 0
+        with_hover_request("""
+            function func(xxx, yyy)
+                value = @something rand((xxx│, yyy, nothing))
+                return value
+            end
+        """) do _, result, uri
+            @test result isa Hover
+            @test result.range.start.line == 1
+            cnt += 1
+        end
+        @test cnt == 1
+    end
+end
+
 end # module test_hover
