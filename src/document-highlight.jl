@@ -56,6 +56,7 @@ function lowering_document_highlights!(highlights::Vector{DocumentHighlight}, fi
     end return highlights
 
     binfo = JL.lookup_binding(ctx3, binding)
+    is_local_binding(binfo) || return highlights
 
     binding_occurrences = compute_binding_occurrences(ctx3, st3)
     if haskey(binding_occurrences, binfo)
