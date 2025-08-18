@@ -125,13 +125,13 @@ end
 byte_ancestors(flt, sn::JS.SyntaxNode, byte::Integer) = byte_ancestors(flt, sn, byte:byte)
 
 """
-    greatest_local(st0, b) -> (st::Union{SyntaxTree, Nothing}, b::Int)
+    greatest_local(st0::JL.SyntaxTree, offset::Int) -> st::Union{JL.SyntaxTree, Nothing}
 
-Return the largest tree that can introduce local bindings that are visible to
-the cursor (if any such tree exists), and the cursor's position within it.
+Return the largest tree that can introduce local bindings that are visible to the cursor
+(if any such tree exists).
 """
-function greatest_local(st0::JL.SyntaxTree, b::Int)
-    bas = byte_ancestors(st0, b)
+function greatest_local(st0::JL.SyntaxTree, offset::Int)
+    bas = byte_ancestors(st0, offset)
     first_global = findfirst(st::JL.SyntaxTree -> JL.kind(st) in JS.KSet"toplevel module", bas)
     isnothing(first_global) && return nothing
 
@@ -146,8 +146,7 @@ function greatest_local(st0::JL.SyntaxTree, b::Int)
         i -= 1
         i < 1 && return nothing
     end
-
-    return bas[i], (b - (JS.first_byte(st0) - 1))
+    return bas[i]
 end
 
 """

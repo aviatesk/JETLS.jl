@@ -51,7 +51,7 @@ end
 function lowering_document_highlights!(highlights::Vector{DocumentHighlight}, fi::FileInfo, offset::Int, mod::Module)
     st0_top = build_tree!(JL.SyntaxTree, fi)
 
-    st0, _ = @something greatest_local(st0_top, offset) return highlights
+    st0 = @something greatest_local(st0_top, offset) return highlights
     (; ctx3, st3) = try
         jl_lower_for_scope_resolution(mod, st0)
     catch err
