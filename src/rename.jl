@@ -54,7 +54,7 @@ function local_binding_rename_preparation(fi::FileInfo, pos::Position, mod::Modu
     end return nothing
 
     binfo = JL.lookup_binding(ctx3, binding)
-    if binfo.kind === :local || binfo.kind === :argument
+    if is_local_binding(binfo)
         return (; range = jsobj_to_range(binding, fi), placeholder = binfo.name)
     else
         return nothing
@@ -90,9 +90,7 @@ function local_binding_rename(uri::URI, fi::FileInfo, pos::Position, mod::Module
     end return nothing
 
     binfo = JL.lookup_binding(ctx3, binding)
-    if !(binfo.kind === :local || binfo.kind === :argument)
-        return nothing
-    end
+    is_local_binding(binfo) || return nothing
     if !Base.isidentifier(newName)
         error = ResponseError(;
             code = ErrorCodes.RequestFailed,

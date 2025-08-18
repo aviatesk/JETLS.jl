@@ -38,6 +38,22 @@ include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
         rename_prep = JETLS.local_binding_rename_preparation(fi, only(positions), @__MODULE__)
         @test isnothing(rename_prep)
     end
+
+    @testset "static parameter rename prepare" begin
+        let code = """
+            func(::│TTT│) where │TTT│<:Integer = zero(│TTT│)
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 6
+            fi = JETLS.FileInfo(#=version=#0, parsedstream(clean_code))
+            @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+            for (i, pos) in enumerate(positions)
+                rename_prep = JETLS.local_binding_rename_preparation(fi, pos, @__MODULE__)
+                @test !isnothing(rename_prep)
+                @test rename_prep.placeholder == "TTT"
+            end
+        end
+    end
 end
 
 @testset "local_binding_rename" begin
@@ -115,6 +131,38 @@ end
                     edit.newText == "zzz zzz" &&
                     edit.range == Range(; start=positions[3], var"end"=positions[4])
                 end == 1
+            end
+        end
+    end
+
+    @testset "static parameter rename" begin
+        let code = """
+            func(::│TTT│) where │TTT│<:Integer = zero(│TTT│)
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 6
+            fi = JETLS.FileInfo(#=version=#0, parsedstream(clean_code))
+            @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+            furi = filename2uri("Untitled" * @__FILE__)
+            for (i, pos) in enumerate(positions)
+                (; result, error) = JETLS.local_binding_rename(furi, fi, pos, @__MODULE__, "SSS")
+                @test result isa WorkspaceEdit && isnothing(error)
+                for (uri, edits) in result.changes
+                    @test furi == uri
+                    @test length(edits) == 3
+                    @test count(edits) do edit
+                        edit.newText == "SSS" &&
+                        edit.range == Range(; start=positions[1], var"end"=positions[2])
+                    end == 1
+                    @test count(edits) do edit
+                        edit.newText == "SSS" &&
+                        edit.range == Range(; start=positions[3], var"end"=positions[4])
+                    end == 1
+                    @test count(edits) do edit
+                        edit.newText == "SSS" &&
+                        edit.range == Range(; start=positions[5], var"end"=positions[6])
+                    end == 1
+                end
             end
         end
     end
