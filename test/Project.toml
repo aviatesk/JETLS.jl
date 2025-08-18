@@ -10,8 +10,8 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 [sources]
 JET = {rev = "master", url = "https://github.com/aviatesk/JET.jl"}
 JETLS = {path = "."}
-JuliaLowering = {rev = "jetls-hacking", url = "https://github.com/mlechu/JuliaLowering.jl"}
-JuliaSyntax = {rev = "e02f29f", url = "https://github.com/JuliaLang/JuliaSyntax.jl"}
+JuliaLowering = {rev = "jetls-hacking", url = "https://github.com/aviatesk/JuliaLowering.jl"}
+JuliaSyntax = {rev = "jetls-hacking", url = "https://github.com/JuliaLang/JuliaSyntax.jl"}
 
 [compat]
 Test = "1.11.0"
