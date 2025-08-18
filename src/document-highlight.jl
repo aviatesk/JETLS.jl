@@ -51,16 +51,10 @@ end
 function lowering_document_highlights!(highlights::Vector{DocumentHighlight}, fi::FileInfo, offset::Int, mod::Module)
     st0_top = build_tree!(JL.SyntaxTree, fi)
 
-    st0 = @something greatest_local(st0_top, offset) return highlights
-    (; ctx3, st3) = try
-        jl_lower_for_scope_resolution(mod, st0)
-    catch err
-        JETLS_DEBUG_LOWERING && @warn "Error in lowering (lowering_document_highlights!)" err
-        JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
-        return highlights
-    end
+    (; ctx3, st3, binding) = @something begin
+        _select_target_binding(st0_top, offset, mod; caller="lowering_document_highlights!")
+    end return highlights
 
-    binding = @something __select_target_binding(ctx3, st3, offset) return highlights
     binfo = JL.lookup_binding(ctx3, binding)
 
     binding_occurrences = compute_binding_occurrences(ctx3, st3)

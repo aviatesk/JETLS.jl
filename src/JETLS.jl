@@ -73,6 +73,7 @@ include("code-action.jl")
 include("code-lens.jl")
 include("formatting.jl")
 include("inlay-hint.jl")
+include("rename.jl")
 include("testrunner.jl")
 include("did-change-watched-files.jl")
 include("response.jl")
@@ -218,6 +219,10 @@ function _handle_message(server::Server, @nospecialize msg)
         return handle_DocumentRangeFormattingRequest(server, msg)
     elseif msg isa DidChangeWatchedFilesNotification
         return handle_DidChangeWatchedFilesNotification(server, msg)
+    elseif msg isa RenameRequest
+        return handle_RenameRequest(server, msg)
+    elseif msg isa PrepareRenameRequest
+        return handle_PrepareRenameRequest(server, msg)
     elseif msg isa Dict{Symbol,Any} # response message
         if handle_ResponseMessage(server, msg)
             return nothing

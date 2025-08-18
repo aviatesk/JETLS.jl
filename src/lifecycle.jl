@@ -162,6 +162,15 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
         end
     end
 
+    if supports(server, :textDocument, :rename, :dynamicRegistration)
+        renameProvider = nothing # will be registered dynamically
+    else
+        renameProvider = rename_options()
+        if JETLS_DEV_MODE
+            @info "Registering 'textDocument/rename' with `InitializeResponse`"
+        end
+    end
+
     positionEncodings = getcapability(state, :general, :positionEncodings)
     if isnothing(positionEncodings) || isempty(positionEncodings)
         positionEncoding = PositionEncodingKind.UTF16
@@ -192,6 +201,7 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
             documentRangeFormattingProvider,
             executeCommandProvider,
             inlayHintProvider,
+            renameProvider,
         ),
         serverInfo = (;
             name = "JETLS",
@@ -319,6 +329,16 @@ function handle_InitializedNotification(server::Server)
         # NOTE If rangeFormatting's `dynamicRegistration` is not supported,
         # it needs to be registered along with initialization in the `InitializeResponse`,
         # since `DocumentRangeFormattingRegistrationOptions` does not extend `StaticRegistrationOptions`.
+    end
+
+    if supports(server, :textDocument, :rename, :dynamicRegistration)
+        push!(registrations, rename_registration())
+        if JETLS_DEV_MODE
+            @info "Dynamically registering 'textDocument/rename' upon `InitializedNotification`"
+        end
+    else
+        # NOTE If rename's `dynamicRegistration` is not supported,
+        # it needs to be registered along with initialization in the `InitializeResponse`.
     end
 
     if supports(server, :textDocument, :inlayHint, :dynamicRegistration)
