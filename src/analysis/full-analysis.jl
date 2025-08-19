@@ -67,8 +67,7 @@ function analyze_parsed_if_exist(server::Server, info::FullAnalysisInfo, args...
     jetconfigs = entryjetconfigs(info.entry)
     fi = get_saved_file_info(server.state, uri)
     if !isnothing(fi)
-        filename = uri2filename(uri)
-        @assert !isnothing(filename) lazy"Unsupported URI: $uri"
+        filename = @something uri2filename(uri) error(lazy"Unsupported URI: $uri")
         parsed = build_tree!(JS.SyntaxNode, fi; filename)
         begin_full_analysis_progress(server, info)
         try
@@ -77,8 +76,7 @@ function analyze_parsed_if_exist(server::Server, info::FullAnalysisInfo, args...
             end_full_analysis_progress(server, info)
         end
     else
-        filepath = uri2filepath(uri)
-        @assert filepath !== nothing lazy"Unsupported URI: $uri"
+        filepath = @something uri2filepath(uri) error(lazy"Unsupported URI: $uri")
         begin_full_analysis_progress(server, info)
         try
             return JET.analyze_and_report_file!(LSInterpreter(server, info), filepath, args...; jetconfigs...)

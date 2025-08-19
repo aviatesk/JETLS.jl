@@ -63,13 +63,6 @@ function jet_result_to_diagnostics!(uri2diagnostics::URI2Diagnostics, result::JE
     return uri2diagnostics
 end
 
-frame_module(frame) = let def = frame.linfo.def
-    if def isa Method
-        def = def.module
-    end
-    return def
-end
-
 function jet_toplevel_error_report_to_diagnostic(
         postprocessor::JET.PostProcessor, @nospecialize report::JET.ToplevelErrorReport
     )
@@ -94,22 +87,26 @@ function jet_inference_error_report_to_diagnostic(postprocessor::JET.PostProcess
     message = JET.with_bufferring(:limit=>true) do io
         JET.print_report_message(io, report)
     end |> postprocessor
-    relatedInformation = DiagnosticRelatedInformation[
-        let frame = report.vst[rstack[i]],
-            message = postprocessor(sprint(JET.print_frame_sig, frame, JET.PrintConfig()))
-            DiagnosticRelatedInformation(;
-                location = Location(;
-                    uri = filepath2uri(to_full_path(frame.file)),
-                    range = jet_frame_to_range(frame)),
-                message)
-        end
-        for i = 2:length(rstack)]
+    relatedInformation = DiagnosticRelatedInformation[]
+    for i = 2:length(rstack)
+        frame = report.vst[rstack[i]]
+        location = @something jet_frame_to_location(frame) continue
+        message = postprocessor(sprint(JET.print_frame_sig, frame, JET.PrintConfig()))
+        push!(relatedInformation, DiagnosticRelatedInformation(; location, message))
+    end
     return Diagnostic(;
         range = jet_frame_to_range(topframe),
         severity = inference_error_report_severity(report),
         message,
         source = INFERENCE_DIAGNOSTIC_SOURCE,
         relatedInformation)
+end
+
+function jet_frame_to_location(frame)
+    frame.file === :none && return nothing
+    return Location(;
+        uri = filepath2uri(to_full_path(frame.file)),
+        range = jet_frame_to_range(frame))
 end
 
 function jet_frame_to_range(frame)
