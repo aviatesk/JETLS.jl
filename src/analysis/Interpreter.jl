@@ -56,6 +56,7 @@ function JET.analyze_from_definitions!(interp::LSInterpreter, config::JET.Toplev
     entrypoint = config.analyze_from_definitions
     res = JET.InterpretationState(interp).res
     n = length(res.toplevel_signatures)
+    n == 0 && return
     next_interval = interval = 10 ^ max(round(Int, log10(n)) - 1, 0)
     token = interp.info.token
     if token !== nothing
