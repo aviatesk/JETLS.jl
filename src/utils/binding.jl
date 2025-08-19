@@ -322,7 +322,6 @@ function compute_binding_occurrences(
 
     for (i, binfo) = enumerate(ctx3.bindings.info)
         binfo.is_internal && continue
-        include_global_bindings || is_local_binding(binfo) || continue
         if binfo.kind === :argument
             push!(get!(Vector{Int}, same_arg_bindings, Symbol(binfo.name)), i)
         elseif binfo.kind === :static_parameter
@@ -330,6 +329,10 @@ function compute_binding_occurrences(
         elseif binfo.kind === :local
             # :local static parameter binding is introduced to evaluate signature type
             push!(get!(Vector{Int}, same_sparam_bindings, Symbol(binfo.name)), i)
+        elseif binfo.kind === :global
+            include_global_bindings || continue
+        else
+            error(lazy"Unknown binding kind: $(binfo.kind)")
         end
         occurrences[binfo] = Set{BindingOccurence{Tree3}}()
     end
