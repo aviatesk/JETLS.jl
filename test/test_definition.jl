@@ -27,10 +27,9 @@ end
 
 include("setup.jl")
 
-# Helper to run a single global definition test
+# Helper to run a single definition test
 function with_definition_request(tester::Function, text::AbstractString; kwargs...)
     clean_code, positions = JETLS.get_text_and_positions(text; kwargs...)
-
     withscript(clean_code) do script_path
         uri = filepath2uri(script_path)
         withserver() do (; writereadmsg, id_counter)
@@ -38,7 +37,6 @@ function with_definition_request(tester::Function, text::AbstractString; kwargs.
             (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, clean_code))
             @test raw_res isa PublishDiagnosticsNotification
             @test raw_res.params.uri == uri
-
             for (i, pos) in enumerate(positions)
                 (; raw_res) = writereadmsg(DefinitionRequest(;
                     id = id_counter[] += 1,
@@ -329,6 +327,27 @@ end
             @test any(results) do result
                 result.uri == uri &&
                 result.range.start.line == 4
+            end
+            cnt += 1
+        end
+        @test cnt == 1
+    end
+end
+
+@testset "'Definition' for local bindings" begin
+    @testset "local definition with macrocall" begin
+        cnt = 0
+        with_definition_request("""
+            function func(xxx, yyy)
+                value = @something rand((xxx│, yyy, nothing))
+                return value
+            end
+        """) do _, results, uri
+            @test results isa Vector{Location}
+            @test length(results) == 1
+            @test any(results) do result
+                result.uri == uri &&
+                result.range.start.line == 0
             end
             cnt += 1
         end
