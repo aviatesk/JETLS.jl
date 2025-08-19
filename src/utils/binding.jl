@@ -312,7 +312,8 @@ a set of `BindingOccurence` objects that record where and how the binding appear
 """
 function compute_binding_occurrences(
         ctx3::JL.VariableAnalysisContext, st3::Tree3;
-        ismacro::Union{Nothing,Base.RefValue{Bool}} = nothing
+        ismacro::Union{Nothing,Base.RefValue{Bool}} = nothing,
+        include_global_bindings::Bool = false
     ) where Tree3<:JL.SyntaxTree
     occurrences = Dict{JL.BindingInfo,Set{BindingOccurence{Tree3}}}()
 
@@ -321,7 +322,7 @@ function compute_binding_occurrences(
 
     for (i, binfo) = enumerate(ctx3.bindings.info)
         binfo.is_internal && continue
-        is_local_binding(binfo) || continue
+        include_global_bindings || is_local_binding(binfo) || continue
         if binfo.kind === :argument
             push!(get!(Vector{Int}, same_arg_bindings, Symbol(binfo.name)), i)
         elseif binfo.kind === :static_parameter
