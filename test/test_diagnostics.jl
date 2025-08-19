@@ -113,28 +113,27 @@ end
 end
 
 @testset "inference diagnostics (package analysis)" begin
-    pkg_code = """
-    module TestPackageAnalysis
-    export hello
+    withpackage("TestPackageAnalysis", """
+        module TestPackageAnalysis
+        export hello
 
-    struct Hello
-        who::String
-    end
-    function hello(x::Hello)
-        return "Hello, \$(x.who)!"
-    end
-
-    module BadModule
-        using ..TestPackageAnalysis: Hello
-        function badhello(x::Hello)
-            # Undefined variable 'y'
-            return "Hello, \$(y.who)"
+        struct Hello
+            who::String
         end
-    end
+        function hello(x::Hello)
+            return "Hello, \$(x.who)!"
+        end
 
-    end # module TestPackageAnalysis
-    """
-    withpackage("TestPackageAnalysis", pkg_code) do pkg_path
+        module BadModule
+            using ..TestPackageAnalysis: Hello
+            function badhello(x::Hello)
+                # Undefined variable 'y'
+                return "Hello, \$(y.who)"
+            end
+        end
+
+        end # module TestPackageAnalysis
+        """) do pkg_path
         rootUri = filepath2uri(pkg_path)
         src_path = normpath(pkg_path, "src", "TestPackageAnalysis.jl")
         uri = filepath2uri(src_path)
@@ -143,7 +142,6 @@ end
 
             @test raw_res isa PublishDiagnosticsNotification
             @test raw_res.params.uri == uri
-            # @test raw_res.params.version == 1
 
             found_diagnostic = false
             for diag in raw_res.params.diagnostics
@@ -156,6 +154,18 @@ end
                 end
             end
             @test found_diagnostic
+        end
+    end
+end
+
+@testset "Empty package analysis" begin
+    withpackage("TestEmptyPackageAnalysis", "module TestEmptyPackageAnalysis end") do pkg_path
+        rootUri = filepath2uri(pkg_path)
+        src_path = normpath(pkg_path, "src", "TestEmptyPackageAnalysis.jl")
+        uri = filepath2uri(src_path)
+        withserver(; rootUri) do (; writereadmsg, id_counter)
+            (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, read(src_path, String)))
+            @test raw_res isa PublishDiagnosticsNotification
         end
     end
 end
