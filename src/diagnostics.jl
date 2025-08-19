@@ -6,34 +6,21 @@ const INFERENCE_DIAGNOSTIC_SOURCE = "JETLS - inference"
 function parsed_stream_to_diagnostics(fi::FileInfo)
     diagnostics = Diagnostic[]
     for diagnostic in fi.parsed_stream.diagnostics
-        push!(diagnostics, jsdiag_to_diagnostic(diagnostic, fi))
+        push!(diagnostics, jsdiag_to_lspdiag(diagnostic, fi))
     end
     return diagnostics
 end
 
-function jsdiag_to_diagnostic(diagnostic::JS.Diagnostic, fi::FileInfo)
-    severity =
-        diagnostic.level === :error ? DiagnosticSeverity.Error :
-        diagnostic.level === :warning ? DiagnosticSeverity.Warning :
-        diagnostic.level === :note ? DiagnosticSeverity.Information :
-        DiagnosticSeverity.Hint
-    return jsobj_to_diagnostic(diagnostic, fi, diagnostic.message, severity, #=source=#SYNTAX_DIAGNOSTIC_SOURCE)
-end
-
-function jsobj_to_diagnostic(obj, fi::FileInfo,
-        message::AbstractString, severity::DiagnosticSeverity.Ty, source::String;
-        tags::Union{Nothing,Vector{DiagnosticTag.Ty}} = nothing,
-        relatedInformation::Union{Nothing,Vector{DiagnosticRelatedInformation}} = nothing,
-        kwargs...
-    )
-    range = jsobj_to_range(obj, fi; kwargs...)
+function jsdiag_to_lspdiag(diagnostic::JS.Diagnostic, fi::FileInfo)
     return Diagnostic(;
-        range,
-        severity,
-        message,
-        source,
-        tags,
-        relatedInformation)
+        range = jsobj_to_range(diagnostic, fi),
+        severity =
+            diagnostic.level === :error ? DiagnosticSeverity.Error :
+            diagnostic.level === :warning ? DiagnosticSeverity.Warning :
+            diagnostic.level === :note ? DiagnosticSeverity.Information :
+            DiagnosticSeverity.Hint,
+        message = diagnostic.message,
+        source = SYNTAX_DIAGNOSTIC_SOURCE)
 end
 
 function jet_result_to_diagnostics(file_uris, result::JET.JETToplevelResult)
@@ -89,7 +76,7 @@ function jet_toplevel_error_report_to_diagnostic(
     if report isa JET.ParseErrorReport
         # TODO: Pass correct encoding here
         fi = FileInfo(#=version=#0, ParseStream!(report.source.code), PositionEncodingKind.UTF16)
-        return jsdiag_to_diagnostic(report.diagnostic, fi)
+        return jsdiag_to_lspdiag(report.diagnostic, fi)
     end
     message = JET.with_bufferring(:limit=>true) do io
         JET.print_report(io, report)
@@ -192,6 +179,7 @@ function analyze_lowered_code!(diagnostics::Vector{Diagnostic},
             continue
         end
         bk = binfo.kind
+        range = jsobj_to_range(binding, fi)
         key = LoweringDiagnosticKey(fb, lb, bk, bn)
         key in reported ? continue : push!(reported, key)
         if bk === :argument
@@ -199,9 +187,11 @@ function analyze_lowered_code!(diagnostics::Vector{Diagnostic},
         else
             message = "Unused local binding `$bn`"
         end
-        push!(diagnostics, jsobj_to_diagnostic(
-            binding, fi, message,
-            #=severity=#DiagnosticSeverity.Information, #=source=#LOWERING_DIAGNOSTIC_SOURCE;
+        push!(diagnostics, Diagnostic(;
+            range,
+            severity = DiagnosticSeverity.Information,
+            message,
+            source = LOWERING_DIAGNOSTIC_SOURCE,
             tags = DiagnosticTag.Ty[DiagnosticTag.Unnecessary]))
     end
     return diagnostics
@@ -216,8 +206,11 @@ function lowering_diagnostics!(
         jl_lower_for_scope_resolution(mod, st0; recover_from_macro_errors=false)
     catch err
         if err isa JL.LoweringError
-            push!(diagnostics, jsobj_to_diagnostic(err.ex, fi, err.msg,
-                #=severity=#DiagnosticSeverity.Error, #=source=#LOWERING_DIAGNOSTIC_SOURCE))
+            push!(diagnostics, Diagnostic(;
+                range = jsobj_to_range(err.ex, fi),
+                severity = DiagnosticSeverity.Error,
+                message = err.msg,
+                source = LOWERING_DIAGNOSTIC_SOURCE))
         elseif err isa JL.MacroExpansionError
             st = scrub_expand_macro_stacktrace(stacktrace(catch_backtrace()))
             msg = err.msg
@@ -229,8 +222,11 @@ function lowering_diagnostics!(
                 msg *= "\n" * sprint(Base.showerror, inner)
                 relatedInformation = stacktrace_to_related_information(st)
             end
-            push!(diagnostics, jsobj_to_diagnostic(err.ex, fi, msg,
-                #=severity=#DiagnosticSeverity.Error, #=source=#LOWERING_DIAGNOSTIC_SOURCE;
+            push!(diagnostics, Diagnostic(;
+                range = jsobj_to_range(err.ex, fi),
+                severity = DiagnosticSeverity.Error,
+                message = msg,
+                source = LOWERING_DIAGNOSTIC_SOURCE,
                 relatedInformation))
         else
             JETLS_DEBUG_LOWERING && @warn "Error in lowering (with macrocall nodes)"
