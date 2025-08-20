@@ -151,8 +151,7 @@ function stacktrace_to_related_information(stacktrace::Vector{Base.StackTraces.S
 end
 
 struct LoweringDiagnosticKey
-    first_byte::UInt
-    last_byte::UInt
+    range::Range
     kind::Symbol
     name::String
 end
@@ -167,17 +166,14 @@ function analyze_lowered_code!(diagnostics::Vector{Diagnostic},
         if any(occurrence::BindingOccurence->occurrence.kind===:use, occurrences)
             continue
         end
-        binding = JL.binding_ex(ctx3, binfo.id)
-        fb, lb = JS.first_byte(binding), JS.last_byte(binding)
         bn = binfo.name
-        if iszero(fb) || iszero(lb)
-            continue
-        elseif ismacro[] && (bn == "__module__" || bn == "__source__")
+        if ismacro[] && (bn == "__module__" || bn == "__source__")
             continue
         end
+        provs = JL.flattened_provenance(JL.binding_ex(ctx3, binfo.id))
         bk = binfo.kind
-        range = jsobj_to_range(binding, fi)
-        key = LoweringDiagnosticKey(fb, lb, bk, bn)
+        range = jsobj_to_range(first(provs), fi)
+        key = LoweringDiagnosticKey(range, bk, bn)
         key in reported ? continue : push!(reported, key)
         if bk === :argument
             message = "Unused argument `$bn`"
@@ -250,7 +246,8 @@ lowering_diagnostics(args...) = lowering_diagnostics!(Diagnostic[], args...) # u
 function toplevel_lowering_diagnostics(server::Server, uri::URI)
     diagnostics = Diagnostic[]
     file_info = get_file_info(server.state, uri)
-    st0_top = build_tree!(JL.SyntaxTree, file_info)
+    filename = @something uri2filename(uri) error(lazy"Unsupported URI: $uri")
+    st0_top = build_tree!(JL.SyntaxTree, file_info; filename)
     sl = JL.SyntaxList(st0_top)
     push!(sl, st0_top)
     while !isempty(sl)
