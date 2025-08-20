@@ -18,6 +18,10 @@ function get_lowered_diagnostics(mod::Module, text::AbstractString)
     return JETLS.lowering_diagnostics(st0[1], mod, fi)
 end
 
+macro just_return(x)
+    :($(esc(x)))
+end
+
 @testset "unused binding detection" begin
     let diagnostics = get_lowered_diagnostics("""
         y = let x = 42
@@ -360,6 +364,19 @@ end
         @test diagnostic.message == "Unused argument `configs`"
         @test diagnostic.range.start.line == 0
         @test diagnostic.range.var"end".line == 0
+    end
+
+    @testset "argument decl with macro" begin
+        diagnostics = get_lowered_diagnostics(@__MODULE__, """
+        func(@just_return x) = nothing
+        """)
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.message == "Unused argument `x`"
+        @test diagnostic.range.start.line == 0
+        @test diagnostic.range.start.character == length("func(")
+        @test diagnostic.range.var"end".line == 0
+        @test diagnostic.range.var"end".character == length("func(@just_return x")
     end
 
     length_utf16(s::AbstractString) = sum(c::Char -> codepoint(c) < 0x10000 ? 1 : 2, collect(s); init=0)
