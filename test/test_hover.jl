@@ -3,8 +3,10 @@ module test_hover
 using Test
 using JETLS
 using JETLS.LSP
+using JETLS.LSP.URIs2
 
-include("setup.jl")
+include(normpath(pkgdir(JETLS), "test", "setup.jl"))
+include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
 
 @testset "'Hover' request/responce (pkg)" begin
     pkg_code = """
@@ -72,7 +74,6 @@ include("setup.jl")
     @assert length(positions) == length(testers)
 
     withpackage("HoverTest", clean_code) do pkg_path
-        rootUri = filepath2uri(pkg_path)
         src_path = normpath(pkg_path, "src", "HoverTest.jl")
         uri = filepath2uri(src_path)
         withserver() do (; writereadmsg, id_counter)
@@ -239,20 +240,39 @@ function with_hover_request(tester::Function, text::AbstractString; kwargs...)
     end
 end
 
+module lowering_module end
+get_local_hover(args...; kwargs...) = get_local_hover(lowering_module, args...; kwargs...)
+function get_local_hover(mod::Module, text::AbstractString, pos::Position; filename::AbstractString=@__FILE__)
+    ps = JETLS.ParseStream!(text)
+    fi = JETLS.FileInfo(#=version=#0, ps)
+    uri = filename2uri(filename)
+    st0_top = JETLS.build_tree!(JL.SyntaxTree, fi)
+    @assert JS.kind(st0_top) === JS.K"toplevel"
+    offset = JETLS.xy_to_offset(fi, pos)
+    return JETLS.local_binding_hover(fi, uri, st0_top, offset, mod)
+end
+
+function func(xxx, yyy)
+    value = @something rand((xxx, yyy, nothing))
+    return value
+end
+
 @testset "'hover' for local bindings" begin
     @testset "local hover with macrocall" begin
-        cnt = 0
-        with_hover_request("""
+        clean_text, positions = JETLS.get_text_and_positions("""
             function func(xxx, yyy)
-                value = @something rand((xxx│, yyy, nothing))
+                value = @something rand((│xx│x│, yyy, nothing))
                 return value
             end
-        """) do _, result, uri
+        """)
+        @test length(positions) == 3
+        for pos in positions
+            result = get_local_hover(clean_text, pos)
             @test result isa Hover
-            @test result.range.start.line == 1
-            cnt += 1
+            @test result.range.start == positions[1]
+            @test result.range.var"end" == positions[3]
+            @test occursin("function func(xxx, yyy)", result.contents.value)
         end
-        @test cnt == 1
     end
 end
 

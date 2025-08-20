@@ -21,6 +21,39 @@ end
 #     method = HOVER_REGISTRATION_METHOD))
 # register(currently_running, hover_registration())
 
+function local_binding_hover(fi::FileInfo, uri::URI, st0_top::JL.SyntaxTree, offset::Int, mod::Module)
+    target_binding, definitions = @something begin
+        select_target_binding_definitions(st0_top, offset, mod)
+    end return nothing
+    contents = MarkupContent(;
+        kind = MarkupKind.Markdown,
+        value = local_binding_hover_info(fi, uri, definitions))
+    return Hover(;
+        contents,
+        range = jsobj_to_range(target_binding, fi))
+end
+
+function local_binding_hover_info(fi::FileInfo, uri::URI, definitions::JL.SyntaxList)
+    io = IOBuffer()
+    n = length(definitions)
+    for (i, definition) in enumerate(definitions)
+        println(io, "``````julia")
+        JL.showprov(io, definition; include_location=false)
+        println(io)
+        println(io, "``````")
+        (; line, character) = jsobj_to_range(definition, fi).start
+        line += 1; character += 1
+        showtext = "`@ " * simple_loc_text(uri; line) * "`"
+        println(io, create_source_location_link(uri, showtext; line, character))
+        if i ≠ n
+            println(io, "\n---\n") # separator
+        else
+            println(io)
+        end
+    end
+    return String(take!(io))
+end
+
 function handle_HoverRequest(server::Server, msg::HoverRequest)
     pos = msg.params.position
     uri = msg.params.textDocument.uri
@@ -37,38 +70,10 @@ function handle_HoverRequest(server::Server, msg::HoverRequest)
     offset = xy_to_offset(fi, pos)
     (; mod, analyzer, postprocessor) = get_context_info(server.state, uri, pos)
 
-    target_binding_definitions = select_target_binding_definitions(st0_top, offset, mod)
-    if !isnothing(target_binding_definitions)
-        # TODO Ideally we would want to show the type of this local binding,
-        # but for now we'll just show the location of the local binding
-        target_binding, definitions = target_binding_definitions
-        io = IOBuffer()
-        n = length(definitions)
-        for (i, definition) in enumerate(definitions)
-            println(io, "``````julia")
-            JL.showprov(io, definition; include_location=false)
-            println(io)
-            println(io, "``````")
-            (; line, character) = jsobj_to_range(definition, fi).start
-            line += 1; character += 1
-            showtext = "`@ " * simple_loc_text(uri; line) * "`"
-            println(io, create_source_location_link(uri, showtext; line, character))
-            if i ≠ n
-                println(io, "\n---\n") # separator
-            else
-                println(io)
-            end
-        end
-        value = String(take!(io))
-        contents = MarkupContent(;
-            kind = MarkupKind.Markdown,
-            value)
-        return send(server, HoverResponse(;
-            id = msg.id,
-            result = Hover(;
-                contents,
-                range = jsobj_to_range(target_binding, fi))))
-    end
+    local_hover = local_binding_hover(fi, uri, st0_top, offset, mod)
+    isnothing(local_hover) || return send(server, HoverResponse(;
+        id = msg.id,
+        result = local_hover))
 
     node = @something select_target_node(st0_top, offset) begin
         return send(server, HoverResponse(; id = msg.id, result = null))
