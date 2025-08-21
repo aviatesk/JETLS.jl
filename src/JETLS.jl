@@ -52,6 +52,8 @@ const CASStats = JETLS_DEV_MODE ? AtomicContainers.CASStats : Nothing
 include("testrunner/testrunner-types.jl")
 include("types.jl")
 
+include("analysis/ASTTypeAnnotator.jl")
+
 include("utils/jl_syntax_macros.jl")
 include("utils/general.jl")
 include("utils/string.jl")
@@ -59,6 +61,7 @@ include("utils/path.jl")
 include("utils/pkg.jl")
 include("utils/ast.jl")
 include("utils/binding.jl")
+include("utils/inference.jl")
 include("utils/lsp.jl")
 include("utils/server.jl")
 
