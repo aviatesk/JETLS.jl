@@ -44,7 +44,7 @@ function handle_DocumentHighlightRequest(server::Server, msg::DocumentHighlightR
 
     return send(server, DocumentHighlightResponse(;
         id = msg.id,
-        result = highlights
+        result = isempty(highlights) ? null : highlights
     ))
 end
 
