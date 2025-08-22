@@ -6,7 +6,7 @@ using JuliaSyntax: JuliaSyntax as JS
 using JET: CC, JET
 using ..JETLS:
     AnalysisEntry, FullAnalysisInfo, SavedFileInfo, Server,
-    JETLS_DEV_MODE, build_tree!, get_saved_file_info, yield_to_endpoint, send
+    JETLS_DEV_MODE, build_tree!, get_saved_file_info, yield_to_endpoint, send, get_config
 using ..JETLS.URIs2
 using ..JETLS.LSP
 using ..JETLS.Analyzer
@@ -18,17 +18,18 @@ Counter() = Counter(0)
 increment!(counter::Counter) = counter.count += 1
 Base.getindex(counter::Counter) = counter.count
 
-struct LSInterpreter{S<:Server, I<:FullAnalysisInfo} <: JET.ConcreteInterpreter
-    server::S
-    info::I
-    analyzer::LSAnalyzer
-    counter::Counter
-    state::JET.InterpretationState
+mutable struct LSInterpreter{S<:Server, I<:FullAnalysisInfo} <: JET.ConcreteInterpreter
+    const server::S
+    const info::I
+    const analyzer::LSAnalyzer
+    const counter::Counter
+    const state::JET.InterpretationState
+    current_pkgid::Union{Base.PkgId, Nothing}
     function LSInterpreter(server::S, info::I, analyzer::LSAnalyzer, counter::Counter) where S<:Server where I<:FullAnalysisInfo
         return new{S,I}(server, info, analyzer, counter)
     end
     function LSInterpreter(server::S, info::I, analyzer::LSAnalyzer, counter::Counter, state::JET.InterpretationState) where S<:Server where I<:FullAnalysisInfo
-        return new{S,I}(server, info, analyzer, counter, state)
+        return new{S,I}(server, info, analyzer, counter, state,  state.config.pkgid)
     end
 end
 
@@ -145,4 +146,164 @@ function JET.try_read_file(interp::LSInterpreter, include_context::Module, filen
     return read(filename, String)
 end
 
+
+function should_recursive_analyze(interp::LSInterpreter, dep::Symbol)
+    server = interp.server
+    server_state = server.state
+    interp_state = JET.InterpretationState(interp)
+    depth = interp_state.pkg_mod_depth
+
+    max_depth = get_config(server_state.config_manager, "recursive_analysis", "max_depth")
+    max_depth < depth && return false
+
+    exclude = get_config(server_state.config_manager, "recursive_analysis", "exclude")
+    depstr = String(dep)
+    # XXX: This is temporary implementation.
+    #      In the future, this method support `Regex` or `Glob` like object.
+    depstr in exclude && return false
+
+    return true
+end
+
+
+function JET.usemodule_with_err_handling(interp::LSInterpreter, ex::Expr)
+    # In 1.13, lowerd form of `using`/`import` is changed
+    # TODO: support 1.13 and later
+    @static if VERSION >= v"1.13.0"
+        return @invoke JET.usemodule_with_err_handling(interp::JET.ConcreteInterpreter, ex::Expr)
+    end
+
+    state = JET.InterpretationState(interp)
+    caller_mod = state.context
+    Meta.isexpr(ex, (:export, :public)) && @goto eval_usemodule
+    current_pkgid = interp.current_pkgid
+    if current_pkgid !== nothing
+        module_usage = JET.pattern_match_module_usage(ex)
+        (; modpath) = module_usage
+        dep = first(modpath)::Symbol
+        if !(dep === :. || # relative module doesn't need to be fixed
+             dep === :Base || dep === :Core) # modules available by default
+            if dep === Symbol(current_pkgid.name)
+                # it's somehow allowed to use the package itself without the relative module path,
+                # so we need to special case it and fix it to use the relative module path
+                for _ = 1:state.pkg_mod_depth
+                    pushfirst!(modpath, :.)
+                end
+            else
+                dependencies = interp.server.state.dependencies
+                depstr = String(dep)
+                required_pkgenv = Base.identify_package_env(caller_mod, depstr)
+                if required_pkgenv === nothing
+                    local report = JET.DependencyError(current_pkgid.name, depstr, state.filename, state.curline)
+                    JET.add_toplevel_error_report!(state, report)
+                    return nothing
+                end
+                required_pkgid, required_env = required_pkgenv
+                if required_pkgid ∉ dependencies
+                    maybe_mod = Base.maybe_root_module(required_pkgid)
+                    if maybe_mod isa Module
+                        @assert nameof(maybe_mod) == dep
+                        res = JET.with_err_handling(JET.general_err_handler, state; scrub_offset=1) do
+                            Core.eval(caller_mod, :(const $dep = $maybe_mod))
+                            true
+                        end
+                        if res === nothing
+                            @warn "Failed to set module to $dep in $mod"
+                            return nothing
+                        end
+                    else
+                        if !should_recursive_analyze(interp, dep)
+                            res = JET.with_err_handling(JET.general_err_handler, state; scrub_offset=1) do
+                                Core.eval(caller_mod, :(const $dep = Base.require($required_pkgid)))
+                                true
+                            end
+                            if res === nothing
+                                @warn "Failed to set module to $dep in $mod"
+                                return nothing
+                            end
+                        else
+                            path = Base.locate_package(required_pkgid, required_env)
+                            # without `instantiate`, sometimes required_pkgenv is not `nothing` but path is nothing
+                            if path === nothing
+                                local report = JET.DependencyError(current_pkgid.name, depstr, state.filename, state.curline)
+                                JET.add_toplevel_error_report!(state, report)
+                                return nothing
+                            end
+                            required_uuid = required_pkgid.uuid
+                            required_uuid = (required_uuid === nothing ? (UInt64(0), UInt64(0)) : convert(NTuple{2, UInt64}, required_uuid))
+                            old_uuid = ccall(:jl_module_uuid, NTuple{2, UInt64}, (Any,), Base.__toplevel__)
+                            if required_uuid !== old_uuid
+                                ccall(:jl_set_module_uuid, Cvoid, (Any, NTuple{2, UInt64}), Base.__toplevel__, required_uuid)
+                            end
+                            old_pkgid = interp.current_pkgid
+                            interp.current_pkgid = required_pkgid
+                            try
+                                JET.handle_include(
+                                    interp,
+                                    Base.include,
+                                    [Base.__toplevel__, path])
+                            finally
+                                interp.current_pkgid = old_pkgid
+                                loaded_mod = Base.maybe_root_module(required_pkgid)
+                                if loaded_mod === nothing
+                                    @warn "Failed to get $dep"
+                                    return nothing
+                                end
+                                res = JET.with_err_handling(JET.general_err_handler, state; scrub_offset=1) do
+                                    Core.eval(caller_mod, :(const $dep = $loaded_mod))
+                                    true
+                                end
+                                if res === nothing
+                                    @warn "Failed to set module to $dep in $mod"
+                                    return nothing
+                                end
+                                if required_uuid !== old_uuid
+                                    ccall(:jl_set_module_uuid, Cvoid, (Any, NTuple{2, UInt64}), Base.__toplevel__, old_uuid)
+                                end
+                            end
+                        end
+                    end
+                    push!(interp.server.state.dependencies, required_pkgid)
+                end
+                pushfirst!(modpath, :.)
+            end
+            fixed_module_usage = JET.ModuleUsage(module_usage; modpath)
+            ex = JET.form_module_usage(fixed_module_usage)
+        elseif dep === :.
+            # The syntax `import ..Submod` refers to the name that is available within
+            # a parent module specified by the number of `.` dots, indicating how many
+            # levels up the module hierarchy to go. However, when it comes to package
+            # loading, it seems to work regardless of the number of dots. For now, in
+            # `report_package`, adjust `modpath` here to mimic the package loading behavior.
+            topmodidx = findfirst(@nospecialize(mp)->mp!==:., modpath)::Int
+            topmodsym = modpath[topmodidx]
+            curmod = caller_mod
+            for i = 1:(topmodidx-1)
+                if topmodsym isa Symbol && isdefined(curmod, topmodsym)
+                    modpath = modpath[topmodidx:end]
+                    for j = 1:i
+                        pushfirst!(modpath, :.)
+                    end
+                    fixed_module_usage = JET.ModuleUsage(module_usage; modpath)
+                    ex = JET.form_module_usage(fixed_module_usage)
+                    break
+                else
+                    curmod = parentmodule(curmod)
+                end
+            end
+        end
+    end
+
+    @label eval_usemodule
+
+    # # `scrub_offset = 1`: `Core.eval`
+    # Executing `using/import` is somewhat redundant, since the module is already loaded
+    # and the remaining work is only to introduce names, but this doesn't affect results.
+    # TODO: Refactor using `Core._import` or similar.
+    JET.with_err_handling(JET.general_err_handler, state; scrub_offset=1) do
+        Core.eval(caller_mod, ex)
+        true
+    end
+
+    end
 end # module Interpreter

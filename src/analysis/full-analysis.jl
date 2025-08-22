@@ -266,6 +266,17 @@ function initiate_analysis_unit!(server::Server, uri::URI; token::Union{Nothing,
     return analysis_unit
 end
 
+function clear_dependencies_cache!(server)
+    dependencies = server.state.dependencies
+    for dep in dependencies
+        # TODO: make configurable cache clearing condition
+        if !Base.is_stdlib(dep)
+            Base.unreference_module(dep)
+        end
+    end
+    empty!(dependencies)
+end
+
 function reanalyze!(server::Server, analysis_unit::AnalysisUnit; token::Union{Nothing,ProgressToken}=nothing)
     state = server.state
     analysis_result = analysis_unit.result
@@ -287,6 +298,8 @@ function reanalyze!(server::Server, analysis_unit::AnalysisUnit; token::Union{No
 
     entry = analysis_unit.entry
     n_files = length(values(analysis_unit.result.successfully_analyzed_file_infos))
+
+    clear_dependencies_cache!(server)
 
     # manually dispatch here for the maximum inferrability
     if entry isa ScriptAnalysisEntry

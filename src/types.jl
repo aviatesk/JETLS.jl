@@ -237,6 +237,13 @@ global DEFAULT_CONFIG::Dict{String,Any} = Dict{String,Any}(
     "testrunner" => Dict{String,Any}(
         "executable" => "testrunner"
     ),
+    "recursive_analysis" => Dict{String, Any}(
+        "max_depth" => 0,
+        # In the future, this should use `Regex` or `Glob` like patterns.
+        # Currently, since schema-related mechanisms are not fully developed,
+        # only plain string and exact match is supported.
+        "exclude" => String[]
+    )
 )
 
 global CONFIG_RELOAD_REQUIRED::Dict{String,Any} = Dict{String,Any}(
@@ -249,6 +256,10 @@ global CONFIG_RELOAD_REQUIRED::Dict{String,Any} = Dict{String,Any}(
     "testrunner" => Dict{String,Any}(
         "executable" => false
     ),
+    "recursive_analysis" => Dict{String, Any}(
+        "max_depth" => true,
+        "exclude" => true
+    )
 )
 
 WatchedConfigFiles() = WatchedConfigFiles(String["__DEFAULT_CONFIG__"], Dict{String,Any}[DEFAULT_CONFIG])
@@ -314,6 +325,7 @@ mutable struct ServerState
     const currently_requested::Dict{String,RequestCaller}
     const currently_registered::Set{Registered}
     const config_manager::ConfigManager
+    const dependencies::Set{Base.PkgId}
     encoding::PositionEncodingKind.Ty
     root_path::String
     root_env_path::String
@@ -329,6 +341,7 @@ mutable struct ServerState
             #=currently_requested=# Dict{String,RequestCaller}(),
             #=currently_registered=# Set{Registered}(),
             #=config_manager=# ConfigManager(),
+            #=dependencies=# Set{Base.PkgId}(),
             #=encoding=# PositionEncodingKind.UTF16, # initialize with UTF16 (for tests)
         )
     end
