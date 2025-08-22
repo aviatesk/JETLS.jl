@@ -117,6 +117,10 @@ get_context_analyzer(::Nothing, uri::URI) = LSAnalyzer(uri)
 get_context_analyzer(::OutOfScope, uri::URI) = LSAnalyzer(uri)
 get_context_analyzer(analysis_unit::AnalysisUnit, ::URI) = analysis_unit.result.analyzer
 
+get_context_interpreter(::Nothing) = nothing
+get_context_interpreter(::OutOfScope) = nothing
+get_context_interpreter(analysis_unit::AnalysisUnit) = analysis_unit.result.interp
+
 get_post_processor(::Nothing) = LSPostProcessor(JET.PostProcessor())
 get_post_processor(::OutOfScope) = LSPostProcessor(JET.PostProcessor())
 get_post_processor(analysis_unit::AnalysisUnit) = LSPostProcessor(JET.PostProcessor(analysis_unit.result.actual2virtual))

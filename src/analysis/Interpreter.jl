@@ -2,10 +2,9 @@ module Interpreter
 
 export LSInterpreter
 
-using JuliaSyntax: JuliaSyntax as JS
 using JET: CC, JET
 using ..JETLS:
-    AnalysisEntry, FullAnalysisInfo, SavedFileInfo, Server,
+    JS, AnalysisEntry, FullAnalysisInfo, SavedFileInfo, Server,
     JETLS_DEV_MODE, build_tree!, get_saved_file_info, yield_to_endpoint, send
 using ..JETLS.URIs2
 using ..JETLS.LSP
@@ -18,29 +17,40 @@ Counter() = Counter(0)
 increment!(counter::Counter) = counter.count += 1
 Base.getindex(counter::Counter) = counter.count
 
+struct SigInferenceResult
+    filename::String
+    node::JS.SyntaxNode
+    result
+    SigInferenceResult(filename::String, node::JS.SyntaxNode) = new(filename, node)
+    SigInferenceResult(filename::String, node::JS.SyntaxNode, @nospecialize(result)) = new(filename, node, result)
+end
+
 struct LSInterpreter{S<:Server, I<:FullAnalysisInfo} <: JET.ConcreteInterpreter
     server::S
     info::I
     analyzer::LSAnalyzer
     counter::Counter
+    curnode::Base.RefValue{JS.SyntaxNode}
+    results::Vector{SigInferenceResult}
     state::JET.InterpretationState
-    function LSInterpreter(server::S, info::I, analyzer::LSAnalyzer, counter::Counter) where S<:Server where I<:FullAnalysisInfo
-        return new{S,I}(server, info, analyzer, counter)
+    function LSInterpreter(server::S, info::I, analyzer::LSAnalyzer, counter::Counter, curnode::Base.RefValue{JS.SyntaxNode}, results::Vector{SigInferenceResult}) where S<:Server where I<:FullAnalysisInfo
+        return new{S,I}(server, info, analyzer, counter, curnode, results)
     end
-    function LSInterpreter(server::S, info::I, analyzer::LSAnalyzer, counter::Counter, state::JET.InterpretationState) where S<:Server where I<:FullAnalysisInfo
-        return new{S,I}(server, info, analyzer, counter, state)
+    function LSInterpreter(server::S, info::I, analyzer::LSAnalyzer, counter::Counter, curnode::Base.RefValue{JS.SyntaxNode}, results::Vector{SigInferenceResult}, state::JET.InterpretationState) where S<:Server where I<:FullAnalysisInfo
+        return new{S,I}(server, info, analyzer, counter, curnode, results, state)
     end
 end
 
 # The main constructor
-LSInterpreter(server::Server, info::FullAnalysisInfo) = LSInterpreter(server, info, LSAnalyzer(info.entry), Counter())
+LSInterpreter(server::Server, info::FullAnalysisInfo) =
+    LSInterpreter(server, info, LSAnalyzer(info.entry), Counter(), Ref{JS.SyntaxNode}(), SigInferenceResult[])
 
 # `JET.ConcreteInterpreter` interface
 JET.InterpretationState(interp::LSInterpreter) = interp.state
 function JET.ConcreteInterpreter(interp::LSInterpreter, state::JET.InterpretationState)
     # add `state` to `interp`, and update `interp.analyzer.cache`
     initialize_cache!(interp.analyzer, state.res.analyzed_files)
-    return LSInterpreter(interp.server, interp.info, interp.analyzer, interp.counter, state)
+    return LSInterpreter(interp.server, interp.info, interp.analyzer, interp.counter, interp.curnode, interp.results, state)
 end
 JET.ToplevelAbstractAnalyzer(interp::LSInterpreter) = interp.analyzer
 
@@ -94,6 +104,7 @@ function JET.analyze_from_definitions!(interp::LSInterpreter, config::JET.Toplev
                 match.method, match.spec_types, match.sparams)
             reports = JET.get_reports(analyzer, result)
             append!(res.inference_error_reports, reports)
+            interp.results[i] = SigInferenceResult(interp.results[i].filename, interp.results[i].node, result)
         else
             # something went wrong
             if JETLS_DEV_MODE
@@ -128,6 +139,21 @@ function JET.virtual_process!(interp::LSInterpreter,
                                        x::Union{AbstractString,JS.SyntaxNode},
                                        overrideex::Union{Nothing,Expr})
     increment!(interp.counter)
+    return res
+end
+
+function JET.lower_with_err_handling(interp::LSInterpreter, node::JS.SyntaxNode, x::Expr)
+    interp.curnode[] = node
+    @invoke JET.lower_with_err_handling(interp::JET.ConcreteInterpreter, node::JS.SyntaxNode, x::Expr)
+end
+
+function JET.collect_toplevel_signature!(interp::LSInterpreter, frame::JET.JuliaInterpreter.Frame, @nospecialize(node))
+    res = @invoke JET.collect_toplevel_signature!(interp::JET.ConcreteInterpreter, frame::JET.JuliaInterpreter.Frame, node::Any)
+    if !isnothing(res)
+        filename = JET.InterpretationState(interp).filename
+        @assert length(res) == length(interp.results) + 1
+        push!(interp.results, SigInferenceResult(filename, interp.curnode[]))
+    end
     return res
 end
 
