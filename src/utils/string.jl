@@ -66,9 +66,9 @@ function xy_to_offset end
 
 xy_to_offset(fi::FileInfo, pos::Position) = _xy_to_offset(fi.parsed_stream.textbuf, pos, fi.encoding)
 xy_to_offset( # used by tests
-    s::Union{Vector{UInt8},AbstractString}, pos::Position,
+    s::Union{Vector{UInt8},AbstractString}, pos::Position, filename::AbstractString,
     encoding::PositionEncodingKind.Ty = PositionEncodingKind.UTF16
-) = xy_to_offset(FileInfo(#=version=#0, ParseStream!(s), encoding), pos)
+) = xy_to_offset(FileInfo(#=version=#0, s, filename, encoding), pos)
 
 function _xy_to_offset(textbuf::Vector{UInt8}, pos::Position, encoding::PositionEncodingKind.Ty)
     b = 0
@@ -108,9 +108,9 @@ function offset_to_xy end
 
 offset_to_xy(fi::FileInfo, byte::Integer) = _offset_to_xy(fi.parsed_stream.textbuf, byte, fi.encoding)
 offset_to_xy( # used by tests
-    s::Union{Vector{UInt8},AbstractString}, byte::Integer,
+    s::Union{Vector{UInt8},AbstractString}, byte::Integer, filename::AbstractString,
     encoding::PositionEncodingKind.Ty = PositionEncodingKind.UTF16
-) = offset_to_xy(FileInfo(#=version=#0, ParseStream!(s), encoding), byte)
+) = offset_to_xy(FileInfo(#=version=#0, s, filename, encoding), byte)
 
 function _offset_to_xy(textbuf::Vector{UInt8}, byte::Integer, encoding::PositionEncodingKind.Ty)
     if byte < 1

@@ -11,15 +11,14 @@ include("jsjl_utils.jl")
 
 global lowering_module::Module = Module()
 function get_cursor_bindings(fi::JETLS.FileInfo, b::Int)
-    st0 = JETLS.build_tree!(JL.SyntaxTree, fi)
+    st0 = fi.syntax_tree0
     cb = JETLS.cursor_bindings(st0, b, lowering_module)
     return isnothing(cb) ? [] : cb
 end
 
 function get_local_completions(s::AbstractString, b::Int)
     uri = JETLS.URIs2.filepath2uri(@__FILE__)
-    ps = JETLS.ParseStream!(s)
-    fi = JETLS.FileInfo(#=version=#0, ps)
+    fi = JETLS.FileInfo(#=version=#0, s, @__FILE__)
     return map(get_cursor_bindings(fi, b)) do ((bi, st, dist))
         JETLS.to_completion(bi, st, dist, uri, fi)
     end
@@ -51,7 +50,7 @@ end
 function with_completion(f, text::String; kwargs...)
     clean_code, positions = JETLS.get_text_and_positions(text; kwargs...)
     for (i, pos) in enumerate(positions)
-        cv = get_local_completions(clean_code, JETLS.xy_to_offset(clean_code, pos))
+        cv = get_local_completions(clean_code, JETLS.xy_to_offset(clean_code, pos, @__FILE__))
         f(i, cv)
     end
 end

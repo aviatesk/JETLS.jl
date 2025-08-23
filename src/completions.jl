@@ -147,7 +147,7 @@ function local_completions!(items::Dict{String, CompletionItem},
     fi = @something get_file_info(s, uri) return nothing
     # NOTE don't bail out even if `length(fi.parsed_stream.diagnostics) ≠ 0`
     # so that we can get some completions even for incomplete code
-    st0 = build_tree!(JL.SyntaxTree, fi)
+    st0 = fi.syntax_tree0
     (; mod) = get_context_info(s, uri, params.position)
     cbs = @something cursor_bindings(st0, xy_to_offset(fi, params.position), mod) return nothing
     for (bi, st, dist) in cbs
@@ -207,7 +207,7 @@ function global_completions!(items::Dict{String, CompletionItem}, state::ServerS
     # since macros are always defined top-level
     is_completed = is_macro_invoke
 
-    st = build_tree!(JL.SyntaxTree, fi)
+    st = fi.syntax_tree0
     offset = xy_to_offset(fi, pos)
     dotprefix = select_dotprefix_node(st, offset)
     if !isnothing(dotprefix)

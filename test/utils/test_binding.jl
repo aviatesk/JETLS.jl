@@ -11,7 +11,7 @@ function with_target_binding(f, text::AbstractString; kwargs...)
     clean_code, positions = JETLS.get_text_and_positions(text; kwargs...)
     st0_top = jlparse(clean_code)
     for (i, pos) in enumerate(positions)
-        offset = JETLS.xy_to_offset(clean_code, pos)
+        offset = JETLS.xy_to_offset(clean_code, pos, @__FILE__)
         f(i, JETLS.select_target_binding(st0_top, offset, lowering_module))
     end
 end
@@ -20,7 +20,7 @@ function _with_target_binding(f, text::AbstractString; kwargs...)
     clean_code, positions = JETLS.get_text_and_positions(text; kwargs...)
     st0_top = jlparse(clean_code)
     for (i, pos) in enumerate(positions)
-        offset = JETLS.xy_to_offset(clean_code, pos)
+        offset = JETLS.xy_to_offset(clean_code, pos, @__FILE__)
         f(i, JETLS._select_target_binding(st0_top, offset, lowering_module))
     end
 end
@@ -89,7 +89,7 @@ function with_target_binding_definitions(f, text::AbstractString; kwargs...)
     clean_code, positions = JETLS.get_text_and_positions(text; kwargs...)
     st0_top = jlparse(clean_code)
     for (i, pos) in enumerate(positions)
-        offset = JETLS.xy_to_offset(clean_code, pos)
+        offset = JETLS.xy_to_offset(clean_code, pos, @__FILE__)
         f(i, JETLS.select_target_binding_definitions(st0_top, offset, lowering_module))
     end
 end

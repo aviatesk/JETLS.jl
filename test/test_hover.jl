@@ -243,10 +243,9 @@ end
 module lowering_module end
 get_local_hover(args...; kwargs...) = get_local_hover(lowering_module, args...; kwargs...)
 function get_local_hover(mod::Module, text::AbstractString, pos::Position; filename::AbstractString=@__FILE__)
-    ps = JETLS.ParseStream!(text)
-    fi = JETLS.FileInfo(#=version=#0, ps)
+    fi = JETLS.FileInfo(#=version=#0, text, filename)
     uri = filename2uri(filename)
-    st0_top = JETLS.build_tree!(JL.SyntaxTree, fi)
+    st0_top = fi.syntax_tree0
     @assert JS.kind(st0_top) === JS.K"toplevel"
     offset = JETLS.xy_to_offset(fi, pos)
     return JETLS.local_binding_hover(fi, uri, st0_top, offset, mod)

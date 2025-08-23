@@ -23,34 +23,54 @@ struct _TestsetInfo{FileInfo}
     _TestsetInfo{FileInfo}(st0::SyntaxTree0, result::_TestsetResult{FileInfo}) where {FileInfo} = new{FileInfo}(st0, result)
 end
 
-mutable struct FileInfo
+struct FileInfo
     version::Int
+    encoding::LSP.PositionEncodingKind.Ty
     parsed_stream::JS.ParseStream
-    const encoding::LSP.PositionEncodingKind.Ty
-    # filled after cached
-    syntax_node::Dict{Any,JS.SyntaxNode}
-    syntax_tree0::Dict{Any,SyntaxTree0}
+    syntax_node::JS.SyntaxNode
+    syntax_tree0::SyntaxTree0
     testsetinfos::Vector{_TestsetInfo{FileInfo}}
-    FileInfo(
-        version::Int, parsed_stream::JS.ParseStream,
+
+    function FileInfo(
+            version::Int, parsed_stream::JS.ParseStream, filename::AbstractString,
+            encoding::LSP.PositionEncodingKind.Ty = LSP.PositionEncodingKind.UTF16
+        )
+        syntax_node = JS.build_tree(JS.SyntaxNode, parsed_stream; filename)
+        syntax_tree0 = JS.build_tree(JL.SyntaxTree, parsed_stream; filename)
+        new(version, encoding, parsed_stream, syntax_node, syntax_tree0, TestsetInfo[])
+    end
+end
+
+function FileInfo( # Constructor for production code (with URI)
+        version::Int, parsed_stream::JS.ParseStream, uri::URI,
         encoding::LSP.PositionEncodingKind.Ty = LSP.PositionEncodingKind.UTF16
-    ) = new(version, parsed_stream, encoding, Dict{Any,JS.SyntaxNode}(), Dict{Any,SyntaxTree0}(), TestsetInfo[])
+    )
+    filename = @something uri2filename(uri) error(lazy"Unsupported URI: $uri")
+    return FileInfo(version, parsed_stream, filename, encoding)
+end
+
+function FileInfo( # Constructor for test code (with raw text input and filename)
+        version::Int, s::Union{Vector{UInt8},AbstractString}, args...
+    )
+    return FileInfo(version, ParseStream!(s), args...)
 end
 
 const TestsetDiagnosticsKey = _TestsetDiagnosticsKey{FileInfo}
 const TestsetResult = _TestsetResult{FileInfo}
 const TestsetInfo = _TestsetInfo{FileInfo}
 
-mutable struct SavedFileInfo
+struct SavedFileInfo
     parsed_stream::JS.ParseStream
-    # filled after cached
-    syntax_node::Dict{Any,JS.SyntaxNode}
-    syntax_tree0::Dict{Any,SyntaxTree0}
-    SavedFileInfo(parsed_stream::JS.ParseStream) =
-        new(parsed_stream, Dict{Any,JS.SyntaxNode}(), Dict{Any,SyntaxTree0}())
-end
+    syntax_node::JS.SyntaxNode
+    syntax_tree0::SyntaxTree0
 
-function build_tree! end
+    function SavedFileInfo(parsed_stream::JS.ParseStream, uri::URI)
+        filename = @something uri2filename(uri) error(lazy"Unsupported URI: $uri")
+        syntax_node = JS.build_tree(JS.SyntaxNode, parsed_stream; filename)
+        syntax_tree0 = JS.build_tree(JL.SyntaxTree, parsed_stream; filename)
+        new(parsed_stream, syntax_node, syntax_tree0)
+    end
+end
 
 entryuri(entry::AnalysisEntry) = entryuri_impl(entry)::URI
 entryenvpath(entry::AnalysisEntry) = entryenvpath_impl(entry)::Union{Nothing,String}

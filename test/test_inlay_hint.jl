@@ -14,7 +14,7 @@ include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
             x = 1
             end
             """
-            fi = JETLS.FileInfo(1, parsedstream(code))
+            fi = JETLS.FileInfo(1, code, @__FILE__)
             range = Range(; start = Position(; line = 0, character = 0),
                             var"end" = Position(; line = 3, character = 0))
             inlay_hints = JETLS.syntactic_inlay_hints(fi, range)
@@ -29,7 +29,7 @@ include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
             y = 2
             end # module TestModule
             """
-            fi = JETLS.FileInfo(1, parsedstream(code))
+            fi = JETLS.FileInfo(1, code, @__FILE__)
             range = Range(; start = Position(; line = 0, character = 0),
                             var"end" = Position(; line = 4, character = 0))
             inlay_hints = JETLS.syntactic_inlay_hints(fi, range)
@@ -41,7 +41,7 @@ include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
             x = 1
             end #= module TestModule =#
             """
-            fi = JETLS.FileInfo(1, parsedstream(code))
+            fi = JETLS.FileInfo(1, code, @__FILE__)
             range = Range(; start = Position(; line = 0, character = 0),
                             var"end" = Position(; line = 3, character = 0))
             inlay_hints = JETLS.syntactic_inlay_hints(fi, range)
@@ -52,7 +52,7 @@ include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
             let code = """
                 module TestModule end
                 """
-                fi = JETLS.FileInfo(1, parsedstream(code))
+                fi = JETLS.FileInfo(1, code, @__FILE__)
                 range = Range(; start = Position(; line = 0, character = 0),
                                 var"end" = Position(; line = 1, character = 0))
                 inlay_hints = JETLS.syntactic_inlay_hints(fi, range)
@@ -68,7 +68,7 @@ include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
                 end
                 end
                 """
-                fi = JETLS.FileInfo(1, parsedstream(code))
+                fi = JETLS.FileInfo(1, code, @__FILE__)
                 range = Range(; start = Position(; line = 0, character = 0),
                                 var"end" = Position(; line = 5, character = 0))
                 inlay_hints = JETLS.syntactic_inlay_hints(fi, range)
@@ -88,7 +88,7 @@ include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
                 x = 1
                 end
                 """
-                fi = JETLS.FileInfo(1, parsedstream(code))
+                fi = JETLS.FileInfo(1, code, @__FILE__)
                 range = Range(; start = Position(; line = 0, character = 0),
                                 var"end" = Position(; line = 1, character = 0))
                 inlay_hints = JETLS.syntactic_inlay_hints(fi, range)
@@ -102,7 +102,7 @@ include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
                 x = 1
                 end    # some comment
                 """
-                fi = JETLS.FileInfo(1, parsedstream(code))
+                fi = JETLS.FileInfo(1, code, @__FILE__)
                 range = Range(; start = Position(; line = 0, character = 0),
                                 var"end" = Position(; line = 3, character = 0))
                 inlay_hints = JETLS.syntactic_inlay_hints(fi, range)

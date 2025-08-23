@@ -68,7 +68,7 @@ function jet_toplevel_error_report_to_diagnostic(
     )
     if report isa JET.ParseErrorReport
         # TODO: Pass correct encoding here
-        fi = FileInfo(#=version=#0, ParseStream!(report.source.code), PositionEncodingKind.UTF16)
+        fi = FileInfo(#=version=#0, report.source.code, JS.filename(report.source), PositionEncodingKind.UTF16)
         return jsdiag_to_lspdiag(report.diagnostic, fi)
     end
     message = JET.with_bufferring(:limit=>true) do io
@@ -246,8 +246,7 @@ lowering_diagnostics(args...) = lowering_diagnostics!(Diagnostic[], args...) # u
 function toplevel_lowering_diagnostics(server::Server, uri::URI)
     diagnostics = Diagnostic[]
     file_info = get_file_info(server.state, uri)
-    filename = @something uri2filename(uri) error(lazy"Unsupported URI: $uri")
-    st0_top = build_tree!(JL.SyntaxTree, file_info; filename)
+    st0_top = file_info.syntax_tree0
     sl = JL.SyntaxList(st0_top)
     push!(sl, st0_top)
     while !isempty(sl)
