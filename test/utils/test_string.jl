@@ -79,9 +79,9 @@ end
 
         # All encodings should produce same results for ASCII
         for offset in [1, 3, 6]  # start, middle, end+1
-            pos_utf8 = offset_to_xy(textbuf, offset, UTF8)
-            pos_utf16 = offset_to_xy(textbuf, offset, UTF16)
-            pos_utf32 = offset_to_xy(textbuf, offset, UTF32)
+            pos_utf8 = offset_to_xy(textbuf, offset, @__FILE__, UTF8)
+            pos_utf16 = offset_to_xy(textbuf, offset, @__FILE__, UTF16)
+            pos_utf32 = offset_to_xy(textbuf, offset, @__FILE__, UTF32)
 
             @test pos_utf8.line == 0
             @test pos_utf8.character == offset - 1
@@ -94,15 +94,15 @@ end
         textbuf = Vector{UInt8}(text)
 
         # Test line boundaries
-        @test offset_to_xy(textbuf, 1).line == 0  # Start of line 1
-        @test offset_to_xy(textbuf, 6).line == 0  # End of line 1
-        @test offset_to_xy(textbuf, 7).line == 1  # Start of line 2
-        @test offset_to_xy(textbuf, 12).line == 1  # End of line 2
-        @test offset_to_xy(textbuf, 13).line == 2  # Start of line 3
+        @test offset_to_xy(textbuf, 1, @__FILE__).line == 0  # Start of line 1
+        @test offset_to_xy(textbuf, 6, @__FILE__).line == 0  # End of line 1
+        @test offset_to_xy(textbuf, 7, @__FILE__).line == 1  # Start of line 2
+        @test offset_to_xy(textbuf, 12, @__FILE__).line == 1  # End of line 2
+        @test offset_to_xy(textbuf, 13, @__FILE__).line == 2  # Start of line 3
 
         # Character positions reset on new lines
-        @test offset_to_xy(textbuf, 7).character == 0  # Start of line 2
-        @test offset_to_xy(textbuf, 8).character == 1  # 'i' in line2
+        @test offset_to_xy(textbuf, 7, @__FILE__).character == 0  # Start of line 2
+        @test offset_to_xy(textbuf, 8, @__FILE__).character == 1  # 'i' in line2
     end
 
     @testset "BMP characters (café)" begin
@@ -110,9 +110,9 @@ end
         textbuf = Vector{UInt8}(text)
 
         # After 'é' at byte 6
-        pos_utf8 = offset_to_xy(textbuf, 6, UTF8)
-        pos_utf16 = offset_to_xy(textbuf, 6, UTF16)
-        pos_utf32 = offset_to_xy(textbuf, 6, UTF32)
+        pos_utf8 = offset_to_xy(textbuf, 6, @__FILE__, UTF8)
+        pos_utf16 = offset_to_xy(textbuf, 6, @__FILE__, UTF16)
+        pos_utf32 = offset_to_xy(textbuf, 6, @__FILE__, UTF32)
 
         @test pos_utf8.character == 4  # 4 characters
         @test pos_utf16.character == 4  # 4 UTF-16 units
@@ -124,9 +124,9 @@ end
         textbuf = Vector{UInt8}(text)
 
         # After emoji at byte 6
-        pos_utf8 = offset_to_xy(textbuf, 6, UTF8)
-        pos_utf16 = offset_to_xy(textbuf, 6, UTF16)
-        pos_utf32 = offset_to_xy(textbuf, 6, UTF32)
+        pos_utf8 = offset_to_xy(textbuf, 6, @__FILE__, UTF8)
+        pos_utf16 = offset_to_xy(textbuf, 6, @__FILE__, UTF16)
+        pos_utf32 = offset_to_xy(textbuf, 6, @__FILE__, UTF32)
 
         @test pos_utf8.character == 2  # 'a' + '😀'
         @test pos_utf16.character == 3  # 'a' + 2 units for '😀'
@@ -138,15 +138,15 @@ end
         textbuf = Vector{UInt8}(text)
 
         # After "Hi " (byte 4)
-        @test offset_to_xy(textbuf, 4, UTF8).character == 3
+        @test offset_to_xy(textbuf, 4, @__FILE__, UTF8).character == 3
 
         # After "世" (byte 7)
-        @test offset_to_xy(textbuf, 7, UTF8).character == 4
-        @test offset_to_xy(textbuf, 7, UTF16).character == 4
+        @test offset_to_xy(textbuf, 7, @__FILE__, UTF8).character == 4
+        @test offset_to_xy(textbuf, 7, @__FILE__, UTF16).character == 4
 
         # After "😊" (byte 15)
-        @test offset_to_xy(textbuf, 15, UTF8).character == 7
-        @test offset_to_xy(textbuf, 15, UTF16).character == 8  # Extra unit for emoji
+        @test offset_to_xy(textbuf, 15, @__FILE__, UTF8).character == 7
+        @test offset_to_xy(textbuf, 15, @__FILE__, UTF16).character == 8  # Extra unit for emoji
     end
 
     @testset "Edge cases" begin
@@ -154,16 +154,16 @@ end
         textbuf = Vector{UInt8}(text)
 
         # Invalid offset before start
-        @test_throws ArgumentError offset_to_xy(textbuf, 0)
+        @test_throws ArgumentError offset_to_xy(textbuf, 0, @__FILE__)
 
         # Beyond end gets clamped
-        pos = offset_to_xy(textbuf, 100)
+        pos = offset_to_xy(textbuf, 100, @__FILE__)
         @test pos.line == 0
         @test pos.character == 4
 
         # Empty string
         empty_buf = Vector{UInt8}("")
-        @test offset_to_xy(empty_buf, 1).character == 0
+        @test offset_to_xy(empty_buf, 1, @__FILE__).character == 0
     end
 end
 
@@ -174,9 +174,9 @@ end
 
         # All encodings same for ASCII
         pos = Position(; line=0, character=6)
-        @test xy_to_offset(textbuf, pos, UTF8) == 7
-        @test xy_to_offset(textbuf, pos, UTF16) == 7
-        @test xy_to_offset(textbuf, pos, UTF32) == 7
+        @test xy_to_offset(textbuf, pos, @__FILE__, UTF8) == 7
+        @test xy_to_offset(textbuf, pos, @__FILE__, UTF16) == 7
+        @test xy_to_offset(textbuf, pos, @__FILE__, UTF32) == 7
     end
 
     @testset "Multi-line navigation" begin
@@ -184,16 +184,16 @@ end
         textbuf = Vector{UInt8}(text)
 
         # Line 0, char 0 -> byte 1
-        @test xy_to_offset(textbuf, Position(; line=0, character=0)) == 1
+        @test xy_to_offset(textbuf, Position(; line=0, character=0), @__FILE__) == 1
 
         # Line 1, char 0 -> byte 7 (after "first\n")
-        @test xy_to_offset(textbuf, Position(; line=1, character=0)) == 7
+        @test xy_to_offset(textbuf, Position(; line=1, character=0), @__FILE__) == 7
 
         # Line 1, char 3 -> byte 10 ("sec" in second)
-        @test xy_to_offset(textbuf, Position(; line=1, character=3)) == 10
+        @test xy_to_offset(textbuf, Position(; line=1, character=3), @__FILE__) == 10
 
         # Line 2, char 2 -> byte 16 ("th" in third)
-        @test xy_to_offset(textbuf, Position(; line=2, character=2)) == 16
+        @test xy_to_offset(textbuf, Position(; line=2, character=2), @__FILE__) == 16
     end
 
     @testset "BMP characters" begin
@@ -202,9 +202,9 @@ end
 
         # Position after 'é' - all encodings count it as 1 unit
         pos = Position(; line=0, character=4)
-        @test xy_to_offset(textbuf, pos, UTF8) == 6
-        @test xy_to_offset(textbuf, pos, UTF16) == 6
-        @test xy_to_offset(textbuf, pos, UTF32) == 6
+        @test xy_to_offset(textbuf, pos, @__FILE__, UTF8) == 6
+        @test xy_to_offset(textbuf, pos, @__FILE__, UTF16) == 6
+        @test xy_to_offset(textbuf, pos, @__FILE__, UTF32) == 6
     end
 
     @testset "Emoji with UTF-16 surrogate pairs" begin
@@ -213,15 +213,15 @@ end
 
         # Position 2: UTF-8/32 -> after emoji, UTF-16 -> middle of emoji
         pos = Position(; line=0, character=2)
-        @test xy_to_offset(textbuf, pos, UTF8) == 6   # After emoji
-        @test xy_to_offset(textbuf, pos, UTF16) == 2  # Middle of emoji!
-        @test xy_to_offset(textbuf, pos, UTF32) == 6  # After emoji
+        @test xy_to_offset(textbuf, pos, @__FILE__, UTF8) == 6   # After emoji
+        @test xy_to_offset(textbuf, pos, @__FILE__, UTF16) == 2  # Middle of emoji!
+        @test xy_to_offset(textbuf, pos, @__FILE__, UTF32) == 6  # After emoji
 
         # Position 3: UTF-8/32 -> after 'b', UTF-16 -> after emoji
         pos = Position(; line=0, character=3)
-        @test xy_to_offset(textbuf, pos, UTF8) == 7   # After 'b'
-        @test xy_to_offset(textbuf, pos, UTF16) == 6  # After emoji
-        @test xy_to_offset(textbuf, pos, UTF32) == 7  # After 'b'
+        @test xy_to_offset(textbuf, pos, @__FILE__, UTF8) == 7   # After 'b'
+        @test xy_to_offset(textbuf, pos, @__FILE__, UTF16) == 6  # After emoji
+        @test xy_to_offset(textbuf, pos, @__FILE__, UTF32) == 7  # After 'b'
     end
 
     @testset "Complex Unicode" begin
@@ -230,15 +230,15 @@ end
 
         # After α (2 bytes)
         pos = Position(; line=0, character=1)
-        @test xy_to_offset(textbuf, pos, UTF8) == 3
+        @test xy_to_offset(textbuf, pos, @__FILE__, UTF8) == 3
 
         # After ⊕ (3 bytes total from start: α=2 + ⊕=3)
         pos = Position(; line=0, character=2)
-        @test xy_to_offset(textbuf, pos, UTF8) == 6
+        @test xy_to_offset(textbuf, pos, @__FILE__, UTF8) == 6
 
         # After 😀 with UTF-16 (needs 4 character units: α=1 + ⊕=1 + 😀=2)
         pos = Position(; line=0, character=4)
-        @test xy_to_offset(textbuf, pos, UTF16) == 10
+        @test xy_to_offset(textbuf, pos, @__FILE__, UTF16) == 10
     end
 
     @testset "Beyond line end" begin
@@ -247,11 +247,11 @@ end
 
         # Character position beyond line end
         pos = Position(; line=0, character=100)
-        @test xy_to_offset(textbuf, pos) == 6  # End of "short"
+        @test xy_to_offset(textbuf, pos, @__FILE__) == 6  # End of "short"
 
         # Line beyond file
         pos = Position(; line=100, character=0)
-        @test xy_to_offset(textbuf, pos) == sizeof(text)  # End of file
+        @test xy_to_offset(textbuf, pos, @__FILE__) == sizeof(text)  # End of file
     end
 
     @testset "Guard against invalid positions" begin
@@ -262,7 +262,7 @@ end
             """ |> Vector{UInt8}
             ok = true
             for i = 0:10, j = 0:10
-                ok &= xy_to_offset(code, Position(i, j)) isa Int
+                ok &= xy_to_offset(code, Position(i, j), @__FILE__) isa Int
             end
             @test ok
         end
@@ -302,8 +302,8 @@ end
             push!(test_positions, sizeof(text) + 1)
 
             for byte in test_positions
-                pos = offset_to_xy(textbuf, byte, encoding)
-                recovered = xy_to_offset(textbuf, pos, encoding)
+                pos = offset_to_xy(textbuf, byte, @__FILE__, encoding)
+                recovered = xy_to_offset(textbuf, pos, @__FILE__, encoding)
                 @test recovered == byte
             end
         end
@@ -313,14 +313,14 @@ end
 function test_string_positions(s)
     v = Vector{UInt8}(s)
     for b in eachindex(s)
-        pos = JETLS.offset_to_xy(v, b)
-        b2 =  JETLS.xy_to_offset(v, pos)
+        pos = JETLS.offset_to_xy(v, b, @__FILE__)
+        b2 =  JETLS.xy_to_offset(v, pos, @__FILE__)
         @test b === b2
     end
     # One past the last byte is a valid position in an editor
     b = length(v) + 1
-    pos = JETLS.offset_to_xy(v, b)
-    b2 =  JETLS.xy_to_offset(v, pos)
+    pos = JETLS.offset_to_xy(v, b, @__FILE__)
+    b2 =  JETLS.xy_to_offset(v, pos, @__FILE__)
     @test b === b2
 end
 @testset "Cursor file position <-> byte" begin

@@ -66,7 +66,7 @@ function handle_HoverRequest(server::Server, msg::HoverRequest)
                 error = file_cache_error(uri)))
     end
 
-    st0_top = build_tree!(JL.SyntaxTree, fi)
+    st0_top = fi.syntax_tree0
     offset = xy_to_offset(fi, pos)
     (; mod, analyzer, postprocessor) = get_context_info(server.state, uri, pos)
 

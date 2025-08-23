@@ -11,9 +11,8 @@ module lowering_module end
 
 get_lowered_diagnostics(text::AbstractString) = get_lowered_diagnostics(lowering_module, text)
 function get_lowered_diagnostics(mod::Module, text::AbstractString)
-    ps = JETLS.ParseStream!(text)
-    fi = JETLS.FileInfo(#=version=#0, ps)
-    st0 = JETLS.build_tree!(JL.SyntaxTree, fi)
+    fi = JETLS.FileInfo(#=version=#0, text, @__FILE__)
+    st0 = fi.syntax_tree0
     @assert JS.kind(st0) === JS.K"toplevel"
     return JETLS.lowering_diagnostics(st0[1], mod, fi)
 end

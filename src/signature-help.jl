@@ -416,7 +416,7 @@ end
 
 function cursor_siginfos(mod::Module, fi::FileInfo, b::Int, analyzer::LSAnalyzer;
                          postprocessor::LSPostProcessor=LSPostProcessor())
-    st0 = build_tree!(JL.SyntaxTree, fi)
+    st0 = fi.syntax_tree0
     call = cursor_call(fi.parsed_stream, st0, b)
     isnothing(call) && return empty_siginfos
     after_semicolon = let

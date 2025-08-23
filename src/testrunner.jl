@@ -36,7 +36,7 @@ testset_line(testsetinfo::TestsetInfo) = testset_line(testsetinfo.st0)
 testset_line(testset::JL.SyntaxTree) = JS.source_line(testset[2])
 
 function update_testsetinfos!(server::Server, fi::FileInfo; notify_server::Bool=true)
-    st0_top = build_tree!(JL.SyntaxTree, fi)
+    st0_top = fi.syntax_tree0
     testsets = find_executable_testsets(st0_top)
     m, n = length(testsets), length(fi.testsetinfos)
     if m == n == 0
@@ -235,7 +235,7 @@ end
 function testrunner_testcase_code_actions!(
         code_actions::Vector{Union{CodeAction, Command}}, uri::URI, fi::FileInfo, action_range::Range
     )
-    st0_top = build_tree!(JL.SyntaxTree, fi)
+    st0_top = fi.syntax_tree0
     traverse_skip_func_scope(st0_top) do st0::SyntaxTree0
         if JS.kind(st0) === JS.K"macrocall" && JS.numchildren(st0) ≥ 1
             macroname = st0[1]

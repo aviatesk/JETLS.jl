@@ -46,7 +46,7 @@ function handle_PrepareRenameRequest(server::Server, msg::PrepareRenameRequest)
 end
 
 function local_binding_rename_preparation(fi::FileInfo, pos::Position, mod::Module)
-    st0_top = build_tree!(JL.SyntaxTree, fi)
+    st0_top = fi.syntax_tree0
     offset = xy_to_offset(fi, pos)
 
     (; ctx3, binding) = @something begin
@@ -82,7 +82,7 @@ function handle_RenameRequest(server::Server, msg::RenameRequest)
 end
 
 function local_binding_rename(uri::URI, fi::FileInfo, pos::Position, mod::Module, newName::String)
-    st0_top = build_tree!(JL.SyntaxTree, fi)
+    st0_top = fi.syntax_tree0
     offset = xy_to_offset(fi, pos)
 
     (; ctx3, st3, binding) = @something begin

@@ -13,9 +13,8 @@ function siginfos(mod::Module, code::AbstractString; kwargs...)
     clean_code, positions = JETLS.get_text_and_positions(code; kwargs...)
     @assert length(positions) == 1 "siginfos requires exactly one cursor marker"
     position = only(positions)
-    b = JETLS.xy_to_offset(clean_code, position)
-    ps = JS.ParseStream(clean_code); JS.parse!(ps)
-    fi = JETLS.FileInfo(0, ps)
+    fi = JETLS.FileInfo(0, clean_code, @__FILE__)
+    b = JETLS.xy_to_offset(fi, position)
     return JETLS.cursor_siginfos(mod, fi, b, LSAnalyzer())
 end
 

@@ -16,7 +16,7 @@ include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
             """
             clean_code, positions = JETLS.get_text_and_positions(code)
             @test length(positions) == 6
-            fi = JETLS.FileInfo(#=version=#0, parsedstream(clean_code))
+            fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
             @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
             for pos in positions
                 highlights = JETLS.lowering_document_highlights(fi, pos, @__MODULE__)
@@ -41,7 +41,7 @@ include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
             """
             clean_code, positions = JETLS.get_text_and_positions(code)
             @test length(positions) == 4
-            fi = JETLS.FileInfo(#=version=#0, parsedstream(clean_code))
+            fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
             @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
             for pos in positions
                 highlights = JETLS.lowering_document_highlights(fi, pos, @__MODULE__)
@@ -65,7 +65,7 @@ include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
             """
             clean_code, positions = JETLS.get_text_and_positions(code)
             @test length(positions) == 6
-            fi = JETLS.FileInfo(#=version=#0, parsedstream(clean_code))
+            fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
             @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
             for pos in positions
                 highlights = JETLS.lowering_document_highlights(fi, pos, @__MODULE__)
@@ -93,7 +93,7 @@ include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
             """
             clean_code, positions = JETLS.get_text_and_positions(code)
             @test length(positions) == 4
-            fi = JETLS.FileInfo(#=version=#0, parsedstream(clean_code))
+            fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
             @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
             for pos in positions
                 highlights = JETLS.lowering_document_highlights(fi, pos, @__MODULE__)
@@ -119,7 +119,7 @@ include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
             """
             clean_code, positions = JETLS.get_text_and_positions(code)
             @test length(positions) == 10
-            fi = JETLS.FileInfo(#=version=#0, parsedstream(clean_code))
+            fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
             @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
             for i = (1,2,5,6,7,8) # x
                 pos = positions[i]
@@ -167,7 +167,7 @@ include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
         """
         clean_code, positions = JETLS.get_text_and_positions(code)
         @test length(positions) == 2
-        fi = JETLS.FileInfo(#=version=#0, parsedstream(clean_code))
+        fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
         for pos in positions
             highlights = JETLS.lowering_document_highlights(fi, pos, @__MODULE__)
             @test length(highlights) == 0

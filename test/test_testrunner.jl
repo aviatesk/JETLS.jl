@@ -85,7 +85,7 @@ end
             @test true
         end
         """
-        fi = JETLS.FileInfo(1, parsedstream(test_code))
+        fi = JETLS.FileInfo(1, test_code, @__FILE__)
         JETLS.update_testsetinfos!(server, fi; notify_server=false)
         @test length(fi.testsetinfos) == 1
         uri = LSP.URI("file:///test.jl")
@@ -112,7 +112,7 @@ end
             @test false
         end
         """
-        fi = JETLS.FileInfo(1, parsedstream(test_code))
+        fi = JETLS.FileInfo(1, test_code, @__FILE__)
         JETLS.update_testsetinfos!(server, fi; notify_server=false)
         @test length(fi.testsetinfos) == 2
 
@@ -169,7 +169,7 @@ end
         test_code, positions = JETLS.get_text_and_positions(test_code_with_positions)
         @test length(positions) == 4
 
-        fi = JETLS.FileInfo(1, parsedstream(test_code))
+        fi = JETLS.FileInfo(1, test_code, @__FILE__)
         JETLS.update_testsetinfos!(server, fi; notify_server=false)
         @test length(fi.testsetinfos) == 2
 
@@ -257,7 +257,7 @@ end
         test_code, positions = JETLS.get_text_and_positions(test_code_with_positions)
         @test length(positions) == 1
 
-        fi = JETLS.FileInfo(1, parsedstream(test_code))
+        fi = JETLS.FileInfo(1, test_code, @__FILE__)
         JETLS.update_testsetinfos!(server, fi; notify_server=false)
         @test length(fi.testsetinfos) == 1
 
@@ -310,7 +310,7 @@ end
         test_code, positions = JETLS.get_text_and_positions(test_code_with_positions)
         @test length(positions) == 4
 
-        fi = JETLS.FileInfo(1, parsedstream(test_code))
+        fi = JETLS.FileInfo(1, test_code, @__FILE__)
         JETLS.update_testsetinfos!(server, fi; notify_server=false)
         uri = LSP.URI("file:///test.jl")
 
@@ -374,7 +374,7 @@ end
             @test sin(0) == 1
         end
         """
-        fi = JETLS.FileInfo(1, parsedstream(test_code))
+        fi = JETLS.FileInfo(1, test_code, @__FILE__)
         JETLS.update_testsetinfos!(server, fi; notify_server=false)
         @test length(fi.testsetinfos) == 2
 
@@ -382,20 +382,25 @@ end
         key1 = JETLS.TestsetDiagnosticsKey("\"foo\"", 1, fi)
         result2 = mock_testrunner_result(; n_passed=0, n_failed=1)
         key2 = JETLS.TestsetDiagnosticsKey("\"bar\"", 2, fi)
-        fi.testsetinfos = [
+        
+        # Update testsetinfos - note that testsetinfos is mutable even though FileInfo is immutable
+        fi.testsetinfos[1] = JETLS.TestsetInfo(fi.testsetinfos[1].st0, JETLS.TestsetResult(result1, key1))
+        fi.testsetinfos[2] = JETLS.TestsetInfo(fi.testsetinfos[2].st0, JETLS.TestsetResult(result2, key2))
+        
+        # Create new FileInfo for version 2 with same test code
+        fi2 = JETLS.FileInfo(2, test_code, @__FILE__)
+        # Copy over the testsetinfos with results
+        append!(fi2.testsetinfos, [
             JETLS.TestsetInfo(fi.testsetinfos[1].st0, JETLS.TestsetResult(result1, key1)),
             JETLS.TestsetInfo(fi.testsetinfos[2].st0, JETLS.TestsetResult(result2, key2))
-        ]
-
-        fi.parsed_stream = parsedstream(test_code)
-        fi.version = 2
-        JETLS.clear_file_info_cache!(fi)
-        JETLS.update_testsetinfos!(server, fi; notify_server=false)
-        @test length(fi.testsetinfos) == 2
-        @test isdefined(fi.testsetinfos[1], :result)
-        @test isdefined(fi.testsetinfos[2], :result)
-        @test fi.testsetinfos[1].result.result === result1
-        @test fi.testsetinfos[2].result.result === result2
+        ])
+        
+        JETLS.update_testsetinfos!(server, fi2; notify_server=false)
+        @test length(fi2.testsetinfos) == 2
+        @test isdefined(fi2.testsetinfos[1], :result)
+        @test isdefined(fi2.testsetinfos[2], :result)
+        @test fi2.testsetinfos[1].result.result === result1
+        @test fi2.testsetinfos[2].result.result === result2
     end
 
     let server = JETLS.Server()
@@ -408,7 +413,7 @@ end
             @test sin(0) == 1
         end
         """
-        fi = JETLS.FileInfo(1, parsedstream(test_code))
+        fi = JETLS.FileInfo(1, test_code, @__FILE__)
         JETLS.update_testsetinfos!(server, fi; notify_server=false)
         @test length(fi.testsetinfos) == 2
 
@@ -425,13 +430,12 @@ end
             @test sin(0) == 1
         end
         """
-        fi.parsed_stream = parsedstream(new_test_code)
-        fi.version = 2
-        JETLS.clear_file_info_cache!(fi)
-        JETLS.update_testsetinfos!(server, fi; notify_server=false)
-        @test length(fi.testsetinfos) == 2
-        @test !isdefined(fi.testsetinfos[1], :result) # name changed from "foo" to "baz"
-        @test !isdefined(fi.testsetinfos[2], :result)
+        # Create new FileInfo for version 2 with new test code
+        fi2 = JETLS.FileInfo(2, new_test_code, @__FILE__)
+        JETLS.update_testsetinfos!(server, fi2; notify_server=false)
+        @test length(fi2.testsetinfos) == 2
+        @test !isdefined(fi2.testsetinfos[1], :result) # name changed from "foo" to "baz"
+        @test !isdefined(fi2.testsetinfos[2], :result)
     end
 
     let server = JETLS.Server()
@@ -440,7 +444,7 @@ end
             @test 10 > 0
         end
         """
-        fi = JETLS.FileInfo(1, parsedstream(test_code))
+        fi = JETLS.FileInfo(1, test_code, @__FILE__)
         JETLS.update_testsetinfos!(server, fi; notify_server=false)
         @test length(fi.testsetinfos) == 1
 
@@ -457,14 +461,17 @@ end
             @test true
         end
         """
-        fi.parsed_stream = parsedstream(new_test_code)
-        fi.version = 2
-        JETLS.clear_file_info_cache!(fi)
-        JETLS.update_testsetinfos!(server, fi; notify_server=false)
-        @test length(fi.testsetinfos) == 2
-        @test isdefined(fi.testsetinfos[1], :result)
-        @test fi.testsetinfos[1].result.result === result
-        @test !isdefined(fi.testsetinfos[2], :result)
+        # Create new FileInfo for version 2 with new test code
+        fi2 = JETLS.FileInfo(2, new_test_code, @__FILE__)
+        # Copy over the testsetinfo result for "foo" 
+        append!(fi2.testsetinfos, [
+            JETLS.TestsetInfo(fi.testsetinfos[1].st0, JETLS.TestsetResult(result, key))
+        ])
+        JETLS.update_testsetinfos!(server, fi2; notify_server=false)
+        @test length(fi2.testsetinfos) == 2
+        @test isdefined(fi2.testsetinfos[1], :result)
+        @test fi2.testsetinfos[1].result.result === result
+        @test !isdefined(fi2.testsetinfos[2], :result)
     end
 end
 

@@ -1,49 +1,3 @@
-"""
-    clear_file_info_cache!(fi::Union{FileInfo,SavedFileInfo})
-
-Clear the cached syntax node and syntax tree from the given file info object.
-This should be called when the underlying parsed stream is updated to ensure
-that stale cached representations are removed.
-"""
-function clear_file_info_cache!(fi::Union{FileInfo,SavedFileInfo})
-    empty!(fi.syntax_node)
-    empty!(fi.syntax_tree0)
-    return fi
-end
-
-function cleanup_file_info!(fi::FileInfo)
-    clear_file_info_cache!(fi)
-    empty!(fi.testsetinfos)
-end
-cleanup_file_info!(fi::SavedFileInfo) = clear_file_info_cache!(fi)
-
-"""
-    build_tree!(::Type{JS.SyntaxNode}, fi::Union{FileInfo,SavedFileInfo}; kwargs...)
-
-Build and cache a `JS.SyntaxNode` for the given file info object.
-Returns the cached syntax node if it already exists, otherwise builds a new one
-from the parsed stream and caches it.
-The cache is separated by `kwargs`.
-"""
-function build_tree!(::Type{JS.SyntaxNode}, fi::Union{FileInfo,SavedFileInfo}; kwargs...)
-    return get!(fi.syntax_node, kwargs) do
-        JS.build_tree(JS.SyntaxNode, fi.parsed_stream; kwargs...)
-    end
-end
-
-"""
-    build_tree!(::Type{JL.SyntaxTree}, fi::Union{FileInfo,SavedFileInfo}; kwargs...)
-
-Build and cache a `JL.SyntaxTree` for the given file info object.
-Returns the cached syntax tree if it already exists, otherwise builds a new one
-from the parsed stream and caches it.
-The cache is separated by `kwargs`.
-"""
-function build_tree!(::Type{JL.SyntaxTree}, fi::Union{FileInfo,SavedFileInfo}; kwargs...)
-    return get!(fi.syntax_tree0, kwargs) do
-        JS.build_tree(JL.SyntaxTree, fi.parsed_stream; kwargs...)
-    end
-end
 
 function ParseStream!(s::Union{AbstractString,Vector{UInt8}})
     stream = JS.ParseStream(s)
@@ -63,14 +17,7 @@ entry in the cache.
 cache_file_info!(state::ServerState, uri::URI, version::Int, text::String) =
     cache_file_info!(state, uri, version, ParseStream!(text))
 function cache_file_info!(state::ServerState, uri::URI, version::Int, parsed_stream::JS.ParseStream)
-    if haskey(state.file_cache, uri)
-        fi = state.file_cache[uri]
-        fi.version = version
-        fi.parsed_stream = parsed_stream
-        return clear_file_info_cache!(fi)
-    else
-        return state.file_cache[uri] = FileInfo(version, parsed_stream, state.encoding)
-    end
+    return state.file_cache[uri] = FileInfo(version, parsed_stream, uri, state.encoding)
 end
 
 """
@@ -85,13 +32,7 @@ Otherwise, creates a new `SavedFileInfo` entry in the cache.
 cache_saved_file_info!(state::ServerState, uri::URI, text::String) =
     cache_saved_file_info!(state, uri, ParseStream!(text))
 function cache_saved_file_info!(state::ServerState, uri::URI, parsed_stream::JS.ParseStream)
-    if haskey(state.saved_file_cache, uri)
-        fi = state.saved_file_cache[uri]
-        fi.parsed_stream = parsed_stream
-        return clear_file_info_cache!(fi)
-    else
-        return state.saved_file_cache[uri] = SavedFileInfo(parsed_stream)
-    end
+    return state.saved_file_cache[uri] = SavedFileInfo(parsed_stream, uri)
 end
 
 function handle_DidOpenTextDocumentNotification(server::Server, msg::DidOpenTextDocumentNotification)
@@ -166,16 +107,14 @@ function handle_DidCloseTextDocumentNotification(server::Server, msg::DidCloseTe
     uri = msg.params.textDocument.uri
     fi = get(server.state.file_cache, uri, nothing)
     if !isnothing(fi)
-        delete!(server.state.file_cache, fi)
+        delete!(server.state.file_cache, uri)
         if clear_extra_diagnostics!(server, fi)
             notify_diagnostics!(server)
         end
-        cleanup_file_info!(fi)
     end
     sfi = get(server.state.saved_file_cache, uri, nothing)
     if !isnothing(sfi)
-        delete!(server.state.saved_file_cache, fi)
-        cleanup_file_info!(sfi)
+        delete!(server.state.saved_file_cache, uri)
     end
     nothing
 end

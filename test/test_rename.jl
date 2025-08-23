@@ -15,7 +15,7 @@ include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
         """
         clean_code, positions = JETLS.get_text_and_positions(code)
         @test length(positions) == 9
-        fi = JETLS.FileInfo(#=version=#0, parsedstream(clean_code))
+        fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
         @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
         for (i, pos) in enumerate(positions)
             if i in (4,5,6) # println
@@ -34,7 +34,7 @@ include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
         """
         clean_code, positions = JETLS.get_text_and_positions(code)
         @test length(positions) == 1
-        fi = JETLS.FileInfo(#=version=#0, parsedstream(clean_code))
+        fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
         rename_prep = JETLS.local_binding_rename_preparation(fi, only(positions), @__MODULE__)
         @test isnothing(rename_prep)
     end
@@ -45,7 +45,7 @@ include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
             """
             clean_code, positions = JETLS.get_text_and_positions(code)
             @test length(positions) == 6
-            fi = JETLS.FileInfo(#=version=#0, parsedstream(clean_code))
+            fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
             @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
             for (i, pos) in enumerate(positions)
                 rename_prep = JETLS.local_binding_rename_preparation(fi, pos, @__MODULE__)
@@ -61,7 +61,7 @@ include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
             """
             clean_code, positions = JETLS.get_text_and_positions(code)
             @test length(positions) == 4
-            fi = JETLS.FileInfo(#=version=#0, parsedstream(clean_code))
+            fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
             @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
             for (i, pos) in enumerate(positions)
                 rename_prep = JETLS.local_binding_rename_preparation(fi, pos, @__MODULE__)
@@ -80,7 +80,7 @@ end
         """
         clean_code, positions = JETLS.get_text_and_positions(code)
         @test length(positions) == 9
-        fi = JETLS.FileInfo(#=version=#0, parsedstream(clean_code))
+        fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
         @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
         furi = filename2uri("Untitled" * @__FILE__)
         for (i, pos) in enumerate(positions)
@@ -110,7 +110,7 @@ end
     let code = "func(xx│x, yyy) = println(xxx, yyy)"
         clean_code, positions = JETLS.get_text_and_positions(code)
         @test length(positions) == 1
-        fi = JETLS.FileInfo(#=version=#0, parsedstream(clean_code))
+        fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
         furi = filename2uri("Untitled" * @__FILE__)
         let
             (; result, error) = JETLS.local_binding_rename(furi, fi, only(positions), @__MODULE__, "zzz zzz")
@@ -130,7 +130,7 @@ end
     let code = """func(var"│xxx│") = println(var"│xxx│")"""
         clean_code, positions = JETLS.get_text_and_positions(code)
         @test length(positions) == 4
-        fi = JETLS.FileInfo(#=version=#0, parsedstream(clean_code))
+        fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
         @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
         furi = filename2uri("Untitled" * @__FILE__)
         for pos in positions
@@ -157,7 +157,7 @@ end
             """
             clean_code, positions = JETLS.get_text_and_positions(code)
             @test length(positions) == 6
-            fi = JETLS.FileInfo(#=version=#0, parsedstream(clean_code))
+            fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
             @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
             furi = filename2uri("Untitled" * @__FILE__)
             for (i, pos) in enumerate(positions)
@@ -189,7 +189,7 @@ end
             """
             clean_code, positions = JETLS.get_text_and_positions(code)
             @test length(positions) == 4
-            fi = JETLS.FileInfo(#=version=#0, parsedstream(clean_code))
+            fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
             @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
             furi = filename2uri("Untitled" * @__FILE__)
             for (i, pos) in enumerate(positions)

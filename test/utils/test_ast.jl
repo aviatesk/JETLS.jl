@@ -14,7 +14,7 @@ include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
         end
         """
         clean_code, positions = JETLS.get_text_and_positions(code)
-        return_pos = JETLS.xy_to_offset(clean_code, positions[1])
+        return_pos = JETLS.xy_to_offset(clean_code, positions[1], @__FILE__)
 
         st = jlparse(clean_code)
         let ancestors = JETLS.byte_ancestors(st, 1)
@@ -57,8 +57,8 @@ include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
         """
         clean_code, positions = JETLS.get_text_and_positions(code)
         @assert length(positions) == 2
-        hello_start = JETLS.xy_to_offset(clean_code, positions[1])
-        hello_end = JETLS.xy_to_offset(clean_code, positions[2]) - 1
+        hello_start = JETLS.xy_to_offset(clean_code, positions[1], @__FILE__)
+        hello_end = JETLS.xy_to_offset(clean_code, positions[2], @__FILE__) - 1
 
         let st = jlparse(clean_code),
             ancestors = JETLS.byte_ancestors(st, hello_start:hello_end)
@@ -82,7 +82,7 @@ include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
         │x = 1
         """
         clean_code, positions = JETLS.get_text_and_positions(code)
-        x_pos = JETLS.xy_to_offset(clean_code, positions[1])
+        x_pos = JETLS.xy_to_offset(clean_code, positions[1], @__FILE__)
 
         st = jlparse(clean_code)
         sn = jsparse(clean_code)
@@ -105,7 +105,7 @@ include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
         """
         clean_code, positions = JETLS.get_text_and_positions(code)
         @test length(positions) == 1
-        c_pos = JETLS.xy_to_offset(clean_code, positions[1])
+        c_pos = JETLS.xy_to_offset(clean_code, positions[1], @__FILE__)
 
         let st = jlparse(clean_code),
             ancestors = JETLS.byte_ancestors(st, c_pos)
@@ -122,7 +122,7 @@ include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
     let code = "α = β + │γ"
         clean_code, positions = JETLS.get_text_and_positions(code)
         @test length(positions) == 1
-        γ_pos = JETLS.xy_to_offset(clean_code, positions[1])
+        γ_pos = JETLS.xy_to_offset(clean_code, positions[1], @__FILE__)
         @test γ_pos == sizeof("α = β + ")+1
 
         let st = jlparse(clean_code),
@@ -143,10 +143,10 @@ include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
         clean_code, positions = JETLS.get_text_and_positions(code)
         @test length(positions) == 2
 
-        pos1 = JETLS.xy_to_offset(clean_code, positions[1])
+        pos1 = JETLS.xy_to_offset(clean_code, positions[1], @__FILE__)
         @test pos1 == sizeof("αβγ = ")+1
 
-        pos2 = JETLS.xy_to_offset(clean_code, positions[2])
+        pos2 = JETLS.xy_to_offset(clean_code, positions[2], @__FILE__)
         @test pos2 == sizeof("αβγ = δεζ + ηθι")+1
 
         st = jlparse(clean_code)
@@ -406,8 +406,8 @@ select_target_node(::Type{JS.SyntaxNode}, code::AbstractString, pos::Int) = JETL
 function get_target_node(::Type{T}, code::AbstractString; kwargs...) where T
     clean_code, positions = JETLS.get_text_and_positions(code; kwargs...)
     @assert length(positions) == 1
-    fi = JETLS.FileInfo(1, parsedstream(clean_code))
-    target_node = select_target_node(T, clean_code, JETLS.xy_to_offset(clean_code, positions[1]))
+    fi = JETLS.FileInfo(1, clean_code, @__FILE__)
+    target_node = select_target_node(T, clean_code, JETLS.xy_to_offset(fi, positions[1]))
     return fi, target_node
 end
 
@@ -532,7 +532,7 @@ get_dotprefix_node(code::AbstractString, pos::Int) = JETLS.select_dotprefix_node
 function get_dotprefix_node(code::AbstractString; kwargs...)
     clean_code, positions = JETLS.get_text_and_positions(code; kwargs...)
     @assert length(positions) == 1
-    return get_dotprefix_node(clean_code, JETLS.xy_to_offset(clean_code, positions[1]))
+    return get_dotprefix_node(clean_code, JETLS.xy_to_offset(clean_code, positions[1], @__FILE__))
 end
 @testset "`select_dotprefix_node`" begin
     @test isnothing(get_dotprefix_node("isnothing│"))
