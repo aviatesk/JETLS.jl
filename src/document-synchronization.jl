@@ -17,7 +17,11 @@ entry in the cache.
 cache_file_info!(state::ServerState, uri::URI, version::Int, text::String) =
     cache_file_info!(state, uri, version, ParseStream!(text))
 function cache_file_info!(state::ServerState, uri::URI, version::Int, parsed_stream::JS.ParseStream)
-    return state.file_cache[uri] = FileInfo(version, parsed_stream, uri, state.encoding)
+    fi = FileInfo(version, parsed_stream, uri, state.encoding)
+    withlock(state.file_cache) do file_cache
+        file_cache[uri] = fi
+    end
+    return fi
 end
 
 """
@@ -32,7 +36,11 @@ Otherwise, creates a new `SavedFileInfo` entry in the cache.
 cache_saved_file_info!(state::ServerState, uri::URI, text::String) =
     cache_saved_file_info!(state, uri, ParseStream!(text))
 function cache_saved_file_info!(state::ServerState, uri::URI, parsed_stream::JS.ParseStream)
-    return state.saved_file_cache[uri] = SavedFileInfo(parsed_stream, uri)
+    sfi = SavedFileInfo(parsed_stream, uri)
+    withlock(state.saved_file_cache) do saved_file_cache
+        saved_file_cache[uri] = sfi
+    end
+    return sfi
 end
 
 function handle_DidOpenTextDocumentNotification(server::Server, msg::DidOpenTextDocumentNotification)
@@ -72,7 +80,10 @@ end
 
 function handle_DidSaveTextDocumentNotification(server::Server, msg::DidSaveTextDocumentNotification)
     uri = msg.params.textDocument.uri
-    if !haskey(server.state.saved_file_cache, uri)
+    has_saved_file = withlock(server.state.saved_file_cache) do saved_file_cache
+        haskey(saved_file_cache, uri)
+    end
+    if !has_saved_file
         # Some language client implementations (in this case Zed) appear to be
         # sending `textDocument/didSave` notifications for arbitrary text documents,
         # so we add a save guard for such cases.
@@ -106,17 +117,23 @@ end
 
 function handle_DidCloseTextDocumentNotification(server::Server, msg::DidCloseTextDocumentNotification)
     uri = msg.params.textDocument.uri
-    fi = get(server.state.file_cache, uri, nothing)
+    fi = withlock(server.state.file_cache) do file_cache
+        if haskey(file_cache, uri)
+            pop!(file_cache, uri)
+        else
+            nothing
+        end
+    end
     if !isnothing(fi)
-        delete!(server.state.file_cache, uri)
-        delete!(server.state.testsetinfos_cache, uri)
         if clear_extra_diagnostics!(server, uri)
             notify_diagnostics!(server)
         end
     end
-    sfi = get(server.state.saved_file_cache, uri, nothing)
-    if !isnothing(sfi)
-        delete!(server.state.saved_file_cache, uri)
+    withlock(server.state.testsetinfos_cache) do testsetinfos_cache
+        delete!(testsetinfos_cache, uri)
+    end
+    withlock(server.state.saved_file_cache) do saved_file_cache
+        delete!(saved_file_cache, uri)
     end
     nothing
 end

@@ -221,7 +221,9 @@ function global_completions!(items::Dict{String, CompletionItem}, state::ServerS
         # disable local completions for dot-prefixed code for now
         is_completed |= true
     end
-    state.completion_resolver_info = (completion_module, postprocessor)
+    withlock(state.completion_resolver_info) do completion_resolver_info
+        completion_resolver_info[] = CompletionResolverInfo(completion_module, postprocessor)
+    end
 
     prioritized_names = let s = Set{Symbol}()
         pnames = @invokelatest(names(completion_module; all=true))::Vector{Symbol}
@@ -389,10 +391,11 @@ end
 # ===================
 
 function resolve_completion_item(state::ServerState, item::CompletionItem)
-    isdefined(state, :completion_resolver_info) || return item
     data = item.data
     data isa CompletionData || return item
-    mod, postprocessor = state.completion_resolver_info
+    (; mod, postprocessor) = @something withlock(state.completion_resolver_info) do completion_resolver_info
+        isassigned(completion_resolver_info) ? completion_resolver_info[] : nothing
+    end return item
     name = Symbol(data.name)
     binding = Base.Docs.Binding(mod, name)
     docs = postprocessor(Base.Docs.doc(binding))
