@@ -1,11 +1,13 @@
 function run_full_analysis!(server::Server, uri::URI; onsave::Bool=false, token::Union{Nothing,ProgressToken}=nothing)
-    if !haskey(server.state.analysis_cache, uri)
+    analysis_info = withlock(server.state.analysis_cache) do analysis_cache
+        get(analysis_cache, uri, nothing)
+    end
+    if analysis_info === nothing
         res = initiate_analysis_unit!(server, uri; token)
         if res isa AnalysisUnit
             notify_diagnostics!(server)
         end
     else # this file is tracked by some analysis unit already
-        analysis_info = server.state.analysis_cache[uri]
         if analysis_info isa OutOfScope
             # this file is out of the current project scope, ignore it
         else
@@ -144,11 +146,15 @@ end
 function record_reverse_map!(state::ServerState, analysis_unit::AnalysisUnit)
     afiles = analyzed_file_uris(analysis_unit)
     for uri in afiles
-        analysis_info = get!(Set{AnalysisUnit}, state.analysis_cache, uri)
+        analysis_info = withlock(state.analysis_cache) do analysis_cache
+            get!(Set{AnalysisUnit}, analysis_cache, uri)
+        end
         if analysis_info isa OutOfScope
             # this file was previously `OutOfScope`, but now can be analyzed by some unit,
             # so replace the cache with a set
-            analysis_info = state.analysis_cache[uri] = Set{AnalysisUnit}()
+            analysis_info = withlock(state.analysis_cache) do analysis_cache
+                analysis_cache[uri] = Set{AnalysisUnit}()
+            end
         end
         should_record = true
         for analysis_unit′ in analysis_info
@@ -178,7 +184,9 @@ function initiate_analysis_unit!(server::Server, uri::URI; token::Union{Nothing,
 
     env_path = find_analysis_env_path(state, uri)
     if env_path isa OutOfScope
-        state.analysis_cache[uri] = env_path
+        withlock(state.analysis_cache) do analysis_cache
+            analysis_cache[uri] = env_path
+        end
         return nothing
     end
     if isnothing(env_path)

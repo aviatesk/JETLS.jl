@@ -214,8 +214,9 @@ get_post_processor(::OutOfScope) = LSPostProcessor(JET.PostProcessor())
 get_post_processor(analysis_unit::AnalysisUnit) = LSPostProcessor(JET.PostProcessor(analysis_unit.result.actual2virtual))
 
 function find_analysis_unit_for_uri(state::ServerState, uri::URI)
-    haskey(state.analysis_cache, uri) || return nothing
-    analysis_info = state.analysis_cache[uri]
+    analysis_info = @something withlock(state.analysis_cache) do analysis_cache
+        get(analysis_cache, uri, nothing)
+    end return nothing
     if analysis_info isa OutOfScope
         return analysis_info
     end

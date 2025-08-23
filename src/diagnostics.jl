@@ -308,7 +308,11 @@ end
 
 function get_full_diagnostics(server::Server)
     uri2diagnostics = URI2Diagnostics()
-    for (uri, analysis_info) in server.state.analysis_cache
+    analysis_cache_copy = withlock(server.state.analysis_cache) do analysis_cache
+        # Create a copy to avoid holding the lock during iteration
+        copy(analysis_cache)
+    end
+    for (uri, analysis_info) in analysis_cache_copy
         if analysis_info isa OutOfScope
             continue
         end
@@ -325,7 +329,11 @@ function get_full_diagnostics(server::Server)
 end
 
 function merge_extra_diagnostics!(uri2diagnostics::URI2Diagnostics, server::Server)
-    for (_, extra_uri2diagnostics) in server.state.extra_diagnostics
+    extra_diagnostics_values = withlock(server.state.extra_diagnostics) do extra_diagnostics
+        # Collect values to avoid holding lock during merge
+        collect(values(extra_diagnostics))
+    end
+    for extra_uri2diagnostics in extra_diagnostics_values
         merge_diagnostics!(uri2diagnostics, extra_uri2diagnostics)
     end
     return uri2diagnostics
