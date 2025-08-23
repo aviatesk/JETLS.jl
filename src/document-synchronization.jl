@@ -41,7 +41,8 @@ function handle_DidOpenTextDocumentNotification(server::Server, msg::DidOpenText
     uri = textDocument.uri
 
     parsed_stream = ParseStream!(textDocument.text)
-    cache_file_info!(server.state, uri, textDocument.version, parsed_stream)
+    fi = cache_file_info!(server.state, uri, textDocument.version, parsed_stream)
+    update_testsetinfos!(server, fi)
     cache_saved_file_info!(server.state, uri, parsed_stream)
 
     if supports(server, :window, :workDoneProgress)
