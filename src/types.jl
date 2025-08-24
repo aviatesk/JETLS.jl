@@ -1,26 +1,26 @@
 const SyntaxTree0 = typeof(JS.build_tree(JL.SyntaxTree, JS.parse!(JS.ParseStream(""))))
 
 abstract type ExtraDiagnosticsKey end
-to_file_info(key::ExtraDiagnosticsKey) = to_file_info_impl(key)::FileInfo
+to_uri(key::ExtraDiagnosticsKey) = to_uri_impl(key)::URI
 @eval to_key(key::ExtraDiagnosticsKey) = hash(key, $(rand(UInt)))
 
-struct _TestsetDiagnosticsKey{FileInfo} <: ExtraDiagnosticsKey
+struct TestsetDiagnosticsKey <: ExtraDiagnosticsKey
+    uri::URI
     testset_name::String
-    idx::Int
-    fi::FileInfo
+    testset_index::Int
 end
-to_file_info_impl(key::_TestsetDiagnosticsKey) = key.fi
+to_uri_impl(key::TestsetDiagnosticsKey) = key.uri
 
-struct _TestsetResult{FileInfo}
+struct TestsetResult
     result::TestRunnerResult
-    key::_TestsetDiagnosticsKey{FileInfo}
+    key::TestsetDiagnosticsKey
 end
 
-struct _TestsetInfo{FileInfo}
+struct TestsetInfo
     st0::SyntaxTree0
-    result::_TestsetResult{FileInfo}
-    _TestsetInfo{FileInfo}(st0::SyntaxTree0) where {FileInfo} = new{FileInfo}(st0)
-    _TestsetInfo{FileInfo}(st0::SyntaxTree0, result::_TestsetResult{FileInfo}) where {FileInfo} = new{FileInfo}(st0, result)
+    result::TestsetResult
+    TestsetInfo(st0::SyntaxTree0) = new(st0)
+    TestsetInfo(st0::SyntaxTree0, result::TestsetResult) = new(st0, result)
 end
 
 struct FileInfo
@@ -29,7 +29,7 @@ struct FileInfo
     parsed_stream::JS.ParseStream
     syntax_node::JS.SyntaxNode
     syntax_tree0::SyntaxTree0
-    testsetinfos::Vector{_TestsetInfo{FileInfo}}
+    testsetinfos::Vector{TestsetInfo}
 
     function FileInfo(
             version::Int, parsed_stream::JS.ParseStream, filename::AbstractString,
@@ -54,10 +54,6 @@ function FileInfo( # Constructor for test code (with raw text input and filename
     )
     return FileInfo(version, ParseStream!(s), args...)
 end
-
-const TestsetDiagnosticsKey = _TestsetDiagnosticsKey{FileInfo}
-const TestsetResult = _TestsetResult{FileInfo}
-const TestsetInfo = _TestsetInfo{FileInfo}
 
 struct SavedFileInfo
     parsed_stream::JS.ParseStream

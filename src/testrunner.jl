@@ -35,48 +35,57 @@ testset_name(testset::JL.SyntaxTree) = JS.sourcetext(testset[2])
 testset_line(testsetinfo::TestsetInfo) = testset_line(testsetinfo.st0)
 testset_line(testset::JL.SyntaxTree) = JS.source_line(testset[2])
 
-function update_testsetinfos!(server::Server, fi::FileInfo; notify_server::Bool=true)
-    st0_top = fi.syntax_tree0
-    testsets = find_executable_testsets(st0_top)
-    m, n = length(testsets), length(fi.testsetinfos)
-    if m == n == 0
-        return fi.testsetinfos # nothing to do
-    end
+function update_testsetinfos!(server::Server, fi::FileInfo, prev_fi::Union{Nothing,FileInfo}; notify_server::Bool=true)
     any_deleted = false
-    for i = 1:max(m, n)
-        if i ≤ m
-            testsetᵢ = testsets[i]
-            if i ≤ n
-                testsetinfoᵢ = fi.testsetinfos[i]
-                if isdefined(testsetinfoᵢ, :result)
-                    key = testsetinfoᵢ.result.key
-                    if testset_name(testsetᵢ) == key.testset_name
-                        # this `@testset` is likely still begin mapped to the original
-                        # testset, so let's keep the result and diagnostics
-                        fi.testsetinfos[i] = TestsetInfo(testsetᵢ, testsetinfoᵢ.result)
-                    else
-                        any_deleted |= clear_extra_diagnostics!(server, key) # === true
-                        fi.testsetinfos[i] = TestsetInfo(testsetᵢ)
-                    end
+
+    new_testsets = find_executable_testsets(fi.syntax_tree0)
+    m = length(new_testsets)
+    resize!(fi.testsetinfos, m)
+
+    if isnothing(prev_fi)
+        for i = 1:m
+            fi.testsetinfos[i] = TestsetInfo(new_testsets[i])
+        end
+        return false # no diagnostics deleted
+    end
+
+    prev_testsetinfos = prev_fi.testsetinfos
+    n = length(prev_testsetinfos)
+
+    for i = 1:m
+        testsetᵢ = new_testsets[i]
+        if i ≤ n
+            prev_testsetinfoᵢ = prev_testsetinfos[i]
+            if isdefined(prev_testsetinfoᵢ, :result)
+                key = prev_testsetinfoᵢ.result.key
+                if testset_name(testsetᵢ) == key.testset_name
+                    # this `@testset` is likely still being mapped to the original
+                    # testset, so let's keep the result and diagnostics
+                    fi.testsetinfos[i] = TestsetInfo(testsetᵢ, prev_testsetinfoᵢ.result)
                 else
+                    any_deleted |= clear_extra_diagnostics!(server, key) # === true
                     fi.testsetinfos[i] = TestsetInfo(testsetᵢ)
                 end
             else
-                push!(fi.testsetinfos, TestsetInfo(testsetᵢ))
+                fi.testsetinfos[i] = TestsetInfo(testsetᵢ)
             end
-        else # i > m && i ≤ n
-            testsetinfoᵢ = fi.testsetinfos[i]
-            if isdefined(testsetinfoᵢ, :result)
-                any_deleted |= clear_extra_diagnostics!(server, testsetinfoᵢ.result.key) # === true
-            end
-            # `fi.testsetinfos[i]` will be erased by the following `resize!`
+        else
+            fi.testsetinfos[i] = TestsetInfo(testsetᵢ)
         end
     end
-    resize!(fi.testsetinfos, m)
+
+    # Clear diagnostics for any removed testsets (when n > m)
+    for i = (m+1):n
+        prev_testsetinfoᵢ = prev_testsetinfos[i]
+        if isdefined(prev_testsetinfoᵢ, :result)
+            any_deleted |= clear_extra_diagnostics!(server, prev_testsetinfoᵢ.result.key) # === true
+        end
+    end
+
     if notify_server && any_deleted
         notify_diagnostics!(server)
     end
-    return fi.testsetinfos
+    return any_deleted
 end
 
 function traverse_skip_func_scope(@specialize(callback), st0_top::SyntaxTree0)
@@ -438,7 +447,7 @@ function _testrunner_run_testset(server::Server, executable::AbstractString, uri
         return ret
     end
 
-    key = TestsetDiagnosticsKey(tsn, idx, fi)
+    key = TestsetDiagnosticsKey(uri, tsn, idx)
     fi.testsetinfos[idx] = TestsetInfo(fi.testsetinfos[idx].st0, TestsetResult(result, key))
     if !isempty(result.diagnostics)
         server.state.extra_diagnostics[key] = testrunner_result_to_diagnostics(result)
@@ -665,7 +674,7 @@ function try_clear_testrunner_result!(server::Server, uri::URI, idx::Int, tsn::S
     end
 
     fi.testsetinfos[idx] = TestsetInfo(fi.testsetinfos[idx].st0)
-    if clear_extra_diagnostics!(server, TestsetDiagnosticsKey(tsn, idx, fi))
+    if clear_extra_diagnostics!(server, TestsetDiagnosticsKey(uri, tsn, idx))
         notify_diagnostics!(server)
     end
 

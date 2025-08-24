@@ -4,12 +4,13 @@ using Test
 using JETLS
 using JETLS: JS
 using JETLS.LSP
+using JETLS.URIs2
 
 struct TestDiagnosticsKey <: JETLS.ExtraDiagnosticsKey
-    file_info::JETLS.FileInfo
+    uri::URI
     id::Int
 end
-JETLS.to_file_info_impl(key::TestDiagnosticsKey) = key.file_info
+JETLS.to_uri_impl(key::TestDiagnosticsKey) = key.uri
 
 function create_test_diagnostic(message::String, line::Int=0, char::Int=0)
     return LSP.Diagnostic(;
@@ -20,9 +21,8 @@ end
 @testset "ExtraDiagnostics" begin
     @testset "ExtraDiagnostics basic operations" begin
         let extra_diags = JETLS.ExtraDiagnostics()
-            uri = LSP.URI("file:///test.jl")
-            fi = JETLS.FileInfo(1, "", uri)
-            key = TestDiagnosticsKey(fi, 1)
+            uri = URI("file:///test.jl")
+            key = TestDiagnosticsKey(uri, 1)
             diag = create_test_diagnostic("Test message")
             val = JETLS.URI2Diagnostics(uri => [diag])
 
@@ -45,10 +45,9 @@ end
 
     @testset "ExtraDiagnostics get methods" begin
         let extra_diags = JETLS.ExtraDiagnostics()
-            uri = LSP.URI("file:///test.jl")
-            fi = JETLS.FileInfo(1, "", uri)
-            key1 = TestDiagnosticsKey(fi, 1)
-            key2 = TestDiagnosticsKey(fi, 2)
+            uri = URI("file:///test.jl")
+            key1 = TestDiagnosticsKey(uri, 1)
+            key2 = TestDiagnosticsKey(uri, 2)
             diag = create_test_diagnostic("Test message")
             val = JETLS.URI2Diagnostics(uri => [diag])
             default_val = JETLS.URI2Diagnostics()
@@ -76,7 +75,7 @@ end
             @test extra_diags[key2] == default_val
 
             # Test get! with function
-            key3 = TestDiagnosticsKey(fi, 3)
+            key3 = TestDiagnosticsKey(uri, 3)
             computed_val = get!(extra_diags, key3) do
                 JETLS.URI2Diagnostics(uri => [create_test_diagnostic("Computed")])
             end
@@ -87,9 +86,8 @@ end
 
     @testset "ExtraDiagnostics delete!" begin
         let extra_diags = JETLS.ExtraDiagnostics()
-            uri = LSP.URI("file:///test.jl")
-            fi = JETLS.FileInfo(1, "", uri)
-            key = TestDiagnosticsKey(fi, 1)
+            uri = URI("file:///test.jl")
+            key = TestDiagnosticsKey(uri, 1)
             diag = create_test_diagnostic("Test message")
             val = JETLS.URI2Diagnostics(uri => [diag])
 
@@ -109,12 +107,10 @@ end
 
     @testset "ExtraDiagnostics keys and values" begin
         let extra_diags = JETLS.ExtraDiagnostics()
-            uri1 = LSP.URI("file:///test1.jl")
-            uri2 = LSP.URI("file:///test2.jl")
-            fi1 = JETLS.FileInfo(1, "", uri1)
-            fi2 = JETLS.FileInfo(2, "", uri2)
-            key1 = TestDiagnosticsKey(fi1, 1)
-            key2 = TestDiagnosticsKey(fi2, 2)
+            uri1 = URI("file:///test1.jl")
+            uri2 = URI("file:///test2.jl")
+            key1 = TestDiagnosticsKey(uri1, 1)
+            key2 = TestDiagnosticsKey(uri2, 2)
 
             diag1 = create_test_diagnostic("Message 1")
             diag2 = create_test_diagnostic("Message 2")
@@ -147,17 +143,13 @@ end
             @test collect(extra_diags) == []
 
             # Add test data
-            uri1 = LSP.URI("file:///test1.jl")
-            uri2 = LSP.URI("file:///test2.jl")
-            uri3 = LSP.URI("file:///test3.jl")
+            uri1 = URI("file:///test1.jl")
+            uri2 = URI("file:///test2.jl")
+            uri3 = URI("file:///test3.jl")
 
-            fi1 = JETLS.FileInfo(1, "", uri1)
-            fi2 = JETLS.FileInfo(2, "", uri2)
-            fi3 = JETLS.FileInfo(3, "", uri3)
-
-            key1 = TestDiagnosticsKey(fi1, 1)
-            key2 = TestDiagnosticsKey(fi2, 2)
-            key3 = TestDiagnosticsKey(fi3, 3)
+            key1 = TestDiagnosticsKey(uri1, 1)
+            key2 = TestDiagnosticsKey(uri2, 2)
+            key3 = TestDiagnosticsKey(uri3, 3)
 
             diag1 = create_test_diagnostic("Message 1")
             diag2 = create_test_diagnostic("Message 2")
@@ -211,23 +203,14 @@ end
         end
     end
 
-    @testset "ExtraDiagnostics to_file_info" begin
-        let fi = JETLS.FileInfo(42, "", @__FILE__)
-            key = TestDiagnosticsKey(fi, 1)
-
-            @test JETLS.to_file_info(key) === fi
-            @test JETLS.to_file_info(key).version == 42
-        end
-    end
 
     @testset "ExtraDiagnostics with multiple diagnostics per URI" begin
         let extra_diags = JETLS.ExtraDiagnostics()
-            uri = LSP.URI("file:///test1.jl")
+            uri = URI("file:///test1.jl")
 
-            fi = JETLS.FileInfo(1, "", uri)
-            key = TestDiagnosticsKey(fi, 1)
+            key = TestDiagnosticsKey(uri, 1)
 
-            another_uri = LSP.URI("file:///test2.jl")
+            another_uri = URI("file:///test2.jl")
 
             diag1 = create_test_diagnostic("Error 1", 0, 0)
             diag2 = create_test_diagnostic("Error 2", 1, 0)
@@ -256,9 +239,8 @@ end
 
     @testset "clear_extra_diagnostics! single key" begin
         let extra_diags = JETLS.ExtraDiagnostics()
-            uri = LSP.URI("file:///test.jl")
-            fi = JETLS.FileInfo(1, "", uri)
-            key = TestDiagnosticsKey(fi, 1)
+            uri = URI("file:///test.jl")
+            key = TestDiagnosticsKey(uri, 1)
             diag = create_test_diagnostic("Test message")
             val = JETLS.URI2Diagnostics(uri => [diag])
 
@@ -275,21 +257,18 @@ end
         end
     end
 
-    @testset "clear_extra_diagnostics! bulk deletion by FileInfo" begin
+    @testset "clear_extra_diagnostics! bulk deletion by URI" begin
         let extra_diags = JETLS.ExtraDiagnostics()
 
-            uri1 = JETLS.LSP.URI("file:///test1.jl")
-            uri2 = JETLS.LSP.URI("file:///test2.jl")
+            uri1 = URI("file:///test1.jl")
+            uri2 = URI("file:///test2.jl")
 
-            fi1 = JETLS.FileInfo(1, "", uri1)
-            fi2 = JETLS.FileInfo(2, "", uri2)
-
-            # Create multiple keys for the same FileInfo
-            key1 = TestDiagnosticsKey(fi1, 1)
-            key2 = TestDiagnosticsKey(fi1, 2)
-            key3 = TestDiagnosticsKey(fi1, 3)
-            # And one key for a different FileInfo
-            key4 = TestDiagnosticsKey(fi2, 4)
+            # Create multiple keys for the same URI
+            key1 = TestDiagnosticsKey(uri1, 1)
+            key2 = TestDiagnosticsKey(uri1, 2)
+            key3 = TestDiagnosticsKey(uri1, 3)
+            # And one key for a different URI
+            key4 = TestDiagnosticsKey(uri2, 4)
 
             val1 = JETLS.URI2Diagnostics(uri1 => [create_test_diagnostic("Message 1")])
             val2 = JETLS.URI2Diagnostics(uri1 => [create_test_diagnostic("Message 2")])
@@ -303,20 +282,20 @@ end
 
             @test length(extra_diags) == 4
 
-            # Clear all keys associated with fi1
-            @test JETLS.clear_extra_diagnostics!(extra_diags, fi1)
+            # Clear all keys associated with uri1
+            @test JETLS.clear_extra_diagnostics!(extra_diags, uri1)
 
-            # Check that only keys for fi1 were deleted
+            # Check that only keys for uri1 were deleted
             @test !haskey(extra_diags, key1)
             @test !haskey(extra_diags, key2)
             @test !haskey(extra_diags, key3)
             @test haskey(extra_diags, key4)
             @test length(extra_diags) == 1
 
-            # Verify the remaining key is for fi2
+            # Verify the remaining key is for uri2
             remaining_keys = collect(keys(extra_diags))
             @test length(remaining_keys) == 1
-            @test JETLS.to_file_info(remaining_keys[1]) === fi2
+            @test JETLS.to_uri(remaining_keys[1]) === uri2
         end
     end
 end # @testset "ExtraDiagnostics"

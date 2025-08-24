@@ -147,11 +147,10 @@ function clear_extra_diagnostics!(extra_diagnostics::ExtraDiagnostics, key::Extr
     end
     return false
 end
-function clear_extra_diagnostics!(extra_diagnostics::ExtraDiagnostics, fi::FileInfo) # bulk deletion
+function clear_extra_diagnostics!(extra_diagnostics::ExtraDiagnostics, uri::URI) # bulk deletion
     any_deleted = false
     for key in keys(extra_diagnostics)
-        keyfi = to_file_info(key)
-        if keyfi === fi
+        if to_uri(key) == uri
             delete!(extra_diagnostics, key)
             any_deleted |= true
         end
