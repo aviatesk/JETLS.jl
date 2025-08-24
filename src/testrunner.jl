@@ -88,28 +88,13 @@ function update_testsetinfos!(server::Server, fi::FileInfo, prev_fi::Union{Nothi
     return any_deleted
 end
 
-function traverse_skip_func_scope(@specialize(callback), st0_top::SyntaxTree0)
-    testsets = JL.SyntaxList(st0_top)
-    stack = JL.SyntaxList(st0_top)
-    push!(stack, st0_top)
-    while !isempty(stack)
-        st0 = pop!(stack)
-        if JS.kind(st0) in JS.KSet"function macro"
-            # avoid visit inside function scope
-            continue
-        end
-        callback(st0)
-        for i = JS.numchildren(st0):-1:1
-            push!(stack, st0[i])
-        end
-    end
-    return testsets
-end
-
 function find_executable_testsets(st0_top::SyntaxTree0)
     testsets = JL.SyntaxList(st0_top)
-    traverse_skip_func_scope(st0_top) do st0::SyntaxTree0
-        if JS.kind(st0) === JS.K"macrocall" && JS.numchildren(st0) ≥ 2
+    traverse(st0_top) do st0::SyntaxTree0
+        if JS.kind(st0) in JS.KSet"function macro"
+            # avoid visit inside function scope
+            return TraversalNoRecurse()
+        elseif JS.kind(st0) === JS.K"macrocall" && JS.numchildren(st0) ≥ 2
             macroname = st0[1]
             if JS.kind(macroname) === JS.K"MacroName" && macroname.name_val == "@testset"
                 testsetname = st0[2]
@@ -245,8 +230,11 @@ function testrunner_testcase_code_actions!(
         code_actions::Vector{Union{CodeAction, Command}}, uri::URI, fi::FileInfo, action_range::Range
     )
     st0_top = fi.syntax_tree0
-    traverse_skip_func_scope(st0_top) do st0::SyntaxTree0
-        if JS.kind(st0) === JS.K"macrocall" && JS.numchildren(st0) ≥ 1
+    traverse(st0_top) do st0::SyntaxTree0
+        if JS.kind(st0) in JS.KSet"function macro"
+            # avoid visit inside function scope
+            return TraversalNoRecurse()
+        elseif JS.kind(st0) === JS.K"macrocall" && JS.numchildren(st0) ≥ 1
             macroname = st0[1]
             if JS.kind(macroname) === JS.K"MacroName" && macroname.name_val in TEST_MACROS
                 tcr = jsobj_to_range(st0, fi; adjust_last=1) # +1 to support cases like `@test ...│`
