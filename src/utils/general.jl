@@ -102,7 +102,7 @@ macro define_override_constructor(Tex)
 end
 
 """
-    getobjpath(obj, path::Symbo...)
+    getobjpath(obj, path::Symbol...)
 
 An accessor primarily written for accessing fields of LSP objects whose fields
 may be unset (set to `nothing`) depending on client/server capabilities.
@@ -197,6 +197,8 @@ function app_notfound_message(app::AbstractString, setting_path::String...; is_d
         instruction_url = "https://github.com/aviatesk/JETLS.jl#prerequisites"
     elseif app == "runic"
         instruction_url = "https://github.com/fredrikekre/Runic.jl#installation"
+    else
+        return msg
     end
 
     return msg * install_instruction_message(app, instruction_url)
