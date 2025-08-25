@@ -36,7 +36,7 @@ end
 # use `stop` if some lowering pass mutates ctx in a way you don't want
 function jldebug(st0_in::JL.SyntaxTree, stop=5)
     global ctx5, st5, ctx4, st4, ctx3, st3, ctx2, st2, ctx1, st1
-    stop = stop - 1; stop < 0 && return; ctx1, st1 = JL.expand_forms_1(Module(), st0_in)
+    stop = stop - 1; stop < 0 && return; ctx1, st1 = JL.expand_forms_1(Module(), st0_in, true)
     stop = stop - 1; stop < 0 && return; ctx2, st2 = JL.expand_forms_2(ctx1, st1)
     stop = stop - 1; stop < 0 && return; ctx3, st3 = JL.resolve_scopes(ctx2, st2)
     stop = stop - 1; stop < 0 && return; ctx4, st4 = JL.convert_closures(ctx3, st3)

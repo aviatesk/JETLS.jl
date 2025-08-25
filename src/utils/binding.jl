@@ -57,14 +57,14 @@ function jl_lower_for_scope_resolution(
         st0 = without_kinds(st0, JS.KSet"error")
     end
     ctx1, st1 = try
-        JL.expand_forms_1(mod, st0)
+        JL.expand_forms_1(mod, st0, true)
     catch err
         recover_from_macro_errors || rethrow(err)
         JETLS_DEBUG_LOWERING && @warn "Error in macro expansion; trimming and retrying"
         JETLS_DEBUG_LOWERING && showerror(stderr, err)
         JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
         st0 = without_kinds(st0, JS.KSet"macrocall")
-        JL.expand_forms_1(mod, st0)
+        JL.expand_forms_1(mod, st0, true)
     end
     return _jl_lower_for_scope_resolution(ctx1, st0, st1)
 end

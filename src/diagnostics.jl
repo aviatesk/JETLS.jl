@@ -229,7 +229,7 @@ function lowering_diagnostics!(
 
         st0 = without_kinds(st0, JS.KSet"error macrocall")
         try
-            ctx1, st1 = JL.expand_forms_1(mod, st0)
+            ctx1, st1 = JL.expand_forms_1(mod, st0, true)
             _jl_lower_for_scope_resolution(ctx1, st0, st1)
         catch
             # The same error has probably already been handled above
