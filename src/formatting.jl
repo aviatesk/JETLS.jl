@@ -52,7 +52,7 @@ function handle_DocumentFormattingRequest(server::Server, msg::DocumentFormattin
     elseif supports(server, :window, :workDoneProgress)
         id = String(gensym(:WorkDoneProgressCreateRequest_formatting))
         token = String(gensym(:FormattingProgress))
-        server.state.currently_requested[id] = FormattingProgressCaller(uri, msg.id, token)
+        addrequest!(server, id=>FormattingProgressCaller(uri, msg.id, token))
         params = WorkDoneProgressCreateParams(; token)
         send(server, WorkDoneProgressCreateRequest(; id, params))
     else
@@ -110,7 +110,7 @@ function handle_DocumentRangeFormattingRequest(server::Server, msg::DocumentRang
     elseif supports(server, :window, :workDoneProgress)
         id = String(gensym(:WorkDoneProgressCreateRequest_rangeFormatting))
         token = String(gensym(:RangeFormattingProgress))
-        server.state.currently_requested[id] = RangeFormattingProgressCaller(uri, range, msg.id, token)
+        addrequest!(server, id=>RangeFormattingProgressCaller(uri, range, msg.id, token))
         params = WorkDoneProgressCreateParams(; token)
         send(server, WorkDoneProgressCreateRequest(; id, params))
     else

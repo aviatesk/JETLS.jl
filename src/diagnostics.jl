@@ -318,6 +318,26 @@ function notify_temporary_diagnostics!(server::Server, temp_uri2diagnostics::URI
     notify_diagnostics!(server, uri2diagnostics)
 end
 
+clear_extra_diagnostics!(server::Server, args...) = clear_extra_diagnostics!(server.state, args...)
+clear_extra_diagnostics!(state::ServerState, args...) = clear_extra_diagnostics!(state.extra_diagnostics, args...)
+function clear_extra_diagnostics!(extra_diagnostics::ExtraDiagnostics, key::ExtraDiagnosticsKey)
+    if haskey(extra_diagnostics, key)
+        delete!(extra_diagnostics, key)
+        return true
+    end
+    return false
+end
+function clear_extra_diagnostics!(extra_diagnostics::ExtraDiagnostics, uri::URI) # bulk deletion
+    any_deleted = false
+    for key in keys(extra_diagnostics)
+        if to_uri(key) == uri
+            delete!(extra_diagnostics, key)
+            any_deleted |= true
+        end
+    end
+    return any_deleted
+end
+
 # textDocument/diagnostic
 # -----------------------
 
