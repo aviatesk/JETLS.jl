@@ -470,10 +470,12 @@ function _testrunner_run_testset(server::Server, executable::AbstractString, uri
 
     key = TestsetDiagnosticsKey(uri, tsn, idx)
     testsetinfos.infos[idx] = TestsetInfo(testsetinfos.infos[idx].st0, TestsetResult(result, key))
-    if !isempty(result.diagnostics)
-        server.state.extra_diagnostics[key] = testrunner_result_to_diagnostics(result)
-    elseif haskey(server.state.extra_diagnostics, key)
-        empty!(server.state.extra_diagnostics[key])
+    withlock(server.state.extra_diagnostics) do extra_diagnostics
+        if !isempty(result.diagnostics)
+            extra_diagnostics[key] = testrunner_result_to_diagnostics(result)
+        elseif haskey(extra_diagnostics, key)
+            empty!(extra_diagnostics[key])
+        end
     end
     notify_diagnostics!(server)
 
