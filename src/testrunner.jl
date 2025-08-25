@@ -35,52 +35,63 @@ testset_name(testset::JL.SyntaxTree) = JS.sourcetext(testset[2])
 testset_line(testsetinfo::TestsetInfo) = testset_line(testsetinfo.st0)
 testset_line(testset::JL.SyntaxTree) = JS.source_line(testset[2])
 
-function update_testsetinfos!(server::Server, fi::FileInfo, prev_fi::Union{Nothing,FileInfo}; notify_server::Bool=true)
-    any_deleted = false
-
+function update_testsetinfos!(server::Server, uri::URI, fi::FileInfo; notify_server::Bool=true)
     new_testsets = find_executable_testsets(fi.syntax_tree0)
     m = length(new_testsets)
-    resize!(fi.testsetinfos, m)
 
-    if isnothing(prev_fi)
-        for i = 1:m
-            fi.testsetinfos[i] = TestsetInfo(new_testsets[i])
+    existing_testsetinfos = @something get(server.state.testsetinfos_cache, uri, nothing) begin
+        # new file or newly created testsets
+        if !iszero(m)
+            server.state.testsetinfos_cache[uri] =
+                TestsetInfos(fi.version, TestsetInfo[TestsetInfo(t) for t in new_testsets])
         end
-        return false # no diagnostics deleted
+        return false
     end
 
-    prev_testsetinfos = prev_fi.testsetinfos
-    n = length(prev_testsetinfos)
+    any_deleted = false
+    if existing_testsetinfos.version != fi.version
+        prev_infos = existing_testsetinfos.infos
+        n = length(prev_infos)
 
-    for i = 1:m
-        testsetᵢ = new_testsets[i]
-        if i ≤ n
-            prev_testsetinfoᵢ = prev_testsetinfos[i]
-            if isdefined(prev_testsetinfoᵢ, :result)
-                key = prev_testsetinfoᵢ.result.key
-                if testset_name(testsetᵢ) == key.testset_name
-                    # this `@testset` is likely still being mapped to the original
-                    # testset, so let's keep the result and diagnostics
-                    fi.testsetinfos[i] = TestsetInfo(testsetᵢ, prev_testsetinfoᵢ.result)
-                else
-                    any_deleted |= clear_extra_diagnostics!(server, key) # === true
-                    fi.testsetinfos[i] = TestsetInfo(testsetᵢ)
-                end
-            else
-                fi.testsetinfos[i] = TestsetInfo(testsetᵢ)
-            end
+        if iszero(n)
+            # Delete the existing cache if exist
+            delete!(server.state.testsetinfos_cache, uri)
         else
-            fi.testsetinfos[i] = TestsetInfo(testsetᵢ)
-        end
-    end
+            # Update the cache with new version and infos
+            new_infos = Vector{TestsetInfo}(undef, m)
+            for i = 1:m
+                testsetᵢ = new_testsets[i]
+                if i ≤ n
+                    prev_testsetinfoᵢ = prev_infos[i]
+                    if isdefined(prev_testsetinfoᵢ, :result)
+                        key = prev_testsetinfoᵢ.result.key
+                        if testset_name(testsetᵢ) == key.testset_name
+                            # this `@testset` is likely still being mapped to the original
+                            # testset, so let's keep the result and diagnostics
+                            new_infos[i] = TestsetInfo(testsetᵢ, prev_testsetinfoᵢ.result)
+                        else
+                            any_deleted |= clear_extra_diagnostics!(server, key) # === true
+                            new_infos[i] = TestsetInfo(testsetᵢ)
+                        end
+                    else
+                        new_infos[i] = TestsetInfo(testsetᵢ)
+                    end
+                else
+                    new_infos[i] = TestsetInfo(testsetᵢ)
+                end
+            end
+            server.state.testsetinfos_cache[uri] = TestsetInfos(fi.version, new_infos)
 
-    # Clear diagnostics for any removed testsets (when n > m)
-    for i = (m+1):n
-        prev_testsetinfoᵢ = prev_testsetinfos[i]
-        if isdefined(prev_testsetinfoᵢ, :result)
-            any_deleted |= clear_extra_diagnostics!(server, prev_testsetinfoᵢ.result.key) # === true
+            # Clear diagnostics for any removed testsets (when n > m)
+            for i = (m+1):n
+                prev_testsetinfoᵢ = prev_infos[i]
+                if isdefined(prev_testsetinfoᵢ, :result)
+                    any_deleted |= clear_extra_diagnostics!(server, prev_testsetinfoᵢ.result.key) # === true
+                end
+            end
         end
     end
+    # else: version unchanged, no need to update
 
     if notify_server && any_deleted
         notify_diagnostics!(server)
@@ -107,8 +118,10 @@ function find_executable_testsets(st0_top::SyntaxTree0)
     return testsets
 end
 
-function testrunner_code_lenses!(code_lenses::Vector{CodeLens}, uri::URI, fi::FileInfo)
-    for (idx, testsetinfo) in enumerate(fi.testsetinfos)
+function testrunner_code_lenses!(
+        code_lenses::Vector{CodeLens}, uri::URI, fi::FileInfo, testsetinfos::TestsetInfos
+    )
+    for (idx, testsetinfo) in enumerate(testsetinfos.infos)
         testrunner_code_lenses!(code_lenses, uri, fi, idx, testsetinfo)
     end
     return code_lenses
@@ -160,25 +173,31 @@ function testrunner_code_lenses!(
     return code_lenses
 end
 
+testrunner_code_lenses(args...) = # used by tests
+    testrunner_code_lenses!(CodeLens[], args...)
+
 function testrunner_code_actions!(
-        code_actions::Vector{Union{CodeAction,Command}}, uri::URI, fi::FileInfo, action_range::Range
+        code_actions::Vector{Union{CodeAction,Command}}, uri::URI, fi::FileInfo, testsetinfos::TestsetInfos, action_range::Range
     )
-    testrunner_testset_code_actions!(code_actions, uri, fi, action_range)
+    testrunner_testset_code_actions!(code_actions, uri, fi, testsetinfos, action_range)
     testrunner_testcase_code_actions!(code_actions, uri, fi, action_range)
     return code_actions
 end
 
+testrunner_code_actions(args...) = # used by tests
+    testrunner_code_actions!(Union{CodeAction,Command}[], args...)
+
 function testrunner_testset_code_actions!(
-        code_actions::Vector{Union{CodeAction, Command}}, uri::URI, fi::FileInfo, action_range::Range
+        code_actions::Vector{Union{CodeAction,Command}}, uri::URI, fi::FileInfo, testsetinfos::TestsetInfos, action_range::Range
     )
-    for (idx, testsetinfo) in enumerate(fi.testsetinfos)
+    for (idx, testsetinfo) in enumerate(testsetinfos.infos)
         testrunner_testset_code_actions!(code_actions, uri, fi, idx, testsetinfo, action_range)
     end
     return code_actions
 end
 
 function testrunner_testset_code_actions!(
-        code_actions::Vector{Union{CodeAction, Command}}, uri::URI, fi::FileInfo, idx::Int, testsetinfo::TestsetInfo, action_range::Range
+        code_actions::Vector{Union{CodeAction,Command}}, uri::URI, fi::FileInfo, idx::Int, testsetinfo::TestsetInfo, action_range::Range
     )
     tsr = jsobj_to_range(testsetinfo.st0, fi; adjust_last=1) # +1 to support cases like `@testset "xxx" begin ... end│`
     overlap(action_range, tsr) || return nothing
@@ -227,7 +246,7 @@ function testrunner_testset_code_actions!(
 end
 
 function testrunner_testcase_code_actions!(
-        code_actions::Vector{Union{CodeAction, Command}}, uri::URI, fi::FileInfo, action_range::Range
+        code_actions::Vector{Union{CodeAction,Command}}, uri::URI, fi::FileInfo, action_range::Range
     )
     st0_top = fi.syntax_tree0
     traverse(st0_top) do st0::SyntaxTree0
@@ -366,8 +385,9 @@ function testrunner_run_testset(server::Server, uri::URI, fi::FileInfo, idx::Int
                                 token::Union{Nothing,ProgressToken}=nothing)
     executable = get_config(server.state.config_manager, "testrunner", "executable")
     if isnothing(Sys.which(executable))
-        is_default_setting = executable == "testrunner"
-        show_error_message(server, app_notfound_message(executable, "testrunner", "executable", is_default_setting=is_default_setting))
+        show_error_message(server, app_notfound_message(
+            executable, "testrunner", "executable";
+            is_default_setting = executable == "testrunner"))
         return token !== nothing && end_testrunner_progress(server, token, "TestRunner not installed")
     end
 
@@ -398,19 +418,26 @@ function testrunner_run_testset(server::Server, uri::URI, fi::FileInfo, idx::Int
     end
 end
 
-# Check if the `@testset` mapping state in `fi.testsetinfos` is still in the expected state
-is_testsetinfo_valid(fi::FileInfo, idx::Int, tsn::String) =
-    checkbounds(Bool, fi.testsetinfos, idx) && testset_name(fi.testsetinfos[idx]) == tsn
+# Check if the `@testset` mapping state in testsetinfos is still in the expected state
+is_testsetinfo_valid(fi::FileInfo, testsetinfos::TestsetInfos, idx::Int) =
+    testsetinfos.version == fi.version && checkbounds(Bool, testsetinfos.infos, idx)
 
 function _testrunner_run_testset(server::Server, executable::AbstractString, uri::URI, fi::FileInfo, idx::Int, tsn::String, filepath::String)
-    if !is_testsetinfo_valid(fi, idx, tsn)
+    testsetinfos = @something get(server.state.testsetinfos_cache, uri, nothing) begin
+        show_warning_message(server, """
+            Test structure not found, so test execution is being cancelled.
+            """)
+        return "Test structure not found"
+    end
+    if !is_testsetinfo_valid(fi, testsetinfos, idx)
         show_warning_message(server, """
             The test structure has changed significantly, so test execution is being cancelled.
             Please run the test again from the code lens or code actions currently displayed in the editor.
             """)
         return "Test execution cancelled"
     end
-    tsl = testset_line(fi.testsetinfos[idx])
+
+    tsl = testset_line(testsetinfos.infos[idx])
     test_env_path = find_uri_env_path(server.state, uri)
     cmd = testrunner_cmd(executable, filepath, tsn, tsl, test_env_path)
     testrunnerproc = open(cmd; read=true)
@@ -425,10 +452,16 @@ function _testrunner_run_testset(server::Server, executable::AbstractString, uri
             """)
         return "Test execution failed"
     end
-
     ret = summary_testrunner_result(result)
 
-    if !is_testsetinfo_valid(fi, idx, tsn)
+    # Handle the case where the test structure is updated during test execution
+    testsetinfos = @something get(server.state.testsetinfos_cache, uri, nothing) begin
+        # If the file state has changed during test execution, it's difficult to apply results to the file:
+        # Simply show only the option to open logs
+        show_testrunner_result_in_message(server, result, #=title=#tsn)
+        return ret
+    end
+    if !is_testsetinfo_valid(fi, testsetinfos, idx)
         # If the file state has changed during test execution, it's difficult to apply results to the file:
         # Simply show only the option to open logs
         show_testrunner_result_in_message(server, result, #=title=#tsn)
@@ -436,7 +469,7 @@ function _testrunner_run_testset(server::Server, executable::AbstractString, uri
     end
 
     key = TestsetDiagnosticsKey(uri, tsn, idx)
-    fi.testsetinfos[idx] = TestsetInfo(fi.testsetinfos[idx].st0, TestsetResult(result, key))
+    testsetinfos.infos[idx] = TestsetInfo(testsetinfos.infos[idx].st0, TestsetResult(result, key))
     if !isempty(result.diagnostics)
         server.state.extra_diagnostics[key] = testrunner_result_to_diagnostics(result)
     elseif haskey(server.state.extra_diagnostics, key)
@@ -456,8 +489,9 @@ function testrunner_run_testcase(server::Server, uri::URI, tcl::Int, tct::String
                                  token::Union{Nothing,ProgressToken}=nothing)
     executable = get_config(server.state.config_manager, "testrunner", "executable")
     if isnothing(Sys.which(executable))
-        is_default_setting = executable == "testrunner"
-        show_error_message(server, app_notfound_message(executable, "testrunner", "executable", is_default_setting=is_default_setting))
+        show_error_message(server, app_notfound_message(
+            executable, "testrunner", "executable";
+            is_default_setting = executable == "testrunner"))
         return token !== nothing && end_testrunner_progress(server, token, "TestRunner not installed")
     end
 
@@ -655,13 +689,15 @@ function try_clear_testrunner_result!(server::Server, uri::URI, idx::Int, tsn::S
         return nothing
     end
 
-    if !is_testsetinfo_valid(fi, idx, tsn)
+    fi = @something get_file_info(server.state, uri) return nothing
+    testsetinfos = @something get(server.state.testsetinfos_cache, uri, nothing) return nothing
+    if !is_testsetinfo_valid(fi, testsetinfos, idx)
         # file is has been modified, just do nothing and return
         # the clean up should be performed by `invalidate_testsetinfos!`
         return nothing
     end
 
-    fi.testsetinfos[idx] = TestsetInfo(fi.testsetinfos[idx].st0)
+    testsetinfos.infos[idx] = TestsetInfo(testsetinfos.infos[idx].st0)
     if clear_extra_diagnostics!(server, TestsetDiagnosticsKey(uri, tsn, idx))
         notify_diagnostics!(server)
     end

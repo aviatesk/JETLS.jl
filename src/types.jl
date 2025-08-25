@@ -23,13 +23,17 @@ struct TestsetInfo
     TestsetInfo(st0::SyntaxTree0, result::TestsetResult) = new(st0, result)
 end
 
+struct TestsetInfos
+    version::Int # document version
+    infos::Vector{TestsetInfo}
+end
+
 struct FileInfo
     version::Int
     encoding::LSP.PositionEncodingKind.Ty
     parsed_stream::JS.ParseStream
     syntax_node::JS.SyntaxNode
     syntax_tree0::SyntaxTree0
-    testsetinfos::Vector{TestsetInfo}
 
     function FileInfo(
             version::Int, parsed_stream::JS.ParseStream, filename::AbstractString,
@@ -37,7 +41,7 @@ struct FileInfo
         )
         syntax_node = JS.build_tree(JS.SyntaxNode, parsed_stream; filename)
         syntax_tree0 = JS.build_tree(JL.SyntaxTree, parsed_stream; filename)
-        new(version, encoding, parsed_stream, syntax_node, syntax_tree0, TestsetInfo[])
+        new(version, encoding, parsed_stream, syntax_node, syntax_tree0)
     end
 end
 
@@ -326,6 +330,7 @@ mutable struct ServerState
     const file_cache::Dict{URI,FileInfo} # syntactic analysis cache (synced with `textDocument/didChange`)
     const saved_file_cache::Dict{URI,SavedFileInfo} # syntactic analysis cache (synced with `textDocument/didSave`)
     const analysis_cache::Dict{URI,AnalysisInfo} # entry points for the full analysis (currently not cached really)
+    const testsetinfos_cache::Dict{URI,TestsetInfos}
     const extra_diagnostics::ExtraDiagnostics
     const currently_requested::Dict{String,RequestCaller}
     const currently_registered::Set{Registered}
@@ -341,6 +346,7 @@ mutable struct ServerState
             #=file_cache=# Dict{URI,FileInfo}(),
             #=saved_file_cache=# Dict{URI,SavedFileInfo}(),
             #=analysis_cache=# Dict{URI,AnalysisInfo}(),
+            #=testsetinfos_cache=# Dict{URI,TestsetInfos}(),
             #=extra_diagnostics=# ExtraDiagnostics(),
             #=currently_requested=# Dict{String,RequestCaller}(),
             #=currently_registered=# Set{Registered}(),

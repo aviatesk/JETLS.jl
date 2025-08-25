@@ -31,7 +31,9 @@ function handle_CodeLensRequest(server::Server, msg::CodeLensRequest)
                 error = file_cache_error(uri)))
     end
     code_lenses = CodeLens[]
-    testrunner_code_lenses!(code_lenses, uri, fi)
+    testsetinfos = get(server.state.testsetinfos_cache, uri, nothing)
+    isnothing(testsetinfos) ||
+        testrunner_code_lenses!(code_lenses, uri, fi, testsetinfos)
     return send(server,
         CodeLensResponse(;
             id = msg.id,
