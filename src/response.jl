@@ -11,15 +11,9 @@ in which case an unhandled message log is output in `handle_message` as a refere
 for developers.
 """
 function handle_ResponseMessage(server::Server, msg::Dict{Symbol,Any})
-    id = get(msg, :id, nothing)
-    currently_requested = server.state.currently_requested
-    if id isa String && haskey(currently_requested, id)
-        request_caller = currently_requested[id]
-        delete!(currently_requested, id)
-        handle_requested_response(server, msg, request_caller)
-        return true
-    end
-    return false
+    request_caller = @something poprequest!(server, get(msg, :id, nothing)) return false
+    handle_requested_response(server, msg, request_caller)
+    return true
 end
 
 """

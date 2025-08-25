@@ -48,7 +48,7 @@ function handle_DidOpenTextDocumentNotification(server::Server, msg::DidOpenText
     if supports(server, :window, :workDoneProgress)
         id = String(gensym(:WorkDoneProgressCreateRequest_run_full_analysis!))
         token = String(gensym(:WorkDoneProgressCreateRequest_run_full_analysis!))
-        server.state.currently_requested[id] = RunFullAnalysisCaller(uri, #=onsave=#false, token)
+        addrequest!(server, id=>RunFullAnalysisCaller(uri, #=onsave=#false, token))
         send(server,
             WorkDoneProgressCreateRequest(;
                 id,
@@ -94,7 +94,7 @@ function handle_DidSaveTextDocumentNotification(server::Server, msg::DidSaveText
     if supports(server, :window, :workDoneProgress)
         id = String(gensym(:WorkDoneProgressCreateRequest_run_full_analysis!))
         token = String(gensym(:WorkDoneProgressCreateRequest_run_full_analysis!))
-        server.state.currently_requested[id] = RunFullAnalysisCaller(uri, #=onsave=#true, token)
+        addrequest!(server, id=>RunFullAnalysisCaller(uri, #=onsave=#true, token))
         send(server,
             WorkDoneProgressCreateRequest(;
                 id,

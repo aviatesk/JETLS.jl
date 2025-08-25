@@ -352,7 +352,7 @@ function show_testrunner_result_in_message(server::Server, result::TestRunnerRes
     end
 
     id = String(gensym(:ShowMessageRequest))
-    server.state.currently_requested[id] = request_caller
+    addrequest!(server, id=>request_caller)
 
     send(server, ShowMessageRequest(;
         id,
@@ -546,7 +546,7 @@ function open_testsetinfo_logs!(server::Server, tsn::String, logs::String)
         uri = URI(; scheme="untitled", path=untitled_name)
         id = String(gensym(:ShowDocumentRequest))
         context = "showing test logs"
-        server.state.currently_requested[id] = ShowDocumentRequestCaller(uri, logs, context)
+        addrequest!(server, id=>ShowDocumentRequestCaller(uri, logs, context))
         send(server, ShowDocumentRequest(;
             id,
             params = ShowDocumentParams(;
@@ -601,7 +601,7 @@ function testrunner_run_testset_from_uri(server::Server, uri::URI, idx::Int, tsn
     if supports(server, :window, :workDoneProgress)
         id = String(gensym(:WorkDoneProgressCreateRequest_testrunner))
         token = String(gensym(:TestRunnerProgress))
-        server.state.currently_requested[id] = TestRunnerTestsetProgressCaller(uri, fi, idx, tsn, filepath, token)
+        addrequest!(server, id=>TestRunnerTestsetProgressCaller(uri, fi, idx, tsn, filepath, token))
         params = WorkDoneProgressCreateParams(; token)
         send(server, WorkDoneProgressCreateRequest(; id, params))
     else
@@ -633,7 +633,7 @@ function testrunner_run_testcase_from_uri(server::Server, uri::URI, tcl::Int, tc
     if supports(server, :window, :workDoneProgress)
         id = String(gensym(:WorkDoneProgressCreateRequest_testrunner))
         token = String(gensym(:TestRunnerProgress))
-        server.state.currently_requested[id] = TestRunnerTestcaseProgressCaller(uri, tcl, tct, filepath, token)
+        addrequest!(server, id=>TestRunnerTestcaseProgressCaller(uri, tcl, tct, filepath, token))
         params = WorkDoneProgressCreateParams(; token)
         send(server, WorkDoneProgressCreateRequest(; id, params))
     else

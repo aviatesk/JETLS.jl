@@ -362,17 +362,3 @@ struct Server{Callback}
     end
 end
 Server() = Server(Returns(nothing), LSEndpoint(IOBuffer(), IOBuffer())) # used for tests
-
-"""
-    send(state::ServerState, msg)
-
-Send a message to the client through the server `state.endpoint`
-
-This function is used by each handler that processes messages sent from the client,
-as well as for sending requests and notifications from the server to the client.
-"""
-function send(server::Server, @nospecialize msg)
-    JSONRPC.send(server.endpoint, msg)
-    server.callback !== nothing && server.callback(:sent, msg)
-    nothing
-end

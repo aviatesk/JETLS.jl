@@ -1,6 +1,5 @@
 # server interaction utilities
 # ===========================
-using Markdown
 
 const DEFAULT_FLUSH_INTERVAL = 0.05
 function yield_to_endpoint(interval=DEFAULT_FLUSH_INTERVAL)
@@ -9,7 +8,100 @@ function yield_to_endpoint(interval=DEFAULT_FLUSH_INTERVAL)
     sleep(interval)
 end
 
-# TODO memomize computed results?
+"""
+    send(server::Server, msg)
+
+Send a message to the client through the `server.state.endpoint`.
+
+This function is used by each handler that processes messages sent from the client,
+as well as for sending requests and notifications from the server to the client.
+"""
+function send(server::Server, @nospecialize msg)
+    JSONRPC.send(server.endpoint, msg)
+    server.callback !== nothing && server.callback(:sent, msg)
+    nothing
+end
+
+"""
+    addrequest!(server::Server, id=>caller)
+    addrequest!(server::Server, id::String, caller::RequestCaller)
+
+Register a `RequestCaller` for tracking an outgoing request from the server to the client.
+
+When the server sends a request to the client (e.g., `window/workDoneProgress/create`,
+`window/showMessageRequest`, `workspace/applyEdit`), it needs to track which handler
+should process the client's response. This function associates a unique request ID with
+a `RequestCaller` subtype that encapsulates the context needed to handle the response.
+
+# Arguments
+- `server::Server`: The language server instance
+- `id::String`: A unique identifier for the request (typically generated with `gensym`)
+- `caller::RequestCaller`: An instance of a `RequestCaller` subtype containing the
+  context information needed to handle the client's response
+
+# Usage
+The function supports both syntaxes for convenience:
+- `addrequest!(server, id=>caller)` - Using Pair syntax
+- `addrequest!(server, id, caller)` - Using separate arguments
+
+# Example
+```julia
+# When creating a progress token
+id = String(gensym(:WorkDoneProgressCreateRequest_formatting))
+token = String(gensym(:FormattingProgress))
+caller = FormattingProgressCaller(uri, msg.id, token)
+addrequest!(server, id=>caller)
+send(server, WorkDoneProgressCreateRequest(; id, params))
+```
+
+# See also
+- [`poprequest!`](@ref) - Retrieve and remove a registered `RequestCaller` when handling the response
+- [`handle_ResponseMessage`](@ref) - The main handler that uses these request callers
+"""
+addrequest!(server::Server, (id, caller)) = addrequest!(server, id, caller)
+function addrequest!(server::Server, id::String, caller::RequestCaller)
+    return server.state.currently_requested[id] = caller
+end
+
+"""
+    poprequest!(server::Server, id) -> Union{Nothing,RequestCaller}
+
+Retrieve and remove a registered `RequestCaller` for a completed request.
+
+When the client sends a response to a server-initiated request, this function retrieves
+the associated `RequestCaller` that contains the context needed to handle the response.
+The caller is removed from the tracking dictionary after retrieval.
+
+# Arguments
+- `server::Server`: The language server instance
+- `id`: The unique identifier of the request (typically a `String` or `nothing`)
+
+# Returns
+- The `RequestCaller` instance if found, or `nothing` if no matching request exists
+
+# Usage
+This function is primarily used in `handle_ResponseMessage` to retrieve the appropriate
+handler context when processing client responses. The retrieved `RequestCaller` is then
+dispatched to the appropriate handler based on its type.
+
+# Example
+```julia
+# In handle_ResponseMessage
+request_caller = @something poprequest!(server, get(msg, :id, nothing)) return false
+handle_requested_response(server, msg, request_caller)
+```
+
+# See also
+- [`addrequest!`](@ref) - Register a `RequestCaller` when sending a request to the client
+- [`handle_ResponseMessage`](@ref) - The main handler that processes client responses
+"""
+function poprequest!(server::Server, @nospecialize id)
+    currently_requested = server.state.currently_requested
+    if id isa String && haskey(currently_requested, id)
+        return pop!(currently_requested, id)
+    end
+    return nothing
+end
 
 """
     supports(server::Server, paths::Symbol...) -> Bool
@@ -136,24 +228,4 @@ function find_analysis_unit_for_uri(state::ServerState, uri::URI)
         end
     end
     return analysis_unit
-end
-
-clear_extra_diagnostics!(server::Server, args...) = clear_extra_diagnostics!(server.state, args...)
-clear_extra_diagnostics!(state::ServerState, args...) = clear_extra_diagnostics!(state.extra_diagnostics, args...)
-function clear_extra_diagnostics!(extra_diagnostics::ExtraDiagnostics, key::ExtraDiagnosticsKey)
-    if haskey(extra_diagnostics, key)
-        delete!(extra_diagnostics, key)
-        return true
-    end
-    return false
-end
-function clear_extra_diagnostics!(extra_diagnostics::ExtraDiagnostics, uri::URI) # bulk deletion
-    any_deleted = false
-    for key in keys(extra_diagnostics)
-        if to_uri(key) == uri
-            delete!(extra_diagnostics, key)
-            any_deleted |= true
-        end
-    end
-    return any_deleted
 end

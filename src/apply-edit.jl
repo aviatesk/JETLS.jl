@@ -10,7 +10,7 @@ function set_document_content(server::Server, uri::URI, content::String; context
     changes = Dict{URI,Vector{TextEdit}}(uri => edits)
     edit = WorkspaceEdit(; changes)
     id = String(gensym(:ApplyWorkspaceEditRequest))
-    server.state.currently_requested[id] = SetDocumentContentCaller()
+    addrequest!(server, id=>SetDocumentContentCaller())
     label = "Set document content"
     if context !== nothing
         label *= "(for $context)"

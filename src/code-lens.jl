@@ -41,6 +41,6 @@ end
 struct CodeLensRefreshRequestCaller <: RequestCaller end
 function request_codelens_refresh!(server::Server)
     id = String(gensym(:CodeLensRefreshRequest))
-    server.state.currently_requested[id] = CodeLensRefreshRequestCaller()
+    addrequest!(server, id=>CodeLensRefreshRequestCaller())
     return send(server, CodeLensRefreshRequest(; id, params = nothing))
 end
