@@ -42,7 +42,7 @@ function handle_DidOpenTextDocumentNotification(server::Server, msg::DidOpenText
 
     parsed_stream = ParseStream!(textDocument.text)
     fi = cache_file_info!(server.state, uri, textDocument.version, parsed_stream)
-    update_testsetinfos!(server, fi, nothing)
+    update_testsetinfos!(server, uri, fi)
     cache_saved_file_info!(server.state, uri, parsed_stream)
 
     if supports(server, :window, :workDoneProgress)
@@ -66,9 +66,8 @@ function handle_DidChangeTextDocumentNotification(server::Server, msg::DidChange
         @assert contentChange.range === contentChange.rangeLength === nothing # since `change = TextDocumentSyncKind.Full`
     end
     text = last(contentChanges).text
-    prev_fi = server.state.file_cache[uri]
     fi = cache_file_info!(server.state, uri, textDocument.version, text)
-    update_testsetinfos!(server, fi, prev_fi)
+    update_testsetinfos!(server, uri, fi)
 end
 
 function handle_DidSaveTextDocumentNotification(server::Server, msg::DidSaveTextDocumentNotification)
@@ -110,6 +109,7 @@ function handle_DidCloseTextDocumentNotification(server::Server, msg::DidCloseTe
     fi = get(server.state.file_cache, uri, nothing)
     if !isnothing(fi)
         delete!(server.state.file_cache, uri)
+        delete!(server.state.testsetinfos_cache, uri)
         if clear_extra_diagnostics!(server, uri)
             notify_diagnostics!(server)
         end
