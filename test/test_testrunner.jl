@@ -87,7 +87,7 @@ end
         end
         """
         uri = URI("file://runtests.jl")
-        fi = JETLS.cache_file_info!(server.state, uri, 1, JETLS.ParseStream!(test_code))
+        fi = JETLS.cache_file_info!(server.state, uri, 1, test_code)
         JETLS.update_testsetinfos!(server, uri, fi; notify_server=false)
         testsetinfos = server.state.testsetinfos_cache[uri]
         @test length(testsetinfos.infos) == 1
@@ -114,7 +114,7 @@ end
         end
         """
         uri = URI("file://runtests.jl")
-        fi = JETLS.cache_file_info!(server.state, uri, 1, JETLS.ParseStream!(test_code))
+        fi = JETLS.cache_file_info!(server.state, uri, 1, test_code)
         JETLS.update_testsetinfos!(server, uri, fi; notify_server=false)
         testsetinfos = server.state.testsetinfos_cache[uri]
         @test length(testsetinfos.infos) == 2
@@ -169,7 +169,7 @@ end
         test_code, positions = JETLS.get_text_and_positions(test_code_with_positions)
         @test length(positions) == 4
         uri = URI("file://runtests.jl")
-        fi = JETLS.cache_file_info!(server.state, uri, 1, JETLS.ParseStream!(test_code))
+        fi = JETLS.cache_file_info!(server.state, uri, 1, test_code)
         JETLS.update_testsetinfos!(server, uri, fi; notify_server=false)
         testsetinfos = server.state.testsetinfos_cache[uri]
         @test length(testsetinfos.infos) == 2
@@ -252,7 +252,7 @@ end
         @test length(positions) == 1
 
         uri = URI("file://runtests.jl")
-        fi = JETLS.cache_file_info!(server.state, uri, 1, JETLS.ParseStream!(test_code))
+        fi = JETLS.cache_file_info!(server.state, uri, 1, test_code)
         JETLS.update_testsetinfos!(server, uri, fi; notify_server=false)
         testsetinfos = server.state.testsetinfos_cache[uri]
         @test length(testsetinfos.infos) == 1
@@ -305,7 +305,7 @@ end
         @test length(positions) == 4
 
         uri = URI("file://runtests.jl")
-        fi = JETLS.cache_file_info!(server.state, uri, 1, JETLS.ParseStream!(test_code))
+        fi = JETLS.cache_file_info!(server.state, uri, 1, test_code)
         JETLS.update_testsetinfos!(server, uri, fi; notify_server=false)
         testsetinfos = server.state.testsetinfos_cache[uri]
 
@@ -366,7 +366,7 @@ end
         end
         """
         uri = URI("file://runtests.jl")
-        fi1 = JETLS.cache_file_info!(server.state, uri, 1, JETLS.ParseStream!(test_code))
+        fi1 = JETLS.cache_file_info!(server.state, uri, 1, test_code)
         JETLS.update_testsetinfos!(server, uri, fi1; notify_server=false)
         testsetinfos = server.state.testsetinfos_cache[uri]
         @test length(testsetinfos.infos) == 2
@@ -380,7 +380,7 @@ end
         testsetinfos.infos[2] = JETLS.TestsetInfo(testsetinfos.infos[2].st0, JETLS.TestsetResult(result2, key2))
 
         new_test_code = test_code * "\n" # new line inserted at the end
-        fi2 = JETLS.cache_file_info!(server.state, uri, 2, JETLS.ParseStream!(new_test_code))
+        fi2 = JETLS.cache_file_info!(server.state, uri, 2, new_test_code)
         @test !JETLS.update_testsetinfos!(server, uri, fi2; notify_server=false) # nothing changed
         testsetinfos = server.state.testsetinfos_cache[uri]
         @test length(testsetinfos.infos) == 2
@@ -401,7 +401,7 @@ end
         end
         """
         uri = URI("file://runtests.jl")
-        fi1 = JETLS.cache_file_info!(server.state, uri, 1, JETLS.ParseStream!(test_code))
+        fi1 = JETLS.cache_file_info!(server.state, uri, 1, test_code)
         JETLS.update_testsetinfos!(server, uri, fi1; notify_server=false)
         testsetinfos = server.state.testsetinfos_cache[uri]
         @test length(testsetinfos.infos) == 2
@@ -420,7 +420,7 @@ end
             @test sin(0) == 1
         end
         """ # the testset "foo" has been modified
-        fi2 = JETLS.cache_file_info!(server.state, uri, 2, JETLS.ParseStream!(new_test_code))
+        fi2 = JETLS.cache_file_info!(server.state, uri, 2, new_test_code)
         @test !JETLS.update_testsetinfos!(server, uri, fi2; notify_server=false) # test results are still being mapped
         @test haskey(server.state.extra_diagnostics, key)
         testsetinfos = server.state.testsetinfos_cache[uri]
@@ -440,7 +440,7 @@ end
         end
         """
         uri = URI("file://runtests.jl")
-        fi1 = JETLS.cache_file_info!(server.state, uri, 1, JETLS.ParseStream!(test_code))
+        fi1 = JETLS.cache_file_info!(server.state, uri, 1, test_code)
         JETLS.update_testsetinfos!(server, uri, fi1; notify_server=false)
         testsetinfos = server.state.testsetinfos_cache[uri]
         @test length(testsetinfos.infos) == 2
@@ -455,7 +455,7 @@ end
             @test sin(0) == 1
         end
         """ # the testset "foo" has been deleted
-        fi2 = JETLS.cache_file_info!(server.state, uri, 2, JETLS.ParseStream!(new_test_code))
+        fi2 = JETLS.cache_file_info!(server.state, uri, 2, new_test_code)
         @test JETLS.update_testsetinfos!(server, uri, fi2; notify_server=false)
         @test isempty(server.state.extra_diagnostics)
         testsetinfos = server.state.testsetinfos_cache[uri]
@@ -474,7 +474,7 @@ end
         end
         """
         uri = URI("file://runtests.jl")
-        fi1 = JETLS.cache_file_info!(server.state, uri, 1, JETLS.ParseStream!(test_code))
+        fi1 = JETLS.cache_file_info!(server.state, uri, 1, test_code)
         JETLS.update_testsetinfos!(server, uri, fi1; notify_server=false)
         testsetinfos = server.state.testsetinfos_cache[uri]
         @test length(testsetinfos.infos) == 2
@@ -493,7 +493,7 @@ end
             @test sin(0) == 1
         end
         """ # the testset "foo" has been renamed to "baz"
-        fi2 = JETLS.cache_file_info!(server.state, uri, 2, JETLS.ParseStream!(new_test_code))
+        fi2 = JETLS.cache_file_info!(server.state, uri, 2, new_test_code)
         @test JETLS.update_testsetinfos!(server, uri, fi2; notify_server=false)
         @test !haskey(server.state.extra_diagnostics, key)
         testsetinfos = server.state.testsetinfos_cache[uri]
@@ -509,7 +509,7 @@ end
         end
         """
         uri = URI("file://runtests.jl")
-        fi1 = JETLS.cache_file_info!(server.state, uri, 1, JETLS.ParseStream!(test_code))
+        fi1 = JETLS.cache_file_info!(server.state, uri, 1, test_code)
         JETLS.update_testsetinfos!(server, uri, fi1; notify_server=false)
         testsetinfos = server.state.testsetinfos_cache[uri]
         @test length(testsetinfos.infos) == 1
@@ -528,7 +528,7 @@ end
             @test true
         end
         """
-        fi2 = JETLS.cache_file_info!(server.state, uri, 2, JETLS.ParseStream!(new_test_code))
+        fi2 = JETLS.cache_file_info!(server.state, uri, 2, new_test_code)
         @test !JETLS.update_testsetinfos!(server, uri, fi2; notify_server=false) # just the new testset has been added
         @test haskey(server.state.extra_diagnostics, key)
         testsetinfos = server.state.testsetinfos_cache[uri]
