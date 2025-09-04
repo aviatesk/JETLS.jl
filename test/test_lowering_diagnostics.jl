@@ -399,6 +399,11 @@ macro m_gen_invalid(n)
     :([return i for i in 1:$n])
 end
 
+include(normpath(pkgdir(JETLS), "test", "fixtures", "macros.jl"))
+let filename = normpath(pkgdir(JETLS), "test", "fixtures", "macros_JL.jl")
+    JL.include_string(@__MODULE__, read(filename,String), filename)
+end
+
 @testset "JuliaLowering error diagnostics" begin
     @testset "lowering error diagnostics" begin
         diagnostics = get_lowered_diagnostics(@__MODULE__, "macro foo(x, y) \$(x) end")
@@ -442,6 +447,34 @@ end
         @test diagnostic.range.start.character == sizeof("x = ")
         @test diagnostic.range.var"end".line == 0
         @test diagnostic.range.var"end".character == sizeof("x = @m_throw 42")
+    end
+
+    @testset "nested macro expansion error diagnostics" begin
+        diagnostics = get_lowered_diagnostics(@__MODULE__, """let
+            @m_outer_error missing
+        end""")
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.source == JETLS.LOWERING_DIAGNOSTIC_SOURCE
+        @test diagnostic.message == "Error expanding macro\nError in foo"
+        @test diagnostic.range.start.line == 1
+        @test diagnostic.range.start.character == 4
+        @test diagnostic.range.var"end".line == 1
+        @test diagnostic.range.var"end".character == sizeof("    @m_outer_error missing")
+    end
+
+    @testset "nested macro expansion error diagnostics (with JL provenance)" begin
+        diagnostics = get_lowered_diagnostics(@__MODULE__, """let
+            @m_outer_error_JL missing
+        end""")
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.source == JETLS.LOWERING_DIAGNOSTIC_SOURCE
+        @test diagnostic.message == "Error expanding macro\nError in foo"
+        @test diagnostic.range.start.line == 1
+        @test diagnostic.range.start.character == 4
+        @test diagnostic.range.var"end".line == 1
+        @test diagnostic.range.var"end".character == sizeof("    @m_outer_error_JL missing")
     end
 
     @testset "lowering error within macro expanded code" begin

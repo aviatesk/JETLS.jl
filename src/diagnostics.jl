@@ -150,6 +150,33 @@ function stacktrace_to_related_information(stacktrace::Vector{Base.StackTraces.S
     return relatedInformation
 end
 
+# TODO Use actual file cache (with proper character encoding)
+function provenances_to_related_information!(relatedInformation::Vector{DiagnosticRelatedInformation}, provs, msg)
+    for prov in provs
+        filename = JS.filename(prov)
+        uri = filepath2uri(to_full_path(filename))
+        sr = JL.sourceref(prov)
+        if sr isa JL.SourceRef
+            # use precise location information if available
+            sf = JS.sourcefile(sr)
+            code = JS.sourcetext(sf)
+            location = Location(;
+                uri,
+                range = Range(;
+                    start = offset_to_xy(code, JS.first_byte(sr), filename),
+                    var"end" = offset_to_xy(code, JS.last_byte(sr), filename)))
+            message = JS.sourcetext(sr)
+        else
+            location = Location(;
+                uri,
+                range = line_range(first(JS.source_location(prov))))
+            message = msg
+        end
+        push!(relatedInformation, DiagnosticRelatedInformation(; location, message))
+    end
+    return relatedInformation
+end
+
 struct LoweringDiagnosticKey
     range::Range
     kind::Symbol
@@ -215,8 +242,14 @@ function lowering_diagnostics!(
                 msg *= "\n" * sprint(Base.showerror, inner)
                 relatedInformation = stacktrace_to_related_information(st)
             end
+            provs = JL.flattened_provenance(err.ex)
+            provs′ = @view provs[2:end]
+            if !isempty(provs′)
+                relatedInformation = @something relatedInformation DiagnosticRelatedInformation[]
+                provenances_to_related_information!(relatedInformation, provs′, msg)
+            end
             push!(diagnostics, Diagnostic(;
-                range = jsobj_to_range(err.ex, fi),
+                range = jsobj_to_range(first(provs), fi),
                 severity = DiagnosticSeverity.Error,
                 message = msg,
                 source = LOWERING_DIAGNOSTIC_SOURCE,
