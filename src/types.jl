@@ -132,7 +132,6 @@ end
 const URI2Diagnostics = Dict{URI,Vector{Diagnostic}}
 
 mutable struct FullAnalysisResult
-    staled::Bool
     actual2virtual::JET.Actual2Virtual
     analyzer::LSAnalyzer
     const uri2diagnostics::URI2Diagnostics
@@ -163,7 +162,7 @@ abstract type RequestCaller end
 
 struct RunFullAnalysisCaller <: RequestCaller
     uri::URI
-    onsave::Bool
+    throttle::Bool
     token::ProgressToken
 end
 

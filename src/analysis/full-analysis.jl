@@ -1,4 +1,4 @@
-function run_full_analysis!(server::Server, uri::URI; onsave::Bool=false, token::Union{Nothing,ProgressToken}=nothing)
+function run_full_analysis!(server::Server, uri::URI; throttle::Bool=false, token::Union{Nothing,ProgressToken}=nothing)
     if !haskey(server.state.analysis_cache, uri)
         res = initiate_analysis_unit!(server, uri; token)
         if res isa AnalysisUnit
@@ -11,9 +11,7 @@ function run_full_analysis!(server::Server, uri::URI; onsave::Bool=false, token:
         else
             # TODO support multiple analysis units, which can happen if this file is included from multiple different analysis_units
             analysis_unit = first(analysis_info)
-            if onsave
-                analysis_unit.result.staled = true
-            end
+
             function task()
                 res = reanalyze!(server, analysis_unit; token)
                 if res isa AnalysisUnit
@@ -21,7 +19,7 @@ function run_full_analysis!(server::Server, uri::URI; onsave::Bool=false, token:
                 end
             end
             id = hash(run_full_analysis!, hash(analysis_unit))
-            if onsave
+            if throttle
                 debounce(id, get_config(server.state.config_manager, "performance", "full_analysis", "debounce")) do
                     throttle(id, get_config(server.state.config_manager, "performance", "full_analysis", "throttle")) do
                         task()
@@ -106,7 +104,7 @@ function new_analysis_unit(entry::AnalysisEntry, result)
     successfully_analyzed_file_infos = copy(analyzed_file_infos)
     is_full_analysis_successful(result) || empty!(successfully_analyzed_file_infos)
     analysis_result = FullAnalysisResult(
-        #=staled=#false, result.res.actual2virtual::JET.Actual2Virtual, update_analyzer_world(result.analyzer),
+        result.res.actual2virtual::JET.Actual2Virtual, update_analyzer_world(result.analyzer),
         uri2diagnostics, analyzed_file_infos, successfully_analyzed_file_infos)
     return AnalysisUnit(entry, analysis_result)
 end
@@ -133,7 +131,6 @@ function update_analysis_unit!(analysis_unit::AnalysisUnit, result)
         empty!(get!(()->Diagnostic[], uri2diagnostics, new_file_uri))
     end
     jet_result_to_diagnostics!(uri2diagnostics, result)
-    analysis_unit.result.staled = false
     if is_full_analysis_successful(result)
         analysis_unit.result.actual2virtual = result.res.actual2virtual
         analysis_unit.result.analyzer = update_analyzer_world(result.analyzer)
@@ -266,10 +263,6 @@ end
 
 function reanalyze!(server::Server, analysis_unit::AnalysisUnit; token::Union{Nothing,ProgressToken}=nothing)
     state = server.state
-    analysis_result = analysis_unit.result
-    if !(analysis_result.staled)
-        return nothing
-    end
 
     any_parse_failed = any(analyzed_file_uris(analysis_unit)) do uri::URI
         fi = get_saved_file_info(state, uri)
