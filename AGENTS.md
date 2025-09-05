@@ -3,6 +3,9 @@
   the maximum line length under _92 characters_.
 - When writing Markdown text, use _2 whitespaces_ for indentation and try to
   keep the maximum line length under _80 characters_.
+  - Additionally, prioritize simple text style and limit unnecessary decorations
+    (e.g. `**`) to only truly necessary locations. This is a style that should
+    generally be aimed for, but pay particular attention when writing Markdown.
 - When writing commit messages, follow the format `component: brief summary` for
   the title. In the body of the commit message, provide a brief prose summary of
   the purpose of the changes made.
