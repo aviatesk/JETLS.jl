@@ -182,8 +182,13 @@ function greatest_local(st0::JL.SyntaxTree, offset::Int)
 
     i = first_global - 1
     while JL.kind(bas[i]) === JS.K"block"
-        # bas[i] is a block within a global scope, so can't introduce local
-        # bindings.  Shrink the tree (mostly for performance).
+        if any(j::Int -> JS.kind(bas[i][j]) === JS.K"local", 1:JS.numchildren(bas[i]))
+            # If this `block` contains `local`, it may introduce local bindings.
+            # For correct scope analysis, we need to analyze this entire block
+            break
+        end
+        # `bas[i]` is a block within a global scope, so can't introduce local bindings.
+        # Shrink the tree (mostly for performance).
         i -= 1
         i < 1 && return nothing
     end
