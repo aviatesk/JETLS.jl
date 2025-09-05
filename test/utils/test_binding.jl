@@ -83,6 +83,29 @@ end
         end
         @test cnt == 4
     end
+
+    # Perform analysis on a `block` unit containing `local`
+    let cnt = 0
+        local binfo = nothing
+        _with_target_binding("""
+            begin
+                local │xxx│ = 42
+                getxxx() = │xxx│
+            end
+            """) do i, (; ctx3, binding)
+            if i in (1, 2)
+                @test JS.sourcetext(binding) == "xxx"
+                @test JS.source_line(binding) == 2
+                binfo = JL.lookup_binding(ctx3, binding)
+            else
+                @test JS.sourcetext(binding) == "xxx"
+                @test JS.source_line(binding) == 3
+                @test JL.lookup_binding(ctx3, binding).id == binfo.id
+            end
+            cnt += 1
+        end
+        @test cnt == 4
+    end
 end
 
 function with_target_binding_definitions(f, text::AbstractString; kwargs...)
