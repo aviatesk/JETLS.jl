@@ -327,7 +327,13 @@ struct ConfigManager
 end
 ConfigManager() = ConfigManager(Dict{String,Any}(), WatchedConfigFiles())
 
+struct CompletionResolverInfo
+    mod::Module
+    postprocessor::LSPostProcessor
+end
+
 mutable struct ServerState
+    # Fields that may be written to concurrently (require locking)
     const workspaceFolders::Vector{URI}
     const file_cache::Dict{URI,FileInfo} # syntactic analysis cache (synced with `textDocument/didChange`)
     const saved_file_cache::Dict{URI,SavedFileInfo} # syntactic analysis cache (synced with `textDocument/didSave`)
@@ -337,12 +343,17 @@ mutable struct ServerState
     const currently_requested::Dict{String,RequestCaller}
     const currently_registered::Set{Registered}
     const config_manager::ConfigManager
+    const completion_resolver_info::Base.RefValue{CompletionResolverInfo}
+
+    const __state_lock__::ReentrantLock # Lock for protecting shared state
+
+    # Fields that are written only once during lifecycle messages (no need to lock)
     encoding::PositionEncodingKind.Ty
     root_path::String
     root_env_path::String
-    completion_resolver_info::Tuple{Module,LSPostProcessor}
     init_params::InitializeParams
     function ServerState()
+        lock = ReentrantLock()
         return new(
             #=workspaceFolders=# URI[],
             #=file_cache=# Dict{URI,FileInfo}(),
@@ -352,9 +363,71 @@ mutable struct ServerState
             #=extra_diagnostics=# ExtraDiagnostics(),
             #=currently_requested=# Dict{String,RequestCaller}(),
             #=currently_registered=# Set{Registered}(),
-            #=config_manager=# ConfigManager(),
+            #=config_manager=# ConfigManager(lock),  # Share the same lock
+            #=completion_resolver_info=# Base.RefValue{CompletionResolverInfo}(),
+            #=__state_lock__=# lock,
             #=encoding=# PositionEncodingKind.UTF16, # initialize with UTF16 (for tests)
         )
+    end
+end
+
+"""
+    MustLock{T}
+
+A wrapper that requires explicit locking before accessing the wrapped value.
+This ensures thread-safe access to shared data structures by making it impossible
+to accidentally access protected fields without proper synchronization.
+
+# Usage
+```julia
+# Cannot access directly - will cause MethodError
+state.file_cache[uri] = fi  # Error!
+
+# Must use withlock pattern
+withlock(state.file_cache) do file_cache
+    file_cache[uri] = fi  # OK
+end
+```
+"""
+struct MustLock{T}
+    lock::ReentrantLock
+    val::T
+end
+
+"""
+    withlock(func, ml::MustLock)
+
+Execute `func` with exclusive access to the value wrapped in `MustLock`.
+The lock is automatically acquired before calling `func` and released afterwards.
+
+# Examples
+```julia
+withlock(state.config_manager) do config_manager
+    config_manager.reload_required_setting["key"] = value
+end
+
+result = withlock(state.file_cache) do file_cache
+    get(file_cache, uri, nothing)
+end
+```
+"""
+function withlock(func, ml::MustLock)
+    @lock ml.lock func(ml.val)
+end
+
+let __state_lock__idx = Base.fieldindex(ServerState, :__state_lock__)
+    global function Base.getproperty(state::ServerState, name::Symbol)
+        if name === :__state_lock__
+            return getfield(state, :__state_lock__)
+        end
+        idx = Base.fieldindex(ServerState, name)
+        if idx < __state_lock__idx
+            # Requires lock on access
+            return MustLock(getfield(state, :__state_lock__), getfield(state, name))
+        else
+            # Don't require lock on access
+            return getfield(state, name)
+        end
     end
 end
 

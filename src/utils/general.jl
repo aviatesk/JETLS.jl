@@ -27,19 +27,21 @@ macro time(msg, ex)
     end
 end
 
-# TODO Need to make them thread safe when making the message handling multithreaded
-
 begin
-    local debounced = Dict{UInt, Timer}()
+    local debounced_lock, debounced
+    global debounce
+    debounced_lock = ReentrantLock()
+    debounced = Dict{UInt, Timer}()
     function debounce(f, id::UInt, delay)
-        if haskey(debounced, id)
-            close(debounced[id])
-        end
-        debounced[id] = Timer(delay) do _
-            try
+        lock(debounced_lock) do
+            if haskey(debounced, id)
+                close(debounced[id])
+            end
+            debounced[id] = Timer(delay) do _
                 f()
-            finally
-                delete!(debounced, id)
+                lock(debounced_lock) do
+                    delete!(debounced, id)
+                end
             end
         end
         nothing
@@ -47,25 +49,30 @@ begin
 end
 
 begin
-    local throttled = Dict{UInt, Tuple{Union{Nothing,Timer}, Float64}}()
+    local throttled_lock, throttled
+    global throttle
+    throttled_lock = ReentrantLock()
+    throttled = Dict{UInt, Tuple{Union{Nothing,Timer}, Float64}}()
     function throttle(f, id::UInt, interval)
-        if !haskey(throttled, id)
-            f()
-            throttled[id] = (nothing, time())
-            return nothing
-        end
-        last_timer, last_time = throttled[id]
-        if last_timer !== nothing
-            close(last_timer)
-        end
-        delay = max(0.0, interval - (time() - last_time))
-        throttled[id] = (Timer(delay) do _
-            try
+        lock(throttled_lock) do
+            if !haskey(throttled, id)
+                # Execute immediately for first call
                 f()
-            finally
                 throttled[id] = (nothing, time())
+                return nothing
             end
-        end, last_time)
+            last_timer, last_time = throttled[id]
+            if last_timer !== nothing
+                close(last_timer)
+            end
+            delay = max(0.0, interval - (time() - last_time))
+            throttled[id] = (Timer(delay) do _
+                f()
+                lock(throttled_lock) do
+                    throttled[id] = (nothing, time())
+                end
+            end, last_time)
+        end
         nothing
     end
 end
