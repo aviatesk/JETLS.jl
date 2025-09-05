@@ -1,3 +1,8 @@
+struct RunFullAnalysisCaller <: RequestCaller
+    uri::URI
+    throttle::Bool
+    token::ProgressToken
+end
 
 function ParseStream!(s::Union{AbstractString,Vector{UInt8}})
     stream = JS.ParseStream(s)

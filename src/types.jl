@@ -160,12 +160,6 @@ const AnalysisInfo = Union{Set{AnalysisUnit},OutOfScope}
 
 abstract type RequestCaller end
 
-struct RunFullAnalysisCaller <: RequestCaller
-    uri::URI
-    throttle::Bool
-    token::ProgressToken
-end
-
 struct Registered
     id::String
     method::String
