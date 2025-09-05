@@ -284,9 +284,15 @@ function toplevel_lowering_diagnostics(server::Server, uri::URI)
     push!(sl, st0_top)
     while !isempty(sl)
         st0 = pop!(sl)
-        if JS.kind(st0) in JS.KSet"toplevel module"
+        if JS.kind(st0) === JS.K"toplevel"
             for i = JS.numchildren(st0):-1:1 # # reversed since we use `pop!`
                 push!(sl, st0[i])
+            end
+        elseif JS.kind(st0) === JS.K"module"
+            stblk = st0[end]
+            JS.kind(stblk) === JS.K"block" || continue
+            for i = JS.numchildren(stblk):-1:1 # # reversed since we use `pop!`
+                push!(sl, stblk[i])
             end
         else
             pos = offset_to_xy(file_info, JS.first_byte(st0))

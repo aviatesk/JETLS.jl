@@ -413,6 +413,30 @@ end
         @test diagnostic.message == "`\$` expression outside string or quote block"
     end
 
+    @testset "toplevel lowering error diagnostics" begin
+        server = JETLS.Server()
+        uri = URI("file://$(@__FILE__)")
+        text = """
+        macro foo(x, y) \$(x) end
+        macro bar(x, y) \$(x) end
+        """
+        JETLS.cache_file_info!(server.state, uri, #=version=#0, text)
+        diagnostics = JETLS.toplevel_lowering_diagnostics(server, uri)
+        @test length(diagnostics) == 2
+        @test count(diagnostics) do diagnostic
+            diagnostic.source == JETLS.LOWERING_DIAGNOSTIC_SOURCE &&
+            diagnostic.message == "`\$` expression outside string or quote block" &&
+            diagnostic.range.start.line == 0 &&
+            diagnostic.range.var"end".line == 0
+        end == 1
+        @test count(diagnostics) do diagnostic
+            diagnostic.source == JETLS.LOWERING_DIAGNOSTIC_SOURCE &&
+            diagnostic.message == "`\$` expression outside string or quote block" &&
+            diagnostic.range.start.line == 1 &&
+            diagnostic.range.var"end".line == 1
+        end == 1
+    end
+
     @testset "macro not found error diagnostics" begin
         diagnostics = get_lowered_diagnostics(@__MODULE__, "x = @notexisting 42")
         @test length(diagnostics) == 1
