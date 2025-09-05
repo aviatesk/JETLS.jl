@@ -44,9 +44,11 @@ If this Julia is a built one, convert `path` to `fixed_path`, which is a path to
 files that are editable (or tracked by git).
 """
 function fix_build_path end
-let build_dir = normpath(Sys.BINDIR, "..", ".."), # with path separator at the end
-    share_path = normpath(Sys.BINDIR, Base.DATAROOTDIR, "julia") # without path separator at the end
+begin
+    local build_dir, share_path, build_path
     global fix_build_path
+    build_dir = normpath(Sys.BINDIR, "..", "..") # with path separator at the end
+    share_path = normpath(Sys.BINDIR, Base.DATAROOTDIR, "julia") # without path separator at the end
     if ispath(normpath(build_dir), "base")
         build_path = splitdir(build_dir)[1] # remove the path separator
         fix_build_path(path::AbstractString) = replace(path, share_path => build_path)

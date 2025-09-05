@@ -236,8 +236,8 @@ end
     default_config_origin = deepcopy(JETLS.DEFAULT_CONFIG)
     is_reload_required_key_origin = deepcopy(JETLS.CONFIG_RELOAD_REQUIRED)
     try
-        global JETLS.DEFAULT_CONFIG = TEST_DICT
-        global JETLS.CONFIG_RELOAD_REQUIRED = TEST_RELOAD_REQUIRED
+        JETLS.DEFAULT_CONFIG = TEST_DICT
+        JETLS.CONFIG_RELOAD_REQUIRED = TEST_RELOAD_REQUIRED
 
         @testset "access_nested_dict" begin
             @test JETLS.access_nested_dict(TEST_DICT, "test_key1") == "test_value1"
@@ -312,8 +312,8 @@ end
             @test JETLS.get_config(manager, "test_key2", "nested_key2", "deep_nested_key1") == "deep_nested_value1"
         end
     finally
-        global JETLS.DEFAULT_CONFIG = default_config_origin
-        global JETLS.CONFIG_RELOAD_REQUIRED = is_reload_required_key_origin
+        JETLS.DEFAULT_CONFIG = default_config_origin
+        JETLS.CONFIG_RELOAD_REQUIRED = is_reload_required_key_origin
     end
 end
 
@@ -367,7 +367,7 @@ end
 @testset "`is_reload_required_key`" begin
     default_config_origin = deepcopy(JETLS.CONFIG_RELOAD_REQUIRED)
     try
-        global JETLS.CONFIG_RELOAD_REQUIRED = Dict{String,Any}(
+        JETLS.CONFIG_RELOAD_REQUIRED = Dict{String,Any}(
             "performance" => Dict{String,Any}(
                 "full_analysis" => Dict{String,Any}(
                     "debounce" => true,
@@ -383,7 +383,7 @@ end
         @test JETLS.is_reload_required_key("nonexistent") === false
         @test JETLS.is_reload_required_key("performance", "nonexistent") === false
     finally
-        global JETLS.CONFIG_RELOAD_REQUIRED = default_config_origin
+        JETLS.CONFIG_RELOAD_REQUIRED = default_config_origin
     end
 end
 
@@ -482,7 +482,7 @@ end
     default_config_origin = deepcopy(JETLS.DEFAULT_CONFIG)
     is_reload_required_key_origin = deepcopy(JETLS.CONFIG_RELOAD_REQUIRED)
     try
-        global JETLS.DEFAULT_CONFIG = Dict{String,Any}(
+        JETLS.DEFAULT_CONFIG = Dict{String,Any}(
             "performance" => Dict{String,Any}(
                 "full_analysis" => Dict{String,Any}(
                     "debounce" => 1.0,
@@ -493,7 +493,7 @@ end
                 "executable" => "testrunner"
             )
         )
-        global JETLS.CONFIG_RELOAD_REQUIRED = Dict{String,Any}(
+        JETLS.CONFIG_RELOAD_REQUIRED = Dict{String,Any}(
             "performance" => Dict{String,Any}(
                 "full_analysis" => Dict{String,Any}(
                     "debounce" => true,
@@ -529,8 +529,8 @@ end
             @test !haskey(manager.reload_required_setting, "testrunner")
         end
     finally
-        global JETLS.DEFAULT_CONFIG = default_config_origin
-        global JETLS.CONFIG_RELOAD_REQUIRED = is_reload_required_key_origin
+        JETLS.DEFAULT_CONFIG = default_config_origin
+        JETLS.CONFIG_RELOAD_REQUIRED = is_reload_required_key_origin
     end
 end
 

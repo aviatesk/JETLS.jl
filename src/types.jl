@@ -78,11 +78,12 @@ entrykind(entry::AnalysisEntry) = entrykind_impl(entry)::String
 entryjetconfigs(entry::AnalysisEntry) = entryjetconfigs_impl(entry)::Dict{Symbol,Any}
 
 entryenvpath_impl(::AnalysisEntry) = nothing
-let default_jetconfigs = Dict{Symbol,Any}(
+begin
+    local default_jetconfigs = Dict{Symbol,Any}(
         :toplevel_logger => nothing,
         # force concretization of documentation
         :concretization_patterns => [:($(Base.Docs.doc!)(xs__))])
-    global entryjetconfigs_impl(::AnalysisEntry) = default_jetconfigs
+    entryjetconfigs_impl(::AnalysisEntry) = default_jetconfigs
 end
 
 struct ScriptAnalysisEntry <: AnalysisEntry
@@ -106,11 +107,12 @@ end
 entryuri_impl(entry::PackageSourceAnalysisEntry) = entry.pkgfileuri
 entryenvpath_impl(entry::PackageSourceAnalysisEntry) = entry.env_path
 entrykind_impl(::PackageSourceAnalysisEntry) = "pkg src"
-let jetconfigs = Dict{Symbol,Any}(
+begin
+    local jetconfigs = Dict{Symbol,Any}(
         :toplevel_logger => nothing,
         :analyze_from_definitions => true,
         :concretization_patterns => [:(x_)])
-    global entryjetconfigs_impl(entry::PackageSourceAnalysisEntry) = jetconfigs
+    entryjetconfigs_impl(::PackageSourceAnalysisEntry) = jetconfigs
 end
 struct PackageTestAnalysisEntry <: AnalysisEntry
     env_path::String

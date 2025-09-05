@@ -29,8 +29,9 @@ end
 
 # TODO Need to make them thread safe when making the message handling multithreaded
 
-let debounced = Dict{UInt, Timer}()
-    global function debounce(f, id::UInt, delay)
+begin
+    local debounced = Dict{UInt, Timer}()
+    function debounce(f, id::UInt, delay)
         if haskey(debounced, id)
             close(debounced[id])
         end
@@ -45,8 +46,9 @@ let debounced = Dict{UInt, Timer}()
     end
 end
 
-let throttled = Dict{UInt, Tuple{Union{Nothing,Timer}, Float64}}()
-    global function throttle(f, id::UInt, interval)
+begin
+    local throttled = Dict{UInt, Tuple{Union{Nothing,Timer}, Float64}}()
+    function throttle(f, id::UInt, interval)
         if !haskey(throttled, id)
             f()
             throttled[id] = (nothing, time())
