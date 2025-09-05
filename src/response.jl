@@ -59,8 +59,8 @@ function handle_requested_response(server::Server, msg::Dict{Symbol,Any},
 end
 
 function handle_run_full_analysis_response(server::Server, msg::Dict{Symbol,Any}, request_caller::RunFullAnalysisCaller)
-    (; uri, onsave, token) = request_caller
-    run_full_analysis!(server, uri; onsave, token)
+    (; uri, throttle, token) = request_caller
+    run_full_analysis!(server, uri; throttle, token)
 end
 
 function handle_show_document_response(server::Server, msg::Dict{Symbol,Any}, request_caller::ShowDocumentRequestCaller)

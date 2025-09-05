@@ -1,4 +1,4 @@
-function run_full_analysis!(server::Server, uri::URI; onsave::Bool=false, token::Union{Nothing,ProgressToken}=nothing)
+function run_full_analysis!(server::Server, uri::URI; throttle::Bool=false, token::Union{Nothing,ProgressToken}=nothing)
     if !haskey(server.state.analysis_cache, uri)
         res = initiate_analysis_unit!(server, uri; token)
         if res isa AnalysisUnit
@@ -19,7 +19,7 @@ function run_full_analysis!(server::Server, uri::URI; onsave::Bool=false, token:
                 end
             end
             id = hash(run_full_analysis!, hash(analysis_unit))
-            if onsave
+            if throttle
                 debounce(id, get_config(server.state.config_manager, "performance", "full_analysis", "debounce")) do
                     throttle(id, get_config(server.state.config_manager, "performance", "full_analysis", "throttle")) do
                         task()

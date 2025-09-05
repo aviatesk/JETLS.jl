@@ -162,7 +162,7 @@ abstract type RequestCaller end
 
 struct RunFullAnalysisCaller <: RequestCaller
     uri::URI
-    onsave::Bool
+    throttle::Bool
     token::ProgressToken
 end
 
