@@ -165,6 +165,69 @@ function should_recursive_analyze(interp::LSInterpreter, dep::Symbol)
     return true
 end
 
+"""
+    maybe_introduce_mod(required_pkgid::Base.PkgId, caller_mod::Module, dep::Symbol)
+
+If the module is already loaded (i.e. `dep` in `Base.loaded_modules`),
+introduce it to `caller_mod` as `const dep = maybe_mod`.
+
+If the module is not loaded or failed to introduce, return `false`.
+(If failed to introduce, error reports will be added to `state`.)
+
+If succeeded, return `true`.
+"""
+function maybe_introduce_mod!(required_pkgid::Base.PkgId, caller_mod::Module, dep::Symbol, state::JET.InterpretationState)
+    maybe_mod = Base.maybe_root_module(required_pkgid)
+    maybe_mod === nothing && return false
+    @assert maybe_mod isa Module
+    res = JET.with_err_handling(JET.general_err_handler, state; scrub_offset=1) do
+        Core.eval(caller_mod, :(const $dep = $maybe_mod))
+    end
+    return res !== nothing
+end
+
+
+"""
+    include_on___toplevel__(required_pkgid::Base.PkgId, required_env::AbstractString, interp::LSInterpreter) -> Union{Module, Nothing}
+
+Load the package identified by `required_pkgid` in the environment `required_env` following process:
+1. Locate the package path using `Base.locate_package`.
+  - If not found, return `nothing`. (This typically happens when the `instantiate` step is not done.)
+2. Load the package into `Base.__toplevel__` using `Base.include`.
+3. Return the loaded module using `Base.maybe_root_module`.
+  - If failed, return `nothing`.
+"""
+function include_on___toplevel__(required_pkgid::Base.PkgId, required_env::AbstractString, interp::LSInterpreter)
+    path = Base.locate_package(required_pkgid, required_env)
+    if path === nothing
+        return nothing
+    end
+    required_uuid = required_pkgid.uuid
+    required_uuid = (required_uuid === nothing ? (UInt64(0), UInt64(0)) : convert(NTuple{2, UInt64}, required_uuid))
+    old_uuid = ccall(:jl_module_uuid, NTuple{2, UInt64}, (Any,), Base.__toplevel__)
+    if required_uuid !== old_uuid
+        ccall(:jl_set_module_uuid, Cvoid, (Any, NTuple{2, UInt64}), Base.__toplevel__, required_uuid)
+    end
+    old_pkgid = interp.current_pkgid
+    interp.current_pkgid = required_pkgid
+    try
+        JET.handle_include(
+            interp,
+            Base.include,
+            [Base.__toplevel__, path])
+    finally
+        interp.current_pkgid = old_pkgid
+        loaded_mod = Base.maybe_root_module(required_pkgid)
+        if required_uuid !== old_uuid
+            ccall(:jl_set_module_uuid, Cvoid, (Any, NTuple{2, UInt64}), Base.__toplevel__, old_uuid)
+        end
+        if loaded_mod === nothing
+            @warn "Failed to load module $required_pkgid from $path"
+            return nothing
+        end
+        return loaded_mod
+    end
+end
 
 function JET.usemodule_with_err_handling(interp::LSInterpreter, ex::Expr)
     # In 1.13, lowerd form of `using`/`import` is changed
@@ -200,70 +263,39 @@ function JET.usemodule_with_err_handling(interp::LSInterpreter, ex::Expr)
                 end
                 required_pkgid, required_env = required_pkgenv
                 if required_pkgid ∉ dependencies
-                    maybe_mod = Base.maybe_root_module(required_pkgid)
-                    if maybe_mod isa Module
-                        @assert nameof(maybe_mod) == dep
+                    if !should_recursive_analyze(interp, dep)
+                        # TODO: refactor JET to avoid code duplication
                         res = JET.with_err_handling(JET.general_err_handler, state; scrub_offset=1) do
-                            Core.eval(caller_mod, :(const $dep = $maybe_mod))
-                            true
+                            Core.eval(caller_mod, :(const $dep = Base.require($required_pkgid)))
                         end
                         if res === nothing
-                            @warn "Failed to set module to $dep in $mod"
+                            @warn "Failed to set module to $dep in $caller_mod"
                             return nothing
                         end
                     else
-                        if !should_recursive_analyze(interp, dep)
-                            res = JET.with_err_handling(JET.general_err_handler, state; scrub_offset=1) do
-                                Core.eval(caller_mod, :(const $dep = Base.require($required_pkgid)))
-                                true
-                            end
-                            if res === nothing
-                                @warn "Failed to set module to $dep in $mod"
-                                return nothing
-                            end
-                        else
-                            path = Base.locate_package(required_pkgid, required_env)
-                            # without `instantiate`, sometimes required_pkgenv is not `nothing` but path is nothing
-                            if path === nothing
-                                local report = JET.DependencyError(current_pkgid.name, depstr, state.filename, state.curline)
-                                JET.add_toplevel_error_report!(state, report)
-                                return nothing
-                            end
-                            required_uuid = required_pkgid.uuid
-                            required_uuid = (required_uuid === nothing ? (UInt64(0), UInt64(0)) : convert(NTuple{2, UInt64}, required_uuid))
-                            old_uuid = ccall(:jl_module_uuid, NTuple{2, UInt64}, (Any,), Base.__toplevel__)
-                            if required_uuid !== old_uuid
-                                ccall(:jl_set_module_uuid, Cvoid, (Any, NTuple{2, UInt64}), Base.__toplevel__, required_uuid)
-                            end
-                            old_pkgid = interp.current_pkgid
-                            interp.current_pkgid = required_pkgid
-                            try
-                                JET.handle_include(
-                                    interp,
-                                    Base.include,
-                                    [Base.__toplevel__, path])
-                            finally
-                                interp.current_pkgid = old_pkgid
-                                loaded_mod = Base.maybe_root_module(required_pkgid)
-                                if loaded_mod === nothing
-                                    @warn "Failed to get $dep"
-                                    return nothing
-                                end
-                                res = JET.with_err_handling(JET.general_err_handler, state; scrub_offset=1) do
-                                    Core.eval(caller_mod, :(const $dep = $loaded_mod))
-                                    true
-                                end
-                                if res === nothing
-                                    @warn "Failed to set module to $dep in $mod"
-                                    return nothing
-                                end
-                                if required_uuid !== old_uuid
-                                    ccall(:jl_set_module_uuid, Cvoid, (Any, NTuple{2, UInt64}), Base.__toplevel__, old_uuid)
-                                end
-                            end
+                        maybe_mod = include_on___toplevel__(required_pkgid, required_env, interp)
+                        if maybe_mod === nothing
+                            local report = JET.DependencyError(current_pkgid.name, depstr, state.filename, state.curline)
+                            JET.add_toplevel_error_report!(state, report)
+                            return nothing
+                        end
+
+                        res = JET.with_err_handling(JET.general_err_handler, state; scrub_offset=1) do
+                            Core.eval(caller_mod, :(const $dep = $maybe_mod))
+                        end
+                        if res === nothing
+                            @warn "Failed to set module to $dep in $caller_mod"
+                            return nothing
                         end
                     end
                     push!(interp.server.state.dependencies, required_pkgid)
+                else
+                    # we already see this package, so introduce it.
+                    introduced = maybe_introduce_mod!(required_pkgid, caller_mod, dep, state)
+                    if !introduced
+                        @warn "Failed to introduce module $dep in $caller_mod in spite of being already seen"
+                        return nothing
+                    end
                 end
                 pushfirst!(modpath, :.)
             end
