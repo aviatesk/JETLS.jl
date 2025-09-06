@@ -299,7 +299,9 @@ function reanalyze!(server::Server, analysis_unit::AnalysisUnit; token::Union{No
     entry = analysis_unit.entry
     n_files = length(values(analysis_unit.result.successfully_analyzed_file_infos))
 
-    clear_dependencies_cache!(server)
+    if get_config(server.state.config_manager, "recursive_analysis", "reanalyze")
+        clear_dependencies_cache!(server)
+    end
 
     # manually dispatch here for the maximum inferrability
     if entry isa ScriptAnalysisEntry
