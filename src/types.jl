@@ -242,7 +242,8 @@ global DEFAULT_CONFIG::Dict{String,Any} = Dict{String,Any}(
         # In the future, this should use `Regex` or `Glob` like patterns.
         # Currently, since schema-related mechanisms are not fully developed,
         # only plain string and exact match is supported.
-        "exclude" => String[]
+        "exclude" => String[],
+        "reanalyze" => true
     )
 )
 
@@ -258,7 +259,8 @@ global CONFIG_RELOAD_REQUIRED::Dict{String,Any} = Dict{String,Any}(
     ),
     "recursive_analysis" => Dict{String, Any}(
         "max_depth" => true,
-        "exclude" => true
+        "exclude" => true,
+        "reanalyze" => true
     )
 )
 

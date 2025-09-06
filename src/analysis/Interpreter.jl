@@ -148,6 +148,9 @@ end
 
 
 function should_recursive_analyze(interp::LSInterpreter, dep::Symbol)
+    if interp.info.reanalyze && !get_config(server.state.config_manager, "recursive_analysis", "reanalyze")
+        return false
+    end
     server = interp.server
     server_state = server.state
     interp_state = JET.InterpretationState(interp)
