@@ -107,6 +107,30 @@ jobs:
       - uses: julia-actions/julia-processcoverage@v1
       - uses: codecov/codecov-action@v5
 
+  JULIA_NUM_THREADS:
+    name: Test with `JULIA_NUM_THREADS = 4,2`
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v1
+        with:
+          version: "1.12-nightly" # most stable version
+          arch: x64
+      - uses: julia-actions/cache@v2
+      - name: set LocalPreferences.toml
+        working-directory: .
+        run: |
+          echo '
+          [JET] # allow JET to be loaded on nightly
+          JET_DEV_MODE = true
+          ' > LocalPreferences.toml
+      - uses: julia-actions/julia-buildpkg@latest
+      - uses: julia-actions/julia-runtest@latest
+        env:
+          JULIA_NUM_THREADS: "4,2"
+      - uses: julia-actions/julia-processcoverage@v1
+      - uses: codecov/codecov-action@v5
+
   test_runserver:
     name: Test runserver.jl
     runs-on: ubuntu-latest

@@ -13,7 +13,7 @@ const JETLS_DEV_MODE = Preferences.@load_preference("JETLS_DEV_MODE", false)
 const JETLS_TEST_MODE = Preferences.@load_preference("JETLS_TEST_MODE", false)
 const JETLS_DEBUG_LOWERING = Preferences.@load_preference("JETLS_DEBUG_LOWERING", false)
 push_init_hooks!() do
-    @info "Running JETLS with" JETLS_DEV_MODE JETLS_TEST_MODE JETLS_DEBUG_LOWERING
+    @info "Running JETLS with" JETLS_DEV_MODE JETLS_TEST_MODE JETLS_DEBUG_LOWERING Threads.nthreads()
 end
 
 using LSP
@@ -42,6 +42,7 @@ Analyzer.LSAnalyzer(args...; kwargs...) = LSAnalyzer(ScriptAnalysisEntry(filepat
 
 include("analysis/resolver.jl")
 
+include("AtomicContainers/AtomicContainers.jl")
 include("testrunner/testrunner-types.jl")
 include("types.jl")
 
