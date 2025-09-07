@@ -252,6 +252,14 @@ global DEFAULT_CONFIG::Dict{String,Any} = Dict{String,Any}(
     "testrunner" => Dict{String,Any}(
         "executable" => "testrunner"
     ),
+    "recursive_analysis" => Dict{String, Any}(
+        "max_depth" => 1,
+        # In the future, this should use `Regex` or `Glob` like patterns.
+        # Currently, since schema-related mechanisms are not fully developed,
+        # only plain string and exact match is supported.
+        "exclude" => String[],
+        "reanalyze" => false
+    )
 )
 
 global CONFIG_RELOAD_REQUIRED::Dict{String,Any} = Dict{String,Any}(
@@ -264,6 +272,11 @@ global CONFIG_RELOAD_REQUIRED::Dict{String,Any} = Dict{String,Any}(
     "testrunner" => Dict{String,Any}(
         "executable" => false
     ),
+    "recursive_analysis" => Dict{String, Any}(
+        "max_depth" => true,
+        "exclude" => true,
+        "reanalyze" => true
+    )
 )
 
 WatchedConfigFiles() = WatchedConfigFiles(String["__DEFAULT_CONFIG__"], Dict{String,Any}[DEFAULT_CONFIG])
