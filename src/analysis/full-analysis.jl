@@ -21,12 +21,12 @@ function run_full_analysis!(server::Server, uri::URI; throttle::Bool=false, toke
             id = hash(run_full_analysis!, hash(analysis_unit))
             if throttle
                 debounce(id, get_config(server.state.config_manager, "performance", "full_analysis", "debounce")) do
-                    throttle(id, get_config(server.state.config_manager, "performance", "full_analysis", "throttle")) do
+                    JETLS.throttle(id, get_config(server.state.config_manager, "performance", "full_analysis", "throttle")) do
                         task()
                     end
                 end
             else
-                throttle(id, get_config(server.state.config_manager, "performance", "full_analysis", "throttle")) do
+                JETLS.throttle(id, get_config(server.state.config_manager, "performance", "full_analysis", "throttle")) do
                     task()
                 end
             end
