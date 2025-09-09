@@ -303,6 +303,10 @@ const FileCache = SWContainer{Base.PersistentDict{URI,FileInfo}}
 const SavedFileCache = SWContainer{Base.PersistentDict{URI,SavedFileInfo}}
 const TestsetInfosCache = SWContainer{Base.PersistentDict{URI,TestsetInfos}}
 
+# Type aliases for concurrent updates using CASContainer (lightweight operations)
+const CurrentlyRequested = CASContainer{Base.PersistentDict{String,RequestCaller}}
+const CurrentlyRegistered = CASContainer{Set{Registered}}
+
 mutable struct ServerState
     const workspaceFolders::Vector{URI}
     const file_cache::FileCache # syntactic analysis cache (synced with `textDocument/didChange`)
@@ -310,8 +314,8 @@ mutable struct ServerState
     const testsetinfos_cache::TestsetInfosCache
     const analysis_cache::Dict{URI,AnalysisInfo} # entry points for the full analysis (currently not cached really)
     const extra_diagnostics::ExtraDiagnostics
-    const currently_requested::Dict{String,RequestCaller}
-    const currently_registered::Set{Registered}
+    const currently_requested::CurrentlyRequested
+    const currently_registered::CurrentlyRegistered
     const config_manager::ConfigManager
     encoding::PositionEncodingKind.Ty
     root_path::String
@@ -326,8 +330,8 @@ mutable struct ServerState
             #=testsetinfos_cache=# SWContainer(Base.PersistentDict{URI,TestsetInfos}()),
             #=analysis_cache=# Dict{URI,AnalysisInfo}(),
             #=extra_diagnostics=# ExtraDiagnostics(),
-            #=currently_requested=# Dict{String,RequestCaller}(),
-            #=currently_registered=# Set{Registered}(),
+            #=currently_requested=# CASContainer(Base.PersistentDict{String,RequestCaller}()),
+            #=currently_registered=# CASContainer(Set{Registered}()),
             #=config_manager=# ConfigManager(),
             #=encoding=# PositionEncodingKind.UTF16, # initialize with UTF16 (for tests)
         )
