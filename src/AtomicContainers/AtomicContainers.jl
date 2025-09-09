@@ -1,10 +1,42 @@
+"""
+    AtomicContainers
+
+Thread-safe container implementations for concurrent data access.
+
+# Types
+This module provides three container types with different concurrency guarantees:
+- `SWContainer`: Single-writer, multiple-reader (no concurrent write protection)
+- `LWContainer`: Lock-based writes with lock-free reads
+- `CASContainer`: Lock-free CAS-based updates with retry on conflict
+
+# Interfaces
+All containers support:
+- `load(container)`: Lock-free read of current data
+- `store!(f, container)`: Update data using given callback `f(data) -> (new, ret)`
+  - `f` receives the current `data` and returns `new` data and `ret`
+  - The `container` stores `new` data and `store!` returns `ret` to the caller
+
+# Example
+```julia
+container = CASContainer(Dict("count" => 0))
+
+old_count = store!(container) do data
+    old = data["count"]
+    new = old + 1
+    new_data = Dict("count" => new)
+    new_data, old  # Returns (new_data_to_store, value_to_return)
+end
+```
+"""
 module AtomicContainers
 
 export SWContainer, LWContainer, CASContainer, store!, load, getstats, resetstats!
 
 abstract type AtomicContainer end
 function load(::AtomicContainer) end
-function store!(::AtomicContainer) end
+function store!(f, ::AtomicContainer) end
+function getstats(::AtomicContainer) end
+function resetstats!(::AtomicContainer) end
 
 abstract type AtomicStats end
 function getstats(::AtomicStats) end
@@ -87,25 +119,24 @@ end
 load(c::SWContainer) = @atomic :acquire c.data
 
 """
-    store!(f, c::SWContainer{T}) -> new::T
+    store!(f, c::SWContainer{T}) -> ret
 
-Updates the data stored in an SWContainer.
+Updates the data stored in an [`SWContainer`](@ref) with no concurrency protection.
 
-## Arguments
-- `f`: A function that takes the current value `old::T` and returns a new value `new::T`.
+`f(old::T) -> (new::T, ret)` is executed exactly once.
 
 !!! warning
     This provides NO protection against concurrent writes. If multiple threads
-    call `store!` simultaneously, updates may be lost. Use `CASContainer` or
-    `LWContainer` for concurrent write safety.
+    call `store!` simultaneously, updates may be lost. Use [`CASContainer`](@ref) or
+    [`LWContainer`](@ref) for concurrent write safety.
 """
 function store!(f, c::SWContainer) end
 
 function store!(f, c::SWContainer{T,Nothing}) where T
     old = @atomic :acquire c.data
-    new = f(old)::T
-    @atomic :release c.data = new
-    return new
+    new, ret = f(old)
+    @atomic :release c.data = new::T
+    return ret
 end
 
 function store!(f, c::SWContainer{T,SWStats}) where T
@@ -114,12 +145,12 @@ function store!(f, c::SWContainer{T,SWStats}) where T
     @atomic :monotonic stats.attempts += 1
     old = @atomic :acquire c.data
     t_f_start = time_ns()
-    new = f(old)::T
+    new, ret = f(old)
     t_f_end = time_ns()
-    @atomic :release c.data = new
+    @atomic :release c.data = new::T
     @atomic :monotonic stats.f_ns += (t_f_end - t_f_start)
     @atomic :monotonic stats.total_ns += (time_ns() - t0)
-    return new
+    return ret
 end
 
 getstats(c::SWContainer) = getstats(@something c.stats return nothing)
@@ -191,16 +222,22 @@ end
 
 Locked-Write Container: lock-free reads (atomic load), lock-serialized writes.
 
-# When to use LW
+When to use LW:
 - Heavy `f` function: (ms range, susceptible to interrupts/IO/allocations/GC)
 - Functions with side effects that must run exactly once (lock ensures single execution)
 
-# When to avoid
-- High write frequency with lightweight `f` (ns-range): Consider `CASContainer`
+When to avoid:
+- High write frequency with lightweight `f` (ns-range): Consider [`CASContainer`](@ref)
 - Strict fairness requirements (`ReentrantLock` is not strictly FIFO)
 
-Note: While inspired by RCU (Read-Copy-Update) patterns, this implementation uses
-locks for write serialization rather than classic RCU's grace period mechanism.
+!!! warning
+    `LWContainer` does not protect the internal state of `data` itself.
+    The callback `f(data) -> (new, ret)` for `store!` should avoid modifying `data` in-place
+    but return a `new` object.
+
+!!! note
+    While inspired by RCU (Read-Copy-Update) patterns, this implementation uses
+    locks for write serialization rather than classic RCU's grace period mechanism.
 """
 mutable struct LWContainer{T,Stats<:Union{Nothing,LWStats}} <: AtomicContainer
     @atomic data::T
@@ -213,19 +250,20 @@ end
 load(c::LWContainer) = @atomic :acquire c.data
 
 """
-    store!(f, c::LWContainer{T}) -> new::T
+    store!(f, c::LWContainer{T}) -> ret
 
 Atomically update the data stored in an [`LWContainer`](@ref) using a lock for serialization.
-`f(old::T) -> new::T` must not modify `old` in-place.
+
+`f(old::T) -> (new::T, ret)` is executed exactly once (no retries).
 """
 function store!(f, c::LWContainer) end
 
 function store!(f, c::LWContainer{T,Nothing}) where T
     @lock c.update_lock begin
         old = @atomic :acquire c.data
-        new = f(old)::T
-        @atomic :release c.data = new
-        return new
+        new, ret = f(old)
+        @atomic :release c.data = new::T
+        return ret
     end
 end
 
@@ -241,9 +279,9 @@ function store!(f, c::LWContainer{T,LWStats}) where T
     end
     try
         old = @atomic :acquire c.data
-        new = f(old)::T
-        @atomic :release c.data = new
-        return new
+        new, ret = f(old)
+        @atomic :release c.data = new::T
+        return ret
     finally
         unlock(c.update_lock)
         @atomic :monotonic stats.total_ns += time_ns() - t0
@@ -333,13 +371,18 @@ end
 
 Compare-And-Swap (CAS) container using lock-free retry loops for updates.
 
-# When to use CAS
+When to use CAS:
 - Lightweight `f` function (tens to hundreds of ns) that's safe to retry (pure function)
 - High write frequency or low-to-moderate contention needing high throughput
 
-# When to avoid
+When to avoid:
 - Heavy `f` or functions with side effects: wasted re-evaluation on failure → Use LW
 - High contention: excessive retries cause spin time and cache line bouncing
+
+!!! warning
+    `CASContainer` does not protect the internal state of `data` itself.
+    The function `f(data) -> (new, ret)` for `store!` must be pure (and thus should not
+    modify `data` in-place) and return a `new` object.
 """
 mutable struct CASContainer{T,Stats<:Union{Nothing,CASStats}} <: AtomicContainer
     @atomic data::T
@@ -351,11 +394,13 @@ end
 load(c::CASContainer) = @atomic :acquire c.data
 
 """
-    store!(f, c::CASContainer{T}; backoff::Union{Nothing,Unsigned}=nothing) -> new::T
+    store!(f, c::CASContainer{T}; backoff::Union{Nothing,Unsigned}=nothing) -> ret
 
-Atomically update using CAS with retry on failure.
-`f(old::T) -> new::T` must be pure (no side effects and safe to retry,
-including not modifying `old` in-place).
+Atomically update the data stored in a [`CASContainer`](@ref) using compare-and-swap.
+
+`f(old::T) -> (new::T, ret)` may be executed multiple times and thus **must be pure**
+(no side effects, safe to retry).
+
 `backoff::Union{Nothing,Unsigned}` controls the retry behavior:
 - `backoff == nothing` (default): Adaptive (yields after 16 retries)
 - `backoff == 0`: Immediate retry (fastest for low contention)
@@ -367,10 +412,10 @@ function store!(f, c::CASContainer{T,Nothing}; backoff::Union{Nothing,Unsigned}=
     local retries = 0
     old = @atomic :acquire c.data
     while true
-        new = f(old)::T
-        old, success = @atomicreplace :acquire_release :monotonic c.data old => new
+        new, ret = f(old)
+        old, success = @atomicreplace :acquire_release :monotonic c.data old => new::T
         if success
-            return new
+            return ret
         else
             # Failure. Increment locally and apply throttled backoff if needed
             retries += 1
@@ -398,9 +443,9 @@ function store!(f, c::CASContainer{T,CASStats}; backoff::Union{Nothing,Unsigned}
     old = @atomic :acquire c.data
     while true
         t0 = time_ns()
-        new = f(old)::T
+        new, ret = f(old)
         f_time += time_ns() - t0
-        old, success = @atomicreplace :acquire_release :monotonic c.data old => new
+        old, success = @atomicreplace :acquire_release :monotonic c.data old => new::T
         if success
             if retries != 0
                 @atomic :monotonic stats.retries += retries
@@ -408,7 +453,7 @@ function store!(f, c::CASContainer{T,CASStats}; backoff::Union{Nothing,Unsigned}
             end
             @atomic :monotonic stats.f_ns += f_time
             @atomic :monotonic stats.total_ns += (time_ns() - t_loop0)
-            return new
+            return ret
         else
             # Failure. Increment locally and apply throttled backoff if needed
             retries += 1

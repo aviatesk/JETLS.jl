@@ -80,7 +80,7 @@ end
 ```julia
 abstract type AtomicContainer end
 function load(::AtomicContainer) end
-function store!(::AtomicContainer) end
+function store!(f, ::AtomicContainer) end
 
 abstract type AtomicStats end
 function getstats(::AtomicStats) end
@@ -90,6 +90,11 @@ function resetstats!(::AtomicStats) end
 #### `SWContainer`
 Simple atomic container providing atomic reads and writes without locks or CAS loops.
 Fastest option for sequential or non-contended updates.
+
+> [!warning]
+> Concurrent writes are NOT safe.
+> If correctness under contention is needed,
+> use [`LWContainer`](@ref) or [`CASContainer`](@ref) containers instead.
 ```julia
 mutable struct SWContainer{T,Stats<:Union{Nothing,AtomicStats}}
     @atomic data::T
@@ -99,23 +104,31 @@ load(c::SWContainer) = @atomic :acquire c.data
 
 function store!(f, c::SWContainer{T}) where T
     old = @atomic :acquire c.data
-    new = f(old)::T
-    @atomic :release c.data = new
-    return new
+    new, ret = f(old)
+    @atomic :release c.data = new::T
+    return ret
 end
 ```
 
 #### `LWContainer`
-Locked Write Container that provides lock-free reads and lock-serialized writes.
-Readers access data atomically without locks, while writers are serialized through a lock.
+Locked-Write Container: lock-free reads (atomic load), lock-serialized writes.
 
-This container is optimal for scenarios where:
-- Reads are very frequent and must be fast (lock-free)
-- Writes are relatively infrequent
-- Update operations may take considerable time
+When to use LW:
+- Heavy `f` function: (ms range, susceptible to interrupts/IO/allocations/GC)
+- Functions with side effects that must run exactly once (lock ensures single execution)
 
-Note: While inspired by RCU (Read-Copy-Update) patterns, this implementation uses
-locks for write serialization rather than classic RCU's grace period mechanism.
+When to avoid:
+- High write frequency with lightweight `f` (ns-range): Consider [`CASContainer`](@ref)
+- Strict fairness requirements (`ReentrantLock` is not strictly FIFO)
+
+> [!warning]
+> `LWContainer` does not protect the internal state of `data` itself.
+> Always use immutable data structures and avoid in-place mutations.
+> The function `f` in `store!` must return a new object, not modify the existing one.
+
+> [!note]
+> While inspired by RCU (Read-Copy-Update) patterns, this implementation uses
+> locks for write serialization rather than classic RCU's grace period mechanism.
 ```julia
 mutable struct LWContainer{T,Stats<:Union{Nothing,LWStats}}
     @atomic data::T
@@ -128,16 +141,28 @@ load(c::LWContainer) = @atomic :acquire c.data
 function store!(f, c::LWContainer{T}) where T
     @lock c.update_lock begin
         old = @atomic :acquire c.data
-        new = f(old)::T
-        @atomic :release c.data = new
-        return new
+        new, ret = f(old)
+        @atomic :release c.data = new::T
+        return ret
     end
 end
 ```
 
 #### `CASContainer`
-Generic Compare-And-Swap pattern implementation.
-Optimal for wrapping values whose updates complete in a short time.
+Compare-And-Swap (CAS) container using lock-free retry loops for updates.
+
+When to use CAS:
+- Lightweight `f` function (tens to hundreds of ns) that's safe to retry (pure function)
+- High write frequency or low-to-moderate contention needing high throughput
+
+When to avoid:
+- Heavy `f` or functions with side effects: wasted re-evaluation on failure → Use LW
+- High contention: excessive retries cause spin time and cache line bouncing
+
+> [!warning]
+> `CASContainer` does not protect the internal state of `data` itself.
+> Always use immutable data structures and avoid in-place mutations.
+> The function `f` in `store!` must be pure and return a new object, not modify the existing one.
 ```julia
 mutable struct CASContainer{T,Stats<:Union{Nothing,CASStats}}
     @atomic data::T
@@ -148,10 +173,10 @@ load(c::CASContainer) = @atomic :acquire c.data
 function store!(f, c::CASContainer{T}; backoff::Union{Nothing,Unsigned}=nothing) where T
     old = @atomic :acquire c.data
     while true
-        new = f(old)::T
-        old, success = @atomicreplace :acquire_release :monotonic c.data old => new
+        new, ret = f(old)
+        old, success = @atomicreplace :acquire_release :monotonic c.data old => (new::T)
         if success
-            return new
+            return ret
         else
             # Failure. Increment locally and apply throttled backoff if needed
             ...
@@ -308,7 +333,7 @@ function merge_config!(manager::ConfigManager, filepath::String, new_config::Dic
         # 3. Merge configuration (recursive dict operations)
         new_data = copy_and_merge(old_data, filepath, parsed)
         # 4. Send warnings if needed (side effect)
-        return new_data
+        return new_data, nothing
     end
 end
 ```
@@ -339,7 +364,7 @@ function Base.setindex!(extra_diagnostics::ExtraDiagnostics, val::URI2Diagnostic
     store!(extra_diagnostics.container) do old_data
         # Simple dict copy and update - lightweight operation
         new_data = copy_and_update(old_data, key, val)
-        return new_data
+        return new_data, nothing
     end
 end
 ```
@@ -533,17 +558,19 @@ Solution: Use `CASContainer` (lightweight dict operations)
 const CurrentlyRequested = CASContainer{Base.PersistentDict{String,RequestCaller}}
 
 function addrequest!(cr::CurrentlyRequested, id::String, caller::RequestCaller)
-    store!(cr) do data
-        Base.PersistentDict(data, id=>caller)
+    return store!(cr) do data
+        Base.PersistentDict(data, id=>caller), caller
     end
-    return caller
 end
 
 function poprequest!(cr::CurrentlyRequested, id::String)
-    store!(cr) do data
-        return Base.delete(data, id)
+    return store!(cr) do data
+        if haskey(data, id)
+            caller = data[id]
+            return Base.delete(data, id), caller
+        end
+        return data, nothing
     end
-    return id
 end
 ```
 
@@ -562,31 +589,25 @@ Solution: Use `CASContainer` (lightweight set operations)
 const CurrentlyRegistered = CASContainer{Set{Registered}}
 
 function register!(cr::CurrentlyRegistered, reg::Registered)
-    registered = Ref(false)
-    store!(cr) do data
+    return store!(cr) do data
         if reg ∉ data
             new_data = copy(data)
             push!(new_data, reg)
-            registered[] = true
-            return new_data
+            return new_data, true
         end
-        return data  # No change
+        return data, false
     end
-    return registered[]
 end
 
 function unregister!(cr::CurrentlyRegistered, reg::Registered)
-    unregistered = Ref(false)
-    store!(cr) do data
+    return store!(cr) do data
         if reg ∈ data
             new_data = copy(data)
             delete!(new_data, reg)
-            unregistered[] = true
-            return new_data
+            return new_data, true
         end
-        return data  # No change
+        return data, false
     end
-    return unregistered[]
 end
 ```
 
@@ -606,7 +627,7 @@ const CompletionResolverInfoContainer = CASContainer{Union{Nothing,CompletionRes
 # Write: during completion list generation
 function set_resolver_info!(container::CompletionResolverInfoContainer, info::CompletionResolverInfo)
     store!(container) do _
-        info  # Simple replacement
+        info, nothing
     end
 end
 
