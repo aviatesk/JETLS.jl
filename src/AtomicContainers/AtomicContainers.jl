@@ -114,6 +114,10 @@ mutable struct SWContainer{T,Stats<:Union{Nothing,SWStats}} <: AtomicContainer
     const stats::Stats
     SWContainer(data::T; withstats::Bool=false) where T =
         new{T, withstats ? SWStats : Nothing}(data, withstats ? SWStats() : nothing)
+    SWContainer{T}(data; withstats::Bool=false) where T =
+        new{T, withstats ? SWStats : Nothing}(convert(T, data), withstats ? SWStats() : nothing)
+    SWContainer{T,SWStats}(data) where T = new{T,SWStats}(convert(T, data), SWStats())
+    SWContainer{T,Nothing}(data) where T = new{T,Nothing}(convert(T, data), nothing)
 end
 
 load(c::SWContainer) = @atomic :acquire c.data
@@ -245,6 +249,10 @@ mutable struct LWContainer{T,Stats<:Union{Nothing,LWStats}} <: AtomicContainer
     const stats::Stats
     LWContainer(data::T; withstats::Bool=false) where T =
         new{T, withstats ? LWStats : Nothing}(data, ReentrantLock(), withstats ? LWStats() : nothing)
+    LWContainer{T}(data; withstats::Bool=false) where T =
+        new{T, withstats ? LWStats : Nothing}(convert(T, data), ReentrantLock(), withstats ? LWStats() : nothing)
+    LWContainer{T,LWStats}(data) where T = new{T,LWStats}(convert(T, data), ReentrantLock(), LWStats())
+    LWContainer{T,Nothing}(data) where T = new{T,Nothing}(convert(T, data), ReentrantLock(), nothing)
 end
 
 load(c::LWContainer) = @atomic :acquire c.data
@@ -389,6 +397,10 @@ mutable struct CASContainer{T,Stats<:Union{Nothing,CASStats}} <: AtomicContainer
     const stats::Stats
     CASContainer(data::T; withstats::Bool=false) where T =
         new{T, withstats ? CASStats : Nothing}(data, withstats ? CASStats() : nothing)
+    CASContainer{T}(data; withstats::Bool=false) where T =
+        new{T, withstats ? CASStats : Nothing}(convert(T, data), withstats ? CASStats() : nothing)
+    CASContainer{T,CASStats}(data) where T = new{T,CASStats}(convert(T, data), CASStats())
+    CASContainer{T,Nothing}(data) where T = new{T,Nothing}(convert(T, data), nothing)
 end
 
 load(c::CASContainer) = @atomic :acquire c.data
