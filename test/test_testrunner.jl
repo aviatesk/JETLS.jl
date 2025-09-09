@@ -409,7 +409,10 @@ end
         result = mock_testrunner_result(; n_passed=1)
         key = JETLS.TestsetDiagnosticsKey(uri, "\"foo\"", 1)
         testsetinfos.infos[1] = JETLS.TestsetInfo(testsetinfos.infos[1].st0, JETLS.TestsetResult(result, key))
-        server.state.extra_diagnostics[key] = JETLS.testrunner_result_to_diagnostics(result)
+        val = JETLS.testrunner_result_to_diagnostics(result)
+        JETLS.store!(server.state.extra_diagnostics) do data
+            JETLS.ExtraDiagnosticsData(data, key=>val), nothing
+        end
 
         new_test_code = """
         @testset "foo" begin
@@ -422,7 +425,7 @@ end
         """ # the testset "foo" has been modified
         fi2 = JETLS.cache_file_info!(server.state, uri, 2, new_test_code)
         @test !JETLS.update_testsetinfos!(server, uri, fi2; notify_server=false) # test results are still being mapped
-        @test haskey(server.state.extra_diagnostics, key)
+        @test haskey(JETLS.load(server.state.extra_diagnostics), key)
         testsetinfos = JETLS.get_testsetinfos(server.state, uri)
         @test length(testsetinfos.infos) == 2
         @test isdefined(testsetinfos.infos[1], :result)
@@ -448,7 +451,10 @@ end
         result = mock_testrunner_result(; n_passed=1)
         key = JETLS.TestsetDiagnosticsKey(uri, "\"foo\"", 1)
         testsetinfos.infos[1] = JETLS.TestsetInfo(testsetinfos.infos[1].st0, JETLS.TestsetResult(result, key))
-        server.state.extra_diagnostics[key] = JETLS.testrunner_result_to_diagnostics(result)
+        val = JETLS.testrunner_result_to_diagnostics(result)
+        JETLS.store!(server.state.extra_diagnostics) do data
+            JETLS.ExtraDiagnosticsData(data, key=>val), nothing
+        end
 
         new_test_code = """
         @testset "bar" begin
@@ -457,7 +463,7 @@ end
         """ # the testset "foo" has been deleted
         fi2 = JETLS.cache_file_info!(server.state, uri, 2, new_test_code)
         @test JETLS.update_testsetinfos!(server, uri, fi2; notify_server=false)
-        @test isempty(server.state.extra_diagnostics)
+        @test isempty(JETLS.load(server.state.extra_diagnostics).keys)
         testsetinfos = JETLS.get_testsetinfos(server.state, uri)
         @test length(testsetinfos.infos) == 1
         @test !isdefined(testsetinfos.infos[1], :result)
@@ -482,7 +488,10 @@ end
         result = mock_testrunner_result(; n_passed=1)
         key = JETLS.TestsetDiagnosticsKey(uri, "\"foo\"", 1)
         testsetinfos.infos[1] = JETLS.TestsetInfo(testsetinfos.infos[1].st0, JETLS.TestsetResult(result, key))
-        server.state.extra_diagnostics[key] = JETLS.testrunner_result_to_diagnostics(result)
+        val = JETLS.testrunner_result_to_diagnostics(result)
+        JETLS.store!(server.state.extra_diagnostics) do data
+            JETLS.ExtraDiagnosticsData(data, key=>val), nothing
+        end
 
         new_test_code = """
         @testset "baz" begin
@@ -495,7 +504,7 @@ end
         """ # the testset "foo" has been renamed to "baz"
         fi2 = JETLS.cache_file_info!(server.state, uri, 2, new_test_code)
         @test JETLS.update_testsetinfos!(server, uri, fi2; notify_server=false)
-        @test !haskey(server.state.extra_diagnostics, key)
+        @test !haskey(JETLS.load(server.state.extra_diagnostics), key)
         testsetinfos = JETLS.get_testsetinfos(server.state, uri)
         @test length(testsetinfos.infos) == 2
         @test !isdefined(testsetinfos.infos[1], :result)
@@ -517,7 +526,10 @@ end
         result = mock_testrunner_result(; n_passed=1)
         key = JETLS.TestsetDiagnosticsKey(uri, "\"foo\"", 1)
         testsetinfos.infos[1] = JETLS.TestsetInfo(testsetinfos.infos[1].st0, JETLS.TestsetResult(result, key))
-        server.state.extra_diagnostics[key] = JETLS.testrunner_result_to_diagnostics(result)
+        val = JETLS.testrunner_result_to_diagnostics(result)
+        JETLS.store!(server.state.extra_diagnostics) do data
+            JETLS.ExtraDiagnosticsData(data, key=>val), nothing
+        end
 
         new_test_code = """
         @testset "foo" begin
@@ -530,7 +542,7 @@ end
         """
         fi2 = JETLS.cache_file_info!(server.state, uri, 2, new_test_code)
         @test !JETLS.update_testsetinfos!(server, uri, fi2; notify_server=false) # just the new testset has been added
-        @test haskey(server.state.extra_diagnostics, key)
+        @test haskey(JETLS.load(server.state.extra_diagnostics), key)
         testsetinfos = JETLS.get_testsetinfos(server.state, uri)
         @test length(testsetinfos.infos) == 2
         @test isdefined(testsetinfos.infos[1], :result)
