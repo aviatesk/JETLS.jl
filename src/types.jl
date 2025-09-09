@@ -306,6 +306,7 @@ const TestsetInfosCache = SWContainer{Base.PersistentDict{URI,TestsetInfos}, SWS
 # Type aliases for concurrent updates using CASContainer (lightweight operations)
 const CurrentlyRequested = CASContainer{Base.PersistentDict{String,RequestCaller}, CASStats}
 const CurrentlyRegistered = CASContainer{Set{Registered}, CASStats}
+const CompletionResolverInfo = CASContainer{Union{Nothing,Tuple{Module,LSPostProcessor}}, CASStats}
 
 mutable struct ServerState
     const workspaceFolders::Vector{URI}
@@ -317,22 +318,23 @@ mutable struct ServerState
     const currently_requested::CurrentlyRequested
     const currently_registered::CurrentlyRegistered
     const config_manager::ConfigManager
+    const completion_resolver_info::CompletionResolverInfo
     encoding::PositionEncodingKind.Ty
     root_path::String
     root_env_path::String
-    completion_resolver_info::Tuple{Module,LSPostProcessor}
     init_params::InitializeParams
     function ServerState()
         return new(
             #=workspaceFolders=# URI[],
-            #=file_cache=# SWContainer(Base.PersistentDict{URI,FileInfo}(); withstats=JETLS_DEV_MODE),
-            #=saved_file_cache=# SWContainer(Base.PersistentDict{URI,SavedFileInfo}(); withstats=JETLS_DEV_MODE),
-            #=testsetinfos_cache=# SWContainer(Base.PersistentDict{URI,TestsetInfos}(); withstats=JETLS_DEV_MODE),
+            #=file_cache=# FileCache(Base.PersistentDict{URI,FileInfo}()),
+            #=saved_file_cache=# SavedFileCache(Base.PersistentDict{URI,SavedFileInfo}()),
+            #=testsetinfos_cache=# TestsetInfosCache(Base.PersistentDict{URI,TestsetInfos}()),
             #=analysis_cache=# Dict{URI,AnalysisInfo}(),
             #=extra_diagnostics=# ExtraDiagnostics(),
-            #=currently_requested=# CASContainer(Base.PersistentDict{String,RequestCaller}(); withstats=JETLS_DEV_MODE),
-            #=currently_registered=# CASContainer(Set{Registered}(); withstats=JETLS_DEV_MODE),
+            #=currently_requested=# CurrentlyRequested(Base.PersistentDict{String,RequestCaller}()),
+            #=currently_registered=# CurrentlyRegistered(Set{Registered}()),
             #=config_manager=# ConfigManager(),
+            #=completion_resolver_info=# CompletionResolverInfo(nothing),
             #=encoding=# PositionEncodingKind.UTF16, # initialize with UTF16 (for tests)
         )
     end
