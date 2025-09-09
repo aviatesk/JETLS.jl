@@ -132,20 +132,20 @@ Updates the data stored in an [`SWContainer`](@ref) with no concurrency protecti
 """
 function store!(f, c::SWContainer) end
 
-function store!(f, c::SWContainer{T,Nothing}) where T
+@inline function store!(f, c::SWContainer{T,Nothing}) where T
     old = @atomic :acquire c.data
-    new, ret = f(old)
+    new, ret = @inline f(old)
     @atomic :release c.data = new::T
     return ret
 end
 
-function store!(f, c::SWContainer{T,SWStats}) where T
+@inline function store!(f, c::SWContainer{T,SWStats}) where T
     t0 = time_ns()
     stats = c.stats
     @atomic :monotonic stats.attempts += 1
     old = @atomic :acquire c.data
     t_f_start = time_ns()
-    new, ret = f(old)
+    new, ret = @inline f(old)
     t_f_end = time_ns()
     @atomic :release c.data = new::T
     @atomic :monotonic stats.f_ns += (t_f_end - t_f_start)
@@ -408,11 +408,11 @@ Atomically update the data stored in a [`CASContainer`](@ref) using compare-and-
 """
 function store!(f, c::CASContainer; backoff::Union{Nothing,Unsigned}) end
 
-function store!(f, c::CASContainer{T,Nothing}; backoff::Union{Nothing,Unsigned}=nothing) where T
+@inline function store!(f, c::CASContainer{T,Nothing}; backoff::Union{Nothing,Unsigned}=nothing) where T
     local retries = 0
     old = @atomic :acquire c.data
     while true
-        new, ret = f(old)
+        new, ret = @inline f(old)
         old, success = @atomicreplace :acquire_release :monotonic c.data old => new::T
         if success
             return ret
@@ -434,7 +434,7 @@ function store!(f, c::CASContainer{T,Nothing}; backoff::Union{Nothing,Unsigned}=
     end
 end
 
-function store!(f, c::CASContainer{T,CASStats}; backoff::Union{Nothing,Unsigned}=nothing) where T
+@inline function store!(f, c::CASContainer{T,CASStats}; backoff::Union{Nothing,Unsigned}=nothing) where T
     local retries = 0
     local f_time = zero(UInt64)
     local t_loop0 = time_ns()
@@ -443,7 +443,7 @@ function store!(f, c::CASContainer{T,CASStats}; backoff::Union{Nothing,Unsigned}
     old = @atomic :acquire c.data
     while true
         t0 = time_ns()
-        new, ret = f(old)
+        new, ret = @inline f(old)
         f_time += time_ns() - t0
         old, success = @atomicreplace :acquire_release :monotonic c.data old => new::T
         if success

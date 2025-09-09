@@ -102,9 +102,9 @@ end
 
 load(c::SWContainer) = @atomic :acquire c.data
 
-function store!(f, c::SWContainer{T}) where T
+@inline function store!(f, c::SWContainer{T}) where T
     old = @atomic :acquire c.data
-    new, ret = f(old)
+    new, ret = @inline f(old)
     @atomic :release c.data = new::T
     return ret
 end
@@ -170,10 +170,10 @@ end
 
 load(c::CASContainer) = @atomic :acquire c.data
 
-function store!(f, c::CASContainer{T}; backoff::Union{Nothing,Unsigned}=nothing) where T
+@inline function store!(f, c::CASContainer{T}; backoff::Union{Nothing,Unsigned}=nothing) where T
     old = @atomic :acquire c.data
     while true
-        new, ret = f(old)
+        new, ret = @inline f(old)
         old, success = @atomicreplace :acquire_release :monotonic c.data old => (new::T)
         if success
             return ret
@@ -254,7 +254,7 @@ mutable struct ServerState
     const currently_registered::CurrentlyRegistered                 # CASContainer (set operations)
 
     # Completion context (lightweight updates, high frequency)
-    const completion_resolver_info::CompletionResolverInfoContainer # CASContainer (simple replacement)
+    const completion_resolver_info::CompletionResolverInfo          # CASContainer (simple replacement)
 
     # Workspace folders (lightweight updates, very infrequent)
     const workspaceFolders::WorkspaceFolders                        # CASContainer (vector replacement)
@@ -622,17 +622,17 @@ Usage pattern:
 Solution: Use `CASContainer`
 
 ```julia
-const CompletionResolverInfoContainer = CASContainer{Union{Nothing,CompletionResolverInfo}}
+const CompletionResolverInfo = CASContainer{Union{Nothing,CompletionResolverInfo}}
 
 # Write: during completion list generation
-function set_resolver_info!(container::CompletionResolverInfoContainer, info::CompletionResolverInfo)
+function set_resolver_info!(container::CompletionResolverInfo, info::CompletionResolverInfo)
     store!(container) do _
         info, nothing
     end
 end
 
 # Read: during completion item resolution (lock-free)
-function get_resolver_info(container::CompletionResolverInfoContainer)
+function get_resolver_info(container::CompletionResolverInfo)
     return load(container)
 end
 ```
