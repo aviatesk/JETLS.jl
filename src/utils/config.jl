@@ -62,11 +62,8 @@ This rules defines a total order. (See `is_config_file`)
 function Base.lt(::ConfigFileOrder, path1, path2)
     path1 == "__DEFAULT_CONFIG__" && return false
     path2 == "__DEFAULT_CONFIG__" && return true
-
     path1 == path2                && return false
-
-    # unreachable
-    return false
+    return false # unreachable
 end
 
 function register_config!(manager::ConfigManager,
@@ -89,16 +86,18 @@ function register_config!(manager::ConfigManager,
     manager.watched_files[filepath] = config
 end
 
-function selective_merge!(target::Dict{String,Any}, source::Dict{String,Any},
-                          on_leaf_filter = Returns(true),
-                          key_path::Vector{String} = String[])
+selective_merge!(args...) = selective_merge!(Returns(true), args...)
+function selective_merge!(
+        on_leaf_filter, target::Dict{String,Any}, source::Dict{String,Any},
+        key_path::Vector{String} = String[]
+    )
     traverse_merge!(target, source, key_path) do t, k, v, path
         on_leaf_filter(path) && (t[k] = v)
     end
 end
 
 function merge_reload_required_keys!(target::Dict{String,Any}, source::Dict{String,Any})
-    selective_merge!(target, source, Base.Splat(is_reload_required_key), String[])
+    selective_merge!(Base.Splat(is_reload_required_key), target, source, String[])
     cleanup_empty_dicts!(target)
 end
 

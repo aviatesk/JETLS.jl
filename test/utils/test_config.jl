@@ -148,21 +148,21 @@ end
     # filtering: only allow specific keys
     dict1 = Dict{String, Any}("a" => 1, "b" => 2)
     dict2 = Dict{String, Any}("b" => 3, "c" => 4)
-    JETLS.selective_merge!(dict1, dict2, path -> path[end] == "b")
+    JETLS.selective_merge!(path -> path[end] == "b", dict1, dict2)
     @test dict1 == Dict{String, Any}("a" => 1, "b" => 3) # only "b" was merged
     @test dict2 == Dict{String, Any}("b" => 3, "c" => 4)
 
     # filtering: block all keys
     dict1 = Dict{String, Any}("a" => 1, "b" => 2)
     dict2 = Dict{String, Any}("b" => 3, "c" => 4)
-    JETLS.selective_merge!(dict1, dict2, Returns(false))
+    JETLS.selective_merge!(Returns(false), dict1, dict2)
     @test dict1 == Dict{String, Any}("a" => 1, "b" => 2) # nothing merged
     @test dict2 == Dict{String, Any}("b" => 3, "c" => 4)
 
     # filtering with nested paths
     dict1 = Dict{String, Any}("performance" => Dict{String, Any}("full_analysis" => Dict{String, Any}("debounce" => 1.0)))
     dict2 = Dict{String, Any}("performance" => Dict{String, Any}("full_analysis" => Dict{String, Any}("throttle" => 5.0)))
-    JETLS.selective_merge!(dict1, dict2, path -> path == ["performance", "full_analysis", "throttle"])
+    JETLS.selective_merge!(path -> path == ["performance", "full_analysis", "throttle"], dict1, dict2)
     @test dict1["performance"]["full_analysis"]["debounce"] == 1.0
     @test dict1["performance"]["full_analysis"]["throttle"] == 5.0
 
@@ -230,7 +230,6 @@ end
     # testrunner.executable should NOT be merged (it's false in CONFIG_RELOAD_REQUIRED)
     @test !haskey(dict1, "testrunner")
 end
-
 
 @testset "configuration utilities" begin
     default_config_origin = deepcopy(JETLS.DEFAULT_CONFIG)
