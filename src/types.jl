@@ -166,63 +166,70 @@ struct Registered
     method::String
 end
 
-struct ExtraDiagnostics
+struct ExtraDiagnosticsData
     keys::Dict{UInt,ExtraDiagnosticsKey}
     values::Dict{UInt,URI2Diagnostics}
 end
-ExtraDiagnostics() = ExtraDiagnostics(Dict{UInt,ExtraDiagnosticsKey}(), Dict{UInt,URI2Diagnostics}())
+ExtraDiagnosticsData() = ExtraDiagnosticsData(Dict{UInt,ExtraDiagnosticsKey}(), Dict{UInt,URI2Diagnostics}())
+function ExtraDiagnosticsData(data::ExtraDiagnosticsData, (key, val))
+    new_data = copy(data)
+    new_data[key] = val
+    return new_data
+end
 
-Base.haskey(extra_diagnostics::ExtraDiagnostics, key::ExtraDiagnosticsKey) =
+Base.copy(extra_diagnostics::ExtraDiagnosticsData) = ExtraDiagnosticsData(copy(extra_diagnostics.keys), copy(extra_diagnostics.values))
+
+Base.haskey(extra_diagnostics::ExtraDiagnosticsData, key::ExtraDiagnosticsKey) =
     haskey(extra_diagnostics.keys, to_key(key))
-Base.getindex(extra_diagnostics::ExtraDiagnostics, key::ExtraDiagnosticsKey) =
+Base.getindex(extra_diagnostics::ExtraDiagnosticsData, key::ExtraDiagnosticsKey) =
     extra_diagnostics.values[to_key(key)]
-function Base.setindex!(extra_diagnostics::ExtraDiagnostics, val::URI2Diagnostics, key::ExtraDiagnosticsKey)
+function Base.setindex!(extra_diagnostics::ExtraDiagnosticsData, val::URI2Diagnostics, key::ExtraDiagnosticsKey)
     k = to_key(key)
     extra_diagnostics.keys[k] = key
     return extra_diagnostics.values[k] = val
 end
-function Base.get(extra_diagnostics::ExtraDiagnostics, key::ExtraDiagnosticsKey, default)
+function Base.get(extra_diagnostics::ExtraDiagnosticsData, key::ExtraDiagnosticsKey, default)
     if haskey(extra_diagnostics, key)
         return extra_diagnostics[key]
     end
     return default
 end
-function Base.get(f, extra_diagnostics::ExtraDiagnostics, key::ExtraDiagnosticsKey)
+function Base.get(f, extra_diagnostics::ExtraDiagnosticsData, key::ExtraDiagnosticsKey)
     if haskey(extra_diagnostics, key)
         return extra_diagnostics[key]
     end
     return f()
 end
-function Base.get!(extra_diagnostics::ExtraDiagnostics, key::ExtraDiagnosticsKey, default::URI2Diagnostics)
+function Base.get!(extra_diagnostics::ExtraDiagnosticsData, key::ExtraDiagnosticsKey, default::URI2Diagnostics)
     if haskey(extra_diagnostics, key)
         return extra_diagnostics[key]
     end
     return extra_diagnostics[key] = default
 end
-function Base.get!(f, extra_diagnostics::ExtraDiagnostics, key::ExtraDiagnosticsKey)
+function Base.get!(f, extra_diagnostics::ExtraDiagnosticsData, key::ExtraDiagnosticsKey)
     if haskey(extra_diagnostics, key)
         return extra_diagnostics[key]
     end
     return extra_diagnostics[key] = f()
 end
-Base.keys(extra_diagnostics::ExtraDiagnostics) = values(extra_diagnostics.keys)
-Base.values(extra_diagnostics::ExtraDiagnostics) = values(extra_diagnostics.values)
-function Base.push!(extra_diagnostics::ExtraDiagnostics, (key, val)::Pair{ExtraDiagnosticsKey,URI2Diagnostics})
+Base.keys(extra_diagnostics::ExtraDiagnosticsData) = values(extra_diagnostics.keys)
+Base.values(extra_diagnostics::ExtraDiagnosticsData) = values(extra_diagnostics.values)
+function Base.push!(extra_diagnostics::ExtraDiagnosticsData, (key, val)::Pair{ExtraDiagnosticsKey,URI2Diagnostics})
     k = to_key(key)
     push!(extra_diagnostics.keys, k => val)
     push!(extra_diagnostics.values, k => val)
 end
-function Base.delete!(extra_diagnostics::ExtraDiagnostics, key::ExtraDiagnosticsKey)
+function Base.delete!(extra_diagnostics::ExtraDiagnosticsData, key::ExtraDiagnosticsKey)
     k = to_key(key)
     delete!(extra_diagnostics.keys, k)
     delete!(extra_diagnostics.values, k)
 end
 
-Base.length(extra_diagnostics::ExtraDiagnostics) = length(extra_diagnostics.keys)
-Base.eltype(::Type{ExtraDiagnostics}) = Pair{ExtraDiagnosticsKey,URI2Diagnostics}
-Base.keytype(::Type{ExtraDiagnostics}) = ExtraDiagnosticsKey
-Base.valtype(::Type{ExtraDiagnostics}) = URI2Diagnostics
-function Base.iterate(extra_diagnostics::ExtraDiagnostics, keysiter=(keys(extra_diagnostics.keys),))
+Base.length(extra_diagnostics::ExtraDiagnosticsData) = length(extra_diagnostics.keys)
+Base.eltype(::Type{ExtraDiagnosticsData}) = Pair{ExtraDiagnosticsKey,URI2Diagnostics}
+Base.keytype(::Type{ExtraDiagnosticsData}) = ExtraDiagnosticsKey
+Base.valtype(::Type{ExtraDiagnosticsData}) = URI2Diagnostics
+function Base.iterate(extra_diagnostics::ExtraDiagnosticsData, keysiter=(keys(extra_diagnostics.keys),))
     next = @something iterate(keysiter...) return nothing
     k, nextstate = next
     nextkeysiter = (keysiter[1], nextstate)
@@ -304,6 +311,7 @@ const SavedFileCache = SWContainer{Base.PersistentDict{URI,SavedFileInfo}, SWSta
 const TestsetInfosCache = SWContainer{Base.PersistentDict{URI,TestsetInfos}, SWStats}
 
 # Type aliases for concurrent updates using CASContainer (lightweight operations)
+const ExtraDiagnostics = CASContainer{ExtraDiagnosticsData, CASStats}
 const CurrentlyRequested = CASContainer{Base.PersistentDict{String,RequestCaller}, CASStats}
 const CurrentlyRegistered = CASContainer{Set{Registered}, CASStats}
 const CompletionResolverInfo = CASContainer{Union{Nothing,Tuple{Module,LSPostProcessor}}, CASStats}
@@ -330,7 +338,7 @@ mutable struct ServerState
             #=saved_file_cache=# SavedFileCache(Base.PersistentDict{URI,SavedFileInfo}()),
             #=testsetinfos_cache=# TestsetInfosCache(Base.PersistentDict{URI,TestsetInfos}()),
             #=analysis_cache=# Dict{URI,AnalysisInfo}(),
-            #=extra_diagnostics=# ExtraDiagnostics(),
+            #=extra_diagnostics=# ExtraDiagnostics(ExtraDiagnosticsData()),
             #=currently_requested=# CurrentlyRequested(Base.PersistentDict{String,RequestCaller}()),
             #=currently_registered=# CurrentlyRegistered(Set{Registered}()),
             #=config_manager=# ConfigManager(),
