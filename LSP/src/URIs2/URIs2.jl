@@ -157,7 +157,7 @@ end
         is_rfc3986_sub_delim(c)
 end
 
-function encode(io::IO, s::AbstractString, issafe::Function)
+function encode(io::IO, s::AbstractString, issafe)
     for c in s
         if issafe(c)
             print(io, c)

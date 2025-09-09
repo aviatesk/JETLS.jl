@@ -28,7 +28,7 @@ Apply URI percent-encoding to escape special characters in `x`.
 function escapeuri end
 
 escapeuri(c::Char) = string('%', uppercase(string(Int(c), base=16, pad=2)))
-escapeuri(str::AbstractString, safe::Function=issafe) =
+escapeuri(str::AbstractString, safe=issafe) =
     join(safe(c) ? c : escapeuri(c) for c in utf8_chars(str))
 
 escapeuri(bytes::Vector{UInt8}) = bytes

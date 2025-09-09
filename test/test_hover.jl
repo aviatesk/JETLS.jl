@@ -219,7 +219,7 @@ end
 end
 
 # Helper to run a single hover test
-function with_hover_request(tester::Function, text::AbstractString; kwargs...)
+function with_hover_request(tester, text::AbstractString; kwargs...)
     clean_code, positions = JETLS.get_text_and_positions(text; kwargs...)
     withscript(clean_code) do script_path
         uri = filepath2uri(script_path)

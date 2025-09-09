@@ -282,7 +282,7 @@ end
 
 include("setup.jl")
 
-function with_signature_help_request(tester::Function, text::AbstractString; kwargs...)
+function with_signature_help_request(tester, text::AbstractString; kwargs...)
     clean_code, positions = JETLS.get_text_and_positions(text; kwargs...)
 
     withscript(clean_code) do script_path

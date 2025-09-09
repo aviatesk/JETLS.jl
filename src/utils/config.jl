@@ -11,7 +11,7 @@ function access_nested_dict(dict::Dict{String,Any}, path::String, rest_path::Str
 end
 
 """
-    traverse_merge!(on_leaf::Function, target::Dict{String,Any},
+    traverse_merge!(on_leaf, target::Dict{String,Any},
                     source::Dict{String,Any}, key_path::Vector{String})
 
 Recursively merges `source` into `target`, traversing nested dictionaries.
@@ -24,7 +24,7 @@ If a key in `source` is not a dictionary, the `on_leaf` function is called with:
 
 If the key does not exist in `target`, it will be created as an empty dictionary before merging.
 """
-function traverse_merge!(on_leaf::Function, target::Dict{String,Any},
+function traverse_merge!(on_leaf, target::Dict{String,Any},
                          source::Dict{String,Any}, key_path::Vector{String})
     for (k, v) in source
         current_path = [key_path; k]
@@ -90,7 +90,7 @@ function register_config!(manager::ConfigManager,
 end
 
 function selective_merge!(target::Dict{String,Any}, source::Dict{String,Any},
-                          on_leaf_filter::Function = Returns(true),
+                          on_leaf_filter = Returns(true),
                           key_path::Vector{String} = String[])
     traverse_merge!(target, source, key_path) do t, k, v, path
         on_leaf_filter(path) && (t[k] = v)
@@ -181,14 +181,14 @@ function collect_unmatched_keys!(unknown_keys::Vector{Vector{String}}, sub::Abst
 end
 
 """
-    merge_config!(on_reload_required::Function, current_config::Dict{String, Any},
+    merge_config!(on_reload_required, current_config::Dict{String, Any},
                   new_config::Dict{String, Any}, key_path::Vector{String} = String[])
 
 Merges `new_config` into `current_config`, updating the values in `current_config`.
 If a key in `new_config` is marked as requiring a reload (using `is_reload_required_key`),
 the `on_reload_required` function is called with the target dictionary, value, key, and path.
 """
-function merge_config!(on_reload_required::Function, current_config::Dict{String, Any},
+function merge_config!(on_reload_required, current_config::Dict{String, Any},
                        new_config::Dict{String, Any}, key_path::Vector{String} = String[])
     traverse_merge!(current_config, new_config, key_path) do t, k, v, path
         if is_reload_required_key(path...)
@@ -198,7 +198,7 @@ function merge_config!(on_reload_required::Function, current_config::Dict{String
     end
 end
 
-function merge_config!(on_reload_required::Function, manager::ConfigManager, filepath::AbstractString, new_config::AbstractDict)
+function merge_config!(on_reload_required, manager::ConfigManager, filepath::AbstractString, new_config::AbstractDict)
     current_config = get(manager.watched_files, filepath, nothing)
     if current_config === nothing
         if JETLS_DEV_MODE
@@ -230,4 +230,3 @@ function get_config(manager::ConfigManager, key_path::String...)
 
     return nothing
 end
-

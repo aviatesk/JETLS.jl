@@ -243,7 +243,7 @@ end
 # ====================
 
 function with_completion_request(
-        tester::Function, text::AbstractString;
+        tester, text::AbstractString;
         context::Union{Nothing, CompletionContext} = nothing,
         full_analysis::Bool = false,
         kwargs...
