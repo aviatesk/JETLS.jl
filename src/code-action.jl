@@ -33,7 +33,7 @@ function handle_CodeActionRequest(server::Server, msg::CodeActionRequest)
                 error = file_cache_error(uri)))
     end
     code_actions = Union{CodeAction,Command}[]
-    testsetinfos = get(server.state.testsetinfos_cache, uri, nothing)
+    testsetinfos = get_testsetinfos(server.state, uri)
     isnothing(testsetinfos) ||
         testrunner_code_actions!(code_actions, uri, fi, testsetinfos, msg.params.range)
     return send(server,

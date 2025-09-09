@@ -298,12 +298,17 @@ mutable struct ConfigManager
 end
 ConfigManager() = ConfigManager(ConfigDict(), WatchedConfigFiles())
 
+# Type aliases for document-synchronization caches using `SWContainer` (sequential-only updates)
+const FileCache = SWContainer{Base.PersistentDict{URI,FileInfo}}
+const SavedFileCache = SWContainer{Base.PersistentDict{URI,SavedFileInfo}}
+const TestsetInfosCache = SWContainer{Base.PersistentDict{URI,TestsetInfos}}
+
 mutable struct ServerState
     const workspaceFolders::Vector{URI}
-    const file_cache::Dict{URI,FileInfo} # syntactic analysis cache (synced with `textDocument/didChange`)
-    const saved_file_cache::Dict{URI,SavedFileInfo} # syntactic analysis cache (synced with `textDocument/didSave`)
+    const file_cache::FileCache # syntactic analysis cache (synced with `textDocument/didChange`)
+    const saved_file_cache::SavedFileCache # syntactic analysis cache (synced with `textDocument/didSave`)
+    const testsetinfos_cache::TestsetInfosCache
     const analysis_cache::Dict{URI,AnalysisInfo} # entry points for the full analysis (currently not cached really)
-    const testsetinfos_cache::Dict{URI,TestsetInfos}
     const extra_diagnostics::ExtraDiagnostics
     const currently_requested::Dict{String,RequestCaller}
     const currently_registered::Set{Registered}
@@ -316,10 +321,10 @@ mutable struct ServerState
     function ServerState()
         return new(
             #=workspaceFolders=# URI[],
-            #=file_cache=# Dict{URI,FileInfo}(),
-            #=saved_file_cache=# Dict{URI,SavedFileInfo}(),
+            #=file_cache=# SWContainer(Base.PersistentDict{URI,FileInfo}()),
+            #=saved_file_cache=# SWContainer(Base.PersistentDict{URI,SavedFileInfo}()),
+            #=testsetinfos_cache=# SWContainer(Base.PersistentDict{URI,TestsetInfos}()),
             #=analysis_cache=# Dict{URI,AnalysisInfo}(),
-            #=testsetinfos_cache=# Dict{URI,TestsetInfos}(),
             #=extra_diagnostics=# ExtraDiagnostics(),
             #=currently_requested=# Dict{String,RequestCaller}(),
             #=currently_registered=# Set{Registered}(),

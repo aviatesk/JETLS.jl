@@ -43,6 +43,8 @@ Analyzer.LSAnalyzer(args...; kwargs...) = LSAnalyzer(ScriptAnalysisEntry(filepat
 include("analysis/resolver.jl")
 
 include("AtomicContainers/AtomicContainers.jl")
+using .AtomicContainers
+
 include("testrunner/testrunner-types.jl")
 include("types.jl")
 
