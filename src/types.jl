@@ -299,13 +299,13 @@ end
 ConfigManager() = ConfigManager(ConfigDict(), WatchedConfigFiles())
 
 # Type aliases for document-synchronization caches using `SWContainer` (sequential-only updates)
-const FileCache = SWContainer{Base.PersistentDict{URI,FileInfo}}
-const SavedFileCache = SWContainer{Base.PersistentDict{URI,SavedFileInfo}}
-const TestsetInfosCache = SWContainer{Base.PersistentDict{URI,TestsetInfos}}
+const FileCache = SWContainer{Base.PersistentDict{URI,FileInfo}, SWStats}
+const SavedFileCache = SWContainer{Base.PersistentDict{URI,SavedFileInfo}, SWStats}
+const TestsetInfosCache = SWContainer{Base.PersistentDict{URI,TestsetInfos}, SWStats}
 
 # Type aliases for concurrent updates using CASContainer (lightweight operations)
-const CurrentlyRequested = CASContainer{Base.PersistentDict{String,RequestCaller}}
-const CurrentlyRegistered = CASContainer{Set{Registered}}
+const CurrentlyRequested = CASContainer{Base.PersistentDict{String,RequestCaller}, CASStats}
+const CurrentlyRegistered = CASContainer{Set{Registered}, CASStats}
 
 mutable struct ServerState
     const workspaceFolders::Vector{URI}
@@ -325,13 +325,13 @@ mutable struct ServerState
     function ServerState()
         return new(
             #=workspaceFolders=# URI[],
-            #=file_cache=# SWContainer(Base.PersistentDict{URI,FileInfo}()),
-            #=saved_file_cache=# SWContainer(Base.PersistentDict{URI,SavedFileInfo}()),
-            #=testsetinfos_cache=# SWContainer(Base.PersistentDict{URI,TestsetInfos}()),
+            #=file_cache=# SWContainer(Base.PersistentDict{URI,FileInfo}(); withstats=JETLS_DEV_MODE),
+            #=saved_file_cache=# SWContainer(Base.PersistentDict{URI,SavedFileInfo}(); withstats=JETLS_DEV_MODE),
+            #=testsetinfos_cache=# SWContainer(Base.PersistentDict{URI,TestsetInfos}(); withstats=JETLS_DEV_MODE),
             #=analysis_cache=# Dict{URI,AnalysisInfo}(),
             #=extra_diagnostics=# ExtraDiagnostics(),
-            #=currently_requested=# CASContainer(Base.PersistentDict{String,RequestCaller}()),
-            #=currently_registered=# CASContainer(Set{Registered}()),
+            #=currently_requested=# CASContainer(Base.PersistentDict{String,RequestCaller}(); withstats=JETLS_DEV_MODE),
+            #=currently_registered=# CASContainer(Set{Registered}(); withstats=JETLS_DEV_MODE),
             #=config_manager=# ConfigManager(),
             #=encoding=# PositionEncodingKind.UTF16, # initialize with UTF16 (for tests)
         )

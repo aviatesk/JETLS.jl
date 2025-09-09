@@ -44,6 +44,9 @@ include("analysis/resolver.jl")
 
 include("AtomicContainers/AtomicContainers.jl")
 using .AtomicContainers
+const SWStats  = JETLS_DEV_MODE ? AtomicContainers.SWStats : Nothing
+const LWStats  = JETLS_DEV_MODE ? AtomicContainers.LWStats : Nothing
+const CASStats = JETLS_DEV_MODE ? AtomicContainers.CASStats : Nothing
 
 include("testrunner/testrunner-types.jl")
 include("types.jl")
