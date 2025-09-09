@@ -75,14 +75,12 @@ function register_config!(manager::ConfigManager,
         end
         return
     end
-
     if haskey(manager.watched_files, filepath)
         if JETLS_DEV_MODE
             @warn "File $filepath is already being watched, skipping."
         end
         return
     end
-
     manager.watched_files[filepath] = config
 end
 
@@ -126,7 +124,7 @@ function fix_reload_required_settings!(manager::ConfigManager)
 end
 
 """
-    collect_unmatched_keys(sub::AbstractDict, base::AbstractDict) -> Vector{Vector{String}}
+    collect_unmatched_keys(sub::Dict{String,Any}, base::Dict{String,Any}) -> Vector{Vector{String}}
 
 Traverses the keys of `sub` and returns a list of key paths that are not present in `base`.
 Note that this function does *not* perform deep structural comparison for keys whose values are dictionaries.
@@ -155,7 +153,7 @@ julia> collect_unmatched_keys(
  ["key1"]
 ```
 """
-function collect_unmatched_keys(sub::AbstractDict, base::AbstractDict)
+function collect_unmatched_keys(sub::Dict{String,Any}, base::Dict{String,Any})
     unknown_keys = Vector{String}[]
     collect_unmatched_keys!(unknown_keys, sub, base, String[])
     return unknown_keys
@@ -163,7 +161,10 @@ end
 
 collect_unmatched_keys(new_config::Dict{String,Any}) = collect_unmatched_keys(new_config, DEFAULT_CONFIG)
 
-function collect_unmatched_keys!(unknown_keys::Vector{Vector{String}}, sub::AbstractDict, base::AbstractDict, key_path::Vector{String})
+function collect_unmatched_keys!(
+        unknown_keys::Vector{Vector{String}},
+        sub::Dict{String,Any}, base::Dict{String,Any}, key_path::Vector{String}
+    )
     for (k, v) in sub
         current_path = [key_path; k]
         b = get(base, k, nothing)
@@ -205,7 +206,6 @@ function merge_config!(on_reload_required, manager::ConfigManager, filepath::Abs
         end
         return
     end
-
     merge_config!(on_reload_required,
                   current_config,
                   new_config)
@@ -226,6 +226,5 @@ function get_config(manager::ConfigManager, key_path::String...)
             return v
         end
     end
-
     return nothing
 end
