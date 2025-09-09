@@ -36,17 +36,6 @@ const TEST_DICT_DIFFERENT_KEY = JETLS.ConfigDict(
     ),
 )
 
-const TEST_RELOAD_REQUIRED = JETLS.ConfigDict(
-    "test_key1" => true,
-    "test_key2" => JETLS.ConfigDict(
-        "nested_key1" => false,
-        "nested_key2" => JETLS.ConfigDict(
-            "deep_nested_key1" => true,
-            "deep_nested_key2" => false
-        )
-    )
-)
-
 @testset "WatchedConfigFiles" begin
     @testset "constructor and basic operations" begin
         watched = JETLS.WatchedConfigFiles()
@@ -132,87 +121,104 @@ end
 end
 
 @testset "configuration utilities" begin
-    default_config_origin = JETLS.DEFAULT_CONFIG
-    is_reload_required_key_origin = JETLS.CONFIG_RELOAD_REQUIRED
-    try
-        JETLS.DEFAULT_CONFIG = TEST_DICT
-        JETLS.CONFIG_RELOAD_REQUIRED = TEST_RELOAD_REQUIRED
+    @testset "access_nested_dict" begin
+        @test JETLS.access_nested_dict(TEST_DICT, "test_key1") == "test_value1"
+        @test JETLS.access_nested_dict(TEST_DICT, "test_key2", "nested_key1") == "nested_value1"
+        @test JETLS.access_nested_dict(TEST_DICT, "test_key2", "nested_key2", "deep_nested_key1") == "deep_nested_value1"
+        @test JETLS.access_nested_dict(TEST_DICT, "test_key2", "nested_key2", "deep_nested_key3") === nothing
+        @test JETLS.access_nested_dict(TEST_DICT, "non_existent_key") === nothing
 
-        @testset "access_nested_dict" begin
-            @test JETLS.access_nested_dict(TEST_DICT, "test_key1") == "test_value1"
-            @test JETLS.access_nested_dict(TEST_DICT, "test_key2", "nested_key1") == "nested_value1"
-            @test JETLS.access_nested_dict(TEST_DICT, "test_key2", "nested_key2", "deep_nested_key1") == "deep_nested_value1"
-            @test JETLS.access_nested_dict(TEST_DICT, "test_key2", "nested_key2", "deep_nested_key3") === nothing
-            @test JETLS.access_nested_dict(TEST_DICT, "non_existent_key") === nothing
-
-            let empty_dict = JETLS.ConfigDict()
-                @test JETLS.access_nested_dict(empty_dict, "key") === nothing
-            end
-
-            let dict = JETLS.ConfigDict("scalar" => "value")
-                @test JETLS.access_nested_dict(dict, "scalar", "unknown") === nothing
-                @test JETLS.access_nested_dict(dict, "scalar") == "value"
-            end
+        let empty_dict = JETLS.ConfigDict()
+            @test JETLS.access_nested_dict(empty_dict, "key") === nothing
         end
 
-        @testset "collect_unmatched_keys" begin
-            # It is correct that `test_key2.diffname_2.diffname_3` is not included,
-            # because `collect_unmatched_keys` does not track deeper nested differences in key names.
-            @test Set(JETLS.collect_unmatched_keys(TEST_DICT_DIFFERENT_KEY, TEST_DICT)) == Set([
-                ["diffname_1"],
-                ["test_key2", "diffname_2"],
-            ])
+        let dict = JETLS.ConfigDict("scalar" => "value")
+            @test JETLS.access_nested_dict(dict, "scalar", "unknown") === nothing
+            @test JETLS.access_nested_dict(dict, "scalar") == "value"
+        end
+    end
 
-            @test isempty(JETLS.collect_unmatched_keys(TEST_DICT, TEST_DICT))
-            @test isempty(JETLS.collect_unmatched_keys(TEST_DICT, TEST_DICT_DIFFERENT_VALUE))
+    @testset "collect_unmatched_keys" begin
+        # It is correct that `test_key2.diffname_2.diffname_3` is not included,
+        # because `collect_unmatched_keys` does not track deeper nested differences in key names.
+        @test Set(JETLS.collect_unmatched_keys(TEST_DICT_DIFFERENT_KEY, TEST_DICT)) == Set([
+            ["diffname_1"],
+            ["test_key2", "diffname_2"],
+        ])
 
-            # single-arg version should use DEFAULT_CONFIG
-            @test JETLS.collect_unmatched_keys(TEST_DICT_DIFFERENT_KEY) ==
-                  JETLS.collect_unmatched_keys(TEST_DICT_DIFFERENT_KEY, JETLS.DEFAULT_CONFIG)
+        @test isempty(JETLS.collect_unmatched_keys(TEST_DICT, TEST_DICT))
+        @test isempty(JETLS.collect_unmatched_keys(TEST_DICT, TEST_DICT_DIFFERENT_VALUE))
+
+        # single-arg version should use DEFAULT_CONFIG
+        @test JETLS.collect_unmatched_keys(TEST_DICT_DIFFERENT_KEY) ==
+              JETLS.collect_unmatched_keys(TEST_DICT_DIFFERENT_KEY, JETLS.DEFAULT_CONFIG)
+    end
+
+    @testset "config files priority" begin
+        files = ["/foo/bar/.JETLSConfig.toml", "__DEFAULT_CONFIG__"]
+        @test sort!(files, order=JETLS.ConfigFileOrder()) == [
+            "/foo/bar/.JETLSConfig.toml",       # highest priority
+            "__DEFAULT_CONFIG__"                # lowest priority
+        ]
+    end
+
+    @testset "config manager" begin
+        manager = JETLS.ConfigManager()
+
+        test_config = JETLS.ConfigDict(
+            "full_analysis" => JETLS.ConfigDict(
+                "debounce" => 2.0,
+                "throttle" => 10.0
+            ),
+            "testrunner" => JETLS.ConfigDict(
+                "executable" => "test_runner"
+            )
+        )
+
+        JETLS.register_config!(manager, "/foo/bar/.JETLSConfig.toml", test_config)
+        JETLS.fix_reload_required_settings!(manager)
+
+        @test JETLS.get_config(manager, "full_analysis", "debounce") === 2.0
+        @test JETLS.get_config(manager, "full_analysis", "throttle") === 10.0
+        @test JETLS.get_config(manager, "testrunner", "executable") === "test_runner"
+        @test JETLS.get_config(manager, "non_existent_key") === nothing
+
+        # Test priority: __DEFAULT_CONFIG__ has lower priority
+        override_config = JETLS.ConfigDict(
+            "full_analysis" => JETLS.ConfigDict(
+                "debounce" => 999.0
+            ),
+            "testrunner" => JETLS.ConfigDict(
+                "executable" => "override_runner"
+            )
+        )
+        JETLS.register_config!(manager, "__DEFAULT_CONFIG__", override_config)
+        # High priority config should still win
+        @test JETLS.get_config(manager, "full_analysis", "debounce") === 2.0
+        @test JETLS.get_config(manager, "testrunner", "executable") === "test_runner"
+
+        # Test merge_config! with reload required callback
+        changed_reload_required = Set{String}()
+        updated_config = JETLS.ConfigDict(
+            "full_analysis" => JETLS.ConfigDict(
+                "debounce" => 3.0,  # reload required
+                "throttle" => 15.0   # reload required
+            ),
+            "testrunner" => JETLS.ConfigDict(
+                "executable" => "new_runner"  # not reload required
+            )
+        )
+        JETLS.merge_config!(manager, "/foo/bar/.JETLSConfig.toml", updated_config) do _, path, _
+            push!(changed_reload_required, join(path, "."))
         end
 
-        @testset "config files priority" begin
-            files = ["/foo/bar/.JETLSConfig.toml", "__DEFAULT_CONFIG__"]
-            @test sort!(files, order=JETLS.ConfigFileOrder()) == [
-                "/foo/bar/.JETLSConfig.toml",       # highest priority
-                "__DEFAULT_CONFIG__"                # lowest priority
-            ]
-        end
-
-        @testset "config manager" begin
-            manager = JETLS.ConfigManager()
-            JETLS.register_config!(manager, "/foo/bar/.JETLSConfig.toml", TEST_DICT)
-            JETLS.fix_reload_required_settings!(manager)
-
-            @test JETLS.get_config(manager, "test_key1") === "test_value1"
-            @test JETLS.get_config(manager, "test_key2", "nested_key1") === "nested_value1"
-            @test JETLS.get_config(manager, "test_key2", "nested_key2", "deep_nested_key1") === "deep_nested_value1"
-            @test JETLS.get_config(manager, "test_key2", "nested_key2", "deep_nested_key3") === nothing
-            @test JETLS.get_config(manager, "non_existent_key") === nothing
-
-            JETLS.register_config!(manager, "__DEFAULT_CONFIG__", TEST_DICT_DIFFERENT_VALUE)
-            # __DEFAULT_CONFIG__ has lower priority than the file, so it should not change
-            @test JETLS.get_config(manager, "test_key1") === "test_value1"
-            @test JETLS.get_config(manager, "test_key2", "nested_key1") === "nested_value1"
-            @test JETLS.get_config(manager, "test_key2", "nested_key2", "deep_nested_key1") === "deep_nested_value1"
-            @test JETLS.get_config(manager, "test_key2", "nested_key2", "deep_nested_key3") === nothing
-            @test JETLS.get_config(manager, "non_existent_key") === nothing
-
-            changed_reload_required = Set{String}()
-            JETLS.merge_config!(manager, "/foo/bar/.JETLSConfig.toml", TEST_DICT_DIFFERENT_VALUE) do _, path, _
-                push!(changed_reload_required, join(path, "."))
-            end
-            # `on_reload_required` should be called for changed keys that require reload
-            @test changed_reload_required == Set(["test_key1", "test_key2.nested_key2.deep_nested_key1"])
-            # non reload_required keys should be changed dynamically
-            @test JETLS.get_config(manager,  "test_key2", "nested_key2", "deep_nested_key2") == "newvalue_3"
-            # reload_required keys should not be changed dynamically without explicit update
-            @test JETLS.get_config(manager, "test_key1") == "test_value1"
-            @test JETLS.get_config(manager, "test_key2", "nested_key2", "deep_nested_key1") == "deep_nested_value1"
-        end
-    finally
-        JETLS.DEFAULT_CONFIG = default_config_origin
-        JETLS.CONFIG_RELOAD_REQUIRED = is_reload_required_key_origin
+        # on_reload_required should be called for reload-required keys
+        @test changed_reload_required == Set(["full_analysis.debounce", "full_analysis.throttle"])
+        # non reload_required keys should be changed dynamically
+        @test JETLS.get_config(manager, "testrunner", "executable") == "new_runner"
+        # reload_required keys should NOT change (they stay at the fixed values)
+        @test JETLS.get_config(manager, "full_analysis", "debounce") == 2.0
+        @test JETLS.get_config(manager, "full_analysis", "throttle") == 10.0
     end
 end
 
@@ -282,24 +288,11 @@ end
 end
 
 @testset "`is_reload_required_key`" begin
-    default_config_origin = JETLS.CONFIG_RELOAD_REQUIRED
-    try
-        JETLS.CONFIG_RELOAD_REQUIRED = JETLS.ConfigDict(
-            "full_analysis" => JETLS.ConfigDict(
-                "debounce" => true,
-                "throttle" => false
-            ),
-            "simple_key" => true
-        )
-
-        @test JETLS.is_reload_required_key("full_analysis", "debounce") === true
-        @test JETLS.is_reload_required_key("full_analysis", "throttle") === false
-        @test JETLS.is_reload_required_key("simple_key") === true
-        @test JETLS.is_reload_required_key("nonexistent") === false
-        @test JETLS.is_reload_required_key("performance", "nonexistent") === false
-    finally
-        JETLS.CONFIG_RELOAD_REQUIRED = default_config_origin
-    end
+    @test JETLS.is_reload_required_key("full_analysis", "debounce")
+    @test JETLS.is_reload_required_key("full_analysis", "throttle")
+    @test !JETLS.is_reload_required_key("testrunner", "executable")
+    @test !JETLS.is_reload_required_key("nonexistent")
+    @test !JETLS.is_reload_required_key("full_analysis", "nonexistent")
 end
 
 @testset "`is_config_file`" begin
@@ -393,52 +386,25 @@ end
     end
 end
 
-@testset "`fix_reload_required_settings!` comprehensive" begin
-    default_config_origin = JETLS.DEFAULT_CONFIG
-    is_reload_required_key_origin = JETLS.CONFIG_RELOAD_REQUIRED
-    try
-        JETLS.DEFAULT_CONFIG = JETLS.ConfigDict(
-            "full_analysis" => JETLS.ConfigDict(
-                "debounce" => 1.0,
-                "throttle" => 5.0
-            ),
-            "testrunner" => JETLS.ConfigDict(
-                "executable" => "testrunner"
-            )
-        )
-        JETLS.CONFIG_RELOAD_REQUIRED = JETLS.ConfigDict(
-            "full_analysis" => JETLS.ConfigDict(
-                "debounce" => true,
-                "throttle" => true
-            ),
-            "testrunner" => JETLS.ConfigDict(
-                "executable" => false
-            )
-        )
+@testset "`fix_reload_required_settings!` priority handling" begin
+    manager = JETLS.ConfigManager()
+    high_priority_config = JETLS.ConfigDict(
+        "full_analysis" => JETLS.ConfigDict("debounce" => 2.0, "throttle" => 10.0)
+    )
+    low_priority_config = JETLS.ConfigDict(
+        "full_analysis" => JETLS.ConfigDict("debounce" => 999.0, "throttle" => 999.0),
+        "testrunner" => JETLS.ConfigDict("executable" => "custom")
+    )
 
-        # test priority handling
-        let manager = JETLS.ConfigManager()
-            high_priority_config = JETLS.ConfigDict(
-                "full_analysis" => JETLS.ConfigDict("debounce" => 2.0)
-            )
-            low_priority_config = JETLS.ConfigDict(
-                "full_analysis" => JETLS.ConfigDict("debounce" => 999.0),
-                "testrunner" => JETLS.ConfigDict("executable" => "custom")
-            )
+    JETLS.register_config!(manager, "__DEFAULT_CONFIG__", low_priority_config)
+    JETLS.register_config!(manager, "/path/.JETLSConfig.toml", high_priority_config)
+    JETLS.fix_reload_required_settings!(manager)
 
-            JETLS.register_config!(manager, "__DEFAULT_CONFIG__", low_priority_config)
-            JETLS.register_config!(manager, "/path/.JETLSConfig.toml", high_priority_config)
-            JETLS.fix_reload_required_settings!(manager)
-
-            # high priority should win for reload-required keys
-            @test manager.reload_required_setting["full_analysis"]["debounce"] == 2.0
-            # testrunner.executable is not reload-required, so should not be in reload_required_setting
-            @test !haskey(manager.reload_required_setting, "testrunner")
-        end
-    finally
-        JETLS.DEFAULT_CONFIG = default_config_origin
-        JETLS.CONFIG_RELOAD_REQUIRED = is_reload_required_key_origin
-    end
+    # high priority should win for reload-required keys
+    @test manager.reload_required_setting["full_analysis"]["debounce"] == 2.0
+    @test manager.reload_required_setting["full_analysis"]["throttle"] == 10.0
+    # testrunner.executable is not reload-required, so should not be in reload_required_setting
+    @test !haskey(manager.reload_required_setting, "testrunner")
 end
 
-end
+end # test_config
