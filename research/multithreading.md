@@ -56,7 +56,8 @@ Principles:
 ```julia
 function handle_message(server::Server, @nospecialize msg)
     if is_sequential_message(msg)
-        # Process synchronously (fast: ~1-2ms)
+        # Process synchronously (processed within the main server loop thread `:default`)
+        # N.B. Each message handling should be fast: ~1-2ms
         # N.B. Full-analysis triggered by document synchronization uses `Threads.@spawn` internally
         handle_message_sequentially(server, msg)
     else
@@ -218,7 +219,7 @@ weight of its update function and access pattern.
 | `currently_requested` | `CASContainer` | Light | Simple dict operations |
 | `currently_registered` | `CASContainer` | Light | Simple set operations |
 | `completion_resolver_info` | `CASContainer` | Light | Simple replacement |
-| `workspaceFolders` | `CASContainer` | Light | Vector replacement |
+| `workspaceFolders` | None needed* | - | Only updated during initialization |
 | `analysis_manager` | Queue | Very heavy | Complex multi-URI analysis |
 
 Key insight: Most updates are lightweight dict/set/vector operations
@@ -227,12 +228,6 @@ parsing) and `analysis_manager` (full analysis) require heavier synchronization.
 
 ```julia
 mutable struct ServerState
-    # Lifecycle fields (written once at initialization, no locking needed)
-    encoding::PositionEncodingKind.Ty
-    root_path::String
-    root_env_path::String
-    init_params::InitializeParams
-
     # Document synchronization (sequential writes, concurrent reads)
     const file_cache::FileCache                                     # SWContainer (sequential only)
     const saved_file_cache::SavedFileCache                          # SWContainer (sequential only)
@@ -256,8 +251,12 @@ mutable struct ServerState
     # Completion context (lightweight updates, high frequency)
     const completion_resolver_info::CompletionResolverInfo          # CASContainer (simple replacement)
 
-    # Workspace folders (lightweight updates, very infrequent)
-    const workspaceFolders::WorkspaceFolders                        # CASContainer (vector replacement)
+    # Lifecycle fields (written once at initialization, no locking needed)
+    workspaceFolders::Vector{URI}
+    encoding::PositionEncodingKind.Ty
+    root_path::String
+    root_env_path::String
+    init_params::InitializeParams
 end
 ```
 
@@ -637,19 +636,13 @@ function get_resolver_info(container::CompletionResolverInfo)
 end
 ```
 
-#### 3.2.9 `workspaceFolders`
+#### 3.2.9 Lifecycle fields
 
-Problem: Concurrent access to workspace folder list
-
-Usage pattern:
-- Very infrequent updates (modified only on initialization and workspace folder changes notification)
-- Read during file path resolution
-
-Solution: Use `CASContainer` (simple vector replacement)
-
-```julia
-const WorkspaceFolders = CASContainer{Vector{URI}}
-```
+Lifecycle fields like `workspaceFolders` currently only gets written during
+initialization, thus no locking needed.
+If we implement `workspace/didChangeWorkspaceFolders` notification or
+`workspace/workspaceFolders` request handling in the future,
+the `workspaceFolders` field for example will need thread-safe container.
 
 #### 3.2.10 `debounce`/`throttle`
 
@@ -695,7 +688,16 @@ Recommendation: Maintain current implementation
 - `CONFIG_RELOAD_REQUIRED::Dict`: Configuration requiring reload
 - `LS_ANALYZER_CACHE::Dict`: Analyzer cache
 
-No additional thread safety measures needed for these global states
+No additional thread safety measures needed for these global states,
+because these objects are either actually constant or only potentially
+replaced during testing, and can be considered as completely constant
+during the actual LS lifecycle.
+
+> [!note]
+> `LS_ANALYZER_CACHE` may be modified during full analysis,
+> but `LS_ANALYZER_CACHE` is only referenced within full analysis, and full
+> analysis execution itself is performed in an independently thread-safe manner,
+> so there is no need to worry about conflicts with other parallel executions.
 
 #### 3.3.1 `currently_running`
 - Purpose: Global reference for debugging (e.g., `currently_running.documents[uri]`)
