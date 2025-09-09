@@ -16,10 +16,10 @@ const CLIENT_CAPABILITIES = ClientCapabilities(
 )
 
 const DEBOUNCE_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
-    "performance", "full_analysis", "debounce")
+    "full_analysis", "debounce")
 
 const THROTTLE_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
-    "performance", "full_analysis", "throttle")
+    "full_analysis", "throttle")
 
 const TESTRUNNER_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
     "testrunner", "executable")
@@ -38,7 +38,7 @@ const TESTRUNNER_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
         DEBOUNCE_STARTUP = 100.0
         TESTRUNNER_STARTUP = "testrunner_startup"
         write(config_path, """
-            [performance.full_analysis]
+            [full_analysis]
             debounce = $DEBOUNCE_STARTUP
             [testrunner]
             executable = \"$TESTRUNNER_STARTUP\"
@@ -49,21 +49,21 @@ const TESTRUNNER_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
 
             # after initialization, manager should have the fixed config for reload required keys
             @test JETLS.access_nested_dict(manager.reload_required_setting,
-                "performance", "full_analysis", "debounce") == DEBOUNCE_STARTUP
+                "full_analysis", "debounce") == DEBOUNCE_STARTUP
             @test JETLS.access_nested_dict(manager.reload_required_setting,
-                "performance", "full_analysis", "throttle") == THROTTLE_DEFAULT
+                "full_analysis", "throttle") == THROTTLE_DEFAULT
 
             @test haskey(manager.watched_files, config_path)
             @test collect(keys(manager.watched_files)) == [config_path, "__DEFAULT_CONFIG__"]
             @test manager.watched_files["__DEFAULT_CONFIG__"] == JETLS.DEFAULT_CONFIG
 
-            @test JETLS.get_config(manager, "performance", "full_analysis", "debounce") == DEBOUNCE_STARTUP
+            @test JETLS.get_config(manager, "full_analysis", "debounce") == DEBOUNCE_STARTUP
             @test JETLS.get_config(manager, "testrunner", "executable") == TESTRUNNER_STARTUP
 
-            # change `performance.full_analysis.debounce` to `DEBOUNCE_V2`
+            # change `full_analysis.debounce` to `DEBOUNCE_V2`
             DEBOUNCE_V2 = 200.0
             write(config_path, """
-                [performance.full_analysis]
+                [full_analysis]
                 debounce = $DEBOUNCE_V2
                 [testrunner]
                 executable = \"$TESTRUNNER_STARTUP\"
@@ -79,18 +79,18 @@ const TESTRUNNER_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
             @test raw_res isa ShowMessageNotification
             @test raw_res.method == "window/showMessage"
             @test raw_res.params.type == MessageType.Warning
-            @test occursin("performance.full_analysis.debounce", raw_res.params.message)
+            @test occursin("full_analysis.debounce", raw_res.params.message)
             @test occursin("restart", raw_res.params.message)
 
             # Config should not be changed (reload required)
-            @test JETLS.get_config(manager, "performance", "full_analysis", "debounce") == DEBOUNCE_STARTUP
+            @test JETLS.get_config(manager, "full_analysis", "debounce") == DEBOUNCE_STARTUP
             # But config dict should be updated to avoid showing the same message again
-            @test manager.watched_files[config_path]["performance"]["full_analysis"]["debounce"] == DEBOUNCE_V2
+            @test manager.watched_files[config_path]["full_analysis"]["debounce"] == DEBOUNCE_V2
 
             THROTTLE_V2 = 300.0
-            # Add a new key `performance.full_analysis.throttle`
+            # Add a new key `full_analysis.throttle`
             write(config_path, """
-                [performance.full_analysis]
+                [full_analysis]
                 debounce = $DEBOUNCE_V2
                 throttle = $THROTTLE_V2
                 [testrunner]
@@ -111,13 +111,13 @@ const TESTRUNNER_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
             @test !occursin("debounce", raw_res.params.message)
             @test occursin("restart", raw_res.params.message)
 
-            # `performance.full_analysis.throttle` should not be changed (reload required)
-            @test JETLS.get_config(manager, "performance", "full_analysis", "throttle") == THROTTLE_DEFAULT
+            # `full_analysis.throttle` should not be changed (reload required)
+            @test JETLS.get_config(manager, "full_analysis", "throttle") == THROTTLE_DEFAULT
 
             # Change `testrunner.executable` to "newtestrunner"
             TESTRUNNER_V2 = "testrunner_v2"
             write(config_path, """
-                [performance.full_analysis]
+                [full_analysis]
                 debounce = $DEBOUNCE_V2
                 [testrunner]
                 executable = \"$TESTRUNNER_V2\"
@@ -135,7 +135,7 @@ const TESTRUNNER_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
 
             # unknown keys should be reported
             write(config_path, """
-                [performance]
+                [full_analysis]
                 ___unknown_key___ = \"value\"
                 """)
 
@@ -149,7 +149,7 @@ const TESTRUNNER_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
             @test raw_res.method == "window/showMessage"
             @test raw_res.params.type == MessageType.Error
             @test occursin("unknown keys", raw_res.params.message)
-            @test occursin("performance.___unknown_key___", raw_res.params.message)
+            @test occursin("full_analysis.___unknown_key___", raw_res.params.message)
 
             # Delete the config file
             rm(config_path)
@@ -167,7 +167,7 @@ const TESTRUNNER_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
 
             # After deletion,
             # - for reload required keys, `get_config` should remain unchanged
-            @test JETLS.get_config(manager, "performance", "full_analysis", "debounce") == DEBOUNCE_STARTUP
+            @test JETLS.get_config(manager, "full_analysis", "debounce") == DEBOUNCE_STARTUP
             # -  For non-reload required keys, replace with value from the next highest-priority config file. (`__DEFAULT_CONFIG__`)
             @test JETLS.get_config(manager, "testrunner", "executable") == TESTRUNNER_DEFAULT
 
@@ -179,7 +179,7 @@ const TESTRUNNER_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
             DEBOUNCE_RECREATE = 400.0
             TESTRUNNER_RECREATE = "testrunner_recreate"
             write(config_path, """
-                [performance.full_analysis]
+                [full_analysis]
                 debounce = $DEBOUNCE_RECREATE
                 [testrunner]
                 executable = \"$TESTRUNNER_RECREATE\"
@@ -200,9 +200,9 @@ const TESTRUNNER_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
             # `config_path` should be registered again
             @test haskey(manager.watched_files, config_path)
             # reload required keys should not be changed even if higher priority config file is re-created
-            @test JETLS.get_config(manager, "performance", "full_analysis", "debounce") == DEBOUNCE_STARTUP
+            @test JETLS.get_config(manager, "full_analysis", "debounce") == DEBOUNCE_STARTUP
             @test JETLS.access_nested_dict(manager.watched_files[config_path],
-                "performance", "full_analysis", "debounce") == DEBOUNCE_RECREATE
+                "full_analysis", "debounce") == DEBOUNCE_RECREATE
             # non-reload required keys should be updated
             @test JETLS.get_config(manager, "testrunner", "executable") == TESTRUNNER_RECREATE
 
@@ -216,7 +216,7 @@ const TESTRUNNER_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
             )
             writereadmsg(other_change_notification; read=0)
             # no effect on config
-            @test JETLS.get_config(manager, "performance", "full_analysis", "debounce") == DEBOUNCE_STARTUP
+            @test JETLS.get_config(manager, "full_analysis", "debounce") == DEBOUNCE_STARTUP
             @test JETLS.get_config(manager, "testrunner", "executable") == TESTRUNNER_RECREATE
         end
     end
@@ -236,7 +236,7 @@ end
             DEBOUNCE_RECREATE = 500.0
             TESTRUNNER_RECREATE = "testrunner_recreate"
             write(config_path, """
-                [performance.full_analysis]
+                [full_analysis]
                 debounce = $DEBOUNCE_RECREATE
                 [testrunner]
                 executable = \"$TESTRUNNER_RECREATE\"
@@ -256,7 +256,7 @@ end
 
             # If higher priority config file is created,
             # - reload required keys should not be changed
-            @test JETLS.get_config(manager, "performance", "full_analysis", "debounce") == DEBOUNCE_DEFAULT
+            @test JETLS.get_config(manager, "full_analysis", "debounce") == DEBOUNCE_DEFAULT
             # - non-reload required keys should be updated
             @test JETLS.get_config(manager, "testrunner", "executable") == TESTRUNNER_RECREATE
 
@@ -264,7 +264,7 @@ end
             DEBOUNCE_V2 = 600.0
             TESTRUNNER_V2 = "testrunner_v2"
             write(config_path, """
-                [performance.full_analysis]
+                [full_analysis]
                 debounce = $DEBOUNCE_V2
                 [testrunner]
                 executable = \"$TESTRUNNER_V2\"
@@ -279,9 +279,9 @@ end
             @test raw_res isa ShowMessageNotification
             @test raw_res.method == "window/showMessage"
             @test raw_res.params.type == MessageType.Warning
-            @test occursin("performance.full_analysis.debounce", raw_res.params.message)
+            @test occursin("full_analysis.debounce", raw_res.params.message)
             @test occursin("restart", raw_res.params.message)
-            @test JETLS.get_config(manager, "performance", "full_analysis", "debounce") == DEBOUNCE_DEFAULT
+            @test JETLS.get_config(manager, "full_analysis", "debounce") == DEBOUNCE_DEFAULT
             @test JETLS.get_config(manager, "testrunner", "executable") == TESTRUNNER_V2
         end
     end

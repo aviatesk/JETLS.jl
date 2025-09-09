@@ -245,11 +245,9 @@ end
 
 # TODO (later): move this definition to external files
 global DEFAULT_CONFIG::ConfigDict = ConfigDict(
-    "performance" => ConfigDict(
-        "full_analysis" => ConfigDict(
-            "debounce" => 1.0,
-            "throttle" => 5.0
-        )
+    "full_analysis" => ConfigDict(
+        "debounce" => 1.0,
+        "throttle" => 5.0
     ),
     "testrunner" => ConfigDict(
         "executable" => "testrunner"
@@ -257,11 +255,9 @@ global DEFAULT_CONFIG::ConfigDict = ConfigDict(
 )
 
 global CONFIG_RELOAD_REQUIRED::ConfigDict = ConfigDict(
-    "performance" => ConfigDict(
-        "full_analysis" => ConfigDict(
-            "debounce" => true,
-            "throttle" => true
-        )
+    "full_analysis" => ConfigDict(
+        "debounce" => true,
+        "throttle" => true
     ),
     "testrunner" => ConfigDict(
         "executable" => false
