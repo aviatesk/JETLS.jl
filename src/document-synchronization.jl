@@ -22,7 +22,11 @@ entry in the cache.
 cache_file_info!(state::ServerState, uri::URI, version::Int, text::String) =
     cache_file_info!(state, uri, version, ParseStream!(text))
 function cache_file_info!(state::ServerState, uri::URI, version::Int, parsed_stream::JS.ParseStream)
-    return state.file_cache[uri] = FileInfo(version, parsed_stream, uri, state.encoding)
+    fi = FileInfo(version, parsed_stream, uri, state.encoding)
+    store!(state.file_cache) do cache
+        Base.PersistentDict(cache, uri => fi)
+    end
+    return fi
 end
 
 """
@@ -37,7 +41,11 @@ Otherwise, creates a new `SavedFileInfo` entry in the cache.
 cache_saved_file_info!(state::ServerState, uri::URI, text::String) =
     cache_saved_file_info!(state, uri, ParseStream!(text))
 function cache_saved_file_info!(state::ServerState, uri::URI, parsed_stream::JS.ParseStream)
-    return state.saved_file_cache[uri] = SavedFileInfo(parsed_stream, uri)
+    sfi = SavedFileInfo(parsed_stream, uri)
+    store!(state.saved_file_cache) do cache
+        Base.PersistentDict(cache, uri => sfi)
+    end
+    return sfi
 end
 
 function handle_DidOpenTextDocumentNotification(server::Server, msg::DidOpenTextDocumentNotification)
@@ -77,7 +85,8 @@ end
 
 function handle_DidSaveTextDocumentNotification(server::Server, msg::DidSaveTextDocumentNotification)
     uri = msg.params.textDocument.uri
-    if !haskey(server.state.saved_file_cache, uri)
+    cache = load(server.state.saved_file_cache)
+    if !haskey(cache, uri)
         # Some language client implementations (in this case Zed) appear to be
         # sending `textDocument/didSave` notifications for arbitrary text documents,
         # so we add a save guard for such cases.
@@ -111,17 +120,19 @@ end
 
 function handle_DidCloseTextDocumentNotification(server::Server, msg::DidCloseTextDocumentNotification)
     uri = msg.params.textDocument.uri
-    fi = get(server.state.file_cache, uri, nothing)
-    if !isnothing(fi)
-        delete!(server.state.file_cache, uri)
-        delete!(server.state.testsetinfos_cache, uri)
-        if clear_extra_diagnostics!(server, uri)
-            notify_diagnostics!(server)
-        end
+
+    store!(server.state.file_cache) do cache
+        Base.delete(cache, uri)
     end
-    sfi = get(server.state.saved_file_cache, uri, nothing)
-    if !isnothing(sfi)
-        delete!(server.state.saved_file_cache, uri)
+    store!(server.state.saved_file_cache) do cache
+        Base.delete(cache, uri)
     end
+    store!(server.state.testsetinfos_cache) do cache
+        Base.delete(cache, uri)
+    end
+    if clear_extra_diagnostics!(server, uri)
+        notify_diagnostics!(server)
+    end
+
     nothing
 end

@@ -39,11 +39,13 @@ function update_testsetinfos!(server::Server, uri::URI, fi::FileInfo; notify_ser
     new_testsets = find_executable_testsets(fi.syntax_tree0)
     m = length(new_testsets)
 
-    existing_testsetinfos = @something get(server.state.testsetinfos_cache, uri, nothing) begin
+    existing_testsetinfos = @something get_testsetinfos(server.state, uri) begin
         # new file or newly created testsets
         if !iszero(m)
-            server.state.testsetinfos_cache[uri] =
-                TestsetInfos(fi.version, TestsetInfo[TestsetInfo(t) for t in new_testsets])
+            local infos = TestsetInfos(fi.version, TestsetInfo[TestsetInfo(t) for t in new_testsets])
+            store!(server.state.testsetinfos_cache) do c
+                Base.PersistentDict(c, uri => infos)
+            end
         end
         return false
     end
@@ -55,7 +57,9 @@ function update_testsetinfos!(server::Server, uri::URI, fi::FileInfo; notify_ser
 
         if iszero(n)
             # Delete the existing cache if exist
-            delete!(server.state.testsetinfos_cache, uri)
+            store!(server.state.testsetinfos_cache) do c
+                Base.delete(c, uri)
+            end
         else
             # Update the cache with new version and infos
             new_infos = Vector{TestsetInfo}(undef, m)
@@ -80,7 +84,10 @@ function update_testsetinfos!(server::Server, uri::URI, fi::FileInfo; notify_ser
                     new_infos[i] = TestsetInfo(testsetᵢ)
                 end
             end
-            server.state.testsetinfos_cache[uri] = TestsetInfos(fi.version, new_infos)
+            local infos = TestsetInfos(fi.version, new_infos)
+            store!(server.state.testsetinfos_cache) do c
+                Base.PersistentDict(c, uri => infos)
+            end
 
             # Clear diagnostics for any removed testsets (when n > m)
             for i = (m+1):n
@@ -423,7 +430,7 @@ is_testsetinfo_valid(fi::FileInfo, testsetinfos::TestsetInfos, idx::Int) =
     testsetinfos.version == fi.version && checkbounds(Bool, testsetinfos.infos, idx)
 
 function _testrunner_run_testset(server::Server, executable::AbstractString, uri::URI, fi::FileInfo, idx::Int, tsn::String, filepath::String)
-    testsetinfos = @something get(server.state.testsetinfos_cache, uri, nothing) begin
+    testsetinfos = @something get_testsetinfos(server.state, uri) begin
         show_warning_message(server, """
             Test structure not found, so test execution is being cancelled.
             """)
@@ -455,7 +462,7 @@ function _testrunner_run_testset(server::Server, executable::AbstractString, uri
     ret = summary_testrunner_result(result)
 
     # Handle the case where the test structure is updated during test execution
-    testsetinfos = @something get(server.state.testsetinfos_cache, uri, nothing) begin
+    testsetinfos = @something get_testsetinfos(server.state, uri) begin
         # If the file state has changed during test execution, it's difficult to apply results to the file:
         # Simply show only the option to open logs
         show_testrunner_result_in_message(server, result, #=title=#tsn)
@@ -690,7 +697,7 @@ function try_clear_testrunner_result!(server::Server, uri::URI, idx::Int, tsn::S
     end
 
     fi = @something get_file_info(server.state, uri) return nothing
-    testsetinfos = @something get(server.state.testsetinfos_cache, uri, nothing) return nothing
+    testsetinfos = @something get_testsetinfos(server.state, uri) return nothing
     if !is_testsetinfo_valid(fi, testsetinfos, idx)
         # file is has been modified, just do nothing and return
         # the clean up should be performed by `invalidate_testsetinfos!`

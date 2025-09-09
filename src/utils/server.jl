@@ -161,7 +161,7 @@ end
 
 Fetch cached FileInfo given an LSclient-provided structure with a URI
 """
-get_file_info(s::ServerState, uri::URI) = get(s.file_cache, uri, nothing)
+get_file_info(s::ServerState, uri::URI) = get(load(s.file_cache), uri, nothing)
 get_file_info(s::ServerState, t::TextDocumentIdentifier) = get_file_info(s, t.uri)
 
 """
@@ -170,8 +170,10 @@ get_file_info(s::ServerState, t::TextDocumentIdentifier) = get_file_info(s, t.ur
 
 Fetch cached saved FileInfo given an LSclient-provided structure with a URI
 """
-get_saved_file_info(s::ServerState, uri::URI) = get(s.saved_file_cache, uri, nothing)
+get_saved_file_info(s::ServerState, uri::URI) = get(load(s.saved_file_cache), uri, nothing)
 get_saved_file_info(s::ServerState, t::TextDocumentIdentifier) = get_saved_file_info(s, t.uri)
+
+get_testsetinfos(s::ServerState, uri::URI) = get(load(s.testsetinfos_cache), uri, nothing)
 
 """
     get_context_info(state::ServerState, uri::URI, pos::Position) -> (; mod, analyzer, postprocessor)
