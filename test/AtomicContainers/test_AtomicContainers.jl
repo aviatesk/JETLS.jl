@@ -37,7 +37,7 @@ function stress_test_swmr1(ContainerType;
                 if (i % 100) == 0
                     yield()
                 end
-                PairSnap(s.a - 1, s.b + 1)
+                PairSnap(s.a - 1, s.b + 1), nothing
             end
         end
     end
@@ -86,6 +86,7 @@ function stress_test_swmr2(ContainerType;
                     yield()
                 end
                 push!(newary, 1)
+                newary, nothing
             end
         end
     end
@@ -134,7 +135,7 @@ function stress_test_mwmr1(ContainerType;
                     if (i % 100) == 0
                         yield()
                     end
-                    PairSnap(s.a - 1, s.b + 1)
+                    PairSnap(s.a - 1, s.b + 1), nothing
                 end
             end
         end
@@ -186,6 +187,7 @@ function stress_test_mwmr2(ContainerType;
                         yield()
                     end
                     push!(newary, 1)
+                    newary, nothing
                 end
             end
         end

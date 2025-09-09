@@ -60,10 +60,9 @@ send(server, WorkDoneProgressCreateRequest(; id, params))
 """
 addrequest!(server::Server, (id, caller)) = addrequest!(server, id, caller)
 function addrequest!(server::Server, id::String, caller::RequestCaller)
-    store!(server.state.currently_requested) do data
-        Base.PersistentDict(data, id => caller)
+    return store!(server.state.currently_requested) do data
+        Base.PersistentDict(data, id => caller), caller
     end
-    return caller
 end
 
 """
@@ -100,15 +99,13 @@ handle_requested_response(server, msg, request_caller)
 """
 function poprequest!(server::Server, @nospecialize id)
     id isa String || return nothing
-    local ret::Union{Nothing,RequestCaller} = nothing
-    store!(server.state.currently_requested) do data
+    return store!(server.state.currently_requested) do data
         if haskey(data, id)
-            ret = data[id]
-            return Base.delete(data, id)
+            caller = data[id]
+            return Base.delete(data, id), caller
         end
-        return data
+        return data, nothing
     end
-    return ret
 end
 
 """

@@ -23,10 +23,9 @@ cache_file_info!(state::ServerState, uri::URI, version::Int, text::String) =
     cache_file_info!(state, uri, version, ParseStream!(text))
 function cache_file_info!(state::ServerState, uri::URI, version::Int, parsed_stream::JS.ParseStream)
     fi = FileInfo(version, parsed_stream, uri, state.encoding)
-    store!(state.file_cache) do cache
-        Base.PersistentDict(cache, uri => fi)
+    return store!(state.file_cache) do cache
+        Base.PersistentDict(cache, uri => fi), fi
     end
-    return fi
 end
 
 """
@@ -43,9 +42,8 @@ cache_saved_file_info!(state::ServerState, uri::URI, text::String) =
 function cache_saved_file_info!(state::ServerState, uri::URI, parsed_stream::JS.ParseStream)
     sfi = SavedFileInfo(parsed_stream, uri)
     store!(state.saved_file_cache) do cache
-        Base.PersistentDict(cache, uri => sfi)
+        Base.PersistentDict(cache, uri => sfi), sfi
     end
-    return sfi
 end
 
 function handle_DidOpenTextDocumentNotification(server::Server, msg::DidOpenTextDocumentNotification)
@@ -122,13 +120,13 @@ function handle_DidCloseTextDocumentNotification(server::Server, msg::DidCloseTe
     uri = msg.params.textDocument.uri
 
     store!(server.state.file_cache) do cache
-        Base.delete(cache, uri)
+        Base.delete(cache, uri), nothing
     end
     store!(server.state.saved_file_cache) do cache
-        Base.delete(cache, uri)
+        Base.delete(cache, uri), nothing
     end
     store!(server.state.testsetinfos_cache) do cache
-        Base.delete(cache, uri)
+        Base.delete(cache, uri), nothing
     end
     if clear_extra_diagnostics!(server, uri)
         notify_diagnostics!(server)

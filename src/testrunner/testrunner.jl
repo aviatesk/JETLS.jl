@@ -44,7 +44,7 @@ function update_testsetinfos!(server::Server, uri::URI, fi::FileInfo; notify_ser
         if !iszero(m)
             local infos = TestsetInfos(fi.version, TestsetInfo[TestsetInfo(t) for t in new_testsets])
             store!(server.state.testsetinfos_cache) do c
-                Base.PersistentDict(c, uri => infos)
+                Base.PersistentDict(c, uri => infos), nothing
             end
         end
         return false
@@ -58,7 +58,7 @@ function update_testsetinfos!(server::Server, uri::URI, fi::FileInfo; notify_ser
         if iszero(n)
             # Delete the existing cache if exist
             store!(server.state.testsetinfos_cache) do c
-                Base.delete(c, uri)
+                Base.delete(c, uri), nothing
             end
         else
             # Update the cache with new version and infos
@@ -86,7 +86,7 @@ function update_testsetinfos!(server::Server, uri::URI, fi::FileInfo; notify_ser
             end
             local infos = TestsetInfos(fi.version, new_infos)
             store!(server.state.testsetinfos_cache) do c
-                Base.PersistentDict(c, uri => infos)
+                Base.PersistentDict(c, uri => infos), nothing
             end
 
             # Clear diagnostics for any removed testsets (when n > m)
