@@ -1,6 +1,6 @@
-function access_nested_dict(dict::Dict{String,Any}, path::String, rest_path::String...)
+function access_nested_dict(dict::ConfigDict, path::String, rest_path::String...)
     nextobj = @something get(dict, path, nothing) return nothing
-    if !(nextobj isa Dict{String,Any})
+    if !(nextobj isa ConfigDict)
         if isempty(rest_path)
             return nextobj
         else
@@ -11,36 +11,43 @@ function access_nested_dict(dict::Dict{String,Any}, path::String, rest_path::Str
 end
 
 """
-    traverse_merge!(on_leaf, target::Dict{String,Any},
-                    source::Dict{String,Any}, key_path::Vector{String})
+    traverse_merge(on_leaf, base::ConfigDict, overlay::ConfigDict) -> merged::ConfigDict
 
-Recursively merges `source` into `target`, traversing nested dictionaries.
-If a key in `source` is a dictionary, it will recursively merge it into the corresponding key in `target`.
-If a key in `source` is not a dictionary, the `on_leaf` function is called with:
-- `target`: the target dictionary being modified
-- `k`: the key from `source`
-- `v`: the value from `source`
-- `path`: the current path as a vector of strings
+Return a new `ConfigDict` whose key value pairs are merged from `base` and `overlay`.
 
-If the key does not exist in `target`, it will be created as an empty dictionary before merging.
+If a key in `overlay` is a dictionary, it will recursively merge it into the corresponding
+key in `base`, creating new `ConfigDict` instances along the way.
+
+When a value in `overlay` is not a dictionary, the `on_leaf` function is called with:
+- `current_path`: the current path as a vector of strings
+- `v`: the value from `overlay`
+The `on_leaf(current_path, v) -> newv` function should return the value to be stored
+in the result, or `nothing` to skip storing the key.
 """
-function traverse_merge!(on_leaf, target::Dict{String,Any},
-                         source::Dict{String,Any}, key_path::Vector{String})
-    for (k, v) in source
+function traverse_merge(
+        on_leaf, base::ConfigDict, overlay::ConfigDict,
+        key_path::Vector{String} = String[]
+    )
+    result = base
+    for (k, v) in overlay
         current_path = [key_path; k]
-        if v isa Dict{String,Any}
-            tv = get(target, k, nothing)
-            if tv isa Dict{String,Any}
-                traverse_merge!(on_leaf, tv, v, current_path)
+        if v isa ConfigDict
+            base_v = get(base, k, nothing)
+            if base_v isa ConfigDict
+                merged_v = traverse_merge(on_leaf, base_v, v, current_path)
+                result = ConfigDict(result, k => merged_v)
             else
-                tv = target[k] = Dict{String,Any}()
-                traverse_merge!(on_leaf, tv, v, current_path)
+                merged_v = traverse_merge(on_leaf, ConfigDict(), v, current_path)
+                result = ConfigDict(result, k => merged_v)
             end
         else
-            on_leaf(target, k, v, current_path)
+            on_leaf_result = on_leaf(current_path, v)
+            if on_leaf_result !== nothing
+                result = ConfigDict(result, k => on_leaf_result)
+            end
         end
     end
-    return target
+    return result
 end
 
 is_reload_required_key(key_path::String...) = access_nested_dict(CONFIG_RELOAD_REQUIRED, key_path...) === true
@@ -68,7 +75,7 @@ end
 
 function register_config!(manager::ConfigManager,
                           filepath::AbstractString,
-                          config::Dict{String,Any} = Dict{String,Any}())
+                          config::ConfigDict = ConfigDict())
     if !is_config_file(filepath)
         if JETLS_DEV_MODE
             @warn "File $filepath is not a recognized config file, skipping."
@@ -84,30 +91,25 @@ function register_config!(manager::ConfigManager,
     manager.watched_files[filepath] = config
 end
 
-selective_merge!(args...) = selective_merge!(Returns(true), args...)
-function selective_merge!(
-        on_leaf_filter, target::Dict{String,Any}, source::Dict{String,Any},
-        key_path::Vector{String} = String[]
-    )
-    traverse_merge!(target, source, key_path) do t, k, v, path
-        on_leaf_filter(path) && (t[k] = v)
-    end
+function merge_reload_required_keys(base::ConfigDict, overlay::ConfigDict)
+    return traverse_merge(base, overlay) do path, v
+        is_reload_required_key(path...) ? v : nothing
+    end |> cleanup_empty_dicts
 end
 
-function merge_reload_required_keys!(target::Dict{String,Any}, source::Dict{String,Any})
-    selective_merge!(Base.Splat(is_reload_required_key), target, source, String[])
-    cleanup_empty_dicts!(target)
-end
-
-function cleanup_empty_dicts!(dict::Dict{String,Any})
+function cleanup_empty_dicts(dict::ConfigDict)
+    result = dict
     for (k, v) in dict
-        if v isa Dict{String,Any}
-            cleanup_empty_dicts!(v)
-            if isempty(v)
-                delete!(dict, k)
+        if v isa ConfigDict
+            cleaned_v = cleanup_empty_dicts(v)
+            if isempty(cleaned_v)
+                result = Base.delete(result, k)
+            elseif cleaned_v != v
+                result = ConfigDict(result, k => cleaned_v)
             end
         end
     end
+    return result
 end
 
 """
@@ -118,56 +120,56 @@ merge them based on priority, and set them as the settings that require a reload
 for this server.
 """
 function fix_reload_required_settings!(manager::ConfigManager)
+    result = manager.reload_required_setting
     for config in Iterators.reverse(values(manager.watched_files))
-        merge_reload_required_keys!(manager.reload_required_setting, config)
+        result = merge_reload_required_keys(result, config)
     end
+    manager.reload_required_setting = result
 end
 
 """
-    collect_unmatched_keys(sub::Dict{String,Any}, base::Dict{String,Any}) -> Vector{Vector{String}}
+    collect_unmatched_keys(this::ConfigDict, ref::ConfigDict) -> Vector{Vector{String}}
 
-Traverses the keys of `sub` and returns a list of key paths that are not present in `base`.
+Traverses the keys of `this` and returns a list of key paths that are not present in `ref`.
 Note that this function does *not* perform deep structural comparison for keys whose values are dictionaries.
 
 # Examples
 ```julia-repl
 julia> collect_unmatched_keys(
-            Dict("key1" => Dict("key2" => 0, "key3"  => 0, "key4"  => 0)),
-            Dict("key1" => Dict("key2" => 0, "diff1" => 0, "diff2" => 0))
+            ConfigDict("key1" => ConfigDict("key2" => 0, "key3"  => 0, "key4"  => 0)),
+            ConfigDict("key1" => ConfigDict("key2" => 0, "diff1" => 0, "diff2" => 0))
         )
 2-element Vector{Vector{String}}:
  ["key1", "key3"]
  ["key1", "key4"]
 
 julia> collect_unmatched_keys(
-            Dict("key1" => 0, "key2" => 0),
-            Dict("key1" => 1, "key2" => 1)
+            ConfigDict("key1" => 0, "key2" => 0),
+            ConfigDict("key1" => 1, "key2" => 1)
         )
 Vector{String}[]
 
 julia> collect_unmatched_keys(
-           Dict("key1" => Dict("key2" => 0, "key3" => 0)),
-           Dict("diff" => Dict("diff" => 0, "key3" => 0))
+           ConfigDict("key1" => ConfigDict("key2" => 0, "key3" => 0)),
+           ConfigDict("diff" => ConfigDict("diff" => 0, "key3" => 0))
         )
 1-element Vector{Vector{String}}:
  ["key1"]
 ```
 """
-function collect_unmatched_keys(sub::Dict{String,Any}, base::Dict{String,Any})
+function collect_unmatched_keys(this::ConfigDict, ref::ConfigDict=DEFAULT_CONFIG)
     unknown_keys = Vector{String}[]
-    collect_unmatched_keys!(unknown_keys, sub, base, String[])
+    collect_unmatched_keys!(unknown_keys, this, ref, String[])
     return unknown_keys
 end
 
-collect_unmatched_keys(new_config::Dict{String,Any}) = collect_unmatched_keys(new_config, DEFAULT_CONFIG)
-
 function collect_unmatched_keys!(
         unknown_keys::Vector{Vector{String}},
-        sub::Dict{String,Any}, base::Dict{String,Any}, key_path::Vector{String}
+        this::ConfigDict, ref::ConfigDict, key_path::Vector{String}
     )
-    for (k, v) in sub
+    for (k, v) in this
         current_path = [key_path; k]
-        b = get(base, k, nothing)
+        b = get(ref, k, nothing)
         if b === nothing
             push!(unknown_keys, current_path)
         elseif v isa AbstractDict
@@ -181,24 +183,17 @@ function collect_unmatched_keys!(
 end
 
 """
-    merge_config!(on_reload_required, current_config::Dict{String, Any},
-                  new_config::Dict{String, Any}, key_path::Vector{String} = String[])
+    merge_config!(on_reload_required, manager::ConfigManager, filepath::AbstractString, new_config::ConfigDict)
 
-Merges `new_config` into `current_config`, updating the values in `current_config`.
+Merges `new_config` into the configuration file tracked by `manager` at `filepath`.
+Updates the configuration stored in `manager.watched_files[filepath]` by merging in the new values.
 If a key in `new_config` is marked as requiring a reload (using `is_reload_required_key`),
-the `on_reload_required` function is called with the target dictionary, value, key, and path.
+the `on_reload_required` function is called with the current config dictionary, value, key, and path.
+If the filepath is not being watched by the manager, the operation is skipped with a warning in dev mode.
 """
-function merge_config!(on_reload_required, current_config::Dict{String, Any},
-                       new_config::Dict{String, Any}, key_path::Vector{String} = String[])
-    traverse_merge!(current_config, new_config, key_path) do t, k, v, path
-        if is_reload_required_key(path...)
-            on_reload_required(t, v, k, path)
-        end
-        t[k] = v
-    end
-end
-
-function merge_config!(on_reload_required, manager::ConfigManager, filepath::AbstractString, new_config::AbstractDict)
+function merge_config!(
+        on_reload_required, manager::ConfigManager, filepath::AbstractString, new_config::ConfigDict
+    )
     current_config = get(manager.watched_files, filepath, nothing)
     if current_config === nothing
         if JETLS_DEV_MODE
@@ -206,9 +201,12 @@ function merge_config!(on_reload_required, manager::ConfigManager, filepath::Abs
         end
         return
     end
-    merge_config!(on_reload_required,
-                  current_config,
-                  new_config)
+    manager.watched_files[filepath] = traverse_merge(current_config, new_config) do path, v
+        if is_reload_required_key(path...)
+            on_reload_required(current_config, path, v)
+        end
+        v
+    end
 end
 
 """
