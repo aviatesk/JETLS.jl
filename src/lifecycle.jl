@@ -16,11 +16,10 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
 
     workspaceFolders = init_params.workspaceFolders
     if workspaceFolders !== nothing
-        for workspaceFolder in workspaceFolders
-            push!(state.workspaceFolders, workspaceFolder.uri)
-        end
+        state.workspaceFolders = URI[uri for (; uri) in workspaceFolders]
     else
         rootUri = init_params.rootUri
+        state.workspaceFolders = URI[]
         if rootUri !== nothing
             push!(state.workspaceFolders, rootUri)
         else

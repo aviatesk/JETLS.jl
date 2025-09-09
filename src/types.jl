@@ -317,7 +317,6 @@ const CurrentlyRegistered = CASContainer{Set{Registered}, CASStats}
 const CompletionResolverInfo = CASContainer{Union{Nothing,Tuple{Module,LSPostProcessor}}, CASStats}
 
 mutable struct ServerState
-    const workspaceFolders::Vector{URI}
     const file_cache::FileCache # syntactic analysis cache (synced with `textDocument/didChange`)
     const saved_file_cache::SavedFileCache # syntactic analysis cache (synced with `textDocument/didSave`)
     const testsetinfos_cache::TestsetInfosCache
@@ -327,13 +326,15 @@ mutable struct ServerState
     const currently_registered::CurrentlyRegistered
     const config_manager::ConfigManager
     const completion_resolver_info::CompletionResolverInfo
+
+    # Lifecycle fields (set after initialization request)
     encoding::PositionEncodingKind.Ty
+    workspaceFolders::Vector{URI}
     root_path::String
     root_env_path::String
     init_params::InitializeParams
     function ServerState()
         return new(
-            #=workspaceFolders=# URI[],
             #=file_cache=# FileCache(Base.PersistentDict{URI,FileInfo}()),
             #=saved_file_cache=# SavedFileCache(Base.PersistentDict{URI,SavedFileInfo}()),
             #=testsetinfos_cache=# TestsetInfosCache(Base.PersistentDict{URI,TestsetInfos}()),
