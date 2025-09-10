@@ -296,12 +296,12 @@ end
 end
 
 @testset "`is_config_file`" begin
-    @test JETLS.is_config_file("__DEFAULT_CONFIG__") === true
-    @test JETLS.is_config_file("/path/to/.JETLSConfig.toml") === true
-    @test JETLS.is_config_file(".JETLSConfig.toml") === true
-    @test JETLS.is_config_file("config.toml") === false
-    @test JETLS.is_config_file("/path/to/regular.txt") === false
-    @test JETLS.is_config_file("") === false
+    @test JETLS.is_config_file("__DEFAULT_CONFIG__")
+    @test JETLS.is_config_file("/path/to/.JETLSConfig.toml")
+    @test JETLS.is_config_file(".JETLSConfig.toml")
+    @test !JETLS.is_config_file("/path/to/Non.JETLSConfig.toml")
+    @test !JETLS.is_config_file("config.toml")
+    @test !JETLS.is_config_file("/path/to/regular.txt")
 end
 
 @testset "`is_watched_file`" begin

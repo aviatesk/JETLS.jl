@@ -52,7 +52,7 @@ end
 
 is_static_setting(key_path::String...) = access_nested_dict(STATIC_CONFIG, key_path...) === true
 
-is_config_file(filepath::AbstractString) = filepath == "__DEFAULT_CONFIG__" || endswith(filepath, ".JETLSConfig.toml")
+is_config_file(filepath::AbstractString) = filepath == "__DEFAULT_CONFIG__" || basename(filepath) == ".JETLSConfig.toml"
 
 is_watched_file(manager::ConfigManager, filepath::AbstractString) = haskey(manager.watched_files, filepath)
 
