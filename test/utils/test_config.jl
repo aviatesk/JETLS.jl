@@ -117,16 +117,16 @@ end
 
 @testset "`merge_reload_required_keys`" begin
     dict1 = JETLS.ConfigDict(
-        "performance" => JETLS.ConfigDict("full_analysis" => JETLS.ConfigDict("debounce" => 1.0)))
+        "full_analysis" => JETLS.ConfigDict("debounce" => 1.0))
     dict2 = JETLS.ConfigDict(
-        "performance" => JETLS.ConfigDict("full_analysis" => JETLS.ConfigDict("throttle" => 5.0)),
+        "full_analysis" => JETLS.ConfigDict("throttle" => 5.0),
         "testrunner" => JETLS.ConfigDict("executable" => "testrunner2"))
 
     result = JETLS.merge_reload_required_keys(dict1, dict2)
 
     # Should merge reload-required keys only
-    @test result["performance"]["full_analysis"]["debounce"] == 1.0
-    @test result["performance"]["full_analysis"]["throttle"] == 5.0
+    @test result["full_analysis"]["debounce"] == 1.0
+    @test result["full_analysis"]["throttle"] == 5.0
     # testrunner.executable should NOT be merged (it's false in CONFIG_RELOAD_REQUIRED)
     @test !haskey(result, "testrunner")
 end
@@ -271,13 +271,13 @@ end
     end
 
     # filtering with nested paths
-    let base = JETLS.ConfigDict("performance" => JETLS.ConfigDict("full_analysis" => JETLS.ConfigDict("debounce" => 1.0)))
-        overlay = JETLS.ConfigDict("performance" => JETLS.ConfigDict("full_analysis" => JETLS.ConfigDict("throttle" => 5.0)))
+    let base = JETLS.ConfigDict("full_analysis" => JETLS.ConfigDict("debounce" => 1.0))
+        overlay = JETLS.ConfigDict("full_analysis" => JETLS.ConfigDict("throttle" => 5.0))
         result = JETLS.traverse_merge(base, overlay) do path, v
-            path == ["performance", "full_analysis", "throttle"] ? v : nothing
+            path == ["full_analysis", "throttle"] ? v : nothing
         end
-        @test result["performance"]["full_analysis"]["debounce"] == 1.0
-        @test result["performance"]["full_analysis"]["throttle"] == 5.0
+        @test result["full_analysis"]["debounce"] == 1.0
+        @test result["full_analysis"]["throttle"] == 5.0
     end
 end
 
@@ -285,17 +285,15 @@ end
     default_config_origin = JETLS.CONFIG_RELOAD_REQUIRED
     try
         JETLS.CONFIG_RELOAD_REQUIRED = JETLS.ConfigDict(
-            "performance" => JETLS.ConfigDict(
-                "full_analysis" => JETLS.ConfigDict(
-                    "debounce" => true,
-                    "throttle" => false
-                )
+            "full_analysis" => JETLS.ConfigDict(
+                "debounce" => true,
+                "throttle" => false
             ),
             "simple_key" => true
         )
 
-        @test JETLS.is_reload_required_key("performance", "full_analysis", "debounce") === true
-        @test JETLS.is_reload_required_key("performance", "full_analysis", "throttle") === false
+        @test JETLS.is_reload_required_key("full_analysis", "debounce") === true
+        @test JETLS.is_reload_required_key("full_analysis", "throttle") === false
         @test JETLS.is_reload_required_key("simple_key") === true
         @test JETLS.is_reload_required_key("nonexistent") === false
         @test JETLS.is_reload_required_key("performance", "nonexistent") === false
@@ -400,22 +398,18 @@ end
     is_reload_required_key_origin = JETLS.CONFIG_RELOAD_REQUIRED
     try
         JETLS.DEFAULT_CONFIG = JETLS.ConfigDict(
-            "performance" => JETLS.ConfigDict(
-                "full_analysis" => JETLS.ConfigDict(
-                    "debounce" => 1.0,
-                    "throttle" => 5.0
-                )
+            "full_analysis" => JETLS.ConfigDict(
+                "debounce" => 1.0,
+                "throttle" => 5.0
             ),
             "testrunner" => JETLS.ConfigDict(
                 "executable" => "testrunner"
             )
         )
         JETLS.CONFIG_RELOAD_REQUIRED = JETLS.ConfigDict(
-            "performance" => JETLS.ConfigDict(
-                "full_analysis" => JETLS.ConfigDict(
-                    "debounce" => true,
-                    "throttle" => true
-                )
+            "full_analysis" => JETLS.ConfigDict(
+                "debounce" => true,
+                "throttle" => true
             ),
             "testrunner" => JETLS.ConfigDict(
                 "executable" => false
@@ -425,14 +419,10 @@ end
         # test priority handling
         let manager = JETLS.ConfigManager()
             high_priority_config = JETLS.ConfigDict(
-                "performance" => JETLS.ConfigDict(
-                    "full_analysis" => JETLS.ConfigDict("debounce" => 2.0)
-                )
+                "full_analysis" => JETLS.ConfigDict("debounce" => 2.0)
             )
             low_priority_config = JETLS.ConfigDict(
-                "performance" => JETLS.ConfigDict(
-                    "full_analysis" => JETLS.ConfigDict("debounce" => 999.0)
-                ),
+                "full_analysis" => JETLS.ConfigDict("debounce" => 999.0),
                 "testrunner" => JETLS.ConfigDict("executable" => "custom")
             )
 
@@ -441,7 +431,7 @@ end
             JETLS.fix_reload_required_settings!(manager)
 
             # high priority should win for reload-required keys
-            @test manager.reload_required_setting["performance"]["full_analysis"]["debounce"] == 2.0
+            @test manager.reload_required_setting["full_analysis"]["debounce"] == 2.0
             # testrunner.executable is not reload-required, so should not be in reload_required_setting
             @test !haskey(manager.reload_required_setting, "testrunner")
         end
