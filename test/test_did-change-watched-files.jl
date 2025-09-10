@@ -69,18 +69,17 @@ const TESTRUNNER_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
                 executable = \"$TESTRUNNER_STARTUP\"
                 """)
 
-            change_notification = DidChangeWatchedFilesNotification(;
-                params=DidChangeWatchedFilesParams(;
-                    changes=[FileEvent(; uri=filepath2uri(config_path), type=FileChangeType.Changed)]
+            let msg = DidChangeWatchedFilesNotification(;
+                    params=DidChangeWatchedFilesParams(;
+                        changes=[FileEvent(; uri=filepath2uri(config_path), type=FileChangeType.Changed)]
+                    )
                 )
-            )
-            (; raw_res) = writereadmsg(change_notification)
-
-            @test raw_res isa ShowMessageNotification
-            @test raw_res.method == "window/showMessage"
-            @test raw_res.params.type == MessageType.Warning
-            @test occursin("full_analysis.debounce", raw_res.params.message)
-            @test occursin("restart", raw_res.params.message)
+                (; raw_res) = writereadmsg(msg)
+                @test raw_res isa ShowMessageNotification
+                @test raw_res.params.type == MessageType.Warning
+                @test occursin("full_analysis.debounce", raw_res.params.message)
+                @test occursin("restart", raw_res.params.message)
+            end
 
             # Static setting should not be changed
             @test JETLS.get_config(manager, "full_analysis", "debounce") == DEBOUNCE_STARTUP
@@ -97,19 +96,19 @@ const TESTRUNNER_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
                 executable = \"$TESTRUNNER_STARTUP\"
                 """)
 
-            change_notification1 = DidChangeWatchedFilesNotification(;
-                params=DidChangeWatchedFilesParams(;
-                    changes=[FileEvent(; uri=filepath2uri(config_path), type=FileChangeType.Changed)]
+            let msg = DidChangeWatchedFilesNotification(;
+                    params=DidChangeWatchedFilesParams(;
+                        changes=[FileEvent(; uri=filepath2uri(config_path), type=FileChangeType.Changed)]
+                    )
                 )
-            )
-            (; raw_res) = writereadmsg(change_notification1)
-            @test raw_res isa ShowMessageNotification
-            @test raw_res.method == "window/showMessage"
-            @test raw_res.params.type == MessageType.Warning
-            # only changed keys should be reported
-            @test occursin("throttle", raw_res.params.message)
-            @test !occursin("debounce", raw_res.params.message)
-            @test occursin("restart", raw_res.params.message)
+                (; raw_res) = writereadmsg(msg)
+                @test raw_res isa ShowMessageNotification
+                @test raw_res.params.type == MessageType.Warning
+                # only changed keys should be reported
+                @test occursin("throttle", raw_res.params.message)
+                @test !occursin("debounce", raw_res.params.message)
+                @test occursin("restart", raw_res.params.message)
+            end
 
             # `full_analysis.throttle` should not be changed (static)
             @test JETLS.get_config(manager, "full_analysis", "throttle") == THROTTLE_DEFAULT
@@ -123,12 +122,19 @@ const TESTRUNNER_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
                 executable = \"$TESTRUNNER_V2\"
                 """)
 
-            change_notification2 = DidChangeWatchedFilesNotification(;
-                params=DidChangeWatchedFilesParams(;
-                    changes=[FileEvent(; uri=filepath2uri(config_path), type=FileChangeType.Changed)]
+            let msg = DidChangeWatchedFilesNotification(;
+                    params=DidChangeWatchedFilesParams(;
+                        changes=[FileEvent(; uri=filepath2uri(config_path), type=FileChangeType.Changed)]
+                    )
                 )
-            )
-            writereadmsg(change_notification2; read=0)
+                (; raw_res) = writereadmsg(msg)
+                @test raw_res isa ShowMessageNotification
+                @test raw_res.params.type == MessageType.Info
+                # only changed keys should be reported
+                @test !occursin("throttle", raw_res.params.message)
+                @test !occursin("debounce", raw_res.params.message)
+                @test occursin("testrunner", raw_res.params.message)
+            end
 
             # testrunner.executable should be updated in both configs (dynamic)
             @test JETLS.get_config(manager, "testrunner", "executable") == TESTRUNNER_V2
@@ -138,32 +144,31 @@ const TESTRUNNER_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
                 [full_analysis]
                 ___unknown_key___ = \"value\"
                 """)
-
-            change_notification3 = DidChangeWatchedFilesNotification(;
-                params=DidChangeWatchedFilesParams(;
-                    changes=[FileEvent(; uri=filepath2uri(config_path), type=FileChangeType.Changed)]
+            let msg = DidChangeWatchedFilesNotification(;
+                    params=DidChangeWatchedFilesParams(;
+                        changes=[FileEvent(; uri=filepath2uri(config_path), type=FileChangeType.Changed)]
+                    )
                 )
-            )
-            (; raw_res) = writereadmsg(change_notification3)
-            @test raw_res isa ShowMessageNotification
-            @test raw_res.method == "window/showMessage"
-            @test raw_res.params.type == MessageType.Error
-            @test occursin("unknown keys", raw_res.params.message)
-            @test occursin("full_analysis.___unknown_key___", raw_res.params.message)
+                (; raw_res) = writereadmsg(msg)
+                @test raw_res isa ShowMessageNotification
+                @test raw_res.params.type == MessageType.Error
+                @test occursin("unknown keys", raw_res.params.message)
+                @test occursin("full_analysis.___unknown_key___", raw_res.params.message)
+            end
 
             # Delete the config file
             rm(config_path)
-            deletion_notification = DidChangeWatchedFilesNotification(;
-                params=DidChangeWatchedFilesParams(;
-                    changes=[FileEvent(; uri=filepath2uri(config_path), type=FileChangeType.Deleted)]
+            let msg = DidChangeWatchedFilesNotification(;
+                    params=DidChangeWatchedFilesParams(;
+                        changes=[FileEvent(; uri=filepath2uri(config_path), type=FileChangeType.Deleted)]
+                    )
                 )
-            )
-            (; raw_res) = writereadmsg(deletion_notification)
-            @test raw_res isa ShowMessageNotification
-            @test raw_res.method == "window/showMessage"
-            @test raw_res.params.type == MessageType.Warning
-            @test occursin("deleted", raw_res.params.message)
-            @test occursin("restart", raw_res.params.message)
+                (; raw_res) = writereadmsg(msg)
+                @test raw_res isa ShowMessageNotification
+                @test raw_res.params.type == MessageType.Warning
+                @test occursin("Deleted", raw_res.params.message)
+                @test occursin("restart", raw_res.params.message)
+            end
 
             # After deletion,
             # - for static keys, `get_config` should remain unchanged
@@ -185,17 +190,17 @@ const TESTRUNNER_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
                 executable = \"$TESTRUNNER_RECREATE\"
                 """)
 
-            re_creation_notification = DidChangeWatchedFilesNotification(;
-                params=DidChangeWatchedFilesParams(;
-                    changes=[FileEvent(; uri=filepath2uri(config_path), type=FileChangeType.Created)]
+            let msg = DidChangeWatchedFilesNotification(;
+                    params=DidChangeWatchedFilesParams(;
+                        changes=[FileEvent(; uri=filepath2uri(config_path), type=FileChangeType.Created)]
+                    )
                 )
-            )
-            (; raw_res) = writereadmsg(re_creation_notification)
-            @test raw_res isa ShowMessageNotification
-            @test raw_res.method == "window/showMessage"
-            @test raw_res.params.type == MessageType.Warning
-            @test occursin("create", raw_res.params.message)
-            @test occursin("restart", raw_res.params.message)
+                (; raw_res) = writereadmsg(msg)
+                @test raw_res isa ShowMessageNotification
+                @test raw_res.params.type == MessageType.Warning
+                @test occursin("Created", raw_res.params.message)
+                @test occursin("restart", raw_res.params.message)
+            end
 
             # `config_path` should be registered again
             @test haskey(manager.watched_files, config_path)
@@ -209,12 +214,13 @@ const TESTRUNNER_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
             # non-config file change (should be ignored)
             other_file = joinpath(tmpdir, "other.txt")
             touch(other_file)
-            other_change_notification = DidChangeWatchedFilesNotification(;
-                params=DidChangeWatchedFilesParams(;
-                    changes=[FileEvent(; uri=filepath2uri(other_file), type=FileChangeType.Changed)]
+            let msg = DidChangeWatchedFilesNotification(;
+                    params=DidChangeWatchedFilesParams(;
+                        changes=[FileEvent(; uri=filepath2uri(other_file), type=FileChangeType.Changed)]
+                    )
                 )
-            )
-            writereadmsg(other_change_notification; read=0)
+                writereadmsg(msg; read=0)
+            end
             # no effect on config
             @test JETLS.get_config(manager, "full_analysis", "debounce") == DEBOUNCE_STARTUP
             @test JETLS.get_config(manager, "testrunner", "executable") == TESTRUNNER_RECREATE
@@ -248,9 +254,8 @@ end
             )
             (; raw_res) = writereadmsg(creation_notification)
             @test raw_res isa ShowMessageNotification
-            @test raw_res.method == "window/showMessage"
             @test raw_res.params.type == MessageType.Warning
-            @test occursin("create", raw_res.params.message)
+            @test occursin("Created", raw_res.params.message)
             @test occursin("restart", raw_res.params.message)
             @test haskey(manager.watched_files, config_path)
 
@@ -277,9 +282,9 @@ end
             (; raw_res) = writereadmsg(change_notification)
 
             @test raw_res isa ShowMessageNotification
-            @test raw_res.method == "window/showMessage"
             @test raw_res.params.type == MessageType.Warning
-            @test occursin("full_analysis.debounce", raw_res.params.message)
+            @test occursin("Updated", raw_res.params.message)
+            @test occursin("`full_analysis.debounce`", raw_res.params.message)
             @test occursin("restart", raw_res.params.message)
             @test JETLS.get_config(manager, "full_analysis", "debounce") == DEBOUNCE_DEFAULT
             @test JETLS.get_config(manager, "testrunner", "executable") == TESTRUNNER_V2

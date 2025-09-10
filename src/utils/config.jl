@@ -1,3 +1,24 @@
+# TODO (later): move this definition to external files
+const DEFAULT_CONFIG = ConfigDict(
+    "full_analysis" => ConfigDict(
+        "debounce" => 1.0,
+        "throttle" => 5.0
+    ),
+    "testrunner" => ConfigDict(
+        "executable" => "testrunner"
+    ),
+)
+
+const STATIC_CONFIG = ConfigDict(
+    "full_analysis" => ConfigDict(
+        "debounce" => true,
+        "throttle" => true
+    ),
+    "testrunner" => ConfigDict(
+        "executable" => false
+    ),
+)
+
 function access_nested_dict(dict::ConfigDict, path::String, rest_path::String...)
     nextobj = @something get(dict, path, nothing) return nothing
     if !(nextobj isa ConfigDict)
@@ -73,30 +94,6 @@ function Base.lt(::ConfigFileOrder, path1, path2)
     return false # unreachable
 end
 
-function register_config!(manager::ConfigManager,
-                          filepath::AbstractString,
-                          config::ConfigDict = ConfigDict())
-    if !is_config_file(filepath)
-        if JETLS_DEV_MODE
-            @warn "File $filepath is not a recognized config file, skipping."
-        end
-        return
-    end
-    if haskey(manager.watched_files, filepath)
-        if JETLS_DEV_MODE
-            @warn "File $filepath is already being watched, skipping."
-        end
-        return
-    end
-    manager.watched_files[filepath] = config
-end
-
-function merge_static_settings(base::ConfigDict, overlay::ConfigDict)
-    return traverse_merge(base, overlay) do path, v
-        is_static_setting(path...) ? v : nothing
-    end |> cleanup_empty_dicts
-end
-
 function cleanup_empty_dicts(dict::ConfigDict)
     result = dict
     for (k, v) in dict
@@ -112,6 +109,34 @@ function cleanup_empty_dicts(dict::ConfigDict)
     return result
 end
 
+function merge_settings(base::ConfigDict, overlay::ConfigDict)
+    return traverse_merge(base, overlay) do _, v
+        v
+    end |> cleanup_empty_dicts
+end
+
+function get_settings(manager::ConfigManager)
+    result = ConfigDict()
+    for config in Iterators.reverse(values(manager.watched_files))
+        result = merge_settings(result, config)
+    end
+    return result
+end
+
+function merge_static_settings(base::ConfigDict, overlay::ConfigDict)
+    return traverse_merge(base, overlay) do path, v
+        is_static_setting(path...) ? v : nothing
+    end |> cleanup_empty_dicts
+end
+
+function get_static_settings(manager::ConfigManager)
+    result = ConfigDict()
+    for config in Iterators.reverse(values(manager.watched_files))
+        result = merge_static_settings(result, config)
+    end
+    return result
+end
+
 """
     fix_static_settings!(manager::ConfigManager)
 
@@ -120,11 +145,7 @@ merge them based on priority, and set them as the settings that require a reload
 for this server.
 """
 function fix_static_settings!(manager::ConfigManager)
-    result = manager.static_settings
-    for config in Iterators.reverse(values(manager.watched_files))
-        result = merge_static_settings(result, config)
-    end
-    manager.static_settings = result
+    return manager.static_settings = get_static_settings(manager)
 end
 
 """
@@ -183,30 +204,33 @@ function collect_unmatched_keys!(
 end
 
 """
-    merge_config!(on_static_setting, manager::ConfigManager, filepath::AbstractString, new_config::ConfigDict)
+    merge_config!(on_leaf, manager::ConfigManager, filepath::AbstractString, new_config::ConfigDict)
 
 Merges `new_config` into the configuration file tracked by `manager` at `filepath`.
 Updates the configuration stored in `manager.watched_files[filepath]` by merging in the new values.
 If a key in `new_config` is marked as requiring a reload (using `is_static_setting`),
-the `on_static_setting` function is called with the current config dictionary, path, and value.
+the `on_leaf` function is called with the current config dictionary, path, and value.
 If the filepath is not being watched by the manager, the operation is skipped with a warning in dev mode.
 """
 function merge_config!(
-        on_static_setting, manager::ConfigManager, filepath::AbstractString, new_config::ConfigDict
+        on_leaf, manager::ConfigManager, filepath::AbstractString, new_config::ConfigDict
     )
-    current_config = get(manager.watched_files, filepath, nothing)
-    if current_config === nothing
-        if JETLS_DEV_MODE
-            @warn "File $filepath is not being watched, skipping merge."
-        end
-        return
-    end
+    current_config = get(manager.watched_files, filepath, DEFAULT_CONFIG)
     manager.watched_files[filepath] = traverse_merge(current_config, new_config) do path, v
-        if is_static_setting(path...)
-            on_static_setting(current_config, path, v)
-        end
+        on_leaf(current_config, path, v)
         v
     end
+end
+
+function delete_config!(on_leaf, manager::ConfigManager, filepath::AbstractString)
+    old = get_settings(manager)
+    delete!(manager.watched_files, filepath)
+    new = get_settings(manager)
+    traverse_merge(old, new) do path, v
+        on_leaf(old, path, v)
+        nothing
+    end
+    return nothing
 end
 
 """
@@ -217,7 +241,8 @@ Among the registered configuration files, fetches the value in order of priority
 If the key path does not exist in any of the configurations, returns `nothing`.
 """
 function get_config(manager::ConfigManager, key_path::String...)
-    is_static_setting(key_path...) && return access_nested_dict(manager.static_settings, key_path...)
+    is_static_setting(key_path...) &&
+        return access_nested_dict(manager.static_settings, key_path...)
     for config in values(manager.watched_files)
         v = access_nested_dict(config, key_path...)
         if v !== nothing
@@ -226,3 +251,34 @@ function get_config(manager::ConfigManager, key_path::String...)
     end
     return nothing
 end
+
+"""
+Loads the configuration from the specified path into the server's config manager.
+
+If the file does not exist or cannot be parsed, current configuration remains unchanged.
+When there are unknown keys in the config file, send error by `workspace/showMessage`
+and **current configuration is not changed.**
+"""
+function load_config!(on_leaf, server::Server, path::AbstractString)
+    isfile(path) || return
+    parsed = TOML.tryparsefile(path)
+    parsed isa TOML.ParserError && return # just skip to reduce noise while typing
+    config_dict = to_config_dict(parsed)
+
+    unknown_keys = collect_unmatched_keys(config_dict)
+    if !isempty(unknown_keys)
+        show_error_message(server, """
+            Configuration file at $path contains unknown keys:
+            $(join(map(x -> string('`', join(x, "."), '`'), unknown_keys), ", "))
+            """)
+        return
+    end
+
+    merge_config!(on_leaf,
+                  server.state.config_manager,
+                  path,
+                  config_dict)
+end
+
+to_config_dict(dict::Dict{String,Any}) = ConfigDict(
+    (k => (v isa Dict{String,Any} ? to_config_dict(v) : v) for (k, v) in dict)...)
