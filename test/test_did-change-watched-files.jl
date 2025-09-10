@@ -47,10 +47,10 @@ const TESTRUNNER_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
         withserver(; rootUri, capabilities=CLIENT_CAPABILITIES) do (; writereadmsg, server)
             manager = server.state.config_manager
 
-            # after initialization, manager should have the fixed config for reload required keys
-            @test JETLS.access_nested_dict(manager.reload_required_setting,
+            # after initialization, manager should have the fixed config for static keys
+            @test JETLS.access_nested_dict(manager.static_settings,
                 "full_analysis", "debounce") == DEBOUNCE_STARTUP
-            @test JETLS.access_nested_dict(manager.reload_required_setting,
+            @test JETLS.access_nested_dict(manager.static_settings,
                 "full_analysis", "throttle") == THROTTLE_DEFAULT
 
             @test haskey(manager.watched_files, config_path)
@@ -82,7 +82,7 @@ const TESTRUNNER_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
             @test occursin("full_analysis.debounce", raw_res.params.message)
             @test occursin("restart", raw_res.params.message)
 
-            # Config should not be changed (reload required)
+            # Static setting should not be changed
             @test JETLS.get_config(manager, "full_analysis", "debounce") == DEBOUNCE_STARTUP
             # But config dict should be updated to avoid showing the same message again
             @test manager.watched_files[config_path]["full_analysis"]["debounce"] == DEBOUNCE_V2
@@ -111,7 +111,7 @@ const TESTRUNNER_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
             @test !occursin("debounce", raw_res.params.message)
             @test occursin("restart", raw_res.params.message)
 
-            # `full_analysis.throttle` should not be changed (reload required)
+            # `full_analysis.throttle` should not be changed (static)
             @test JETLS.get_config(manager, "full_analysis", "throttle") == THROTTLE_DEFAULT
 
             # Change `testrunner.executable` to "newtestrunner"
@@ -130,7 +130,7 @@ const TESTRUNNER_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
             )
             writereadmsg(change_notification2; read=0)
 
-            # testrunner.executable should be updated in both configs (no reload required)
+            # testrunner.executable should be updated in both configs (dynamic)
             @test JETLS.get_config(manager, "testrunner", "executable") == TESTRUNNER_V2
 
             # unknown keys should be reported
@@ -166,9 +166,9 @@ const TESTRUNNER_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
             @test occursin("restart", raw_res.params.message)
 
             # After deletion,
-            # - for reload required keys, `get_config` should remain unchanged
+            # - for static keys, `get_config` should remain unchanged
             @test JETLS.get_config(manager, "full_analysis", "debounce") == DEBOUNCE_STARTUP
-            # -  For non-reload required keys, replace with value from the next highest-priority config file. (`__DEFAULT_CONFIG__`)
+            # -  For non-static keys, replace with value from the next highest-priority config file. (`__DEFAULT_CONFIG__`)
             @test JETLS.get_config(manager, "testrunner", "executable") == TESTRUNNER_DEFAULT
 
             # remove the config file from watched files
@@ -199,11 +199,11 @@ const TESTRUNNER_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
 
             # `config_path` should be registered again
             @test haskey(manager.watched_files, config_path)
-            # reload required keys should not be changed even if higher priority config file is re-created
+            # static keys should not be changed even if higher priority config file is re-created
             @test JETLS.get_config(manager, "full_analysis", "debounce") == DEBOUNCE_STARTUP
             @test JETLS.access_nested_dict(manager.watched_files[config_path],
                 "full_analysis", "debounce") == DEBOUNCE_RECREATE
-            # non-reload required keys should be updated
+            # non-static keys should be updated
             @test JETLS.get_config(manager, "testrunner", "executable") == TESTRUNNER_RECREATE
 
             # non-config file change (should be ignored)
@@ -255,9 +255,9 @@ end
             @test haskey(manager.watched_files, config_path)
 
             # If higher priority config file is created,
-            # - reload required keys should not be changed
+            # - static keys should not be changed
             @test JETLS.get_config(manager, "full_analysis", "debounce") == DEBOUNCE_DEFAULT
-            # - non-reload required keys should be updated
+            # - non-static keys should be updated
             @test JETLS.get_config(manager, "testrunner", "executable") == TESTRUNNER_RECREATE
 
             # New config file change also should be watched

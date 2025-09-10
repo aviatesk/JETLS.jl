@@ -254,7 +254,7 @@ const DEFAULT_CONFIG = ConfigDict(
     ),
 )
 
-const CONFIG_RELOAD_REQUIRED = ConfigDict(
+const STATIC_CONFIG = ConfigDict(
     "full_analysis" => ConfigDict(
         "debounce" => true,
         "throttle" => true
@@ -313,7 +313,7 @@ end
 
 struct ConfigFileOrder <: Base.Ordering end
 mutable struct ConfigManager
-    reload_required_setting::ConfigDict     # settings that are not changed during the server lifetime
+    static_settings::ConfigDict             # settings that should be static throughout the server lifetime
     const watched_files::WatchedConfigFiles # watched configuration files
 end
 ConfigManager() = ConfigManager(ConfigDict(), WatchedConfigFiles())
