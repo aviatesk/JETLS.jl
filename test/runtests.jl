@@ -14,10 +14,10 @@ end
         @testset "lsp" include("utils/test_lsp.jl")
         @testset "path" include("utils/test_path.jl")
         @testset "markdown" include("utils/test_markdown.jl")
-        @testset "config" include("utils/test_config.jl")
         @testset "string" include("utils/test_string.jl")
     end
     @testset "types" include("test_types.jl")
+    @testset "config" include("test_config.jl")
     @testset "URIs2" include("test_URIs2.jl")
     @testset "registration" include("test_registration.jl")
     @testset "resolver" include("test_resolver.jl")
