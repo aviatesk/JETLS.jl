@@ -38,7 +38,7 @@ function initialize_config!(server::Server)
         end
     end
 
-    fix_reload_required_settings!(server.state.config_manager)
+    fix_static_settings!(server.state.config_manager)
 end
 
 """
@@ -48,7 +48,7 @@ If the file does not exist or cannot be parsed, current configuration remains un
 When there are unknown keys in the config file, send error by `workspace/showMessage`
 and **current configuration is not changed.**
 """
-function load_config!(on_reload_required, server::Server, path::AbstractString)
+function load_config!(on_static_setting, server::Server, path::AbstractString)
     isfile(path) || return
     parsed = TOML.tryparsefile(path)
     parsed isa TOML.ParserError && return # just skip to reduce noise while typing
@@ -64,7 +64,7 @@ function load_config!(on_reload_required, server::Server, path::AbstractString)
         return
     end
 
-    merge_config!(on_reload_required,
+    merge_config!(on_static_setting,
                   server.state.config_manager,
                   path,
                   config_dict)

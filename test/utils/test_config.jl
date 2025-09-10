@@ -15,12 +15,12 @@ const TEST_DICT = JETLS.ConfigDict(
 )
 
 const TEST_DICT_DIFFERENT_VALUE = JETLS.ConfigDict(
-    "test_key1" => "newvalue_1",  # different value (reload required)
+    "test_key1" => "newvalue_1",  # different value (static)
     "test_key2" => JETLS.ConfigDict(
         "nested_key1" => "nested_value1",
         "nested_key2" => JETLS.ConfigDict(
-            "deep_nested_key1" => "newvalue_2", # different value (reload required)
-            "deep_nested_key2" => "newvalue_3"  # different value (reload not required)
+            "deep_nested_key1" => "newvalue_2", # different value (static)
+            "deep_nested_key2" => "newvalue_3"  # different value (dynamic)
         )
     )
 )
@@ -104,19 +104,19 @@ const TEST_DICT_DIFFERENT_KEY = JETLS.ConfigDict(
     end
 end
 
-@testset "`merge_reload_required_keys`" begin
+@testset "`merge_static_settings`" begin
     dict1 = JETLS.ConfigDict(
         "full_analysis" => JETLS.ConfigDict("debounce" => 1.0))
     dict2 = JETLS.ConfigDict(
         "full_analysis" => JETLS.ConfigDict("throttle" => 5.0),
         "testrunner" => JETLS.ConfigDict("executable" => "testrunner2"))
 
-    result = JETLS.merge_reload_required_keys(dict1, dict2)
+    result = JETLS.merge_static_settings(dict1, dict2)
 
-    # Should merge reload-required keys only
+    # Should merge static keys only
     @test result["full_analysis"]["debounce"] == 1.0
     @test result["full_analysis"]["throttle"] == 5.0
-    # testrunner.executable should NOT be merged (it's false in CONFIG_RELOAD_REQUIRED)
+    # testrunner.executable should NOT be merged (it's false in STATIC_CONFIG)
     @test !haskey(result, "testrunner")
 end
 
@@ -176,7 +176,7 @@ end
         )
 
         JETLS.register_config!(manager, "/foo/bar/.JETLSConfig.toml", test_config)
-        JETLS.fix_reload_required_settings!(manager)
+        JETLS.fix_static_settings!(manager)
 
         @test JETLS.get_config(manager, "full_analysis", "debounce") === 2.0
         @test JETLS.get_config(manager, "full_analysis", "throttle") === 10.0
@@ -197,26 +197,26 @@ end
         @test JETLS.get_config(manager, "full_analysis", "debounce") === 2.0
         @test JETLS.get_config(manager, "testrunner", "executable") === "test_runner"
 
-        # Test merge_config! with reload required callback
-        changed_reload_required = Set{String}()
+        # Test merge_config! with the on_static_setting callback
+        changed_reload_required_keysstatic = Set{String}()
         updated_config = JETLS.ConfigDict(
             "full_analysis" => JETLS.ConfigDict(
-                "debounce" => 3.0,  # reload required
-                "throttle" => 15.0   # reload required
+                "debounce" => 3.0,  # static
+                "throttle" => 15.0   # static
             ),
             "testrunner" => JETLS.ConfigDict(
-                "executable" => "new_runner"  # not reload required
+                "executable" => "new_runner"  # not static
             )
         )
         JETLS.merge_config!(manager, "/foo/bar/.JETLSConfig.toml", updated_config) do _, path, _
-            push!(changed_reload_required, join(path, "."))
+            push!(changed_reload_required_keysstatic, join(path, "."))
         end
 
-        # on_reload_required should be called for reload-required keys
-        @test changed_reload_required == Set(["full_analysis.debounce", "full_analysis.throttle"])
-        # non reload_required keys should be changed dynamically
+        # `on_static_setting` should be called for static keys
+        @test changed_reload_required_keysstatic == Set(["full_analysis.debounce", "full_analysis.throttle"])
+        # non static keys should be changed dynamically
         @test JETLS.get_config(manager, "testrunner", "executable") == "new_runner"
-        # reload_required keys should NOT change (they stay at the fixed values)
+        # static keys should NOT change (they stay at the fixed values)
         @test JETLS.get_config(manager, "full_analysis", "debounce") == 2.0
         @test JETLS.get_config(manager, "full_analysis", "throttle") == 10.0
     end
@@ -287,12 +287,12 @@ end
     end
 end
 
-@testset "`is_reload_required_key`" begin
-    @test JETLS.is_reload_required_key("full_analysis", "debounce")
-    @test JETLS.is_reload_required_key("full_analysis", "throttle")
-    @test !JETLS.is_reload_required_key("testrunner", "executable")
-    @test !JETLS.is_reload_required_key("nonexistent")
-    @test !JETLS.is_reload_required_key("full_analysis", "nonexistent")
+@testset "`is_static_setting`" begin
+    @test JETLS.is_static_setting("full_analysis", "debounce")
+    @test JETLS.is_static_setting("full_analysis", "throttle")
+    @test !JETLS.is_static_setting("testrunner", "executable")
+    @test !JETLS.is_static_setting("nonexistent")
+    @test !JETLS.is_static_setting("full_analysis", "nonexistent")
 end
 
 @testset "`is_config_file`" begin
@@ -386,7 +386,7 @@ end
     end
 end
 
-@testset "`fix_reload_required_settings!` priority handling" begin
+@testset "`fix_static_settings!` priority handling" begin
     manager = JETLS.ConfigManager()
     high_priority_config = JETLS.ConfigDict(
         "full_analysis" => JETLS.ConfigDict("debounce" => 2.0, "throttle" => 10.0)
@@ -398,13 +398,13 @@ end
 
     JETLS.register_config!(manager, "__DEFAULT_CONFIG__", low_priority_config)
     JETLS.register_config!(manager, "/path/.JETLSConfig.toml", high_priority_config)
-    JETLS.fix_reload_required_settings!(manager)
+    JETLS.fix_static_settings!(manager)
 
-    # high priority should win for reload-required keys
-    @test manager.reload_required_setting["full_analysis"]["debounce"] == 2.0
-    @test manager.reload_required_setting["full_analysis"]["throttle"] == 10.0
-    # testrunner.executable is not reload-required, so should not be in reload_required_setting
-    @test !haskey(manager.reload_required_setting, "testrunner")
+    # high priority should win for the static keys
+    @test manager.static_settings["full_analysis"]["debounce"] == 2.0
+    @test manager.static_settings["full_analysis"]["throttle"] == 10.0
+    # testrunner.executable is not static, so should not be in `static_settings`
+    @test !haskey(manager.static_settings, "testrunner")
 end
 
 end # test_config

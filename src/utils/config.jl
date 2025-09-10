@@ -50,7 +50,7 @@ function traverse_merge(
     return result
 end
 
-is_reload_required_key(key_path::String...) = access_nested_dict(CONFIG_RELOAD_REQUIRED, key_path...) === true
+is_static_setting(key_path::String...) = access_nested_dict(STATIC_CONFIG, key_path...) === true
 
 is_config_file(filepath::AbstractString) = filepath == "__DEFAULT_CONFIG__" || endswith(filepath, ".JETLSConfig.toml")
 
@@ -91,9 +91,9 @@ function register_config!(manager::ConfigManager,
     manager.watched_files[filepath] = config
 end
 
-function merge_reload_required_keys(base::ConfigDict, overlay::ConfigDict)
+function merge_static_settings(base::ConfigDict, overlay::ConfigDict)
     return traverse_merge(base, overlay) do path, v
-        is_reload_required_key(path...) ? v : nothing
+        is_static_setting(path...) ? v : nothing
     end |> cleanup_empty_dicts
 end
 
@@ -113,18 +113,18 @@ function cleanup_empty_dicts(dict::ConfigDict)
 end
 
 """
-    fix_reload_required_settings!(manager::ConfigManager)
+    fix_static_settings!(manager::ConfigManager)
 
-Traverse the reload-required settings from the currently registered config files,
+Traverse the static settings from the currently registered config files,
 merge them based on priority, and set them as the settings that require a reload
 for this server.
 """
-function fix_reload_required_settings!(manager::ConfigManager)
-    result = manager.reload_required_setting
+function fix_static_settings!(manager::ConfigManager)
+    result = manager.static_settings
     for config in Iterators.reverse(values(manager.watched_files))
-        result = merge_reload_required_keys(result, config)
+        result = merge_static_settings(result, config)
     end
-    manager.reload_required_setting = result
+    manager.static_settings = result
 end
 
 """
@@ -183,16 +183,16 @@ function collect_unmatched_keys!(
 end
 
 """
-    merge_config!(on_reload_required, manager::ConfigManager, filepath::AbstractString, new_config::ConfigDict)
+    merge_config!(on_static_setting, manager::ConfigManager, filepath::AbstractString, new_config::ConfigDict)
 
 Merges `new_config` into the configuration file tracked by `manager` at `filepath`.
 Updates the configuration stored in `manager.watched_files[filepath]` by merging in the new values.
-If a key in `new_config` is marked as requiring a reload (using `is_reload_required_key`),
-the `on_reload_required` function is called with the current config dictionary, value, key, and path.
+If a key in `new_config` is marked as requiring a reload (using `is_static_setting`),
+the `on_static_setting` function is called with the current config dictionary, value, key, and path.
 If the filepath is not being watched by the manager, the operation is skipped with a warning in dev mode.
 """
 function merge_config!(
-        on_reload_required, manager::ConfigManager, filepath::AbstractString, new_config::ConfigDict
+        on_static_setting, manager::ConfigManager, filepath::AbstractString, new_config::ConfigDict
     )
     current_config = get(manager.watched_files, filepath, nothing)
     if current_config === nothing
@@ -202,8 +202,8 @@ function merge_config!(
         return
     end
     manager.watched_files[filepath] = traverse_merge(current_config, new_config) do path, v
-        if is_reload_required_key(path...)
-            on_reload_required(current_config, path, v)
+        if is_static_setting(path...)
+            on_static_setting(current_config, path, v)
         end
         v
     end
@@ -217,7 +217,7 @@ Among the registered configuration files, fetches the value in order of priority
 If the key path does not exist in any of the configurations, returns `nothing`.
 """
 function get_config(manager::ConfigManager, key_path::String...)
-    is_reload_required_key(key_path...) && return access_nested_dict(manager.reload_required_setting, key_path...)
+    is_static_setting(key_path...) && return access_nested_dict(manager.static_settings, key_path...)
     for config in values(manager.watched_files)
         v = access_nested_dict(config, key_path...)
         if v !== nothing
