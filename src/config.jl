@@ -7,15 +7,21 @@ const DEFAULT_CONFIG = ConfigDict(
     "testrunner" => ConfigDict(
         "executable" => "testrunner"
     ),
+    "internal" => ConfigDict(
+        "static_setting" => 0
+    ),
 )
 
 const STATIC_CONFIG = ConfigDict(
     "full_analysis" => ConfigDict(
-        "debounce" => true,
-        "throttle" => true
+        "debounce" => false,
+        "throttle" => false
     ),
     "testrunner" => ConfigDict(
         "executable" => false
+    ),
+    "internal" => ConfigDict(
+        "static_setting" => true
     ),
 )
 

@@ -106,16 +106,15 @@ end
 
 @testset "`merge_static_settings`" begin
     dict1 = JETLS.ConfigDict(
-        "full_analysis" => JETLS.ConfigDict("debounce" => 1.0))
+        "internal" => JETLS.ConfigDict("static_setting" => 42))
     dict2 = JETLS.ConfigDict(
-        "full_analysis" => JETLS.ConfigDict("throttle" => 5.0),
+        "internal" => JETLS.ConfigDict("static_setting" => 99),
         "testrunner" => JETLS.ConfigDict("executable" => "testrunner2"))
 
     result = JETLS.merge_static_settings(dict1, dict2)
 
     # Should merge static keys only
-    @test result["full_analysis"]["debounce"] == 1.0
-    @test result["full_analysis"]["throttle"] == 5.0
+    @test result["internal"]["static_setting"] == 99
     # testrunner.executable should NOT be merged (it's false in STATIC_CONFIG)
     @test !haskey(result, "testrunner")
 end
@@ -172,6 +171,9 @@ end
             ),
             "testrunner" => JETLS.ConfigDict(
                 "executable" => "test_runner"
+            ),
+            "internal" => JETLS.ConfigDict(
+                "static_setting" => 5
             )
         )
 
@@ -201,11 +203,14 @@ end
         changed_static_keys = Set{String}()
         updated_config = JETLS.ConfigDict(
             "full_analysis" => JETLS.ConfigDict(
-                "debounce" => 3.0,  # static
-                "throttle" => 15.0   # static
+                "debounce" => 3.0,
+                "throttle" => 15.0
             ),
             "testrunner" => JETLS.ConfigDict(
                 "executable" => "new_runner"  # not static
+            ),
+            "internal" => JETLS.ConfigDict(
+                "static_setting" => 10
             )
         )
         JETLS.merge_config!(manager, "/foo/bar/.JETLSConfig.toml", updated_config) do _, path, _
@@ -215,12 +220,13 @@ end
         end
 
         # `on_static_setting` should be called for static keys
-        @test changed_static_keys == Set(["full_analysis.debounce", "full_analysis.throttle"])
+        @test changed_static_keys == Set(["internal.static_setting"])
         # non static keys should be changed dynamically
         @test JETLS.get_config(manager, "testrunner", "executable") == "new_runner"
+        @test JETLS.get_config(manager, "full_analysis", "debounce") == 3.0
+        @test JETLS.get_config(manager, "full_analysis", "throttle") == 15.0
         # static keys should NOT change (they stay at the fixed values)
-        @test JETLS.get_config(manager, "full_analysis", "debounce") == 2.0
-        @test JETLS.get_config(manager, "full_analysis", "throttle") == 10.0
+        @test JETLS.get_config(manager, "internal", "static_setting") == 5
     end
 end
 
@@ -290,8 +296,9 @@ end
 end
 
 @testset "`is_static_setting`" begin
-    @test JETLS.is_static_setting("full_analysis", "debounce")
-    @test JETLS.is_static_setting("full_analysis", "throttle")
+    @test !JETLS.is_static_setting("full_analysis", "debounce")
+    @test !JETLS.is_static_setting("full_analysis", "throttle")
+    @test JETLS.is_static_setting("internal", "static_setting")
     @test !JETLS.is_static_setting("testrunner", "executable")
     @test !JETLS.is_static_setting("nonexistent")
     @test !JETLS.is_static_setting("full_analysis", "nonexistent")
@@ -366,10 +373,10 @@ end
 @testset "`fix_static_settings!` priority handling" begin
     manager = JETLS.ConfigManager()
     high_priority_config = JETLS.ConfigDict(
-        "full_analysis" => JETLS.ConfigDict("debounce" => 2.0, "throttle" => 10.0)
+        "internal" => JETLS.ConfigDict("static_setting" => 2)
     )
     low_priority_config = JETLS.ConfigDict(
-        "full_analysis" => JETLS.ConfigDict("debounce" => 999.0, "throttle" => 999.0),
+        "internal" => JETLS.ConfigDict("static_setting" => 999),
         "testrunner" => JETLS.ConfigDict("executable" => "custom")
     )
 
@@ -378,8 +385,7 @@ end
     JETLS.fix_static_settings!(manager)
 
     # high priority should win for the static keys
-    @test manager.static_settings["full_analysis"]["debounce"] == 2.0
-    @test manager.static_settings["full_analysis"]["throttle"] == 10.0
+    @test manager.static_settings["internal"]["static_setting"] == 2
     # testrunner.executable is not static, so should not be in `static_settings`
     @test !haskey(manager.static_settings, "testrunner")
 end
