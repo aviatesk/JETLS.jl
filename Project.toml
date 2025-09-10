@@ -22,7 +22,7 @@ TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 [sources]
 JET = {rev = "master", url = "https://github.com/aviatesk/JET.jl"}
 JSONRPC = {path = "JSONRPC"}
-JuliaLowering = {rev = "jetls-2", url = "https://github.com/mlechu/JuliaLowering.jl"}
+JuliaLowering = {rev = "jetls-hacking", url = "https://github.com/mlechu/JuliaLowering.jl"}
 JuliaSyntax = {rev = "jetls-hacking", url = "https://github.com/JuliaLang/JuliaSyntax.jl"}
 LSP = {path = "LSP"}
 

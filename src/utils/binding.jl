@@ -57,7 +57,7 @@ function jl_lower_for_scope_resolution(
         st0 = without_kinds(st0, JS.KSet"error")
     end
     ctx1, st1 = try
-        JL.expand_forms_1(mod, st0, true)
+        JL.expand_forms_1(mod, st0, true, Base.get_world_counter())
     catch err
         recover_from_macro_errors || rethrow(err)
         JETLS_DEBUG_LOWERING && @warn "Error in macro expansion; trimming and retrying"
