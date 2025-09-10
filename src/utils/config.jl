@@ -188,7 +188,7 @@ end
 Merges `new_config` into the configuration file tracked by `manager` at `filepath`.
 Updates the configuration stored in `manager.watched_files[filepath]` by merging in the new values.
 If a key in `new_config` is marked as requiring a reload (using `is_static_setting`),
-the `on_static_setting` function is called with the current config dictionary, value, key, and path.
+the `on_static_setting` function is called with the current config dictionary, path, and value.
 If the filepath is not being watched by the manager, the operation is skipped with a warning in dev mode.
 """
 function merge_config!(
