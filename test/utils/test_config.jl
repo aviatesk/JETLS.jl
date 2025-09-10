@@ -175,7 +175,7 @@ end
             )
         )
 
-        JETLS.register_config!(manager, "/foo/bar/.JETLSConfig.toml", test_config)
+        manager.watched_files["/foo/bar/.JETLSConfig.toml"] = test_config
         JETLS.fix_static_settings!(manager)
 
         @test JETLS.get_config(manager, "full_analysis", "debounce") === 2.0
@@ -192,13 +192,13 @@ end
                 "executable" => "override_runner"
             )
         )
-        JETLS.register_config!(manager, "__DEFAULT_CONFIG__", override_config)
+        manager.watched_files["__DEFAULT_CONFIG__"] = override_config
         # High priority config should still win
         @test JETLS.get_config(manager, "full_analysis", "debounce") === 2.0
         @test JETLS.get_config(manager, "testrunner", "executable") === "test_runner"
 
-        # Test merge_config! with the on_static_setting callback
-        changed_reload_required_keysstatic = Set{String}()
+        # Test merge_config!
+        changed_static_keys = Set{String}()
         updated_config = JETLS.ConfigDict(
             "full_analysis" => JETLS.ConfigDict(
                 "debounce" => 3.0,  # static
@@ -209,11 +209,13 @@ end
             )
         )
         JETLS.merge_config!(manager, "/foo/bar/.JETLSConfig.toml", updated_config) do _, path, _
-            push!(changed_reload_required_keysstatic, join(path, "."))
+            if JETLS.is_static_setting(path...)
+                push!(changed_static_keys, join(path, "."))
+            end
         end
 
         # `on_static_setting` should be called for static keys
-        @test changed_reload_required_keysstatic == Set(["full_analysis.debounce", "full_analysis.throttle"])
+        @test changed_static_keys == Set(["full_analysis.debounce", "full_analysis.throttle"])
         # non static keys should be changed dynamically
         @test JETLS.get_config(manager, "testrunner", "executable") == "new_runner"
         # static keys should NOT change (they stay at the fixed values)
@@ -308,8 +310,7 @@ end
     let manager = JETLS.ConfigManager()
         filepath = "/path/to/.JETLSConfig.toml"
         @test JETLS.is_watched_file(manager, filepath) === false
-
-        JETLS.register_config!(manager, filepath, JETLS.ConfigDict("key" => "value"))
+        manager.watched_files[filepath] = JETLS.ConfigDict()
         @test JETLS.is_watched_file(manager, filepath) === true
     end
 end
@@ -362,30 +363,6 @@ end
     end
 end
 
-@testset "`register_config!` edge cases" begin
-    # non-config file should be rejected
-    let manager = JETLS.ConfigManager()
-        filepath = "regular.txt"
-        initial_count = length(manager.watched_files)
-        JETLS.register_config!(manager, filepath, JETLS.ConfigDict("key" => "value"))
-        @test length(manager.watched_files) == initial_count
-    end
-
-    # duplicate registration should be ignored
-    let manager = JETLS.ConfigManager()
-        filepath = ".JETLSConfig.toml"
-        config1 = JETLS.ConfigDict("key1" => "value1")
-        config2 = JETLS.ConfigDict("key2" => "value2")
-
-        JETLS.register_config!(manager, filepath, config1)
-        @test manager.watched_files[filepath] == config1
-
-        # second registration should be ignored
-        JETLS.register_config!(manager, filepath, config2)
-        @test manager.watched_files[filepath] == config1  # unchanged
-    end
-end
-
 @testset "`fix_static_settings!` priority handling" begin
     manager = JETLS.ConfigManager()
     high_priority_config = JETLS.ConfigDict(
@@ -396,8 +373,8 @@ end
         "testrunner" => JETLS.ConfigDict("executable" => "custom")
     )
 
-    JETLS.register_config!(manager, "__DEFAULT_CONFIG__", low_priority_config)
-    JETLS.register_config!(manager, "/path/.JETLSConfig.toml", high_priority_config)
+    manager.watched_files["__DEFAULT_CONFIG__"] = low_priority_config
+    manager.watched_files["/path/.JETLSConfig.toml"] = high_priority_config
     JETLS.fix_static_settings!(manager)
 
     # high priority should win for the static keys

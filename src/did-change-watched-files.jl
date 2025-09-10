@@ -21,92 +21,81 @@ end
 #     method = DID_CHANGE_WATCHED_FILES_REGISTRATION_METHOD))
 # register(currently_running, did_change_watched_files_registration())
 
-function initialize_config!(server::Server)
-    if !isdefined(server.state, :root_path)
-        if JETLS_DEV_MODE
-            @info "`server.state.root_path` is not defined, skip registration at startup."
-        end
-    else
-        config_path = joinpath(server.state.root_path, ".JETLSConfig.toml")
-        if !isfile(config_path)
-            if JETLS_DEV_MODE
-                @info "No configuration file found at $config_path, skip registration at startup."
-            end
-        else
-            register_config!(server.state.config_manager, config_path)
-            load_config!(Returns(nothing), server, config_path) # in initialization, no actions are required
-        end
-    end
+function handle_config_file_change!(server::Server, changed_path::AbstractString, change_type::FileChangeType.Ty)
+    changed_settings = String[]
+    changed_static_settings = String[]
 
-    fix_static_settings!(server.state.config_manager)
-end
-
-"""
-Loads the configuration from the specified path into the server's config manager.
-
-If the file does not exist or cannot be parsed, current configuration remains unchanged.
-When there are unknown keys in the config file, send error by `workspace/showMessage`
-and **current configuration is not changed.**
-"""
-function load_config!(on_static_setting, server::Server, path::AbstractString)
-    isfile(path) || return
-    parsed = TOML.tryparsefile(path)
-    parsed isa TOML.ParserError && return # just skip to reduce noise while typing
-
-    config_dict = to_config_dict(parsed)
-    unknown_keys = collect_unmatched_keys(config_dict)
-
-    if !isempty(unknown_keys)
-        show_error_message(server, """
-            Configuration file at $path contains unknown keys:
-            $(join(map(x -> join(x, "."), unknown_keys), ", "))
-            """)
-        return
-    end
-
-    merge_config!(on_static_setting,
-                  server.state.config_manager,
-                  path,
-                  config_dict)
-end
-
-to_config_dict(dict::Dict{String,Any}) = ConfigDict(
-    (k => (v isa Dict{String,Any} ? to_config_dict(v) : v) for (k, v) in dict)...)
-
-function handle_file_change!(server::Server, change::FileEvent)
-    changed_path = uri2filepath(change.uri)
-    change_type = change.type
-    # show message when `changed_path` is a highest priority or
-    # check effective precisely only?
     if change_type == FileChangeType.Created
-        register_config!(server.state.config_manager, changed_path)
-        show_warning_message(server, """
-            Configuration file $changed_path was created.
-            Please restart the server to apply the changes that require restart.
-            """)
-        load_config!(Returns(nothing), server, changed_path)
+        load_config!(server, changed_path) do current_config, path, new_value
+            current_value = access_nested_dict(current_config, path...)
+            if current_value != new_value
+                if is_static_setting(path...)
+                    push!(changed_static_settings, join(path, "."))
+                else
+                    push!(changed_settings, join(path, "."))
+                end
+            end
+        end
+        kind = "Created"
     elseif change_type == FileChangeType.Changed
         is_watched_file(server.state.config_manager, changed_path) || return
         load_config!(server, changed_path) do current_config, path, new_value
-            if access_nested_dict(current_config, path...) != new_value
-                show_warning_message(server, """
-                    Configuration key `$(join(path, "."))` was changed.
-                    Please restart the server to apply the changes that require restart.
-                    """)
+            current_value = access_nested_dict(current_config, path...)
+            if current_value != new_value
+                if is_static_setting(path...)
+                    push!(changed_static_settings, join(path, "."))
+                else
+                    push!(changed_settings, join(path, "."))
+                end
             end
-         end
+        end
+        kind = "Updated"
     elseif change_type == FileChangeType.Deleted
-        is_watched_file(server.state.config_manager, changed_path) || return
-        delete!(server.state.config_manager.watched_files, changed_path)
+        delete_config!(server.state.config_manager, changed_path) do old_config, path, new_value
+            old_value = access_nested_dict(old_config, path...)
+            if old_value != new_value
+                if is_static_setting(path...)
+                    push!(changed_static_settings, join(path, "."))
+                else
+                    push!(changed_settings, join(path, "."))
+                end
+            end
+        end
+        kind = "Deleted"
+    else error("Unknown FileChangeType") end
+
+    if !isempty(changed_static_settings) && !isempty(changed_settings)
+        settings_str = join(string.('`', changed_settings, '`'), ", ")
+        static_str = join(string.('`', changed_static_settings, '`'), ", ")
         show_warning_message(server, """
-            $changed_path was deleted.
-            You may need to restart the server to apply the changes that require restart.
+            $kind config file: $changed_path
+            Changes applied: $settings_str
+            Static settings affected: $static_str (requires restart to apply)
+            """)
+    elseif !isempty(changed_static_settings)
+        static_str = join(string.('`', changed_static_settings, '`'), ", ")
+        show_warning_message(server, """
+            $kind config file: $changed_path
+            Static settings affected: $static_str (requires restart to apply)
+            """)
+    elseif !isempty(changed_settings)
+        settings_str = join(string.('`', changed_settings, '`'), ", ")
+        show_info_message(server, """
+            $kind config file: $changed_path
+            Changes applied: $settings_str
+            """)
+    elseif kind != "Updated"
+        show_info_message(server, """
+            $kind config file: $changed_path
             """)
     end
 end
 
 function handle_DidChangeWatchedFilesNotification(server::Server, msg::DidChangeWatchedFilesNotification)
     for change in msg.params.changes
-        handle_file_change!(server, change)
+        changed_path = uri2filepath(change.uri)
+        if is_config_file(changed_path)
+            handle_config_file_change!(server, changed_path, change.type)
+        end
     end
 end

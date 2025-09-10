@@ -48,7 +48,17 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
         # leave Refs undefined
     end
 
-    initialize_config!(server)
+    if !isdefined(state, :root_path)
+        if JETLS_DEV_MODE
+            @info "`server.state.root_path` is not defined, skip config registration at startup."
+        end
+    else
+        config_path = joinpath(state.root_path, ".JETLSConfig.toml")
+        if isfile(config_path)
+            load_config!(Returns(nothing), server, config_path)
+        end
+    end
+    fix_static_settings!(state.config_manager)
 
     if supports(server, :textDocument, :completion, :dynamicRegistration)
         completionProvider = nothing # will be registered dynamically

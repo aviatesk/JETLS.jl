@@ -242,28 +242,6 @@ struct WatchedConfigFiles
     files::Vector{String}
     configs::Vector{ConfigDict}
 end
-
-# TODO (later): move this definition to external files
-const DEFAULT_CONFIG = ConfigDict(
-    "full_analysis" => ConfigDict(
-        "debounce" => 1.0,
-        "throttle" => 5.0
-    ),
-    "testrunner" => ConfigDict(
-        "executable" => "testrunner"
-    ),
-)
-
-const STATIC_CONFIG = ConfigDict(
-    "full_analysis" => ConfigDict(
-        "debounce" => true,
-        "throttle" => true
-    ),
-    "testrunner" => ConfigDict(
-        "executable" => false
-    ),
-)
-
 WatchedConfigFiles() = WatchedConfigFiles(String["__DEFAULT_CONFIG__"], ConfigDict[DEFAULT_CONFIG])
 
 function _file_idx(watched_files::WatchedConfigFiles, file::String)
@@ -312,6 +290,7 @@ function Base.get(watched_files::WatchedConfigFiles, file::String, default)
 end
 
 struct ConfigFileOrder <: Base.Ordering end
+
 mutable struct ConfigManager
     static_settings::ConfigDict             # settings that should be static throughout the server lifetime
     const watched_files::WatchedConfigFiles # watched configuration files
