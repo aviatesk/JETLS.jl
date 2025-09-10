@@ -244,7 +244,7 @@ struct WatchedConfigFiles
 end
 
 # TODO (later): move this definition to external files
-global DEFAULT_CONFIG::ConfigDict = ConfigDict(
+const DEFAULT_CONFIG = ConfigDict(
     "full_analysis" => ConfigDict(
         "debounce" => 1.0,
         "throttle" => 5.0
@@ -254,7 +254,7 @@ global DEFAULT_CONFIG::ConfigDict = ConfigDict(
     ),
 )
 
-global CONFIG_RELOAD_REQUIRED::ConfigDict = ConfigDict(
+const CONFIG_RELOAD_REQUIRED = ConfigDict(
     "full_analysis" => ConfigDict(
         "debounce" => true,
         "throttle" => true
