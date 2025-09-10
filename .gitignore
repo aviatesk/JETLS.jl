@@ -4,3 +4,4 @@ out
 Manifest.toml
 Manifest-*.toml
 .envrc
+**/.JETLSConfig.toml

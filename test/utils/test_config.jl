@@ -3,44 +3,44 @@ module test_config
 using Test
 using JETLS
 
-const TEST_DICT = Dict{String, Any}(
+const TEST_DICT = JETLS.ConfigDict(
     "test_key1" => "test_value1",
-    "test_key2" => Dict{String, Any}(
+    "test_key2" => JETLS.ConfigDict(
         "nested_key1" => "nested_value1",
-        "nested_key2" => Dict{String, Any}(
+        "nested_key2" => JETLS.ConfigDict(
             "deep_nested_key1" => "deep_nested_value1",
             "deep_nested_key2" => "deep_nested_value2"
         )
     )
 )
 
-const TEST_DICT_DIFFERENT_VALUE = Dict{String, Any}(
+const TEST_DICT_DIFFERENT_VALUE = JETLS.ConfigDict(
     "test_key1" => "newvalue_1",  # different value (reload required)
-    "test_key2" => Dict{String, Any}(
+    "test_key2" => JETLS.ConfigDict(
         "nested_key1" => "nested_value1",
-        "nested_key2" => Dict{String, Any}(
+        "nested_key2" => JETLS.ConfigDict(
             "deep_nested_key1" => "newvalue_2", # different value (reload required)
             "deep_nested_key2" => "newvalue_3"  # different value (reload not required)
         )
     )
 )
 
-const TEST_DICT_DIFFERENT_KEY = Dict{String, Any}(
+const TEST_DICT_DIFFERENT_KEY = JETLS.ConfigDict(
     "diffname_1" => "test_value1",  # different key name
-    "test_key2" => Dict{String, Any}(
+    "test_key2" => JETLS.ConfigDict(
         "nested_key1" => "nested_value1",
-        "diffname_2" => Dict{String, Any}(       # different key name
+        "diffname_2" => JETLS.ConfigDict(       # different key name
             "deep_nested_key1" => "deep_nested_value1",
             "diffname_3" => "deep_nested_value2" # different key under a different key
         )
     ),
 )
 
-const TEST_RELOAD_REQUIRED = Dict{String, Any}(
+const TEST_RELOAD_REQUIRED = JETLS.ConfigDict(
     "test_key1" => true,
-    "test_key2" => Dict{String, Any}(
+    "test_key2" => JETLS.ConfigDict(
         "nested_key1" => false,
-        "nested_key2" => Dict{String, Any}(
+        "nested_key2" => JETLS.ConfigDict(
             "deep_nested_key1" => true,
             "deep_nested_key2" => false
         )
@@ -57,7 +57,7 @@ const TEST_RELOAD_REQUIRED = Dict{String, Any}(
 
     @testset "setindex! and getindex" begin
         watched = JETLS.WatchedConfigFiles()
-        config = Dict{String,Any}("key1" => "value1")
+        config = JETLS.ConfigDict("key1" => "value1")
 
         watched["/project/.JETLSConfig.toml"] = config
         @test length(watched) == 2
@@ -69,7 +69,7 @@ const TEST_RELOAD_REQUIRED = Dict{String, Any}(
 
     @testset "haskey and get" begin
         watched = JETLS.WatchedConfigFiles()
-        config = Dict{String,Any}("key" => "value")
+        config = JETLS.ConfigDict("key" => "value")
 
         @test !haskey(watched, "___UNDEFINED___")
         @test get(watched, "___UNDEFINED___", "default") == "default"
@@ -81,7 +81,7 @@ const TEST_RELOAD_REQUIRED = Dict{String, Any}(
 
     @testset "delete!" begin
         watched = JETLS.WatchedConfigFiles()
-        config = Dict{String,Any}("key1" => "value1")
+        config = JETLS.ConfigDict("key1" => "value1")
         watched["/project/.JETLSConfig.toml"] = config
 
         @test length(watched) == 2
@@ -104,9 +104,8 @@ const TEST_RELOAD_REQUIRED = Dict{String, Any}(
 
     @testset "priority with multiple config files" begin
         watched = JETLS.WatchedConfigFiles()
-        watched["/home/user/.JETLSConfig.toml"] = Dict{String,Any}("source" => "home")
+        watched["/home/user/.JETLSConfig.toml"] = JETLS.ConfigDict("source" => "home")
         files = collect(keys(watched))
-        configs = collect(values(watched))
 
         # Should be sorted by ConfigFileOrder
         @test issorted(files, order=JETLS.ConfigFileOrder())
@@ -116,124 +115,25 @@ const TEST_RELOAD_REQUIRED = Dict{String, Any}(
     end
 end
 
-@testset "`selective_merge!`" begin
-    # basic overwrite with no filter (allow all)
-    dict1 = Dict{String, Any}("a" => 1, "b" => 2)
-    dict2 = Dict{String, Any}("b" => 3, "c" => 4)
-    JETLS.selective_merge!(dict1, dict2)
-    @test dict1 == Dict{String, Any}("a" => 1, "b" => 3, "c" => 4)
-    @test dict2 == Dict{String, Any}("b" => 3, "c" => 4) # dict2 should remain unchanged
+@testset "`merge_reload_required_keys`" begin
+    dict1 = JETLS.ConfigDict(
+        "performance" => JETLS.ConfigDict("full_analysis" => JETLS.ConfigDict("debounce" => 1.0)))
+    dict2 = JETLS.ConfigDict(
+        "performance" => JETLS.ConfigDict("full_analysis" => JETLS.ConfigDict("throttle" => 5.0)),
+        "testrunner" => JETLS.ConfigDict("executable" => "testrunner2"))
 
-    # nested merge with no filter
-    dict1 = Dict{String, Any}("a" => Dict{String, Any}("x" => 1))
-    dict2 = Dict{String, Any}("a" => Dict{String, Any}("y" => 2))
-    JETLS.selective_merge!(dict1, dict2)
-    @test dict1 == Dict{String, Any}("a" => Dict{String, Any}("x" => 1, "y" => 2))
-    @test dict2 == Dict{String, Any}("a" => Dict{String, Any}("y" => 2))
-
-    # overwrite nested dict with value (no filter)
-    dict1 = Dict{String, Any}("a" => Dict{String, Any}("x" => 1))
-    dict2 = Dict{String, Any}("a" => "scalar")
-    JETLS.selective_merge!(dict1, dict2)
-    @test dict1 == Dict{String, Any}("a" => "scalar")
-    @test dict2 == Dict{String, Any}("a" => "scalar")
-
-    # overwrite value with nested dict (no filter)
-    dict1 = Dict{String, Any}("a" => "scalar")
-    dict2 = Dict{String, Any}("a" => Dict{String, Any}("x" => 1))
-    JETLS.selective_merge!(dict1, dict2)
-    @test dict1 == Dict{String, Any}("a" => Dict{String, Any}("x" => 1))
-    @test dict2 == Dict{String, Any}("a" => Dict{String, Any}("x" => 1))
-
-    # filtering: only allow specific keys
-    dict1 = Dict{String, Any}("a" => 1, "b" => 2)
-    dict2 = Dict{String, Any}("b" => 3, "c" => 4)
-    JETLS.selective_merge!(path -> path[end] == "b", dict1, dict2)
-    @test dict1 == Dict{String, Any}("a" => 1, "b" => 3) # only "b" was merged
-    @test dict2 == Dict{String, Any}("b" => 3, "c" => 4)
-
-    # filtering: block all keys
-    dict1 = Dict{String, Any}("a" => 1, "b" => 2)
-    dict2 = Dict{String, Any}("b" => 3, "c" => 4)
-    JETLS.selective_merge!(Returns(false), dict1, dict2)
-    @test dict1 == Dict{String, Any}("a" => 1, "b" => 2) # nothing merged
-    @test dict2 == Dict{String, Any}("b" => 3, "c" => 4)
-
-    # filtering with nested paths
-    dict1 = Dict{String, Any}("performance" => Dict{String, Any}("full_analysis" => Dict{String, Any}("debounce" => 1.0)))
-    dict2 = Dict{String, Any}("performance" => Dict{String, Any}("full_analysis" => Dict{String, Any}("throttle" => 5.0)))
-    JETLS.selective_merge!(path -> path == ["performance", "full_analysis", "throttle"], dict1, dict2)
-    @test dict1["performance"]["full_analysis"]["debounce"] == 1.0
-    @test dict1["performance"]["full_analysis"]["throttle"] == 5.0
-
-    # deeply nested merge (no filter)
-    dict1 = Dict{String, Any}("a" => Dict{String, Any}("b" => Dict{String, Any}("c" => 1)))
-    dict2 = Dict{String, Any}("a" => Dict{String, Any}("b" => Dict{String, Any}("d" => 2)))
-    JETLS.selective_merge!(dict1, dict2)
-    @test dict1 == Dict{String, Any}("a" => Dict{String, Any}("b" => Dict{String, Any}("c" => 1, "d" => 2)))
-    @test dict2 == Dict{String, Any}("a" => Dict{String, Any}("b" => Dict{String, Any}("d" => 2)))
-
-    # multiple top-level keys
-    dict1 = Dict{String, Any}("a" => 1, "b" => Dict{String, Any}("x" => 10))
-    dict2 = Dict{String, Any}("b" => Dict{String, Any}("y" => 20), "c" => 3)
-    JETLS.selective_merge!(dict1, dict2)
-    @test dict1 == Dict{String, Any}("a" => 1, "b" => Dict{String, Any}("x" => 10, "y" => 20), "c" => 3)
-
-    # realistic deeply nested update
-    dict1 = Dict{String, Any}(
-        "config" => Dict{String, Any}(
-            "editor" => Dict{String, Any}(
-                "font" => Dict{String, Any}("size" => 12, "family" => "monospace"),
-                "theme" => "light"
-            ),
-            "lint" => Dict{String, Any}("enabled" => true)
-        )
-    )
-
-    dict2 = Dict{String, Any}(
-        "config" => Dict{String, Any}(
-            "editor" => Dict{String, Any}(
-                "font" => Dict{String, Any}("size" => 14),  # update only size
-                "theme" => "dark",             # overwrite theme
-                "keymap" => "vim"              # new key added
-            ),
-            "lint" => false                   # overwrite entire value
-        )
-    )
-
-    JETLS.selective_merge!(dict1, dict2)
-
-    @test dict1 == Dict{String, Any}(
-        "config" => Dict{String, Any}(
-            "editor" => Dict{String, Any}(
-                "font" => Dict{String, Any}("size" => 14, "family" => "monospace"),
-                "theme" => "dark",
-                "keymap" => "vim"
-            ),
-            "lint" => false
-        )
-    )
-end
-
-@testset "`merge_reload_required_keys!`" begin
-    dict1 = Dict{String, Any}(
-        "performance" => Dict{String, Any}("full_analysis" => Dict{String, Any}("debounce" => 1.0)))
-    dict2 = Dict{String, Any}(
-        "performance" => Dict{String, Any}("full_analysis" => Dict{String, Any}("throttle" => 5.0)),
-        "testrunner" => Dict{String, Any}("executable" => "testrunner2"))
-
-    JETLS.merge_reload_required_keys!(dict1, dict2)
+    result = JETLS.merge_reload_required_keys(dict1, dict2)
 
     # Should merge reload-required keys only
-    @test dict1["performance"]["full_analysis"]["debounce"] == 1.0
-    @test dict1["performance"]["full_analysis"]["throttle"] == 5.0
+    @test result["performance"]["full_analysis"]["debounce"] == 1.0
+    @test result["performance"]["full_analysis"]["throttle"] == 5.0
     # testrunner.executable should NOT be merged (it's false in CONFIG_RELOAD_REQUIRED)
-    @test !haskey(dict1, "testrunner")
+    @test !haskey(result, "testrunner")
 end
 
 @testset "configuration utilities" begin
-    default_config_origin = deepcopy(JETLS.DEFAULT_CONFIG)
-    is_reload_required_key_origin = deepcopy(JETLS.CONFIG_RELOAD_REQUIRED)
+    default_config_origin = JETLS.DEFAULT_CONFIG
+    is_reload_required_key_origin = JETLS.CONFIG_RELOAD_REQUIRED
     try
         JETLS.DEFAULT_CONFIG = TEST_DICT
         JETLS.CONFIG_RELOAD_REQUIRED = TEST_RELOAD_REQUIRED
@@ -245,11 +145,11 @@ end
             @test JETLS.access_nested_dict(TEST_DICT, "test_key2", "nested_key2", "deep_nested_key3") === nothing
             @test JETLS.access_nested_dict(TEST_DICT, "non_existent_key") === nothing
 
-            let empty_dict = Dict{String, Any}()
+            let empty_dict = JETLS.ConfigDict()
                 @test JETLS.access_nested_dict(empty_dict, "key") === nothing
             end
 
-            let dict = Dict{String, Any}("scalar" => "value")
+            let dict = JETLS.ConfigDict("scalar" => "value")
                 @test JETLS.access_nested_dict(dict, "scalar", "unknown") === nothing
                 @test JETLS.access_nested_dict(dict, "scalar") == "value"
             end
@@ -299,7 +199,7 @@ end
             @test JETLS.get_config(manager, "non_existent_key") === nothing
 
             changed_reload_required = Set{String}()
-            JETLS.merge_config!(manager, "/foo/bar/.JETLSConfig.toml", TEST_DICT_DIFFERENT_VALUE) do _, _, _, path
+            JETLS.merge_config!(manager, "/foo/bar/.JETLSConfig.toml", TEST_DICT_DIFFERENT_VALUE) do _, path, _
                 push!(changed_reload_required, join(path, "."))
             end
             # `on_reload_required` should be called for changed keys that require reload
@@ -316,59 +216,77 @@ end
     end
 end
 
-@testset "`traverse_merge!`" begin
+@testset "`traverse_merge`" begin
     # basic merge with custom on_leaf function
-    let target = Dict{String, Any}("a" => 1)
-        source = Dict{String, Any}("b" => 2)
-        collected_calls = Tuple{Dict{String,Any}, String, Any, Vector{String}}[]
-        JETLS.traverse_merge!(target, source, String[]) do t, k, v, path
-            push!(collected_calls, (t, k, v, path))
-            t[k] = v * 10
+    let target = JETLS.ConfigDict("a" => 1)
+        source = JETLS.ConfigDict("b" => 2)
+        collected_calls = Tuple{Vector{String},Any}[]
+        result = JETLS.traverse_merge(target, source) do path, v
+            push!(collected_calls, (path, v))
+            v * 10
         end
-        @test target == Dict{String, Any}("a" => 1, "b" => 20)
+        @test result == JETLS.ConfigDict("a" => 1, "b" => 20)
         @test length(collected_calls) == 1
-        @test collected_calls[1][2] == "b"
-        @test collected_calls[1][3] == 2
-        @test collected_calls[1][4] == ["b"]
+        @test collected_calls[1][1] == ["b"]
+        @test collected_calls[1][2] == 2
     end
 
     # nested merge with custom on_leaf
-    let target = Dict{String, Any}("nested" => Dict{String, Any}("a" => 1))
-        source = Dict{String, Any}("nested" => Dict{String, Any}("b" => 2))
+    let target = JETLS.ConfigDict("nested" => JETLS.ConfigDict("a" => 1))
+        source = JETLS.ConfigDict("nested" => JETLS.ConfigDict("b" => 2))
         collected_paths = Vector{String}[]
-        JETLS.traverse_merge!(target, source, String[]) do t, k, v, path
+        result = JETLS.traverse_merge(target, source) do path, v
             push!(collected_paths, path)
-            t[k] = v
+            v
         end
-        @test target == Dict{String, Any}("nested" => Dict{String, Any}("a" => 1, "b" => 2))
+        @test result == JETLS.ConfigDict("nested" => JETLS.ConfigDict("a" => 1, "b" => 2))
         @test collected_paths == [["nested", "b"]]
     end
 
     # creating new nested structure
-    let target = Dict{String, Any}()
-        source = Dict{String, Any}("new" => Dict{String, Any}("deep" => "value"))
-        JETLS.traverse_merge!(target, source, String[]) do t, k, v, path
-            t[k] = v
+    let target = JETLS.ConfigDict()
+        source = JETLS.ConfigDict("new" => JETLS.ConfigDict("deep" => "value"))
+        result = JETLS.traverse_merge(target, source) do _, v
+            v
         end
-        @test target == Dict{String, Any}("new" => Dict{String, Any}("deep" => "value"))
+        @test result == JETLS.ConfigDict("new" => JETLS.ConfigDict("deep" => "value"))
     end
 
     # overwriting non-dict with dict
-    let target = Dict{String, Any}("key" => "scalar")
-        source = Dict{String, Any}("key" => Dict{String, Any}("nested" => "value"))
-        JETLS.traverse_merge!(target, source, String[]) do t, k, v, path
-            t[k] = v
+    let target = JETLS.ConfigDict("key" => "scalar")
+        source = JETLS.ConfigDict("key" => JETLS.ConfigDict("nested" => "value"))
+        result = JETLS.traverse_merge(target, source) do _, v
+            v
         end
-        @test target == Dict{String, Any}("key" => Dict{String, Any}("nested" => "value"))
+        @test result == JETLS.ConfigDict("key" => JETLS.ConfigDict("nested" => "value"))
+    end
+
+    # filtering with on_leaf returning nothing
+    let base = JETLS.ConfigDict("a" => 1, "b" => 2)
+        overlay = JETLS.ConfigDict("b" => 3, "c" => 4)
+        result = JETLS.traverse_merge(base, overlay) do path, v
+            path[end] == "b" ? v : nothing  # only merge keys ending with "b"
+        end
+        @test result == JETLS.ConfigDict("a" => 1, "b" => 3)  # only "b" was merged
+    end
+
+    # filtering with nested paths
+    let base = JETLS.ConfigDict("performance" => JETLS.ConfigDict("full_analysis" => JETLS.ConfigDict("debounce" => 1.0)))
+        overlay = JETLS.ConfigDict("performance" => JETLS.ConfigDict("full_analysis" => JETLS.ConfigDict("throttle" => 5.0)))
+        result = JETLS.traverse_merge(base, overlay) do path, v
+            path == ["performance", "full_analysis", "throttle"] ? v : nothing
+        end
+        @test result["performance"]["full_analysis"]["debounce"] == 1.0
+        @test result["performance"]["full_analysis"]["throttle"] == 5.0
     end
 end
 
 @testset "`is_reload_required_key`" begin
-    default_config_origin = deepcopy(JETLS.CONFIG_RELOAD_REQUIRED)
+    default_config_origin = JETLS.CONFIG_RELOAD_REQUIRED
     try
-        JETLS.CONFIG_RELOAD_REQUIRED = Dict{String,Any}(
-            "performance" => Dict{String,Any}(
-                "full_analysis" => Dict{String,Any}(
+        JETLS.CONFIG_RELOAD_REQUIRED = JETLS.ConfigDict(
+            "performance" => JETLS.ConfigDict(
+                "full_analysis" => JETLS.ConfigDict(
                     "debounce" => true,
                     "throttle" => false
                 )
@@ -400,52 +318,52 @@ end
         filepath = "/path/to/.JETLSConfig.toml"
         @test JETLS.is_watched_file(manager, filepath) === false
 
-        JETLS.register_config!(manager, filepath, Dict{String,Any}("key" => "value"))
+        JETLS.register_config!(manager, filepath, JETLS.ConfigDict("key" => "value"))
         @test JETLS.is_watched_file(manager, filepath) === true
     end
 end
 
-@testset "`cleanup_empty_dicts!`" begin
-    let dict = Dict{String, Any}(
-        "keep" => "value",
-        "empty_nested" => Dict{String, Any}(),
-        "nested" => Dict{String, Any}(
-            "keep_nested" => "value",
-            "empty_deep" => Dict{String, Any}(
-                "empty_deeper" => Dict{String, Any}()
+@testset "`cleanup_empty_dicts`" begin
+    let dict = JETLS.ConfigDict(
+            "keep" => "value",
+            "empty_nested" => JETLS.ConfigDict(),
+            "nested" => JETLS.ConfigDict(
+                "keep_nested" => "value",
+                "empty_deep" => JETLS.ConfigDict(
+                    "empty_deeper" => JETLS.ConfigDict()
+                )
             )
         )
-    )
-        JETLS.cleanup_empty_dicts!(dict)
-        @test dict == Dict{String, Any}(
+        result = JETLS.cleanup_empty_dicts(dict)
+        @test result == JETLS.ConfigDict(
             "keep" => "value",
-            "nested" => Dict{String, Any}("keep_nested" => "value")
+            "nested" => JETLS.ConfigDict("keep_nested" => "value")
         )
     end
 
     # completely empty dict should remain empty
-    let dict = Dict{String, Any}()
-        JETLS.cleanup_empty_dicts!(dict)
-        @test dict == Dict{String, Any}()
+    let dict = JETLS.ConfigDict()
+        result = JETLS.cleanup_empty_dicts(dict)
+        @test result == JETLS.ConfigDict()
     end
 
     # dict with only empty nested dicts should become empty
-    let dict = Dict{String, Any}("empty" => Dict{String, Any}())
-        JETLS.cleanup_empty_dicts!(dict)
-        @test dict == Dict{String, Any}()
+    let dict = JETLS.ConfigDict("empty" => JETLS.ConfigDict())
+        result = JETLS.cleanup_empty_dicts(dict)
+        @test result == JETLS.ConfigDict()
     end
 
-    let dict = Dict{String, Any}(
-        "nested" => Dict{String, Any}(
-            "nested2 " => Dict{String, Any}(
+    let dict = JETLS.ConfigDict(
+        "nested" => JETLS.ConfigDict(
+            "nested2 " => JETLS.ConfigDict(
                 "deep_nested" => 1
                 )
             )
         )
-        JETLS.cleanup_empty_dicts!(dict)
-        @test dict == Dict{String, Any}(
-            "nested" => Dict{String, Any}(
-                "nested2 " => Dict{String, Any}(
+        result = JETLS.cleanup_empty_dicts(dict)
+        @test result == JETLS.ConfigDict(
+            "nested" => JETLS.ConfigDict(
+                "nested2 " => JETLS.ConfigDict(
                     "deep_nested" => 1
                 )
             )
@@ -458,15 +376,15 @@ end
     let manager = JETLS.ConfigManager()
         filepath = "regular.txt"
         initial_count = length(manager.watched_files)
-        JETLS.register_config!(manager, filepath, Dict{String,Any}("key" => "value"))
+        JETLS.register_config!(manager, filepath, JETLS.ConfigDict("key" => "value"))
         @test length(manager.watched_files) == initial_count
     end
 
     # duplicate registration should be ignored
     let manager = JETLS.ConfigManager()
         filepath = ".JETLSConfig.toml"
-        config1 = Dict{String,Any}("key1" => "value1")
-        config2 = Dict{String,Any}("key2" => "value2")
+        config1 = JETLS.ConfigDict("key1" => "value1")
+        config2 = JETLS.ConfigDict("key2" => "value2")
 
         JETLS.register_config!(manager, filepath, config1)
         @test manager.watched_files[filepath] == config1
@@ -478,44 +396,44 @@ end
 end
 
 @testset "`fix_reload_required_settings!` comprehensive" begin
-    default_config_origin = deepcopy(JETLS.DEFAULT_CONFIG)
-    is_reload_required_key_origin = deepcopy(JETLS.CONFIG_RELOAD_REQUIRED)
+    default_config_origin = JETLS.DEFAULT_CONFIG
+    is_reload_required_key_origin = JETLS.CONFIG_RELOAD_REQUIRED
     try
-        JETLS.DEFAULT_CONFIG = Dict{String,Any}(
-            "performance" => Dict{String,Any}(
-                "full_analysis" => Dict{String,Any}(
+        JETLS.DEFAULT_CONFIG = JETLS.ConfigDict(
+            "performance" => JETLS.ConfigDict(
+                "full_analysis" => JETLS.ConfigDict(
                     "debounce" => 1.0,
                     "throttle" => 5.0
                 )
             ),
-            "testrunner" => Dict{String,Any}(
+            "testrunner" => JETLS.ConfigDict(
                 "executable" => "testrunner"
             )
         )
-        JETLS.CONFIG_RELOAD_REQUIRED = Dict{String,Any}(
-            "performance" => Dict{String,Any}(
-                "full_analysis" => Dict{String,Any}(
+        JETLS.CONFIG_RELOAD_REQUIRED = JETLS.ConfigDict(
+            "performance" => JETLS.ConfigDict(
+                "full_analysis" => JETLS.ConfigDict(
                     "debounce" => true,
                     "throttle" => true
                 )
             ),
-            "testrunner" => Dict{String,Any}(
+            "testrunner" => JETLS.ConfigDict(
                 "executable" => false
             )
         )
 
         # test priority handling
         let manager = JETLS.ConfigManager()
-            high_priority_config = Dict{String,Any}(
-                "performance" => Dict{String,Any}(
-                    "full_analysis" => Dict{String,Any}("debounce" => 2.0)
+            high_priority_config = JETLS.ConfigDict(
+                "performance" => JETLS.ConfigDict(
+                    "full_analysis" => JETLS.ConfigDict("debounce" => 2.0)
                 )
             )
-            low_priority_config = Dict{String,Any}(
-                "performance" => Dict{String,Any}(
-                    "full_analysis" => Dict{String,Any}("debounce" => 999.0)
+            low_priority_config = JETLS.ConfigDict(
+                "performance" => JETLS.ConfigDict(
+                    "full_analysis" => JETLS.ConfigDict("debounce" => 999.0)
                 ),
-                "testrunner" => Dict{String,Any}("executable" => "custom")
+                "testrunner" => JETLS.ConfigDict("executable" => "custom")
             )
 
             JETLS.register_config!(manager, "__DEFAULT_CONFIG__", low_priority_config)

@@ -52,7 +52,9 @@ function load_config!(on_reload_required, server::Server, path::AbstractString)
     isfile(path) || return
     parsed = TOML.tryparsefile(path)
     parsed isa TOML.ParserError && return # just skip to reduce noise while typing
-    unknown_keys = collect_unmatched_keys(parsed)
+
+    config_dict = to_config_dict(parsed)
+    unknown_keys = collect_unmatched_keys(config_dict)
 
     if !isempty(unknown_keys)
         show_error_message(server, """
@@ -65,8 +67,11 @@ function load_config!(on_reload_required, server::Server, path::AbstractString)
     merge_config!(on_reload_required,
                   server.state.config_manager,
                   path,
-                  parsed)
+                  config_dict)
 end
+
+to_config_dict(dict::Dict{String,Any}) = ConfigDict(
+    (k => (v isa Dict{String,Any} ? to_config_dict(v) : v) for (k, v) in dict)...)
 
 function handle_file_change!(server::Server, change::FileEvent)
     changed_path = uri2filepath(change.uri)
@@ -82,8 +87,8 @@ function handle_file_change!(server::Server, change::FileEvent)
         load_config!(Returns(nothing), server, changed_path)
     elseif change_type == FileChangeType.Changed
         is_watched_file(server.state.config_manager, changed_path) || return
-        load_config!(server, changed_path) do current_config, new_value, k, path
-            if !haskey(current_config, k) || current_config[k] != new_value
+        load_config!(server, changed_path) do current_config, path, new_value
+            if access_nested_dict(current_config, path...) != new_value
                 show_warning_message(server, """
                     Configuration key `$(join(path, "."))` was changed.
                     Please restart the server to apply the changes that require restart.

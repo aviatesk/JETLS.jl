@@ -3,7 +3,7 @@ module test_did_change_watched_files
 using Test
 using JETLS
 
-include("setup.jl")
+include(normpath(pkgdir(JETLS), "test", "setup.jl"))
 
 # `workspace/didChangeWatchedFiles` does not support static registration,
 # so we need to allow dynamic registration here to test it
@@ -44,7 +44,7 @@ const TESTRUNNER_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
             executable = \"$TESTRUNNER_STARTUP\"
             """)
         rootUri = filepath2uri(tmpdir)
-        withserver(; rootUri, capabilities=CLIENT_CAPABILITIES) do (; writereadmsg, readmsg, id_counter, server)
+        withserver(; rootUri, capabilities=CLIENT_CAPABILITIES) do (; writereadmsg, server)
             manager = server.state.config_manager
 
             # after initialization, manager should have the fixed config for reload required keys
@@ -57,9 +57,6 @@ const TESTRUNNER_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
             @test collect(keys(manager.watched_files)) == [config_path, "__DEFAULT_CONFIG__"]
             @test manager.watched_files["__DEFAULT_CONFIG__"] == JETLS.DEFAULT_CONFIG
 
-            jetlstoml_config_state = manager.watched_files[config_path]
-            @test jetlstoml_config_state["performance"]["full_analysis"]["debounce"] == DEBOUNCE_STARTUP
-            @test jetlstoml_config_state["testrunner"]["executable"] == TESTRUNNER_STARTUP
             @test JETLS.get_config(manager, "performance", "full_analysis", "debounce") == DEBOUNCE_STARTUP
             @test JETLS.get_config(manager, "testrunner", "executable") == TESTRUNNER_STARTUP
 
@@ -88,7 +85,7 @@ const TESTRUNNER_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
             # Config should not be changed (reload required)
             @test JETLS.get_config(manager, "performance", "full_analysis", "debounce") == DEBOUNCE_STARTUP
             # But config dict should be updated to avoid showing the same message again
-            @test jetlstoml_config_state["performance"]["full_analysis"]["debounce"] == DEBOUNCE_V2
+            @test manager.watched_files[config_path]["performance"]["full_analysis"]["debounce"] == DEBOUNCE_V2
 
             THROTTLE_V2 = 300.0
             # Add a new key `performance.full_analysis.throttle`
@@ -134,7 +131,6 @@ const TESTRUNNER_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
             writereadmsg(change_notification2; read=0)
 
             # testrunner.executable should be updated in both configs (no reload required)
-            @test jetlstoml_config_state["testrunner"]["executable"] == TESTRUNNER_V2
             @test JETLS.get_config(manager, "testrunner", "executable") == TESTRUNNER_V2
 
             # unknown keys should be reported
@@ -230,7 +226,7 @@ end
     mktempdir() do tmpdir
         rootUri = filepath2uri(tmpdir)
 
-        withserver(; rootUri, capabilities=CLIENT_CAPABILITIES) do (; writereadmsg, readmsg, id_counter, server)
+        withserver(; rootUri, capabilities=CLIENT_CAPABILITIES) do (; writereadmsg, server)
             manager = server.state.config_manager
 
             @test collect(keys(manager.watched_files)) == ["__DEFAULT_CONFIG__"]
