@@ -18,11 +18,8 @@ const CLIENT_CAPABILITIES = ClientCapabilities(
 const DEBOUNCE_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
     "full_analysis", "debounce")
 
-const THROTTLE_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
-    "full_analysis", "throttle")
-
-const TESTRUNNER_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
-    "testrunner", "executable")
+const STATIC_SETTING_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
+    "internal", "static_setting")
 
 # Test the full cycle of `DidChangeWatchedFilesNotification`:
 # 1. Initialize with `.JETLSConfig.toml` file.
@@ -35,11 +32,11 @@ const TESTRUNNER_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
 @testset "DidChangeWatchedFilesNotification full-cycle" begin
     mktempdir() do tmpdir
         config_path = joinpath(tmpdir, ".JETLSConfig.toml")
-        DEBOUNCE_STARTUP = 100.0
+        STATIC_SETTING_STARTUP = 100
         TESTRUNNER_STARTUP = "testrunner_startup"
         write(config_path, """
-            [full_analysis]
-            debounce = $DEBOUNCE_STARTUP
+            [internal]
+            static_setting = $STATIC_SETTING_STARTUP
             [testrunner]
             executable = \"$TESTRUNNER_STARTUP\"
             """)
@@ -49,22 +46,20 @@ const TESTRUNNER_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
 
             # after initialization, manager should have the fixed config for static keys
             @test JETLS.access_nested_dict(manager.static_settings,
-                "full_analysis", "debounce") == DEBOUNCE_STARTUP
-            @test JETLS.access_nested_dict(manager.static_settings,
-                "full_analysis", "throttle") == THROTTLE_DEFAULT
+                "internal", "static_setting") == STATIC_SETTING_STARTUP
 
             @test haskey(manager.watched_files, config_path)
             @test collect(keys(manager.watched_files)) == [config_path, "__DEFAULT_CONFIG__"]
             @test manager.watched_files["__DEFAULT_CONFIG__"] == JETLS.DEFAULT_CONFIG
 
-            @test JETLS.get_config(manager, "full_analysis", "debounce") == DEBOUNCE_STARTUP
+            @test JETLS.get_config(manager, "internal", "static_setting") == STATIC_SETTING_STARTUP
             @test JETLS.get_config(manager, "testrunner", "executable") == TESTRUNNER_STARTUP
 
-            # change `full_analysis.debounce` to `DEBOUNCE_V2`
-            DEBOUNCE_V2 = 200.0
+            # change `internal.static_setting` to `STATIC_SETTING_V2`
+            STATIC_SETTING_V2 = 200
             write(config_path, """
-                [full_analysis]
-                debounce = $DEBOUNCE_V2
+                [internal]
+                static_setting = $STATIC_SETTING_V2
                 [testrunner]
                 executable = \"$TESTRUNNER_STARTUP\"
                 """)
@@ -77,21 +72,22 @@ const TESTRUNNER_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
                 (; raw_res) = writereadmsg(msg)
                 @test raw_res isa ShowMessageNotification
                 @test raw_res.params.type == MessageType.Warning
-                @test occursin("full_analysis.debounce", raw_res.params.message)
+                @test occursin("internal.static_setting", raw_res.params.message)
                 @test occursin("restart", raw_res.params.message)
             end
 
             # Static setting should not be changed
-            @test JETLS.get_config(manager, "full_analysis", "debounce") == DEBOUNCE_STARTUP
+            @test JETLS.get_config(manager, "internal", "static_setting") == STATIC_SETTING_STARTUP
             # But config dict should be updated to avoid showing the same message again
-            @test manager.watched_files[config_path]["full_analysis"]["debounce"] == DEBOUNCE_V2
+            @test manager.watched_files[config_path]["internal"]["static_setting"] == STATIC_SETTING_V2
 
-            THROTTLE_V2 = 300.0
-            # Add a new key `full_analysis.throttle`
+            DEBOUNCE_V2 = 300.0
+            # Add a new key `full_analysis.debounce` (now dynamic)
             write(config_path, """
+                [internal]
+                static_setting = $STATIC_SETTING_V2
                 [full_analysis]
                 debounce = $DEBOUNCE_V2
-                throttle = $THROTTLE_V2
                 [testrunner]
                 executable = \"$TESTRUNNER_STARTUP\"
                 """)
@@ -103,19 +99,20 @@ const TESTRUNNER_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
                 )
                 (; raw_res) = writereadmsg(msg)
                 @test raw_res isa ShowMessageNotification
-                @test raw_res.params.type == MessageType.Warning
+                @test raw_res.params.type == MessageType.Info
                 # only changed keys should be reported
-                @test occursin("throttle", raw_res.params.message)
-                @test !occursin("debounce", raw_res.params.message)
-                @test occursin("restart", raw_res.params.message)
+                @test occursin("debounce", raw_res.params.message)
+                @test !occursin("static_setting", raw_res.params.message)
             end
 
-            # `full_analysis.throttle` should not be changed (static)
-            @test JETLS.get_config(manager, "full_analysis", "throttle") == THROTTLE_DEFAULT
+            # `full_analysis.debounce` should be changed (dynamic)
+            @test JETLS.get_config(manager, "full_analysis", "debounce") == DEBOUNCE_V2
 
             # Change `testrunner.executable` to "newtestrunner"
             TESTRUNNER_V2 = "testrunner_v2"
             write(config_path, """
+                [internal]
+                static_setting = $STATIC_SETTING_V2
                 [full_analysis]
                 debounce = $DEBOUNCE_V2
                 [testrunner]
@@ -131,8 +128,8 @@ const TESTRUNNER_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
                 @test raw_res isa ShowMessageNotification
                 @test raw_res.params.type == MessageType.Info
                 # only changed keys should be reported
-                @test !occursin("throttle", raw_res.params.message)
                 @test !occursin("debounce", raw_res.params.message)
+                @test !occursin("static_setting", raw_res.params.message)
                 @test occursin("testrunner", raw_res.params.message)
             end
 
@@ -171,21 +168,21 @@ const TESTRUNNER_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
             end
 
             # After deletion,
-            # - for static keys, `get_config` should remain unchanged
-            @test JETLS.get_config(manager, "full_analysis", "debounce") == DEBOUNCE_STARTUP
-            # -  For non-static keys, replace with value from the next highest-priority config file. (`__DEFAULT_CONFIG__`)
-            @test JETLS.get_config(manager, "testrunner", "executable") == TESTRUNNER_DEFAULT
+            # - For static keys, `get_config` should remain unchanged
+            @test JETLS.get_config(manager, "internal", "static_setting") == STATIC_SETTING_STARTUP
+            # - For non-static keys, replace with value from the next highest-priority config file. (`__DEFAULT_CONFIG__`)
+            @test JETLS.get_config(manager, "full_analysis", "debounce") == DEBOUNCE_DEFAULT
 
             # remove the config file from watched files
             @test !haskey(manager.watched_files, config_path)
             @test collect(keys(manager.watched_files)) == ["__DEFAULT_CONFIG__"]
 
             # re-create the config file
-            DEBOUNCE_RECREATE = 400.0
+            STATIC_SETTING_RECREATE = 400
             TESTRUNNER_RECREATE = "testrunner_recreate"
             write(config_path, """
-                [full_analysis]
-                debounce = $DEBOUNCE_RECREATE
+                [internal]
+                static_setting = $STATIC_SETTING_RECREATE
                 [testrunner]
                 executable = \"$TESTRUNNER_RECREATE\"
                 """)
@@ -205,9 +202,9 @@ const TESTRUNNER_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
             # `config_path` should be registered again
             @test haskey(manager.watched_files, config_path)
             # static keys should not be changed even if higher priority config file is re-created
-            @test JETLS.get_config(manager, "full_analysis", "debounce") == DEBOUNCE_STARTUP
+            @test JETLS.get_config(manager, "internal", "static_setting") == STATIC_SETTING_STARTUP
             @test JETLS.access_nested_dict(manager.watched_files[config_path],
-                "full_analysis", "debounce") == DEBOUNCE_RECREATE
+                "internal", "static_setting") == STATIC_SETTING_RECREATE
             # non-static keys should be updated
             @test JETLS.get_config(manager, "testrunner", "executable") == TESTRUNNER_RECREATE
 
@@ -222,7 +219,7 @@ const TESTRUNNER_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
                 writereadmsg(msg; read=0)
             end
             # no effect on config
-            @test JETLS.get_config(manager, "full_analysis", "debounce") == DEBOUNCE_STARTUP
+            @test JETLS.get_config(manager, "internal", "static_setting") == STATIC_SETTING_STARTUP
             @test JETLS.get_config(manager, "testrunner", "executable") == TESTRUNNER_RECREATE
         end
     end
@@ -239,11 +236,11 @@ end
             @test manager.watched_files["__DEFAULT_CONFIG__"] == JETLS.DEFAULT_CONFIG
 
             config_path = joinpath(tmpdir, ".JETLSConfig.toml")
-            DEBOUNCE_RECREATE = 500.0
+            STATIC_SETTING_RECREATE = 500
             TESTRUNNER_RECREATE = "testrunner_recreate"
             write(config_path, """
-                [full_analysis]
-                debounce = $DEBOUNCE_RECREATE
+                [internal]
+                static_setting = $STATIC_SETTING_RECREATE
                 [testrunner]
                 executable = \"$TESTRUNNER_RECREATE\"
                 """)
@@ -261,16 +258,16 @@ end
 
             # If higher priority config file is created,
             # - static keys should not be changed
-            @test JETLS.get_config(manager, "full_analysis", "debounce") == DEBOUNCE_DEFAULT
+            @test JETLS.get_config(manager, "internal", "static_setting") == STATIC_SETTING_DEFAULT
             # - non-static keys should be updated
             @test JETLS.get_config(manager, "testrunner", "executable") == TESTRUNNER_RECREATE
 
             # New config file change also should be watched
-            DEBOUNCE_V2 = 600.0
+            STATIC_SETTING_V2 = 600
             TESTRUNNER_V2 = "testrunner_v2"
             write(config_path, """
-                [full_analysis]
-                debounce = $DEBOUNCE_V2
+                [internal]
+                static_setting = $STATIC_SETTING_V2
                 [testrunner]
                 executable = \"$TESTRUNNER_V2\"
                 """)
@@ -284,12 +281,12 @@ end
             @test raw_res isa ShowMessageNotification
             @test raw_res.params.type == MessageType.Warning
             @test occursin("Updated", raw_res.params.message)
-            @test occursin("`full_analysis.debounce`", raw_res.params.message)
+            @test occursin("`internal.static_setting`", raw_res.params.message)
             @test occursin("restart", raw_res.params.message)
-            @test JETLS.get_config(manager, "full_analysis", "debounce") == DEBOUNCE_DEFAULT
+            @test JETLS.get_config(manager, "internal", "static_setting") == STATIC_SETTING_DEFAULT
             @test JETLS.get_config(manager, "testrunner", "executable") == TESTRUNNER_V2
         end
     end
 end
 
-end
+end # module test_did_change_watched_files
