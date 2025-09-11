@@ -293,48 +293,21 @@ These are only updated by document synchronization messages (`didOpen`, `didChan
 
 Problem: Updates occurring during configuration reads
 
-Solution: Use `LWContainer` for heavy update operations
-
 Update operations involve:
 - TOML file parsing (`TOML.tryparsefile`)
 - Unknown key validation (recursive traversal)
 - Configuration merging (recursive dict operations)
 - User notification via `show_warning_message` (side effect)
 
+Solution: Use `LWContainer` for update operations
+
 ```julia
-mutable struct ConfigManager
-    container::LWContainer{ConfigManagerData}
+struct ConfigManagerData # Renamed from ConfigManager, immutable now
+    static_settings::ConfigDict
+    watched_files::WatchedConfigFiles
 end
 
-struct ConfigManagerData
-    reload_required_setting::Dict{String,Any}
-    watched_files::WatchedConfigFiles  # Priority-sorted config files
-end
-
-# Read: lock-free, very frequent
-function get_config(manager::ConfigManager, key_path::String...)
-    data = load(manager.container)
-    # Search in priority order through watched_files
-    for config in values(data.watched_files)
-        v = access_nested_dict(config, key_path...)
-        v !== nothing && return v
-    end
-    return nothing
-end
-
-# Update: heavy operations with file I/O and side effects
-function merge_config!(manager::ConfigManager, filepath::String, new_config::Dict)
-    store!(manager.container) do old_data
-        # 1. Parse TOML file (file I/O)
-        parsed = TOML.tryparsefile(filepath)
-        # 2. Validate unknown keys (recursive traversal)
-        unknown_keys = collect_unmatched_keys(parsed)
-        # 3. Merge configuration (recursive dict operations)
-        new_data = copy_and_merge(old_data, filepath, parsed)
-        # 4. Send warnings if needed (side effect)
-        return new_data, nothing
-    end
-end
+const ConfigManager = LWContainer{ConfigManagerData, LWStats}
 ```
 
 #### 3.2.3 `ExtraDiagnostics`
@@ -683,90 +656,33 @@ Recommendation: Maintain current implementation
 
 ### 3.3 Global State
 
-- `currently_running::Server`: Global server instance
-- `DEFAULT_CONFIG::Dict`: Global configuration dictionary
-- `CONFIG_RELOAD_REQUIRED::Dict`: Configuration requiring reload
-- `LS_ANALYZER_CACHE::Dict`: Analyzer cache
-
 No additional thread safety measures needed for these global states,
-because these objects are either actually constant or only potentially
-replaced during testing, and can be considered as completely constant
-during the actual LS lifecycle.
+because these objects are either completely constant or used for debugging only:
+- `DEFAULT_CONFIG::ConfigDict`
+- `STATIC_CONFIG::ConfigDict`
+- `currently_running::Server`
 
 > [!note]
-> `LS_ANALYZER_CACHE` may be modified during full analysis,
-> but `LS_ANALYZER_CACHE` is only referenced within full analysis, and full
-> analysis execution itself is performed in an independently thread-safe manner,
-> so there is no need to worry about conflicts with other parallel executions.
-
-#### 3.3.1 `currently_running`
-- Purpose: Global reference for debugging (e.g., `currently_running.documents[uri]`)
-- Thread safety: Not used in normal server loop, so no synchronization needed
-
-#### 3.3.2 Configuration-related global variables
-- `DEFAULT_CONFIG`: Default configuration dictionary
-- `CONFIG_RELOAD_REQUIRED`: Definition of configuration keys requiring reload
-- Thread safety:
-  - Read-only during normal server operation
-  - Only modified during test execution
-  - Tests run single-threaded, so no conflicts
-
-#### 3.3.3 `LS_ANALYZER_CACHE`
-- Purpose: `AnalysisToken` cache (`src/analysis/Analyzer.jl:113`)
-- Access pattern:
-  ```julia
-  analysis_cache_key = JET.compute_hash(entry, state.inf_params)
-  analysis_token = get!(AnalysisToken, LS_ANALYZER_CACHE, analysis_cache_key)
-  ```
-- Thread safety:
-  - Full analyses each run single-threaded and serially
-  - Cache keys computed from analysis target and inference parameters, no collisions
-  - No conflicts in current architecture
-
-Design evaluation:
-- Current global state usage patterns are thread-safe
-- Only used for debugging, testing, or serially executed processing
-- No additional synchronization mechanisms needed
+> `LS_ANALYZER_CACHE` is another global constant which maybe be modified during
+> full analysis, but `LS_ANALYZER_CACHE` is only referenced within full analysis,
+> and full analysis execution itself is performed in an independently
+> thread-safe manner, so there is no need to worry about conflicts with other
+> parallel executions.
 
 ### 3.4 External Resources
 
-#### 3.4.1 Formatter
+[Design under consideration]
 
-Problem: External process conflicts
-```julia
-proc = open(`$exe`; read = true, write = true)
-write(proc, text)
-ret = read(proc)
-```
-
-Solution: [Design under consideration]
-
-#### 3.4.2 TestRunner
-
-Problems:
-- Background task management
-- Temporary file collisions
-- Insufficient cleanup of hung tests
-
-Solution: [Design under consideration]
-
-#### 3.4.3 File I/O
-
-Problem: TOCTOU (Time-of-Check-Time-of-Use) race conditions
-```julia
-if !isfile(config_path)  # Check
-    # Another thread might create/delete file here
-    # Later use
-```
-
-Solution: [Design under consideration]
+- Formatter process
+- TestRunner process
 
 ## 4. Implementation Strategy
 
 Proceed with parallelization safely by confirming tests pass at each step through phased implementation:
 - Phase 1: Implement and test basic data structures
-- Phase 2: Component parallelization
-- Phase 3: Message handler parallelization
+- Phase 2: `ServerState` parallelization
+- Phase 3: Full-analysis parallelization
+- Phase 4: Message handler parallelization
 
 ### 4.1 Phase 1: Implement `AtomicContainers`
 
@@ -778,16 +694,39 @@ Implement thread-safe data structures as the foundation for parallelization:
 
 Create unit tests for each data structure to verify concurrent access safety.
 
-### 4.2 Phase 2: Component Parallelization
+### 4.2 Phase 2: `ServerState` Parallelization
 
-Migrate each `ServerState` field to new data structures:
-- `file_cache`, `saved_file_cache`, `testsetinfos_cache`
-- `config_manager`, `extra_diagnostics`
-- `analysis_cache` → `AnalysisManager`
-
+Migrate each `ServerState` field to new data structures (except `analysis_cache`).
 At this phase, message handling remains serial. Confirm all existing tests pass.
 
-### 4.3 Phase 3: Message Handler Parallelization
+### 4.3 Phase 3: Full-Analysis Parallelization
+
+Enable concurrent execution of full analyses while maintaining data consistency:
+
+#### 4.3.1 Goals
+- Allow multiple full analyses to run concurrently for different `AnalysisEntry`s
+- Maintain lock-free read access to analysis results during analysis execution
+- Properly handle duplicate analysis requests for the same entry
+- Ensure atomic updates of analysis results
+
+#### 4.3.2 Implementation Steps
+
+1. Implement `AnalysisManager`:
+   - Queue-based request handling with worker task
+   - Per-entry duplicate request detection and coalescing
+   - Atomic cache updates for lock-free reads
+
+2. Migrate from `analysis_cache` to `AnalysisManager`:
+   - Replace direct cache access with `AnalysisManager` API
+   - Update `run_full_analysis!` to use queuing system
+   - Ensure diagnostic publication remains atomic
+
+3. Enable parallel analysis execution:
+   - Spawn analysis tasks on `:default` thread pool
+   - Implement proper cancellation handling?
+   - Add progress reporting for concurrent analyses
+
+### 4.4 Phase 4: Message Handler Parallelization
 
 Classify messages into sequential and parallel processing:
 - Sequential: lifecycle, document synchronization, cancellation
