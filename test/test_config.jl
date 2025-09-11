@@ -104,22 +104,50 @@ const TEST_DICT_DIFFERENT_KEY = JETLS.ConfigDict(
     end
 end
 
-@testset "`merge_static_settings`" begin
-    dict1 = JETLS.ConfigDict(
-        "internal" => JETLS.ConfigDict("static_setting" => 42))
-    dict2 = JETLS.ConfigDict(
-        "internal" => JETLS.ConfigDict("static_setting" => 99),
-        "testrunner" => JETLS.ConfigDict("executable" => "testrunner2"))
+@testset "Configuration utilities" begin
+    @testset "`is_static_setting`" begin
+        @test !JETLS.is_static_setting("full_analysis", "debounce")
+        @test !JETLS.is_static_setting("full_analysis", "throttle")
+        @test JETLS.is_static_setting("internal", "static_setting")
+        @test !JETLS.is_static_setting("testrunner", "executable")
+        @test !JETLS.is_static_setting("nonexistent")
+        @test !JETLS.is_static_setting("full_analysis", "nonexistent")
+    end
 
-    result = JETLS.merge_static_settings(dict1, dict2)
+    @testset "`is_config_file`" begin
+        @test JETLS.is_config_file("__DEFAULT_CONFIG__")
+        @test JETLS.is_config_file("/path/to/.JETLSConfig.toml")
+        @test JETLS.is_config_file(".JETLSConfig.toml")
+        @test !JETLS.is_config_file("/path/to/Non.JETLSConfig.toml")
+        @test !JETLS.is_config_file("config.toml")
+        @test !JETLS.is_config_file("/path/to/regular.txt")
+    end
 
-    # Should merge static keys only
-    @test result["internal"]["static_setting"] == 99
-    # testrunner.executable should NOT be merged (it's false in STATIC_CONFIG)
-    @test !haskey(result, "testrunner")
+    @testset "`merge_static_settings`" begin
+        dict1 = JETLS.ConfigDict(
+            "internal" => JETLS.ConfigDict("static_setting" => 42))
+        dict2 = JETLS.ConfigDict(
+            "internal" => JETLS.ConfigDict("static_setting" => 99),
+            "testrunner" => JETLS.ConfigDict("executable" => "testrunner2"))
+
+        result = JETLS.merge_static_settings(dict1, dict2)
+
+        # Should merge static keys only
+        @test result["internal"]["static_setting"] == 99
+        # testrunner.executable should NOT be merged (it's false in STATIC_CONFIG)
+        @test !haskey(result, "testrunner")
+    end
+
+    @testset "config files priority" begin
+        files = ["/foo/bar/.JETLSConfig.toml", "__DEFAULT_CONFIG__"]
+        @test sort!(files, order=JETLS.ConfigFileOrder()) == [
+            "/foo/bar/.JETLSConfig.toml",       # highest priority
+            "__DEFAULT_CONFIG__"                # lowest priority
+        ]
+    end
 end
 
-@testset "configuration utilities" begin
+@testset "ConfigDict utilities" begin
     @testset "access_nested_dict" begin
         @test JETLS.access_nested_dict(TEST_DICT, "test_key1") == "test_value1"
         @test JETLS.access_nested_dict(TEST_DICT, "test_key2", "nested_key1") == "nested_value1"
@@ -153,224 +181,189 @@ end
               JETLS.collect_unmatched_keys(TEST_DICT_DIFFERENT_KEY, JETLS.DEFAULT_CONFIG)
     end
 
-    @testset "config files priority" begin
-        files = ["/foo/bar/.JETLSConfig.toml", "__DEFAULT_CONFIG__"]
-        @test sort!(files, order=JETLS.ConfigFileOrder()) == [
-            "/foo/bar/.JETLSConfig.toml",       # highest priority
-            "__DEFAULT_CONFIG__"                # lowest priority
-        ]
-    end
-
-    @testset "config manager" begin
-        manager = JETLS.ConfigManager()
-
-        test_config = JETLS.ConfigDict(
-            "full_analysis" => JETLS.ConfigDict(
-                "debounce" => 2.0,
-                "throttle" => 10.0
-            ),
-            "testrunner" => JETLS.ConfigDict(
-                "executable" => "test_runner"
-            ),
-            "internal" => JETLS.ConfigDict(
-                "static_setting" => 5
-            )
-        )
-
-        manager.watched_files["/foo/bar/.JETLSConfig.toml"] = test_config
-        JETLS.fix_static_settings!(manager)
-
-        @test JETLS.get_config(manager, "full_analysis", "debounce") === 2.0
-        @test JETLS.get_config(manager, "full_analysis", "throttle") === 10.0
-        @test JETLS.get_config(manager, "testrunner", "executable") === "test_runner"
-        @test JETLS.get_config(manager, "non_existent_key") === nothing
-
-        # Test priority: __DEFAULT_CONFIG__ has lower priority
-        override_config = JETLS.ConfigDict(
-            "full_analysis" => JETLS.ConfigDict(
-                "debounce" => 999.0
-            ),
-            "testrunner" => JETLS.ConfigDict(
-                "executable" => "override_runner"
-            )
-        )
-        manager.watched_files["__DEFAULT_CONFIG__"] = override_config
-        # High priority config should still win
-        @test JETLS.get_config(manager, "full_analysis", "debounce") === 2.0
-        @test JETLS.get_config(manager, "testrunner", "executable") === "test_runner"
-
-        # Test merge_config!
-        changed_static_keys = Set{String}()
-        updated_config = JETLS.ConfigDict(
-            "full_analysis" => JETLS.ConfigDict(
-                "debounce" => 3.0,
-                "throttle" => 15.0
-            ),
-            "testrunner" => JETLS.ConfigDict(
-                "executable" => "new_runner"  # not static
-            ),
-            "internal" => JETLS.ConfigDict(
-                "static_setting" => 10
-            )
-        )
-        JETLS.merge_config!(manager, "/foo/bar/.JETLSConfig.toml", updated_config) do _, path, _
-            if JETLS.is_static_setting(path...)
-                push!(changed_static_keys, join(path, "."))
+    @testset "`traverse_merge`" begin
+        # basic merge with custom on_leaf function
+        let target = JETLS.ConfigDict("a" => 1)
+            source = JETLS.ConfigDict("b" => 2)
+            collected_calls = Tuple{Vector{String},Any}[]
+            result = JETLS.traverse_merge(target, source) do path, v
+                push!(collected_calls, (path, v))
+                v * 10
             end
+            @test result == JETLS.ConfigDict("a" => 1, "b" => 20)
+            @test length(collected_calls) == 1
+            @test collected_calls[1][1] == ["b"]
+            @test collected_calls[1][2] == 2
         end
 
-        # `on_static_setting` should be called for static keys
-        @test changed_static_keys == Set(["internal.static_setting"])
-        # non static keys should be changed dynamically
-        @test JETLS.get_config(manager, "testrunner", "executable") == "new_runner"
-        @test JETLS.get_config(manager, "full_analysis", "debounce") == 3.0
-        @test JETLS.get_config(manager, "full_analysis", "throttle") == 15.0
-        # static keys should NOT change (they stay at the fixed values)
-        @test JETLS.get_config(manager, "internal", "static_setting") == 5
-    end
-end
-
-@testset "`traverse_merge`" begin
-    # basic merge with custom on_leaf function
-    let target = JETLS.ConfigDict("a" => 1)
-        source = JETLS.ConfigDict("b" => 2)
-        collected_calls = Tuple{Vector{String},Any}[]
-        result = JETLS.traverse_merge(target, source) do path, v
-            push!(collected_calls, (path, v))
-            v * 10
+        # nested merge with custom on_leaf
+        let target = JETLS.ConfigDict("nested" => JETLS.ConfigDict("a" => 1))
+            source = JETLS.ConfigDict("nested" => JETLS.ConfigDict("b" => 2))
+            collected_paths = Vector{String}[]
+            result = JETLS.traverse_merge(target, source) do path, v
+                push!(collected_paths, path)
+                v
+            end
+            @test result == JETLS.ConfigDict("nested" => JETLS.ConfigDict("a" => 1, "b" => 2))
+            @test collected_paths == [["nested", "b"]]
         end
-        @test result == JETLS.ConfigDict("a" => 1, "b" => 20)
-        @test length(collected_calls) == 1
-        @test collected_calls[1][1] == ["b"]
-        @test collected_calls[1][2] == 2
-    end
 
-    # nested merge with custom on_leaf
-    let target = JETLS.ConfigDict("nested" => JETLS.ConfigDict("a" => 1))
-        source = JETLS.ConfigDict("nested" => JETLS.ConfigDict("b" => 2))
-        collected_paths = Vector{String}[]
-        result = JETLS.traverse_merge(target, source) do path, v
-            push!(collected_paths, path)
-            v
+        # creating new nested structure
+        let target = JETLS.ConfigDict()
+            source = JETLS.ConfigDict("new" => JETLS.ConfigDict("deep" => "value"))
+            result = JETLS.traverse_merge(target, source) do _, v
+                v
+            end
+            @test result == JETLS.ConfigDict("new" => JETLS.ConfigDict("deep" => "value"))
         end
-        @test result == JETLS.ConfigDict("nested" => JETLS.ConfigDict("a" => 1, "b" => 2))
-        @test collected_paths == [["nested", "b"]]
-    end
 
-    # creating new nested structure
-    let target = JETLS.ConfigDict()
-        source = JETLS.ConfigDict("new" => JETLS.ConfigDict("deep" => "value"))
-        result = JETLS.traverse_merge(target, source) do _, v
-            v
+        # overwriting non-dict with dict
+        let target = JETLS.ConfigDict("key" => "scalar")
+            source = JETLS.ConfigDict("key" => JETLS.ConfigDict("nested" => "value"))
+            result = JETLS.traverse_merge(target, source) do _, v
+                v
+            end
+            @test result == JETLS.ConfigDict("key" => JETLS.ConfigDict("nested" => "value"))
         end
-        @test result == JETLS.ConfigDict("new" => JETLS.ConfigDict("deep" => "value"))
-    end
 
-    # overwriting non-dict with dict
-    let target = JETLS.ConfigDict("key" => "scalar")
-        source = JETLS.ConfigDict("key" => JETLS.ConfigDict("nested" => "value"))
-        result = JETLS.traverse_merge(target, source) do _, v
-            v
+        # filtering with on_leaf returning nothing
+        let base = JETLS.ConfigDict("a" => 1, "b" => 2)
+            overlay = JETLS.ConfigDict("b" => 3, "c" => 4)
+            result = JETLS.traverse_merge(base, overlay) do path, v
+                path[end] == "b" ? v : nothing  # only merge keys ending with "b"
+            end
+            @test result == JETLS.ConfigDict("a" => 1, "b" => 3)  # only "b" was merged
         end
-        @test result == JETLS.ConfigDict("key" => JETLS.ConfigDict("nested" => "value"))
-    end
 
-    # filtering with on_leaf returning nothing
-    let base = JETLS.ConfigDict("a" => 1, "b" => 2)
-        overlay = JETLS.ConfigDict("b" => 3, "c" => 4)
-        result = JETLS.traverse_merge(base, overlay) do path, v
-            path[end] == "b" ? v : nothing  # only merge keys ending with "b"
+        # filtering with nested paths
+        let base = JETLS.ConfigDict("full_analysis" => JETLS.ConfigDict("debounce" => 1.0))
+            overlay = JETLS.ConfigDict("full_analysis" => JETLS.ConfigDict("throttle" => 5.0))
+            result = JETLS.traverse_merge(base, overlay) do path, v
+                path == ["full_analysis", "throttle"] ? v : nothing
+            end
+            @test result["full_analysis"]["debounce"] == 1.0
+            @test result["full_analysis"]["throttle"] == 5.0
         end
-        @test result == JETLS.ConfigDict("a" => 1, "b" => 3)  # only "b" was merged
     end
 
-    # filtering with nested paths
-    let base = JETLS.ConfigDict("full_analysis" => JETLS.ConfigDict("debounce" => 1.0))
-        overlay = JETLS.ConfigDict("full_analysis" => JETLS.ConfigDict("throttle" => 5.0))
-        result = JETLS.traverse_merge(base, overlay) do path, v
-            path == ["full_analysis", "throttle"] ? v : nothing
-        end
-        @test result["full_analysis"]["debounce"] == 1.0
-        @test result["full_analysis"]["throttle"] == 5.0
-    end
-end
-
-@testset "`is_static_setting`" begin
-    @test !JETLS.is_static_setting("full_analysis", "debounce")
-    @test !JETLS.is_static_setting("full_analysis", "throttle")
-    @test JETLS.is_static_setting("internal", "static_setting")
-    @test !JETLS.is_static_setting("testrunner", "executable")
-    @test !JETLS.is_static_setting("nonexistent")
-    @test !JETLS.is_static_setting("full_analysis", "nonexistent")
-end
-
-@testset "`is_config_file`" begin
-    @test JETLS.is_config_file("__DEFAULT_CONFIG__")
-    @test JETLS.is_config_file("/path/to/.JETLSConfig.toml")
-    @test JETLS.is_config_file(".JETLSConfig.toml")
-    @test !JETLS.is_config_file("/path/to/Non.JETLSConfig.toml")
-    @test !JETLS.is_config_file("config.toml")
-    @test !JETLS.is_config_file("/path/to/regular.txt")
-end
-
-@testset "`is_watched_file`" begin
-    let manager = JETLS.ConfigManager()
-        filepath = "/path/to/.JETLSConfig.toml"
-        @test JETLS.is_watched_file(manager, filepath) === false
-        manager.watched_files[filepath] = JETLS.ConfigDict()
-        @test JETLS.is_watched_file(manager, filepath) === true
-    end
-end
-
-@testset "`cleanup_empty_dicts`" begin
-    let dict = JETLS.ConfigDict(
-            "keep" => "value",
-            "empty_nested" => JETLS.ConfigDict(),
-            "nested" => JETLS.ConfigDict(
-                "keep_nested" => "value",
-                "empty_deep" => JETLS.ConfigDict(
-                    "empty_deeper" => JETLS.ConfigDict()
+    @testset "`cleanup_empty_dicts`" begin
+        let dict = JETLS.ConfigDict(
+                "keep" => "value",
+                "empty_nested" => JETLS.ConfigDict(),
+                "nested" => JETLS.ConfigDict(
+                    "keep_nested" => "value",
+                    "empty_deep" => JETLS.ConfigDict(
+                        "empty_deeper" => JETLS.ConfigDict()
+                    )
                 )
             )
-        )
-        result = JETLS.cleanup_empty_dicts(dict)
-        @test result == JETLS.ConfigDict(
-            "keep" => "value",
-            "nested" => JETLS.ConfigDict("keep_nested" => "value")
-        )
-    end
-
-    # completely empty dict should remain empty
-    let dict = JETLS.ConfigDict()
-        result = JETLS.cleanup_empty_dicts(dict)
-        @test result == JETLS.ConfigDict()
-    end
-
-    # dict with only empty nested dicts should become empty
-    let dict = JETLS.ConfigDict("empty" => JETLS.ConfigDict())
-        result = JETLS.cleanup_empty_dicts(dict)
-        @test result == JETLS.ConfigDict()
-    end
-
-    let dict = JETLS.ConfigDict(
-        "nested" => JETLS.ConfigDict(
-            "nested2 " => JETLS.ConfigDict(
-                "deep_nested" => 1
-                )
+            result = JETLS.cleanup_empty_dicts(dict)
+            @test result == JETLS.ConfigDict(
+                "keep" => "value",
+                "nested" => JETLS.ConfigDict("keep_nested" => "value")
             )
-        )
-        result = JETLS.cleanup_empty_dicts(dict)
-        @test result == JETLS.ConfigDict(
+        end
+
+        # completely empty dict should remain empty
+        let dict = JETLS.ConfigDict()
+            result = JETLS.cleanup_empty_dicts(dict)
+            @test result == JETLS.ConfigDict()
+        end
+
+        # dict with only empty nested dicts should become empty
+        let dict = JETLS.ConfigDict("empty" => JETLS.ConfigDict())
+            result = JETLS.cleanup_empty_dicts(dict)
+            @test result == JETLS.ConfigDict()
+        end
+
+        let dict = JETLS.ConfigDict(
             "nested" => JETLS.ConfigDict(
                 "nested2 " => JETLS.ConfigDict(
                     "deep_nested" => 1
+                    )
                 )
             )
-        )
+            result = JETLS.cleanup_empty_dicts(dict)
+            @test result == JETLS.ConfigDict(
+                "nested" => JETLS.ConfigDict(
+                    "nested2 " => JETLS.ConfigDict(
+                        "deep_nested" => 1
+                    )
+                )
+            )
+        end
     end
 end
 
-@testset "`fix_static_settings!` priority handling" begin
+@testset "ConfigManager" begin
+    manager = JETLS.ConfigManager()
+
+    test_config = JETLS.ConfigDict(
+        "full_analysis" => JETLS.ConfigDict(
+            "debounce" => 2.0,
+            "throttle" => 10.0
+        ),
+        "testrunner" => JETLS.ConfigDict(
+            "executable" => "test_runner"
+        ),
+        "internal" => JETLS.ConfigDict(
+            "static_setting" => 5
+        )
+    )
+
+    manager.watched_files["/foo/bar/.JETLSConfig.toml"] = test_config
+    JETLS.fix_static_settings!(manager)
+
+    @test JETLS.get_config(manager, "full_analysis", "debounce") === 2.0
+    @test JETLS.get_config(manager, "full_analysis", "throttle") === 10.0
+    @test JETLS.get_config(manager, "testrunner", "executable") === "test_runner"
+    @test JETLS.get_config(manager, "non_existent_key") === nothing
+
+    # Test priority: __DEFAULT_CONFIG__ has lower priority
+    override_config = JETLS.ConfigDict(
+        "full_analysis" => JETLS.ConfigDict(
+            "debounce" => 999.0
+        ),
+        "testrunner" => JETLS.ConfigDict(
+            "executable" => "override_runner"
+        )
+    )
+    manager.watched_files["__DEFAULT_CONFIG__"] = override_config
+    # High priority config should still win
+    @test JETLS.get_config(manager, "full_analysis", "debounce") === 2.0
+    @test JETLS.get_config(manager, "testrunner", "executable") === "test_runner"
+
+    # Test merge_config!
+    changed_static_keys = Set{String}()
+    updated_config = JETLS.ConfigDict(
+        "full_analysis" => JETLS.ConfigDict(
+            "debounce" => 3.0,
+            "throttle" => 15.0
+        ),
+        "testrunner" => JETLS.ConfigDict(
+            "executable" => "new_runner"  # not static
+        ),
+        "internal" => JETLS.ConfigDict(
+            "static_setting" => 10
+        )
+    )
+    JETLS.merge_config!(manager, "/foo/bar/.JETLSConfig.toml", updated_config) do _, path, _
+        if JETLS.is_static_setting(path...)
+            push!(changed_static_keys, join(path, "."))
+        end
+    end
+
+    # `on_static_setting` should be called for static keys
+    @test changed_static_keys == Set(["internal.static_setting"])
+    # non static keys should be changed dynamically
+    @test JETLS.get_config(manager, "testrunner", "executable") == "new_runner"
+    @test JETLS.get_config(manager, "full_analysis", "debounce") == 3.0
+    @test JETLS.get_config(manager, "full_analysis", "throttle") == 15.0
+    # static keys should NOT change (they stay at the fixed values)
+    @test JETLS.get_config(manager, "internal", "static_setting") == 5
+end
+
+@testset "`fix_static_settings!`" begin
     manager = JETLS.ConfigManager()
     high_priority_config = JETLS.ConfigDict(
         "internal" => JETLS.ConfigDict("static_setting" => 2)
