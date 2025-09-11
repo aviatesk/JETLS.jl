@@ -252,6 +252,9 @@ struct WatchedConfigFiles
 end
 WatchedConfigFiles() = WatchedConfigFiles(String["__DEFAULT_CONFIG__"], ConfigDict[DEFAULT_CONFIG])
 
+Base.copy(watched_files::WatchedConfigFiles) =
+    WatchedConfigFiles(copy(watched_files.files), copy(watched_files.configs))
+
 function _file_idx(watched_files::WatchedConfigFiles, file::String)
     idx = searchsortedfirst(watched_files.files, file, ConfigFileOrder())
     if idx > length(watched_files.files) || watched_files.files[idx] != file
@@ -299,11 +302,11 @@ end
 
 struct ConfigFileOrder <: Base.Ordering end
 
-mutable struct ConfigManager
-    static_settings::ConfigDict             # settings that should be static throughout the server lifetime
-    const watched_files::WatchedConfigFiles # watched configuration files
+struct ConfigManagerData
+    static_settings::ConfigDict
+    watched_files::WatchedConfigFiles
 end
-ConfigManager() = ConfigManager(ConfigDict(), WatchedConfigFiles())
+ConfigManagerData() = ConfigManagerData(ConfigDict(), WatchedConfigFiles())
 
 # Type aliases for document-synchronization caches using `SWContainer` (sequential-only updates)
 const FileCache = SWContainer{Base.PersistentDict{URI,FileInfo}, SWStats}
@@ -315,6 +318,9 @@ const ExtraDiagnostics = CASContainer{ExtraDiagnosticsData, CASStats}
 const CurrentlyRequested = CASContainer{Base.PersistentDict{String,RequestCaller}, CASStats}
 const CurrentlyRegistered = CASContainer{Set{Registered}, CASStats}
 const CompletionResolverInfo = CASContainer{Union{Nothing,Tuple{Module,LSPostProcessor}}, CASStats}
+
+# Type aliases for concurrent updates using LWContainer (non-retriable operations)
+const ConfigManager = LWContainer{ConfigManagerData, LWStats}
 
 mutable struct ServerState
     const file_cache::FileCache # syntactic analysis cache (synced with `textDocument/didChange`)
@@ -342,7 +348,7 @@ mutable struct ServerState
             #=extra_diagnostics=# ExtraDiagnostics(ExtraDiagnosticsData()),
             #=currently_requested=# CurrentlyRequested(Base.PersistentDict{String,RequestCaller}()),
             #=currently_registered=# CurrentlyRegistered(Set{Registered}()),
-            #=config_manager=# ConfigManager(),
+            #=config_manager=# ConfigManager(ConfigManagerData()),
             #=completion_resolver_info=# CompletionResolverInfo(nothing),
             #=encoding=# PositionEncodingKind.UTF16, # initialize with UTF16 (for tests)
         )
