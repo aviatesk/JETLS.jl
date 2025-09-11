@@ -132,6 +132,7 @@ end
 const URI2Diagnostics = Dict{URI,Vector{Diagnostic}}
 
 mutable struct FullAnalysisResult
+    staled::Bool
     actual2virtual::JET.Actual2Virtual
     analyzer::LSAnalyzer
     const uri2diagnostics::URI2Diagnostics
