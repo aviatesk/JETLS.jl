@@ -19,7 +19,9 @@ end
 #     method = DID_CHANGE_WATCHED_FILES_REGISTRATION_METHOD))
 # register(currently_running, did_change_watched_files_registration())
 
-function handle_config_file_change!(server::Server, changed_path::AbstractString, change_type::FileChangeType.Ty)
+function handle_config_file_change!(
+        server::Server, changed_path::AbstractString, change_type::FileChangeType.Ty
+    )
     changed_settings = String[]
     changed_static_settings = String[]
 
@@ -36,8 +38,7 @@ function handle_config_file_change!(server::Server, changed_path::AbstractString
         end
         kind = "Created"
     elseif change_type == FileChangeType.Changed
-        is_watched_file(server.state.config_manager, changed_path) || return
-        load_config!(server, changed_path) do current_config, path, new_value
+        load_config!(server, changed_path; reload=true) do current_config, path, new_value
             current_value = access_nested_dict(current_config, path...)
             if current_value != new_value
                 if is_static_setting(path...)
