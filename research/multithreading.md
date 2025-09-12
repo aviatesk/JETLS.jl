@@ -531,57 +531,51 @@ struct OutOfScope
     module_context::Module
 end
 
-const AnalysisInfo = Union{Set{AnalysisUnit},OutOfScope}
+const AnalysisInfo = Union{AnalysisUnit,OutOfScope}
+
+struct AnalysisRequest
+    entry::AnalysisEntry
+    token::Union{Nothing,ProgressToken} # Progress notification token
+    onsave::Bool                        # i.e. "reanalyze"
+    generation::Int                     # Version number to detect staleness
+end
+
+const AnalysisCache = LWContainer{Dict{URI,AnalysisInfo}}
+const RunningAnalyses = CASContainer{Dict{AnalysisEntry,Union{Nothing,AnalysisRequest}}}
+const AnalyzedGenerations = CASContainer{Dict{AnalysisEntry,Int}} # Maps entry to generation
+const CurrentGenerations = CASContainer{Dict{AnalysisEntry,Int}}  # Current generation per entry
+const DebouncedRequests = LWContainer{Dict{AnalysisEntry,Timer}}
 
 struct AnalysisManager
     # Current analysis results (lock-free reads, heavy updates)
-    cache::LWContainer{Dict{URI,AnalysisInfo}}
+    cache::AnalysisCache
 
     # Track running analyses (lightweight updates)
-    analyzing::CASContainer{Dict{AnalysisEntry,Union{Nothing,AnalysisRequest}}}
+    pending_analyses::RunningAnalyses
 
     # Analysis queue (serial execution per AnalysisEntry)
     queue::Channel{AnalysisRequest}
     worker_tasks::Vector{Task}  # Currently single task, future: multiple workers
 
-    # Track analyzed entries (lightweight updates)
-    analyzed_entries::CASContainer{Set{AnalysisEntry}}
+    # Track current generation for each entry (lightweight updates)
+    current_generations::CurrentGenerations
+
+    # Track analyzed generation for each entry (lightweight updates)
+    analyzed_generations::AnalyzedGenerations
 
     # Debouncing management (timer close has side effects)
-    debounced::LWContainer{Dict{AnalysisEntry,Timer}}
-end
-
-# Constructor: initially single-threaded
-function AnalysisManager()
-    manager = AnalysisManager(
-        LWContainer(Dict{URI,AnalysisInfo}()),
-        CASContainer(Dict{AnalysisEntry,Union{Nothing,AnalysisRequest}}()),
-        Channel{AnalysisRequest}(Inf),
-        Task[],  # Will contain single worker initially
-        CASContainer(Set{AnalysisEntry}()),
-        LWContainer(Dict{AnalysisEntry,Timer}())
-    )
-    # Start single worker (future: parameterize worker count)
-    worker = Threads.@spawn :default analysis_worker(manager)
-    push!(manager.worker_tasks, worker)
-    return manager
-end
-
-struct AnalysisRequest
-    server::Server                      # Server instance for sending notifications
-    entry::AnalysisEntry
-    token::Union{Nothing,ProgressToken} # Progress notification token
-    onsave::Bool                        # i.e. "reanalyze"
+    debounced::DebouncedRequests
 end
 ```
 
-### 4.3 Per-Entry Serialization
+### 4.3 Per-Entry Serialization and Pending Request Management
 
 The `AnalysisManager` ensures that multiple analyses for the same `AnalysisEntry`
 are properly serialized:
 
+- Pending request management happens in `request_analysis!` (not in the worker)
 - When a request arrives for an entry that's currently being analyzed, it replaces
-  any existing pending request in the `analyzing` dictionary
+  any existing pending request in the `pending_analyses` dictionary
 - Only the latest pending request is kept (newer requests replace older ones)
 - After an analysis completes, the pending request (if any) is re-queued
 - This naturally prevents duplicate analyses without complex timing mechanisms
@@ -633,41 +627,7 @@ Why debouncing is still useful:
 >   * 20.1s: Analysis 2 completes (current state analyzed)
 > - Result: Only 2 analyses ran, intermediate request was properly discarded.
 
-### 4.5 Cache Invalidation Mechanism
-
-The cache invalidation mechanism replaces the mutable `staled` field:
-
-```julia
-# Called from request_analysis! when onsave=true (triggered by DidSave notification)
-function invalidate_cache!(manager::AnalysisManager, uri::URI)
-    analysis_info = get_analysis_info(manager, uri)
-    if analysis_info isa Set{AnalysisUnit}
-        # Remove entries from analyzed set - will trigger re-analysis
-        store!(manager.analyzed_entries) do entries
-            new_entries = copy(entries)
-            for au in analysis_info
-                delete!(new_entries, au.entry)
-            end
-            return new_entries, nothing
-        end
-    end
-end
-
-# Check if analysis is needed (called in worker after dequeuing but before execute_analysis)
-should_analyze(manager::AnalysisManager, entry::AnalysisEntry) =
-    !(entry in load(manager.analyzed_entries))  # Analyze if not in set
-
-# Mark entry as analyzed after successful analysis
-function mark_analyzed!(manager::AnalysisManager, entry::AnalysisEntry)
-    store!(manager.analyzed_entries) do entries
-        new_entries = copy(entries)
-        push!(new_entries, entry)
-        return new_entries, nothing
-    end
-end
-```
-
-### 4.6 Operations
+### 4.5 Operations
 
 #### Read Operation (Lock-free)
 ```julia
@@ -700,10 +660,25 @@ function request_analysis!(
         return nothing
     end
 
-    # Invalidate cache if this is a save event
+    # Increment generation and invalidate cache if this is a save event
     if onsave
-        invalidate_cache!(manager, uri)
+        generation = increment_generation!(manager, entry)
+    else
+        generation = get_generation(manager, entry)
     end
+
+    # Check if already analyzing and handle pending requests
+    should_queue = store!(manager.pending_analyses) do running
+        if haskey(running, entry)
+            # Replace any existing pending request with this new one
+            new_running = copy(running)
+            new_running[entry] = AnalysisRequest(entry, token, onsave, generation)
+            return new_running, false  # Don't queue - just update pending
+        else
+            return running, true  # Not analyzing - should queue
+        end
+    end
+    should_queue || return nothing  # Request saved as pending
 
     # Apply debouncing for save events
     if onsave && (debounce_delay = get_config(server.state.config_manager, "full_analysis", "debounce")) > 0
@@ -721,16 +696,27 @@ function request_analysis!(
                     return new_t, nothing
                 end
                 # Queue the request after debounce period
-                put!(manager.queue, AnalysisRequest(server, entry, token, onsave))
+                queue_request!(manager, AnalysisRequest(entry, token, onsave, generation))
             end
             return new_timers, nothing
         end
     else
         # Immediate queueing for non-save or no-debounce
-        put!(manager.queue, AnalysisRequest(server, entry, token, onsave))
+        queue_request!(manager, AnalysisRequest(entry, token, onsave, generation))
     end
 
     return nothing
+end
+
+# Helper function to queue request and mark as analyzing
+function queue_request!(manager::AnalysisManager, request::AnalysisRequest)
+    # Mark as analyzing before queueing
+    store!(manager.pending_analyses) do running
+        new_running = copy(running)
+        new_running[request.entry] = nothing  # Mark as analyzing, no pending yet
+        return new_running, nothing
+    end
+    put!(manager.queue, request)
 end
 ```
 
@@ -823,37 +809,24 @@ end
 
 #### Worker Task
 ```julia
-function analysis_worker(manager::AnalysisManager)
+function start_analysis_workers(server::Server, manager::AnalysisManager, n_workers::Int)
+    for i in 1:n_workers
+        worker = Threads.@spawn :default analysis_worker(server, manager)
+        push!(manager.worker_tasks, worker)
+    end
+end
+
+function analysis_worker(server::Server, manager::AnalysisManager)
     # Note: Currently single worker, but designed for future multi-worker scaling
-    # When multiple workers exist, the per-entry locking ensures correctness
+    # When multiple workers exist, the per-entry serialization ensures correctness
 
     while true
         request = take!(manager.queue)
 
-        # Check if already analyzing this entry
-        is_analyzing = store!(manager.analyzing) do analyzing
-            if haskey(analyzing, request.entry)
-                # Keep only the latest request as pending
-                new_analyzing = copy(analyzing)
-                new_analyzing[request.entry] = request
-                return new_analyzing, true  # Already analyzing
-            end
-            # Mark as analyzing (no pending request yet)
-            new_analyzing = copy(analyzing)
-            new_analyzing[request.entry] = nothing
-            return new_analyzing, false  # Not analyzing
-        end
-
-        if is_analyzing
-            continue  # Skip to next request
-        end
-
-        server = request.server
-
         # Check if analysis is actually needed
-        if !should_analyze(manager, request.entry)
+        if !should_analyze(manager, request)
             # Skip analysis - already up to date
-            @goto next
+            @goto complete
         end
 
         if request.token !== nothing
@@ -877,20 +850,24 @@ function analysis_worker(manager::AnalysisManager)
 
         if result !== nothing
             update_analysis_cache!(manager, request.entry, result)
-            mark_analyzed!(manager, request.entry)
+            mark_analyzed_generation!(manager, request)
             notify_diagnostics!(server)
         end
 
-        @label next
+        @label complete
 
         # Check for pending request and re-queue if needed
-        pending_request = store!(manager.analyzing) do analyzing
-            if haskey(analyzing, request.entry)
-                new_analyzing = copy(analyzing)
-                pending = delete!(new_analyzing, request.entry)
-                return new_analyzing, pending
+        pending_request = store!(manager.pending_analyses) do running
+            if haskey(running, request.entry)
+                new_running = copy(running)
+                pending = pop!(new_running, request.entry)
+                if pending !== nothing
+                    # Re-mark as analyzing before queueing the pending request
+                    new_running[request.entry] = nothing
+                end
+                return new_running, pending
             end
-            return analyzing, nothing
+            return running, nothing
         end
         if pending_request !== nothing
             # Re-queue the pending request for processing
@@ -899,18 +876,6 @@ function analysis_worker(manager::AnalysisManager)
     end
 end
 ```
-
-> [!note] Future Multi-threading Support
->
-> When Julia's compiler and JET become thread-safe, scaling to multiple workers is trivial:
-> ```julia
-> function start_analysis_workers(manager::AnalysisManager, n_workers::Int)
->     for i in 1:n_workers
->         worker = Threads.@spawn :default analysis_worker(manager)
->         push!(manager.worker_tasks, worker)
->     end
-> end
-> ```
 
 #### Cache Update
 ```julia
@@ -963,7 +928,58 @@ function update_analysis_cache!(manager::AnalysisManager, entry::AnalysisEntry, 
 end
 ```
 
-### 4.7 File Deletion and Cache Cleanup
+#### Cache Invalidation and Generation Management
+
+The generation-based invalidation mechanism ensures correct staleness detection even
+when files are modified during ongoing analyses.
+
+To handle files being modified during ongoing analyses:
+
+- Each `AnalysisEntry` has a generation number that increments on save
+- Each `AnalysisRequest` captures the generation at request time
+- After analysis completes, it's marked with its generation
+- `should_analyze` checks if the analyzed generation matches the requested one
+- If a file is saved during analysis, its generation increments, making
+  future requests with higher generations trigger re-analysis
+
+This ensures that:
+1. Completed analyses are always recorded with their generation
+2. Stale analyses are naturally superseded by newer generations
+3. The system automatically re-analyzes when generations differ
+
+```julia
+# Increment generation when file is saved
+function increment_generation!(manager::AnalysisManager, entry::AnalysisEntry)
+    store!(manager.current_generations) do generations
+        new_generations = copy(generations)
+        gen = get(new_generations, entry, 0) + 1
+        new_generations[entry] = gen
+        return new_generations, gen
+    end
+end
+
+# Get current generation for an entry
+function get_generation(manager::AnalysisManager, entry::AnalysisEntry)
+    return get(load(manager.current_generations), entry, 0)
+end
+
+# Check if analysis is needed (called in worker after dequeuing)
+function should_analyze(manager::AnalysisManager, request::AnalysisRequest)
+    analyzed_generation = get(load(manager.analyzed_generations), request.entry, -1)
+    return analyzed_generation != request.generation  # Analyze if generation differs
+end
+
+# Mark entry as analyzed with its generation
+function mark_analyzed_generation!(manager::AnalysisManager, request::AnalysisRequest)
+    store!(manager.analyzed_generations) do generations
+        new_generations = copy(generations)
+        new_generations[request.entry] = request.generation
+        return new_generations, nothing
+    end
+end
+```
+
+#### File Deletion and Cache Cleanup
 
 When files are deleted or removed from the project scope:
 
@@ -971,7 +987,7 @@ When files are deleted or removed from the project scope:
 # Called when a file is deleted (from didClose or file system watch)
 function remove_from_cache!(manager::AnalysisManager, uri::URI)
     # Remove from analyzed entries
-    store!(manager.analyzed_entries) do entries
+    store!(manager.analyzed_generations) do entries
         analysis_info = get_analysis_info(manager, uri)
         if analysis_info isa Set{AnalysisUnit}
             new_entries = copy(entries)
