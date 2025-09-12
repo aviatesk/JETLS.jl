@@ -518,9 +518,8 @@ abstract type AnalysisEntry end
 struct FullAnalysisResult # immutable now
     actual2virtual::JET.Actual2Virtual
     analyzer::LSAnalyzer
-    uri2diagnostics::URI2Diagnostics                                  # new instance for each result
-    analyzed_file_infos::Dict{URI,JET.AnalyzedFileInfo}               # new instance for each result
-    successfully_analyzed_file_infos::Dict{URI,JET.AnalyzedFileInfo}  # new instance for each result
+    uri2diagnostics::URI2Diagnostics                     # new instance for each result
+    analyzed_file_infos::Dict{URI,JET.AnalyzedFileInfo}  # new instance for each result
 end
 
 struct AnalysisUnit

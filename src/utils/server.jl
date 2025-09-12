@@ -192,7 +192,7 @@ Returns a named tuple containing:
   to recognize, which are caused by JET implementation details
 """
 function get_context_info(state::ServerState, uri::URI, pos::Position)
-    analysis_unit = find_analysis_unit_for_uri(state, uri)
+    analysis_unit = get(state.analysis_cache, uri, nothing)
     mod = get_context_module(analysis_unit, uri, pos)
     analyzer = get_context_analyzer(analysis_unit, uri)
     postprocessor = get_post_processor(analysis_unit)
@@ -202,7 +202,7 @@ end
 get_context_module(::Nothing, ::URI, ::Position) = Main
 get_context_module(oos::OutOfScope, ::URI, ::Position) = isdefined(oos, :module_context) ? oos.module_context : Main
 function get_context_module(analysis_unit::AnalysisUnit, uri::URI, pos::Position)
-    safi = @something successfully_analyzed_file_info(analysis_unit, uri) return Main
+    safi = @something analyzed_file_info(analysis_unit, uri) return Main
     curline = Int(pos.line) + 1
     curmod = Main
     for (range, mod) in safi.module_range_infos
@@ -219,20 +219,3 @@ get_context_analyzer(analysis_unit::AnalysisUnit, ::URI) = analysis_unit.result.
 get_post_processor(::Nothing) = LSPostProcessor(JET.PostProcessor())
 get_post_processor(::OutOfScope) = LSPostProcessor(JET.PostProcessor())
 get_post_processor(analysis_unit::AnalysisUnit) = LSPostProcessor(JET.PostProcessor(analysis_unit.result.actual2virtual))
-
-function find_analysis_unit_for_uri(state::ServerState, uri::URI)
-    haskey(state.analysis_cache, uri) || return nothing
-    analysis_info = state.analysis_cache[uri]
-    if analysis_info isa OutOfScope
-        return analysis_info
-    end
-    analysis_unit = first(analysis_info)
-    for analysis_unit′ in analysis_info
-        # prioritize `PackageSourceAnalysisEntry` if exists
-        if isa(analysis_unit.entry, PackageSourceAnalysisEntry)
-            analysis_unit = analysis_unit′
-            break
-        end
-    end
-    return analysis_unit
-end

@@ -313,11 +313,10 @@ function get_full_diagnostics(server::Server)
             continue
         end
         diagnostics = get!(Vector{Diagnostic}, uri2diagnostics, uri)
-        for analysis_unit in analysis_info
-            full_diagnostics = get(analysis_unit.result.uri2diagnostics, uri, nothing)
-            if full_diagnostics !== nothing
-                append!(diagnostics, full_diagnostics)
-            end
+        analysis_unit = analysis_info
+        full_diagnostics = get(analysis_unit.result.uri2diagnostics, uri, nothing)
+        if full_diagnostics !== nothing
+            append!(diagnostics, full_diagnostics)
         end
     end
     merge_extra_diagnostics!(uri2diagnostics, server)

@@ -137,7 +137,6 @@ mutable struct FullAnalysisResult
     analyzer::LSAnalyzer
     const uri2diagnostics::URI2Diagnostics
     const analyzed_file_infos::Dict{URI,JET.AnalyzedFileInfo}
-    const successfully_analyzed_file_infos::Dict{URI,JET.AnalyzedFileInfo}
 end
 
 struct AnalysisUnit
@@ -147,8 +146,8 @@ end
 
 analyzed_file_uris(analysis_unit::AnalysisUnit) = keys(analysis_unit.result.analyzed_file_infos)
 
-function successfully_analyzed_file_info(analysis_unit::AnalysisUnit, uri::URI)
-    return get(analysis_unit.result.successfully_analyzed_file_infos, uri, nothing)
+function analyzed_file_info(analysis_unit::AnalysisUnit, uri::URI)
+    return get(analysis_unit.result.analyzed_file_infos, uri, nothing)
 end
 
 struct OutOfScope
@@ -157,7 +156,8 @@ struct OutOfScope
     OutOfScope(module_context::Module) = new(module_context)
 end
 
-const AnalysisInfo = Union{Set{AnalysisUnit},OutOfScope}
+# TODO support multiple analysis units, which can happen if this file is included from multiple different analysis_units
+const AnalysisInfo = Union{AnalysisUnit,OutOfScope}
 
 abstract type RequestCaller end
 
