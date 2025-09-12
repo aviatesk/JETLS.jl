@@ -23,9 +23,9 @@ using JETLS.URIs2
     withscript(script_code) do script_path
         uri = filepath2uri(script_path)
         withserver() do (; writereadmsg, id_counter)
+            # `textDocument/publishDiagnostics` is notified, but the diagnostics of syntax errors wouldn't be published
             (; raw_res) = writereadmsg(
-                make_DidOpenTextDocumentNotification(uri, script_code);
-                read = 0) # `textDocument/publishDiagnostics` is not notified by the server due to the existence of syntax errors
+                make_DidOpenTextDocumentNotification(uri, script_code))
 
             let id = id_counter[] += 1
                 (; raw_res) = writereadmsg(DocumentDiagnosticRequest(;
@@ -60,7 +60,7 @@ end
     # Use withscript to create a temporary file and run the test
     withscript(scriptcode) do script_path
         uri = filepath2uri(script_path)
-        withserver() do (; writereadmsg, id_counter)
+        withserver() do (; writereadmsg)
             (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, scriptcode))
 
             @test raw_res isa PublishDiagnosticsNotification
@@ -93,7 +93,7 @@ end
     # Use withscript to create a temporary file and run the test
     withscript(scriptcode) do script_path
         uri = filepath2uri(script_path)
-        withserver() do (; writereadmsg, id_counter)
+        withserver() do (; writereadmsg)
             (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, scriptcode))
 
             @test raw_res isa PublishDiagnosticsNotification
@@ -137,7 +137,7 @@ end
         rootUri = filepath2uri(pkg_path)
         src_path = normpath(pkg_path, "src", "TestPackageAnalysis.jl")
         uri = filepath2uri(src_path)
-        withserver(; rootUri) do (; writereadmsg, id_counter)
+        withserver(; rootUri) do (; writereadmsg)
             (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, read(src_path, String)))
 
             @test raw_res isa PublishDiagnosticsNotification
@@ -163,7 +163,7 @@ end
         rootUri = filepath2uri(pkg_path)
         src_path = normpath(pkg_path, "src", "TestEmptyPackageAnalysis.jl")
         uri = filepath2uri(src_path)
-        withserver(; rootUri) do (; writereadmsg, id_counter)
+        withserver(; rootUri) do (; writereadmsg)
             (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, read(src_path, String)))
             @test raw_res isa PublishDiagnosticsNotification
         end
