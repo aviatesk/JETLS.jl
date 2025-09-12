@@ -167,8 +167,7 @@ end
 
 function initiate_analysis_unit!(server::Server, uri::URI; token::Union{Nothing,ProgressToken}=nothing)
     state = server.state
-    fi = get_saved_file_info(state, uri)
-    if isnothing(fi)
+    fi = @something get_saved_file_info(state, uri) begin
         error(lazy"`initiate_analysis_unit!` called before saved file cache is created for $uri")
     end
     parsed_stream = fi.parsed_stream
@@ -181,9 +180,7 @@ function initiate_analysis_unit!(server::Server, uri::URI; token::Union{Nothing,
         state.analysis_cache[uri] = env_path
         return nothing
     end
-    if isnothing(env_path)
-        pkgname = nothing
-    elseif uri.scheme == "untitled"
+    if isnothing(env_path) || uri.scheme == "untitled"
         pkgname = nothing
     else
         pkgname = find_pkg_name(env_path)
