@@ -1,6 +1,6 @@
 ---
 file-created: 2025-08-23T23:27
-file-modified: 2025-09-09T20:40
+file-modified: 2025-09-12T21:05
 status: x
 due: 2025-09-05
 ---
@@ -186,7 +186,7 @@ load(c::CASContainer) = @atomic :acquire c.data
 end
 ```
 
-## 3. Component-Specific Problems and Solutions
+## 3. Component-Specific Design
 
 ### 3.1 `FileInfo`
 
@@ -275,11 +275,12 @@ Design principles:
    - Each field has a single responsibility
    - Update patterns are clearly defined
 
-#### 3.2.1 `FileCache` / `SavedFileCache` / `TestsetInfosCache`
+#### 3.2.1 `file_cache` / `saved_file_cache` / `testsetinfos_cache`
 
-Problem: Conflicts when updating per-URI values
-
-Solution: Use `SWContainer` (see Section 2.4)
+These fields are updated during document synchronization, but since
+document-synchronization notifications are handled sequentially,
+writes can be assumed to occur sequentially.
+Due to frequent writes, we adopt the most efficient `SWContainer`.
 ```julia
 # Type aliases
 const FileCache         = SWContainer{Base.PersistentDict{URI,FileInfo}}
@@ -287,11 +288,12 @@ const SavedFileCache    = SWContainer{Base.PersistentDict{URI,SavedFileInfo}}
 const TestsetInfosCache = SWContainer{Base.PersistentDict{URI,Vector{TestsetInfo}}}
 ```
 
-These are only updated by document synchronization messages (`didOpen`, `didChange`, `didSave`, `didClose`), ensuring sequential processing.
+> [!note]
+> For future extensions, it's possible to add caches for lowered/inferred code to `FileInfo`.
+> Even in that case, these fields would continue to be managed with `SWContainer`, while using
+> `CWContainer` for those code caches to ensure safety against parallel writes.
 
-#### 3.2.2 `ConfigManager`
-
-Problem: Updates occurring during configuration reads
+#### 3.2.2 `config_manager`
 
 Update operations involve:
 - TOML file parsing (`TOML.tryparsefile`)
@@ -299,7 +301,7 @@ Update operations involve:
 - Configuration merging (recursive dict operations)
 - User notification via `show_warning_message` (side effect)
 
-Solution: Use `LWContainer` for update operations
+Use `LWContainer` for update operations as the retry should be avoided.
 
 ```julia
 struct ConfigManagerData # Renamed from ConfigManager, immutable now
@@ -310,7 +312,7 @@ end
 const ConfigManager = LWContainer{ConfigManagerData, LWStats}
 ```
 
-#### 3.2.3 `ExtraDiagnostics`
+#### 3.2.3 `extra_diagnostics`
 
 Problem: Concurrent access to test execution result diagnostics
 
@@ -341,181 +343,7 @@ function Base.setindex!(extra_diagnostics::ExtraDiagnostics, val::URI2Diagnostic
 end
 ```
 
-#### 3.2.4 `AnalysisManager` and `analysis_cache`
-
-Problems:
-- `AnalysisEntry` performs analysis across multiple URIs
-- Need to allow read access during analysis
-- Multiple analyses may execute concurrently
-- Need to handle duplicate requests for the same `AnalysisEntry`
-
-Solution: Serialization and queuing of analysis execution with `AnalysisManager`
-
-```julia
-mutable struct AnalysisManager
-    # Current analysis results (read-only)
-    @atomic cache::Dict{URI,AnalysisInfo}
-
-    # Track running analyses (per AnalysisEntry)
-    const analyzing::Dict{AnalysisEntry,AnalysisTask}
-    const analyzing_lock::ReentrantLock
-
-    # Analysis queue (serial execution per AnalysisEntry)
-    const queue::Channel{AnalysisRequest}
-    const worker_task::Task
-end
-
-struct AnalysisTask
-    started_at::Float64
-    pending_requests::Vector{AnalysisRequest}  # Hold duplicate requests
-end
-
-struct AnalysisRequest
-    entry::AnalysisEntry
-    reanalyze::Bool
-    token::Union{Nothing,ProgressToken}
-    callback::Union{Nothing,Channel{AnalysisResult}}  # For completion notification
-end
-
-# Read: completely lock-free
-function get_analysis_info(manager::AnalysisManager, uri::URI)
-    cache = manager.cache  # Atomic read
-    return get(cache, uri, nothing)
-end
-
-# Analysis request: add to queue
-function request_analysis!(manager::AnalysisManager, entry::AnalysisEntry;
-                          reanalyze::Bool=false,
-                          token::Union{Nothing,ProgressToken}=nothing,
-                          wait::Bool=false)
-    callback = wait ? Channel{AnalysisResult}(1) : nothing
-    request = AnalysisRequest(entry, reanalyze, token, callback)
-    put!(manager.queue, request)
-
-    if wait
-        result = take!(callback)
-        return result.success ? result.result : nothing
-    end
-    return nothing
-end
-
-# Worker task: process queue sequentially
-function analysis_worker(manager::AnalysisManager)
-    while true
-        request = take!(manager.queue)
-
-        # Check if already analyzing
-        @lock manager.analyzing_lock begin
-            if haskey(manager.analyzing, request.entry)
-                # Hold duplicate request
-                push!(manager.analyzing[request.entry].pending_requests, request)
-                continue
-            end
-            # Record analysis start
-            manager.analyzing[request.entry] = AnalysisTask(time(), AnalysisRequest[])
-        end
-
-        # Execute analysis (outside lock)
-        result = execute_analysis(request)
-
-        # Publish results
-        if result.success
-            update_analysis_cache!(manager, result)
-        end
-
-        # Process pending requests
-        pending = @lock manager.analyzing_lock begin
-            task = pop!(manager.analyzing, request.entry)
-            task.pending_requests
-        end
-
-        # Callback notification
-        request.callback !== nothing && put!(request.callback, result)
-
-        # Queue reanalysis if pending requests exist
-        if !isempty(pending)
-            latest = last(pending)
-            put!(manager.queue, AnalysisRequest(
-                latest.entry, true, latest.token, latest.callback
-            ))
-        end
-    end
-end
-
-# Cache update: atomically publish new cache
-function update_analysis_cache!(manager::AnalysisManager, result::AnalysisResult)
-    analysis_unit = AnalysisUnit(result.entry, result.result)
-    analyzed_uris = keys(result.result.analyzed_file_infos)
-
-    # Prepare new cache
-    new_cache = copy(manager.cache)
-
-    for uri in analyzed_uris
-        analysis_info = get(new_cache, uri, nothing)
-
-        if analysis_info === nothing || analysis_info isa OutOfScope
-            new_cache[uri] = Set{AnalysisUnit}([analysis_unit])
-        else
-            # Copy and update existing Set
-            new_info = copy(analysis_info)
-            # Remove old version
-            filter!(au -> au.entry != analysis_unit.entry, new_info)
-            # Add new version
-            push!(new_info, analysis_unit)
-            new_cache[uri] = new_info
-        end
-    end
-
-    # Atomically publish
-    @atomic manager.cache = new_cache
-end
-```
-
-#### 3.2.5 `AnalysisUnit` and `FullAnalysisResult`
-
-Problems:
-- Consistency during concurrent access to analysis results
-- Avoid showing intermediate states during updates
-
-Solution: Immutable design
-```julia
-# Completely immutable analysis result
-struct FullAnalysisResult
-    actual2virtual::JET.Actual2Virtual
-    analyzer::LSAnalyzer
-    uri2diagnostics::URI2Diagnostics
-    analyzed_file_infos::Dict{URI,JET.AnalyzedFileInfo}
-    successfully_analyzed_file_infos::Dict{URI,JET.AnalyzedFileInfo}
-end
-
-struct AnalysisUnit
-    entry::AnalysisEntry
-    result::FullAnalysisResult
-end
-
-# Updates create new instances
-function create_updated_result(old_result::FullAnalysisResult, jet_result)
-    new_uri2diagnostics = copy(old_result.uri2diagnostics)
-    # ... diagnostic update processing
-
-    return FullAnalysisResult(
-        jet_result.actual2virtual,
-        update_analyzer_world(jet_result.analyzer),
-        new_uri2diagnostics,
-        new_analyzed_file_infos,
-        new_successfully_analyzed_file_infos
-    )
-end
-```
-
-Design advantages:
-1. Complete serialization: Analysis executes serially per `AnalysisEntry`
-2. Lock-free reads: Atomic operations always read consistent state
-3. Duplicate request handling: Properly manages concurrent requests for same Entry
-4. Immutable design: `AnalysisResult` is immutable, safe for concurrent access
-5. Clear separation of responsibilities: `AnalysisManager` handles execution, cache handles result lookup
-
-#### 3.2.6 `currently_requested`
+#### 3.2.4 `currently_requested`
 
 Problem: Concurrent access to server→client request ID management
 
@@ -546,7 +374,7 @@ function poprequest!(cr::CurrentlyRequested, id::String)
 end
 ```
 
-#### 3.2.7 `currently_registered`
+#### 3.2.5 `currently_registered`
 
 Problem: Concurrent access to dynamic capability registration duplicate management
 
@@ -583,7 +411,7 @@ function unregister!(cr::CurrentlyRegistered, reg::Registered)
 end
 ```
 
-#### 3.2.8 `completion_resolver_info`
+#### 3.2.6 `completion_resolver_info`
 
 Problem: Concurrent access to completion resolution information
 
@@ -609,7 +437,7 @@ function get_resolver_info(container::CompletionResolverInfo)
 end
 ```
 
-#### 3.2.9 Lifecycle fields
+#### 3.2.7 Lifecycle fields
 
 Lifecycle fields like `workspaceFolders` currently only gets written during
 initialization, thus no locking needed.
@@ -617,42 +445,13 @@ If we implement `workspace/didChangeWorkspaceFolders` notification or
 `workspace/workspaceFolders` request handling in the future,
 the `workspaceFolders` field for example will need thread-safe container.
 
-#### 3.2.10 `debounce`/`throttle`
+#### 3.2.8 `debounce`/`throttle`
 
-Solution: Current implementation already uses `ReentrantLock`
-
-```julia
-# Current implementation in src/utils/general.jl
-begin
-    local debounced_lock, debounced
-    global debounce
-    debounced_lock = ReentrantLock()
-    debounced = Dict{UInt, Timer}()
-    function debounce(f, id::UInt, delay)
-        lock(debounced_lock) do
-            if haskey(debounced, id)
-                close(debounced[id])
-            end
-            debounced[id] = Timer(delay) do _
-                f()
-                lock(debounced_lock) do
-                    delete!(debounced, id)
-                end
-            end
-        end
-        nothing
-    end
-end
-```
-
-Design evaluation:
-- Current implementation is already thread-safe
-- Uses global lock, which is reasonable because:
-  - Lock-held processing is very lightweight
-  - Timer management inherently requires synchronization
-- Lock acquisition in timer callback is properly implemented
-
-Recommendation: Maintain current implementation
+These features are used exclusively in full-analysis, but the current
+implementation is not thread-safe.
+When implementing concurrent full-analysis with a queue-based `AnalysisManager`,
+these features will be implemented as part of the `AnalysisManager` functionality,
+so the existing implementation will simply be deleted.
 
 ### 3.3 Global State
 
@@ -676,7 +475,554 @@ because these objects are either completely constant or used for debugging only:
 - Formatter process
 - TestRunner process
 
-## 4. Implementation Strategy
+## 4. Multithreading Full-Analysis
+
+This section describes the design for parallelizing full analyses, which are the
+most computationally intensive operations in JETLS.
+
+### 4.1 Overview
+
+Full analysis involves analyzing an entire codebase starting from an `AnalysisEntry`
+(script, package source, or test suite). The challenge is to:
+- Allow multiple analyses to run concurrently for different entries
+- Maintain consistent view of analysis results during updates
+- Handle duplicate analysis requests efficiently
+- Provide lock-free read access to analysis results
+
+### 4.2 `AnalysisManager` Architecture
+
+The `AnalysisManager` coordinates all full analyses using a queue-based architecture:
+1. Queue-based execution: All analysis requests go through a central queue,
+   ensuring controlled concurrency and preventing resource exhaustion.
+2. Per-entry serialization: Multiple analyses for the same `AnalysisEntry`
+   are serialized to avoid duplicate work and ensure consistency.
+3. Atomic cache updates: The entire cache is updated atomically, ensuring
+   readers always see a consistent state.
+4. Duplicate request coalescing: When multiple requests arrive for the same
+   entry while it's being analyzed, only the latest request is kept as pending
+   and processed after the current analysis completes.
+
+> [!note] Single-threaded Implementation First
+>
+> Initially, `AnalysisManager` will run with a single worker task. This is because:
+> - Julia's compiler infrastructure and JET are not yet fully thread-safe
+> - Full analysis involves type inference which modifies global compiler state
+>
+> However, the architecture is designed to easily scale to multiple workers once
+> thread-safety is achieved. The per-entry serialization mechanism ensures
+> correctness regardless of the number of workers.
+
+```julia
+abstract type AnalysisEntry end
+
+struct FullAnalysisResult # immutable now
+    actual2virtual::JET.Actual2Virtual
+    analyzer::LSAnalyzer
+    uri2diagnostics::URI2Diagnostics                                  # new instance for each result
+    analyzed_file_infos::Dict{URI,JET.AnalyzedFileInfo}               # new instance for each result
+    successfully_analyzed_file_infos::Dict{URI,JET.AnalyzedFileInfo}  # new instance for each result
+end
+
+struct AnalysisUnit
+    entry::AnalysisEntry
+    result::FullAnalysisResult
+end
+
+struct OutOfScope
+    module_context::Module
+end
+
+const AnalysisInfo = Union{Set{AnalysisUnit},OutOfScope}
+
+struct AnalysisManager
+    # Current analysis results (lock-free reads, heavy updates)
+    cache::LWContainer{Dict{URI,AnalysisInfo}}
+
+    # Track running analyses (lightweight updates)
+    analyzing::CASContainer{Dict{AnalysisEntry,Union{Nothing,AnalysisRequest}}}
+
+    # Analysis queue (serial execution per AnalysisEntry)
+    queue::Channel{AnalysisRequest}
+    worker_tasks::Vector{Task}  # Currently single task, future: multiple workers
+
+    # Track analyzed entries (lightweight updates)
+    analyzed_entries::CASContainer{Set{AnalysisEntry}}
+
+    # Debouncing management (timer close has side effects)
+    debounced::LWContainer{Dict{AnalysisEntry,Timer}}
+end
+
+# Constructor: initially single-threaded
+function AnalysisManager()
+    manager = AnalysisManager(
+        LWContainer(Dict{URI,AnalysisInfo}()),
+        CASContainer(Dict{AnalysisEntry,Union{Nothing,AnalysisRequest}}()),
+        Channel{AnalysisRequest}(Inf),
+        Task[],  # Will contain single worker initially
+        CASContainer(Set{AnalysisEntry}()),
+        LWContainer(Dict{AnalysisEntry,Timer}())
+    )
+    # Start single worker (future: parameterize worker count)
+    worker = Threads.@spawn :default analysis_worker(manager)
+    push!(manager.worker_tasks, worker)
+    return manager
+end
+
+struct AnalysisRequest
+    server::Server                      # Server instance for sending notifications
+    entry::AnalysisEntry
+    token::Union{Nothing,ProgressToken} # Progress notification token
+    onsave::Bool                        # i.e. "reanalyze"
+end
+```
+
+### 4.3 Per-Entry Serialization
+
+The `AnalysisManager` ensures that multiple analyses for the same `AnalysisEntry`
+are properly serialized:
+
+- When a request arrives for an entry that's currently being analyzed, it replaces
+  any existing pending request in the `analyzing` dictionary
+- Only the latest pending request is kept (newer requests replace older ones)
+- After an analysis completes, the pending request (if any) is re-queued
+- This naturally prevents duplicate analyses without complex timing mechanisms
+
+### 4.4 Debouncing and Throttling
+
+In the queue-based architecture, throttling becomes unnecessary while debouncing
+remains valuable:
+
+Why throttling is unnecessary:
+- Per-entry serialization naturally prevents overlapping analyses
+- Pending requests automatically coalesce (only the latest is kept)
+- No risk of multiple concurrent timers for the same analysis unit
+
+Why debouncing is still useful:
+- Rapid save events can flood the queue with redundant requests
+- Debouncing at the request level prevents unnecessary queueing
+- Reduces worker wake-ups and improves overall efficiency
+
+> [!note]
+> The key insight: throttling was a workaround for the inability to cancel
+> obsolete analyses once they started. The queue-based design solves this > fundamentally.
+>
+> Problem in the old timer-based system:
+> - Events:
+>   * 0s: Save event → `Timer` A created for analysis unit X
+>   * 0.1s: Analysis 1 starts from `Timer` A (takes 10s)
+>   * 1s: Save event → `Timer` B created for same unit X
+>   * 2s: Save event → `Timer` C created for same unit X
+>   * 10.1s: Analysis 1 completes
+>   * 10.2s: Analysis 2 starts from `Timer` B (takes 10s) [stale - fi  * ged at 2s!]
+>   * 20.2s: Analysis 2 completes
+>   * 20.3s: Analysis 3 starts from Timer C (takes 10s)
+>   * 30.3s: Analysis 3 completes (finally current)
+> - Result: 3 full analyses ran sequentially, but the analysis 2 was obsolete when it started.
+> - Workaround: By setting e.g. `throttling == 5.0`, we can skip the analysis 2 and 3.
+>   But we actually don't want to skip analysis 3.
+>
+> Solution in the queue-based system:
+> - Events:
+>   * 0s: Save event → Request A queued for analysis unit X
+>   * 0.1s: Worker takes Request A → Starts Analysis 1 (takes 10s)
+>   * 1s: Save event → Request B queued
+>   * 1s: Worker sees unit X is analyzing → Request B becomes pending
+>   * 2s: Save event → Request C queued
+>   * 2s: Worker sees unit X is analyzing → Request C replaces B (B discarded)
+>   * 10.1s: Analysis 1 completes → Request C (latest) is re-queued
+>   * 10.1s: Worker takes Request C → Starts Analysis 2 with latest state
+>   * 20.1s: Analysis 2 completes (current state analyzed)
+> - Result: Only 2 analyses ran, intermediate request was properly discarded.
+
+### 4.5 Cache Invalidation Mechanism
+
+The cache invalidation mechanism replaces the mutable `staled` field:
+
+```julia
+# Called from request_analysis! when onsave=true (triggered by DidSave notification)
+function invalidate_cache!(manager::AnalysisManager, uri::URI)
+    analysis_info = get_analysis_info(manager, uri)
+    if analysis_info isa Set{AnalysisUnit}
+        # Remove entries from analyzed set - will trigger re-analysis
+        store!(manager.analyzed_entries) do entries
+            new_entries = copy(entries)
+            for au in analysis_info
+                delete!(new_entries, au.entry)
+            end
+            return new_entries, nothing
+        end
+    end
+end
+
+# Check if analysis is needed (called in worker after dequeuing but before execute_analysis)
+should_analyze(manager::AnalysisManager, entry::AnalysisEntry) =
+    !(entry in load(manager.analyzed_entries))  # Analyze if not in set
+
+# Mark entry as analyzed after successful analysis
+function mark_analyzed!(manager::AnalysisManager, entry::AnalysisEntry)
+    store!(manager.analyzed_entries) do entries
+        new_entries = copy(entries)
+        push!(new_entries, entry)
+        return new_entries, nothing
+    end
+end
+```
+
+### 4.6 Operations
+
+#### Read Operation (Lock-free)
+```julia
+get_analysis_info(manager::AnalysisManager, uri::URI) =
+    get(load(manager.cache), uri, nothing)
+```
+
+#### Request Analysis
+
+```julia
+function request_analysis!(
+        server::Server, uri::URI;
+        onsave::Bool = false, # meaning `reanalyze`
+        token::Union{Nothing,ProgressToken} = nothing
+    )
+    manager = server.state.analysis_manager
+    entry = get_analysis_entry(server, uri)
+
+    # Handle special cases where analysis cannot proceed
+    if isnothing(entry)
+        # Parse error or other issue - cannot analyze
+        return nothing
+    end
+
+    if entry isa OutOfScope
+        # Record as out of scope in cache
+        store!(manager.cache) do cache
+            merge(cache, Dict(uri => entry)), nothing
+        end
+        return nothing
+    end
+
+    # Invalidate cache if this is a save event
+    if onsave
+        invalidate_cache!(manager, uri)
+    end
+
+    # Apply debouncing for save events
+    if onsave && (debounce_delay = get_config(server.state.config_manager, "full_analysis", "debounce")) > 0
+        store!(manager.debounced) do timers
+            new_timers = copy(timers)
+            # Cancel existing timer if any
+            if haskey(new_timers, entry)
+                close(new_timers[entry])
+            end
+            # Set new debounced request
+            new_timers[entry] = Timer(debounce_delay) do _
+                store!(manager.debounced) do t
+                    new_t = copy(t)
+                    delete!(new_t, entry)
+                    return new_t, nothing
+                end
+                # Queue the request after debounce period
+                put!(manager.queue, AnalysisRequest(server, entry, token, onsave))
+            end
+            return new_timers, nothing
+        end
+    else
+        # Immediate queueing for non-save or no-debounce
+        put!(manager.queue, AnalysisRequest(server, entry, token, onsave))
+    end
+
+    return nothing
+end
+```
+
+#### Determining Analysis Entry
+
+The key motivation for separating entry determination from analysis execution is,
+by computing the `AnalysisEntry` before queueing, multiple URIs that map to the
+same analysis unit (e.g., different files in the same package) will produce
+identical entries before analysis for each is executed. The queue mechanism then
+naturally deduplicates these requests, preventing redundant analyses.
+
+```julia
+function get_analysis_entry(server::Server, uri::URI)::Union{Nothing,AnalysisEntry,OutOfScope}
+    state = server.state
+
+    # Check if saved file info exists and is parseable
+    fi = get_saved_file_info(state, uri)
+    if isnothing(fi) || !isempty(fi.parsed_stream.diagnostics)
+        return nothing
+    end
+
+    # Determine analysis environment
+    env_path = find_analysis_env_path(state, uri)
+    if env_path isa OutOfScope
+        # Return OutOfScope marker - caller will handle cache update
+        return env_path
+    end
+
+    # Special cases
+    if uri.scheme == "untitled"
+        return ScriptAnalysisEntry(uri)
+    end
+
+    # No environment or no package name -> standalone script
+    if isnothing(env_path)
+        return ScriptAnalysisEntry(uri)
+    end
+
+    pkgname = find_pkg_name(env_path)
+    if isnothing(pkgname)
+        return ScriptInEnvAnalysisEntry(env_path, uri)
+    end
+
+    # Package analysis - determine file kind
+    filepath = uri2filepath(uri)::String
+    filekind, filedir = find_package_directory(filepath, env_path)
+
+    if filekind === :src
+        # Package source files - find main module file
+        pkgenv = Base.identify_package_env(pkgname)
+        if isnothing(pkgenv)
+            # Failed to identify package - treat as script
+            return ScriptInEnvAnalysisEntry(env_path, uri)
+        end
+        pkgid, _ = pkgenv
+        pkgfile = Base.locate_package(pkgid, env_path)
+        if isnothing(pkgfile)
+            # No main file found - treat as script
+            return ScriptInEnvAnalysisEntry(env_path, uri)
+        end
+        # Important: All source files map to the same PackageSourceAnalysisEntry
+        # with the main module file as the entry point
+        return PackageSourceAnalysisEntry(env_path, filepath2uri(pkgfile), pkgid)
+
+    elseif filekind === :test
+        # Test files - use runtests.jl as entry point
+        runtestsfile = joinpath(filedir, "runtests.jl")
+        if !isfile(runtestsfile)
+            return ScriptInEnvAnalysisEntry(env_path, uri)
+        end
+        # Important: All test files map to the same PackageTestAnalysisEntry
+        return PackageTestAnalysisEntry(env_path, filepath2uri(runtestsfile))
+
+    elseif filekind === :docs
+        # Documentation files - currently treated as scripts
+        # TODO: Could analyze doc examples
+        return ScriptInEnvAnalysisEntry(env_path, uri)
+
+    elseif filekind === :ext
+        # Extension files - currently treated as scripts
+        # TODO: Could analyze as package extensions
+        return ScriptInEnvAnalysisEntry(env_path, uri)
+
+    else
+        # Unknown file kind - treat as script in environment
+        return ScriptInEnvAnalysisEntry(env_path, uri)
+    end
+end
+```
+
+#### Worker Task
+```julia
+function analysis_worker(manager::AnalysisManager)
+    # Note: Currently single worker, but designed for future multi-worker scaling
+    # When multiple workers exist, the per-entry locking ensures correctness
+
+    while true
+        request = take!(manager.queue)
+
+        # Check if already analyzing this entry
+        is_analyzing = store!(manager.analyzing) do analyzing
+            if haskey(analyzing, request.entry)
+                # Keep only the latest request as pending
+                new_analyzing = copy(analyzing)
+                new_analyzing[request.entry] = request
+                return new_analyzing, true  # Already analyzing
+            end
+            # Mark as analyzing (no pending request yet)
+            new_analyzing = copy(analyzing)
+            new_analyzing[request.entry] = nothing
+            return new_analyzing, false  # Not analyzing
+        end
+
+        if is_analyzing
+            continue  # Skip to next request
+        end
+
+        server = request.server
+
+        # Check if analysis is actually needed
+        if !should_analyze(manager, request.entry)
+            # Skip analysis - already up to date
+            @goto next
+        end
+
+        if request.token !== nothing
+            title = request.onsave ? "Reanalyzing" : "Analyzing"
+            filename = basename(uri2filename(entryuri(request.entry)))
+            send_progress_begin(server, request.token,
+                               "$title $filename [$(entrykind(request.entry))]")
+        end
+
+        # Execute the analysis with error handling
+        result = try
+            execute_analysis(manager, request)
+        catch err
+            @error "Analysis failed" exception=(err, catch_backtrace()) entry=request.entry
+            nothing  # Return nothing on error
+        end
+
+        if request.token !== nothing
+            send_progress_end(server, request.token)
+        end
+
+        if result !== nothing
+            update_analysis_cache!(manager, request.entry, result)
+            mark_analyzed!(manager, request.entry)
+            notify_diagnostics!(server)
+        end
+
+        @label next
+
+        # Check for pending request and re-queue if needed
+        pending_request = store!(manager.analyzing) do analyzing
+            if haskey(analyzing, request.entry)
+                new_analyzing = copy(analyzing)
+                pending = delete!(new_analyzing, request.entry)
+                return new_analyzing, pending
+            end
+            return analyzing, nothing
+        end
+        if pending_request !== nothing
+            # Re-queue the pending request for processing
+            put!(manager.queue, pending_request)
+        end
+    end
+end
+```
+
+> [!note] Future Multi-threading Support
+>
+> When Julia's compiler and JET become thread-safe, scaling to multiple workers is trivial:
+> ```julia
+> function start_analysis_workers(manager::AnalysisManager, n_workers::Int)
+>     for i in 1:n_workers
+>         worker = Threads.@spawn :default analysis_worker(manager)
+>         push!(manager.worker_tasks, worker)
+>     end
+> end
+> ```
+
+#### Cache Update
+```julia
+function update_analysis_cache!(manager::AnalysisManager, entry::AnalysisEntry, result::FullAnalysisResult)
+    analysis_unit = AnalysisUnit(entry, result)
+    analyzed_uris = keys(result.analyzed_file_infos)
+
+    # Update cache atomically
+    store!(manager.cache) do cache
+        new_cache = copy(cache)
+
+        for uri in analyzed_uris
+            analysis_info = get(new_cache, uri, nothing)
+
+            if analysis_info === nothing || analysis_info isa OutOfScope
+                new_cache[uri] = Set{AnalysisUnit}([analysis_unit])
+            else
+                # Copy and update existing Set with subset management
+                new_info = copy(analysis_info)
+
+                # Manage subset relationships for correct file association
+                afiles = analyzed_uris
+                should_record = true
+                for au in collect(new_info)  # Collect to avoid mutation during iteration
+                    if au.entry == analysis_unit.entry
+                        delete!(new_info, au)  # Remove old version
+                        continue
+                    end
+
+                    bfiles = keys(au.result.analyzed_file_infos)
+                    if afiles ≠ bfiles
+                        if afiles ⊆ bfiles
+                            should_record = false  # Don't record subset
+                        elseif bfiles ⊆ afiles
+                            delete!(new_info, au)  # Remove old subset
+                        end
+                    end
+                end
+
+                # Add new version if it's not a subset
+                if should_record
+                    push!(new_info, analysis_unit)
+                end
+                new_cache[uri] = new_info
+            end
+        end
+
+        return new_cache, nothing  # Return updated cache
+    end
+end
+```
+
+### 4.7 File Deletion and Cache Cleanup
+
+When files are deleted or removed from the project scope:
+
+```julia
+# Called when a file is deleted (from didClose or file system watch)
+function remove_from_cache!(manager::AnalysisManager, uri::URI)
+    # Remove from analyzed entries
+    store!(manager.analyzed_entries) do entries
+        analysis_info = get_analysis_info(manager, uri)
+        if analysis_info isa Set{AnalysisUnit}
+            new_entries = copy(entries)
+            for au in analysis_info
+                delete!(new_entries, au.entry)
+            end
+            return new_entries, nothing
+        end
+        return entries, nothing
+    end
+
+    # Remove from cache
+    store!(manager.cache) do cache
+        new_cache = copy(cache)
+        delete!(new_cache, uri)
+        return new_cache, nothing
+    end
+end
+```
+
+This ensures proper cleanup when:
+- Files are deleted from the file system
+- Files are closed and no longer tracked
+- Files move out of project scope
+
+> [!note]
+> Currently JETLS doesn't subscribe to `workspace/didDeleteFiles` notification,
+> so there's no place to call `remove_from_cache!` yet. This should be implemented
+> in the future to properly handle file deletions.
+
+### 4.8 Implementation Considerations
+
+The following points need to be addressed when implementing the new design:
+
+1. Progress notification integration
+   - Caller creates token and passes it to `request_analysis!`
+   - Worker sends progress notifications using the provided token
+   - No special handling needed for async token creation
+
+2. Error handling
+   - Wrap `execute_analysis` with try/catch to prevent worker crash
+   - Log errors with `@error` for debugging
+   - Return `nothing` on failure (skip cache update)
+   - User notification to be addressed in future
+
+3. Initial vs re-analysis unification
+   - `execute_analysis` will handle both initial and re-analysis cases
+   - Check if entry exists in cache to determine which case
+
+## 5. Implementation Strategy
 
 Proceed with parallelization safely by confirming tests pass at each step through phased implementation:
 - Phase 1: Implement and test basic data structures
@@ -684,7 +1030,7 @@ Proceed with parallelization safely by confirming tests pass at each step throug
 - Phase 3: Full-analysis parallelization
 - Phase 4: Message handler parallelization
 
-### 4.1 Phase 1: Implement `AtomicContainers`
+### 5.1 Phase 1: Implement `AtomicContainers`
 
 Implement thread-safe data structures as the foundation for parallelization:
 - `SWContainer`: Generic container with lock-free reads and sequential writes
@@ -694,39 +1040,17 @@ Implement thread-safe data structures as the foundation for parallelization:
 
 Create unit tests for each data structure to verify concurrent access safety.
 
-### 4.2 Phase 2: `ServerState` Parallelization
+### 5.2 Phase 2: `ServerState` Parallelization
 
 Migrate each `ServerState` field to new data structures (except `analysis_cache`).
 At this phase, message handling remains serial. Confirm all existing tests pass.
 
-### 4.3 Phase 3: Full-Analysis Parallelization
+### 5.3 Phase 3: Full-Analysis Parallelization
 
-Enable concurrent execution of full analyses while maintaining data consistency:
+Migrate `analysis_cache` to `AnalysisManager` to enable concurrent full analyses.
+See [[#4 Multithreading Full-Analysis]] for detailed design and implementation.
 
-#### 4.3.1 Goals
-- Allow multiple full analyses to run concurrently for different `AnalysisEntry`s
-- Maintain lock-free read access to analysis results during analysis execution
-- Properly handle duplicate analysis requests for the same entry
-- Ensure atomic updates of analysis results
-
-#### 4.3.2 Implementation Steps
-
-1. Implement `AnalysisManager`:
-   - Queue-based request handling with worker task
-   - Per-entry duplicate request detection and coalescing
-   - Atomic cache updates for lock-free reads
-
-2. Migrate from `analysis_cache` to `AnalysisManager`:
-   - Replace direct cache access with `AnalysisManager` API
-   - Update `run_full_analysis!` to use queuing system
-   - Ensure diagnostic publication remains atomic
-
-3. Enable parallel analysis execution:
-   - Spawn analysis tasks on `:default` thread pool
-   - Implement proper cancellation handling?
-   - Add progress reporting for concurrent analyses
-
-### 4.4 Phase 4: Message Handler Parallelization
+### 5.4 Phase 4: Message Handler Parallelization
 
 Classify messages into sequential and parallel processing:
 - Sequential: lifecycle, document synchronization, cancellation
