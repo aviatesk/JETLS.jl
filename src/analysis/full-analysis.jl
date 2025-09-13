@@ -196,7 +196,7 @@ end
 function begin_full_analysis_progress(server::Server, request::AnalysisRequest)
     token = @something request.token return nothing
     filename = uri2filename(entryuri(request.entry))
-    pre = isnothing(request.prev_analysis_result) ? "analyzing" : "Reanalyzing"
+    pre = isnothing(request.prev_analysis_result) ? "Analyzing" : "Reanalyzing"
     title = "$(pre) $(basename(filename)) [$(entrykind(request.entry))]"
     send(server, ProgressNotification(;
         params = ProgressParams(;

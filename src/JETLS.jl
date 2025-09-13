@@ -127,6 +127,8 @@ function runserver(server::Server)
     shutdown_requested = false
     local exit_code::Int = 1
     JETLS_DEV_MODE && @info "Running JETLS server loop"
+    msg_queue = Channel{Any}(Inf)
+    start_sequential_message_handler(server, msg_queue)
     try
         for msg in server.endpoint
             server.callback !== nothing && server.callback(:received, msg)
@@ -148,7 +150,7 @@ function runserver(server::Server)
                         code=ErrorCodes.InvalidRequest,
                         message="Received request after a shutdown request requested")))
             else # general message hander
-                handle_message(server, msg)
+                handle_message(server, msg_queue, msg)
             end
         end
     catch err
@@ -161,23 +163,30 @@ function runserver(server::Server)
     return (; exit_code, server.endpoint)
 end
 
-function handle_message(server::Server, @nospecialize msg)
-    if is_sequential_msg(msg)
-        _handle_message(server, msg)
-    else
-        Threads.@spawn :default _handle_message(server, msg)
+function start_sequential_message_handler(server::Server, msg_queue::Channel{Any})
+    Threads.@spawn :default while true
+        msg = take!(msg_queue)
+        _handle_message(handle_sequential_message, server, msg)
     end
 end
 
-function _handle_message(server::Server, @nospecialize msg)
+function handle_message(server::Server, msg_queue::Channel{Any}, @nospecialize msg)
+    if is_sequential_msg(msg)
+        put!(msg_queue, msg)
+    else
+        Threads.@spawn :default _handle_message(handle_concurrent_message, server, msg)
+    end
+end
+
+function _handle_message(func, server::Server, @nospecialize msg)
     if !JETLS_TEST_MODE
         try
             if JETLS_DEV_MODE
                 # `@invokelatest` for allowing changes maded by Revise to be reflected without
                 # terminating the `runserver` loop
-                return @invokelatest __handle_message(server, msg)
+                return @invokelatest func(server, msg)
             else
-                return __handle_message(server, msg)
+                return func(server, msg)
             end
         catch err
             @error "Message handling failed for" typeof(msg)
@@ -188,9 +197,9 @@ function _handle_message(server::Server, @nospecialize msg)
         if JETLS_DEV_MODE
             # `@invokelatest` for allowing changes maded by Revise to be reflected without
             # terminating the `runserver` loop
-            return @invokelatest __handle_message(server, msg)
+            return @invokelatest func(server, msg)
         else
-            return __handle_message(server, msg)
+            return func(server, msg)
         end
     end
 end
@@ -202,7 +211,7 @@ function is_sequential_msg(@nospecialize msg)
            msg isa DidSaveTextDocumentNotification
 end
 
-function __handle_message(server::Server, @nospecialize msg)
+function handle_sequential_message(server::Server, @nospecialize msg)
     if msg isa DidOpenTextDocumentNotification
         return handle_DidOpenTextDocumentNotification(server, msg)
     elseif msg isa DidChangeTextDocumentNotification
@@ -211,7 +220,11 @@ function __handle_message(server::Server, @nospecialize msg)
         return handle_DidCloseTextDocumentNotification(server, msg)
     elseif msg isa DidSaveTextDocumentNotification
         return handle_DidSaveTextDocumentNotification(server, msg)
-    elseif msg isa CompletionRequest
+    else error(lazy"Unexpected sequential message type $(typeof(msg))") end
+end
+
+function handle_concurrent_message(server::Server, @nospecialize msg)
+    if msg isa CompletionRequest
         return handle_CompletionRequest(server, msg)
     elseif msg isa CompletionResolveRequest
         return handle_CompletionResolveRequest(server, msg)
