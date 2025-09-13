@@ -4,11 +4,13 @@ function register(server::Server, registrations::Vector{Registration})
     state = server.state
     filtered = filter(registrations) do registration
         reg = Registered(registration.id, registration.method)
-        if reg ∉ state.currently_registered
-            push!(state.currently_registered, reg)
-            return true
-        else
-            return false
+        return store!(state.currently_registered) do data
+            if reg ∉ data
+                new_data = copy(data)
+                push!(new_data, reg)
+                return new_data, true
+            end
+            return data, false
         end
     end
     send(server, RegisterCapabilityRequest(;
@@ -22,11 +24,13 @@ unregister(server::Server, unregistration::Unregistration) =
 function unregister(server::Server, unregisterations::Vector{Unregistration})
     filtered = filter(unregisterations) do unregistration
         reg = Registered(unregistration.id, unregistration.method)
-        if reg ∈ server.state.currently_registered
-            delete!(server.state.currently_registered, reg)
-            return true
-        else
-            return false
+        return store!(server.state.currently_registered) do data
+            if reg ∈ data
+                new_data = copy(data)
+                delete!(new_data, reg)
+                return new_data, true
+            end
+            return data, false
         end
     end
     send(server, UnregisterCapabilityRequest(;

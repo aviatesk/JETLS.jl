@@ -34,7 +34,7 @@ function withserver(f;
             put!(sent_queue, x)
         end
     end
-    t = Threads.@spawn runserver(server)
+    t = Threads.@spawn :default runserver(server)
     id_counter = Ref(0)
     old_env = Pkg.project().path
     root_path = nothing

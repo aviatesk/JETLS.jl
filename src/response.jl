@@ -33,8 +33,8 @@ end
 
 function handle_requested_response(server::Server, msg::Dict{Symbol,Any},
                                    @nospecialize request_caller::RequestCaller)
-    if request_caller isa RunFullAnalysisCaller
-        handle_run_full_analysis_response(server, msg, request_caller)
+    if request_caller isa RequestAnalysisCaller
+        handle_request_analysis_response(server, msg, request_caller)
     elseif request_caller isa ShowDocumentRequestCaller
         handle_show_document_response(server, msg, request_caller)
     elseif request_caller isa SetDocumentContentCaller
@@ -58,9 +58,9 @@ function handle_requested_response(server::Server, msg::Dict{Symbol,Any},
     end
 end
 
-function handle_run_full_analysis_response(server::Server, msg::Dict{Symbol,Any}, request_caller::RunFullAnalysisCaller)
+function handle_request_analysis_response(server::Server, ::Dict{Symbol,Any}, request_caller::RequestAnalysisCaller)
     (; uri, onsave, token) = request_caller
-    run_full_analysis!(server, uri; onsave, token)
+    request_analysis!(server, uri; onsave, token)
 end
 
 function handle_show_document_response(server::Server, msg::Dict{Symbol,Any}, request_caller::ShowDocumentRequestCaller)

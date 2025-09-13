@@ -295,8 +295,18 @@ end
     end
 end
 
+# Test utility for setting config files in ConfigManager
+function storeconfig!(manager::JETLS.ConfigManager, filepath::AbstractString, new_config::JETLS.ConfigDict)
+    JETLS.store!(manager) do old_data
+        new_watched_files = copy(old_data.watched_files)
+        new_watched_files[filepath] = new_config
+        new_data = JETLS.ConfigManagerData(old_data.static_settings, new_watched_files)
+        return new_data, nothing
+    end
+end
+
 @testset "ConfigManager" begin
-    manager = JETLS.ConfigManager()
+    manager = JETLS.ConfigManager(JETLS.ConfigManagerData())
 
     test_config = JETLS.ConfigDict(
         "full_analysis" => JETLS.ConfigDict(
@@ -311,7 +321,7 @@ end
         )
     )
 
-    manager.watched_files["/foo/bar/.JETLSConfig.toml"] = test_config
+    storeconfig!(manager, "/foo/bar/.JETLSConfig.toml", test_config)
     JETLS.fix_static_settings!(manager)
 
     @test JETLS.get_config(manager, "full_analysis", "debounce") === 2.0
@@ -328,12 +338,12 @@ end
             "executable" => "override_runner"
         )
     )
-    manager.watched_files["__DEFAULT_CONFIG__"] = override_config
+    storeconfig!(manager, "__DEFAULT_CONFIG__", override_config)
     # High priority config should still win
     @test JETLS.get_config(manager, "full_analysis", "debounce") === 2.0
     @test JETLS.get_config(manager, "testrunner", "executable") === "test_runner"
 
-    # Test merge_config!
+    # Test updating config
     changed_static_keys = Set{String}()
     updated_config = JETLS.ConfigDict(
         "full_analysis" => JETLS.ConfigDict(
@@ -347,11 +357,16 @@ end
             "static_setting" => 10
         )
     )
-    JETLS.merge_config!(manager, "/foo/bar/.JETLSConfig.toml", updated_config) do _, path, _
-        if JETLS.is_static_setting(path...)
-            push!(changed_static_keys, join(path, "."))
+    merged_config = let data = JETLS.load(manager)
+        current_config = get(data.watched_files, "/foo/bar/.JETLSConfig.toml", JETLS.DEFAULT_CONFIG)
+        JETLS.traverse_merge(current_config, updated_config) do path, v
+            if JETLS.is_static_setting(path...)
+                push!(changed_static_keys, join(path, "."))
+            end
+            v
         end
     end
+    storeconfig!(manager, "/foo/bar/.JETLSConfig.toml", merged_config)
 
     # `on_static_setting` should be called for static keys
     @test changed_static_keys == Set(["internal.static_setting"])
@@ -364,7 +379,7 @@ end
 end
 
 @testset "`fix_static_settings!`" begin
-    manager = JETLS.ConfigManager()
+    manager = JETLS.ConfigManager(JETLS.ConfigManagerData())
     high_priority_config = JETLS.ConfigDict(
         "internal" => JETLS.ConfigDict("static_setting" => 2)
     )
@@ -373,14 +388,15 @@ end
         "testrunner" => JETLS.ConfigDict("executable" => "custom")
     )
 
-    manager.watched_files["__DEFAULT_CONFIG__"] = low_priority_config
-    manager.watched_files["/path/.JETLSConfig.toml"] = high_priority_config
+    storeconfig!(manager, "__DEFAULT_CONFIG__", low_priority_config)
+    storeconfig!(manager, "/path/.JETLSConfig.toml", high_priority_config)
     JETLS.fix_static_settings!(manager)
 
     # high priority should win for the static keys
-    @test manager.static_settings["internal"]["static_setting"] == 2
+    data = JETLS.load(manager)
+    @test data.static_settings["internal"]["static_setting"] == 2
     # testrunner.executable is not static, so should not be in `static_settings`
-    @test !haskey(manager.static_settings, "testrunner")
+    @test !haskey(data.static_settings, "testrunner")
 end
 
 end # test_config

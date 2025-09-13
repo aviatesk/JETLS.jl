@@ -69,7 +69,8 @@ end
 """
 # Typical completion UI
 
-to|
+`to|` ->
+```
    ┌───┬──────────────────────────┬────────────────────────────┐
    │(1)│to_completion(2)     (3) >│(4)...                      │
    │(1)│to_indices(2)        (3)  │# Typical completion UI ─(5)│
@@ -77,11 +78,12 @@ to|
    └───┴──────────────────────────┤to|                       │ │
                                   │...                     ──┘ │
                                   └────────────────────────────┘
-(1) Icon corresponding to CompletionItem's `ci.kind`
-(2) `ci.labelDetails.detail`
-(3) `ci.labelDetails.description`
-(4) `ci.detail` (possibly at (3))
-(5) `ci.documentation`
+```
+- (1) Icon corresponding to CompletionItem's `ci.kind`
+- (2) `ci.labelDetails.detail`
+- (3) `ci.labelDetails.description`
+- (4) `ci.detail` (possibly at (3))
+- (5) `ci.documentation`
 
 Sending (4) and (5) to the client can happen eagerly in response to <TAB>
 (textDocument/completion), or lazily, on selection in the list
@@ -221,7 +223,9 @@ function global_completions!(items::Dict{String, CompletionItem}, state::ServerS
         # disable local completions for dot-prefixed code for now
         is_completed |= true
     end
-    state.completion_resolver_info = (completion_module, postprocessor)
+    store!(state.completion_resolver_info) do _
+        (completion_module, postprocessor), nothing
+    end
 
     prioritized_names = let s = Set{Symbol}()
         pnames = @invokelatest(names(completion_module; all=true))::Vector{Symbol}
@@ -389,10 +393,9 @@ end
 # ===================
 
 function resolve_completion_item(state::ServerState, item::CompletionItem)
-    isdefined(state, :completion_resolver_info) || return item
+    mod, postprocessor = @something load(state.completion_resolver_info) return item
     data = item.data
     data isa CompletionData || return item
-    mod, postprocessor = state.completion_resolver_info
     name = Symbol(data.name)
     binding = Base.Docs.Binding(mod, name)
     docs = postprocessor(Base.Docs.doc(binding))
