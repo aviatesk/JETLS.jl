@@ -147,8 +147,7 @@ function runserver(server::Server)
                     error=ResponseError(;
                         code=ErrorCodes.InvalidRequest,
                         message="Received request after a shutdown request requested")))
-            else
-                # handle general messages
+            else # general message hander
                 handle_message(server, msg)
             end
         end
@@ -163,14 +162,22 @@ function runserver(server::Server)
 end
 
 function handle_message(server::Server, @nospecialize msg)
+    if is_sequential_msg(msg)
+        _handle_message(server, msg)
+    else
+        Threads.@spawn :default _handle_message(server, msg)
+    end
+end
+
+function _handle_message(server::Server, @nospecialize msg)
     if !JETLS_TEST_MODE
         try
             if JETLS_DEV_MODE
                 # `@invokelatest` for allowing changes maded by Revise to be reflected without
                 # terminating the `runserver` loop
-                return @invokelatest _handle_message(server, msg)
+                return @invokelatest __handle_message(server, msg)
             else
-                return _handle_message(server, msg)
+                return __handle_message(server, msg)
             end
         catch err
             @error "Message handling failed for" typeof(msg)
@@ -181,14 +188,21 @@ function handle_message(server::Server, @nospecialize msg)
         if JETLS_DEV_MODE
             # `@invokelatest` for allowing changes maded by Revise to be reflected without
             # terminating the `runserver` loop
-            return @invokelatest _handle_message(server, msg)
+            return @invokelatest __handle_message(server, msg)
         else
-            return _handle_message(server, msg)
+            return __handle_message(server, msg)
         end
     end
 end
 
-function _handle_message(server::Server, @nospecialize msg)
+function is_sequential_msg(@nospecialize msg)
+    return msg isa DidOpenTextDocumentNotification ||
+           msg isa DidChangeTextDocumentNotification ||
+           msg isa DidCloseTextDocumentNotification ||
+           msg isa DidSaveTextDocumentNotification
+end
+
+function __handle_message(server::Server, @nospecialize msg)
     if msg isa DidOpenTextDocumentNotification
         return handle_DidOpenTextDocumentNotification(server, msg)
     elseif msg isa DidChangeTextDocumentNotification
