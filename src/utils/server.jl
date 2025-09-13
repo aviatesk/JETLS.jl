@@ -192,10 +192,10 @@ Returns a named tuple containing:
   to recognize, which are caused by JET implementation details
 """
 function get_context_info(state::ServerState, uri::URI, pos::Position)
-    analysis_unit = get(state.analysis_cache, uri, nothing)
-    mod = get_context_module(analysis_unit, uri, pos)
-    analyzer = get_context_analyzer(analysis_unit, uri)
-    postprocessor = get_post_processor(analysis_unit)
+    analysis_info = get_analysis_info(state.analysis_manager, uri)
+    mod = get_context_module(analysis_info, uri, pos)
+    analyzer = get_context_analyzer(analysis_info, uri)
+    postprocessor = get_post_processor(analysis_info)
     return (; mod, analyzer, postprocessor)
 end
 

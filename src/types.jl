@@ -122,21 +122,13 @@ entryuri_impl(entry::PackageTestAnalysisEntry) = entry.runtestsuri
 entryenvpath_impl(entry::PackageTestAnalysisEntry) = entry.env_path
 entrykind_impl(::PackageTestAnalysisEntry) = "pkg test"
 
-struct FullAnalysisInfo{E<:AnalysisEntry}
-    entry::E
-    token::Union{Nothing,ProgressToken}
-    reanalyze::Bool
-    n_files::Int
-end
-
 const URI2Diagnostics = Dict{URI,Vector{Diagnostic}}
 
-mutable struct FullAnalysisResult
-    staled::Bool
-    actual2virtual::JET.Actual2Virtual
+struct FullAnalysisResult
+    uri2diagnostics::URI2Diagnostics
     analyzer::LSAnalyzer
-    const uri2diagnostics::URI2Diagnostics
-    const analyzed_file_infos::Dict{URI,JET.AnalyzedFileInfo}
+    analyzed_file_infos::Dict{URI,JET.AnalyzedFileInfo}
+    actual2virtual::JET.Actual2Virtual
 end
 
 struct AnalysisUnit
@@ -144,11 +136,11 @@ struct AnalysisUnit
     result::FullAnalysisResult
 end
 
-analyzed_file_uris(analysis_unit::AnalysisUnit) = keys(analysis_unit.result.analyzed_file_infos)
+analyzed_file_uris(analysis_unit::AnalysisUnit) = analyzed_file_uris(analysis_unit.result)
+analyzed_file_uris(analysis_result::FullAnalysisResult) = keys(analysis_result.analyzed_file_infos)
 
-function analyzed_file_info(analysis_unit::AnalysisUnit, uri::URI)
-    return get(analysis_unit.result.analyzed_file_infos, uri, nothing)
-end
+analyzed_file_info(analysis_unit::AnalysisUnit, uri::URI) = analyzed_file_info(analysis_unit.result, uri)
+analyzed_file_info(analysis_result::FullAnalysisResult, uri::URI) = get(analysis_result.analyzed_file_infos, uri, nothing)
 
 struct OutOfScope
     module_context::Module
@@ -158,6 +150,54 @@ end
 
 # TODO support multiple analysis units, which can happen if this file is included from multiple different analysis_units
 const AnalysisInfo = Union{AnalysisUnit,OutOfScope}
+
+struct AnalysisRequest
+    entry::AnalysisEntry
+    uri::URI
+    generation::Int
+    token::Union{Nothing,ProgressToken}
+    notify::Bool
+    prev_analysis_result::Union{Nothing,FullAnalysisResult}
+    completion::Channel{Nothing}
+    function AnalysisRequest(
+            entry::AnalysisEntry,
+            uri::URI,
+            generation::Int,
+            token::Union{Nothing,ProgressToken},
+            notify::Bool,
+            prev_analysis_result::Union{Nothing,FullAnalysisResult},
+            completion::Channel{Nothing} = Channel{Nothing}(1)
+        )
+        return new(entry, uri, generation, token, notify, prev_analysis_result, completion)
+    end
+end
+
+const AnalysisCache = LWContainer{Dict{URI,AnalysisInfo}, LWStats}
+const PendingAnalyses = CASContainer{Dict{AnalysisEntry,Union{Nothing,AnalysisRequest}}, CASStats}
+const CurrentGenerations = CASContainer{Dict{AnalysisEntry,Int}}
+const AnalyzedGenerations = CASContainer{Dict{AnalysisEntry,Int}}
+const DebouncedRequests = LWContainer{Dict{AnalysisEntry,Timer}, LWStats}
+
+struct AnalysisManager
+    cache::AnalysisCache
+    pending_analyses::PendingAnalyses
+    queue::Channel{AnalysisRequest}
+    worker_tasks::Vector{Task}
+    current_generations::CurrentGenerations
+    analyzed_generations::AnalyzedGenerations
+    debounced::DebouncedRequests
+    function AnalysisManager(n_workers::Int)
+        return new(
+            AnalysisCache(Dict{URI,AnalysisInfo}()),
+            PendingAnalyses(Dict{AnalysisEntry,Union{Nothing,AnalysisRequest}}()),
+            Channel{AnalysisRequest}(Inf),
+            Vector{Task}(undef, n_workers),
+            CurrentGenerations(Dict{AnalysisEntry,Int}()),
+            AnalyzedGenerations(Dict{AnalysisEntry,Int}()),
+            DebouncedRequests(Dict{AnalysisEntry,Timer}())
+        )
+    end
+end
 
 abstract type RequestCaller end
 
@@ -326,7 +366,7 @@ mutable struct ServerState
     const file_cache::FileCache # syntactic analysis cache (synced with `textDocument/didChange`)
     const saved_file_cache::SavedFileCache # syntactic analysis cache (synced with `textDocument/didSave`)
     const testsetinfos_cache::TestsetInfosCache
-    const analysis_cache::Dict{URI,AnalysisInfo} # entry points for the full analysis (currently not cached really)
+    const analysis_manager::AnalysisManager
     const extra_diagnostics::ExtraDiagnostics
     const currently_requested::CurrentlyRequested
     const currently_registered::CurrentlyRegistered
@@ -344,7 +384,7 @@ mutable struct ServerState
             #=file_cache=# FileCache(Base.PersistentDict{URI,FileInfo}()),
             #=saved_file_cache=# SavedFileCache(Base.PersistentDict{URI,SavedFileInfo}()),
             #=testsetinfos_cache=# TestsetInfosCache(Base.PersistentDict{URI,TestsetInfos}()),
-            #=analysis_cache=# Dict{URI,AnalysisInfo}(),
+            #=analysis_manager=# AnalysisManager(#=n_workers=# 1), # TODO multiple workers
             #=extra_diagnostics=# ExtraDiagnostics(ExtraDiagnosticsData()),
             #=currently_requested=# CurrentlyRequested(Base.PersistentDict{String,RequestCaller}()),
             #=currently_registered=# CurrentlyRegistered(Set{Registered}()),

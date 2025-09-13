@@ -69,7 +69,8 @@ end
 """
 # Typical completion UI
 
-to|
+`to|` ->
+```
    ┌───┬──────────────────────────┬────────────────────────────┐
    │(1)│to_completion(2)     (3) >│(4)...                      │
    │(1)│to_indices(2)        (3)  │# Typical completion UI ─(5)│
@@ -77,11 +78,12 @@ to|
    └───┴──────────────────────────┤to|                       │ │
                                   │...                     ──┘ │
                                   └────────────────────────────┘
-(1) Icon corresponding to CompletionItem's `ci.kind`
-(2) `ci.labelDetails.detail`
-(3) `ci.labelDetails.description`
-(4) `ci.detail` (possibly at (3))
-(5) `ci.documentation`
+```
+- (1) Icon corresponding to CompletionItem's `ci.kind`
+- (2) `ci.labelDetails.detail`
+- (3) `ci.labelDetails.description`
+- (4) `ci.detail` (possibly at (3))
+- (5) `ci.documentation`
 
 Sending (4) and (5) to the client can happen eagerly in response to <TAB>
 (textDocument/completion), or lazily, on selection in the list

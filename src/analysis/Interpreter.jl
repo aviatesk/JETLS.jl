@@ -5,8 +5,8 @@ export LSInterpreter
 using JuliaSyntax: JuliaSyntax as JS
 using JET: CC, JET
 using ..JETLS:
-    AnalysisEntry, FullAnalysisInfo, SavedFileInfo, Server,
-    JETLS_DEV_MODE, get_saved_file_info, yield_to_endpoint, send
+    AnalysisRequest, SavedFileInfo, Server, JETLS_DEV_MODE,
+    get_saved_file_info, yield_to_endpoint, send
 using ..JETLS.URIs2
 using ..JETLS.LSP
 using ..JETLS.Analyzer
@@ -18,29 +18,29 @@ Counter() = Counter(0)
 increment!(counter::Counter) = counter.count += 1
 Base.getindex(counter::Counter) = counter.count
 
-struct LSInterpreter{S<:Server, I<:FullAnalysisInfo} <: JET.ConcreteInterpreter
+struct LSInterpreter{S<:Server} <: JET.ConcreteInterpreter
     server::S
-    info::I
+    request::AnalysisRequest
     analyzer::LSAnalyzer
     counter::Counter
     state::JET.InterpretationState
-    function LSInterpreter(server::S, info::I, analyzer::LSAnalyzer, counter::Counter) where S<:Server where I<:FullAnalysisInfo
-        return new{S,I}(server, info, analyzer, counter)
+    function LSInterpreter(server::S, request::AnalysisRequest, analyzer::LSAnalyzer, counter::Counter) where S<:Server
+        return new{S}(server, request, analyzer, counter)
     end
-    function LSInterpreter(server::S, info::I, analyzer::LSAnalyzer, counter::Counter, state::JET.InterpretationState) where S<:Server where I<:FullAnalysisInfo
-        return new{S,I}(server, info, analyzer, counter, state)
+    function LSInterpreter(server::S, request::AnalysisRequest, analyzer::LSAnalyzer, counter::Counter, state::JET.InterpretationState) where S<:Server
+        return new{S}(server, request, analyzer, counter, state)
     end
 end
 
 # The main constructor
-LSInterpreter(server::Server, info::FullAnalysisInfo) = LSInterpreter(server, info, LSAnalyzer(info.entry), Counter())
+LSInterpreter(server::Server, request::AnalysisRequest) = LSInterpreter(server, request, LSAnalyzer(request.entry), Counter())
 
 # `JET.ConcreteInterpreter` interface
 JET.InterpretationState(interp::LSInterpreter) = interp.state
 function JET.ConcreteInterpreter(interp::LSInterpreter, state::JET.InterpretationState)
     # add `state` to `interp`, and update `interp.analyzer.cache`
     initialize_cache!(interp.analyzer, state.res.analyzed_files)
-    return LSInterpreter(interp.server, interp.info, interp.analyzer, interp.counter, state)
+    return LSInterpreter(interp.server, interp.request, interp.analyzer, interp.counter, state)
 end
 JET.ToplevelAbstractAnalyzer(interp::LSInterpreter) = interp.analyzer
 
@@ -58,7 +58,7 @@ function JET.analyze_from_definitions!(interp::LSInterpreter, config::JET.Toplev
     n = length(res.toplevel_signatures)
     n == 0 && return
     next_interval = interval = 10 ^ max(round(Int, log10(n)) - 1, 0)
-    token = interp.info.token
+    token = interp.request.token
     if token !== nothing
         send(interp.server, ProgressNotification(;
             params = ProgressParams(;
@@ -106,14 +106,15 @@ end
 function JET.virtual_process!(interp::LSInterpreter,
                               x::Union{AbstractString,JS.SyntaxNode},
                               overrideex::Union{Nothing,Expr})
-    token = interp.info.token
+    token = interp.request.token
     if token !== nothing
         filename = JET.InterpretationState(interp).filename
         shortpath = let state = interp.server.state
             isdefined(state, :root_path) ? relpath(filename, state.root_path) : basename(filename)
         end
-        percentage = let total = interp.info.n_files
-            iszero(total) ? 0 : compute_percentage(interp.counter[], total,
+        percentage = let prev_analysis_result = interp.request.prev_analysis_result
+            n_files = isnothing(prev_analysis_result) ? 0 : length(prev_analysis_result.analyzed_file_infos)
+            iszero(n_files) ? 0 : compute_percentage(interp.counter[], n_files,
                 JET.InterpretationState(interp).config.analyze_from_definitions ? 50 : 100)
         end
         send(interp.server, ProgressNotification(;

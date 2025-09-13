@@ -59,6 +59,8 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
     end
     fix_static_settings!(state.config_manager)
 
+    start_analysis_workers!(server)
+
     if supports(server, :textDocument, :completion, :dynamicRegistration)
         completionProvider = nothing # will be registered dynamically
     else
@@ -230,8 +232,7 @@ should be enabled by default.
 function handle_InitializedNotification(server::Server)
     state = server.state
 
-    isdefined(state, :init_params) ||
-        error("Initialization process not completed") # to exit the server loop
+    isdefined(state, :init_params) || error("Initialization process not completed") # to exit the server loop
 
     registrations = Registration[]
 

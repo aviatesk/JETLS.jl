@@ -81,7 +81,7 @@ struct LSAnalyzer <: ToplevelAbstractAnalyzer
         return new(state, analysis_token, cache, method_table)
     end
 end
-function LSAnalyzer(entry::AnalysisEntry, state::AnalyzerState)
+function LSAnalyzer(@nospecialize(entry::AnalysisEntry), state::AnalyzerState)
     analysis_cache_key = JET.compute_hash(entry, state.inf_params)
     analysis_token = get!(AnalysisToken, LS_ANALYZER_CACHE, analysis_cache_key)
     cache = InterpretationStateCache()

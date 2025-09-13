@@ -9,11 +9,12 @@ function analyze_and_resolve(s::AbstractString; kwargs...)
     position = only(positions)
     server = JETLS.Server()
     state = server.state
-    mktemp() do filename, io
+    mktemp() do filename, _
         uri = filename2uri(filename)
         fileinfo = JETLS.cache_file_info!(state, uri, 1, text)
         JETLS.cache_saved_file_info!(state, uri, text)
-        JETLS.initiate_analysis_unit!(server, uri)
+        JETLS.start_analysis_workers!(server)
+        JETLS.request_analysis!(server, uri; notify=false, wait=true)
 
         (; mod, analyzer) = JETLS.get_context_info(state, uri, position)
 
