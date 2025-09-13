@@ -308,7 +308,7 @@ end
 
 function get_full_diagnostics(server::Server)
     uri2diagnostics = URI2Diagnostics()
-    for (uri, analysis_info) in server.state.analysis_cache
+    for (uri, analysis_info) in load(server.state.analysis_manager.cache)
         if analysis_info isa OutOfScope
             continue
         end

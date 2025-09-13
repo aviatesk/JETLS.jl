@@ -31,8 +31,8 @@ module __demo__ end
             # compile `LSInterpreter`
             entry = ScriptAnalysisEntry(uri)
             # specify `token::String`?
-            info = FullAnalysisInfo(entry, nothing, #=reanalyze=#false, #=n_files=#0)
-            interp = LSInterpreter(server, info)
+            request = AnalysisRequest(entry, uri, #=generation=#1, #=token=#nothing, #=notify=#false, #=prev_analysis_result=#nothing)
+            interp = LSInterpreter(server, request)
             filepath = normpath(pkgdir(JET), "demo.jl")
             JET.analyze_and_report_file!(interp, filepath;
                 virtualize=false,

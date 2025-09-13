@@ -1,4 +1,4 @@
-struct RunFullAnalysisCaller <: RequestCaller
+struct RequestAnalysisCaller <: RequestCaller
     uri::URI
     onsave::Bool
     token::ProgressToken
@@ -57,16 +57,16 @@ function handle_DidOpenTextDocumentNotification(server::Server, msg::DidOpenText
     cache_saved_file_info!(server.state, uri, parsed_stream)
 
     if supports(server, :window, :workDoneProgress)
-        id = String(gensym(:WorkDoneProgressCreateRequest_run_full_analysis!))
-        token = String(gensym(:WorkDoneProgressCreateRequest_run_full_analysis!))
-        addrequest!(server, id=>RunFullAnalysisCaller(uri, #=onsave=#false, token))
+        id = String(gensym(:WorkDoneProgressCreateRequest_request_analysis!))
+        token = String(gensym(:WorkDoneProgressCreateRequest_request_analysis!))
+        addrequest!(server, id=>RequestAnalysisCaller(uri, #=onsave=#false, token))
         send(server,
             WorkDoneProgressCreateRequest(;
                 id,
                 params = WorkDoneProgressCreateParams(;
                     token = token)))
     else
-        run_full_analysis!(server, uri)
+        request_analysis!(server, uri)
     end
 end
 
@@ -103,16 +103,16 @@ function handle_DidSaveTextDocumentNotification(server::Server, msg::DidSaveText
     cache_saved_file_info!(server.state, uri, text)
 
     if supports(server, :window, :workDoneProgress)
-        id = String(gensym(:WorkDoneProgressCreateRequest_run_full_analysis!))
-        token = String(gensym(:WorkDoneProgressCreateRequest_run_full_analysis!))
-        addrequest!(server, id=>RunFullAnalysisCaller(uri, #=onsave=#true, token))
+        id = String(gensym(:WorkDoneProgressCreateRequest_request_analysis!))
+        token = String(gensym(:WorkDoneProgressCreateRequest_request_analysis!))
+        addrequest!(server, id=>RequestAnalysisCaller(uri, #=onsave=#true, token))
         send(server,
             WorkDoneProgressCreateRequest(;
                 id,
                 params = WorkDoneProgressCreateParams(;
                     token = token)))
     else
-        run_full_analysis!(server, uri; onsave=true)
+        request_analysis!(server, uri; onsave=true)
     end
 end
 
