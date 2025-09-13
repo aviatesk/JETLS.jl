@@ -201,8 +201,8 @@ end
 
 get_context_module(::Nothing, ::URI, ::Position) = Main
 get_context_module(oos::OutOfScope, ::URI, ::Position) = isdefined(oos, :module_context) ? oos.module_context : Main
-function get_context_module(analysis_unit::AnalysisUnit, uri::URI, pos::Position)
-    safi = @something analyzed_file_info(analysis_unit, uri) return Main
+function get_context_module(analysis_result::AnalysisResult, uri::URI, pos::Position)
+    safi = @something analyzed_file_info(analysis_result, uri) return Main
     curline = Int(pos.line) + 1
     curmod = Main
     for (range, mod) in safi.module_range_infos
@@ -214,8 +214,8 @@ end
 
 get_context_analyzer(::Nothing, uri::URI) = LSAnalyzer(uri)
 get_context_analyzer(::OutOfScope, uri::URI) = LSAnalyzer(uri)
-get_context_analyzer(analysis_unit::AnalysisUnit, ::URI) = analysis_unit.result.analyzer
+get_context_analyzer(analysis_result::AnalysisResult, ::URI) = analysis_result.analyzer
 
 get_post_processor(::Nothing) = LSPostProcessor(JET.PostProcessor())
 get_post_processor(::OutOfScope) = LSPostProcessor(JET.PostProcessor())
-get_post_processor(analysis_unit::AnalysisUnit) = LSPostProcessor(JET.PostProcessor(analysis_unit.result.actual2virtual))
+get_post_processor(analysis_result::AnalysisResult) = LSPostProcessor(JET.PostProcessor(analysis_result.actual2virtual))

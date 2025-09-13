@@ -124,23 +124,17 @@ entrykind_impl(::PackageTestAnalysisEntry) = "pkg test"
 
 const URI2Diagnostics = Dict{URI,Vector{Diagnostic}}
 
-struct FullAnalysisResult
+struct AnalysisResult
+    entry::AnalysisEntry
     uri2diagnostics::URI2Diagnostics
     analyzer::LSAnalyzer
     analyzed_file_infos::Dict{URI,JET.AnalyzedFileInfo}
     actual2virtual::JET.Actual2Virtual
 end
 
-struct AnalysisUnit
-    entry::AnalysisEntry
-    result::FullAnalysisResult
-end
+analyzed_file_uris(analysis_result::AnalysisResult) = keys(analysis_result.analyzed_file_infos)
 
-analyzed_file_uris(analysis_unit::AnalysisUnit) = analyzed_file_uris(analysis_unit.result)
-analyzed_file_uris(analysis_result::FullAnalysisResult) = keys(analysis_result.analyzed_file_infos)
-
-analyzed_file_info(analysis_unit::AnalysisUnit, uri::URI) = analyzed_file_info(analysis_unit.result, uri)
-analyzed_file_info(analysis_result::FullAnalysisResult, uri::URI) = get(analysis_result.analyzed_file_infos, uri, nothing)
+analyzed_file_info(analysis_result::AnalysisResult, uri::URI) = get(analysis_result.analyzed_file_infos, uri, nothing)
 
 struct OutOfScope
     module_context::Module
@@ -149,7 +143,7 @@ struct OutOfScope
 end
 
 # TODO support multiple analysis units, which can happen if this file is included from multiple different analysis_units
-const AnalysisInfo = Union{AnalysisUnit,OutOfScope}
+const AnalysisInfo = Union{AnalysisResult,OutOfScope}
 
 struct AnalysisRequest
     entry::AnalysisEntry
@@ -157,7 +151,7 @@ struct AnalysisRequest
     generation::Int
     token::Union{Nothing,ProgressToken}
     notify::Bool
-    prev_analysis_result::Union{Nothing,FullAnalysisResult}
+    prev_analysis_result::Union{Nothing,AnalysisResult}
     completion::Channel{Nothing}
     function AnalysisRequest(
             entry::AnalysisEntry,
@@ -165,7 +159,7 @@ struct AnalysisRequest
             generation::Int,
             token::Union{Nothing,ProgressToken},
             notify::Bool,
-            prev_analysis_result::Union{Nothing,FullAnalysisResult},
+            prev_analysis_result::Union{Nothing,AnalysisResult},
             completion::Channel{Nothing} = Channel{Nothing}(1)
         )
         return new(entry, uri, generation, token, notify, prev_analysis_result, completion)

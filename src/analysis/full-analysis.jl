@@ -21,9 +21,9 @@ function request_analysis!(
     elseif analysis_info isa OutOfScope
         entry = analysis_info
     else
-        analysis_unit = analysis_info::AnalysisUnit # cached analysis unit
-        entry = analysis_unit.entry
-        prev_analysis_result = analysis_unit.result
+        analysis_result = analysis_info::AnalysisResult # cached analysis result
+        entry = analysis_result.entry
+        prev_analysis_result = analysis_result
     end
 
     if entry isa OutOfScope
@@ -114,7 +114,7 @@ function analysis_worker(server::Server)
 
         has_any_parse_errors(server, request) && @goto next_request
 
-        analysis_unit = @something try
+        analysis_result = @something try
             execute_analysis_request(server, request)
         catch err
             @error "Error in `execute_analysis_request` for " request
@@ -123,7 +123,7 @@ function analysis_worker(server::Server)
             nothing
         end @goto next_request
 
-        update_analysis_cache!(manager, analysis_unit)
+        update_analysis_cache!(manager, analysis_result)
         mark_analyzed_generation!(manager, request)
         request.notify && notify_diagnostics!(server)
         put!(request.completion, nothing)
@@ -174,12 +174,12 @@ function has_any_parse_errors(server::Server, request::AnalysisRequest)
     end
 end
 
-function update_analysis_cache!(manager::AnalysisManager, analysis_unit::AnalysisUnit)
-    analyzed_uris = analyzed_file_uris(analysis_unit)
+function update_analysis_cache!(manager::AnalysisManager, analysis_result::AnalysisResult)
+    analyzed_uris = analyzed_file_uris(analysis_result)
     store!(manager.cache) do cache
         new_cache = copy(cache)
         for uri in analyzed_uris
-            new_cache[uri] = analysis_unit
+            new_cache[uri] = analysis_result
         end
         return new_cache, nothing
     end
@@ -252,7 +252,7 @@ function update_analyzer_world(analyzer::LSAnalyzer)
     return JET.AbstractAnalyzer(analyzer, newstate)
 end
 
-function new_analysis_unit(request::AnalysisRequest, result)
+function new_analysis_result(request::AnalysisRequest, result)
     analyzed_file_infos = Dict{URI,JET.AnalyzedFileInfo}(
         # `filepath` is an absolute path (since `path` is specified as absolute)
         filename2uri(filepath) => analyzed_file_info
@@ -268,8 +268,7 @@ function new_analysis_unit(request::AnalysisRequest, result)
         analyzer = update_analyzer_world(result.analyzer)
     end
 
-    analysis_result = FullAnalysisResult(uri2diagnostics, analyzer, analyzed_file_infos, actual2virtual)
-    return AnalysisUnit(entry, analysis_result)
+    return AnalysisResult(entry, uri2diagnostics, analyzer, analyzed_file_infos, actual2virtual)
 end
 
 function lookup_analysis_entry(state::ServerState, uri::URI)
@@ -337,7 +336,7 @@ function execute_analysis_request(server::Server, request::AnalysisRequest)
 
     else error("Unsupported analysis entry $entry") end
 
-    ret = new_analysis_unit(request, result)
+    ret = new_analysis_result(request, result)
 
     # TODO Request fallback analysis in cases this script was not analyzed by the analysis entry
     # request.uri ∉ analyzed_file_uris(ret)
