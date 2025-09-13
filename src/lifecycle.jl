@@ -377,4 +377,6 @@ function handle_InitializedNotification(server::Server)
     end
 
     register(server, registrations)
+
+    @info "Initialized JETLS with" JETLS_DEV_MODE JETLS_TEST_MODE JETLS_DEBUG_LOWERING Threads.nthreads()
 end

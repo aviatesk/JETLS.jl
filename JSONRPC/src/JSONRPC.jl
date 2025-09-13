@@ -15,7 +15,7 @@ mutable struct Endpoint
         in_msg_queue = Channel{Any}(Inf)
         out_msg_queue = Channel{Any}(Inf)
 
-        read_task = Threads.@spawn try
+        read_task = Threads.@spawn :interactive try
             while true
                 msg = @something readmsg(in, method_dispatcher) break
                 put!(in_msg_queue, msg)
@@ -24,7 +24,7 @@ mutable struct Endpoint
             err_handler(#=isread=#true, err, catch_backtrace())
         end
 
-        write_task = Threads.@spawn try
+        write_task = Threads.@spawn :interactive try
             for msg in out_msg_queue
                 if isopen(out)
                     writemsg(out, msg)
