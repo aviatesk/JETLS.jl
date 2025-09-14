@@ -152,6 +152,7 @@ function runserver(server::Server)
             else # general message hander
                 handle_message(server, msg_queue, msg)
             end
+            GC.safepoint()
         end
     catch err
         @error "Message handling loop failed"
@@ -167,6 +168,7 @@ function start_sequential_message_handler(server::Server, msg_queue::Channel{Any
     Threads.@spawn :default while true
         msg = take!(msg_queue)
         _handle_message(handle_sequential_message, server, msg)
+        GC.safepoint()
     end
 end
 

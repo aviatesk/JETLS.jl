@@ -19,6 +19,7 @@ mutable struct Endpoint
             while true
                 msg = @something readmsg(in, method_dispatcher) break
                 put!(in_msg_queue, msg)
+                GC.safepoint()
             end
         catch err
             err_handler(#=isread=#true, err, catch_backtrace())
@@ -29,10 +30,11 @@ mutable struct Endpoint
                 if isopen(out)
                     writemsg(out, msg)
                 else
-                    @info "failed to send" msg
                     # TODO Reconsider at some point whether this should be treated as an error.
+                    @error "Failed to send" msg
                     break
                 end
+                GC.safepoint()
             end
         catch err
             err_handler(#=isread=#false, err, catch_backtrace())

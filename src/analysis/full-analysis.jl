@@ -118,8 +118,7 @@ function analysis_worker(server::Server)
             execute_analysis_request(server, request)
         catch err
             @error "Error in `execute_analysis_request` for " request
-            showerror(stderr, err)
-            Base.show_backtrace(stderr, catch_backtrace())
+            Base.display_error(stderr, err, catch_backtrace())
             nothing
         end @goto next_request
 
@@ -146,6 +145,8 @@ function analysis_worker(server::Server)
         if pending_request !== nothing
             put!(manager.queue, pending_request)
         end
+
+        GC.safepoint()
     end
 end
 
