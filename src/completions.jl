@@ -213,7 +213,7 @@ function global_completions!(items::Dict{String, CompletionItem}, state::ServerS
     offset = xy_to_offset(fi, pos)
     dotprefix = select_dotprefix_node(st, offset)
     if !isnothing(dotprefix)
-        prefixtyp = resolve_type(analyzer, mod, dotprefix)
+        prefixtyp = resolve_type(analyzer, completion_module, dotprefix)
         if prefixtyp isa Core.Const
             prefixval = prefixtyp.val
             if prefixval isa Module

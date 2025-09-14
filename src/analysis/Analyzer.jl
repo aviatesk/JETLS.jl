@@ -270,7 +270,7 @@ end
 # ===========
 
 # the entry constructor
-function LSAnalyzer(entry::AnalysisEntry,
+function LSAnalyzer(@nospecialize(entry::AnalysisEntry),
                     world::UInt = Base.get_world_counter();
                     jetconfigs...)
     jetconfigs = JET.kwargs_dict(jetconfigs)

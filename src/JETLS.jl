@@ -146,9 +146,9 @@ function runserver(server::Server)
             elseif shutdown_requested
                 send(server, ResponseMessage(;
                     id = msg.id,
-                    error=ResponseError(;
-                        code=ErrorCodes.InvalidRequest,
-                        message="Received request after a shutdown request requested")))
+                    error = ResponseError(;
+                        code = ErrorCodes.InvalidRequest,
+                        message = "Received request after a shutdown request requested")))
             else # general message hander
                 handle_message(server, msg_queue, msg)
             end
