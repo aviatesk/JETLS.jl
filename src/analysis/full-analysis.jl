@@ -158,7 +158,7 @@ function increment_generation!(manager::AnalysisManager, @nospecialize entry::An
     some = Some{AnalysisEntry}(entry)
     store!(manager.current_generations) do generations
         new_generations = copy(generations)
-        generation = get(new_generations, request.entry, 0) + 1
+        generation = get(new_generations, some.value, 0) + 1
         new_generations[some.value] = generation
         return new_generations, generation
     end
