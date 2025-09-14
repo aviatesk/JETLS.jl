@@ -39,16 +39,17 @@ function request_analysis!(
         end
         return nothing
     end
+    entry = entry::AnalysisEntry
+
+    if onsave
+        generation = increment_generation!(manager, entry)
+    else
+        generation = get_generation(manager, entry)
+    end
 
     completion = Channel{Nothing}(1)
     request = AnalysisRequest(
-        entry::AnalysisEntry, uri, generation, token, notify, prev_analysis_result, completion)
-
-    if onsave
-        generation = increment_generation!(manager, request)
-    else
-        generation = get_generation(manager, request)
-    end
+        entry, uri, generation, token, notify, prev_analysis_result, completion)
 
     # Check if already analyzing and handle pending requests
     should_queue = store!(manager.pending_analyses) do analyses
@@ -153,17 +154,18 @@ function analysis_worker(server::Server)
     end
 end
 
-function increment_generation!(manager::AnalysisManager, request::AnalysisRequest)
+function increment_generation!(manager::AnalysisManager, @nospecialize entry::AnalysisEntry)
+    some = Some{AnalysisEntry}(entry)
     store!(manager.current_generations) do generations
         new_generations = copy(generations)
         generation = get(new_generations, request.entry, 0) + 1
-        new_generations[request.entry] = generation
+        new_generations[some.value] = generation
         return new_generations, generation
     end
 end
 
-get_generation(manager::AnalysisManager, request::AnalysisRequest) =
-    get(load(manager.current_generations), request.entry, 0)
+get_generation(manager::AnalysisManager, @nospecialize entry::AnalysisEntry) =
+    get(load(manager.current_generations), entry, 0)
 
 function is_staled_request(manager::AnalysisManager, request::AnalysisRequest)
     analyzed_generation = get(load(manager.analyzed_generations), request.entry, -1)
