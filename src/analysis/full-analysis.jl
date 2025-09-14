@@ -27,28 +27,28 @@ function request_analysis!(
     end
 
     if entry isa OutOfScope
+        local outofscope = entry
         store!(manager.cache) do cache
-            if get(cache, uri, nothing) === entry
-                return cache, nothing
+            if get(cache, uri, nothing) === outofscope
+                cache, nothing
             else
                 local new_cache = copy(cache)
-                new_cache[uri] = entry
-                return new_cache, nothing
+                new_cache[uri] = outofscope
+                new_cache, nothing
             end
         end
         return nothing
     end
-    entry = entry::AnalysisEntry
-
-    if onsave
-        generation = increment_generation!(manager, entry)
-    else
-        generation = get_generation(manager, entry)
-    end
 
     completion = Channel{Nothing}(1)
     request = AnalysisRequest(
-        entry, uri, generation, token, notify, prev_analysis_result, completion)
+        entry::AnalysisEntry, uri, generation, token, notify, prev_analysis_result, completion)
+
+    if onsave
+        generation = increment_generation!(manager, request)
+    else
+        generation = get_generation(manager, request)
+    end
 
     # Check if already analyzing and handle pending requests
     should_queue = store!(manager.pending_analyses) do analyses
@@ -56,14 +56,16 @@ function request_analysis!(
             # Replace any existing pending request with this new one
             local new_analyses = copy(analyses)
             new_analyses[request.entry] = request
-            return new_analyses, false  # Don't queue - just update pending
+            new_analyses, false  # Don't queue - just update pending
         else
-            return analyses, true  # Not analyzing - should queue
+            analyses, true  # Not analyzing - should queue
         end
     end
-    should_queue || return nothing  # Request saved as pending
+    should_queue || @goto wait_or_return # Request saved as pending
 
-    if onsave && (delay = get_config(server.state.config_manager, "full_analysis", "debounce")) > 0
+    debounce = get_config(server.state.config_manager, "full_analysis", "debounce")
+    if onsave && debounce isa Float64 && debounce > 0
+        local delay::Float64 = debounce
         store!(manager.debounced) do debounced
             # Cancel existing timer if any
             if haskey(debounced, request.entry)
@@ -86,8 +88,8 @@ function request_analysis!(
         queue_request!(manager, request)
     end
 
+    @label wait_or_return
     wait && take!(completion)
-
     nothing
 end
 
@@ -125,9 +127,10 @@ function analysis_worker(server::Server)
         update_analysis_cache!(manager, analysis_result)
         mark_analyzed_generation!(manager, request)
         request.notify && notify_diagnostics!(server)
-        put!(request.completion, nothing)
 
         @label next_request
+
+        put!(request.completion, nothing) # Notify the completion callback
 
         # Check for pending request and re-queue if needed
         pending_request = store!(manager.pending_analyses) do analyses
@@ -150,17 +153,17 @@ function analysis_worker(server::Server)
     end
 end
 
-function increment_generation!(manager::AnalysisManager, @nospecialize entry::AnalysisEntry)
+function increment_generation!(manager::AnalysisManager, request::AnalysisRequest)
     store!(manager.current_generations) do generations
         new_generations = copy(generations)
-        generation = get(new_generations, entry, 0) + 1
-        new_generations[entry] = generation
+        generation = get(new_generations, request.entry, 0) + 1
+        new_generations[request.entry] = generation
         return new_generations, generation
     end
 end
 
-get_generation(manager::AnalysisManager, @nospecialize entry::AnalysisEntry) =
-    get(load(manager.current_generations), entry, 0)
+get_generation(manager::AnalysisManager, request::AnalysisRequest) =
+    get(load(manager.current_generations), request.entry, 0)
 
 function is_staled_request(manager::AnalysisManager, request::AnalysisRequest)
     analyzed_generation = get(load(manager.analyzed_generations), request.entry, -1)
@@ -186,7 +189,7 @@ function update_analysis_cache!(manager::AnalysisManager, analysis_result::Analy
     end
 end
 
-function mark_analyzed_generation!(manager::AnalysisManager, @nospecialize request::AnalysisRequest)
+function mark_analyzed_generation!(manager::AnalysisManager, request::AnalysisRequest)
     store!(manager.analyzed_generations) do generations
         new_generations = copy(generations)
         new_generations[request.entry] = request.generation
