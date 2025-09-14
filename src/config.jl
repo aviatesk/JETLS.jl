@@ -1,8 +1,7 @@
 # TODO (later): move this definition to external files
 const DEFAULT_CONFIG = ConfigDict(
     "full_analysis" => ConfigDict(
-        "debounce" => 1.0,
-        "throttle" => 5.0
+        "debounce" => 1.0
     ),
     "testrunner" => ConfigDict(
         "executable" => "testrunner"
@@ -14,8 +13,7 @@ const DEFAULT_CONFIG = ConfigDict(
 
 const STATIC_CONFIG = ConfigDict(
     "full_analysis" => ConfigDict(
-        "debounce" => false,
-        "throttle" => false
+        "debounce" => false
     ),
     "testrunner" => ConfigDict(
         "executable" => false

@@ -107,7 +107,6 @@ end
 @testset "Configuration utilities" begin
     @testset "`is_static_setting`" begin
         @test !JETLS.is_static_setting("full_analysis", "debounce")
-        @test !JETLS.is_static_setting("full_analysis", "throttle")
         @test JETLS.is_static_setting("internal", "static_setting")
         @test !JETLS.is_static_setting("testrunner", "executable")
         @test !JETLS.is_static_setting("nonexistent")
@@ -237,12 +236,11 @@ end
 
         # filtering with nested paths
         let base = JETLS.ConfigDict("full_analysis" => JETLS.ConfigDict("debounce" => 1.0))
-            overlay = JETLS.ConfigDict("full_analysis" => JETLS.ConfigDict("throttle" => 5.0))
+            overlay = JETLS.ConfigDict("full_analysis" => JETLS.ConfigDict("debounce" => 5.0))
             result = JETLS.traverse_merge(base, overlay) do path, v
-                path == ["full_analysis", "throttle"] ? v : nothing
+                path == ["full_analysis", "debounce"] ? v : nothing
             end
-            @test result["full_analysis"]["debounce"] == 1.0
-            @test result["full_analysis"]["throttle"] == 5.0
+            @test result["full_analysis"]["debounce"] == 5.0
         end
     end
 
@@ -310,8 +308,7 @@ end
 
     test_config = JETLS.ConfigDict(
         "full_analysis" => JETLS.ConfigDict(
-            "debounce" => 2.0,
-            "throttle" => 10.0
+            "debounce" => 2.0
         ),
         "testrunner" => JETLS.ConfigDict(
             "executable" => "test_runner"
@@ -325,7 +322,6 @@ end
     JETLS.fix_static_settings!(manager)
 
     @test JETLS.get_config(manager, "full_analysis", "debounce") === 2.0
-    @test JETLS.get_config(manager, "full_analysis", "throttle") === 10.0
     @test JETLS.get_config(manager, "testrunner", "executable") === "test_runner"
     @test JETLS.get_config(manager, "non_existent_key") === nothing
 
@@ -347,8 +343,7 @@ end
     changed_static_keys = Set{String}()
     updated_config = JETLS.ConfigDict(
         "full_analysis" => JETLS.ConfigDict(
-            "debounce" => 3.0,
-            "throttle" => 15.0
+            "debounce" => 3.0
         ),
         "testrunner" => JETLS.ConfigDict(
             "executable" => "new_runner"  # not static
@@ -373,7 +368,6 @@ end
     # non static keys should be changed dynamically
     @test JETLS.get_config(manager, "testrunner", "executable") == "new_runner"
     @test JETLS.get_config(manager, "full_analysis", "debounce") == 3.0
-    @test JETLS.get_config(manager, "full_analysis", "throttle") == 15.0
     # static keys should NOT change (they stay at the fixed values)
     @test JETLS.get_config(manager, "internal", "static_setting") == 5
 end
