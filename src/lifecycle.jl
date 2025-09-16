@@ -16,11 +16,10 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
 
     workspaceFolders = init_params.workspaceFolders
     if workspaceFolders !== nothing
-        for workspaceFolder in workspaceFolders
-            push!(state.workspaceFolders, workspaceFolder.uri)
-        end
+        state.workspaceFolders = URI[uri for (; uri) in workspaceFolders]
     else
         rootUri = init_params.rootUri
+        state.workspaceFolders = URI[]
         if rootUri !== nothing
             push!(state.workspaceFolders, rootUri)
         else
@@ -59,6 +58,8 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
         end
     end
     fix_static_settings!(state.config_manager)
+
+    start_analysis_workers!(server)
 
     if supports(server, :textDocument, :completion, :dynamicRegistration)
         completionProvider = nothing # will be registered dynamically
@@ -231,8 +232,7 @@ should be enabled by default.
 function handle_InitializedNotification(server::Server)
     state = server.state
 
-    isdefined(state, :init_params) ||
-        error("Initialization process not completed") # to exit the server loop
+    isdefined(state, :init_params) || error("Initialization process not completed") # to exit the server loop
 
     registrations = Registration[]
 
@@ -377,4 +377,6 @@ function handle_InitializedNotification(server::Server)
     end
 
     register(server, registrations)
+
+    JETLS_DEV_MODE && @info "Initialized JETLS with" JETLS_DEV_MODE JETLS_TEST_MODE JETLS_DEBUG_LOWERING Threads.nthreads()
 end

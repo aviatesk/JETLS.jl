@@ -44,14 +44,6 @@ const STATIC_SETTING_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
         withserver(; rootUri, capabilities=CLIENT_CAPABILITIES) do (; writereadmsg, server)
             manager = server.state.config_manager
 
-            # after initialization, manager should have the fixed config for static keys
-            @test JETLS.access_nested_dict(manager.static_settings,
-                "internal", "static_setting") == STATIC_SETTING_STARTUP
-
-            @test haskey(manager.watched_files, config_path)
-            @test collect(keys(manager.watched_files)) == [config_path, "__DEFAULT_CONFIG__"]
-            @test manager.watched_files["__DEFAULT_CONFIG__"] == JETLS.DEFAULT_CONFIG
-
             @test JETLS.get_config(manager, "internal", "static_setting") == STATIC_SETTING_STARTUP
             @test JETLS.get_config(manager, "testrunner", "executable") == TESTRUNNER_STARTUP
 
@@ -78,8 +70,6 @@ const STATIC_SETTING_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
 
             # Static setting should not be changed
             @test JETLS.get_config(manager, "internal", "static_setting") == STATIC_SETTING_STARTUP
-            # But config dict should be updated to avoid showing the same message again
-            @test manager.watched_files[config_path]["internal"]["static_setting"] == STATIC_SETTING_V2
 
             DEBOUNCE_V2 = 300.0
             # Add a new key `full_analysis.debounce` (now dynamic)
@@ -173,10 +163,6 @@ const STATIC_SETTING_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
             # - For non-static keys, replace with value from the next highest-priority config file. (`__DEFAULT_CONFIG__`)
             @test JETLS.get_config(manager, "full_analysis", "debounce") == DEBOUNCE_DEFAULT
 
-            # remove the config file from watched files
-            @test !haskey(manager.watched_files, config_path)
-            @test collect(keys(manager.watched_files)) == ["__DEFAULT_CONFIG__"]
-
             # re-create the config file
             STATIC_SETTING_RECREATE = 400
             TESTRUNNER_RECREATE = "testrunner_recreate"
@@ -199,14 +185,8 @@ const STATIC_SETTING_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
                 @test occursin("restart", raw_res.params.message)
             end
 
-            # `config_path` should be registered again
-            @test haskey(manager.watched_files, config_path)
             # static keys should not be changed even if higher priority config file is re-created
             @test JETLS.get_config(manager, "internal", "static_setting") == STATIC_SETTING_STARTUP
-            @test JETLS.access_nested_dict(manager.watched_files[config_path],
-                "internal", "static_setting") == STATIC_SETTING_RECREATE
-            # non-static keys should be updated
-            @test JETLS.get_config(manager, "testrunner", "executable") == TESTRUNNER_RECREATE
 
             # non-config file change (should be ignored)
             other_file = joinpath(tmpdir, "other.txt")
@@ -232,9 +212,6 @@ end
         withserver(; rootUri, capabilities=CLIENT_CAPABILITIES) do (; writereadmsg, server)
             manager = server.state.config_manager
 
-            @test collect(keys(manager.watched_files)) == ["__DEFAULT_CONFIG__"]
-            @test manager.watched_files["__DEFAULT_CONFIG__"] == JETLS.DEFAULT_CONFIG
-
             config_path = joinpath(tmpdir, ".JETLSConfig.toml")
             STATIC_SETTING_RECREATE = 500
             TESTRUNNER_RECREATE = "testrunner_recreate"
@@ -254,7 +231,6 @@ end
             @test raw_res.params.type == MessageType.Warning
             @test occursin("Created", raw_res.params.message)
             @test occursin("restart", raw_res.params.message)
-            @test haskey(manager.watched_files, config_path)
 
             # If higher priority config file is created,
             # - static keys should not be changed

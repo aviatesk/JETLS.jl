@@ -42,10 +42,11 @@ function (@main)(_::Vector{String})::Cint
             end
         end
         JETLS.currently_running = server
-        res = runserver(server)
+        t = Threads.@spawn :interactive runserver(server)
     else
-        res = runserver(endpoint)
+        t = Threads.@spawn :interactive runserver(endpoint)
     end
+    res = fetch(t)
     @info "JETLS server stopped" res.exit_code
     return res.exit_code
 end

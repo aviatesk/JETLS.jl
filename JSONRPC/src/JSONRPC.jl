@@ -9,30 +9,32 @@ mutable struct Endpoint
     out_msg_queue::Channel{Any}
     read_task::Task
     write_task::Task
-    state::Symbol
+    @atomic state::Symbol
 
     function Endpoint(err_handler, in::IO, out::IO, method_dispatcher)
         in_msg_queue = Channel{Any}(Inf)
         out_msg_queue = Channel{Any}(Inf)
 
-        read_task = Threads.@spawn try
+        read_task = Threads.@spawn :interactive try
             while true
                 msg = @something readmsg(in, method_dispatcher) break
                 put!(in_msg_queue, msg)
+                GC.safepoint()
             end
         catch err
             err_handler(#=isread=#true, err, catch_backtrace())
         end
 
-        write_task = Threads.@spawn try
+        write_task = Threads.@spawn :interactive try
             for msg in out_msg_queue
                 if isopen(out)
                     writemsg(out, msg)
                 else
-                    @info "failed to send" msg
                     # TODO Reconsider at some point whether this should be treated as an error.
+                    @error "Failed to send" msg
                     break
                 end
+                GC.safepoint()
             end
         catch err
             err_handler(#=isread=#false, err, catch_backtrace())
@@ -111,11 +113,11 @@ function Base.close(endpoint::Endpoint)
     # the socket, which we don't want to do
     # fetch(endpoint.read_task)
     fetch(endpoint.write_task)
-    endpoint.state = :closed
+    @atomic :release endpoint.state = :closed
     return endpoint
 end
 function check_dead_endpoint!(endpoint::Endpoint)
-    state = endpoint.state
+    state = @atomic :acquire endpoint.state
     state === :open || error("Endpoint is $state")
 end
 

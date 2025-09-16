@@ -36,14 +36,16 @@ testset_line(testsetinfo::TestsetInfo) = testset_line(testsetinfo.st0)
 testset_line(testset::JL.SyntaxTree) = JS.source_line(testset[2])
 
 function update_testsetinfos!(server::Server, uri::URI, fi::FileInfo; notify_server::Bool=true)
-    new_testsets = find_executable_testsets(fi.syntax_tree0)
+    new_testsets = find_executable_testsets(build_syntax_tree(fi))
     m = length(new_testsets)
 
-    existing_testsetinfos = @something get(server.state.testsetinfos_cache, uri, nothing) begin
+    existing_testsetinfos = @something get_testsetinfos(server.state, uri) begin
         # new file or newly created testsets
         if !iszero(m)
-            server.state.testsetinfos_cache[uri] =
-                TestsetInfos(fi.version, TestsetInfo[TestsetInfo(t) for t in new_testsets])
+            local infos = TestsetInfos(fi.version, TestsetInfo[TestsetInfo(t) for t in new_testsets])
+            store!(server.state.testsetinfos_cache) do c
+                Base.PersistentDict(c, uri => infos), nothing
+            end
         end
         return false
     end
@@ -55,7 +57,9 @@ function update_testsetinfos!(server::Server, uri::URI, fi::FileInfo; notify_ser
 
         if iszero(n)
             # Delete the existing cache if exist
-            delete!(server.state.testsetinfos_cache, uri)
+            store!(server.state.testsetinfos_cache) do c
+                Base.delete(c, uri), nothing
+            end
         else
             # Update the cache with new version and infos
             new_infos = Vector{TestsetInfo}(undef, m)
@@ -80,7 +84,10 @@ function update_testsetinfos!(server::Server, uri::URI, fi::FileInfo; notify_ser
                     new_infos[i] = TestsetInfo(testsetᵢ)
                 end
             end
-            server.state.testsetinfos_cache[uri] = TestsetInfos(fi.version, new_infos)
+            local infos = TestsetInfos(fi.version, new_infos)
+            store!(server.state.testsetinfos_cache) do c
+                Base.PersistentDict(c, uri => infos), nothing
+            end
 
             # Clear diagnostics for any removed testsets (when n > m)
             for i = (m+1):n
@@ -248,7 +255,7 @@ end
 function testrunner_testcase_code_actions!(
         code_actions::Vector{Union{CodeAction,Command}}, uri::URI, fi::FileInfo, action_range::Range
     )
-    st0_top = fi.syntax_tree0
+    st0_top = build_syntax_tree(fi)
     traverse(st0_top) do st0::SyntaxTree0
         if JS.kind(st0) in JS.KSet"function macro"
             # avoid visit inside function scope
@@ -423,7 +430,7 @@ is_testsetinfo_valid(fi::FileInfo, testsetinfos::TestsetInfos, idx::Int) =
     testsetinfos.version == fi.version && checkbounds(Bool, testsetinfos.infos, idx)
 
 function _testrunner_run_testset(server::Server, executable::AbstractString, uri::URI, fi::FileInfo, idx::Int, tsn::String, filepath::String)
-    testsetinfos = @something get(server.state.testsetinfos_cache, uri, nothing) begin
+    testsetinfos = @something get_testsetinfos(server.state, uri) begin
         show_warning_message(server, """
             Test structure not found, so test execution is being cancelled.
             """)
@@ -455,7 +462,7 @@ function _testrunner_run_testset(server::Server, executable::AbstractString, uri
     ret = summary_testrunner_result(result)
 
     # Handle the case where the test structure is updated during test execution
-    testsetinfos = @something get(server.state.testsetinfos_cache, uri, nothing) begin
+    testsetinfos = @something get_testsetinfos(server.state, uri) begin
         # If the file state has changed during test execution, it's difficult to apply results to the file:
         # Simply show only the option to open logs
         show_testrunner_result_in_message(server, result, #=title=#tsn)
@@ -471,9 +478,20 @@ function _testrunner_run_testset(server::Server, executable::AbstractString, uri
     key = TestsetDiagnosticsKey(uri, tsn, idx)
     testsetinfos.infos[idx] = TestsetInfo(testsetinfos.infos[idx].st0, TestsetResult(result, key))
     if !isempty(result.diagnostics)
-        server.state.extra_diagnostics[key] = testrunner_result_to_diagnostics(result)
-    elseif haskey(server.state.extra_diagnostics, key)
-        empty!(server.state.extra_diagnostics[key])
+        val = testrunner_result_to_diagnostics(result)
+        store!(server.state.extra_diagnostics) do data
+            return ExtraDiagnosticsData(data, key=>val), nothing
+        end
+    else
+        store!(server.state.extra_diagnostics) do data
+            if haskey(data, key)
+                new_data = copy(data)
+                delete!(new_data, key)
+                new_data, nothing
+            else
+                data, nothing
+            end
+        end
     end
     notify_diagnostics!(server)
 
@@ -690,7 +708,7 @@ function try_clear_testrunner_result!(server::Server, uri::URI, idx::Int, tsn::S
     end
 
     fi = @something get_file_info(server.state, uri) return nothing
-    testsetinfos = @something get(server.state.testsetinfos_cache, uri, nothing) return nothing
+    testsetinfos = @something get_testsetinfos(server.state, uri) return nothing
     if !is_testsetinfo_valid(fi, testsetinfos, idx)
         # file is has been modified, just do nothing and return
         # the clean up should be performed by `invalidate_testsetinfos!`

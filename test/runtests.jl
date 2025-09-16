@@ -6,6 +6,8 @@ include("setup.jl")
     @test withserver(Returns(true))
 end
 
+@testset "AtomicContainers" include("AtomicContainers/test_AtomicContainers.jl")
+
 @testset "JETLS" begin
     @testset "utils" begin
         @testset "general" include("utils/test_general.jl")

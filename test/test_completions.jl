@@ -11,7 +11,7 @@ include("jsjl_utils.jl")
 
 global lowering_module::Module = Module()
 function get_cursor_bindings(fi::JETLS.FileInfo, b::Int)
-    st0 = fi.syntax_tree0
+    st0 = JETLS.build_syntax_tree(fi)
     cb = JETLS.cursor_bindings(st0, b, lowering_module)
     return isnothing(cb) ? [] : cb
 end
@@ -260,7 +260,7 @@ function with_completion_request(
             else
                 JETLS.cache_file_info!(server.state, uri, 1, clean_code)
                 JETLS.cache_saved_file_info!(server.state, uri, clean_code)
-                JETLS.initiate_analysis_unit!(server, uri)
+                JETLS.request_analysis!(server, uri; notify=false, wait=true)
             end
 
             for (i, pos) in enumerate(positions)

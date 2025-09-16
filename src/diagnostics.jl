@@ -279,19 +279,19 @@ lowering_diagnostics(args...) = lowering_diagnostics!(Diagnostic[], args...) # u
 function toplevel_lowering_diagnostics(server::Server, uri::URI)
     diagnostics = Diagnostic[]
     file_info = get_file_info(server.state, uri)
-    st0_top = file_info.syntax_tree0
+    st0_top = build_syntax_tree(file_info)
     sl = JL.SyntaxList(st0_top)
     push!(sl, st0_top)
     while !isempty(sl)
         st0 = pop!(sl)
         if JS.kind(st0) === JS.K"toplevel"
-            for i = JS.numchildren(st0):-1:1 # # reversed since we use `pop!`
+            for i = JS.numchildren(st0):-1:1 # reversed since we use `pop!`
                 push!(sl, st0[i])
             end
         elseif JS.kind(st0) === JS.K"module"
             stblk = st0[end]
             JS.kind(stblk) === JS.K"block" || continue
-            for i = JS.numchildren(stblk):-1:1 # # reversed since we use `pop!`
+            for i = JS.numchildren(stblk):-1:1 # reversed since we use `pop!`
                 push!(sl, stblk[i])
             end
         else
@@ -308,16 +308,15 @@ end
 
 function get_full_diagnostics(server::Server)
     uri2diagnostics = URI2Diagnostics()
-    for (uri, analysis_info) in server.state.analysis_cache
+    for (uri, analysis_info) in load(server.state.analysis_manager.cache)
         if analysis_info isa OutOfScope
             continue
         end
         diagnostics = get!(Vector{Diagnostic}, uri2diagnostics, uri)
-        for analysis_unit in analysis_info
-            full_diagnostics = get(analysis_unit.result.uri2diagnostics, uri, nothing)
-            if full_diagnostics !== nothing
-                append!(diagnostics, full_diagnostics)
-            end
+        analysis_result = analysis_info
+        full_diagnostics = get(analysis_result.uri2diagnostics, uri, nothing)
+        if full_diagnostics !== nothing
+            append!(diagnostics, full_diagnostics)
         end
     end
     merge_extra_diagnostics!(uri2diagnostics, server)
@@ -325,7 +324,7 @@ function get_full_diagnostics(server::Server)
 end
 
 function merge_extra_diagnostics!(uri2diagnostics::URI2Diagnostics, server::Server)
-    for (_, extra_uri2diagnostics) in server.state.extra_diagnostics
+    for (_, extra_uri2diagnostics) in load(server.state.extra_diagnostics)
         merge_diagnostics!(uri2diagnostics, extra_uri2diagnostics)
     end
     return uri2diagnostics
@@ -360,21 +359,30 @@ end
 clear_extra_diagnostics!(server::Server, args...) = clear_extra_diagnostics!(server.state, args...)
 clear_extra_diagnostics!(state::ServerState, args...) = clear_extra_diagnostics!(state.extra_diagnostics, args...)
 function clear_extra_diagnostics!(extra_diagnostics::ExtraDiagnostics, key::ExtraDiagnosticsKey)
-    if haskey(extra_diagnostics, key)
-        delete!(extra_diagnostics, key)
-        return true
+    return store!(extra_diagnostics) do data
+        if haskey(data, key)
+            new_data = copy(data)
+            delete!(new_data, key)
+            return new_data, true
+        end
+        return data, false
     end
-    return false
 end
 function clear_extra_diagnostics!(extra_diagnostics::ExtraDiagnostics, uri::URI) # bulk deletion
-    any_deleted = false
-    for key in keys(extra_diagnostics)
-        if to_uri(key) == uri
-            delete!(extra_diagnostics, key)
-            any_deleted |= true
+    return store!(extra_diagnostics) do data
+        any_deleted = false
+        new_data = nothing
+        for key in keys(data)
+            if to_uri(key) == uri
+                if new_data === nothing
+                    new_data = copy(data)
+                end
+                delete!(new_data, key)
+                any_deleted |= true
+            end
         end
+        return something(new_data, data), any_deleted
     end
-    return any_deleted
 end
 
 # textDocument/diagnostic

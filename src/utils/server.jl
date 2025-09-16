@@ -60,7 +60,9 @@ send(server, WorkDoneProgressCreateRequest(; id, params))
 """
 addrequest!(server::Server, (id, caller)) = addrequest!(server, id, caller)
 function addrequest!(server::Server, id::String, caller::RequestCaller)
-    return server.state.currently_requested[id] = caller
+    return store!(server.state.currently_requested) do data
+        Base.PersistentDict(data, id => caller), caller
+    end
 end
 
 """
@@ -96,11 +98,14 @@ handle_requested_response(server, msg, request_caller)
 - [`handle_ResponseMessage`](@ref) - The main handler that processes client responses
 """
 function poprequest!(server::Server, @nospecialize id)
-    currently_requested = server.state.currently_requested
-    if id isa String && haskey(currently_requested, id)
-        return pop!(currently_requested, id)
+    id isa String || return nothing
+    return store!(server.state.currently_requested) do data
+        if haskey(data, id)
+            caller = data[id]
+            return Base.delete(data, id), caller
+        end
+        return data, nothing
     end
-    return nothing
 end
 
 """
@@ -161,7 +166,7 @@ end
 
 Fetch cached FileInfo given an LSclient-provided structure with a URI
 """
-get_file_info(s::ServerState, uri::URI) = get(s.file_cache, uri, nothing)
+get_file_info(s::ServerState, uri::URI) = get(load(s.file_cache), uri, nothing)
 get_file_info(s::ServerState, t::TextDocumentIdentifier) = get_file_info(s, t.uri)
 
 """
@@ -170,8 +175,10 @@ get_file_info(s::ServerState, t::TextDocumentIdentifier) = get_file_info(s, t.ur
 
 Fetch cached saved FileInfo given an LSclient-provided structure with a URI
 """
-get_saved_file_info(s::ServerState, uri::URI) = get(s.saved_file_cache, uri, nothing)
+get_saved_file_info(s::ServerState, uri::URI) = get(load(s.saved_file_cache), uri, nothing)
 get_saved_file_info(s::ServerState, t::TextDocumentIdentifier) = get_saved_file_info(s, t.uri)
+
+get_testsetinfos(s::ServerState, uri::URI) = get(load(s.testsetinfos_cache), uri, nothing)
 
 """
     get_context_info(state::ServerState, uri::URI, pos::Position) -> (; mod, analyzer, postprocessor)
@@ -185,17 +192,17 @@ Returns a named tuple containing:
   to recognize, which are caused by JET implementation details
 """
 function get_context_info(state::ServerState, uri::URI, pos::Position)
-    analysis_unit = find_analysis_unit_for_uri(state, uri)
-    mod = get_context_module(analysis_unit, uri, pos)
-    analyzer = get_context_analyzer(analysis_unit, uri)
-    postprocessor = get_post_processor(analysis_unit)
+    analysis_info = get_analysis_info(state.analysis_manager, uri)
+    mod = get_context_module(analysis_info, uri, pos)
+    analyzer = get_context_analyzer(analysis_info, uri)
+    postprocessor = get_post_processor(analysis_info)
     return (; mod, analyzer, postprocessor)
 end
 
 get_context_module(::Nothing, ::URI, ::Position) = Main
 get_context_module(oos::OutOfScope, ::URI, ::Position) = isdefined(oos, :module_context) ? oos.module_context : Main
-function get_context_module(analysis_unit::AnalysisUnit, uri::URI, pos::Position)
-    safi = @something successfully_analyzed_file_info(analysis_unit, uri) return Main
+function get_context_module(analysis_result::AnalysisResult, uri::URI, pos::Position)
+    safi = @something analyzed_file_info(analysis_result, uri) return Main
     curline = Int(pos.line) + 1
     curmod = Main
     for (range, mod) in safi.module_range_infos
@@ -207,25 +214,8 @@ end
 
 get_context_analyzer(::Nothing, uri::URI) = LSAnalyzer(uri)
 get_context_analyzer(::OutOfScope, uri::URI) = LSAnalyzer(uri)
-get_context_analyzer(analysis_unit::AnalysisUnit, ::URI) = analysis_unit.result.analyzer
+get_context_analyzer(analysis_result::AnalysisResult, ::URI) = analysis_result.analyzer
 
 get_post_processor(::Nothing) = LSPostProcessor(JET.PostProcessor())
 get_post_processor(::OutOfScope) = LSPostProcessor(JET.PostProcessor())
-get_post_processor(analysis_unit::AnalysisUnit) = LSPostProcessor(JET.PostProcessor(analysis_unit.result.actual2virtual))
-
-function find_analysis_unit_for_uri(state::ServerState, uri::URI)
-    haskey(state.analysis_cache, uri) || return nothing
-    analysis_info = state.analysis_cache[uri]
-    if analysis_info isa OutOfScope
-        return analysis_info
-    end
-    analysis_unit = first(analysis_info)
-    for analysis_unit′ in analysis_info
-        # prioritize `PackageSourceAnalysisEntry` if exists
-        if isa(analysis_unit.entry, PackageSourceAnalysisEntry)
-            analysis_unit = analysis_unit′
-            break
-        end
-    end
-    return analysis_unit
-end
+get_post_processor(analysis_result::AnalysisResult) = LSPostProcessor(JET.PostProcessor(analysis_result.actual2virtual))

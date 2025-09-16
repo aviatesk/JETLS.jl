@@ -43,7 +43,7 @@ function handle_InlayHintRequest(server::Server, msg::InlayHintRequest)
 end
 
 function syntactic_inlay_hints!(inlay_hints::Vector{InlayHint}, fi::FileInfo, range::Range)
-    traverse(fi.syntax_tree0) do st::SyntaxTree0
+    traverse(build_syntax_tree(fi)) do st::SyntaxTree0
         if JS.kind(st) === JS.K"module" && JS.numchildren(st) ≥ 2
             modrange = jsobj_to_range(st, fi)
             endpos = modrange.var"end"

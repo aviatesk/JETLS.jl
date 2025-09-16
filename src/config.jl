@@ -1,8 +1,7 @@
 # TODO (later): move this definition to external files
 const DEFAULT_CONFIG = ConfigDict(
     "full_analysis" => ConfigDict(
-        "debounce" => 1.0,
-        "throttle" => 5.0
+        "debounce" => 1.0
     ),
     "testrunner" => ConfigDict(
         "executable" => "testrunner"
@@ -14,8 +13,7 @@ const DEFAULT_CONFIG = ConfigDict(
 
 const STATIC_CONFIG = ConfigDict(
     "full_analysis" => ConfigDict(
-        "debounce" => false,
-        "throttle" => false
+        "debounce" => false
     ),
     "testrunner" => ConfigDict(
         "executable" => false
@@ -81,8 +79,6 @@ is_static_setting(key_path::String...) = access_nested_dict(STATIC_CONFIG, key_p
 
 is_config_file(filepath::AbstractString) = filepath == "__DEFAULT_CONFIG__" || basename(filepath) == ".JETLSConfig.toml"
 
-is_watched_file(manager::ConfigManager, filepath::AbstractString) = haskey(manager.watched_files, filepath)
-
 """
     Base.lt(::ConfigFileOrder, path1, path2)
 
@@ -121,9 +117,9 @@ function merge_settings(base::ConfigDict, overlay::ConfigDict)
     end |> cleanup_empty_dicts
 end
 
-function get_settings(manager::ConfigManager)
+function get_settings(data::ConfigManagerData)
     result = ConfigDict()
-    for config in Iterators.reverse(values(manager.watched_files))
+    for config in Iterators.reverse(values(data.watched_files))
         result = merge_settings(result, config)
     end
     return result
@@ -135,23 +131,12 @@ function merge_static_settings(base::ConfigDict, overlay::ConfigDict)
     end |> cleanup_empty_dicts
 end
 
-function get_static_settings(manager::ConfigManager)
+function get_static_settings(data::ConfigManagerData)
     result = ConfigDict()
-    for config in Iterators.reverse(values(manager.watched_files))
+    for config in Iterators.reverse(values(data.watched_files))
         result = merge_static_settings(result, config)
     end
     return result
-end
-
-"""
-    fix_static_settings!(manager::ConfigManager)
-
-Traverse the static settings from the currently registered config files,
-merge them based on priority, and set them as the settings that require a reload
-for this server.
-"""
-function fix_static_settings!(manager::ConfigManager)
-    return manager.static_settings = get_static_settings(manager)
 end
 
 """
@@ -210,36 +195,6 @@ function collect_unmatched_keys!(
 end
 
 """
-    merge_config!(on_leaf, manager::ConfigManager, filepath::AbstractString, new_config::ConfigDict)
-
-Merges `new_config` into the configuration file tracked by `manager` at `filepath`.
-Updates the configuration stored in `manager.watched_files[filepath]` by merging in the new values.
-If a key in `new_config` is marked as requiring a reload (using `is_static_setting`),
-the `on_leaf` function is called with the current config dictionary, path, and value.
-If the filepath is not being watched by the manager, the operation is skipped with a warning in dev mode.
-"""
-function merge_config!(
-        on_leaf, manager::ConfigManager, filepath::AbstractString, new_config::ConfigDict
-    )
-    current_config = get(manager.watched_files, filepath, DEFAULT_CONFIG)
-    manager.watched_files[filepath] = traverse_merge(current_config, new_config) do path, v
-        on_leaf(current_config, path, v)
-        v
-    end
-end
-
-function delete_config!(on_leaf, manager::ConfigManager, filepath::AbstractString)
-    old = get_settings(manager)
-    delete!(manager.watched_files, filepath)
-    new = get_settings(manager)
-    traverse_merge(old, new) do path, v
-        on_leaf(old, path, v)
-        nothing
-    end
-    return nothing
-end
-
-"""
     get_config(manager::ConfigManager, key_path...)
 
 Retrieves the current configuration value.
@@ -248,43 +203,77 @@ If the key path does not exist in any of the configurations, returns `nothing`.
 """
 function get_config(manager::ConfigManager, key_path::String...)
     is_static_setting(key_path...) &&
-        return access_nested_dict(manager.static_settings, key_path...)
-    for config in values(manager.watched_files)
-        v = access_nested_dict(config, key_path...)
-        if v !== nothing
-            return v
-        end
+        return access_nested_dict(load(manager).static_settings, key_path...)
+    for config in values(load(manager).watched_files)
+        return @something access_nested_dict(config, key_path...) continue
     end
     return nothing
+end
+
+function fix_static_settings!(manager::ConfigManager)
+    store!(manager) do old_data
+        new_static = get_static_settings(old_data)
+        new_data = ConfigManagerData(new_static, old_data.watched_files)
+        return new_data, new_static
+    end
 end
 
 """
 Loads the configuration from the specified path into the server's config manager.
 
-If the file does not exist or cannot be parsed, current configuration remains unchanged.
-When there are unknown keys in the config file, send error by `workspace/showMessage`
-and **current configuration is not changed.**
+If the file does not exist or cannot be parsed, just return leaving the current
+configuration unchanged. When there are unknown keys in the config file,
+send error message while leaving current configuration unchanged.
 """
-function load_config!(on_leaf, server::Server, path::AbstractString)
-    isfile(path) || return
-    parsed = TOML.tryparsefile(path)
-    parsed isa TOML.ParserError && return # just skip to reduce noise while typing
-    config_dict = to_config_dict(parsed)
+function load_config!(on_leaf, server::Server, filepath::AbstractString;
+                      reload::Bool = false)
+    store!(server.state.config_manager) do old_data
+        if reload
+            haskey(old_data.watched_files, filepath) ||
+                show_warning_message(server, "Loading unregistered configuration file: $filepath")
+        end
 
-    unknown_keys = collect_unmatched_keys(config_dict)
-    if !isempty(unknown_keys)
-        show_error_message(server, """
-            Configuration file at $path contains unknown keys:
-            $(join(map(x -> string('`', join(x, "."), '`'), unknown_keys), ", "))
-            """)
-        return
+        isfile(filepath) || return old_data, nothing
+        parsed = TOML.tryparsefile(filepath)
+        parsed isa TOML.ParserError && return old_data, nothing
+
+        new_config = to_config_dict(parsed)
+
+        unknown_keys = collect_unmatched_keys(new_config)
+        if !isempty(unknown_keys)
+            show_error_message(server, """
+                Configuration file at $filepath contains unknown keys:
+                $(join(map(x -> string('`', join(x, "."), '`'), unknown_keys), ", "))
+                """)
+            return old_data, nothing
+        end
+
+        current_config = get(old_data.watched_files, filepath, DEFAULT_CONFIG)
+        merged_config = traverse_merge(current_config, new_config) do filepath, v
+            on_leaf(current_config, filepath, v)
+            v
+        end
+        new_watched_files = copy(old_data.watched_files)
+        new_watched_files[filepath] = merged_config
+        new_data = ConfigManagerData(old_data.static_settings, new_watched_files)
+        return new_data, nothing
     end
-
-    merge_config!(on_leaf,
-                  server.state.config_manager,
-                  path,
-                  config_dict)
 end
 
 to_config_dict(dict::Dict{String,Any}) = ConfigDict(
     (k => (v isa Dict{String,Any} ? to_config_dict(v) : v) for (k, v) in dict)...)
+
+function delete_config!(on_leaf, manager::ConfigManager, filepath::AbstractString)
+    store!(manager) do old_data
+        old_settings = get_settings(old_data)
+        new_watched_files = copy(old_data.watched_files)
+        delete!(new_watched_files, filepath)
+        new_data = ConfigManagerData(old_data.static_settings, new_watched_files)
+        new_settings = get_settings(new_data)
+        traverse_merge(old_settings, new_settings) do path, v
+            on_leaf(old_settings, path, v)
+            nothing
+        end
+        return new_data, nothing
+    end
+end

@@ -12,7 +12,7 @@ module lowering_module end
 get_lowered_diagnostics(text::AbstractString) = get_lowered_diagnostics(lowering_module, text)
 function get_lowered_diagnostics(mod::Module, text::AbstractString)
     fi = JETLS.FileInfo(#=version=#0, text, @__FILE__)
-    st0 = fi.syntax_tree0
+    st0 = JETLS.build_syntax_tree(fi)
     @assert JS.kind(st0) === JS.K"toplevel"
     return JETLS.lowering_diagnostics(st0[1], mod, fi)
 end
@@ -310,7 +310,7 @@ end
             withserver() do (; writereadmsg, id_counter, server)
                 JETLS.cache_file_info!(server.state, uri, 1, script)
                 JETLS.cache_saved_file_info!(server.state, uri, script)
-                JETLS.initiate_analysis_unit!(server, uri)
+                JETLS.request_analysis!(server, uri; notify=false, wait=true)
 
                 id = id_counter[] += 1
                 (; raw_res) = writereadmsg(DocumentDiagnosticRequest(;

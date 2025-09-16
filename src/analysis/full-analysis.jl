@@ -1,47 +1,209 @@
-function run_full_analysis!(server::Server, uri::URI; onsave::Bool=false, token::Union{Nothing,ProgressToken}=nothing)
-    if !haskey(server.state.analysis_cache, uri)
-        res = initiate_analysis_unit!(server, uri; token)
-        if res isa AnalysisUnit
-            notify_diagnostics!(server)
-        end
-    else # this file is tracked by some analysis unit already
-        analysis_info = server.state.analysis_cache[uri]
-        if analysis_info isa OutOfScope
-            # this file is out of the current project scope, ignore it
-        else
-            # TODO support multiple analysis units, which can happen if this file is included from multiple different analysis_units
-            analysis_unit = first(analysis_info)
-            if onsave
-                analysis_unit.result.staled = true
-            end
-            function task()
-                res = reanalyze!(server, analysis_unit; token)
-                if res isa AnalysisUnit
-                    notify_diagnostics!(server)
-                end
-            end
-            id = hash(run_full_analysis!, hash(analysis_unit))
-            if onsave
-                debounce(id, get_config(server.state.config_manager, "full_analysis", "debounce")) do
-                    throttle(id, get_config(server.state.config_manager, "full_analysis", "throttle")) do
-                        task()
-                    end
-                end
+function start_analysis_workers!(server::Server)
+    for i = 1:length(server.state.analysis_manager.worker_tasks)
+        server.state.analysis_manager.worker_tasks[i] = Threads.@spawn :default analysis_worker(server)
+    end
+end
+
+get_analysis_info(manager::AnalysisManager, uri::URI) = get(load(manager.cache), uri, nothing)
+
+function request_analysis!(
+        server::Server, uri::URI;
+        onsave::Bool = false,
+        token::Union{Nothing,ProgressToken} = nothing,
+        notify::Bool = true, # used by tests
+        wait::Bool = false,  # used by tests
+    )
+    manager = server.state.analysis_manager
+    analysis_info = get_analysis_info(server.state.analysis_manager, uri)
+    prev_analysis_result = nothing
+    if isnothing(analysis_info)
+        entry = lookup_analysis_entry(server.state, uri)
+    elseif analysis_info isa OutOfScope
+        entry = analysis_info
+    else
+        analysis_result = analysis_info::AnalysisResult # cached analysis result
+        entry = analysis_result.entry
+        prev_analysis_result = analysis_result
+    end
+
+    if entry isa OutOfScope
+        local outofscope = entry
+        store!(manager.cache) do cache
+            if get(cache, uri, nothing) === outofscope
+                cache, nothing
             else
-                JETLS.throttle(id, get_config(server.state.config_manager, "full_analysis", "throttle")) do
-                    task()
-                end
+                local new_cache = copy(cache)
+                new_cache[uri] = outofscope
+                new_cache, nothing
             end
+        end
+        return nothing
+    end
+    entry = entry::AnalysisEntry
+
+    if onsave
+        generation = increment_generation!(manager, entry)
+    else
+        generation = get_generation(manager, entry)
+    end
+
+    completion = Channel{Nothing}(1)
+    request = AnalysisRequest(
+        entry, uri, generation, token, notify, prev_analysis_result, completion)
+
+    # Check if already analyzing and handle pending requests
+    should_queue = store!(manager.pending_analyses) do analyses
+        if haskey(analyses, request.entry)
+            # Replace any existing pending request with this new one
+            local new_analyses = copy(analyses)
+            new_analyses[request.entry] = request
+            new_analyses, false  # Don't queue - just update pending
+        else
+            analyses, true  # Not analyzing - should queue
         end
     end
+    should_queue || @goto wait_or_return # Request saved as pending
+
+    debounce = get_config(server.state.config_manager, "full_analysis", "debounce")
+    if onsave && debounce isa Float64 && debounce > 0
+        local delay::Float64 = debounce
+        store!(manager.debounced) do debounced
+            # Cancel existing timer if any
+            if haskey(debounced, request.entry)
+                close(debounced[request.entry])
+            end
+            local new_debounced = copy(debounced)
+            # Set debounce timer
+            new_debounced[request.entry] = Timer(delay) do _
+                store!(manager.debounced) do debounced′
+                    local new_debounced′ = copy(debounced′)
+                    delete!(new_debounced′, request.entry)
+                    return new_debounced′, nothing
+                end
+                # Queue the request after debounce period
+                queue_request!(manager, request)
+            end
+            return new_debounced, nothing
+        end
+    else
+        queue_request!(manager, request)
+    end
+
+    @label wait_or_return
+    wait && take!(completion)
     nothing
 end
 
-function begin_full_analysis_progress(server::Server, info::FullAnalysisInfo)
-    token = @something info.token return nothing
-    filename = uri2filename(entryuri(info.entry))
-    pre = info.reanalyze ? "Reanalyzing" : "Analyzing"
-    title = "$(pre) $(basename(filename)) [$(entrykind(info.entry))]"
+function queue_request!(manager::AnalysisManager, request::AnalysisRequest)
+    store!(manager.pending_analyses) do analyses
+        new_analyses = copy(analyses)
+        new_analyses[request.entry] = nothing  # Mark as analyzing, no pending yet
+        return new_analyses, nothing
+    end
+    put!(manager.queue, request)
+end
+
+ # Analysis queue processing implementation (analysis serialized per AnalysisEntry)
+function analysis_worker(server::Server)
+    # Note: Currently single worker, but designed for future multi-worker scaling.
+    # When multiple workers exist, the per-entry serialization ensures correctness.
+
+    manager = server.state.analysis_manager
+
+    while true
+        request = take!(manager.queue)
+
+        is_staled_request(manager, request) || @goto next_request # skip analysis if the analyzed generation is still latest
+
+        has_any_parse_errors(server, request) && @goto next_request
+
+        analysis_result = @something try
+            execute_analysis_request(server, request)
+        catch err
+            @error "Error in `execute_analysis_request` for " request
+            Base.display_error(stderr, err, catch_backtrace())
+            nothing
+        end @goto next_request
+
+        update_analysis_cache!(manager, analysis_result)
+        mark_analyzed_generation!(manager, request)
+        request.notify && notify_diagnostics!(server)
+
+        @label next_request
+
+        put!(request.completion, nothing) # Notify the completion callback
+
+        # Check for pending request and re-queue if needed
+        pending_request = store!(manager.pending_analyses) do analyses
+            if haskey(analyses, request.entry)
+                new_analyses = copy(analyses)
+                pending = pop!(new_analyses, request.entry)
+                if pending !== nothing
+                    # Re-mark as analyzing before queueing the pending request
+                    new_analyses[request.entry] = nothing
+                end
+                return new_analyses, pending
+            end
+            return analyses, nothing
+        end
+        if pending_request !== nothing
+            put!(manager.queue, pending_request)
+        end
+
+        GC.safepoint()
+    end
+end
+
+function increment_generation!(manager::AnalysisManager, @nospecialize entry::AnalysisEntry)
+    some = Some{AnalysisEntry}(entry)
+    store!(manager.current_generations) do generations
+        new_generations = copy(generations)
+        generation = get(new_generations, some.value, 0) + 1
+        new_generations[some.value] = generation
+        return new_generations, generation
+    end
+end
+
+get_generation(manager::AnalysisManager, @nospecialize entry::AnalysisEntry) =
+    get(load(manager.current_generations), entry, 0)
+
+function is_staled_request(manager::AnalysisManager, request::AnalysisRequest)
+    analyzed_generation = get(load(manager.analyzed_generations), request.entry, -1)
+    return analyzed_generation != request.generation
+end
+
+function has_any_parse_errors(server::Server, request::AnalysisRequest)
+    prev_analysis_result = @something request.prev_analysis_result return false # fresh analysis, no knowledge about the sources
+    return any(analyzed_file_uris(prev_analysis_result)) do uri::URI
+        saved_fi = @something get_saved_file_info(server.state, uri) return false
+        return !isempty(saved_fi.parsed_stream.diagnostics)
+    end
+end
+
+function update_analysis_cache!(manager::AnalysisManager, analysis_result::AnalysisResult)
+    analyzed_uris = analyzed_file_uris(analysis_result)
+    store!(manager.cache) do cache
+        new_cache = copy(cache)
+        for uri in analyzed_uris
+            new_cache[uri] = analysis_result
+        end
+        return new_cache, nothing
+    end
+end
+
+function mark_analyzed_generation!(manager::AnalysisManager, request::AnalysisRequest)
+    store!(manager.analyzed_generations) do generations
+        new_generations = copy(generations)
+        new_generations[request.entry] = request.generation
+        return new_generations, nothing
+    end
+end
+
+function begin_full_analysis_progress(server::Server, request::AnalysisRequest)
+    token = @something request.token return nothing
+    filename = uri2filename(entryuri(request.entry))
+    pre = isnothing(request.prev_analysis_result) ? "Analyzing" : "Reanalyzing"
+    title = "$(pre) $(basename(filename)) [$(entrykind(request.entry))]"
     send(server, ProgressNotification(;
         params = ProgressParams(;
             token,
@@ -52,9 +214,8 @@ function begin_full_analysis_progress(server::Server, info::FullAnalysisInfo)
     yield_to_endpoint()
 end
 
-function end_full_analysis_progress(server::Server, info::FullAnalysisInfo)
-    token = @something info.token return nothing
-
+function end_full_analysis_progress(server::Server, request::AnalysisRequest)
+    token = @something request.token return nothing
     send(server, ProgressNotification(;
         params = ProgressParams(;
             token,
@@ -62,26 +223,26 @@ function end_full_analysis_progress(server::Server, info::FullAnalysisInfo)
                 message = "Full analysis finished"))))
 end
 
-function analyze_parsed_if_exist(server::Server, info::FullAnalysisInfo, args...)
-    uri = entryuri(info.entry)
-    jetconfigs = entryjetconfigs(info.entry)
+function analyze_parsed_if_exist(server::Server, request::AnalysisRequest, args...)
+    uri = entryuri(request.entry)
+    jetconfigs = entryjetconfigs(request.entry)
     fi = get_saved_file_info(server.state, uri)
     if !isnothing(fi)
         filename = @something uri2filename(uri) error(lazy"Unsupported URI: $uri")
         parsed = fi.syntax_node
-        begin_full_analysis_progress(server, info)
+        begin_full_analysis_progress(server, request)
         try
-            return JET.analyze_and_report_expr!(LSInterpreter(server, info), parsed, filename, args...; jetconfigs...)
+            return JET.analyze_and_report_expr!(LSInterpreter(server, request), parsed, filename, args...; jetconfigs...)
         finally
-            end_full_analysis_progress(server, info)
+            end_full_analysis_progress(server, request)
         end
     else
         filepath = @something uri2filepath(uri) error(lazy"Unsupported URI: $uri")
-        begin_full_analysis_progress(server, info)
+        begin_full_analysis_progress(server, request)
         try
-            return JET.analyze_and_report_file!(LSInterpreter(server, info), filepath, args...; jetconfigs...)
+            return JET.analyze_and_report_file!(LSInterpreter(server, request), filepath, args...; jetconfigs...)
         finally
-            end_full_analysis_progress(server, info)
+            end_full_analysis_progress(server, request)
         end
     end
 end
@@ -97,218 +258,93 @@ function update_analyzer_world(analyzer::LSAnalyzer)
     return JET.AbstractAnalyzer(analyzer, newstate)
 end
 
-function new_analysis_unit(entry::AnalysisEntry, result)
+function new_analysis_result(request::AnalysisRequest, result)
     analyzed_file_infos = Dict{URI,JET.AnalyzedFileInfo}(
         # `filepath` is an absolute path (since `path` is specified as absolute)
-        filename2uri(filepath) => analyzed_file_info for (filepath, analyzed_file_info) in result.res.analyzed_files)
-    # TODO return something for `toplevel_error_reports`
+        filename2uri(filepath) => analyzed_file_info
+        for (filepath, analyzed_file_info) in result.res.analyzed_files)
+
     uri2diagnostics = jet_result_to_diagnostics(keys(analyzed_file_infos), result)
-    successfully_analyzed_file_infos = copy(analyzed_file_infos)
-    is_full_analysis_successful(result) || empty!(successfully_analyzed_file_infos)
-    analysis_result = FullAnalysisResult(
-        #=staled=#false, result.res.actual2virtual::JET.Actual2Virtual, update_analyzer_world(result.analyzer),
-        uri2diagnostics, analyzed_file_infos, successfully_analyzed_file_infos)
-    return AnalysisUnit(entry, analysis_result)
-end
 
-function update_analysis_unit!(analysis_unit::AnalysisUnit, result)
-    uri2diagnostics = analysis_unit.result.uri2diagnostics
-    cached_analyzed_file_infos = analysis_unit.result.analyzed_file_infos
-    cached_successfully_analyzed_file_infos = analysis_unit.result.successfully_analyzed_file_infos
-    new_analyzed_file_infos = Dict{URI,JET.AnalyzedFileInfo}(
-        # `filepath` is an absolute path (since `path` is specified as absolute)
-        filename2uri(filepath) => analyzed_file_info for (filepath, analyzed_file_info) in result.res.analyzed_files)
-    for deleted_file_uri in setdiff(keys(cached_analyzed_file_infos), keys(new_analyzed_file_infos))
-        empty!(get!(()->Diagnostic[], uri2diagnostics, deleted_file_uri))
-        delete!(cached_analyzed_file_infos, deleted_file_uri)
-        if is_full_analysis_successful(result)
-            delete!(cached_successfully_analyzed_file_infos, deleted_file_uri)
-        end
-    end
-    for (new_file_uri, analyzed_file_info) in new_analyzed_file_infos
-        cached_analyzed_file_infos[new_file_uri] = analyzed_file_info
-        if is_full_analysis_successful(result)
-            cached_successfully_analyzed_file_infos[new_file_uri] = analyzed_file_info
-        end
-        empty!(get!(()->Diagnostic[], uri2diagnostics, new_file_uri))
-    end
-    jet_result_to_diagnostics!(uri2diagnostics, result)
-    analysis_unit.result.staled = false
-    if is_full_analysis_successful(result)
-        analysis_unit.result.actual2virtual = result.res.actual2virtual
-        analysis_unit.result.analyzer = update_analyzer_world(result.analyzer)
-    end
-end
-
-# TODO This reverse map recording should respect the changes made in `include` chains
-function record_reverse_map!(state::ServerState, analysis_unit::AnalysisUnit)
-    afiles = analyzed_file_uris(analysis_unit)
-    for uri in afiles
-        analysis_info = get!(Set{AnalysisUnit}, state.analysis_cache, uri)
-        if analysis_info isa OutOfScope
-            # this file was previously `OutOfScope`, but now can be analyzed by some unit,
-            # so replace the cache with a set
-            analysis_info = state.analysis_cache[uri] = Set{AnalysisUnit}()
-        end
-        should_record = true
-        for analysis_unit′ in analysis_info
-            bfiles = analyzed_file_uris(analysis_unit′)
-            if afiles ≠ bfiles
-                if afiles ⊆ bfiles
-                    should_record = false
-                else # bfiles ⊆ afiles, i.e. now we have a better unit to analyze this file
-                    delete!(analysis_info, analysis_unit′)
-                end
-            end
-        end
-        should_record && push!(analysis_info, analysis_unit)
-    end
-end
-
-function initiate_analysis_unit!(server::Server, uri::URI; token::Union{Nothing,ProgressToken}=nothing)
-    state = server.state
-    fi = get_saved_file_info(state, uri)
-    if isnothing(fi)
-        error(lazy"`initiate_analysis_unit!` called before saved file cache is created for $uri")
-    end
-    parsed_stream = fi.parsed_stream
-    if !isempty(parsed_stream.diagnostics)
-        return nothing
-    end
-
-    env_path = find_analysis_env_path(state, uri)
-    if env_path isa OutOfScope
-        state.analysis_cache[uri] = env_path
-        return nothing
-    end
-    if isnothing(env_path)
-        pkgname = nothing
-    elseif uri.scheme == "untitled"
-        pkgname = nothing
+    (; entry, prev_analysis_result) = request
+    if !is_full_analysis_successful(result) && !isnothing(prev_analysis_result)
+        (; actual2virtual, analyzer, analyzed_file_infos) = prev_analysis_result
     else
-        pkgname = find_pkg_name(env_path)
+        actual2virtual = result.res.actual2virtual::JET.Actual2Virtual
+        analyzer = update_analyzer_world(result.analyzer)
     end
 
-    if env_path === nothing
-        @label analyze_script
-        if env_path !== nothing
-            local entry = ScriptInEnvAnalysisEntry(env_path, uri)
-            local info = FullAnalysisInfo(entry, token, #=reanalyze=#false, #=n_files=#0)
-            result = activate_do(env_path) do
-                analyze_parsed_if_exist(server, info)
-            end
-        else
-            local entry = ScriptAnalysisEntry(uri)
-            local info = FullAnalysisInfo(entry, token, #=reanalyze=#false, #=n_files=#0)
-            result = analyze_parsed_if_exist(server, info)
-        end
-        analysis_unit = new_analysis_unit(entry, result)
-        @assert uri in analyzed_file_uris(analysis_unit)
-        record_reverse_map!(state, analysis_unit)
-    elseif pkgname === nothing
-        @goto analyze_script
-    else # this file is likely one within a package
-        filepath = uri2filepath(uri)::String # uri.scheme === "file"
-        filekind, filedir = find_package_directory(filepath, env_path)
-        if filekind === :script
-            @goto analyze_script
-        elseif filekind === :src
-            # analyze package source files
-            entry_result = activate_do(env_path) do
-                pkgenv = @something Base.identify_package_env(pkgname) begin
-                    @warn "Failed to identify package environment" pkgname
-                    return nothing
-                end
-                pkgid, env = pkgenv
-                pkgfile = @something Base.locate_package(pkgid, env) begin
-                    @warn "Expected a package to have a source file" pkgname
-                    return nothing
-                end
-                pkgfileuri = filepath2uri(pkgfile)
-                local entry = PackageSourceAnalysisEntry(env_path, pkgfileuri, pkgid)
-                local info = FullAnalysisInfo(entry, token, #=reanalyze=#false, #=n_files=#0)
-                res = analyze_parsed_if_exist(server, info, pkgid)
-                return entry, res
-            end
-            if entry_result === nothing
-                @goto analyze_script
-            end
-            entry, result = entry_result
-            analysis_unit = new_analysis_unit(entry, result)
-            record_reverse_map!(state, analysis_unit)
-            if uri ∉ analyzed_file_uris(analysis_unit)
-                @goto analyze_script
-            end
-        elseif filekind === :test
-            # analyze test scripts
-            runtestsfile = joinpath(filedir, "runtests.jl")
-            runtestsuri = filepath2uri(runtestsfile)
-            local entry = PackageTestAnalysisEntry(env_path, runtestsuri)
-            local info = FullAnalysisInfo(entry, token, #=reanalyze=#false, #=n_files=#0)
-            result = activate_do(env_path) do
-                analyze_parsed_if_exist(server, info)
-            end
-            analysis_unit = new_analysis_unit(entry, result)
-            record_reverse_map!(state, analysis_unit)
-            if uri ∉ analyzed_file_uris(analysis_unit)
-                @goto analyze_script
-            end
-        elseif filekind === :docs
-            @goto analyze_script # TODO
-        else
-            @assert filekind === :ext
-            @goto analyze_script # TODO
-        end
-    end
-
-    return analysis_unit
+    return AnalysisResult(entry, uri2diagnostics, analyzer, analyzed_file_infos, actual2virtual)
 end
 
-function reanalyze!(server::Server, analysis_unit::AnalysisUnit; token::Union{Nothing,ProgressToken}=nothing)
-    state = server.state
-    analysis_result = analysis_unit.result
-    if !(analysis_result.staled)
-        return nothing
+function lookup_analysis_entry(state::ServerState, uri::URI)
+    maybe_env_path = find_analysis_env_path(state, uri)
+    if maybe_env_path isa OutOfScope
+        return maybe_env_path
     end
 
-    any_parse_failed = any(analyzed_file_uris(analysis_unit)) do uri::URI
-        fi = get_saved_file_info(state, uri)
-        if !isnothing(fi) && !isempty(fi.parsed_stream.diagnostics)
-            return true
-        end
-        return false
-    end
-    if any_parse_failed
-        # TODO Allow running the full analysis even with any parse errors?
-        return nothing
+    env_path = maybe_env_path
+    if isnothing(env_path)
+        return ScriptAnalysisEntry(uri)
+    elseif uri.scheme == "untitled"
+        return ScriptInEnvAnalysisEntry(env_path, uri)
     end
 
-    entry = analysis_unit.entry
-    n_files = length(values(analysis_unit.result.successfully_analyzed_file_infos))
+    pkgname = find_pkg_name(env_path)
+    filepath = uri2filepath(uri)::String # uri.scheme === "file"
+    filekind, filedir = find_package_directory(filepath, env_path)
+    if filekind === :src
+        return @something activate_do(env_path) do
+            pkgenv = @something Base.identify_package_env(pkgname) begin
+                @warn "Failed to identify package environment" pkgname
+                return nothing
+            end
+            pkgid, env = pkgenv
+            pkgfile = @something Base.locate_package(pkgid, env) begin
+                @warn "Expected a package to have a source file" pkgname
+                return nothing
+            end
+            pkgfileuri = filepath2uri(pkgfile)
+            PackageSourceAnalysisEntry(env_path, pkgfileuri, pkgid)
+        end ScriptInEnvAnalysisEntry(env_path, uri)
+    elseif filekind === :test
+        runtestsfile = joinpath(filedir, "runtests.jl")
+        runtestsuri = filepath2uri(runtestsfile)
+        return PackageTestAnalysisEntry(env_path, runtestsuri)
+    elseif filekind === :docs # TODO
+    elseif filekind === :ext # TODO
+    else
+        @assert filekind === :script
+    end
+    return ScriptInEnvAnalysisEntry(env_path, uri)
+end
 
-    # manually dispatch here for the maximum inferrability
+function execute_analysis_request(server::Server, request::AnalysisRequest)
+    entry = request.entry
+
     if entry isa ScriptAnalysisEntry
-        info = FullAnalysisInfo(entry, token, #=reanalyze=#true, n_files)
-        result = analyze_parsed_if_exist(server, info)
+        result = analyze_parsed_if_exist(server, request)
+
     elseif entry isa ScriptInEnvAnalysisEntry
-        info = FullAnalysisInfo(entry, token, #=reanalyze=#true, n_files)
         result = activate_do(entryenvpath(entry)) do
-            analyze_parsed_if_exist(server, info)
+            analyze_parsed_if_exist(server, request)
         end
+
     elseif entry isa PackageSourceAnalysisEntry
-        info = FullAnalysisInfo(entry, token, #=reanalyze=#true, n_files)
         result = activate_do(entryenvpath(entry)) do
-            analyze_parsed_if_exist(server, info, entry.pkgid)
+            analyze_parsed_if_exist(server, request, entry.pkgid)
         end
+
     elseif entry isa PackageTestAnalysisEntry
-        info = FullAnalysisInfo(entry, token, #=reanalyze=#true, n_files)
         result = activate_do(entryenvpath(entry)) do
-            analyze_parsed_if_exist(server, info)
+            analyze_parsed_if_exist(server, request)
         end
+
     else error("Unsupported analysis entry $entry") end
 
-    update_analysis_unit!(analysis_unit, result)
-    record_reverse_map!(state, analysis_unit)
+    ret = new_analysis_result(request, result)
 
-    return analysis_unit
+    # TODO Request fallback analysis in cases this script was not analyzed by the analysis entry
+    # request.uri ∉ analyzed_file_uris(ret)
+    return ret
 end

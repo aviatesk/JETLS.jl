@@ -30,18 +30,15 @@ end
 
 struct FileInfo
     version::Int
-    encoding::LSP.PositionEncodingKind.Ty
     parsed_stream::JS.ParseStream
-    syntax_node::JS.SyntaxNode
-    syntax_tree0::SyntaxTree0
+    filename::String
+    encoding::LSP.PositionEncodingKind.Ty
 
     function FileInfo(
             version::Int, parsed_stream::JS.ParseStream, filename::AbstractString,
             encoding::LSP.PositionEncodingKind.Ty = LSP.PositionEncodingKind.UTF16
         )
-        syntax_node = JS.build_tree(JS.SyntaxNode, parsed_stream; filename)
-        syntax_tree0 = JS.build_tree(JL.SyntaxTree, parsed_stream; filename)
-        new(version, encoding, parsed_stream, syntax_node, syntax_tree0)
+        new(version, parsed_stream, filename, encoding)
     end
 end
 
@@ -62,13 +59,11 @@ end
 struct SavedFileInfo
     parsed_stream::JS.ParseStream
     syntax_node::JS.SyntaxNode
-    syntax_tree0::SyntaxTree0
 
     function SavedFileInfo(parsed_stream::JS.ParseStream, uri::URI)
         filename = @something uri2filename(uri) error(lazy"Unsupported URI: $uri")
         syntax_node = JS.build_tree(JS.SyntaxNode, parsed_stream; filename)
-        syntax_tree0 = JS.build_tree(JL.SyntaxTree, parsed_stream; filename)
-        new(parsed_stream, syntax_node, syntax_tree0)
+        new(parsed_stream, syntax_node)
     end
 end
 
@@ -122,34 +117,19 @@ entryuri_impl(entry::PackageTestAnalysisEntry) = entry.runtestsuri
 entryenvpath_impl(entry::PackageTestAnalysisEntry) = entry.env_path
 entrykind_impl(::PackageTestAnalysisEntry) = "pkg test"
 
-struct FullAnalysisInfo{E<:AnalysisEntry}
-    entry::E
-    token::Union{Nothing,ProgressToken}
-    reanalyze::Bool
-    n_files::Int
-end
-
 const URI2Diagnostics = Dict{URI,Vector{Diagnostic}}
 
-mutable struct FullAnalysisResult
-    staled::Bool
-    actual2virtual::JET.Actual2Virtual
-    analyzer::LSAnalyzer
-    const uri2diagnostics::URI2Diagnostics
-    const analyzed_file_infos::Dict{URI,JET.AnalyzedFileInfo}
-    const successfully_analyzed_file_infos::Dict{URI,JET.AnalyzedFileInfo}
-end
-
-struct AnalysisUnit
+struct AnalysisResult
     entry::AnalysisEntry
-    result::FullAnalysisResult
+    uri2diagnostics::URI2Diagnostics
+    analyzer::LSAnalyzer
+    analyzed_file_infos::Dict{URI,JET.AnalyzedFileInfo}
+    actual2virtual::JET.Actual2Virtual
 end
 
-analyzed_file_uris(analysis_unit::AnalysisUnit) = keys(analysis_unit.result.analyzed_file_infos)
+analyzed_file_uris(analysis_result::AnalysisResult) = keys(analysis_result.analyzed_file_infos)
 
-function successfully_analyzed_file_info(analysis_unit::AnalysisUnit, uri::URI)
-    return get(analysis_unit.result.successfully_analyzed_file_infos, uri, nothing)
-end
+analyzed_file_info(analysis_result::AnalysisResult, uri::URI) = get(analysis_result.analyzed_file_infos, uri, nothing)
 
 struct OutOfScope
     module_context::Module
@@ -157,7 +137,56 @@ struct OutOfScope
     OutOfScope(module_context::Module) = new(module_context)
 end
 
-const AnalysisInfo = Union{Set{AnalysisUnit},OutOfScope}
+# TODO support multiple analysis units, which can happen if this file is included from multiple different analysis_units
+const AnalysisInfo = Union{AnalysisResult,OutOfScope}
+
+struct AnalysisRequest
+    entry::AnalysisEntry
+    uri::URI
+    generation::Int
+    token::Union{Nothing,ProgressToken}
+    notify::Bool
+    prev_analysis_result::Union{Nothing,AnalysisResult}
+    completion::Channel{Nothing}
+    function AnalysisRequest(
+            entry::AnalysisEntry,
+            uri::URI,
+            generation::Int,
+            token::Union{Nothing,ProgressToken},
+            notify::Bool,
+            prev_analysis_result::Union{Nothing,AnalysisResult},
+            completion::Channel{Nothing} = Channel{Nothing}(1)
+        )
+        return new(entry, uri, generation, token, notify, prev_analysis_result, completion)
+    end
+end
+
+const AnalysisCache = LWContainer{Dict{URI,AnalysisInfo}, LWStats}
+const PendingAnalyses = CASContainer{Dict{AnalysisEntry,Union{Nothing,AnalysisRequest}}, CASStats}
+const CurrentGenerations = CASContainer{Dict{AnalysisEntry,Int}}
+const AnalyzedGenerations = CASContainer{Dict{AnalysisEntry,Int}}
+const DebouncedRequests = LWContainer{Dict{AnalysisEntry,Timer}, LWStats}
+
+struct AnalysisManager
+    cache::AnalysisCache
+    pending_analyses::PendingAnalyses
+    queue::Channel{AnalysisRequest}
+    worker_tasks::Vector{Task}
+    current_generations::CurrentGenerations
+    analyzed_generations::AnalyzedGenerations
+    debounced::DebouncedRequests
+    function AnalysisManager(n_workers::Int)
+        return new(
+            AnalysisCache(Dict{URI,AnalysisInfo}()),
+            PendingAnalyses(Dict{AnalysisEntry,Union{Nothing,AnalysisRequest}}()),
+            Channel{AnalysisRequest}(Inf),
+            Vector{Task}(undef, n_workers),
+            CurrentGenerations(Dict{AnalysisEntry,Int}()),
+            AnalyzedGenerations(Dict{AnalysisEntry,Int}()),
+            DebouncedRequests(Dict{AnalysisEntry,Timer}())
+        )
+    end
+end
 
 abstract type RequestCaller end
 
@@ -166,63 +195,70 @@ struct Registered
     method::String
 end
 
-struct ExtraDiagnostics
+struct ExtraDiagnosticsData
     keys::Dict{UInt,ExtraDiagnosticsKey}
     values::Dict{UInt,URI2Diagnostics}
 end
-ExtraDiagnostics() = ExtraDiagnostics(Dict{UInt,ExtraDiagnosticsKey}(), Dict{UInt,URI2Diagnostics}())
+ExtraDiagnosticsData() = ExtraDiagnosticsData(Dict{UInt,ExtraDiagnosticsKey}(), Dict{UInt,URI2Diagnostics}())
+function ExtraDiagnosticsData(data::ExtraDiagnosticsData, (key, val))
+    new_data = copy(data)
+    new_data[key] = val
+    return new_data
+end
 
-Base.haskey(extra_diagnostics::ExtraDiagnostics, key::ExtraDiagnosticsKey) =
+Base.copy(extra_diagnostics::ExtraDiagnosticsData) = ExtraDiagnosticsData(copy(extra_diagnostics.keys), copy(extra_diagnostics.values))
+
+Base.haskey(extra_diagnostics::ExtraDiagnosticsData, key::ExtraDiagnosticsKey) =
     haskey(extra_diagnostics.keys, to_key(key))
-Base.getindex(extra_diagnostics::ExtraDiagnostics, key::ExtraDiagnosticsKey) =
+Base.getindex(extra_diagnostics::ExtraDiagnosticsData, key::ExtraDiagnosticsKey) =
     extra_diagnostics.values[to_key(key)]
-function Base.setindex!(extra_diagnostics::ExtraDiagnostics, val::URI2Diagnostics, key::ExtraDiagnosticsKey)
+function Base.setindex!(extra_diagnostics::ExtraDiagnosticsData, val::URI2Diagnostics, key::ExtraDiagnosticsKey)
     k = to_key(key)
     extra_diagnostics.keys[k] = key
     return extra_diagnostics.values[k] = val
 end
-function Base.get(extra_diagnostics::ExtraDiagnostics, key::ExtraDiagnosticsKey, default)
+function Base.get(extra_diagnostics::ExtraDiagnosticsData, key::ExtraDiagnosticsKey, default)
     if haskey(extra_diagnostics, key)
         return extra_diagnostics[key]
     end
     return default
 end
-function Base.get(f, extra_diagnostics::ExtraDiagnostics, key::ExtraDiagnosticsKey)
+function Base.get(f, extra_diagnostics::ExtraDiagnosticsData, key::ExtraDiagnosticsKey)
     if haskey(extra_diagnostics, key)
         return extra_diagnostics[key]
     end
     return f()
 end
-function Base.get!(extra_diagnostics::ExtraDiagnostics, key::ExtraDiagnosticsKey, default::URI2Diagnostics)
+function Base.get!(extra_diagnostics::ExtraDiagnosticsData, key::ExtraDiagnosticsKey, default::URI2Diagnostics)
     if haskey(extra_diagnostics, key)
         return extra_diagnostics[key]
     end
     return extra_diagnostics[key] = default
 end
-function Base.get!(f, extra_diagnostics::ExtraDiagnostics, key::ExtraDiagnosticsKey)
+function Base.get!(f, extra_diagnostics::ExtraDiagnosticsData, key::ExtraDiagnosticsKey)
     if haskey(extra_diagnostics, key)
         return extra_diagnostics[key]
     end
     return extra_diagnostics[key] = f()
 end
-Base.keys(extra_diagnostics::ExtraDiagnostics) = values(extra_diagnostics.keys)
-Base.values(extra_diagnostics::ExtraDiagnostics) = values(extra_diagnostics.values)
-function Base.push!(extra_diagnostics::ExtraDiagnostics, (key, val)::Pair{ExtraDiagnosticsKey,URI2Diagnostics})
+Base.keys(extra_diagnostics::ExtraDiagnosticsData) = values(extra_diagnostics.keys)
+Base.values(extra_diagnostics::ExtraDiagnosticsData) = values(extra_diagnostics.values)
+function Base.push!(extra_diagnostics::ExtraDiagnosticsData, (key, val)::Pair{ExtraDiagnosticsKey,URI2Diagnostics})
     k = to_key(key)
     push!(extra_diagnostics.keys, k => val)
     push!(extra_diagnostics.values, k => val)
 end
-function Base.delete!(extra_diagnostics::ExtraDiagnostics, key::ExtraDiagnosticsKey)
+function Base.delete!(extra_diagnostics::ExtraDiagnosticsData, key::ExtraDiagnosticsKey)
     k = to_key(key)
     delete!(extra_diagnostics.keys, k)
     delete!(extra_diagnostics.values, k)
 end
 
-Base.length(extra_diagnostics::ExtraDiagnostics) = length(extra_diagnostics.keys)
-Base.eltype(::Type{ExtraDiagnostics}) = Pair{ExtraDiagnosticsKey,URI2Diagnostics}
-Base.keytype(::Type{ExtraDiagnostics}) = ExtraDiagnosticsKey
-Base.valtype(::Type{ExtraDiagnostics}) = URI2Diagnostics
-function Base.iterate(extra_diagnostics::ExtraDiagnostics, keysiter=(keys(extra_diagnostics.keys),))
+Base.length(extra_diagnostics::ExtraDiagnosticsData) = length(extra_diagnostics.keys)
+Base.eltype(::Type{ExtraDiagnosticsData}) = Pair{ExtraDiagnosticsKey,URI2Diagnostics}
+Base.keytype(::Type{ExtraDiagnosticsData}) = ExtraDiagnosticsKey
+Base.valtype(::Type{ExtraDiagnosticsData}) = URI2Diagnostics
+function Base.iterate(extra_diagnostics::ExtraDiagnosticsData, keysiter=(keys(extra_diagnostics.keys),))
     next = @something iterate(keysiter...) return nothing
     k, nextstate = next
     nextkeysiter = (keysiter[1], nextstate)
@@ -244,6 +280,9 @@ struct WatchedConfigFiles
     configs::Vector{ConfigDict}
 end
 WatchedConfigFiles() = WatchedConfigFiles(String["__DEFAULT_CONFIG__"], ConfigDict[DEFAULT_CONFIG])
+
+Base.copy(watched_files::WatchedConfigFiles) =
+    WatchedConfigFiles(copy(watched_files.files), copy(watched_files.configs))
 
 function _file_idx(watched_files::WatchedConfigFiles, file::String)
     idx = searchsortedfirst(watched_files.files, file, ConfigFileOrder())
@@ -292,38 +331,54 @@ end
 
 struct ConfigFileOrder <: Base.Ordering end
 
-mutable struct ConfigManager
-    static_settings::ConfigDict             # settings that should be static throughout the server lifetime
-    const watched_files::WatchedConfigFiles # watched configuration files
+struct ConfigManagerData
+    static_settings::ConfigDict
+    watched_files::WatchedConfigFiles
 end
-ConfigManager() = ConfigManager(ConfigDict(), WatchedConfigFiles())
+ConfigManagerData() = ConfigManagerData(ConfigDict(), WatchedConfigFiles())
+
+# Type aliases for document-synchronization caches using `SWContainer` (sequential-only updates)
+const FileCache = SWContainer{Base.PersistentDict{URI,FileInfo}, SWStats}
+const SavedFileCache = SWContainer{Base.PersistentDict{URI,SavedFileInfo}, SWStats}
+const TestsetInfosCache = SWContainer{Base.PersistentDict{URI,TestsetInfos}, SWStats}
+
+# Type aliases for concurrent updates using CASContainer (lightweight operations)
+const ExtraDiagnostics = CASContainer{ExtraDiagnosticsData, CASStats}
+const CurrentlyRequested = CASContainer{Base.PersistentDict{String,RequestCaller}, CASStats}
+const CurrentlyRegistered = CASContainer{Set{Registered}, CASStats}
+const CompletionResolverInfo = CASContainer{Union{Nothing,Tuple{Module,LSPostProcessor}}, CASStats}
+
+# Type aliases for concurrent updates using LWContainer (non-retriable operations)
+const ConfigManager = LWContainer{ConfigManagerData, LWStats}
 
 mutable struct ServerState
-    const workspaceFolders::Vector{URI}
-    const file_cache::Dict{URI,FileInfo} # syntactic analysis cache (synced with `textDocument/didChange`)
-    const saved_file_cache::Dict{URI,SavedFileInfo} # syntactic analysis cache (synced with `textDocument/didSave`)
-    const analysis_cache::Dict{URI,AnalysisInfo} # entry points for the full analysis (currently not cached really)
-    const testsetinfos_cache::Dict{URI,TestsetInfos}
+    const file_cache::FileCache # syntactic analysis cache (synced with `textDocument/didChange`)
+    const saved_file_cache::SavedFileCache # syntactic analysis cache (synced with `textDocument/didSave`)
+    const testsetinfos_cache::TestsetInfosCache
+    const analysis_manager::AnalysisManager
     const extra_diagnostics::ExtraDiagnostics
-    const currently_requested::Dict{String,RequestCaller}
-    const currently_registered::Set{Registered}
+    const currently_requested::CurrentlyRequested
+    const currently_registered::CurrentlyRegistered
     const config_manager::ConfigManager
+    const completion_resolver_info::CompletionResolverInfo
+
+    # Lifecycle fields (set after initialization request)
     encoding::PositionEncodingKind.Ty
+    workspaceFolders::Vector{URI}
     root_path::String
     root_env_path::String
-    completion_resolver_info::Tuple{Module,LSPostProcessor}
     init_params::InitializeParams
     function ServerState()
         return new(
-            #=workspaceFolders=# URI[],
-            #=file_cache=# Dict{URI,FileInfo}(),
-            #=saved_file_cache=# Dict{URI,SavedFileInfo}(),
-            #=analysis_cache=# Dict{URI,AnalysisInfo}(),
-            #=testsetinfos_cache=# Dict{URI,TestsetInfos}(),
-            #=extra_diagnostics=# ExtraDiagnostics(),
-            #=currently_requested=# Dict{String,RequestCaller}(),
-            #=currently_registered=# Set{Registered}(),
-            #=config_manager=# ConfigManager(),
+            #=file_cache=# FileCache(Base.PersistentDict{URI,FileInfo}()),
+            #=saved_file_cache=# SavedFileCache(Base.PersistentDict{URI,SavedFileInfo}()),
+            #=testsetinfos_cache=# TestsetInfosCache(Base.PersistentDict{URI,TestsetInfos}()),
+            #=analysis_manager=# AnalysisManager(#=n_workers=# 1), # TODO multiple workers
+            #=extra_diagnostics=# ExtraDiagnostics(ExtraDiagnosticsData()),
+            #=currently_requested=# CurrentlyRequested(Base.PersistentDict{String,RequestCaller}()),
+            #=currently_registered=# CurrentlyRegistered(Set{Registered}()),
+            #=config_manager=# ConfigManager(ConfigManagerData()),
+            #=completion_resolver_info=# CompletionResolverInfo(nothing),
             #=encoding=# PositionEncodingKind.UTF16, # initialize with UTF16 (for tests)
         )
     end
