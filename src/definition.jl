@@ -73,7 +73,7 @@ function handle_DefinitionRequest(server::Server, msg::DefinitionRequest)
                 error = file_cache_error(uri)))
     end
 
-    st0 = fi.syntax_tree0
+    st0 = build_syntax_tree(fi)
     offset = xy_to_offset(fi, origin_position)
     (; mod, analyzer) = get_context_info(server.state, uri, origin_position)
 

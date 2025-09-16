@@ -245,7 +245,7 @@ get_local_hover(args...; kwargs...) = get_local_hover(lowering_module, args...; 
 function get_local_hover(mod::Module, text::AbstractString, pos::Position; filename::AbstractString=@__FILE__)
     fi = JETLS.FileInfo(#=version=#0, text, filename)
     uri = filename2uri(filename)
-    st0_top = fi.syntax_tree0
+    st0_top = JETLS.build_syntax_tree(fi)
     @assert JS.kind(st0_top) === JS.K"toplevel"
     offset = JETLS.xy_to_offset(fi, pos)
     return JETLS.local_binding_hover(fi, uri, st0_top, offset, mod)

@@ -36,7 +36,7 @@ testset_line(testsetinfo::TestsetInfo) = testset_line(testsetinfo.st0)
 testset_line(testset::JL.SyntaxTree) = JS.source_line(testset[2])
 
 function update_testsetinfos!(server::Server, uri::URI, fi::FileInfo; notify_server::Bool=true)
-    new_testsets = find_executable_testsets(fi.syntax_tree0)
+    new_testsets = find_executable_testsets(build_syntax_tree(fi))
     m = length(new_testsets)
 
     existing_testsetinfos = @something get_testsetinfos(server.state, uri) begin
@@ -255,7 +255,7 @@ end
 function testrunner_testcase_code_actions!(
         code_actions::Vector{Union{CodeAction,Command}}, uri::URI, fi::FileInfo, action_range::Range
     )
-    st0_top = fi.syntax_tree0
+    st0_top = build_syntax_tree(fi)
     traverse(st0_top) do st0::SyntaxTree0
         if JS.kind(st0) in JS.KSet"function macro"
             # avoid visit inside function scope

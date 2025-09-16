@@ -30,18 +30,15 @@ end
 
 struct FileInfo
     version::Int
-    encoding::LSP.PositionEncodingKind.Ty
     parsed_stream::JS.ParseStream
-    syntax_node::JS.SyntaxNode
-    syntax_tree0::SyntaxTree0
+    filename::String
+    encoding::LSP.PositionEncodingKind.Ty
 
     function FileInfo(
             version::Int, parsed_stream::JS.ParseStream, filename::AbstractString,
             encoding::LSP.PositionEncodingKind.Ty = LSP.PositionEncodingKind.UTF16
         )
-        syntax_node = JS.build_tree(JS.SyntaxNode, parsed_stream; filename)
-        syntax_tree0 = JS.build_tree(JL.SyntaxTree, parsed_stream; filename)
-        new(version, encoding, parsed_stream, syntax_node, syntax_tree0)
+        new(version, parsed_stream, filename, encoding)
     end
 end
 
@@ -62,13 +59,11 @@ end
 struct SavedFileInfo
     parsed_stream::JS.ParseStream
     syntax_node::JS.SyntaxNode
-    syntax_tree0::SyntaxTree0
 
     function SavedFileInfo(parsed_stream::JS.ParseStream, uri::URI)
         filename = @something uri2filename(uri) error(lazy"Unsupported URI: $uri")
         syntax_node = JS.build_tree(JS.SyntaxNode, parsed_stream; filename)
-        syntax_tree0 = JS.build_tree(JL.SyntaxTree, parsed_stream; filename)
-        new(parsed_stream, syntax_node, syntax_tree0)
+        new(parsed_stream, syntax_node)
     end
 end
 

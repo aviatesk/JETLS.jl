@@ -1,3 +1,7 @@
+function build_syntax_tree(fi::FileInfo)
+    return JS.build_tree(JL.SyntaxTree, fi.parsed_stream; filename = fi.filename)
+end
+
 """
 Return a tree where all nodes of `kinds` are removed.  Should not modify any
 nodes, and should not create new nodes unnecessarily.

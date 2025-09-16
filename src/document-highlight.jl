@@ -49,7 +49,7 @@ function handle_DocumentHighlightRequest(server::Server, msg::DocumentHighlightR
 end
 
 function lowering_document_highlights!(highlights::Vector{DocumentHighlight}, fi::FileInfo, offset::Int, mod::Module)
-    st0_top = fi.syntax_tree0
+    st0_top = build_syntax_tree(fi)
 
     (; ctx3, st3, binding) = @something begin
         _select_target_binding(st0_top, offset, mod; caller="lowering_document_highlights!")

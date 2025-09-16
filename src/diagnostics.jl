@@ -279,19 +279,19 @@ lowering_diagnostics(args...) = lowering_diagnostics!(Diagnostic[], args...) # u
 function toplevel_lowering_diagnostics(server::Server, uri::URI)
     diagnostics = Diagnostic[]
     file_info = get_file_info(server.state, uri)
-    st0_top = file_info.syntax_tree0
+    st0_top = build_syntax_tree(file_info)
     sl = JL.SyntaxList(st0_top)
     push!(sl, st0_top)
     while !isempty(sl)
         st0 = pop!(sl)
         if JS.kind(st0) === JS.K"toplevel"
-            for i = JS.numchildren(st0):-1:1 # # reversed since we use `pop!`
+            for i = JS.numchildren(st0):-1:1 # reversed since we use `pop!`
                 push!(sl, st0[i])
             end
         elseif JS.kind(st0) === JS.K"module"
             stblk = st0[end]
             JS.kind(stblk) === JS.K"block" || continue
-            for i = JS.numchildren(stblk):-1:1 # # reversed since we use `pop!`
+            for i = JS.numchildren(stblk):-1:1 # reversed since we use `pop!`
                 push!(sl, stblk[i])
             end
         else
