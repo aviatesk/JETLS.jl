@@ -120,7 +120,7 @@ function JET.virtual_process!(interp::LSInterpreter,
             params = ProgressParams(;
                 token,
                 value = WorkDoneProgressReport(;
-                    message = shortpath * "[file analysis]",
+                    message = shortpath * " [file analysis]",
                     percentage))))
         yield_to_endpoint()
     end
