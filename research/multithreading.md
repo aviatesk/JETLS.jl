@@ -1,6 +1,6 @@
 ---
 file-created: 2025-08-23T23:27
-file-modified: 2025-09-12T21:05
+file-modified: 2025-09-17T00:56
 status: x
 due: 2025-09-05
 ---
@@ -192,16 +192,57 @@ end
 
 Problem: Concurrent access to mutable fields, duplicate computation from lazy AST construction
 
-Solution: Immutability and pre-computed AST construction ([aviatesk/JETLS.jl#229](https://github.com/aviatesk/JETLS.jl/pull/229))
+Initial Solution Attempt: Immutability and pre-computed AST construction ([aviatesk/JETLS.jl#229](https://github.com/aviatesk/JETLS.jl/pull/229))
 ```julia
 struct FileInfo
     version::Int
     encoding::LSP.PositionEncodingKind.Ty
     parsed_stream::JS.ParseStream
     syntax_node::JS.SyntaxNode
-    syntax_tree0::SyntaxTree0
+    syntax_tree0::SyntaxTree0  # PROBLEM: This approach doesn't work!
 end
 ```
+
+#### Parallel Lowering
+
+**Critical Issue Discovered**: The cached `syntax_tree0` field causes
+thread-safety problems because `JuliaLowering.lower(syntax_tree0[i])` modifies
+the internal  state of parent `syntax_tree0`. When multiple threads attempt to
+lower subtrees concurrently, this leads to race conditions and
+`ConcurrencyViolationErrors`:
+- [aviatesk/JETLS.jl#241](https://github.com/aviatesk/JETLS.jl/pull/241#issuecomment-3298466578)
+- [c42f/JuliaLowering.jl#83](https://github.com/c42f/JuliaLowering.jl/issues/83)
+
+Final Solution: Remove cached syntax tree and create fresh instances on demand
+```julia
+struct FileInfo
+    version::Int
+    encoding::LSP.PositionEncodingKind.Ty
+    parsed_stream::JS.ParseStream
+    filename::String
+    # No cached syntax_tree field!
+end
+
+# Create fresh syntax tree for each use (used by each parallelized hander)
+function build_syntax_tree(fi::FileInfo)
+    return JS.build_tree(JL.SyntaxTree, fi.parsed_stream; filename = fi.filename)
+end
+```
+
+This ensures:
+- Each lowering operation gets an independent `SyntaxTree` instance
+- No shared mutable states between concurrent operations
+- Safe parallel message handling without race conditions
+
+#### Future Enhancements
+
+While this solution allows us safe parallel lowering on subtrees, repeatedly
+building a fresh syntax trees certainly introduces memory pressure.
+A memory-efficient `copy` implementation for `SyntaxTree` that preserves
+structure while creating independent instances would be desirable.
+`deepcopy` proved too expensive (more expensive than the lowering operation
+itself), so a specialized shallow copy mechanism that handles the shared state
+correctly is desired.
 
 ### 3.2 `ServerState`
 
