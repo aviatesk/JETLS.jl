@@ -9,7 +9,7 @@ mutable struct Endpoint
     out_msg_queue::Channel{Any}
     read_task::Task
     write_task::Task
-    state::Symbol
+    @atomic state::Symbol
 
     function Endpoint(err_handler, in::IO, out::IO, method_dispatcher)
         in_msg_queue = Channel{Any}(Inf)
@@ -113,11 +113,11 @@ function Base.close(endpoint::Endpoint)
     # the socket, which we don't want to do
     # fetch(endpoint.read_task)
     fetch(endpoint.write_task)
-    endpoint.state = :closed
+    @atomic :release endpoint.state = :closed
     return endpoint
 end
 function check_dead_endpoint!(endpoint::Endpoint)
-    state = endpoint.state
+    state = @atomic :acquire endpoint.state
     state === :open || error("Endpoint is $state")
 end
 
