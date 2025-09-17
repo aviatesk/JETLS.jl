@@ -142,7 +142,7 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
     if supports(server, :textDocument, :formatting, :dynamicRegistration)
         documentFormattingProvider = nothing # will be registered dynamically
     else
-        documentFormattingProvider = formatting_options()
+        documentFormattingProvider = formatting_options(server)
         if JETLS_DEV_MODE
             @info "Registering 'textDocument/formatting' with `InitializeResponse`"
         end
@@ -151,7 +151,7 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
     if supports(server, :textDocument, :rangeFormatting, :dynamicRegistration)
         documentRangeFormattingProvider = nothing # will be registered dynamically
     else
-        documentRangeFormattingProvider = range_formatting_options()
+        documentRangeFormattingProvider = range_formatting_options(server)
         if JETLS_DEV_MODE
             @info "Registering 'textDocument/rangeFormatting' with `InitializeResponse`"
         end
@@ -320,7 +320,7 @@ function handle_InitializedNotification(server::Server)
     end
 
     if supports(server, :textDocument, :formatting, :dynamicRegistration)
-        push!(registrations, formatting_registration())
+        push!(registrations, formatting_registration(server))
         if JETLS_DEV_MODE
             @info "Dynamically registering 'textDocument/formatting' upon `InitializedNotification`"
         end
@@ -331,7 +331,7 @@ function handle_InitializedNotification(server::Server)
     end
 
     if supports(server, :textDocument, :rangeFormatting, :dynamicRegistration)
-        push!(registrations, range_formatting_registration())
+        push!(registrations, range_formatting_registration(server))
         if JETLS_DEV_MODE
             @info "Dynamically registering 'textDocument/rangeFormatting' upon `InitializedNotification`"
         end
