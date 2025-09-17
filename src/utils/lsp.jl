@@ -112,6 +112,13 @@ function request_failed_error(message::AbstractString; data=nothing)
         data)
 end
 
+function request_cancelled_error(message::AbstractString="Request was cancelled"; data=nothing)
+    return ResponseError(;
+        code = ErrorCodes.RequestCancelled,
+        message,
+        data)
+end
+
 """
     show_error_message(server::Server, message::String)
 

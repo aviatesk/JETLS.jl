@@ -99,7 +99,6 @@ likely be implemented in the near future, for those who want to test this server
 Please note that not only the progress of the list, but also the structure of
 the list itself is subject to change.
 
-- [x] Parallel/concurrent message handling
 - Full-Analysis
   - [x] Document synchronization
   - [ ] JuliaLowering integration
@@ -154,6 +153,9 @@ the list itself is subject to change.
   - [x] Prototype implementation
   - [ ] Documentation
   - [ ] Schema support
+- [x] Parallel/concurrent message handling
+- [x] Work done progress support
+- [x] Message cancellation support
 
 Detailed development notes and progress for this project are collected at
 <https://publish.obsidian.md/jetls>, so those interested might want to take a look.

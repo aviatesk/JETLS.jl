@@ -1,3 +1,6 @@
+struct RegisterCapabilityRequestCaller <: RequestCaller end
+struct UnregisterCapabilityRequestCaller <: RequestCaller end
+
 register(server::Server, registration::Registration) =
     register(server, Registration[registration])
 function register(server::Server, registrations::Vector{Registration})
@@ -13,10 +16,12 @@ function register(server::Server, registrations::Vector{Registration})
             return data, false
         end
     end
+    id = String(gensym(:RegisterCapabilityRequest))
     send(server, RegisterCapabilityRequest(;
-        id = String(gensym(:RegisterCapabilityRequest)),
+        id,
         params = RegistrationParams(;
             registrations = filtered)))
+    addrequest!(server, id=>RegisterCapabilityRequestCaller())
 end
 
 unregister(server::Server, unregistration::Unregistration) =
@@ -33,8 +38,10 @@ function unregister(server::Server, unregisterations::Vector{Unregistration})
             return data, false
         end
     end
+    id = String(gensym(:UnregisterCapabilityRequest))
     send(server, UnregisterCapabilityRequest(;
-        id = String(gensym(:UnregisterCapabilityRequest)),
+        id,
         params = UnregistrationParams(;
             unregisterations = filtered)))
+    addrequest!(server, id=>UnregisterCapabilityRequestCaller())
 end

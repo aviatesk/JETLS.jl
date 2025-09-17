@@ -418,20 +418,34 @@ function get_completion_items(state::ServerState, uri::URI, params::CompletionPa
         items)))
 end
 
-function handle_CompletionRequest(server::Server, msg::CompletionRequest)
+function handle_CompletionRequest(server::Server, msg::CompletionRequest, cancel_flag::CancelFlag)
+    if is_cancelled(cancel_flag)
+        return send(server,
+            CompletionResponse(;
+                id = msg.id,
+                result = nothing,
+                error = request_cancelled_error()))
+    end
     uri = msg.params.textDocument.uri
     items = get_completion_items(server.state, uri, msg.params)
     return send(server,
-        ResponseMessage(;
+        CompletionResponse(;
             id = msg.id,
             result = CompletionList(;
                 isIncomplete = false,
                 items)))
 end
 
-function handle_CompletionResolveRequest(server::Server, msg::CompletionResolveRequest)
+function handle_CompletionResolveRequest(server::Server, msg::CompletionResolveRequest, cancel_flag::CancelFlag)
+    if is_cancelled(cancel_flag)
+        return send(server,
+            CompletionResolveResponse(;
+                id = msg.id,
+                result = nothing,
+                error = request_cancelled_error()))
+    end
     return send(server,
-        ResponseMessage(;
+        CompletionResolveResponse(;
             id = msg.id,
             result = resolve_completion_item(server.state, msg.params)))
 end

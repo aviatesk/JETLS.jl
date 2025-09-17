@@ -53,6 +53,8 @@ function handle_requested_response(server::Server, msg::Dict{Symbol,Any},
         handle_formatting_progress_response(server, msg, request_caller)
     elseif request_caller isa RangeFormattingProgressCaller
         handle_range_formatting_progress_response(server, msg, request_caller)
+    elseif request_caller isa RegisterCapabilityRequestCaller || request_caller isa UnregisterCapabilityRequestCaller
+        # nothing to do
     else
         error("Unknown request caller type")
     end

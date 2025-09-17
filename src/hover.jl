@@ -54,7 +54,14 @@ function local_binding_hover_info(fi::FileInfo, uri::URI, definitions::JL.Syntax
     return String(take!(io))
 end
 
-function handle_HoverRequest(server::Server, msg::HoverRequest)
+function handle_HoverRequest(server::Server, msg::HoverRequest, cancel_flag::CancelFlag)
+    if is_cancelled(cancel_flag)
+        return send(server,
+            HoverResponse(;
+                id = msg.id,
+                result = nothing,
+                error = request_cancelled_error()))
+    end
     pos = msg.params.position
     uri = msg.params.textDocument.uri
 

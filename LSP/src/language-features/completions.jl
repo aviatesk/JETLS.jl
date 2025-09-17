@@ -95,11 +95,6 @@ end
     context::Union{CompletionContext, Nothing} = nothing
 end
 
-@interface CompletionRequest @extends RequestMessage begin
-    method::String = "textDocument/completion"
-    params::CompletionParams
-end
-
 """
 Defines whether the insert text in a completion item should be interpreted as
 plain text or a snippet.
@@ -505,11 +500,79 @@ presented in the editor.
 end
 
 """
+The Completion request is sent from the client to the server to compute completion
+items at a given cursor position. Completion items are presented in the
+[IntelliSense](https://code.visualstudio.com/docs/editor/intellisense) user
+interface. If computing full completion items is expensive, servers can
+additionally provide a handler for the completion item resolve request
+(`completionItem/resolve`). This request is sent when a completion item is
+selected in the user interface. A typical use case is for example: the
+[`textDocument/completion`](@ref CompletionRequest) request doesn't fill in the
+`documentation` property for returned completion items since it is expensive to
+compute. When the item is selected in the user interface then a
+`completionItem/resolve` request is sent with the selected completion item as a
+parameter. The returned completion item should have the documentation property
+filled in. By default the request can only delay the computation of the `detail`
+and `documentation` properties. Since 3.16.0 the client can signal that it can
+resolve more properties lazily. This is done using the
+[`completionItem.resolveSupport`](@ref ClientCapabilities) client capability which lists
+all properties that can be filled in during a `completionItem/resolve` request. All other
+properties (usually `sortText`, `filterText`, `insertText` and `textEdit`) must
+be provided in the [`textDocument/completion`](@ref CompletionResponse) response and
+must not be changed during resolve.
+
+The language server protocol uses the following model around completions:
+
+- to achieve consistency across languages and to honor different clients usually
+  the client is responsible for filtering and sorting. This has also the advantage
+  that client can experiment with different filter and sorting models. However
+  servers can enforce different behavior by setting a `filterText` / `sortText`
+- for speed clients should be able to filter an already received completion list
+  if the user continues typing. Servers can opt out of this using a
+  [`CompletionList`](@ref) and mark it as `isIncomplete`.
+
+A completion item provides additional means to influence filtering and sorting.
+They are expressed by either creating a [`CompletionItem`](@ref) with a `insertText`
+or with a `textEdit`.
+The two modes differ as follows:
+
+- **Completion item provides an `insertText` / `label` without a text edit**: in the
+  model the client should filter against what the user has already typed using the
+  word boundary rules of the language (e.g. resolving the word under the cursor
+  position). The reason for this mode is that it makes it extremely easy for a
+  server to implement a basic completion list and get it filtered on the client.
+- **Completion Item with [`TextEdit`](@ref)s**: in this mode the server tells the client
+  that it actually knows what it is doing. If you create a completion item with a
+  [`TextEdit`](@ref) at the current cursor position no word guessing takes place and no
+  automatic filtering (like with an `insertText`) should happen. This mode can be
+  combined with a `sortText` and `filterText` to customize two things. If the text
+  edit is a replace edit then the range denotes the word used for filtering. If
+  the replace changes the text it most likely makes sense to specify a filter text
+  to be used.
+"""
+@interface CompletionRequest @extends RequestMessage begin
+    method::String = "textDocument/completion"
+    params::CompletionParams
+end
+
+"""
+If a `Vector{CompletionItem}` is provided it is interpreted to be complete.
+So it is the same as [`{ isIncomplete: false, items }`](@ref CompletionList).
+"""
+@interface CompletionResponse @extends ResponseMessage begin
+    result::Union{Vector{CompletionItem}, CompletionList, Null, Nothing}
+end
+
+"""
 The request is sent from the client to the server to resolve additional information for a given completion item.
 """
 @interface CompletionResolveRequest @extends RequestMessage begin
     method::String = "completionItem/resolve"
     params::CompletionItem
+end
+
+@interface CompletionResolveResponse @extends ResponseMessage begin
+    result::Union{CompletionItem, Nothing}
 end
 
 @interface CompletionClientCapabilities begin

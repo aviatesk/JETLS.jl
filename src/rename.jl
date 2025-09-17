@@ -24,7 +24,14 @@ end
 #     method = RENAME_REGISTRATION_METHOD))
 # register(currently_running, rename_registration())
 
-function handle_PrepareRenameRequest(server::Server, msg::PrepareRenameRequest)
+function handle_PrepareRenameRequest(server::Server, msg::PrepareRenameRequest, cancel_flag::CancelFlag)
+    if is_cancelled(cancel_flag)
+        return send(server,
+            PrepareRenameResponse(;
+                id = msg.id,
+                result = nothing,
+                error = request_cancelled_error()))
+    end
     uri = msg.params.textDocument.uri
     pos = msg.params.position
 
@@ -61,7 +68,14 @@ function local_binding_rename_preparation(fi::FileInfo, pos::Position, mod::Modu
     end
 end
 
-function handle_RenameRequest(server::Server, msg::RenameRequest)
+function handle_RenameRequest(server::Server, msg::RenameRequest, cancel_flag::CancelFlag)
+    if is_cancelled(cancel_flag)
+        return send(server,
+            RenameResponse(;
+                id = msg.id,
+                result = nothing,
+                error = request_cancelled_error()))
+    end
     uri = msg.params.textDocument.uri
     pos = msg.params.position
     newName = msg.params.newName
