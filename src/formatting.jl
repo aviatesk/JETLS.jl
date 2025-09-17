@@ -16,29 +16,43 @@ struct RangeFormattingProgressCaller <: RequestCaller
     token::ProgressToken
 end
 
-function formatting_options()
-    return DocumentFormattingOptions()
+function formatting_options(server::Server)
+    return DocumentFormattingOptions(;
+        workDoneProgress = supports(server, :window, :workDoneProgress))
 end
 
-function formatting_registration()
+function formatting_registration(server::Server)
     return Registration(;
         id = FORMATTING_REGISTRATION_ID,
         method = FORMATTING_REGISTRATION_METHOD,
         registerOptions = DocumentFormattingRegistrationOptions(;
-            documentSelector = DEFAULT_DOCUMENT_SELECTOR))
+            documentSelector = DEFAULT_DOCUMENT_SELECTOR,
+            workDoneProgress = supports(server, :window, :workDoneProgress)))
 end
 
-function range_formatting_options()
-    return DocumentRangeFormattingOptions()
+function range_formatting_options(server::Server)
+    return DocumentRangeFormattingOptions(;
+        workDoneProgress = supports(server, :window, :workDoneProgress))
 end
 
-function range_formatting_registration()
+function range_formatting_registration(server::Server)
     return Registration(;
         id = RANGE_FORMATTING_REGISTRATION_ID,
         method = RANGE_FORMATTING_REGISTRATION_METHOD,
         registerOptions = DocumentRangeFormattingRegistrationOptions(;
-            documentSelector = DEFAULT_DOCUMENT_SELECTOR))
+            documentSelector = DEFAULT_DOCUMENT_SELECTOR,
+            workDoneProgress = supports(server, :window, :workDoneProgress)))
 end
+
+# For dynamic registrations during development
+# unregister(currently_running, Unregistration(;
+#     id = FORMATTING_REGISTRATION_ID,
+#     method = FORMATTING_REGISTRATION_METHOD))
+# register(currently_running, formatting_registration(currently_running))
+# unregister(currently_running, Unregistration(;
+#     id = RANGE_FORMATTING_REGISTRATION_ID,
+#     method = RANGE_FORMATTING_REGISTRATION_METHOD))
+# register(currently_running, range_formatting_registration(currently_running))
 
 document_text(fi::FileInfo) = JS.sourcetext(fi.parsed_stream)
 document_range(fi::FileInfo) = jsobj_to_range(fi.parsed_stream, fi)
@@ -47,7 +61,7 @@ function handle_DocumentFormattingRequest(server::Server, msg::DocumentFormattin
     uri = msg.params.textDocument.uri
 
     workDoneToken = msg.params.workDoneToken
-    if workDoneToken !== nothing && supports(server, :window, :workDoneProgress)
+    if workDoneToken !== nothing
         Threads.@spawn do_format_with_progress(server, uri, msg.id, workDoneToken)
     elseif supports(server, :window, :workDoneProgress)
         id = String(gensym(:WorkDoneProgressCreateRequest_formatting))
@@ -105,12 +119,12 @@ function handle_DocumentRangeFormattingRequest(server::Server, msg::DocumentRang
     range = msg.params.range
 
     workDoneToken = msg.params.workDoneToken
-    if workDoneToken !== nothing && supports(server, :window, :workDoneProgress)
+    if workDoneToken !== nothing
         Threads.@spawn do_range_format_with_progress(server, uri, range, msg.id, workDoneToken)
     elseif supports(server, :window, :workDoneProgress)
         id = String(gensym(:WorkDoneProgressCreateRequest_rangeFormatting))
         token = String(gensym(:RangeFormattingProgress))
-        addrequest!(server, id=>RangeFormattingProgressCaller(uri, range, msg.id, token))
+        addrequest!(server, id => RangeFormattingProgressCaller(uri, range, msg.id, token))
         params = WorkDoneProgressCreateParams(; token)
         send(server, WorkDoneProgressCreateRequest(; id, params))
     else
