@@ -60,11 +60,8 @@ function handle_DidOpenTextDocumentNotification(server::Server, msg::DidOpenText
         id = String(gensym(:WorkDoneProgressCreateRequest_request_analysis!))
         token = String(gensym(:WorkDoneProgressCreateRequest_request_analysis!))
         addrequest!(server, id=>RequestAnalysisCaller(uri, #=onsave=#false, token))
-        send(server,
-            WorkDoneProgressCreateRequest(;
-                id,
-                params = WorkDoneProgressCreateParams(;
-                    token = token)))
+        params = WorkDoneProgressCreateParams(; token)
+        send(server, WorkDoneProgressCreateRequest(; id, params))
     else
         request_analysis!(server, uri)
     end
@@ -106,11 +103,8 @@ function handle_DidSaveTextDocumentNotification(server::Server, msg::DidSaveText
         id = String(gensym(:WorkDoneProgressCreateRequest_request_analysis!))
         token = String(gensym(:WorkDoneProgressCreateRequest_request_analysis!))
         addrequest!(server, id=>RequestAnalysisCaller(uri, #=onsave=#true, token))
-        send(server,
-            WorkDoneProgressCreateRequest(;
-                id,
-                params = WorkDoneProgressCreateParams(;
-                    token = token)))
+        params = WorkDoneProgressCreateParams(; token)
+        send(server, WorkDoneProgressCreateRequest(; id, params))
     else
         request_analysis!(server, uri; onsave=true)
     end

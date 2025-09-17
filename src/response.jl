@@ -60,12 +60,16 @@ function handle_requested_response(server::Server, msg::Dict{Symbol,Any},
     end
 end
 
-function handle_request_analysis_response(server::Server, ::Dict{Symbol,Any}, request_caller::RequestAnalysisCaller)
+function handle_request_analysis_response(
+        server::Server, ::Dict{Symbol,Any}, request_caller::RequestAnalysisCaller
+    )
     (; uri, onsave, token) = request_caller
     request_analysis!(server, uri; onsave, token)
 end
 
-function handle_show_document_response(server::Server, msg::Dict{Symbol,Any}, request_caller::ShowDocumentRequestCaller)
+function handle_show_document_response(
+        server::Server, msg::Dict{Symbol,Any}, request_caller::ShowDocumentRequestCaller
+    )
     if handle_response_error(server, msg, "show document")
     elseif haskey(msg, :result)
         result = msg[:result] # ::ShowDocumentResult
@@ -80,7 +84,9 @@ function handle_show_document_response(server::Server, msg::Dict{Symbol,Any}, re
     end
 end
 
-function handle_apply_workspace_edit_response(server::Server, msg::Dict{Symbol,Any}, ::SetDocumentContentCaller)
+function handle_apply_workspace_edit_response(
+        server::Server, msg::Dict{Symbol,Any}, ::SetDocumentContentCaller
+    )
     if handle_response_error(server, msg, "apply workspace edit")
     elseif haskey(msg, :result)
         result = msg[:result] # ::ApplyWorkspaceEditResult
@@ -95,7 +101,10 @@ function handle_apply_workspace_edit_response(server::Server, msg::Dict{Symbol,A
     end
 end
 
-function handle_test_runner_message_response2(server::Server, msg::Dict{Symbol,Any}, request_caller::TestRunnerMessageRequestCaller2)
+function handle_test_runner_message_response2(
+        server::Server, msg::Dict{Symbol,Any},
+        request_caller::TestRunnerMessageRequestCaller2
+    )
     if handle_response_error(server, msg, "show test action (logs)")
         return
     elseif haskey(msg, :result) && msg[:result] !== nothing
@@ -111,7 +120,10 @@ function handle_test_runner_message_response2(server::Server, msg::Dict{Symbol,A
     # If user cancelled (result is null), do nothing
 end
 
-function handle_test_runner_message_response4(server::Server, msg::Dict{Symbol,Any}, request_caller::TestRunnerMessageRequestCaller4)
+function handle_test_runner_message_response4(
+        server::Server, msg::Dict{Symbol,Any},
+        request_caller::TestRunnerMessageRequestCaller4
+    )
     if handle_response_error(server, msg, "show test actions")
         return
     elseif haskey(msg, :result) && msg[:result] !== nothing
@@ -134,7 +146,10 @@ function handle_test_runner_message_response4(server::Server, msg::Dict{Symbol,A
     # If user cancelled (result is null), do nothing
 end
 
-function handle_testrunner_testset_progress_response(server::Server, msg::Dict{Symbol,Any}, request_caller::TestRunnerTestsetProgressCaller)
+function handle_testrunner_testset_progress_response(
+        server::Server, msg::Dict{Symbol,Any},
+        request_caller::TestRunnerTestsetProgressCaller
+    )
     if handle_response_error(server, msg, "create work done progress")
         return
     end
@@ -142,7 +157,10 @@ function handle_testrunner_testset_progress_response(server::Server, msg::Dict{S
     testrunner_run_testset(server, uri, fi, idx, testset_name, filepath; token)
 end
 
-function handle_testrunner_testcase_progress_response(server::Server, msg::Dict{Symbol,Any}, request_caller::TestRunnerTestcaseProgressCaller)
+function handle_testrunner_testcase_progress_response(
+        server::Server, msg::Dict{Symbol,Any},
+        request_caller::TestRunnerTestcaseProgressCaller
+    )
     if handle_response_error(server, msg, "create work done progress")
         return
     end
@@ -150,14 +168,18 @@ function handle_testrunner_testcase_progress_response(server::Server, msg::Dict{
     testrunner_run_testcase(server, uri, testcase_line, testcase_text, filepath; token)
 end
 
-function handle_code_lens_refresh_response(server::Server, msg::Dict{Symbol,Any}, ::CodeLensRefreshRequestCaller)
+function handle_code_lens_refresh_response(
+        server::Server, msg::Dict{Symbol,Any}, ::CodeLensRefreshRequestCaller
+    )
     if handle_response_error(server, msg, "refresh code lens")
     else
         # just valid request response cycle
     end
 end
 
-function handle_formatting_progress_response(server::Server, msg::Dict{Symbol,Any}, request_caller::FormattingProgressCaller)
+function handle_formatting_progress_response(
+        server::Server, msg::Dict{Symbol, Any}, request_caller::FormattingProgressCaller
+    )
     if handle_response_error(server, msg, "create work done progress")
         return
     end
@@ -165,7 +187,9 @@ function handle_formatting_progress_response(server::Server, msg::Dict{Symbol,An
     do_format_with_progress(server, uri, msg_id, token)
 end
 
-function handle_range_formatting_progress_response(server::Server, msg::Dict{Symbol,Any}, request_caller::RangeFormattingProgressCaller)
+function handle_range_formatting_progress_response(
+        server::Server, msg::Dict{Symbol, Any}, request_caller::RangeFormattingProgressCaller
+    )
     if handle_response_error(server, msg, "create work done progress")
         return
     end
