@@ -23,7 +23,7 @@ let (pkgcode, positions) = JETLS.get_text_and_positions("""
         filepath = normpath(pkgpath, "src", "TestFullLifecycle.jl")
         uri = string(JETLS.URIs2.filepath2uri(filepath))
 
-        test_full_cycle = function ((; writereadmsg, id_counter),)
+        test_full_cycle = function ((; server, writereadmsg, id_counter),)
             # open the file, and fill in the file cache
             let (; raw_res) = writereadmsg(
                     DidOpenTextDocumentNotification(;
@@ -43,7 +43,7 @@ let (pkgcode, positions) = JETLS.get_text_and_positions("""
                         params = CompletionParams(;
                             textDocument = TextDocumentIdentifier(; uri),
                             position = pos1)))
-                @test raw_res isa ResponseMessage
+                @test raw_res isa CompletionResponse
                 @test raw_res.id == id
                 result = raw_res.result
             end
@@ -61,7 +61,7 @@ let (pkgcode, positions) = JETLS.get_text_and_positions("""
                         CompletionResolveRequest(;
                             id,
                             params =  item))
-                    @test raw_res isa ResponseMessage
+                    @test raw_res isa CompletionResolveResponse
                     @test raw_res.id == id
                     result = raw_res.result
                     @test result isa CompletionItem
@@ -71,6 +71,27 @@ let (pkgcode, positions) = JETLS.get_text_and_positions("""
                         occursin("greetings", documentation.value)
                 end
             end
+
+            # Test basic cancellation handling functionality
+            let id = id_counter[] += 1
+                writereadmsg(
+                    CancelRequestNotification(;
+                        params = CancelParams(;
+                            id));
+                    read = 0)
+                (; raw_res) = writereadmsg(
+                    CompletionRequest(;
+                        id,
+                        params = CompletionParams(;
+                            textDocument = TextDocumentIdentifier(; uri),
+                            position = pos1)))
+                @test raw_res isa CompletionResponse
+                @test raw_res.id == id
+                @test isnothing(raw_res.result)
+                @test raw_res.error isa ResponseError
+                @test raw_res.error.code == ErrorCodes.RequestCancelled
+            end
+            @test length(server.state.currently_handled) == 0
         end
 
         rootUri = JETLS.URIs2.filepath2uri(pkgpath)

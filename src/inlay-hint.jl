@@ -22,7 +22,14 @@ end
 #     method = INLAY_HINT_REGISTRATION_METHOD))
 # register(currently_running, inlay_hint_registration(#=static=#true))
 
-function handle_InlayHintRequest(server::Server, msg::InlayHintRequest)
+function handle_InlayHintRequest(server::Server, msg::InlayHintRequest, cancel_flag::CancelFlag)
+    if is_cancelled(cancel_flag)
+        return send(server,
+            InlayHintResponse(;
+                id = msg.id,
+                result = nothing,
+                error = request_cancelled_error()))
+    end
     uri = msg.params.textDocument.uri
     range = msg.params.range
 

@@ -351,12 +351,25 @@ const CompletionResolverInfo = CASContainer{Union{Nothing,Tuple{Module,LSPostPro
 # Type aliases for concurrent updates using LWContainer (non-retriable operations)
 const ConfigManager = LWContainer{ConfigManagerData, LWStats}
 
+mutable struct CancelFlag
+    @atomic cancelled::Bool
+    # on_cancelled::LWContainer{IdSet{Any}, LWStats} for cancellation callback?
+end
+const CurrentlyHandled = Dict{Union{Int,String}, CancelFlag}
+
+function cancel!(cancel_flag::CancelFlag)
+    @atomic :release cancel_flag.cancelled = true
+end
+
+is_cancelled(cancel_flag::CancelFlag) = @atomic :acquire cancel_flag.cancelled
+
 mutable struct ServerState
     const file_cache::FileCache # syntactic analysis cache (synced with `textDocument/didChange`)
     const saved_file_cache::SavedFileCache # syntactic analysis cache (synced with `textDocument/didSave`)
     const testsetinfos_cache::TestsetInfosCache
     const analysis_manager::AnalysisManager
     const extra_diagnostics::ExtraDiagnostics
+    const currently_handled::CurrentlyHandled
     const currently_requested::CurrentlyRequested
     const currently_registered::CurrentlyRegistered
     const config_manager::ConfigManager
@@ -375,6 +388,7 @@ mutable struct ServerState
             #=testsetinfos_cache=# TestsetInfosCache(Base.PersistentDict{URI,TestsetInfos}()),
             #=analysis_manager=# AnalysisManager(#=n_workers=# 1), # TODO multiple workers
             #=extra_diagnostics=# ExtraDiagnostics(ExtraDiagnosticsData()),
+            #=currently_handled=# CurrentlyHandled(),
             #=currently_requested=# CurrentlyRequested(Base.PersistentDict{String,RequestCaller}()),
             #=currently_registered=# CurrentlyRegistered(Set{Registered}()),
             #=config_manager=# ConfigManager(ConfigManagerData()),

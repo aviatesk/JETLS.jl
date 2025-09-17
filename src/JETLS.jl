@@ -127,8 +127,8 @@ function runserver(server::Server)
     shutdown_requested = false
     local exit_code::Int = 1
     JETLS_DEV_MODE && @info "Running JETLS server loop"
-    msg_queue = Channel{Any}(Inf)
-    start_sequential_message_handler(server, msg_queue)
+    seq_queue = start_sequential_message_worker(server)
+    con_queue = start_concurrent_message_worker(server)
     try
         for msg in server.endpoint
             server.callback !== nothing && server.callback(:received, msg)
@@ -149,8 +149,10 @@ function runserver(server::Server)
                     error = ResponseError(;
                         code = ErrorCodes.InvalidRequest,
                         message = "Received request after a shutdown request requested")))
-            else # general message hander
-                handle_message(server, msg_queue, msg)
+            elseif is_sequential_msg(msg)
+                put!(seq_queue, msg)
+            else
+                put!(con_queue, msg)
             end
             GC.safepoint()
         end
@@ -164,48 +166,6 @@ function runserver(server::Server)
     return (; exit_code, server.endpoint)
 end
 
-function start_sequential_message_handler(server::Server, msg_queue::Channel{Any})
-    Threads.@spawn :default while true
-        msg = take!(msg_queue)
-        _handle_message(handle_sequential_message, server, msg)
-        GC.safepoint()
-    end
-end
-
-function handle_message(server::Server, msg_queue::Channel{Any}, @nospecialize msg)
-    if is_sequential_msg(msg)
-        put!(msg_queue, msg)
-    else
-        Threads.@spawn :default _handle_message(handle_concurrent_message, server, msg)
-    end
-end
-
-function _handle_message(func, server::Server, @nospecialize msg)
-    if !JETLS_TEST_MODE
-        try
-            if JETLS_DEV_MODE
-                # `@invokelatest` for allowing changes maded by Revise to be reflected without
-                # terminating the `runserver` loop
-                return @invokelatest func(server, msg)
-            else
-                return func(server, msg)
-            end
-        catch err
-            @error "Message handling failed for" typeof(msg)
-            Base.display_error(stderr, err, catch_backtrace())
-            return nothing
-        end
-    else
-        if JETLS_DEV_MODE
-            # `@invokelatest` for allowing changes maded by Revise to be reflected without
-            # terminating the `runserver` loop
-            return @invokelatest func(server, msg)
-        else
-            return func(server, msg)
-        end
-    end
-end
-
 function is_sequential_msg(@nospecialize msg)
     return msg isa DidOpenTextDocumentNotification ||
            msg isa DidChangeTextDocumentNotification ||
@@ -213,68 +173,171 @@ function is_sequential_msg(@nospecialize msg)
            msg isa DidSaveTextDocumentNotification
 end
 
-function handle_sequential_message(server::Server, @nospecialize msg)
+function start_sequential_message_worker(server::Server)
+    queue = Channel{Any}(Inf)
+    Threads.@spawn :default while true
+        msg = take!(queue)
+        handle_message(SequentialMessageHandler(), server, msg)
+        GC.safepoint()
+    end
+    return queue
+end
+
+function start_concurrent_message_worker(server::Server)
+    queue = Channel{Any}(Inf)
+    Threads.@spawn :default while true
+        msg = take!(queue)
+        handle_message(ConcurrentMessageHandler(queue), server, msg)
+        GC.safepoint()
+    end
+    return queue
+end
+
+abstract type MessageHandler end
+
+function handle_message(handler::MessageHandler, server::Server, @nospecialize msg)
+    if !JETLS_TEST_MODE
+        try
+            if JETLS_DEV_MODE
+                # `@invokelatest` for allowing changes maded by Revise to be reflected without
+                # terminating the `runserver` loop
+                return @invokelatest handler(server, msg)
+            else
+                return handler(server, msg)
+            end
+        catch err
+            @error "Message handling failed for" typeof(handler) typeof(msg)
+            Base.display_error(stderr, err, catch_backtrace())
+            return nothing
+        end
+    else
+        if JETLS_DEV_MODE
+            # `@invokelatest` for allowing changes maded by Revise to be reflected without
+            # terminating the `runserver` loop
+            return @invokelatest handler(server, msg)
+        else
+            return handler(server, msg)
+        end
+    end
+end
+
+struct SequentialMessageHandler <: MessageHandler end
+function (::SequentialMessageHandler)(server::Server, @nospecialize msg)
     if msg isa DidOpenTextDocumentNotification
-        return handle_DidOpenTextDocumentNotification(server, msg)
+        handle_DidOpenTextDocumentNotification(server, msg)
     elseif msg isa DidChangeTextDocumentNotification
-        return handle_DidChangeTextDocumentNotification(server, msg)
+        handle_DidChangeTextDocumentNotification(server, msg)
     elseif msg isa DidCloseTextDocumentNotification
-        return handle_DidCloseTextDocumentNotification(server, msg)
+        handle_DidCloseTextDocumentNotification(server, msg)
     elseif msg isa DidSaveTextDocumentNotification
-        return handle_DidSaveTextDocumentNotification(server, msg)
+        handle_DidSaveTextDocumentNotification(server, msg)
     else error(lazy"Unexpected sequential message type $(typeof(msg))") end
 end
 
-function handle_concurrent_message(server::Server, @nospecialize msg)
+struct ConcurrentMessageHandler <: MessageHandler
+    queue::Channel{Any}
+end
+struct HandledId
+    id::Union{String, Int}
+end
+function (handler::ConcurrentMessageHandler)(server::Server, @nospecialize msg)
+    # Handle `currently_handled` processing serially within the concurrent message worker thread
+    if msg isa CancelRequestNotification
+        cancel!(get!(()->CancelFlag(true), server.state.currently_handled, msg.params.id))
+    elseif msg isa HandledId
+        delete!(server.state.currently_handled, msg.id)
+    # Handle regular messages concurrently
+    elseif msg isa Dict{Symbol,Any} # ResponseMessage or untyped message
+        id = get(msg, :id, nothing)
+        cancel_flag = isnothing(id) ? nothing : get!(()->CancelFlag(false), server.state.currently_handled, id)
+        Threads.@spawn :default handle_message(ResponseMessageHandler(handler.queue, id, cancel_flag), server, msg)
+    elseif isdefined(msg, :id) && (id = msg.id; id isa String || id isa Int)
+        cancel_flag = get!(()->CancelFlag(false), server.state.currently_handled, id)
+        Threads.@spawn :default handle_message(RequestMessageHandler(handler.queue, id, cancel_flag), server, msg)
+    else
+        Threads.@spawn :default handle_message(NotificationMessageHandler(), server, msg)
+    end
+end
+
+struct ResponseMessageHandler <: MessageHandler
+    queue::Channel{Any}
+    id::Union{String, Int, Nothing}
+    cancel_flag::CancelFlag
+end
+function (handler::ResponseMessageHandler)(server::Server, msg::Dict{Symbol,Any})
+    (; queue, id, cancel_flag) = handler
+    if handle_ResponseMessage(server, msg) # TODO Use `cancel_flag`
+    elseif JETLS_DEV_MODE
+        # Log unhandled `ResponseMessage` or untyped message for reference
+        _id = get(()->get(msg, :id, nothing), msg, :method)
+        @warn "[ResponseMessageHandler] Unhandled message" msg _id=_id maxlog=1
+    end
+    isnothing(id) || put!(queue, HandledId(id))
+    nothing
+end
+
+struct RequestMessageHandler <: MessageHandler
+    queue::Channel{Any}
+    id::Union{String, Int}
+    cancel_flag::CancelFlag
+end
+function (handler::RequestMessageHandler)(server::Server, @nospecialize msg)
+    (; queue, id, cancel_flag) = handler
     if msg isa CompletionRequest
-        return handle_CompletionRequest(server, msg)
+        handle_CompletionRequest(server, msg, cancel_flag)
     elseif msg isa CompletionResolveRequest
-        return handle_CompletionResolveRequest(server, msg)
+        handle_CompletionResolveRequest(server, msg, cancel_flag)
     elseif msg isa SignatureHelpRequest
-        return handle_SignatureHelpRequest(server, msg)
+        handle_SignatureHelpRequest(server, msg, cancel_flag)
     elseif msg isa DefinitionRequest
-        return handle_DefinitionRequest(server, msg)
+        handle_DefinitionRequest(server, msg, cancel_flag)
     elseif msg isa HoverRequest
-        return handle_HoverRequest(server, msg)
+        handle_HoverRequest(server, msg, cancel_flag)
     elseif msg isa DocumentHighlightRequest
-        return handle_DocumentHighlightRequest(server, msg)
+        handle_DocumentHighlightRequest(server, msg, cancel_flag)
     elseif msg isa DocumentDiagnosticRequest
-        return handle_DocumentDiagnosticRequest(server, msg)
+        handle_DocumentDiagnosticRequest(server, msg, cancel_flag)
     elseif msg isa WorkspaceDiagnosticRequest
         @assert false "workspace/diagnostic should not be enabled"
     elseif msg isa CodeLensRequest
-        return handle_CodeLensRequest(server, msg)
+        handle_CodeLensRequest(server, msg, cancel_flag)
     elseif msg isa CodeActionRequest
-        return handle_CodeActionRequest(server, msg)
+        handle_CodeActionRequest(server, msg, cancel_flag)
     elseif msg isa ExecuteCommandRequest
-        return handle_ExecuteCommandRequest(server, msg)
+        handle_ExecuteCommandRequest(server, msg, cancel_flag)
     elseif msg isa InlayHintRequest
-        return handle_InlayHintRequest(server, msg)
+        handle_InlayHintRequest(server, msg, cancel_flag)
     elseif msg isa DocumentFormattingRequest
-        return handle_DocumentFormattingRequest(server, msg)
+        handle_DocumentFormattingRequest(server, msg, cancel_flag)
     elseif msg isa DocumentRangeFormattingRequest
-        return handle_DocumentRangeFormattingRequest(server, msg)
-    elseif msg isa DidChangeWatchedFilesNotification
-        return handle_DidChangeWatchedFilesNotification(server, msg)
+        handle_DocumentRangeFormattingRequest(server, msg, cancel_flag)
     elseif msg isa RenameRequest
-        return handle_RenameRequest(server, msg)
+        handle_RenameRequest(server, msg, cancel_flag)
     elseif msg isa PrepareRenameRequest
-        return handle_PrepareRenameRequest(server, msg)
-    elseif msg isa Dict{Symbol,Any} # response message
-        if handle_ResponseMessage(server, msg)
-            return nothing
-        end
-        # some `ResponseMessage` may be unhandled, log it for reference
-    end
-    if JETLS_DEV_MODE
+        handle_PrepareRenameRequest(server, msg, cancel_flag)
+    elseif JETLS_DEV_MODE
         if isdefined(msg, :method)
-            id = getfield(msg, :method)
-        elseif msg isa Dict{Symbol,Any} # unhandled `ResponseMessage`
-            id = get(()->get(msg, :id, nothing), msg, :method)
+            _id = getfield(msg, :method)
         else
-            id = typeof(msg)
+            _id = typeof(msg)
         end
-        @warn "Unhandled message" msg _id=id maxlog=1
+        @warn "[RequestMessageHandler] Unhandled message" msg _id=_id maxlog=1
+    end
+    put!(queue, HandledId(id))
+    nothing
+end
+
+struct NotificationMessageHandler <: MessageHandler end
+function (::NotificationMessageHandler)(server::Server, @nospecialize msg)
+    if msg isa DidChangeWatchedFilesNotification
+        handle_DidChangeWatchedFilesNotification(server, msg)
+    elseif JETLS_DEV_MODE
+        if isdefined(msg, :method)
+            _id = getfield(msg, :method)
+        else
+            _id = typeof(msg)
+        end
+        @warn "[NotificationMessageHandler] Unhandled message" msg _id=_id maxlog=1
     end
     nothing
 end

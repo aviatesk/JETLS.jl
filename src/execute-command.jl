@@ -32,7 +32,14 @@ end
 #     method = EXECUTE_COMMAND_REGISTRATION_METHOD))
 # register(currently_running, execute_command_registration())
 
-function handle_ExecuteCommandRequest(server::Server, msg::ExecuteCommandRequest)
+function handle_ExecuteCommandRequest(server::Server, msg::ExecuteCommandRequest, cancel_flag::CancelFlag)
+    if is_cancelled(cancel_flag)
+        return send(server,
+            ExecuteCommandResponse(;
+                id = msg.id,
+                result = nothing,
+                error = request_cancelled_error()))
+    end
     command = msg.params.command
     if command == COMMAND_TESTRUNNER_RUN_TESTSET
         return execute_testrunner_run_testset_command(server, msg)
