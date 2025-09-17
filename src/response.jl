@@ -139,7 +139,7 @@ function handle_testrunner_testset_progress_response(server::Server, msg::Dict{S
         return
     end
     (; uri, fi, idx, testset_name, filepath, token) = request_caller
-    Threads.@spawn testrunner_run_testset(server, uri, fi, idx, testset_name, filepath; token)
+    testrunner_run_testset(server, uri, fi, idx, testset_name, filepath; token)
 end
 
 function handle_testrunner_testcase_progress_response(server::Server, msg::Dict{Symbol,Any}, request_caller::TestRunnerTestcaseProgressCaller)
@@ -147,7 +147,7 @@ function handle_testrunner_testcase_progress_response(server::Server, msg::Dict{
         return
     end
     (; uri, testcase_line, testcase_text, filepath, token) = request_caller
-    Threads.@spawn testrunner_run_testcase(server, uri, testcase_line, testcase_text, filepath; token)
+    testrunner_run_testcase(server, uri, testcase_line, testcase_text, filepath; token)
 end
 
 function handle_code_lens_refresh_response(server::Server, msg::Dict{Symbol,Any}, ::CodeLensRefreshRequestCaller)
@@ -162,7 +162,7 @@ function handle_formatting_progress_response(server::Server, msg::Dict{Symbol,An
         return
     end
     (; uri, msg_id, token) = request_caller
-    Threads.@spawn do_format_with_progress(server, uri, msg_id, token)
+    do_format_with_progress(server, uri, msg_id, token)
 end
 
 function handle_range_formatting_progress_response(server::Server, msg::Dict{Symbol,Any}, request_caller::RangeFormattingProgressCaller)
@@ -170,5 +170,5 @@ function handle_range_formatting_progress_response(server::Server, msg::Dict{Sym
         return
     end
     (; uri, range, msg_id, token) = request_caller
-    Threads.@spawn do_range_format_with_progress(server, uri, range, msg_id, token)
+    do_range_format_with_progress(server, uri, range, msg_id, token)
 end
