@@ -54,6 +54,7 @@ Minimal [Emacs](https://www.gnu.org/software/emacs/)
                 "--startup-file=no"
                 "--history-file=no"
                 "--project=/path/to/JETLS.jl"
+                "--threads=auto"
                 "/path/to/JETLS.jl/runserver.jl"))
 ```
 ### Neovim
@@ -66,6 +67,7 @@ vim.lsp.config("jetls", {
         "--startup-file=no",
         "--history-file=no",
         "--project=/path/to/JETLS.jl",
+        "--threads=auto",
         "/path/to/JETLS.jl/runserver.jl",
     },
     filetypes = {"julia"},
@@ -89,7 +91,7 @@ name = "julia"
 language-servers = [ "jetls" ]
 
 [language-server]
-jetls = { command = "julia", args = ["--startup-file=no", "--history-file=no", "--project=/path/to/JETLS.jl", "/path/to/JETLS.jl/runserver.jl"] }
+jetls = { command = "julia", args = ["--startup-file=no", "--history-file=no", "--project=/path/to/JETLS.jl", "--threads=auto", "/path/to/JETLS.jl/runserver.jl"] }
 ```
 
 ## Roadmap
