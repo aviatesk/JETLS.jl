@@ -69,7 +69,7 @@ function handle_DocumentFormattingRequest(server::Server, msg::DocumentFormattin
 
     workDoneToken = msg.params.workDoneToken
     if workDoneToken !== nothing
-        Threads.@spawn do_format_with_progress(server, uri, msg.id, workDoneToken)
+        do_format_with_progress(server, uri, msg.id, workDoneToken)
     elseif supports(server, :window, :workDoneProgress)
         id = String(gensym(:WorkDoneProgressCreateRequest_formatting))
         token = String(gensym(:FormattingProgress))
@@ -77,7 +77,7 @@ function handle_DocumentFormattingRequest(server::Server, msg::DocumentFormattin
         params = WorkDoneProgressCreateParams(; token)
         send(server, WorkDoneProgressCreateRequest(; id, params))
     else
-        Threads.@spawn do_format(server, uri, msg.id)
+        do_format(server, uri, msg.id)
     end
 
     return nothing
@@ -134,7 +134,7 @@ function handle_DocumentRangeFormattingRequest(server::Server, msg::DocumentRang
 
     workDoneToken = msg.params.workDoneToken
     if workDoneToken !== nothing
-        Threads.@spawn do_range_format_with_progress(server, uri, range, msg.id, workDoneToken)
+        do_range_format_with_progress(server, uri, range, msg.id, workDoneToken)
     elseif supports(server, :window, :workDoneProgress)
         id = String(gensym(:WorkDoneProgressCreateRequest_rangeFormatting))
         token = String(gensym(:RangeFormattingProgress))
@@ -142,7 +142,7 @@ function handle_DocumentRangeFormattingRequest(server::Server, msg::DocumentRang
         params = WorkDoneProgressCreateParams(; token)
         send(server, WorkDoneProgressCreateRequest(; id, params))
     else
-        Threads.@spawn do_range_format(server, uri, range, msg.id)
+        do_range_format(server, uri, range, msg.id)
     end
 
     return nothing

@@ -235,9 +235,6 @@ function (::SequentialMessageHandler)(server::Server, @nospecialize msg)
 end
 
 # TODO This cancellation handling still has the following cleanup issues not yet implemented:
-# - Each `ResponseMessage` handler is currently written asynchronously as a remnant of the
-#   previous implementation, so it immediately returns a `HandledId` in any case.
-#   If a `CancelRequestNotification` is issued afterwards, a dead ID will remain in `currently_handled`
 # - When a client mistakenly sends a `CancelRequestNotification` for an already processed request,
 #   it will register a dead ID in `currently_handled`. A fixed size FIFO queue to record
 #   already handled message IDs may solve this problem in many cases.

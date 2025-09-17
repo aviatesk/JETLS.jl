@@ -657,7 +657,7 @@ function testrunner_run_testset_from_uri(server::Server, uri::URI, idx::Int, tsn
         params = WorkDoneProgressCreateParams(; token)
         send(server, WorkDoneProgressCreateRequest(; id, params))
     else
-        Threads.@spawn testrunner_run_testset(server, uri, fi, idx, tsn, filepath)
+        testrunner_run_testset(server, uri, fi, idx, tsn, filepath)
     end
     return nothing
 end
@@ -689,7 +689,7 @@ function testrunner_run_testcase_from_uri(server::Server, uri::URI, tcl::Int, tc
         params = WorkDoneProgressCreateParams(; token)
         send(server, WorkDoneProgressCreateRequest(; id, params))
     else
-        Threads.@spawn testrunner_run_testcase(server, uri, tcl, tct, filepath)
+        testrunner_run_testcase(server, uri, tcl, tct, filepath)
     end
     return nothing
 end
