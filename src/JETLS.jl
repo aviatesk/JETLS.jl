@@ -234,6 +234,14 @@ function (::SequentialMessageHandler)(server::Server, @nospecialize msg)
     else error(lazy"Unexpected sequential message type $(typeof(msg))") end
 end
 
+# TODO This cancellation handling still has the following cleanup issues not yet implemented:
+# - Each `ResponseMessage` handler is currently written asynchronously as a remnant of the
+#   previous implementation, so it immediately returns a `HandledId` in any case.
+#   If a `CancelRequestNotification` is issued afterwards, a dead ID will remain in `currently_handled`
+# - When a client mistakenly sends a `CancelRequestNotification` for an already processed request,
+#   it will register a dead ID in `currently_handled`. A fixed size FIFO queue to record
+#   already handled message IDs may solve this problem in many cases.
+
 struct ConcurrentMessageHandler <: MessageHandler
     queue::Channel{Any}
 end
@@ -246,6 +254,7 @@ function (handler::ConcurrentMessageHandler)(server::Server, @nospecialize msg)
         cancel!(get!(()->CancelFlag(true), server.state.currently_handled, msg.params.id))
     elseif msg isa HandledId
         delete!(server.state.currently_handled, msg.id)
+        # @info "Remaining requests" length(server.state.currently_handled) Base.summarysize(server.state.currently_handled)
     # Handle regular messages concurrently
     elseif msg isa Dict{Symbol,Any} # ResponseMessage or untyped message
         id = get(msg, :id, nothing)
