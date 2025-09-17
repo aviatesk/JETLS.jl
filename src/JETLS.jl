@@ -254,9 +254,7 @@ function (handler::ConcurrentMessageHandler)(server::Server, @nospecialize msg)
         # @info "Remaining requests" length(server.state.currently_handled) Base.summarysize(server.state.currently_handled)
     # Handle regular messages concurrently
     elseif msg isa Dict{Symbol,Any} # ResponseMessage or untyped message
-        id = get(msg, :id, nothing)
-        cancel_flag = isnothing(id) ? nothing : get!(()->CancelFlag(false), server.state.currently_handled, id)
-        Threads.@spawn :default handle_message(ResponseMessageHandler(handler.queue, id, cancel_flag), server, msg)
+        Threads.@spawn :default handle_message(ResponseMessageHandler(), server, msg)
     elseif isdefined(msg, :id) && (id = msg.id; id isa String || id isa Int)
         cancel_flag = get!(()->CancelFlag(false), server.state.currently_handled, id)
         Threads.@spawn :default handle_message(RequestMessageHandler(handler.queue, id, cancel_flag), server, msg)
@@ -265,20 +263,14 @@ function (handler::ConcurrentMessageHandler)(server::Server, @nospecialize msg)
     end
 end
 
-struct ResponseMessageHandler <: MessageHandler
-    queue::Channel{Any}
-    id::Union{String, Int, Nothing}
-    cancel_flag::CancelFlag
-end
-function (handler::ResponseMessageHandler)(server::Server, msg::Dict{Symbol,Any})
-    (; queue, id, cancel_flag) = handler
-    if handle_ResponseMessage(server, msg) # TODO Use `cancel_flag`
+struct ResponseMessageHandler <: MessageHandler end
+function (::ResponseMessageHandler)(server::Server, msg::Dict{Symbol,Any})
+    if handle_ResponseMessage(server, msg)
     elseif JETLS_DEV_MODE
         # Log unhandled `ResponseMessage` or untyped message for reference
         _id = get(()->get(msg, :id, nothing), msg, :method)
         @warn "[ResponseMessageHandler] Unhandled message" msg _id=_id maxlog=1
     end
-    isnothing(id) || put!(queue, HandledId(id))
     nothing
 end
 

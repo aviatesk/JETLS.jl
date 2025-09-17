@@ -31,8 +31,9 @@ function handle_response_error(server::Server, msg::Dict{Symbol,Any}, context::S
     return false
 end
 
-function handle_requested_response(server::Server, msg::Dict{Symbol,Any},
-                                   @nospecialize request_caller::RequestCaller)
+function handle_requested_response(
+        server::Server, msg::Dict{Symbol,Any}, @nospecialize request_caller::RequestCaller
+    )
     if request_caller isa RequestAnalysisCaller
         handle_request_analysis_response(server, msg, request_caller)
     elseif request_caller isa ShowDocumentRequestCaller
