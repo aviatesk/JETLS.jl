@@ -99,6 +99,7 @@ likely be implemented in the near future, for those who want to test this server
 Please note that not only the progress of the list, but also the structure of
 the list itself is subject to change.
 
+- [x] Parallel/concurrent message handling
 - Full-Analysis
   - [x] Document synchronization
   - [ ] JuliaLowering integration
