@@ -48,6 +48,39 @@ const SWStats  = JETLS_DEV_MODE ? AtomicContainers.SWStats : Nothing
 const LWStats  = JETLS_DEV_MODE ? AtomicContainers.LWStats : Nothing
 const CASStats = JETLS_DEV_MODE ? AtomicContainers.CASStats : Nothing
 
+macro tryinvokelatest(ex)
+    Meta.isexpr(ex, :call) || error("@tryinvokelatest expects :call expresion")
+
+    f, args, kwargs = Base.destructure_callex(__module__, ex)
+    f = esc(f); args = esc.(args); kwargs = esc.(kwargs);
+
+    callex = Expr(:call, f)
+    isempty(kwargs) || push!(callex.args, Expr(:parameters, kwargs...))
+    push!(callex.args, args...)
+    callex = if JETLS_DEV_MODE
+        # `@invokelatest` for allowing changes maded by Revise to be reflected without
+        # terminating the `runserver` loop
+        :(@invokelatest $(callex))
+    else
+        callex
+    end
+
+    JETLS_TEST_MODE && return callex
+
+    arglist = Any[f, args..., kwargs...]
+    callargs = map(1:length(arglist)) do i::Int
+        arg = arglist[i]
+        name = Symbol("argtype", i)
+        Expr(:(=), name, Expr(:call, GlobalRef(Core,:typeof), arg))
+    end
+    return :(try
+        $callex
+    catch err
+        @error "@tryinvokelatest failed with" $(callargs...)
+        Base.display_error(stderr, err, catch_backtrace())
+    end)
+end
+
 include("testrunner/testrunner-types.jl")
 include("types.jl")
 
@@ -176,7 +209,7 @@ function start_sequential_message_worker(server::Server)
     queue = Channel{Any}(Inf)
     Threads.@spawn :default while true
         msg = take!(queue)
-        invoke_dispatcher(SequentialMessageDispatcher(), server, msg)
+        @tryinvokelatest handle_sequential_message(server, msg)
         GC.safepoint()
     end
     return queue
@@ -186,41 +219,14 @@ function start_concurrent_message_worker(server::Server)
     queue = Channel{Any}(Inf)
     Threads.@spawn :default while true
         msg = take!(queue)
-        invoke_dispatcher(ConcurrentMessageDispatcher(queue), server, msg)
+        handler_concurrent_message = ConcurrentMessageHandler(queue)
+        @tryinvokelatest handler_concurrent_message(server, msg)
         GC.safepoint()
     end
     return queue
 end
 
-abstract type MessageDispatcher end
-function invoke_dispatcher(dispatcher::MessageDispatcher, server::Server, @nospecialize msg)
-    if !JETLS_TEST_MODE
-        try
-            if JETLS_DEV_MODE
-                # `@invokelatest` for allowing changes maded by Revise to be reflected without
-                # terminating the `runserver` loop
-                return @invokelatest dispatcher(server, msg)
-            else
-                return dispatcher(server, msg)
-            end
-        catch err
-            @error "Message handling failed for" typeof(dispatcher) typeof(msg)
-            Base.display_error(stderr, err, catch_backtrace())
-            return nothing
-        end
-    else
-        if JETLS_DEV_MODE
-            # `@invokelatest` for allowing changes maded by Revise to be reflected without
-            # terminating the `runserver` loop
-            return @invokelatest dispatcher(server, msg)
-        else
-            return dispatcher(server, msg)
-        end
-    end
-end
-
-struct SequentialMessageDispatcher <: MessageDispatcher end
-function (::SequentialMessageDispatcher)(server::Server, @nospecialize msg)
+function handle_sequential_message(server::Server, @nospecialize msg)
     if msg isa DidOpenTextDocumentNotification
         handle_DidOpenTextDocumentNotification(server, msg)
     elseif msg isa DidChangeTextDocumentNotification
@@ -235,7 +241,7 @@ function (::SequentialMessageDispatcher)(server::Server, @nospecialize msg)
         else
             _id = typeof(msg)
         end
-        @warn "[SequentialMessageDispatcher] Unhandled message" msg _id=_id maxlog=1
+        @warn "[handle_sequential_message] Unhandled message" msg _id=_id maxlog=1
     end
 end
 
@@ -244,13 +250,13 @@ end
 #   it will register a dead ID in `currently_handled`. A fixed size FIFO queue to record
 #   already handled message IDs may solve this problem in many cases.
 
-struct ConcurrentMessageDispatcher <: MessageDispatcher
+struct ConcurrentMessageHandler
     queue::Channel{Any}
 end
 struct HandledToken
     id::Union{String, Int}
 end
-function (dispatcher::ConcurrentMessageDispatcher)(server::Server, @nospecialize msg)
+function (dispatcher::ConcurrentMessageHandler)(server::Server, @nospecialize msg)
     # Handle `currently_handled` processing serially within the concurrent message worker thread
     if msg isa CancelRequestNotification
         cancel!(get!(()->CancelFlag(true), server.state.currently_handled, msg.params.id))
@@ -270,21 +276,23 @@ function (dispatcher::ConcurrentMessageDispatcher)(server::Server, @nospecialize
             token = cancellable_token(request_caller)
             cancel_flag = isnothing(token) ? DUMMY_CANCEL_FLAG :
                 get!(()->CancelFlag(false), server.state.currently_handled, token)
-            Threads.@spawn :default invoke_dispatcher(ResponseMessageDispatcher(dispatcher.queue, token, cancel_flag, request_caller), server, msg)
+            handle_response_message = ResponseMessageDispatcher(dispatcher.queue, token, cancel_flag, request_caller)
+            Threads.@spawn :default @tryinvokelatest handle_response_message(server, msg)
         elseif JETLS_DEV_MODE
             # Not a response to our request, or untyped message - log if in dev mode
             _id = get(()->get(msg, :id, nothing), msg, :method)
-            @warn "[ConcurrentMessageDispatcher] Unhandled message" msg _id=_id maxlog=1
+            @warn "[ConcurrentMessageHandler] Unhandled message" msg _id=_id maxlog=1
         end
     elseif isdefined(msg, :id) && (id = msg.id; id isa String || id isa Int)
         cancel_flag = get!(()->CancelFlag(false), server.state.currently_handled, id)
-        Threads.@spawn :default invoke_dispatcher(RequestMessageDispatcher(dispatcher.queue, id, cancel_flag), server, msg)
+        handle_request_message = RequestMessageDispatcher(dispatcher.queue, id, cancel_flag)
+        Threads.@spawn :default @tryinvokelatest handle_request_message(server, msg)
     else
-        Threads.@spawn :default invoke_dispatcher(NotificationMessageDispatcher(), server, msg)
+        Threads.@spawn :default @tryinvokelatest handle_notification_message(server, msg)
     end
 end
 
-struct ResponseMessageDispatcher <: MessageDispatcher
+struct ResponseMessageDispatcher
     queue::Channel{Any}
     token::Union{Nothing,ProgressToken}
     cancel_flag::CancelFlag
@@ -322,7 +330,7 @@ function (dispatcher::ResponseMessageDispatcher)(server::Server, msg::Dict{Symbo
     nothing
 end
 
-struct RequestMessageDispatcher <: MessageDispatcher
+struct RequestMessageDispatcher
     queue::Channel{Any}
     id::Union{String, Int}
     cancel_flag::CancelFlag
@@ -379,8 +387,7 @@ function (dispatcher::RequestMessageDispatcher)(server::Server, @nospecialize ms
     nothing
 end
 
-struct NotificationMessageDispatcher <: MessageDispatcher end
-function (::NotificationMessageDispatcher)(server::Server, @nospecialize msg)
+function handle_notification_message(server::Server, @nospecialize msg)
     if msg isa DidChangeWatchedFilesNotification
         handle_DidChangeWatchedFilesNotification(server, msg)
     elseif JETLS_DEV_MODE
@@ -389,7 +396,7 @@ function (::NotificationMessageDispatcher)(server::Server, @nospecialize msg)
         else
             _id = typeof(msg)
         end
-        @warn "[NotificationMessageDispatcher] Unhandled message" msg _id=_id maxlog=1
+        @warn "[handle_notification_message] Unhandled message" msg _id=_id maxlog=1
     end
     nothing
 end
