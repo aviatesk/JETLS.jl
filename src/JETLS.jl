@@ -177,7 +177,7 @@ function start_sequential_message_worker(server::Server)
     queue = Channel{Any}(Inf)
     Threads.@spawn :default while true
         msg = take!(queue)
-        handle_message(SequentialMessageHandler(), server, msg)
+        invoke_dispatcher(SequentialMessageDispatcher(), server, msg)
         GC.safepoint()
     end
     return queue
@@ -187,26 +187,25 @@ function start_concurrent_message_worker(server::Server)
     queue = Channel{Any}(Inf)
     Threads.@spawn :default while true
         msg = take!(queue)
-        handle_message(ConcurrentMessageHandler(queue), server, msg)
+        invoke_dispatcher(ConcurrentMessageDispatcher(queue), server, msg)
         GC.safepoint()
     end
     return queue
 end
 
-abstract type MessageHandler end
-
-function handle_message(handler::MessageHandler, server::Server, @nospecialize msg)
+abstract type MessageDispatcher end
+function invoke_dispatcher(dispatcher::MessageDispatcher, server::Server, @nospecialize msg)
     if !JETLS_TEST_MODE
         try
             if JETLS_DEV_MODE
                 # `@invokelatest` for allowing changes maded by Revise to be reflected without
                 # terminating the `runserver` loop
-                return @invokelatest handler(server, msg)
+                return @invokelatest dispatcher(server, msg)
             else
-                return handler(server, msg)
+                return dispatcher(server, msg)
             end
         catch err
-            @error "Message handling failed for" typeof(handler) typeof(msg)
+            @error "Message handling failed for" typeof(dispatcher) typeof(msg)
             Base.display_error(stderr, err, catch_backtrace())
             return nothing
         end
@@ -214,15 +213,15 @@ function handle_message(handler::MessageHandler, server::Server, @nospecialize m
         if JETLS_DEV_MODE
             # `@invokelatest` for allowing changes maded by Revise to be reflected without
             # terminating the `runserver` loop
-            return @invokelatest handler(server, msg)
+            return @invokelatest dispatcher(server, msg)
         else
-            return handler(server, msg)
+            return dispatcher(server, msg)
         end
     end
 end
 
-struct SequentialMessageHandler <: MessageHandler end
-function (::SequentialMessageHandler)(server::Server, @nospecialize msg)
+struct SequentialMessageDispatcher <: MessageDispatcher end
+function (::SequentialMessageDispatcher)(server::Server, @nospecialize msg)
     if msg isa DidOpenTextDocumentNotification
         handle_DidOpenTextDocumentNotification(server, msg)
     elseif msg isa DidChangeTextDocumentNotification
@@ -231,7 +230,14 @@ function (::SequentialMessageHandler)(server::Server, @nospecialize msg)
         handle_DidCloseTextDocumentNotification(server, msg)
     elseif msg isa DidSaveTextDocumentNotification
         handle_DidSaveTextDocumentNotification(server, msg)
-    else error(lazy"Unexpected sequential message type $(typeof(msg))") end
+    elseif JETLS_DEV_MODE
+        if isdefined(msg, :method)
+            _id = getfield(msg, :method)
+        else
+            _id = typeof(msg)
+        end
+        @warn "[SequentialMessageDispatcher] Unhandled message" msg _id=_id maxlog=1
+    end
 end
 
 # TODO This cancellation handling still has the following cleanup issues not yet implemented:
@@ -239,13 +245,13 @@ end
 #   it will register a dead ID in `currently_handled`. A fixed size FIFO queue to record
 #   already handled message IDs may solve this problem in many cases.
 
-struct ConcurrentMessageHandler <: MessageHandler
+struct ConcurrentMessageDispatcher <: MessageDispatcher
     queue::Channel{Any}
 end
 struct HandledId
     id::Union{String, Int}
 end
-function (handler::ConcurrentMessageHandler)(server::Server, @nospecialize msg)
+function (dispatcher::ConcurrentMessageDispatcher)(server::Server, @nospecialize msg)
     # Handle `currently_handled` processing serially within the concurrent message worker thread
     if msg isa CancelRequestNotification
         cancel!(get!(()->CancelFlag(true), server.state.currently_handled, msg.params.id))
@@ -261,32 +267,32 @@ function (handler::ConcurrentMessageHandler)(server::Server, @nospecialize msg)
         end
         if request_caller !== nothing
             # NOTE: The `get!` call to `server.state.currently_handled` MUST happen here
-            # to avoid race conditions. Only after getting the flag can we spawn the actual handler.
+            # to avoid race conditions. Only after getting the flag can we spawn the actual dispatcher.
             token = work_done_progress_token(request_caller)
             cancel_flag = isnothing(token) ? CancelFlag(false) :
                 get!(()->CancelFlag(false), server.state.currently_handled, token)
-            Threads.@spawn :default handle_message(ResponseMessageHandler(handler.queue, token, cancel_flag, request_caller), server, msg)
+            Threads.@spawn :default invoke_dispatcher(ResponseMessageDispatcher(dispatcher.queue, token, cancel_flag, request_caller), server, msg)
         elseif JETLS_DEV_MODE
             # Not a response to our request, or untyped message - log if in dev mode
             _id = get(()->get(msg, :id, nothing), msg, :method)
-            @warn "[ConcurrentMessageHandler] Unhandled message" msg _id=_id maxlog=1
+            @warn "[ConcurrentMessageDispatcher] Unhandled message" msg _id=_id maxlog=1
         end
     elseif isdefined(msg, :id) && (id = msg.id; id isa String || id isa Int)
         cancel_flag = get!(()->CancelFlag(false), server.state.currently_handled, id)
-        Threads.@spawn :default handle_message(RequestMessageHandler(handler.queue, id, cancel_flag), server, msg)
+        Threads.@spawn :default invoke_dispatcher(RequestMessageDispatcher(dispatcher.queue, id, cancel_flag), server, msg)
     else
-        Threads.@spawn :default handle_message(NotificationMessageHandler(), server, msg)
+        Threads.@spawn :default invoke_dispatcher(NotificationMessageDispatcher(), server, msg)
     end
 end
 
-struct ResponseMessageHandler <: MessageHandler
+struct ResponseMessageDispatcher <: MessageDispatcher
     queue::Channel{Any}
     token::Union{Nothing,ProgressToken}
     cancel_flag::CancelFlag
     request_caller::RequestCaller
 end
-function (handler::ResponseMessageHandler)(server::Server, msg::Dict{Symbol,Any})
-    (; cancel_flag, request_caller) = handler
+function (dispatcher::ResponseMessageDispatcher)(server::Server, msg::Dict{Symbol,Any})
+    (; cancel_flag, request_caller) = dispatcher
     if request_caller isa RequestAnalysisCaller
         handle_request_analysis_response(server, msg, request_caller, cancel_flag)
     elseif request_caller isa ShowDocumentRequestCaller
@@ -312,18 +318,18 @@ function (handler::ResponseMessageHandler)(server::Server, msg::Dict{Symbol,Any}
     else
         error("Unknown request caller type")
     end
-    token = handler.token
-    isnothing(token) || put!(handler.queue, HandledId(token))
+    token = dispatcher.token
+    isnothing(token) || put!(dispatcher.queue, HandledId(token))
     nothing
 end
 
-struct RequestMessageHandler <: MessageHandler
+struct RequestMessageDispatcher <: MessageDispatcher
     queue::Channel{Any}
     id::Union{String, Int}
     cancel_flag::CancelFlag
 end
-function (handler::RequestMessageHandler)(server::Server, @nospecialize msg)
-    (; queue, id, cancel_flag) = handler
+function (dispatcher::RequestMessageDispatcher)(server::Server, @nospecialize msg)
+    (; queue, id, cancel_flag) = dispatcher
     if msg isa CompletionRequest
         handle_CompletionRequest(server, msg, cancel_flag)
     elseif msg isa CompletionResolveRequest
@@ -362,14 +368,14 @@ function (handler::RequestMessageHandler)(server::Server, @nospecialize msg)
         else
             _id = typeof(msg)
         end
-        @warn "[RequestMessageHandler] Unhandled message" msg _id=_id maxlog=1
+        @warn "[RequestMessageDispatcher] Unhandled message" msg _id=_id maxlog=1
     end
     put!(queue, HandledId(id))
     nothing
 end
 
-struct NotificationMessageHandler <: MessageHandler end
-function (::NotificationMessageHandler)(server::Server, @nospecialize msg)
+struct NotificationMessageDispatcher <: MessageDispatcher end
+function (::NotificationMessageDispatcher)(server::Server, @nospecialize msg)
     if msg isa DidChangeWatchedFilesNotification
         handle_DidChangeWatchedFilesNotification(server, msg)
     elseif JETLS_DEV_MODE
@@ -378,7 +384,7 @@ function (::NotificationMessageHandler)(server::Server, @nospecialize msg)
         else
             _id = typeof(msg)
         end
-        @warn "[NotificationMessageHandler] Unhandled message" msg _id=_id maxlog=1
+        @warn "[NotificationMessageDispatcher] Unhandled message" msg _id=_id maxlog=1
     end
     nothing
 end
