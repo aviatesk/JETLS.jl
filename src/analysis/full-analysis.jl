@@ -11,6 +11,45 @@ end
 
 get_analysis_info(manager::AnalysisManager, uri::URI) = get(load(manager.cache), uri, nothing)
 
+struct RequestAnalysisCaller <: RequestCaller
+    uri::URI
+    onsave::Bool
+    token::ProgressToken
+end
+work_done_progress_token(rc::RequestAnalysisCaller) = rc.token
+
+function request_analysis_on_open!(server::Server, uri::URI)
+    if supports(server, :window, :workDoneProgress)
+        id = String(gensym(:WorkDoneProgressCreateRequest_request_analysis_on_open!))
+        token = String(gensym(:WorkDoneProgressCreateRequest_request_analysis_on_open!))
+        addrequest!(server, id=>RequestAnalysisCaller(uri, #=onsave=#false, token))
+        params = WorkDoneProgressCreateParams(; token)
+        send(server, WorkDoneProgressCreateRequest(; id, params))
+    else
+        request_analysis!(server, uri)
+    end
+end
+
+function request_analysis_on_save!(server::Server, uri::URI)
+    if supports(server, :window, :workDoneProgress)
+        id = String(gensym(:WorkDoneProgressCreateRequest_request_analysis_on_save!))
+        token = String(gensym(:WorkDoneProgressCreateRequest_request_analysis_on_save!))
+        addrequest!(server, id=>RequestAnalysisCaller(uri, #=onsave=#true, token))
+        params = WorkDoneProgressCreateParams(; token)
+        send(server, WorkDoneProgressCreateRequest(; id, params))
+    else
+        request_analysis!(server, uri; onsave=true)
+    end
+end
+
+function handle_request_analysis_response(
+        server::Server, ::Dict{Symbol,Any}, request_caller::RequestAnalysisCaller,
+        cancel_flag::CancelFlag
+    )
+    (; uri, onsave, token) = request_caller
+    request_analysis!(server, uri; onsave, token, cancel_flag)
+end
+
 function request_analysis!(
         server::Server, uri::URI;
         onsave::Bool = false,

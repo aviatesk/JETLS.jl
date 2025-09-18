@@ -85,6 +85,16 @@ function handle_DocumentFormattingRequest(server::Server, msg::DocumentFormattin
     return nothing
 end
 
+function handle_formatting_progress_response(
+        server::Server, msg::Dict{Symbol, Any}, request_caller::FormattingProgressCaller, cancel_flag::CancelFlag
+    )
+    if handle_response_error(server, msg, "create work done progress")
+        return
+    end
+    (; uri, msg_id, token) = request_caller
+    do_format_with_progress(server, uri, msg_id, token, cancel_flag)
+end
+
 function do_format_with_progress(
         server::Server, uri::URI, msg_id::Union{String,Int}, token::ProgressToken, ::CancelFlag
     )
@@ -128,7 +138,7 @@ end
 function handle_DocumentRangeFormattingRequest(server::Server, msg::DocumentRangeFormattingRequest, cancel_flag::CancelFlag)
     if is_cancelled(cancel_flag)
         return send(server,
-            ResponseMessage(;
+            DocumentRangeFormattingResponse(;
                 id = msg.id,
                 result = nothing,
                 error = request_cancelled_error()))
@@ -150,6 +160,16 @@ function handle_DocumentRangeFormattingRequest(server::Server, msg::DocumentRang
     end
 
     return nothing
+end
+
+function handle_range_formatting_progress_response(
+        server::Server, msg::Dict{Symbol, Any}, request_caller::RangeFormattingProgressCaller, cancel_flag::CancelFlag
+    )
+    if handle_response_error(server, msg, "create work done progress")
+        return
+    end
+    (; uri, range, msg_id, token) = request_caller
+    do_range_format_with_progress(server, uri, range, msg_id, token, cancel_flag)
 end
 
 function do_range_format_with_progress(

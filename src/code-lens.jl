@@ -48,8 +48,18 @@ function handle_CodeLensRequest(server::Server, msg::CodeLensRequest, cancel_fla
 end
 
 struct CodeLensRefreshRequestCaller <: RequestCaller end
+
 function request_codelens_refresh!(server::Server)
     id = String(gensym(:CodeLensRefreshRequest))
     addrequest!(server, id=>CodeLensRefreshRequestCaller())
     return send(server, CodeLensRefreshRequest(; id, params = nothing))
+end
+
+function handle_code_lens_refresh_response(
+        server::Server, msg::Dict{Symbol,Any}, ::CodeLensRefreshRequestCaller
+    )
+    if handle_response_error(server, msg, "refresh code lens")
+    else
+        # just valid request response cycle
+    end
 end

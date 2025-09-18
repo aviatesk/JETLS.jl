@@ -19,3 +19,20 @@ function set_document_content(server::Server, uri::URI, content::String; context
         id,
         params = ApplyWorkspaceEditParams(; label, edit)))
 end
+
+function handle_apply_workspace_edit_response(
+        server::Server, msg::Dict{Symbol,Any}, ::SetDocumentContentCaller
+    )
+    if handle_response_error(server, msg, "apply workspace edit")
+    elseif haskey(msg, :result)
+        result = msg[:result] # ::ApplyWorkspaceEditResult
+        if haskey(result, "applied") && result["applied"] === true
+            # If applied successfully, no action needed
+        else
+            failure_reason = get(result, "failureReason", "Unknown reason")
+            show_error_message(server, "Failed to apply workspace edit: $failure_reason")
+        end
+    else
+        show_error_message(server, "Unexpected response from workspace edit request")
+    end
+end

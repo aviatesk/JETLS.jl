@@ -388,6 +388,51 @@ function show_testrunner_result_in_message(server::Server, result::TestRunnerRes
             actions)))
 end
 
+function handle_test_runner_message_response2(
+        server::Server, msg::Dict{Symbol,Any},
+        request_caller::TestRunnerMessageRequestCaller2
+    )
+    if handle_response_error(server, msg, "show test action (logs)")
+        return
+    elseif haskey(msg, :result) && msg[:result] !== nothing
+        selected = msg[:result] # ::MessageActionItem
+        title = get(selected, "title", "")
+        (; testset_name, logs) = request_caller
+        if title == TESTRUNNER_OPEN_LOGS_TITLE
+            open_testsetinfo_logs!(server, testset_name, logs)
+        else
+            error(lazy"Unknown action: $title")
+        end
+    end
+    # If user cancelled (result is null), do nothing
+end
+
+function handle_test_runner_message_response4(
+        server::Server, msg::Dict{Symbol,Any},
+        request_caller::TestRunnerMessageRequestCaller4
+    )
+    if handle_response_error(server, msg, "show test actions")
+        return
+    elseif haskey(msg, :result) && msg[:result] !== nothing
+        selected = msg[:result] # ::MessageActionItem
+        title = get(selected, "title", "")
+        (; testset_name, uri, idx, logs) = request_caller
+        if title == TESTRUNNER_RERUN_TITLE
+            error_msg = testrunner_run_testset_from_uri(server, uri, idx, testset_name)
+            if error_msg !== nothing
+                show_error_message(server, error_msg)
+            end
+        elseif title == TESTRUNNER_OPEN_LOGS_TITLE
+            open_testsetinfo_logs!(server, testset_name, logs)
+        elseif title == TESTRUNNER_CLEAR_RESULT_TITLE
+            try_clear_testrunner_result!(server, uri, idx, testset_name)
+        else
+            error(lazy"Unknown action: $title")
+        end
+    end
+    # If user cancelled (result is null), do nothing
+end
+
 function testrunner_run_testset(
         server::Server, uri::URI, fi::FileInfo, idx::Int, tsn::String, filepath::String;
         token::Union{Nothing,ProgressToken} = nothing, cancel_flag::CancelFlag = CancelFlag(false)
@@ -658,6 +703,23 @@ function open_testsetinfo_logs!(server::Server, tsn::String, logs::String)
     end
 end
 
+function handle_show_document_response(
+        server::Server, msg::Dict{Symbol,Any}, request_caller::ShowDocumentRequestCaller
+    )
+    if handle_response_error(server, msg, "show document")
+    elseif haskey(msg, :result)
+        result = msg[:result] # ::ShowDocumentResult
+        if haskey(result, "success") && result["success"] === true
+            (; uri, logs, context) = request_caller
+            return set_document_content(server, uri, logs; context)
+        else
+            show_error_message(server, "Failed to open document for viewing test logs")
+        end
+    else
+        show_error_message(server, "Unexpected response from show document request")
+    end
+end
+
 struct TestRunnerTestsetProgressCaller <: RequestCaller
     uri::URI
     fi::FileInfo
@@ -699,6 +761,17 @@ function testrunner_run_testset_from_uri(server::Server, uri::URI, idx::Int, tsn
     return nothing
 end
 
+function handle_testrunner_testset_progress_response(
+        server::Server, msg::Dict{Symbol,Any},
+        request_caller::TestRunnerTestsetProgressCaller, cancel_flag::CancelFlag
+    )
+    if handle_response_error(server, msg, "create work done progress")
+        return
+    end
+    (; uri, fi, idx, testset_name, filepath, token) = request_caller
+    testrunner_run_testset(server, uri, fi, idx, testset_name, filepath; token, cancel_flag)
+end
+
 struct TestRunnerTestcaseProgressCaller <: RequestCaller
     uri::URI
     testcase_line::Int
@@ -730,6 +803,17 @@ function testrunner_run_testcase_from_uri(server::Server, uri::URI, tcl::Int, tc
         testrunner_run_testcase(server, uri, tcl, tct, filepath)
     end
     return nothing
+end
+
+function handle_testrunner_testcase_progress_response(
+        server::Server, msg::Dict{Symbol,Any},
+        request_caller::TestRunnerTestcaseProgressCaller, cancel_flag::CancelFlag
+    )
+    if handle_response_error(server, msg, "create work done progress")
+        return
+    end
+    (; uri, testcase_line, testcase_text, filepath, token) = request_caller
+    testrunner_run_testcase(server, uri, testcase_line, testcase_text, filepath; token, cancel_flag)
 end
 
 """

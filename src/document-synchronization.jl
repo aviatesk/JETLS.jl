@@ -1,10 +1,3 @@
-struct RequestAnalysisCaller <: RequestCaller
-    uri::URI
-    onsave::Bool
-    token::ProgressToken
-end
-work_done_progress_token(rc::RequestAnalysisCaller) = rc.token
-
 function ParseStream!(s::Union{AbstractString,Vector{UInt8}})
     stream = JS.ParseStream(s)
     JS.parse!(stream; rule=:all)
@@ -57,15 +50,7 @@ function handle_DidOpenTextDocumentNotification(server::Server, msg::DidOpenText
     update_testsetinfos!(server, uri, fi)
     cache_saved_file_info!(server.state, uri, parsed_stream)
 
-    if supports(server, :window, :workDoneProgress)
-        id = String(gensym(:WorkDoneProgressCreateRequest_request_analysis!))
-        token = String(gensym(:WorkDoneProgressCreateRequest_request_analysis!))
-        addrequest!(server, id=>RequestAnalysisCaller(uri, #=onsave=#false, token))
-        params = WorkDoneProgressCreateParams(; token)
-        send(server, WorkDoneProgressCreateRequest(; id, params))
-    else
-        request_analysis!(server, uri)
-    end
+    request_analysis_on_open!(server, uri)
 end
 
 function handle_DidChangeTextDocumentNotification(server::Server, msg::DidChangeTextDocumentNotification)
@@ -100,15 +85,7 @@ function handle_DidSaveTextDocumentNotification(server::Server, msg::DidSaveText
     end
     cache_saved_file_info!(server.state, uri, text)
 
-    if supports(server, :window, :workDoneProgress)
-        id = String(gensym(:WorkDoneProgressCreateRequest_request_analysis!))
-        token = String(gensym(:WorkDoneProgressCreateRequest_request_analysis!))
-        addrequest!(server, id=>RequestAnalysisCaller(uri, #=onsave=#true, token))
-        params = WorkDoneProgressCreateParams(; token)
-        send(server, WorkDoneProgressCreateRequest(; id, params))
-    else
-        request_analysis!(server, uri; onsave=true)
-    end
+    request_analysis_on_save!(server, uri)
 end
 
 function handle_DidCloseTextDocumentNotification(server::Server, msg::DidCloseTextDocumentNotification)

@@ -84,7 +84,6 @@ include("inlay-hint.jl")
 include("rename.jl")
 include("testrunner/testrunner.jl")
 include("did-change-watched-files.jl")
-include("response.jl")
 include("lifecycle.jl")
 
 """
