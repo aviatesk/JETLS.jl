@@ -85,7 +85,7 @@ let (pkgcode, positions) = JETLS.get_text_and_positions("""
                         params = CompletionParams(;
                             textDocument = TextDocumentIdentifier(; uri),
                             position = pos1)))
-                @test raw_res isa CompletionResponse
+                @test raw_res isa ResponseMessage
                 @test raw_res.id == id
                 @test isnothing(raw_res.result)
                 @test raw_res.error isa ResponseError

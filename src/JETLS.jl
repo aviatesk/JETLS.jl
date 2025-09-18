@@ -329,38 +329,44 @@ struct RequestMessageDispatcher <: MessageDispatcher
 end
 function (dispatcher::RequestMessageDispatcher)(server::Server, @nospecialize msg)
     (; queue, id, cancel_flag) = dispatcher
-    if msg isa CompletionRequest
-        handle_CompletionRequest(server, msg, cancel_flag)
+    if is_cancelled(cancel_flag)
+        send(server,
+            ResponseMessage(;
+                id = msg.id,
+                result = nothing,
+                error = request_cancelled_error()))
+    elseif msg isa CompletionRequest
+        handle_CompletionRequest(server, msg)
     elseif msg isa CompletionResolveRequest
-        handle_CompletionResolveRequest(server, msg, cancel_flag)
+        handle_CompletionResolveRequest(server, msg)
     elseif msg isa SignatureHelpRequest
-        handle_SignatureHelpRequest(server, msg, cancel_flag)
+        handle_SignatureHelpRequest(server, msg)
     elseif msg isa DefinitionRequest
-        handle_DefinitionRequest(server, msg, cancel_flag)
+        handle_DefinitionRequest(server, msg)
     elseif msg isa HoverRequest
-        handle_HoverRequest(server, msg, cancel_flag)
+        handle_HoverRequest(server, msg)
     elseif msg isa DocumentHighlightRequest
-        handle_DocumentHighlightRequest(server, msg, cancel_flag)
+        handle_DocumentHighlightRequest(server, msg)
     elseif msg isa DocumentDiagnosticRequest
-        handle_DocumentDiagnosticRequest(server, msg, cancel_flag)
+        handle_DocumentDiagnosticRequest(server, msg)
     elseif msg isa WorkspaceDiagnosticRequest
         @assert false "workspace/diagnostic should not be enabled"
     elseif msg isa CodeLensRequest
-        handle_CodeLensRequest(server, msg, cancel_flag)
+        handle_CodeLensRequest(server, msg)
     elseif msg isa CodeActionRequest
-        handle_CodeActionRequest(server, msg, cancel_flag)
+        handle_CodeActionRequest(server, msg)
     elseif msg isa ExecuteCommandRequest
-        handle_ExecuteCommandRequest(server, msg, cancel_flag)
+        handle_ExecuteCommandRequest(server, msg)
     elseif msg isa InlayHintRequest
-        handle_InlayHintRequest(server, msg, cancel_flag)
+        handle_InlayHintRequest(server, msg)
     elseif msg isa DocumentFormattingRequest
         handle_DocumentFormattingRequest(server, msg, cancel_flag)
     elseif msg isa DocumentRangeFormattingRequest
         handle_DocumentRangeFormattingRequest(server, msg, cancel_flag)
     elseif msg isa RenameRequest
-        handle_RenameRequest(server, msg, cancel_flag)
+        handle_RenameRequest(server, msg)
     elseif msg isa PrepareRenameRequest
-        handle_PrepareRenameRequest(server, msg, cancel_flag)
+        handle_PrepareRenameRequest(server, msg)
     elseif JETLS_DEV_MODE
         if isdefined(msg, :method)
             _id = getfield(msg, :method)

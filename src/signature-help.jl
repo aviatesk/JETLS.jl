@@ -467,14 +467,7 @@ end
 `textDocument/signatureHelp` is requested when one of the negotiated trigger characters is typed.
 Some clients, e.g. Eglot (emacs), requests it more frequently.
 """
-function handle_SignatureHelpRequest(server::Server, msg::SignatureHelpRequest, cancel_flag::CancelFlag)
-    if is_cancelled(cancel_flag)
-        return send(server,
-            SignatureHelpResponse(;
-                id = msg.id,
-                result = nothing,
-                error = request_cancelled_error()))
-    end
+function handle_SignatureHelpRequest(server::Server, msg::SignatureHelpRequest)
     state = server.state
     uri = msg.params.textDocument.uri
     fi = @something get_file_info(state, uri) begin

@@ -21,14 +21,7 @@ end
 #     method = CODE_LENS_REGISTRATION_METHOD))
 # register(currently_running, code_lens_registration())
 
-function handle_CodeLensRequest(server::Server, msg::CodeLensRequest, cancel_flag::CancelFlag)
-    if is_cancelled(cancel_flag)
-        return send(server,
-            CodeLensResponse(;
-                id = msg.id,
-                result = nothing,
-                error = request_cancelled_error()))
-    end
+function handle_CodeLensRequest(server::Server, msg::CodeLensRequest)
     uri = msg.params.textDocument.uri
     fi = @something get_file_info(server.state, uri) begin
         return send(server,

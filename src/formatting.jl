@@ -60,13 +60,6 @@ document_text(fi::FileInfo) = JS.sourcetext(fi.parsed_stream)
 document_range(fi::FileInfo) = jsobj_to_range(fi.parsed_stream, fi)
 
 function handle_DocumentFormattingRequest(server::Server, msg::DocumentFormattingRequest, cancel_flag::CancelFlag)
-    if is_cancelled(cancel_flag)
-        return send(server,
-            DocumentFormattingResponse(;
-                id = msg.id,
-                result = nothing,
-                error = request_cancelled_error()))
-    end
     uri = msg.params.textDocument.uri
 
     workDoneToken = msg.params.workDoneToken
@@ -136,13 +129,6 @@ function format_result(state::ServerState, uri::URI)
 end
 
 function handle_DocumentRangeFormattingRequest(server::Server, msg::DocumentRangeFormattingRequest, cancel_flag::CancelFlag)
-    if is_cancelled(cancel_flag)
-        return send(server,
-            DocumentRangeFormattingResponse(;
-                id = msg.id,
-                result = nothing,
-                error = request_cancelled_error()))
-    end
     uri = msg.params.textDocument.uri
     range = msg.params.range
 

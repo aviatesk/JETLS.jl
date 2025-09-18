@@ -61,14 +61,7 @@ LSP.LocationLink(loc::Location, originSelectionRange::Range) =
         targetSelectionRange = loc.range,
         originSelectionRange)
 
-function handle_DefinitionRequest(server::Server, msg::DefinitionRequest, cancel_flag::CancelFlag)
-    if is_cancelled(cancel_flag)
-        return send(server,
-            DefinitionResponse(;
-                id = msg.id,
-                result = nothing,
-                error = request_cancelled_error()))
-    end
+function handle_DefinitionRequest(server::Server, msg::DefinitionRequest)
     origin_position = msg.params.position
     uri = msg.params.textDocument.uri
 

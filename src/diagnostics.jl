@@ -417,14 +417,7 @@ end
 #     method = DIAGNOSTIC_REGISTRATION_METHOD))
 # register(currently_running, diagnostic_registration())
 
-function handle_DocumentDiagnosticRequest(server::Server, msg::DocumentDiagnosticRequest, cancel_flag::CancelFlag)
-    if is_cancelled(cancel_flag)
-        return send(server,
-            DocumentDiagnosticResponse(;
-                id = msg.id,
-                result = nothing,
-                error = request_cancelled_error()))
-    end
+function handle_DocumentDiagnosticRequest(server::Server, msg::DocumentDiagnosticRequest)
     uri = msg.params.textDocument.uri
 
     # This `previousResultId` calculation is mostly meaningless, but it might help the

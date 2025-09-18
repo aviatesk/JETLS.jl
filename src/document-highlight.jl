@@ -23,14 +23,7 @@ end
 
 # TODO Add some syntactic highlight feature?
 
-function handle_DocumentHighlightRequest(server::Server, msg::DocumentHighlightRequest, cancel_flag::CancelFlag)
-    if is_cancelled(cancel_flag)
-        return send(server,
-            DocumentHighlightResponse(;
-                id = msg.id,
-                result = nothing,
-                error = request_cancelled_error()))
-    end
+function handle_DocumentHighlightRequest(server::Server, msg::DocumentHighlightRequest)
     uri = msg.params.textDocument.uri
     pos = msg.params.position
 
