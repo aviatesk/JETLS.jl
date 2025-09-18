@@ -89,14 +89,14 @@ end
 function do_format_with_progress(
         server::Server, uri::URI, msg_id::Union{String,Int}, token::ProgressToken
     )
-    send_progress(server, cancellable_token.token,
+    send_progress(server, token,
         WorkDoneProgressBegin(; title = "Formatting document"))
     completed = false
     try
         do_format(server, uri, msg_id)
         completed = true
     finally
-        send_progress(server, cancellable_token.token,
+        send_progress(server, token,
             WorkDoneProgressEnd(;
                 message = "Document formatting " * (completed ? "completed" : "failed")))
     end
@@ -153,14 +153,14 @@ end
 function do_range_format_with_progress(
         server::Server, uri::URI, range::Range, msg_id::Union{String,Int}, token::ProgressToken
     )
-    send_progress(server, cancellable_token.token,
+    send_progress(server, token,
         WorkDoneProgressBegin(; title = "Formatting document range"))
     completed = false
     try
         do_range_format(server, uri, range, msg_id)
         completed = true
     finally
-        send_progress(server, cancellable_token.token,
+        send_progress(server, token,
             WorkDoneProgressEnd(;
                 message = "Document range formatting " * (completed ? "completed" : "failed")))
     end
