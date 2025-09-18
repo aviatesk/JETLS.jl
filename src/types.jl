@@ -1,33 +1,5 @@
 const SyntaxTree0 = typeof(JS.build_tree(JL.SyntaxTree, JS.parse!(JS.ParseStream(""))))
 
-abstract type ExtraDiagnosticsKey end
-to_uri(key::ExtraDiagnosticsKey) = to_uri_impl(key)::URI
-@eval to_key(key::ExtraDiagnosticsKey) = hash(key, $(rand(UInt)))
-
-struct TestsetDiagnosticsKey <: ExtraDiagnosticsKey
-    uri::URI
-    testset_name::String
-    testset_index::Int
-end
-to_uri_impl(key::TestsetDiagnosticsKey) = key.uri
-
-struct TestsetResult
-    result::TestRunnerResult
-    key::TestsetDiagnosticsKey
-end
-
-struct TestsetInfo
-    st0::SyntaxTree0
-    result::TestsetResult
-    TestsetInfo(st0::SyntaxTree0) = new(st0)
-    TestsetInfo(st0::SyntaxTree0, result::TestsetResult) = new(st0, result)
-end
-
-struct TestsetInfos
-    version::Int # document version
-    infos::Vector{TestsetInfo}
-end
-
 struct FileInfo
     version::Int
     parsed_stream::JS.ParseStream
@@ -65,6 +37,34 @@ struct SavedFileInfo
         syntax_node = JS.build_tree(JS.SyntaxNode, parsed_stream; filename)
         new(parsed_stream, syntax_node)
     end
+end
+
+abstract type ExtraDiagnosticsKey end
+to_uri(key::ExtraDiagnosticsKey) = to_uri_impl(key)::URI
+@eval to_key(key::ExtraDiagnosticsKey) = hash(key, $(rand(UInt)))
+
+struct TestsetDiagnosticsKey <: ExtraDiagnosticsKey
+    uri::URI
+    testset_name::String
+    testset_index::Int
+end
+to_uri_impl(key::TestsetDiagnosticsKey) = key.uri
+
+struct TestsetResult
+    result::TestRunnerResult
+    key::TestsetDiagnosticsKey
+end
+
+struct TestsetInfo
+    st0::SyntaxTree0
+    result::TestsetResult
+    TestsetInfo(st0::SyntaxTree0) = new(st0)
+    TestsetInfo(st0::SyntaxTree0, result::TestsetResult) = new(st0, result)
+end
+
+struct TestsetInfos
+    version::Int # document version
+    infos::Vector{TestsetInfo}
 end
 
 entryuri(entry::AnalysisEntry) = entryuri_impl(entry)::URI
