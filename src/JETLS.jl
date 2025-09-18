@@ -48,56 +48,6 @@ const SWStats  = JETLS_DEV_MODE ? AtomicContainers.SWStats : Nothing
 const LWStats  = JETLS_DEV_MODE ? AtomicContainers.LWStats : Nothing
 const CASStats = JETLS_DEV_MODE ? AtomicContainers.CASStats : Nothing
 
-"""
-    @tryinvokelatest f(args...; kwargs...)
-
-Safely invoke a function with the latest method definitions and automatic error handling.
-
-This macro combines the functionality of `@invokelatest` and try-catch error handling,
-providing a robust way to call functions in the JETLS server environment where:
-- Methods that are called from unrevisable loop may be updated by Revise.jl during development
-- Errors should be logged but not crash the server (in non-test mode)
-
-The macro's behavior depends on the JETLS execution mode:
-- `JETLS_DEV_MODE=true`: Wraps the call with `@invokelatest` to ensure Revise.jl
-  changes are reflected without restarting the server
-- `JETLS_DEV_MODE=false`: Direct function call without `@invokelatest`
-- `JETLS_TEST_MODE=true`: No try-catch wrapping, allowing errors to propagate for testing
-- `JETLS_TEST_MODE=false`: Wraps the call in try-catch to log errors without crashing
-"""
-macro tryinvokelatest(ex)
-    Meta.isexpr(ex, :call) || error("@tryinvokelatest expects :call expresion")
-
-    f, args, kwargs = Base.destructure_callex(__module__, ex)
-    f = esc(f); args = esc.(args); kwargs = esc.(kwargs);
-
-    callex = Expr(:call, f)
-    isempty(kwargs) || push!(callex.args, Expr(:parameters, kwargs...))
-    push!(callex.args, args...)
-    callex = if JETLS_DEV_MODE
-        # `@invokelatest` for allowing changes maded by Revise to be reflected without
-        # terminating the `runserver` loop
-        :(@invokelatest $(callex))
-    else
-        callex
-    end
-
-    JETLS_TEST_MODE && return callex
-
-    arglist = Any[f, args..., kwargs...]
-    callargs = map(1:length(arglist)) do i::Int
-        arg = arglist[i]
-        name = Symbol("argtype", i)
-        Expr(:(=), name, Expr(:call, GlobalRef(Core,:typeof), arg))
-    end
-    return :(try
-        $callex
-    catch err
-        @error "@tryinvokelatest failed with" $(callargs...)
-        Base.display_error(stderr, err, catch_backtrace())
-    end)
-end
-
 include("testrunner/testrunner-types.jl")
 include("types.jl")
 
