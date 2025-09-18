@@ -67,6 +67,25 @@ struct TestsetInfos
     infos::Vector{TestsetInfo}
 end
 
+mutable struct CancelFlag
+    @atomic cancelled::Bool
+    # on_cancelled::LWContainer{IdSet{Any}, LWStats} for cancellation callback?
+end
+const DUMMY_CANCEL_FLAG = CancelFlag(false)
+
+function cancel!(cancel_flag::CancelFlag)
+    @atomic :release cancel_flag.cancelled = true
+end
+
+is_cancelled(cancel_flag::CancelFlag) = @atomic :acquire cancel_flag.cancelled
+
+struct CancellableToken
+    token::ProgressToken
+    cancel_flag::CancelFlag
+end
+
+const CurrentlyHandled = Dict{Union{Int,String}, CancelFlag}
+
 entryuri(entry::AnalysisEntry) = entryuri_impl(entry)::URI
 entryenvpath(entry::AnalysisEntry) = entryenvpath_impl(entry)::Union{Nothing,String}
 entrykind(entry::AnalysisEntry) = entrykind_impl(entry)::String
@@ -144,7 +163,7 @@ struct AnalysisRequest
     entry::AnalysisEntry
     uri::URI
     generation::Int
-    token::Union{Nothing,ProgressToken}
+    cancellable_token::Union{Nothing,CancellableToken}
     notify::Bool
     prev_analysis_result::Union{Nothing,AnalysisResult}
     completion::Channel{Nothing}
@@ -152,12 +171,12 @@ struct AnalysisRequest
             entry::AnalysisEntry,
             uri::URI,
             generation::Int,
-            token::Union{Nothing,ProgressToken},
+            cancellable_token::Union{Nothing,CancellableToken},
             notify::Bool,
             prev_analysis_result::Union{Nothing,AnalysisResult},
             completion::Channel{Nothing} = Channel{Nothing}(1)
         )
-        return new(entry, uri, generation, token, notify, prev_analysis_result, completion)
+        return new(entry, uri, generation, cancellable_token, notify, prev_analysis_result, completion)
     end
 end
 
@@ -351,24 +370,6 @@ const CompletionResolverInfo = CASContainer{Union{Nothing,Tuple{Module,LSPostPro
 
 # Type aliases for concurrent updates using LWContainer (non-retriable operations)
 const ConfigManager = LWContainer{ConfigManagerData, LWStats}
-
-mutable struct CancelFlag
-    @atomic cancelled::Bool
-    # on_cancelled::LWContainer{IdSet{Any}, LWStats} for cancellation callback?
-end
-const CurrentlyHandled = Dict{Union{Int,String}, CancelFlag}
-const DUMMY_CANCEL_FLAG = CancelFlag(false)
-
-function cancel!(cancel_flag::CancelFlag)
-    @atomic :release cancel_flag.cancelled = true
-end
-
-is_cancelled(cancel_flag::CancelFlag) = @atomic :acquire cancel_flag.cancelled
-
-struct CancellableToken
-    token::ProgressToken
-    cancel_flag::CancelFlag
-end
 
 mutable struct ServerState
     const file_cache::FileCache # syntactic analysis cache (synced with `textDocument/didChange`)

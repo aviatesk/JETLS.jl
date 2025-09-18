@@ -6,7 +6,7 @@ using JuliaSyntax: JuliaSyntax as JS
 using JET: CC, JET
 using ..JETLS:
     AnalysisRequest, SavedFileInfo, Server, JETLS_DEV_MODE,
-    get_saved_file_info, yield_to_endpoint, send_progress
+    get_saved_file_info, is_cancelled, send_progress, yield_to_endpoint
 using ..JETLS.URIs2
 using ..JETLS.LSP
 using ..JETLS.Analyzer
@@ -57,26 +57,35 @@ function JET.analyze_from_definitions!(interp::LSInterpreter, config::JET.Toplev
     res = JET.InterpretationState(interp).res
     n = length(res.toplevel_signatures)
     n == 0 && return
-    next_interval = interval = 10 ^ max(round(Int, log10(n)) - 1, 0)
-    token = interp.request.token
-    if token !== nothing
-        send_progress(interp.server, token,
+    cancellable_token = interp.request.cancellable_token
+    if cancellable_token !== nothing
+        if is_cancelled(cancellable_token.cancel_flag)
+            return
+        end
+        send_progress(interp.server, cancellable_token.token,
             WorkDoneProgressReport(;
                 cancellable = true,
                 message = "0 / $n [signature analysis]",
                 percentage = 50))
         yield_to_endpoint()
     end
+    next_interval = interval = 10 ^ max(round(Int, log10(n)) - 1, 0)
+    all_reports = JET.InferenceErrorReport[]
     for i = 1:n
-        if token !== nothing && i == next_interval
-            percentage = compute_percentage(i, n, 50) + 50
-            send_progress(interp.server, token,
-                WorkDoneProgressReport(;
-                    cancellable = true,
-                    message = "$i / $n [signature analysis]",
-                    percentage))
-            yield_to_endpoint(0.01)
-            next_interval += interval
+        if cancellable_token !== nothing
+            if is_cancelled(cancellable_token.cancel_flag)
+                return
+            end
+            if i == next_interval
+                percentage = compute_percentage(i, n, 50) + 50
+                send_progress(interp.server, cancellable_token.token,
+                    WorkDoneProgressReport(;
+                        cancellable = true,
+                        message = "$i / $n [signature analysis]",
+                        percentage))
+                yield_to_endpoint(0.01)
+                next_interval += interval
+            end
         end
         tt = res.toplevel_signatures[i]
         match = Base._which(tt;
@@ -90,8 +99,7 @@ function JET.analyze_from_definitions!(interp::LSInterpreter, config::JET.Toplev
              match.method.name === entrypoint))
             analyzer, result = JET.analyze_method_signature!(analyzer,
                 match.method, match.spec_types, match.sparams)
-            reports = JET.get_reports(analyzer, result)
-            append!(res.inference_error_reports, reports)
+            append!(all_reports, JET.get_reports(analyzer, result))
         else
             # something went wrong
             if JETLS_DEV_MODE
@@ -99,13 +107,14 @@ function JET.analyze_from_definitions!(interp::LSInterpreter, config::JET.Toplev
             end
         end
     end
+    append!(res.inference_error_reports, all_reports)
 end
 
 function JET.virtual_process!(interp::LSInterpreter,
                               x::Union{AbstractString,JS.SyntaxNode},
                               overrideex::Union{Nothing,Expr})
-    token = interp.request.token
-    if token !== nothing
+    cancellable_token = interp.request.cancellable_token
+    if cancellable_token !== nothing
         filename = JET.InterpretationState(interp).filename
         shortpath = let state = interp.server.state
             isdefined(state, :root_path) ? relpath(filename, state.root_path) : basename(filename)
@@ -115,7 +124,7 @@ function JET.virtual_process!(interp::LSInterpreter,
             iszero(n_files) ? 0 : compute_percentage(interp.counter[], n_files,
                 JET.InterpretationState(interp).config.analyze_from_definitions ? 50 : 100)
         end
-        send_progress(interp.server, token,
+        send_progress(interp.server, cancellable_token.token,
             WorkDoneProgressReport(;
                 cancellable = true,
                 message = shortpath * " [file analysis]",

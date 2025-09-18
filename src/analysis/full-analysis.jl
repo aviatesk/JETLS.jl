@@ -43,20 +43,20 @@ function request_analysis_on_save!(server::Server, uri::URI)
 end
 
 function handle_request_analysis_response(
-        server::Server, ::Dict{Symbol,Any}, request_caller::RequestAnalysisCaller,
-        cancel_flag::CancelFlag
+        server::Server, request_caller::RequestAnalysisCaller, cancel_flag::CancelFlag
     )
     (; uri, onsave, token) = request_caller
-    request_analysis!(server, uri; onsave, token, cancel_flag)
+    cancellable_token = CancellableToken(token, cancel_flag)
+    # Each response message handler needs to be written synchronously, so we use `wait=true`
+    request_analysis!(server, uri; cancellable_token, onsave, wait=true)
 end
 
 function request_analysis!(
         server::Server, uri::URI;
+        cancellable_token::Union{Nothing,CancellableToken} = nothing,
         onsave::Bool = false,
-        token::Union{Nothing,ProgressToken} = nothing,
-        cancel_flag::CancelFlag = CancelFlag(false),
+        wait::Bool = false,
         notify::Bool = true, # used by tests
-        wait::Bool = false,  # used by tests
     )
     manager = server.state.analysis_manager
     analysis_info = get_analysis_info(server.state.analysis_manager, uri)
@@ -94,7 +94,7 @@ function request_analysis!(
 
     completion = Channel{Nothing}(1)
     request = AnalysisRequest(
-        entry, uri, generation, token, notify, prev_analysis_result, completion)
+        entry, uri, generation, cancellable_token, notify, prev_analysis_result, completion)
 
     # Check if already analyzing and handle pending requests
     should_queue = store!(manager.pending_analyses) do analyses
@@ -152,50 +152,51 @@ end
 function analysis_worker(server::Server)
     # Note: Currently single worker, but designed for future multi-worker scaling.
     # When multiple workers exist, the per-entry serialization ensures correctness.
+    while true
+        request = take!(server.state.analysis_manager.queue)
+        @tryinvokelatest resolve_analysis_request(server, request)
+        GC.safepoint()
+    end
+end
 
+function resolve_analysis_request(server::Server, request::AnalysisRequest)
     manager = server.state.analysis_manager
 
-    while true
-        request = take!(manager.queue)
+    is_staled_request(manager, request) || @goto next_request # skip analysis if the analyzed generation is still latest
 
-        is_staled_request(manager, request) || @goto next_request # skip analysis if the analyzed generation is still latest
+    has_any_parse_errors(server, request) && @goto next_request
 
-        has_any_parse_errors(server, request) && @goto next_request
+    analysis_result = @something try
+        execute_analysis_request(server, request)
+    catch err
+        @error "Error in `execute_analysis_request` for " request
+        Base.display_error(stderr, err, catch_backtrace())
+        nothing
+    end @goto next_request
 
-        analysis_result = @something try
-            execute_analysis_request(server, request)
-        catch err
-            @error "Error in `execute_analysis_request` for " request
-            Base.display_error(stderr, err, catch_backtrace())
-            nothing
-        end @goto next_request
+    update_analysis_cache!(manager, analysis_result)
+    mark_analyzed_generation!(manager, request)
+    request.notify && notify_diagnostics!(server)
 
-        update_analysis_cache!(manager, analysis_result)
-        mark_analyzed_generation!(manager, request)
-        request.notify && notify_diagnostics!(server)
+    @label next_request
 
-        @label next_request
+    put!(request.completion, nothing) # Notify the completion callback
 
-        put!(request.completion, nothing) # Notify the completion callback
-
-        # Check for pending request and re-queue if needed
-        pending_request = store!(manager.pending_analyses) do analyses
-            if haskey(analyses, request.entry)
-                new_analyses = copy(analyses)
-                pending = pop!(new_analyses, request.entry)
-                if pending !== nothing
-                    # Re-mark as analyzing before queueing the pending request
-                    new_analyses[request.entry] = nothing
-                end
-                return new_analyses, pending
+    # Check for pending request and re-queue if needed
+    pending_request = store!(manager.pending_analyses) do analyses
+        if haskey(analyses, request.entry)
+            new_analyses = copy(analyses)
+            pending = pop!(new_analyses, request.entry)
+            if pending !== nothing
+                # Re-mark as analyzing before queueing the pending request
+                new_analyses[request.entry] = nothing
             end
-            return analyses, nothing
+            return new_analyses, pending
         end
-        if pending_request !== nothing
-            put!(manager.queue, pending_request)
-        end
-
-        GC.safepoint()
+        return analyses, nothing
+    end
+    if pending_request !== nothing
+        put!(manager.queue, pending_request)
     end
 end
 
@@ -245,11 +246,11 @@ function mark_analyzed_generation!(manager::AnalysisManager, request::AnalysisRe
 end
 
 function begin_full_analysis_progress(server::Server, request::AnalysisRequest)
-    token = @something request.token return nothing
+    cancellable_token = @something request.cancellable_token return nothing
     filename = uri2filename(entryuri(request.entry))
     pre = isnothing(request.prev_analysis_result) ? "Analyzing" : "Reanalyzing"
     title = "$(pre) $(basename(filename)) [$(entrykind(request.entry))]"
-    send_progress(server, token,
+    send_progress(server, cancellable_token.token,
         WorkDoneProgressBegin(;
             title,
             cancellable = true,
@@ -259,8 +260,8 @@ function begin_full_analysis_progress(server::Server, request::AnalysisRequest)
 end
 
 function end_full_analysis_progress(server::Server, request::AnalysisRequest)
-    token = @something request.token return nothing
-    send_progress(server, token,
+    cancellable_token = @something request.cancellable_token return nothing
+    send_progress(server, cancellable_token.token,
         WorkDoneProgressEnd(; message = "Full analysis finished"))
 end
 
