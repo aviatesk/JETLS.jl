@@ -189,7 +189,7 @@ struct AnalysisManager
 end
 
 abstract type RequestCaller end
-work_done_progress_token(::RequestCaller) = nothing
+cancellable_token(::RequestCaller) = nothing
 
 struct Registered
     id::String
@@ -357,12 +357,18 @@ mutable struct CancelFlag
     # on_cancelled::LWContainer{IdSet{Any}, LWStats} for cancellation callback?
 end
 const CurrentlyHandled = Dict{Union{Int,String}, CancelFlag}
+const DUMMY_CANCEL_FLAG = CancelFlag(false)
 
 function cancel!(cancel_flag::CancelFlag)
     @atomic :release cancel_flag.cancelled = true
 end
 
 is_cancelled(cancel_flag::CancelFlag) = @atomic :acquire cancel_flag.cancelled
+
+struct CancellableToken
+    token::ProgressToken
+    cancel_flag::CancelFlag
+end
 
 mutable struct ServerState
     const file_cache::FileCache # syntactic analysis cache (synced with `textDocument/didChange`)

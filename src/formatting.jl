@@ -8,7 +8,6 @@ struct FormattingProgressCaller <: RequestCaller
     msg_id::Union{String,Int}
     token::ProgressToken
 end
-work_done_progress_token(rc::FormattingProgressCaller) = rc.token
 
 struct RangeFormattingProgressCaller <: RequestCaller
     uri::URI
@@ -16,7 +15,6 @@ struct RangeFormattingProgressCaller <: RequestCaller
     msg_id::Union{String,Int}
     token::ProgressToken
 end
-work_done_progress_token(rc::RangeFormattingProgressCaller) = rc.token
 
 function formatting_options(server::Server)
     return DocumentFormattingOptions(;
@@ -59,12 +57,12 @@ end
 document_text(fi::FileInfo) = JS.sourcetext(fi.parsed_stream)
 document_range(fi::FileInfo) = jsobj_to_range(fi.parsed_stream, fi)
 
-function handle_DocumentFormattingRequest(server::Server, msg::DocumentFormattingRequest, cancel_flag::CancelFlag)
+function handle_DocumentFormattingRequest(server::Server, msg::DocumentFormattingRequest)
     uri = msg.params.textDocument.uri
 
     workDoneToken = msg.params.workDoneToken
     if workDoneToken !== nothing
-        do_format_with_progress(server, uri, msg.id, workDoneToken, cancel_flag)
+        do_format_with_progress(server, uri, msg.id, workDoneToken)
     elseif supports(server, :window, :workDoneProgress)
         id = String(gensym(:WorkDoneProgressCreateRequest_formatting))
         token = String(gensym(:FormattingProgress))
@@ -79,17 +77,17 @@ function handle_DocumentFormattingRequest(server::Server, msg::DocumentFormattin
 end
 
 function handle_formatting_progress_response(
-        server::Server, msg::Dict{Symbol, Any}, request_caller::FormattingProgressCaller, cancel_flag::CancelFlag
+        server::Server, msg::Dict{Symbol, Any}, request_caller::FormattingProgressCaller,
     )
     if handle_response_error(server, msg, "create work done progress")
         return
     end
     (; uri, msg_id, token) = request_caller
-    do_format_with_progress(server, uri, msg_id, token, cancel_flag)
+    do_format_with_progress(server, uri, msg_id, token)
 end
 
 function do_format_with_progress(
-        server::Server, uri::URI, msg_id::Union{String,Int}, token::ProgressToken, ::CancelFlag
+        server::Server, uri::URI, msg_id::Union{String,Int}, token::ProgressToken
     )
     send(server, ProgressNotification(;
         params = ProgressParams(;
@@ -128,13 +126,13 @@ function format_result(state::ServerState, uri::URI)
     return TextEdit[TextEdit(; range = document_range(fi), newText)]
 end
 
-function handle_DocumentRangeFormattingRequest(server::Server, msg::DocumentRangeFormattingRequest, cancel_flag::CancelFlag)
+function handle_DocumentRangeFormattingRequest(server::Server, msg::DocumentRangeFormattingRequest)
     uri = msg.params.textDocument.uri
     range = msg.params.range
 
     workDoneToken = msg.params.workDoneToken
     if workDoneToken !== nothing
-        do_range_format_with_progress(server, uri, range, msg.id, workDoneToken, cancel_flag)
+        do_range_format_with_progress(server, uri, range, msg.id, workDoneToken)
     elseif supports(server, :window, :workDoneProgress)
         id = String(gensym(:WorkDoneProgressCreateRequest_rangeFormatting))
         token = String(gensym(:RangeFormattingProgress))
@@ -149,17 +147,17 @@ function handle_DocumentRangeFormattingRequest(server::Server, msg::DocumentRang
 end
 
 function handle_range_formatting_progress_response(
-        server::Server, msg::Dict{Symbol, Any}, request_caller::RangeFormattingProgressCaller, cancel_flag::CancelFlag
+        server::Server, msg::Dict{Symbol, Any}, request_caller::RangeFormattingProgressCaller
     )
     if handle_response_error(server, msg, "create work done progress")
         return
     end
     (; uri, range, msg_id, token) = request_caller
-    do_range_format_with_progress(server, uri, range, msg_id, token, cancel_flag)
+    do_range_format_with_progress(server, uri, range, msg_id, token)
 end
 
 function do_range_format_with_progress(
-        server::Server, uri::URI, range::Range, msg_id::Union{String,Int}, token::ProgressToken, ::CancelFlag
+        server::Server, uri::URI, range::Range, msg_id::Union{String,Int}, token::ProgressToken
     )
     send(server, ProgressNotification(;
         params = ProgressParams(;

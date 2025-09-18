@@ -247,7 +247,7 @@ end
 struct ConcurrentMessageDispatcher <: MessageDispatcher
     queue::Channel{Any}
 end
-struct HandledId
+struct HandledToken
     id::Union{String, Int}
 end
 function (dispatcher::ConcurrentMessageDispatcher)(server::Server, @nospecialize msg)
@@ -256,7 +256,7 @@ function (dispatcher::ConcurrentMessageDispatcher)(server::Server, @nospecialize
         cancel!(get!(()->CancelFlag(true), server.state.currently_handled, msg.params.id))
     elseif msg isa WorkDoneProgressCancelNotification
         cancel!(get!(()->CancelFlag(true), server.state.currently_handled, msg.params.token))
-    elseif msg isa HandledId
+    elseif msg isa HandledToken
         delete!(server.state.currently_handled, msg.id)
         # @info "Remaining requests" length(server.state.currently_handled) Base.summarysize(server.state.currently_handled)
     # Handle regular messages concurrently
@@ -267,8 +267,8 @@ function (dispatcher::ConcurrentMessageDispatcher)(server::Server, @nospecialize
         if request_caller !== nothing
             # NOTE: The `get!` call to `server.state.currently_handled` MUST happen here
             # to avoid race conditions. Only after getting the flag can we spawn the actual dispatcher.
-            token = work_done_progress_token(request_caller)
-            cancel_flag = isnothing(token) ? CancelFlag(false) :
+            token = cancellable_token(request_caller)
+            cancel_flag = isnothing(token) ? DUMMY_CANCEL_FLAG :
                 get!(()->CancelFlag(false), server.state.currently_handled, token)
             Threads.@spawn :default invoke_dispatcher(ResponseMessageDispatcher(dispatcher.queue, token, cancel_flag, request_caller), server, msg)
         elseif JETLS_DEV_MODE
@@ -309,16 +309,16 @@ function (dispatcher::ResponseMessageDispatcher)(server::Server, msg::Dict{Symbo
     elseif request_caller isa CodeLensRefreshRequestCaller
         handle_code_lens_refresh_response(server, msg, request_caller)
     elseif request_caller isa FormattingProgressCaller
-        handle_formatting_progress_response(server, msg, request_caller, cancel_flag)
+        handle_formatting_progress_response(server, msg, request_caller)
     elseif request_caller isa RangeFormattingProgressCaller
-        handle_range_formatting_progress_response(server, msg, request_caller, cancel_flag)
+        handle_range_formatting_progress_response(server, msg, request_caller)
     elseif request_caller isa RegisterCapabilityRequestCaller || request_caller isa UnregisterCapabilityRequestCaller
         # nothing to do
     else
         error("Unknown request caller type")
     end
-    token = dispatcher.token
-    isnothing(token) || put!(dispatcher.queue, HandledId(token))
+    id = dispatcher.token
+    isnothing(id) || put!(dispatcher.queue, HandledToken(id))
     nothing
 end
 
@@ -360,9 +360,9 @@ function (dispatcher::RequestMessageDispatcher)(server::Server, @nospecialize ms
     elseif msg isa InlayHintRequest
         handle_InlayHintRequest(server, msg)
     elseif msg isa DocumentFormattingRequest
-        handle_DocumentFormattingRequest(server, msg, cancel_flag)
+        handle_DocumentFormattingRequest(server, msg)
     elseif msg isa DocumentRangeFormattingRequest
-        handle_DocumentRangeFormattingRequest(server, msg, cancel_flag)
+        handle_DocumentRangeFormattingRequest(server, msg)
     elseif msg isa RenameRequest
         handle_RenameRequest(server, msg)
     elseif msg isa PrepareRenameRequest
@@ -375,7 +375,7 @@ function (dispatcher::RequestMessageDispatcher)(server::Server, @nospecialize ms
         end
         @warn "[RequestMessageDispatcher] Unhandled message" msg _id=_id maxlog=1
     end
-    put!(queue, HandledId(id))
+    put!(queue, HandledToken(id))
     nothing
 end
 

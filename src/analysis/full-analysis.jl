@@ -16,7 +16,7 @@ struct RequestAnalysisCaller <: RequestCaller
     onsave::Bool
     token::ProgressToken
 end
-work_done_progress_token(rc::RequestAnalysisCaller) = rc.token
+cancellable_token(rc::RequestAnalysisCaller) = rc.token
 
 function request_analysis_on_open!(server::Server, uri::URI)
     if supports(server, :window, :workDoneProgress)

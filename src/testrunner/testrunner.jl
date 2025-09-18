@@ -435,20 +435,23 @@ end
 
 function testrunner_run_testset(
         server::Server, uri::URI, fi::FileInfo, idx::Int, tsn::String, filepath::String;
-        token::Union{Nothing,ProgressToken} = nothing, cancel_flag::CancelFlag = CancelFlag(false)
+        cancellable_token::Union{Nothing,CancellableToken} = nothing
     )
     executable = get_config(server.state.config_manager, "testrunner", "executable")
     if isnothing(Sys.which(executable))
         show_error_message(server, app_notfound_message(
             executable, "testrunner", "executable";
             is_default_setting = executable == "testrunner"))
-        return token !== nothing && end_testrunner_progress(server, token, "TestRunner not installed")
+        if !isnothing(cancellable_token)
+            end_testrunner_progress(server, cancellable_token.token, "TestRunner not installed")
+        end
+        return
     end
 
-    if token !== nothing
+    if !isnothing(cancellable_token)
         send(server, ProgressNotification(;
             params = ProgressParams(;
-                token,
+                token = cancellable_token.token,
                 value = WorkDoneProgressBegin(;
                     cancellable = true,
                     title = "Running tests for $tsn"))))
@@ -456,7 +459,7 @@ function testrunner_run_testset(
 
     local result::String
     try
-        result = _testrunner_run_testset(server, executable, uri, fi, idx, tsn, filepath, cancel_flag)
+        result = _testrunner_run_testset(server, executable, uri, fi, idx, tsn, filepath; cancellable_token)
     catch err
         result = sprint(Base.showerror, err, catch_backtrace())
         @error "Error from testrunner executor" err
@@ -466,8 +469,8 @@ function testrunner_run_testset(
             """)
     finally
         @assert @isdefined(result) "`result` should be defined at this point"
-        if token !== nothing
-            end_testrunner_progress(server, token, result)
+        if !isnothing(cancellable_token)
+            end_testrunner_progress(server, cancellable_token.token, result)
         end
     end
 end
@@ -478,7 +481,8 @@ is_testsetinfo_valid(fi::FileInfo, testsetinfos::TestsetInfos, idx::Int) =
 
 function _testrunner_run_testset(
         server::Server, executable::AbstractString, uri::URI, fi::FileInfo,
-        idx::Int, tsn::String, filepath::String, cancel_flag::CancelFlag
+        idx::Int, tsn::String, filepath::String;
+        cancellable_token::Union{Nothing, CancellableToken} = nothing
     )
     testsetinfos = @something get_testsetinfos(server.state, uri) begin
         show_warning_message(server, """
@@ -502,13 +506,13 @@ function _testrunner_run_testset(
     # Wait for the process with cancellation support
     while true
         process_running(testrunnerproc) || break
-        if is_cancelled(cancel_flag)
+        if !isnothing(cancellable_token) && is_cancelled(cancellable_token.cancel_flag)
             kill(testrunnerproc)
             return "Test execution cancelled by user"
         end
         sleep(0.1)
     end
-    if is_cancelled(cancel_flag)
+    if !isnothing(cancellable_token) && is_cancelled(cancellable_token.cancel_flag)
          return "Test execution cancelled by user"
     end
 
@@ -568,20 +572,23 @@ end
 
 function testrunner_run_testcase(
         server::Server, uri::URI, tcl::Int, tct::String, filepath::String;
-        token::Union{Nothing,ProgressToken} = nothing, cancel_flag::CancelFlag = CancelFlag(false)
+        cancellable_token::Union{Nothing,CancellableToken} = nothing
     )
     executable = get_config(server.state.config_manager, "testrunner", "executable")
     if isnothing(Sys.which(executable))
         show_error_message(server, app_notfound_message(
             executable, "testrunner", "executable";
             is_default_setting = executable == "testrunner"))
-        return token !== nothing && end_testrunner_progress(server, token, "TestRunner not installed")
+        if !isnothing(cancellable_token)
+            end_testrunner_progress(server, cancellable_token.token, "TestRunner not installed")
+        end
+        return
     end
 
-    if token !== nothing
+    if !isnothing(cancellable_token)
         send(server, ProgressNotification(;
             params = ProgressParams(;
-                token,
+                token = cancellable_token.token,
                 value = WorkDoneProgressBegin(;
                     cancellable = true,
                     title = "Running test case $tct at L$tcl"))))
@@ -589,7 +596,7 @@ function testrunner_run_testcase(
 
     local result::String
     try
-        result = _testrunner_run_testcase(server, executable, uri, tcl, tct, filepath, cancel_flag)
+        result = _testrunner_run_testcase(server, executable, uri, tcl, tct, filepath; cancellable_token)
     catch err
         result = sprint(Base.showerror, err, catch_backtrace())
         @error "Error from testrunner executor" err
@@ -599,15 +606,15 @@ function testrunner_run_testcase(
             """)
     finally
         @assert @isdefined(result) "`result` should be defined at this point"
-        if token !== nothing
-            end_testrunner_progress(server, token, result)
+        if !isnothing(cancellable_token)
+            end_testrunner_progress(server, cancellable_token.token, result)
         end
     end
 end
 
 function _testrunner_run_testcase(
-        server::Server, executable::AbstractString, uri::URI, tcl::Int, tct::String, filepath::String,
-        cancel_flag::CancelFlag
+        server::Server, executable::AbstractString, uri::URI, tcl::Int, tct::String, filepath::String;
+        cancellable_token::Union{Nothing,CancellableToken} = nothing
     )
     test_env_path = find_uri_env_path(server.state, uri)
     cmd = testrunner_cmd(executable, filepath, tcl, test_env_path)
@@ -616,13 +623,13 @@ function _testrunner_run_testcase(
     # Wait for the process with cancellation support
     while true
         process_running(testrunnerproc) || break
-        if is_cancelled(cancel_flag)
+        if !isnothing(cancellable_token) && is_cancelled(cancellable_token.cancel_flag)
             kill(testrunnerproc)
             return "Test execution cancelled by user"
         end
         sleep(0.1)
     end
-    if is_cancelled(cancel_flag)
+    if !isnothing(cancellable_token) && is_cancelled(cancellable_token.cancel_flag)
          return "Test execution cancelled by user"
     end
 
@@ -728,7 +735,7 @@ struct TestRunnerTestsetProgressCaller <: RequestCaller
     filepath::String
     token::ProgressToken
 end
-work_done_progress_token(rc::TestRunnerTestsetProgressCaller) = rc.token
+cancellable_token(rc::TestRunnerTestsetProgressCaller) = rc.token
 
 """
     testrunner_run_testset_from_uri(server::Server, uri::URI, idx::Int) -> Union{Nothing, String}
@@ -769,7 +776,8 @@ function handle_testrunner_testset_progress_response(
         return
     end
     (; uri, fi, idx, testset_name, filepath, token) = request_caller
-    testrunner_run_testset(server, uri, fi, idx, testset_name, filepath; token, cancel_flag)
+    cancellable_token = CancellableToken(token, cancel_flag)
+    testrunner_run_testset(server, uri, fi, idx, testset_name, filepath; cancellable_token)
 end
 
 struct TestRunnerTestcaseProgressCaller <: RequestCaller
@@ -779,7 +787,7 @@ struct TestRunnerTestcaseProgressCaller <: RequestCaller
     filepath::String
     token::ProgressToken
 end
-work_done_progress_token(rc::TestRunnerTestcaseProgressCaller) = rc.token
+cancellable_token(rc::TestRunnerTestcaseProgressCaller) = rc.token
 
 function testrunner_run_testcase_from_uri(server::Server, uri::URI, tcl::Int, tct::String)
     fi = @something get_file_info(server.state, uri) begin
@@ -813,7 +821,8 @@ function handle_testrunner_testcase_progress_response(
         return
     end
     (; uri, testcase_line, testcase_text, filepath, token) = request_caller
-    testrunner_run_testcase(server, uri, testcase_line, testcase_text, filepath; token, cancel_flag)
+    cancellable_token = CancellableToken(token, cancel_flag)
+    testrunner_run_testcase(server, uri, testcase_line, testcase_text, filepath; cancellable_token)
 end
 
 """
