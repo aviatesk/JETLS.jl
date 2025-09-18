@@ -371,6 +371,8 @@ const CompletionResolverInfo = CASContainer{Union{Nothing,Tuple{Module,LSPostPro
 # Type aliases for concurrent updates using LWContainer (non-retriable operations)
 const ConfigManager = LWContainer{ConfigManagerData, LWStats}
 
+const HandledHistory = FixedSizeFIFOQueue{Union{Int,String}}
+
 mutable struct ServerState
     const file_cache::FileCache # syntactic analysis cache (synced with `textDocument/didChange`)
     const saved_file_cache::SavedFileCache # syntactic analysis cache (synced with `textDocument/didSave`)
@@ -378,6 +380,7 @@ mutable struct ServerState
     const analysis_manager::AnalysisManager
     const extra_diagnostics::ExtraDiagnostics
     const currently_handled::CurrentlyHandled
+    const handled_history::HandledHistory
     const currently_requested::CurrentlyRequested
     const currently_registered::CurrentlyRegistered
     const config_manager::ConfigManager
@@ -397,6 +400,7 @@ mutable struct ServerState
             #=analysis_manager=# AnalysisManager(#=n_workers=# 1), # TODO multiple workers
             #=extra_diagnostics=# ExtraDiagnostics(ExtraDiagnosticsData()),
             #=currently_handled=# CurrentlyHandled(),
+            #=handled_history=# HandledHistory(128),
             #=currently_requested=# CurrentlyRequested(Base.PersistentDict{String,RequestCaller}()),
             #=currently_registered=# CurrentlyRegistered(Set{Registered}()),
             #=config_manager=# ConfigManager(ConfigManagerData()),

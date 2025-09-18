@@ -43,6 +43,7 @@ Analyzer.LSAnalyzer(args...; kwargs...) = LSAnalyzer(ScriptAnalysisEntry(filepat
 include("analysis/resolver.jl")
 
 include("AtomicContainers/AtomicContainers.jl")
+include("FixedSizeFIFOQueue/FixedSizeFIFOQueue.jl")
 using .AtomicContainers
 const SWStats  = JETLS_DEV_MODE ? AtomicContainers.SWStats : Nothing
 const LWStats  = JETLS_DEV_MODE ? AtomicContainers.LWStats : Nothing
@@ -212,11 +213,6 @@ function handle_sequential_message(server::Server, @nospecialize msg)
     end
 end
 
-# TODO This cancellation handling still has the following cleanup issues not yet implemented:
-# - When a client mistakenly sends a `CancelRequestNotification` for an already processed request,
-#   it will register a dead ID in `currently_handled`. A fixed size FIFO queue to record
-#   already handled message IDs may solve this problem in many cases.
-
 struct ConcurrentMessageHandler
     queue::Channel{Any}
 end
@@ -226,12 +222,20 @@ end
 function (dispatcher::ConcurrentMessageHandler)(server::Server, @nospecialize msg)
     # Handle `currently_handled` processing serially within the concurrent message worker thread
     if msg isa CancelRequestNotification
+        if msg.params.id in server.state.handled_history
+            return # Request was already handled, ignore cancellation
+        end
         cancel!(get!(()->CancelFlag(true), server.state.currently_handled, msg.params.id))
     elseif msg isa WorkDoneProgressCancelNotification
+        if msg.params.token in server.state.handled_history
+            return # Token was already handled, ignore cancellation
+        end
         cancel!(get!(()->CancelFlag(true), server.state.currently_handled, msg.params.token))
     elseif msg isa HandledToken
         delete!(server.state.currently_handled, msg.id)
+        push!(server.state.handled_history, msg.id) # Add to handled history to prevent dead IDs from accumulating
         # @info "Remaining requests" length(server.state.currently_handled) Base.summarysize(server.state.currently_handled)
+        # @info "Handled history" length(server.state.handled_history) Base.summarysize(server.state.handled_history)
     # Handle regular messages concurrently
     elseif msg isa Dict{Symbol,Any} # ResponseMessage or untyped message
         request_caller = let id = get(msg, :id, nothing)
