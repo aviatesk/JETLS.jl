@@ -249,24 +249,19 @@ function begin_full_analysis_progress(server::Server, request::AnalysisRequest)
     filename = uri2filename(entryuri(request.entry))
     pre = isnothing(request.prev_analysis_result) ? "Analyzing" : "Reanalyzing"
     title = "$(pre) $(basename(filename)) [$(entrykind(request.entry))]"
-    send(server, ProgressNotification(;
-        params = ProgressParams(;
-            token,
-            value = WorkDoneProgressBegin(;
-                title,
-                cancellable = true,
-                message = "Full analysis initiated",
-                percentage = 0))))
+    send_progress(server, token,
+        WorkDoneProgressBegin(;
+            title,
+            cancellable = true,
+            message = "Full analysis initiated",
+            percentage = 0))
     yield_to_endpoint()
 end
 
 function end_full_analysis_progress(server::Server, request::AnalysisRequest)
     token = @something request.token return nothing
-    send(server, ProgressNotification(;
-        params = ProgressParams(;
-            token,
-            value = WorkDoneProgressEnd(;
-                message = "Full analysis finished"))))
+    send_progress(server, token,
+        WorkDoneProgressEnd(; message = "Full analysis finished"))
 end
 
 function analyze_parsed_if_exist(server::Server, request::AnalysisRequest, args...)

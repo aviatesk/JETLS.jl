@@ -6,7 +6,7 @@ using JuliaSyntax: JuliaSyntax as JS
 using JET: CC, JET
 using ..JETLS:
     AnalysisRequest, SavedFileInfo, Server, JETLS_DEV_MODE,
-    get_saved_file_info, yield_to_endpoint, send
+    get_saved_file_info, yield_to_endpoint, send_progress
 using ..JETLS.URIs2
 using ..JETLS.LSP
 using ..JETLS.Analyzer
@@ -60,25 +60,21 @@ function JET.analyze_from_definitions!(interp::LSInterpreter, config::JET.Toplev
     next_interval = interval = 10 ^ max(round(Int, log10(n)) - 1, 0)
     token = interp.request.token
     if token !== nothing
-        send(interp.server, ProgressNotification(;
-            params = ProgressParams(;
-                token,
-                value = WorkDoneProgressReport(;
-                    cancellable = true,
-                    message = "0 / $n [signature analysis]",
-                    percentage = 50))))
+        send_progress(interp.server, token,
+            WorkDoneProgressReport(;
+                cancellable = true,
+                message = "0 / $n [signature analysis]",
+                percentage = 50))
         yield_to_endpoint()
     end
     for i = 1:n
         if token !== nothing && i == next_interval
             percentage = compute_percentage(i, n, 50) + 50
-            send(interp.server, ProgressNotification(;
-                params = ProgressParams(;
-                    token,
-                    value = WorkDoneProgressReport(;
-                        cancellable = true,
-                        message = "$i / $n [signature analysis]",
-                        percentage))))
+            send_progress(interp.server, token,
+                WorkDoneProgressReport(;
+                    cancellable = true,
+                    message = "$i / $n [signature analysis]",
+                    percentage))
             yield_to_endpoint(0.01)
             next_interval += interval
         end
@@ -119,13 +115,11 @@ function JET.virtual_process!(interp::LSInterpreter,
             iszero(n_files) ? 0 : compute_percentage(interp.counter[], n_files,
                 JET.InterpretationState(interp).config.analyze_from_definitions ? 50 : 100)
         end
-        send(interp.server, ProgressNotification(;
-            params = ProgressParams(;
-                token,
-                value = WorkDoneProgressReport(;
-                    cancellable = true,
-                    message = shortpath * " [file analysis]",
-                    percentage))))
+        send_progress(interp.server, token,
+            WorkDoneProgressReport(;
+                cancellable = true,
+                message = shortpath * " [file analysis]",
+                percentage))
         yield_to_endpoint()
     end
     res = @invoke JET.virtual_process!(interp::JET.ConcreteInterpreter,

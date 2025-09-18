@@ -443,18 +443,16 @@ function testrunner_run_testset(
             executable, "testrunner", "executable";
             is_default_setting = executable == "testrunner"))
         if !isnothing(cancellable_token)
-            end_testrunner_progress(server, cancellable_token.token, "TestRunner not installed")
+            send_progress(server, cancellable_token.token, WorkDoneProgressEnd(; message = "TestRunner not installed"))
         end
         return
     end
 
     if !isnothing(cancellable_token)
-        send(server, ProgressNotification(;
-            params = ProgressParams(;
-                token = cancellable_token.token,
-                value = WorkDoneProgressBegin(;
-                    cancellable = true,
-                    title = "Running tests for $tsn"))))
+        send_progress(server, cancellable_token.token,
+            WorkDoneProgressBegin(;
+                cancellable = true,
+                title = "Running tests for $tsn"))
     end
 
     local result::String
@@ -470,7 +468,7 @@ function testrunner_run_testset(
     finally
         @assert @isdefined(result) "`result` should be defined at this point"
         if !isnothing(cancellable_token)
-            end_testrunner_progress(server, cancellable_token.token, result)
+            send_progress(server, cancellable_token.token, WorkDoneProgressEnd(; message = result))
         end
     end
 end
@@ -580,18 +578,16 @@ function testrunner_run_testcase(
             executable, "testrunner", "executable";
             is_default_setting = executable == "testrunner"))
         if !isnothing(cancellable_token)
-            end_testrunner_progress(server, cancellable_token.token, "TestRunner not installed")
+            send_progress(server, cancellable_token.token, WorkDoneProgressEnd(; message = "TestRunner not installed"))
         end
         return
     end
 
     if !isnothing(cancellable_token)
-        send(server, ProgressNotification(;
-            params = ProgressParams(;
-                token = cancellable_token.token,
-                value = WorkDoneProgressBegin(;
-                    cancellable = true,
-                    title = "Running test case $tct at L$tcl"))))
+        send_progress(server, cancellable_token.token,
+            WorkDoneProgressBegin(;
+                cancellable = true,
+                title = "Running test case $tct at L$tcl"))
     end
 
     local result::String
@@ -607,7 +603,7 @@ function testrunner_run_testcase(
     finally
         @assert @isdefined(result) "`result` should be defined at this point"
         if !isnothing(cancellable_token)
-            end_testrunner_progress(server, cancellable_token.token, result)
+            send_progress(server, cancellable_token.token, WorkDoneProgressEnd(; message = result))
         end
     end
 end
@@ -662,14 +658,6 @@ function _testrunner_run_testcase(
     show_testrunner_result_in_message(server, result, "$tct", #=request_key=#""; extra_message)
 
     return summary_testrunner_result(result)
-end
-
-function end_testrunner_progress(server::Server, token::ProgressToken, message::String)
-    send(server, ProgressNotification(;
-        params = ProgressParams(;
-            token,
-            value = WorkDoneProgressEnd(;
-                message))))
 end
 
 struct ShowDocumentRequestCaller <: RequestCaller

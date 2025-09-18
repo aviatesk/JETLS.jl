@@ -1035,6 +1035,7 @@ end
 Union type for all work done progress value types.
 """
 const WorkDoneProgressValue = Union{WorkDoneProgressBegin, WorkDoneProgressReport, WorkDoneProgressEnd}
+push!(exports, :WorkDoneProgressValue)
 
 @interface WorkDoneProgressParams begin
     "An optional token that a server can use to report work done progress."
@@ -1043,6 +1044,36 @@ end
 
 @interface WorkDoneProgressOptions begin
     workDoneProgress::Union{Bool, Nothing} = nothing
+end
+
+@interface ProgressParams begin
+    "The progress token provided by the client or server."
+    token::ProgressToken
+
+    "The progress data."
+    value::WorkDoneProgressValue
+end
+
+"""
+The base protocol offers also support to report progress in a generic fashion.
+This mechanism can be used to report any kind of progress including [work done progress](@ref work_done_progress)
+(usually used to report progress in the user interface using a progress bar) and
+[partial result progress](@ref partial_result_progress) to support streaming of results.
+
+Notification:
+- method: `\$/progress`
+- params: `ProgressParams`
+
+Progress is reported against a token.
+The token is different than the request ID which allows to report progress out of band
+and also for notification.
+
+# Tags
+- since – 3.15.0
+"""
+@interface ProgressNotification @extends NotificationMessage begin
+    method::String = "\$/progress"
+    params::ProgressParams
 end
 
 # Partial Result Progress

@@ -89,22 +89,16 @@ end
 function do_format_with_progress(
         server::Server, uri::URI, msg_id::Union{String,Int}, token::ProgressToken
     )
-    send(server, ProgressNotification(;
-        params = ProgressParams(;
-            token,
-            value = WorkDoneProgressBegin(;
-                cancellable = false,
-                title = "Formatting document"))))
+    send_progress(server, cancellable_token.token,
+        WorkDoneProgressBegin(; title = "Formatting document"))
     completed = false
     try
         do_format(server, uri, msg_id)
         completed = true
     finally
-        send(server, ProgressNotification(;
-            params = ProgressParams(;
-                token,
-                value = WorkDoneProgressEnd(;
-                    message = "Document formatting " * (completed ? "completed" : "failed")))))
+        send_progress(server, cancellable_token.token,
+            WorkDoneProgressEnd(;
+                message = "Document formatting " * (completed ? "completed" : "failed")))
     end
 end
 
@@ -159,22 +153,16 @@ end
 function do_range_format_with_progress(
         server::Server, uri::URI, range::Range, msg_id::Union{String,Int}, token::ProgressToken
     )
-    send(server, ProgressNotification(;
-        params = ProgressParams(;
-            token,
-            value = WorkDoneProgressBegin(;
-                cancellable = false,
-                title = "Formatting document range"))))
+    send_progress(server, cancellable_token.token,
+        WorkDoneProgressBegin(; title = "Formatting document range"))
     completed = false
     try
         do_range_format(server, uri, range, msg_id)
         completed = true
     finally
-        send(server, ProgressNotification(;
-            params = ProgressParams(;
-                token,
-                value = WorkDoneProgressEnd(;
-                    message = "Document range formatting " * (completed ? "completed" : "failed")))))
+        send_progress(server, cancellable_token.token,
+            WorkDoneProgressEnd(;
+                message = "Document range formatting " * (completed ? "completed" : "failed")))
     end
 end
 

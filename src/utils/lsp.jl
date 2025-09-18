@@ -196,3 +196,7 @@ function handle_response_error(server::Server, msg::Dict{Symbol,Any}, context::S
     end
     return false
 end
+
+function send_progress(server::Server, token::ProgressToken, value::WorkDoneProgressValue)
+    send(server, ProgressNotification(; params = ProgressParams(; token, value)))
+end
