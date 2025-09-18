@@ -54,6 +54,20 @@ function local_binding_hover_info(fi::FileInfo, uri::URI, definitions::JL.Syntax
     return String(take!(io))
 end
 
+function type_on_hover(fi::FileInfo, uri::URI, st0_top::JL.SyntaxTree, offset::Int, mod::Module)
+    st0 = @something greatest_local(st0_top, offset) return nothing # nothing we can lower
+    target = @something select_inferrable_target(st0, offset) return nothing
+    inferred_tree = @something infer_toplevel_tree(st0, mod) return nothing
+    typ = @something get_type_for_range(inferred_tree, JS.byte_range(target)) return nothing
+    typstr = string(typ)
+    contents = MarkupContent(;
+        kind = MarkupKind.Markdown,
+        value = "`$typstr`")
+    return Hover(;
+        contents,
+        range = jsobj_to_range(target, fi))
+end
+
 function handle_HoverRequest(server::Server, msg::HoverRequest)
     pos = msg.params.position
     uri = msg.params.textDocument.uri
@@ -70,7 +84,7 @@ function handle_HoverRequest(server::Server, msg::HoverRequest)
     offset = xy_to_offset(fi, pos)
     (; mod, analyzer, postprocessor) = get_context_info(server.state, uri, pos)
 
-    local_hover = local_binding_hover(fi, uri, st0_top, offset, mod)
+    local_hover = type_on_hover(fi, uri, st0_top, offset, mod)
     isnothing(local_hover) || return send(server, HoverResponse(;
         id = msg.id,
         result = local_hover))
