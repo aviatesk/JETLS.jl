@@ -34,6 +34,9 @@ function handle_CodeLensRequest(server::Server, msg::CodeLensRequest)
     testsetinfos = get_testsetinfos(server.state, uri)
     isnothing(testsetinfos) ||
         testrunner_code_lenses!(code_lenses, uri, fi, testsetinfos)
+    entrypoints = get_entrypoints(server.state, uri)
+    isnothing(entrypoints) ||
+        report_trim_code_lens!(code_lenses, uri, fi, entrypoints)
     return send(server,
         CodeLensResponse(;
             id = msg.id,

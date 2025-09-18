@@ -67,6 +67,28 @@ struct TestsetInfos
     infos::Vector{TestsetInfo}
 end
 
+struct ReportTrimDiagnosticsKey <: ExtraDiagnosticsKey
+    uri::URI
+end
+to_uri_info_impl(key::ReportTrimDiagnosticsKey) = key.uri
+
+struct ReportTrimInfo
+    result::ReportTrimResult
+    key::ReportTrimDiagnosticsKey
+end
+
+struct Entrypoint
+    st0::SyntaxTree0
+    result::ReportTrimInfo
+    Entrypoint(st0::SyntaxTree0) = new(st0)
+    Entrypoint(st0::SyntaxTree0, result::ReportTrimInfo) = new(st0, result)
+end
+
+struct Entrypoints
+    version::Int # document version
+    infos::Vector{Entrypoint}
+end
+
 entryuri(entry::AnalysisEntry) = entryuri_impl(entry)::URI
 entryenvpath(entry::AnalysisEntry) = entryenvpath_impl(entry)::Union{Nothing,String}
 entrykind(entry::AnalysisEntry) = entrykind_impl(entry)::String
@@ -342,6 +364,7 @@ ConfigManagerData() = ConfigManagerData(ConfigDict(), WatchedConfigFiles())
 const FileCache = SWContainer{Base.PersistentDict{URI,FileInfo}, SWStats}
 const SavedFileCache = SWContainer{Base.PersistentDict{URI,SavedFileInfo}, SWStats}
 const TestsetInfosCache = SWContainer{Base.PersistentDict{URI,TestsetInfos}, SWStats}
+const EntrypointsCache = SWContainer{Base.PersistentDict{URI,Entrypoint}, SWStats}
 
 # Type aliases for concurrent updates using CASContainer (lightweight operations)
 const ExtraDiagnostics = CASContainer{ExtraDiagnosticsData, CASStats}
@@ -374,6 +397,7 @@ mutable struct ServerState
     const file_cache::FileCache # syntactic analysis cache (synced with `textDocument/didChange`)
     const saved_file_cache::SavedFileCache # syntactic analysis cache (synced with `textDocument/didSave`)
     const testsetinfos_cache::TestsetInfosCache
+    const entrypoints_cache::EntrypointsCache
     const analysis_manager::AnalysisManager
     const extra_diagnostics::ExtraDiagnostics
     const currently_handled::CurrentlyHandled
@@ -393,6 +417,7 @@ mutable struct ServerState
             #=file_cache=# FileCache(Base.PersistentDict{URI,FileInfo}()),
             #=saved_file_cache=# SavedFileCache(Base.PersistentDict{URI,SavedFileInfo}()),
             #=testsetinfos_cache=# TestsetInfosCache(Base.PersistentDict{URI,TestsetInfos}()),
+            #=entrypoints_cache=# EntrypointsCache(Base.PersistentDict{URI,Entrypoints}()),
             #=analysis_manager=# AnalysisManager(#=n_workers=# 1), # TODO multiple workers
             #=extra_diagnostics=# ExtraDiagnostics(ExtraDiagnosticsData()),
             #=currently_handled=# CurrentlyHandled(),

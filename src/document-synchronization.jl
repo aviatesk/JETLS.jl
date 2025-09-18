@@ -48,6 +48,7 @@ function handle_DidOpenTextDocumentNotification(server::Server, msg::DidOpenText
     parsed_stream = ParseStream!(textDocument.text)
     fi = cache_file_info!(server.state, uri, textDocument.version, parsed_stream)
     update_testsetinfos!(server, uri, fi)
+    update_entrypoint!(server, uri, fi)
     cache_saved_file_info!(server.state, uri, parsed_stream)
 
     request_analysis_on_open!(server, uri)
@@ -62,6 +63,7 @@ function handle_DidChangeTextDocumentNotification(server::Server, msg::DidChange
     text = last(contentChanges).text
     fi = cache_file_info!(server.state, uri, textDocument.version, text)
     update_testsetinfos!(server, uri, fi)
+    update_entrypoint!(server, uri, fi)
 end
 
 function handle_DidSaveTextDocumentNotification(server::Server, msg::DidSaveTextDocumentNotification)
@@ -98,6 +100,9 @@ function handle_DidCloseTextDocumentNotification(server::Server, msg::DidCloseTe
         Base.delete(cache, uri), nothing
     end
     store!(server.state.testsetinfos_cache) do cache
+        Base.delete(cache, uri), nothing
+    end
+    store!(server.state.entrypoints_cache) do cache
         Base.delete(cache, uri), nothing
     end
     if clear_extra_diagnostics!(server, uri)
