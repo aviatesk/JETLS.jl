@@ -49,6 +49,7 @@ const LWStats  = JETLS_DEV_MODE ? AtomicContainers.LWStats : Nothing
 const CASStats = JETLS_DEV_MODE ? AtomicContainers.CASStats : Nothing
 
 include("testrunner/testrunner-types.jl")
+include("report-trim/report-trim-types.jl")
 include("types.jl")
 
 include("utils/jl_syntax_macros.jl")
@@ -83,6 +84,7 @@ include("formatting.jl")
 include("inlay-hint.jl")
 include("rename.jl")
 include("testrunner/testrunner.jl")
+include("report-trim/report-trim.jl")
 include("did-change-watched-files.jl")
 include("lifecycle.jl")
 
