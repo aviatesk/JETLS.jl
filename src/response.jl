@@ -1,22 +1,4 @@
 """
-    handle_ResponseMessage(server::Server, msg::Dict{Symbol,Any}) -> res::Bool
-
-Handler for `ResponseMessage` sent from the client.
-Note that `msg` is just a `Dict{Symbol,Any}` object because the current implementation of
-JSONRPC.jl  does not convert `ResponseMessage` to LSP objects defined in LSP.jl.
-
-Also, this handler does not handle all `ResponseMessage`s, but only returns `true`
-when the server handles `msg` in some way, and returns `false` in other cases,
-in which case an unhandled message log is output in `handle_message` as a reference
-for developers.
-"""
-function handle_ResponseMessage(server::Server, msg::Dict{Symbol,Any})
-    request_caller = @something poprequest!(server, get(msg, :id, nothing)) return false
-    handle_requested_response(server, msg, request_caller)
-    return true
-end
-
-"""
     handle_response_error(server::Server, msg::Dict{Symbol,Any}, context::String)
 
 Common error handling for response messages. Checks for error field and shows appropriate message.
@@ -31,41 +13,11 @@ function handle_response_error(server::Server, msg::Dict{Symbol,Any}, context::S
     return false
 end
 
-function handle_requested_response(
-        server::Server, msg::Dict{Symbol,Any}, @nospecialize request_caller::RequestCaller
-    )
-    if request_caller isa RequestAnalysisCaller
-        handle_request_analysis_response(server, msg, request_caller)
-    elseif request_caller isa ShowDocumentRequestCaller
-        handle_show_document_response(server, msg, request_caller)
-    elseif request_caller isa SetDocumentContentCaller
-        handle_apply_workspace_edit_response(server, msg, request_caller)
-    elseif request_caller isa TestRunnerMessageRequestCaller2
-        handle_test_runner_message_response2(server, msg, request_caller)
-    elseif request_caller isa TestRunnerMessageRequestCaller4
-        handle_test_runner_message_response4(server, msg, request_caller)
-    elseif request_caller isa TestRunnerTestsetProgressCaller
-        handle_testrunner_testset_progress_response(server, msg, request_caller)
-    elseif request_caller isa TestRunnerTestcaseProgressCaller
-        handle_testrunner_testcase_progress_response(server, msg, request_caller)
-    elseif request_caller isa CodeLensRefreshRequestCaller
-        handle_code_lens_refresh_response(server, msg, request_caller)
-    elseif request_caller isa FormattingProgressCaller
-        handle_formatting_progress_response(server, msg, request_caller)
-    elseif request_caller isa RangeFormattingProgressCaller
-        handle_range_formatting_progress_response(server, msg, request_caller)
-    elseif request_caller isa RegisterCapabilityRequestCaller || request_caller isa UnregisterCapabilityRequestCaller
-        # nothing to do
-    else
-        error("Unknown request caller type")
-    end
-end
-
 function handle_request_analysis_response(
-        server::Server, ::Dict{Symbol,Any}, request_caller::RequestAnalysisCaller
+        server::Server, ::Dict{Symbol,Any}, request_caller::RequestAnalysisCaller, cancel_flag::CancelFlag
     )
     (; uri, onsave, token) = request_caller
-    request_analysis!(server, uri; onsave, token)
+    request_analysis!(server, uri; onsave, token, cancel_flag)
 end
 
 function handle_show_document_response(
@@ -149,24 +101,24 @@ end
 
 function handle_testrunner_testset_progress_response(
         server::Server, msg::Dict{Symbol,Any},
-        request_caller::TestRunnerTestsetProgressCaller
+        request_caller::TestRunnerTestsetProgressCaller, cancel_flag::CancelFlag
     )
     if handle_response_error(server, msg, "create work done progress")
         return
     end
     (; uri, fi, idx, testset_name, filepath, token) = request_caller
-    testrunner_run_testset(server, uri, fi, idx, testset_name, filepath; token)
+    testrunner_run_testset(server, uri, fi, idx, testset_name, filepath; token, cancel_flag)
 end
 
 function handle_testrunner_testcase_progress_response(
         server::Server, msg::Dict{Symbol,Any},
-        request_caller::TestRunnerTestcaseProgressCaller
+        request_caller::TestRunnerTestcaseProgressCaller, cancel_flag::CancelFlag
     )
     if handle_response_error(server, msg, "create work done progress")
         return
     end
     (; uri, testcase_line, testcase_text, filepath, token) = request_caller
-    testrunner_run_testcase(server, uri, testcase_line, testcase_text, filepath; token)
+    testrunner_run_testcase(server, uri, testcase_line, testcase_text, filepath; token, cancel_flag)
 end
 
 function handle_code_lens_refresh_response(
@@ -179,21 +131,21 @@ function handle_code_lens_refresh_response(
 end
 
 function handle_formatting_progress_response(
-        server::Server, msg::Dict{Symbol, Any}, request_caller::FormattingProgressCaller
+        server::Server, msg::Dict{Symbol, Any}, request_caller::FormattingProgressCaller, cancel_flag::CancelFlag
     )
     if handle_response_error(server, msg, "create work done progress")
         return
     end
     (; uri, msg_id, token) = request_caller
-    do_format_with_progress(server, uri, msg_id, token)
+    do_format_with_progress(server, uri, msg_id, token, cancel_flag)
 end
 
 function handle_range_formatting_progress_response(
-        server::Server, msg::Dict{Symbol, Any}, request_caller::RangeFormattingProgressCaller
+        server::Server, msg::Dict{Symbol, Any}, request_caller::RangeFormattingProgressCaller, cancel_flag::CancelFlag
     )
     if handle_response_error(server, msg, "create work done progress")
         return
     end
     (; uri, range, msg_id, token) = request_caller
-    do_range_format_with_progress(server, uri, range, msg_id, token)
+    do_range_format_with_progress(server, uri, range, msg_id, token, cancel_flag)
 end

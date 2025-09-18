@@ -8,6 +8,7 @@ struct FormattingProgressCaller <: RequestCaller
     msg_id::Union{String,Int}
     token::ProgressToken
 end
+work_done_progress_token(rc::FormattingProgressCaller) = rc.token
 
 struct RangeFormattingProgressCaller <: RequestCaller
     uri::URI
@@ -15,6 +16,7 @@ struct RangeFormattingProgressCaller <: RequestCaller
     msg_id::Union{String,Int}
     token::ProgressToken
 end
+work_done_progress_token(rc::RangeFormattingProgressCaller) = rc.token
 
 function formatting_options(server::Server)
     return DocumentFormattingOptions(;
@@ -69,7 +71,7 @@ function handle_DocumentFormattingRequest(server::Server, msg::DocumentFormattin
 
     workDoneToken = msg.params.workDoneToken
     if workDoneToken !== nothing
-        do_format_with_progress(server, uri, msg.id, workDoneToken)
+        do_format_with_progress(server, uri, msg.id, workDoneToken, cancel_flag)
     elseif supports(server, :window, :workDoneProgress)
         id = String(gensym(:WorkDoneProgressCreateRequest_formatting))
         token = String(gensym(:FormattingProgress))
@@ -83,13 +85,15 @@ function handle_DocumentFormattingRequest(server::Server, msg::DocumentFormattin
     return nothing
 end
 
-function do_format_with_progress(server::Server, uri::URI, msg_id::Union{String,Int}, token::ProgressToken)
+function do_format_with_progress(
+        server::Server, uri::URI, msg_id::Union{String,Int}, token::ProgressToken, ::CancelFlag
+    )
     send(server, ProgressNotification(;
         params = ProgressParams(;
             token,
             value = WorkDoneProgressBegin(;
-                title = "Formatting document",
-                cancellable = false))))
+                cancellable = false,
+                title = "Formatting document"))))
     completed = false
     try
         do_format(server, uri, msg_id)
@@ -134,7 +138,7 @@ function handle_DocumentRangeFormattingRequest(server::Server, msg::DocumentRang
 
     workDoneToken = msg.params.workDoneToken
     if workDoneToken !== nothing
-        do_range_format_with_progress(server, uri, range, msg.id, workDoneToken)
+        do_range_format_with_progress(server, uri, range, msg.id, workDoneToken, cancel_flag)
     elseif supports(server, :window, :workDoneProgress)
         id = String(gensym(:WorkDoneProgressCreateRequest_rangeFormatting))
         token = String(gensym(:RangeFormattingProgress))
@@ -148,13 +152,15 @@ function handle_DocumentRangeFormattingRequest(server::Server, msg::DocumentRang
     return nothing
 end
 
-function do_range_format_with_progress(server::Server, uri::URI, range::Range, msg_id::Union{String,Int}, token::ProgressToken)
+function do_range_format_with_progress(
+        server::Server, uri::URI, range::Range, msg_id::Union{String,Int}, token::ProgressToken, ::CancelFlag
+    )
     send(server, ProgressNotification(;
         params = ProgressParams(;
             token,
             value = WorkDoneProgressBegin(;
-                title = "Formatting document range",
-                cancellable = false))))
+                cancellable = false,
+                title = "Formatting document range"))))
     completed = false
     try
         do_range_format(server, uri, range, msg_id)

@@ -64,6 +64,7 @@ function JET.analyze_from_definitions!(interp::LSInterpreter, config::JET.Toplev
             params = ProgressParams(;
                 token,
                 value = WorkDoneProgressReport(;
+                    cancellable = true,
                     message = "0 / $n [signature analysis]",
                     percentage = 50))))
         yield_to_endpoint()
@@ -75,6 +76,7 @@ function JET.analyze_from_definitions!(interp::LSInterpreter, config::JET.Toplev
                 params = ProgressParams(;
                     token,
                     value = WorkDoneProgressReport(;
+                        cancellable = true,
                         message = "$i / $n [signature analysis]",
                         percentage))))
             yield_to_endpoint(0.01)
@@ -121,6 +123,7 @@ function JET.virtual_process!(interp::LSInterpreter,
             params = ProgressParams(;
                 token,
                 value = WorkDoneProgressReport(;
+                    cancellable = true,
                     message = shortpath * " [file analysis]",
                     percentage))))
         yield_to_endpoint()
