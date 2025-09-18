@@ -73,6 +73,7 @@ include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
 end
 
 @testset "local_binding_rename" begin
+    server = JETLS.Server()
     let code = """
         function func(│xx│x│, yyy)
             │pri│ntln│(│xx│x│, yyy)
@@ -85,10 +86,10 @@ end
         furi = filename2uri("Untitled" * @__FILE__)
         for (i, pos) in enumerate(positions)
             if i in (4,5,6) # println, should never be called if client supports rename prepare
-                rename = JETLS.local_binding_rename(furi, fi, pos, @__MODULE__, "zzz")
+                rename = JETLS.local_binding_rename(server, furi, fi, pos, @__MODULE__, "zzz")
                 @test isnothing(rename)
             else
-                (; result, error) = JETLS.local_binding_rename(furi, fi, pos, @__MODULE__, "zzz")
+                (; result, error) = JETLS.local_binding_rename(server, furi, fi, pos, @__MODULE__, "zzz")
                 @test result isa WorkspaceEdit && isnothing(error)
                 for (uri, edits) in result.changes
                     @test furi == uri
@@ -113,15 +114,15 @@ end
         fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
         furi = filename2uri("Untitled" * @__FILE__)
         let
-            (; result, error) = JETLS.local_binding_rename(furi, fi, only(positions), @__MODULE__, "zzz zzz")
+            (; result, error) = JETLS.local_binding_rename(server, furi, fi, only(positions), @__MODULE__, "zzz zzz")
             @test isnothing(result) && error isa ResponseError
         end
         let
-            (; result, error) = JETLS.local_binding_rename(furi, fi, only(positions), @__MODULE__, "42zzz")
+            (; result, error) = JETLS.local_binding_rename(server, furi, fi, only(positions), @__MODULE__, "42zzz")
             @test isnothing(result) && error isa ResponseError
         end
         let
-            (; result, error) = JETLS.local_binding_rename(furi, fi, only(positions), @__MODULE__, "'zzz'")
+            (; result, error) = JETLS.local_binding_rename(server, furi, fi, only(positions), @__MODULE__, "'zzz'")
             @test isnothing(result) && error isa ResponseError
         end
     end
@@ -134,7 +135,7 @@ end
         @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
         furi = filename2uri("Untitled" * @__FILE__)
         for pos in positions
-            (; result, error) = JETLS.local_binding_rename(furi, fi, pos, @__MODULE__, "zzz zzz")
+            (; result, error) = JETLS.local_binding_rename(server, furi, fi, pos, @__MODULE__, "zzz zzz")
             @test result isa WorkspaceEdit && isnothing(error)
             for (uri, edits) in result.changes
                 @test furi == uri
@@ -161,7 +162,7 @@ end
             @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
             furi = filename2uri("Untitled" * @__FILE__)
             for (i, pos) in enumerate(positions)
-                (; result, error) = JETLS.local_binding_rename(furi, fi, pos, @__MODULE__, "SSS")
+                (; result, error) = JETLS.local_binding_rename(server, furi, fi, pos, @__MODULE__, "SSS")
                 @test result isa WorkspaceEdit && isnothing(error)
                 for (uri, edits) in result.changes
                     @test furi == uri
@@ -193,7 +194,7 @@ end
             @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
             furi = filename2uri("Untitled" * @__FILE__)
             for (i, pos) in enumerate(positions)
-                (; result, error) = JETLS.local_binding_rename(furi, fi, pos, @__MODULE__, "yyy")
+                (; result, error) = JETLS.local_binding_rename(server, furi, fi, pos, @__MODULE__, "yyy")
                 @test result isa WorkspaceEdit && isnothing(error)
                 for (uri, edits) in result.changes
                     @test furi == uri

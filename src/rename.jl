@@ -76,12 +76,12 @@ function handle_RenameRequest(server::Server, msg::RenameRequest)
 
     (; mod) = get_context_info(server.state, uri, pos)
     (; result, error) = @something(
-        local_binding_rename(uri, fi, pos, mod, newName),
+        local_binding_rename(server, uri, fi, pos, mod, newName),
         (; result = null, error = nothing))
     return send(server, RenameResponse(; id = msg.id, result, error))
 end
 
-function local_binding_rename(uri::URI, fi::FileInfo, pos::Position, mod::Module, newName::String)
+function local_binding_rename(server::Server, uri::URI, fi::FileInfo, pos::Position, mod::Module, newName::String)
     st0_top = build_syntax_tree(fi)
     offset = xy_to_offset(fi, pos)
 
@@ -115,6 +115,13 @@ function local_binding_rename(uri::URI, fi::FileInfo, pos::Position, mod::Module
         push!(rename_ranges, jsobj_to_range(occurrence.tree, fi))
     end
     edits = TextEdit[TextEdit(; range, newText = newName) for range in rename_ranges]
-    result = WorkspaceEdit(; changes = Dict(uri => edits))
+
+    if supports(server, :workspace, :workspaceEdit, :documentChanges)
+        textDocument = OptionalVersionedTextDocumentIdentifier(; uri, fi.version)
+        result = WorkspaceEdit(; documentChanges = TextDocumentEdit[TextDocumentEdit(; textDocument, edits)])
+    else
+        result = WorkspaceEdit(; changes = Dict(uri => edits))
+    end
+
     return (; result, error = nothing)
 end
