@@ -3,6 +3,7 @@ struct RequestAnalysisCaller <: RequestCaller
     onsave::Bool
     token::ProgressToken
 end
+work_done_progress_token(rc::RequestAnalysisCaller) = rc.token
 
 function ParseStream!(s::Union{AbstractString,Vector{UInt8}})
     stream = JS.ParseStream(s)

@@ -189,6 +189,7 @@ struct AnalysisManager
 end
 
 abstract type RequestCaller end
+work_done_progress_token(::RequestCaller) = nothing
 
 struct Registered
     id::String

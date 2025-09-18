@@ -249,12 +249,28 @@ function (handler::ConcurrentMessageHandler)(server::Server, @nospecialize msg)
     # Handle `currently_handled` processing serially within the concurrent message worker thread
     if msg isa CancelRequestNotification
         cancel!(get!(()->CancelFlag(true), server.state.currently_handled, msg.params.id))
+    elseif msg isa WorkDoneProgressCancelNotification
+        cancel!(get!(()->CancelFlag(true), server.state.currently_handled, msg.params.token))
     elseif msg isa HandledId
         delete!(server.state.currently_handled, msg.id)
         # @info "Remaining requests" length(server.state.currently_handled) Base.summarysize(server.state.currently_handled)
     # Handle regular messages concurrently
     elseif msg isa Dict{Symbol,Any} # ResponseMessage or untyped message
-        Threads.@spawn :default handle_message(ResponseMessageHandler(), server, msg)
+        request_caller = let id = get(msg, :id, nothing)
+            id !== nothing ? poprequest!(server, id) : nothing
+        end
+        if request_caller !== nothing
+            # NOTE: The `get!` call to `server.state.currently_handled` MUST happen here
+            # to avoid race conditions. Only after getting the flag can we spawn the actual handler.
+            token = work_done_progress_token(request_caller)
+            cancel_flag = isnothing(token) ? CancelFlag(false) :
+                get!(()->CancelFlag(false), server.state.currently_handled, token)
+            Threads.@spawn :default handle_message(ResponseMessageHandler(handler.queue, token, cancel_flag, request_caller), server, msg)
+        elseif JETLS_DEV_MODE
+            # Not a response to our request, or untyped message - log if in dev mode
+            _id = get(()->get(msg, :id, nothing), msg, :method)
+            @warn "[ConcurrentMessageHandler] Unhandled message" msg _id=_id maxlog=1
+        end
     elseif isdefined(msg, :id) && (id = msg.id; id isa String || id isa Int)
         cancel_flag = get!(()->CancelFlag(false), server.state.currently_handled, id)
         Threads.@spawn :default handle_message(RequestMessageHandler(handler.queue, id, cancel_flag), server, msg)
@@ -263,14 +279,41 @@ function (handler::ConcurrentMessageHandler)(server::Server, @nospecialize msg)
     end
 end
 
-struct ResponseMessageHandler <: MessageHandler end
-function (::ResponseMessageHandler)(server::Server, msg::Dict{Symbol,Any})
-    if handle_ResponseMessage(server, msg)
-    elseif JETLS_DEV_MODE
-        # Log unhandled `ResponseMessage` or untyped message for reference
-        _id = get(()->get(msg, :id, nothing), msg, :method)
-        @warn "[ResponseMessageHandler] Unhandled message" msg _id=_id maxlog=1
+struct ResponseMessageHandler <: MessageHandler
+    queue::Channel{Any}
+    token::Union{Nothing,ProgressToken}
+    cancel_flag::CancelFlag
+    request_caller::RequestCaller
+end
+function (handler::ResponseMessageHandler)(server::Server, msg::Dict{Symbol,Any})
+    (; cancel_flag, request_caller) = handler
+    if request_caller isa RequestAnalysisCaller
+        handle_request_analysis_response(server, msg, request_caller, cancel_flag)
+    elseif request_caller isa ShowDocumentRequestCaller
+        handle_show_document_response(server, msg, request_caller)
+    elseif request_caller isa SetDocumentContentCaller
+        handle_apply_workspace_edit_response(server, msg, request_caller)
+    elseif request_caller isa TestRunnerMessageRequestCaller2
+        handle_test_runner_message_response2(server, msg, request_caller)
+    elseif request_caller isa TestRunnerMessageRequestCaller4
+        handle_test_runner_message_response4(server, msg, request_caller)
+    elseif request_caller isa TestRunnerTestsetProgressCaller
+        handle_testrunner_testset_progress_response(server, msg, request_caller, cancel_flag)
+    elseif request_caller isa TestRunnerTestcaseProgressCaller
+        handle_testrunner_testcase_progress_response(server, msg, request_caller, cancel_flag)
+    elseif request_caller isa CodeLensRefreshRequestCaller
+        handle_code_lens_refresh_response(server, msg, request_caller)
+    elseif request_caller isa FormattingProgressCaller
+        handle_formatting_progress_response(server, msg, request_caller, cancel_flag)
+    elseif request_caller isa RangeFormattingProgressCaller
+        handle_range_formatting_progress_response(server, msg, request_caller, cancel_flag)
+    elseif request_caller isa RegisterCapabilityRequestCaller || request_caller isa UnregisterCapabilityRequestCaller
+        # nothing to do
+    else
+        error("Unknown request caller type")
     end
+    token = handler.token
+    isnothing(token) || put!(handler.queue, HandledId(token))
     nothing
 end
 

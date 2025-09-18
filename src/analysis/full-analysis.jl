@@ -1,6 +1,11 @@
 function start_analysis_workers!(server::Server)
     for i = 1:length(server.state.analysis_manager.worker_tasks)
-        server.state.analysis_manager.worker_tasks[i] = Threads.@spawn :default analysis_worker(server)
+        server.state.analysis_manager.worker_tasks[i] = Threads.@spawn :default try
+            analysis_worker(server)
+        catch err
+            @error "Critical error happened in analysis worker"
+            Base.display_error(stderr, err, catch_backtrace())
+        end
     end
 end
 
@@ -10,6 +15,7 @@ function request_analysis!(
         server::Server, uri::URI;
         onsave::Bool = false,
         token::Union{Nothing,ProgressToken} = nothing,
+        cancel_flag::CancelFlag = CancelFlag(false),
         notify::Bool = true, # used by tests
         wait::Bool = false,  # used by tests
     )
@@ -209,6 +215,7 @@ function begin_full_analysis_progress(server::Server, request::AnalysisRequest)
             token,
             value = WorkDoneProgressBegin(;
                 title,
+                cancellable = true,
                 message = "Full analysis initiated",
                 percentage = 0))))
     yield_to_endpoint()
