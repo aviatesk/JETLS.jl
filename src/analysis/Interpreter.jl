@@ -5,8 +5,8 @@ export LSInterpreter
 using JuliaSyntax: JuliaSyntax as JS
 using JET: CC, JET
 using ..JETLS:
-    AnalysisRequest, SavedFileInfo, Server, JETLS_DEV_MODE,
-    get_saved_file_info, is_cancelled, send_progress, yield_to_endpoint
+    AnalysisRequest, AnalysisResult, SavedFileInfo, Server, JETLS, JETLS_DEV_MODE,
+    is_cancelled, send_progress, yield_to_endpoint
 using ..JETLS.URIs2
 using ..JETLS.LSP
 using ..JETLS.Analyzer
@@ -51,7 +51,17 @@ function compute_percentage(count, total, max=100)
     return min(round(Int, (count / total) * max), max)
 end
 
+function cache_intermediate_analysis_result!(interp::LSInterpreter)
+    result = JET.JETToplevelResult(interp.analyzer, interp.state.res, "LSInterpreter (intermediate result)", ())
+    intermediate_result = JETLS.new_analysis_result(interp.request, result)
+    JETLS.update_analysis_cache!(interp.server.state.analysis_manager, intermediate_result)
+end
+
 function JET.analyze_from_definitions!(interp::LSInterpreter, config::JET.ToplevelConfig)
+    # Cache intermediate analysis results after file analysis completes
+    # This makes module context information available immediately for LS features
+    cache_intermediate_analysis_result!(interp)
+
     analyzer = JET.ToplevelAbstractAnalyzer(interp, JET.non_toplevel_concretized; refresh_local_cache = false)
     entrypoint = config.analyze_from_definitions
     res = JET.InterpretationState(interp).res
@@ -140,7 +150,7 @@ end
 
 function JET.try_read_file(interp::LSInterpreter, include_context::Module, filename::AbstractString)
     uri = filename2uri(filename)
-    fi = get_saved_file_info(interp.server.state, uri)
+    fi = JETLS.get_saved_file_info(interp.server.state, uri)
     if !isnothing(fi)
         parsed_stream = fi.parsed_stream
         if isempty(parsed_stream.diagnostics)
