@@ -92,6 +92,50 @@ let (pkgcode, positions) = JETLS.get_text_and_positions("""
                 @test raw_res.error.code == ErrorCodes.RequestCancelled
             end
             @test length(server.state.currently_handled) == 0
+
+            # Test dead cancellation request handling (cancelling already completed request)
+            let completed_id = id_counter[] += 1
+                # First, make a normal request that completes successfully
+                (; raw_res) = writereadmsg(
+                    CompletionRequest(;
+                        id = completed_id,
+                        params = CompletionParams(;
+                            textDocument = TextDocumentIdentifier(; uri),
+                            position = pos1)))
+                @test raw_res isa CompletionResponse
+                @test raw_res.id == completed_id
+                @test raw_res.result isa CompletionList
+
+                # The request is now completed and its ID should be in handled_history
+                @test completed_id in server.state.handled_history
+                @test length(server.state.currently_handled) == 0
+
+                # Now send a cancellation for the already completed request
+                # This should be ignored and not create a dead entry in currently_handled
+                writereadmsg(
+                    CancelRequestNotification(;
+                        params = CancelParams(;
+                            id = completed_id));
+                    read = 0)
+
+                # Verify no dead entry was created
+                @test length(server.state.currently_handled) == 0
+                @test completed_id in server.state.handled_history
+
+                # Make another request to ensure server is still functioning normally
+                let new_id = id_counter[] += 1
+                    (; raw_res) = writereadmsg(
+                        CompletionRequest(;
+                            id = new_id,
+                            params = CompletionParams(;
+                                textDocument = TextDocumentIdentifier(; uri),
+                                position = pos1)))
+                    @test raw_res isa CompletionResponse
+                    @test raw_res.id == new_id
+                    @test raw_res.result isa CompletionList
+                end
+            end
+            @test length(server.state.currently_handled) == 0
         end
 
         rootUri = JETLS.URIs2.filepath2uri(pkgpath)
