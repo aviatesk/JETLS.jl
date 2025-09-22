@@ -1,52 +1,63 @@
-'use strict';
+"use strict";
 
-import * as vscode from 'vscode';
+import * as vscode from "vscode";
 
 import {
   LanguageClient,
   LanguageClientOptions,
-  ServerOptions
-} from 'vscode-languageclient/node';
+  ServerOptions,
+} from "vscode-languageclient/node";
 
 let languageClient: LanguageClient;
 let outputChannel: vscode.OutputChannel;
-let traceOutputChannel: vscode.OutputChannel;
 
 function startLanguageServer(context: vscode.ExtensionContext) {
-  const config = vscode.workspace.getConfiguration('JETLSClient');
-  const juliaExecutable = config.get<string>('juliaExecutablePath', 'julia');
+  const config = vscode.workspace.getConfiguration("JETLSClient");
+  const juliaExecutable = config.get<string>("juliaExecutablePath", "julia");
 
-  const serverScript = context.asAbsolutePath('runserver.jl');
-  const serverArgsToRun = ['--startup-file=no', '--history-file=no', '--project=.', '--threads=auto', serverScript];
-  const serverArgsToDebug = ['--startup-file=no', '--history-file=no', '--project=.', '--threads=auto', serverScript, '--debug=yes'];
+  const serverScript = context.asAbsolutePath("runserver.jl");
+  const serverArgsToRun = [
+    "--startup-file=no",
+    "--history-file=no",
+    "--project=.",
+    "--threads=auto",
+    serverScript,
+  ];
+  const serverArgsToDebug = [
+    "--startup-file=no",
+    "--history-file=no",
+    "--project=.",
+    "--threads=auto",
+    serverScript,
+    "--debug=yes",
+  ];
   const serverOptions: ServerOptions = {
     run: { command: juliaExecutable, args: serverArgsToRun },
-    debug: { command: juliaExecutable, args: serverArgsToDebug }
+    debug: { command: juliaExecutable, args: serverArgsToDebug },
   };
 
   const clientOptions: LanguageClientOptions = {
     // documentSelector: [{ scheme: 'file', language: 'julia' }],
     documentSelector: [
       {
-        scheme: 'file',
-        language: 'julia'
+        scheme: "file",
+        language: "julia",
       },
       {
-        scheme: 'untitled',
-        language: 'julia'
-      }
+        scheme: "untitled",
+        language: "julia",
+      },
     ],
     // synchronize: {
     //   // Notify the server about file changes to '.clientrc files contained in the workspace
     //   fileEvents: vscode.workspace.createFileSystemWatcher('**/.clientrc'),
     // },
     outputChannel,
-    traceOutputChannel,
   };
 
   languageClient = new LanguageClient(
-    'JETLSClient',
-    'JETLS Language Server',
+    "JETLSClient",
+    "JETLS Language Server",
     serverOptions,
     clientOptions,
   );
@@ -67,19 +78,20 @@ function restartLanguageServer(context: vscode.ExtensionContext) {
 }
 
 export function activate(context: vscode.ExtensionContext) {
-  context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
-    if (event.affectsConfiguration('JETLSClient.juliaExecutablePath')) {
-      restartLanguageServer(context);
-    };
-  }));
   context.subscriptions.push(
-    vscode.commands.registerCommand('JETLSClient.restartLanguageServer', () => {
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (event.affectsConfiguration("JETLSClient.juliaExecutablePath")) {
+        restartLanguageServer(context);
+      }
+    }),
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand("JETLSClient.restartLanguageServer", () => {
       restartLanguageServer(context);
-    })
+    }),
   );
 
-  outputChannel = vscode.window.createOutputChannel('JETLS Language Server');
-  traceOutputChannel = vscode.window.createOutputChannel('JETLS Language Server (Trace)');
+  outputChannel = vscode.window.createOutputChannel("JETLS Language Server");
 
   startLanguageServer(context);
 }
@@ -91,9 +103,6 @@ export function deactivate() {
   }
   if (outputChannel) {
     outputChannel.dispose();
-  }
-  if (traceOutputChannel) {
-    traceOutputChannel.dispose();
   }
   return Promise.all(promises);
 }
