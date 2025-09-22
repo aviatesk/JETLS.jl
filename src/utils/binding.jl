@@ -357,6 +357,9 @@ function compute_binding_occurrences(
     # The same goes for static parameter bindings
     for (_, idxs) in same_sparam_bindings
         length(idxs) == 1 && continue
+        if !any(i::Int->ctx3.bindings.info[i].kind===:static_parameter, idxs)
+            continue # if this doesn't contain static parameters, ignore it.
+        end
         newoccurrences = union!((occurrences[ctx3.bindings.info[idx]] for idx in idxs)...)
         for idx in idxs
             occurrences[ctx3.bindings.info[idx]] = newoccurrences

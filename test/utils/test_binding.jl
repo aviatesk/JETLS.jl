@@ -758,6 +758,37 @@ ismacro_callback(ismacro) = @test ismacro[]
             end
         end
     end
+
+    @testset "occurrences of local bindings with the same name" begin
+        with_binding_occurrences("""
+            let xxx = rand()
+                if xxx > 0
+                    let xxx = xxx
+                        # println(xxx)
+                    end
+                end
+                println(xxx)
+            end
+            """; ismacro_callback = nomacro_callback) do binding_occurrences
+            binfos = collect(keys(binding_occurrences))
+            idxs = findall(binfo->binfo.name=="xxx", binfos)
+            @test length(idxs) == 2
+            @test binding_occurrences[binfos[idxs[1]]] !== binding_occurrences[binfos[idxs[2]]]
+            @test count(idxs) do idx
+                occurrences = binding_occurrences[binfos[idx]]
+                any(occurrences) do occurrence
+                    occurrence.kind === :use &&
+                    JS.source_line(occurrence.tree) == 7
+                end
+            end == 1
+            @test count(idxs) do idx
+                occurrences = binding_occurrences[binfos[idx]]
+                all(occurrences) do occurrence
+                    occurrence.kind !== :use
+                end
+            end == 1
+        end
+    end
 end
 
 end # module test_binding
