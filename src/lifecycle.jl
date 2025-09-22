@@ -218,6 +218,21 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
             name = "JETLS",
             version = "0.0.0"))
 
+    processId = init_params.processId
+    if !isnothing(processId)
+        Threads.@spawn while true
+            # To handle cases where the client crashes and cannot execute the normal
+            # server shutdown process, check every 60 seconds whether the `processId`
+            # is alive, and if not, put a special message token `SelfShutdownNotification`
+            # into the `endpoint` queue. See `runserver(server::Server)`.
+            sleep(60)
+            if !iszero(@ccall uv_kill(processId::Cint, 0::Cint)::Cint)
+                put!(server.endpoint.in_msg_queue, self_shutdown_token)
+                break
+            end
+        end
+    end
+
     return send(server,
         InitializeResponse(;
             id = msg.id,
