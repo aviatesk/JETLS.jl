@@ -15,7 +15,7 @@ JETLS aims to offer enhanced language features such as type-sensitive
 diagnostics, macro-aware go-to definition and such.
 
 This repository manages JETLS.jl, a Julia package that implements a language
-server, and jetls-client, a sample VSCode extension that serves as a language
+server, and `jetls-client`, a sample VSCode extension that serves as a language
 client for testing JETLS. For information on how to use JETLS with other
 frontends, please refer to the [Other editors](#other-editors) section.
 
@@ -41,7 +41,82 @@ frontends, please refer to the [Other editors](#other-editors) section.
 - In the [Extension Development Host](https://code.visualstudio.com/api/get-started/your-first-extension#:~:text=Then%2C%20inside%20the%20editor%2C%20press%20F5.%20This%20will%20compile%20and%20run%20the%20extension%20in%20a%20new%20Extension%20Development%20Host%20window.)
   instance of VSCode, open a Julia file.
 
+## Communication Channels
+
+JETLS supports multiple communication channels between the client and server.
+Choose based on your environment and requirements:
+
+### `auto` (Default for VSCode)
+The `jetls-client` VSCode extension automatically selects the most appropriate
+channel based on your environment:
+- Local development: `pipe` for maximum safety
+- Remote SSH/WSL: `pipe` (works well in these environments)
+- Dev Containers: `stdio` for compatibility
+
+### `pipe` (Unix Domain Socket / Named Pipe)
+- Advantages: Complete isolation from `stdin`/`stdout`, preventing protocol
+  corruption; fastest for local communication
+- Best for: Local development, Remote SSH, WSL
+- Limitations: Not suitable for cross-container communication
+
+### `socket` (TCP)
+- Advantages: Complete isolation from `stdin`/`stdout`, preventing protocol
+  corruption; works across network boundaries; supports port forwarding
+- Best for: Remote development with port forwarding
+- Limitations: May require firewall configuration; potentially less secure
+  than local alternatives
+
+### `stdio`
+- Advantages: Simplest setup; maximum compatibility; works everywhere
+- Best for: Dev containers; environments where `pipe` doesn't work
+- Limitations: Risk of protocol corruption if any code writes to
+  `stdin`/`stdout`
+
+> [!WARNING]
+> When using `stdio` mode, any `println(stdout, ...)` in your code or dependency
+> packages may corrupt the LSP protocol and break the connection. Prefer `pipe`
+> or `socket` modes when possible.
+
+### VSCode Configuration
+
+```jsonc
+{
+  // Auto-detect (recommended)
+  "jetls-client.communicationChannel": "auto",
+
+  // Or explicitly specify a mode:
+  "jetls-client.communicationChannel": "pipe",   // Safe local development
+  "jetls-client.communicationChannel": "stdio",  // Maximum compatibility
+  "jetls-client.communicationChannel": "socket", // Network communication
+
+  // For socket mode, specify port:
+  "jetls-client.socketPort": 7777  // Or use 0 for auto-assign
+}
+```
+
+### Command-line Usage
+
+When using JETLS from the command line or with other editors:
+
+```bash
+# Standard input/output (default, --stdio can be omitted)
+julia runserver.jl --stdio
+
+# Unix domain socket or Windows named pipe
+julia runserver.jl --pipe=/tmp/jetls.sock
+
+# TCP socket
+julia runserver.jl --socket=7777
+```
+
 ## Other Editors
+
+> [!warning]
+> These setups are basically very minimal and do not necessarily properly utilize
+> the communication channels described above.
+> Many of these setups simply use `stdio` as the communication channel, but as
+> noted above, there are potential risks of breaking LSP connections due to
+> writes to `stdout` that may occur when loading dependency packages.
 
 ### Emacs
 Minimal [Emacs](https://www.gnu.org/software/emacs/)
