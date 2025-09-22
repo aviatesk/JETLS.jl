@@ -120,6 +120,15 @@ for development purposes only, particularly for inspection or dynamic registrati
 """
 global currently_running::Server
 
+struct SelfShutdownNotification end
+"""
+In cases where the client crashes and cannot execute the normal server shutdown,
+this special token is sent from the server itself to its `endpoint`.
+When the server loop receives this token, the server immediately shuts down the server loop,
+allowing the caller side to safely `exit` this Julia process.
+"""
+const self_shutdown_token = SelfShutdownNotification()
+
 runserver(args...) = runserver(Returns(nothing), args...) # no callback specified
 runserver(callback, in::IO, out::IO) = runserver(callback, LSEndpoint(in, out))
 runserver(callback, endpoint::Endpoint) = runserver(Server(callback, endpoint))
@@ -142,6 +151,9 @@ function runserver(server::Server)
                 send(server, ShutdownResponse(; id = msg.id, result = null))
             elseif msg isa ExitNotification
                 exit_code = !shutdown_requested
+                break
+            elseif msg === self_shutdown_token
+                exit_code = 1
                 break
             elseif shutdown_requested
                 send(server, ResponseMessage(;
