@@ -45,6 +45,24 @@
           "type": "string",
           "default": "julia",
           "description": "Path to the Julia executable."
+        },
+        "jetls-client.communicationChannel": {
+          "scope": "resource",
+          "type": "string",
+          "enum": [
+            "auto",
+            "pipe",
+            "stdio",
+            "socket"
+          ],
+          "default": "auto",
+          "description": "Communication channel for the language server. 'auto' (default) selects the best option based on environment, 'pipe' for local development with stdout isolation, 'socket' for network communication, or 'stdio' for maximum compatibility (but risk of stdout pollution)."
+        },
+        "jetls-client.socketPort": {
+          "scope": "resource",
+          "type": "number",
+          "default": 0,
+          "description": "Port number for socket communication (0 = auto-assign). Only used when 'socket' communication channel is used."
         }
       }
     }
