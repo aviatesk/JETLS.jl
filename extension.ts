@@ -1,6 +1,7 @@
 "use strict";
 
 import * as vscode from "vscode";
+import { ExtensionContext, OutputChannel } from "vscode";
 
 import {
   LanguageClient,
@@ -9,10 +10,10 @@ import {
 } from "vscode-languageclient/node";
 
 let languageClient: LanguageClient;
-let outputChannel: vscode.OutputChannel;
+let outputChannel: OutputChannel;
 
-function startLanguageServer(context: vscode.ExtensionContext) {
-  const config = vscode.workspace.getConfiguration("JETLSClient");
+function startLanguageServer(context: ExtensionContext) {
+  const config = vscode.workspace.getConfiguration("jetls-client");
   const juliaExecutable = config.get<string>("juliaExecutablePath", "julia");
 
   const serverScript = context.asAbsolutePath("runserver.jl");
@@ -37,7 +38,6 @@ function startLanguageServer(context: vscode.ExtensionContext) {
   };
 
   const clientOptions: LanguageClientOptions = {
-    // documentSelector: [{ scheme: 'file', language: 'julia' }],
     documentSelector: [
       {
         scheme: "file",
@@ -48,15 +48,11 @@ function startLanguageServer(context: vscode.ExtensionContext) {
         language: "julia",
       },
     ],
-    // synchronize: {
-    //   // Notify the server about file changes to '.clientrc files contained in the workspace
-    //   fileEvents: vscode.workspace.createFileSystemWatcher('**/.clientrc'),
-    // },
     outputChannel,
   };
 
   languageClient = new LanguageClient(
-    "JETLSClient",
+    "jetls-client",
     "JETLS Language Server",
     serverOptions,
     clientOptions,
@@ -65,9 +61,7 @@ function startLanguageServer(context: vscode.ExtensionContext) {
   languageClient.start();
 }
 
-// TODO: "Refresh" the language server when the configuration changes
-
-function restartLanguageServer(context: vscode.ExtensionContext) {
+function restartLanguageServer(context: ExtensionContext) {
   if (languageClient) {
     languageClient.stop().then(() => {
       languageClient.start();
@@ -77,18 +71,21 @@ function restartLanguageServer(context: vscode.ExtensionContext) {
   }
 }
 
-export function activate(context: vscode.ExtensionContext) {
+export function activate(context: ExtensionContext) {
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((event) => {
-      if (event.affectsConfiguration("JETLSClient.juliaExecutablePath")) {
+      if (event.affectsConfiguration("jetls-client.juliaExecutablePath")) {
         restartLanguageServer(context);
       }
     }),
   );
   context.subscriptions.push(
-    vscode.commands.registerCommand("JETLSClient.restartLanguageServer", () => {
-      restartLanguageServer(context);
-    }),
+    vscode.commands.registerCommand(
+      "jetls-client.restartLanguageServer",
+      () => {
+        restartLanguageServer(context);
+      },
+    ),
   );
 
   outputChannel = vscode.window.createOutputChannel("JETLS Language Server");
@@ -96,13 +93,11 @@ export function activate(context: vscode.ExtensionContext) {
   startLanguageServer(context);
 }
 
-export function deactivate() {
-  const promises: Thenable<void>[] = [];
+export async function deactivate() {
   if (languageClient) {
-    promises.push(languageClient.stop());
+    await languageClient.stop();
   }
   if (outputChannel) {
     outputChannel.dispose();
   }
-  return Promise.all(promises);
 }

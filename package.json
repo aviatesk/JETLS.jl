@@ -32,7 +32,7 @@
   "contributes": {
     "commands": [
       {
-        "command": "JETLSClient.restartLanguageServer",
+        "command": "jetls-client.restartLanguageServer",
         "title": "Restart JETLS Language Server"
       }
     ],
@@ -40,7 +40,7 @@
       "type": "object",
       "title": "JETLS configurations",
       "properties": {
-        "JETLSClient.juliaExecutablePath": {
+        "jetls-client.juliaExecutablePath": {
           "scope": "resource",
           "type": "string",
           "default": "julia",

@@ -5,8 +5,8 @@
 
 The goal of this project is to develop a new language server for
 [Julia](https://julialang.org/), currently called "JETLS".
-This language server aims to enhance developer productivity by providing
-advanced static analysis and seamless integration with the Julia runtime.
+JETLS aims to enhance developer productivity by providing advanced static
+analysis and seamless integration with the Julia runtime.
 By leveraging tooling technologies like
 [JET.jl](https://github.com/aviatesk/JET.jl),
 [JuliaSyntax.jl](https://github.com/JuliaLang/JuliaSyntax.jl) and
