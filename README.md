@@ -23,7 +23,7 @@ frontends, please refer to the [Other editors](#other-editors) section.
 
 - VSCode v1.93.0 or higher
 - npm v11.0.0 or higher
-- Julia [`v"1.12.0-beta2"`](https://julialang.org/downloads/#upcoming_release)
+- Julia [`v"1.12.0"`](https://julialang.org/downloads/#current_stable_release)
   or higher
 
 ## Steps
