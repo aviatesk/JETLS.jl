@@ -113,10 +113,11 @@ end
 
 function format_result(state::ServerState, uri::URI)
     fi = @something get_file_info(state, uri) return file_cache_error(uri)
-    executable = get_config(state.config_manager, "formatter", "runic", "executable")
+    setting_path = ("formatter", "runic", "executable")
+    executable = get_config(state.config_manager, setting_path...)
     runic = @something Sys.which(executable) return request_failed_error(
-        app_notfound_message(executable, "formatter", "runic", "executable";
-            is_default_setting = executable == "runic"))
+        app_notfound_message(executable, setting_path...;
+            is_default_setting = executable == access_nested_dict(DEFAULT_CONFIG, setting_path...)))
     newText = @something format_runic(runic, document_text(fi)) begin
         return request_failed_error("Runic formatter returned an error. See server logs for details.")
     end
@@ -180,10 +181,11 @@ end
 
 function range_format_result(state::ServerState, uri::URI, range::Range)
     fi = @something get_file_info(state, uri) return file_cache_error(uri)
-    executable = get_config(state.config_manager, "formatter", "runic", "executable")
+    setting_path = ("formatter", "runic", "executable")
+    executable = get_config(state.config_manager, setting_path...)
     runic = @something Sys.which(executable) return request_failed_error(
-        app_notfound_message(executable, "formatter", "runic", "executable";
-            is_default_setting = executable == "runic"))
+        app_notfound_message(executable, setting_path...;
+            is_default_setting = executable == access_nested_dict(DEFAULT_CONFIG, setting_path...)))
     startline = Int(range.start.line + 1)
     endline = Int(range.var"end".line + 1)
     lines = "$startline:$endline"

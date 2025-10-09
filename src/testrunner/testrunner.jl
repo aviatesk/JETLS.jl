@@ -437,11 +437,12 @@ function testrunner_run_testset(
         server::Server, uri::URI, fi::FileInfo, idx::Int, tsn::String, filepath::String;
         cancellable_token::Union{Nothing,CancellableToken} = nothing
     )
-    executable = get_config(server.state.config_manager, "testrunner", "executable")
+    setting_path = ("testrunner", "executable")
+    executable = get_config(server.state.config_manager, setting_path...)
     if isnothing(Sys.which(executable))
         show_error_message(server, app_notfound_message(
-            executable, "testrunner", "executable";
-            is_default_setting = executable == "testrunner"))
+            executable, setting_path...;
+            is_default_setting = executable == access_nested_dict(DEFAULT_CONFIG, setting_path...)))
         if !isnothing(cancellable_token)
             send_progress(server, cancellable_token.token, WorkDoneProgressEnd(; message = "TestRunner not installed"))
         end
@@ -572,11 +573,12 @@ function testrunner_run_testcase(
         server::Server, uri::URI, tcl::Int, tct::String, filepath::String;
         cancellable_token::Union{Nothing,CancellableToken} = nothing
     )
-    executable = get_config(server.state.config_manager, "testrunner", "executable")
+    setting_path = ("testrunner", "executable")
+    executable = get_config(server.state.config_manager, setting_path...)
     if isnothing(Sys.which(executable))
         show_error_message(server, app_notfound_message(
-            executable, "testrunner", "executable";
-            is_default_setting = executable == "testrunner"))
+            executable, setting_path...;
+            is_default_setting = executable == access_nested_dict(DEFAULT_CONFIG, setting_path...)))
         if !isnothing(cancellable_token)
             send_progress(server, cancellable_token.token, WorkDoneProgressEnd(; message = "TestRunner not installed"))
         end

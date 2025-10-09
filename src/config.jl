@@ -4,11 +4,11 @@ const DEFAULT_CONFIG = ConfigDict(
         "debounce" => 1.0
     ),
     "testrunner" => ConfigDict(
-        "executable" => "testrunner"
+        "executable" => @static Sys.iswindows() ? "testrunner.bat" : "testrunner"
     ),
     "formatter" => ConfigDict(
         "runic" => ConfigDict(
-            "executable" => "runic"
+            "executable" => @static Sys.iswindows() ? "runic.bat" : "runic"
         )
     ),
     "internal" => ConfigDict(
