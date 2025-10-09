@@ -4,6 +4,7 @@ const TESTRUNNER_RUN_TITLE = "▶ Run"
 const TESTRUNNER_RERUN_TITLE = "▶ Rerun"
 const TESTRUNNER_OPEN_LOGS_TITLE = "☰ Open logs"
 const TESTRUNNER_CLEAR_RESULT_TITLE = "✓ Clear result"
+const TESTRUNNER_INSTALLATION_URL = "https://github.com/aviatesk/JETLS.jl#prerequisites"
 
 const TEST_MACROS = [
     "@inferred",
@@ -440,9 +441,13 @@ function testrunner_run_testset(
     setting_path = ("testrunner", "executable")
     executable = get_config(server.state.config_manager, setting_path...)
     if isnothing(Sys.which(executable))
-        show_error_message(server, app_notfound_message(
-            executable, setting_path...;
-            is_default_setting = executable == access_nested_dict(DEFAULT_CONFIG, setting_path...)))
+        default_executable = access_nested_dict(DEFAULT_CONFIG, setting_path...)
+        additional_msg = if executable == default_executable
+            install_instruction_message(executable, TESTRUNNER_INSTALLATION_URL)
+        else
+            check_settings_message(setting_path...)
+        end
+        show_error_message(server, app_notfound_message(executable) * additional_msg)
         if !isnothing(cancellable_token)
             send_progress(server, cancellable_token.token, WorkDoneProgressEnd(; message = "TestRunner not installed"))
         end
@@ -576,9 +581,13 @@ function testrunner_run_testcase(
     setting_path = ("testrunner", "executable")
     executable = get_config(server.state.config_manager, setting_path...)
     if isnothing(Sys.which(executable))
-        show_error_message(server, app_notfound_message(
-            executable, setting_path...;
-            is_default_setting = executable == access_nested_dict(DEFAULT_CONFIG, setting_path...)))
+        default_executable = access_nested_dict(DEFAULT_CONFIG, setting_path...)
+        additional_msg = if executable == default_executable
+            install_instruction_message(executable, TESTRUNNER_INSTALLATION_URL)
+        else
+            check_settings_message(setting_path...)
+        end
+        show_error_message(server, app_notfound_message(executable) * additional_msg)
         if !isnothing(cancellable_token)
             send_progress(server, cancellable_token.token, WorkDoneProgressEnd(; message = "TestRunner not installed"))
         end

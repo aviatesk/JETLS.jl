@@ -193,22 +193,4 @@ function check_settings_message(setting_path::String...)
     """
 end
 
-function app_notfound_message(app::AbstractString, setting_path::String...; is_default_setting::Bool=true)
-    msg = """
-    `$app` executable is not found on the `PATH`.
-    """
-
-    if !isempty(setting_path) && !is_default_setting
-        return msg * check_settings_message(setting_path...)
-    end
-
-    if app == "testrunner"
-        instruction_url = "https://github.com/aviatesk/JETLS.jl#prerequisites"
-    elseif app == "runic"
-        instruction_url = "https://github.com/fredrikekre/Runic.jl#installation"
-    else
-        return msg
-    end
-
-    return msg * install_instruction_message(app, instruction_url)
-end
+app_notfound_message(app::AbstractString) = "`$app` executable is not found on the `PATH`."
