@@ -4,7 +4,12 @@ const DEFAULT_CONFIG = ConfigDict(
         "debounce" => 1.0
     ),
     "testrunner" => ConfigDict(
-        "executable" => "testrunner"
+        "executable" => @static Sys.iswindows() ? "testrunner.bat" : "testrunner"
+    ),
+    "formatter" => ConfigDict(
+        "runic" => ConfigDict(
+            "executable" => @static Sys.iswindows() ? "runic.bat" : "runic"
+        )
     ),
     "internal" => ConfigDict(
         "static_setting" => 0
@@ -17,6 +22,11 @@ const STATIC_CONFIG = ConfigDict(
     ),
     "testrunner" => ConfigDict(
         "executable" => false
+    ),
+    "formatter" => ConfigDict(
+        "runic" => ConfigDict(
+            "executable" => false
+        )
     ),
     "internal" => ConfigDict(
         "static_setting" => true

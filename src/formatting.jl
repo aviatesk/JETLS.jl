@@ -2,6 +2,7 @@ const FORMATTING_REGISTRATION_ID = "jetls-formatting"
 const FORMATTING_REGISTRATION_METHOD = "textDocument/formatting"
 const RANGE_FORMATTING_REGISTRATION_ID = "jetls-rangeFormatting"
 const RANGE_FORMATTING_REGISTRATION_METHOD = "textDocument/rangeFormatting"
+const RUNIC_INSTALLATION_URL = "https://github.com/fredrikekre/Runic.jl#installation"
 
 struct FormattingProgressCaller <: RequestCaller
     uri::URI
@@ -113,7 +114,16 @@ end
 
 function format_result(state::ServerState, uri::URI)
     fi = @something get_file_info(state, uri) return file_cache_error(uri)
-    runic = @something Sys.which("runic") return request_failed_error(app_notfound_message("runic"))
+    setting_path = ("formatter", "runic", "executable")
+    executable = get_config(state.config_manager, setting_path...)
+    default_executable = access_nested_dict(DEFAULT_CONFIG, setting_path...)
+    additional_msg = if executable == default_executable
+        install_instruction_message(executable, RUNIC_INSTALLATION_URL)
+    else
+        check_settings_message(setting_path...)
+    end
+    runic = @something Sys.which(executable) return request_failed_error(
+        app_notfound_message(executable) * additional_msg)
     newText = @something format_runic(runic, document_text(fi)) begin
         return request_failed_error("Runic formatter returned an error. See server logs for details.")
     end
@@ -177,7 +187,16 @@ end
 
 function range_format_result(state::ServerState, uri::URI, range::Range)
     fi = @something get_file_info(state, uri) return file_cache_error(uri)
-    runic = @something Sys.which("runic") return request_failed_error(app_notfound_message("runic"))
+    setting_path = ("formatter", "runic", "executable")
+    executable = get_config(state.config_manager, setting_path...)
+    default_executable = access_nested_dict(DEFAULT_CONFIG, setting_path...)
+    additional_msg = if executable == default_executable
+        install_instruction_message(executable, RUNIC_INSTALLATION_URL)
+    else
+        check_settings_message(setting_path...)
+    end
+    runic = @something Sys.which(executable) return request_failed_error(
+        app_notfound_message(executable) * additional_msg)
     startline = Int(range.start.line + 1)
     endline = Int(range.var"end".line + 1)
     lines = "$startline:$endline"
