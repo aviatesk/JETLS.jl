@@ -6,6 +6,11 @@ const DEFAULT_CONFIG = ConfigDict(
     "testrunner" => ConfigDict(
         "executable" => "testrunner"
     ),
+    "formatter" => ConfigDict(
+        "runic" => ConfigDict(
+            "executable" => "runic"
+        )
+    ),
     "internal" => ConfigDict(
         "static_setting" => 0
     ),
@@ -17,6 +22,11 @@ const STATIC_CONFIG = ConfigDict(
     ),
     "testrunner" => ConfigDict(
         "executable" => false
+    ),
+    "formatter" => ConfigDict(
+        "runic" => ConfigDict(
+            "executable" => false
+        )
     ),
     "internal" => ConfigDict(
         "static_setting" => true

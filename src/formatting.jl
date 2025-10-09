@@ -113,7 +113,10 @@ end
 
 function format_result(state::ServerState, uri::URI)
     fi = @something get_file_info(state, uri) return file_cache_error(uri)
-    runic = @something Sys.which("runic") return request_failed_error(app_notfound_message("runic"))
+    executable = get_config(state.config_manager, "formatter", "runic", "executable")
+    runic = @something Sys.which(executable) return request_failed_error(
+        app_notfound_message(executable, "formatter", "runic", "executable";
+            is_default_setting = executable == "runic"))
     newText = @something format_runic(runic, document_text(fi)) begin
         return request_failed_error("Runic formatter returned an error. See server logs for details.")
     end
@@ -177,7 +180,10 @@ end
 
 function range_format_result(state::ServerState, uri::URI, range::Range)
     fi = @something get_file_info(state, uri) return file_cache_error(uri)
-    runic = @something Sys.which("runic") return request_failed_error(app_notfound_message("runic"))
+    executable = get_config(state.config_manager, "formatter", "runic", "executable")
+    runic = @something Sys.which(executable) return request_failed_error(
+        app_notfound_message(executable, "formatter", "runic", "executable";
+            is_default_setting = executable == "runic"))
     startline = Int(range.start.line + 1)
     endline = Int(range.var"end".line + 1)
     lines = "$startline:$endline"
