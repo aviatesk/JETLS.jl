@@ -1,92 +1,3 @@
-# TODO (later): move this definition to external files
-const DEFAULT_CONFIG = ConfigDict(
-    "full_analysis" => ConfigDict(
-        "debounce" => 1.0
-    ),
-    "testrunner" => ConfigDict(
-        "executable" => @static Sys.iswindows() ? "testrunner.bat" : "testrunner"
-    ),
-    "formatter" => ConfigDict(
-        "runic" => ConfigDict(
-            "executable" => @static Sys.iswindows() ? "runic.bat" : "runic"
-        )
-    ),
-    "internal" => ConfigDict(
-        "static_setting" => 0
-    ),
-)
-
-const STATIC_CONFIG = ConfigDict(
-    "full_analysis" => ConfigDict(
-        "debounce" => false
-    ),
-    "testrunner" => ConfigDict(
-        "executable" => false
-    ),
-    "formatter" => ConfigDict(
-        "runic" => ConfigDict(
-            "executable" => false
-        )
-    ),
-    "internal" => ConfigDict(
-        "static_setting" => true
-    ),
-)
-
-function access_nested_dict(dict::ConfigDict, path::String, rest_path::String...)
-    nextobj = @something get(dict, path, nothing) return nothing
-    if !(nextobj isa ConfigDict)
-        if isempty(rest_path)
-            return nextobj
-        else
-            return nothing
-        end
-    end
-    return access_nested_dict(nextobj, rest_path...)
-end
-
-"""
-    traverse_merge(on_leaf, base::ConfigDict, overlay::ConfigDict) -> merged::ConfigDict
-
-Return a new `ConfigDict` whose key value pairs are merged from `base` and `overlay`.
-
-If a key in `overlay` is a dictionary, it will recursively merge it into the corresponding
-key in `base`, creating new `ConfigDict` instances along the way.
-
-When a value in `overlay` is not a dictionary, the `on_leaf` function is called with:
-- `current_path`: the current path as a vector of strings
-- `v`: the value from `overlay`
-The `on_leaf(current_path, v) -> newv` function should return the value to be stored
-in the result, or `nothing` to skip storing the key.
-"""
-function traverse_merge(
-        on_leaf, base::ConfigDict, overlay::ConfigDict,
-        key_path::Vector{String} = String[]
-    )
-    result = base
-    for (k, v) in overlay
-        current_path = [key_path; k]
-        if v isa ConfigDict
-            base_v = get(base, k, nothing)
-            if base_v isa ConfigDict
-                merged_v = traverse_merge(on_leaf, base_v, v, current_path)
-                result = ConfigDict(result, k => merged_v)
-            else
-                merged_v = traverse_merge(on_leaf, ConfigDict(), v, current_path)
-                result = ConfigDict(result, k => merged_v)
-            end
-        else
-            on_leaf_result = on_leaf(current_path, v)
-            if on_leaf_result !== nothing
-                result = ConfigDict(result, k => on_leaf_result)
-            end
-        end
-    end
-    return result
-end
-
-is_static_setting(key_path::String...) = access_nested_dict(STATIC_CONFIG, key_path...) === true
-
 is_config_file(filepath::AbstractString) = filepath == "__DEFAULT_CONFIG__" || basename(filepath) == ".JETLSConfig.toml"
 
 """
@@ -106,25 +17,33 @@ function Base.lt(::ConfigFileOrder, path1, path2)
     return false # unreachable
 end
 
-function cleanup_empty_dicts(dict::ConfigDict)
-    result = dict
-    for (k, v) in dict
-        if v isa ConfigDict
-            cleaned_v = cleanup_empty_dicts(v)
-            if isempty(cleaned_v)
-                result = Base.delete(result, k)
-            elseif cleaned_v != v
-                result = ConfigDict(result, k => cleaned_v)
+"""
+    notice_difference(on_difference::Function, base::T, overlay::T) -> T
+
+"""
+@generated function notice_difference(on_difference::Function, base::T, overlay::T,
+    path::Vector{Symbol}=Symbol[]) where T
+    exprs = Expr[]
+    for field in fieldnames(T)
+        field_type = fieldtype(T, field)
+        is_leaf = is_leaf_setting(T, field)
+        comparison = quote
+            base_val = getfield(base, $(QuoteNode(field)))
+            overlay_val = getfield(overlay, $(QuoteNode(field)))
+            if base_val != overlay_val
+                if $is_leaf
+                    on_difference(($(QuoteNode(field)),), overlay_val)
+                else
+                    notice_difference(on_difference, base_val, overlay_val, [path; $(QuoteNode(field))])
+                end
             end
         end
+        push!(exprs, comparison)
     end
-    return result
-end
-
-function merge_settings(base::ConfigDict, overlay::ConfigDict)
-    return traverse_merge(base, overlay) do _, v
-        v
-    end |> cleanup_empty_dicts
+    return quote
+        $(exprs...)
+        return overlay
+    end
 end
 
 function get_settings(data::ConfigManagerData)
@@ -135,12 +54,6 @@ function get_settings(data::ConfigManagerData)
     return result
 end
 
-function merge_static_settings(base::ConfigDict, overlay::ConfigDict)
-    return traverse_merge(base, overlay) do path, v
-        is_static_setting(path...) ? v : nothing
-    end |> cleanup_empty_dicts
-end
-
 function get_static_settings(data::ConfigManagerData)
     result = ConfigDict()
     for config in Iterators.reverse(values(data.watched_files))
@@ -149,60 +62,6 @@ function get_static_settings(data::ConfigManagerData)
     return result
 end
 
-"""
-    collect_unmatched_keys(this::ConfigDict, ref::ConfigDict) -> Vector{Vector{String}}
-
-Traverses the keys of `this` and returns a list of key paths that are not present in `ref`.
-Note that this function does *not* perform deep structural comparison for keys whose values are dictionaries.
-
-# Examples
-```julia-repl
-julia> collect_unmatched_keys(
-            ConfigDict("key1" => ConfigDict("key2" => 0, "key3"  => 0, "key4"  => 0)),
-            ConfigDict("key1" => ConfigDict("key2" => 0, "diff1" => 0, "diff2" => 0))
-        )
-2-element Vector{Vector{String}}:
- ["key1", "key3"]
- ["key1", "key4"]
-
-julia> collect_unmatched_keys(
-            ConfigDict("key1" => 0, "key2" => 0),
-            ConfigDict("key1" => 1, "key2" => 1)
-        )
-Vector{String}[]
-
-julia> collect_unmatched_keys(
-           ConfigDict("key1" => ConfigDict("key2" => 0, "key3" => 0)),
-           ConfigDict("diff" => ConfigDict("diff" => 0, "key3" => 0))
-        )
-1-element Vector{Vector{String}}:
- ["key1"]
-```
-"""
-function collect_unmatched_keys(this::ConfigDict, ref::ConfigDict=DEFAULT_CONFIG)
-    unknown_keys = Vector{String}[]
-    collect_unmatched_keys!(unknown_keys, this, ref, String[])
-    return unknown_keys
-end
-
-function collect_unmatched_keys!(
-        unknown_keys::Vector{Vector{String}},
-        this::ConfigDict, ref::ConfigDict, key_path::Vector{String}
-    )
-    for (k, v) in this
-        current_path = [key_path; k]
-        b = get(ref, k, nothing)
-        if b === nothing
-            push!(unknown_keys, current_path)
-        elseif v isa AbstractDict
-            if b isa AbstractDict
-                collect_unmatched_keys!(unknown_keys, v, b, current_path)
-            else
-                push!(unknown_keys, current_path)
-            end
-        end
-    end
-end
 
 """
     get_config(manager::ConfigManager, key_path...)
@@ -211,11 +70,11 @@ Retrieves the current configuration value.
 Among the registered configuration files, fetches the value in order of priority (see `Base.lt(::ConfigFileOrder, path1, path2)`).
 If the key path does not exist in any of the configurations, returns `nothing`.
 """
-function get_config(manager::ConfigManager, key_path::String...)
-    is_static_setting(key_path...) &&
-        return access_nested_dict(load(manager).static_settings, key_path...)
+function get_config(manager::ConfigManager, key_path::Symbol...)
+    is_static_setting(JETLSConfig, key_path...) &&
+        return getobjpath(load(manager).static_settings, key_path...)
     for config in values(load(manager).watched_files)
-        return @something access_nested_dict(config, key_path...) continue
+        return @something getobjpath(config, key_path...) continue
     end
     return nothing
 end
@@ -263,6 +122,7 @@ function load_config!(on_leaf, server::Server, filepath::AbstractString;
             on_leaf(current_config, filepath, v)
             v
         end
+        merged_config::JETLSConfig = Configurations.from_dict(JETLSConfig, merged_config)
         new_watched_files = copy(old_data.watched_files)
         new_watched_files[filepath] = merged_config
         new_data = ConfigManagerData(old_data.static_settings, new_watched_files)
