@@ -27,37 +27,28 @@ function handle_config_file_change!(
 
     if change_type == FileChangeType.Created
         load_config!(server, changed_path) do current_config, path, new_value
-            current_value = access_nested_dict(current_config, path...)
-            if current_value != new_value
-                if is_static_setting(path...)
-                    push!(changed_static_settings, join(path, "."))
-                else
-                    push!(changed_settings, join(path, "."))
-                end
+            if is_static_setting(path...)
+                push!(changed_static_settings, join(path, "."))
+            else
+                push!(changed_settings, join(path, "."))
             end
         end
         kind = "Created"
     elseif change_type == FileChangeType.Changed
         load_config!(server, changed_path; reload=true) do current_config, path, new_value
-            current_value = access_nested_dict(current_config, path...)
-            if current_value != new_value
-                if is_static_setting(path...)
-                    push!(changed_static_settings, join(path, "."))
-                else
-                    push!(changed_settings, join(path, "."))
-                end
+            if is_static_setting(path...)
+                push!(changed_static_settings, join(path, "."))
+            else
+                push!(changed_settings, join(path, "."))
             end
         end
         kind = "Updated"
     elseif change_type == FileChangeType.Deleted
         delete_config!(server.state.config_manager, changed_path) do old_config, path, new_value
-            old_value = access_nested_dict(old_config, path...)
-            if old_value != new_value
-                if is_static_setting(path...)
-                    push!(changed_static_settings, join(path, "."))
-                else
-                    push!(changed_settings, join(path, "."))
-                end
+            if is_static_setting(path...)
+                push!(changed_static_settings, join(path, "."))
+            else
+                push!(changed_settings, join(path, "."))
             end
         end
         kind = "Deleted"

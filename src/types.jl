@@ -1,3 +1,5 @@
+using Configurations
+
 const SyntaxTree0 = typeof(JS.build_tree(JL.SyntaxTree, JS.parse!(JS.ParseStream(""))))
 
 struct FileInfo
@@ -293,13 +295,90 @@ struct LSPostProcessor
 end
 LSPostProcessor() = LSPostProcessor(JET.PostProcessor())
 
-const ConfigDict = Base.PersistentDict{String, Any}
+
+"""
+    is_static_setting(config, field::Symbol) -> Bool
+
+Check if the configuration field is static (requires server restart to take effect).
+"""
+is_static_setting
+
+"""
+    is_leaf_setting(config, field::Symbol) -> Bool
+
+Check if the configuration field is a leaf setting (not a nested configuration).
+"""
+is_leaf_setting
+
+@option struct FullAnalysisConfig
+    debounce::Maybe{Float64}
+    function FullAnalysisConfig(debounce::Float64)
+        debounce >= 0 || throw(ArgumentError("debounce must be non-negative"))
+        new(debounce)
+    end
+end
+
+is_static_setting(::Type{FullAnalysisConfig}, ::Symbol) = false
+is_leaf_setting(::Type{FullAnalysisConfig}, ::Symbol) = true
+default_config(::Type{FullAnalysisConfig}) = FullAnalysisConfig(0.5)
+
+@option struct TestRunnerConfig
+    executable::Maybe{String}
+    function TestRunnerConfig(executable::String)
+        # check existence of executable here?
+        new(executable)
+    end
+end
+
+is_static_setting(::Type{TestRunnerConfig}, ::Symbol) = false
+is_leaf_setting(::Type{TestRunnerConfig}, ::Symbol) = true
+default_config(::Type{TestRunnerConfig}) = TestRunnerConfig(@static Sys.iswindows() ? "testrunner.bat" : "testrunner")
+
+@option struct FormatterSetting
+    executable::Maybe{String}
+    function TestRunnerConfig(executable::String)
+        # check existence of executable here?
+        new(executable)
+    end
+end
+
+is_static_setting(::Type{FormatSetting}, ::Symbol) = false
+is_leaf_setting(::Type{FormatSetting}, ::Symbol) = true
+default_config(::Type{FormatterSetting}) = FormatterSetting(@static Sys.iswindows() ? "runic.bat" : "runic")
+
+# configuration item for test purpose
+@option struct InternalConfig
+    static_setting::Maybe{Int}
+    dynamic_setting::Maybe{Int}
+end
+
+is_static_setting(::Type{InternalConfig}, field::Symbol) = field == :static_setting
+is_leaf_setting(::Type{InternalConfig}, ::Symbol) = true
+default_config(::Type{InternalConfig}) = InternalConfig(0, 0)
+
+@option struct JETLSConfig
+    full_analysis::Maybe{FullAnalysisConfig}
+    testrunner::Maybe{TestRunnerConfig}
+    formatter::Maybe{FormatterSetting}
+    internal::Maybe{InternalConfig}
+end
+
+is_leaf_setting(::Type{JETLSConfig}, ::Symbol) = false
+is_static_setting(path::Symbol...) =
+    is_static_setting(fieldtype(JETLSConfig, path[1]), path[2:end]...)
+
+DEFAULT_CONFIG = JETLSConfig(default_config(FullAnalysisConfig),
+                             default_config(TestRunnerConfig),
+                             default_config(FormatterSetting),
+                             default_config(InternalConfig))
+get_default_config(objepath) = getobjpath(DEFAULT_CONFIG)
+
 
 struct WatchedConfigFiles
     files::Vector{String}
-    configs::Vector{ConfigDict}
+    configs::Vector{JETLSConfig}
 end
-WatchedConfigFiles() = WatchedConfigFiles(String["__DEFAULT_CONFIG__"], ConfigDict[DEFAULT_CONFIG])
+WatchedConfigFiles() = WatchedConfigFiles(String["__DEFAULT_CONFIG__"], [DEFAULT_CONFIG])
 
 Base.copy(watched_files::WatchedConfigFiles) =
     WatchedConfigFiles(copy(watched_files.files), copy(watched_files.configs))
@@ -326,7 +405,7 @@ function Base.delete!(watched_files::WatchedConfigFiles, file::String)
     return watched_files
 end
 
-function Base.setindex!(watched_files::WatchedConfigFiles, config::ConfigDict, file::String)
+function Base.setindex!(watched_files::WatchedConfigFiles, config::JETLSConfig, file::String)
     idx = searchsortedfirst(watched_files.files, file, ConfigFileOrder())
     if 1 <= idx <= length(watched_files.files) && watched_files.files[idx] == file
         watched_files.configs[idx] = config
@@ -352,10 +431,10 @@ end
 struct ConfigFileOrder <: Base.Ordering end
 
 struct ConfigManagerData
-    static_settings::ConfigDict
+    static_settings::JETLSConfig
     watched_files::WatchedConfigFiles
 end
-ConfigManagerData() = ConfigManagerData(ConfigDict(), WatchedConfigFiles())
+ConfigManagerData() = ConfigManagerData(JETLSConfig(), WatchedConfigFiles())
 
 # Type aliases for document-synchronization caches using `SWContainer` (sequential-only updates)
 const FileCache = SWContainer{Base.PersistentDict{URI,FileInfo}, SWStats}

@@ -116,7 +116,7 @@ function format_result(state::ServerState, uri::URI)
     fi = @something get_file_info(state, uri) return file_cache_error(uri)
     setting_path = ("formatter", "runic", "executable")
     executable = get_config(state.config_manager, setting_path...)
-    default_executable = access_nested_dict(DEFAULT_CONFIG, setting_path...)
+    default_executable = get_default_config(setting_path...)
     additional_msg = if executable == default_executable
         install_instruction_message(executable, RUNIC_INSTALLATION_URL)
     else
