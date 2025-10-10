@@ -444,10 +444,10 @@ function testrunner_run_testset(
         server::Server, uri::URI, fi::FileInfo, idx::Int, tsn::String, filepath::String;
         cancellable_token::Union{Nothing,CancellableToken} = nothing
     )
-    setting_path = ("testrunner", "executable")
+    setting_path = (:testrunner, :executable)
     executable = get_config(server.state.config_manager, setting_path...)
     if isnothing(Sys.which(executable))
-        default_executable = access_nested_dict(DEFAULT_CONFIG, setting_path...)
+        default_executable = get_default_config(setting_path...)
         additional_msg = if executable == default_executable
             install_instruction_message(executable, TESTRUNNER_INSTALLATION_URL)
         else
@@ -584,10 +584,10 @@ function testrunner_run_testcase(
         server::Server, uri::URI, tcl::Int, tct::String, filepath::String;
         cancellable_token::Union{Nothing,CancellableToken} = nothing
     )
-    setting_path = ("testrunner", "executable")
+    setting_path = (:testrunner, :executable)
     executable = get_config(server.state.config_manager, setting_path...)
     if isnothing(Sys.which(executable))
-        default_executable = access_nested_dict(DEFAULT_CONFIG, setting_path...)
+        default_executable = get_default_config(setting_path...)
         additional_msg = if executable == default_executable
             install_instruction_message(executable, TESTRUNNER_INSTALLATION_URL)
         else
