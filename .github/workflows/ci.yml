@@ -14,15 +14,15 @@ jobs:
       fail-fast: false # don't stop CI even when one of them fails
       matrix:
         include:
-          # - version: "1" # current stable
-          #   os: ubuntu-latest
-          #   arch: x64
+          - version: "1" # current stable
+            os: ubuntu-latest
+            arch: x64
           - version: "1.12" # minimum version supported
             os: ubuntu-latest
             arch: x64
-          - version: "1.13-nightly" # next release
-            os: ubuntu-latest
-            arch: x64
+          # - version: "1.13-nightly" # next release
+          #   os: ubuntu-latest
+          #   arch: x64
           - version: "nightly" # dev
             os: ubuntu-latest
             arch: x64
@@ -35,9 +35,9 @@ jobs:
           # - version: "1" # x64 windows
           #   os: windows-latest
           #   arch: x64
-          # - version: "1" # x64 macOS
-          #   os: macos-latest
-          #   arch: x64
+          - version: "1" # x64 macOS
+            os: macos-latest
+            arch: x64
     steps:
       - uses: actions/checkout@v4
       - uses: julia-actions/setup-julia@v2
