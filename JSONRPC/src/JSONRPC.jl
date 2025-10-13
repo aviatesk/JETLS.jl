@@ -9,14 +9,19 @@ mutable struct Endpoint
     out_msg_queue::Channel{Any}
     read_task::Task
     write_task::Task
-    @atomic state::Symbol
+    @atomic isopen::Bool
 
     function Endpoint(err_handler, in::IO, out::IO, method_dispatcher)
         in_msg_queue = Channel{Any}(Inf)
         out_msg_queue = Channel{Any}(Inf)
 
+        local endpoint::Endpoint
+
         read_task = Threads.@spawn :interactive try
             while true
+                if @isdefined(endpoint) && !isopen(endpoint)
+                    break
+                end
                 msg = @something readmsg(in, method_dispatcher) break
                 put!(in_msg_queue, msg)
                 GC.safepoint()
@@ -30,9 +35,7 @@ mutable struct Endpoint
                 if isopen(out)
                     writemsg(out, msg)
                 else
-                    # TODO Reconsider at some point whether this should be treated as an error.
-                    @error "Failed to send" msg
-                    break
+                    error(lazy"Output channel has been closed before message serialization: $msg")
                 end
                 GC.safepoint()
             end
@@ -40,7 +43,7 @@ mutable struct Endpoint
             err_handler(#=isread=#false, err, catch_backtrace())
         end
 
-        return new(in_msg_queue, out_msg_queue, read_task, write_task, :open)
+        return endpoint = new(in_msg_queue, out_msg_queue, read_task, write_task, true)
     end
 end
 
@@ -113,13 +116,13 @@ function Base.close(endpoint::Endpoint)
     # the socket, which we don't want to do
     # fetch(endpoint.read_task)
     fetch(endpoint.write_task)
-    @atomic :release endpoint.state = :closed
+    @atomic :release endpoint.isopen = false
     return endpoint
 end
-function check_dead_endpoint!(endpoint::Endpoint)
-    state = @atomic :acquire endpoint.state
-    state === :open || error("Endpoint is $state")
-end
+
+Base.isopen(endpoint::Endpoint) = @atomic :acquire endpoint.isopen
+
+check_dead_endpoint!(endpoint::Endpoint) = isopen(endpoint) || error("Endpoint is closed")
 
 function Base.flush(endpoint::Endpoint)
     check_dead_endpoint!(endpoint)
@@ -128,8 +131,8 @@ function Base.flush(endpoint::Endpoint)
     end
 end
 
-function Base.iterate(endpoint::Endpoint, state = nothing)
-    check_dead_endpoint!(endpoint)
+function Base.iterate(endpoint::Endpoint, _=nothing)
+    isopen(endpoint) || return nothing
     return take!(endpoint.in_msg_queue), nothing
 end
 
@@ -139,4 +142,4 @@ function send(endpoint::Endpoint, @nospecialize(msg::Any))
     return msg
 end
 
-end
+end # module JSONRPC

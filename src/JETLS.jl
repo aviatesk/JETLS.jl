@@ -172,7 +172,7 @@ function runserver(server::Server)
         @error "Message handling loop failed"
         Base.display_error(stderr, err, catch_backtrace())
     finally
-        close(server.endpoint)
+        close(seq_queue); close(con_queue); close(server.endpoint)
     end
     JETLS_DEV_MODE && @info "Exited JETLS server loop"
     return (; exit_code, server.endpoint)
@@ -191,6 +191,7 @@ function start_sequential_message_worker(server::Server)
         msg = take!(queue)
         @tryinvokelatest handle_sequential_message(server, msg)
         GC.safepoint()
+        isopen(queue) || break
     end
     return queue
 end
@@ -202,6 +203,7 @@ function start_concurrent_message_worker(server::Server)
         handler_concurrent_message = ConcurrentMessageHandler(queue)
         @tryinvokelatest handler_concurrent_message(server, msg)
         GC.safepoint()
+        isopen(queue) || break
     end
     return queue
 end

@@ -170,7 +170,7 @@ function withserver(f;
             result = fetch(t)
             @test result isa @NamedTuple{exit_code::Int, endpoint::JETLS.JSONRPC.Endpoint}
             @test result.exit_code == 0
-            @test result.endpoint.state === :closed
+            @test !result.endpoint.isopen
         finally
             close(in)
             close(out)
