@@ -226,6 +226,7 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
             # is alive, and if not, put a special message token `SelfShutdownNotification`
             # into the `endpoint` queue. See `runserver(server::Server)`.
             sleep(60)
+            isopen(server.endpoint) || break
             if !iszero(@ccall uv_kill(processId::Cint, 0::Cint)::Cint)
                 put!(server.endpoint.in_msg_queue, self_shutdown_token)
                 break
