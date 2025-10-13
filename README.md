@@ -15,9 +15,10 @@ JETLS aims to offer enhanced language features such as type-sensitive
 diagnostics, macro-aware go-to definition and such.
 
 This repository manages JETLS.jl, a Julia package that implements a language
-server, and `jetls-client`, a sample VSCode extension that serves as a language
-client for testing JETLS. For information on how to use JETLS with other
-frontends, please refer to the [Other editors](#other-editors) section.
+server, and [`jetls-client`](https://marketplace.visualstudio.com/items?itemName=aviatesk.jetls-client),
+a sample VSCode extension that serves as a language client for testing JETLS.
+For information on how to use JETLS with other frontends, please refer to the
+[Other editors](#other-editors) section.
 
 ## Getting started with VSCode
 
@@ -240,7 +241,7 @@ the list itself is subject to change.
 - [x] Work done progress support
 - [x] Message cancellation support
 - Release
-  - [ ] Publish a standalone extension (`jetls-client`)
+  - [x] Publish a standalone VSCode language client extension
   - [ ] Environment isolution
   - [ ] Bundle JETLS (as a Julia package)
   - [ ] Integration into [julia-vscode](https://github.com/julia-vscode/julia-vscode)
