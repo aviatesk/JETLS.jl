@@ -296,7 +296,7 @@ function toplevel_lowering_diagnostics(server::Server, uri::URI)
             end
         else
             pos = offset_to_xy(file_info, JS.first_byte(st0))
-            (; mod) = get_context_info(server.state, uri, pos)
+            mod = get_context_module(server.state, uri, pos)
             lowering_diagnostics!(diagnostics, st0, mod, file_info)
         end
     end
