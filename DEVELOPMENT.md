@@ -1,12 +1,12 @@
-# Development Notes
+# Development notes
 
-## Coding Guidelines
+## Coding guidelines
 
 This section contains meta-documentation related to development.
 For more detailed coding guidelines, please refer to [AGENTS.md](./AGENTS.md),
 which has been organized to be easily recognized by AI agents.
 
-## `[sources]` Dependencies
+## `[sources]` dependencies
 
 In JETLS, since we need to use packages that aren’t yet registered
 (e.g., [JuliaLowering.jl](https://github.com/c42f/JuliaLowering.jl)) or
@@ -36,7 +36,7 @@ you can restore the `[sources]` section, and perform any most of `Pkg`
 operations without any issues onward.
 The same applies to the other packages listed in `[sources]`.
 
-## When Test Fails Locally
+## When test fails locally
 
 Some of JETLS's test cases depend on specific implementation details of dependency packages
 (especially JET and JS/JL), and may fail unless those dependency packages are
@@ -121,7 +121,7 @@ precompile_workload = false # Disable precompilation for JETLS
 precompile_workload = false # Optionally disable precompilation for JET if you're developing it simultaneously
 ```
 
-## Dynamic Registration
+## Dynamic registration
 
 This language server supports
 [dynamic registration](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#client_registerCapability)
