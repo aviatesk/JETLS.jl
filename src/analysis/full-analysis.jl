@@ -337,7 +337,7 @@ function lookup_analysis_entry(state::ServerState, uri::URI)
     filekind, filedir = find_package_directory(filepath, env_path)
     if filekind === :src
         return @something activate_do(env_path) do
-            pkgenv = @something Base.identify_package_env(pkgname) begin
+            pkgenv = @lock Base.require_lock @something Base.identify_package_env(pkgname) begin
                 @warn "Failed to identify package environment" pkgname
                 return nothing
             end
