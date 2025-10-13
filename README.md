@@ -19,29 +19,43 @@ server, and `jetls-client`, a sample VSCode extension that serves as a language
 client for testing JETLS. For information on how to use JETLS with other
 frontends, please refer to the [Other editors](#other-editors) section.
 
-## Requirements
+## Getting started with VSCode
 
-- VSCode v1.93.0 or higher
-- npm v11.0.0 or higher
+> [!IMPORTANT]
+> Currently, the `jetls-client` VSCode extension is not bundled with JETLS.jl
+> as a Julia package, requiring you to explicitly specify the path to your
+> JETLS.jl installation via the `jetls-client.jetlsDirectory` configuration
+> and ensure the environment is properly initialized with `Pkg.instantiate()`.
+> Since JETLS is currently distributed as source code, updates must be
+> performed manually using `git pull`, followed by `Pkg.update()` and
+> `Pkg.instantiate()` to refresh dependencies.
+
+### Requirements
+
+- [VSCode](https://code.visualstudio.com/) v1.96.0 or higher
 - Julia [`v"1.12.0"`](https://julialang.org/downloads/#current_stable_release)
   or higher
 
-## Steps
+### Steps
 
-- Run `julia --project=. -e 'using Pkg; Pkg.instantiate()'` in this folder to
-  install all necessary Julia packages.
-- Run `npm install` in this folder to install all necessary node modules for
-  the client.
-- Open this folder in VSCode.
-- Press <kbd>Ctrl+Shift+B</kbd> to start compiling the client and server in
-  [watch mode](https://code.visualstudio.com/docs/editor/tasks#:~:text=The%20first%20entry%20executes,the%20HelloWorld.js%20file.).
-- Switch to the Run and Debug View in the Sidebar (<kbd>Ctrl+Shift+D</kbd>).
-- Select `Launch Client` from the drop-down menu (if it is not already selected).
-- Press `▷` to run the launch configuration (<kbd>F5</kbd>).
-- In the [Extension Development Host](https://code.visualstudio.com/api/get-started/your-first-extension#:~:text=Then%2C%20inside%20the%20editor%2C%20press%20F5.%20This%20will%20compile%20and%20run%20the%20extension%20in%20a%20new%20Extension%20Development%20Host%20window.)
-  instance of VSCode, open a Julia file.
+1. Clone and initialize this repository:
+   ```bash
+   git clone https://github.com/aviatesk/JETLS.jl.git
+   cd JETLS.jl
+   julia --project=. -e 'using Pkg; Pkg.instantiate()'
+   ```
+2. Install the JETLS Client VSCode extension (`jetls-client`):
+   - Open VSCode
+   - Go to Extensions (Invoke the `View: Show Extensions` command)
+   - Search for `"JETLS Client"`
+   - Click `Install`
+3. Configure the extension:
+   - Open VSCode settings
+   - Set `jetls-client.jetlsDirectory` to the path of the cloned JETLS.jl repository
+   - (Optional) Set `jetls-client.juliaExecutablePath` to your Julia executable path (default: `julia`)
+4. Open any Julia file
 
-## Communication Channels
+## Communication channels
 
 JETLS supports multiple communication channels between the client and server.
 Choose based on your environment and requirements:
@@ -53,7 +67,7 @@ channel based on your environment:
 - Remote SSH/WSL: `pipe` (works well in these environments)
 - Dev Containers: `stdio` for compatibility
 
-### `pipe` (Unix Domain Socket / Named Pipe)
+### `pipe` (Unix domain socket / named pipe)
 - Advantages: Complete isolation from `stdin`/`stdout`, preventing protocol
   corruption; fastest for local communication
 - Best for: Local development, Remote SSH, WSL
@@ -77,24 +91,7 @@ channel based on your environment:
 > packages may corrupt the LSP protocol and break the connection. Prefer `pipe`
 > or `socket` modes when possible.
 
-### VSCode Configuration
-
-```jsonc
-{
-  // Auto-detect (recommended)
-  "jetls-client.communicationChannel": "auto",
-
-  // Or explicitly specify a mode:
-  "jetls-client.communicationChannel": "pipe",   // Safe local development
-  "jetls-client.communicationChannel": "stdio",  // Maximum compatibility
-  "jetls-client.communicationChannel": "socket", // Network communication
-
-  // For socket mode, specify port:
-  "jetls-client.socketPort": 7777  // Or use 0 for auto-assign
-}
-```
-
-### Command-line Usage
+### Command-line usage
 
 When using JETLS from the command line or with other editors:
 
@@ -109,14 +106,22 @@ julia runserver.jl --pipe=/tmp/jetls.sock
 julia runserver.jl --socket=7777
 ```
 
-## Other Editors
+## Other editors
 
-> [!warning]
-> These setups are basically very minimal and do not necessarily properly utilize
-> the communication channels described above.
-> Many of these setups simply use `stdio` as the communication channel, but as
-> noted above, there are potential risks of breaking LSP connections due to
-> writes to `stdout` that may occur when loading dependency packages.
+> [!IMPORTANT]
+> These setups use generic language clients, requiring you to explicitly
+> specify the path to your JETLS.jl installation and ensure the environment
+> is properly initialized with `Pkg.instantiate()`. Since JETLS is currently
+> distributed as source code, updates must be performed manually using
+> `git pull`, followed by `Pkg.update()` and `Pkg.instantiate()` to refresh
+> dependencies.
+
+> [!WARNING]
+> These setups are basically very minimal and do not necessarily properly
+> utilize the communication channels described above. Many of these setups
+> simply use `stdio` as the communication channel, but as noted above, there
+> are potential risks of breaking LSP connections due to writes to `stdout`
+> that may occur when loading dependency packages.
 
 ### Emacs
 Minimal [Emacs](https://www.gnu.org/software/emacs/)
@@ -134,8 +139,8 @@ Minimal [Emacs](https://www.gnu.org/software/emacs/)
                 "--socket"
                 :autoport))
 ```
-### Neovim
 
+### Neovim
 Minimal [Neovim](https://neovim.io/) setup (requires Neovim v0.11):
 ```lua
 vim.lsp.config("jetls", {
@@ -158,7 +163,6 @@ See [aviatesk/zed-julia#avi/JETLS](https://github.com/aviatesk/zed-julia/tree/av
 for installation steps.
 
 ### Helix
-
 Minimal [Helix](https://helix-editor.com/) setup:
 
 > `languages.toml`
@@ -235,11 +239,16 @@ the list itself is subject to change.
 - [x] Parallel/concurrent message handling
 - [x] Work done progress support
 - [x] Message cancellation support
+- Release
+  - [ ] Publish a standalone extension (`jetls-client`)
+  - [ ] Environment isolution
+  - [ ] Bundle JETLS (as a Julia package)
+  - [ ] Integration into [julia-vscode](https://github.com/julia-vscode/julia-vscode)
 
 Detailed development notes and progress for this project are collected at
 <https://publish.obsidian.md/jetls>, so those interested might want to take a look.
 
-## TestRunner Integration
+## TestRunner integration
 
 JETLS integrates with [TestRunner.jl](https://github.com/aviatesk/TestRunner.jl)
 to provide an enhanced testing experience directly within your editor. This
@@ -260,24 +269,24 @@ See <https://pkgdocs.julialang.org/dev/apps/> for the details.
 
 ### Features
 
-#### Code Lens
+#### Code lens
 
 When you open a Julia file containing `@testset` blocks, JETLS displays
 interactive code lenses above each `@testset`:
 
-- **`▶ Run "testset_name"`**: Run the testset for the first time
+- `▶ Run "testset_name"`: Run the testset for the first time
 > ![TestRunner Code Lens](./assets/testrunner-code-lens-dark.png#gh-dark-mode-only)
 > ![TestRunner Code Lens](./assets/testrunner-code-lens-light.png#gh-light-mode-only)
 
 After running tests, the code lens is refreshed as follows:
-- **`▶ Rerun "testset_name" [summary]`**: Re-run a testset that has previous
+- `▶ Rerun "testset_name" [summary]`: Re-run a testset that has previous
   results
-- **`☰ Open logs`**: View the detailed test output in a new editor tab
-- **`✓ Clear result`**: Remove the test results and inline diagnostics
+- `☰ Open logs`: View the detailed test output in a new editor tab
+- `✓ Clear result`: Remove the test results and inline diagnostics
 > ![TestRunner Code Lens with Results](./assets/testrunner-code-lens-refreshed-dark.png#gh-dark-mode-only)
 > ![TestRunner Code Lens with Results](./assets/testrunner-code-lens-refreshed-light.png#gh-light-mode-only)
 
-#### Code Actions
+#### Code actions
 
 You can trigger test runs via "code actions" when the code action range is
 requested:
@@ -293,23 +302,23 @@ Note that when running individual `@test` cases, the error results are displayed
 as temporary diagnostics for 10 seconds. Click `☰ Open logs` button in the
 pop up message to view detailed error messages that persist.
 
-#### Test Diagnostics
+#### Test diagnostics
 
 Failed tests are displayed as diagnostics (red squiggly lines) at the exact
 lines where the failures occurred, making it easy to identify and fix issues:
 > ![TestRunner Diagnostics](./assets/testrunner-diagnostics-dark.png#gh-dark-mode-only)
 > ![TestRunner Diagnostics](./assets/testrunner-diagnostics-light.png#gh-light-mode-only)
 
-#### Progress Notifications
+#### Progress notifications
 
 For clients that support work done progress, JETLS shows progress notifications
 while tests are running, keeping you informed about long-running test suites.
 
-### Supported Patterns
+### Supported patterns
 
 The TestRunner integration supports:
 
-1. **Named `@testset` blocks** (via code lens or code actions):
+1. Named `@testset` blocks (via code lens or code actions):
 ```julia
 using Test
 
@@ -344,7 +353,7 @@ end
 @testset "test_func2" test_func2()
 ```
 
-2. **Individual `@test` macros** (via code actions only):
+2. Individual `@test` macros (via code actions only):
 ```julia
 # Run individual tests directly
 @test 1 + 1 == 2
@@ -381,7 +390,7 @@ Test execution requires that your file is saved and matches the on-disk version.
 If you see a message asking you to save the file first, make sure to save your
 changes before running tests.
 
-## Development Note
+## Development note
 
 - [DEVELOPMENT.md](./DEVELOPMENT.md): Developer notes
 - [AGENTS.md](./AGENTS.md): Specific coding rules (recommended reading for human developers as well)

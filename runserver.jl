@@ -5,29 +5,21 @@ module var"##__JETLSEntryPoint__##"
 using Pkg
 using Sockets
 
-let old_env = Pkg.project().path
-    try
-        Pkg.activate(@__DIR__; io=devnull)
+# TODO load Revise only when `JETLS_DEV_MODE` is true
+try
+    # load Revise with JuliaInterpreter used by JETLS
+    using Revise
+catch
+    @warn "Revise not found"
+end
 
-        # TODO load Revise only when `JETLS_DEV_MODE` is true
-        try
-            # load Revise with JuliaInterpreter used by JETLS
-            using Revise
-        catch err
-            @warn "Revise not found"
-        end
+@info "Loading JETLS..."
 
-        @info "Loading JETLS..."
-
-        try
-            using JETLS
-        catch
-            @error "JETLS not found"
-            exit(1)
-        end
-    finally
-        Pkg.activate(old_env; io=devnull)
-    end
+try
+    using JETLS
+catch
+    @error "JETLS not found in this environment" Pkg.project().path
+    exit(1)
 end
 
 function show_help()

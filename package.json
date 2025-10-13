@@ -1,9 +1,10 @@
 {
   "name": "jetls-client",
-  "description": "A VSCode client the new Julia language server",
+  "displayName": "JETLS Client",
+  "description": "A new language server for Julia",
   "author": "Shuhei Kadowaki",
   "license": "MIT",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/aviatesk/JETLS.jl"
@@ -14,12 +15,15 @@
   ],
   "categories": [
     "Programming Languages",
-    "Linters"
+    "Linters",
+    "Formatters",
+    "Testing"
   ],
   "keywords": [
     "Julia",
-    "language server",
-    "JET"
+    "JETLS",
+    "JET",
+    "language server"
   ],
   "engines": {
     "vscode": "^1.96.0"
@@ -33,7 +37,7 @@
     "commands": [
       {
         "command": "jetls-client.restartLanguageServer",
-        "title": "Restart JETLS Language Server"
+        "title": "JETLS Client: Restart JETLS Language Server"
       }
     ],
     "configuration": {
@@ -45,6 +49,18 @@
           "type": "string",
           "default": "julia",
           "description": "Path to the Julia executable."
+        },
+        "jetls-client.juliaThreads": {
+          "scope": "resource",
+          "type": "string",
+          "default": "auto",
+          "description": "Number of Julia threads to use (used as --threads= option). Default is 'auto'."
+        },
+        "jetls-client.jetlsDirectory": {
+          "scope": "resource",
+          "type": "string",
+          "default": "",
+          "description": "Directory path for JETLS project environment (used as --project= option). If not set, uses global Julia environment."
         },
         "jetls-client.communicationChannel": {
           "scope": "resource",
@@ -68,10 +84,11 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run build",
-    "build": "tsc -b",
-    "watch": "tsc -b -w",
-    "lint": "eslint"
+    "build": "node esbuild.js --production",
+    "watch": "node esbuild.js --watch",
+    "tsc": "tsc --noEmit",
+    "lint": "eslint",
+    "vscode:prepublish": "npm run tsc && npm run lint && npm run build"
   },
   "dependencies": {
     "glob": "^11.0.0",
@@ -84,6 +101,7 @@
     "@types/node": "^20",
     "@types/vscode": "^1.75.1",
     "@vscode/test-electron": "^2.3.9",
+    "esbuild": "^0.25.10",
     "eslint": "^9.13.0",
     "fs": "^0.0.1-security",
     "mocha": "^10.3.0",

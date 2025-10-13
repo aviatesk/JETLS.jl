@@ -16,6 +16,7 @@ import * as cp from "child_process";
 
 let languageClient: LanguageClient;
 let outputChannel: OutputChannel;
+let statusBarItem: vscode.StatusBarItem;
 
 interface ProcessManager {
   process: cp.ChildProcess;
@@ -57,11 +58,12 @@ function setupProcessMonitoring(
           // Reset the timeout with new duration
           if (manager.timeoutHandle) {
             clearTimeout(manager.timeoutHandle);
-            manager.timeoutHandle = setTimeout(
-              () => onTimeout(true),
-              manager.timeoutDuration,
-            );
           }
+
+          manager.timeoutHandle = setTimeout(
+            () => onTimeout(true),
+            manager.timeoutDuration,
+          );
         }
       }),
   );
@@ -74,24 +76,50 @@ function setupProcessMonitoring(
   return manager;
 }
 
+// Helper to create timeout handler with cleanup
+function createTimeoutHandler(
+  juliaProcess: cp.ChildProcess,
+  reject: (error: Error) => void,
+  options: {
+    timeoutMessage: string;
+    precompilingMessage: string;
+    cleanup?: () => void;
+  },
+): (isPrecompiling: boolean) => void {
+  return (isPrecompiling: boolean) => {
+    const message = isPrecompiling
+      ? options.precompilingMessage
+      : options.timeoutMessage;
+    outputChannel.appendLine(`[jetls-client] ${message}`);
+    juliaProcess.kill();
+    if (options.cleanup) {
+      options.cleanup();
+    }
+    reject(new Error(message));
+  };
+}
+
 // Helper to spawn Julia process with standard arguments
 function spawnJuliaServer(
   juliaExecutable: string,
   serverScript: string,
   extraArgs: string[],
-  options: { cwd?: string } = {},
+  options: { cwd?: string; projectPath?: string; threads?: string } = {},
 ): cp.ChildProcess {
-  const baseArgs = [
-    "--startup-file=no",
-    "--history-file=no",
-    "--project=.",
-    "--threads=auto",
+  const baseArgs = ["--startup-file=no", "--history-file=no"];
+
+  if (options.projectPath) {
+    baseArgs.push(`--project=${options.projectPath}`);
+  }
+
+  baseArgs.push(
+    `--threads=${options.threads || "auto"}`,
     serverScript,
     ...extraArgs,
-  ];
+  );
 
   return cp.spawn(juliaExecutable, baseArgs, {
-    cwd: options.cwd || vscode.workspace.rootPath,
+    cwd: options.cwd,
     detached: false,
   });
 }
@@ -99,6 +127,8 @@ function spawnJuliaServer(
 async function startLanguageServer(context: ExtensionContext) {
   const config = vscode.workspace.getConfiguration("jetls-client");
   const juliaExecutable = config.get<string>("juliaExecutablePath", "julia");
+  const jetlsDirectory = config.get<string>("jetlsDirectory", "");
+  const juliaThreads = config.get<string>("juliaThreads", "auto");
 
   let commChannel = config.get<string>("communicationChannel", "auto");
   if (commChannel === "auto") {
@@ -136,14 +166,14 @@ async function startLanguageServer(context: ExtensionContext) {
   let serverOptions: ServerOptions;
 
   if (commChannel === "stdio") {
-    const baseArgs = [
-      "--startup-file=no",
-      "--history-file=no",
-      "--project=.",
-      "--threads=auto",
-      serverScript,
-      "--stdio",
-    ];
+    const baseArgs = ["--startup-file=no", "--history-file=no"];
+
+    if (jetlsDirectory) {
+      baseArgs.push(`--project=${jetlsDirectory}`);
+    }
+
+    baseArgs.push(`--threads=${juliaThreads}`, serverScript, "--stdio");
+
     serverOptions = {
       run: { command: juliaExecutable, args: baseArgs },
       debug: { command: juliaExecutable, args: [...baseArgs, "--debug=yes"] },
@@ -157,21 +187,29 @@ async function startLanguageServer(context: ExtensionContext) {
           `[jetls-client] Starting JETLS with TCP socket (port: ${port || "auto-assign"})...`,
         );
 
-        const juliaProcess = spawnJuliaServer(juliaExecutable, serverScript, [
-          "--socket",
-          port.toString(),
-        ]);
+        const juliaProcess = spawnJuliaServer(
+          juliaExecutable,
+          serverScript,
+          ["--socket", port.toString()],
+          {
+            projectPath: jetlsDirectory || undefined,
+            threads: juliaThreads,
+          },
+        );
 
         let actualPort: number | null = null;
+
+        const timeoutHandler = createTimeoutHandler(juliaProcess, reject, {
+          timeoutMessage: "Timeout waiting for JETLS to provide port number",
+          precompilingMessage:
+            "Timeout waiting for JETLS to provide port number (during precompilation)",
+        });
 
         const manager = setupProcessMonitoring(
           juliaProcess,
           (isPrecompiling) => {
             if (!actualPort) {
-              const message = isPrecompiling
-                ? "Timeout waiting for JETLS to provide port number (during precompilation)"
-                : "Timeout waiting for JETLS to provide port number";
-              reject(new Error(message));
+              timeoutHandler(isPrecompiling);
             }
           },
         );
@@ -215,6 +253,7 @@ async function startLanguageServer(context: ExtensionContext) {
                   outputChannel.appendLine(
                     `[jetls-client] Socket error: ${err.message}`,
                   );
+                  juliaProcess.kill();
                   reject(err);
                 });
               }
@@ -277,22 +316,25 @@ async function startLanguageServer(context: ExtensionContext) {
           );
 
           outputChannel.appendLine(`[jetls-client] Starting JETLS...`);
-          const juliaProcess = spawnJuliaServer(juliaExecutable, serverScript, [
-            "--pipe",
-            socketPath,
-          ]);
+          const juliaProcess = spawnJuliaServer(
+            juliaExecutable,
+            serverScript,
+            ["--pipe", socketPath],
+            {
+              projectPath: jetlsDirectory || undefined,
+              threads: juliaThreads,
+            },
+          );
 
           // Setup monitoring with timeout
           const manager = setupProcessMonitoring(
             juliaProcess,
-            (isPrecompiling) => {
-              server.close();
-              const message = isPrecompiling
-                ? "Timeout waiting for JETLS to connect (during precompilation)"
-                : "Timeout waiting for JETLS to connect";
-              outputChannel.appendLine(`[jetls-client] ${message}`);
-              reject(new Error(message));
-            },
+            createTimeoutHandler(juliaProcess, reject, {
+              timeoutMessage: "Timeout waiting for JETLS to connect",
+              precompilingMessage:
+                "Timeout waiting for JETLS to connect (during precompilation)",
+              cleanup: () => server.close(),
+            }),
           );
 
           // Capture stdout for debugging
@@ -323,18 +365,24 @@ async function startLanguageServer(context: ExtensionContext) {
               clearTimeout(manager.timeoutHandle);
             }
             server.close();
-            // Clean up socket file on Unix
             if (process.platform !== "win32" && fs.existsSync(socketPath)) {
               fs.unlinkSync(socketPath);
             }
           });
-        });
 
-        // Wait for JETLS to connect
-        server.once("connection", (socket: net.Socket) => {
-          outputChannel.appendLine(`[jetls-client] JETLS connected!`);
-          server.close(); // Stop accepting new connections
-          resolve({ reader: socket, writer: socket });
+          // Wait for JETLS to connect
+          server.once("connection", (socket: net.Socket) => {
+            outputChannel.appendLine(`[jetls-client] JETLS connected!`);
+
+            // Clear timeout since connection succeeded
+            if (manager.timeoutHandle) {
+              clearTimeout(manager.timeoutHandle);
+              manager.timeoutHandle = null;
+            }
+
+            server.close(); // Stop accepting new connections
+            resolve({ reader: socket, writer: socket });
+          });
         });
       });
     };
@@ -361,21 +409,43 @@ async function startLanguageServer(context: ExtensionContext) {
     clientOptions,
   );
 
-  languageClient.start();
+  statusBarItem.text = "$(sync~spin) Loading JETLS ...";
+  statusBarItem.tooltip = "Loading JETLS and attempting to establish communication between client and server.";
+  statusBarItem.show();
+
+  languageClient.start().then(() => {
+    statusBarItem.hide();
+    outputChannel.appendLine("[jetls-client] JETLS is ready!");
+  });
 }
 
 async function restartLanguageServer(context: ExtensionContext) {
   if (languageClient) {
-    await languageClient.stop();
+    try {
+      await languageClient.stop();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      outputChannel.appendLine(
+        `[jetls-client] Failed to stop language client: ${message}.`,
+      );
+    }
   }
   await startLanguageServer(context);
 }
 
 export function activate(context: ExtensionContext) {
+  statusBarItem = vscode.window.createStatusBarItem(
+    vscode.StatusBarAlignment.Left,
+    100,
+  );
+  context.subscriptions.push(statusBarItem);
+
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (
         event.affectsConfiguration("jetls-client.juliaExecutablePath") ||
+        event.affectsConfiguration("jetls-client.jetlsDirectory") ||
+        event.affectsConfiguration("jetls-client.juliaThreads") ||
         event.affectsConfiguration("jetls-client.communicationChannel") ||
         event.affectsConfiguration("jetls-client.socketPort")
       ) {
@@ -406,5 +476,8 @@ export async function deactivate() {
   }
   if (outputChannel) {
     outputChannel.dispose();
+  }
+  if (statusBarItem) {
+    statusBarItem.dispose();
   }
 }
