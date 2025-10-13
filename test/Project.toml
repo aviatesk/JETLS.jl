@@ -1,17 +1,13 @@
 [deps]
 InteractiveUtils = "b77e0a4c-d291-57a0-90e8-8db25a27a240"
-JET = "c3a54625-cd67-489e-a8e7-0a5a0ff4e31b"
-JETLS = "a3b70258-0602-4ee2-b5a6-54c2470400db"
-JuliaLowering = "f3c80556-a63f-4383-b822-37d64f81a311"
-JuliaSyntax = "70703baa-626e-46a2-a12c-08ffd08c73b4"
+JETLS = "b3b70258-0602-4ee2-b5a6-54c2470400db"
 Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [sources]
-JET = {rev = "master", url = "https://github.com/aviatesk/JET.jl"}
 JETLS = {path = "."}
-JuliaLowering = {rev = "jetls-hacking", url = "https://github.com/mlechu/JuliaLowering.jl"}
-JuliaSyntax = {rev = "jetls-hacking", url = "https://github.com/JuliaLang/JuliaSyntax.jl"}
 
 [compat]
+InteractiveUtils = "1.11"
+Pkg = "1.11.0"
 Test = "1.11.0"
