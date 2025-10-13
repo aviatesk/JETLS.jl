@@ -240,6 +240,7 @@ the list itself is subject to change.
 - [x] Parallel/concurrent message handling
 - [x] Work done progress support
 - [x] Message cancellation support
+- [ ] Notebook support
 - Release
   - [x] Publish a standalone VSCode language client extension
   - [ ] Environment isolution
