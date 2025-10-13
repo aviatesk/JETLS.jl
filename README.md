@@ -130,7 +130,9 @@ Minimal [Emacs](https://www.gnu.org/software/emacs/)
                 "--history-file=no"
                 "--project=/path/to/JETLS.jl"
                 "--threads=auto"
-                "/path/to/JETLS.jl/runserver.jl"))
+                "/path/to/JETLS.jl/runserver.jl"
+                "--socket"
+                :autoport))
 ```
 ### Neovim
 
