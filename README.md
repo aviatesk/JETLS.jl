@@ -183,10 +183,10 @@ likely be implemented in the near future, for those who want to test this server
 Please note that not only the progress of the list, but also the structure of
 the list itself is subject to change.
 
-- Full-Analysis
+- Analysis
   - [x] Document synchronization
-  - [ ] JuliaLowering integration
   - [ ] Incremental analysis
+  - [ ] JuliaLowering integration
   - [ ] Recursive analysis for dependencies
   - [ ] Cross-server-process cache system
 - Diagnostics
@@ -220,9 +220,9 @@ the list itself is subject to change.
   - [ ] Type-aware method documentation
   - [ ] Type of local binding on hover
 - Formatting
-  - [ ] Make formatting backend configurable
   - [x] [Runic](https://github.com/fredrikekre/Runic.jl) integration
   - [ ] [JuliaFormatter](https://github.com/domluna/JuliaFormatter.jl) integration
+  - [ ] Make formatting backend configurable
 - Rename
   - [x] Local binding
   - [ ] Global binding
@@ -232,7 +232,6 @@ the list itself is subject to change.
   - [x] Code actions for running individual `@testset`s
   - [x] Code actions for running individual `@test` cases
   - [x] Inline test result diagnostics
-  - [x] Work done progress during test execution
 - Configuration system
   - [x] Prototype implementation
   - [ ] Documentation
