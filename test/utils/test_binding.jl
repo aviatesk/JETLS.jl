@@ -789,6 +789,23 @@ ismacro_callback(ismacro) = @test ismacro[]
             end == 1
         end
     end
+
+    @testset "with return type annotation" begin
+        with_binding_occurrences("""
+            function func(xxx::TTT)::Float64 where TTT<:Integer
+                return sin(xxx)
+            end
+            """; ismacro_callback = nomacro_callback) do binding_occurrences
+            binfos = collect(keys(binding_occurrences))
+            idx = only(findall(binfo->binfo.name=="xxx", binfos))
+            occurrences = binding_occurrences[binfos[idx]]
+            @test any(occurrences) do occurrence
+                occurrence.kind === :use &&
+                JS.sourcetext(occurrence.tree) == "xxx" &&
+                JS.source_line(occurrence.tree) == 2
+            end
+        end
+    end
 end
 
 end # module test_binding
