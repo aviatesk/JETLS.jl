@@ -444,7 +444,7 @@ end
         @test diagnostic.source == JETLS.LOWERING_DIAGNOSTIC_SOURCE
         @test diagnostic.message == "Macro name `@notexisting` not found"
         @test diagnostic.range.start.line == 0
-        @test diagnostic.range.start.character == sizeof("x = @")
+        @test diagnostic.range.start.character == sizeof("x = ")
         @test diagnostic.range.var"end".line == 0
         @test diagnostic.range.var"end".character == sizeof("x = @notexisting")
     end

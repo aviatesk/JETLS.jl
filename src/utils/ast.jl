@@ -442,7 +442,7 @@ end
 
 noparen_macrocall(st0::JL.SyntaxTree) =
     JS.kind(st0) === JS.K"macrocall" &&
-    !(JS.numchildren(st0) ≥ 2 && JS.kind(st0[1]) === JS.K"StringMacroName") &&
+    !(JS.numchildren(st0) ≥ 2 && JS.kind(st0[1]) === JS.K"StrMacroName") &&
     !JS.has_flags(st0, JS.PARENS_FLAG)
 
 """
@@ -481,6 +481,8 @@ function select_target_node(node0::Union{JS.SyntaxNode,JL.SyntaxTree}, offset::I
         if (JS.kind(basᵢ) === JS.K"." &&
             basᵢ[1] !== target) # e.g. don't allow jumps to `tmeet` from `Base.Compi│ler.tmeet`
             target = basᵢ
+        elseif JS.kind(basᵢ) === JS.K"macro_name"
+            target = basᵢ # treat the entire macro name as an identifier
         else
             return target
         end

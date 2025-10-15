@@ -481,9 +481,9 @@ end
             """
             fi, node = get_target_node(T, code)
             @test node !== nothing
-            @test JS.kind(node) === JS.K"MacroName"
+            @test JS.kind(node) === JS.K"macro_name"
             let range = JETLS.jsobj_to_range(node, fi)
-                @test range.start.line == 0 && range.start.character == 1 # not include the @-mark
+                @test range.start.line == 0 && range.start.character == 0 # include @-mark
                 @test range.var"end".line == 0 && range.var"end".character == sizeof("@inline")
             end
         end
@@ -494,7 +494,7 @@ end
             fi, node = get_target_node(T, code)
             @test node !== nothing
             let range = JETLS.jsobj_to_range(node, fi)
-                @test range.start.line == 0 && range.start.character == 0
+                @test range.start.line == 0 && range.start.character == 0 # include `Base.`
                 @test range.var"end".line == 0 && range.var"end".character == sizeof("Base.@inline")
             end
         end
