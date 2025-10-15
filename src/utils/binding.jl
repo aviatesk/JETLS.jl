@@ -474,11 +474,13 @@ function compute_binding_occurrences!(
                 for i = 1:JS.numchildren(arglist)
                     record_occurrence!(occurrences, :def, arglist[i], ctx3)
                 end
+                i = 2
                 if n ≥ 3
-                    sparamlist = st[1]
+                    sparamlist = st[2]
                     for i = 1:JS.numchildren(sparamlist)
                         record_occurrence!(occurrences, :def, sparamlist[i], ctx3)
                     end
+                    i = 3
                 end
                 if is_kwcall_lambda(ctx3, st)
                     # This is `kwcall` method -- now need to perform some special case
