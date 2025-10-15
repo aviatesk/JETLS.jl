@@ -1,4 +1,4 @@
-module var"##__JETLSEntryPoint__##"
+module CLI
 
 @info "Running JETLS with Julia version" VERSION
 
@@ -173,6 +173,4 @@ function (@main)(args::Vector{String})::Cint
     return res.exit_code
 end
 
-end # module var"##__JETLSEntryPoint__##"
-
-using .var"##__JETLSEntryPoint__##": main
+end # module CLI
