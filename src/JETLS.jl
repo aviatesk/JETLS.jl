@@ -388,4 +388,6 @@ end
 
 include("precompile.jl")
 
+include("CLI.jl")
+
 end # module JETLS
