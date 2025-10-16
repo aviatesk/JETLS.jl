@@ -22,10 +22,10 @@ TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 
 [sources]
 JET = {rev = "master", url = "https://github.com/aviatesk/JET.jl"}
-JSONRPC = {subdir = "JSONRPC", url = "https://github.com/ExpandingMan/JETLS.jl"}
+JSONRPC = {subdir = "JSONRPC", url = "https://github.com/aviatesk/JETLS.jl"}
 JuliaLowering = {rev = "jetls-hacking-2", url = "https://github.com/mlechu/JuliaLowering.jl"}
 JuliaSyntax = {rev = "jetls-hacking-2", url = "https://github.com/JuliaLang/JuliaSyntax.jl"}
-LSP = {subdir = "LSP", url = "https://github.com/ExpandingMan/JETLS.jl"}
+LSP = {subdir = "LSP", url = "https://github.com/aviatesk/JETLS.jl"}
 
 [compat]
 JET = "0.10.6"
@@ -44,3 +44,4 @@ julia = "1.12"
 
 [apps.jetls]
 submodule = "CLI"
+julia_flags = ["--startup-file=no", "--history-file=no", "--threads=auto"]
