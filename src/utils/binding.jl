@@ -423,9 +423,9 @@ function compute_binding_occurrences!(
     while !isempty(stack)
         st = pop!(stack)
         k = JS.kind(st)
-        n = JS.numchildren(st)
+        nc = JS.numchildren(st)
         if k === JS.K"local" # || k === JS.K"function_decl"
-            if n ≥ 1
+            if nc ≥ 1
                 record_occurrence!(occurrences, :decl, st[1], ctx3)
                 if !include_decls
                     continue # avoid to recurse to skip recording use
@@ -437,10 +437,10 @@ function compute_binding_occurrences!(
             record_occurrence!(occurrences, :use, st, ctx3; skip_recording=skip_recording_uses)
         end
 
-        i = 1
+        start_idx = 1
         if k === JS.K"function_decl"
             infunc = true
-            if n ≥ 1
+            if nc ≥ 1
                 local func = st[1]
                 if JS.kind(func) === JS.K"BindingId"
                     binfo = JL.lookup_binding(ctx3, func)
@@ -450,7 +450,7 @@ function compute_binding_occurrences!(
                     end
                 end
             end
-        elseif infunc && k === JS.K"block" && n ≥ 1
+        elseif infunc && k === JS.K"block" && nc ≥ 1
             blk1 = st[1]
             if JS.kind(blk1) === JS.K"function_decl" && infunc && JS.numchildren(blk1) ≥ 1
                 # This is an inner function definition -- the binding of this inner function
@@ -468,19 +468,18 @@ function compute_binding_occurrences!(
         elseif k === JS.K"lambda"
             # All blocks except the last one define arguments and static parameters,
             # so we recurse to avoid counting them as usage
-            i = n ≥ 2 ? n : 0
-            if n ≥ 2
+            if nc ≥ 2
                 arglist = st[1]
                 for i = 1:JS.numchildren(arglist)
                     record_occurrence!(occurrences, :def, arglist[i], ctx3)
                 end
-                i = 2
-                if n ≥ 3
+                start_idx = 2
+                if nc ≥ 3
                     sparamlist = st[2]
                     for i = 1:JS.numchildren(sparamlist)
                         record_occurrence!(occurrences, :def, sparamlist[i], ctx3)
                     end
-                    i = 3
+                    start_idx = 3
                 end
                 if is_kwcall_lambda(ctx3, st)
                     # This is `kwcall` method -- now need to perform some special case
@@ -490,27 +489,27 @@ function compute_binding_occurrences!(
                     # These bindings are never actually used, so simply recursing would cause
                     # this pass to report them as unused local bindings.
                     # We avoid this problem by setting `include_decls` when recursing.
-                    for j = 1:n
-                        compute_binding_occurrences!(occurrences, ctx3, st[j]; ismacro, include_decls=true)
+                    for i = 1:nc
+                        compute_binding_occurrences!(occurrences, ctx3, st[i]; ismacro, include_decls=true)
                     end
                     continue
                 end
             end
         elseif k === JS.K"="
-            i = 2 # the left hand side, i.e. "definition", does not account for usage
-            if n ≥ 1
+            start_idx = 2 # the left hand side, i.e. "definition", does not account for usage
+            if nc ≥ 1
                 record_occurrence!(occurrences, :def, st[1], ctx3)
-                if n ≥ 2
+                if nc ≥ 2
                     rhs = st[2]
                     # In struct definitions, `local struct_name` is somehow introduced,
                     # so special case it here: https://github.com/c42f/JuliaLowering.jl/blob/4b12ab19dad40c64767558be0a8a338eb4cc9172/src/desugaring.jl#L3833
                     # TODO investigate why this local binding introduction is necessary on the JL side
                     if JS.kind(rhs) === JS.K"BindingId" && JL.lookup_binding(ctx3, rhs).name == "struct_type"
-                        i = 1
+                        start_idx = 1
                     end
                 end
             end
-        elseif k === JS.K"call" && n ≥ 1
+        elseif k === JS.K"call" && nc ≥ 1
             arg1 = st[1]
             if JS.kind(arg1) === JS.K"BindingId" && JL.lookup_binding(ctx3, arg1).name == "#self#"
                 # Don't count self arguments used in self calls as "usage".
@@ -518,19 +517,19 @@ function compute_binding_occurrences!(
                 # ```julia
                 # hasmatch(x::RegexMatch, y::Bool=false) = nothing
                 # ```
-                for j = n:-1:2 # reversed since we use `pop!`
-                    argⱼ = st[j]
+                for i = nc:-1:2 # reversed since we use `pop!`
+                    argⱼ = st[i]
                     if JS.kind(argⱼ) === JS.K"BindingId" && JL.lookup_binding(ctx3, argⱼ).kind === :argument
                         continue # skip this argument
                     end
-                    push!(stack, st[j])
+                    push!(stack, st[i])
                 end
                 push!(stack, arg1)
                 continue
             end
         end
-        for j = n:-1:i # reversed since we use `pop!`
-            push!(stack, st[j])
+        for i = nc:-1:start_idx # reversed since we use `pop!`
+            push!(stack, st[i])
         end
     end
 
