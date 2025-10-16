@@ -94,7 +94,7 @@ function handle_HoverRequest(server::Server, msg::HoverRequest)
             end
         end
     end
-    if !JS.is_identifier(identifier_node)
+    if !(JS.is_identifier(identifier_node) || JS.kind(identifier_node) === JS.K"macro_name")
         return send(server, HoverResponse(; id = msg.id, result = null))
     end
     identifier = Expr(identifier_node)

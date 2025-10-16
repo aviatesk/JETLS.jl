@@ -187,7 +187,7 @@ function global_completions!(items::Dict{String, CompletionItem}, state::ServerS
         edit_start_pos = offset_to_xy(fi, JS.first_byte(prev_token))
         is_macro_invoke = true
     # Case: `@macr│`
-    elseif prev_kind === JS.K"MacroName"
+    elseif prev_kind === JS.K"macro_name"
         edit_start_pos = offset_to_xy(fi, JS.first_byte(prev_tok(prev_token)))
         is_macro_invoke = true
     # Case `│` (empty program)
