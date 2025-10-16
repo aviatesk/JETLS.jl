@@ -29,8 +29,8 @@ LSP = {path = "LSP"}
 [compat]
 JET = "0.10.6"
 JSONRPC = "0.1"
-JuliaLowering = "1.0.0"
-# JuliaSyntax = "2"
+JuliaLowering = "1"
+JuliaSyntax = "2"
 LSP = "0.1"
 Markdown = "1.11.0"
 Pkg = "1.11.0"
