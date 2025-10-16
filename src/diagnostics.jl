@@ -294,6 +294,13 @@ function toplevel_lowering_diagnostics(server::Server, uri::URI)
             for i = JS.numchildren(stblk):-1:1 # reversed since we use `pop!`
                 push!(sl, stblk[i])
             end
+        elseif JS.kind(st0) === JS.K"doc"
+            # skip docstring expressions for now
+            for i = JS.numchildren(st0):-1:1 # reversed since we use `pop!`
+                if JS.kind(st0[i]) !== JS.K"string"
+                    push!(sl, st0[i])
+                end
+            end
         else
             pos = offset_to_xy(file_info, JS.first_byte(st0))
             (; mod) = get_context_info(server.state, uri, pos)
