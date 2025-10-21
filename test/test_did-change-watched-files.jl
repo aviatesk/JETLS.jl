@@ -15,11 +15,11 @@ const CLIENT_CAPABILITIES = ClientCapabilities(
     )
 )
 
-const DEBOUNCE_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
-    "full_analysis", "debounce")
+const DEBOUNCE_DEFAULT = JETLS.getobjpath(JETLS.DEFAULT_CONFIG,
+    :full_analysis, :debounce)
 
-const STATIC_SETTING_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
-    "internal", "static_setting")
+const STATIC_SETTING_DEFAULT = JETLS.getobjpath(JETLS.DEFAULT_CONFIG,
+    :internal, :static_setting)
 
 # Test the full cycle of `DidChangeWatchedFilesNotification`:
 # 1. Initialize with `.JETLSConfig.toml` file.
@@ -44,8 +44,8 @@ const STATIC_SETTING_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
         withserver(; rootUri, capabilities=CLIENT_CAPABILITIES) do (; writereadmsg, server)
             manager = server.state.config_manager
 
-            @test JETLS.get_config(manager, "internal", "static_setting") == STATIC_SETTING_STARTUP
-            @test JETLS.get_config(manager, "testrunner", "executable") == TESTRUNNER_STARTUP
+            @test JETLS.get_config(manager, :internal, :static_setting) == STATIC_SETTING_STARTUP
+            @test JETLS.get_config(manager, :testrunner, :executable) == TESTRUNNER_STARTUP
 
             # change `internal.static_setting` to `STATIC_SETTING_V2`
             STATIC_SETTING_V2 = 200
@@ -69,7 +69,7 @@ const STATIC_SETTING_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
             end
 
             # Static setting should not be changed
-            @test JETLS.get_config(manager, "internal", "static_setting") == STATIC_SETTING_STARTUP
+            @test JETLS.get_config(manager, :internal, :static_setting) == STATIC_SETTING_STARTUP
 
             DEBOUNCE_V2 = 300.0
             # Add a new key `full_analysis.debounce` (now dynamic)
@@ -96,7 +96,7 @@ const STATIC_SETTING_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
             end
 
             # `full_analysis.debounce` should be changed (dynamic)
-            @test JETLS.get_config(manager, "full_analysis", "debounce") == DEBOUNCE_V2
+            @test JETLS.get_config(manager, :full_analysis, :debounce) == DEBOUNCE_V2
 
             # Change `testrunner.executable` to "newtestrunner"
             TESTRUNNER_V2 = "testrunner_v2"
@@ -124,7 +124,7 @@ const STATIC_SETTING_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
             end
 
             # testrunner.executable should be updated in both configs (dynamic)
-            @test JETLS.get_config(manager, "testrunner", "executable") == TESTRUNNER_V2
+            @test JETLS.get_config(manager, :testrunner, :executable) == TESTRUNNER_V2
 
             # unknown keys should be reported
             write(config_path, """
@@ -159,9 +159,9 @@ const STATIC_SETTING_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
 
             # After deletion,
             # - For static keys, `get_config` should remain unchanged
-            @test JETLS.get_config(manager, "internal", "static_setting") == STATIC_SETTING_STARTUP
+            @test JETLS.get_config(manager, :internal, :static_setting) == STATIC_SETTING_STARTUP
             # - For non-static keys, replace with value from the next highest-priority config file. (`__DEFAULT_CONFIG__`)
-            @test JETLS.get_config(manager, "full_analysis", "debounce") == DEBOUNCE_DEFAULT
+            @test JETLS.get_config(manager, :full_analysis, :debounce) == DEBOUNCE_DEFAULT
 
             # re-create the config file
             STATIC_SETTING_RECREATE = 400
@@ -186,7 +186,7 @@ const STATIC_SETTING_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
             end
 
             # static keys should not be changed even if higher priority config file is re-created
-            @test JETLS.get_config(manager, "internal", "static_setting") == STATIC_SETTING_STARTUP
+            @test JETLS.get_config(manager, :internal, :static_setting) == STATIC_SETTING_STARTUP
 
             # non-config file change (should be ignored)
             other_file = joinpath(tmpdir, "other.txt")
@@ -199,8 +199,8 @@ const STATIC_SETTING_DEFAULT = JETLS.access_nested_dict(JETLS.DEFAULT_CONFIG,
                 writereadmsg(msg; read=0)
             end
             # no effect on config
-            @test JETLS.get_config(manager, "internal", "static_setting") == STATIC_SETTING_STARTUP
-            @test JETLS.get_config(manager, "testrunner", "executable") == TESTRUNNER_RECREATE
+            @test JETLS.get_config(manager, :internal, :static_setting) == STATIC_SETTING_STARTUP
+            @test JETLS.get_config(manager, :testrunner, :executable) == TESTRUNNER_RECREATE
         end
     end
 end
@@ -234,9 +234,9 @@ end
 
             # If higher priority config file is created,
             # - static keys should not be changed
-            @test JETLS.get_config(manager, "internal", "static_setting") == STATIC_SETTING_DEFAULT
+            @test JETLS.get_config(manager, :internal, :static_setting) == STATIC_SETTING_DEFAULT
             # - non-static keys should be updated
-            @test JETLS.get_config(manager, "testrunner", "executable") == TESTRUNNER_RECREATE
+            @test JETLS.get_config(manager, :testrunner, :executable) == TESTRUNNER_RECREATE
 
             # New config file change also should be watched
             STATIC_SETTING_V2 = 600
@@ -259,8 +259,8 @@ end
             @test occursin("Updated", raw_res.params.message)
             @test occursin("`internal.static_setting`", raw_res.params.message)
             @test occursin("restart", raw_res.params.message)
-            @test JETLS.get_config(manager, "internal", "static_setting") == STATIC_SETTING_DEFAULT
-            @test JETLS.get_config(manager, "testrunner", "executable") == TESTRUNNER_V2
+            @test JETLS.get_config(manager, :internal, :static_setting) == STATIC_SETTING_DEFAULT
+            @test JETLS.get_config(manager, :testrunner, :executable) == TESTRUNNER_V2
         end
     end
 end
