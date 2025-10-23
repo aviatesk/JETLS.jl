@@ -7,6 +7,7 @@ authors = ["Shuhei Kadowaki <aviatesk@gmail.com>"]
 projects = ["test"]
 
 [deps]
+Configurations = "5218b696-f38b-4ac9-8b61-a12ec717816d"
 JET = "c3a54625-cd67-489e-a8e7-0a5a0ff4e31b"
 JSONRPC = "a2756949-8476-49a1-a294-231eace0f283"
 JuliaLowering = "f3c80556-a63f-4383-b822-37d64f81a311"
@@ -27,6 +28,7 @@ JuliaSyntax = {rev = "jetls-hacking-2", url = "https://github.com/JuliaLang/Juli
 LSP = {path = "LSP"}
 
 [compat]
+Configurations = "0.17.6"
 JET = "0.10.6"
 JSONRPC = "0.1"
 JuliaLowering = "1"

@@ -109,7 +109,7 @@ function request_analysis!(
     end
     should_queue || @goto wait_or_return # Request saved as pending
 
-    debounce = get_config(server.state.config_manager, "full_analysis", "debounce")
+    debounce = get_config(server.state.config_manager, :full_analysis, :debounce)
     if onsave && debounce isa Float64 && debounce > 0
         local delay::Float64 = debounce
         store!(manager.debounced) do debounced

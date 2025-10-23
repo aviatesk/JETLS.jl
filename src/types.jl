@@ -1,3 +1,5 @@
+using Configurations
+
 const SyntaxTree0 = typeof(JS.build_tree(JL.SyntaxTree, JS.parse!(JS.ParseStream(""))))
 
 struct FileInfo
@@ -293,13 +295,94 @@ struct LSPostProcessor
 end
 LSPostProcessor() = LSPostProcessor(JET.PostProcessor())
 
-const ConfigDict = Base.PersistentDict{String, Any}
+# To extend configuration options, define new `@option struct`s here:
+#
+# @option struct NewConfig <: ConfigSection
+#     field1::Maybe{Type1}  # Maybe{T} from Configurations.jl allows optional fields
+#     field2::Maybe{Type2}
+# end
+#
+# All fields must be wrapped in `Maybe{}` to support partial configuration.
+#
+# Then, update the following methods properly to make the
+# `is_static_setting(::Type{JETLSConfig}, field::Symbol)` and
+# `default_config(::Type{JETLSConfig}) -> NewConfig` work correctly:
+#
+#   - is_static_setting(::Type{NewConfig}, field::Symbol) -> Bool
+#     Returns whether a setting requires server restart.
+#   - default_config(::Type{NewConfig}) -> NewConfig
+#     Returns the default configuration values.
+#
+# Finally, add the new config section to `JETLSConfig` struct below.
+
+abstract type ConfigSection end
+
+_unwrap_maybe(::Type{Maybe{S}}) where {S} = S
+_unwrap_maybe(::Type{T}) where {T} = T
+
+@option struct FullAnalysisConfig <: ConfigSection
+    debounce::Maybe{Float64}
+end
+
+is_static_setting(::Type{FullAnalysisConfig}, ::Symbol) = false
+default_config(::Type{FullAnalysisConfig}) = FullAnalysisConfig(1.0)
+
+@option struct TestRunnerConfig <: ConfigSection
+    executable::Maybe{String}
+end
+
+is_static_setting(::Type{TestRunnerConfig}, ::Symbol) = false
+default_config(::Type{TestRunnerConfig}) = TestRunnerConfig(@static Sys.iswindows() ? "testrunner.bat" : "testrunner")
+
+@option struct RunicConfig <: ConfigSection
+    executable::Maybe{String}
+end
+
+is_static_setting(::Type{RunicConfig}, ::Symbol) = false
+default_config(::Type{RunicConfig}) = RunicConfig(@static Sys.iswindows() ? "runic.bat" : "runic")
+
+@option struct FormatterConfig <: ConfigSection
+    runic::Maybe{RunicConfig}
+end
+
+default_config(::Type{FormatterConfig}) = FormatterConfig(default_config(RunicConfig))
+
+# configuration item for test purpose
+@option struct InternalConfig <: ConfigSection
+    static_setting::Maybe{Int}
+    dynamic_setting::Maybe{Int}
+end
+
+is_static_setting(::Type{InternalConfig}, field::Symbol) = field == :static_setting
+default_config(::Type{InternalConfig}) = InternalConfig(0, 0)
+
+@option struct JETLSConfig <: ConfigSection
+    full_analysis::Maybe{FullAnalysisConfig}
+    testrunner::Maybe{TestRunnerConfig}
+    formatter::Maybe{FormatterConfig}
+    internal::Maybe{InternalConfig}
+end
+
+is_static_setting(path::Symbol...) =
+    is_static_setting(JETLSConfig, path...)
+
+is_static_setting(::Type{T}, head::Symbol, rest::Symbol...) where {T<:ConfigSection} =
+    is_static_setting(_unwrap_maybe(fieldtype(T, head)), rest...)
+
+const DEFAULT_CONFIG = JETLSConfig(
+    full_analysis = default_config(FullAnalysisConfig),
+    testrunner = default_config(TestRunnerConfig),
+    formatter = default_config(FormatterConfig),
+    internal = default_config(InternalConfig)
+)
+
+get_default_config(path::Symbol...) = getobjpath(DEFAULT_CONFIG, path...)
 
 struct WatchedConfigFiles
     files::Vector{String}
-    configs::Vector{ConfigDict}
+    configs::Vector{JETLSConfig}
 end
-WatchedConfigFiles() = WatchedConfigFiles(String["__DEFAULT_CONFIG__"], ConfigDict[DEFAULT_CONFIG])
+WatchedConfigFiles() = WatchedConfigFiles(String["__DEFAULT_CONFIG__"], [DEFAULT_CONFIG])
 
 Base.copy(watched_files::WatchedConfigFiles) =
     WatchedConfigFiles(copy(watched_files.files), copy(watched_files.configs))
@@ -326,7 +409,7 @@ function Base.delete!(watched_files::WatchedConfigFiles, file::String)
     return watched_files
 end
 
-function Base.setindex!(watched_files::WatchedConfigFiles, config::ConfigDict, file::String)
+function Base.setindex!(watched_files::WatchedConfigFiles, config::JETLSConfig, file::String)
     idx = searchsortedfirst(watched_files.files, file, ConfigFileOrder())
     if 1 <= idx <= length(watched_files.files) && watched_files.files[idx] == file
         watched_files.configs[idx] = config
@@ -352,10 +435,11 @@ end
 struct ConfigFileOrder <: Base.Ordering end
 
 struct ConfigManagerData
-    static_settings::ConfigDict
+    current_settings::JETLSConfig
+    static_settings::JETLSConfig
     watched_files::WatchedConfigFiles
 end
-ConfigManagerData() = ConfigManagerData(ConfigDict(), WatchedConfigFiles())
+ConfigManagerData() = ConfigManagerData(DEFAULT_CONFIG, DEFAULT_CONFIG, WatchedConfigFiles())
 
 # Type aliases for document-synchronization caches using `SWContainer` (sequential-only updates)
 const FileCache = SWContainer{Base.PersistentDict{URI,FileInfo}, SWStats}
