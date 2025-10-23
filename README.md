@@ -233,7 +233,8 @@ the list itself is subject to change.
   - [x] Code actions for running individual `@test` cases
   - [x] Inline test result diagnostics
 - Configuration system
-  - [x] Prototype implementation
+  - [x] Type stable config object implementation
+  - [ ] Support LSP configurations
   - [ ] Documentation
   - [ ] Schema support
 - [x] Parallel/concurrent message handling

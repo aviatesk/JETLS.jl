@@ -137,7 +137,6 @@ julia> collect_unmatched_keys(
  ["key1"]
 ```
 
-
 TODO: remove this. This is a temporary workaround to report unknown keys in the config file
       until Configurations.jl supports reporting full path of unknown keys.
 """
