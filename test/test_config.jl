@@ -218,6 +218,14 @@ end
     @test JETLS.get_config(manager, :testrunner, :executable) === "test_runner"
     @test JETLS.get_config(manager, :non_existent_key) === nothing
 
+    @test Base.infer_return_type((typeof(manager),)) do manager
+           JETLS.get_config(manager, :internal, :dynamic_setting)
+    end == Union{Nothing, Int}
+
+    @test Base.infer_return_type((typeof(manager),)) do manager
+           JETLS.get_config(manager, :internal, :static_setting)
+    end == Union{Nothing, Int}
+
     # Test priority: __DEFAULT_CONFIG__ has lower priority
     override_config = JETLS.JETLSConfig(;
         full_analysis=JETLS.FullAnalysisConfig(999.0),
