@@ -1,4 +1,7 @@
-is_config_file(filepath::AbstractString) = filepath == "__DEFAULT_CONFIG__" || basename(filepath) == ".JETLSConfig.toml"
+is_config_file(filepath::AbstractString) =
+    filepath == "__DEFAULT_CONFIG__" ||
+    filepath == "__LSP_CONFIG__" ||
+    basename(filepath) == ".JETLSConfig.toml"
 
 """
     Base.lt(::ConfigFileOrder, path1, path2)
@@ -6,15 +9,19 @@ is_config_file(filepath::AbstractString) = filepath == "__DEFAULT_CONFIG__" || b
 Compare two paths to determine **reverse of** their priority.
 The order is determined by the following rule:
 
-1. "__DEFAULT_CONFIG__" has lower priority than any other path.
+1. Project root `.JETLSConfig.toml` has highest priority
+2. "__LSP_CONFIG__" has medium priority
+3. "__DEFAULT_CONFIG__" has lowest priority
 
 This rule defines a total order. (See `is_config_file`)
 """
 function Base.lt(::ConfigFileOrder, path1, path2)
+    path1 == path2                && return false
     path1 == "__DEFAULT_CONFIG__" && return false
     path2 == "__DEFAULT_CONFIG__" && return true
-    path1 == path2                && return false
-    return false # unreachable
+    path1 == "__LSP_CONFIG__"     && return false
+    path2 == "__LSP_CONFIG__"     && return true
+    return false # project root .JETLSConfig.toml has highest priority
 end
 
 @generated function on_difference(
@@ -183,10 +190,80 @@ Base.@constprop :aggressive function get_config(manager::ConfigManager, key_path
 end
 
 function fix_static_settings!(manager::ConfigManager)
-    store!(manager) do old_data
+    store!(manager) do old_data::ConfigManagerData
         new_static = get_current_settings(old_data.watched_files)
         new_data = ConfigManagerData(old_data.current_settings, new_static, old_data.watched_files)
         return new_data, new_static
+    end
+end
+
+struct ConfigChange
+    path::String
+    old_val
+    new_val
+    ConfigChange(path::String, @nospecialize(old_val), @nospecialize(new_val)) = new(path, old_val, new_val)
+end
+
+struct ConfigChangeTracker
+    changed_settings::Vector{ConfigChange}
+    changed_static_settings::Vector{ConfigChange}
+end
+ConfigChangeTracker() = ConfigChangeTracker(ConfigChange[], ConfigChange[])
+
+function (tracker::ConfigChangeTracker)(old_val, new_val, path::Tuple{Vararg{Symbol}})
+    if old_val !== new_val
+        path_str = join(path, ".")
+        if is_static_setting(path...)
+            push!(tracker.changed_static_settings, ConfigChange(path_str, old_val, new_val))
+        else
+            push!(tracker.changed_settings, ConfigChange(path_str, old_val, new_val))
+        end
+    end
+    return new_val
+end
+
+function changed_settings_message(changed_settings::Vector{ConfigChange})
+    body = map(changed_settings) do config_change
+        old_repr = repr(config_change.old_val)
+        new_repr = repr(config_change.new_val)
+        "`$(config_change.path)` (`$old_repr` => `$new_repr`)"
+    end |> (x -> join(x, ", "))
+    return "Changes applied: $body"
+end
+
+function changed_static_settings_message(changed_settings::Vector{ConfigChange})
+    body = map(changed_settings) do config_change
+        old_repr = repr(config_change.old_val)
+        new_repr = repr(config_change.new_val)
+        "`$(config_change.path)` (`$old_repr` => `$new_repr`)"
+    end |> (x -> join(x, ", "))
+    return "Static settings affected (requires restart to apply): $body"
+end
+
+function notify_config_changes(
+        server::Server,
+        tracker::ConfigChangeTracker,
+        source::AbstractString
+    )
+    if !isempty(tracker.changed_static_settings) && !isempty(tracker.changed_settings)
+        show_warning_message(server, """
+            Configuration changed.
+            Source: $source
+            $(changed_settings_message(tracker.changed_settings))
+            $(changed_static_settings_message(tracker.changed_static_settings))
+            """)
+    elseif !isempty(tracker.changed_static_settings)
+        show_warning_message(server, """
+            Configuration changed.
+            Source: $source
+            $(changed_static_settings_message(tracker.changed_static_settings))
+            """)
+    elseif !isempty(tracker.changed_settings)
+        show_info_message(server, """
+            Configuration changed.
+            Source: $source
+            $(changed_settings_message(tracker.changed_settings))
+            """)
     end
 end
 
@@ -199,7 +276,7 @@ send error message while leaving current configuration unchanged.
 """
 function load_config!(callback, server::Server, filepath::AbstractString;
                       reload::Bool = false)
-    store!(server.state.config_manager) do old_data
+    store!(server.state.config_manager) do old_data::ConfigManagerData
         if reload
             haskey(old_data.watched_files, filepath) ||
                 show_warning_message(server, "Loading unregistered configuration file: $filepath")
@@ -218,10 +295,7 @@ function load_config!(callback, server::Server, filepath::AbstractString;
                 config_dict = to_config_dict(parsed)
                 unknown_keys = collect_unmatched_keys(config_dict)
                 if !isempty(unknown_keys)
-                    show_error_message(server, """
-                        Configuration file at $filepath contains unknown keys:
-                        $(join(map(x -> string('`', join(x, "."), '`'), unknown_keys), ", "))
-                        """)
+                    show_error_message(server, unmatched_keys_in_config_file_msg(filepath, unknown_keys))
                     return old_data, nothing
                 end
             end
@@ -241,8 +315,14 @@ function load_config!(callback, server::Server, filepath::AbstractString;
     end
 end
 
+unmatched_keys_in_config_file_msg(filepath::AbstractString, unmatched_keys) =
+    unmatched_keys_msg("Configuration file at $filepath contains unknown keys:", unmatched_keys)
+
+unmatched_keys_msg(header_msg::AbstractString, unmatched_keys) =
+    header_msg * "\n" * join(map(x -> string('`', join(x, "."), '`'), unmatched_keys), ", ")
+
 function delete_config!(callback, manager::ConfigManager, filepath::AbstractString)
-    store!(manager) do old_data
+    store!(manager) do old_data::ConfigManagerData
         haskey(old_data.watched_files, filepath) || return old_data, nothing
         new_watched_files = copy(old_data.watched_files)
         delete!(new_watched_files, filepath)

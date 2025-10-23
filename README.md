@@ -160,7 +160,7 @@ vim.lsp.enable("jetls")
 
 ### Zed
 [Zed](https://zed.dev/) extension for Julia/JETLS is available:
-See [aviatesk/zed-julia#avi/JETLS](https://github.com/aviatesk/zed-julia/tree/avi/JETLS)
+See [`aviatesk/zed-julia#avi/JETLS`](https://github.com/aviatesk/zed-julia/tree/avi/JETLS)
 for installation steps.
 
 ### Helix
@@ -234,8 +234,8 @@ the list itself is subject to change.
   - [x] Inline test result diagnostics
 - Configuration system
   - [x] Type stable config object implementation
-  - [ ] Support LSP configurations
-  - [ ] Documentation
+  - [x] Support LSP configurations
+  - [x] Documentation
   - [ ] Schema support
 - [x] Parallel/concurrent message handling
 - [x] Work done progress support
@@ -249,6 +249,142 @@ the list itself is subject to change.
 
 Detailed development notes and progress for this project are collected at
 <https://publish.obsidian.md/jetls>, so those interested might want to take a look.
+
+## Configuration
+
+JETLS supports various configuration options.
+This documentation uses TOML format to describe the configuration schema.
+
+### Available configurations
+
+#### `[full_analysis] debounce`
+
+- Type: number (seconds)
+- Default: `1.0`
+
+Debounce time in seconds before triggering full analysis after a document
+change. JETLS performs type-aware analysis using
+[JET.jl](https://github.com/aviatesk/JET.jl) to detect potential errors.
+Higher values reduce analysis frequency (saving CPU) but may feel less
+responsive.
+
+```toml
+[full_analysis]
+debounce = 2.0  # Wait 2 seconds after typing stops before analyzing
+```
+
+#### `[formatter.runic] executable`
+
+- Type: string (path)
+- Default: `"runic"` (or `"runic.bat"` on Windows)
+
+Path to the [Runic](https://github.com/fredrikekre/Runic.jl) formatter
+executable. If not specified, JETLS looks for `runic` in your `PATH` (typically
+`~/.julia/bin/runic`). Used for document formatting (triggered via editor
+format command).
+
+```toml
+[formatter.runic]
+executable = "/custom/path/to/runic"
+```
+
+#### `[testrunner] executable`
+
+- Type: string (path)
+- Default: `"testrunner"` (or `"testrunner.bat"` on Windows)
+
+Path to the [TestRunner.jl](https://github.com/aviatesk/TestRunner.jl)
+executable for running individual `@testset` blocks and `@test` cases. If not
+specified, JETLS looks for `testrunner` in your `PATH` (typically
+`~/.julia/bin/testrunner`).
+
+```toml
+[testrunner]
+executable = "/custom/path/to/testrunner"
+```
+
+See [TestRunner integration](#testrunner-integration) for setup instructions.
+
+### How to configure
+
+#### Method 1: Project-specific configuration file
+
+Create a `.JETLSConfig.toml` file in your project root.
+This configuration method works client-agnostically, thus allows projects to
+commit configuration to VCS without writing JETLS configurations in various
+formats that each client can understand.
+
+> Example `.JETLSConfig.toml`:
+```toml
+[full_analysis]
+debounce = 2.0
+
+[testrunner]
+executable = "/custom/path/to/testrunner"
+```
+
+#### Method 2: Editor configuration via LSP
+
+If your client supports [`workspace/configuration`](#workspace-configuration-support),
+you can configure JETLS in a client-specific manner.
+As examples, we show the configuration methods for the VSCode extension `jetls-client`,
+and the Zed extension [`aviatesk/zed-julia#avi/JETLS`](https://github.com/aviatesk/zed-julia/tree/avi/JETLS).
+
+##### VSCode (`jetls-client` extension)
+Configure JETLS in VSCode's settings.json file with `jetls-client.jetlsSettings` section:
+> Example `.vscode/settings.json`:
+```jsonc
+{
+  "jetls-client.jetlsSettings": {
+    "full_analysis": {
+      "debounce": 2.0
+    },
+    "testrunner": {
+      "executable": "/custom/path/to/testrunner"
+    }
+  }
+}
+```
+See [`package.json`](./package.json) for the complete list of available VSCode
+settings and their descriptions.
+
+##### Zed ([`aviatesk/zed-julia#avi/JETLS`](https://github.com/aviatesk/zed-julia/tree/avi/JETLS) extension)
+Configure JETLS in Zed's settings.json file with the `lsp.JETLS.settings` section:
+> Example `.zed/settings.json`:
+```jsonc
+{
+  "lsp": {
+    "JETLS": {
+      // Required configuration items for starting the server
+      "binary": {
+        ...
+      },
+      // JETLS configurations
+      "settings": {
+        "full_analysis": {
+          "debounce": 2.0
+        },
+        "testrunner": {
+          "executable": "/custom/path/to/testrunner"
+        }
+      }
+    }
+  }
+}
+```
+
+### Configuration priority
+
+When multiple configuration sources are present, they are merged in priority
+order (highest first):
+
+1. Project-specific `.JETLSConfig.toml`
+2. Editor configuration via LSP
+3. Built-in defaults
+
+The `.JETLSConfig.toml` file takes precedence, since it provides a
+**client-agnostic** way to configure JETLS that works consistently across
+all editors.
 
 ## TestRunner integration
 
