@@ -97,6 +97,39 @@
                 }
               }
             },
+            "formatter": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "Runic",
+                    "JuliaFormatter"
+                  ],
+                  "default": "Runic",
+                  "description": "Preset formatter to use. 'Runic' (default) or 'JuliaFormatter'."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "custom": {
+                      "type": "object",
+                      "properties": {
+                        "executable": {
+                          "type": "string",
+                          "description": "Path to custom formatter executable for document formatting. The formatter should read Julia code from stdin and output formatted code to stdout. Optional."
+                        },
+                        "executable_range": {
+                          "type": "string",
+                          "description": "Path to custom formatter executable for range formatting. Should accept --lines=START:END argument. Optional."
+                        }
+                      }
+                    }
+                  }
+                }
+              ],
+              "default": "Runic",
+              "markdownDescription": "Formatter configuration. Can be a preset name ('Runic' or 'JuliaFormatter') or a custom formatter object. See [Formatting](https://github.com/aviatesk/JETLS.jl#formatting) for details."
+            },
             "testrunner": {
               "type": "object",
               "properties": {
@@ -104,21 +137,6 @@
                   "type": "string",
                   "default": "",
                   "description": "Path to the TestRunner.jl executable. If empty, uses 'testrunner' from PATH."
-                }
-              }
-            },
-            "formatter": {
-              "type": "object",
-              "properties": {
-                "runic": {
-                  "type": "object",
-                  "properties": {
-                    "executable": {
-                      "type": "string",
-                      "default": "",
-                      "description": "Path to the Runic formatter executable. If empty, uses 'runic' from PATH."
-                    }
-                  }
                 }
               }
             }
