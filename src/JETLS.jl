@@ -12,8 +12,11 @@ using Preferences: Preferences
 const JETLS_DEV_MODE = Preferences.@load_preference("JETLS_DEV_MODE", false)
 const JETLS_TEST_MODE = Preferences.@load_preference("JETLS_TEST_MODE", false)
 const JETLS_DEBUG_LOWERING = Preferences.@load_preference("JETLS_DEBUG_LOWERING", false)
+function show_setup_info(msg)
+    @info msg Sys.BINDIR pkgdir(JETLS) Threads.nthreads() JETLS_DEV_MODE JETLS_TEST_MODE JETLS_DEBUG_LOWERING
+end
 push_init_hooks!() do
-    @info "Running JETLS with" JETLS_DEV_MODE JETLS_TEST_MODE JETLS_DEBUG_LOWERING Threads.nthreads()
+    show_setup_info("Running JETLS with the following setup:")
 end
 
 using LSP
