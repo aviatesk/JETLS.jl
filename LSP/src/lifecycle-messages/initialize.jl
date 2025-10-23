@@ -513,11 +513,11 @@ provides text document synchronization (e.g. open, changed and close notificatio
         """
         workspaceEdit::Union{WorkspaceEditClientCapabilities, Nothing} = nothing
 
-        # """
-        # Capabilities specific to the `workspace/didChangeConfiguration`
-        # notification.
-        # """
-        # didChangeConfiguration::Union{DidChangeConfigurationClientCapabilities, Nothing} = nothing
+        """
+        Capabilities specific to the `workspace/didChangeConfiguration`
+        notification.
+        """
+        didChangeConfiguration::Union{DidChangeConfigurationClientCapabilities, Nothing} = nothing
 
         """
         Capabilities specific to the `workspace/didChangeWatchedFiles`
