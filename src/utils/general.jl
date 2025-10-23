@@ -117,8 +117,11 @@ An accessor primarily written for accessing fields of LSP objects whose fields
 may be unset (set to `nothing`) depending on client/server capabilities.
 Traverses the field chain `paths...` of `obj`, and returns `nothing` if any
 `nothing` field is encountered along the way.
+
+Note: `@noinline` is used to maximize type stability. This is a temporary workaround and
+may become unnecessary with future compiler improvements.
 """
-function getobjpath(obj, path::Symbol, paths::Symbol...)
+@noinline Base.@constprop :aggressive function getobjpath(obj, path::Symbol, paths::Symbol...)
     nextobj = @something getfield(obj, path) return nothing
     getobjpath(nextobj, paths...)
 end

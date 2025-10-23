@@ -173,7 +173,7 @@ Retrieves the current configuration value.
 Among the registered configuration files, fetches the value in order of priority (see `Base.lt(::ConfigFileOrder, path1, path2)`).
 If the key path does not exist in any of the configurations, returns `nothing`.
 """
-function get_config(manager::ConfigManager, key_path::Symbol...)
+Base.@constprop :aggressive function get_config(manager::ConfigManager, key_path::Symbol...)
     try
         is_static_setting(key_path...) &&
             return getobjpath(load(manager).static_settings, key_path...)
