@@ -18,6 +18,16 @@ let languageClient: LanguageClient;
 let outputChannel: OutputChannel;
 let statusBarItem: vscode.StatusBarItem;
 
+interface ServerConfig {
+  juliaExecutablePath: string;
+  jetlsDirectory: string;
+  juliaThreads: string;
+  communicationChannel: string;
+  socketPort: number;
+}
+
+let currentServerConfig: ServerConfig | null = null;
+
 interface ProcessManager {
   process: cp.ChildProcess;
   timeoutHandle: NodeJS.Timeout | null;
@@ -124,13 +134,40 @@ function spawnJuliaServer(
   });
 }
 
-async function startLanguageServer(context: ExtensionContext) {
+function getServerConfig(): ServerConfig {
   const config = vscode.workspace.getConfiguration("jetls-client");
-  const juliaExecutable = config.get<string>("juliaExecutablePath", "julia");
-  const jetlsDirectory = config.get<string>("jetlsDirectory", "");
-  const juliaThreads = config.get<string>("juliaThreads", "auto");
+  return {
+    juliaExecutablePath: config.get<string>("juliaExecutablePath", "julia"),
+    jetlsDirectory: config.get<string>("jetlsDirectory", ""),
+    juliaThreads: config.get<string>("juliaThreads", "auto"),
+    communicationChannel: config.get<string>("communicationChannel", "auto"),
+    socketPort: config.get<number>("socketPort", 8080),
+  };
+}
 
-  let commChannel = config.get<string>("communicationChannel", "auto");
+function hasServerConfigChanged(
+  oldConfig: ServerConfig | null,
+  newConfig: ServerConfig,
+): boolean {
+  if (!oldConfig) { return true; }
+  return (
+    oldConfig.juliaExecutablePath !== newConfig.juliaExecutablePath ||
+    oldConfig.jetlsDirectory !== newConfig.jetlsDirectory ||
+    oldConfig.juliaThreads !== newConfig.juliaThreads ||
+    oldConfig.communicationChannel !== newConfig.communicationChannel ||
+    oldConfig.socketPort !== newConfig.socketPort
+  );
+}
+
+async function startLanguageServer(context: ExtensionContext) {
+  const serverConfig = getServerConfig();
+  currentServerConfig = serverConfig;
+
+  const juliaExecutable = serverConfig.juliaExecutablePath;
+  const jetlsDirectory = serverConfig.jetlsDirectory;
+  const juliaThreads = serverConfig.juliaThreads;
+
+  let commChannel = serverConfig.communicationChannel;
   if (commChannel === "auto") {
     // Auto-detect best default based on environment
     commChannel = "pipe";
@@ -179,7 +216,7 @@ async function startLanguageServer(context: ExtensionContext) {
       debug: { command: juliaExecutable, args: [...baseArgs, "--debug=yes"] },
     };
   } else if (commChannel === "socket") {
-    const port = config.get<number>("socketPort", 0) || 0; // Use 0 for auto-assign
+    const port = serverConfig.socketPort || 0; // Use 0 for auto-assign
 
     serverOptions = () => {
       return new Promise((resolve, reject) => {
@@ -449,10 +486,21 @@ export function activate(context: ExtensionContext) {
         event.affectsConfiguration("jetls-client.communicationChannel") ||
         event.affectsConfiguration("jetls-client.socketPort")
       ) {
-        vscode.window.showInformationMessage(
-          "JETLS configuration changed. Restarting language server...",
-        );
-        restartLanguageServer(context);
+        const newConfig = getServerConfig();
+        if (hasServerConfigChanged(currentServerConfig, newConfig)) {
+          vscode.window.showInformationMessage(
+            "JETLS configuration changed. Restarting language server...",
+          );
+          restartLanguageServer(context);
+        }
+      } else if (event.affectsConfiguration("jetls-client.jetlsSettings")) {
+        if (languageClient) {
+          languageClient.sendNotification("workspace/didChangeConfiguration", {
+            settings: vscode.workspace
+              .getConfiguration("jetls-client")
+              .get("jetlsSettings"),
+          });
+        }
       }
     }),
   );
