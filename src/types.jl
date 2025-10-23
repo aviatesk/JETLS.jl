@@ -334,18 +334,28 @@ end
 is_static_setting(::Type{TestRunnerConfig}, ::Symbol) = false
 default_config(::Type{TestRunnerConfig}) = TestRunnerConfig(@static Sys.iswindows() ? "testrunner.bat" : "testrunner")
 
-@option struct RunicConfig <: ConfigSection
+@option "custom" struct CustomFormatterConfig
     executable::Maybe{String}
+    executable_range::Maybe{String}
 end
 
-is_static_setting(::Type{RunicConfig}, ::Symbol) = false
-default_config(::Type{RunicConfig}) = RunicConfig(@static Sys.iswindows() ? "runic.bat" : "runic")
+const FormatterConfig = Union{String,CustomFormatterConfig}
 
-@option struct FormatterConfig <: ConfigSection
-    runic::Maybe{RunicConfig}
+is_static_setting(::Type{FormatterConfig}) = false
+is_static_setting(::Type{FormatterConfig}, ::Symbol) = false
+function default_config(::Type{FormatterConfig})
+    return "Runic"
 end
 
-default_config(::Type{FormatterConfig}) = FormatterConfig(default_config(RunicConfig))
+function default_executable(formatter::String)
+    if formatter == "Runic"
+        return @static Sys.iswindows() ? "runic.bat" : "runic"
+    elseif formatter == "JuliaFormatter"
+        return @static Sys.iswindows() ? "jlfmt.bat" : "jlfmt"
+    else
+        return nothing
+    end
+end
 
 # configuration item for test purpose
 @option struct InternalConfig <: ConfigSection
