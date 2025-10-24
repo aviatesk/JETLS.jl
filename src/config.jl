@@ -1,28 +1,5 @@
 is_config_file(filepath::AbstractString) =
-    filepath == "__DEFAULT_CONFIG__" ||
-    filepath == "__LSP_CONFIG__" ||
     basename(filepath) == ".JETLSConfig.toml"
-
-"""
-    Base.lt(::ConfigFileOrder, path1, path2)
-
-Compare two paths to determine **reverse of** their priority.
-The order is determined by the following rule:
-
-1. Project root `.JETLSConfig.toml` has highest priority
-2. "__LSP_CONFIG__" has medium priority
-3. "__DEFAULT_CONFIG__" has lowest priority
-
-This rule defines a total order. (See `is_config_file`)
-"""
-function Base.lt(::ConfigFileOrder, path1, path2)
-    path1 == path2                && return false
-    path1 == "__DEFAULT_CONFIG__" && return false
-    path2 == "__DEFAULT_CONFIG__" && return true
-    path1 == "__LSP_CONFIG__"     && return false
-    path2 == "__LSP_CONFIG__"     && return true
-    return false # project root .JETLSConfig.toml has highest priority
-end
 
 @generated function on_difference(
     callback,
@@ -97,15 +74,7 @@ Merges two configuration objects, with `overlay` taking precedence over `base`.
 If a field in `overlay` is `nothing`, the corresponding field from `base` is retained.
 """
 merge_setting(base::T, overlay::T) where {T<:ConfigSection} =
-    on_difference((base_val, overlay_val, path) -> overlay_val === nothing ? base_val : overlay_val, base, overlay)
-
-function get_current_settings(watched_files::WatchedConfigFiles)
-    result = DEFAULT_CONFIG
-    for config in Iterators.reverse(values(watched_files))
-        result = merge_setting(result, config)
-    end
-    return result
-end
+    on_difference((base_val, overlay_val, _) -> overlay_val === nothing ? base_val : overlay_val, base, overlay)
 
 # TODO: remove this.
 #       (now this is used for `collect_unmatched_keys` only. see that's comment)
@@ -176,14 +145,18 @@ end
     get_config(manager::ConfigManager, key_path...)
 
 Retrieves the current configuration value.
-Among the registered configuration files, fetches the value in order of priority (see `Base.lt(::ConfigFileOrder, path1, path2)`).
+Among the registered configuration files, fetches the value in order of priority.
 If the key path does not exist in any of the configurations, returns `nothing`.
 """
 Base.@constprop :aggressive function get_config(manager::ConfigManager, key_path::Symbol...)
     try
-        is_static_setting(key_path...) &&
-            return getobjpath(load(manager).static_settings, key_path...)
-        return getobjpath(load(manager).current_settings, key_path...)
+        data = load(manager)
+        if is_static_setting(key_path...)
+            return getobjpath(data.static_settings, key_path...)
+        else
+            settings = get_settings(data)
+            return getobjpath(settings, key_path...)
+        end
     catch e
         e isa FieldError ? nothing : rethrow()
     end
@@ -191,8 +164,8 @@ end
 
 function fix_static_settings!(manager::ConfigManager)
     store!(manager) do old_data::ConfigManagerData
-        new_static = get_current_settings(old_data.watched_files)
-        new_data = ConfigManagerData(old_data.current_settings, new_static, old_data.watched_files)
+        new_static = get_settings(old_data)
+        new_data = ConfigManagerData(old_data; static_settings=new_static)
         return new_data, new_static
     end
 end
@@ -268,7 +241,7 @@ function notify_config_changes(
 end
 
 """
-Loads the configuration from the specified path into the server's config manager.
+Loads the project configuration from the specified path into the server's config manager.
 
 If the file does not exist or cannot be parsed, just return leaving the current
 configuration unchanged. When there are unknown keys in the config file,
@@ -277,16 +250,15 @@ send error message while leaving current configuration unchanged.
 function load_config!(callback, server::Server, filepath::AbstractString;
                       reload::Bool = false)
     store!(server.state.config_manager) do old_data::ConfigManagerData
-        if reload
-            haskey(old_data.watched_files, filepath) ||
-                show_warning_message(server, "Loading unregistered configuration file: $filepath")
+        if reload && old_data.project_config_path != filepath
+            show_warning_message(server, "Loading unregistered configuration file: $filepath")
         end
 
         isfile(filepath) || return old_data, nothing
         parsed = TOML.tryparsefile(filepath)
         parsed isa TOML.ParserError && return old_data, nothing
 
-        new_config = try
+        new_project_config = try
             Configurations.from_dict(JETLSConfig, parsed)
         catch e
             # TODO: remove this when Configurations.jl support to report
@@ -306,11 +278,11 @@ function load_config!(callback, server::Server, filepath::AbstractString;
             return old_data, nothing
         end
 
-        new_watched_files = copy(old_data.watched_files)
-        new_watched_files[filepath] = new_config
-        new_current_settings = get_current_settings(new_watched_files)
-        on_difference(callback, old_data.current_settings, new_current_settings)
-        new_data = ConfigManagerData(new_current_settings, old_data.static_settings, new_watched_files)
+        new_data = ConfigManagerData(old_data;
+            project_config=new_project_config,
+            project_config_path=filepath
+        )
+        on_difference(callback, get_settings(old_data), get_settings(new_data))
         return new_data, nothing
     end
 end
@@ -323,12 +295,12 @@ unmatched_keys_msg(header_msg::AbstractString, unmatched_keys) =
 
 function delete_config!(callback, manager::ConfigManager, filepath::AbstractString)
     store!(manager) do old_data::ConfigManagerData
-        haskey(old_data.watched_files, filepath) || return old_data, nothing
-        new_watched_files = copy(old_data.watched_files)
-        delete!(new_watched_files, filepath)
-        new_current_settings = get_current_settings(new_watched_files)
-        new_data = ConfigManagerData(new_current_settings, old_data.static_settings, new_watched_files)
-        on_difference(callback, old_data.current_settings, new_current_settings)
+        old_data.project_config_path == filepath || return old_data, nothing
+        new_data = ConfigManagerData(old_data;
+            project_config=EMPTY_CONFIG,
+            project_config_path=nothing
+        )
+        on_difference(callback, get_settings(old_data), get_settings(new_data))
         return new_data, nothing
     end
 end
