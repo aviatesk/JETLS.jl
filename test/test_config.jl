@@ -75,8 +75,7 @@ end
     @testset "`get_default_config`" begin
         @test JETLS.get_default_config(:testrunner, :executable) ==
             (@static Sys.iswindows() ? "testrunner.bat" : "testrunner")
-        @test JETLS.get_default_config(:formatter, :runic, :executable) ==
-            (@static Sys.iswindows() ? "runic.bat" : "runic")
+        @test JETLS.get_default_config(:formatter) == "Runic"
 
         @test_throws FieldError JETLS.get_default_config(:nonexistent)
         @test_throws FieldError JETLS.get_default_config(:full_analysis, :nonexistent)
@@ -86,7 +85,6 @@ end
         @test !JETLS.is_static_setting(:internal, :dynamic_setting)
         @test JETLS.is_static_setting(:internal, :static_setting)
         @test !JETLS.is_static_setting(:testrunner, :executable)
-        @test !JETLS.is_static_setting(:formatter, :runic, :executable)
     end
 
     @testset "`merge_setting`" begin
@@ -337,6 +335,44 @@ end
 
     @test JETLS.get_config(manager, :testrunner, :executable) == "lsp_runner"
     @test JETLS.get_config(manager, :full_analysis, :debounce) == 3.0
+end
+
+@testset "Formatter configuration" begin
+    @testset "preset formatter: Runic" begin
+        manager = JETLS.ConfigManager(JETLS.ConfigManagerData())
+        config = JETLS.JETLSConfig(; formatter="Runic")
+        storeconfig!(manager, "/path/.JETLSConfig.toml", config)
+        @test JETLS.get_config(manager, :formatter) == "Runic"
+    end
+
+    @testset "preset formatter: JuliaFormatter" begin
+        manager = JETLS.ConfigManager(JETLS.ConfigManagerData())
+        config = JETLS.JETLSConfig(; formatter="JuliaFormatter")
+        storeconfig!(manager, "/path/.JETLSConfig.toml", config)
+        @test JETLS.get_config(manager, :formatter) == "JuliaFormatter"
+    end
+
+    @testset "custom formatter" begin
+        manager = JETLS.ConfigManager(JETLS.ConfigManagerData())
+        custom = JETLS.CustomFormatterConfig("my-formatter", "my-range-formatter")
+        config = JETLS.JETLSConfig(; formatter=custom)
+        storeconfig!(manager, "/path/.JETLSConfig.toml", config)
+        formatter = JETLS.get_config(manager, :formatter)
+        @test formatter isa JETLS.CustomFormatterConfig
+        @test formatter.executable == "my-formatter"
+        @test formatter.executable_range == "my-range-formatter"
+    end
+
+    @testset "custom formatter without executable_range" begin
+        manager = JETLS.ConfigManager(JETLS.ConfigManagerData())
+        custom = JETLS.CustomFormatterConfig("my-formatter", nothing)
+        config = JETLS.JETLSConfig(; formatter=custom)
+        storeconfig!(manager, "/path/.JETLSConfig.toml", config)
+        formatter = JETLS.get_config(manager, :formatter)
+        @test formatter isa JETLS.CustomFormatterConfig
+        @test formatter.executable == "my-formatter"
+        @test formatter.executable_range === nothing
+    end
 end
 
 end # test_config
