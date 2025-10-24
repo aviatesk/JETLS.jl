@@ -21,6 +21,9 @@ const DEBOUNCE_DEFAULT = JETLS.getobjpath(JETLS.DEFAULT_CONFIG,
 const STATIC_SETTING_DEFAULT = JETLS.getobjpath(JETLS.DEFAULT_CONFIG,
     :internal, :static_setting)
 
+const TESTRUNNER_DEFAULT = JETLS.getobjpath(JETLS.DEFAULT_CONFIG,
+    :testrunner, :executable)
+
 # Test the full cycle of `DidChangeWatchedFilesNotification`:
 # 1. Initialize with `.JETLSConfig.toml` file.
 # 2. Change the keys that require reload
@@ -64,8 +67,10 @@ const STATIC_SETTING_DEFAULT = JETLS.getobjpath(JETLS.DEFAULT_CONFIG,
                 (; raw_res) = writereadmsg(msg)
                 @test raw_res isa ShowMessageNotification
                 @test raw_res.params.type == MessageType.Warning
-                @test occursin("internal.static_setting", raw_res.params.message)
-                @test occursin("restart", raw_res.params.message)
+                expected_static_msg = JETLS.changed_static_settings_message([
+                    JETLS.ConfigChange("internal.static_setting", STATIC_SETTING_STARTUP, STATIC_SETTING_V2)
+                ])
+                @test occursin(expected_static_msg, raw_res.params.message)
             end
 
             # Static setting should not be changed
@@ -90,9 +95,11 @@ const STATIC_SETTING_DEFAULT = JETLS.getobjpath(JETLS.DEFAULT_CONFIG,
                 (; raw_res) = writereadmsg(msg)
                 @test raw_res isa ShowMessageNotification
                 @test raw_res.params.type == MessageType.Info
-                # only changed keys should be reported
-                @test occursin("debounce", raw_res.params.message)
-                @test !occursin("static_setting", raw_res.params.message)
+                expected_changes_msg = JETLS.changed_settings_message([
+                    JETLS.ConfigChange("full_analysis.debounce", DEBOUNCE_DEFAULT, DEBOUNCE_V2)
+                ])
+                @test occursin(expected_changes_msg, raw_res.params.message)
+                @test !occursin("internal.static_setting", raw_res.params.message)
             end
 
             # `full_analysis.debounce` should be changed (dynamic)
@@ -117,10 +124,12 @@ const STATIC_SETTING_DEFAULT = JETLS.getobjpath(JETLS.DEFAULT_CONFIG,
                 (; raw_res) = writereadmsg(msg)
                 @test raw_res isa ShowMessageNotification
                 @test raw_res.params.type == MessageType.Info
-                # only changed keys should be reported
-                @test !occursin("debounce", raw_res.params.message)
-                @test !occursin("static_setting", raw_res.params.message)
-                @test occursin("testrunner", raw_res.params.message)
+                expected_changes_msg = JETLS.changed_settings_message([
+                    JETLS.ConfigChange("testrunner.executable", TESTRUNNER_STARTUP, TESTRUNNER_V2)
+                ])
+                @test occursin(expected_changes_msg, raw_res.params.message)
+                @test !occursin("full_analysis.debounce", raw_res.params.message)
+                @test !occursin("internal.static_setting", raw_res.params.message)
             end
 
             # testrunner.executable should be updated in both configs (dynamic)
@@ -139,8 +148,8 @@ const STATIC_SETTING_DEFAULT = JETLS.getobjpath(JETLS.DEFAULT_CONFIG,
                 (; raw_res) = writereadmsg(msg)
                 @test raw_res isa ShowMessageNotification
                 @test raw_res.params.type == MessageType.Error
-                @test occursin("unknown keys", raw_res.params.message)
-                @test occursin("full_analysis.___unknown_key___", raw_res.params.message)
+                expected_error_msg = JETLS.unmatched_keys_in_config_file_msg(config_path, [["full_analysis", "___unknown_key___"]])
+                @test occursin(expected_error_msg, raw_res.params.message)
             end
 
             # Delete the config file
@@ -150,11 +159,26 @@ const STATIC_SETTING_DEFAULT = JETLS.getobjpath(JETLS.DEFAULT_CONFIG,
                         changes=[FileEvent(; uri=filepath2uri(config_path), type=FileChangeType.Deleted)]
                     )
                 )
-                (; raw_res) = writereadmsg(msg)
-                @test raw_res isa ShowMessageNotification
-                @test raw_res.params.type == MessageType.Warning
-                @test occursin("Deleted", raw_res.params.message)
-                @test occursin("restart", raw_res.params.message)
+                (; raw_res) = writereadmsg(msg; read=2)
+                @test any(raw_res) do r
+                    r isa ShowMessageNotification &&
+                    r.params.type == MessageType.Info &&
+                    occursin(JETLS.config_file_deleted_msg(config_path), r.params.message)
+                end
+                @test any(raw_res) do r
+                    if r isa ShowMessageNotification && r.params.type == MessageType.Warning
+                        expected_changes = JETLS.changed_settings_message([
+                            JETLS.ConfigChange("full_analysis.debounce", DEBOUNCE_V2, DEBOUNCE_DEFAULT),
+                            JETLS.ConfigChange("testrunner.executable", TESTRUNNER_V2, TESTRUNNER_DEFAULT)
+                        ])
+                        expected_static = JETLS.changed_static_settings_message([
+                            JETLS.ConfigChange("internal.static_setting", STATIC_SETTING_V2, STATIC_SETTING_DEFAULT)
+                        ])
+                        return occursin(expected_changes, r.params.message) &&
+                               occursin(expected_static, r.params.message)
+                    end
+                    return false
+                end
             end
 
             # After deletion,
@@ -178,11 +202,25 @@ const STATIC_SETTING_DEFAULT = JETLS.getobjpath(JETLS.DEFAULT_CONFIG,
                         changes=[FileEvent(; uri=filepath2uri(config_path), type=FileChangeType.Created)]
                     )
                 )
-                (; raw_res) = writereadmsg(msg)
-                @test raw_res isa ShowMessageNotification
-                @test raw_res.params.type == MessageType.Warning
-                @test occursin("Created", raw_res.params.message)
-                @test occursin("restart", raw_res.params.message)
+                (; raw_res) = writereadmsg(msg; read=2)
+                @test any(raw_res) do r
+                    r isa ShowMessageNotification &&
+                    r.params.type == MessageType.Info &&
+                    occursin(JETLS.config_file_created_msg(config_path), r.params.message)
+                end
+                @test any(raw_res) do r
+                    if r isa ShowMessageNotification && r.params.type == MessageType.Warning
+                        expected_changes = JETLS.changed_settings_message([
+                            JETLS.ConfigChange("testrunner.executable", TESTRUNNER_DEFAULT, TESTRUNNER_RECREATE)
+                        ])
+                        expected_static = JETLS.changed_static_settings_message([
+                            JETLS.ConfigChange("internal.static_setting", STATIC_SETTING_DEFAULT, STATIC_SETTING_RECREATE)
+                        ])
+                        return occursin(expected_changes, r.params.message) &&
+                               occursin(expected_static, r.params.message)
+                    end
+                    return false
+                end
             end
 
             # static keys should not be changed even if higher priority config file is re-created
@@ -193,9 +231,7 @@ const STATIC_SETTING_DEFAULT = JETLS.getobjpath(JETLS.DEFAULT_CONFIG,
             touch(other_file)
             let msg = DidChangeWatchedFilesNotification(;
                     params=DidChangeWatchedFilesParams(;
-                        changes=[FileEvent(; uri=filepath2uri(other_file), type=FileChangeType.Changed)]
-                    )
-                )
+                        changes=[FileEvent(; uri=filepath2uri(other_file), type=FileChangeType.Changed)]))
                 writereadmsg(msg; read=0)
             end
             # no effect on config
@@ -226,11 +262,25 @@ end
                     changes=[FileEvent(; uri=filepath2uri(config_path), type=FileChangeType.Created)]
                 )
             )
-            (; raw_res) = writereadmsg(creation_notification)
-            @test raw_res isa ShowMessageNotification
-            @test raw_res.params.type == MessageType.Warning
-            @test occursin("Created", raw_res.params.message)
-            @test occursin("restart", raw_res.params.message)
+            (; raw_res) = writereadmsg(creation_notification; read=2)
+            @test any(raw_res) do r
+                r isa ShowMessageNotification &&
+                r.params.type == MessageType.Info &&
+                occursin(JETLS.config_file_created_msg(config_path), r.params.message)
+            end
+            @test any(raw_res) do r
+                if r isa ShowMessageNotification && r.params.type == MessageType.Warning
+                    expected_changes = JETLS.changed_settings_message([
+                        JETLS.ConfigChange("testrunner.executable", TESTRUNNER_DEFAULT, TESTRUNNER_RECREATE)
+                    ])
+                    expected_static = JETLS.changed_static_settings_message([
+                        JETLS.ConfigChange("internal.static_setting", STATIC_SETTING_DEFAULT, STATIC_SETTING_RECREATE)
+                    ])
+                    return occursin(expected_changes, r.params.message) &&
+                           occursin(expected_static, r.params.message)
+                end
+                return false
+            end
 
             # If higher priority config file is created,
             # - static keys should not be changed
@@ -256,9 +306,11 @@ end
 
             @test raw_res isa ShowMessageNotification
             @test raw_res.params.type == MessageType.Warning
-            @test occursin("Updated", raw_res.params.message)
-            @test occursin("`internal.static_setting`", raw_res.params.message)
-            @test occursin("restart", raw_res.params.message)
+            expected_static_msg = JETLS.changed_static_settings_message([
+                JETLS.ConfigChange("internal.static_setting", STATIC_SETTING_RECREATE, STATIC_SETTING_V2)
+            ])
+            @test occursin(expected_static_msg, raw_res.params.message)
+
             @test JETLS.get_config(manager, :internal, :static_setting) == STATIC_SETTING_DEFAULT
             @test JETLS.get_config(manager, :testrunner, :executable) == TESTRUNNER_V2
         end

@@ -149,7 +149,9 @@ function hasServerConfigChanged(
   oldConfig: ServerConfig | null,
   newConfig: ServerConfig,
 ): boolean {
-  if (!oldConfig) { return true; }
+  if (!oldConfig) {
+    return true;
+  }
   return (
     oldConfig.juliaExecutablePath !== newConfig.juliaExecutablePath ||
     oldConfig.jetlsDirectory !== newConfig.jetlsDirectory ||
@@ -447,12 +449,29 @@ async function startLanguageServer(context: ExtensionContext) {
   );
 
   statusBarItem.text = "$(sync~spin) Loading JETLS ...";
-  statusBarItem.tooltip = "Loading JETLS and attempting to establish communication between client and server.";
+  statusBarItem.tooltip =
+    "Loading JETLS and attempting to establish communication between client and server.";
   statusBarItem.show();
 
   languageClient.start().then(() => {
     statusBarItem.hide();
     outputChannel.appendLine("[jetls-client] JETLS is ready!");
+
+    // Register handler for workspace/configuration requests after client starts
+    languageClient.onRequest(
+      "workspace/configuration",
+      (params: { items: { scopeUri?: string; section?: string | null }[] }) => {
+        const items = params.items || [];
+        const results = items.map((item) => {
+          const section = item.section || "jetls-client.jetlsSettings";
+          const scope = item.scopeUri
+            ? vscode.Uri.parse(item.scopeUri)
+            : undefined;
+          return vscode.workspace.getConfiguration(section, scope);
+        });
+        return results;
+      },
+    );
   });
 }
 
@@ -492,14 +511,6 @@ export function activate(context: ExtensionContext) {
             "JETLS configuration changed. Restarting language server...",
           );
           restartLanguageServer(context);
-        }
-      } else if (event.affectsConfiguration("jetls-client.jetlsSettings")) {
-        if (languageClient) {
-          languageClient.sendNotification("workspace/didChangeConfiguration", {
-            settings: vscode.workspace
-              .getConfiguration("jetls-client")
-              .get("jetlsSettings"),
-          });
         }
       }
     }),

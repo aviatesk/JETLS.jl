@@ -66,6 +66,7 @@ include("utils/lsp.jl")
 include("utils/server.jl")
 
 include("config.jl")
+include("workspace-configuration.jl")
 
 include("analysis/Interpreter.jl")
 using .Interpreter
@@ -308,6 +309,8 @@ function (dispatcher::ResponseMessageDispatcher)(server::Server, msg::Dict{Symbo
         handle_formatting_progress_response(server, msg, request_caller)
     elseif request_caller isa RangeFormattingProgressCaller
         handle_range_formatting_progress_response(server, msg, request_caller)
+    elseif request_caller isa WorkspaceConfigurationCaller
+        handle_workspace_configuration_response(server, msg, request_caller)
     elseif request_caller isa RegisterCapabilityRequestCaller || request_caller isa UnregisterCapabilityRequestCaller
         # nothing to do
     else
@@ -378,6 +381,8 @@ end
 function handle_notification_message(server::Server, @nospecialize msg)
     if msg isa DidChangeWatchedFilesNotification
         handle_DidChangeWatchedFilesNotification(server, msg)
+    elseif msg isa DidChangeConfigurationNotification
+        handle_DidChangeConfigurationNotification(server, msg)
     elseif JETLS_DEV_MODE
         if isdefined(msg, :method)
             _id = getfield(msg, :method)
