@@ -378,68 +378,44 @@ const DEFAULT_CONFIG = JETLSConfig(
 
 get_default_config(path::Symbol...) = getobjpath(DEFAULT_CONFIG, path...)
 
-struct WatchedConfigFiles
-    files::Vector{String}
-    configs::Vector{JETLSConfig}
-end
-WatchedConfigFiles() = WatchedConfigFiles(String["__DEFAULT_CONFIG__"], [DEFAULT_CONFIG])
-
-Base.copy(watched_files::WatchedConfigFiles) =
-    WatchedConfigFiles(copy(watched_files.files), copy(watched_files.configs))
-
-function _file_idx(watched_files::WatchedConfigFiles, file::String)
-    idx = searchsortedfirst(watched_files.files, file, ConfigFileOrder())
-    if idx > length(watched_files.files) || watched_files.files[idx] != file
-        return nothing
-    end
-    return idx
-end
-
-Base.keys(watched_files::WatchedConfigFiles) = watched_files.files
-Base.values(watched_files::WatchedConfigFiles) = watched_files.configs
-Base.length(watched_files::WatchedConfigFiles) = length(watched_files.files)
-Base.haskey(watched_files::WatchedConfigFiles, file::String) = _file_idx(watched_files, file) !== nothing
-
-function Base.delete!(watched_files::WatchedConfigFiles, file::String)
-    file == "__DEFAULT_CONFIG__" && throw(ArgumentError("Cannot delete `__DEFAULT_CONFIG__` file."))
-    idx = _file_idx(watched_files, file)
-    idx === nothing && return watched_files
-    deleteat!(watched_files.files, idx)
-    deleteat!(watched_files.configs, idx)
-    return watched_files
-end
-
-function Base.setindex!(watched_files::WatchedConfigFiles, config::JETLSConfig, file::String)
-    idx = searchsortedfirst(watched_files.files, file, ConfigFileOrder())
-    if 1 <= idx <= length(watched_files.files) && watched_files.files[idx] == file
-        watched_files.configs[idx] = config
-        return watched_files
-    end
-    insert!(watched_files.files, idx, file)
-    insert!(watched_files.configs, idx, config)
-    return watched_files
-end
-
-function Base.getindex(watched_files::WatchedConfigFiles, file::String)
-    idx = _file_idx(watched_files, file)
-    idx === nothing && throw(KeyError(file))
-    return watched_files.configs[idx]
-end
-
-function Base.get(watched_files::WatchedConfigFiles, file::String, default)
-    idx = _file_idx(watched_files, file)
-    idx === nothing && return default
-    return watched_files.configs[idx]
-end
-
-struct ConfigFileOrder <: Base.Ordering end
+const EMPTY_CONFIG = JETLSConfig()
 
 struct ConfigManagerData
-    current_settings::JETLSConfig
     static_settings::JETLSConfig
-    watched_files::WatchedConfigFiles
+    project_config::JETLSConfig
+    lsp_config::JETLSConfig
+    project_config_path::Union{Nothing,String}
+    __settings__::JETLSConfig
+    function ConfigManagerData(
+            static_settings::JETLSConfig,
+            project_config::JETLSConfig,
+            lsp_config::JETLSConfig,
+            project_config_path::Union{Nothing,String}
+        )
+        # Configuration priority:
+        # 1. DEFAULT_CONFIG (base layer)
+        # 2. LSP config (middle layer)
+        # 3. Project config (highest priority)
+        settings = DEFAULT_CONFIG
+        settings = merge_setting(settings, lsp_config)
+        settings = merge_setting(settings, project_config)
+        return new(static_settings, project_config, lsp_config, project_config_path, settings)
+    end
 end
-ConfigManagerData() = ConfigManagerData(DEFAULT_CONFIG, DEFAULT_CONFIG, WatchedConfigFiles())
+
+ConfigManagerData() = ConfigManagerData(DEFAULT_CONFIG, EMPTY_CONFIG, EMPTY_CONFIG, nothing)
+
+function ConfigManagerData(
+        data::ConfigManagerData;
+        static_settings::JETLSConfig = data.static_settings,
+        project_config::JETLSConfig = data.project_config,
+        lsp_config::JETLSConfig = data.lsp_config,
+        project_config_path::Union{Nothing,String} = data.project_config_path
+    )
+    return ConfigManagerData(static_settings, project_config, lsp_config, project_config_path)
+end
+
+get_settings(data::ConfigManagerData) = data.__settings__
 
 # Type aliases for document-synchronization caches using `SWContainer` (sequential-only updates)
 const FileCache = SWContainer{Base.PersistentDict{URI,FileInfo}, SWStats}
