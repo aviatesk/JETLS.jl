@@ -3,74 +3,6 @@ module test_config
 using Test
 using JETLS
 
-@testset "WatchedConfigFiles" begin
-    @testset "constructor and basic operations" begin
-        watched = JETLS.WatchedConfigFiles()
-        @test length(watched) == 1
-        @test keys(watched) == ["__DEFAULT_CONFIG__"]
-        @test watched["__DEFAULT_CONFIG__"] == JETLS.DEFAULT_CONFIG
-    end
-
-    @testset "setindex! and getindex" begin
-        watched = JETLS.WatchedConfigFiles()
-        config = JETLS.JETLSConfig()
-
-        watched["/project/.JETLSConfig.toml"] = config
-        @test length(watched) == 2
-        @test watched["__DEFAULT_CONFIG__"] == JETLS.DEFAULT_CONFIG
-        @test watched["/project/.JETLSConfig.toml"] == config
-        files = collect(keys(watched))
-        @test issorted(files, order=JETLS.ConfigFileOrder())
-    end
-
-    @testset "haskey and get" begin
-        watched = JETLS.WatchedConfigFiles()
-        config = JETLS.JETLSConfig()
-
-        @test !haskey(watched, "___UNDEFINED___")
-        @test get(watched, "___UNDEFINED___", "default") == "default"
-        watched["/project/.JETLSConfig.toml"] = config
-        @test haskey(watched, "/project/.JETLSConfig.toml")
-        @test get(watched, "/project/.JETLSConfig.toml", "default") == config
-        @test watched["/project/.JETLSConfig.toml"] == config
-    end
-
-    @testset "delete!" begin
-        watched = JETLS.WatchedConfigFiles()
-        config = JETLS.JETLSConfig()
-        watched["/project/.JETLSConfig.toml"] = config
-
-        @test length(watched) == 2
-        delete!(watched, "/project/.JETLSConfig.toml")
-        @test length(watched) == 1
-        @test !haskey(watched, "/project/.JETLSConfig.toml")
-        @test haskey(watched, "__DEFAULT_CONFIG__")
-        @test collect(keys(watched)) == ["__DEFAULT_CONFIG__"]
-
-        # "__DEFAULT_CONFIG__" should not be deleted
-        @test_throws ArgumentError delete!(watched, "__DEFAULT_CONFIG__")
-        @test length(watched) == 1
-        @test haskey(watched, "__DEFAULT_CONFIG__")
-    end
-
-    @testset "KeyError handling" begin
-        watched = JETLS.WatchedConfigFiles()
-        @test_throws KeyError watched["/nonexistent/.JETLSConfig.toml"]
-    end
-
-    @testset "priority with multiple config files" begin
-        watched = JETLS.WatchedConfigFiles()
-        watched["/home/user/.JETLSConfig.toml"] = JETLS.JETLSConfig()
-        files = collect(keys(watched))
-
-        # Should be sorted by ConfigFileOrder
-        @test issorted(files, order=JETLS.ConfigFileOrder())
-        # Higher priority config files come first in ConfigFileOrder
-        @test files[1] == "/home/user/.JETLSConfig.toml"
-        @test files[2] == "__DEFAULT_CONFIG__"
-    end
-end
-
 @testset "Configuration utilities" begin
     @testset "`get_default_config`" begin
         @test JETLS.get_default_config(:testrunner, :executable) ==
@@ -136,34 +68,11 @@ end
     end
 
     @testset "`is_config_file`" begin
-        @test JETLS.is_config_file("__DEFAULT_CONFIG__")
-        @test JETLS.is_config_file("__LSP_CONFIG__")
         @test JETLS.is_config_file("/path/to/.JETLSConfig.toml")
         @test JETLS.is_config_file(".JETLSConfig.toml")
         @test !JETLS.is_config_file("/path/to/Non.JETLSConfig.toml")
         @test !JETLS.is_config_file("config.toml")
         @test !JETLS.is_config_file("/path/to/regular.txt")
-    end
-
-    @testset "config files priority" begin
-        files = ["/foo/bar/.JETLSConfig.toml", "__DEFAULT_CONFIG__"]
-        @test sort!(files, order=JETLS.ConfigFileOrder()) == [
-            "/foo/bar/.JETLSConfig.toml",       # highest priority
-            "__DEFAULT_CONFIG__"                # lowest priority
-        ]
-    end
-
-    @testset "config files priority with LSP config" begin
-        files = [
-            "/foo/bar/.JETLSConfig.toml",
-            "__LSP_CONFIG__",
-            "__DEFAULT_CONFIG__"
-        ]
-        @test sort!(files, order=JETLS.ConfigFileOrder()) == [
-            "/foo/bar/.JETLSConfig.toml",       # highest priority
-            "__LSP_CONFIG__",                    # medium priority
-            "__DEFAULT_CONFIG__"                 # lowest priority
-        ]
     end
 end
 
@@ -206,12 +115,19 @@ end
     end
 end
 
-function storeconfig!(manager::JETLS.ConfigManager, filepath::AbstractString, new_config::JETLS.JETLSConfig)
+function store_project_config!(manager::JETLS.ConfigManager, filepath::AbstractString, new_config::JETLS.JETLSConfig)
     JETLS.store!(manager) do old_data
-        new_watched_files = copy(old_data.watched_files)
-        new_watched_files[filepath] = new_config
-        new_current_settings = JETLS.get_current_settings(new_watched_files)
-        new_data = JETLS.ConfigManagerData(new_current_settings, old_data.static_settings, new_watched_files)
+        new_data = JETLS.ConfigManagerData(old_data;
+            project_config=new_config,
+            project_config_path=filepath
+        )
+        return new_data, nothing
+    end
+end
+
+function store_lsp_config!(manager::JETLS.ConfigManager, new_config::JETLS.JETLSConfig)
+    JETLS.store!(manager) do old_data
+        new_data = JETLS.ConfigManagerData(old_data; lsp_config=new_config)
         return new_data, nothing
     end
 end
@@ -225,7 +141,7 @@ end
         internal=JETLS.InternalConfig(5, nothing)
     )
 
-    storeconfig!(manager, "/foo/bar/.JETLSConfig.toml", test_config)
+    store_project_config!(manager, "/foo/bar/.JETLSConfig.toml", test_config)
     JETLS.fix_static_settings!(manager)
 
     @test JETLS.get_config(manager, :full_analysis, :debounce) === 2.0
@@ -240,13 +156,13 @@ end
            JETLS.get_config(manager, :internal, :static_setting)
     end == Union{Nothing, Int}
 
-    # Test priority: __DEFAULT_CONFIG__ has lower priority
-    override_config = JETLS.JETLSConfig(;
+    # Test priority: LSP config has lower priority than project config
+    lsp_config = JETLS.JETLSConfig(;
         full_analysis=JETLS.FullAnalysisConfig(999.0),
-        testrunner=JETLS.TestRunnerConfig("override_runner")
+        testrunner=JETLS.TestRunnerConfig("lsp_runner")
     )
-    storeconfig!(manager, "__DEFAULT_CONFIG__", override_config)
-    # High priority config should still win
+    store_lsp_config!(manager, lsp_config)
+    # High priority project config should still win
     @test JETLS.get_config(manager, :full_analysis, :debounce) === 2.0
     @test JETLS.get_config(manager, :testrunner, :executable) === "test_runner"
 
@@ -258,7 +174,7 @@ end
         internal=JETLS.InternalConfig(10, nothing)
     )
     let data = JETLS.load(manager)
-        current_config = get(data.watched_files, "/foo/bar/.JETLSConfig.toml", JETLS.DEFAULT_CONFIG)
+        current_config = data.project_config
         JETLS.on_difference(current_config, updated_config) do _, new_val, path
             if JETLS.is_static_setting(JETLS.JETLSConfig, path...)
                 push!(changed_static_keys, join(path, "."))
@@ -266,7 +182,7 @@ end
             return new_val
         end
     end
-    storeconfig!(manager, "/foo/bar/.JETLSConfig.toml", updated_config)
+    store_project_config!(manager, "/foo/bar/.JETLSConfig.toml", updated_config)
 
     # `on_static_setting` should be called for static keys
     @test changed_static_keys == Set(["internal.static_setting"])
@@ -287,8 +203,8 @@ end
         testrunner=JETLS.TestRunnerConfig("custom")
     )
 
-    storeconfig!(manager, "__DEFAULT_CONFIG__", low_priority_config)
-    storeconfig!(manager, "/path/.JETLSConfig.toml", high_priority_config)
+    store_lsp_config!(manager, low_priority_config)
+    store_project_config!(manager, "/path/.JETLSConfig.toml", high_priority_config)
     JETLS.fix_static_settings!(manager)
 
     # high priority should win for the static keys
@@ -299,10 +215,6 @@ end
 @testset "LSP configuration priority and merging" begin
     manager = JETLS.ConfigManager(JETLS.ConfigManagerData())
 
-    default_config = JETLS.JETLSConfig(;
-        full_analysis=JETLS.FullAnalysisConfig(1.0),
-        testrunner=JETLS.TestRunnerConfig("default_runner")
-    )
     lsp_config = JETLS.JETLSConfig(;
         full_analysis=JETLS.FullAnalysisConfig(2.0),
         testrunner=nothing
@@ -312,9 +224,8 @@ end
         full_analysis=nothing
     )
 
-    storeconfig!(manager, "__DEFAULT_CONFIG__", default_config)
-    storeconfig!(manager, "__LSP_CONFIG__", lsp_config)
-    storeconfig!(manager, "/project/.JETLSConfig.toml", project_config)
+    store_lsp_config!(manager, lsp_config)
+    store_project_config!(manager, "/project/.JETLSConfig.toml", project_config)
 
     @test JETLS.get_config(manager, :testrunner, :executable) == "project_runner"
     @test JETLS.get_config(manager, :full_analysis, :debounce) == 2.0
@@ -323,17 +234,12 @@ end
 @testset "LSP configuration merging without project config" begin
     manager = JETLS.ConfigManager(JETLS.ConfigManagerData())
 
-    default_config = JETLS.JETLSConfig(;
-        full_analysis=JETLS.FullAnalysisConfig(1.0),
-        testrunner=JETLS.TestRunnerConfig("default_runner")
-    )
     lsp_config = JETLS.JETLSConfig(;
         full_analysis=JETLS.FullAnalysisConfig(3.0),
         testrunner=JETLS.TestRunnerConfig("lsp_runner")
     )
 
-    storeconfig!(manager, "__DEFAULT_CONFIG__", default_config)
-    storeconfig!(manager, "__LSP_CONFIG__", lsp_config)
+    store_lsp_config!(manager, lsp_config)
 
     @test JETLS.get_config(manager, :testrunner, :executable) == "lsp_runner"
     @test JETLS.get_config(manager, :full_analysis, :debounce) == 3.0
