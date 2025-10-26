@@ -463,7 +463,7 @@ async function startLanguageServer(context: ExtensionContext) {
       (params: { items: { scopeUri?: string; section?: string | null }[] }) => {
         const items = params.items || [];
         const results = items.map((item) => {
-          const section = item.section || "jetls-client.jetlsSettings";
+          const section = "jetls-client.jetlsSettings";
           const scope = item.scopeUri
             ? vscode.Uri.parse(item.scopeUri)
             : undefined;
