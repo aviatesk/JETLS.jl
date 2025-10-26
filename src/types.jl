@@ -392,24 +392,28 @@ const EMPTY_CONFIG = JETLSConfig()
 
 struct ConfigManagerData
     static_settings::JETLSConfig
-    project_config::JETLSConfig
+    file_config::JETLSConfig
     lsp_config::JETLSConfig
-    project_config_path::Union{Nothing,String}
+    file_config_path::Union{Nothing,String}
     __settings__::JETLSConfig
     function ConfigManagerData(
             static_settings::JETLSConfig,
-            project_config::JETLSConfig,
+            file_config::JETLSConfig,
             lsp_config::JETLSConfig,
-            project_config_path::Union{Nothing,String}
+            file_config_path::Union{Nothing,String}
         )
         # Configuration priority:
         # 1. DEFAULT_CONFIG (base layer)
-        # 2. LSP config (middle layer)
-        # 3. Project config (highest priority)
+        # 2. LSP config via `workspace/configuration` (middle layer)
+        # 3. File config from `.JETLSConfig.toml` (highest priority)
+        #    - Allows client-agnostic configuration
+        #    - Limited to project root scope only
+        #    - Takes precedence since clients don't properly support
+        #      hierarchical configuration via scopeUri
         settings = DEFAULT_CONFIG
         settings = merge_setting(settings, lsp_config)
-        settings = merge_setting(settings, project_config)
-        return new(static_settings, project_config, lsp_config, project_config_path, settings)
+        settings = merge_setting(settings, file_config)
+        return new(static_settings, file_config, lsp_config, file_config_path, settings)
     end
 end
 
@@ -418,11 +422,11 @@ ConfigManagerData() = ConfigManagerData(DEFAULT_CONFIG, EMPTY_CONFIG, EMPTY_CONF
 function ConfigManagerData(
         data::ConfigManagerData;
         static_settings::JETLSConfig = data.static_settings,
-        project_config::JETLSConfig = data.project_config,
+        file_config::JETLSConfig = data.file_config,
         lsp_config::JETLSConfig = data.lsp_config,
-        project_config_path::Union{Nothing,String} = data.project_config_path
+        file_config_path::Union{Nothing,String} = data.file_config_path
     )
-    return ConfigManagerData(static_settings, project_config, lsp_config, project_config_path)
+    return ConfigManagerData(static_settings, file_config, lsp_config, file_config_path)
 end
 
 get_settings(data::ConfigManagerData) = data.__settings__

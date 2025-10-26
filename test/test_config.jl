@@ -113,11 +113,11 @@ end
     end
 end
 
-function store_project_config!(manager::JETLS.ConfigManager, filepath::AbstractString, new_config::JETLS.JETLSConfig)
+function store_file_config!(manager::JETLS.ConfigManager, filepath::AbstractString, new_config::JETLS.JETLSConfig)
     JETLS.store!(manager) do old_data
         new_data = JETLS.ConfigManagerData(old_data;
-            project_config=new_config,
-            project_config_path=filepath
+            file_config=new_config,
+            file_config_path=filepath
         )
         return new_data, nothing
     end
@@ -139,7 +139,7 @@ end
         internal=JETLS.InternalConfig(5, nothing)
     )
 
-    store_project_config!(manager, "/foo/bar/.JETLSConfig.toml", test_config)
+    store_file_config!(manager, "/foo/bar/.JETLSConfig.toml", test_config)
     JETLS.fix_static_settings!(manager)
 
     @test JETLS.get_config(manager, :full_analysis, :debounce) === 2.0
@@ -154,17 +154,18 @@ end
            JETLS.get_config(manager, :internal, :static_setting)
     end == Union{Nothing, Int}
 
-    # Test priority: LSP config has lower priority than project config
+    # Test priority: file config has higher priority than LSP config
     lsp_config = JETLS.JETLSConfig(;
         full_analysis=JETLS.FullAnalysisConfig(999.0),
         testrunner=JETLS.TestRunnerConfig("lsp_runner")
     )
     store_lsp_config!(manager, lsp_config)
-    # High priority project config should still win
+    # High priority file config should win
     @test JETLS.get_config(manager, :full_analysis, :debounce) === 2.0
     @test JETLS.get_config(manager, :testrunner, :executable) === "test_runner"
 
     # Test updating config
+    store_lsp_config!(manager, JETLS.EMPTY_CONFIG)
     changed_static_keys = Set{String}()
     updated_config = JETLS.JETLSConfig(;
         full_analysis=JETLS.FullAnalysisConfig(3.0),
@@ -172,7 +173,7 @@ end
         internal=JETLS.InternalConfig(10, nothing)
     )
     let data = JETLS.load(manager)
-        current_config = data.project_config
+        current_config = data.file_config
         JETLS.on_difference(current_config, updated_config) do _, new_val, path
             if JETLS.is_static_setting(JETLS.JETLSConfig, path...)
                 push!(changed_static_keys, join(path, "."))
@@ -180,7 +181,7 @@ end
             return new_val
         end
     end
-    store_project_config!(manager, "/foo/bar/.JETLSConfig.toml", updated_config)
+    store_file_config!(manager, "/foo/bar/.JETLSConfig.toml", updated_config)
 
     # `on_static_setting` should be called for static keys
     @test changed_static_keys == Set(["internal.static_setting"])
@@ -193,19 +194,19 @@ end
 
 @testset "`fix_static_settings!`" begin
     manager = JETLS.ConfigManager(JETLS.ConfigManagerData())
-    high_priority_config = JETLS.JETLSConfig(;
+    file_config = JETLS.JETLSConfig(;
         internal=JETLS.InternalConfig(2, nothing)
     )
-    low_priority_config = JETLS.JETLSConfig(;
+    lsp_config = JETLS.JETLSConfig(;
         internal=JETLS.InternalConfig(999, nothing),
         testrunner=JETLS.TestRunnerConfig("custom")
     )
 
-    store_lsp_config!(manager, low_priority_config)
-    store_project_config!(manager, "/path/.JETLSConfig.toml", high_priority_config)
+    store_file_config!(manager, "/path/.JETLSConfig.toml", file_config)
+    store_lsp_config!(manager, lsp_config)
     JETLS.fix_static_settings!(manager)
 
-    # high priority should win for the static keys
+    # File config (higher priority) should win for the static keys
     data = JETLS.load(manager)
     @test JETLS.getobjpath(data.static_settings, :internal, :static_setting) == 2
 end
@@ -217,19 +218,21 @@ end
         full_analysis=JETLS.FullAnalysisConfig(2.0),
         testrunner=nothing
     )
-    project_config = JETLS.JETLSConfig(;
-        testrunner=JETLS.TestRunnerConfig("project_runner"),
+    file_config = JETLS.JETLSConfig(;
+        testrunner=JETLS.TestRunnerConfig("file_runner"),
         full_analysis=nothing
     )
 
     store_lsp_config!(manager, lsp_config)
-    store_project_config!(manager, "/project/.JETLSConfig.toml", project_config)
+    store_file_config!(manager, "/project/.JETLSConfig.toml", file_config)
 
-    @test JETLS.get_config(manager, :testrunner, :executable) == "project_runner"
+    # File config has higher priority, so it wins when both are set
+    @test JETLS.get_config(manager, :testrunner, :executable) == "file_runner"
+    # When file config doesn't set a value, LSP config is used
     @test JETLS.get_config(manager, :full_analysis, :debounce) == 2.0
 end
 
-@testset "LSP configuration merging without project config" begin
+@testset "LSP configuration merging without file config" begin
     manager = JETLS.ConfigManager(JETLS.ConfigManagerData())
 
     lsp_config = JETLS.JETLSConfig(;
@@ -247,14 +250,14 @@ end
     @testset "preset formatter: Runic" begin
         manager = JETLS.ConfigManager(JETLS.ConfigManagerData())
         config = JETLS.JETLSConfig(; formatter="Runic")
-        store_project_config!(manager, "/path/.JETLSConfig.toml", config)
+        store_file_config!(manager, "/path/.JETLSConfig.toml", config)
         @test JETLS.get_config(manager, :formatter) == "Runic"
     end
 
     @testset "preset formatter: JuliaFormatter" begin
         manager = JETLS.ConfigManager(JETLS.ConfigManagerData())
         config = JETLS.JETLSConfig(; formatter="JuliaFormatter")
-        store_project_config!(manager, "/path/.JETLSConfig.toml", config)
+        store_file_config!(manager, "/path/.JETLSConfig.toml", config)
         @test JETLS.get_config(manager, :formatter) == "JuliaFormatter"
     end
 
@@ -262,7 +265,7 @@ end
         manager = JETLS.ConfigManager(JETLS.ConfigManagerData())
         custom = JETLS.CustomFormatterConfig("my-formatter", "my-range-formatter")
         config = JETLS.JETLSConfig(; formatter=custom)
-        store_project_config!(manager, "/path/.JETLSConfig.toml", config)
+        store_file_config!(manager, "/path/.JETLSConfig.toml", config)
         formatter = JETLS.get_config(manager, :formatter)
         @test formatter isa JETLS.CustomFormatterConfig
         @test formatter.executable == "my-formatter"
@@ -273,7 +276,7 @@ end
         manager = JETLS.ConfigManager(JETLS.ConfigManagerData())
         custom = JETLS.CustomFormatterConfig("my-formatter", nothing)
         config = JETLS.JETLSConfig(; formatter=custom)
-        store_project_config!(manager, "/path/.JETLSConfig.toml", config)
+        store_file_config!(manager, "/path/.JETLSConfig.toml", config)
         formatter = JETLS.get_config(manager, :formatter)
         @test formatter isa JETLS.CustomFormatterConfig
         @test formatter.executable == "my-formatter"

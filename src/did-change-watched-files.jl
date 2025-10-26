@@ -28,14 +28,14 @@ function handle_config_file_change!(
     tracker = ConfigChangeTracker()
 
     if change_type == FileChangeType.Created
-        load_config!(tracker, server, changed_path)
+        load_file_config!(tracker, server, changed_path)
         kind = "created"
         show_info_message(server, config_file_created_msg(changed_path))
     elseif change_type == FileChangeType.Changed
-        load_config!(tracker, server, changed_path; reload=true)
+        load_file_config!(tracker, server, changed_path; reload=true)
         kind = "updated"
     elseif change_type == FileChangeType.Deleted
-        delete_config!(tracker, server.state.config_manager, changed_path)
+        delete_file_config!(tracker, server.state.config_manager, changed_path)
         kind = "deleted"
         show_info_message(server, config_file_deleted_msg(changed_path))
     else error("Unknown FileChangeType") end
@@ -45,16 +45,16 @@ function handle_config_file_change!(
 end
 
 """
-Loads the project configuration from the specified path into the server's config manager.
+Loads the file-based configuration from the specified path into the server's config manager.
 
 If the file does not exist or cannot be parsed, just return leaving the current
 configuration unchanged. When there are unknown keys in the config file,
 send error message while leaving current configuration unchanged.
 """
-function load_config!(callback, server::Server, filepath::AbstractString;
-                      reload::Bool = false)
+function load_file_config!(callback, server::Server, filepath::AbstractString;
+                           reload::Bool = false)
     store!(server.state.config_manager) do old_data::ConfigManagerData
-        if reload && old_data.project_config_path != filepath
+        if reload && old_data.file_config_path != filepath
             show_warning_message(server, "Loading unregistered configuration file: $filepath")
         end
 
@@ -62,7 +62,7 @@ function load_config!(callback, server::Server, filepath::AbstractString;
         parsed = TOML.tryparsefile(filepath)
         parsed isa TOML.ParserError && return old_data, nothing
 
-        new_project_config = try
+        new_file_config = try
             Configurations.from_dict(JETLSConfig, parsed)
         catch e
             # TODO: remove this when Configurations.jl support to report
@@ -83,8 +83,8 @@ function load_config!(callback, server::Server, filepath::AbstractString;
         end
 
         new_data = ConfigManagerData(old_data;
-            project_config=new_project_config,
-            project_config_path=filepath
+            file_config=new_file_config,
+            file_config_path=filepath
         )
         on_difference(callback, get_settings(old_data), get_settings(new_data))
         return new_data, nothing
@@ -94,12 +94,12 @@ end
 unmatched_keys_in_config_file_msg(filepath::AbstractString, unmatched_keys) =
     unmatched_keys_msg("Configuration file at $filepath contains unknown keys:", unmatched_keys)
 
-function delete_config!(callback, manager::ConfigManager, filepath::AbstractString)
+function delete_file_config!(callback, manager::ConfigManager, filepath::AbstractString)
     store!(manager) do old_data::ConfigManagerData
-        old_data.project_config_path == filepath || return old_data, nothing
+        old_data.file_config_path == filepath || return old_data, nothing
         new_data = ConfigManagerData(old_data;
-            project_config=EMPTY_CONFIG,
-            project_config_path=nothing
+            file_config=EMPTY_CONFIG,
+            file_config_path=nothing
         )
         on_difference(callback, get_settings(old_data), get_settings(new_data))
         return new_data, nothing

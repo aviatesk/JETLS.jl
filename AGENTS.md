@@ -6,6 +6,10 @@
   - Additionally, prioritize simple text style and limit unnecessary decorations
     (e.g. `**`) to only truly necessary locations. This is a style that should
     generally be aimed for, but pay particular attention when writing Markdown.
+  - Headers should use sentence case (only the first word capitalized), not
+    title case. For example:
+    - Good: `## Conclusion and alternative approaches`
+    - Bad: `## Conclusion And Alternative Approaches`
 - When writing commit messages, follow the format `component: Brief summary` for
   the title. In the body of the commit message, provide a brief prose summary of
   the purpose of the changes made.
