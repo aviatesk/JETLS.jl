@@ -154,12 +154,13 @@ section:
 When multiple configuration sources are present, they are merged in priority
 order (highest first):
 
-1. Editor configuration via LSP (`workspace/configuration`)
-2. File-based configuration (`.JETLSConfig.toml`)
+1. File-based configuration (`.JETLSConfig.toml`)
+2. Editor configuration via LSP (`workspace/configuration`)
 3. Built-in defaults
 
-Editor configuration via LSP takes precedence to enable future support for
-**hierarchical configuration** (per-folder/per-file settings using `scopeUri`).
-While `.JETLSConfig.toml` is limited to project root scope only, it provides a
-**client-agnostic** way to configure JETLS that works consistently across all
-editors without requiring client-specific configuration files.
+File-based configuration (`.JETLSConfig.toml`) takes precedence as it provides
+a **client-agnostic** way to configure JETLS that works consistently across all
+editors. While the LSP specification defines `scopeUri` for hierarchical
+configuration, current LSP clients (including Zed and VS Code as of 2025-10-27)
+do not properly support scoped configuration requests, making `.JETLSConfig.toml`
+the more useful configuration method for project-specific settings.

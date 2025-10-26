@@ -404,15 +404,15 @@ struct ConfigManagerData
         )
         # Configuration priority:
         # 1. DEFAULT_CONFIG (base layer)
-        # 2. File config from `.JETLSConfig.toml` (middle layer)
+        # 2. LSP config via `workspace/configuration` (middle layer)
+        # 3. File config from `.JETLSConfig.toml` (highest priority)
         #    - Allows client-agnostic configuration
         #    - Limited to project root scope only
-        # 3. LSP config via `workspace/configuration` (highest priority)
-        #    - Enables future hierarchical configuration support
-        #    - Allows per-folder/per-file configuration via `scopeUri`
+        #    - Takes precedence since clients don't properly support
+        #      hierarchical configuration via scopeUri
         settings = DEFAULT_CONFIG
-        settings = merge_setting(settings, file_config)
         settings = merge_setting(settings, lsp_config)
+        settings = merge_setting(settings, file_config)
         return new(static_settings, file_config, lsp_config, file_config_path, settings)
     end
 end

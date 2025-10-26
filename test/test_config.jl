@@ -154,18 +154,17 @@ end
            JETLS.get_config(manager, :internal, :static_setting)
     end == Union{Nothing, Int}
 
-    # Test priority: LSP config has higher priority than file config
+    # Test priority: file config has higher priority than LSP config
     lsp_config = JETLS.JETLSConfig(;
         full_analysis=JETLS.FullAnalysisConfig(999.0),
         testrunner=JETLS.TestRunnerConfig("lsp_runner")
     )
     store_lsp_config!(manager, lsp_config)
-    # High priority LSP config should win
-    @test JETLS.get_config(manager, :full_analysis, :debounce) === 999.0
-    @test JETLS.get_config(manager, :testrunner, :executable) === "lsp_runner"
+    # High priority file config should win
+    @test JETLS.get_config(manager, :full_analysis, :debounce) === 2.0
+    @test JETLS.get_config(manager, :testrunner, :executable) === "test_runner"
 
     # Test updating config
-    # First clear LSP config so we can test file config changes
     store_lsp_config!(manager, JETLS.EMPTY_CONFIG)
     changed_static_keys = Set{String}()
     updated_config = JETLS.JETLSConfig(;
@@ -207,9 +206,9 @@ end
     store_lsp_config!(manager, lsp_config)
     JETLS.fix_static_settings!(manager)
 
-    # LSP config (higher priority) should win for the static keys
+    # File config (higher priority) should win for the static keys
     data = JETLS.load(manager)
-    @test JETLS.getobjpath(data.static_settings, :internal, :static_setting) == 999
+    @test JETLS.getobjpath(data.static_settings, :internal, :static_setting) == 2
 end
 
 @testset "LSP configuration priority and merging" begin
@@ -227,10 +226,10 @@ end
     store_lsp_config!(manager, lsp_config)
     store_file_config!(manager, "/project/.JETLSConfig.toml", file_config)
 
-    # LSP config has higher priority, so it wins when both are set
-    @test JETLS.get_config(manager, :full_analysis, :debounce) == 2.0
-    # When LSP config doesn't set a value, file config is used
+    # File config has higher priority, so it wins when both are set
     @test JETLS.get_config(manager, :testrunner, :executable) == "file_runner"
+    # When file config doesn't set a value, LSP config is used
+    @test JETLS.get_config(manager, :full_analysis, :debounce) == 2.0
 end
 
 @testset "LSP configuration merging without file config" begin
