@@ -178,7 +178,7 @@ function format_result(state::ServerState, uri::URI, options::FormattingOptions)
         return exe
     end
 
-    newText = @something format_code(exe, document_text(fi), nothing, options, formatter) begin
+    newText = @something format_file(exe, uri, fi, nothing, options, formatter) begin
         return request_failed_error("Formatter returned an error. See server logs for details.")
     end
     return TextEdit[TextEdit(; range = document_range(fi), newText)]
@@ -258,15 +258,15 @@ function range_format_result(
     startline = Int(range.start.line + 1)
     endline = Int(range.var"end".line + 1)
     lines = "$startline:$endline"
-    newText = @something format_code(exe, document_text(fi), lines, options, formatter) begin
+    newText = @something format_file(exe, uri, fi, lines, options, formatter) begin
         return request_failed_error("Formatter returned an error. See server logs for details.")
     end
     edit = TextEdit(; range = document_range(fi), newText)
     return TextEdit[edit]
 end
 
-function format_code(
-        exe::String, text::AbstractString, lines::Union{Nothing,AbstractString},
+function format_file(
+        exe::String, uri::URI, fi::FileInfo, lines::Union{Nothing,AbstractString},
         options::FormattingOptions, formatter::FormatterConfig
     )
     cmd = if formatter isa String
@@ -282,8 +282,16 @@ function format_code(
             # (should not reach here due to earlier validation)
             if isnothing(lines)
                 tabSize = options.tabSize
-                if tabSize !== nothing
-                    `$exe --indent=$(Int(tabSize)) --prioritize-config-file`
+                filepath = uri2filepath(uri)
+                if filepath !== nothing
+                    config_dir = dirname(filepath)
+                    if tabSize !== nothing
+                        `$exe --indent=$(Int(tabSize)) --prioritize-config-file --config-dir=$config_dir`
+                    else
+                        `$exe --config-dir=$config_dir`
+                    end
+                elseif tabSize !== nothing
+                    `$exe --indent=$(Int(tabSize))`
                 else
                     `$exe`
                 end
@@ -304,7 +312,7 @@ function format_code(
     end
 
     proc = open(cmd; read = true, write = true)
-    write(proc, text)
+    write(proc, document_text(fi))
     close(proc.in)
     wait(proc)
     if proc.exitcode ≠ 0
