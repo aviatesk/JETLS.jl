@@ -79,6 +79,50 @@
           "type": "number",
           "default": 0,
           "description": "Port number for socket communication (0 = auto-assign). Only used when 'socket' communication channel is used."
+        },
+        "jetls-client.jetlsSettings": {
+          "scope": "resource",
+          "type": "object",
+          "default": {},
+          "markdownDescription": "JETLS server configuration settings. See [JETLS Configuration](https://github.com/aviatesk/JETLS.jl#configuration) for available options.",
+          "properties": {
+            "full_analysis": {
+              "type": "object",
+              "properties": {
+                "debounce": {
+                  "type": "number",
+                  "default": 1.0,
+                  "minimum": 0.0,
+                  "description": "Debounce time in seconds before triggering full analysis after a document change."
+                }
+              }
+            },
+            "testrunner": {
+              "type": "object",
+              "properties": {
+                "executable": {
+                  "type": "string",
+                  "default": "",
+                  "description": "Path to the TestRunner.jl executable. If empty, uses 'testrunner' from PATH."
+                }
+              }
+            },
+            "formatter": {
+              "type": "object",
+              "properties": {
+                "runic": {
+                  "type": "object",
+                  "properties": {
+                    "executable": {
+                      "type": "string",
+                      "default": "",
+                      "description": "Path to the Runic formatter executable. If empty, uses 'runic' from PATH."
+                    }
+                  }
+                }
+              }
+            }
+          }
         }
       }
     }
@@ -88,6 +132,7 @@
     "watch": "node esbuild.js --watch",
     "tsc": "tsc --noEmit",
     "lint": "eslint",
+    "check": "npm run tsc && npm run lint",
     "vscode:prepublish": "npm run tsc && npm run lint && npm run build"
   },
   "dependencies": {

@@ -57,6 +57,7 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
             load_config!(Returns(nothing), server, config_path)
         end
     end
+
     fix_static_settings!(state.config_manager)
 
     start_analysis_workers!(server)
@@ -392,7 +393,16 @@ function handle_InitializedNotification(server::Server)
         # so it must be registered dynamically
     end
 
+    if supports(server, :workspace, :didChangeConfiguration, :dynamicRegistration)
+        push!(registrations, did_change_configuration_registration())
+        if JETLS_DEV_MODE
+            @info "Dynamically registering 'workspace/didChangeConfiguration' upon `InitializedNotification`"
+        end
+    end
+
     register(server, registrations)
+
+    load_lsp_config!(server, "[LSP] workspace/configuration")
 
     JETLS_DEV_MODE && show_setup_info("Initialized JETLS with the following setup:")
 end
