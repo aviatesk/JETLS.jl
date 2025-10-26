@@ -54,7 +54,7 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
     else
         config_path = joinpath(state.root_path, ".JETLSConfig.toml")
         if isfile(config_path)
-            load_config!(Returns(nothing), server, config_path)
+            load_file_config!(Returns(nothing), server, config_path)
         end
     end
 

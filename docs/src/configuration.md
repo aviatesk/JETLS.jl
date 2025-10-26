@@ -67,7 +67,7 @@ See [TestRunner integration](@ref) for setup instructions.
 
 ## How to configure JETLS
 
-### Method 1: Project-specific configuration file
+### Method 1: File-based configuration
 
 Create a `.JETLSConfig.toml` file in your project root.
 This configuration method works client-agnostically, thus allows projects to
@@ -154,10 +154,12 @@ section:
 When multiple configuration sources are present, they are merged in priority
 order (highest first):
 
-1. Project-specific `.JETLSConfig.toml`
-2. Editor configuration via LSP
+1. Editor configuration via LSP (`workspace/configuration`)
+2. File-based configuration (`.JETLSConfig.toml`)
 3. Built-in defaults
 
-The `.JETLSConfig.toml` file takes precedence, since it provides a
-**client-agnostic** way to configure JETLS that works consistently across
-all editors.
+Editor configuration via LSP takes precedence to enable future support for
+**hierarchical configuration** (per-folder/per-file settings using `scopeUri`).
+While `.JETLSConfig.toml` is limited to project root scope only, it provides a
+**client-agnostic** way to configure JETLS that works consistently across all
+editors without requiring client-specific configuration files.
