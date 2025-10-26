@@ -65,7 +65,7 @@ function store_lsp_config!(tracker::ConfigChangeTracker, server::Server, @nospec
         return delete_lsp_config!(tracker, server)
     end
     store!(server.state.config_manager) do old_data::ConfigManagerData
-        new_config = try
+        new_lsp_config = try
             Configurations.from_dict(JETLSConfig, config_dict)
         catch e
             if e isa Configurations.InvalidKeyError
@@ -79,17 +79,18 @@ function store_lsp_config!(tracker::ConfigChangeTracker, server::Server, @nospec
             return old_data, nothing
         end
 
-        new_watched_files = copy(old_data.watched_files)
-        new_watched_files["__LSP_CONFIG__"] = new_config
-        new_current_settings = get_current_settings(new_watched_files)
-        on_difference(tracker, old_data.current_settings, new_current_settings)
-        new_data = ConfigManagerData(new_current_settings, old_data.static_settings, new_watched_files)
+        new_data = ConfigManagerData(old_data; lsp_config=new_lsp_config)
+        on_difference(tracker, get_settings(old_data), get_settings(new_data))
         return new_data, nothing
     end
 end
 
 function delete_lsp_config!(tracker::ConfigChangeTracker, server::Server)
-    delete_config!(tracker, server.state.config_manager, "__LSP_CONFIG__")
+    store!(server.state.config_manager) do old_data::ConfigManagerData
+        new_data = ConfigManagerData(old_data; lsp_config=EMPTY_CONFIG)
+        on_difference(tracker, get_settings(old_data), get_settings(new_data))
+        return new_data, nothing
+    end
 end
 
 function handle_DidChangeConfigurationNotification(server::Server, msg::DidChangeConfigurationNotification)
