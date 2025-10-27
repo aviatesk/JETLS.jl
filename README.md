@@ -63,8 +63,6 @@ the list itself is subject to change.
   - [ ] Global binding definition
   - [x] Local binding definition
   - [ ] Type-aware method definition
-- Document Highlight
-  - [x] Highlight local binding
 - Hover
   - [x] Method documentation
   - [x] Global binding documentation
@@ -75,6 +73,10 @@ the list itself is subject to change.
   - [x] [Runic](https://github.com/fredrikekre/Runic.jl) integration
   - [x] [JuliaFormatter](https://github.com/domluna/JuliaFormatter.jl) integration
   - [x] Make formatting backend configurable
+- Document Highlight
+  - [x] Local binding
+  - [/] Global binding (dot-accessed binding not supported yet)
+  - [ ] Field name
 - Rename
   - [x] Local binding
   - [ ] Global binding

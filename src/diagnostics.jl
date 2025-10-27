@@ -280,6 +280,15 @@ function toplevel_lowering_diagnostics(server::Server, uri::URI)
     diagnostics = Diagnostic[]
     file_info = get_file_info(server.state, uri)
     st0_top = build_syntax_tree(file_info)
+    iterate_toplevel_tree(st0_top) do st0::JL.SyntaxTree
+        pos = offset_to_xy(file_info, JS.first_byte(st0))
+        (; mod) = get_context_info(server.state, uri, pos)
+        lowering_diagnostics!(diagnostics, st0, mod, file_info)
+    end
+    return diagnostics
+end
+
+function iterate_toplevel_tree(callback, st0_top::JL.SyntaxTree)
     sl = JL.SyntaxList(st0_top)
     push!(sl, st0_top)
     while !isempty(sl)
@@ -301,13 +310,10 @@ function toplevel_lowering_diagnostics(server::Server, uri::URI)
                     push!(sl, st0[i])
                 end
             end
-        else
-            pos = offset_to_xy(file_info, JS.first_byte(st0))
-            (; mod) = get_context_info(server.state, uri, pos)
-            lowering_diagnostics!(diagnostics, st0, mod, file_info)
+        else # st0 is lowerable tree
+            callback(st0)
         end
     end
-    return diagnostics
 end
 
 # textDocument/publishDiagnostics

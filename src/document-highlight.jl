@@ -36,31 +36,83 @@ function handle_DocumentHighlightRequest(server::Server, msg::DocumentHighlightR
     end
 
     highlights = DocumentHighlight[]
-
-    offset = xy_to_offset(fi, pos)
-
-    (; mod) = get_context_info(server.state, uri, pos)
-    lowering_document_highlights!(highlights, fi, offset, mod)
-
+    document_highlights!(highlights, fi, pos, (server.state, uri))
     return send(server, DocumentHighlightResponse(;
         id = msg.id,
         result = isempty(highlights) ? null : highlights
     ))
 end
 
-function lowering_document_highlights!(highlights::Vector{DocumentHighlight}, fi::FileInfo, offset::Int, mod::Module)
+function document_highlights!(
+        highlights::Vector{DocumentHighlight}, fi::FileInfo, pos::Position,
+        module_info::Union{Tuple{ServerState,URI},Module},
+    )
     st0_top = build_syntax_tree(fi)
+    offset = xy_to_offset(fi, pos)
+    if module_info isa Module
+        mod = module_info
+    else
+        (; mod) = get_context_info(module_info..., pos)
+    end
 
     (; ctx3, st3, binding) = @something begin
-        _select_target_binding(st0_top, offset, mod; caller="lowering_document_highlights!")
+        _select_target_binding(st0_top, offset, mod; caller="document_highlights!")
     end return highlights
 
     binfo = JL.lookup_binding(ctx3, binding)
-    is_local_binding(binfo) || return highlights
 
+    highlights′ = Dict{Range,DocumentHighlightKind.Ty}()
+    if binfo.kind === :global
+        global_document_highlights!(highlights′, fi, st0_top, binfo, module_info)
+    else
+        local_document_highlights!(highlights′, fi, ctx3, st3, binfo)
+    end
+
+    for (range, kind) in highlights′
+        push!(highlights, DocumentHighlight(; range, kind))
+    end
+    return highlights
+end
+
+function global_document_highlights!(
+        highlights′::Dict{Range,DocumentHighlightKind.Ty},
+        fi::FileInfo, st0_top::JL.SyntaxTree, binfo::JL.BindingInfo,
+        module_info::Union{Tuple{ServerState,URI},Module},
+    )
+    iterate_toplevel_tree(st0_top) do st0::JL.SyntaxTree
+        if module_info isa Module
+            mod = module_info
+        else
+            (; mod) = get_context_info(module_info..., offset_to_xy(fi, JS.first_byte(st0)))
+        end
+        (; ctx3, st3) = try
+            jl_lower_for_scope_resolution(mod, st0)
+        catch
+            return
+        end
+        binding_occurrences = compute_binding_occurrences(ctx3, st3; include_global_bindings=true)
+        for (binfo′, occurrences) in binding_occurrences
+            if binfo′.mod === binfo.mod && binfo′.name == binfo.name
+                for occurrence in occurrences
+                    range = jsobj_to_range(occurrence.tree, fi)
+                    kind =
+                        occurrence.kind === :def ? DocumentHighlightKind.Write :
+                        occurrence.kind === :use ? DocumentHighlightKind.Read :
+                        DocumentHighlightKind.Text
+                    highlights′[range] = max(kind, get(highlights′, range, DocumentHighlightKind.Text))
+                end
+            end
+        end
+    end
+    return highlights′
+end
+
+function local_document_highlights!(
+        highlights′::Dict{Range,DocumentHighlightKind.Ty},
+        fi::FileInfo, ctx3, st3, binfo::JL.BindingInfo
+    )
     binding_occurrences = compute_binding_occurrences(ctx3, st3)
     if haskey(binding_occurrences, binfo)
-        highlights′ = Dict{Range,DocumentHighlightKind.Ty}()
         for occurrence in binding_occurrences[binfo]
             range = jsobj_to_range(occurrence.tree, fi)
             kind =
@@ -69,13 +121,14 @@ function lowering_document_highlights!(highlights::Vector{DocumentHighlight}, fi
                 DocumentHighlightKind.Text
             highlights′[range] = max(kind, get(highlights′, range, DocumentHighlightKind.Text))
         end
-        for (range, kind) in highlights′
-            push!(highlights, DocumentHighlight(; range, kind))
-        end
     end
+    return highlights′
+end
+
+# used by tests
+function document_highlights(fi::FileInfo, pos::Position, mod::Module)
+    highlights = DocumentHighlight[]
+    document_highlights!(highlights, fi, pos, mod)
     return highlights
 end
-lowering_document_highlights(fi::FileInfo, offset::Int, mod::Module) = # used by tests
-    lowering_document_highlights!(DocumentHighlight[], fi, offset, mod)
-lowering_document_highlights(fi::FileInfo, pos::Position, mod::Module) = # used by tests
-    lowering_document_highlights(fi, xy_to_offset(fi, pos), mod)
+document_highlights(args...) = document_highlights(args..., Main)
