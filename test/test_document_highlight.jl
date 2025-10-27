@@ -7,7 +7,15 @@ using JETLS.LSP
 include(normpath(pkgdir(JETLS), "test", "setup.jl"))
 include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
 
-@testset "lowering_document_highlights!" begin
+# Used by the global binding tests:
+function myfunc end
+global globalvar::Int = 42
+const MYCONST = "constant"
+struct MyType
+    field::Int
+end
+
+@testset "document_highlights!" begin
     @testset "local binding highlights" begin
         let code = """
             function func(│xx│x│, yyy)
@@ -19,7 +27,7 @@ include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
             fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
             @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
             for pos in positions
-                highlights = JETLS.lowering_document_highlights(fi, pos, @__MODULE__)
+                highlights = JETLS.document_highlights(fi, pos)
                 @test length(highlights) == 2
                 @test any(highlights) do highlight
                     highlight.range.start == positions[1] &&
@@ -44,7 +52,7 @@ include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
             fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
             @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
             for pos in positions
-                highlights = JETLS.lowering_document_highlights(fi, pos, @__MODULE__)
+                highlights = JETLS.document_highlights(fi, pos)
                 @test length(highlights) == 2
                 @test any(highlights) do highlight
                     highlight.range.start == positions[1] &&
@@ -68,7 +76,7 @@ include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
             fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
             @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
             for pos in positions
-                highlights = JETLS.lowering_document_highlights(fi, pos, @__MODULE__)
+                highlights = JETLS.document_highlights(fi, pos)
                 @test length(highlights) == 3
                 @test any(highlights) do highlight
                     highlight.range.start == positions[1] &&
@@ -96,7 +104,7 @@ include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
             fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
             @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
             for pos in positions
-                highlights = JETLS.lowering_document_highlights(fi, pos, @__MODULE__)
+                highlights = JETLS.document_highlights(fi, pos)
                 @test length(highlights) == 2
                 @test any(highlights) do highlight
                     highlight.range.start == positions[1] &&
@@ -123,7 +131,7 @@ include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
             @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
             for i = (1,2,5,6,7,8) # x
                 pos = positions[i]
-                highlights = JETLS.lowering_document_highlights(fi, pos, @__MODULE__)
+                highlights = JETLS.document_highlights(fi, pos)
                 @test length(highlights) == 3
                 @test count(highlights) do highlight
                     highlight.range.start == positions[1] &&
@@ -143,7 +151,7 @@ include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
             end
             for i = (3,4,9,10) # y
                 pos = positions[i]
-                highlights = JETLS.lowering_document_highlights(fi, pos, @__MODULE__)
+                highlights = JETLS.document_highlights(fi, pos)
                 @test length(highlights) == 2 # no duplications for the declaration and the write
                 @test count(highlights) do highlight
                     highlight.range.start == positions[3] &&
@@ -159,18 +167,145 @@ include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
         end
     end
 
-    @testset "No highlights for global bindings" begin
-        code = """
-        function func│(xxx, yyy)
-            println│(xxx, yyy)
+    @testset "global bindings highlights" begin
+        let code = """
+            function │myfunc│(x)
+                x + 1
+            end
+
+            │myfunc│(1)
+
+            function │myfunc│(x, y)
+                x + y
+            end
+
+            result = │myfunc│(2, 3)
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 8
+            fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
+            @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+            for pos in positions
+                highlights = JETLS.document_highlights(fi, pos, @__MODULE__)
+                @test length(highlights) == 4
+                @test count(highlights) do highlight
+                    highlight.range.start == positions[1] &&
+                    highlight.range.var"end" == positions[2] &&
+                    highlight.kind == DocumentHighlightKind.Write
+                end == 1
+                @test count(highlights) do highlight
+                    highlight.range.start == positions[3] &&
+                    highlight.range.var"end" == positions[4] &&
+                    highlight.kind == DocumentHighlightKind.Read
+                end == 1
+                @test count(highlights) do highlight
+                    highlight.range.start == positions[5] &&
+                    highlight.range.var"end" == positions[6] &&
+                    highlight.kind == DocumentHighlightKind.Write
+                end == 1
+                @test count(highlights) do highlight
+                    highlight.range.start == positions[7] &&
+                    highlight.range.var"end" == positions[8] &&
+                    highlight.kind == DocumentHighlightKind.Read
+                end == 1
+            end
         end
-        """
-        clean_code, positions = JETLS.get_text_and_positions(code)
-        @test length(positions) == 2
-        fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
-        for pos in positions
-            highlights = JETLS.lowering_document_highlights(fi, pos, @__MODULE__)
-            @test length(highlights) == 0
+
+        let code = """
+            global │globalvar│::Int = 42
+
+            function use_global()
+                println(│globalvar│)
+            end
+
+            │globalvar│ = 100
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 6
+            fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
+            @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+            for pos in positions
+                highlights = JETLS.document_highlights(fi, pos, @__MODULE__)
+                @test length(highlights) == 3
+                @test count(highlights) do highlight
+                    highlight.range.start == positions[1] &&
+                    highlight.range.var"end" == positions[2] &&
+                    highlight.kind == DocumentHighlightKind.Write
+                end == 1
+                @test count(highlights) do highlight
+                    highlight.range.start == positions[3] &&
+                    highlight.range.var"end" == positions[4] &&
+                    highlight.kind == DocumentHighlightKind.Read
+                end == 1
+                @test count(highlights) do highlight
+                    highlight.range.start == positions[5] &&
+                    highlight.range.var"end" == positions[6] &&
+                    highlight.kind == DocumentHighlightKind.Write
+                end == 1
+            end
+        end
+
+        let code = """
+            const │MYCONST│ = "constant"
+
+            function get_const()
+                │MYCONST│
+            end
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 4
+            fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
+            @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+            for pos in positions
+                highlights = JETLS.document_highlights(fi, pos, @__MODULE__)
+                @test length(highlights) == 2
+                @test count(highlights) do highlight
+                    highlight.range.start == positions[1] &&
+                    highlight.range.var"end" == positions[2] &&
+                    highlight.kind == DocumentHighlightKind.Write
+                end == 1
+                @test count(highlights) do highlight
+                    highlight.range.start == positions[3] &&
+                    highlight.range.var"end" == positions[4] &&
+                    highlight.kind == DocumentHighlightKind.Read
+                end == 1
+            end
+        end
+
+        let code = """
+            struct │MyType│
+                field::Int
+            end
+
+            function process(x::│MyType│)
+                x.field
+            end
+
+            instance = │MyType│(42)
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 6
+            fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
+            @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+            for pos in positions
+                highlights = JETLS.document_highlights(fi, pos, @__MODULE__)
+                @test length(highlights) == 3
+                @test count(highlights) do highlight
+                    highlight.range.start == positions[1] &&
+                    highlight.range.var"end" == positions[2] &&
+                    highlight.kind == DocumentHighlightKind.Write
+                end == 1
+                @test count(highlights) do highlight
+                    highlight.range.start == positions[3] &&
+                    highlight.range.var"end" == positions[4] &&
+                    highlight.kind == DocumentHighlightKind.Read
+                end == 1
+                @test count(highlights) do highlight
+                    highlight.range.start == positions[5] &&
+                    highlight.range.var"end" == positions[6] &&
+                    highlight.kind == DocumentHighlightKind.Read
+                end == 1
+            end
         end
     end
 end

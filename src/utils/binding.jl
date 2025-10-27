@@ -448,6 +448,16 @@ function compute_binding_occurrences!(
                     if !isnothing(ismacro)
                         ismacro[] |= startswith(binfo.name, "@")
                     end
+                    start_idx = 2
+                end
+            end
+        elseif k === JS.K"method_defs" || k === JS.K"constdecl"
+            if nc ≥ 1
+                local global_binding = st[1]
+                if JS.kind(global_binding) === JS.K"BindingId"
+                    binfo = JL.lookup_binding(ctx3, global_binding)
+                    record_occurrence!(occurrences, :def, global_binding, binfo)
+                    start_idx = 2
                 end
             end
         elseif infunc && k === JS.K"block" && nc ≥ 1
