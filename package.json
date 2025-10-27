@@ -4,7 +4,7 @@
   "description": "A new language server for Julia",
   "author": "Shuhei Kadowaki",
   "license": "MIT",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "repository": {
     "type": "git",
     "url": "https://github.com/aviatesk/JETLS.jl"
@@ -91,8 +91,8 @@
               "properties": {
                 "debounce": {
                   "type": "number",
-                  "default": 1.0,
-                  "minimum": 0.0,
+                  "default": 1,
+                  "minimum": 0,
                   "description": "Debounce time in seconds before triggering full analysis after a document change."
                 }
               }
