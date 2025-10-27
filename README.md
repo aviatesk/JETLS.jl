@@ -1,6 +1,7 @@
 # JETLS
 
-[![](https://img.shields.io/badge/docs-latest-blue.svg)](https://aviatesk.github.io/JETLS.jl/dev/)
+[![](https://img.shields.io/badge/docs-user_guide-9558B2?logo=julia)](https://aviatesk.github.io/JETLS.jl/dev/)
+[![](https://img.shields.io/badge/docs-dev_notes-7C3AED?logo=obsidian)](https://publish.obsidian.md/jetls)
 [![](https://github.com/aviatesk/JETLS.jl/actions/workflows/ci.yml/badge.svg)](https://github.com/aviatesk/JETLS.jl/actions/workflows/ci.yml)
 [![](https://codecov.io/gh/aviatesk/JETLS.jl/branch/master/graph/badge.svg)](https://codecov.io/gh/aviatesk/JETLS.jl)
 
@@ -107,4 +108,3 @@ developing JETLS:
 
 Meta-level discussions, research, and ideas related to the development of JETLS
 are compiled as [Obsidian](https://obsidian.md/) notes at <https://publish.obsidian.md/jetls>.
-Feel free to take a look if interested.
