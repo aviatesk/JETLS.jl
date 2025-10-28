@@ -1,4 +1,4 @@
-# JETLS
+k# JETLS
 
 [![](https://img.shields.io/badge/docs-user_guide-9558B2?logo=julia)](https://aviatesk.github.io/JETLS.jl/dev/)
 [![](https://img.shields.io/badge/docs-dev_notes-7C3AED?logo=obsidian)](https://publish.obsidian.md/jetls)
@@ -75,8 +75,8 @@ the list itself is subject to change.
   - [x] Make formatting backend configurable
 - Document Highlight
   - [x] Local binding
-  - [/] Global binding (dot-accessed binding not supported yet)
-  - [ ] Field name
+  - [x] Global binding
+  - [ ] Field name, dot-accessed bindings
 - Rename
   - [x] Local binding
   - [ ] Global binding

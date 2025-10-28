@@ -130,9 +130,6 @@ function local_document_highlights!(
 end
 
 # used by tests
-function document_highlights(fi::FileInfo, pos::Position, mod::Module)
-    highlights = DocumentHighlight[]
-    document_highlights!(highlights, fi, pos, mod)
-    return highlights
-end
+document_highlights(fi::FileInfo, pos::Position, mod::Module) =
+    document_highlights!(DocumentHighlight[], fi, pos, mod)
 document_highlights(args...) = document_highlights(args..., Main)
