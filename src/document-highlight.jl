@@ -74,6 +74,20 @@ function document_highlights!(
     return highlights
 end
 
+function add_highlight_for_occurrence!(
+        highlights′::Dict{Range,DocumentHighlightKind.Ty},
+        fi::FileInfo, occurrence::BindingOccurence
+    )
+    range = jsobj_to_range(occurrence.tree, fi)
+    kind = document_highlight_kind(occurrence)
+    highlights′[range] = max(kind, get(highlights′, range, DocumentHighlightKind.Text))
+end
+
+document_highlight_kind(occurrence::BindingOccurence) =
+    occurrence.kind === :def ? DocumentHighlightKind.Write :
+    occurrence.kind === :use ? DocumentHighlightKind.Read :
+    DocumentHighlightKind.Text
+
 function global_document_highlights!(
         highlights′::Dict{Range,DocumentHighlightKind.Ty},
         fi::FileInfo, st0_top::JL.SyntaxTree, binfo::JL.BindingInfo,
@@ -94,12 +108,7 @@ function global_document_highlights!(
         for (binfo′, occurrences) in binding_occurrences
             if binfo′.mod === binfo.mod && binfo′.name == binfo.name
                 for occurrence in occurrences
-                    range = jsobj_to_range(occurrence.tree, fi)
-                    kind =
-                        occurrence.kind === :def ? DocumentHighlightKind.Write :
-                        occurrence.kind === :use ? DocumentHighlightKind.Read :
-                        DocumentHighlightKind.Text
-                    highlights′[range] = max(kind, get(highlights′, range, DocumentHighlightKind.Text))
+                    add_highlight_for_occurrence!(highlights′, fi, occurrence)
                 end
             end
         end
@@ -114,12 +123,7 @@ function local_document_highlights!(
     binding_occurrences = compute_binding_occurrences(ctx3, st3)
     if haskey(binding_occurrences, binfo)
         for occurrence in binding_occurrences[binfo]
-            range = jsobj_to_range(occurrence.tree, fi)
-            kind =
-                occurrence.kind === :def ? DocumentHighlightKind.Write :
-                occurrence.kind === :use ? DocumentHighlightKind.Read :
-                DocumentHighlightKind.Text
-            highlights′[range] = max(kind, get(highlights′, range, DocumentHighlightKind.Text))
+            add_highlight_for_occurrence!(highlights′, fi, occurrence)
         end
     end
     return highlights′
