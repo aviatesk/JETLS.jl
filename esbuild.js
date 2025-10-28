@@ -5,14 +5,14 @@ const watch = process.argv.includes('--watch');
 
 async function main() {
     const ctx = await esbuild.context({
-        entryPoints: ['extension.ts'],
+        entryPoints: ['jetls-client.ts'],
         bundle: true,
         format: 'cjs',
         minify: production,
         sourcemap: !production,
         sourcesContent: false,
         platform: 'node',
-        outfile: 'out/extension.js',
+        outfile: 'out/jetls-client.js',
         external: ['vscode'],
         logLevel: 'silent',
         plugins: [

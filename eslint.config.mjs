@@ -11,7 +11,7 @@ import stylistic from '@stylistic/eslint-plugin';
 export default tseslint.config(
 	{
 		ignores: [
-			'**/out',
+			'out/**',
 			"docs/**",
 			'esbuild.js',
 		]

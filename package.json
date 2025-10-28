@@ -32,7 +32,7 @@
     "onLanguage:julia",
     "workspaceContains:Project.toml"
   ],
-  "main": "./out/extension",
+  "main": "./out/jetls-client",
   "contributes": {
     "commands": [
       {
