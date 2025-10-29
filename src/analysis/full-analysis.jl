@@ -289,10 +289,6 @@ function analyze_parsed_if_exist(server::Server, request::AnalysisRequest, args.
     end
 end
 
-function is_full_analysis_successful(result)
-    return isempty(result.res.toplevel_error_reports)
-end
-
 # update `AnalyzerState(analyzer).world` so that `analyzer` can infer any newly defined methods
 function update_analyzer_world(analyzer::LSAnalyzer)
     state = JET.AnalyzerState(analyzer)
@@ -309,7 +305,7 @@ function new_analysis_result(request::AnalysisRequest, result)
     uri2diagnostics = jet_result_to_diagnostics(keys(analyzed_file_infos), result)
 
     (; entry, prev_analysis_result) = request
-    if !is_full_analysis_successful(result) && !isnothing(prev_analysis_result)
+    if !(isempty(result.res.toplevel_error_reports) || isnothing(prev_analysis_result))
         (; actual2virtual, analyzer, analyzed_file_infos) = prev_analysis_result
     else
         actual2virtual = result.res.actual2virtual::JET.Actual2Virtual

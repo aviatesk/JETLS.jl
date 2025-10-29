@@ -92,9 +92,12 @@ include("did-change-watched-files.jl")
 include("lifecycle.jl")
 
 """
-    runserver([callback,] in::IO, out::IO) -> (; exit_code::Int, endpoint::Endpoint)
-    runserver([callback,] endpoint::Endpoint) -> (; exit_code::Int, endpoint::Endpoint)
-    runserver([callback,] server::Server) -> (; exit_code::Int, endpoint::Endpoint)
+    runserver([callback,] in::IO, out::IO; client_process_id=nothing)
+        -> (; exit_code::Int, endpoint::Endpoint)
+    runserver([callback,] endpoint::Endpoint; client_process_id=nothing)
+        -> (; exit_code::Int, endpoint::Endpoint)
+    runserver([callback,] server::Server; client_process_id=nothing)
+        -> (; exit_code::Int, endpoint::Endpoint)
 
 Run the JETLS language server with the specified input/output streams or endpoint.
 
@@ -105,6 +108,15 @@ signature `callback(event::Symbol, msg)` where `event` is either `:sent` or
 When given IO streams, the function creates an `Endpoint` and then a `ServerState`
 before entering the message handling loop. The function returns after receiving an
 exit notification, with an exit code based on whether shutdown was properly requested.
+
+# Keyword arguments
+- `client_process_id::Union{Nothing,Int}`: If provided, the server monitors the
+  specified client process and automatically shuts down if the client process
+  terminates. This handles cases where the client crashes and cannot execute the
+  normal server shutdown process. Note that if this is specified, the value is
+  expected to be identical to the process ID that the client passes as `processId`
+  in the [initialize parameters](@ref InitializeParams) of the
+  [`InitializeRequest`](@ref).
 """
 function runserver end
 
@@ -133,21 +145,36 @@ allowing the caller side to safely `exit` this Julia process.
 """
 const self_shutdown_token = SelfShutdownNotification()
 
-runserver(args...) = runserver(Returns(nothing), args...) # no callback specified
-runserver(callback, in::IO, out::IO) = runserver(callback, LSEndpoint(in, out))
-runserver(callback, endpoint::Endpoint) = runserver(Server(callback, endpoint))
-function runserver(server::Server)
+runserver(args...; kwargs...) = runserver(Returns(nothing), args...; kwargs...) # no callback specified
+runserver(callback, in::IO, out::IO; kwargs...) = runserver(callback, LSEndpoint(in, out); kwargs...)
+runserver(callback, endpoint::Endpoint; kwargs...) = runserver(Server(callback, endpoint); kwargs...)
+function runserver(server::Server; client_process_id::Union{Nothing,Int}=nothing)
     shutdown_requested = false
     local exit_code::Int = 1
     JETLS_DEV_MODE && @info "Running JETLS server loop"
     seq_queue = start_sequential_message_worker(server)
     con_queue = start_concurrent_message_worker(server)
+    if !isnothing(client_process_id)
+        @info "Monitoring client process ID" client_process_id
+        Threads.@spawn while true
+            # To handle cases where the client crashes and cannot execute the normal
+            # server shutdown process, check every 60 seconds whether the `processId`
+            # is alive, and if not, put a special message token `SelfShutdownNotification`
+            # into the `endpoint` queue. See `runserver(server::Server)`.
+            sleep(60)
+            isopen(server.endpoint) || break
+            if !iszero(@ccall uv_kill(client_process_id::Cint, 0::Cint)::Cint)
+                put!(server.endpoint.in_msg_queue, self_shutdown_token)
+                break
+            end
+        end
+    end
     try
         for msg in server.endpoint
             server.callback !== nothing && server.callback(:received, msg)
             # handle lifecycle-related messages
             if msg isa InitializeRequest
-                handle_InitializeRequest(server, msg)
+                handle_InitializeRequest(server, msg; client_process_id)
             elseif msg isa InitializedNotification
                 handle_InitializedNotification(server)
             elseif msg isa ShutdownRequest
