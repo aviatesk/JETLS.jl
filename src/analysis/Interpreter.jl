@@ -65,8 +65,8 @@ function JET.analyze_from_definitions!(interp::LSInterpreter, config::JET.Toplev
     analyzer = JET.ToplevelAbstractAnalyzer(interp, JET.non_toplevel_concretized; refresh_local_cache = false)
     entrypoint = config.analyze_from_definitions
     res = JET.InterpretationState(interp).res
-    n = length(res.toplevel_signatures)
-    n == 0 && return
+    n_sigs = length(res.toplevel_signatures)
+    n_sigs == 0 && return
     cancellable_token = interp.request.cancellable_token
     if cancellable_token !== nothing
         if is_cancelled(cancellable_token.cancel_flag)
@@ -75,23 +75,23 @@ function JET.analyze_from_definitions!(interp::LSInterpreter, config::JET.Toplev
         send_progress(interp.server, cancellable_token.token,
             WorkDoneProgressReport(;
                 cancellable = true,
-                message = "0 / $n [signature analysis]",
+                message = "0 / $n_sigs [signature analysis]",
                 percentage = 50))
         yield_to_endpoint()
     end
-    next_interval = interval = 10 ^ max(round(Int, log10(n)) - 1, 0)
+    next_interval = interval = 10 ^ max(round(Int, log10(n_sigs)) - 1, 0)
     all_reports = JET.InferenceErrorReport[]
-    for i = 1:n
+    for i = 1:n_sigs
         if cancellable_token !== nothing
             if is_cancelled(cancellable_token.cancel_flag)
                 return
             end
             if i == next_interval
-                percentage = compute_percentage(i, n, 50) + 50
+                percentage = compute_percentage(i, n_sigs, 50) + 50
                 send_progress(interp.server, cancellable_token.token,
                     WorkDoneProgressReport(;
                         cancellable = true,
-                        message = "$i / $n [signature analysis]",
+                        message = "$i / $n_sigs [signature analysis]",
                         percentage))
                 yield_to_endpoint(0.01)
                 next_interval += interval

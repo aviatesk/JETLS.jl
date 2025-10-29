@@ -108,6 +108,7 @@ end
 entryuri_impl(entry::ScriptAnalysisEntry) = entry.uri
 entryenvpath_impl(::ScriptAnalysisEntry) = nothing
 entrykind_impl(::ScriptAnalysisEntry) = "script"
+
 struct ScriptInEnvAnalysisEntry <: AnalysisEntry
     env_path::String
     uri::URI
@@ -115,6 +116,7 @@ end
 entryuri_impl(entry::ScriptInEnvAnalysisEntry) = entry.uri
 entryenvpath_impl(entry::ScriptInEnvAnalysisEntry) = entry.env_path
 entrykind_impl(::ScriptInEnvAnalysisEntry) = "script in env"
+
 struct PackageSourceAnalysisEntry <: AnalysisEntry
     env_path::String
     pkgfileuri::URI
@@ -123,13 +125,13 @@ end
 entryuri_impl(entry::PackageSourceAnalysisEntry) = entry.pkgfileuri
 entryenvpath_impl(entry::PackageSourceAnalysisEntry) = entry.env_path
 entrykind_impl(::PackageSourceAnalysisEntry) = "pkg src"
-begin
-    local jetconfigs = Dict{Symbol,Any}(
+let jetconfigs = Dict{Symbol,Any}(
         :toplevel_logger => nothing,
         :analyze_from_definitions => true,
         :concretization_patterns => [:(x_)])
     entryjetconfigs_impl(::PackageSourceAnalysisEntry) = jetconfigs
 end
+
 struct PackageTestAnalysisEntry <: AnalysisEntry
     env_path::String
     runtestsuri::URI
