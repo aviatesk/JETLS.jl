@@ -94,12 +94,11 @@ entrykind(entry::AnalysisEntry) = entrykind_impl(entry)::String
 entryjetconfigs(entry::AnalysisEntry) = entryjetconfigs_impl(entry)::Dict{Symbol,Any}
 
 entryenvpath_impl(::AnalysisEntry) = nothing
-begin
-    local default_jetconfigs = Dict{Symbol,Any}(
+let default_jetconfigs = Dict{Symbol,Any}(
         :toplevel_logger => nothing,
         # force concretization of documentation
         :concretization_patterns => [:($(Base.Docs.doc!)(xs__))])
-    entryjetconfigs_impl(::AnalysisEntry) = default_jetconfigs
+    global entryjetconfigs_impl(::AnalysisEntry) = default_jetconfigs
 end
 
 struct ScriptAnalysisEntry <: AnalysisEntry
