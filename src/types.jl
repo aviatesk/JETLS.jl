@@ -124,10 +124,7 @@ end
 entryuri_impl(entry::PackageSourceAnalysisEntry) = entry.pkgfileuri
 entryenvpath_impl(entry::PackageSourceAnalysisEntry) = entry.env_path
 entrykind_impl(::PackageSourceAnalysisEntry) = "pkg src"
-let jetconfigs = Dict{Symbol,Any}(
-        :toplevel_logger => nothing,
-        :analyze_from_definitions => true,
-        :concretization_patterns => [:(x_)])
+let jetconfigs = Dict{Symbol,Any}()
     global entryjetconfigs_impl(::PackageSourceAnalysisEntry) = jetconfigs
 end
 
@@ -146,7 +143,7 @@ struct AnalysisResult
     uri2diagnostics::URI2Diagnostics
     analyzer::LSAnalyzer
     analyzed_file_infos::Dict{URI,JET.AnalyzedFileInfo}
-    actual2virtual::JET.Actual2Virtual
+    actual2virtual::Union{Nothing,JET.Actual2Virtual}
 end
 
 analyzed_file_uris(analysis_result::AnalysisResult) = keys(analysis_result.analyzed_file_infos)

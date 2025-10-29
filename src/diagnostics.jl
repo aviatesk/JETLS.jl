@@ -58,6 +58,7 @@ function jet_result_to_diagnostics!(uri2diagnostics::URI2Diagnostics, result::JE
         else
             uri = filepath2uri(to_full_path(filename))
         end
+        haskey(uri2diagnostics, uri) || continue # FIXME
         push!(uri2diagnostics[uri], diagnostic)
     end
     return uri2diagnostics

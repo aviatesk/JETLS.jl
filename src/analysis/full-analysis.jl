@@ -308,7 +308,7 @@ function new_analysis_result(request::AnalysisRequest, result)
     if !(isempty(result.res.toplevel_error_reports) || isnothing(prev_analysis_result))
         (; actual2virtual, analyzer, analyzed_file_infos) = prev_analysis_result
     else
-        actual2virtual = result.res.actual2virtual::JET.Actual2Virtual
+        actual2virtual = result.res.actual2virtual
         analyzer = update_analyzer_world(result.analyzer)
     end
 
@@ -370,7 +370,13 @@ function execute_analysis_request(server::Server, request::AnalysisRequest)
 
     elseif entry isa PackageSourceAnalysisEntry
         result = activate_do(entryenvpath(entry)) do
-            analyze_parsed_if_exist(server, request, entry.pkgid)
+            # analyze_parsed_if_exist(server, request, entry.pkgid)
+            begin_full_analysis_progress(server, request)
+            try
+                return analyze_package(server, request, entry.pkgid)
+            finally
+                end_full_analysis_progress(server, request)
+            end
         end
 
     elseif entry isa PackageTestAnalysisEntry
