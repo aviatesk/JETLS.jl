@@ -14,7 +14,7 @@ makedocs(;
         "Configuration" => "configuration.md",
         "Formatter integration" => "formatting.md",
         "TestRunner integration" => "testrunner.md",
-        "Communication channels" => "communication-channels.md",
+        "Launching" => "launching.md",
     ],
 )
 

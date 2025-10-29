@@ -35,7 +35,7 @@ function show_help()
       --socket=<port>          Use TCP socket on specified port
 
     Options:
-      --clientProcessId=<pid>  Monitor client process (server shuts down if client exits)
+      --clientProcessId=<pid>  Monitor client process (enables crash detection)
       --help, -h               Show this help message
 
     Examples:
@@ -164,9 +164,9 @@ function (@main)(args::Vector{String})::Cint
             end
         end
         JETLS.currently_running = server
-        t = Threads.@spawn :interactive runserver(server)
+        t = Threads.@spawn :interactive runserver(server; client_process_id)
     else
-        t = Threads.@spawn :interactive runserver(endpoint)
+        t = Threads.@spawn :interactive runserver(endpoint; client_process_id)
     end
     res = fetch(t)
     @info "JETLS server stopped" res.exit_code

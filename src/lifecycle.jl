@@ -10,7 +10,10 @@ and features that don't extend and support `StaticRegistrationOptions` like "com
 need to be registered in this handler in a case when the client does not support
 dynamic registration.
 """
-function handle_InitializeRequest(server::Server, msg::InitializeRequest)
+function handle_InitializeRequest(
+        server::Server, msg::InitializeRequest;
+        client_process_id::Union{Int,Nothing} = nothing
+    )
     state = server.state
     init_params = state.init_params = msg.params
 
@@ -219,8 +222,16 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
             name = "JETLS",
             version = "0.0.0"))
 
-    processId = init_params.processId
-    if !isnothing(processId)
+    process_id = init_params.processId
+    if !isnothing(process_id)
+        if client_process_id !== nothing
+            if client_process_id != process_id
+                @warn "Different client process IDs given" client_process_id process_id
+            else
+                @goto skip_monitoring
+            end
+        end
+        @info "Monitoring parent process ID" process_id
         Threads.@spawn while true
             # To handle cases where the client crashes and cannot execute the normal
             # server shutdown process, check every 60 seconds whether the `processId`
@@ -228,11 +239,16 @@ function handle_InitializeRequest(server::Server, msg::InitializeRequest)
             # into the `endpoint` queue. See `runserver(server::Server)`.
             sleep(60)
             isopen(server.endpoint) || break
-            if !iszero(@ccall uv_kill(processId::Cint, 0::Cint)::Cint)
+            if !iszero(@ccall uv_kill(process_id::Cint, 0::Cint)::Cint)
                 put!(server.endpoint.in_msg_queue, self_shutdown_token)
                 break
             end
         end
+    elseif client_process_id === nothing
+        @warn "No client process ID provided, zombie processes may occur if the client terminates abnormally"
+    else
+        # Monitoring for this client process is already being performed within `runserver`, so it can be skipped
+        @label skip_monitoring
     end
 
     return send(server,
