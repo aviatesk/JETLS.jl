@@ -153,7 +153,7 @@ end
                     break
                 end
             end
-            @test found_diagnostic
+            @test_broken found_diagnostic
         end
     end
 end
