@@ -180,29 +180,32 @@ function global_completions!(items::Dict{String, CompletionItem}, state::ServerS
     completion_module = mod
 
     prev_token = token_before_offset(fi, pos)
-    prev_kind = isnothing(prev_token) ? nothing : JS.kind(prev_token)
-
-    # Case: `@│`
-    if prev_kind === JS.K"@"
-        edit_start_pos = offset_to_xy(fi, JS.first_byte(prev_token))
-        is_macro_invoke = true
-    # Case: `@macr│`
-    elseif prev_kind === JS.K"macro_name"
-        edit_start_pos = offset_to_xy(fi, JS.first_byte(prev_tok(prev_token)))
-        is_macro_invoke = true
-    # Case `│` (empty program)
-    elseif isnothing(prev_token)
+    if isnothing(prev_token)
+        # Case `│` (empty program)
         edit_start_pos = Position(; line=0, character=0)
         is_macro_invoke = false
-    elseif JS.is_identifier(prev_kind)
-        edit_start_pos = offset_to_xy(fi, JS.first_byte(prev_token))
-        is_macro_invoke = false
     else
-        # When completion is triggered within unknown scope (e.g., comment),
-        # it's difficult to properly specify `edit_start_pos`.
-        # Simply specify only the `label` and let the client handle it appropriately.
-        edit_start_pos = nothing
-        is_macro_invoke = false
+        prev_kind = JS.kind(this(prev_token))
+        # Case: `@│`
+        if prev_kind === JS.K"@"
+            edit_start_pos = offset_to_xy(fi, JS.first_byte(prev_token))
+            is_macro_invoke = true
+        # Case: `@macr│`
+        elseif prev_kind === JS.K"macro_name"
+            at_token = @something prev_tok(prev_token) @goto elseblk
+            edit_start_pos = offset_to_xy(fi, JS.first_byte(at_token))
+            is_macro_invoke = true
+        elseif JS.is_identifier(prev_kind)
+            edit_start_pos = offset_to_xy(fi, JS.first_byte(prev_token))
+            is_macro_invoke = false
+        else
+            # When completion is triggered within unknown scope (e.g., comment),
+            # it's difficult to properly specify `edit_start_pos`.
+            # Simply specify only the `label` and let the client handle it appropriately.
+            @label elseblk
+            edit_start_pos = nothing
+            is_macro_invoke = false
+        end
     end
 
     # if we are in macro name context, then we don't need the local completions
