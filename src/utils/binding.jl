@@ -64,7 +64,7 @@ function jl_lower_for_scope_resolution(
         JETLS_DEBUG_LOWERING && showerror(stderr, err)
         JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
         st0 = without_kinds(st0, JS.KSet"macrocall")
-        JL.expand_forms_1(mod, st0, true)
+        JL.expand_forms_1(mod, st0, true, Base.get_world_counter())
     end
     return _jl_lower_for_scope_resolution(ctx1, st0, st1)
 end

@@ -186,17 +186,20 @@ function global_completions!(items::Dict{String, CompletionItem}, state::ServerS
     if prev_kind === JS.K"@"
         edit_start_pos = offset_to_xy(fi, JS.first_byte(prev_token))
         is_macro_invoke = true
-    # Case: `@macr│`
-    elseif prev_kind === JS.K"macro_name"
-        edit_start_pos = offset_to_xy(fi, JS.first_byte(prev_tok(prev_token)))
-        is_macro_invoke = true
     # Case `│` (empty program)
     elseif isnothing(prev_token)
         edit_start_pos = Position(; line=0, character=0)
         is_macro_invoke = false
     elseif JS.is_identifier(prev_kind)
-        edit_start_pos = offset_to_xy(fi, JS.first_byte(prev_token))
-        is_macro_invoke = false
+        pprev_token = prev_tok(prev_token)
+        if !isnothing(pprev_token) && JS.kind(pprev_token) === JS.K"@"
+            # Case: `@macr│`
+            edit_start_pos = offset_to_xy(fi, JS.first_byte(pprev_token))
+            is_macro_invoke = true
+        else
+            edit_start_pos = offset_to_xy(fi, JS.first_byte(prev_token))
+            is_macro_invoke = false
+        end
     else
         # When completion is triggered within unknown scope (e.g., comment),
         # it's difficult to properly specify `edit_start_pos`.
