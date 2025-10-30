@@ -169,7 +169,7 @@ struct AnalysisRequest
     cancellable_token::Union{Nothing,CancellableToken}
     notify::Bool
     prev_analysis_result::Union{Nothing,AnalysisResult}
-    completion::Channel{Nothing}
+    completion::Base.Event
     function AnalysisRequest(
             entry::AnalysisEntry,
             uri::URI,
@@ -177,7 +177,7 @@ struct AnalysisRequest
             cancellable_token::Union{Nothing,CancellableToken},
             notify::Bool,
             prev_analysis_result::Union{Nothing,AnalysisResult},
-            completion::Channel{Nothing} = Channel{Nothing}(1)
+            completion::Base.Event = Base.Event()
         )
         return new(entry, uri, generation, cancellable_token, notify, prev_analysis_result, completion)
     end

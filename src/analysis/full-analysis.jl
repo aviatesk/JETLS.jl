@@ -92,7 +92,7 @@ function request_analysis!(
         generation = get_generation(manager, entry)
     end
 
-    completion = Channel{Nothing}(1)
+    completion = Base.Event()
     request = AnalysisRequest(
         entry, uri, generation, cancellable_token, notify, prev_analysis_result, completion)
 
@@ -135,7 +135,7 @@ function request_analysis!(
     end
 
     @label wait_or_return
-    wait && take!(completion)
+    wait && Base.wait(completion)
     nothing
 end
 
@@ -180,7 +180,7 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
 
     @label next_request
 
-    put!(request.completion, nothing) # Notify the completion callback
+    notify(request.completion)
 
     # Check for pending request and re-queue if needed
     pending_request = store!(manager.pending_analyses) do analyses
