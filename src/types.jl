@@ -128,7 +128,7 @@ let jetconfigs = Dict{Symbol,Any}(
         :toplevel_logger => nothing,
         :analyze_from_definitions => true,
         :concretization_patterns => [:(x_)])
-    entryjetconfigs_impl(::PackageSourceAnalysisEntry) = jetconfigs
+    global entryjetconfigs_impl(::PackageSourceAnalysisEntry) = jetconfigs
 end
 
 struct PackageTestAnalysisEntry <: AnalysisEntry
