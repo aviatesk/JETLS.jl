@@ -155,7 +155,7 @@ function runserver(server::Server; client_process_id::Union{Nothing,Int}=nothing
     seq_queue = start_sequential_message_worker(server)
     con_queue = start_concurrent_message_worker(server)
     if !isnothing(client_process_id)
-        @info "Monitoring client process ID" client_process_id
+        JETLS_DEV_MODE && @info "Monitoring client process ID" client_process_id
         Threads.@spawn while true
             # To handle cases where the client crashes and cannot execute the normal
             # server shutdown process, check every 60 seconds whether the `processId`

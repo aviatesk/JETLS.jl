@@ -231,7 +231,7 @@ function handle_InitializeRequest(
                 @goto skip_monitoring
             end
         end
-        @info "Monitoring parent process ID" process_id
+        JETLS_DEV_MODE && @info "Monitoring parent process ID" process_id
         Threads.@spawn while true
             # To handle cases where the client crashes and cannot execute the normal
             # server shutdown process, check every 60 seconds whether the `processId`
