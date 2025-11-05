@@ -135,26 +135,26 @@
     """
     renameProvider::Union{Nothing, Bool, RenameOptions} = nothing
 
-    # """
-    # The server provides folding provider support.
+    """
+    The server provides folding provider support.
 
-    # # Tags
-    # - since - 3.10.0
-    # """
-    # foldingRangeProvider::Union{Nothing, Bool, FoldingRangeOptions, FoldingRangeRegistrationOptions} = nothing
+    # Tags
+    - since - 3.10.0
+    """
+    foldingRangeProvider::Union{Nothing, Bool, FoldingRangeOptions, FoldingRangeRegistrationOptions} = nothing
 
     """
     The server provides execute command support.
     """
     executeCommandProvider::Union{Nothing, ExecuteCommandOptions} = nothing
 
-    # """
-    # The server provides selection range support.
+    """
+    The server provides selection range support.
 
-    # # Tags
-    # - since - 3.15.0
-    # """
-    # selectionRangeProvider::Union{Nothing, Bool, SelectionRangeOptions, SelectionRangeRegistrationOptions} = nothing
+    # Tags
+    - since - 3.15.0
+    """
+    selectionRangeProvider::Union{Nothing, Bool, SelectionRangeOptions, SelectionRangeRegistrationOptions} = nothing
 
     # """
     # The server provides linked editing range support.
