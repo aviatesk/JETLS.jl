@@ -57,6 +57,7 @@ function handle_InitializeRequest(
     else
         config_path = joinpath(state.root_path, ".JETLSConfig.toml")
         if isfile(config_path)
+            # Null callback: Don't notify even if values different from defaults are loaded initially
             load_file_config!(Returns(nothing), server, config_path)
         end
     end
@@ -418,7 +419,8 @@ function handle_InitializedNotification(server::Server)
 
     register(server, registrations)
 
-    load_lsp_config!(server, "[LSP] workspace/configuration")
+    # `!notify`: Don't notify even if values different from defaults are loaded initially
+    load_lsp_config!(server, "[LSP] workspace/configuration"; notify=false)
 
     JETLS_DEV_MODE && show_setup_info("Initialized JETLS with the following setup:")
 end

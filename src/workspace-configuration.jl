@@ -1,6 +1,7 @@
 struct LoadLSPConfigHandler
     server::Server
     source::String
+    notify::Bool
 end
 
 function (handler::LoadLSPConfigHandler)(server::Server, @nospecialize(config_value))
@@ -10,7 +11,7 @@ function (handler::LoadLSPConfigHandler)(server::Server, @nospecialize(config_va
     else
         store_lsp_config!(tracker, server, config_value, handler.source)
     end
-    notify_config_changes(handler.server, tracker, handler.source)
+    handler.notify && notify_config_changes(handler.server, tracker, handler.source)
 end
 
 struct WorkspaceConfigurationCaller <: RequestCaller
@@ -47,9 +48,9 @@ function handle_workspace_configuration_response(
     end
 end
 
-function load_lsp_config!(server::Server, source::AbstractString)
+function load_lsp_config!(server::Server, source::AbstractString; notify::Bool=true)
     supports(server, :workspace, :configuration) || return false
-    handler = LoadLSPConfigHandler(server, source)
+    handler = LoadLSPConfigHandler(server, source, notify)
     request_workspace_configuration(handler, server, nothing)
     return true
 end
