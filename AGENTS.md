@@ -16,6 +16,9 @@
   Also, ensure that the maximum line length never exceeds 72 characters.
   When referencing external GitHub PRs or issues, use proper GitHub interlinking
   format (e.g., `owner/repo#123` for PRs/issues).
+  Finally, if you write code yourself, include a "Written by Claude" footer at
+  the end of the commit message (no emoji nonsense). However, when simply asked
+  to write a commit message, there's no need to add that footer.
 
 # Coding rules
 - When writing functions, use the most restrictive signature type possible.
