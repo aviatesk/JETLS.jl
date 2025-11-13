@@ -3,14 +3,13 @@
 
 """
 A special object representing `null` value.
-When used as a field specified as `StructTypes.omitempties`, the key-value pair is not
-omitted in the serialized JSON but instead appears as `null`.
+When used as a field that might be omitted in the serialized JSON (i.e. the field can be `nothing`),
+the key-value pair appears as `null` instead of being omitted.
 This special object is specifically intended for use in `ResponseMessage`.
 """
 struct Null end
 const null = Null()
-StructTypes.StructType(::Type{Null}) = StructTypes.CustomStruct()
-StructTypes.lower(::Null) = nothing
+StructUtils.lower(::Null) = JSON.Null()
 push!(exports, :Null, :null)
 
 const boolean = Bool

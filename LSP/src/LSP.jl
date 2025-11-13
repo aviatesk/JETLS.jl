@@ -1,6 +1,7 @@
 module LSP
 
-using StructTypes: StructTypes
+using StructUtils: StructUtils
+using JSON: JSON
 
 include("URIs2/URIs2.jl")
 using ..URIs2: URI
@@ -12,6 +13,7 @@ include("utils/interface.jl")
 include("utils/namespace.jl")
 
 include("base-protocol.jl")
+
 include("basic-json-structures.jl")
 include("lifecycle-messages/register-capability.jl")
 include("lifecycle-messages/unregister-capability.jl")
