@@ -515,6 +515,30 @@ Diagnostic objects are only valid in the scope of a resource.
     data::Union{Any, Nothing} = nothing
 end
 
+# Utility constructor
+function Diagnostic(diag::Diagnostic;
+        range::Range = diag.range,
+        severity::Union{DiagnosticSeverity.Ty,Nothing} = diag.severity,
+        code::Union{String,Int,Nothing} = diag.code,
+        codeDescription::Union{CodeDescription,Nothing} = diag.codeDescription,
+        source::Union{String,Nothing} = diag.source,
+        message::String = diag.message,
+        tags::Union{Vector{DiagnosticTag.Ty},Nothing} = diag.tags,
+        relatedInformation::Union{Vector{DiagnosticRelatedInformation},Nothing} = diag.relatedInformation,
+        data::Any = diag.data
+    )
+    return Diagnostic(;
+        range,
+        severity,
+        code,
+        codeDescription,
+        source,
+        message,
+        tags,
+        relatedInformation,
+        data)
+end
+
 # Command
 # =======
 

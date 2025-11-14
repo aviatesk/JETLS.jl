@@ -1,5 +1,3 @@
-using Configurations
-
 const SyntaxTree0 = typeof(JS.build_tree(JL.SyntaxTree, JS.parse!(JS.ParseStream(""))))
 
 struct FileInfo
@@ -358,6 +356,80 @@ function default_executable(formatter::String)
     end
 end
 
+@option struct DiagnosticCodeConfig <: ConfigSection
+    enabled::Maybe{Bool}
+    severity::Maybe{DiagnosticSeverity.Ty}
+end
+
+is_static_setting(::Type{DiagnosticCodeConfig}, ::Symbol) = false
+default_config(::Type{DiagnosticCodeConfig}) = DiagnosticCodeConfig(true, nothing)
+
+Configurations.from_dict(::Type{DiagnosticCodeConfig}, x::AbstractDict{String}) =
+    parse_diagnostic_code_config(x, "")
+
+const DIAGNOSTIC_SOURCE = "JETLS"
+
+const VALID_DIAGNOSTIC_CATEGORIES = Set{String}([
+    "syntax",
+    "lowering",
+    "toplevel",
+    "inference",
+    "testrunner",
+])
+
+const SYNTAX_DIAGNOSTIC_CODE = "syntax/parse-error"
+const LOWERING_UNUSED_ARGUMENT_CODE = "lowering/unused-argument"
+const LOWERING_UNUSED_LOCAL_CODE = "lowering/unused-local"
+const LOWERING_ERROR_CODE = "lowering/error"
+const LOWERING_MACRO_EXPANSION_ERROR_CODE = "lowering/macro-expansion-error"
+const TOPLEVEL_ERROR_CODE = "toplevel/error"
+const INFERENCE_UNDEF_GLOBAL_VAR_CODE = "inference/undef-global-var"
+const INFERENCE_UNDEF_LOCAL_VAR_CODE = "inference/undef-local-var"
+const INFERENCE_UNDEF_STATIC_PARAM_CODE = "inference/undef-static-param" # currently not reported
+const TESTRUNNER_TEST_FAILURE_CODE = "testrunner/test-failure"
+
+const ALL_DIAGNOSTIC_CODES = String[
+    SYNTAX_DIAGNOSTIC_CODE,
+    LOWERING_UNUSED_ARGUMENT_CODE,
+    LOWERING_UNUSED_LOCAL_CODE,
+    LOWERING_ERROR_CODE,
+    LOWERING_MACRO_EXPANSION_ERROR_CODE,
+    TOPLEVEL_ERROR_CODE,
+    INFERENCE_UNDEF_GLOBAL_VAR_CODE,
+    INFERENCE_UNDEF_LOCAL_VAR_CODE,
+    INFERENCE_UNDEF_STATIC_PARAM_CODE,
+    TESTRUNNER_TEST_FAILURE_CODE,
+]
+const ALL_DIAGNOSTIC_CODES_MAP = OrderedCollections.OrderedDict{String,Symbol}(
+    code => Symbol(code) for code in ALL_DIAGNOSTIC_CODES)
+
+let fields = Expr[]
+    for (_, fname) in ALL_DIAGNOSTIC_CODES_MAP
+        push!(fields, :($fname::Maybe{DiagnosticCodeConfig}))
+    end
+    Core.eval(@__MODULE__, :(@option struct DiagnosticCodesConfig <: ConfigSection
+        $(fields...)
+    end))
+end
+
+is_static_setting(::Type{DiagnosticCodesConfig}, ::Symbol) = false
+Core.eval(@__MODULE__, :(function default_config(::Type{DiagnosticCodesConfig})
+    return DiagnosticCodesConfig($(fill(nothing, length(ALL_DIAGNOSTIC_CODES))...))
+end))
+
+function Configurations.from_dict(::Type{DiagnosticCodesConfig}, x::AbstractDict{String})
+    check_diagnostic_codes_raw(x)
+    DiagnosticCodesConfig((parse_diagnostic_codes_config(x, code) for code in ALL_DIAGNOSTIC_CODES)...)
+end
+
+@option struct DiagnosticConfig <: ConfigSection
+    enabled::Maybe{Bool}
+    codes::Maybe{DiagnosticCodesConfig}
+end
+
+is_static_setting(::Type{DiagnosticConfig}, ::Symbol) = false
+default_config(::Type{DiagnosticConfig}) = DiagnosticConfig(true, nothing)
+
 # configuration item for test purpose
 @option struct InternalConfig <: ConfigSection
     static_setting::Maybe{Int}
@@ -368,6 +440,7 @@ is_static_setting(::Type{InternalConfig}, field::Symbol) = field == :static_sett
 default_config(::Type{InternalConfig}) = InternalConfig(0, 0)
 
 @option struct JETLSConfig <: ConfigSection
+    diagnostics::Maybe{DiagnosticConfig}
     full_analysis::Maybe{FullAnalysisConfig}
     testrunner::Maybe{TestRunnerConfig}
     formatter::Maybe{FormatterConfig}
@@ -381,6 +454,7 @@ is_static_setting(::Type{T}, head::Symbol, rest::Symbol...) where {T<:ConfigSect
     is_static_setting(_unwrap_maybe(fieldtype(T, head)), rest...)
 
 const DEFAULT_CONFIG = JETLSConfig(
+    diagnostics = default_config(DiagnosticConfig),
     full_analysis = default_config(FullAnalysisConfig),
     testrunner = default_config(TestRunnerConfig),
     formatter = default_config(FormatterConfig),

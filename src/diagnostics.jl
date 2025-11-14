@@ -1,7 +1,168 @@
-const SYNTAX_DIAGNOSTIC_SOURCE = "JETLS - syntax"
-const LOWERING_DIAGNOSTIC_SOURCE = "JETLS - lowering"
-const TOPLEVEL_DIAGNOSTIC_SOURCE = "JETLS - top-level"
-const INFERENCE_DIAGNOSTIC_SOURCE = "JETLS - inference"
+# configuration
+# =============
+
+struct DiagnosticConfigError <: Exception
+    msg::AbstractString
+end
+Base.showerror(io::IO, e::DiagnosticConfigError) = print(io, "DiagnosticConfigError: ", e.msg)
+
+function parse_diagnostic_severity(
+        @nospecialize(severity_value), code_or_pattern::AbstractString
+    )
+    if severity_value isa Int
+        if !(1 ≤ severity_value ≤ 4)
+            throw(DiagnosticConfigError(
+                lazy"Invalid severity value \"$severity_value\" for diagnostic code \"$code_or_pattern\". " *
+                "Valid integer values are: 1-4"))
+        end
+        return severity_value
+    elseif severity_value isa String
+        severity_str = lowercase(severity_value)
+        if severity_str == "error"
+            return DiagnosticSeverity.Error
+        elseif severity_str == "warning"
+            return DiagnosticSeverity.Warning
+        elseif severity_str == "information" || severity_str == "info"
+            return DiagnosticSeverity.Information
+        elseif severity_str == "hint"
+            return DiagnosticSeverity.Hint
+        else
+            throw(DiagnosticConfigError(
+                lazy"Invalid severity value \"$severity_value\" for diagnostic code \"$code_or_pattern\". " *
+                "Valid string values are: \"error\", \"warning\", \"information\"/\"info\", \"hint\""))
+        end
+    else
+        throw(DiagnosticConfigError(
+            lazy"Invalid severity value \"$severity_value\" for diagnostic code \"$code_or_pattern\". " *
+            "Severity must be an integer (1-4) or string"))
+    end
+end
+
+function parse_diagnostic_code_config(
+        code_config::AbstractDict{String}, code_or_pattern::AbstractString
+    )
+    parsed_config = copy(code_config)
+    if haskey(parsed_config, "severity")
+        parsed_config["severity"] = parse_diagnostic_severity(
+            parsed_config["severity"], code_or_pattern)
+    end
+    # HACK: This is not public API of Configurations
+    return @invoke Configurations.from_dict(
+        DiagnosticCodeConfig::Type, parsed_config::AbstractDict{String})
+end
+
+function extract_category(code::AbstractString)
+    idx = findfirst('/', code)
+    return idx === nothing ? nothing : code[1:prevind(code, idx)]
+end
+
+function is_valid_diagnostic_code_key(key::AbstractString)
+    if key ∈ ALL_DIAGNOSTIC_CODES
+        return true
+    end
+    if endswith(key, "/*")
+        category = extract_category(key)
+        return category !== nothing && category ∈ VALID_DIAGNOSTIC_CATEGORIES
+    end
+    return false
+end
+
+let all_codes_str = join(string.('`', ALL_DIAGNOSTIC_CODES, '`'), ", ")
+    patterns_str = join(string.('`', collect(VALID_DIAGNOSTIC_CATEGORIES), "/*", '`'), ", ")
+    msg = "Diagnostic code must be one of: $all_codes_str, or a category pattern: $patterns_str"
+    global function check_diagnostic_codes_raw(codes_raw::AbstractDict{String})
+        for key in keys(codes_raw)
+            if !is_valid_diagnostic_code_key(key)
+                throw(DiagnosticConfigError(
+                    lazy"Invalid diagnostic code \"$key\". " * msg))
+            end
+        end
+    end
+end
+
+function parse_diagnostic_codes_config(codes_raw::AbstractDict{String}, code::String)
+    category = extract_category(code)
+    @assert (category === nothing || category in VALID_DIAGNOSTIC_CATEGORIES) "Invalid diagnostic category"
+    pattern_config = category_config = nothing
+    if category !== nothing
+        pattern = "$category/*"
+        if haskey(codes_raw, pattern)
+            pattern_dict = codes_raw[pattern]
+            if !isa(pattern_dict, AbstractDict{String})
+                throw(DiagnosticConfigError(
+                    lazy"Diagnostic code configuration for \"$pattern\" must be AbstractDict{String}"))
+            end
+            category_config = Configurations.from_dict(DiagnosticCodeConfig, pattern_dict)
+        end
+    end
+    if haskey(codes_raw, code)
+        code_dict = codes_raw[code]
+        if !isa(code_dict, AbstractDict{String})
+            throw(DiagnosticConfigError(
+                lazy"Diagnostic code configuration for \"$code\" must be AbstractDict{String}"))
+        end
+        pattern_config = Configurations.from_dict(DiagnosticCodeConfig, code_dict)
+    end
+    if category_config !== nothing && pattern_config !== nothing
+        enabled = pattern_config.enabled !== nothing ? pattern_config.enabled :
+                  category_config.enabled !== nothing ? category_config.enabled : nothing
+        severity = pattern_config.severity !== nothing ? pattern_config.severity :
+                   category_config.severity !== nothing ? category_config.severity : nothing
+        return DiagnosticCodeConfig(enabled, severity)
+    elseif pattern_config !== nothing
+        return pattern_config
+    elseif category_config !== nothing
+        return category_config
+    else
+        return nothing
+    end
+end
+
+function apply_diagnostic_config(diagnostic::Diagnostic, manager::ConfigManager)
+    settings = get_settings(load(manager))
+    diagnostic_config = @something settings.diagnostics default_config(DiagnosticConfig)
+    diagnostic_config.enabled === false && return nothing
+    code = diagnostic.code
+    if !(code isa String)
+        if JETLS_DEV_MODE
+            @warn "Unexpected diagnostic code type" code
+        elseif JETLS_TEST_MODE
+            error(lazy"Unexpected diagnostic code type: $code")
+        end
+        return diagnostic
+    elseif !haskey(ALL_DIAGNOSTIC_CODES_MAP, code)
+        if JETLS_DEV_MODE
+            @warn "Unknown diagnostic code" code
+        elseif JETLS_TEST_MODE
+            error(lazy"Unknown diagnostic code: $code")
+        end
+        return diagnostic
+    end
+    codes_config = @something diagnostic_config.codes default_config(DiagnosticCodesConfig)
+    code_config = getfield(codes_config, ALL_DIAGNOSTIC_CODES_MAP[code])
+    code_config === nothing && return diagnostic
+    code_config.enabled === false && return nothing
+    severity = @something code_config.severity diagnostic.severity
+    if severity == diagnostic.severity
+        return diagnostic
+    else
+        return Diagnostic(diagnostic; severity)
+    end
+end
+
+function apply_diagnostic_config!(diagnostics::Vector{Diagnostic}, manager::ConfigManager)
+    result = Diagnostic[]
+    for diagnostic in diagnostics
+        applied = apply_diagnostic_config(diagnostic, manager)
+        applied === nothing || push!(result, applied)
+    end
+    empty!(diagnostics)
+    append!(diagnostics, result)
+    return diagnostics
+end
+
+# syntax diagnotics
+# =================
 
 function parsed_stream_to_diagnostics(fi::FileInfo)
     diagnostics = Diagnostic[]
@@ -20,8 +181,12 @@ function jsdiag_to_lspdiag(diagnostic::JS.Diagnostic, fi::FileInfo)
             diagnostic.level === :note ? DiagnosticSeverity.Information :
             DiagnosticSeverity.Hint,
         message = diagnostic.message,
-        source = SYNTAX_DIAGNOSTIC_SOURCE)
+        source = DIAGNOSTIC_SOURCE,
+        code = SYNTAX_DIAGNOSTIC_CODE)
 end
+
+# toplevel / inference diagnostics
+# ================================
 
 function jet_result_to_diagnostics(file_uris, result::JET.JETToplevelResult)
     uri2diagnostics = URI2Diagnostics(uri => Diagnostic[] for uri in file_uris)
@@ -78,7 +243,8 @@ function jet_toplevel_error_report_to_diagnostic(
         range = line_range(report.line),
         severity = DiagnosticSeverity.Error,
         message,
-        source = TOPLEVEL_DIAGNOSTIC_SOURCE)
+        source = DIAGNOSTIC_SOURCE,
+        code = TOPLEVEL_ERROR_CODE)
 end
 
 function jet_inference_error_report_to_diagnostic(postprocessor::JET.PostProcessor, @nospecialize report::JET.InferenceErrorReport)
@@ -98,8 +264,23 @@ function jet_inference_error_report_to_diagnostic(postprocessor::JET.PostProcess
         range = jet_frame_to_range(topframe),
         severity = inference_error_report_severity(report),
         message,
-        source = INFERENCE_DIAGNOSTIC_SOURCE,
+        source = DIAGNOSTIC_SOURCE,
+        code = inference_error_report_code(report),
         relatedInformation)
+end
+
+function inference_error_report_code(@nospecialize report::JET.InferenceErrorReport)
+    if report isa Analyzer.UndefVarErrorReport
+        if report.var isa GlobalRef
+            return INFERENCE_UNDEF_GLOBAL_VAR_CODE
+        elseif report.var isa TypeVar
+            return INFERENCE_UNDEF_STATIC_PARAM_CODE
+        else
+            return INFERENCE_UNDEF_LOCAL_VAR_CODE
+        end
+    else
+        return nothing
+    end
 end
 
 function jet_frame_to_location(frame)
@@ -121,6 +302,9 @@ function line_range(line::Int)
     var"end" = Position(; line, character=Int(typemax(Int32)))
     return Range(; start, var"end")
 end
+
+# lowering diagnostics
+# ====================
 
 const JL_MACRO_FILE = only(methods(JL.expand_macro, (JL.MacroExpansionContext,JL.SyntaxTree))).file
 function scrub_expand_macro_stacktrace(stacktrace::Vector{Base.StackTraces.StackFrame})
@@ -204,14 +388,17 @@ function analyze_lowered_code!(diagnostics::Vector{Diagnostic},
         key in reported ? continue : push!(reported, key)
         if bk === :argument
             message = "Unused argument `$bn`"
+            code = LOWERING_UNUSED_ARGUMENT_CODE
         else
             message = "Unused local binding `$bn`"
+            code = LOWERING_UNUSED_LOCAL_CODE
         end
         push!(diagnostics, Diagnostic(;
             range,
             severity = DiagnosticSeverity.Information,
             message,
-            source = LOWERING_DIAGNOSTIC_SOURCE,
+            source = DIAGNOSTIC_SOURCE,
+            code,
             tags = DiagnosticTag.Ty[DiagnosticTag.Unnecessary]))
     end
     return diagnostics
@@ -230,7 +417,8 @@ function lowering_diagnostics!(
                 range = jsobj_to_range(err.ex, fi),
                 severity = DiagnosticSeverity.Error,
                 message = err.msg,
-                source = LOWERING_DIAGNOSTIC_SOURCE))
+                source = DIAGNOSTIC_SOURCE,
+                code = LOWERING_ERROR_CODE))
         elseif err isa JL.MacroExpansionError
             st = scrub_expand_macro_stacktrace(stacktrace(catch_backtrace()))
             msg = err.msg
@@ -252,7 +440,8 @@ function lowering_diagnostics!(
                 range = jsobj_to_range(first(provs), fi),
                 severity = DiagnosticSeverity.Error,
                 message = msg,
-                source = LOWERING_DIAGNOSTIC_SOURCE,
+                source = DIAGNOSTIC_SOURCE,
+                code = LOWERING_MACRO_EXPANSION_ERROR_CODE,
                 relatedInformation))
         else
             JETLS_DEBUG_LOWERING && @warn "Error in lowering (with macrocall nodes)"
@@ -317,7 +506,7 @@ function iterate_toplevel_tree(callback, st0_top::JL.SyntaxTree)
 end
 
 # textDocument/publishDiagnostics
-# -------------------------------
+# ===============================
 
 function get_full_diagnostics(server::Server)
     uri2diagnostics = URI2Diagnostics()
@@ -356,6 +545,7 @@ end
 
 function notify_diagnostics!(server::Server, uri2diagnostics::URI2Diagnostics)
     for (uri, diagnostics) in uri2diagnostics
+        apply_diagnostic_config!(diagnostics, server.state.config_manager)
         send(server, PublishDiagnosticsNotification(;
             params = PublishDiagnosticsParams(;
                 uri,
@@ -399,7 +589,7 @@ function clear_extra_diagnostics!(extra_diagnostics::ExtraDiagnostics, uri::URI)
 end
 
 # textDocument/diagnostic
-# -----------------------
+# =======================
 
 const DIAGNOSTIC_REGISTRATION_ID = "jetls-diagnostic"
 const DIAGNOSTIC_REGISTRATION_METHOD = "textDocument/diagnostic"
@@ -468,6 +658,7 @@ function handle_DocumentDiagnosticRequest(server::Server, msg::DocumentDiagnosti
     else
         diagnostics = parsed_stream_to_diagnostics(file_info)
     end
+    apply_diagnostic_config!(diagnostics, server.state.config_manager)
     return send(server,
         DocumentDiagnosticResponse(;
             id = msg.id,

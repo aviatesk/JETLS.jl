@@ -168,11 +168,12 @@ struct ConfigChange
     ConfigChange(path::String, @nospecialize(old_val), @nospecialize(new_val)) = new(path, old_val, new_val)
 end
 
-struct ConfigChangeTracker
+mutable struct ConfigChangeTracker
     changed_settings::Vector{ConfigChange}
     changed_static_settings::Vector{ConfigChange}
+    diagnostic_setting_changed::Bool
 end
-ConfigChangeTracker() = ConfigChangeTracker(ConfigChange[], ConfigChange[])
+ConfigChangeTracker() = ConfigChangeTracker(ConfigChange[], ConfigChange[], false)
 
 function (tracker::ConfigChangeTracker)(old_val, new_val, path::Tuple{Vararg{Symbol}})
     if old_val !== new_val
@@ -181,6 +182,9 @@ function (tracker::ConfigChangeTracker)(old_val, new_val, path::Tuple{Vararg{Sym
             push!(tracker.changed_static_settings, ConfigChange(path_str, old_val, new_val))
         else
             push!(tracker.changed_settings, ConfigChange(path_str, old_val, new_val))
+        end
+        if !isempty(path) && first(path) === :diagnostics
+            tracker.diagnostic_setting_changed = true
         end
     end
     return new_val
