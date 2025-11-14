@@ -131,6 +131,22 @@ jobs:
       - uses: julia-actions/julia-processcoverage@v1
       - uses: codecov/codecov-action@v5
 
+  LSP:
+    name: Test LSP.jl
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v1
+        with:
+          version: "1.12" # most stable version
+          arch: x64
+      - uses: julia-actions/cache@v2
+      - name: test LSP
+        shell: julia --color=yes --project=. {0}    # this is necessary for the next command to work on Windows
+        run: 'using Pkg; Pkg.activate(normpath(pwd(), "LSP")); Pkg.instantiate(); Pkg.test(; coverage=true)'
+      - uses: julia-actions/julia-processcoverage@v1
+      - uses: codecov/codecov-action@v5
+
   test_runserver:
     name: Test runserver.jl
     runs-on: ubuntu-latest

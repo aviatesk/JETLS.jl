@@ -2,7 +2,7 @@ module JSONRPC
 
 export Endpoint, send
 
-using JSON3
+using JSON
 
 mutable struct Endpoint
     in_msg_queue::Channel{Any}
@@ -55,12 +55,18 @@ function Endpoint(in::IO, out::IO, method_dispatcher)
     end
 end
 
-const Parsed = @NamedTuple{method::Union{Nothing,String}}
-
 function readmsg(io::IO, method_dispatcher)
     msg_str = @something read_transport_layer(io) return nothing
-    parsed = JSON3.read(msg_str, Parsed)
-    return reparse_msg_str(parsed, msg_str, method_dispatcher)
+    lazyjson = JSON.lazy(msg_str)
+    if hasproperty(lazyjson, :method)
+        method = lazyjson.method[]
+        if haskey(method_dispatcher, method)
+            return JSON.parse(lazyjson, method_dispatcher[method])
+        end
+        return JSON.parse(lazyjson, Dict{Symbol,Any})
+    else # TODO parse to ResponseMessage?
+        return JSON.parse(lazyjson, Dict{Symbol,Any})
+    end
 end
 
 function read_transport_layer(io::IO)
@@ -81,20 +87,8 @@ function read_transport_layer(io::IO)
     return String(read(io, message_length))
 end
 
-function reparse_msg_str(parsed::Parsed, msg_str::String, method_dispatcher)
-    parsed_method = parsed.method
-    if parsed_method !== nothing
-        if haskey(method_dispatcher, parsed_method)
-            return JSON3.read(msg_str, method_dispatcher[parsed_method])
-        end
-        return JSON3.read(msg_str, Dict{Symbol,Any})
-    else # TODO parse to ResponseMessage?
-        return JSON3.read(msg_str, Dict{Symbol,Any})
-    end
-end
-
 function writemsg(io::IO, @nospecialize msg)
-    msg_str = JSON3.write(msg)
+    msg_str = JSON.json(msg; omit_null=true)
     write_transport_layer(io, msg_str)
 end
 
