@@ -1,27 +1,27 @@
-# Configuration
+# JETLS configuration
 
 JETLS supports various configuration options.
 This documentation uses TOML format to describe the configuration schema.
 
 ## Available configurations
 
-### `[full_analysis] debounce`
+### [`[full_analysis] debounce`](@id config/full_analysis-debounce)
 
 - **Type**: number (seconds)
 - **Default**: `1.0`
 
-Debounce time in seconds before triggering full analysis after a document
-change. JETLS performs type-aware analysis using
-[JET.jl](https://github.com/aviatesk/JET.jl) to detect potential errors.
-Higher values reduce analysis frequency (saving CPU) but may feel less
-responsive.
+Debounce time in seconds before triggering full analysis after a file save.
+JETLS performs type-aware analysis using [JET.jl](https://github.com/aviatesk/JET.jl)
+to detect potential errors. The debounce prevents excessive analysis when you
+save files frequently. Higher values reduce analysis frequency (saving CPU) but
+may delay diagnostic updates.
 
 ```toml
 [full_analysis]
-debounce = 2.0  # Wait 2 seconds after typing stops before analyzing
+debounce = 2.0  # Wait 2 seconds after save before analyzing
 ```
 
-### `formatter`
+### [`formatter`](@id config/formatter)
 
 - **Type**: string or table
 - **Default**: `"Runic"`
@@ -48,7 +48,101 @@ executable_range = "/path/to/custom-range-formatter"
 
 See [Formatting](@ref) for detailed configuration instructions and setup requirements.
 
-### `[testrunner] executable`
+### [`[diagnostics]`](@id config/diagnostics)
+
+Configure how JETLS reports diagnostic messages (errors, warnings, infos, hints)
+in your editor. JETLS uses hierarchical diagnostic codes in the format
+`"category/kind"` (following the [LSP specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#diagnostic))
+to allow fine-grained control over which diagnostics to show and at what
+severity level.
+
+See the [Diagnostics](@ref) section for complete diagnostic reference
+including all available codes, their meanings, and examples.
+
+#### [`[diagnostics] enabled`](@id config/diagnostics-enabled)
+
+- **Type**: boolean
+- **Default**: `true`
+
+Enable or disable all JETLS diagnostics. When set to `false`, no diagnostic
+messages will be shown.
+
+```toml
+[diagnostics]
+enabled = false  # Disable all diagnostics
+```
+
+#### [`[diagnostics.codes]`](@id config/diagnostics-codes)
+
+Fine-grained control over individual diagnostic codes or categories. Each
+diagnostic in JETLS has a hierarchical code in the format `"category/kind"`
+(e.g., `"lowering/unused-argument"`, `"inference/undef-global-var"`).
+
+See the [Diagnostic reference](diagnostics.md#Diagnostic-reference) section for
+a complete list of all available diagnostic codes, their default severity
+levels, and detailed explanations with examples.
+
+You can configure diagnostics at two levels:
+1. **Category-level**: Use wildcard patterns like `"lowering/*"` to control all
+   diagnostics in a category
+2. **Code-level**: Specify exact codes like `"lowering/unused-argument"` for
+   fine-grained control
+
+Each diagnostic configuration supports:
+- `enabled`: Whether to show this diagnostic (boolean)
+- `severity`: Override the default severity (see below)
+
+##### Severity values
+
+JETLS supports four severity levels defined by the [LSP specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#diagnosticSeverity):
+- `Error` (`1`): Critical issues that prevent code from working correctly
+- `Warning` (`2`): Potential problems that should be reviewed
+- `Information` (`3`): Informational messages about code that may benefit from attention
+- `Hint` (`4`): Suggestions for improvements or best practices
+
+You can specify severity using:
+- Integer: `1` (Error), `2` (Warning), `3` (Information), `4` (Hint)
+- String: `"error"`, `"warning"`, `"information"` or `"info"`, `"hint"`
+  (case-insensitive)
+
+##### Configuration priority
+
+When `diagnostics.enabled` is `false`, all diagnostics are disabled regardless
+of other settings. When `diagnostics.enabled` is `true` (the default), specific
+code settings override category-level settings. For example:
+
+```toml
+[diagnostics.codes]
+"lowering/*" = { enabled = false }  # Disable all lowering diagnostics
+"lowering/unused-argument" = { enabled = true }  # But enable this specific one
+```
+
+#### `[diagnostics]` configuration examples
+
+```toml
+[diagnostics]
+enabled = true
+
+[diagnostics.codes]
+# Make all lowering diagnostics warnings
+"lowering/*" = { severity = "warning" }
+
+# Disable inference diagnostics entirely
+"inference/*" = { enabled = false }
+
+# Show unused arguments as hints (overrides category setting)
+"lowering/unused-argument" = { severity = "hint" }
+
+# Completely disable unused local variable diagnostics
+"lowering/unused-local" = { enabled = false }
+
+# Use integer severity values
+"syntax/parse-error" = { severity = 1 }  # Error
+```
+
+See the [Configuring diagnostics](@ref) section for additional examples and common use cases.
+
+### [`[testrunner] executable`](@id config/testrunner-executable)
 
 - **Type**: string (path)
 - **Default**: `"testrunner"` (or `"testrunner.bat"` on Windows)
