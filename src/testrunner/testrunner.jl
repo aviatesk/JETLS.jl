@@ -332,6 +332,7 @@ function testrunner_result_to_diagnostics(result::TestRunnerResult)
             message = diag.message,
             source = DIAGNOSTIC_SOURCE,
             code = TESTRUNNER_TEST_FAILURE_CODE,
+            codeDescription = diagnostic_code_description(TESTRUNNER_TEST_FAILURE_CODE),
             relatedInformation)
         push!(get!(Vector{Diagnostic}, uri2diagnostics, uri), diagnostic)
     end

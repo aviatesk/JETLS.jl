@@ -161,6 +161,11 @@ function apply_diagnostic_config!(diagnostics::Vector{Diagnostic}, manager::Conf
     return diagnostics
 end
 
+function diagnostic_code_description(code::AbstractString)
+    return CodeDescription(;
+        href = uri"https://aviatesk.github.io/JETLS.jl/diagnostics/#diagnostic/$code")
+end
+
 # syntax diagnotics
 # =================
 
@@ -182,7 +187,8 @@ function jsdiag_to_lspdiag(diagnostic::JS.Diagnostic, fi::FileInfo)
             DiagnosticSeverity.Hint,
         message = diagnostic.message,
         source = DIAGNOSTIC_SOURCE,
-        code = SYNTAX_DIAGNOSTIC_CODE)
+        code = SYNTAX_DIAGNOSTIC_CODE,
+        codeDescription = diagnostic_code_description(SYNTAX_DIAGNOSTIC_CODE))
 end
 
 # toplevel / inference diagnostics
@@ -244,7 +250,8 @@ function jet_toplevel_error_report_to_diagnostic(
         severity = DiagnosticSeverity.Error,
         message,
         source = DIAGNOSTIC_SOURCE,
-        code = TOPLEVEL_ERROR_CODE)
+        code = TOPLEVEL_ERROR_CODE,
+        codeDescription = diagnostic_code_description(TOPLEVEL_ERROR_CODE))
 end
 
 function jet_inference_error_report_to_diagnostic(postprocessor::JET.PostProcessor, @nospecialize report::JET.InferenceErrorReport)
@@ -260,12 +267,14 @@ function jet_inference_error_report_to_diagnostic(postprocessor::JET.PostProcess
         message = postprocessor(sprint(JET.print_frame_sig, frame, JET.PrintConfig()))
         push!(relatedInformation, DiagnosticRelatedInformation(; location, message))
     end
+    code = inference_error_report_code(report)
     return Diagnostic(;
         range = jet_frame_to_range(topframe),
         severity = inference_error_report_severity(report),
         message,
         source = DIAGNOSTIC_SOURCE,
-        code = inference_error_report_code(report),
+        code,
+        codeDescription = diagnostic_code_description(code),
         relatedInformation)
 end
 
@@ -399,6 +408,7 @@ function analyze_lowered_code!(diagnostics::Vector{Diagnostic},
             message,
             source = DIAGNOSTIC_SOURCE,
             code,
+            codeDescription = diagnostic_code_description(code),
             tags = DiagnosticTag.Ty[DiagnosticTag.Unnecessary]))
     end
     return diagnostics
@@ -418,7 +428,8 @@ function lowering_diagnostics!(
                 severity = DiagnosticSeverity.Error,
                 message = err.msg,
                 source = DIAGNOSTIC_SOURCE,
-                code = LOWERING_ERROR_CODE))
+                code = LOWERING_ERROR_CODE,
+                codeDescription = diagnostic_code_description(LOWERING_ERROR_CODE)))
         elseif err isa JL.MacroExpansionError
             st = scrub_expand_macro_stacktrace(stacktrace(catch_backtrace()))
             msg = err.msg
@@ -442,6 +453,7 @@ function lowering_diagnostics!(
                 message = msg,
                 source = DIAGNOSTIC_SOURCE,
                 code = LOWERING_MACRO_EXPANSION_ERROR_CODE,
+                codeDescription = diagnostic_code_description(LOWERING_MACRO_EXPANSION_ERROR_CODE),
                 relatedInformation))
         else
             JETLS_DEBUG_LOWERING && @warn "Error in lowering (with macrocall nodes)"
