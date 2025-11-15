@@ -17,30 +17,33 @@ mutable struct Endpoint
 
         local endpoint::Endpoint
 
-        read_task = Threads.@spawn :interactive try
-            while true
-                if @isdefined(endpoint) && !isopen(endpoint)
-                    break
-                end
-                msg = @something readmsg(in, method_dispatcher) break
-                put!(in_msg_queue, msg)
-                GC.safepoint()
+        read_task = Threads.@spawn :interactive while true
+            if @isdefined(endpoint) && !isopen(endpoint)
+                break
             end
-        catch err
-            err_handler(#=isread=#true, err, catch_backtrace())
+            msg = @something try
+                readmsg(in, method_dispatcher)
+            catch err
+                err_handler(#=isread=#true, err, catch_backtrace())
+                continue
+            end break
+            put!(in_msg_queue, msg)
+            GC.safepoint()
         end
 
-        write_task = Threads.@spawn :interactive try
-            for msg in out_msg_queue
-                if isopen(out)
+        write_task = Threads.@spawn :interactive for msg in out_msg_queue
+            if isopen(out)
+                try
                     writemsg(out, msg)
-                else
-                    error(lazy"Output channel has been closed before message serialization: $msg")
+                catch err
+                    err_handler(#=isread=#false, err, catch_backtrace())
+                    continue
                 end
-                GC.safepoint()
+            else
+                @error "Output channel has been closed before message serialization:" msg
+                break
             end
-        catch err
-            err_handler(#=isread=#false, err, catch_backtrace())
+            GC.safepoint()
         end
 
         return endpoint = new(in_msg_queue, out_msg_queue, read_task, write_task, true)
