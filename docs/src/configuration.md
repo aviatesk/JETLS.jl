@@ -5,7 +5,18 @@ This documentation uses TOML format to describe the configuration schema.
 
 ## Available configurations
 
-### [`[full_analysis] debounce`](@id config/full_analysis-debounce)
+- [`[full_analysis]`](@ref config/full_analysis)
+    - [`[full_analysis] debounce`](@ref config/full_analysis-debounce)
+- [`formatter`](@ref config/formatter)
+- [`[diagnostics]`](@ref config/diagnostics)
+    - [`[diagnostics] enabled`](@ref config/diagnostics-enabled)
+    - [`[diagnostics.codes]`](@ref config/diagnostics-codes)
+- [`[testrunner]`](@ref config/testrunner)
+    - [`[testrunner] executable`](@ref config/testrunner-executable)
+
+### [`[full_analysis]`](@id config/full_analysis)
+
+#### [`[full_analysis] debounce`](@id config/full_analysis-debounce)
 
 - **Type**: number (seconds)
 - **Default**: `1.0`
@@ -166,7 +177,9 @@ enabled = true
 
 See the [Configuring diagnostics](@ref) section for additional examples and common use cases.
 
-### [`[testrunner] executable`](@id config/testrunner-executable)
+### [`[testrunner]`](@id config/testrunner)
+
+#### [`[testrunner] executable`](@id config/testrunner-executable)
 
 - **Type**: string (path)
 - **Default**: `"testrunner"` (or `"testrunner.bat"` on Windows)

@@ -232,6 +232,10 @@ You can configure which diagnostics are shown and at what [severity level](@ref 
 under the `[diagnostics]` section. This allows you to customize JETLS's
 behavior to match your project's coding standards and preferences.
 
+```@example
+# This is an internal comment for this documenation: # hide
+# Use H5 for subsections in this section so that the `@contents` block above works as intended. # hide
+```
 ##### Quick example
 
 ```toml
