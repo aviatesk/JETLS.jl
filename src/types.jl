@@ -377,7 +377,7 @@ const INFERENCE_UNDEF_LOCAL_VAR_CODE = "inference/undef-local-var"
 const INFERENCE_UNDEF_STATIC_PARAM_CODE = "inference/undef-static-param" # currently not reported
 const TESTRUNNER_TEST_FAILURE_CODE = "testrunner/test-failure"
 
-const ALL_DIAGNOSTIC_CODES = String[
+const ALL_DIAGNOSTIC_CODES = Set{String}(String[
     SYNTAX_DIAGNOSTIC_CODE,
     LOWERING_UNUSED_ARGUMENT_CODE,
     LOWERING_UNUSED_LOCAL_CODE,
@@ -388,32 +388,23 @@ const ALL_DIAGNOSTIC_CODES = String[
     INFERENCE_UNDEF_LOCAL_VAR_CODE,
     INFERENCE_UNDEF_STATIC_PARAM_CODE,
     TESTRUNNER_TEST_FAILURE_CODE,
-]
-const ALL_DIAGNOSTIC_CODES_MAP = OrderedCollections.OrderedDict{String,Symbol}(
-    code => Symbol(code) for code in ALL_DIAGNOSTIC_CODES)
+])
 
-let fields = Expr[]
-    for (_, fname) in ALL_DIAGNOSTIC_CODES_MAP
-        push!(fields, :($fname::Maybe{DiagnosticSeverity.Ty}))
-    end
-    Core.eval(@__MODULE__, :(@option struct DiagnosticCodesConfig <: ConfigSection
-        $(fields...)
-    end))
+struct DiagnosticPattern <: ConfigSection
+    pattern::Union{Regex,String}
+    match_by::String
+    match_type::String
+    severity::Int
 end
 
-is_static_setting(::Type{DiagnosticCodesConfig}, ::Symbol) = false
-Core.eval(@__MODULE__, :(function default_config(::Type{DiagnosticCodesConfig})
-    return DiagnosticCodesConfig($(fill(nothing, length(ALL_DIAGNOSTIC_CODES))...))
-end))
-
-function Configurations.from_dict(::Type{DiagnosticCodesConfig}, x::AbstractDict{String})
-    check_diagnostic_codes_raw(x)
-    DiagnosticCodesConfig((parse_diagnostic_codes_config(x, code) for code in ALL_DIAGNOSTIC_CODES)...)
-end
+# Overload to inject custom validations for parsing `DiagnosticPattern` from
+# `Configuration.to_dict(::DiagnosticConfig, config::AbstractDict{String})`
+Base.convert(::Type{DiagnosticPattern}, x::AbstractDict{String}) =
+    parse_diagnostic_pattern(x)
 
 @option struct DiagnosticConfig <: ConfigSection
     enabled::Maybe{Bool}
-    codes::Maybe{DiagnosticCodesConfig}
+    patterns::Maybe{Vector{DiagnosticPattern}}
 end
 
 is_static_setting(::Type{DiagnosticConfig}, ::Symbol) = false
@@ -429,7 +420,7 @@ is_static_setting(::Type{InternalConfig}, field::Symbol) = field == :static_sett
 default_config(::Type{InternalConfig}) = InternalConfig(0, 0)
 
 @option struct JETLSConfig <: ConfigSection
-    diagnostics::Maybe{DiagnosticConfig}
+    diagnostic::Maybe{DiagnosticConfig}
     full_analysis::Maybe{FullAnalysisConfig}
     testrunner::Maybe{TestRunnerConfig}
     formatter::Maybe{FormatterConfig}
@@ -443,7 +434,7 @@ is_static_setting(::Type{T}, head::Symbol, rest::Symbol...) where {T<:ConfigSect
     is_static_setting(_unwrap_maybe(fieldtype(T, head)), rest...)
 
 const DEFAULT_CONFIG = JETLSConfig(
-    diagnostics = default_config(DiagnosticConfig),
+    diagnostic = default_config(DiagnosticConfig),
     full_analysis = default_config(FullAnalysisConfig),
     testrunner = default_config(TestRunnerConfig),
     formatter = default_config(FormatterConfig),

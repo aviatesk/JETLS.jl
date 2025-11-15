@@ -1,4 +1,4 @@
-# Diagnostics
+# Diagnostic
 
 JETLS reports various diagnostic messages (errors, warnings, hints) to help you
 catch potential issues in your Julia code. Each diagnostic has a unique code
@@ -7,22 +7,22 @@ that identifies its category and type.
 This document describes all available diagnostic codes, their meanings, default
 severity levels, and how to configure them to match your project's needs.
 
-## Diagnostic codes
+## [Diagnostic codes](@id diagnostic-code)
 
 JETLS reports diagnostics using hierarchical codes in the format
 `"category/kind"`, following the [LSP specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#diagnostic).
 This structure allows fine-grained control over which diagnostics to show and at
-what [severity level](@ref severity-level) through configuration.
+what [severity level](@ref diagnostic-severity) through configuration.
 
 All available diagnostic codes are listed below. Each category (e.g.,
 `syntax/*`, `lowering/*`) contains one or more specific diagnostic codes:
 
 ```@contents
-Pages = ["diagnostics.md"]
+Pages = ["diagnostic.md"]
 Depth = 3:4
 ```
 
-## [Diagnostic severity levels](@id severity-level)
+## [Diagnostic severity levels](@id diagnostic-severity)
 
 Each diagnostic has a severity level that indicates how serious the issue is.
 JETLS supports four severity levels defined by the [LSP specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#diagnosticSeverity):
@@ -40,11 +40,12 @@ How diagnostics are displayed depends on your LSP client (VS Code, Neovim,
 etc.), but most clients use color-coded underlines and gutter markers that
 correspond to these severity levels.
 
-You can change the severity of any diagnostic through [Configuring diagnostics](@ref).
+You can change the severity of any diagnostic by
+[configuring `diagnostic` section](@ref configuring-diagnostic).
 Additionally, JETLS supports disabling diagnostics entirely using the special
 severity value `"off"` (or `0`).
 
-## Diagnostic reference
+## [Diagnostic reference](@id diagnostic-reference)
 
 This section provides detailed explanations for each diagnostic code. For every
 diagnostic, you'll find:
@@ -68,7 +69,7 @@ Here is a summary table of the diagnostics explained in this section:
 | [`inference/undef-local-var`](@ref diagnostic/inference/undef-local-var)           | `Information/Warning` | References to undefined local variables                        |
 | [`testrunner/test-failure`](@ref diagnostic/testrunner/test-failure)               | `Error`               | Test failures from TestRunner integration                      |
 
-### Syntax diagnostics (`syntax/*`)
+### [Syntax diagnostic (`syntax/*`)](@id diagnostic/syntax)
 
 #### [Syntax parse error (`syntax/parse-error`)](@id diagnostic/syntax/parse-error)
 
@@ -85,9 +86,9 @@ function parse_error(x)
 end
 ```
 
-### Lowering diagnostics (`lowering/*`)
+### [Lowering diagnostic (`lowering/*`)](@id diagnostic/lowering)
 
-Lowering diagnostics are detected during Julia's lowering phase, which
+Lowering diagnostic is detected during Julia's lowering phase, which
 transforms parsed syntax into a simpler intermediate representation.
 
 #### [Lowering error (`lowering/error`)](@id diagnostic/lowering/error)
@@ -158,9 +159,9 @@ function unused_local()
 end
 ```
 
-### [Top-level diagnostics (`toplevel/*`)](@id toplevel-diagnostics)
+### [Top-level diagnostic (`toplevel/*`)](@id toplevel-diagnostic)
 
-Top-level diagnostics are reported by JETLS's full analysis feature, which runs
+Top-level diagnostic are reported by JETLS's full analysis feature, which runs
 when you save a file. To prevent excessive analysis on frequent saves, JETLS
 uses a debounce mechanism. See the [`[full_analysis] debounce`](@ref config/full_analysis-debounce)
 configuration documentation to adjust the debounce period.
@@ -195,17 +196,17 @@ using UnexistingPkg  # Package JETLS does not have UnexistingPkg in its dependen
 ```
 
 These errors prevent JETLS from fully analyzing your code, which means
-[Inference diagnostics](@ref inference-diagnostics) will not be available until
+[Inference diagnostic](@ref inference-diagnostic) will not be available until
 the top-level errors are resolved. To fix these errors, ensure your package
 environment is properly set up by running `Pkg.instantiate()` in your package
 directory, and verify that your package can be loaded successfully in a Julia REPL.
 
-### [Inference diagnostics (`inference/*`)](@id inference-diagnostics)
+### [Inference diagnostic (`inference/*`)](@id inference-diagnostic)
 
-Inference diagnostics use JET.jl to perform type-aware analysis and detect
+Inference diagnostic uses JET.jl to perform type-aware analysis and detect
 potential errors through static analysis. These diagnostics are also reported by
-JETLS's full analysis feature (see [Top-level diagnostics](@ref
-toplevel-diagnostics) for details on when analysis runs).
+JETLS's full analysis feature (see [Top-level diagnostic](@ref
+toplevel-diagnostic) for details on when analysis runs).
 
 #### [Undefined global variable (`inference/undef-global-var`)](@id diagnostic/inference/undef-global-var)
 
@@ -240,7 +241,7 @@ function undef_local_var()
 end
 ```
 
-### TestRunner diagnostics (`testrunner/*`)
+### [TestRunner diagnostic (`testrunner/*`)](@id diagnostic/testrunner)
 
 #### [Test failure (`testrunner/test-failure`)](@id diagnostic/testrunner/test-failure)
 
@@ -249,10 +250,10 @@ end
 Test failures reported by [TestRunner integration](@ref) that happened during
 running individual `@testset` blocks or `@test` cases.
 
-## Configuring diagnostics
+## [Configuring diagnostic](@id configuring-diagnostic)
 
-You can configure which diagnostics are shown and at what [severity level](@ref severity-level)
-under the `[diagnostics]` section. This allows you to customize JETLS's
+You can configure which diagnostics are shown and at what [severity level](@ref diagnostic-severity)
+under the `[diagnostic]` section. This allows you to customize JETLS's
 behavior to match your project's coding standards and preferences.
 
 ```@example
@@ -263,15 +264,26 @@ nothing # Use H5 for subsections in this section so that the `@contents` block a
 ##### Quick example
 
 ```toml
-[diagnostics.codes]
-# Make all lowering diagnostics warnings
-"lowering/*" = "warning"
+# Pattern matching against diagnostic code
+[[diagnostic.patterns]]
+pattern = "lowering/.*"
+match_by = "code"
+match_type = "regex"
+severity = "warning"
 
-# Disable inference diagnostics entirely
-"inference/*" = "off"
+# Pattern matching against diagnostic message
+[[diagnostic.patterns]]
+pattern = "Macro name `@namespace` not found"
+match_by = "message"
+match_type = "literal"
+severity = "info"
 
-# Show unused arguments as hints (overrides category setting)
-"lowering/unused-argument" = "hint"
+# Disable specific diagnostic by code
+[[diagnostic.patterns]]
+pattern = "lowering/unused-argument"
+match_by = "code"
+match_type = "literal"
+severity = "off"
 ```
 
 ##### Common use cases
@@ -279,27 +291,39 @@ nothing # Use H5 for subsections in this section so that the `@contents` block a
 Disable unused variable warnings during prototyping:
 
 ```toml
-[diagnostics.codes]
-"lowering/unused-argument" = "off"
-"lowering/unused-local" = "off"
+[[diagnostic.patterns]]
+pattern = "lowering/unused-argument"
+match_by = "code"
+match_type = "literal"
+severity = "off"
+
+[[diagnostic.patterns]]
+pattern = "lowering/unused-local"
+match_by = "code"
+match_type = "literal"
+severity = "off"
 ```
 
-Make inference diagnostics less intrusive:
+Make inference diagnostic less intrusive:
 
 ```toml
-[diagnostics.codes]
-"inference/*" = "hint"
+[[diagnostic.patterns]]
+pattern = "inference/.*"
+match_by = "code"
+match_type = "regex"
+severity = "hint"
 ```
 
-Set a baseline severity for all diagnostics, with specific overrides:
+Suppress specific macro expansion errors:
 
 ```toml
-[diagnostics.codes]
-"*" = "hint"
-"syntax/*" = "error"
-"lowering/unused-argument" = "off"
+[[diagnostic.patterns]]
+pattern = "Macro name `MyPkg.@mymacro` not found"
+match_by = "message"
+match_type = "literal"
+severity = "off"
 ```
 
 For complete configuration options, severity values, pattern matching syntax,
-and more examples, see the [`[diagnostics]` configuration](@ref config/diagnostics)
+and more examples, see the [`[diagnostic]` configuration](@ref config/diagnostic)
 section in the [JETLS configuration](@ref) page.

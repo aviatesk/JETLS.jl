@@ -49,9 +49,9 @@ using JETLS.URIs2
     end
 end
 
-@testset "lowering diagnostics" include("test_lowering_diagnostics.jl")
+@testset "lowering diagnostic" include("test_lowering_diagnostics.jl")
 
-@testset "top-level error diagnostics" begin
+@testset "top-level error diagnostic" begin
     # Test with code that has syntax errors
     scriptcode = """
     include("nonexistent.jl")
@@ -79,7 +79,7 @@ end
     end
 end
 
-@testset "inference diagnostics (script analysis)" begin
+@testset "inference diagnostic (script analysis)" begin
     # Test with code that has syntax errors
     scriptcode = """
     struct Hello
@@ -112,7 +112,7 @@ end
     end
 end
 
-@testset "inference diagnostics (package analysis)" begin
+@testset "inference diagnostic (package analysis)" begin
     withpackage("TestPackageAnalysis", """
         module TestPackageAnalysis
         export hello
@@ -197,144 +197,371 @@ end
 
 using JETLS.Configurations: Configurations
 
-function make_test_diagnostic(; code::String, severity::DiagnosticSeverity.Ty)
+function make_test_diagnostic(;
+        code::String,
+        severity::DiagnosticSeverity.Ty,
+        message::String = "Test diagnostic"
+    )
     return Diagnostic(;
-        range = Range(; start = Position(; line=0, character=0),
+        range = Range(;
+            start = Position(; line=0, character=0),
             var"end" = Position(; line=0, character=10)),
         severity,
-        message = "Test diagnostic",
+        message,
         source = JETLS.DIAGNOSTIC_SOURCE,
         code,
         codeDescription = JETLS.diagnostic_code_description(code))
 end
 
+function make_test_manager(config_dict::Dict{String,Any})
+    lsp_config = JETLS.Configurations.from_dict(JETLS.JETLSConfig, config_dict)
+    data = JETLS.ConfigManagerData(JETLS.DEFAULT_CONFIG, JETLS.EMPTY_CONFIG, lsp_config, nothing)
+    return JETLS.ConfigManager(data)
+end
+
 @testset "diagnostic configuration" begin
-    @testset "JETLS.DiagnosticCodesConfig" begin
-        let codes_raw = Dict{String,Any}("lowering/unused-argument" => 1)
-            config = Configurations.from_dict(JETLS.DiagnosticCodesConfig, codes_raw)
-            @test config.var"lowering/unused-argument" == DiagnosticSeverity.Error
+    @testset "DiagnosticConfig parsing/validation" begin
+        @testset "valid patterns" begin
+            let config_raw = Dict{String,Any}()
+                config = Configurations.from_dict(JETLS.DiagnosticConfig, config_raw)
+                @test config.enabled === nothing
+                @test config.patterns === nothing
+            end
+            let config_raw = Dict{String,Any}("enabled" => false)
+                config = Configurations.from_dict(JETLS.DiagnosticConfig, config_raw)
+                @test config.enabled === false
+                @test config.patterns === nothing
+            end
+
+            let config_raw = Dict{String,Any}(
+                    "patterns" => [
+                        Dict{String,Any}(
+                            "pattern" => "lowering/unused-argument",
+                            "match_by" => "code",
+                            "match_type" => "literal",
+                            "severity" => "hint")
+                    ])
+                config = Configurations.from_dict(JETLS.DiagnosticConfig, config_raw)
+                @test config.enabled === nothing
+                @test config.patterns !== nothing
+                @test length(config.patterns) == 1
+                pattern = only(config.patterns)
+                @test pattern.match_by == "code"
+                @test pattern.pattern == "lowering/unused-argument"
+                @test pattern.severity == DiagnosticSeverity.Hint
+                @test pattern.match_type == "literal"
+            end
+            let config_raw = Dict{String,Any}(
+                    "patterns" => [
+                        Dict{String,Any}(
+                            "pattern" => "lowering/unused-argument",
+                            "match_by" => "code",
+                            "match_type" => "literal",
+                            "severity" => 4)
+                    ])
+                config = Configurations.from_dict(JETLS.DiagnosticConfig, config_raw)
+                pattern = only(config.patterns)
+                @test pattern.severity == DiagnosticSeverity.Hint
+            end
+
+            let config_raw = Dict{String,Any}(
+                    "patterns" => [
+                        Dict{String,Any}(
+                            "pattern" => "inference/.*",
+                            "match_by" => "code",
+                            "match_type" => "regex",
+                            "severity" => "off")
+                    ])
+                config = Configurations.from_dict(JETLS.DiagnosticConfig, config_raw)
+                pattern = only(config.patterns)
+                @test pattern.match_type == "regex"
+                @test pattern.pattern isa Regex
+                @test pattern.pattern.pattern == "inference/.*"
+                @test pattern.severity == 0
+            end
+
+            let config_raw = Dict{String,Any}(
+                    "patterns" => [
+                        Dict{String,Any}(
+                            "pattern" => "Macro name `@namespace` not found",
+                            "match_by" => "message",
+                            "match_type" => "literal",
+                            "severity" => "info")
+                    ])
+                config = Configurations.from_dict(JETLS.DiagnosticConfig, config_raw)
+                pattern = only(config.patterns)
+                @test pattern.match_by == "message"
+                @test pattern.pattern == "Macro name `@namespace` not found"
+                @test pattern.match_type == "literal"
+            end
+
+            let config_raw = Dict{String,Any}(
+                    "patterns" => [
+                        Dict{String,Any}(
+                            "pattern" => "Macro name `.*` not found",
+                            "match_by" => "message",
+                            "match_type" => "regex",
+                            "severity" => "hint")
+                    ])
+                config = Configurations.from_dict(JETLS.DiagnosticConfig, config_raw)
+                pattern = only(config.patterns)
+                @test pattern.match_by == "message"
+                @test pattern.pattern isa Regex
+                @test pattern.pattern.pattern == "Macro name `.*` not found"
+                @test pattern.severity == DiagnosticSeverity.Hint
+                @test pattern.match_type == "regex"
+            end
+
+            let config_raw = Dict{String,Any}(
+                    "enabled" => true,
+                    "patterns" => [
+                        Dict{String,Any}(
+                            "pattern" => "test1",
+                            "match_by" => "code",
+                            "match_type" => "literal",
+                            "severity" => "info"),
+                        Dict{String,Any}(
+                            "pattern" => "test2",
+                            "match_by" => "message",
+                            "match_type" => "literal",
+                            "severity" => "hint")
+                    ])
+                config = Configurations.from_dict(JETLS.DiagnosticConfig, config_raw)
+                @test config.enabled === true
+                @test config.patterns !== nothing
+                @test length(config.patterns) == 2
+            end
         end
 
-        let codes_raw = Dict{String,Any}("lowering/*" => 3)
-            config = Configurations.from_dict(JETLS.DiagnosticCodesConfig, codes_raw)
-            @test config.var"lowering/unused-argument" == DiagnosticSeverity.Information
-            @test config.var"lowering/unused-local" == DiagnosticSeverity.Information
-        end
-
-        let codes_raw = Dict{String,Any}(
-                    "lowering/*" => 0,
-                    "lowering/unused-argument" => "warning")
-            config = Configurations.from_dict(JETLS.DiagnosticCodesConfig, codes_raw)
-            @test config.var"lowering/unused-local" == 0
-            @test config.var"lowering/unused-argument" == DiagnosticSeverity.Warning
-        end
-
-        let codes_raw = Dict{String,Any}(
-                    "lowering/*" => "warn",
-                    "lowering/unused-argument" => "info")
-            config = Configurations.from_dict(JETLS.DiagnosticCodesConfig, codes_raw)
-            @test config.var"lowering/unused-local" === DiagnosticSeverity.Warning
-            @test config.var"lowering/unused-argument" == DiagnosticSeverity.Information
-        end
-
-        let codes_raw = Dict{String,Any}(
-                    "*" => "hint",
-                    "lowering/*" => "error",
-                    "lowering/unused-argument" => "off")
-            config = Configurations.from_dict(JETLS.DiagnosticCodesConfig, codes_raw)
-            @test config.var"syntax/parse-error" == DiagnosticSeverity.Hint
-            @test config.var"lowering/unused-local" == DiagnosticSeverity.Error
-            @test config.var"lowering/unused-argument" == 0
-            @test config.var"testrunner/test-failure" == DiagnosticSeverity.Hint
-        end
-
-        let codes_raw = Dict{String,Any}()
-            config = Configurations.from_dict(JETLS.DiagnosticCodesConfig, codes_raw)
-            @test config == JETLS.default_config(JETLS.DiagnosticCodesConfig)
-        end
-
-        let codes_raw = Dict{String,Any}("unexisting/error" => 1)
-            @test_throws JETLS.DiagnosticConfigError Configurations.from_dict(JETLS.DiagnosticCodesConfig, codes_raw)
-        end
-        let codes_raw = Dict{String,Any}("lowering/*" => "invalid")
-            @test_throws JETLS.DiagnosticConfigError Configurations.from_dict(JETLS.DiagnosticCodesConfig, codes_raw)
-        end
-        let codes_raw = Dict{String,Any}("lowering/*" => 5)
-            @test_throws JETLS.DiagnosticConfigError Configurations.from_dict(JETLS.DiagnosticCodesConfig, codes_raw)
-        end
-        let codes_raw = Dict{String,Any}("lowering/*" => Dict("unexisting_key" => "unexisting_value"))
-            @test_throws JETLS.DiagnosticConfigError Configurations.from_dict(JETLS.DiagnosticCodesConfig, codes_raw)
-        end
-        let codes_raw = Dict{String,Any}("unexisting/*" => "warning")
-            @test_throws JETLS.DiagnosticConfigError Configurations.from_dict(JETLS.DiagnosticCodesConfig, codes_raw)
-        end
-    end
-
-    @testset "JETLS.DiagnosticConfig" begin
-        let raw = Dict{String,Any}("codes" =>
-                Dict{String,Any}(
-                    "*" => "hint",
-                    "lowering/*" => "error",
-                    "lowering/unused-argument" => "off"))
-            config = Configurations.from_dict(JETLS.DiagnosticConfig, raw)
-            @test config.enabled === nothing
-            @test config.codes.var"syntax/parse-error" == DiagnosticSeverity.Hint
-            @test config.codes.var"lowering/unused-local" == DiagnosticSeverity.Error
-            @test config.codes.var"lowering/unused-argument" == 0
-            @test config.codes.var"testrunner/test-failure" == DiagnosticSeverity.Hint
+        @testset "invalid patterns" begin
+            let config_raw = Dict{String,Any}(
+                    "invalid" => [])
+                @test_throws Configurations.InvalidKeyError Configurations.from_dict(
+                    JETLS.DiagnosticConfig, config_raw)
+            end
+            let config_raw = Dict{String,Any}(
+                    "patterns" => [
+                        Dict{String,Any}( # missing `pattern`
+                            "match_by" => "code",
+                            "match_type" => "literal",
+                            "severity" => "info")
+                    ])
+                @test_throws JETLS.DiagnosticConfigError Configurations.from_dict(
+                    JETLS.DiagnosticConfig, config_raw)
+            end
+            let config_raw = Dict{String,Any}(
+                    "patterns" => [
+                        Dict{String,Any}( # missing `match_by`
+                            "pattern" => "test",
+                            "match_type" => "literal",
+                            "severity" => "info")
+                    ])
+                @test_throws JETLS.DiagnosticConfigError Configurations.from_dict(
+                    JETLS.DiagnosticConfig, config_raw)
+            end
+            let config_raw = Dict{String,Any}(
+                    "patterns" => [
+                        Dict{String,Any}( # missing `match_type`
+                            "pattern" => "test",
+                            "match_by" => "code",
+                            "severity" => "info")
+                    ])
+                @test_throws JETLS.DiagnosticConfigError Configurations.from_dict(
+                    JETLS.DiagnosticConfig, config_raw)
+            end
+            let config_raw = Dict{String,Any}(
+                    "patterns" => [
+                        Dict{String,Any}( # missing `severity`
+                            "pattern" => "test",
+                            "match_by" => "code",
+                            "match_type" => "literal",)
+                    ])
+                @test_throws JETLS.DiagnosticConfigError Configurations.from_dict(
+                    JETLS.DiagnosticConfig, config_raw)
+            end
+            let config_raw = Dict{String,Any}(
+                    "patterns" => [
+                        Dict{String,Any}(
+                            "pattern" => "test",
+                            "match_by" => "invalid",
+                            "severity" => "info",
+                            "match_type" => "literal")
+                    ])
+                @test_throws JETLS.DiagnosticConfigError Configurations.from_dict(
+                    JETLS.DiagnosticConfig, config_raw)
+            end
+            let config_raw = Dict{String,Any}(
+                    "patterns" => [
+                        Dict{String,Any}(
+                            "pattern" => "test",
+                            "match_by" => Dict{String,Any}(),
+                            "severity" => "info",
+                            "match_type" => "literal")
+                    ])
+                @test_throws JETLS.DiagnosticConfigError Configurations.from_dict(
+                    JETLS.DiagnosticConfig, config_raw)
+            end
+            let config_raw = Dict{String,Any}(
+                    "patterns" => [
+                        Dict{String,Any}(
+                            "pattern" => "test",
+                            "match_by" => "code",
+                            "severity" => "invalid",
+                            "match_type" => "literal")
+                    ])
+                @test_throws JETLS.DiagnosticConfigError Configurations.from_dict(
+                    JETLS.DiagnosticConfig, config_raw)
+            end
+            let config_raw = Dict{String,Any}(
+                    "patterns" => [
+                        Dict{String,Any}(
+                            "pattern" => "test",
+                            "match_by" => "code",
+                            "severity" => 5,
+                            "match_type" => "literal")
+                    ])
+                @test_throws JETLS.DiagnosticConfigError Configurations.from_dict(
+                    JETLS.DiagnosticConfig, config_raw)
+            end
+            let config_raw = Dict{String,Any}(
+                    "patterns" => [
+                        Dict{String,Any}(
+                            "pattern" => "test",
+                            "match_by" => "code",
+                            "severity" => Dict{String,Any}(),
+                            "match_type" => "literal")
+                    ])
+                @test_throws JETLS.DiagnosticConfigError Configurations.from_dict(
+                    JETLS.DiagnosticConfig, config_raw)
+            end
+            let config_raw = Dict{String,Any}(
+                    "patterns" => [
+                        Dict{String,Any}(
+                            "pattern" => "test",
+                            "match_by" => "code",
+                            "match_type" => "invalid",
+                            "severity" => "info")
+                    ])
+                @test_throws JETLS.DiagnosticConfigError Configurations.from_dict(
+                    JETLS.DiagnosticConfig, config_raw)
+            end
+            let config_raw = Dict{String,Any}(
+                    "patterns" => [
+                        Dict{String,Any}(
+                            "pattern" => "test",
+                            "match_by" => "code",
+                            "match_type" => Dict{String,Any}(),
+                            "severity" => "info")
+                    ])
+                @test_throws JETLS.DiagnosticConfigError Configurations.from_dict(
+                    JETLS.DiagnosticConfig, config_raw)
+            end
+            let config_raw = Dict{String,Any}(
+                    "patterns" => [
+                        Dict{String,Any}(
+                            "pattern" => "[invalid", # regex parse failure
+                            "match_by" => "code",
+                            "match_type" => "regex",
+                            "severity" => "info")
+                    ])
+                @test_throws JETLS.DiagnosticConfigError Configurations.from_dict(
+                    JETLS.DiagnosticConfig, config_raw)
+            end
+            let config_raw = Dict{String,Any}(
+                    "patterns" => [
+                        Dict{String,Any}(
+                            "pattern" => "test",
+                            "match_by" => "code",
+                            "match_type" => "literal",
+                            "severity" => "info",
+                            "invalid_key" => "value")
+                    ])
+                @test_throws JETLS.DiagnosticConfigError Configurations.from_dict(
+                    JETLS.DiagnosticConfig, config_raw)
+            end
         end
     end
 
     @testset "apply_diagnostic_config!" begin
-        diagnostics = [
-            make_test_diagnostic(;
-                code = JETLS.LOWERING_UNUSED_ARGUMENT_CODE,
-                severity = DiagnosticSeverity.Information),
-            make_test_diagnostic(;
-                code = JETLS.LOWERING_UNUSED_LOCAL_CODE,
-                severity = DiagnosticSeverity.Information),
-            make_test_diagnostic(;
-                code = JETLS.SYNTAX_DIAGNOSTIC_CODE,
-                severity = DiagnosticSeverity.Error),
-            make_test_diagnostic(;
-                code = JETLS.TOPLEVEL_ERROR_CODE,
-                severity = DiagnosticSeverity.Error),
-            make_test_diagnostic(;
-                code = JETLS.INFERENCE_UNDEF_GLOBAL_VAR_CODE,
-                severity = DiagnosticSeverity.Error)
-        ]
-        config_dict = Dict{String,Any}(
-            "diagnostics" => Dict{String,Any}(
-                "codes" => Dict{String,Any}(
-                    "*" => "hint",
-                    "lowering/*" => "warning",
-                    "lowering/unused-argument" => "off",
-                    "inference/*" => "info")))
-        manager = let
-            lsp_config = JETLS.Configurations.from_dict(JETLS.JETLSConfig, config_dict)
-            data = JETLS.ConfigManagerData(JETLS.DEFAULT_CONFIG, JETLS.EMPTY_CONFIG, lsp_config, nothing)
-            JETLS.ConfigManager(data)
+        let diagnostics = [
+                make_test_diagnostic(;
+                    code = JETLS.LOWERING_UNUSED_ARGUMENT_CODE,
+                    severity = DiagnosticSeverity.Information),
+                make_test_diagnostic(;
+                    code = JETLS.INFERENCE_UNDEF_GLOBAL_VAR_CODE,
+                    severity = DiagnosticSeverity.Warning),
+            ]
+            manager = make_test_manager(Dict{String,Any}(
+                "diagnostic" => Dict{String,Any}(
+                    "patterns" => [
+                        Dict{String,Any}(
+                            "pattern" => "lowering/unused-argument",
+                            "match_by" => "code",
+                            "match_type" => "literal",
+                            "severity" => "hint"),
+                        Dict{String,Any}(
+                            "pattern" => "inference/.*",
+                            "match_by" => "code",
+                            "match_type" => "regex",
+                            "severity" => "off"),
+                    ])))
+            JETLS.apply_diagnostic_config!(diagnostics, manager)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).code == JETLS.LOWERING_UNUSED_ARGUMENT_CODE
+            @test only(diagnostics).severity == DiagnosticSeverity.Hint
         end
-        JETLS.apply_diagnostic_config!(diagnostics, manager)
 
-        @test length(diagnostics) == 4
-        let idx = findfirst(d -> d.code == JETLS.LOWERING_UNUSED_LOCAL_CODE, diagnostics)
-            @test idx !== nothing
-            @test diagnostics[idx].severity == DiagnosticSeverity.Warning
+        let diagnostics = [
+                make_test_diagnostic(;
+                    code = JETLS.LOWERING_MACRO_EXPANSION_ERROR_CODE,
+                    severity = DiagnosticSeverity.Error,
+                    message = "Macro name `@namespace` not found")
+            ]
+            manager = make_test_manager(Dict{String,Any}(
+                "diagnostic" => Dict{String,Any}(
+                    "patterns" => [
+                        Dict{String,Any}(
+                            "pattern" => "Macro name `@namespace` not found",
+                            "match_by" => "message",
+                            "match_type" => "literal",
+                            "severity" => "info"),
+                    ])))
+            JETLS.apply_diagnostic_config!(diagnostics, manager)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).severity == DiagnosticSeverity.Information
         end
-        let idx = findfirst(d -> d.code == JETLS.SYNTAX_DIAGNOSTIC_CODE, diagnostics)
-            @test idx !== nothing
-            @test diagnostics[idx].severity == DiagnosticSeverity.Hint
+
+        let diagnostics = [
+                make_test_diagnostic(;
+                    code = JETLS.LOWERING_MACRO_EXPANSION_ERROR_CODE,
+                    severity = DiagnosticSeverity.Error,
+                    message = "Macro name `@interface` not found")
+            ]
+            manager = make_test_manager(Dict{String,Any}(
+                "diagnostic" => Dict{String,Any}(
+                    "patterns" => [
+                        Dict{String,Any}(
+                            "pattern" => "Macro name `.*` not found",
+                            "match_by" => "message",
+                            "match_type" => "regex",
+                            "severity" => "hint"),
+                    ])))
+            JETLS.apply_diagnostic_config!(diagnostics, manager)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).severity == DiagnosticSeverity.Hint
         end
-        let idx = findfirst(d -> d.code == JETLS.TOPLEVEL_ERROR_CODE, diagnostics)
-            @test idx !== nothing
-            @test diagnostics[idx].severity == DiagnosticSeverity.Hint
+
+        let diagnostics = [
+                make_test_diagnostic(;
+                    code = JETLS.LOWERING_UNUSED_ARGUMENT_CODE,
+                    severity = DiagnosticSeverity.Information)
+            ]
+            manager = make_test_manager(Dict{String,Any}(
+                "diagnostic" => Dict{String,Any}(
+                    "enabled" => false)))
+            JETLS.apply_diagnostic_config!(diagnostics, manager)
+            @test isempty(diagnostics)
         end
-        let idx = findfirst(d -> d.code == JETLS.INFERENCE_UNDEF_GLOBAL_VAR_CODE, diagnostics)
-            @test idx !== nothing
-            @test diagnostics[idx].severity == DiagnosticSeverity.Information
-        end
-        @test findfirst(d -> d.code == JETLS.LOWERING_UNUSED_ARGUMENT_CODE, diagnostics) === nothing
     end
 end
 

@@ -1,26 +1,29 @@
 # configuration
 # =============
 
+# config parse/validation
+# -----------------------
+
 struct DiagnosticConfigError <: Exception
     msg::AbstractString
 end
 Base.showerror(io::IO, e::DiagnosticConfigError) = print(io, "DiagnosticConfigError: ", e.msg)
 
 function parse_diagnostic_severity(
-        @nospecialize(severity_value), code_or_pattern::AbstractString
+        @nospecialize(severity_value), pattern::AbstractString
     )
     if severity_value isa Int
         if 0 ≤ severity_value ≤ 4
             return severity_value
         else
             throw(DiagnosticConfigError(
-                lazy"Invalid severity value \"$severity_value\" for diagnostic code \"$code_or_pattern\". " *
+                lazy"Invalid severity value \"$severity_value\" for diagnostic pattern \"$pattern\". " *
                 "Valid integer values are: 0 (off), 1 (error), 2 (warning), 3 (information), 4 (hint)"))
         end
     elseif severity_value isa String
         severity_str = lowercase(severity_value)
         if severity_str == "off"
-            return 0 # special severity value
+            return 0
         elseif severity_str == "error"
             return DiagnosticSeverity.Error
         elseif severity_str == "warning" || severity_str == "warn"
@@ -31,80 +34,123 @@ function parse_diagnostic_severity(
             return DiagnosticSeverity.Hint
         else
             throw(DiagnosticConfigError(
-                lazy"Invalid severity value \"$severity_value\" for diagnostic code \"$code_or_pattern\". " *
+                lazy"Invalid severity value \"$severity_value\" for diagnostic pattern \"$pattern\". " *
                 "Valid string values are: \"off\", \"error\", \"warning\"/\"warn\", \"information\"/\"info\", \"hint\""))
         end
     else
         throw(DiagnosticConfigError(
-            lazy"Invalid severity value \"$severity_value\" for diagnostic code \"$code_or_pattern\". " *
+            lazy"Invalid severity value \"$severity_value\" for diagnostic pattern \"$pattern\". " *
             "Severity must be an integer (0-4) or string"))
     end
 end
 
-function extract_category(code::AbstractString)
-    idx = findfirst('/', code)
-    return idx === nothing ? nothing : code[1:prevind(code, idx)]
-end
-
-function is_valid_diagnostic_code_key(key::AbstractString)
-    if key == "*"
-        return true
-    elseif key ∈ ALL_DIAGNOSTIC_CODES
-        return true
-    elseif endswith(key, "/*")
-        category = extract_category(key)
-        return category !== nothing && category ∈ VALID_DIAGNOSTIC_CATEGORIES
+function parse_diagnostic_pattern(x::AbstractDict{String})
+    if !haskey(x, "pattern")
+        throw(DiagnosticConfigError("Missing required field `pattern` in diagnostic pattern"))
     end
-    return false
-end
-
-let all_codes_str = join(string.('`', ALL_DIAGNOSTIC_CODES, '`'), ", ")
-    patterns_str = join(string.('`', collect(VALID_DIAGNOSTIC_CATEGORIES), "/*", '`'), ", ")
-    msg = "Diagnostic code must be one of: $all_codes_str, a category pattern: $patterns_str, or `*` for all diagnostics"
-    global function check_diagnostic_codes_raw(codes_raw::AbstractDict{String})
-        for key in keys(codes_raw)
-            if !is_valid_diagnostic_code_key(key)
-                throw(DiagnosticConfigError(
-                    lazy"Invalid diagnostic code \"$key\". " * msg))
-            end
-        end
-    end
-end
-
-function parse_diagnostic_codes_config(codes_raw::AbstractDict{String}, code::String)
-    wildcard_result = category_result = specific_result = nothing
-
-    # Check for "*" wildcard (lowest priority)
-    if haskey(codes_raw, "*")
-        wildcard_result = parse_diagnostic_severity(codes_raw["*"], "*")
+    pattern_value = x["pattern"]
+    if !(pattern_value isa String)
+        throw(DiagnosticConfigError(
+            lazy"Invalid `pattern` value. Must be a string, got $(typeof(pattern_value))"))
     end
 
-    # Check for category pattern (medium priority)
-    category = extract_category(code)
-    @assert (category === nothing || category in VALID_DIAGNOSTIC_CATEGORIES) "Invalid diagnostic category"
-    if category !== nothing
-        pattern = "$category/*"
-        if haskey(codes_raw, pattern)
-            category_result = parse_diagnostic_severity(codes_raw[pattern], pattern)
+    for key in keys(x)
+        if key ∉ ("pattern", "match_by", "match_type", "severity")
+            throw(DiagnosticConfigError(
+                lazy"Unknown field \"$key\" in diagnostic pattern for pattern \"$pattern_value\". " *
+                "Valid fields are: pattern, match_by, match_type, severity"))
         end
     end
 
-    # Check for specific code (highest priority)
-    if haskey(codes_raw, code)
-        specific_result = parse_diagnostic_severity(codes_raw[code], code)
+    if !haskey(x, "match_by")
+        throw(DiagnosticConfigError(
+            lazy"Missing required field `match_by` in diagnostic pattern for pattern \"$pattern_value\""))
+    end
+    match_by = x["match_by"]
+    if !(match_by isa String)
+        throw(DiagnosticConfigError(
+            lazy"Invalid `match_by` value for pattern \"$pattern_value\". Must be a string, got $(typeof(match_by))"))
+    end
+    if !(match_by in ("code", "message"))
+        throw(DiagnosticConfigError(
+            lazy"Invalid `match_by` value \"$match_by\" for pattern \"$pattern_value\". Must be \"code\" or \"message\""))
     end
 
-    # Merge with priority: specific > category > wildcard
-    # Return the highest priority result that was actually set
-    if specific_result !== nothing
-        return specific_result
-    elseif category_result !== nothing
-        return category_result
-    elseif wildcard_result !== nothing
-        return wildcard_result
+    if !haskey(x, "match_type")
+        throw(DiagnosticConfigError(
+            lazy"Missing required field `match_type` in diagnostic pattern for pattern \"$pattern_value\""))
+    end
+    match_type = x["match_type"]
+    if !(match_type isa String)
+        throw(DiagnosticConfigError(
+            lazy"Invalid `match_type` value for pattern \"$pattern_value\". Must be a string, got $(typeof(match_type))"))
+    end
+    if !(match_type in ("literal", "regex"))
+        throw(DiagnosticConfigError(
+            lazy"Invalid `match_type` value \"$match_type\" for pattern \"$pattern_value\". Must be \"literal\" or \"regex\""))
+    end
+
+    pattern = if match_type == "regex"
+        try
+            Regex(pattern_value)
+        catch e
+            throw(DiagnosticConfigError(
+                lazy"Invalid regex pattern \"$pattern_value\": $(sprint(showerror, e))"))
+        end
     else
-        return nothing
+        pattern_value
     end
+
+    if !haskey(x, "severity")
+        throw(DiagnosticConfigError(
+            lazy"Missing required field `severity` in diagnostic pattern for pattern \"$pattern_value\""))
+    end
+    severity = parse_diagnostic_severity(x["severity"], pattern_value)
+
+    return DiagnosticPattern(pattern, match_by, match_type, severity)
+end
+
+# config application
+# ------------------
+
+"""
+    calculate_match_specificity(pattern, target, is_message_match) -> UInt
+
+Calculate the specificity score for a diagnostic pattern match.
+
+# Priority Strategy
+Higher specificity scores indicate more specific matches that should take precedence.
+The scoring follows this priority order (highest to lowest):
+
+1. **Message literal match**: `4`
+2. **Message regex match**: `3`
+3. **Code literal match**: `2`
+4. **Code regex match**: `1`
+
+Message-based patterns receive a priority bonus because they allow more fine-grained
+control over specific diagnostic instances, whereas code-based patterns are more
+categorical.
+
+# Returns
+- `0` if the pattern does not match the target
+- An unsigned integer representing the match specificity if the pattern matches
+"""
+function calculate_match_specificity(
+        pattern::Union{Regex,String},
+        target::String,
+        is_message_match::Bool
+    )
+    local specificity::UInt8 = 0
+    if pattern isa String
+        specificity = pattern == target ? 2 : 0
+    else
+        specificity = occursin(pattern, target) ? 1 : 0
+    end
+    specificity == 0 && return specificity
+    if is_message_match
+        specificity + 2
+    end
+    return specificity
 end
 
 function _apply_diagnostic_config(diagnostic::Diagnostic, diagnostic_config::DiagnosticConfig)
@@ -116,7 +162,7 @@ function _apply_diagnostic_config(diagnostic::Diagnostic, diagnostic_config::Dia
             error(lazy"Unexpected diagnostic code type: $code")
         end
         return diagnostic
-    elseif !haskey(ALL_DIAGNOSTIC_CODES_MAP, code)
+    elseif code ∉ ALL_DIAGNOSTIC_CODES
         if JETLS_DEV_MODE
             @warn "Unknown diagnostic code" code
         elseif JETLS_TEST_MODE
@@ -124,20 +170,37 @@ function _apply_diagnostic_config(diagnostic::Diagnostic, diagnostic_config::Dia
         end
         return diagnostic
     end
-    codes_config = @something diagnostic_config.codes default_config(DiagnosticCodesConfig)
-    severity = @something getfield(codes_config, ALL_DIAGNOSTIC_CODES_MAP[code]) return diagnostic
-    if severity == 0 # special severity value
+
+    patterns = @something diagnostic_config.patterns return diagnostic
+
+    message = diagnostic.message
+    severity = nothing
+    best_specificity = 0
+    for pattern_config in patterns
+        target = pattern_config.match_by == "message" ? message : code
+        is_message_match = pattern_config.match_by == "message"
+        specificity = calculate_match_specificity(
+            pattern_config.pattern, target, is_message_match)
+        if specificity > best_specificity
+            best_specificity = specificity
+            severity = pattern_config.severity
+        end
+    end
+
+    if severity === nothing
+        return diagnostic
+    elseif severity == 0
         return missing
     elseif severity == diagnostic.severity
         return nothing
     else
-        return Diagnostic(diagnostic; severity)
+        return Diagnostic(diagnostic; severity=severity)
     end
 end
 
 function apply_diagnostic_config!(diagnostics::Vector{Diagnostic}, manager::ConfigManager)
     settings = get_settings(load(manager))
-    diagnostic_config = @something settings.diagnostics default_config(DiagnosticConfig)
+    diagnostic_config = @something settings.diagnostic default_config(DiagnosticConfig)
     if diagnostic_config.enabled === false
         return empty!(diagnostics)
     end
@@ -158,7 +221,7 @@ end
 
 function diagnostic_code_description(code::AbstractString)
     return CodeDescription(;
-        href = URI("https://aviatesk.github.io/JETLS.jl/dev/diagnostics/#diagnostic/$code"))
+        href = URI("https://aviatesk.github.io/JETLS.jl/dev/diagnostic/#diagnostic/$code"))
 end
 
 # syntax diagnotics
@@ -186,8 +249,8 @@ function jsdiag_to_lspdiag(diagnostic::JS.Diagnostic, fi::FileInfo)
         codeDescription = diagnostic_code_description(SYNTAX_DIAGNOSTIC_CODE))
 end
 
-# toplevel / inference diagnostics
-# ================================
+# toplevel / inference diagnostic
+# ===============================
 
 function jet_result_to_diagnostics(file_uris, result::JET.JETToplevelResult)
     uri2diagnostics = URI2Diagnostics(uri => Diagnostic[] for uri in file_uris)
@@ -307,8 +370,8 @@ function line_range(line::Int)
     return Range(; start, var"end")
 end
 
-# lowering diagnostics
-# ====================
+# lowering diagnostic
+# ===================
 
 const JL_MACRO_FILE = only(methods(JL.expand_macro, (JL.MacroExpansionContext,JL.SyntaxTree))).file
 function scrub_expand_macro_stacktrace(stacktrace::Vector{Base.StackTraces.StackFrame})

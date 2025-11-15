@@ -14,7 +14,7 @@ By leveraging tooling technologies like
 [JuliaSyntax.jl](https://github.com/JuliaLang/JuliaSyntax.jl) and
 [JuliaLowering.jl](https://github.com/c42f/JuliaLowering.jl),
 JETLS aims to offer enhanced language features such as type-sensitive
-diagnostics, macro-aware go-to definition and such.
+diagnostic, macro-aware go-to definition and such.
 
 ## Getting started
 

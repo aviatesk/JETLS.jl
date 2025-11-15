@@ -41,7 +41,7 @@ the list itself is subject to change.
   - [ ] JuliaLowering integration
   - [ ] Recursive analysis for dependencies
   - [ ] Cross-server-process cache system
-- Diagnostics
+- Diagnostic
   - [x] Syntax errors
   - [x] Lowering errors
   - [x] Undefined bindings
