@@ -26,6 +26,7 @@ Depth = 3:4
 
 Each diagnostic has a severity level that indicates how serious the issue is.
 JETLS supports four severity levels defined by the [LSP specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#diagnosticSeverity):
+
 - **`Error`** (`1`): Critical issues that prevent code from working correctly.
   Most LSP clients display these with red underlines and error markers.
 - **`Warning`** (`2`): Potential problems that should be reviewed. Typically
@@ -47,10 +48,25 @@ severity value `"off"` (or `0`).
 
 This section provides detailed explanations for each diagnostic code. For every
 diagnostic, you'll find:
+
 - A description of what the diagnostic detects
 - Its default severity level
 - Code examples demonstrating when the diagnostic is reported
 - Example diagnostic messages (shown in code comments)
+
+Here is a summary table of the diagnostics explained in this section:
+
+| Code                                                                               | Default Severity      | Description                                                    |
+| ---------------------------------------------------------------------------------- | --------------------- | -------------------------------------------------------------- |
+| [`syntax/parse-error`](@ref diagnostic/syntax/parse-error)                         | `Error`               | Syntax parsing errors detected by JuliaSyntax.jl               |
+| [`lowering/error`](@ref diagnostic/lowering/error)                                 | `Error`               | General lowering errors                                        |
+| [`lowering/macro-expansion-error`](@ref diagnostic/lowering/macro-expansion-error) | `Error`               | Errors during macro expansion                                  |
+| [`lowering/unused-argument`](@ref diagnostic/lowering/unused-argument)             | `Information`         | Function arguments that are never used                         |
+| [`lowering/unused-local`](@ref diagnostic/lowering/unused-local)                   | `Information`         | Local variables that are assigned but never read               |
+| [`toplevel/error`](@ref diagnostic/toplevel/error)                                 | `Error`               | Errors during code loading (missing deps, type failures, etc.) |
+| [`inference/undef-global-var`](@ref diagnostic/inference/undef-global-var)         | `Warning`             | References to undefined global variables                       |
+| [`inference/undef-local-var`](@ref diagnostic/inference/undef-local-var)           | `Information/Warning` | References to undefined local variables                        |
+| [`testrunner/test-failure`](@ref diagnostic/testrunner/test-failure)               | `Error`               | Test failures from TestRunner integration                      |
 
 ### Syntax diagnostics (`syntax/*`)
 
@@ -62,6 +78,7 @@ Syntax parsing errors detected by JuliaSyntax.jl. These indicate invalid Julia
 syntax that prevents the code from being parsed.
 
 Example:
+
 ```julia
 function parse_error(x)
     println(x  # Expected `)` or `,` (JETLS syntax/parse-error)
@@ -80,6 +97,7 @@ transforms parsed syntax into a simpler intermediate representation.
 General lowering errors that don't fit into more specific categories.
 
 Example:
+
 ```julia
 function lowering_error(x)
     $(x)  # `$` expression outside string or quote block (JETLS lowering/error)
@@ -93,6 +111,7 @@ end
 Errors that occur when expanding macros during the lowering phase.
 
 Example:
+
 ```julia
 function macro_expand_error()
     @undefined_macro ex  # Macro name `@undefined_macro` not found (JETLS lowering/macro-expansion-error)
@@ -100,6 +119,7 @@ end
 ```
 
 Errors that occur during actual macro expansion are also reported:
+
 ```julia
 macro myinline(ex)
     Meta.isexpr(ex, :function) || error("Expected long function definition")
@@ -116,6 +136,7 @@ end
 Function arguments that are declared but never used in the function body.
 
 Example:
+
 ```julia
 function unused_argument(x, y)  # Unused argument `y` (JETLS lowering/unused-argument)
     return x + 1
@@ -129,6 +150,7 @@ end
 Local variables that are assigned but never read.
 
 Example:
+
 ```julia
 function unused_local()
     x = 10  # Unused local binding `x` (JETLS lowering/unused-local)
@@ -208,6 +230,7 @@ variable is definitely undefined (`Warning`) or only possibly undefined
 (`Information`).
 
 Example:
+
 ```julia
 function undef_local_var()
     if rand() > 0.5
@@ -233,9 +256,10 @@ under the `[diagnostics]` section. This allows you to customize JETLS's
 behavior to match your project's coding standards and preferences.
 
 ```@example
-# This is an internal comment for this documenation: # hide
-# Use H5 for subsections in this section so that the `@contents` block above works as intended. # hide
+nothing # This is an internal comment for this documenation: # hide
+nothing # Use H5 for subsections in this section so that the `@contents` block above works as intended. # hide
 ```
+
 ##### Quick example
 
 ```toml
