@@ -66,6 +66,7 @@ Here is a summary table of the diagnostics explained in this section:
 | [`toplevel/error`](@ref diagnostic/toplevel/error)                                 | `Error`               | Errors during code loading (missing deps, type failures, etc.) |
 | [`inference/undef-global-var`](@ref diagnostic/inference/undef-global-var)         | `Warning`             | References to undefined global variables                       |
 | [`inference/undef-local-var`](@ref diagnostic/inference/undef-local-var)           | `Information/Warning` | References to undefined local variables                        |
+| [`inference/method-error`](@ref diagnostic/inference/method-error)                 | `Warning`             | No matching method found for function calls                    |
 | [`testrunner/test-failure`](@ref diagnostic/testrunner/test-failure)               | `Error`               | Test failures from TestRunner integration                      |
 
 ### Syntax diagnostics (`syntax/*`)
@@ -237,6 +238,32 @@ function undef_local_var()
         x = 1
     end
     return x  # local variable `x` may be undefined (JETLS inference/undef-local-var)
+end
+```
+
+#### [No matching method found (`inference/method-error`)](@id diagnostic/inference/method-error)
+
+**Default severity:** `Warning`
+
+Function calls where no matching method can be found for the inferred argument
+types. This diagnostic detects potential `MethodError`s that would occur at
+runtime.
+
+Examples:
+
+```julia
+function method_error_example()
+    return sin(1, 2)  # no matching method found `sin(::Int64, ::Int64)` (JETLS inference/method-error)
+end
+```
+
+When multiple union-split signatures fail to find matches, the diagnostic will
+report all failed signatures:
+
+```julia
+function union_split_method_error(x::Union{Int,String})
+    return unsupported_func(x)  # no matching method found `unsupported_func(::Int64)`,
+                                # `unsupported_func(::String)` (2/2 union split) (JETLS inference/method-error)
 end
 ```
 
