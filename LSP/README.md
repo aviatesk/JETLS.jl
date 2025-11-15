@@ -12,7 +12,7 @@ to faithfully translate the TypeScript LSP specification into idiomatic Julia co
   - Uses `Union{Nothing, Type} = nothing` field to represent TypeScript's optional properties (`field?: Type`)
   - Supports inheritance through `@extends` to compose interfaces (similar to TypeScript's `extends`)
   - Enables anonymous interface definitions within `Union` types for inline type specifications
-  - Integrates with JSON.jl v1 and StructUtils.jl for JSON serialization/deserialization
+  - Automatically configures `StructTypes.omitempties()` to omit optional fields during JSON serialization
   - Creates method dispatchers for `RequestMessage` and `NotificationMessage` types to enable LSP message routing
 
 - **`@namespace` macro**: Creates Julia modules containing typed constants that correspond to TypeScript `namespace`s:
