@@ -34,7 +34,6 @@ using REPL: REPL # loading REPL is necessary to make `Base.Docs.doc(::Base.Docs.
 using Markdown: Markdown
 using TOML: TOML
 
-using OrderedCollections: OrderedCollections
 using Configurations: @option, Configurations, Maybe
 
 abstract type AnalysisEntry end # used by `Analyzer.LSAnalyzer`

@@ -11,7 +11,7 @@ makedocs(;
     ),
     pages = Any[
         "Index" => "index.md",
-        "Diagnostics" => "diagnostics.md",
+        "Diagnostic" => "diagnostic.md",
         "Formatter integration" => "formatting.md",
         "TestRunner integration" => "testrunner.md",
         "Configuration" => "configuration.md",

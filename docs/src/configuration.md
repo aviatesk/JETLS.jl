@@ -8,9 +8,9 @@ This documentation uses TOML format to describe the configuration schema.
 - [`[full_analysis]`](@ref config/full_analysis)
     - [`[full_analysis] debounce`](@ref config/full_analysis-debounce)
 - [`formatter`](@ref config/formatter)
-- [`[diagnostics]`](@ref config/diagnostics)
-    - [`[diagnostics] enabled`](@ref config/diagnostics-enabled)
-    - [`[diagnostics.codes]`](@ref config/diagnostics-codes)
+- [`[diagnostic]`](@ref config/diagnostic)
+    - [`[diagnostic] enabled`](@ref config/diagnostic-enabled)
+    - [`[[diagnostic.patterns]]`](@ref config/diagnostic-patterns)
 - [`[testrunner]`](@ref config/testrunner)
     - [`[testrunner] executable`](@ref config/testrunner-executable)
 
@@ -59,7 +59,7 @@ executable_range = "/path/to/custom-range-formatter"
 
 See [Formatting](@ref) for detailed configuration instructions and setup requirements.
 
-### [`[diagnostics]`](@id config/diagnostics)
+### [`[diagnostic]`](@id config/diagnostic)
 
 Configure how JETLS reports diagnostic messages (errors, warnings, infos, hints)
 in your editor. JETLS uses hierarchical diagnostic codes in the format
@@ -67,10 +67,10 @@ in your editor. JETLS uses hierarchical diagnostic codes in the format
 to allow fine-grained control over which diagnostics to show and at what
 severity level.
 
-See the [Diagnostics](@ref) section for complete diagnostic reference
+See the [Diagnostic](@ref) section for complete diagnostic reference
 including all available codes, their meanings, and examples.
 
-#### [`[diagnostics] enabled`](@id config/diagnostics-enabled)
+#### [`[diagnostic] enabled`](@id config/diagnostic-enabled)
 
 - **Type**: boolean
 - **Default**: `true`
@@ -79,28 +79,39 @@ Enable or disable all JETLS diagnostics. When set to `false`, no diagnostic
 messages will be shown.
 
 ```toml
-[diagnostics]
+[diagnostic]
 enabled = false  # Disable all diagnostics
 ```
 
-#### [`[diagnostics.codes]`](@id config/diagnostics-codes)
+#### [`[[diagnostic.patterns]]`](@id config/diagnostic-patterns)
 
-Fine-grained control over individual diagnostic codes or categories. Each
-diagnostic in JETLS has a hierarchical code in the format `"category/kind"`
-(e.g., `"lowering/unused-argument"`, `"inference/undef-global-var"`).
+Fine-grained control over diagnostics through pattern matching against either
+[diagnostic codes](@ref diagnostic-code) or messages.
 
-See the [Diagnostic reference](diagnostics.md#Diagnostic-reference) section for
+See the [diagnostic reference](@ref diagnostic-reference) section for
 a complete list of all available diagnostic codes, their default severity
 levels, and detailed explanations with examples.
 
 ##### Configuration syntax
 
-Each diagnostic code is configured by assigning a severity value directly:
+Each pattern is defined as a table array entry with the following fields:
 
 ```toml
-[diagnostics.codes]
-"diagnostic-code" = "severity-value"
+[[diagnostic.patterns]]
+pattern = "pattern-value"  # the pattern to match
+match_by = "code"          # "code" or "message"
+match_type = "literal"     # "literal" or "regex"
+severity = "hint"          # severity level
 ```
+
+- `pattern`: The pattern to match (string)
+- `match_by`: What to match against
+  - `"code"`: Match against [diagnostic code](@ref diagnostic-code) (e.g., `"lowering/unused-argument"`)
+  - `"message"`: Match against diagnostic message text
+- `match_type`: How to interpret the pattern
+  - `"literal"`: Exact string match
+  - `"regex"`: Regular expression match
+- `severity`: Severity level to apply (see below)
 
 ##### Severity values
 
@@ -115,67 +126,105 @@ diagnostics entirely. This is a JETLS-specific extension not defined in the LSP
 specification.
 
 You can specify severity using either string or integer values (case-insensitive for strings):
-- `"error"` or `1`: Error
-- `"warning"` or `"warn"` or `2`: Warning
-- `"information"` or `"info"` or `3`: Information
-- `"hint"` or `4`: Hint
-- `"off"` or `0`: Disabled
+- `"error"` or `1` for `Error`
+- `"warning"` or `"warn"` or `2` for `Warning`
+- `"information"` or `"info"` or `3` for `Information`
+- `"hint"` or `4` for `Hint`
+- `"off"` or `0` for `Disabled`
 
-##### Pattern matching and priority
+##### Pattern matching priority
 
-You can configure diagnostics at three levels, with more specific configurations
-overriding less specific ones:
+When multiple patterns match the same diagnostic, more specific patterns take
+precedence. The priority order (highest to lowest) is:
 
-1. **Specific code** (highest priority): Applies to a single diagnostic (e.g., `"lowering/unused-argument"`)
-2. **Category pattern**: Applies to all diagnostics in a category (e.g., `"lowering/*"`, `"inference/*"`)
-3. **Wildcard (`"*"`)** (lowest priority): Applies to all diagnostics
+1. `message` literal match
+2. `message` regex match
+3. `code` literal match
+4. `code` regex match
+
+This priority strategy allows message-based patterns to override code-based
+patterns, enabling fine-grained control for specific diagnostic instances.
 
 Example showing priority:
 
 ```toml
-[diagnostics.codes]
-"*" = "hint"                        # All diagnostics shown as hints
-"lowering/*" = "error"              # Lowering diagnostics shown as errors (overrides "*")
-"lowering/unused-argument" = "off"  # This specific diagnostic disabled (overrides "lowering/*")
+# Lower priority: matches all lowering diagnostics
+[[diagnostic.patterns]]
+pattern = "lowering/.*"
+match_by = "code"
+match_type = "regex"
+severity = "error"
+
+# Higher priority: matches specific message
+[[diagnostic.patterns]]
+pattern = "Unused argument `x`"
+match_by = "message"
+match_type = "literal"
+severity = "off"
+
+# Highest priority among code patterns: exact code match
+[[diagnostic.patterns]]
+pattern = "lowering/unused-argument"
+match_by = "code"
+match_type = "literal"
+severity = "hint"
 ```
 
 !!! note
-    When [`diagnostics.enabled`](@ref config/diagnostics-enabled) is `false`,
-    all diagnostics are disabled regardless of these settings.
-    Also note that `diagnostics.enabled = false` is equivalent to setting:
-    ```toml
-    [diagnostics.code]
-    "*" = "off"
-    ```
+    When [`diagnostic.enabled`](@ref config/diagnostic-enabled) is `false`,
+    all diagnostics are disabled regardless of pattern settings.
 
-#### `[diagnostics]` configuration examples
+#### `[diagnostic]` configuration examples
 
 ```toml
-[diagnostics]
+[diagnostic]
 enabled = true
 
-[diagnostics.codes]
-# Make all lowering diagnostics warnings
-"lowering/*" = "warning"
+# Pattern matching against diagnostic code
+[[diagnostic.patterns]]
+pattern = "lowering/.*"
+match_by = "code"
+match_type = "regex"
+severity = "warning"
 
-# Disable inference diagnostics entirely
-"inference/*" = "off"
+# Disable inference diagnostic entirely
+[[diagnostic.patterns]]
+pattern = "inference/.*"
+match_by = "code"
+match_type = "regex"
+severity = "off"
 
 # Show unused arguments as hints (overrides category setting)
-"lowering/unused-argument" = "hint"
+[[diagnostic.patterns]]
+pattern = "lowering/unused-argument"
+match_by = "code"
+match_type = "literal"
+severity = "hint"
 
-# Completely disable unused local variable diagnostics
-"lowering/unused-local" = 0
+# Completely disable unused local variable diagnostics using integer value
+[[diagnostic.patterns]]
+pattern = "lowering/unused-local"
+match_by = "code"
+match_type = "literal"
+severity = 0
 
-# Use integer severity values
-"syntax/parse-error" = 1  # Error
+# Pattern matching against diagnostic message
+[[diagnostic.patterns]]
+pattern = "Macro name `@interface` not found"
+match_by = "message"
+match_type = "literal"
+severity = "off"
 
-# Set baseline for all diagnostics with specific overrides
-"*" = "hint"
-"syntax/*" = "error"
+# Suppress all macro not found errors using regex
+[[diagnostic.patterns]]
+pattern = "Macro name `.*` not found"
+match_by = "message"
+match_type = "regex"
+severity = "off"
 ```
 
-See the [Configuring diagnostics](@ref) section for additional examples and common use cases.
+See the [configuring diagnostics](@ref configuring-diagnostic) section for
+additional examples and common use cases.
 
 ### [`[testrunner]`](@id config/testrunner)
 
