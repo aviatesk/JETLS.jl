@@ -409,7 +409,7 @@ end
         diagnostics = get_lowered_diagnostics(@__MODULE__, "macro foo(x, y) \$(x) end")
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
-        @test diagnostic.source == JETLS.LOWERING_DIAGNOSTIC_SOURCE
+        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE
         @test diagnostic.message == "`\$` expression outside string or quote block"
     end
 
@@ -424,13 +424,13 @@ end
         diagnostics = JETLS.toplevel_lowering_diagnostics(server, uri)
         @test length(diagnostics) == 2
         @test count(diagnostics) do diagnostic
-            diagnostic.source == JETLS.LOWERING_DIAGNOSTIC_SOURCE &&
+            diagnostic.source == JETLS.DIAGNOSTIC_SOURCE &&
             diagnostic.message == "`\$` expression outside string or quote block" &&
             diagnostic.range.start.line == 0 &&
             diagnostic.range.var"end".line == 0
         end == 1
         @test count(diagnostics) do diagnostic
-            diagnostic.source == JETLS.LOWERING_DIAGNOSTIC_SOURCE &&
+            diagnostic.source == JETLS.DIAGNOSTIC_SOURCE &&
             diagnostic.message == "`\$` expression outside string or quote block" &&
             diagnostic.range.start.line == 1 &&
             diagnostic.range.var"end".line == 1
@@ -441,7 +441,7 @@ end
         diagnostics = get_lowered_diagnostics(@__MODULE__, "x = @notexisting 42")
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
-        @test diagnostic.source == JETLS.LOWERING_DIAGNOSTIC_SOURCE
+        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE
         @test diagnostic.message == "Macro name `@notexisting` not found"
         @test diagnostic.range.start.line == 0
         @test diagnostic.range.start.character == sizeof("x = ")
@@ -453,7 +453,7 @@ end
         diagnostics = get_lowered_diagnostics(@__MODULE__, "x = notexisting\"string\"")
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
-        @test diagnostic.source == JETLS.LOWERING_DIAGNOSTIC_SOURCE
+        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE
         @test diagnostic.message == "Macro name `@notexisting_str` not found"
         @test diagnostic.range.start.line == 0
         @test diagnostic.range.start.character == sizeof("x = ")
@@ -465,7 +465,7 @@ end
         diagnostics = get_lowered_diagnostics(@__MODULE__, "x = @m_throw 42")
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
-        @test diagnostic.source == JETLS.LOWERING_DIAGNOSTIC_SOURCE
+        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE
         @test diagnostic.message == "Error expanding macro\n\"show this error message\""
         @test diagnostic.range.start.line == 0
         @test diagnostic.range.start.character == sizeof("x = ")
@@ -479,7 +479,7 @@ end
         end""")
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
-        @test diagnostic.source == JETLS.LOWERING_DIAGNOSTIC_SOURCE
+        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE
         @test diagnostic.message == "Error expanding macro\nError in foo"
         @test diagnostic.range.start.line == 1
         @test diagnostic.range.start.character == 4
@@ -493,7 +493,7 @@ end
         end""")
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
-        @test diagnostic.source == JETLS.LOWERING_DIAGNOSTIC_SOURCE
+        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE
         @test diagnostic.message == "Error expanding macro\nError in foo"
         @test diagnostic.range.start.line == 1
         @test diagnostic.range.start.character == 4
@@ -509,7 +509,7 @@ end
         """)
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
-        @test diagnostic.source == JETLS.LOWERING_DIAGNOSTIC_SOURCE
+        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE
         @test diagnostic.message == "`return` not allowed inside comprehension or generator"
         @test diagnostic.range.start.line == 2
         @test diagnostic.range.var"end".line == 2

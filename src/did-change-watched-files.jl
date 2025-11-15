@@ -42,6 +42,9 @@ function handle_config_file_change!(
 
     source = "[.JETLSConfig.toml] $(dirname(changed_path)) ($kind)"
     notify_config_changes(server, tracker, source)
+    if tracker.diagnostic_setting_changed
+        notify_diagnostics!(server)
+    end
 end
 
 """
@@ -74,6 +77,12 @@ function load_file_config!(callback, server::Server, filepath::AbstractString;
                     show_error_message(server, unmatched_keys_in_config_file_msg(filepath, unknown_keys))
                     return old_data, nothing
                 end
+            elseif e isa DiagnosticConfigError
+                show_error_message(server, """
+                    Invalid diagnostic configuration in $filepath:
+                    $(e.msg)
+                    """)
+                return old_data, nothing
             end
             show_error_message(server, """
                 Failed to load configuration file at $filepath:

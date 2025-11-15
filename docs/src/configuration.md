@@ -1,27 +1,38 @@
-# Configuration
+# JETLS configuration
 
 JETLS supports various configuration options.
 This documentation uses TOML format to describe the configuration schema.
 
 ## Available configurations
 
-### `[full_analysis] debounce`
+- [`[full_analysis]`](@ref config/full_analysis)
+    - [`[full_analysis] debounce`](@ref config/full_analysis-debounce)
+- [`formatter`](@ref config/formatter)
+- [`[diagnostics]`](@ref config/diagnostics)
+    - [`[diagnostics] enabled`](@ref config/diagnostics-enabled)
+    - [`[diagnostics.codes]`](@ref config/diagnostics-codes)
+- [`[testrunner]`](@ref config/testrunner)
+    - [`[testrunner] executable`](@ref config/testrunner-executable)
+
+### [`[full_analysis]`](@id config/full_analysis)
+
+#### [`[full_analysis] debounce`](@id config/full_analysis-debounce)
 
 - **Type**: number (seconds)
 - **Default**: `1.0`
 
-Debounce time in seconds before triggering full analysis after a document
-change. JETLS performs type-aware analysis using
-[JET.jl](https://github.com/aviatesk/JET.jl) to detect potential errors.
-Higher values reduce analysis frequency (saving CPU) but may feel less
-responsive.
+Debounce time in seconds before triggering full analysis after a file save.
+JETLS performs type-aware analysis using [JET.jl](https://github.com/aviatesk/JET.jl)
+to detect potential errors. The debounce prevents excessive analysis when you
+save files frequently. Higher values reduce analysis frequency (saving CPU) but
+may delay diagnostic updates.
 
 ```toml
 [full_analysis]
-debounce = 2.0  # Wait 2 seconds after typing stops before analyzing
+debounce = 2.0  # Wait 2 seconds after save before analyzing
 ```
 
-### `formatter`
+### [`formatter`](@id config/formatter)
 
 - **Type**: string or table
 - **Default**: `"Runic"`
@@ -48,7 +59,127 @@ executable_range = "/path/to/custom-range-formatter"
 
 See [Formatting](@ref) for detailed configuration instructions and setup requirements.
 
-### `[testrunner] executable`
+### [`[diagnostics]`](@id config/diagnostics)
+
+Configure how JETLS reports diagnostic messages (errors, warnings, infos, hints)
+in your editor. JETLS uses hierarchical diagnostic codes in the format
+`"category/kind"` (following the [LSP specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#diagnostic))
+to allow fine-grained control over which diagnostics to show and at what
+severity level.
+
+See the [Diagnostics](@ref) section for complete diagnostic reference
+including all available codes, their meanings, and examples.
+
+#### [`[diagnostics] enabled`](@id config/diagnostics-enabled)
+
+- **Type**: boolean
+- **Default**: `true`
+
+Enable or disable all JETLS diagnostics. When set to `false`, no diagnostic
+messages will be shown.
+
+```toml
+[diagnostics]
+enabled = false  # Disable all diagnostics
+```
+
+#### [`[diagnostics.codes]`](@id config/diagnostics-codes)
+
+Fine-grained control over individual diagnostic codes or categories. Each
+diagnostic in JETLS has a hierarchical code in the format `"category/kind"`
+(e.g., `"lowering/unused-argument"`, `"inference/undef-global-var"`).
+
+See the [Diagnostic reference](diagnostics.md#Diagnostic-reference) section for
+a complete list of all available diagnostic codes, their default severity
+levels, and detailed explanations with examples.
+
+##### Configuration syntax
+
+Each diagnostic code is configured by assigning a severity value directly:
+
+```toml
+[diagnostics.codes]
+"diagnostic-code" = "severity-value"
+```
+
+##### Severity values
+
+JETLS supports four severity levels defined by the [LSP specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#diagnosticSeverity):
+- `Error` (`1`): Critical issues that prevent code from working correctly
+- `Warning` (`2`): Potential problems that should be reviewed
+- `Information` (`3`): Informational messages about code that may benefit from attention
+- `Hint` (`4`): Suggestions for improvements or best practices
+
+Additionally, JETLS defines a special severity value `"off"` (or `0`) for disabling
+diagnostics entirely. This is a JETLS-specific extension not defined in the LSP
+specification.
+
+You can specify severity using either string or integer values (case-insensitive for strings):
+- `"error"` or `1`: Error
+- `"warning"` or `"warn"` or `2`: Warning
+- `"information"` or `"info"` or `3`: Information
+- `"hint"` or `4`: Hint
+- `"off"` or `0`: Disabled
+
+##### Pattern matching and priority
+
+You can configure diagnostics at three levels, with more specific configurations
+overriding less specific ones:
+
+1. **Specific code** (highest priority): Applies to a single diagnostic (e.g., `"lowering/unused-argument"`)
+2. **Category pattern**: Applies to all diagnostics in a category (e.g., `"lowering/*"`, `"inference/*"`)
+3. **Wildcard (`"*"`)** (lowest priority): Applies to all diagnostics
+
+Example showing priority:
+
+```toml
+[diagnostics.codes]
+"*" = "hint"                        # All diagnostics shown as hints
+"lowering/*" = "error"              # Lowering diagnostics shown as errors (overrides "*")
+"lowering/unused-argument" = "off"  # This specific diagnostic disabled (overrides "lowering/*")
+```
+
+!!! note
+    When [`diagnostics.enabled`](@ref config/diagnostics-enabled) is `false`,
+    all diagnostics are disabled regardless of these settings.
+    Also note that `diagnostics.enabled = false` is equivalent to setting:
+    ```toml
+    [diagnostics.code]
+    "*" = "off"
+    ```
+
+#### `[diagnostics]` configuration examples
+
+```toml
+[diagnostics]
+enabled = true
+
+[diagnostics.codes]
+# Make all lowering diagnostics warnings
+"lowering/*" = "warning"
+
+# Disable inference diagnostics entirely
+"inference/*" = "off"
+
+# Show unused arguments as hints (overrides category setting)
+"lowering/unused-argument" = "hint"
+
+# Completely disable unused local variable diagnostics
+"lowering/unused-local" = 0
+
+# Use integer severity values
+"syntax/parse-error" = 1  # Error
+
+# Set baseline for all diagnostics with specific overrides
+"*" = "hint"
+"syntax/*" = "error"
+```
+
+See the [Configuring diagnostics](@ref) section for additional examples and common use cases.
+
+### [`[testrunner]`](@id config/testrunner)
+
+#### [`[testrunner] executable`](@id config/testrunner-executable)
 
 - **Type**: string (path)
 - **Default**: `"testrunner"` (or `"testrunner.bat"` on Windows)

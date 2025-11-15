@@ -47,7 +47,7 @@ the list itself is subject to change.
   - [x] Undefined bindings
   - [x] Unused bindings
   - [ ] Potential `MethodError`
-  - [ ] Configuration integration
+  - [x] Configuration support
 - Completion
   - [x] Global symbol completion
   - [x] Local binding completion

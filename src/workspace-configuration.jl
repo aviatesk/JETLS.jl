@@ -11,7 +11,12 @@ function (handler::LoadLSPConfigHandler)(server::Server, @nospecialize(config_va
     else
         store_lsp_config!(tracker, server, config_value, handler.source)
     end
-    handler.notify && notify_config_changes(handler.server, tracker, handler.source)
+    if handler.notify
+        notify_config_changes(handler.server, tracker, handler.source)
+        if tracker.diagnostic_setting_changed
+            notify_diagnostics!(server)
+        end
+    end
 end
 
 struct WorkspaceConfigurationCaller <: RequestCaller
@@ -75,6 +80,9 @@ function store_lsp_config!(tracker::ConfigChangeTracker, server::Server, @nospec
                     show_error_message(server, unmatched_keys_in_lsp_config_msg(unknown_keys))
                     return old_data, nothing
                 end
+            elseif e isa DiagnosticConfigError
+                show_error_message(server, "Invalid diagnostic configuration: $(e.msg)")
+                return old_data, nothing
             end
             show_error_message(server, "Failed to parse LSP configuration: $(e)")
             return old_data, nothing
@@ -102,6 +110,9 @@ function handle_DidChangeConfigurationNotification(server::Server, msg::DidChang
         tracker = ConfigChangeTracker()
         store_lsp_config!(tracker, server, msg.params.settings, source)
         notify_config_changes(server, tracker, source)
+        if tracker.diagnostic_setting_changed
+            notify_diagnostics!(server)
+        end
     end
 end
 

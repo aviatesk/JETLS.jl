@@ -38,7 +38,7 @@ using JETLS.URIs2
 
                 found_diagnostic = false
                 for diag in raw_res.result.items
-                    if diag.source == JETLS.SYNTAX_DIAGNOSTIC_SOURCE
+                    if diag.source == JETLS.DIAGNOSTIC_SOURCE
                         found_diagnostic = true
                         break
                     end
@@ -68,7 +68,7 @@ end
 
             found_diagnostic = false
             for diag in raw_res.params.diagnostics
-                if (diag.source == JETLS.TOPLEVEL_DIAGNOSTIC_SOURCE &&
+                if (diag.source == JETLS.DIAGNOSTIC_SOURCE &&
                     diag.range.start.line == 0)
                     found_diagnostic = true
                     break
@@ -101,7 +101,7 @@ end
 
             found_diagnostic = false
             for diag in raw_res.params.diagnostics
-                if diag.source == JETLS.INFERENCE_DIAGNOSTIC_SOURCE
+                if diag.source == JETLS.DIAGNOSTIC_SOURCE
                     found_diagnostic = true
                     break
                 end
@@ -145,7 +145,7 @@ end
 
             found_diagnostic = false
             for diag in raw_res.params.diagnostics
-                if (diag.source == JETLS.INFERENCE_DIAGNOSTIC_SOURCE &&
+                if (diag.source == JETLS.DIAGNOSTIC_SOURCE &&
                     # this also tests that JETLS doesn't show the nonsensical `var"..."`
                     # string caused by JET's internal details
                     occursin("`TestPackageAnalysis.BadModule.y` is not defined", diag.message))
@@ -191,6 +191,86 @@ end
                 @test raw_res.error.data isa DiagnosticServerCancellationData
                 @test raw_res.error.data.retriggerRequest === true
             end
+        end
+    end
+end
+
+using JETLS.Configurations: Configurations
+
+@testset "diagnostic configuration" begin
+    @testset "JETLS.DiagnosticCodesConfig" begin
+        let codes_raw = Dict{String,Any}("lowering/unused-argument" => 1)
+            config = Configurations.from_dict(JETLS.DiagnosticCodesConfig, codes_raw)
+            @test config.var"lowering/unused-argument" == DiagnosticSeverity.Error
+        end
+
+        let codes_raw = Dict{String,Any}("lowering/*" => 3)
+            config = Configurations.from_dict(JETLS.DiagnosticCodesConfig, codes_raw)
+            @test config.var"lowering/unused-argument" == DiagnosticSeverity.Information
+            @test config.var"lowering/unused-local" == DiagnosticSeverity.Information
+        end
+
+        let codes_raw = Dict{String,Any}(
+                    "lowering/*" => 0,
+                    "lowering/unused-argument" => "warning")
+            config = Configurations.from_dict(JETLS.DiagnosticCodesConfig, codes_raw)
+            @test config.var"lowering/unused-local" === nothing
+            @test config.var"lowering/unused-argument" == DiagnosticSeverity.Warning
+        end
+
+        let codes_raw = Dict{String,Any}(
+                    "lowering/*" => "warn",
+                    "lowering/unused-argument" => "info")
+            config = Configurations.from_dict(JETLS.DiagnosticCodesConfig, codes_raw)
+            @test config.var"lowering/unused-local" === DiagnosticSeverity.Warning
+            @test config.var"lowering/unused-argument" == DiagnosticSeverity.Information
+        end
+
+        let codes_raw = Dict{String,Any}(
+                    "*" => "hint",
+                    "lowering/*" => "error",
+                    "lowering/unused-argument" => "off")
+            config = Configurations.from_dict(JETLS.DiagnosticCodesConfig, codes_raw)
+            @test config.var"syntax/parse-error" == DiagnosticSeverity.Hint
+            @test config.var"lowering/unused-local" == DiagnosticSeverity.Error
+            @test config.var"lowering/unused-argument" === nothing
+            @test config.var"testrunner/test-failure" == DiagnosticSeverity.Hint
+        end
+
+        let codes_raw = Dict{String,Any}()
+            config = Configurations.from_dict(JETLS.DiagnosticCodesConfig, codes_raw)
+            @test config == JETLS.default_config(JETLS.DiagnosticCodesConfig)
+        end
+
+        let codes_raw = Dict{String,Any}("unexisting/error" => 1)
+            @test_throws JETLS.DiagnosticConfigError Configurations.from_dict(JETLS.DiagnosticCodesConfig, codes_raw)
+        end
+        let codes_raw = Dict{String,Any}("lowering/*" => "invalid")
+            @test_throws JETLS.DiagnosticConfigError Configurations.from_dict(JETLS.DiagnosticCodesConfig, codes_raw)
+        end
+        let codes_raw = Dict{String,Any}("lowering/*" => 5)
+            @test_throws JETLS.DiagnosticConfigError Configurations.from_dict(JETLS.DiagnosticCodesConfig, codes_raw)
+        end
+        let codes_raw = Dict{String,Any}("lowering/*" => Dict("unexisting_key" => "unexisting_value"))
+            @test_throws JETLS.DiagnosticConfigError Configurations.from_dict(JETLS.DiagnosticCodesConfig, codes_raw)
+        end
+        let codes_raw = Dict{String,Any}("unexisting/*" => "warning")
+            @test_throws JETLS.DiagnosticConfigError Configurations.from_dict(JETLS.DiagnosticCodesConfig, codes_raw)
+        end
+    end
+
+    @testset "JETLS.DiagnosticConfig" begin
+        let raw = Dict{String,Any}("codes" =>
+                Dict{String,Any}(
+                    "*" => "hint",
+                    "lowering/*" => "error",
+                    "lowering/unused-argument" => "off"))
+            config = Configurations.from_dict(JETLS.DiagnosticConfig, raw)
+            @test config.enabled === nothing
+            @test config.codes.var"syntax/parse-error" == DiagnosticSeverity.Hint
+            @test config.codes.var"lowering/unused-local" == DiagnosticSeverity.Error
+            @test config.codes.var"lowering/unused-argument" === nothing
+            @test config.codes.var"testrunner/test-failure" == DiagnosticSeverity.Hint
         end
     end
 end

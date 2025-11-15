@@ -1,4 +1,3 @@
-const TESTRUNNER_DIAGNOSTIC_SOURCE = "JETLS - TestRunner"
 
 const TESTRUNNER_RUN_TITLE = "▶ Run"
 const TESTRUNNER_RERUN_TITLE = "▶ Rerun"
@@ -331,7 +330,9 @@ function testrunner_result_to_diagnostics(result::TestRunnerResult)
             range = line_range(diag.line),
             severity = DiagnosticSeverity.Error,
             message = diag.message,
-            source = TESTRUNNER_DIAGNOSTIC_SOURCE,
+            source = DIAGNOSTIC_SOURCE,
+            code = TESTRUNNER_TEST_FAILURE_CODE,
+            codeDescription = diagnostic_code_description(TESTRUNNER_TEST_FAILURE_CODE),
             relatedInformation)
         push!(get!(Vector{Diagnostic}, uri2diagnostics, uri), diagnostic)
     end
