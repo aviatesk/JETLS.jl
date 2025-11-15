@@ -1,7 +1,0 @@
-[deps]
-JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
-LSP = "880dcf91-6fde-4251-87fc-bfd84012291a"
-Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
-
-[compat]
-Test = "1"
