@@ -154,7 +154,7 @@ end
 
 function diagnostic_code_description(code::AbstractString)
     return CodeDescription(;
-        href = uri"https://aviatesk.github.io/JETLS.jl/diagnostics/#diagnostic/$code")
+        href = URI("https://aviatesk.github.io/JETLS.jl/diagnostics/#diagnostic/$code"))
 end
 
 # syntax diagnotics
