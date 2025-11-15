@@ -130,10 +130,8 @@ function apply_diagnostic_config(diagnostic::Diagnostic, manager::ConfigManager)
         return diagnostic
     end
     codes_config = @something diagnostic_config.codes default_config(DiagnosticCodesConfig)
-    code_config = getfield(codes_config, ALL_DIAGNOSTIC_CODES_MAP[code])
-    code_config === nothing && return diagnostic
-    code_config.enabled === false && return nothing
-    severity = @something code_config.severity diagnostic.severity
+    code_severity = getfield(codes_config, ALL_DIAGNOSTIC_CODES_MAP[code])
+    severity = @something code_severity return diagnostic
     if severity == diagnostic.severity
         return diagnostic
     else
