@@ -2,69 +2,60 @@ is_config_file(filepath::AbstractString) =
     basename(filepath) == ".JETLSConfig.toml"
 
 @generated function on_difference(
-    callback,
-    old_config::T,
-    new_config::T,
-    path::NTuple{N,Symbol}=()
-) where {T<:ConfigSection,N}
-    entries = (
+        callback,
+        old_config::T,
+        new_config::T,
+        path::Tuple{Vararg{Symbol}}=()
+    ) where {T<:ConfigSection}
+    entries = Expr[
         :(on_difference(
             callback,
             getfield(old_config, $(QuoteNode(fname))),
             getfield(new_config, $(QuoteNode(fname))),
-            (path..., $(QuoteNode(fname)))
-        ))
-        for fname in fieldnames(T)
-    )
-
+            (path..., $(QuoteNode(fname)))))
+        for fname in fieldnames(T)]
     quote
         $T($(entries...))
     end
 end
 
 @generated function on_difference(
-    callback,
-    old_val::T,
-    new_val::Nothing,
-    path::Tuple
-) where T <: ConfigSection
-    entries = (
+        callback,
+        old_val::T,
+        ::Nothing,
+        path::Tuple{Vararg{Symbol}}
+    ) where T <: ConfigSection
+    entries = Expr[
         :(on_difference(
             callback,
             getfield(old_val, $(QuoteNode(fname))),
             nothing,
-            (path..., $(QuoteNode(fname)))
-        ))
-        for fname in fieldnames(T)
-    )
-
+            (path..., $(QuoteNode(fname)))))
+        for fname in fieldnames(T)]
     quote
         $T($(entries...))
     end
 end
 
 @generated function on_difference(
-    callback,
-    old_val::Nothing,
-    new_val::T,
-    path::Tuple
-) where T <: ConfigSection
-    entries = (
+        callback,
+        ::Nothing,
+        new_val::T,
+        path::Tuple{Vararg{Symbol}}
+    ) where T <: ConfigSection
+    entries = Expr[
         :(on_difference(
             callback,
             nothing,
             getfield(new_val, $(QuoteNode(fname))),
-            (path..., $(QuoteNode(fname)))
-        ))
-        for fname in fieldnames(T)
-    )
-
+            (path..., $(QuoteNode(fname)))))
+        for fname in fieldnames(T)]
     quote
         $T($(entries...))
     end
 end
 
-on_difference(callback, old_val, new_val, path::Tuple) =
+on_difference(callback, old_val, new_val, path::Tuple{Vararg{Symbol}}) =
     old_val !== new_val ? callback(old_val, new_val, path) : old_val
 
 """
