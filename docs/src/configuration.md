@@ -82,15 +82,14 @@ See the [Diagnostic reference](diagnostics.md#Diagnostic-reference) section for
 a complete list of all available diagnostic codes, their default severity
 levels, and detailed explanations with examples.
 
-You can configure diagnostics at two levels:
-1. **Category-level**: Use wildcard patterns like `"lowering/*"` to control all
-   diagnostics in a category
-2. **Code-level**: Specify exact codes like `"lowering/unused-argument"` for
-   fine-grained control
+##### Configuration syntax
 
-Each diagnostic configuration supports:
-- `enabled`: Whether to show this diagnostic (boolean)
-- `severity`: Override the default severity (see below)
+Each diagnostic code is configured by assigning a severity value directly:
+
+```toml
+[diagnostics.codes]
+"diagnostic-code" = "severity-value"
+```
 
 ##### Severity values
 
@@ -100,22 +99,43 @@ JETLS supports four severity levels defined by the [LSP specification](https://m
 - `Information` (`3`): Informational messages about code that may benefit from attention
 - `Hint` (`4`): Suggestions for improvements or best practices
 
-You can specify severity using:
-- Integer: `1` (Error), `2` (Warning), `3` (Information), `4` (Hint)
-- String: `"error"`, `"warning"`, `"information"` or `"info"`, `"hint"`
-  (case-insensitive)
+Additionally, JETLS defines a special severity value `"off"` (or `0`) for disabling
+diagnostics entirely. This is a JETLS-specific extension not defined in the LSP
+specification.
 
-##### Configuration priority
+You can specify severity using either string or integer values (case-insensitive for strings):
+- `"error"` or `1`: Error
+- `"warning"` or `"warn"` or `2`: Warning
+- `"information"` or `"info"` or `3`: Information
+- `"hint"` or `4`: Hint
+- `"off"` or `0`: Disabled
 
-When `diagnostics.enabled` is `false`, all diagnostics are disabled regardless
-of other settings. When `diagnostics.enabled` is `true` (the default), specific
-code settings override category-level settings. For example:
+##### Pattern matching and priority
+
+You can configure diagnostics at three levels, with more specific configurations
+overriding less specific ones:
+
+1. **Specific code** (highest priority): Applies to a single diagnostic (e.g., `"lowering/unused-argument"`)
+2. **Category pattern**: Applies to all diagnostics in a category (e.g., `"lowering/*"`, `"inference/*"`)
+3. **Wildcard (`"*"`)** (lowest priority): Applies to all diagnostics
+
+Example showing priority:
 
 ```toml
 [diagnostics.codes]
-"lowering/*" = { enabled = false }  # Disable all lowering diagnostics
-"lowering/unused-argument" = { enabled = true }  # But enable this specific one
+"*" = "hint"                        # All diagnostics shown as hints
+"lowering/*" = "error"              # Lowering diagnostics shown as errors (overrides "*")
+"lowering/unused-argument" = "off"  # This specific diagnostic disabled (overrides "lowering/*")
 ```
+
+!!! note
+    When [`diagnostics.enabled`](@ref config/diagnostics-enabled) is `false`,
+    all diagnostics are disabled regardless of these settings.
+    Also note that `diagnostics.enabled = false` is equivalent to setting:
+    ```toml
+    [diagnostics.code]
+    "*" = "off"
+    ```
 
 #### `[diagnostics]` configuration examples
 
@@ -125,19 +145,23 @@ enabled = true
 
 [diagnostics.codes]
 # Make all lowering diagnostics warnings
-"lowering/*" = { severity = "warning" }
+"lowering/*" = "warning"
 
 # Disable inference diagnostics entirely
-"inference/*" = { enabled = false }
+"inference/*" = "off"
 
 # Show unused arguments as hints (overrides category setting)
-"lowering/unused-argument" = { severity = "hint" }
+"lowering/unused-argument" = "hint"
 
 # Completely disable unused local variable diagnostics
-"lowering/unused-local" = { enabled = false }
+"lowering/unused-local" = 0
 
 # Use integer severity values
-"syntax/parse-error" = { severity = 1 }  # Error
+"syntax/parse-error" = 1  # Error
+
+# Set baseline for all diagnostics with specific overrides
+"*" = "hint"
+"syntax/*" = "error"
 ```
 
 See the [Configuring diagnostics](@ref) section for additional examples and common use cases.

@@ -356,17 +356,6 @@ function default_executable(formatter::String)
     end
 end
 
-@option struct DiagnosticCodeConfig <: ConfigSection
-    enabled::Maybe{Bool}
-    severity::Maybe{DiagnosticSeverity.Ty}
-end
-
-is_static_setting(::Type{DiagnosticCodeConfig}, ::Symbol) = false
-default_config(::Type{DiagnosticCodeConfig}) = DiagnosticCodeConfig(true, nothing)
-
-Configurations.from_dict(::Type{DiagnosticCodeConfig}, x::AbstractDict{String}) =
-    parse_diagnostic_code_config(x, "")
-
 const DIAGNOSTIC_SOURCE = "JETLS"
 
 const VALID_DIAGNOSTIC_CATEGORIES = Set{String}([
@@ -405,7 +394,7 @@ const ALL_DIAGNOSTIC_CODES_MAP = OrderedCollections.OrderedDict{String,Symbol}(
 
 let fields = Expr[]
     for (_, fname) in ALL_DIAGNOSTIC_CODES_MAP
-        push!(fields, :($fname::Maybe{DiagnosticCodeConfig}))
+        push!(fields, :($fname::Maybe{DiagnosticSeverity.Ty}))
     end
     Core.eval(@__MODULE__, :(@option struct DiagnosticCodesConfig <: ConfigSection
         $(fields...)

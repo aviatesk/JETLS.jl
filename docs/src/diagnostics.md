@@ -39,9 +39,9 @@ How diagnostics are displayed depends on your LSP client (VS Code, Neovim,
 etc.), but most clients use color-coded underlines and gutter markers that
 correspond to these severity levels.
 
-If a specific diagnostic is displayed intrusively in your client,
-you can change the severity through [Configuring diagnostics](@ref)
-(or disable them entirely if you prefer).
+You can change the severity of any diagnostic through [Configuring diagnostics](@ref).
+Additionally, JETLS supports disabling diagnostics entirely using the special
+severity value `"off"` (or `0`).
 
 ## Diagnostic reference
 
@@ -235,18 +235,15 @@ behavior to match your project's coding standards and preferences.
 ##### Quick example
 
 ```toml
-[diagnostics]
-enabled = true
-
 [diagnostics.codes]
 # Make all lowering diagnostics warnings
-"lowering/*" = { severity = "warning" }
+"lowering/*" = "warning"
 
 # Disable inference diagnostics entirely
-"inference/*" = { enabled = false }
+"inference/*" = "off"
 
 # Show unused arguments as hints (overrides category setting)
-"lowering/unused-argument" = { severity = "hint" }
+"lowering/unused-argument" = "hint"
 ```
 
 ##### Common use cases
@@ -255,24 +252,26 @@ Disable unused variable warnings during prototyping:
 
 ```toml
 [diagnostics.codes]
-"lowering/unused-argument" = { enabled = false }
-"lowering/unused-local" = { enabled = false }
+"lowering/unused-argument" = "off"
+"lowering/unused-local" = "off"
 ```
 
 Make inference diagnostics less intrusive:
 
 ```toml
 [diagnostics.codes]
-"inference/*" = { severity = "hint" }
+"inference/*" = "hint"
 ```
 
-Focus only on syntax and lowering errors:
+Set a baseline severity for all diagnostics, with specific overrides:
 
 ```toml
 [diagnostics.codes]
-"lowering/*" = { enabled = false }
+"*" = "hint"
+"syntax/*" = "error"
+"lowering/unused-argument" = "off"
 ```
 
-For complete configuration options, syntax, and more examples, see the
-[diagnostics configuration](@ref config/diagnostics) in the
-[JETLS configuration](@ref) page.
+For complete configuration options, severity values, pattern matching syntax,
+and more examples, see the [`[diagnostics]` configuration](@ref config/diagnostics)
+section in the [JETLS configuration](@ref) page.

@@ -10,17 +10,22 @@ function parse_diagnostic_severity(
         @nospecialize(severity_value), code_or_pattern::AbstractString
     )
     if severity_value isa Int
-        if !(1 ≤ severity_value ≤ 4)
+        if severity_value == 0
+            return nothing
+        elseif 1 ≤ severity_value ≤ 4
+            return severity_value
+        else
             throw(DiagnosticConfigError(
                 lazy"Invalid severity value \"$severity_value\" for diagnostic code \"$code_or_pattern\". " *
-                "Valid integer values are: 1-4"))
+                "Valid integer values are: 0 (off), 1 (error), 2 (warning), 3 (information), 4 (hint)"))
         end
-        return severity_value
     elseif severity_value isa String
         severity_str = lowercase(severity_value)
-        if severity_str == "error"
+        if severity_str == "off"
+            return nothing
+        elseif severity_str == "error"
             return DiagnosticSeverity.Error
-        elseif severity_str == "warning"
+        elseif severity_str == "warning" || severity_str == "warn"
             return DiagnosticSeverity.Warning
         elseif severity_str == "information" || severity_str == "info"
             return DiagnosticSeverity.Information
@@ -29,26 +34,13 @@ function parse_diagnostic_severity(
         else
             throw(DiagnosticConfigError(
                 lazy"Invalid severity value \"$severity_value\" for diagnostic code \"$code_or_pattern\". " *
-                "Valid string values are: \"error\", \"warning\", \"information\"/\"info\", \"hint\""))
+                "Valid string values are: \"off\", \"error\", \"warning\"/\"warn\", \"information\"/\"info\", \"hint\""))
         end
     else
         throw(DiagnosticConfigError(
             lazy"Invalid severity value \"$severity_value\" for diagnostic code \"$code_or_pattern\". " *
-            "Severity must be an integer (1-4) or string"))
+            "Severity must be an integer (0-4) or string"))
     end
-end
-
-function parse_diagnostic_code_config(
-        code_config::AbstractDict{String}, code_or_pattern::AbstractString
-    )
-    parsed_config = copy(code_config)
-    if haskey(parsed_config, "severity")
-        parsed_config["severity"] = parse_diagnostic_severity(
-            parsed_config["severity"], code_or_pattern)
-    end
-    # HACK: This is not public API of Configurations
-    return @invoke Configurations.from_dict(
-        DiagnosticCodeConfig::Type, parsed_config::AbstractDict{String})
 end
 
 function extract_category(code::AbstractString)
@@ -57,10 +49,11 @@ function extract_category(code::AbstractString)
 end
 
 function is_valid_diagnostic_code_key(key::AbstractString)
-    if key ∈ ALL_DIAGNOSTIC_CODES
+    if key == "*"
         return true
-    end
-    if endswith(key, "/*")
+    elseif key ∈ ALL_DIAGNOSTIC_CODES
+        return true
+    elseif endswith(key, "/*")
         category = extract_category(key)
         return category !== nothing && category ∈ VALID_DIAGNOSTIC_CATEGORIES
     end
@@ -69,7 +62,7 @@ end
 
 let all_codes_str = join(string.('`', ALL_DIAGNOSTIC_CODES, '`'), ", ")
     patterns_str = join(string.('`', collect(VALID_DIAGNOSTIC_CATEGORIES), "/*", '`'), ", ")
-    msg = "Diagnostic code must be one of: $all_codes_str, or a category pattern: $patterns_str"
+    msg = "Diagnostic code must be one of: $all_codes_str, a category pattern: $patterns_str, or `*` for all diagnostics"
     global function check_diagnostic_codes_raw(codes_raw::AbstractDict{String})
         for key in keys(codes_raw)
             if !is_valid_diagnostic_code_key(key)
@@ -81,38 +74,36 @@ let all_codes_str = join(string.('`', ALL_DIAGNOSTIC_CODES, '`'), ", ")
 end
 
 function parse_diagnostic_codes_config(codes_raw::AbstractDict{String}, code::String)
+    wildcard_result = category_result = specific_result = missing
+
+    # Check for "*" wildcard (lowest priority)
+    if haskey(codes_raw, "*")
+        wildcard_result = parse_diagnostic_severity(codes_raw["*"], "*")
+    end
+
+    # Check for category pattern (medium priority)
     category = extract_category(code)
     @assert (category === nothing || category in VALID_DIAGNOSTIC_CATEGORIES) "Invalid diagnostic category"
-    pattern_config = category_config = nothing
     if category !== nothing
         pattern = "$category/*"
         if haskey(codes_raw, pattern)
-            pattern_dict = codes_raw[pattern]
-            if !isa(pattern_dict, AbstractDict{String})
-                throw(DiagnosticConfigError(
-                    lazy"Diagnostic code configuration for \"$pattern\" must be AbstractDict{String}"))
-            end
-            category_config = Configurations.from_dict(DiagnosticCodeConfig, pattern_dict)
+            category_result = parse_diagnostic_severity(codes_raw[pattern], pattern)
         end
     end
+
+    # Check for specific code (highest priority)
     if haskey(codes_raw, code)
-        code_dict = codes_raw[code]
-        if !isa(code_dict, AbstractDict{String})
-            throw(DiagnosticConfigError(
-                lazy"Diagnostic code configuration for \"$code\" must be AbstractDict{String}"))
-        end
-        pattern_config = Configurations.from_dict(DiagnosticCodeConfig, code_dict)
+        specific_result = parse_diagnostic_severity(codes_raw[code], code)
     end
-    if category_config !== nothing && pattern_config !== nothing
-        enabled = pattern_config.enabled !== nothing ? pattern_config.enabled :
-                  category_config.enabled !== nothing ? category_config.enabled : nothing
-        severity = pattern_config.severity !== nothing ? pattern_config.severity :
-                   category_config.severity !== nothing ? category_config.severity : nothing
-        return DiagnosticCodeConfig(enabled, severity)
-    elseif pattern_config !== nothing
-        return pattern_config
-    elseif category_config !== nothing
-        return category_config
+
+    # Merge with priority: specific > category > wildcard
+    # Return the highest priority result that was actually set
+    if specific_result !== missing
+        return specific_result
+    elseif category_result !== missing
+        return category_result
+    elseif wildcard_result !== missing
+        return wildcard_result
     else
         return nothing
     end
