@@ -10,9 +10,7 @@ function parse_diagnostic_severity(
         @nospecialize(severity_value), code_or_pattern::AbstractString
     )
     if severity_value isa Int
-        if severity_value == 0
-            return nothing
-        elseif 1 ≤ severity_value ≤ 4
+        if 0 ≤ severity_value ≤ 4
             return severity_value
         else
             throw(DiagnosticConfigError(
@@ -22,7 +20,7 @@ function parse_diagnostic_severity(
     elseif severity_value isa String
         severity_str = lowercase(severity_value)
         if severity_str == "off"
-            return nothing
+            return 0 # special severity value
         elseif severity_str == "error"
             return DiagnosticSeverity.Error
         elseif severity_str == "warning" || severity_str == "warn"
@@ -74,7 +72,7 @@ let all_codes_str = join(string.('`', ALL_DIAGNOSTIC_CODES, '`'), ", ")
 end
 
 function parse_diagnostic_codes_config(codes_raw::AbstractDict{String}, code::String)
-    wildcard_result = category_result = specific_result = missing
+    wildcard_result = category_result = specific_result = nothing
 
     # Check for "*" wildcard (lowest priority)
     if haskey(codes_raw, "*")
@@ -98,21 +96,18 @@ function parse_diagnostic_codes_config(codes_raw::AbstractDict{String}, code::St
 
     # Merge with priority: specific > category > wildcard
     # Return the highest priority result that was actually set
-    if specific_result !== missing
+    if specific_result !== nothing
         return specific_result
-    elseif category_result !== missing
+    elseif category_result !== nothing
         return category_result
-    elseif wildcard_result !== missing
+    elseif wildcard_result !== nothing
         return wildcard_result
     else
         return nothing
     end
 end
 
-function apply_diagnostic_config(diagnostic::Diagnostic, manager::ConfigManager)
-    settings = get_settings(load(manager))
-    diagnostic_config = @something settings.diagnostics default_config(DiagnosticConfig)
-    diagnostic_config.enabled === false && return nothing
+function _apply_diagnostic_config(diagnostic::Diagnostic, diagnostic_config::DiagnosticConfig)
     code = diagnostic.code
     if !(code isa String)
         if JETLS_DEV_MODE
@@ -130,23 +125,34 @@ function apply_diagnostic_config(diagnostic::Diagnostic, manager::ConfigManager)
         return diagnostic
     end
     codes_config = @something diagnostic_config.codes default_config(DiagnosticCodesConfig)
-    code_severity = getfield(codes_config, ALL_DIAGNOSTIC_CODES_MAP[code])
-    severity = @something code_severity return diagnostic
-    if severity == diagnostic.severity
-        return diagnostic
+    severity = @something getfield(codes_config, ALL_DIAGNOSTIC_CODES_MAP[code]) return diagnostic
+    if severity == 0 # special severity value
+        return missing
+    elseif severity == diagnostic.severity
+        return nothing
     else
         return Diagnostic(diagnostic; severity)
     end
 end
 
 function apply_diagnostic_config!(diagnostics::Vector{Diagnostic}, manager::ConfigManager)
-    result = Diagnostic[]
-    for diagnostic in diagnostics
-        applied = apply_diagnostic_config(diagnostic, manager)
-        applied === nothing || push!(result, applied)
+    settings = get_settings(load(manager))
+    diagnostic_config = @something settings.diagnostics default_config(DiagnosticConfig)
+    if diagnostic_config.enabled === false
+        return empty!(diagnostics)
     end
-    empty!(diagnostics)
-    append!(diagnostics, result)
+    i = 1
+    while i <= length(diagnostics)
+        applied = _apply_diagnostic_config(diagnostics[i], diagnostic_config)
+        if applied === missing
+            deleteat!(diagnostics, i)
+            continue
+        end
+        if applied !== nothing
+            diagnostics[i] = applied # changed
+        end
+        i += 1
+    end
     return diagnostics
 end
 

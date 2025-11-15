@@ -197,6 +197,17 @@ end
 
 using JETLS.Configurations: Configurations
 
+function make_test_diagnostic(; code::String, severity::DiagnosticSeverity.Ty)
+    return Diagnostic(;
+        range = Range(; start = Position(; line=0, character=0),
+            var"end" = Position(; line=0, character=10)),
+        severity,
+        message = "Test diagnostic",
+        source = JETLS.DIAGNOSTIC_SOURCE,
+        code,
+        codeDescription = JETLS.diagnostic_code_description(code))
+end
+
 @testset "diagnostic configuration" begin
     @testset "JETLS.DiagnosticCodesConfig" begin
         let codes_raw = Dict{String,Any}("lowering/unused-argument" => 1)
@@ -214,7 +225,7 @@ using JETLS.Configurations: Configurations
                     "lowering/*" => 0,
                     "lowering/unused-argument" => "warning")
             config = Configurations.from_dict(JETLS.DiagnosticCodesConfig, codes_raw)
-            @test config.var"lowering/unused-local" === nothing
+            @test config.var"lowering/unused-local" == 0
             @test config.var"lowering/unused-argument" == DiagnosticSeverity.Warning
         end
 
@@ -233,7 +244,7 @@ using JETLS.Configurations: Configurations
             config = Configurations.from_dict(JETLS.DiagnosticCodesConfig, codes_raw)
             @test config.var"syntax/parse-error" == DiagnosticSeverity.Hint
             @test config.var"lowering/unused-local" == DiagnosticSeverity.Error
-            @test config.var"lowering/unused-argument" === nothing
+            @test config.var"lowering/unused-argument" == 0
             @test config.var"testrunner/test-failure" == DiagnosticSeverity.Hint
         end
 
@@ -269,9 +280,61 @@ using JETLS.Configurations: Configurations
             @test config.enabled === nothing
             @test config.codes.var"syntax/parse-error" == DiagnosticSeverity.Hint
             @test config.codes.var"lowering/unused-local" == DiagnosticSeverity.Error
-            @test config.codes.var"lowering/unused-argument" === nothing
+            @test config.codes.var"lowering/unused-argument" == 0
             @test config.codes.var"testrunner/test-failure" == DiagnosticSeverity.Hint
         end
+    end
+
+    @testset "apply_diagnostic_config!" begin
+        diagnostics = [
+            make_test_diagnostic(;
+                code = JETLS.LOWERING_UNUSED_ARGUMENT_CODE,
+                severity = DiagnosticSeverity.Information),
+            make_test_diagnostic(;
+                code = JETLS.LOWERING_UNUSED_LOCAL_CODE,
+                severity = DiagnosticSeverity.Information),
+            make_test_diagnostic(;
+                code = JETLS.SYNTAX_DIAGNOSTIC_CODE,
+                severity = DiagnosticSeverity.Error),
+            make_test_diagnostic(;
+                code = JETLS.TOPLEVEL_ERROR_CODE,
+                severity = DiagnosticSeverity.Error),
+            make_test_diagnostic(;
+                code = JETLS.INFERENCE_UNDEF_GLOBAL_VAR_CODE,
+                severity = DiagnosticSeverity.Error)
+        ]
+        config_dict = Dict{String,Any}(
+            "diagnostics" => Dict{String,Any}(
+                "codes" => Dict{String,Any}(
+                    "*" => "hint",
+                    "lowering/*" => "warning",
+                    "lowering/unused-argument" => "off",
+                    "inference/*" => "info")))
+        manager = let
+            lsp_config = JETLS.Configurations.from_dict(JETLS.JETLSConfig, config_dict)
+            data = JETLS.ConfigManagerData(JETLS.DEFAULT_CONFIG, JETLS.EMPTY_CONFIG, lsp_config, nothing)
+            JETLS.ConfigManager(data)
+        end
+        JETLS.apply_diagnostic_config!(diagnostics, manager)
+
+        @test length(diagnostics) == 4
+        let idx = findfirst(d -> d.code == JETLS.LOWERING_UNUSED_LOCAL_CODE, diagnostics)
+            @test idx !== nothing
+            @test diagnostics[idx].severity == DiagnosticSeverity.Warning
+        end
+        let idx = findfirst(d -> d.code == JETLS.SYNTAX_DIAGNOSTIC_CODE, diagnostics)
+            @test idx !== nothing
+            @test diagnostics[idx].severity == DiagnosticSeverity.Hint
+        end
+        let idx = findfirst(d -> d.code == JETLS.TOPLEVEL_ERROR_CODE, diagnostics)
+            @test idx !== nothing
+            @test diagnostics[idx].severity == DiagnosticSeverity.Hint
+        end
+        let idx = findfirst(d -> d.code == JETLS.INFERENCE_UNDEF_GLOBAL_VAR_CODE, diagnostics)
+            @test idx !== nothing
+            @test diagnostics[idx].severity == DiagnosticSeverity.Information
+        end
+        @test findfirst(d -> d.code == JETLS.LOWERING_UNUSED_ARGUMENT_CODE, diagnostics) === nothing
     end
 end
 
