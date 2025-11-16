@@ -628,7 +628,7 @@ function read_testrunner_result(
     cancelled && return "Test execution cancelled by user"
 
     result = try
-        LSP.JSON3.read(output, TestRunnerResult)
+        LSP.JSON.parse(output, TestRunnerResult)
     catch err
         if process_success
             parse_error = sprint(locked_showerror, err, catch_backtrace())

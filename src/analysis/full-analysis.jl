@@ -1931,7 +1931,7 @@ function handle_instantiation_prompt_response(
     accepted = if handle_response_error(server, msg, "confirm environment instantiation")
         false
     else
-        result isa Dict && get(result, "title", "") == INSTANTIATE_ACTION_TITLE
+        result isa AbstractDict && get(result, "title", "") == INSTANTIATE_ACTION_TITLE
     end
     prompts = server.state.analysis_manager.instantiation_prompts
     waiters = store!(prompts) do d
@@ -1957,7 +1957,7 @@ function handle_instantiation_prompt_response(
         send_progress(server, caller.progress_token, WorkDoneProgressEnd(; message))
     end
     if waiters === nothing
-        if !haskey(msg, :error) && result isa Dict && get(result, "title", nothing) in
+        if !haskey(msg, :error) && result isa AbstractDict && get(result, "title", nothing) in
                 (INSTANTIATE_ACTION_TITLE, SKIP_INSTANTIATION_ACTION_TITLE)
             show_info_message(server,
                 """

@@ -1,12 +1,31 @@
 module LSP
 
-using StructTypes: StructTypes
+using StructUtils: StructUtils
+using JSON: JSON
+
+using Preferences: Preferences
+const LSP_DEV_MODE = Preferences.@load_preference("LSP_DEV_MODE", false)
 
 include("URIs2/URIs2.jl")
 using ..URIs2: URI
 
 const exports = Set{Symbol}()
+
 const method_dispatcher = Dict{String,DataType}()
+
+# NOTE `Null` and `URI` are referenced directly from interface.jl, so it should be defined before that.
+
+"""
+A special object representing `null` value.
+When used as a field that might be omitted in the serialized JSON (i.e. the field can be `nothing`),
+the key-value pair appears as `null` instead of being omitted.
+This special object is specifically intended for use in `ResponseMessage`.
+"""
+StructUtils.@nonstruct struct Null end
+const null = Null()
+Base.show(io::IO, ::Null) = print(io, "null")
+StructUtils.lower(::Null) = JSON.Null()
+push!(exports, :Null, :null)
 
 include("DSL/interface.jl")
 include("DSL/namespace.jl")

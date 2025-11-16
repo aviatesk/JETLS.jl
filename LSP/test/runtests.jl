@@ -35,7 +35,7 @@ end # module ExternalInterfaceTest
             "result": null
         }""", DefinitionResponse) do res
         @test res isa DefinitionResponse
-        @test_broken res.result === null # this null should be preserved through the roundtrip
+        @test res.result === null # this null should be preserved through the roundtrip
     end
     test_roundtrip("""{
             "jsonrpc": "2.0",
