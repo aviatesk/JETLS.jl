@@ -62,7 +62,9 @@ function handle_InitializeRequest(
         end
     end
 
-    fix_static_settings!(state.config_manager)
+    # In a case when client doesn't support the pull model configuration,
+    # use `init_params.initializationOptions` as the fallback
+    load_lsp_config!(server, init_params.initializationOptions, "[LSP] initialize"; on_init=true)
 
     start_analysis_workers!(server)
 
@@ -418,9 +420,6 @@ function handle_InitializedNotification(server::Server)
     end
 
     register(server, registrations)
-
-    # `!notify`: Don't notify even if values different from defaults are loaded initially
-    load_lsp_config!(server, "[LSP] workspace/configuration"; notify=false)
 
     JETLS_DEV_MODE && show_setup_info("Initialized JETLS with the following setup:")
 end

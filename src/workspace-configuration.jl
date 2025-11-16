@@ -1,7 +1,7 @@
 struct LoadLSPConfigHandler
     server::Server
     source::String
-    notify::Bool
+    on_init::Bool
 end
 
 function (handler::LoadLSPConfigHandler)(server::Server, @nospecialize(config_value))
@@ -11,7 +11,10 @@ function (handler::LoadLSPConfigHandler)(server::Server, @nospecialize(config_va
     else
         store_lsp_config!(tracker, server, config_value, handler.source)
     end
-    if handler.notify
+    if handler.on_init
+        # Don't notify even if values different from defaults are loaded initially
+        fix_static_settings!(server.state.config_manager)
+    else
         notify_config_changes(handler.server, tracker, handler.source)
         if tracker.diagnostic_setting_changed
             notify_diagnostics!(server)
@@ -53,11 +56,10 @@ function handle_workspace_configuration_response(
     end
 end
 
-function load_lsp_config!(server::Server, source::AbstractString; notify::Bool=true)
-    supports(server, :workspace, :configuration) || return false
-    handler = LoadLSPConfigHandler(server, source, notify)
+function load_lsp_config!(server::Server, source::AbstractString; on_init::Bool=false)
+    handler = LoadLSPConfigHandler(server, source, on_init)
     request_workspace_configuration(handler, server, nothing)
-    return true
+    nothing
 end
 
 unmatched_keys_in_lsp_config_msg(unmatched_keys) =
@@ -102,18 +104,32 @@ function delete_lsp_config!(tracker::ConfigChangeTracker, server::Server)
     end
 end
 
-function handle_DidChangeConfigurationNotification(server::Server, msg::DidChangeConfigurationNotification)
-    source = "[LSP] workspace/didChangeConfiguration"
-    if !load_lsp_config!(server, source)
-        # If the client doesn't support the pull model configuration,
-        # use `msg.params.settings` as the fallback
+function load_lsp_config!(
+        server::Server, @nospecialize(settings), source::AbstractString;
+        on_init::Bool = false
+    )
+    if supports(server, :workspace, :configuration)
+        load_lsp_config!(server, source; on_init)
+    else
         tracker = ConfigChangeTracker()
-        store_lsp_config!(tracker, server, msg.params.settings, source)
-        notify_config_changes(server, tracker, source)
-        if tracker.diagnostic_setting_changed
-            notify_diagnostics!(server)
+        store_lsp_config!(tracker, server, settings, source)
+        if on_init
+            # Don't notify even if values different from defaults are loaded initially
+            fix_static_settings!(server.state.config_manager)
+        else
+            notify_config_changes(server, tracker, source)
+            if tracker.diagnostic_setting_changed
+                notify_diagnostics!(server)
+            end
         end
     end
+end
+
+function handle_DidChangeConfigurationNotification(server::Server, msg::DidChangeConfigurationNotification)
+    source = "[LSP] workspace/didChangeConfiguration"
+    # In a case when client doesn't support the pull model configuration,
+    # use `msg.params.settings` as the fallback
+    load_lsp_config!(server, msg.params.settings, source)
 end
 
 function did_change_configuration_registration()
