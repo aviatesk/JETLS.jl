@@ -1,8 +1,8 @@
 function test_roundtrip(f, s::AbstractString, Typ)
-    x = JSON3.read(s, Typ)
+    x = JSON.parse(s, Typ)
     f(x)
     s′ = to_lsp_json(x)
-    x′ = JSON3.read(s′, Typ)
+    x′ = JSON.parse(s′, Typ)
     f(x′)
 end
 
