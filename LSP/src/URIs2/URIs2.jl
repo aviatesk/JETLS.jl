@@ -7,7 +7,7 @@ module URIs2
 
 export URI, uri2filename, uri2filepath, filename2uri, filepath2uri, @uri_str
 
-using StructTypes: StructTypes
+using StructUtils: StructUtils
 
 include("vendored_from_uris.jl")
 
@@ -22,7 +22,7 @@ Details of a Unified Resource Identifier.
  - query::Union{Nothing, String}
  - fragment::Union{Nothing, String}
 """
-struct URI
+StructUtils.@nonstruct struct URI
     scheme::Union{String,Nothing}
     authority::Union{String,Nothing}
     path::String
@@ -72,10 +72,9 @@ else
     end
 end
 
-Base.convert(::Type{URI}, s::AbstractString) = URI(s)
-
-# This overload requires `URI(::AbstractString)` as well, which is defined later
-StructTypes.StructType(::Type{URI}) = StructTypes.StringType()
+# Tell StructUtils how to serialize/deserialize URI as a string
+StructUtils.lower(uri::URI) = string(uri)
+StructUtils.lift(::Type{URI}, s::String) = URI(s)
 
 function percent_decode(str::AbstractString)
     return unescapeuri(str)
