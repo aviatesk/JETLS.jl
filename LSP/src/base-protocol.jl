@@ -1,18 +1,6 @@
 # Base types
 # =========
 
-"""
-A special object representing `null` value.
-When used as a field specified as `StructTypes.omitempties`, the key-value pair is not
-omitted in the serialized JSON but instead appears as `null`.
-This special object is specifically intended for use in `ResponseMessage`.
-"""
-struct Null end
-const null = Null()
-StructTypes.StructType(::Type{Null}) = StructTypes.CustomStruct()
-StructTypes.lower(::Null) = nothing
-push!(exports, :Null, :null)
-
 const boolean = Bool
 const string = String
 
