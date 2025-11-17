@@ -69,7 +69,9 @@ function store_lsp_config!(tracker::ConfigChangeTracker, server::Server, @nospec
     if config_value isa AbstractDict{String}
         config_dict = config_value
     else
-        show_error_message(server, lazy"Unexpected config data of type $(typeof(config_value)) was passed from $source, deleting LSP configuration")
+        if config_value !== nothing
+            show_error_message(server, lazy"Unexpected config data of type $(typeof(config_value)) was passed from $source, deleting LSP configuration")
+        end
         return delete_lsp_config!(tracker, server)
     end
     store!(server.state.config_manager) do old_data::ConfigManagerData

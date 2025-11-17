@@ -120,11 +120,11 @@ function request_cancelled_error(message::AbstractString="Request was cancelled"
 end
 
 """
-    show_error_message(server::Server, message::String)
+    show_error_message(server::Server, message::AbstractString)
 
 Send an error notification to the client using window/showMessage.
 """
-function show_error_message(server::Server, message::String)
+function show_error_message(server::Server, message::AbstractString)
     send(server, ShowMessageNotification(;
         params = ShowMessageParams(;
             type = MessageType.Error,
@@ -132,11 +132,11 @@ function show_error_message(server::Server, message::String)
 end
 
 """
-    show_info_message(server::Server, message::String)
+    show_info_message(server::Server, message::AbstractString)
 
 Send an info notification to the client using window/showMessage.
 """
-function show_info_message(server::Server, message::String)
+function show_info_message(server::Server, message::AbstractString)
     send(server, ShowMessageNotification(;
         params = ShowMessageParams(;
             type = MessageType.Info,
@@ -144,11 +144,11 @@ function show_info_message(server::Server, message::String)
 end
 
 """
-    show_warning_message(server::Server, message::String)
+    show_warning_message(server::Server, message::AbstractString)
 
 Send a warning notification to the client using window/showMessage.
 """
-function show_warning_message(server::Server, message::String)
+function show_warning_message(server::Server, message::AbstractString)
     send(server, ShowMessageNotification(;
         params = ShowMessageParams(;
             type = MessageType.Warning,
@@ -156,12 +156,12 @@ function show_warning_message(server::Server, message::String)
 end
 
 """
-    show_log_message(server::Server, message::String)
+    show_log_message(server::Server, message::AbstractString)
 
 Send a log message to the client using window/logMessage.
 This appears in the client's output channel rather than as a popup.
 """
-function show_log_message(server::Server, message::String)
+function show_log_message(server::Server, message::AbstractString)
     send(server, LogMessageNotification(;
         params = LogMessageParams(;
             type = MessageType.Log,
@@ -169,13 +169,13 @@ function show_log_message(server::Server, message::String)
 end
 
 """
-    show_debug_message(server::Server, message::String)
+    show_debug_message(server::Server, message::AbstractString)
 
 Send a debug message to the client using window/logMessage.
 This appears in the client's output channel and is typically only shown
 when the client is in debug/verbose mode.
 """
-function show_debug_message(server::Server, message::String)
+function show_debug_message(server::Server, message::AbstractString)
     send(server, LogMessageNotification(;
         params = LogMessageParams(;
             type = MessageType.Debug,
