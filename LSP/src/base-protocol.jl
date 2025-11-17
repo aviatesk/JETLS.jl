@@ -1,17 +1,6 @@
 # Base types
 # =========
 
-"""
-A special object representing `null` value.
-When used as a field that might be omitted in the serialized JSON (i.e. the field can be `nothing`),
-the key-value pair appears as `null` instead of being omitted.
-This special object is specifically intended for use in `ResponseMessage`.
-"""
-struct Null end
-const null = Null()
-StructUtils.lower(::Null) = JSON.Null()
-push!(exports, :Null, :null)
-
 const boolean = Bool
 const string = String
 

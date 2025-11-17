@@ -234,7 +234,6 @@ end
 export CompletionData
 
 @interface CompletionItem begin
-
     """
     The label of this completion item.
 

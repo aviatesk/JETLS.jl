@@ -63,7 +63,7 @@ function readmsg(io::IO, method_dispatcher)
     lazyjson = JSON.lazy(msg_str)
     if hasproperty(lazyjson, :method)
         method = lazyjson.method[]
-        if haskey(method_dispatcher, method)
+        if method isa String && haskey(method_dispatcher, method)
             return JSON.parse(lazyjson, method_dispatcher[method])
         end
         return JSON.parse(lazyjson, Dict{Symbol,Any})

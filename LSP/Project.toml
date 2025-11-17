@@ -8,8 +8,12 @@ projects = ["test"]
 
 [deps]
 JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
+PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
+Preferences = "21216c6a-2e73-6563-6e65-726566657250"
 StructUtils = "ec057cc2-7a8d-4b58-b3b3-92acb9f63b42"
 
 [compat]
 JSON = "1.3"
+PrecompileTools = "1.3.3"
+Preferences = "1.5.0"
 StructUtils = "2.6.0"

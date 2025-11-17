@@ -1,24 +1,193 @@
 using LSP
+using LSP.URIs2
+using LSP: readlsp, writelsp, test_roundtrip
 using JSON
 using Test
 
-function readlsp(msg_str::AbstractString)
-    lazyjson = JSON.lazy(msg_str)
-    if hasproperty(lazyjson, :method)
-        method = lazyjson.method[]
-        if haskey(LSP.method_dispatcher, method)
-            return JSON.parse(lazyjson, LSP.method_dispatcher[method])
-        end
-        return JSON.parse(lazyjson, Dict{Symbol,Any})
-    else # TODO parse to ResponseMessage?
-        return JSON.parse(lazyjson, Dict{Symbol,Any})
-    end
+@test_throws ErrorException LSP.@interface Invalid begin
+    x::Union{Dict{String,Int},Dict{Symbol,Int}}
 end
 
-writelsp(x) = JSON.json(x; omit_null=true)
-
 @testset "LSP" begin
-    @test isempty(JSON.parse(writelsp(ClientCapabilities())))
+    # De/serializing complex LSP objects
+    uri = filename2uri(@__FILE__)
+
+    test_roundtrip("""{
+            "jsonrpc": "2.0",
+            "id": 0,
+            "result": null
+        }""", DefinitionResponse) do res
+        @test res isa DefinitionResponse
+        @test res.result === null # this null should be preserved through the roundtrip
+    end
+    test_roundtrip("""{
+            "jsonrpc": "2.0",
+            "id": 0,
+            "result": {
+                "uri": "$uri",
+                "range": {
+                    "start": {
+                        "line": 0,
+                        "character": 0
+                    },
+                    "end": {
+                        "line": 0,
+                        "character": 5
+                    }
+                }
+            }
+        }""", DefinitionResponse) do res
+        @test res isa DefinitionResponse
+        @test res.result isa Location
+    end
+    test_roundtrip("""{
+            "jsonrpc": "2.0",
+            "id": 0,
+            "result": [{
+                "uri": "$uri",
+                "range": {
+                    "start": {
+                        "line": 0,
+                        "character": 0
+                    },
+                    "end": {
+                        "line": 0,
+                        "character": 5
+                    }
+                }
+            }]
+        }""", DefinitionResponse) do res
+        @test res isa DefinitionResponse
+        @test res.result isa Vector{Location}
+    end
+    test_roundtrip("""{
+            "jsonrpc": "2.0",
+            "id": 0,
+            "result": [{
+                "targetUri": "$uri",
+                "targetRange": {
+                    "start": {
+                        "line": 0,
+                        "character": 0
+                    },
+                    "end": {
+                        "line": 0,
+                        "character": 5
+                    }
+                },
+                "targetSelectionRange": {
+                    "start": {
+                        "line": 0,
+                        "character": 0
+                    },
+                    "end": {
+                        "line": 0,
+                        "character": 5
+                    }
+                }
+            }]
+        }""", DefinitionResponse) do res
+        @test res isa DefinitionResponse
+        @test res.result isa Vector{LocationLink}
+    end
+    test_roundtrip("""{
+            "jsonrpc": "2.0",
+            "id": 0,
+            "error": {
+                "code": $(ErrorCodes.InvalidRequest),
+                "message": "Test message"
+            }
+        }""", DefinitionResponse) do res
+        @test res isa DefinitionResponse
+        @test res.result === nothing
+        @test res.error isa ResponseError
+    end
+
+    test_roundtrip("""{
+            "jsonrpc": "2.0",
+            "id": 0,
+            "method": "completionItem/resolve",
+            "params": {
+                "label": "label",
+                "textEdit": {
+                    "range": {
+                        "start": {
+                            "line": 0,
+                            "character": 0
+                        },
+                        "end": {
+                            "line": 0,
+                            "character": 0
+                        }
+                    },
+                    "newText": "newText"
+                }
+            }
+        }""", CompletionResolveRequest) do req
+        @test req isa CompletionResolveRequest
+        @test req.params.textEdit isa TextEdit
+    end
+    test_roundtrip("""{
+            "jsonrpc": "2.0",
+            "id": 0,
+            "method": "completionItem/resolve",
+            "params": {
+                "label": "label",
+                "textEdit": {
+                    "newText": "newText",
+                    "insert": {
+                        "start": {
+                            "line": 0,
+                            "character": 0
+                        },
+                        "end": {
+                            "line": 0,
+                            "character": 0
+                        }
+                    },
+                    "replace": {
+                        "start": {
+                            "line": 0,
+                            "character": 0
+                        },
+                        "end": {
+                            "line": 0,
+                            "character": 6
+                        }
+                    }
+                }
+            }
+        }""", CompletionResolveRequest) do req
+        @test req isa CompletionResolveRequest
+        @test req.params.textEdit isa InsertReplaceEdit
+    end
+    test_roundtrip("""{
+            "jsonrpc": "2.0",
+            "id": 0,
+            "method": "completionItem/resolve",
+            "params": {
+                "label": "label",
+                "documentation": "documentation"
+            }
+        }""", CompletionResolveRequest) do req
+        @test req isa CompletionResolveRequest
+        @test req.params.documentation isa String
+    end
+    test_roundtrip("""{
+            "jsonrpc": "2.0",
+            "id": 0,
+            "method": "completionItem/resolve",
+            "params": {
+                "label": "label",
+                "documentation": {
+                    "kind": "markdown",
+                    "value": "value"
+                }
+            }
+        }""", CompletionResolveRequest) do req
+        @test req isa CompletionResolveRequest
+        @test req.params.documentation isa MarkupContent
+    end
 
     let init_req_s = """
         {

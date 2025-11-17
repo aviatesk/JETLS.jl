@@ -6,3 +6,4 @@ Manifest-*.toml
 **/.JETLSConfig.toml
 *.vsix
 docs/build/
+LocalPreference.toml
