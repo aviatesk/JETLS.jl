@@ -3,7 +3,6 @@ using Pkg
 using JETLS
 using JETLS.LSP
 using JETLS.URIs2
-using JETLS: JSONRPC
 
 using JETLS: get_text_and_positions
 
@@ -26,7 +25,7 @@ function withserver(f;
     out = Base.BufferStream()
     received_queue = Channel{Any}(Inf)
     sent_queue = Channel{Any}(Inf)
-    server = Server(LSEndpoint(in, out)) do s::Symbol, x
+    server = Server(Endpoint(in, out)) do s::Symbol, x
         @nospecialize x
         if s === :received
             put!(received_queue, x)
@@ -77,19 +76,19 @@ function withserver(f;
     """
     function writereadmsg(@nospecialize(msg); read::Int=1)
         @assert read ≥ 0 "`read::Int` must not be negative"
-        JSONRPC.writemsg(in, msg)
+        LSP.writelsp(in, msg)
         raw_msg = take_with_timeout!(received_queue)
         raw_res = json_res = nothing
         if read == 0
         elseif read == 1
             raw_res = take_with_timeout!(sent_queue)
-            json_res = JSONRPC.readmsg(out, method_dispatcher)
+            json_res = LSP.readlsp(out)
         else
             raw_res = Any[]
             json_res = Any[]
             for _ = 1:read
                 push!(raw_res, take_with_timeout!(sent_queue))
-                push!(json_res, JSONRPC.readmsg(out, method_dispatcher))
+                push!(json_res, LSP.readlsp(out))
             end
         end
         @test isempty(received_queue) && isempty(sent_queue)
@@ -119,13 +118,13 @@ function withserver(f;
         if read == 0
         elseif read == 1
             raw_msg = take_with_timeout!(sent_queue)
-            json_msg = JSONRPC.readmsg(out, method_dispatcher)
+            json_msg = LSP.readlsp(out)
         else
             raw_msg = Any[]
             json_msg = Any[]
             for _ = 1:read
                 push!(raw_msg, take_with_timeout!(sent_queue))
-                push!(json_msg, JSONRPC.readmsg(out, method_dispatcher))
+                push!(json_msg, LSP.readlsp(out))
             end
         end
         @test isempty(received_queue) && isempty(sent_queue)
@@ -168,7 +167,7 @@ function withserver(f;
             end
             writereadmsg(ExitNotification(); read=0)
             result = fetch(t)
-            @test result isa @NamedTuple{exit_code::Int, endpoint::JETLS.JSONRPC.Endpoint}
+            @test result isa @NamedTuple{exit_code::Int, endpoint::JETLS.LSP.Endpoint}
             @test result.exit_code == 0
             @test !result.endpoint.isopen
         finally

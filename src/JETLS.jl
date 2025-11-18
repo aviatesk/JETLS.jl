@@ -1,6 +1,6 @@
 module JETLS
 
-export Server, LSEndpoint, runserver
+export Server, Endpoint, runserver
 
 const __init__hooks__ = Any[]
 push_init_hooks!(hook) = push!(__init__hooks__, hook)
@@ -20,11 +20,9 @@ push_init_hooks!() do
 end
 
 using LSP
+using LSP: LSP
 using LSP.URIs2
-
-using JSONRPC: JSONRPC, Endpoint
-# constructor of `Endpoint` with LSP method dispatcher
-LSEndpoint(args...) = Endpoint(args..., method_dispatcher)
+using LSP.Communication: Endpoint
 
 using Pkg
 using JET: CC, JET
@@ -148,7 +146,7 @@ allowing the caller side to safely `exit` this Julia process.
 const self_shutdown_token = SelfShutdownNotification()
 
 runserver(args...; kwargs...) = runserver(Returns(nothing), args...; kwargs...) # no callback specified
-runserver(callback, in::IO, out::IO; kwargs...) = runserver(callback, LSEndpoint(in, out); kwargs...)
+runserver(callback, in::IO, out::IO; kwargs...) = runserver(callback, Endpoint(in, out); kwargs...)
 runserver(callback, endpoint::Endpoint; kwargs...) = runserver(Server(callback, endpoint); kwargs...)
 function runserver(server::Server; client_process_id::Union{Nothing,Int}=nothing)
     shutdown_requested = false

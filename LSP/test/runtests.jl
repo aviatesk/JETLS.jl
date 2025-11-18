@@ -1,6 +1,6 @@
 using LSP
 using LSP.URIs2
-using LSP: readlsp, writelsp, test_roundtrip
+using LSP: to_lsp_object, to_lsp_json, test_roundtrip
 using JSON
 using Test
 
@@ -189,7 +189,7 @@ end
         @test req.params.documentation isa MarkupContent
     end
 
-    let init_req_s = """
+    test_roundtrip("""
         {
             "jsonrpc": "2.0",
             "id": 0,
@@ -204,8 +204,7 @@ end
                 "workspaceFolders": []
             }
         }
-        """
-        init_req = readlsp(init_req_s)
+        """) do init_req
         @test init_req isa InitializeRequest
         @test init_req.jsonrpc == "2.0"
         @test init_req.id == 0
@@ -215,11 +214,6 @@ end
         @test init_req.params.clientInfo.version == "1.0"
         @test init_req.params.capabilities == ClientCapabilities()
         @test init_req.params.workspaceFolders isa Vector{WorkspaceFolder} && isempty(init_req.params.workspaceFolders)
-
-        init_req_s′ = writelsp(init_req)
-        init_req′ = readlsp(init_req_s′)
-        @test init_req′ isa InitializeRequest
-        @test init_req′.params.workspaceFolders isa Vector{WorkspaceFolder} && isempty(init_req.params.workspaceFolders)
     end
 
     # ResponseMessage should omit the `error` field on success, and omit `result` an error
@@ -227,7 +221,7 @@ end
         success_res = ResponseMessage(;
             id = "id",
             result = null)
-        success_res_s = writelsp(success_res)
+        success_res_s = to_lsp_json(success_res)
         @test occursin("\"result\"", success_res_s) && occursin("null", success_res_s)
         @test !occursin("\"error\"", success_res_s)
     end
@@ -239,7 +233,7 @@ end
                 code = ErrorCodes.RequestFailed,
                 message = "test message",
                 data = :test_data))
-        error_res_s = writelsp(error_res)
+        error_res_s = to_lsp_json(error_res)
         @test !occursin("\"result\"", error_res_s)
         @test occursin("\"error\"", error_res_s)
     end

@@ -10,6 +10,7 @@ include("URIs2/URIs2.jl")
 using ..URIs2: URI
 
 const exports = Set{Symbol}()
+
 const method_dispatcher = Dict{String,DataType}()
 
 # NOTE `Null` and `URI` are referenced directly from interface.jl, so it should be defined before that.
@@ -58,13 +59,16 @@ include("workspace-features/apply-edit.jl")
 include("window-features.jl")
 include("lifecycle-messages/initialize.jl")
 
+include("communication.jl")
+module Communication
+    using ..LSP: Endpoint, send
+    export Endpoint, send
+end
+
+include("precompile.jl")
+
 for name in exports
     Core.eval(@__MODULE__, Expr(:export, name))
 end
-
-export
-    method_dispatcher
-
-include("precompile.jl")
 
 end # module LSP

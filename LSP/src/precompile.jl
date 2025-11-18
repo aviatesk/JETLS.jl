@@ -1,22 +1,16 @@
-function readlsp(msg_str::AbstractString)
-    lazyjson = JSON.lazy(msg_str)
-    if hasproperty(lazyjson, :method)
-        method = lazyjson.method[]
-        if haskey(method_dispatcher, method)
-            return JSON.parse(lazyjson, method_dispatcher[method])
-        end
-        return JSON.parse(lazyjson, Dict{Symbol,Any})
-    else # TODO parse to ResponseMessage?
-        return JSON.parse(lazyjson, Dict{Symbol,Any})
-    end
-end
-writelsp(x) = JSON.json(x; omit_null=true)
-
 function test_roundtrip(f, s::AbstractString, Typ)
     x = JSON.parse(s, Typ)
     f(x)
-    s′ = writelsp(x)
+    s′ = to_lsp_json(x)
     x′ = JSON.parse(s′, Typ)
+    f(x′)
+end
+
+function test_roundtrip(f, s::AbstractString)
+    x = to_lsp_object(s)
+    f(x)
+    s′ = to_lsp_json(x)
+    x′ = to_lsp_object(s′)
     f(x′)
 end
 
@@ -27,7 +21,8 @@ using PrecompileTools
     @compile_workload let
         test_roundtrip("""{
                 "jsonrpc": "2.0",
-                "id":0, "method":"textDocument/completion",
+                "id": 0,
+                "method": "textDocument/completion",
                 "params": {
                     "textDocument": {
                         "uri": "$uri"
@@ -39,7 +34,7 @@ using PrecompileTools
                     "workDoneToken": "workDoneToken",
                     "partialResultToken": "partialResultToken"
                 }
-            }""", CompletionRequest) do req
+            }""") do req
             @assert req isa CompletionRequest
         end
         test_roundtrip("""{
@@ -62,7 +57,7 @@ using PrecompileTools
                         "newText": "newText"
                     }
                 }
-            }""", CompletionResolveRequest) do req
+            }""") do req
             @assert req isa CompletionResolveRequest
             @assert req.params.textEdit isa TextEdit
         end
