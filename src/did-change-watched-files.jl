@@ -118,7 +118,7 @@ end
 function handle_DidChangeWatchedFilesNotification(server::Server, msg::DidChangeWatchedFilesNotification)
     for change in msg.params.changes
         changed_path = uri2filepath(change.uri)
-        if is_config_file(changed_path)
+        if changed_path !== nothing && is_config_file(changed_path)
             handle_config_file_change!(server, changed_path, change.type)
         end
     end

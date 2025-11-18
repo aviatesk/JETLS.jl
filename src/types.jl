@@ -430,7 +430,7 @@ end
 
 is_static_setting(path::Symbol...) =
     is_static_setting(JETLSConfig, path...)
-
+is_static_setting(::Type{<:ConfigSection}) = false
 is_static_setting(::Type{T}, head::Symbol, rest::Symbol...) where {T<:ConfigSection} =
     is_static_setting(_unwrap_maybe(fieldtype(T, head)), rest...)
 

@@ -262,7 +262,7 @@ end
 # active_arg is either an argument index, or :next (available pos. arg), or :none
 function make_siginfo(m::Method, ca::CallArgs, active_arg::Union{Int, Symbol};
                       postprocessor::LSPostProcessor = LSPostProcessor())
-    msig = get_sig_str(m, ca)
+    msig = @something get_sig_str(m, ca)
     msig = postprocessor(msig)
     mnode = JS.parsestmt(JL.SyntaxTree, msig; ignore_errors=true)
     label = String(msig)

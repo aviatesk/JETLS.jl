@@ -164,7 +164,7 @@ struct ConfigChange
     path::String
     old_val
     new_val
-    ConfigChange(path::String, @nospecialize(old_val), @nospecialize(new_val)) = new(path, old_val, new_val)
+    ConfigChange(path::AbstractString, @nospecialize(old_val), @nospecialize(new_val)) = new(path, old_val, new_val)
 end
 
 mutable struct ConfigChangeTracker

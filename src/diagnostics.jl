@@ -345,9 +345,8 @@ function inference_error_report_code(@nospecialize report::JET.InferenceErrorRep
         else
             return INFERENCE_UNDEF_LOCAL_VAR_CODE
         end
-    else
-        return nothing
     end
+    error(lazy"Diagnostic code is not defined for this report: $report")
 end
 
 function jet_frame_to_location(frame)

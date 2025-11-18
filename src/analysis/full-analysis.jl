@@ -329,6 +329,9 @@ function lookup_analysis_entry(state::ServerState, uri::URI)
     end
 
     pkgname = find_pkg_name(env_path)
+    if isnothing(pkgname)
+        return ScriptInEnvAnalysisEntry(env_path, uri)
+    end
     filepath = uri2filepath(uri)::String # uri.scheme === "file"
     filekind, filedir = find_package_directory(filepath, env_path)
     if filekind === :src

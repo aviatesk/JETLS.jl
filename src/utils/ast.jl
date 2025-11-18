@@ -26,9 +26,9 @@ function _without_kinds(st::JL.SyntaxTree, kinds::Tuple{Vararg{JS.Kind}})
 end
 
 function without_kinds(st::JL.SyntaxTree, kinds::Tuple{Vararg{JS.Kind}})
-    return JS.kind(st) in kinds ?
+    return (JS.kind(st) in kinds ?
         JL.@ast(JL.syntax_graph(st), st, [JS.K"TOMBSTONE"]) :
-        _without_kinds(st, kinds)[1]
+        _without_kinds(st, kinds)[1])::JL.SyntaxTree
 end
 
 function _remove_macrocalls(st::JL.SyntaxTree)

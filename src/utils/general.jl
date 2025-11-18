@@ -189,7 +189,7 @@ function install_instruction_message(app::AbstractString, instruction_url::Abstr
     """
 end
 
-function check_settings_message(setting_path::String...)
+function check_settings_message(setting_path::Symbol...)
     """
     This value is configured in the `$(join(setting_path, "."))`.
     Please check the settings.
