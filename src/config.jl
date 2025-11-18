@@ -133,24 +133,23 @@ function collect_unmatched_keys!(
 end
 
 """
-    get_config(manager::ConfigManager, key_path...)
+    get_config(manager::ConfigManager, key_path...) -> config
 
 Retrieves the current configuration value.
 Among the registered configuration files, fetches the value in order of priority.
-If the key path does not exist in any of the configurations, returns `nothing`.
+
+Even when the specified configuration is not explicitly set, a default value is returned,
+so `config` is guaranteed to not be `nothing`.
 """
 Base.@constprop :aggressive function get_config(manager::ConfigManager, key_path::Symbol...)
-    try
-        data = load(manager)
-        if is_static_setting(key_path...)
-            return getobjpath(data.static_settings, key_path...)
-        else
-            settings = get_settings(data)
-            return getobjpath(settings, key_path...)
-        end
-    catch e
-        e isa FieldError ? nothing : rethrow()
+    data = load(manager)
+    config = if is_static_setting(key_path...)
+        getobjpath(merge_setting(DEFAULT_CONFIG, data.static_settings), key_path...)
+    else
+        getobjpath(merge_setting(DEFAULT_CONFIG, get_settings(data)), key_path...)
     end
+    @assert !isnothing(config) "Invalid default configuration values"
+    return config
 end
 
 function fix_static_settings!(manager::ConfigManager)
