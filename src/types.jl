@@ -294,26 +294,29 @@ struct LSPostProcessor
 end
 LSPostProcessor() = LSPostProcessor(JET.PostProcessor())
 
-# To extend configuration options, define new `@option struct`s here:
-#
-# @option struct NewConfig <: ConfigSection
-#     field1::Maybe{Type1}  # Maybe{T} from Configurations.jl allows optional fields
-#     field2::Maybe{Type2}
-# end
-#
-# All fields must be wrapped in `Maybe{}` to support partial configuration.
-#
-# Then, update the following methods properly to make the
-# `is_static_setting(::Type{JETLSConfig}, field::Symbol)` and
-# `default_config(::Type{JETLSConfig}) -> NewConfig` work correctly:
-#
-#   - is_static_setting(::Type{NewConfig}, field::Symbol) -> Bool
-#     Returns whether a setting requires server restart.
-#   - default_config(::Type{NewConfig}) -> NewConfig
-#     Returns the default configuration values.
-#
-# Finally, add the new config section to `JETLSConfig` struct below.
+"""
+To extend configuration options, define new `@option struct`s here:
 
+    @option struct NewConfig <: ConfigSection
+        field1::Maybe{Type1}  # Maybe{T} from Configurations.jl allows optional fields
+        field2::Maybe{Type2}
+    end
+
+All fields must be wrapped in `Maybe{}` to distinguish between cases of
+"no configuration set" and those of "user has set some configuration",
+which are important for our configuration notification system to work.
+
+Note that `TypeX` should not be defined to include the possibility of being `nothing` like `Union{Nothing,TypeX}`.
+In such cases, a further inner configuration level should be used.
+
+Then, overload the following methods properly:
+- `is_static_setting(::Type{NewConfig}, field::Symbol) -> Bool`
+  Returns whether a setting requires server restart.
+- `default_config(::Type{NewConfig}) -> NewConfig`
+  Returns the default configuration values.
+
+Finally, add the new config section to `JETLSConfig` struct below.
+"""
 abstract type ConfigSection end
 
 _unwrap_maybe(::Type{Maybe{S}}) where {S} = S
@@ -342,9 +345,7 @@ const FormatterConfig = Union{String,CustomFormatterConfig}
 
 is_static_setting(::Type{FormatterConfig}) = false
 is_static_setting(::Type{FormatterConfig}, ::Symbol) = false
-function default_config(::Type{FormatterConfig})
-    return "Runic"
-end
+default_config(::Type{FormatterConfig}) = "Runic"
 
 function default_executable(formatter::String)
     if formatter == "Runic"
@@ -441,7 +442,11 @@ const DEFAULT_CONFIG = JETLSConfig(
     internal = default_config(InternalConfig)
 )
 
-get_default_config(path::Symbol...) = getobjpath(DEFAULT_CONFIG, path...)
+function get_default_config(path::Symbol...)
+    config = getobjpath(DEFAULT_CONFIG, path...)
+    @assert !isnothing(config) "Invalid default configuration values"
+    return config
+end
 
 const EMPTY_CONFIG = JETLSConfig()
 

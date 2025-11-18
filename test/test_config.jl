@@ -8,7 +8,6 @@ using JETLS
         @test JETLS.get_default_config(:testrunner, :executable) ==
             (@static Sys.iswindows() ? "testrunner.bat" : "testrunner")
         @test JETLS.get_default_config(:formatter) == "Runic"
-
         @test_throws FieldError JETLS.get_default_config(:nonexistent)
         @test_throws FieldError JETLS.get_default_config(:full_analysis, :nonexistent)
     end
@@ -25,13 +24,10 @@ using JETLS
             testrunner=JETLS.TestRunnerConfig("base_runner"),
             internal=JETLS.InternalConfig(10, 20)
         )
-
         overlay_config = JETLS.JETLSConfig(;
             full_analysis=JETLS.FullAnalysisConfig(2.0),
-            testrunner=nothing,
             internal=JETLS.InternalConfig(30, nothing)
         )
-
         merged = JETLS.merge_setting(base_config, overlay_config)
 
         @test JETLS.getobjpath(merged, :full_analysis, :debounce) == 2.0
@@ -48,8 +44,7 @@ using JETLS
             )
             config2 = JETLS.JETLSConfig(;
                 full_analysis=JETLS.FullAnalysisConfig(2.0),
-                testrunner=JETLS.TestRunnerConfig("runner2"),
-                internal=nothing
+                testrunner=JETLS.TestRunnerConfig("runner2")
             )
             paths_called = []
             JETLS.on_difference(config1, config2) do _, new_val, path
@@ -144,15 +139,15 @@ end
 
     @test JETLS.get_config(manager, :full_analysis, :debounce) === 2.0
     @test JETLS.get_config(manager, :testrunner, :executable) === "test_runner"
-    @test JETLS.get_config(manager, :non_existent_key) === nothing
+    @test_throws FieldError JETLS.get_config(manager, :nonexistent)
 
+    # Type stability check (N.B: Nothing is not allowed)
     @test Base.infer_return_type((typeof(manager),)) do manager
            JETLS.get_config(manager, :internal, :dynamic_setting)
-    end == Union{Nothing, Int}
-
+    end == Int
     @test Base.infer_return_type((typeof(manager),)) do manager
            JETLS.get_config(manager, :internal, :static_setting)
-    end == Union{Nothing, Int}
+    end == Int
 
     # Test priority: file config has higher priority than LSP config
     lsp_config = JETLS.JETLSConfig(;
