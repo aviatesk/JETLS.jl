@@ -342,6 +342,8 @@ function inference_error_report_code(@nospecialize report::JET.InferenceErrorRep
         else
             return INFERENCE_UNDEF_LOCAL_VAR_CODE
         end
+    elseif report isa Analyzer.MethodErrorReport
+        return INFERENCE_METHOD_ERROR_CODE
     end
     error(lazy"Diagnostic code is not defined for this report: $report")
 end
