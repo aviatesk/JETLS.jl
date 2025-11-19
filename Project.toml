@@ -23,8 +23,8 @@ TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 [sources]
 JET = {rev = "1e84376", url = "https://github.com/aviatesk/JET.jl"}
 JSONRPC = {path = "JSONRPC"}
-JuliaLowering = {rev = "main", url = "https://github.com/c42f/JuliaLowering.jl"}
-JuliaSyntax = {rev = "jetls-hacking-2", url = "https://github.com/JuliaLang/JuliaSyntax.jl"}
+JuliaLowering = {rev = "avi/JETLS-JSJL-head", url = "https://github.com/JuliaLang/julia", subdir="JuliaLowering"}
+JuliaSyntax = {rev = "avi/JETLS-JSJL-head", url = "https://github.com/JuliaLang/julia", subdir="JuliaSyntax"}
 LSP = {path = "LSP"}
 
 [compat]
