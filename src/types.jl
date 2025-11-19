@@ -426,12 +426,14 @@ struct ConfigManagerData
     file_config::JETLSConfig
     lsp_config::JETLSConfig
     file_config_path::Union{Nothing,String}
-    __settings__::JETLSConfig
-    __filled_settings__::JETLSConfig
+    settings::JETLSConfig         # Current settings merged from two types of configuration
+    filled_settings::JETLSConfig  # Current settings merged from two types of configuration, with `nothing` values filled with defaults
+    initialized::Bool
     function ConfigManagerData(
             file_config::JETLSConfig,
             lsp_config::JETLSConfig,
-            file_config_path::Union{Nothing,String}
+            file_config_path::Union{Nothing,String},
+            initialized::Bool
         )
         # Configuration priority:
         # 1. DEFAULT_CONFIG (base layer)
@@ -441,28 +443,27 @@ struct ConfigManagerData
         #    - Limited to project root scope only
         #    - Takes precedence since clients don't properly support
         #      hierarchical configuration via scopeUri
-        __settings__ = DEFAULT_CONFIG
-        __settings__ = merge_setting(__settings__, lsp_config)
-        __settings__ = merge_setting(__settings__, file_config)
+        settings = DEFAULT_CONFIG
+        settings = merge_setting(settings, lsp_config)
+        settings = merge_setting(settings, file_config)
         # Create setting structs without `nothing` values for use by `get_config`
-        __filled_settings__ = merge_setting(DEFAULT_CONFIG, __settings__)
+        filled_settings = merge_setting(DEFAULT_CONFIG, settings)
         return new(file_config, lsp_config, file_config_path,
-            __settings__, __filled_settings__)
+                   settings, filled_settings, initialized)
     end
 end
 
-ConfigManagerData() = ConfigManagerData(EMPTY_CONFIG, EMPTY_CONFIG, nothing)
+ConfigManagerData() = ConfigManagerData(EMPTY_CONFIG, EMPTY_CONFIG, nothing, false)
 
 function ConfigManagerData(
         data::ConfigManagerData;
         file_config::JETLSConfig = data.file_config,
         lsp_config::JETLSConfig = data.lsp_config,
-        file_config_path::Union{Nothing,String} = data.file_config_path
+        file_config_path::Union{Nothing,String} = data.file_config_path,
+        initialized::Bool = data.initialized
     )
-    return ConfigManagerData(file_config, lsp_config, file_config_path)
+    return ConfigManagerData(file_config, lsp_config, file_config_path, initialized)
 end
-
-get_settings(data::ConfigManagerData) = data.__settings__
 
 # Type aliases for document-synchronization caches using `SWContainer` (sequential-only updates)
 const FileCache = SWContainer{Base.PersistentDict{URI,FileInfo}, SWStats}
