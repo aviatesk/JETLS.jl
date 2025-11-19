@@ -91,7 +91,7 @@ include("inlay-hint.jl")
 include("rename.jl")
 include("testrunner/testrunner.jl")
 include("did-change-watched-files.jl")
-include("lifecycle.jl")
+include("initialize.jl")
 
 """
     runserver([callback,] in::IO, out::IO; client_process_id=nothing)
