@@ -75,23 +75,11 @@ function store_lsp_config!(tracker::ConfigChangeTracker, server::Server, @nospec
         return delete_lsp_config!(tracker, server)
     end
     store!(server.state.config_manager) do old_data::ConfigManagerData
-        new_lsp_config = try
-            Configurations.from_dict(JETLSConfig, config_dict)
-        catch e
-            if e isa Configurations.InvalidKeyError
-                unknown_keys = collect_unmatched_keys(to_config_dict(config_dict))
-                if !isempty(unknown_keys)
-                    show_error_message(server, unmatched_keys_in_lsp_config_msg(unknown_keys))
-                    return old_data, nothing
-                end
-            elseif e isa DiagnosticConfigError
-                show_error_message(server, "Invalid diagnostic configuration: $(e.msg)")
-                return old_data, nothing
-            end
-            show_error_message(server, "Failed to parse LSP configuration: $(e)")
+        new_lsp_config = parse_config_dict(config_dict)
+        if new_lsp_config isa AbstractString
+            show_error_message(server, new_lsp_config)
             return old_data, nothing
         end
-
         new_data = ConfigManagerData(old_data; lsp_config=new_lsp_config)
         on_difference(tracker, get_settings(old_data), get_settings(new_data))
         return new_data, nothing

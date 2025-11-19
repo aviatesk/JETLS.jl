@@ -359,13 +359,13 @@ end
 
 const DIAGNOSTIC_SOURCE = "JETLS"
 
-const VALID_DIAGNOSTIC_CATEGORIES = Set{String}([
+const VALID_DIAGNOSTIC_CATEGORIES = Set{String}((
     "syntax",
     "lowering",
     "toplevel",
     "inference",
     "testrunner",
-])
+))
 
 const SYNTAX_DIAGNOSTIC_CODE = "syntax/parse-error"
 const LOWERING_UNUSED_ARGUMENT_CODE = "lowering/unused-argument"
@@ -409,7 +409,7 @@ Base.convert(::Type{DiagnosticPattern}, x::AbstractDict{String}) =
 end
 
 is_static_setting(::Type{DiagnosticConfig}, ::Symbol) = false
-default_config(::Type{DiagnosticConfig}) = DiagnosticConfig(true, nothing)
+default_config(::Type{DiagnosticConfig}) = DiagnosticConfig(true, DiagnosticPattern[])
 
 # configuration item for test purpose
 @option struct InternalConfig <: ConfigSection
@@ -456,6 +456,8 @@ struct ConfigManagerData
     lsp_config::JETLSConfig
     file_config_path::Union{Nothing,String}
     __settings__::JETLSConfig
+    __filled_static_settings__::JETLSConfig
+    __filled_settings__::JETLSConfig
     function ConfigManagerData(
             static_settings::JETLSConfig,
             file_config::JETLSConfig,
@@ -470,10 +472,14 @@ struct ConfigManagerData
         #    - Limited to project root scope only
         #    - Takes precedence since clients don't properly support
         #      hierarchical configuration via scopeUri
-        settings = DEFAULT_CONFIG
-        settings = merge_setting(settings, lsp_config)
-        settings = merge_setting(settings, file_config)
-        return new(static_settings, file_config, lsp_config, file_config_path, settings)
+        __settings__ = DEFAULT_CONFIG
+        __settings__ = merge_setting(__settings__, lsp_config)
+        __settings__ = merge_setting(__settings__, file_config)
+        # Create setting structs without `nothing` values for use by `get_config`
+        __filled_static_settings__ = merge_setting(DEFAULT_CONFIG, static_settings)
+        __filled_settings__ = merge_setting(DEFAULT_CONFIG, __settings__)
+        return new(static_settings, file_config, lsp_config, file_config_path,
+            __settings__, __filled_static_settings__, __filled_settings__)
     end
 end
 

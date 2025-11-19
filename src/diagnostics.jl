@@ -153,7 +153,7 @@ function calculate_match_specificity(
     return specificity
 end
 
-function _apply_diagnostic_config(diagnostic::Diagnostic, diagnostic_config::DiagnosticConfig)
+function _apply_diagnostic_config(diagnostic::Diagnostic, manager::ConfigManager)
     code = diagnostic.code
     if !(code isa String)
         if JETLS_DEV_MODE
@@ -171,7 +171,8 @@ function _apply_diagnostic_config(diagnostic::Diagnostic, diagnostic_config::Dia
         return diagnostic
     end
 
-    patterns = @something diagnostic_config.patterns return diagnostic
+    patterns = get_config(manager, :diagnostic, :patterns)
+    isempty(patterns) && return diagnostic
 
     message = diagnostic.message
     severity = nothing
@@ -199,14 +200,10 @@ function _apply_diagnostic_config(diagnostic::Diagnostic, diagnostic_config::Dia
 end
 
 function apply_diagnostic_config!(diagnostics::Vector{Diagnostic}, manager::ConfigManager)
-    settings = get_settings(load(manager))
-    diagnostic_config = @something settings.diagnostic default_config(DiagnosticConfig)
-    if diagnostic_config.enabled === false
-        return empty!(diagnostics)
-    end
+    get_config(manager, :diagnostic, :enabled) || return empty!(diagnostics)
     i = 1
     while i <= length(diagnostics)
-        applied = _apply_diagnostic_config(diagnostics[i], diagnostic_config)
+        applied = _apply_diagnostic_config(diagnostics[i], manager)
         if applied === missing
             deleteat!(diagnostics, i)
             continue
