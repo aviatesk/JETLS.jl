@@ -215,7 +215,7 @@ end
 
 function make_test_manager(config_dict::Dict{String,Any})
     lsp_config = JETLS.Configurations.from_dict(JETLS.JETLSConfig, config_dict)
-    data = JETLS.ConfigManagerData(JETLS.DEFAULT_CONFIG, JETLS.EMPTY_CONFIG, lsp_config, nothing)
+    data = JETLS.ConfigManagerData(JETLS.EMPTY_CONFIG, lsp_config, nothing)
     return JETLS.ConfigManager(data)
 end
 

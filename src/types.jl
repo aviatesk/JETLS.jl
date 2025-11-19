@@ -310,8 +310,6 @@ Note that `TypeX` should not be defined to include the possibility of being `not
 In such cases, a further inner configuration level should be used.
 
 Then, overload the following methods properly:
-- `is_static_setting(::Type{NewConfig}, field::Symbol) -> Bool`
-  Returns whether a setting requires server restart.
 - `default_config(::Type{NewConfig}) -> NewConfig`
   Returns the default configuration values.
 
@@ -325,15 +323,11 @@ _unwrap_maybe(::Type{T}) where {T} = T
 @option struct FullAnalysisConfig <: ConfigSection
     debounce::Maybe{Float64}
 end
-
-is_static_setting(::Type{FullAnalysisConfig}, ::Symbol) = false
 default_config(::Type{FullAnalysisConfig}) = FullAnalysisConfig(1.0)
 
 @option struct TestRunnerConfig <: ConfigSection
     executable::Maybe{String}
 end
-
-is_static_setting(::Type{TestRunnerConfig}, ::Symbol) = false
 default_config(::Type{TestRunnerConfig}) = TestRunnerConfig(@static Sys.iswindows() ? "testrunner.bat" : "testrunner")
 
 @option "custom" struct CustomFormatterConfig
@@ -342,9 +336,6 @@ default_config(::Type{TestRunnerConfig}) = TestRunnerConfig(@static Sys.iswindow
 end
 
 const FormatterConfig = Union{String,CustomFormatterConfig}
-
-is_static_setting(::Type{FormatterConfig}) = false
-is_static_setting(::Type{FormatterConfig}, ::Symbol) = false
 default_config(::Type{FormatterConfig}) = "Runic"
 
 function default_executable(formatter::String)
@@ -407,39 +398,20 @@ Base.convert(::Type{DiagnosticPattern}, x::AbstractDict{String}) =
     enabled::Maybe{Bool}
     patterns::Maybe{Vector{DiagnosticPattern}}
 end
-
-is_static_setting(::Type{DiagnosticConfig}, ::Symbol) = false
 default_config(::Type{DiagnosticConfig}) = DiagnosticConfig(true, DiagnosticPattern[])
-
-# configuration item for test purpose
-@option struct InternalConfig <: ConfigSection
-    static_setting::Maybe{Int}
-    dynamic_setting::Maybe{Int}
-end
-
-is_static_setting(::Type{InternalConfig}, field::Symbol) = field == :static_setting
-default_config(::Type{InternalConfig}) = InternalConfig(0, 0)
 
 @option struct JETLSConfig <: ConfigSection
     diagnostic::Maybe{DiagnosticConfig}
     full_analysis::Maybe{FullAnalysisConfig}
     testrunner::Maybe{TestRunnerConfig}
     formatter::Maybe{FormatterConfig}
-    internal::Maybe{InternalConfig}
 end
-
-is_static_setting(path::Symbol...) =
-    is_static_setting(JETLSConfig, path...)
-is_static_setting(::Type{<:ConfigSection}) = false
-is_static_setting(::Type{T}, head::Symbol, rest::Symbol...) where {T<:ConfigSection} =
-    is_static_setting(_unwrap_maybe(fieldtype(T, head)), rest...)
 
 const DEFAULT_CONFIG = JETLSConfig(
     diagnostic = default_config(DiagnosticConfig),
     full_analysis = default_config(FullAnalysisConfig),
     testrunner = default_config(TestRunnerConfig),
     formatter = default_config(FormatterConfig),
-    internal = default_config(InternalConfig)
 )
 
 function get_default_config(path::Symbol...)
@@ -451,15 +423,12 @@ end
 const EMPTY_CONFIG = JETLSConfig()
 
 struct ConfigManagerData
-    static_settings::JETLSConfig
     file_config::JETLSConfig
     lsp_config::JETLSConfig
     file_config_path::Union{Nothing,String}
     __settings__::JETLSConfig
-    __filled_static_settings__::JETLSConfig
     __filled_settings__::JETLSConfig
     function ConfigManagerData(
-            static_settings::JETLSConfig,
             file_config::JETLSConfig,
             lsp_config::JETLSConfig,
             file_config_path::Union{Nothing,String}
@@ -476,23 +445,21 @@ struct ConfigManagerData
         __settings__ = merge_setting(__settings__, lsp_config)
         __settings__ = merge_setting(__settings__, file_config)
         # Create setting structs without `nothing` values for use by `get_config`
-        __filled_static_settings__ = merge_setting(DEFAULT_CONFIG, static_settings)
         __filled_settings__ = merge_setting(DEFAULT_CONFIG, __settings__)
-        return new(static_settings, file_config, lsp_config, file_config_path,
-            __settings__, __filled_static_settings__, __filled_settings__)
+        return new(file_config, lsp_config, file_config_path,
+            __settings__, __filled_settings__)
     end
 end
 
-ConfigManagerData() = ConfigManagerData(DEFAULT_CONFIG, EMPTY_CONFIG, EMPTY_CONFIG, nothing)
+ConfigManagerData() = ConfigManagerData(EMPTY_CONFIG, EMPTY_CONFIG, nothing)
 
 function ConfigManagerData(
         data::ConfigManagerData;
-        static_settings::JETLSConfig = data.static_settings,
         file_config::JETLSConfig = data.file_config,
         lsp_config::JETLSConfig = data.lsp_config,
         file_config_path::Union{Nothing,String} = data.file_config_path
     )
-    return ConfigManagerData(static_settings, file_config, lsp_config, file_config_path)
+    return ConfigManagerData(file_config, lsp_config, file_config_path)
 end
 
 get_settings(data::ConfigManagerData) = data.__settings__

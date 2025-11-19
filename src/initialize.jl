@@ -1,3 +1,8 @@
+# NOTE: Static server settings that require a server restart to take effect should be
+# accessed during server initialization via `state.init_params.initializationOptions`.
+# These settings differ from dynamic configuration options managed by `ConfigManager`
+# that can be changed at throughout server lifecycle.
+
 """
 Receives `msg::InitializeRequest` and sets up the `server.state` based on `msg.params`.
 As a response to this `msg`, it returns an `InitializeResponse` and performs registration of
@@ -268,9 +273,7 @@ function handle_InitializedNotification(server::Server)
         end
     end
     # - Load LSP configuration
-    #   In a case when client doesn't support the pull model configuration,
-    #   use `init_params.initializationOptions` as the fallback
-    load_lsp_config!(server, state.init_params.initializationOptions, "[LSP] initialize"; on_init=true)
+    load_lsp_config!(server, nothing, "[LSP] initialize"; on_init=true)
 
     registrations = Registration[]
 
