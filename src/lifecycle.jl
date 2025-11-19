@@ -50,22 +50,6 @@ function handle_InitializeRequest(
         # leave Refs undefined
     end
 
-    if !isdefined(state, :root_path)
-        if JETLS_DEV_MODE
-            @info "`server.state.root_path` is not defined, skip config registration at startup."
-        end
-    else
-        config_path = joinpath(state.root_path, ".JETLSConfig.toml")
-        if isfile(config_path)
-            # Null callback: Don't notify even if values different from defaults are loaded initially
-            load_file_config!(Returns(nothing), server, config_path)
-        end
-    end
-
-    # In a case when client doesn't support the pull model configuration,
-    # use `init_params.initializationOptions` as the fallback
-    load_lsp_config!(server, init_params.initializationOptions, "[LSP] initialize"; on_init=true)
-
     start_analysis_workers!(server)
 
     if supports(server, :textDocument, :completion, :dynamicRegistration)
@@ -269,6 +253,24 @@ function handle_InitializedNotification(server::Server)
     state = server.state
 
     isdefined(state, :init_params) || error("Initialization process not completed") # to exit the server loop
+
+    # Load configurations: This needs to be done after the `InitializedNotification` is sent from the client
+    # - Load .JETLSConfig.toml configuration
+    if !isdefined(state, :root_path)
+        if JETLS_DEV_MODE
+            @info "`server.state.root_path` is not defined, skip config registration at startup."
+        end
+    else
+        config_path = joinpath(state.root_path, ".JETLSConfig.toml")
+        if isfile(config_path)
+            # Null callback: Don't notify even if values different from defaults are loaded initially
+            load_file_config!(Returns(nothing), server, config_path)
+        end
+    end
+    # - Load LSP configuration
+    #   In a case when client doesn't support the pull model configuration,
+    #   use `init_params.initializationOptions` as the fallback
+    load_lsp_config!(server, state.init_params.initializationOptions, "[LSP] initialize"; on_init=true)
 
     registrations = Registration[]
 
