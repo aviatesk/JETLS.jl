@@ -12,35 +12,24 @@ using JETLS
         @test_throws FieldError JETLS.get_default_config(:full_analysis, :nonexistent)
     end
 
-    @testset "`is_static_setting`" begin
-        @test !JETLS.is_static_setting(:internal, :dynamic_setting)
-        @test JETLS.is_static_setting(:internal, :static_setting)
-        @test !JETLS.is_static_setting(:testrunner, :executable)
-    end
-
     @testset "`merge_setting`" begin
         base_config = JETLS.JETLSConfig(;
             full_analysis=JETLS.FullAnalysisConfig(1.0),
             testrunner=JETLS.TestRunnerConfig("base_runner"),
-            internal=JETLS.InternalConfig(10, 20)
         )
         overlay_config = JETLS.JETLSConfig(;
             full_analysis=JETLS.FullAnalysisConfig(2.0),
-            internal=JETLS.InternalConfig(30, nothing)
         )
         merged = JETLS.merge_setting(base_config, overlay_config)
 
         @test JETLS.getobjpath(merged, :full_analysis, :debounce) == 2.0
         @test JETLS.getobjpath(merged, :testrunner, :executable) == "base_runner"
-        @test JETLS.getobjpath(merged, :internal, :static_setting) == 30
-        @test JETLS.getobjpath(merged, :internal, :dynamic_setting) == 20
     end
 
     @testset "`on_difference`" begin
         let config1 = JETLS.JETLSConfig(;
                 full_analysis=JETLS.FullAnalysisConfig(1.0),
                 testrunner=JETLS.TestRunnerConfig("runner1"),
-                internal=JETLS.InternalConfig(1, 1)
             )
             config2 = JETLS.JETLSConfig(;
                 full_analysis=JETLS.FullAnalysisConfig(2.0),
@@ -54,8 +43,6 @@ using JETLS
             @test Set(paths_called) == Set([
                 (:full_analysis, :debounce),
                 (:testrunner, :executable),
-                (:internal, :static_setting),
-                (:internal, :dynamic_setting) # even though new_val is nothing, track the path
             ])
         end
     end
@@ -131,11 +118,9 @@ end
     test_config = JETLS.JETLSConfig(;
         full_analysis=JETLS.FullAnalysisConfig(2.0),
         testrunner=JETLS.TestRunnerConfig("test_runner"),
-        internal=JETLS.InternalConfig(5, nothing)
     )
 
     store_file_config!(manager, "/foo/bar/.JETLSConfig.toml", test_config)
-    JETLS.fix_static_settings!(manager)
 
     @test JETLS.get_config(manager, :full_analysis, :debounce) === 2.0
     @test JETLS.get_config(manager, :testrunner, :executable) === "test_runner"
@@ -143,11 +128,11 @@ end
 
     # Type stability check (N.B: Nothing is not allowed)
     @test Base.infer_return_type((typeof(manager),)) do manager
-           JETLS.get_config(manager, :internal, :dynamic_setting)
-    end == Int
+           JETLS.get_config(manager, :full_analysis, :debounce)
+    end == Float64
     @test Base.infer_return_type((typeof(manager),)) do manager
-           JETLS.get_config(manager, :internal, :static_setting)
-    end == Int
+           JETLS.get_config(manager, :formatter)
+    end == JETLS.FormatterConfig
 
     # Test priority: file config has higher priority than LSP config
     lsp_config = JETLS.JETLSConfig(;
@@ -161,49 +146,13 @@ end
 
     # Test updating config
     store_lsp_config!(manager, JETLS.EMPTY_CONFIG)
-    changed_static_keys = Set{String}()
     updated_config = JETLS.JETLSConfig(;
         full_analysis=JETLS.FullAnalysisConfig(3.0),
         testrunner=JETLS.TestRunnerConfig("new_runner"),
-        internal=JETLS.InternalConfig(10, nothing)
     )
-    let data = JETLS.load(manager)
-        current_config = data.file_config
-        JETLS.on_difference(current_config, updated_config) do _, new_val, path
-            if JETLS.is_static_setting(JETLS.JETLSConfig, path...)
-                push!(changed_static_keys, join(path, "."))
-            end
-            return new_val
-        end
-    end
     store_file_config!(manager, "/foo/bar/.JETLSConfig.toml", updated_config)
-
-    # `on_static_setting` should be called for static keys
-    @test changed_static_keys == Set(["internal.static_setting"])
-    # non static keys should be changed dynamically
-    @test JETLS.get_config(manager, :testrunner, :executable) == "new_runner"
     @test JETLS.get_config(manager, :full_analysis, :debounce) == 3.0
-    # static keys should NOT change (they stay at the fixed values)
-    @test JETLS.get_config(manager, :internal, :static_setting) == 5
-end
-
-@testset "`fix_static_settings!`" begin
-    manager = JETLS.ConfigManager(JETLS.ConfigManagerData())
-    file_config = JETLS.JETLSConfig(;
-        internal=JETLS.InternalConfig(2, nothing)
-    )
-    lsp_config = JETLS.JETLSConfig(;
-        internal=JETLS.InternalConfig(999, nothing),
-        testrunner=JETLS.TestRunnerConfig("custom")
-    )
-
-    store_file_config!(manager, "/path/.JETLSConfig.toml", file_config)
-    store_lsp_config!(manager, lsp_config)
-    JETLS.fix_static_settings!(manager)
-
-    # File config (higher priority) should win for the static keys
-    data = JETLS.load(manager)
-    @test JETLS.getobjpath(data.static_settings, :internal, :static_setting) == 2
+    @test JETLS.get_config(manager, :testrunner, :executable) == "new_runner"
 end
 
 @testset "LSP configuration priority and merging" begin
@@ -229,14 +178,11 @@ end
 
 @testset "LSP configuration merging without file config" begin
     manager = JETLS.ConfigManager(JETLS.ConfigManagerData())
-
     lsp_config = JETLS.JETLSConfig(;
         full_analysis=JETLS.FullAnalysisConfig(3.0),
         testrunner=JETLS.TestRunnerConfig("lsp_runner")
     )
-
     store_lsp_config!(manager, lsp_config)
-
     @test JETLS.get_config(manager, :testrunner, :executable) == "lsp_runner"
     @test JETLS.get_config(manager, :full_analysis, :debounce) == 3.0
 end

@@ -13,7 +13,6 @@ function (handler::LoadLSPConfigHandler)(server::Server, @nospecialize(config_va
     end
     if handler.on_init
         # Don't notify even if values different from defaults are loaded initially
-        fix_static_settings!(server.state.config_manager)
     else
         notify_config_changes(handler.server, tracker, handler.source)
         if tracker.diagnostic_setting_changed
@@ -105,7 +104,6 @@ function load_lsp_config!(
         store_lsp_config!(tracker, server, settings, source)
         if on_init
             # Don't notify even if values different from defaults are loaded initially
-            fix_static_settings!(server.state.config_manager)
         else
             notify_config_changes(server, tracker, source)
             if tracker.diagnostic_setting_changed

@@ -180,21 +180,9 @@ so `config` is guaranteed to not be `nothing`.
 """
 Base.@constprop :aggressive function get_config(manager::ConfigManager, key_path::Symbol...)
     data = load(manager)
-    config = if is_static_setting(key_path...)
-        getobjpath(data.__filled_static_settings__, key_path...)
-    else
-        getobjpath(data.__filled_settings__, key_path...)
-    end
+    config = getobjpath(data.__filled_settings__, key_path...)
     @assert !isnothing(config) "Invalid default configuration values"
     return config
-end
-
-function fix_static_settings!(manager::ConfigManager)
-    store!(manager) do old_data::ConfigManagerData
-        new_static = get_settings(old_data)
-        new_data = ConfigManagerData(old_data; static_settings=new_static)
-        return new_data, new_static
-    end
 end
 
 struct ConfigChange
@@ -206,19 +194,14 @@ end
 
 mutable struct ConfigChangeTracker
     changed_settings::Vector{ConfigChange}
-    changed_static_settings::Vector{ConfigChange}
     diagnostic_setting_changed::Bool
 end
-ConfigChangeTracker() = ConfigChangeTracker(ConfigChange[], ConfigChange[], false)
+ConfigChangeTracker() = ConfigChangeTracker(ConfigChange[], false)
 
 function (tracker::ConfigChangeTracker)(old_val, new_val, path::Tuple{Vararg{Symbol}})
     if old_val !== new_val
         path_str = join(path, ".")
-        if is_static_setting(path...)
-            push!(tracker.changed_static_settings, ConfigChange(path_str, old_val, new_val))
-        else
-            push!(tracker.changed_settings, ConfigChange(path_str, old_val, new_val))
-        end
+        push!(tracker.changed_settings, ConfigChange(path_str, old_val, new_val))
         if !isempty(path) && first(path) === :diagnostic
             tracker.diagnostic_setting_changed = true
         end
@@ -235,34 +218,12 @@ function changed_settings_message(changed_settings::Vector{ConfigChange})
     return "Changes applied: $body"
 end
 
-function changed_static_settings_message(changed_settings::Vector{ConfigChange})
-    body = map(changed_settings) do config_change
-        old_repr = repr(config_change.old_val)
-        new_repr = repr(config_change.new_val)
-        "`$(config_change.path)` (`$old_repr` => `$new_repr`)"
-    end |> (x -> join(x, ", "))
-    return "Static settings affected (requires restart to apply): $body"
-end
-
 function notify_config_changes(
         server::Server,
         tracker::ConfigChangeTracker,
         source::AbstractString
     )
-    if !isempty(tracker.changed_static_settings) && !isempty(tracker.changed_settings)
-        show_warning_message(server, """
-            Configuration changed.
-            Source: $source
-            $(changed_settings_message(tracker.changed_settings))
-            $(changed_static_settings_message(tracker.changed_static_settings))
-            """)
-    elseif !isempty(tracker.changed_static_settings)
-        show_warning_message(server, """
-            Configuration changed.
-            Source: $source
-            $(changed_static_settings_message(tracker.changed_static_settings))
-            """)
-    elseif !isempty(tracker.changed_settings)
+    if !isempty(tracker.changed_settings)
         show_info_message(server, """
             Configuration changed.
             Source: $source
