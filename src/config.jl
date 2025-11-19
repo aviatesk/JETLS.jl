@@ -68,7 +68,7 @@ function parse_config_dict(config_dict::AbstractDict{String}, filepath::Union{No
             unknown_keys = collect_unmatched_keys(to_untyped_config_dict(config_dict))
             if !isempty(unknown_keys)
                 if isnothing(filepath)
-                    return unmatched_keys_in_config_file_msg(unknown_keys)
+                    return unmatched_keys_in_lsp_config_msg(unknown_keys)
                 else
                     return unmatched_keys_in_config_file_msg(filepath, unknown_keys)
                 end
