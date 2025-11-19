@@ -74,7 +74,7 @@ function load_file_config!(callback, server::Server, filepath::AbstractString;
             file_config=new_file_config,
             file_config_path=filepath
         )
-        on_difference(callback, get_settings(old_data), get_settings(new_data))
+        on_difference(callback, old_data.settings, new_data.settings)
         return new_data, nothing
     end
 end
@@ -89,7 +89,7 @@ function delete_file_config!(callback, manager::ConfigManager, filepath::Abstrac
             file_config=EMPTY_CONFIG,
             file_config_path=nothing
         )
-        on_difference(callback, get_settings(old_data), get_settings(new_data))
+        on_difference(callback, old_data.settings, new_data.settings)
         return new_data, nothing
     end
 end

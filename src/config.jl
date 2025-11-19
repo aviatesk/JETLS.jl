@@ -180,9 +180,15 @@ so `config` is guaranteed to not be `nothing`.
 """
 Base.@constprop :aggressive function get_config(manager::ConfigManager, key_path::Symbol...)
     data = load(manager)
-    config = getobjpath(data.__filled_settings__, key_path...)
+    config = getobjpath(data.filled_settings, key_path...)
     @assert !isnothing(config) "Invalid default configuration values"
     return config
+end
+
+function initialize_config!(manager::ConfigManager)
+    store!(manager) do old_data::ConfigManagerData
+        return ConfigManagerData(old_data; initialized=true), nothing
+    end
 end
 
 struct ConfigChange

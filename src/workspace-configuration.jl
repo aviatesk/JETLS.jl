@@ -11,14 +11,7 @@ function (handler::LoadLSPConfigHandler)(server::Server, @nospecialize(config_va
     else
         store_lsp_config!(tracker, server, config_value, handler.source)
     end
-    if handler.on_init
-        # Don't notify even if values different from defaults are loaded initially
-    else
-        notify_config_changes(handler.server, tracker, handler.source)
-        if tracker.diagnostic_setting_changed
-            notify_diagnostics!(server)
-        end
-    end
+    handle_lsp_config_change!(server, tracker, handler.source, handler.on_init)
 end
 
 struct WorkspaceConfigurationCaller <: RequestCaller
@@ -80,7 +73,7 @@ function store_lsp_config!(tracker::ConfigChangeTracker, server::Server, @nospec
             return old_data, nothing
         end
         new_data = ConfigManagerData(old_data; lsp_config=new_lsp_config)
-        on_difference(tracker, get_settings(old_data), get_settings(new_data))
+        on_difference(tracker, old_data.settings, new_data.settings)
         return new_data, nothing
     end
 end
@@ -88,7 +81,7 @@ end
 function delete_lsp_config!(tracker::ConfigChangeTracker, server::Server)
     store!(server.state.config_manager) do old_data::ConfigManagerData
         new_data = ConfigManagerData(old_data; lsp_config=EMPTY_CONFIG)
-        on_difference(tracker, get_settings(old_data), get_settings(new_data))
+        on_difference(tracker, old_data.settings, new_data.settings)
         return new_data, nothing
     end
 end
@@ -102,14 +95,21 @@ function load_lsp_config!(
     else
         tracker = ConfigChangeTracker()
         store_lsp_config!(tracker, server, settings, source)
-        if on_init
-            # Don't notify even if values different from defaults are loaded initially
-        else
-            notify_config_changes(server, tracker, source)
-            if tracker.diagnostic_setting_changed
-                notify_diagnostics!(server)
-            end
-        end
+        handle_lsp_config_change!(server, tracker, source, on_init)
+    end
+end
+
+function handle_lsp_config_change!(server::Server, tracker::ConfigChangeTracker, source::AbstractString, on_init::Bool)
+    if on_init
+        initialize_config!(server.state.config_manager)
+    elseif load(server.state.config_manager).initialized
+        # Don't notify even if values different from defaults are loaded on initialization
+        # N.B. We can't just use `!on_init` here because our server is concurrent,
+        # and `workspace/didChangeConfiguration` may be handled before the initial `workspace/configuration`.
+        notify_config_changes(server, tracker, source)
+    end
+    if tracker.diagnostic_setting_changed
+        notify_diagnostics!(server)
     end
 end
 
