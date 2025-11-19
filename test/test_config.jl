@@ -69,23 +69,23 @@ using JETLS
     end
 end
 
-@testset "ConfigDict utilities" begin
-    TEST_DICT = JETLS.ConfigDict(
+@testset "UntypedConfigDict utilities" begin
+    TEST_DICT = JETLS.UntypedConfigDict(
         "test_key1" => "test_value1",
-        "test_key2" => JETLS.ConfigDict(
+        "test_key2" => JETLS.UntypedConfigDict(
             "nested_key1" => "nested_value1",
-            "nested_key2" => JETLS.ConfigDict(
+            "nested_key2" => JETLS.UntypedConfigDict(
                 "deep_nested_key1" => "deep_nested_value1",
                 "deep_nested_key2" => "deep_nested_value2"
             )
         )
     )
 
-    TEST_DICT_DIFFERENT_KEY = JETLS.ConfigDict(
+    TEST_DICT_DIFFERENT_KEY = JETLS.UntypedConfigDict(
         "diffname_1" => "test_value1",
-        "test_key2" => JETLS.ConfigDict(
+        "test_key2" => JETLS.UntypedConfigDict(
             "nested_key1" => "nested_value1",
-            "diffname_2" => JETLS.ConfigDict(
+            "diffname_2" => JETLS.UntypedConfigDict(
                 "deep_nested_key1" => "deep_nested_value1",
                 "diffname_3" => "deep_nested_value2"
             )
@@ -102,9 +102,9 @@ end
 
         @test isempty(JETLS.collect_unmatched_keys(TEST_DICT, TEST_DICT))
 
-        # single-arg version should use DEFAULT_CONFIG_DICT
+        # single-arg version should use DEFAULT_UNTYPED_CONFIG_DICT
         @test JETLS.collect_unmatched_keys(TEST_DICT_DIFFERENT_KEY) ==
-              JETLS.collect_unmatched_keys(TEST_DICT_DIFFERENT_KEY, JETLS.DEFAULT_CONFIG_DICT)
+              JETLS.collect_unmatched_keys(TEST_DICT_DIFFERENT_KEY, JETLS.DEFAULT_UNTYPED_CONFIG_DICT)
     end
 end
 

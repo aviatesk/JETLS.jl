@@ -65,32 +65,11 @@ function load_file_config!(callback, server::Server, filepath::AbstractString;
         parsed = TOML.tryparsefile(filepath)
         parsed isa TOML.ParserError && return old_data, nothing
 
-        new_file_config = try
-            Configurations.from_dict(JETLSConfig, parsed)
-        catch e
-            # TODO: remove this when Configurations.jl support to report
-            #       full path of unknown key.
-            if e isa Configurations.InvalidKeyError
-                config_dict = to_config_dict(parsed)
-                unknown_keys = collect_unmatched_keys(config_dict)
-                if !isempty(unknown_keys)
-                    show_error_message(server, unmatched_keys_in_config_file_msg(filepath, unknown_keys))
-                    return old_data, nothing
-                end
-            elseif e isa DiagnosticConfigError
-                show_error_message(server, """
-                    Invalid diagnostic configuration in $filepath:
-                    $(e.msg)
-                    """)
-                return old_data, nothing
-            end
-            show_error_message(server, """
-                Failed to load configuration file at $filepath:
-                $(e)
-                """)
+        new_file_config = parse_config_dict(parsed, filepath)
+        if new_file_config isa AbstractString
+            show_error_message(server, new_file_config)
             return old_data, nothing
         end
-
         new_data = ConfigManagerData(old_data;
             file_config=new_file_config,
             file_config_path=filepath
