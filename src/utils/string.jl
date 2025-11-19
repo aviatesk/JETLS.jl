@@ -15,9 +15,10 @@ Convert a character position to a UTF-8 byte offset in a Julia string.
 1-based byte offset in the UTF-8 encoded string `s`
 
 # Details
-- For UTF-8: `ch` represents character count (same as `length(s)`)
+According to the LSP specification:
+- For UTF-8: `ch` represents byte offset (0-based)
 - For UTF-16: `ch` represents UTF-16 code units (characters in BMP count as 1, outside BMP count as 2)
-- For UTF-32: `ch` represents UTF-32 code units (each Unicode character counts as 1)
+- For UTF-32: `ch` represents character count (each Unicode character counts as 1)
 """
 function pos_to_utf8_offset(s::String, ch::UInt, encoding::PositionEncodingKind.Ty)
     offset = 1
@@ -32,7 +33,9 @@ function pos_to_utf8_offset(s::String, ch::UInt, encoding::PositionEncodingKind.
             end
             offset = nextind(s, offset)
         end
-    else # UTF-8 or UTF-32 both count characters
+    elseif encoding == PositionEncodingKind.UTF8 # UTF-8 counts bytes
+        offset = Int(ch) + 1
+    else # UTF-32 counts characters
         while offset <= sizeof(s) && char_count < ch
             char_count += 1
             offset = nextind(s, offset)
@@ -96,8 +99,8 @@ Convert a 1-based byte offset to a 0-based line and character number.
 
 # Returns
 `pos::Position` where both are 0-based indices, with character position calculated according
-to the specified encoding:
-- UTF-8: Character count (each Unicode character = 1 unit)
+to the specified encoding per LSP specification:
+- UTF-8: Byte offset within the line (0-based)
 - UTF-16: UTF-16 code units (BMP chars = 1 unit, non-BMP = 2 units)
 - UTF-32: Character count (each Unicode character = 1 unit)
 
@@ -142,24 +145,29 @@ function _offset_to_xy(textbuf::Vector{UInt8}, byte::Integer, encoding::Position
 
     # Count characters from line start to just before the target position
     if target_byte_in_line > line_start_byte
-        character = 0
-        full_text = String(copy(textbuf))
-        byte_idx = line_start_byte
+        if encoding == PositionEncodingKind.UTF8
+            # For UTF-8, character is the byte offset within the line (0-based)
+            character = target_byte_in_line - line_start_byte
+        else
+            character = 0
+            full_text = String(copy(textbuf))
+            byte_idx = line_start_byte
 
-        while byte_idx < target_byte_in_line && byte_idx <= sizeof(full_text)
-            next_byte_idx = nextind(full_text, byte_idx)
-            if next_byte_idx > target_byte_in_line
-                break
+            while byte_idx < target_byte_in_line && byte_idx <= sizeof(full_text)
+                next_byte_idx = nextind(full_text, byte_idx)
+                if next_byte_idx > target_byte_in_line
+                    break
+                end
+
+                if encoding == PositionEncodingKind.UTF16
+                    cp = codepoint(full_text[byte_idx])
+                    character += cp < 0x10000 ? 1 : 2
+                else # UTF-32
+                    character += 1
+                end
+
+                byte_idx = next_byte_idx
             end
-
-            if encoding == PositionEncodingKind.UTF16
-                cp = codepoint(full_text[byte_idx])
-                character += cp < 0x10000 ? 1 : 2
-            else
-                character += 1
-            end
-
-            byte_idx = next_byte_idx
         end
     else
         character = 0
@@ -219,16 +227,19 @@ function get_text_and_positions(
     for (i, line) in enumerate(lines)
         char_offset_adjustment = 0
         for m in eachmatch(matcher, line)
-            char_offset = 0
-            byte_pos = 1
-
-            if encoding == PositionEncodingKind.UTF16
+            if encoding == PositionEncodingKind.UTF8
+                char_offset = m.offset - 1  # m.offset is 1-based, LSP is 0-based
+            elseif encoding == PositionEncodingKind.UTF16
+                char_offset = 0
+                byte_pos = 1
                 while byte_pos < m.offset
                     cp = codepoint(line[byte_pos])
                     char_offset += cp < 0x10000 ? 1 : 2
                     byte_pos = nextind(line, byte_pos)
                 end
-            else
+            else # UTF-32
+                char_offset = 0
+                byte_pos = 1
                 while byte_pos < m.offset
                     char_offset += 1
                     byte_pos = nextind(line, byte_pos)
@@ -238,14 +249,16 @@ function get_text_and_positions(
             adjusted_char_offset = char_offset - char_offset_adjustment
             push!(positions, Position(; line=i-1, character=adjusted_char_offset))
 
-            if encoding == PositionEncodingKind.UTF16
+            if encoding == PositionEncodingKind.UTF8
+                char_offset_adjustment += sizeof(m.match)
+            elseif encoding == PositionEncodingKind.UTF16
                 marker_length = 0
                 for c in m.match
                     cp = codepoint(c)
                     marker_length += cp < 0x10000 ? 1 : 2
                 end
                 char_offset_adjustment += marker_length
-            else
+            else # UTF-32
                 char_offset_adjustment += length(m.match)
             end
         end
