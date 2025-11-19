@@ -219,7 +219,7 @@ function (tracker::ConfigChangeTracker)(old_val, new_val, path::Tuple{Vararg{Sym
         else
             push!(tracker.changed_settings, ConfigChange(path_str, old_val, new_val))
         end
-        if !isempty(path) && first(path) === :diagnostics
+        if !isempty(path) && first(path) === :diagnostic
             tracker.diagnostic_setting_changed = true
         end
     end
