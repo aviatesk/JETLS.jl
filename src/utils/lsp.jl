@@ -183,12 +183,12 @@ function show_debug_message(server::Server, message::AbstractString)
 end
 
 """
-    handle_response_error(server::Server, msg::Dict{Symbol,Any}, context::String)
+    handle_response_error(server::Server, msg::Dict{Symbol,Any}, context::AbstractString)
 
 Common error handling for response messages. Checks for error field and shows appropriate message.
 Returns true if an error was handled, false otherwise.
 """
-function handle_response_error(server::Server, msg::Dict{Symbol,Any}, context::String)
+function handle_response_error(server::Server, msg::Dict{Symbol,Any}, context::AbstractString)
     if haskey(msg, :error)
         error_msg = get(msg[:error], "message", "Unknown error")
         show_error_message(server, "Failed to $context: $error_msg")

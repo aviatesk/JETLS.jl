@@ -142,7 +142,7 @@ end
 function send(endpoint::Endpoint, @nospecialize(msg::Any))
     check_dead_endpoint!(endpoint)
     put!(endpoint.out_msg_queue, msg)
-    return msg
+    nothing
 end
 
 end # module JSONRPC

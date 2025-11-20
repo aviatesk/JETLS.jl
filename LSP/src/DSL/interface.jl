@@ -1,4 +1,4 @@
-const _INTERFACE_DEFS = Dict{Symbol,Expr}()
+const _interface_defs_ = Dict{Symbol,Expr}()
 
 """
     @interface InterfaceName [@extends ParentInterface] begin
@@ -178,7 +178,7 @@ function process_interface_def!(toplevelblk::Expr, structbody::Expr,
         push!(toplevelblk.args, :(Base.convert(::Type{$Name}, nt::NamedTuple) = $Name(; nt...)))
     end
     if !is_anon
-        push!(toplevelblk.args, :($(GlobalRef(@__MODULE__, :_INTERFACE_DEFS))[$(QuoteNode(Name))] = $(QuoteNode(structbody))))
+        push!(toplevelblk.args, :($(GlobalRef(@__MODULE__, :_interface_defs_))[$(QuoteNode(Name))] = $(QuoteNode(structbody))))
     end
     return Name, method
 end
@@ -193,7 +193,7 @@ function add_extended_interface!(toplevelblk::Expr, structbody::Expr,
                                    omittable_fields,
                                    extended_fields,
                                    duplicated_fields,
-                                   _INTERFACE_DEFS[extend],
+                                   _interface_defs_[extend],
                                    __source__;
                                    extending = true)
 end

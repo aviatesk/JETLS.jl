@@ -3,7 +3,7 @@
 
 const DEFAULT_FLUSH_INTERVAL = 0.05
 function yield_to_endpoint(interval=DEFAULT_FLUSH_INTERVAL)
-    # HACK: allow JSONRPC endpoint to process queued messages (e.g. work done progress report)
+    # HACK: allow LSP endpoint to process queued messages (e.g. work done progress report)
     yield()
     sleep(interval)
 end
@@ -38,11 +38,6 @@ a `RequestCaller` subtype that encapsulates the context needed to handle the res
 - `id::String`: A unique identifier for the request (typically generated with `gensym`)
 - `caller::RequestCaller`: An instance of a `RequestCaller` subtype containing the
   context information needed to handle the client's response
-
-# Usage
-The function supports both syntaxes for convenience:
-- `addrequest!(server, id=>caller)` - Using Pair syntax
-- `addrequest!(server, id, caller)` - Using separate arguments
 
 # Example
 ```julia
@@ -80,11 +75,6 @@ The caller is removed from the tracking dictionary after retrieval.
 
 # Returns
 - The `RequestCaller` instance if found, or `nothing` if no matching request exists
-
-# Usage
-This function is primarily used in `handle_ResponseMessage` to retrieve the appropriate
-handler context when processing client responses. The retrieved `RequestCaller` is then
-dispatched to the appropriate handler based on its type.
 
 # Example
 ```julia

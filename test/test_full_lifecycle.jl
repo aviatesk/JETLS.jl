@@ -21,7 +21,7 @@ let (pkgcode, positions) = JETLS.get_text_and_positions("""
 
     withpackage("TestFullLifecycle", pkgcode) do pkgpath
         filepath = normpath(pkgpath, "src", "TestFullLifecycle.jl")
-        uri = string(JETLS.URIs2.filepath2uri(filepath))
+        uri = LSP.URIs2.filepath2uri(filepath)
 
         test_full_cycle = function ((; server, writereadmsg, id_counter),)
             # open the file, and fill in the file cache
@@ -138,7 +138,7 @@ let (pkgcode, positions) = JETLS.get_text_and_positions("""
             @test length(server.state.currently_handled) == 0
         end
 
-        rootUri = JETLS.URIs2.filepath2uri(pkgpath)
+        rootUri = LSP.URIs2.filepath2uri(pkgpath)
 
         # test clients that give workspaceFolders
         let workspaceFolders = [WorkspaceFolder(; uri=rootUri, name="TestFullLifecycle")]
