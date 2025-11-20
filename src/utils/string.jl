@@ -16,7 +16,7 @@ Convert a character position to a UTF-8 byte offset in a Julia string.
 
 # Details
 According to the LSP specification:
-- For UTF-8: `ch` represents byte offset (0-based)
+- For UTF-8: `ch` represents byte offset
 - For UTF-16: `ch` represents UTF-16 code units (characters in BMP count as 1, outside BMP count as 2)
 - For UTF-32: `ch` represents character count (each Unicode character counts as 1)
 """
