@@ -55,7 +55,7 @@ function invalid_execute_command_response(msg::ExecuteCommandRequest, message::A
         error = ResponseError(; code, message))
 end
 
-# E.g. uri = convert(URI, @tryparsearg server msg[1]::String)
+# E.g. uri = URI(@tryparsearg server msg[1]::String)
 macro tryparsearg(server, ex)
     Meta.isexpr(ex, :(::)) || error("invalid forms")
     length(ex.args) == 2 || error("invalid forms")
@@ -83,7 +83,7 @@ macro tryparsearg(server, ex)
 end
 
 function execute_testrunner_run_testset_command(server::Server, msg::ExecuteCommandRequest)
-    uri = convert(URI, @tryparsearg server msg[1]::String)
+    uri = URI(@tryparsearg server msg[1]::String)
     idx = @tryparsearg server msg[2]::Int
     tsn = @tryparsearg server msg[3]::String
     error_msg = testrunner_run_testset_from_uri(server, uri, idx, tsn)
@@ -102,7 +102,7 @@ function execute_testrunner_run_testset_command(server::Server, msg::ExecuteComm
 end
 
 function execute_testrunner_run_testcase_command(server::Server, msg::ExecuteCommandRequest)
-    uri = convert(URI, @tryparsearg server msg[1]::String)
+    uri = URI(@tryparsearg server msg[1]::String)
     tcl = @tryparsearg server msg[2]::Int
     tct = @tryparsearg server msg[3]::String
     error_msg = testrunner_run_testcase_from_uri(server, uri, tcl, tct)
@@ -131,7 +131,7 @@ function execute_testrunner_open_logs_command(server::Server, msg::ExecuteComman
 end
 
 function execute_testrunner_clear_result_command(server::Server, msg::ExecuteCommandRequest)
-    uri = convert(URI, @tryparsearg server msg[1]::String)
+    uri = URI(@tryparsearg server msg[1]::String)
     idx = @tryparsearg server msg[2]::Int
     tsn = @tryparsearg server msg[3]::String
     try_clear_testrunner_result!(server, uri, idx, tsn)
