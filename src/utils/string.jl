@@ -100,7 +100,7 @@ Convert a 1-based byte offset to a 0-based line and character number.
 # Returns
 `pos::Position` where both are 0-based indices, with character position calculated according
 to the specified encoding per LSP specification:
-- UTF-8: Byte offset within the line (0-based)
+- UTF-8: Byte offset within the line
 - UTF-16: UTF-16 code units (BMP chars = 1 unit, non-BMP = 2 units)
 - UTF-32: Character count (each Unicode character = 1 unit)
 
