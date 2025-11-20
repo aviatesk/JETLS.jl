@@ -178,12 +178,8 @@ Among the registered configuration files, fetches the value in order of priority
 Even when the specified configuration is not explicitly set, a default value is returned,
 so `config` is guaranteed to not be `nothing`.
 """
-Base.@constprop :aggressive function get_config(manager::ConfigManager, key_path::Symbol...)
-    data = load(manager)
-    config = getobjpath(data.filled_settings, key_path...)
-    @assert !isnothing(config) "Invalid default configuration values"
-    return config
-end
+Base.@constprop :aggressive get_config(manager::ConfigManager, key_path::Symbol...) =
+    @something getobjpath(load(manager).filled_settings, key_path...) error(lazy"Invalid default configuration value found at $key_path")
 
 function initialize_config!(manager::ConfigManager)
     store!(manager) do old_data::ConfigManagerData
@@ -205,6 +201,7 @@ end
 ConfigChangeTracker() = ConfigChangeTracker(ConfigChange[], false)
 
 function (tracker::ConfigChangeTracker)(old_val, new_val, path::Tuple{Vararg{Symbol}})
+    @nospecialize old_val new_val
     if old_val !== new_val
         path_str = join(path, ".")
         push!(tracker.changed_settings, ConfigChange(path_str, old_val, new_val))
