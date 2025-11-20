@@ -41,7 +41,7 @@ include("window-features.jl")
 include("lifecycle-messages/initialize.jl")
 
 include("communication.jl")
-module Communication
+baremodule Communication
     using ..LSP: Endpoint, send
     export Endpoint, send
 end
