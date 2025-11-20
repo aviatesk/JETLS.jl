@@ -1,9 +1,40 @@
-module JSONRPC
+using JSON3: JSON3
 
-export Endpoint, send
+"""
+    Endpoint
 
-using JSON3
+A bidirectional communication endpoint for Language Server Protocol messages.
 
+`Endpoint` manages asynchronous reading and writing of LSP messages over IO streams.
+It spawns two separate tasks:
+- A read task that continuously reads messages from the input stream and queues them
+- A write task that continuously writes messages from the output queue to the output stream
+
+Both tasks run on the `:interactive` thread pool to ensure responsive message handling.
+
+- `in_msg_queue::Channel{Any}`: Queue of incoming messages read from the input stream
+- `out_msg_queue::Channel{Any}`: Queue of outgoing messages to be written to the output stream
+- `read_task::Task`: Task handling message reading
+- `write_task::Task`: Task handling message writing
+- `isopen::Bool`: Atomic flag indicating whether the endpoint is open
+
+There are two constructors:
+- `Endpoint(in::IO, out::IO)`
+- `Endpoint(err_handler, in::IO, out::IO)`
+
+The later creates an endpoint with custom error handler or default error handler that logs to `stderr`.
+The error handler should have signature `(isread::Bool, err, backtrace) -> nothing`.
+
+# Example
+```julia
+endpoint = Endpoint(stdin, stdout)
+for msg in endpoint
+    # Process incoming messages
+    send(endpoint, response)
+end
+close(endpoint)
+```
+"""
 mutable struct Endpoint
     in_msg_queue::Channel{Any}
     out_msg_queue::Channel{Any}
@@ -11,7 +42,7 @@ mutable struct Endpoint
     write_task::Task
     @atomic isopen::Bool
 
-    function Endpoint(err_handler, in::IO, out::IO, method_dispatcher)
+    function Endpoint(err_handler, in::IO, out::IO)
         in_msg_queue = Channel{Any}(Inf)
         out_msg_queue = Channel{Any}(Inf)
 
@@ -22,7 +53,7 @@ mutable struct Endpoint
                 break
             end
             msg = @something try
-                readmsg(in, method_dispatcher)
+                readlsp(in)
             catch err
                 err_handler(#=isread=#true, err, catch_backtrace())
                 continue
@@ -34,7 +65,7 @@ mutable struct Endpoint
         write_task = Threads.@spawn :interactive for msg in out_msg_queue
             if isopen(out)
                 try
-                    writemsg(out, msg)
+                    writelsp(out, msg)
                 catch err
                     err_handler(#=isread=#false, err, catch_backtrace())
                     continue
@@ -50,21 +81,15 @@ mutable struct Endpoint
     end
 end
 
-function Endpoint(in::IO, out::IO, method_dispatcher)
-    Endpoint(in, out, method_dispatcher) do isread::Bool, err, bt
+function Endpoint(in::IO, out::IO)
+    Endpoint(in, out) do isread::Bool, err, bt
         @nospecialize err
         @error "Error in Endpoint $(isread ? "reading" : "writing") task"
         Base.display_error(stderr, err, bt)
     end
 end
 
-const Parsed = @NamedTuple{method::Union{Nothing,String}}
-
-function readmsg(io::IO, method_dispatcher)
-    msg_str = @something read_transport_layer(io) return nothing
-    parsed = JSON3.read(msg_str, Parsed)
-    return reparse_msg_str(parsed, msg_str, method_dispatcher)
-end
+readlsp(io::IO) = to_lsp_object(@something read_transport_layer(io) return nothing)
 
 function read_transport_layer(io::IO)
     line = chomp(readline(io))
@@ -84,22 +109,22 @@ function read_transport_layer(io::IO)
     return String(read(io, message_length))
 end
 
-function reparse_msg_str(parsed::Parsed, msg_str::String, method_dispatcher)
+const Parsed = @NamedTuple{method::Union{Nothing,String}}
+
+function to_lsp_object(msg_str::AbstractString)
+    parsed = JSON3.read(msg_str, Parsed)
     parsed_method = parsed.method
     if parsed_method !== nothing
         if haskey(method_dispatcher, parsed_method)
             return JSON3.read(msg_str, method_dispatcher[parsed_method])
         end
         return JSON3.read(msg_str, Dict{Symbol,Any})
-    else # TODO parse to ResponseMessage?
-        return JSON3.read(msg_str, Dict{Symbol,Any})
     end
+    # TODO Parse response message?
+    return JSON3.read(msg_str, Dict{Symbol,Any})
 end
 
-function writemsg(io::IO, @nospecialize msg)
-    msg_str = JSON3.write(msg)
-    write_transport_layer(io, msg_str)
-end
+writelsp(io::IO, @nospecialize msg) = write_transport_layer(io, to_lsp_json(msg))
 
 function write_transport_layer(io::IO, response::String)
     response_utf8 = transcode(UInt8, response)
@@ -109,6 +134,8 @@ function write_transport_layer(io::IO, response::String)
     flush(io)
     return n
 end
+
+to_lsp_json(@nospecialize msg) = JSON3.write(msg)
 
 function Base.close(endpoint::Endpoint)
     flush(endpoint)
@@ -139,10 +166,23 @@ function Base.iterate(endpoint::Endpoint, _=nothing)
     return take!(endpoint.in_msg_queue), nothing
 end
 
+"""
+    send(endpoint::Endpoint, msg)
+
+Send a message through the endpoint's output queue.
+
+The message will be asynchronously written to the output stream by the endpoint's write task.
+This function is non-blocking and returns immediately after queueing the message.
+
+# Arguments
+- `endpoint::Endpoint`: The endpoint to send the message through
+- `msg`: The message to send (typically an LSP message structure)
+
+# Throws
+- `ErrorException`: If the endpoint is closed
+"""
 function send(endpoint::Endpoint, @nospecialize(msg::Any))
     check_dead_endpoint!(endpoint)
     put!(endpoint.out_msg_queue, msg)
-    return msg
+    nothing
 end
-
-end # module JSONRPC

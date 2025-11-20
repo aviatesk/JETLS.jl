@@ -9,7 +9,6 @@ projects = ["docs", "test"]
 [deps]
 Configurations = "5218b696-f38b-4ac9-8b61-a12ec717816d"
 JET = "c3a54625-cd67-489e-a8e7-0a5a0ff4e31b"
-JSONRPC = "a2756949-8476-49a1-a294-231eace0f283"
 JuliaLowering = "f3c80556-a63f-4383-b822-37d64f81a311"
 JuliaSyntax = "70703baa-626e-46a2-a12c-08ffd08c73b4"
 LSP = "880dcf91-6fde-4251-87fc-bfd84012291a"
@@ -22,7 +21,6 @@ TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 
 [sources]
 JET = {rev = "1e84376", url = "https://github.com/aviatesk/JET.jl"}
-JSONRPC = {path = "JSONRPC"}
 JuliaLowering = {rev = "avi/JETLS-JSJL-head", url = "https://github.com/JuliaLang/julia", subdir="JuliaLowering"}
 JuliaSyntax = {rev = "avi/JETLS-JSJL-head", url = "https://github.com/JuliaLang/julia", subdir="JuliaSyntax"}
 LSP = {path = "LSP"}
@@ -30,7 +28,6 @@ LSP = {path = "LSP"}
 [compat]
 Configurations = "0.17.6"
 JET = "0.10.6"
-JSONRPC = "0.1"
 JuliaLowering = "1"
 JuliaSyntax = "2"
 LSP = "0.1"

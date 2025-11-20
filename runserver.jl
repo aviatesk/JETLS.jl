@@ -118,7 +118,7 @@ function (@main)(args::Vector{String})::Cint
             # Try connecting first (for VSCode), fallback to listen/accept (for other clients).
             try
                 conn = connect(pipe_name)
-                endpoint = LSEndpoint(conn, conn)
+                endpoint = Endpoint(conn, conn)
                 @info "Connected to existing $pipe_type" pipe_name
             catch
                 # Connection failed - client expects us to create the socket
@@ -126,7 +126,7 @@ function (@main)(args::Vector{String})::Cint
                 server_socket = listen(pipe_name)
                 @info "Waiting for connection on $pipe_type: $pipe_name"
                 conn = accept(server_socket)
-                endpoint = LSEndpoint(conn, conn)
+                endpoint = Endpoint(conn, conn)
                 @info "Accepted connection on $pipe_type"
             end
         catch e
@@ -141,7 +141,7 @@ function (@main)(args::Vector{String})::Cint
             println(stdout, "<JETLS-PORT>$actual_port</JETLS-PORT>")
             @info "Waiting for connection on port" actual_port
             conn = accept(server_socket)
-            endpoint = LSEndpoint(conn, conn)
+            endpoint = Endpoint(conn, conn)
             @info "Connected via TCP socket" actual_port
         catch e
             @error "Failed to create socket connection" socket_port
@@ -149,7 +149,7 @@ function (@main)(args::Vector{String})::Cint
             return Cint(1)
         end
     else # use stdio as the communication channel
-        endpoint = LSEndpoint(stdin, stdout)
+        endpoint = Endpoint(stdin, stdout)
         @info "Using stdio for communication"
     end
 

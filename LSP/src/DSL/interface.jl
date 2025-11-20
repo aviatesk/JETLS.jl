@@ -1,5 +1,82 @@
-const _INTERFACE_DEFS = Dict{Symbol,Expr}()
+const _interface_defs_ = Dict{Symbol,Expr}()
 
+"""
+    @interface InterfaceName [@extends ParentInterface] begin
+        field::Type
+        optionalField::Union{Nothing, Type} = nothing
+        ...
+    end
+
+Creates a Julia struct with keyword constructor that mirrors TypeScript interface
+definitions from the LSP specification, featuring:
+- Keyword constructor: All structs are created with `@kwdef`, enabling keyword-based construction
+- Optional fields: Use `Union{Nothing, Type} = nothing` to represent TypeScript's optional properties (`field?: Type`)
+- Interface inheritance: Use `@extends` to compose interfaces from parent interfaces (similar to TypeScript's `extends`)
+- Anonymous interfaces: Can be used inline within field type declarations (e.g., `Union{Nothing, @interface begin ... end}`)
+- Method dispatching: For interfaces extending `RequestMessage` or `NotificationMessage`,
+  automatically registers the message type in the `method_dispatcher` dictionary for LSP message routing
+
+# Field declarations
+
+Fields can be declared with type annotations and optional default values:
+
+```julia
+@interface Example begin
+    "Required field"
+    requiredField::String
+
+    "Optional field that can be omitted"
+    optionalField::Union{Nothing, Bool} = nothing
+
+    "Field with default value"
+    fieldWithDefault::Int = 0
+end
+```
+
+# Anonymous interfaces
+
+Anonymous interfaces can be used within field type declarations for inline type specifications:
+
+```julia
+@interface Outer begin
+    nested::Union{Nothing, @interface begin
+        innerField::String
+    end} = nothing
+end
+```
+
+# Inheritance
+
+The `@extends` syntax allows composing interfaces from one or more parent interfaces:
+
+```julia
+@interface Child @extends Parent begin
+    childField::String
+end
+
+@interface MultipleInheritance @extends (Parent1, Parent2) begin
+    additionalField::Int
+end
+```
+
+When a child interface defines a field with the same name as a parent interface, the child's definition takes precedence.
+
+# LSP message dispatching
+
+For interfaces that extend `RequestMessage` or `NotificationMessage`, a `method::String`
+field must be defined:
+```julia
+@interface MyRequest @extends RequestMessage begin
+    method::String = "textDocument/myRequest"
+    params::MyParams
+end
+```
+
+This automatically registers the interface in `method_dispatcher["textDocument/myRequest"]`,
+enabling routing of incoming LSP messages to the appropriate handler.
+
+See also: [`@namespace`](@ref)
+"""
 macro interface(exs...)
     nexs = length(exs)
     if nexs == 1
@@ -101,7 +178,7 @@ function process_interface_def!(toplevelblk::Expr, structbody::Expr,
         push!(toplevelblk.args, :(Base.convert(::Type{$Name}, nt::NamedTuple) = $Name(; nt...)))
     end
     if !is_anon
-        push!(toplevelblk.args, :($(GlobalRef(@__MODULE__, :_INTERFACE_DEFS))[$(QuoteNode(Name))] = $(QuoteNode(structbody))))
+        push!(toplevelblk.args, :($(GlobalRef(@__MODULE__, :_interface_defs_))[$(QuoteNode(Name))] = $(QuoteNode(structbody))))
     end
     return Name, method
 end
@@ -116,7 +193,7 @@ function add_extended_interface!(toplevelblk::Expr, structbody::Expr,
                                    omittable_fields,
                                    extended_fields,
                                    duplicated_fields,
-                                   _INTERFACE_DEFS[extend],
+                                   _interface_defs_[extend],
                                    __source__;
                                    extending = true)
 end

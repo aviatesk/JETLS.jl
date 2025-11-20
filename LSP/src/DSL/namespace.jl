@@ -1,3 +1,45 @@
+"""
+    @namespace NamespaceName::Type begin
+        CONSTANT_NAME = value
+        ...
+    end
+
+Creates a Julia module containing typed constants that correspond to TypeScript `namespace`
+definitions from the LSP specification.
+
+# Type references
+
+Due to the design that mimics TypeScript `namespaces` using Julia's module system,
+namespace types must be referenced with the `.Ty` suffix:
+
+```julia
+@namespace SignatureHelpTriggerKind::Int begin
+    Invoked = 1
+    TriggerCharacter = 2
+    ContentChange = 3
+end
+
+@interface SignatureHelpContext begin
+    ...
+    # Use as type annotation
+    triggerKind::SignatureHelpTriggerKind.Ty
+    ...
+end
+```
+
+This is a constraint of Julia's module scoping rules, where constants and type aliases
+within modules cannot be accessed without explicit qualification.
+
+# Implementation details
+
+The macro generates:
+1. A Julia module with the specified namespace name
+2. Constants with the specified type and values
+3. A `Ty` type alias equal to the specified type for convenient type references
+4. Automatic export of the namespace name to the parent module
+
+See also: [`@interface`](@ref)
+"""
 macro namespace(exs...)
     nexs = length(exs)
     nexs == 2 || error("`@namespace` expected 2 arguments: ", exs)
