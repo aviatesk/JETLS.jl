@@ -195,7 +195,7 @@ struct ConfigChange
 end
 
 mutable struct ConfigChangeTracker
-    changed_settings::Vector{ConfigChange}
+    const changed_settings::Vector{ConfigChange}
     diagnostic_setting_changed::Bool
 end
 ConfigChangeTracker() = ConfigChangeTracker(ConfigChange[], false)
