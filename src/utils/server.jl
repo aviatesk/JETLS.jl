@@ -17,7 +17,7 @@ This function is used by each handler that processes messages sent from the clie
 as well as for sending requests and notifications from the server to the client.
 """
 function send(server::Server, @nospecialize msg)
-    JSONRPC.send(server.endpoint, msg)
+    LSP.Communication.send(server.endpoint, msg)
     server.callback !== nothing && server.callback(:sent, msg)
     nothing
 end

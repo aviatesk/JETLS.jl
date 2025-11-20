@@ -40,11 +40,14 @@ include("workspace-features/apply-edit.jl")
 include("window-features.jl")
 include("lifecycle-messages/initialize.jl")
 
+include("communication.jl")
+module Communication
+    using ..LSP: Endpoint, send
+    export Endpoint, send
+end
+
 for name in exports
     Core.eval(@__MODULE__, Expr(:export, name))
 end
-
-export
-    method_dispatcher
 
 end # module LSP
