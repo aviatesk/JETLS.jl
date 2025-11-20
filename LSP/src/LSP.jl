@@ -8,8 +8,8 @@ using ..URIs2: URI
 const exports = Set{Symbol}()
 const method_dispatcher = Dict{String,DataType}()
 
-include("utils/interface.jl")
-include("utils/namespace.jl")
+include("DSL/interface.jl")
+include("DSL/namespace.jl")
 
 include("base-protocol.jl")
 include("basic-json-structures.jl")
