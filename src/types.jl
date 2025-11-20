@@ -288,12 +288,6 @@ function Base.iterate(extra_diagnostics::ExtraDiagnosticsData, keysiter=(keys(ex
     return (key => val, nextkeysiter)
 end
 
-struct LSPostProcessor
-    inner::JET.PostProcessor
-    LSPostProcessor(inner::JET.PostProcessor) = new(inner)
-end
-LSPostProcessor() = LSPostProcessor(JET.PostProcessor())
-
 """
 To extend configuration options, define new `@option struct`s here:
 
@@ -388,11 +382,15 @@ struct DiagnosticPattern <: ConfigSection
     match_type::String
     severity::Int
 end
+@define_eq_overloads DiagnosticPattern
 
 # Overload to inject custom validations for parsing `DiagnosticPattern` from
 # `Configuration.to_dict(::DiagnosticConfig, config::AbstractDict{String})`
 Base.convert(::Type{DiagnosticPattern}, x::AbstractDict{String}) =
     parse_diagnostic_pattern(x)
+
+# N.B. `@option` automatically adds `Base.:(==)` overloads for annotated types,
+# whose behavior is similar to those added by`@define_eq_overloads`
 
 @option struct DiagnosticConfig <: ConfigSection
     enabled::Maybe{Bool}

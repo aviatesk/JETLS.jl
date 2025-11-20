@@ -202,7 +202,7 @@ ConfigChangeTracker() = ConfigChangeTracker(ConfigChange[], false)
 
 function (tracker::ConfigChangeTracker)(old_val, new_val, path::Tuple{Vararg{Symbol}})
     @nospecialize old_val new_val
-    if old_val !== new_val
+    if old_val != new_val
         path_str = join(path, ".")
         push!(tracker.changed_settings, ConfigChange(path_str, old_val, new_val))
         if !isempty(path) && first(path) === :diagnostic

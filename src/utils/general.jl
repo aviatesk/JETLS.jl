@@ -110,6 +110,36 @@ macro tryinvokelatest(ex)
     end)
 end
 
+# types that should be compared by `===` rather than `==`
+const _EGAL_TYPES_ = Any[Symbol, Core.MethodInstance, Type]
+
+macro define_eq_overloads(Tyname)
+    Ty = Core.eval(__module__, Tyname)
+    fld2typs = Pair{Symbol,Any}[Pair{Symbol,Any}(fieldname(Ty, i), fieldtype(Ty, i)) for i = 1:fieldcount(Ty)]
+    h_init = UInt === UInt64 ? rand(UInt64) : rand(UInt32)
+    hash_body = quote h = $h_init end
+    for fld2typ in fld2typs
+        fld, typ = fld2typ
+        push!(hash_body.args, :(h = Base.hash(x.$fld, h)::UInt))
+    end
+    push!(hash_body.args, :(return h))
+    hash_func = :(function Base.hash(x::$Tyname, h::UInt); $hash_body; end)
+    eq_body = foldr(fld2typs; init = true) do fld2typ, x
+        fld, typ = fld2typ
+        if typ in _EGAL_TYPES_
+            eq_ex = :(x1.$fld === x2.$fld)
+        else
+            eq_ex = :((x1.$fld == x2.$fld)::Bool)
+        end
+        Expr(:&&, eq_ex, x)
+    end
+    eq_func = :(function Base.:(==)(x1::$Tyname, x2::$Tyname); $eq_body; end)
+    return quote
+        $eq_func
+        $hash_func
+    end
+end
+
 """
     getobjpath(obj, path::Symbol...)
 
@@ -175,6 +205,12 @@ end
 lsrender(io::IO, table::Markdown.Table) = Markdown.plain(io, table)
 lsrender(io::IO, latex::Markdown.LaTeX) = Markdown.plain(io, latex)
 end
+
+struct LSPostProcessor
+    inner::JET.PostProcessor
+    LSPostProcessor(inner::JET.PostProcessor) = new(inner)
+end
+LSPostProcessor() = LSPostProcessor(JET.PostProcessor())
 
 (processor::LSPostProcessor)(md::Markdown.MD) = processor.inner(lsrender(md))
 (processor::LSPostProcessor)(s::AbstractString) = processor.inner(s)

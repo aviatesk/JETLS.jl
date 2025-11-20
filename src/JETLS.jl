@@ -52,11 +52,12 @@ const SWStats  = JETLS_DEV_MODE ? AtomicContainers.SWStats : Nothing
 const LWStats  = JETLS_DEV_MODE ? AtomicContainers.LWStats : Nothing
 const CASStats = JETLS_DEV_MODE ? AtomicContainers.CASStats : Nothing
 
+include("utils/general.jl")
+
 include("testrunner/testrunner-types.jl")
 include("types.jl")
 
 include("utils/jl_syntax_macros.jl")
-include("utils/general.jl")
 include("utils/string.jl")
 include("utils/path.jl")
 include("utils/pkg.jl")
