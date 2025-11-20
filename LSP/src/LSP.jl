@@ -46,6 +46,8 @@ baremodule Communication
     export Endpoint, send
 end
 
+include("precompile.jl")
+
 for name in exports
     Core.eval(@__MODULE__, Expr(:export, name))
 end
