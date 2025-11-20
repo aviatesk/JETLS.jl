@@ -34,7 +34,7 @@ function pos_to_utf8_offset(s::String, ch::UInt, encoding::PositionEncodingKind.
             offset = nextind(s, offset)
         end
     elseif encoding == PositionEncodingKind.UTF8 # UTF-8 counts bytes
-        offset = Int(ch) + 1
+        offset = min(Int(ch), sizeof(s)) + 1
     else # UTF-32 counts characters
         while offset <= sizeof(s) && char_count < ch
             char_count += 1

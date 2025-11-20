@@ -59,15 +59,21 @@ using JETLS.LSP.PositionEncodingKind: UTF8, UTF16, UTF32
         @test pos_to_utf8_offset("", UInt(0), UTF16) == 1
         @test pos_to_utf8_offset("", UInt(10), UTF16) == 1
         @test pos_to_utf8_offset("", UInt(0), UTF8) == 1
+        @test pos_to_utf8_offset("", UInt(10), UTF8) == 1  # Clamped to end
 
-        # Position beyond string
+        # Position beyond string - UTF-8 should clamp to string bounds
         @test pos_to_utf8_offset("ab", UInt(10), UTF16) == 3
-        @test pos_to_utf8_offset("ab", UInt(10), UTF8) == 11  # Byte 10
+        @test pos_to_utf8_offset("ab", UInt(10), UTF8) == 3  # Clamped to sizeof("ab")+1
+        @test pos_to_utf8_offset("abc", UInt(100), UTF8) == 4  # Clamped to end
+
+        # Position exactly at end of string
+        @test pos_to_utf8_offset("abc", UInt(3), UTF8) == 4  # Exactly at end
 
         # Single emoji - UTF-16 stops mid-emoji at position 1
         @test pos_to_utf8_offset("😀", UInt(1), UTF8) == 2  # Byte offset 1
         @test pos_to_utf8_offset("😀", UInt(1), UTF16) == 1  # Mid-emoji!
         @test pos_to_utf8_offset("😀", UInt(2), UTF16) == 5
+        @test pos_to_utf8_offset("😀", UInt(10), UTF8) == 5  # Clamped to end (4 bytes + 1)
     end
 
     @testset "UTF-16 vs UTF-8 differences" begin
