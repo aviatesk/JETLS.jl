@@ -528,7 +528,7 @@ function _testrunner_run_testset(
     end
 
     result = try
-        LSP.JSON3.read(testrunnerproc, TestRunnerResult)
+        LSP.JSON.parse(testrunnerproc, TestRunnerResult)
     catch err
         @error "Error from testrunner process" err
         show_error_message(server, """
@@ -648,7 +648,7 @@ function _testrunner_run_testcase(
     end
 
     result = try
-        LSP.JSON3.read(testrunnerproc, TestRunnerResult)
+        LSP.JSON.parse(testrunnerproc, TestRunnerResult)
     catch err
         @error "Error from testrunner process" err
         show_error_message(server, """
