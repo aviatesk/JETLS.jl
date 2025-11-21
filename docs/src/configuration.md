@@ -240,7 +240,7 @@ specified, JETLS looks for `testrunner` in your `PATH` (typically
 
 ```toml
 [testrunner]
-executable = "/custom/path/to/testrunner"
+executable = "/path/to/custom/testrunner"
 ```
 
 See [TestRunner integration](@ref) for setup instructions.
@@ -260,11 +260,18 @@ formats that each client can understand.
 [full_analysis]
 debounce = 2.0
 
-[testrunner]
-executable = "/custom/path/to/testrunner"
-
 # Use JuliaFormatter instead of Runic
 formatter = "JuliaFormatter"
+
+# Suppress unused argument warnings
+[[diagnostic.patterns]]
+pattern = "lowering/unused-argument"
+match_by = "code"
+match_type = "literal"
+severity = "off"
+
+[testrunner]
+executable = "/path/to/custom/testrunner"
 ```
 
 ### Method 2: Editor configuration via LSP
@@ -272,7 +279,7 @@ formatter = "JuliaFormatter"
 If your client supports [`workspace/configuration`](#workspace-configuration-support),
 you can configure JETLS in a client-specific manner.
 As examples, we show the configuration methods for the VSCode extension
-`jetls-client`, and the Zed extension
+[`jetls-client`](https://marketplace.visualstudio.com/items?itemName=aviatesk.jetls-client), and the Zed extension
 [`aviatesk/zed-julia#avi/JETLS`](https://github.com/aviatesk/zed-julia/tree/avi/JETLS).
 
 #### VSCode (`jetls-client` extension)
@@ -282,16 +289,28 @@ section:
 
 > Example `.vscode/settings.json`:
 
-```json
+```jsonc
 {
   "jetls-client.jetlsSettings": {
     "full_analysis": {
       "debounce": 2.0
     },
-    "testrunner": {
-      "executable": "/custom/path/to/testrunner"
+    // Use JuliaFormatter instead of Runic
+    "formatter": "JuliaFormatter",
+    // Suppress unused argument warnings
+    "diagnostic": {
+      "patterns": [
+        {
+          "pattern": "lowering/unused-argument",
+          "match_by": "code",
+          "match_type": "literal",
+          "severity": "off"
+        }
+      ]
     },
-    "formatter": "JuliaFormatter"
+    "testrunner": {
+      "executable": "/path/to/custom/testrunner"
+    }
   }
 }
 ```
@@ -299,30 +318,45 @@ section:
 See [`package.json`](https://github.com/aviatesk/JETLS.jl/blob/master/package.json)
 for the complete list of available VSCode settings and their descriptions.
 
-#### Zed ([`aviatesk/zed-julia#avi/JETLS`](https://github.com/aviatesk/zed-julia/tree/avi/JETLS) extension)
+#### Zed (`aviatesk/zed-julia#avi/JETLS` extension)
 
 Configure JETLS in Zed's settings.json file with the `lsp.JETLS.settings`
 section:
 
 > Example `.zed/settings.json`:
 
-```json
+```jsonc
 {
   "lsp": {
     "JETLS": {
       // Required configuration items for starting the server
       "binary": {
-        // ...
+        "path": "/path/to/julia/executable",
+        "env": {
+          "JETLS_DIRECTORY": "/path/to/JETLS/directory/"
+        }
       },
       // JETLS configurations
       "settings": {
         "full_analysis": {
           "debounce": 2.0
         },
-        "testrunner": {
-          "executable": "/custom/path/to/testrunner"
+        // Use JuliaFormatter instead of Runic
+        "formatter": "JuliaFormatter",
+        // Suppress unused argument warnings
+        "diagnostic": {
+          "patterns": [
+            {
+              "pattern": "lowering/unused-argument",
+              "match_by": "code",
+              "match_type": "literal",
+              "severity": "off"
+            }
+          ]
         },
-        "formatter": "JuliaFormatter"
+        "testrunner": {
+          "executable": "/path/to/custom/testrunner"
+        }
       }
     }
   }
