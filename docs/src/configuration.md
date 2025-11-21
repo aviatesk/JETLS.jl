@@ -289,7 +289,7 @@ section:
 
 > Example `.vscode/settings.json`:
 
-```jsonc
+```json
 {
   "jetls-client.jetlsSettings": {
     "full_analysis": {
@@ -325,7 +325,7 @@ section:
 
 > Example `.zed/settings.json`:
 
-```jsonc
+```json
 {
   "lsp": {
     "JETLS": {
