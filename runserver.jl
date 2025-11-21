@@ -30,24 +30,25 @@ function show_help()
     Usage: julia runserver.jl [OPTIONS]
 
     Communication channel options (choose one, default: --stdio):
-      --stdio                  Use standard input/output
-      --pipe=<path>            Use named pipe (Windows) or Unix domain socket
-      --socket=<port>          Use TCP socket on specified port
+      --stdio                     Use standard input/output
+      --pipe-connect=<path>       Connect to client's Unix domain socket/named pipe
+      --pipe-listen=<path>        Listen on Unix domain socket/named pipe
+      --socket=<port>             Listen on TCP socket
 
     Options:
-      --clientProcessId=<pid>  Monitor client process (enables crash detection)
-      --help, -h               Show this help message
+      --clientProcessId=<pid>     Monitor client process (enables crash detection)
+      --help, -h                  Show this help message
 
     Examples:
       julia runserver.jl
       julia runserver.jl --socket=8080
-      julia runserver.jl --pipe=/tmp/jetls.sock --clientProcessId=12345
+      julia runserver.jl --pipe-connect=/tmp/jetls.sock --clientProcessId=12345
+      julia runserver.jl --pipe-listen=/tmp/jetls.sock
     """)
 end
 
 function (@main)(args::Vector{String})::Cint
-    pipe_name = socket_port = client_process_id = nothing
-    help_requested = false
+    pipe_connect_path = pipe_listen_path = socket_port = client_process_id = nothing
 
     i = 1
     while i <= length(args)
@@ -56,17 +57,26 @@ function (@main)(args::Vector{String})::Cint
             show_help()
             return Cint(0)
         elseif occursin(r"^(?:--)?stdio$", arg)
-        elseif occursin(r"^(?:--)?pipe$", arg)
-            socket_port = nothing
+        elseif occursin(r"^(?:--)?pipe-connect$", arg)
             if i < length(args)
-                pipe_name = args[i+1]
+                pipe_connect_path = args[i+1]
                 i += 1
             else
-                @error "--pipe requires a path argument: use --pipe=<path> or --pipe <path>"
+                @error "--pipe-connect requires a path argument: use --pipe-connect=<path> or --pipe-connect <path>"
                 return Cint(1)
             end
-        elseif (m = match(r"^--pipe=(.+)$", arg); !isnothing(m))
-            pipe_name = m.captures[1]
+        elseif (m = match(r"^--pipe-connect=(.+)$", arg); !isnothing(m))
+            pipe_connect_path = m.captures[1]
+        elseif occursin(r"^(?:--)?pipe-listen$", arg)
+            if i < length(args)
+                pipe_listen_path = args[i+1]
+                i += 1
+            else
+                @error "--pipe-listen requires a path argument: use --pipe-listen=<path> or --pipe-listen <path>"
+                return Cint(1)
+            end
+        elseif (m = match(r"^--pipe-listen=(.+)$", arg); !isnothing(m))
+            pipe_listen_path = m.captures[1]
         elseif occursin(r"^(?:--)?socket$", arg)
             if i < length(args)
                 socket_port = tryparse(Int, args[i+1])
@@ -110,27 +120,28 @@ function (@main)(args::Vector{String})::Cint
         @info "Client process ID provided via command line" client_process_id
 
     # Create endpoint based on communication channel
-    if !isnothing(pipe_name)
-        # Try to connect to client-created socket first, then fallback to creating our own
+    if !isnothing(pipe_connect_path)
         try
             pipe_type = Sys.iswindows() ? "Windows named pipe" : "Unix domain socket"
-            # Most LSP clients expect server to create the socket, but VSCode extension creates it
-            # Try connecting first (for VSCode), fallback to listen/accept (for other clients).
-            try
-                conn = connect(pipe_name)
-                endpoint = Endpoint(conn, conn)
-                @info "Connected to existing $pipe_type" pipe_name
-            catch
-                # Connection failed - client expects us to create the socket
-                @info "No existing socket found, creating server socket: $pipe_name"
-                server_socket = listen(pipe_name)
-                @info "Waiting for connection on $pipe_type: $pipe_name"
-                conn = accept(server_socket)
-                endpoint = Endpoint(conn, conn)
-                @info "Accepted connection on $pipe_type"
-            end
+            conn = connect(pipe_connect_path)
+            endpoint = Endpoint(conn, conn)
+            @info "Connected to $pipe_type" pipe_connect_path
         catch e
-            @error "Failed to create pipe/socket connection" pipe_name
+            @error "Failed to connect to pipe" pipe_connect_path
+            Base.display_error(stderr, e, catch_backtrace())
+            return Cint(1)
+        end
+    elseif !isnothing(pipe_listen_path)
+        try
+            pipe_type = Sys.iswindows() ? "Windows named pipe" : "Unix domain socket"
+            server_socket = listen(pipe_listen_path)
+            println(stdout, "<JETLS-PIPE-READY>$pipe_listen_path</JETLS-PIPE-READY>")
+            @info "Waiting for connection on $pipe_type" pipe_listen_path
+            conn = accept(server_socket)
+            endpoint = Endpoint(conn, conn)
+            @info "Accepted connection on $pipe_type"
+        catch e
+            @error "Failed to listen on pipe" pipe_listen_path
             Base.display_error(stderr, e, catch_backtrace())
             return Cint(1)
         end

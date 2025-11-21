@@ -357,7 +357,7 @@ async function startLanguageServer(context: ExtensionContext) {
           const juliaProcess = spawnJuliaServer(
             juliaExecutable,
             serverScript,
-            ["--pipe", socketPath],
+            ["--pipe-connect", socketPath],
             {
               projectPath: jetlsDirectory || undefined,
               threads: juliaThreads,

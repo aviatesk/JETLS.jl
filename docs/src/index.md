@@ -68,11 +68,11 @@ diagnostic, macro-aware go-to definition and such.
 
 !!! warning
     These setups are basically very minimal and do not necessarily properly
-    utilize the [Communication channels](@ref) that we recommends (i.e. `pipe` or `socket`).
-    Many of these setups simply use `stdio` as the communication channel, but
-    as noted in the documentation, there are potential risks of breaking LSP
-    connections due to writes to `stdout` that may occur when loading dependency
-    packages.
+    utilize the [Communication channels](@ref) that we recommend (i.e. `pipe-connect`,
+    `pipe-listen`, or `socket`). Many of these setups simply use `stdio` as the
+    communication channel, but as noted in the documentation, there are potential
+    risks of breaking LSP connections due to writes to `stdout` that may occur
+    when loading dependency packages.
 
 #### Emacs
 

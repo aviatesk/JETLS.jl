@@ -17,57 +17,94 @@ runtime integration. Powered by JET.jl, JuliaSyntax.jl, and JuliaLowering.jl.
 Usage: julia runserver.jl [OPTIONS]
 
 Communication channel options (choose one, default: --stdio):
-  --stdio                  Use standard input/output
-  --pipe=<path>            Use named pipe (Windows) or Unix domain socket
-  --socket=<port>          Use TCP socket on specified port
+  --stdio                     Use standard input/output
+  --pipe-connect=<path>       Connect to client's Unix domain socket/named pipe
+  --pipe-listen=<path>        Listen on Unix domain socket/named pipe
+  --socket=<port>             Listen on TCP socket
 
 Options:
-  --clientProcessId=<pid>  Monitor client process (enables crash detection)
-  --help, -h               Show this help message
+  --clientProcessId=<pid>     Monitor client process (enables crash detection)
+  --help, -h                  Show this help message
 
 Examples:
   julia runserver.jl
   julia runserver.jl --socket=8080
-  julia runserver.jl --pipe=/tmp/jetls.sock --clientProcessId=12345
+  julia runserver.jl --pipe-connect=/tmp/jetls.sock --clientProcessId=12345
+  julia runserver.jl --pipe-listen=/tmp/jetls.sock
 ```
 
 ## Communication channels
 
-JETLS supports multiple communication channels between the client and server.
+`runserver.jl` supports multiple communication channels between the client and server.
 Choose based on your environment and requirements:
 
-### `auto` (default for VSCode)
-
-The `jetls-client` VSCode extension automatically selects the most appropriate
-channel based on your environment:
-
-- Local development: `pipe` for maximum safety
-- Remote SSH/WSL: `pipe` (works well in these environments)
-- Dev Containers: `stdio` for compatibility
-
-### `pipe` (Unix domain socket / named pipe)
+### `pipe-connect` / `pipe-listen` (Unix domain socket / named pipe)
 
 - **Advantages**: Complete isolation from `stdin`/`stdout`, preventing protocol
   corruption; fastest for local communication
 - **Best for**: Local development, Remote SSH, WSL
 - **Limitations**: Not suitable for cross-container communication
+- **Note**: Client is responsible for socket file cleanup in both modes
+
+`runserver.jl` provides two pipe modes:
+
+#### `pipe-connect`
+
+Server connects to a client-created socket. This is the mode used by the
+`jetls-client` VSCode extension and is generally easier to implement:
+
+- Client creates and listens on the socket first
+- Client spawns the server process
+- Server immediately connects to the client's socket
+- **No stdout monitoring required** - simpler client implementation
 
 Example:
 ```bash
-julia runserver.jl --pipe=/tmp/jetls.sock
+julia runserver.jl --pipe-connect=/tmp/jetls.sock
+```
+
+#### `pipe-listen`
+
+Server creates and listens on a socket, then waits for the client to connect.
+This is the traditional LSP server mode:
+
+- Client spawns the server process
+- Server creates socket and prints `<JETLS-PIPE-READY>/tmp/jetls.sock</JETLS-PIPE-READY>` to stdout
+- **Client must monitor stdout** for the readiness notification
+- Client connects to the socket after receiving notification
+
+Example:
+```bash
+julia runserver.jl --pipe-listen=/tmp/jetls.sock
 ```
 
 ### `socket` (TCP)
 
 - **Advantages**: Complete isolation from `stdin`/`stdout`, preventing protocol
   corruption; works across network boundaries; supports port forwarding
-- **Best for**: Remote development with port forwarding
+- **Best for**: Manual remote connection across different machines (without
+  VSCode Remote); shared server accessed by multiple developers
 - **Limitations**: May require firewall configuration; potentially less secure
   than local alternatives
 
 Example:
 ```bash
 julia runserver.jl --socket=7777
+```
+
+The server will print `<JETLS-PORT>7777</JETLS-PORT>` to stdout once it starts
+listening. This is especially useful when using `--socket=0` for automatic port
+assignment, as the actual port number will be announced:
+
+```bash
+julia runserver.jl --socket=0
+# Output: <JETLS-PORT>54321</JETLS-PORT>  (actual port assigned by OS)
+```
+
+Use with SSH port forwarding to connect from a different machine:
+```bash
+ssh -L 8080:localhost:8080 user@remote
+# Then connect your local client to localhost:8080
 ```
 
 ### `stdio`
@@ -88,6 +125,29 @@ julia runserver.jl
     When using `stdio` mode, any `println(stdout, ...)` in your code or
     dependency packages may corrupt the LSP protocol and break the connection.
     Prefer `pipe` or `socket` modes when possible.
+
+## Communication channel configuration for VSCode (`jetls-client`)
+
+The [`jetls-client`](https://marketplace.visualstudio.com/items?itemName=aviatesk.jetls-client)
+VSCode extension by default automatically selects the most appropriate
+communication channel based on your environment:
+
+- **Local development**: `pipe` (`pipe-connect`)
+- **Remote SSH/WSL**: `pipe` (`pipe-connect`, extension runs in remote environment)
+- **Dev Containers**: `stdio`
+
+This automatic selection ensures optimal performance and reliability without
+requiring manual configuration.
+
+### Manual channel selection
+
+You can override the automatic selection by configuring
+`jetls-client.communicationChannel` in VSCode settings:
+
+- `auto` (default): Automatic selection as described above
+- `pipe`: Uses `pipe-connect` mode
+- `socket`: Uses TCP socket (configure port with `jetls-client.socketPort`)
+- `stdio`: Uses standard input/output
 
 ## Client process monitoring
 
