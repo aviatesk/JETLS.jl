@@ -74,40 +74,74 @@ pattern = &quot;Macro name `.*` not found&quot;
 match_by = &quot;message&quot;
 match_type = &quot;regex&quot;
 severity = &quot;off&quot;</code></pre><p>See the <a href="../diagnostic/#configuring-diagnostic">configuring diagnostics</a> section for additional examples and common use cases.</p><h3 id="config/testrunner"><a class="docs-heading-anchor" href="#config/testrunner"><code>[testrunner]</code></a><a id="config/testrunner-1"></a><a class="docs-heading-anchor-permalink" href="#config/testrunner" title="Permalink"></a></h3><h4 id="config/testrunner-executable"><a class="docs-heading-anchor" href="#config/testrunner-executable"><code>[testrunner] executable</code></a><a id="config/testrunner-executable-1"></a><a class="docs-heading-anchor-permalink" href="#config/testrunner-executable" title="Permalink"></a></h4><ul><li><strong>Type</strong>: string (path)</li><li><strong>Default</strong>: <code>&quot;testrunner&quot;</code> (or <code>&quot;testrunner.bat&quot;</code> on Windows)</li></ul><p>Path to the <a href="https://github.com/aviatesk/TestRunner.jl">TestRunner.jl</a> executable for running individual <code>@testset</code> blocks and <code>@test</code> cases. If not specified, JETLS looks for <code>testrunner</code> in your <code>PATH</code> (typically <code>~/.julia/bin/testrunner</code>).</p><pre><code class="language-toml hljs">[testrunner]
-executable = &quot;/custom/path/to/testrunner&quot;</code></pre><p>See <a href="../testrunner/#TestRunner-integration">TestRunner integration</a> for setup instructions.</p><h2 id="How-to-configure-JETLS"><a class="docs-heading-anchor" href="#How-to-configure-JETLS">How to configure JETLS</a><a id="How-to-configure-JETLS-1"></a><a class="docs-heading-anchor-permalink" href="#How-to-configure-JETLS" title="Permalink"></a></h2><h3 id="Method-1:-File-based-configuration"><a class="docs-heading-anchor" href="#Method-1:-File-based-configuration">Method 1: File-based configuration</a><a id="Method-1:-File-based-configuration-1"></a><a class="docs-heading-anchor-permalink" href="#Method-1:-File-based-configuration" title="Permalink"></a></h3><p>Create a <code>.JETLSConfig.toml</code> file in your project root. This configuration method works client-agnostically, thus allows projects to commit configuration to VCS without writing JETLS configurations in various formats that each client can understand.</p><blockquote><p>Example <code>.JETLSConfig.toml</code>:</p></blockquote><pre><code class="language-toml hljs">[full_analysis]
+executable = &quot;/path/to/custom/testrunner&quot;</code></pre><p>See <a href="../testrunner/#TestRunner-integration">TestRunner integration</a> for setup instructions.</p><h2 id="How-to-configure-JETLS"><a class="docs-heading-anchor" href="#How-to-configure-JETLS">How to configure JETLS</a><a id="How-to-configure-JETLS-1"></a><a class="docs-heading-anchor-permalink" href="#How-to-configure-JETLS" title="Permalink"></a></h2><h3 id="Method-1:-File-based-configuration"><a class="docs-heading-anchor" href="#Method-1:-File-based-configuration">Method 1: File-based configuration</a><a id="Method-1:-File-based-configuration-1"></a><a class="docs-heading-anchor-permalink" href="#Method-1:-File-based-configuration" title="Permalink"></a></h3><p>Create a <code>.JETLSConfig.toml</code> file in your project root. This configuration method works client-agnostically, thus allows projects to commit configuration to VCS without writing JETLS configurations in various formats that each client can understand.</p><blockquote><p>Example <code>.JETLSConfig.toml</code>:</p></blockquote><pre><code class="language-toml hljs">[full_analysis]
 debounce = 2.0
 
-[testrunner]
-executable = &quot;/custom/path/to/testrunner&quot;
-
 # Use JuliaFormatter instead of Runic
-formatter = &quot;JuliaFormatter&quot;</code></pre><h3 id="Method-2:-Editor-configuration-via-LSP"><a class="docs-heading-anchor" href="#Method-2:-Editor-configuration-via-LSP">Method 2: Editor configuration via LSP</a><a id="Method-2:-Editor-configuration-via-LSP-1"></a><a class="docs-heading-anchor-permalink" href="#Method-2:-Editor-configuration-via-LSP" title="Permalink"></a></h3><p>If your client supports <a href="#workspace-configuration-support"><code>workspace/configuration</code></a>, you can configure JETLS in a client-specific manner. As examples, we show the configuration methods for the VSCode extension <code>jetls-client</code>, and the Zed extension <a href="https://github.com/aviatesk/zed-julia/tree/avi/JETLS"><code>aviatesk/zed-julia#avi/JETLS</code></a>.</p><h4 id="VSCode-(jetls-client-extension)"><a class="docs-heading-anchor" href="#VSCode-(jetls-client-extension)">VSCode (<code>jetls-client</code> extension)</a><a id="VSCode-(jetls-client-extension)-1"></a><a class="docs-heading-anchor-permalink" href="#VSCode-(jetls-client-extension)" title="Permalink"></a></h4><p>Configure JETLS in VSCode&#39;s settings.json file with <code>jetls-client.jetlsSettings</code> section:</p><blockquote><p>Example <code>.vscode/settings.json</code>:</p></blockquote><pre><code class="language-json hljs">{
+formatter = &quot;JuliaFormatter&quot;
+
+# Suppress unused argument warnings
+[[diagnostic.patterns]]
+pattern = &quot;lowering/unused-argument&quot;
+match_by = &quot;code&quot;
+match_type = &quot;literal&quot;
+severity = &quot;off&quot;
+
+[testrunner]
+executable = &quot;/path/to/custom/testrunner&quot;</code></pre><h3 id="Method-2:-Editor-configuration-via-LSP"><a class="docs-heading-anchor" href="#Method-2:-Editor-configuration-via-LSP">Method 2: Editor configuration via LSP</a><a id="Method-2:-Editor-configuration-via-LSP-1"></a><a class="docs-heading-anchor-permalink" href="#Method-2:-Editor-configuration-via-LSP" title="Permalink"></a></h3><p>If your client supports <a href="#workspace-configuration-support"><code>workspace/configuration</code></a>, you can configure JETLS in a client-specific manner. As examples, we show the configuration methods for the VSCode extension <a href="https://marketplace.visualstudio.com/items?itemName=aviatesk.jetls-client"><code>jetls-client</code></a>, and the Zed extension <a href="https://github.com/aviatesk/zed-julia/tree/avi/JETLS"><code>aviatesk/zed-julia#avi/JETLS</code></a>.</p><h4 id="VSCode-(jetls-client-extension)"><a class="docs-heading-anchor" href="#VSCode-(jetls-client-extension)">VSCode (<code>jetls-client</code> extension)</a><a id="VSCode-(jetls-client-extension)-1"></a><a class="docs-heading-anchor-permalink" href="#VSCode-(jetls-client-extension)" title="Permalink"></a></h4><p>Configure JETLS in VSCode&#39;s settings.json file with <code>jetls-client.jetlsSettings</code> section:</p><blockquote><p>Example <code>.vscode/settings.json</code>:</p></blockquote><pre><code class="language-jsonc hljs">{
   &quot;jetls-client.jetlsSettings&quot;: {
     &quot;full_analysis&quot;: {
       &quot;debounce&quot;: 2.0
     },
-    &quot;testrunner&quot;: {
-      &quot;executable&quot;: &quot;/custom/path/to/testrunner&quot;
+    // Use JuliaFormatter instead of Runic
+    &quot;formatter&quot;: &quot;JuliaFormatter&quot;,
+    // Suppress unused argument warnings
+    &quot;diagnostic&quot;: {
+      &quot;patterns&quot;: [
+        {
+          &quot;pattern&quot;: &quot;lowering/unused-argument&quot;,
+          &quot;match_by&quot;: &quot;code&quot;,
+          &quot;match_type&quot;: &quot;literal&quot;,
+          &quot;severity&quot;: &quot;off&quot;
+        }
+      ]
     },
-    &quot;formatter&quot;: &quot;JuliaFormatter&quot;
+    &quot;testrunner&quot;: {
+      &quot;executable&quot;: &quot;/path/to/custom/testrunner&quot;
+    }
   }
-}</code></pre><p>See <a href="https://github.com/aviatesk/JETLS.jl/blob/master/package.json"><code>package.json</code></a> for the complete list of available VSCode settings and their descriptions.</p><h4 id="Zed-([aviatesk/zed-julia#avi/JETLS](https://github.com/aviatesk/zed-julia/tree/avi/JETLS)-extension)"><a class="docs-heading-anchor" href="#Zed-([aviatesk/zed-julia#avi/JETLS](https://github.com/aviatesk/zed-julia/tree/avi/JETLS)-extension)">Zed (<a href="https://github.com/aviatesk/zed-julia/tree/avi/JETLS"><code>aviatesk/zed-julia#avi/JETLS</code></a> extension)</a><a id="Zed-([aviatesk/zed-julia#avi/JETLS](https://github.com/aviatesk/zed-julia/tree/avi/JETLS)-extension)-1"></a><a class="docs-heading-anchor-permalink" href="#Zed-([aviatesk/zed-julia#avi/JETLS](https://github.com/aviatesk/zed-julia/tree/avi/JETLS)-extension)" title="Permalink"></a></h4><p>Configure JETLS in Zed&#39;s settings.json file with the <code>lsp.JETLS.settings</code> section:</p><blockquote><p>Example <code>.zed/settings.json</code>:</p></blockquote><pre><code class="language-json hljs">{
+}</code></pre><p>See <a href="https://github.com/aviatesk/JETLS.jl/blob/master/package.json"><code>package.json</code></a> for the complete list of available VSCode settings and their descriptions.</p><h4 id="Zed-(aviatesk/zed-julia#avi/JETLS-extension)"><a class="docs-heading-anchor" href="#Zed-(aviatesk/zed-julia#avi/JETLS-extension)">Zed (<code>aviatesk/zed-julia#avi/JETLS</code> extension)</a><a id="Zed-(aviatesk/zed-julia#avi/JETLS-extension)-1"></a><a class="docs-heading-anchor-permalink" href="#Zed-(aviatesk/zed-julia#avi/JETLS-extension)" title="Permalink"></a></h4><p>Configure JETLS in Zed&#39;s settings.json file with the <code>lsp.JETLS.settings</code> section:</p><blockquote><p>Example <code>.zed/settings.json</code>:</p></blockquote><pre><code class="language-jsonc hljs">{
   &quot;lsp&quot;: {
     &quot;JETLS&quot;: {
       // Required configuration items for starting the server
       &quot;binary&quot;: {
-        // ...
+        &quot;path&quot;: &quot;/path/to/julia/executable&quot;,
+        &quot;env&quot;: {
+          &quot;JETLS_DIRECTORY&quot;: &quot;/path/to/JETLS/directory/&quot;
+        }
       },
       // JETLS configurations
       &quot;settings&quot;: {
         &quot;full_analysis&quot;: {
           &quot;debounce&quot;: 2.0
         },
-        &quot;testrunner&quot;: {
-          &quot;executable&quot;: &quot;/custom/path/to/testrunner&quot;
+        // Use JuliaFormatter instead of Runic
+        &quot;formatter&quot;: &quot;JuliaFormatter&quot;,
+        // Suppress unused argument warnings
+        &quot;diagnostic&quot;: {
+          &quot;patterns&quot;: [
+            {
+              &quot;pattern&quot;: &quot;lowering/unused-argument&quot;,
+              &quot;match_by&quot;: &quot;code&quot;,
+              &quot;match_type&quot;: &quot;literal&quot;,
+              &quot;severity&quot;: &quot;off&quot;
+            }
+          ]
         },
-        &quot;formatter&quot;: &quot;JuliaFormatter&quot;
+        &quot;testrunner&quot;: {
+          &quot;executable&quot;: &quot;/path/to/custom/testrunner&quot;
+        }
       }
     }
   }
-}</code></pre><h2 id="Configuration-priority"><a class="docs-heading-anchor" href="#Configuration-priority">Configuration priority</a><a id="Configuration-priority-1"></a><a class="docs-heading-anchor-permalink" href="#Configuration-priority" title="Permalink"></a></h2><p>When multiple configuration sources are present, they are merged in priority order (highest first):</p><ol><li>File-based configuration (<code>.JETLSConfig.toml</code>)</li><li>Editor configuration via LSP (<code>workspace/configuration</code>)</li><li>Built-in defaults</li></ol><p>File-based configuration (<code>.JETLSConfig.toml</code>) takes precedence as it provides a <strong>client-agnostic</strong> way to configure JETLS that works consistently across all editors.</p></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../testrunner/">« TestRunner integration</a><a class="docs-footer-nextpage" href="../launching/">Launching »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.16.0 on <span class="colophon-date" title="Thursday 20 November 2025 17:47">Thursday 20 November 2025</span>. Using Julia version 1.12.1.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
+}</code></pre><h2 id="Configuration-priority"><a class="docs-heading-anchor" href="#Configuration-priority">Configuration priority</a><a id="Configuration-priority-1"></a><a class="docs-heading-anchor-permalink" href="#Configuration-priority" title="Permalink"></a></h2><p>When multiple configuration sources are present, they are merged in priority order (highest first):</p><ol><li>File-based configuration (<code>.JETLSConfig.toml</code>)</li><li>Editor configuration via LSP (<code>workspace/configuration</code>)</li><li>Built-in defaults</li></ol><p>File-based configuration (<code>.JETLSConfig.toml</code>) takes precedence as it provides a <strong>client-agnostic</strong> way to configure JETLS that works consistently across all editors.</p></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../testrunner/">« TestRunner integration</a><a class="docs-footer-nextpage" href="../launching/">Launching »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.16.0 on <span class="colophon-date" title="Friday 21 November 2025 07:20">Friday 21 November 2025</span>. Using Julia version 1.12.1.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
