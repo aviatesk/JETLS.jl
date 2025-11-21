@@ -220,11 +220,11 @@
   },
   "scripts": {
     "build": "node esbuild.js --production",
-    "watch": "node esbuild.js --watch",
-    "tsc": "tsc --noEmit",
-    "lint": "eslint",
-    "check": "npm run tsc && npm run lint",
-    "vscode:prepublish": "npm run tsc && npm run lint && npm run build"
+    "build:watch": "node esbuild.js --watch",
+    "check": "npm run check:tsc && npm run check:lint",
+    "check:tsc": "tsc --noEmit",
+    "check:lint": "eslint",
+    "vscode:prepublish": "npm run check && npm run build"
   },
   "dependencies": {
     "glob": "^11.0.0",
