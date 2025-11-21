@@ -326,18 +326,17 @@ async function startLanguageServer(context: ExtensionContext) {
     outputChannel.appendLine(`[jetls-client] Using TCP socket mode`);
   } else {
     // Default: pipe communication (Unix domain socket / named pipe)
-    const socketPath =
-      process.platform === "win32"
-        ? `\\\\.\\pipe\\jetls-${process.pid}-${Date.now()}`
-        : path.join(os.tmpdir(), `jetls-${process.pid}-${Date.now()}.sock`);
-
-    // Clean up any existing socket file (Unix only)
-    if (process.platform !== "win32" && fs.existsSync(socketPath)) {
-      fs.unlinkSync(socketPath);
-    }
-
     serverOptions = () => {
       return new Promise((resolve, reject) => {
+        const socketPath =
+          process.platform === "win32"
+            ? `\\\\.\\pipe\\jetls-${process.pid}-${Date.now()}`
+            : path.join(os.tmpdir(), `jetls-${process.pid}-${Date.now()}.sock`);
+
+        if (process.platform !== "win32" && fs.existsSync(socketPath)) {
+          fs.unlinkSync(socketPath);
+        }
+
         const server = net.createServer();
 
         server.once("error", (err) => {
@@ -376,7 +375,6 @@ async function startLanguageServer(context: ExtensionContext) {
             }),
           );
 
-          // Capture stdout for debugging
           juliaProcess.stdout?.on("data", (data: Buffer) => {
             data
               .toString()
@@ -409,7 +407,6 @@ async function startLanguageServer(context: ExtensionContext) {
             }
           });
 
-          // Wait for JETLS to connect
           server.once("connection", (socket: net.Socket) => {
             outputChannel.appendLine(`[jetls-client] JETLS connected!`);
 
