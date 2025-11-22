@@ -33,6 +33,7 @@ using Markdown: Markdown
 using TOML: TOML
 
 using Configurations: @option, Configurations, Maybe
+using Glob: Glob
 
 abstract type AnalysisEntry end # used by `Analyzer.LSAnalyzer`
 

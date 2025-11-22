@@ -55,10 +55,10 @@ function parse_diagnostic_pattern(x::AbstractDict{String})
     end
 
     for key in keys(x)
-        if key ∉ ("pattern", "match_by", "match_type", "severity")
+        if key ∉ ("pattern", "match_by", "match_type", "severity", "path")
             throw(DiagnosticConfigError(
                 lazy"Unknown field \"$key\" in diagnostic pattern for pattern \"$pattern_value\". " *
-                "Valid fields are: pattern, match_by, match_type, severity"))
+                "Valid fields are: pattern, match_by, match_type, severity, path"))
         end
     end
 
@@ -107,7 +107,23 @@ function parse_diagnostic_pattern(x::AbstractDict{String})
     end
     severity = parse_diagnostic_severity(x["severity"], pattern_value)
 
-    return DiagnosticPattern(pattern, match_by, match_type, severity)
+    path_glob = if haskey(x, "path")
+        path_value = x["path"]
+        if !(path_value isa String)
+            throw(DiagnosticConfigError(
+                lazy"Invalid `path` value for pattern \"$pattern_value\". Must be a string, got $(typeof(path_value))"))
+        end
+        try
+            Glob.FilenameMatch(path_value)
+        catch e
+            throw(DiagnosticConfigError(
+                lazy"Invalid glob pattern \"$path_value\" for path: $(sprint(showerror, e))"))
+        end
+    else
+        nothing
+    end
+
+    return DiagnosticPattern(pattern, match_by, match_type, severity, path_glob)
 end
 
 # config application
@@ -153,7 +169,10 @@ function calculate_match_specificity(
     return specificity
 end
 
-function _apply_diagnostic_config(diagnostic::Diagnostic, manager::ConfigManager)
+function _apply_diagnostic_config(
+        diagnostic::Diagnostic, manager::ConfigManager, uri::URI,
+        root_path::Union{Nothing,String}
+    )
     code = diagnostic.code
     if !(code isa String)
         if JETLS_DEV_MODE
@@ -174,10 +193,20 @@ function _apply_diagnostic_config(diagnostic::Diagnostic, manager::ConfigManager
     patterns = get_config(manager, :diagnostic, :patterns)
     isempty(patterns) && return diagnostic
 
+    filepath = uri2filename(uri)
+    if root_path !== nothing && startswith(filepath, root_path)
+        path_for_glob = relpath(filepath, root_path)
+    else
+        path_for_glob = filepath
+    end
     message = diagnostic.message
     severity = nothing
     best_specificity = 0
     for pattern_config in patterns
+        globpath = pattern_config.path
+        if globpath !== nothing && !Glob.occursin(globpath, path_for_glob)
+            continue
+        end
         target = pattern_config.match_by == "message" ? message : code
         is_message_match = pattern_config.match_by == "message"
         specificity = calculate_match_specificity(
@@ -199,17 +228,20 @@ function _apply_diagnostic_config(diagnostic::Diagnostic, manager::ConfigManager
     end
 end
 
-function apply_diagnostic_config!(diagnostics::Vector{Diagnostic}, manager::ConfigManager)
+function apply_diagnostic_config!(
+        diagnostics::Vector{Diagnostic}, manager::ConfigManager, uri::URI,
+        root_path::Union{Nothing,String}
+    )
     get_config(manager, :diagnostic, :enabled) || return empty!(diagnostics)
     i = 1
     while i <= length(diagnostics)
-        applied = _apply_diagnostic_config(diagnostics[i], manager)
+        applied = _apply_diagnostic_config(diagnostics[i], manager, uri, root_path)
         if applied === missing
             deleteat!(diagnostics, i)
             continue
         end
         if applied !== nothing
-            diagnostics[i] = applied # changed
+            diagnostics[i] = applied
         end
         i += 1
     end
@@ -611,7 +643,8 @@ end
 
 function notify_diagnostics!(server::Server, uri2diagnostics::URI2Diagnostics)
     for (uri, diagnostics) in uri2diagnostics
-        apply_diagnostic_config!(diagnostics, server.state.config_manager)
+        root_path = isdefined(server.state, :root_path) ? server.state.root_path : nothing
+        apply_diagnostic_config!(diagnostics, server.state.config_manager, uri, root_path)
         send(server, PublishDiagnosticsNotification(;
             params = PublishDiagnosticsParams(;
                 uri,
@@ -724,7 +757,8 @@ function handle_DocumentDiagnosticRequest(server::Server, msg::DocumentDiagnosti
     else
         diagnostics = parsed_stream_to_diagnostics(file_info)
     end
-    apply_diagnostic_config!(diagnostics, server.state.config_manager)
+    root_path = isdefined(server.state, :root_path) ? server.state.root_path : nothing
+    apply_diagnostic_config!(diagnostics, server.state.config_manager, uri, root_path)
     return send(server,
         DocumentDiagnosticResponse(;
             id = msg.id,

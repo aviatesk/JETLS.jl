@@ -197,6 +197,10 @@
                           }
                         ],
                         "description": "Severity level to apply: 'error'/1 for critical issues, 'warning'/'warn'/2 for potential problems, 'information'/'info'/3 for informational messages, 'hint'/4 for suggestions, 'off'/0 to disable."
+                      },
+                      "path": {
+                        "type": "string",
+                        "description": "Optional glob pattern to restrict this configuration to specific files (e.g., 'test/**/*.jl'). Patterns are matched against file paths relative to the workspace root. Supports globstar (**) for matching directories recursively."
                       }
                     }
                   }
