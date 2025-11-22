@@ -562,6 +562,32 @@ end
             JETLS.apply_diagnostic_config!(diagnostics, manager)
             @test isempty(diagnostics)
         end
+
+        # message-based patterns should have higher priority than code-based patterns
+        let diagnostics = [
+                make_test_diagnostic(;
+                    code = JETLS.LOWERING_MACRO_EXPANSION_ERROR_CODE,
+                    severity = DiagnosticSeverity.Error,
+                    message = "Macro name `@interface` not found")
+            ]
+            manager = make_test_manager(Dict{String,Any}(
+                "diagnostic" => Dict{String,Any}(
+                    "patterns" => [
+                        Dict{String,Any}(
+                            "pattern" => "lowering/macro-expansion-error",
+                            "match_by" => "code",
+                            "match_type" => "literal",
+                            "severity" => "hint"),
+                        Dict{String,Any}(
+                            "pattern" => "Macro name `@interface` not found",
+                            "match_by" => "message",
+                            "match_type" => "literal",
+                            "severity" => "info"),
+                    ])))
+            JETLS.apply_diagnostic_config!(diagnostics, manager)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).severity == DiagnosticSeverity.Information
+        end
     end
 end
 

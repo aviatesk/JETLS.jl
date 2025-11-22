@@ -148,7 +148,7 @@ function calculate_match_specificity(
     end
     specificity == 0 && return specificity
     if is_message_match
-        specificity + 2
+        specificity += 2
     end
     return specificity
 end
