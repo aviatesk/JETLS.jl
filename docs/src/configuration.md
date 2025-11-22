@@ -3,7 +3,32 @@
 JETLS supports various configuration options.
 This documentation uses TOML format to describe the configuration schema.
 
-## Available configurations
+## [Configuration schema](@id config/schema)
+
+```toml
+[full_analysis]
+debounce = 1.0             # number (seconds), default: 1.0
+
+formatter = "Runic"        # String preset: "Runic" (default) or "JuliaFormatter"
+
+[formatter.custom]         # Or custom formatter configuration
+executable = ""            # string (path), optional
+executable_range = ""      # string (path), optional
+
+[diagnostic]
+enabled = true             # boolean, default: true
+
+[[diagnostic.patterns]]
+pattern = ""               # string, required
+match_by = ""              # string, required, "code" or "message"
+match_type = ""            # string, required, "literal" or "regex"
+severity = ""              # string or number, required, "error"/"warning"/"warn"/"information"/"info"/"hint"/"off" or 0/1/2/3/4
+
+[testrunner]
+executable = "testrunner"  # string, default: "testrunner" (or "testrunner.bat" on Windows)
+```
+
+## [Configuration reference](@id config/reference)
 
 - [`[full_analysis]`](@ref config/full_analysis)
     - [`[full_analysis] debounce`](@ref config/full_analysis-debounce)
@@ -37,13 +62,23 @@ debounce = 2.0  # Wait 2 seconds after save before analyzing
 - **Type**: string or table
 - **Default**: `"Runic"`
 
-Configures the formatter backend for document and range formatting. Accepts
-either a preset formatter name or a custom formatter configuration.
+Formatter configuration. Can be a preset name or a custom formatter object.
 
 Preset options:
 
 - `"Runic"` (default): Uses [Runic.jl](https://github.com/fredrikekre/Runic.jl)
+  (`"runic"` or `"runic.bat"` on Windows)
 - `"JuliaFormatter"`: Uses [JuliaFormatter.jl](https://github.com/domluna/JuliaFormatter.jl)
+  (`"jlfmt"` or `"jlfmt.bat"` on Windows)
+
+Custom formatter configuration:
+
+- `formatter.custom.executable` (string, optional): Path to custom formatter
+  executable for document formatting. The formatter should read Julia code from
+  stdin and output formatted code to stdout.
+- `formatter.custom.executable_range` (string, optional): Path to custom
+  formatter executable for range formatting. Should accept `--lines=START:END`
+  argument.
 
 Examples:
 
@@ -104,33 +139,31 @@ match_type = "literal"     # "literal" or "regex"
 severity = "hint"          # severity level
 ```
 
-- `pattern`: The pattern to match (string)
-- `match_by`: What to match against
+- `pattern` (**Type**: string): The pattern to match. For code matching, use diagnostic
+  codes like `"lowering/unused-argument"`. For message matching, use text
+  patterns like `"Macro name .* not found"`.
+- `match_by` (**Type**: string): What to match against
   - `"code"`: Match against [diagnostic code](@ref diagnostic-code) (e.g., `"lowering/unused-argument"`)
   - `"message"`: Match against diagnostic message text
-- `match_type`: How to interpret the pattern
+- `match_type` (**Type**: string): How to interpret the pattern
   - `"literal"`: Exact string match
   - `"regex"`: Regular expression match
-- `severity`: Severity level to apply (see below)
+- `severity` (**Type**: string or number): Severity level to apply
 
 ##### Severity values
 
-JETLS supports four severity levels defined by the [LSP specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#diagnosticSeverity):
-- `Error` (`1`): Critical issues that prevent code from working correctly
-- `Warning` (`2`): Potential problems that should be reviewed
-- `Information` (`3`): Informational messages about code that may benefit from attention
-- `Hint` (`4`): Suggestions for improvements or best practices
+[Severity level](@ref diagnostic-severity) to apply.
+Can be specified using either string or number values:
 
-Additionally, JETLS defines a special severity value `"off"` (or `0`) for disabling
-diagnostics entirely. This is a JETLS-specific extension not defined in the LSP
-specification.
+- `"error"` or `1`: Critical issues that prevent code from working correctly
+- `"warning"` or `"warn"` or `2`: Potential problems that should be reviewed
+- `"information"` or `"info"` or `3`: Informational messages about code that may benefit from attention
+- `"hint"` or `4`: Suggestions for improvements or best practices
+- `"off"` or `0`: Disable the diagnostic
 
-You can specify severity using either string or integer values (case-insensitive for strings):
-- `"error"` or `1` for `Error`
-- `"warning"` or `"warn"` or `2` for `Warning`
-- `"information"` or `"info"` or `3` for `Information`
-- `"hint"` or `4` for `Hint`
-- `"off"` or `0` for `Disabled`
+String values are case-insensitive. The numeric values correspond to the
+[LSP specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#diagnosticSeverity),
+while `"off"`/`0` is a JETLS-specific extension for disabling diagnostics.
 
 ##### Pattern matching priority
 
@@ -230,13 +263,11 @@ additional examples and common use cases.
 
 #### [`[testrunner] executable`](@id config/testrunner-executable)
 
-- **Type**: string (path)
-- **Default**: `"testrunner"` (or `"testrunner.bat"` on Windows)
+- **Type**: string
+- **Default**: `"testrunner"` or `"testrunner.bat"` on Windows
 
 Path to the [TestRunner.jl](https://github.com/aviatesk/TestRunner.jl)
-executable for running individual `@testset` blocks and `@test` cases. If not
-specified, JETLS looks for `testrunner` in your `PATH` (typically
-`~/.julia/bin/testrunner`).
+executable for running individual `@testset` blocks and `@test` cases.
 
 ```toml
 [testrunner]

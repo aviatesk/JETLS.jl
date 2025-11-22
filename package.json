@@ -116,11 +116,11 @@
                       "properties": {
                         "executable": {
                           "type": "string",
-                          "description": "Path to custom formatter executable for document formatting. The formatter should read Julia code from stdin and output formatted code to stdout. Optional."
+                          "description": "Path to custom formatter executable for document formatting. Optional."
                         },
                         "executable_range": {
                           "type": "string",
-                          "description": "Path to custom formatter executable for range formatting. Should accept --lines=START:END argument. Optional."
+                          "description": "Path to custom formatter executable for range formatting. Optional."
                         }
                       }
                     }
@@ -208,8 +208,8 @@
               "properties": {
                 "executable": {
                   "type": "string",
-                  "default": "",
-                  "description": "Path to the TestRunner.jl executable. If empty, uses 'testrunner' from PATH."
+                  "default": "testrunner",
+                  "description": "Path to the TestRunner.jl executable. If not set, uses 'testrunner' from PATH."
                 }
               }
             }
