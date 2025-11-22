@@ -33,41 +33,30 @@ end</code></pre><h4 id="diagnostic/inference/undef-local-var"><a class="docs-hea
         x = 1
     end
     return x  # local variable `x` may be undefined (JETLS inference/undef-local-var)
-end</code></pre><h3 id="diagnostic/testrunner"><a class="docs-heading-anchor" href="#diagnostic/testrunner">TestRunner diagnostic (<code>testrunner/*</code>)</a><a id="diagnostic/testrunner-1"></a><a class="docs-heading-anchor-permalink" href="#diagnostic/testrunner" title="Permalink"></a></h3><h4 id="diagnostic/testrunner/test-failure"><a class="docs-heading-anchor" href="#diagnostic/testrunner/test-failure">Test failure (<code>testrunner/test-failure</code>)</a><a id="diagnostic/testrunner/test-failure-1"></a><a class="docs-heading-anchor-permalink" href="#diagnostic/testrunner/test-failure" title="Permalink"></a></h4><p><strong>Default severity:</strong> <code>Error</code></p><p>Test failures reported by <a href="../testrunner/#TestRunner-integration">TestRunner integration</a> that happened during running individual <code>@testset</code> blocks or <code>@test</code> cases.</p><h2 id="configuring-diagnostic"><a class="docs-heading-anchor" href="#configuring-diagnostic">Configuring diagnostic</a><a id="configuring-diagnostic-1"></a><a class="docs-heading-anchor-permalink" href="#configuring-diagnostic" title="Permalink"></a></h2><p>You can configure which diagnostics are shown and at what <a href="#diagnostic-severity">severity level</a> under the <code>[diagnostic]</code> section. This allows you to customize JETLS&#39;s behavior to match your project&#39;s coding standards and preferences.</p><h5 id="Quick-example"><a class="docs-heading-anchor" href="#Quick-example">Quick example</a><a id="Quick-example-1"></a><a class="docs-heading-anchor-permalink" href="#Quick-example" title="Permalink"></a></h5><pre><code class="language-toml hljs"># Pattern matching against diagnostic code
-[[diagnostic.patterns]]
-pattern = &quot;lowering/.*&quot;
-match_by = &quot;code&quot;
-match_type = &quot;regex&quot;
-severity = &quot;warning&quot;
-
-# Pattern matching against diagnostic message
-[[diagnostic.patterns]]
-pattern = &quot;Macro name `@namespace` not found&quot;
+end</code></pre><h3 id="diagnostic/testrunner"><a class="docs-heading-anchor" href="#diagnostic/testrunner">TestRunner diagnostic (<code>testrunner/*</code>)</a><a id="diagnostic/testrunner-1"></a><a class="docs-heading-anchor-permalink" href="#diagnostic/testrunner" title="Permalink"></a></h3><h4 id="diagnostic/testrunner/test-failure"><a class="docs-heading-anchor" href="#diagnostic/testrunner/test-failure">Test failure (<code>testrunner/test-failure</code>)</a><a id="diagnostic/testrunner/test-failure-1"></a><a class="docs-heading-anchor-permalink" href="#diagnostic/testrunner/test-failure" title="Permalink"></a></h4><p><strong>Default severity:</strong> <code>Error</code></p><p>Test failures reported by <a href="../testrunner/#TestRunner-integration">TestRunner integration</a> that happened during running individual <code>@testset</code> blocks or <code>@test</code> cases.</p><h2 id="configuring-diagnostic"><a class="docs-heading-anchor" href="#configuring-diagnostic">Configuring diagnostic</a><a id="configuring-diagnostic-1"></a><a class="docs-heading-anchor-permalink" href="#configuring-diagnostic" title="Permalink"></a></h2><p>You can configure which diagnostics are shown and at what <a href="#diagnostic-severity">severity level</a> under the <code>[diagnostic]</code> section. This allows you to customize JETLS&#39;s behavior to match your project&#39;s coding standards and preferences.</p><h5 id="Common-use-cases"><a class="docs-heading-anchor" href="#Common-use-cases">Common use cases</a><a id="Common-use-cases-1"></a><a class="docs-heading-anchor-permalink" href="#Common-use-cases" title="Permalink"></a></h5><p>Suppress specific macro expansion errors:</p><pre><code class="language-toml hljs">[[diagnostic.patterns]]
+pattern = &quot;Macro name `MyPkg.@mymacro` not found&quot;
 match_by = &quot;message&quot;
 match_type = &quot;literal&quot;
-severity = &quot;info&quot;
-
-# Disable specific diagnostic by code
+severity = &quot;off&quot;</code></pre><p>Apply different settings for test files:</p><pre><code class="language-toml hljs"># Downgrade unused arguments to hints in test files
 [[diagnostic.patterns]]
 pattern = &quot;lowering/unused-argument&quot;
 match_by = &quot;code&quot;
 match_type = &quot;literal&quot;
-severity = &quot;off&quot;</code></pre><h5 id="Common-use-cases"><a class="docs-heading-anchor" href="#Common-use-cases">Common use cases</a><a id="Common-use-cases-1"></a><a class="docs-heading-anchor-permalink" href="#Common-use-cases" title="Permalink"></a></h5><p>Disable unused variable warnings during prototyping:</p><pre><code class="language-toml hljs">[[diagnostic.patterns]]
-pattern = &quot;lowering/unused-argument&quot;
+severity = &quot;hint&quot;
+path = &quot;test/**/*.jl&quot;
+
+# Disable all diagnostics for generated code
+[[diagnostic.patterns]]
+pattern = &quot;.*&quot;
 match_by = &quot;code&quot;
-match_type = &quot;literal&quot;
+match_type = &quot;regex&quot;
 severity = &quot;off&quot;
-
-[[diagnostic.patterns]]
-pattern = &quot;lowering/unused-local&quot;
+path = &quot;gen/**/*.jl&quot;</code></pre><p>Disable unused variable warnings during prototyping:</p><pre><code class="language-toml hljs">[[diagnostic.patterns]]
+pattern = &quot;lowering/(unused-argument|unused-local)&quot;
 match_by = &quot;code&quot;
-match_type = &quot;literal&quot;
+match_type = &quot;regex&quot;
 severity = &quot;off&quot;</code></pre><p>Make inference diagnostic less intrusive:</p><pre><code class="language-toml hljs">[[diagnostic.patterns]]
 pattern = &quot;inference/.*&quot;
 match_by = &quot;code&quot;
 match_type = &quot;regex&quot;
-severity = &quot;hint&quot;</code></pre><p>Suppress specific macro expansion errors:</p><pre><code class="language-toml hljs">[[diagnostic.patterns]]
-pattern = &quot;Macro name `MyPkg.@mymacro` not found&quot;
-match_by = &quot;message&quot;
-match_type = &quot;literal&quot;
-severity = &quot;off&quot;</code></pre><p>For complete configuration options, severity values, pattern matching syntax, and more examples, see the <a href="../configuration/#config/diagnostic"><code>[diagnostic]</code> configuration</a> section in the <a href="../configuration/#JETLS-configuration">JETLS configuration</a> page.</p></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../">« Index</a><a class="docs-footer-nextpage" href="../formatting/">Formatter integration »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.16.0 on <span class="colophon-date" title="Saturday 22 November 2025 17:09">Saturday 22 November 2025</span>. Using Julia version 1.12.2.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
+severity = &quot;hint&quot;</code></pre><p>For complete configuration options, severity values, pattern matching syntax, and more examples, see the <a href="../configuration/#config/diagnostic"><code>[diagnostic]</code> configuration</a> section in the <a href="../configuration/#JETLS-configuration">JETLS configuration</a> page.</p></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../">« Index</a><a class="docs-footer-nextpage" href="../formatting/">Formatter integration »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.16.0 on <span class="colophon-date" title="Saturday 22 November 2025 18:39">Saturday 22 November 2025</span>. Using Julia version 1.12.2.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
