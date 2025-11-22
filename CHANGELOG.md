@@ -21,13 +21,24 @@ This section tracks the major changes to JETLS.jl, the language server implement
 
 #### Changed / Breaking
 
+- Implemented environment isolation via dependency vendoring to prevent conflicts
+  between JETLS dependencies and packages being analyzed.
+  All JETLS dependencies are now vendored with rewritten UUIDs in the `release`
+  branch, allowing JETLS to maintain its own isolated copies of dependencies.
+  This resolves issues where version conflicts between JETLS and analyzed
+  packages would prevent analysis.
+  Users should install JETLS from the `release` branch using
+  `Pkg.Apps.add("https://github.com/aviatesk/JETLS.jl#release")`. (aviatesk/JETLS.jl#314)
+  - For developers:
+    See <https://aviatesk.github.io/JETLS.jl/dev/development/#Release-process>
+    for details on the release process.
 - Migrated the JETLS entry point from the `runserver.jl` script to the `jetls`
   [executable app](https://pkgdocs.julialang.org/dev/apps/) defined by JETLS.jl itself.
   This significantly changes how JETLS is installed and launched,
   while the new methods are generally simpler: (aviatesk/JETLS.jl#314)
   - Installation: Install the `jetls` executable app using:
     ```bash
-    julia -e 'using Pkg; Pkg.Apps.add("https://github.com/aviatesk/JETLS.jl")'
+    julia -e 'using Pkg; Pkg.Apps.add("https://github.com/aviatesk/JETLS.jl#release")'
     ```
     This installs the executable to `~/.julia/bin/` (as `jetls` on Unix-like systems, `jetls.exe` on Windows).
     Make sure `~/.julia/bin` is in your `PATH`.
@@ -84,7 +95,7 @@ a VSCode language client extension for JETLS.
   See <https://aviatesk.github.io/JETLS.jl/dev/#Getting-started> for the new installation and configuration guide.
   Most users can complete the migration by installing the `jetls` executable app:
   ```bash
-  julia -e 'using Pkg; Pkg.Apps.add("https://github.com/aviatesk/JETLS.jl")'
+  julia -e 'using Pkg; Pkg.Apps.add("https://github.com/aviatesk/JETLS.jl#release")'
   ```
 - [JETLS configuration](https://aviatesk.github.io/JETLS.jl/dev/configuration/)
   should now be set with `jetls-client.settings` section,

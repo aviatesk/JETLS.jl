@@ -1,8 +1,12 @@
 node_modules
 out
+Project.toml.bak
 Manifest.toml
 Manifest-*.toml
 .envrc
 **/.JETLSConfig.toml
 *.vsix
 docs/build/
+
+# The following line is negated on release branches
+/vendor
