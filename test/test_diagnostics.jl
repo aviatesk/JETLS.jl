@@ -8,6 +8,7 @@ using JETLS
 using JETLS: JL, JS
 using JETLS.LSP
 using JETLS.URIs2
+using JETLS.Glob
 
 @testset "syntax error diagnostics" begin
     # Test with code that has syntax errors
@@ -250,6 +251,7 @@ end
                 @test pattern.pattern == "lowering/unused-argument"
                 @test pattern.severity == DiagnosticSeverity.Hint
                 @test pattern.match_type == "literal"
+                @test pattern.path === nothing
             end
             let config_raw = Dict{String,Any}(
                     "patterns" => [
@@ -330,6 +332,21 @@ end
                 @test config.enabled === true
                 @test config.patterns !== nothing
                 @test length(config.patterns) == 2
+            end
+
+            let config_raw = Dict{String,Any}(
+                    "patterns" => [
+                        Dict{String,Any}(
+                            "pattern" => "lowering/unused-argument",
+                            "match_by" => "code",
+                            "match_type" => "literal",
+                            "severity" => "hint",
+                            "path" => "test/**/*.jl")
+                    ])
+                config = Configurations.from_dict(JETLS.DiagnosticConfig, config_raw)
+                pattern = only(config.patterns)
+                @test pattern.path !== nothing
+                @test pattern.path isa Glob.FilenameMatch
             end
         end
 
@@ -479,6 +496,18 @@ end
                 @test_throws JETLS.DiagnosticConfigError Configurations.from_dict(
                     JETLS.DiagnosticConfig, config_raw)
             end
+            let config_raw = Dict{String,Any}(
+                    "patterns" => [
+                        Dict{String,Any}(
+                            "pattern" => "test",
+                            "match_by" => "code",
+                            "match_type" => "literal",
+                            "severity" => "hint",
+                            "path" => 123)
+                    ])
+                @test_throws JETLS.DiagnosticConfigError Configurations.from_dict(
+                    JETLS.DiagnosticConfig, config_raw)
+            end
         end
     end
 
@@ -505,7 +534,8 @@ end
                             "match_type" => "regex",
                             "severity" => "off"),
                     ])))
-            JETLS.apply_diagnostic_config!(diagnostics, manager)
+            uri = filepath2uri("/tmp/test.jl")
+            JETLS.apply_diagnostic_config!(diagnostics, manager, uri, nothing)
             @test length(diagnostics) == 1
             @test only(diagnostics).code == JETLS.LOWERING_UNUSED_ARGUMENT_CODE
             @test only(diagnostics).severity == DiagnosticSeverity.Hint
@@ -526,7 +556,8 @@ end
                             "match_type" => "literal",
                             "severity" => "info"),
                     ])))
-            JETLS.apply_diagnostic_config!(diagnostics, manager)
+            uri = filepath2uri("/tmp/test.jl")
+            JETLS.apply_diagnostic_config!(diagnostics, manager, uri, nothing)
             @test length(diagnostics) == 1
             @test only(diagnostics).severity == DiagnosticSeverity.Information
         end
@@ -546,7 +577,8 @@ end
                             "match_type" => "regex",
                             "severity" => "hint"),
                     ])))
-            JETLS.apply_diagnostic_config!(diagnostics, manager)
+            uri = filepath2uri("/tmp/test.jl")
+            JETLS.apply_diagnostic_config!(diagnostics, manager, uri, nothing)
             @test length(diagnostics) == 1
             @test only(diagnostics).severity == DiagnosticSeverity.Hint
         end
@@ -559,7 +591,8 @@ end
             manager = make_test_manager(Dict{String,Any}(
                 "diagnostic" => Dict{String,Any}(
                     "enabled" => false)))
-            JETLS.apply_diagnostic_config!(diagnostics, manager)
+            uri = filepath2uri("/tmp/test.jl")
+            JETLS.apply_diagnostic_config!(diagnostics, manager, uri, nothing)
             @test isempty(diagnostics)
         end
 
@@ -584,9 +617,76 @@ end
                             "match_type" => "literal",
                             "severity" => "info"),
                     ])))
-            JETLS.apply_diagnostic_config!(diagnostics, manager)
+            uri = filepath2uri("/tmp/test.jl")
+            JETLS.apply_diagnostic_config!(diagnostics, manager, uri, nothing)
             @test length(diagnostics) == 1
             @test only(diagnostics).severity == DiagnosticSeverity.Information
+        end
+
+        @testset "path matching" begin
+            let diagnostics = [
+                    make_test_diagnostic(;
+                        code = JETLS.LOWERING_MACRO_EXPANSION_ERROR_CODE,
+                        severity = DiagnosticSeverity.Error,
+                        message = "Macro name `@namespace` not found")
+                ]
+                manager = make_test_manager(Dict{String,Any}(
+                    "diagnostic" => Dict{String,Any}(
+                        "patterns" => [
+                            Dict{String,Any}(
+                                "pattern" => "Macro name `@namespace` not found",
+                                "match_by" => "message",
+                                "match_type" => "literal",
+                                "severity" => "info",
+                                "path" => "LSP/src/**/*.jl")
+                        ])))
+                uri = filepath2uri("/path/to/LSP/src/subdir/protocol.jl")
+                JETLS.apply_diagnostic_config!(diagnostics, manager, uri, "/path/to")
+                @test length(diagnostics) == 1
+                @test only(diagnostics).severity == DiagnosticSeverity.Information
+            end
+
+            let diagnostics = [
+                    make_test_diagnostic(;
+                        code = JETLS.LOWERING_MACRO_EXPANSION_ERROR_CODE,
+                        severity = DiagnosticSeverity.Error,
+                        message = "Macro name `@namespace` not found")
+                ]
+                manager = make_test_manager(Dict{String,Any}(
+                    "diagnostic" => Dict{String,Any}(
+                        "patterns" => [
+                            Dict{String,Any}(
+                                "pattern" => "Macro name `@namespace` not found",
+                                "match_by" => "message",
+                                "match_type" => "literal",
+                                "severity" => "info",
+                                "path" => "LSP/src/**/*.jl")
+                        ])))
+                uri = filepath2uri("/path/to/other/src/protocol.jl")
+                JETLS.apply_diagnostic_config!(diagnostics, manager, uri, "/path/to")
+                @test length(diagnostics) == 1
+                @test only(diagnostics).severity == DiagnosticSeverity.Error
+            end
+
+            let diagnostics = [
+                    make_test_diagnostic(;
+                        code = JETLS.LOWERING_UNUSED_ARGUMENT_CODE,
+                        severity = DiagnosticSeverity.Information)
+                ]
+                manager = make_test_manager(Dict{String,Any}(
+                    "diagnostic" => Dict{String,Any}(
+                        "patterns" => [
+                            Dict{String,Any}(
+                                "pattern" => ".*",
+                                "match_by" => "code",
+                                "match_type" => "regex",
+                                "severity" => "off",
+                                "path" => "test/**/*.jl")
+                        ])))
+                uri = filepath2uri("/path/to/test/foo/bar.jl")
+                JETLS.apply_diagnostic_config!(diagnostics, manager, uri, "/path/to")
+                @test isempty(diagnostics)
+            end
         end
     end
 end

@@ -381,6 +381,7 @@ struct DiagnosticPattern <: ConfigSection
     match_by::String
     match_type::String
     severity::Int
+    path::Maybe{Glob.FilenameMatch{String}}
 end
 @define_eq_overloads DiagnosticPattern
 

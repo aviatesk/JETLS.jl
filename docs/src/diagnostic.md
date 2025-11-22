@@ -261,46 +261,45 @@ nothing # This is an internal comment for this documenation: # hide
 nothing # Use H5 for subsections in this section so that the `@contents` block above works as intended. # hide
 ```
 
-##### Quick example
+##### Common use cases
+
+Suppress specific macro expansion errors:
 
 ```toml
-# Pattern matching against diagnostic code
 [[diagnostic.patterns]]
-pattern = "lowering/.*"
-match_by = "code"
-match_type = "regex"
-severity = "warning"
-
-# Pattern matching against diagnostic message
-[[diagnostic.patterns]]
-pattern = "Macro name `@namespace` not found"
+pattern = "Macro name `MyPkg.@mymacro` not found"
 match_by = "message"
-match_type = "literal"
-severity = "info"
-
-# Disable specific diagnostic by code
-[[diagnostic.patterns]]
-pattern = "lowering/unused-argument"
-match_by = "code"
 match_type = "literal"
 severity = "off"
 ```
 
-##### Common use cases
+Apply different settings for test files:
+
+```toml
+# Downgrade unused arguments to hints in test files
+[[diagnostic.patterns]]
+pattern = "lowering/unused-argument"
+match_by = "code"
+match_type = "literal"
+severity = "hint"
+path = "test/**/*.jl"
+
+# Disable all diagnostics for generated code
+[[diagnostic.patterns]]
+pattern = ".*"
+match_by = "code"
+match_type = "regex"
+severity = "off"
+path = "gen/**/*.jl"
+```
 
 Disable unused variable warnings during prototyping:
 
 ```toml
 [[diagnostic.patterns]]
-pattern = "lowering/unused-argument"
+pattern = "lowering/(unused-argument|unused-local)"
 match_by = "code"
-match_type = "literal"
-severity = "off"
-
-[[diagnostic.patterns]]
-pattern = "lowering/unused-local"
-match_by = "code"
-match_type = "literal"
+match_type = "regex"
 severity = "off"
 ```
 
@@ -312,16 +311,6 @@ pattern = "inference/.*"
 match_by = "code"
 match_type = "regex"
 severity = "hint"
-```
-
-Suppress specific macro expansion errors:
-
-```toml
-[[diagnostic.patterns]]
-pattern = "Macro name `MyPkg.@mymacro` not found"
-match_by = "message"
-match_type = "literal"
-severity = "off"
 ```
 
 For complete configuration options, severity values, pattern matching syntax,

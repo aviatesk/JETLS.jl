@@ -23,6 +23,7 @@ pattern = ""               # string, required
 match_by = ""              # string, required, "code" or "message"
 match_type = ""            # string, required, "literal" or "regex"
 severity = ""              # string or number, required, "error"/"warning"/"warn"/"information"/"info"/"hint"/"off" or 0/1/2/3/4
+path = ""                  # string (optional), glob pattern for file paths
 
 [testrunner]
 executable = "testrunner"  # string, default: "testrunner" (or "testrunner.bat" on Windows)
@@ -133,10 +134,11 @@ Each pattern is defined as a table array entry with the following fields:
 
 ```toml
 [[diagnostic.patterns]]
-pattern = "pattern-value"  # the pattern to match
-match_by = "code"          # "code" or "message"
-match_type = "literal"     # "literal" or "regex"
-severity = "hint"          # severity level
+pattern = "pattern-value"  # string: the pattern to match
+match_by = "code"          # string: "code" or "message"
+match_type = "literal"     # string: "literal" or "regex"
+severity = "hint"          # string or number: severity level
+path = "src/**/*.jl"       # string (optional): restrict to specific files
 ```
 
 - `pattern` (**Type**: string): The pattern to match. For code matching, use diagnostic
@@ -149,6 +151,11 @@ severity = "hint"          # severity level
   - `"literal"`: Exact string match
   - `"regex"`: Regular expression match
 - `severity` (**Type**: string or number): Severity level to apply
+- `path` (**Type**: string, optional): Glob pattern to restrict this
+  configuration to specific files.
+  Patterns are matched against _file paths relative to the workspace root_.
+  Supports globstar (`**`) for matching directories recursively.
+  If omitted, the pattern applies to all files.
 
 ##### Severity values
 
@@ -254,6 +261,22 @@ pattern = "Macro name `.*` not found"
 match_by = "message"
 match_type = "regex"
 severity = "off"
+
+# File path-based filtering: downgrade unused arguments in test files
+[[diagnostic.patterns]]
+pattern = "lowering/unused-argument"
+match_by = "code"
+match_type = "literal"
+severity = "hint"
+path = "test/**/*.jl"
+
+# Disable all diagnostics for generated files
+[[diagnostic.patterns]]
+pattern = ".*"
+match_by = "code"
+match_type = "regex"
+severity = "off"
+path = "gen/**/*.jl"
 ```
 
 See the [configuring diagnostics](@ref configuring-diagnostic) section for
