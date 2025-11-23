@@ -111,7 +111,8 @@ function createTimeoutHandler(
 
 function getServerConfig(): ServerConfig {
   const config = vscode.workspace.getConfiguration("jetls-client");
-  const defaultExecutable = process.platform === "win32" ? "jetls.exe" : "jetls";
+  const defaultExecutable =
+    process.platform === "win32" ? "jetls.exe" : "jetls";
   const executable = config.get<ExecutableConfig>("executable", {
     path: defaultExecutable,
     threads: "auto",
@@ -150,7 +151,8 @@ async function startLanguageServer() {
     baseCommand = cmd;
     baseArgs = args;
   } else {
-    const defaultExecutable = process.platform === "win32" ? "jetls.exe" : "jetls";
+    const defaultExecutable =
+      process.platform === "win32" ? "jetls.exe" : "jetls";
     baseCommand = serverConfig.executable.path || defaultExecutable;
     const threads = serverConfig.executable.threads || "auto";
     baseArgs = [`--threads=${threads}`, "--"];
@@ -466,31 +468,98 @@ async function checkForUpdates(context: ExtensionContext): Promise<void> {
     ?.packageJSON.version;
   const previousVersion = context.globalState.get<string>("version");
 
-  if (currentVersion && previousVersion && currentVersion !== previousVersion) {
+  if (currentVersion && !previousVersion) {
+    // First-time installation
     const message =
-      "JETLS Client has been updated! Please make sure to update the JETLS server as well.";
-    const updateButton = "Update JETLS";
-    const docsButton = "View Changelog";
+      "Welcome to JETLS Client! To use this extension, you need to install the JETLS executable. " +
+      "Click 'Install JETLS' to get started.";
+    const installButton = "Install JETLS";
+    const docsButton = "View Installation Guide";
 
     const selection = await vscode.window.showInformationMessage(
       message,
-      updateButton,
+      installButton,
       docsButton,
     );
 
-    if (selection === updateButton) {
-      const terminal = vscode.window.createTerminal("Update JETLS");
+    if (selection === installButton) {
+      const terminal = vscode.window.createTerminal("Install JETLS");
       terminal.show();
       terminal.sendText(
-        'julia -e \'using Pkg; Pkg.Apps.update("JETLS")\'',
+        "julia -e 'using Pkg; Pkg.Apps.add(\"https://github.com/aviatesk/JETLS.jl#release\")'",
         true,
       );
     } else if (selection === docsButton) {
       vscode.env.openExternal(
         vscode.Uri.parse(
-          "https://github.com/aviatesk/JETLS.jl/blob/master/CHANGELOG.md",
+          "https://github.com/aviatesk/JETLS.jl/blob/master/jetls-client/README.md#getting-started",
         ),
       );
+    }
+  } else if (
+    currentVersion &&
+    previousVersion &&
+    currentVersion !== previousVersion
+  ) {
+    // Update detected
+    if (
+      previousVersion.startsWith("0.1.") &&
+      currentVersion.startsWith("0.2.")
+    ) {
+      // Special handling for v0.1.x -> v0.2.0 breaking update
+      const message =
+        "JETLS Client v0.2.0 requires reinstalling JETLS with the new installation method. " +
+        "Click 'Reinstall JETLS' to run the installation command.";
+      const reinstallButton = "Reinstall JETLS";
+      const migrationGuideButton = "View Migration Guide";
+
+      const selection = await vscode.window.showWarningMessage(
+        message,
+        reinstallButton,
+        migrationGuideButton,
+      );
+
+      if (selection === reinstallButton) {
+        const terminal = vscode.window.createTerminal("Reinstall JETLS");
+        terminal.show();
+        terminal.sendText(
+          "julia -e 'using Pkg; Pkg.Apps.add(\"https://github.com/aviatesk/JETLS.jl#release\")'",
+          true,
+        );
+      } else if (selection === migrationGuideButton) {
+        vscode.env.openExternal(
+          vscode.Uri.parse(
+            "https://github.com/aviatesk/JETLS.jl/blob/master/jetls-client/CHANGELOG.md#v020",
+          ),
+        );
+      }
+    } else {
+      // Normal update
+      const message =
+        "JETLS Client has been updated! Please make sure to update the JETLS server as well.";
+      const updateButton = "Update JETLS";
+      const changelogButton = "View Changelog";
+
+      const selection = await vscode.window.showInformationMessage(
+        message,
+        updateButton,
+        changelogButton,
+      );
+
+      if (selection === updateButton) {
+        const terminal = vscode.window.createTerminal("Update JETLS");
+        terminal.show();
+        terminal.sendText(
+          "julia -e 'using Pkg; Pkg.Apps.update(\"JETLS\")'",
+          true,
+        );
+      } else if (selection === changelogButton) {
+        vscode.env.openExternal(
+          vscode.Uri.parse(
+            "https://github.com/aviatesk/JETLS.jl/blob/master/jetls-client/CHANGELOG.md",
+          ),
+        );
+      }
     }
   }
 
