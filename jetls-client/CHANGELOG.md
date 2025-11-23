@@ -21,8 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Fixed installation command syntax in documentation to use correct
-  `Pkg.Apps.add` keyword argument format
+- Fixed installation command syntax in documentation and migration notification
+  to use correct `Pkg.Apps.add` keyword argument format
 
 ## [v0.2.0]
 
