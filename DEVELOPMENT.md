@@ -209,3 +209,60 @@ supports dynamic/static registration, and if it does, actively opt-in to use it.
 That is, register it via the `client/registerCapability` request in response to
 notifications sent from the client, most likely `InitializedNotification`.
 The `JETLS.register` utility is especially useful for this purpose.
+
+## Release process
+
+JETLS avoids dependency conflicts with packages being analyzed by rewriting the
+UUIDs of its dependencies and vendoring them. This allows JETLS to have its own
+isolated copies of dependencies that won't conflict with the packages users are
+analyzing.
+
+### Branch strategy
+
+- Development branch: `master`
+  - Regular development happens here
+  - Dependencies keep their original UUIDs
+- Release branch: `release`
+  - Distribution branch for users
+  - Dependencies are vendored with rewritten UUIDs
+  - Includes copies of dependency packages in the `vendor/` directory
+
+### Release procedure
+
+1. Check out the `release` branch
+   ```bash
+   git checkout release
+   ```
+
+2. Merge changes from the development branch
+   ```bash
+   git merge -X theirs master
+   ```
+
+3. Vendor dependency packages
+   ```bash
+   julia scripts/vendor-deps.jl --source-branch=master
+   ```
+   This script performs the following:
+   - Fetches the latest `Project.toml` from the `master` branch
+   - Backs it up as `Project.toml.bak`
+   - Cleans up `Manifest.toml`
+   - Updates dependencies with `Pkg.update()`
+   - Loads JETLS and collects dependency packages from `Base.loaded_modules`
+   - Copies each package to `vendor/` and rewrites its UUID
+   - Updates `Project.toml` with vendored UUIDs and `[sources]` entries
+
+4. Commit changes
+   ```bash
+   git add -A
+   git commit -m 'release: 2025-11-23'
+   ```
+
+5. Push to remote
+   ```bash
+   git push origin release
+   ```
+
+Note: `vendor-deps.jl` generates UUIDs using `uuid5(original_uuid, "JETLS-vendor")`.
+This is deterministic, so the same vendored UUID is always generated for the same
+original UUID, ensuring consistency across multiple vendoring operations.
