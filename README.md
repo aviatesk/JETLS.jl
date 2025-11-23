@@ -98,7 +98,7 @@ the list itself is subject to change.
 - Release
   - [x] Publish a standalone VSCode language client extension
   - [x] Make installable as Pkg executable app
-  - [ ] Environment isolution
+  - [x] Environment isolution
   - [ ] Automatic server installation/update for `jetls-client`
   - [ ] Integration into [julia-vscode](https://github.com/julia-vscode/julia-vscode)
 
