@@ -17,14 +17,14 @@ This section tracks the major changes to JETLS.jl, the language server implement
 
 > [!note]
 >
-> - Commit: TODO
+> - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 
 #### Changed / Breaking
 
 - Migrated the JETLS entry point from the `runserver.jl` script to the `jetls`
-  [executable app](https://pkgdocs.julialang.org/dev/apps/) defined by JETLS.jl itself (aviatesk/JETLS.jl#314).
+  [executable app](https://pkgdocs.julialang.org/dev/apps/) defined by JETLS.jl itself.
   This significantly changes how JETLS is installed and launched,
-  while the new methods are generally simpler:
+  while the new methods are generally simpler: (aviatesk/JETLS.jl#314)
   - Installation: Install the `jetls` executable app using:
     ```bash
     julia -e 'using Pkg; Pkg.Apps.add("https://github.com/aviatesk/JETLS.jl")'
@@ -38,29 +38,33 @@ This section tracks the major changes to JETLS.jl, the language server implement
   - Launching: Language clients should launch JETLS using the `jetls` executable with appropriate options.
     See <https://aviatesk.github.io/JETLS.jl/dev/launching/> for detailed launch options.
   - The VSCode language client `jetls-client` has been updated accordingly.
-- Changed diagnostic configuration schema from `[diagnostic.codes]` to `[[diagnostic.patterns]]` for more flexible pattern matching (aviatesk/JETLS.jl#299).
-- Renamed configuration section from `[diagnostics]` to `[diagnostic]` for consistency (aviatesk/JETLS.jl#299).
+- Changed diagnostic configuration schema from `[diagnostic.codes]` to `[[diagnostic.patterns]]` for more flexible pattern matching. (aviatesk/JETLS.jl#299)
+- Renamed configuration section from `[diagnostics]` to `[diagnostic]` for consistency. (aviatesk/JETLS.jl#299)
 
 #### Added
 
 - Added configurable diagnostic serveirty support with hierarchical diagnostic
-  codes in `"category/kind"` format (aviatesk/JETLS.jl#298).
+  codes in `"category/kind"` format.
   Users can now control which diagnostics are displayed and their severity
   levels through fine-grained configuration.
+  (aviatesk/JETLS.jl#298)
 - Added pattern-based diagnostic configuration supporting message-based
-  matching in addition to code-based matching (aviatesk/JETLS.jl#299).
+  matching in addition to code-based matching.
   Supports both `literal` and `regex` patterns with a four-tier priority system.
-- Added file path-based filtering for diagnostic patterns (aviatesk/JETLS.jl#313).
+  (aviatesk/JETLS.jl#299)
+- Added file path-based filtering for diagnostic patterns.
   Users can specify glob patterns (e.g., `"test/**/*.jl"`) to apply diagnostic
   configurations to specific files or directories.
+  (aviatesk/JETLS.jl#313)
 - Added LSP `codeDescription` implementation with clickable documentation links
-  for diagnostics.
-- Added this change log.
+  for diagnostics. (aviatesk/JETLS.jl#298)
+- Added this change log. (aviatesk/JETLS.jl#316)
 
 #### Fixed
 
-- Fixed UTF-8 position encoding to use byte offsets instead of character counts (aviatesk/JETLS.jl#306).
+- Fixed UTF-8 position encoding to use byte offsets instead of character counts.
   This resolves misalignment issues in UTF-8-based editors like Helix while maintaining compatibility with UTF-16 editors like VS Code.
+  (aviatesk/JETLS.jl#306)
 
 ## `jetls-client`
 
@@ -69,8 +73,10 @@ a VSCode language client extension for JETLS.
 
 ### Unreleased
 
-> - Commit: TODO
-> - Diff: <https://github.com/aviatesk/JETLS.jl/compare/b0a4a4c05e3cf1085a55b4f4a1b64e9e3cbb3e33...HEAD>
+> [!note]
+>
+> - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
+> - Diff: [`b0a4a4c...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/b0a4a4c...HEAD)
 
 #### Changed
 
@@ -91,8 +97,9 @@ a VSCode language client extension for JETLS.
   and local JETLS checkout (array form with full command)
 - Added support for applying diagnostic configuration to specific files only by
   specifying glob patterns in the `path` field of
-  `jetls-client.settings.diagnostic.patterns` (aviatesk/JETLS.jl#313).
+  `jetls-client.settings.diagnostic.patterns`.
   For more details, see <https://aviatesk.github.io/JETLS.jl/dev/configuration/#config/diagnostic-patterns>.
+  (aviatesk/JETLS.jl#313)
 
 <!--- Added update notification system that prompts users to update the JETLS server when the extension is updated-->
 
@@ -130,8 +137,10 @@ a VSCode language client extension for JETLS.
 #### Added
 
 - Added `jetls-client.jetlsSettings.formatter` configuration to switch formatter
-  backend between [Runic] and [JuliaFormatter] (aviatesk/JETLS.jl#284):
+  backend between [Runic](github.com/fredrikekre/Runic.jl) and
+  [JuliaFormatter](github.com/fredrikekre/Runic.jl).
   See <https://aviatesk.github.io/JETLS.jl/dev/formatting/> for more details.
+  (aviatesk/JETLS.jl#284)
 - Added support for configuring JETLS through VSCode's `settings.json` file (aviatesk/JETLS.jl#296)
 
 ### [v0.1.1]
