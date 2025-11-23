@@ -15,9 +15,6 @@ const JETLS_DEBUG_LOWERING = Preferences.@load_preference("JETLS_DEBUG_LOWERING"
 function show_setup_info(msg)
     @info msg Sys.BINDIR pkgdir(JETLS) Threads.nthreads() JETLS_DEV_MODE JETLS_TEST_MODE JETLS_DEBUG_LOWERING
 end
-push_init_hooks!() do
-    show_setup_info("Running JETLS with the following setup:")
-end
 
 using LSP
 using LSP: LSP
@@ -422,6 +419,8 @@ function handle_notification_message(server::Server, @nospecialize msg)
     end
     nothing
 end
+
+include("app.jl")
 
 include("precompile.jl")
 

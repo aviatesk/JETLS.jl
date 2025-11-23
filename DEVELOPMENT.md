@@ -143,7 +143,7 @@ For example, you can dynamically add `,` as a `triggerCharacter` for
 then add the following diff to unregister the already enabled completion feature.
 Make a small edit to the file the language server is currently analyzing to send
 some request from the client to the server. This will allow Revise to apply this
-diff to the server process via the dev mode callback (see [runserver.jl](./runserver.jl)),
+diff to the server process via the dev mode callback (see the `JETLS.main` entrypoint),
 which should disable the completion feature:
 ```diff
 diff --git a/src/completions.jl b/src/completions.jl

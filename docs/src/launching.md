@@ -1,23 +1,29 @@
 # Launching JETLS
 
-This guide explains how to launch the JETLS language server using
-`runserver.jl` and describes the available communication channels.
+This guide explains how to launch the JETLS language server using the `jetls`
+executable and describes the available communication channels.
 
-## Using runserver.jl
+## Using the `jetls` executable
 
-The JETLS server is launched using the `runserver.jl` script at the root of
-the repository. You can run it with various options to configure how the
-server communicates with clients.
-
-> `julia runserver.jl --help`
+The JETLS server is launched using the `jetls` executable, which is the main
+entry point of launching JETLS that can be installed as an
+[executable app](https://pkgdocs.julialang.org/dev/apps/) via Pkg.jl:
+```bash
+julia -e 'using Pkg; Pkg.Apps.add("https://github.com/aviatesk/JETLS.jl")'
 ```
-JETLS - A Julia language server providing advanced static analysis and seamless
-runtime integration. Powered by JET.jl, JuliaSyntax.jl, and JuliaLowering.jl.
 
-Usage: julia runserver.jl [OPTIONS]
+You can run `jetls` with various options to configure how the server communicates
+with clients.
+
+> `jetls --help`
+```
+JETLS - A Julia language server with runtime-aware static analysis,
+powered by JET.jl, JuliaSyntax.jl, and JuliaLowering.jl
+
+Usage: jetls [OPTIONS]
 
 Communication channel options (choose one, default: --stdio):
-  --stdio                     Use standard input/output
+  --stdio                     Use standard input/output (not recommended)
   --pipe-connect=<path>       Connect to client's Unix domain socket/named pipe
   --pipe-listen=<path>        Listen on Unix domain socket/named pipe
   --socket=<port>             Listen on TCP socket
@@ -27,16 +33,16 @@ Options:
   --help, -h                  Show this help message
 
 Examples:
-  julia runserver.jl
-  julia runserver.jl --socket=8080
-  julia runserver.jl --pipe-connect=/tmp/jetls.sock --clientProcessId=12345
-  julia runserver.jl --pipe-listen=/tmp/jetls.sock
+  jetls --pipe-listen=/tmp/jetls.sock
+  jetls --pipe-connect=/tmp/jetls.sock --clientProcessId=12345
+  jetls --socket=8080
+  jetls --threads=auto -- --clientProcessId=12345
 ```
 
 ## Communication channels
 
-`runserver.jl` supports multiple communication channels between the client and server.
-Choose based on your environment and requirements:
+The `jetls` executable supports multiple communication channels between the
+client and server. Choose based on your environment and requirements:
 
 ### `pipe-connect` / `pipe-listen` (Unix domain socket / named pipe)
 
@@ -46,7 +52,7 @@ Choose based on your environment and requirements:
 - **Limitations**: Not suitable for cross-container communication
 - **Note**: Client is responsible for socket file cleanup in both modes
 
-`runserver.jl` provides two pipe modes:
+The `jetls` executable provides two pipe modes:
 
 #### `pipe-connect`
 
@@ -60,7 +66,7 @@ Server connects to a client-created socket. This is the mode used by the
 
 Example:
 ```bash
-julia runserver.jl --pipe-connect=/tmp/jetls.sock
+jetls --pipe-connect=/tmp/jetls.sock
 ```
 
 #### `pipe-listen`
@@ -75,7 +81,7 @@ This is the traditional LSP server mode:
 
 Example:
 ```bash
-julia runserver.jl --pipe-listen=/tmp/jetls.sock
+jetls --pipe-listen=/tmp/jetls.sock
 ```
 
 ### `socket` (TCP)
@@ -89,7 +95,7 @@ julia runserver.jl --pipe-listen=/tmp/jetls.sock
 
 Example:
 ```bash
-julia runserver.jl --socket=7777
+jetls --socket=7777
 ```
 
 The server will print `<JETLS-PORT>7777</JETLS-PORT>` to stdout once it starts
@@ -97,7 +103,7 @@ listening. This is especially useful when using `--socket=0` for automatic port
 assignment, as the actual port number will be announced:
 
 ```bash
-julia runserver.jl --socket=0
+jetls --socket=0
 # Output: <JETLS-PORT>54321</JETLS-PORT>  (actual port assigned by OS)
 ```
 
@@ -116,9 +122,9 @@ ssh -L 8080:localhost:8080 user@remote
 
 Example:
 ```bash
-julia runserver.jl --stdio
+jetls --stdio
 # or simply
-julia runserver.jl
+jetls
 ```
 
 !!! warning
@@ -126,7 +132,7 @@ julia runserver.jl
     dependency packages may corrupt the LSP protocol and break the connection.
     Prefer `pipe` or `socket` modes when possible.
 
-## Communication channel configuration for VSCode (`jetls-client`)
+## [Communication channel configuration for VSCode (`jetls-client`)](@id communication/vscode)
 
 The [`jetls-client`](https://marketplace.visualstudio.com/items?itemName=aviatesk.jetls-client)
 VSCode extension by default automatically selects the most appropriate

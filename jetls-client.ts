@@ -18,10 +18,10 @@ let languageClient: LanguageClient;
 let outputChannel: OutputChannel;
 let statusBarItem: vscode.StatusBarItem;
 
+type ExecutableConfig = { path?: string; threads?: string } | string[];
+
 interface ServerConfig {
-  juliaExecutablePath: string;
-  jetlsDirectory: string;
-  juliaThreads: string;
+  executable: ExecutableConfig;
   communicationChannel: string;
   socketPort: number;
 }
@@ -109,37 +109,15 @@ function createTimeoutHandler(
   };
 }
 
-// Helper to spawn Julia process with standard arguments
-function spawnJuliaServer(
-  juliaExecutable: string,
-  serverScript: string,
-  extraArgs: string[],
-  options: { cwd?: string; projectPath?: string; threads?: string } = {},
-): cp.ChildProcess {
-  const baseArgs = ["--startup-file=no", "--history-file=no"];
-
-  if (options.projectPath) {
-    baseArgs.push(`--project=${options.projectPath}`);
-  }
-
-  baseArgs.push(
-    `--threads=${options.threads || "auto"}`,
-    serverScript,
-    ...extraArgs,
-  );
-
-  return cp.spawn(juliaExecutable, baseArgs, {
-    cwd: options.cwd,
-    detached: false,
-  });
-}
-
 function getServerConfig(): ServerConfig {
   const config = vscode.workspace.getConfiguration("jetls-client");
+  const defaultExecutable = process.platform === "win32" ? "jetls.exe" : "jetls";
+  const executable = config.get<ExecutableConfig>("executable", {
+    path: defaultExecutable,
+    threads: "auto",
+  });
   return {
-    juliaExecutablePath: config.get<string>("juliaExecutablePath", "julia"),
-    jetlsDirectory: config.get<string>("jetlsDirectory", ""),
-    juliaThreads: config.get<string>("juliaThreads", "auto"),
+    executable,
     communicationChannel: config.get<string>("communicationChannel", "auto"),
     socketPort: config.get<number>("socketPort", 8080),
   };
@@ -153,21 +131,30 @@ function hasServerConfigChanged(
     return true;
   }
   return (
-    oldConfig.juliaExecutablePath !== newConfig.juliaExecutablePath ||
-    oldConfig.jetlsDirectory !== newConfig.jetlsDirectory ||
-    oldConfig.juliaThreads !== newConfig.juliaThreads ||
+    JSON.stringify(oldConfig.executable) !==
+      JSON.stringify(newConfig.executable) ||
     oldConfig.communicationChannel !== newConfig.communicationChannel ||
     oldConfig.socketPort !== newConfig.socketPort
   );
 }
 
-async function startLanguageServer(context: ExtensionContext) {
+async function startLanguageServer() {
   const serverConfig = getServerConfig();
   currentServerConfig = serverConfig;
 
-  const juliaExecutable = serverConfig.juliaExecutablePath;
-  const jetlsDirectory = serverConfig.jetlsDirectory;
-  const juliaThreads = serverConfig.juliaThreads;
+  let baseCommand: string;
+  let baseArgs: string[];
+
+  if (Array.isArray(serverConfig.executable)) {
+    const [cmd, ...args] = serverConfig.executable;
+    baseCommand = cmd;
+    baseArgs = args;
+  } else {
+    const defaultExecutable = process.platform === "win32" ? "jetls.exe" : "jetls";
+    baseCommand = serverConfig.executable.path || defaultExecutable;
+    const threads = serverConfig.executable.threads || "auto";
+    baseArgs = [`--threads=${threads}`, "--"];
+  }
 
   let commChannel = serverConfig.communicationChannel;
   if (commChannel === "auto") {
@@ -196,8 +183,6 @@ async function startLanguageServer(context: ExtensionContext) {
     );
   }
 
-  const serverScript = context.asAbsolutePath("runserver.jl");
-
   outputChannel.appendLine(
     `[jetls-client] Using communication channel: ${commChannel}`,
   );
@@ -205,17 +190,15 @@ async function startLanguageServer(context: ExtensionContext) {
   let serverOptions: ServerOptions;
 
   if (commChannel === "stdio") {
-    const baseArgs = ["--startup-file=no", "--history-file=no"];
-
-    if (jetlsDirectory) {
-      baseArgs.push(`--project=${jetlsDirectory}`);
-    }
-
-    baseArgs.push(`--threads=${juliaThreads}`, serverScript, "--stdio");
-
     serverOptions = {
-      run: { command: juliaExecutable, args: baseArgs },
-      debug: { command: juliaExecutable, args: [...baseArgs, "--debug=yes"] },
+      run: {
+        command: baseCommand,
+        args: [...baseArgs, "--stdio"],
+      },
+      debug: {
+        command: baseCommand,
+        args: [...baseArgs, "--stdio"],
+      },
     };
   } else if (commChannel === "socket") {
     const port = serverConfig.socketPort || 0; // Use 0 for auto-assign
@@ -226,26 +209,22 @@ async function startLanguageServer(context: ExtensionContext) {
           `[jetls-client] Starting JETLS with TCP socket (port: ${port || "auto-assign"})...`,
         );
 
-        const juliaProcess = spawnJuliaServer(
-          juliaExecutable,
-          serverScript,
-          ["--socket", port.toString()],
-          {
-            projectPath: jetlsDirectory || undefined,
-            threads: juliaThreads,
-          },
-        );
+        const jetlsProcess = cp.spawn(baseCommand, [
+          ...baseArgs,
+          "--socket",
+          port.toString(),
+        ]);
 
         let actualPort: number | null = null;
 
-        const timeoutHandler = createTimeoutHandler(juliaProcess, reject, {
+        const timeoutHandler = createTimeoutHandler(jetlsProcess, reject, {
           timeoutMessage: "Timeout waiting for JETLS to provide port number",
           precompilingMessage:
             "Timeout waiting for JETLS to provide port number (during precompilation)",
         });
 
         const manager = setupProcessMonitoring(
-          juliaProcess,
+          jetlsProcess,
           (isPrecompiling) => {
             if (!actualPort) {
               timeoutHandler(isPrecompiling);
@@ -254,7 +233,7 @@ async function startLanguageServer(context: ExtensionContext) {
         );
 
         // Capture stdout to get the actual port number
-        juliaProcess.stdout?.on("data", (data: Buffer) => {
+        jetlsProcess.stdout?.on("data", (data: Buffer) => {
           data
             .toString()
             .trimEnd()
@@ -292,14 +271,14 @@ async function startLanguageServer(context: ExtensionContext) {
                   outputChannel.appendLine(
                     `[jetls-client] Socket error: ${err.message}`,
                   );
-                  juliaProcess.kill();
+                  jetlsProcess.kill();
                   reject(err);
                 });
               }
             });
         });
 
-        juliaProcess.on("error", (err) => {
+        jetlsProcess.on("error", (err) => {
           outputChannel.appendLine(
             `[jetls-client] Failed to start JETLS: ${err.message}`,
           );
@@ -309,9 +288,9 @@ async function startLanguageServer(context: ExtensionContext) {
           reject(err);
         });
 
-        juliaProcess.on("exit", (code) => {
+        jetlsProcess.on("exit", (code) => {
           outputChannel.appendLine(
-            `[jetls-client] Julia process exited with code: ${code}`,
+            `[jetls-client] JETLS process exited with code: ${code}`,
           );
           if (manager.timeoutHandle) {
             clearTimeout(manager.timeoutHandle);
@@ -354,20 +333,16 @@ async function startLanguageServer(context: ExtensionContext) {
           );
 
           outputChannel.appendLine(`[jetls-client] Starting JETLS...`);
-          const juliaProcess = spawnJuliaServer(
-            juliaExecutable,
-            serverScript,
-            ["--pipe-connect", socketPath],
-            {
-              projectPath: jetlsDirectory || undefined,
-              threads: juliaThreads,
-            },
-          );
+          const jetlsProcess = cp.spawn(baseCommand, [
+            ...baseArgs,
+            "--pipe-connect",
+            socketPath,
+          ]);
 
           // Setup monitoring with timeout
           const manager = setupProcessMonitoring(
-            juliaProcess,
-            createTimeoutHandler(juliaProcess, reject, {
+            jetlsProcess,
+            createTimeoutHandler(jetlsProcess, reject, {
               timeoutMessage: "Timeout waiting for JETLS to connect",
               precompilingMessage:
                 "Timeout waiting for JETLS to connect (during precompilation)",
@@ -375,7 +350,7 @@ async function startLanguageServer(context: ExtensionContext) {
             }),
           );
 
-          juliaProcess.stdout?.on("data", (data: Buffer) => {
+          jetlsProcess.stdout?.on("data", (data: Buffer) => {
             data
               .toString()
               .trimEnd()
@@ -383,7 +358,7 @@ async function startLanguageServer(context: ExtensionContext) {
               .forEach((s) => outputChannel.appendLine(`[JETLS-stdout] ${s}`));
           });
 
-          juliaProcess.on("error", (err) => {
+          jetlsProcess.on("error", (err) => {
             outputChannel.appendLine(
               `[jetls-client] Failed to start JETLS: ${err.message}`,
             );
@@ -394,9 +369,9 @@ async function startLanguageServer(context: ExtensionContext) {
             reject(err);
           });
 
-          juliaProcess.on("exit", (code) => {
+          jetlsProcess.on("exit", (code) => {
             outputChannel.appendLine(
-              `[jetls-client] Julia process exited with code: ${code}`,
+              `[jetls-client] JETLS process exited with code: ${code}`,
             );
             if (manager.timeoutHandle) {
               clearTimeout(manager.timeoutHandle);
@@ -460,7 +435,7 @@ async function startLanguageServer(context: ExtensionContext) {
       (params: { items: { scopeUri?: string; section?: string | null }[] }) => {
         const items = params.items || [];
         const results = items.map((item) => {
-          const section = "jetls-client.jetlsSettings";
+          const section = "jetls-client.settings";
           const scope = item.scopeUri
             ? vscode.Uri.parse(item.scopeUri)
             : undefined;
@@ -472,7 +447,7 @@ async function startLanguageServer(context: ExtensionContext) {
   });
 }
 
-async function restartLanguageServer(context: ExtensionContext) {
+async function restartLanguageServer() {
   if (languageClient) {
     try {
       await languageClient.stop();
@@ -483,7 +458,7 @@ async function restartLanguageServer(context: ExtensionContext) {
       );
     }
   }
-  await startLanguageServer(context);
+  await startLanguageServer();
 }
 
 export function activate(context: ExtensionContext) {
@@ -496,9 +471,7 @@ export function activate(context: ExtensionContext) {
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (
-        event.affectsConfiguration("jetls-client.juliaExecutablePath") ||
-        event.affectsConfiguration("jetls-client.jetlsDirectory") ||
-        event.affectsConfiguration("jetls-client.juliaThreads") ||
+        event.affectsConfiguration("jetls-client.executable") ||
         event.affectsConfiguration("jetls-client.communicationChannel") ||
         event.affectsConfiguration("jetls-client.socketPort")
       ) {
@@ -507,7 +480,7 @@ export function activate(context: ExtensionContext) {
           vscode.window.showInformationMessage(
             "JETLS configuration changed. Restarting language server...",
           );
-          restartLanguageServer(context);
+          restartLanguageServer();
         }
       }
     }),
@@ -516,14 +489,14 @@ export function activate(context: ExtensionContext) {
     vscode.commands.registerCommand(
       "jetls-client.restartLanguageServer",
       () => {
-        restartLanguageServer(context);
+        restartLanguageServer();
       },
     ),
   );
 
   outputChannel = vscode.window.createOutputChannel("JETLS Language Server");
 
-  startLanguageServer(context);
+  startLanguageServer();
 }
 
 export async function deactivate() {
