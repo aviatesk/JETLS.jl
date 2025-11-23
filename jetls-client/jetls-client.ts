@@ -486,7 +486,7 @@ async function checkForUpdates(context: ExtensionContext): Promise<void> {
       const terminal = vscode.window.createTerminal("Install JETLS");
       terminal.show();
       terminal.sendText(
-        "julia -e 'using Pkg; Pkg.Apps.add(\"https://github.com/aviatesk/JETLS.jl#release\")'",
+        'julia -e \'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl"; rev="release")\'',
         true,
       );
     } else if (selection === docsButton) {
@@ -523,7 +523,7 @@ async function checkForUpdates(context: ExtensionContext): Promise<void> {
         const terminal = vscode.window.createTerminal("Reinstall JETLS");
         terminal.show();
         terminal.sendText(
-          "julia -e 'using Pkg; Pkg.Apps.add(\"https://github.com/aviatesk/JETLS.jl#release\")'",
+          'julia -e \'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl"; rev="release")\'',
           true,
         );
       } else if (selection === migrationGuideButton) {
@@ -550,7 +550,7 @@ async function checkForUpdates(context: ExtensionContext): Promise<void> {
         const terminal = vscode.window.createTerminal("Update JETLS");
         terminal.show();
         terminal.sendText(
-          "julia -e 'using Pkg; Pkg.Apps.update(\"JETLS\")'",
+          'julia -e \'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl"; rev="release")\'',
           true,
         );
       } else if (selection === changelogButton) {

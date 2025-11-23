@@ -39,7 +39,7 @@ For those who want to use JETLS with other editors, please refer to the [Other e
 1. Install the `jetls` [executable app](https://pkgdocs.julialang.org/dev/apps/),
    which is the main entry point for running JETLS:
    ```bash
-   julia -e 'using Pkg; Pkg.Apps.add("https://github.com/aviatesk/JETLS.jl#release")'
+   julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="release")'
    ```
    This will install the `jetls` executable (`jetls.exe` on Windows) to `~/.julia/bin/`.
    Make sure `~/.julia/bin` is available on the `PATH` environment so the `jetls` executable is accessible.
@@ -104,7 +104,7 @@ For editors other than VSCode, first install the `jetls`
 the main entry point for running JETLS:
 
 ```bash
-julia -e 'using Pkg; Pkg.Apps.add("https://github.com/aviatesk/JETLS.jl#release")'
+julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="release")'
 ```
 
 Make sure `~/.julia/bin` is available on the `PATH` environment so the `jetls`

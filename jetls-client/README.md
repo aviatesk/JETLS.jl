@@ -32,7 +32,7 @@ diagnostic, macro-aware go-to definition and such.
 1. Install the `jetls` [executable app](https://pkgdocs.julialang.org/dev/apps/),
    which is the main entry point for running JETLS:
    ```bash
-   julia -e 'using Pkg; Pkg.Apps.add("https://github.com/aviatesk/JETLS.jl#release")'
+   julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="release")'
    ```
    This will install the `jetls` executable (`jetls.exe` on Windows) to `~/.julia/bin/`.
    Make sure `~/.julia/bin` is available on the `PATH` environment so the `jetls` executable is accessible.

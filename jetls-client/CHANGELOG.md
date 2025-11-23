@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 >
 > - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 
+### Fixed
+
+- Fixed installation command syntax in documentation to use correct
+  `Pkg.Apps.add` keyword argument format
+
 ## [v0.2.0]
 
 [v0.2.0]: https://github.com/aviatesk/JETLS.jl/compare/b0a4a4c...34278b3
@@ -28,7 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 1. Install the `jetls` executable app:
    ```bash
-   julia -e 'using Pkg; Pkg.Apps.add("https://github.com/aviatesk/JETLS.jl#release")'
+   julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="release")'
    ```
 2. Make sure `~/.julia/bin` is in your `PATH`
 3. Restart VSCode
@@ -39,7 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   See <https://aviatesk.github.io/JETLS.jl/dev/#Getting-started> for the new installation and configuration guide.
   Most users can complete the migration by installing the `jetls` executable app:
   ```bash
-  julia -e 'using Pkg; Pkg.Apps.add("https://github.com/aviatesk/JETLS.jl#release")'
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="release")'
   ```
 - [JETLS configuration](https://aviatesk.github.io/JETLS.jl/dev/configuration/)
   should now be set with `jetls-client.settings` section,

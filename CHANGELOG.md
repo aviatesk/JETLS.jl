@@ -31,7 +31,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   This resolves issues where version conflicts between JETLS and analyzed
   packages would prevent analysis.
   Users should install JETLS from the `release` branch using
-  `Pkg.Apps.add("https://github.com/aviatesk/JETLS.jl#release")`. (aviatesk/JETLS.jl#314)
+  `Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="release")`. (aviatesk/JETLS.jl#314)
   - For developers:
     See <https://github.com/aviatesk/JETLS.jl/blob/master/DEVELOPMENT.md#release-process>
     for details on the release process.
@@ -41,7 +41,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   while the new methods are generally simpler: (aviatesk/JETLS.jl#314)
   - Installation: Install the `jetls` executable app using:
     ```bash
-    julia -e 'using Pkg; Pkg.Apps.add("https://github.com/aviatesk/JETLS.jl#release")'
+    julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="release")'
     ```
     This installs the executable to `~/.julia/bin/` (as `jetls` on Unix-like systems, `jetls.exe` on Windows).
     Make sure `~/.julia/bin` is in your `PATH`.
@@ -51,7 +51,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     ```
   - Launching: Language clients should launch JETLS using the `jetls` executable with appropriate options.
     See <https://aviatesk.github.io/JETLS.jl/dev/launching/> for detailed launch options.
-  - The VSCode language client `jetls-client` has been updated accordingly.
+  - The VSCode language client `jetls-client` and Zed extension `aviatesk/zed-julia` has been updated accordingly.
 - Changed diagnostic configuration schema from `[diagnostic.codes]` to `[[diagnostic.patterns]]` for more flexible pattern matching. (aviatesk/JETLS.jl#299)
 - Renamed configuration section from `[diagnostics]` to `[diagnostic]` for consistency. (aviatesk/JETLS.jl#299)
 

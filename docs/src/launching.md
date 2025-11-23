@@ -9,7 +9,7 @@ The JETLS server is launched using the `jetls` executable, which is the main
 entry point of launching JETLS that can be installed as an
 [executable app](https://pkgdocs.julialang.org/dev/apps/) via Pkg.jl:
 ```bash
-julia -e 'using Pkg; Pkg.Apps.add("https://github.com/aviatesk/JETLS.jl#release")'
+julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="release")'
 ```
 
 You can run `jetls` with various options to configure how the server communicates
