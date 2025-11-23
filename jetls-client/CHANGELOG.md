@@ -10,7 +10,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > [!note]
 >
 > - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
+
+## [v0.2.0]
+
+[v0.2.0]: https://github.com/aviatesk/JETLS.jl/compare/b0a4a4c...HEAD
+
+> [!note]
+>
 > - Diff: [`b0a4a4c...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/b0a4a4c...HEAD)
+
+> [!warning]
+> **Breaking changes**: JETLS installation method has changed significantly.
+> You must reinstall JETLS using the new `jetls` executable app.
+> See the [installation steps](#installation-steps) below.
+
+### Installation steps
+
+1. Install the `jetls` executable app:
+   ```bash
+   julia -e 'using Pkg; Pkg.Apps.add("https://github.com/aviatesk/JETLS.jl#release")'
+   ```
+2. Make sure `~/.julia/bin` is in your `PATH`
+3. Restart VSCode
 
 ### Changed
 
