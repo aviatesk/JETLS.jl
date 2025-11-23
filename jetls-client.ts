@@ -461,6 +461,44 @@ async function restartLanguageServer() {
   await startLanguageServer();
 }
 
+async function checkForUpdates(context: ExtensionContext): Promise<void> {
+  const currentVersion = vscode.extensions.getExtension("aviatesk.jetls-client")
+    ?.packageJSON.version;
+  const previousVersion = context.globalState.get<string>("version");
+
+  if (currentVersion && previousVersion && currentVersion !== previousVersion) {
+    const message =
+      "JETLS Client has been updated! Please make sure to update the JETLS server as well.";
+    const updateButton = "Update JETLS";
+    const docsButton = "View Changelog";
+
+    const selection = await vscode.window.showInformationMessage(
+      message,
+      updateButton,
+      docsButton,
+    );
+
+    if (selection === updateButton) {
+      const terminal = vscode.window.createTerminal("Update JETLS");
+      terminal.show();
+      terminal.sendText(
+        'julia -e \'using Pkg; Pkg.Apps.update("JETLS")\'',
+        true,
+      );
+    } else if (selection === docsButton) {
+      vscode.env.openExternal(
+        vscode.Uri.parse(
+          "https://github.com/aviatesk/JETLS.jl/blob/master/CHANGELOG.md",
+        ),
+      );
+    }
+  }
+
+  if (currentVersion) {
+    await context.globalState.update("version", currentVersion);
+  }
+}
+
 export function activate(context: ExtensionContext) {
   statusBarItem = vscode.window.createStatusBarItem(
     vscode.StatusBarAlignment.Left,
@@ -495,6 +533,8 @@ export function activate(context: ExtensionContext) {
   );
 
   outputChannel = vscode.window.createOutputChannel("JETLS Language Server");
+
+  checkForUpdates(context);
 
   startLanguageServer();
 }

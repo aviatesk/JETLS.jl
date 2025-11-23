@@ -19,6 +19,14 @@ This section tracks the major changes to JETLS.jl, the language server implement
 >
 > - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 
+### [2025-11-24]
+
+[2025-11-24]: https://github.com/aviatesk/JETLS.jl/commit/db47b8b
+
+> [!note]
+>
+> - Commit: [`db47b8b`](https://github.com/aviatesk/JETLS.jl/commit/db47b8b)
+
 #### Changed / Breaking
 
 - Implemented environment isolation via dependency vendoring to prevent conflicts
@@ -30,7 +38,7 @@ This section tracks the major changes to JETLS.jl, the language server implement
   Users should install JETLS from the `release` branch using
   `Pkg.Apps.add("https://github.com/aviatesk/JETLS.jl#release")`. (aviatesk/JETLS.jl#314)
   - For developers:
-    See <https://aviatesk.github.io/JETLS.jl/dev/development/#Release-process>
+    See <https://github.com/aviatesk/JETLS.jl/blob/master/DEVELOPMENT.md#release-process>
     for details on the release process.
 - Migrated the JETLS entry point from the `runserver.jl` script to the `jetls`
   [executable app](https://pkgdocs.julialang.org/dev/apps/) defined by JETLS.jl itself.
@@ -163,7 +171,9 @@ a VSCode language client extension for JETLS.
 > - Commit: [`f199854`](https://github.com/aviatesk/JETLS.jl/commit/f199854)
 > - Diff: [`bc91e4e...f199854`](https://github.com/aviatesk/JETLS.jl/compare/bc91e4e...f199854)
 
-### v0.1.0
+### [v0.1.0]
+
+[v0.1.0]: https://github.com/aviatesk/JETLS.jl/commit/bc91e4e
 
 > [!note]
 >
