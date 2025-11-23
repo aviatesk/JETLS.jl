@@ -106,8 +106,13 @@ the list itself is subject to change.
 
 The following documents contain specific items that should be referenced when
 developing JETLS:
+
 - [DEVELOPMENT.md](./DEVELOPMENT.md): Developer notes
 - [AGENTS.md](./AGENTS.md): Specific coding rules (recommended reading for human developers as well)
 
 Meta-level discussions, research, and ideas related to the development of JETLS
 are compiled as [Obsidian](https://obsidian.md/) notes at <https://publish.obsidian.md/jetls>.
+
+## License
+
+MIT License. See [LICENSE.md](./LICENSE.md) for details.

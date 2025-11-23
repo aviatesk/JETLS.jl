@@ -32,6 +32,10 @@ For those who want to use JETLS with other editors, please refer to the [Other e
 
 ### Steps
 
+!!! warning
+    The `jetls-client` extension does not bundle JETLS.jl itself. You need to
+    install the `jetls` executable separately before using the extension.
+
 1. Install the `jetls` [executable app](https://pkgdocs.julialang.org/dev/apps/),
    which is the main entry point for running JETLS:
    ```bash
