@@ -1,0 +1,6 @@
+name = "PkgA"
+uuid = "056c4eb5-4491-6b91-3d28-8fffe3ee2af1"
+version = "0.1.0"
+
+[deps]
+Preferences = "21216c6a-2e73-6563-6e65-726566657250"

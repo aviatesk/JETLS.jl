@@ -1,0 +1,12 @@
+name = "Compiler"
+uuid = "8499cccf-07fb-5365-ac3a-39ae87615c05"
+version = "0.1.1"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[compat]
+julia = "1.10"
+
+[targets]
+test = ["Test"]

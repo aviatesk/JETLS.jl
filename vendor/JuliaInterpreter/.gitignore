@@ -1,0 +1,9 @@
+*.jl.cov
+*.jl.*.cov
+*.jl.mem
+deps/build.log
+docs/build/
+test/results.md
+Manifest.toml
+Manifest-*.toml
+!/test/code_coverage/coverage_example.jl.cov

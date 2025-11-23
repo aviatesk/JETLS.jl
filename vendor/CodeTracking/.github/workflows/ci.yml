@@ -1,0 +1,70 @@
+name: CI
+on:
+  pull_request:
+    branches:
+      - master
+  push:
+    branches:
+      - master
+    tags: '*'
+jobs:
+  test:
+    name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ github.event_name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        version:
+          - 'lts'
+          - '1'
+          - 'pre'
+          - 'nightly'
+        os:
+          - ubuntu-latest
+          - macOS-latest
+          - windows-latest
+        arch:
+          - x64
+    steps:
+      - uses: actions/checkout@v5
+      - uses: julia-actions/setup-julia@latest
+        with:
+          version: ${{ matrix.version }}
+          arch: ${{ matrix.arch }}
+      - uses: julia-actions/cache@v2
+      - uses: julia-actions/julia-buildpkg@latest
+      - uses: julia-actions/julia-runtest@latest
+      - name: Revise tests
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        run: |
+          julia -e '
+            using Pkg
+            Pkg.develop(path=".")
+            Pkg.add("Revise")
+            Pkg.test("Revise")
+          '
+      - name: Test while running Revise
+        if: ${{ matrix.os == 'ubuntu-latest' && (matrix.version == '1.6' || matrix.version == '1') }}
+        run: |
+          TERM="xterm" julia --project -i --code-coverage -e '
+            using InteractiveUtils, REPL, Revise, Pkg
+            Pkg.add("ColorTypes")
+            t = @async(
+              VERSION >= v"1.12.0-DEV.612" ? Base.run_main_repl(true, true, :no, true) :
+              VERSION >= v"1.11.0-DEV.222" ? Base.run_main_repl(true, true, :no, true, false)   :
+                                            Base.run_main_repl(true, true, false, true, false))
+            isdefined(Base, :errormonitor) && Base.errormonitor(t)
+            while (!isdefined(Base, :active_repl_backend) || isnothing(Base.active_repl_backend)) sleep(0.1) end
+            pushfirst!(Base.active_repl_backend.ast_transforms, Revise.revise_first)
+            cd("test")
+            include("runtests.jl")
+            if Base.VERSION.major == 1 && Base.VERSION.minor >= 9
+                REPL.eval_user_input(:(exit()), Base.active_repl_backend, Main)
+            else
+                REPL.eval_user_input(:(exit()), Base.active_repl_backend)
+            end
+          '
+      - uses: julia-actions/julia-processcoverage@latest
+      - uses: codecov/codecov-action@v5
+        with:
+          file: lcov.info

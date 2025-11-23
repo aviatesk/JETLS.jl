@@ -1,0 +1,21 @@
+name = "CodeTracking"
+uuid = "29b28462-3302-58bb-873a-3f58224955cc"
+authors = ["Tim Holy <tim.holy@gmail.com>"]
+version = "2.0.2"
+
+[deps]
+InteractiveUtils = "b77e0a4c-d291-57a0-90e8-8db25a27a240"
+UUIDs = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
+
+[extras]
+ColorTypes = "3da002f7-5984-5a60-b8a6-cbb66c0b333f"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+REPL = "3fa0cd96-eef1-5676-8a61-b3b8758bbffb"
+SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[compat]
+julia = "1.10"
+
+[targets]
+test = ["ColorTypes", "LinearAlgebra", "REPL", "SparseArrays", "Test"]

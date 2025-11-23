@@ -1,0 +1,17 @@
+        1 fizz() = print("fizz ")
+        - buzz() = print("buzz ")
+        - 
+        - function fizzbuzz(n)
+        4     for i in 1:n
+        4         if i % 3 == 0 || i % 5 == 0
+        1             i % 3 == 0 && fizz()
+        1             i % 5 == 0 && buzz()
+        -         else
+        3             print(i, " ")
+        -         end
+        4     end
+        1     return n
+        - end
+        - 
+        - using JuliaInterpreter
+        - @interpret fizzbuzz(4)
