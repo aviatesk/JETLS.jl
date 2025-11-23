@@ -301,7 +301,7 @@ See [TestRunner integration](@ref) for setup instructions.
 
 ## How to configure JETLS
 
-### Method 1: File-based configuration
+### [Method 1: File-based configuration](@id config/file-based-config)
 
 Create a `.JETLSConfig.toml` file in your project root.
 This configuration method works client-agnostically, thus allows projects to
@@ -328,7 +328,7 @@ severity = "off"
 executable = "/path/to/custom/testrunner"
 ```
 
-### Method 2: Editor configuration via LSP
+### [Method 2: Editor configuration via LSP](@id config/lsp-config)
 
 If your client supports [`workspace/configuration`](#workspace-configuration-support),
 you can configure JETLS in a client-specific manner.
@@ -336,16 +336,16 @@ As examples, we show the configuration methods for the VSCode extension
 [`jetls-client`](https://marketplace.visualstudio.com/items?itemName=aviatesk.jetls-client), and the Zed extension
 [`aviatesk/zed-julia#avi/JETLS`](https://github.com/aviatesk/zed-julia/tree/avi/JETLS).
 
-#### VSCode (`jetls-client` extension)
+#### [VSCode (`jetls-client` extension)](@id config/lsp-config/vscode)
 
-Configure JETLS in VSCode's settings.json file with `jetls-client.jetlsSettings`
+Configure JETLS in VSCode's settings.json file with `jetls-client.settings`
 section:
 
 > Example `.vscode/settings.json`:
 
 ```json
 {
-  "jetls-client.jetlsSettings": {
+  "jetls-client.settings": {
     "full_analysis": {
       "debounce": 2.0
     },
@@ -372,7 +372,7 @@ section:
 See [`package.json`](https://github.com/aviatesk/JETLS.jl/blob/master/package.json)
 for the complete list of available VSCode settings and their descriptions.
 
-#### Zed (`aviatesk/zed-julia#avi/JETLS` extension)
+#### [Zed (`aviatesk/zed-julia#avi/JETLS` extension)](@id config/lsp-config/zed)
 
 Configure JETLS in Zed's settings.json file with the `lsp.JETLS.settings`
 section:
@@ -383,14 +383,6 @@ section:
 {
   "lsp": {
     "JETLS": {
-      // Required configuration items for starting the server
-      "binary": {
-        "path": "/path/to/julia/executable",
-        "env": {
-          "JETLS_DIRECTORY": "/path/to/JETLS/directory/"
-        }
-      },
-      // JETLS configurations
       "settings": {
         "full_analysis": {
           "debounce": 2.0

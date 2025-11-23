@@ -1,16 +1,16 @@
-module test_runserver
+module test_jetls
 
 """
-Test file for exercising runserver.jl with raw JSON communication.
+Test file for exercising the `jetls` executable app with raw JSON communication.
 
-This test spawns actual server processes using runserver.jl and communicates
+This test spawns actual server processes using `julia -m JETLS` and communicates
 with them via stdin/stdout using raw JSON-RPC messages, testing:
 
 1. Server startup and basic lifecycle (initialize, shutdown, exit)
 2. Process management and graceful termination
 
 To run this test independently:
-    julia --startup-file=no -e 'using Test; @testset "runserver" include("test/test_runserver.jl")'
+    julia --startup-file=no -e 'using Test; @testset "jetls" include("test/test_jetls.jl")'
 """
 
 using Test
@@ -19,10 +19,9 @@ using JETLS
 # Test configuration
 const JULIA_CMD = normpath(Sys.BINDIR, "julia")
 const JETLS_DIR = pkgdir(JETLS)
-const SERVER_SCRIPT = normpath(JETLS_DIR, "runserver.jl")
 
 function withserverprocess(f)
-    cmd = `$JULIA_CMD --project=$JETLS_DIR $SERVER_SCRIPT`
+    cmd = `$JULIA_CMD --project=$JETLS_DIR -m JETLS`
     proc = open(cmd; write=true, read=true)
     try
         return f(proc)
@@ -123,7 +122,7 @@ withserverprocess() do proc
     }"""
     write_lsp_message(proc, exit_msg)
 
-    @test with_timeout(#=timeout=#DEFAULT_TIMEOUT, "server process to shutdown") do elapsed
+    @test with_timeout(#=timeout=#DEFAULT_TIMEOUT, "server process to shutdown") do _
         process_running(proc) && return nothing
         return true
     end
@@ -160,11 +159,11 @@ withserverprocess() do proc
     }"""
     write_lsp_message(proc, exit_msg)
 
-    @test with_timeout(#=timeout=#DEFAULT_TIMEOUT, "server process to shutdown") do elapsed
+    @test with_timeout(#=timeout=#DEFAULT_TIMEOUT, "server process to shutdown") do _
         process_running(proc) && return nothing
         return true
     end
     @test process_exited(proc) && proc.exitcode == 1
 end
 
-end # module test_runserver
+end # module test_jetls

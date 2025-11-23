@@ -38,6 +38,8 @@ module __demo__ end
                 virtualize=false,
                 context=__demo__,
                 toplevel_logger=nothing)
+
+            precompile(main, (Vector{String},))
         end
     end
 end

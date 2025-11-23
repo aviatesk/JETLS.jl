@@ -18,53 +18,103 @@ diagnostic, macro-aware go-to definition and such.
 
 ## Getting started
 
-### VSCode
+The easiest way to use JETLS is through
+[`jetls-client`](https://marketplace.visualstudio.com/items?itemName=aviatesk.jetls-client),
+a [VSCode](https://code.visualstudio.com/) client extension for JETLS.
+This section explains how to use JETLS as the IDE backend via `jetls-client`.
 
-#### Requirements
+For those who want to use JETLS with other editors, please refer to the [Other editors](@ref) section.
+
+### Requirements
 
 - [VSCode](https://code.visualstudio.com/) v1.96.0 or higher
-- Julia [`v"1.12.0"`](https://julialang.org/downloads/#current_stable_release)
-  or higher
+- [Julia `v"1.12"`](https://julialang.org/downloads) or higher
 
-#### Steps
+### Steps
 
-!!! info
-    Currently, the `jetls-client` VSCode extension is not bundled with JETLS.jl
-    as a Julia package, requiring you to explicitly specify the path to your
-    JETLS.jl installation via the `jetls-client.jetlsDirectory` configuration
-    and ensure the environment is properly initialized with `Pkg.instantiate()`.
-    Since JETLS is currently distributed as source code, updates must be
-    performed manually using `git pull`, followed by `Pkg.update()` and
-    `Pkg.instantiate()` to refresh dependencies.
-
-1. Clone and initialize this repository:
+1. Install the `jetls` [executable app](https://pkgdocs.julialang.org/dev/apps/),
+   which is the main entry point for running JETLS:
    ```bash
-   git clone https://github.com/aviatesk/JETLS.jl.git
-   cd JETLS.jl
-   julia --project=. -e 'using Pkg; Pkg.instantiate()'
+   julia -e 'using Pkg; Pkg.Apps.add("https://github.com/aviatesk/JETLS.jl")'
    ```
-2. Install the JETLS Client VSCode extension ([`jetls-client`](https://marketplace.visualstudio.com/items?itemName=aviatesk.jetls-client)):
+   This will install the `jetls` executable (`jetls.exe` on Windows) to `~/.julia/bin/`.
+   Make sure `~/.julia/bin` is available on the `PATH` environment so the `jetls` executable is accessible.
+2. Install `jetls-client`:
    - Open VSCode
    - Go to Extensions (Invoke the `View: Show Extensions` command)
    - Search for `"JETLS Client"`
    - Click `Install`
-3. Configure the extension:
-   - Open VSCode settings
-   - Set `jetls-client.jetlsDirectory` to the path of the cloned JETLS.jl
-     repository
-   - (Optional) Set `jetls-client.juliaExecutablePath` to your Julia executable
-     path (default: `julia`)
-4. Open any Julia file
+3. Open any Julia file
 
-### Other editors
+The extension will automatically use the `jetls` (or `jetls.exe` on Windows)
+executable from your `PATH`.
 
-!!! info
-    These setups use generic language clients, requiring you to explicitly
-    specify the path to your JETLS.jl installation and ensure the environment
-    is properly initialized with `Pkg.instantiate()`. Since JETLS is currently
-    distributed as source code, updates must be performed manually using
-    `git pull`, followed by `Pkg.update()` and `Pkg.instantiate()` to refresh
-    dependencies.
+!!! info "Updating JETLS"
+    To update JETLS to the latest version:
+    ```bash
+    julia -e 'using Pkg; Pkg.Apps.update("JETLS")'
+    ```
+    JETLS has not been officially released yet, so there is no versioning policy
+    at this time. In the future, you will be able to install specific versions.
+
+### Advanced: Customizing the executable
+
+Most users do not need any further setups.
+If needed, you can configure `jetls-client.executable` to customize how JETLS is launched:
+
+- Adjust Julia thread count:
+  ```json
+  {
+    "jetls-client.executable": {
+      "path": "jetls",
+      "threads": "4"  // default: "auto"
+    }
+  }
+  ```
+
+- Use a local JETLS checkout (for JETLS development):
+  ```json
+  {
+    "jetls-client.executable": [
+      "/path/to/julia/executable",
+      "--startup-file=no",
+      "--history-file=no",
+      "--threads=auto",
+      "--project=/path/to/JETLS",
+      "-m",
+      "JETLS"
+    ]
+  }
+  ```
+
+See [Communication channel configuration for VSCode](@ref communication/vscode) for advanced
+client-server communication settings.
+
+To configure JETLS behavior (diagnostics, formatting, etc.), use `jetls-client.settings`.
+See [Configuration](@ref config/lsp-config/vscode) for more details.
+
+## Other editors
+
+For editors other than VSCode, first install the `jetls`
+[executable app](https://pkgdocs.julialang.org/dev/apps/),
+the main entry point for running JETLS:
+
+```bash
+julia -e 'using Pkg; Pkg.Apps.add("https://github.com/aviatesk/JETLS.jl")'
+```
+
+Make sure `~/.julia/bin` is available on the `PATH` environment so the `jetls`
+executable (`jetls.exe` on Windows) is accessible.
+
+!!! info "Updating JETLS"
+    To update JETLS to the latest version:
+    ```bash
+    julia -e 'using Pkg; Pkg.Apps.update("JETLS")'
+    ```
+    JETLS has not been officially released yet, so there is no versioning policy
+    at this time. In the future, you will be able to install specific versions.
+
+Then, configure your editor's language client to use the `jetls` executable.
 
 !!! warning
     These setups are basically very minimal and do not necessarily properly
@@ -74,7 +124,7 @@ diagnostic, macro-aware go-to definition and such.
     risks of breaking LSP connections due to writes to `stdout` that may occur
     when loading dependency packages.
 
-#### Emacs
+### Emacs
 
 Minimal [Emacs](https://www.gnu.org/software/emacs/)
 ([eglot](https://github.com/joaotavora/eglot) client) setup:
@@ -83,42 +133,36 @@ Minimal [Emacs](https://www.gnu.org/software/emacs/)
 (add-to-list 'eglot-server-programs
               '(((julia-mode :language-id "julia")
                 (julia-ts-mode :language-id "julia"))
-                "julia"
-                "--startup-file=no"
-                "--history-file=no"
-                "--project=/path/to/JETLS.jl"
+                "jetls"
                 "--threads=auto"
-                "/path/to/JETLS.jl/runserver.jl"
+                "--"
                 "--socket"
                 :autoport))
 ```
 
-#### Neovim
+### Neovim
 
 Minimal [Neovim](https://neovim.io/) setup (requires Neovim v0.11):
 
 ```lua
 vim.lsp.config("jetls", {
     cmd = {
-        "julia",
-        "--startup-file=no",
-        "--history-file=no",
-        "--project=/path/to/JETLS.jl",
+        "jetls",
         "--threads=auto",
-        "/path/to/JETLS.jl/runserver.jl",
+        "--",
     },
     filetypes = {"julia"},
 })
 vim.lsp.enable("jetls")
 ```
 
-#### Zed
+### Zed
 
 [Zed](https://zed.dev/) extension for Julia/JETLS is available:
 See [`aviatesk/zed-julia#avi/JETLS`](https://github.com/aviatesk/zed-julia/tree/avi/JETLS)
 for installation steps.
 
-#### Helix
+### Helix
 
 Minimal [Helix](https://helix-editor.com/) setup:
 
@@ -129,7 +173,7 @@ name = "julia"
 language-servers = [ "jetls" ]
 
 [language-server]
-jetls = { command = "julia", args = ["--startup-file=no", "--history-file=no", "--project=/path/to/JETLS.jl", "--threads=auto", "/path/to/JETLS.jl/runserver.jl"] }
+jetls = { command = "jetls", args = ["--threads=auto", "--"] }
 ```
 
 ## Quick links
