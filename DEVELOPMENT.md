@@ -266,3 +266,49 @@ analyzing.
 Note: `vendor-deps.jl` generates UUIDs using `uuid5(original_uuid, "JETLS-vendor")`.
 This is deterministic, so the same vendored UUID is always generated for the same
 original UUID, ensuring consistency across multiple vendoring operations.
+
+## `jetls-client` development
+
+The [`jetls-client`](./jetls-client) directory contains the VSCode language
+client extension for JETLS.
+
+### Development setup
+
+1. Navigate to the `jetls-client` directory:
+   ```bash
+   cd jetls-client
+   ```
+
+2. Install dependencies:
+   ```bash
+   npm install
+   ```
+
+3. Build the extension:
+   ```bash
+   npm run build
+   ```
+   Or for development with watch mode:
+   ```bash
+   npm run build:watch
+   ```
+
+### Testing the extension locally
+
+To test the extension locally in VSCode:
+
+1. Open the `jetls-client` directory in VSCode
+2. Press F5 to launch the Extension Development Host
+3. The extension will be loaded in the new VSCode window
+
+### Publishing
+
+To package the extension for distribution:
+
+```bash
+cd jetls-client
+vsce publish -m "jetls-client: v0.x.y"
+```
+
+This creates a `.vsix` file that can be installed in VSCode and publish it to
+the marketplace.
