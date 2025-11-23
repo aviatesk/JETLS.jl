@@ -13,11 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [v0.2.0]
 
-[v0.2.0]: https://github.com/aviatesk/JETLS.jl/compare/b0a4a4c...HEAD
+[v0.2.0]: https://github.com/aviatesk/JETLS.jl/compare/b0a4a4c...34278b3
 
 > [!note]
->
-> - Diff: [`b0a4a4c...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/b0a4a4c...HEAD)
+> - Commit: [`34278b3`](https://github.com/aviatesk/JETLS.jl/commit/34278b3)
+> - Diff: [`b0a4a4c...34278b3`](https://github.com/aviatesk/JETLS.jl/compare/b0a4a4c...34278b3)
 
 > [!warning]
 > **Breaking changes**: JETLS installation method has changed significantly.
