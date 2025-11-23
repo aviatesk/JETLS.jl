@@ -1,0 +1,7 @@
+[deps]
+Configurations = "5218b696-f38b-4ac9-8b61-a12ec717816d"
+DocThemeIndigo = "8bac0ac5-51bf-41f9-885e-2bf1ac2bec5f"
+Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
+
+[compat]
+DocThemeIndigo = "0.1.1"

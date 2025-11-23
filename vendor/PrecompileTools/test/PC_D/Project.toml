@@ -1,0 +1,7 @@
+name = "PC_D"
+uuid = "8c347477-c4a5-4b7f-b911-c68b2b9ed891"
+authors = ["Tim Holy <tim.holy@gmail.com>"]
+version = "0.1.0"
+
+[deps]
+PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"

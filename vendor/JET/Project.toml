@@ -1,0 +1,105 @@
+name = "JET"
+version = "0.10.12"
+uuid = "d18a8d2a-b6cf-5b35-ae77-db04d04d451d"
+authors = ["Shuhei Kadowaki <aviatesk@gmail.com>"]
+
+[targets]
+test = ["Aqua", "BenchmarkTools", "Downloads", "Example", "JSON3", "Libdl", "Logging", "Random", "Revise", "StaticArrays", "TOML", "Test"]
+
+[compat]
+Downloads = "1.6.0"
+Pkg = "1.10"
+Revise = "3.3"
+JSON3 = "1"
+LoweredCodeUtils = "3.4"
+Random = "1.10"
+Libdl = "1.10"
+BenchmarkTools = "1.3.2"
+Test = "1.10"
+CodeTracking = "1, 2"
+JuliaSyntax = "1, 2"
+PrecompileTools = "1.3.2"
+JuliaInterpreter = "0.10.3"
+Compiler = "0.1"
+Example = "0.5.3"
+Aqua = "0.8.2"
+Preferences = "1.4"
+MacroTools = "0.5.6"
+StaticArrays = "1.7.0"
+julia = "1.12"
+InteractiveUtils = "1.10"
+Logging = "1.10"
+TOML = "1.0.3"
+
+[weakdeps]
+Revise = "295af30f-e4ad-537b-8983-00126c2a3abe"
+
+[deps]
+Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+LoweredCodeUtils = "01ede001-ea10-5720-9c31-2e53839707a9"
+CodeTracking = "29b28462-3302-58bb-873a-3f58224955cc"
+JuliaSyntax = "02a177f8-2b16-5240-a0b4-02ed40703cda"
+PrecompileTools = "32931bc0-5014-5544-84d5-53636ff9f6c5"
+JuliaInterpreter = "87c368a4-672f-5de1-91ff-3cc7fc652fab"
+Compiler = "8499cccf-07fb-5365-ac3a-39ae87615c05"
+Preferences = "cc588e5a-7be0-5224-8a6a-549b21958db9"
+MacroTools = "73a1cfca-4736-53e3-b924-35a7291c571e"
+InteractiveUtils = "b77e0a4c-d291-57a0-90e8-8db25a27a240"
+
+[extras]
+Downloads = "f43a241f-c20a-4ad4-852c-f6b1247861c6"
+Revise = "295af30f-e4ad-537b-8983-00126c2a3abe"
+JSON3 = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+Libdl = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
+BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
+Example = "7876af07-990d-54b4-ab0e-23690620f79a"
+Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
+StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
+TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
+
+[sources.JuliaSyntax]
+subdir = "vendor/JuliaSyntax"
+rev = "release"
+url = "https://github.com/aviatesk/JETLS.jl"
+
+[sources.Compiler]
+subdir = "vendor/Compiler"
+rev = "release"
+url = "https://github.com/aviatesk/JETLS.jl"
+
+[sources.PrecompileTools]
+subdir = "vendor/PrecompileTools"
+rev = "release"
+url = "https://github.com/aviatesk/JETLS.jl"
+
+[sources.MacroTools]
+subdir = "vendor/MacroTools"
+rev = "release"
+url = "https://github.com/aviatesk/JETLS.jl"
+
+[sources.LoweredCodeUtils]
+subdir = "vendor/LoweredCodeUtils"
+rev = "release"
+url = "https://github.com/aviatesk/JETLS.jl"
+
+[sources.JuliaInterpreter]
+subdir = "vendor/JuliaInterpreter"
+rev = "release"
+url = "https://github.com/aviatesk/JETLS.jl"
+
+[sources.Preferences]
+subdir = "vendor/Preferences"
+rev = "release"
+url = "https://github.com/aviatesk/JETLS.jl"
+
+[sources.CodeTracking]
+subdir = "vendor/CodeTracking"
+rev = "release"
+url = "https://github.com/aviatesk/JETLS.jl"
+
+[extensions]
+JETReviseExt = "Revise"

@@ -1,0 +1,5 @@
+float = 0.33
+
+[opt]
+name = "Roger"
+int = 2

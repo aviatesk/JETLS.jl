@@ -1,0 +1,25 @@
+name = "Configurations"
+uuid = "0e024541-5ab8-52a1-ab45-c6c348770b4a"
+authors = ["Roger-luo <rogerluo.rl18@gmail.com> and contributors"]
+version = "0.17.6"
+
+[deps]
+ExproniconLite = "c4ea0d7b-0a8a-57b2-be88-2cd5ead728ce"
+OrderedCollections = "64c61135-0f01-5c34-beb9-07fc02084e85"
+TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
+
+[compat]
+ExproniconLite = "0.6, 0.7, 0.8, 0.9, 0.10"
+julia = "1.6"
+OrderedCollections = "1.3"
+TOML = "1"
+
+[sources.ExproniconLite]
+subdir = "vendor/ExproniconLite"
+rev = "release"
+url = "https://github.com/aviatesk/JETLS.jl"
+
+[sources.OrderedCollections]
+subdir = "vendor/OrderedCollections"
+rev = "release"
+url = "https://github.com/aviatesk/JETLS.jl"

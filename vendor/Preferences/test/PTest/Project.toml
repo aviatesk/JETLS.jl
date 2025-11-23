@@ -1,0 +1,13 @@
+name = "PTest"
+uuid = "8789f892-390a-4776-818f-b9c2b248add9"
+version = "0.1.0"
+
+[deps]
+Preferences = "21216c6a-2e73-6563-6e65-726566657250"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[sources]
+Preferences = {path = "../.."}
+
+[preferences.PTest]
+pkg_copied_exported = "Exported preference copied over by Pkg.jl"

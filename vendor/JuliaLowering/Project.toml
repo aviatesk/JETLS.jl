@@ -1,0 +1,24 @@
+name = "JuliaLowering"
+uuid = "7ba39d99-9390-5ff4-b3a7-c9cea37c1861"
+authors = ["Claire Foster <aka.c42f@gmail.com> and contributors"]
+version = "1.0.0-DEV"
+
+[deps]
+JuliaSyntax = "02a177f8-2b16-5240-a0b4-02ed40703cda"
+
+[extras]
+REPL = "3fa0cd96-eef1-5676-8a61-b3b8758bbffb"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+FileWatching = "7b1f6079-737a-58dc-b8bc-7a2ca5c1b5ee"
+Markdown = "d6f4376e-aef5-505a-96c1-9c027394607a"
+
+[compat]
+julia = "1"
+
+[targets]
+test = ["Test", "FileWatching", "Markdown", "REPL"]
+
+[sources.JuliaSyntax]
+subdir = "vendor/JuliaSyntax"
+rev = "release"
+url = "https://github.com/aviatesk/JETLS.jl"

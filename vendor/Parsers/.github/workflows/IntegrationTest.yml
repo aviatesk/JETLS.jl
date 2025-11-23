@@ -1,0 +1,62 @@
+name: IntegrationTest
+on:
+  push:
+    branches: [main]
+    tags: [v*]
+  pull_request:
+
+concurrency:
+  # Skip intermediate builds: always.
+  # Cancel intermediate builds: only if it is a pull request build.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
+
+jobs:
+  test:
+    name: ${{ matrix.package.repo }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        julia-version: [1]
+        os: [ubuntu-latest]
+        package:
+          - {user: JuliaData, repo: CSV.jl}
+          - {user: JuliaData, repo: WeakRefStrings.jl}
+          # - {user: JuliaDatabases, repo: MySQL.jl}  # Tests requires a DB.
+          - {user: JuliaIO, repo: JSON.jl}
+          - {user: JuliaStrings, repo: InlineStrings.jl}
+          - {user: nickrobinson251, repo: PowerFlowData.jl}
+          - {user: quinnj, repo: JSON3.jl}
+          - {user: RelationalAI, repo: ChunkedCSV.jl}
+          - {user: cjdoris, repo: ARFFFiles.jl}
+
+    steps:
+      - uses: actions/checkout@v2
+      - uses: julia-actions/setup-julia@v1
+        with:
+          version: ${{ matrix.julia-version }}
+          arch: x64
+      - uses: julia-actions/julia-buildpkg@latest
+      - name: Clone Downstream
+        uses: actions/checkout@v2
+        with:
+          repository: ${{ matrix.package.user }}/${{ matrix.package.repo }}
+          path: downstream
+      - name: Load this and run the downstream tests
+        shell: julia --project=downstream {0}
+        run: |
+          using Pkg
+          try
+            # Force downstream tests to use this PR's version of the package.
+            Pkg.develop(PackageSpec(path="."))  # resolver may fail with main deps
+            Pkg.update()
+            Pkg.test()  # resolver may fail with test time deps
+          catch err
+            err isa Pkg.Resolve.ResolverError || rethrow()
+            # If we can't resolve that means this is incompatible by SemVer and this is fine;
+            # it means we marked this as a breaking change, so we don't need to worry about
+            # mistakenly introducing a breaking change, as we have intentionally made one
+            @info "Not compatible with this release. No problem." exception=err
+            exit(0)  # Exit immediately as a success.
+          end

@@ -1,0 +1,11 @@
+name = "AliasTables"
+uuid = "beccad7b-8a6a-4466-a02c-5791472d17ea"
+version = "0.1.0"
+authors = ["Tim Holy <tim.holy@gmail.com>"]
+
+[deps]
+PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+
+[compat]
+Random = "1.11.0"

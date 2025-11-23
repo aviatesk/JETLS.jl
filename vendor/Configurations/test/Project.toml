@@ -1,0 +1,7 @@
+[deps]
+Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
+Expronicon = "6b7a57c9-7cc1-4fdf-b7f5-e857abae3636"
+ExproniconLite = "55351af7-c7e9-48d6-89ff-24e801d99491"
+OrderedCollections = "bac558e1-5e72-5ebc-8fee-abe8a469f55d"
+TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"

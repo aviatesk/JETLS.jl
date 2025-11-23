@@ -1,0 +1,32 @@
+name = "LSP"
+uuid = "ba3d5f2d-0240-5843-8ab5-e1c74856c201"
+version = "0.1.0"
+authors = ["Shuhei Kadowaki <aviatesk@gmail.com>"]
+
+[deps]
+PrecompileTools = "32931bc0-5014-5544-84d5-53636ff9f6c5"
+JSON3 = "00ac8d46-747e-5902-8e12-fdfc767369c7"
+StructTypes = "66bcceda-d870-5865-93dd-65803322e79e"
+
+[workspace]
+projects = ["test"]
+
+[compat]
+PrecompileTools = "1.3.3"
+JSON3 = "1.14.3"
+StructTypes = "1.11.0"
+
+[sources.PrecompileTools]
+subdir = "vendor/PrecompileTools"
+rev = "release"
+url = "https://github.com/aviatesk/JETLS.jl"
+
+[sources.JSON3]
+subdir = "vendor/JSON3"
+rev = "release"
+url = "https://github.com/aviatesk/JETLS.jl"
+
+[sources.StructTypes]
+subdir = "vendor/StructTypes"
+rev = "release"
+url = "https://github.com/aviatesk/JETLS.jl"
