@@ -97,8 +97,9 @@ the list itself is subject to change.
 - [ ] Notebook support
 - Release
   - [x] Publish a standalone VSCode language client extension
+  - [x] Make installable as Pkg executable app
   - [ ] Environment isolution
-  - [ ] Bundle JETLS (as a Julia package)
+  - [ ] Automatic server installation/update for `jetls-client`
   - [ ] Integration into [julia-vscode](https://github.com/julia-vscode/julia-vscode)
 
 ## Development notes
