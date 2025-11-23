@@ -16,32 +16,36 @@ By leveraging tooling technologies like
 JETLS aims to offer enhanced language features such as type-sensitive
 diagnostic, macro-aware go-to definition and such.
 
-## Getting started
-
-### Requirements
+## Requirements
 
 - [VSCode](https://code.visualstudio.com/) v1.96.0 or higher
 - [Julia `v"1.12"`](https://julialang.org/downloads) or higher
 
-### Steps
+## Installation
 
 > [!warning]
 > The `jetls-client` extension does not bundle JETLS.jl itself. You need to
 > install the `jetls` executable separately before using the extension.
 
-1. Install the `jetls` [executable app](https://pkgdocs.julialang.org/dev/apps/),
+1. Install the [`jetls` executable app](https://pkgdocs.julialang.org/dev/apps/),
    which is the main entry point for running JETLS:
    ```bash
    julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="release")'
    ```
    This will install the `jetls` executable (`jetls.exe` on Windows) to `~/.julia/bin/`.
-   Make sure `~/.julia/bin` is available on the `PATH` environment so the `jetls` executable is accessible.
-2. Install `jetls-client`:
+2. Make sure `~/.julia/bin` is available on the `PATH` environment so the `jetls` executable is accessible.
+   You can verify the installation by running:
+   ```bash
+   jetls --help
+   ```
+   If this displays the help message, the installation was successful and `~/.julia/bin`
+   is properly added to your `PATH`.
+3. Install `jetls-client`:
    - Open VSCode
    - Go to Extensions (Invoke the `View: Show Extensions` command)
    - Search for `"JETLS Client"`
    - Click `Install`
-3. Open any Julia file
+4. Open any Julia file
 
 The extension will automatically use the `jetls` (or `jetls.exe` on Windows)
 executable from your `PATH`.
@@ -73,7 +77,7 @@ The following settings are available for advanced use cases:
   (default: `0` for auto-assign). Only used when `"socket"` communication
   channel is selected
 
-## JETLS Configuration
+## Configuring JETLS
 
 JETLS behavior (diagnostics, formatting, etc.) can be configured through VSCode's
 `settings.json` file using the `jetls-client.settings` section.
