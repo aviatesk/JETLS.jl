@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 >
 > - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 
+## [v0.2.1]
+
+[v0.2.1]: https://github.com/aviatesk/JETLS.jl/compare/34278b3...250188fc
+
+> [!note]
+> - Commit: [`250188fc`](https://github.com/aviatesk/JETLS.jl/commit/250188fc)
+> - Diff: [`34278b3...250188fc`](https://github.com/aviatesk/JETLS.jl/compare/34278b3...250188fc)
+
 ### Fixed
 
 - Fixed installation command syntax in documentation to use correct
