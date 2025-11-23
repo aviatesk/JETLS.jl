@@ -11,6 +11,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 >
 > - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 
+## [v0.2.2]
+
+[v0.2.2]: https://github.com/aviatesk/JETLS.jl/compare/250188fc...9008d1b
+
+> [!note]
+> - Commit: [`250188fc`](https://github.com/aviatesk/JETLS.jl/commit/9008d1b)
+> - Diff: [`34278b3...250188fc`](https://github.com/aviatesk/JETLS.jl/compare/250188fc...9008d1b)
+
+### Fixed
+
+- (Really) fix installation command syntax in the migration commands invoked via
+  the extension installation/update notification to use correct `Pkg.Apps.add`
+  keyword argument format
+
 ## [v0.2.1]
 
 [v0.2.1]: https://github.com/aviatesk/JETLS.jl/compare/34278b3...250188fc
