@@ -4,8 +4,13 @@ on:
   push:
     branches:
       - master # update to match your development branch (master, main, dev, trunk, ...)
-    tags: '*'
+    paths:
+      - "docs/**"
+      - ".github/workflows/Documentation.yml"
   pull_request:
+    paths:
+      - "docs/**"
+      - ".github/workflows/Documentation.yml"
 
 jobs:
   build:
