@@ -60,74 +60,100 @@ executable from your `PATH`.
 > JETLS has not been officially released yet, so there is no versioning policy
 > at this time. In the future, you will be able to install specific versions.
 
-### Advanced launching configuration
+## Launching configuration (advanced)
 
-Most users do not need any further setups beyond the installation steps above.
-The following settings are available for advanced use cases:
+Most users do not need any further configuration beyond the installation steps
+above. The following settings are available for advanced use cases.
 
-- `jetls-client.executable`: JETLS executable configuration. Use object form
-  `{path, threads}` to customize the installed JETLS executable path or thread
-  setting, or array form for a local JETLS checkout
-  (default: `{"path": "jetls", "threads": "auto"}`)
-- `jetls-client.communicationChannel`: Communication channel for the language
-  server. Options: `"auto"` (default), `"pipe"`, `"stdio"`, `"socket"`. See
-  [Communication channels](https://aviatesk.github.io/JETLS.jl/dev/launching/#Communication-channels)
-  for details
-- `jetls-client.socketPort`: Port number for socket communication
-  (default: `0` for auto-assign). Only used when `"socket"` communication
-  channel is selected
+### Executable configuration
+
+Configure the JETLS executable through the `jetls-client.executable` setting:
+
+- **Object form** `{"path": string, "threads": string}`: Customize the executable path or thread
+  setting (default: `{"path": "jetls", "threads": "auto"}`)
+- **Array form** `string[]`: Use a local JETLS checkout for development, e.g,
+  (`["julia", "--startup-file=no", "--history-file=no", "--project=/path/to/JETLS", "-m", "JETLS"]`)
+
+### Communication channel
+
+The extension automatically selects the most appropriate communication channel
+based on your environment:
+
+- **Local development**: `pipe` - Complete isolation from `stdin`/`stdout`,
+  fastest for local communication
+- **Remote SSH/WSL**: `pipe` - Works transparently across remote connections
+- **Dev Containers**: `stdio` - Maximum compatibility for containerized
+  environments
+
+For most users, this automatic selection provides optimal performance and
+reliability without requiring manual configuration.
+
+You can override the automatic selection using `"jetls-client.communicationChannel": string`:
+
+- `auto` (default): Automatic selection as described above
+- `pipe`: Uses Unix domain socket/named pipe
+- `socket`: Uses TCP socket (configure port with `"jetls-client.socketPort": number`,
+  default `0` for auto-assign)
+- `stdio`: Uses standard input/output
+
+For detailed information about each communication channel and when to use them,
+see the [Communication channels documentation](https://aviatesk.github.io/JETLS.jl/dev/launching/#Communication-channels).
 
 ## Configuring JETLS
 
 JETLS behavior (diagnostics, formatting, etc.) can be configured through VSCode's
 `settings.json` file using the `jetls-client.settings` section.
 
+For detailed configuration options and examples, see the
+[Configuration documentation](https://aviatesk.github.io/JETLS.jl/dev/configuration/).
+
+### Available settings
+
+- `"jetls-client.settings.full_analysis.debounce": number`: Debounce time in seconds
+  before triggering full analysis after a document change (default: `1.0`)
+- `"jetls-client.settings.formatter": string | { "executable": string, "range_executable": string }`:
+  Formatter configuration. Can be a preset name (`"Runic"` or `"JuliaFormatter"`)
+  or a custom formatter object (default: `"Runic"`)
+- `"jetls-client.settings.diagnostic.enabled": boolean`: Enable or disable all JETLS
+  diagnostics (default: `true`)
+- `"jetls-client.settings.diagnostic.patterns": { "pattern": string, "match_by": string, "match_type": string, "serverity": string | number, "path": string? }[]`:
+  Fine-grained control over diagnostics through pattern matching.
+  Each pattern supports `pattern`, `match_by` (`"code"` or `"message"`),
+  `match_type` (`"literal"` or `"regex"`), `severity`,
+  and optional `path` (glob pattern) fields
+- `"jetls-client.settings.testrunner.executable": string`:
+  Path to the TestRunner.jl executable
+  (default: `"testrunner"` or `"testrunner.exe"` on Windows)
+
 ### Example configuration
 
-Add the following to your `.vscode/settings.json` (project specific setting file)
-or global user settings:
+> `.vscode/settings.json`
 
 ```jsonc
 {
   "jetls-client.settings": {
     "full_analysis": {
-      "debounce": 1.0
+      "debounce": 2.0,
     },
-    "formatter": "Runic",
+    // Use JuliaFormatter instead of Runic
+    "formatter": "JuliaFormatter",
+    // Suppress unused argument warnings
     "diagnostic": {
       "patterns": [
-        // Disable all diagnostics for test code
         {
-          "pattern": ".*",
+          "pattern": "lowering/unused-argument",
           "match_by": "code",
-          "match_type": "regex",
+          "match_type": "literal",
           "severity": "off",
-          "path": "test//*.jl"
-        }
-      ]
-    }
-  }
+        },
+      ],
+    },
+    "testrunner": {
+      "executable": "/path/to/custom/testrunner",
+    },
+  },
 }
 ```
-
-### Available settings
-
-- `jetls-client.settings.full_analysis.debounce`: Debounce time in seconds
-  before triggering full analysis after a document change (default: `1.0`)
-- `jetls-client.settings.formatter`: Formatter configuration. Can be a preset
-  name (`"Runic"` or `"JuliaFormatter"`) or a custom formatter object
-  (default: `"Runic"`)
-- `jetls-client.settings.diagnostic.enabled`: Enable or disable all JETLS
-  diagnostics (default: `true`)
-- `jetls-client.settings.diagnostic.patterns`: Fine-grained control over
-  diagnostics through pattern matching. Each pattern supports `pattern`,
-  `match_by` (`"code"` or `"message"`), `match_type` (`"literal"` or `"regex"`),
-  `severity`, and optional `path` (glob pattern) fields
-- `jetls-client.settings.testrunner.executable`: Path to the TestRunner.jl
-  executable (default: `"testrunner"` or `"testrunner.exe"` on Windows)
-
-For detailed configuration options and examples, see the
-[Configuration documentation](https://aviatesk.github.io/JETLS.jl/dev/configuration/).
 
 ## License
 
