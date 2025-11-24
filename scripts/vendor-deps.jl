@@ -269,7 +269,7 @@ function fetch_project_from_branch(
         source_branch::AbstractString,
         project_path::AbstractString
     )::String
-    result = read(`git show origin/$(source_branch):$(project_path)`, String)
+    result = read(`git show $(source_branch):$(project_path)`, String)
     return result
 end
 
@@ -300,15 +300,11 @@ function clean_manifests()
     end
 end
 
-
 function vendor_dependencies_from_branch(config::Config)
     @info "=== JETLS Vendoring Script ==="
     @info "Source branch: $(config.source_branch)"
 
-    @info "\n[Step 1/6] Fetching origin/$(config.source_branch)..."
-    run(`git fetch origin $(config.source_branch)`)
-
-    @info "\n[Step 2/6] Fetching Project.toml files from origin/$(config.source_branch)..."
+    @info "\n[Step 1/5] Fetching Project.toml files from $(config.source_branch)..."
 
     main_project = fetch_project_from_branch(config.source_branch, "Project.toml")
     main_path = joinpath(CURRENT_DIR, "Project.toml")
@@ -337,16 +333,16 @@ function vendor_dependencies_from_branch(config::Config)
         end
     end
 
-    @info "\n[Step 3/6] Cleaning manifest files..."
+    @info "\n[Step 2/5] Cleaning manifest files..."
     clean_manifests()
 
-    @info "\n[Step 4/6] Updating dependencies..."
+    @info "\n[Step 3/5] Updating dependencies..."
     Pkg.update()
 
-    @info "\n[Step 5/6] Running vendor isolation..."
+    @info "\n[Step 4/5] Running vendor isolation..."
     vendor_loaded_packages()
 
-    @info "\n[Step 6/6] Release preparation complete!"
+    @info "\n[Step 5/5] Release preparation complete!"
     @info "Vendored package directory: $(VENDOR_DIR)"
 end
 
