@@ -15,6 +15,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 > - Diff: [`2be0cff...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/2be0cff...HEAD)
 
+### Changed
+
+- Updated documentation deployment to show release date in version selector.
+  The documentation version selector now displays `release (YYYY-MM-DD)` instead
+  of just `stable`, making it clearer which release version is being viewed.
+  The release date is automatically extracted from the `release: YYYY-MM-DD`
+  commit message.
+
 ## [2025-11-25]
 
 [2025-11-25]: https://github.com/aviatesk/JETLS.jl/pull/323
