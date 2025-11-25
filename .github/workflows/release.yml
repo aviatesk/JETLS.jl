@@ -152,5 +152,5 @@ jobs:
             exit 0
           fi
 
-          git commit -m "docs: update CHANGELOG for $VERSION release"
+          git commit -m "docs: update CHANGELOG.md for $VERSION release"
           git push origin master

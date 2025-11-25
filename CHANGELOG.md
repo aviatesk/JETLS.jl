@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > [!note]
 > JETLS uses date-based versioning (`YYYY-MM-DD`) rather than semantic versioning,
 > as it is not registered in General due to environment isolation requirements.
+>
 > Each dated section below corresponds to a release that can be installed via
 > `Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="releases/YYYY-MM-DD")`
 
