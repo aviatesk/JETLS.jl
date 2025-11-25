@@ -39,12 +39,15 @@ Documenter.authentication_method(::ReleaseBranchConfig) = Documenter.SSH
 Documenter.authenticated_repo_url(::ReleaseBranchConfig) =
     "git@github.com:aviatesk/JETLS.jl.git"
 
+function deploy_versions()
+    label = isempty(release_date) ? "release" : "release ($release_date)"
+    return [label => "release", "dev" => "dev"]
+end
+
 deploydocs(;
     repo = "github.com/aviatesk/JETLS.jl",
     push_preview = true,
     devbranch,
     deploy_config = devbranch == "release" ? ReleaseBranchConfig() : Documenter.auto_detect_deploy_system(),
-    # Only set versions from release branch to preserve the release date label
-    versions = devbranch == "release" ?
-        ["release ($release_date)" => "release", "dev" => "dev"] : nothing,
+    versions = deploy_versions(),
 )

@@ -76,9 +76,12 @@ jobs:
           DOCUMENTER_RELEASE_DATE: ${{ steps.release_date.outputs.date }}
       - name: Set release as default version
         run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git stash --include-untracked
           git fetch origin gh-pages
           git checkout gh-pages
           echo '<meta http-equiv="refresh" content="0; url=./release/"/>' > index.html
           git add index.html
-          git commit -m "Set release as default documentation version" || true
+          git diff --staged --quiet || git commit -m "Set release as default documentation version"
           git push origin gh-pages
