@@ -1,4 +1,4 @@
-name: CI
+name: JETLS.jl
 
 on:
   push:
@@ -8,13 +8,13 @@ on:
       - "src/**"
       - "test/**"
       - "LSP/**"
-      - ".github/workflows/CI.yml"
+      - ".github/workflows/JETLS.jl.yml"
   pull_request:
     paths:
       - "src/**"
       - "test/**"
       - "LSP/**"
-      - ".github/workflows/CI.yml"
+      - ".github/workflows/JETLS.jl.yml"
 
 jobs:
   test:

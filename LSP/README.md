@@ -1,5 +1,7 @@
 # LSP.jl
 
+[![](https://github.com/aviatesk/JETLS.jl/actions/workflows/LSP.yml/badge.svg)](https://github.com/aviatesk/JETLS.jl/actions/workflows/LSP.yml)
+
 In this directory, the Julia version of the
 [LSP specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification)
 is defined.

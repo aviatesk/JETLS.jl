@@ -1,4 +1,4 @@
-name: LSP
+name: LSP.jl
 
 on:
   push:
@@ -6,11 +6,11 @@ on:
       - master
     paths:
       - "LSP/**"
-      - ".github/workflows/LSP.yml"
+      - ".github/workflows/LSP.jl.yml"
   pull_request:
     paths:
       - "LSP/**"
-      - ".github/workflows/LSP.yml"
+      - ".github/workflows/LSP.jl.yml"
 
 jobs:
   LSP:

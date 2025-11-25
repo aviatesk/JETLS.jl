@@ -1,9 +1,6 @@
 # JETLS.jl documentation
 
-[![](https://img.shields.io/badge/docs-user_guide-9558B2?logo=julia)](https://aviatesk.github.io/JETLS.jl/dev/)
-[![](https://img.shields.io/badge/docs-dev_notes-7C3AED?logo=obsidian)](https://publish.obsidian.md/jetls)
-[![](https://github.com/aviatesk/JETLS.jl/actions/workflows/CI.yml/badge.svg)](https://github.com/aviatesk/JETLS.jl/actions/workflows/CI.yml)
-[![](https://codecov.io/gh/aviatesk/JETLS.jl/branch/master/graph/badge.svg)](https://codecov.io/gh/aviatesk/JETLS.jl)
+[![](https://github.com/aviatesk/JETLS.jl/actions/workflows/Documentation.yml/badge.svg)](https://github.com/aviatesk/JETLS.jl/actions/workflows/Documentation.yml)
 
 The goal of this project is to develop a new language server for
 [Julia](https://julialang.org/), currently called "JETLS".
