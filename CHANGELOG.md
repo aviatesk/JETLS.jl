@@ -4,9 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-> [!warning]
-> JETLS has not been officially released yet, and therefore does not follow a formal versioning policy.
-> This change log currently documents major changes based on the dates they were added.
+> [!note]
+> JETLS uses date-based versioning (`YYYY-MM-DD`) rather than semantic versioning,
+> as it is not registered in General due to environment isolation requirements.
+> Each dated section below corresponds to a release that can be installed via
+> `Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="releases/YYYY-MM-DD")`
 
 ## Unreleased
 
@@ -17,6 +19,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- Updated JuliaSyntax.jl and JuliaLowering.jl dependencies to the latest
+  development versions.
 - Updated documentation deployment to use `release` as the default version.
   The documentation now has two versions in the selector: `release` (stable) and
   `dev` (development). The root URL redirects to `/release/` by default.
