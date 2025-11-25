@@ -261,8 +261,22 @@ analyzing.
    git push -u origin releases/YYYY-MM-DD
    ```
 
-4. Create a pull request from `releases/YYYY-MM-DD` to `release` and merge it.
-   The CI will run tests on the vendored environment before merging.
+4. Create a pull request from `releases/YYYY-MM-DD` to `release` and merge it
+   using "Create a merge commit" (not squash or rebase). This preserves the
+   merge history from `master`, allowing you to track which `master` commits
+   are included in `release`. The CI will run tests on the vendored environment
+   before merging. If merging locally, use `git merge` (not `git merge --squash`
+   or `git rebase`).
+
+5. Do NOT delete the `releases/YYYY-MM-DD` branch after merging. These branches
+   must be kept because the `release` branch's `[sources]` entries reference
+   them by name. Keeping them also allows users to install specific releases
+   via the Julia package manager.
+
+To check which `master` commits are not yet included in `release`:
+```bash
+git log master ^release --oneline
+```
 
 Note: `vendor-deps.jl` generates UUIDs using `uuid5(original_uuid, "JETLS-vendor")`.
 This is deterministic, so the same vendored UUID is always generated for the same
