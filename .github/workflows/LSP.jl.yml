@@ -27,4 +27,8 @@ jobs:
         shell: julia --color=yes --project=. {0}    # this is necessary for the next command to work on Windows
         run: 'using Pkg; Pkg.activate(normpath(pwd(), "LSP")); Pkg.instantiate(); Pkg.test(; coverage=true)'
       - uses: julia-actions/julia-processcoverage@v1
+        with:
+          directories: LSP/src
       - uses: codecov/codecov-action@v5
+        with:
+          flags: LSP.jl
