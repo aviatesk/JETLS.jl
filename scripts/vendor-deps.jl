@@ -450,9 +450,14 @@ function vendor_dependencies_from_branch(config::Config)
     @info "\n[Step 4/5] Running vendor isolation..."
     vendor_loaded_packages(config.use_local_path)
 
-    @info "\n[Step 5/5] Cleaning manifest and reinstantiating..."
+    @info "\n[Step 5/5] Cleaning manifest..."
     clean_manifests()
-    Pkg.instantiate()
+    if config.use_local_path
+        @info "Reinstantiating with local paths..."
+        Pkg.instantiate()
+    else
+        @info "Skipping Pkg.instantiate() - run manually after pushing the branch"
+    end
 
     @info "\nRelease preparation complete!"
     @info "Vendored package directory: $(VENDOR_DIR)"
