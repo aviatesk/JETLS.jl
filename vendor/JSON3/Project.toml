@@ -1,20 +1,7 @@
 name = "JSON3"
-version = "1.14.3"
 uuid = "00ac8d46-747e-5902-8e12-fdfc767369c7"
 authors = ["Jacob Quinn <quinn.jacobd@gmail.com>"]
-
-[targets]
-test = ["Arrow", "Test"]
-
-[compat]
-julia = "1.6"
-PrecompileTools = "1"
-Parsers = "0.3, 1, 2"
-StructTypes = "1.10"
-ArrowTypes = "2.2"
-
-[weakdeps]
-ArrowTypes = "31f734f8-188a-4ce0-8406-c8a06bd891cd"
+version = "1.14.3"
 
 [deps]
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
@@ -29,20 +16,27 @@ Arrow = "69666777-d1a9-59fb-9406-91d4454c9d45"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 ArrowTypes = "31f734f8-188a-4ce0-8406-c8a06bd891cd"
 
+[compat]
+julia = "1.6"
+PrecompileTools = "1"
+Parsers = "0.3, 1, 2"
+StructTypes = "1.10"
+ArrowTypes = "2.2"
+
+[targets]
+test = ["Arrow", "Test"]
+
 [sources.PrecompileTools]
 subdir = "vendor/PrecompileTools"
-rev = "release"
+rev = "releases/2025-11-25"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.Parsers]
 subdir = "vendor/Parsers"
-rev = "release"
+rev = "releases/2025-11-25"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.StructTypes]
 subdir = "vendor/StructTypes"
-rev = "release"
+rev = "releases/2025-11-25"
 url = "https://github.com/aviatesk/JETLS.jl"
-
-[extensions]
-JSON3ArrowExt = ["ArrowTypes"]
