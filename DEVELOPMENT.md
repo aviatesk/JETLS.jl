@@ -232,6 +232,32 @@ analyzing.
 
 ### Release procedure
 
+The release process is automated via `scripts/prepare-release.sh`:
+
+```bash
+./scripts/prepare-release.sh YYYY-MM-DD
+```
+
+This script performs all the steps below automatically and creates a pull request.
+After the script completes:
+
+1. **Merge the pull request using "Create a merge commit" (not squash or rebase).**
+   This preserves the merge history from `master`, allowing you to track which
+   `master` commits are included in `release`. The CI will run tests on the
+   vendored environment before merging.
+
+2. **Do NOT delete the `releases/YYYY-MM-DD` branch after merging.** These
+   branches must be kept because the `release` branch's `[sources]` entries
+   reference them by name. Keeping them also allows users to install specific
+   releases via the Julia package manager.
+
+After the PR is merged, `CHANGELOG.md` on `master` will be automatically updated
+by the CI workflow.
+
+#### Manual steps
+
+The `prepare-release.sh` script automates the following steps:
+
 1. Create a release branch from `release` and merge `master`
    ```bash
    git checkout release
@@ -265,26 +291,18 @@ analyzing.
    exactly. The documentation CI extracts this date to display in the release
    documentation's index page.
 
-4. Create a pull request from `releases/YYYY-MM-DD` to `release` and merge it
-   using "Create a merge commit" (not squash or rebase). This preserves the
-   merge history from `master`, allowing you to track which `master` commits
-   are included in `release`. The CI will run tests on the vendored environment
-   before merging. If merging locally, use `git merge` (not `git merge --squash`
-   or `git rebase`).
+4. Create a pull request from `releases/YYYY-MM-DD` to `release`.
 
-5. Do NOT delete the `releases/YYYY-MM-DD` branch after merging. These branches
-   must be kept because the `release` branch's `[sources]` entries reference
-   them by name. Keeping them also allows users to install specific releases
-   via the Julia package manager.
+> [!note]
+> `vendor-deps.jl` generates UUIDs using `uuid5(original_uuid, "JETLS-vendor")`.
+> This is deterministic, so the same vendored UUID is always generated for the same
+> original UUID, ensuring consistency across multiple vendoring operations
 
-To check which `master` commits are not yet included in `release`:
-```bash
-git log master ^release --oneline
-```
-
-Note: `vendor-deps.jl` generates UUIDs using `uuid5(original_uuid, "JETLS-vendor")`.
-This is deterministic, so the same vendored UUID is always generated for the same
-original UUID, ensuring consistency across multiple vendoring operations.
+> [!note]
+> To check which `master` commits are not yet included in `release`:
+> ```bash
+> git log master ^release --oneline
+> ```
 
 ### Local testing of vendored environment
 

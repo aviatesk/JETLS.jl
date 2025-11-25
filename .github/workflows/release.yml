@@ -7,10 +7,16 @@ on:
   pull_request:
     branches:
       - release
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - closed
 
 jobs:
   test:
     name: Test JETLS.jl with release environment
+    if: github.event.action != 'closed'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -25,6 +31,7 @@ jobs:
 
   test_jetls:
     name: Test jetls executable with release environment
+    if: github.event.action != 'closed'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -89,3 +96,61 @@ jobs:
           git add index.html
           git diff --staged --quiet || git commit -m "Set release as default documentation version"
           git push origin gh-pages
+
+  update-changelog:
+    name: Update CHANGELOG on master
+    if: github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'releases/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Extract release info
+        id: release_info
+        run: |
+          # Extract version from branch name (releases/YYYY-MM-DD)
+          BRANCH="${{ github.event.pull_request.head.ref }}"
+          VERSION="${BRANCH#releases/}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+          # Get the merge commit SHA (short form)
+          MERGE_COMMIT="${{ github.event.pull_request.merge_commit_sha }}"
+          SHORT_SHA="${MERGE_COMMIT:0:7}"
+          echo "commit=$SHORT_SHA" >> $GITHUB_OUTPUT
+
+          # Get the PR number
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
+
+          # Get the previous release commit for diff link
+          # Find the commit hash currently referenced in the Unreleased diff link
+          PREV_COMMIT=$(grep -oP '(?<=Diff: \[`)[a-f0-9]+(?=\.\.\.HEAD)' CHANGELOG.md | head -1)
+          echo "prev_commit=$PREV_COMMIT" >> $GITHUB_OUTPUT
+
+      - name: Update CHANGELOG.md
+        run: |
+          python3 scripts/update-changelog.py \
+            "${{ steps.release_info.outputs.version }}" \
+            "${{ steps.release_info.outputs.commit }}" \
+            "${{ steps.release_info.outputs.pr_number }}" \
+            "${{ steps.release_info.outputs.prev_commit }}"
+
+      - name: Commit and push
+        run: |
+          VERSION="${{ steps.release_info.outputs.version }}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add CHANGELOG.md
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+
+          git commit -m "docs: update CHANGELOG for $VERSION release"
+          git push origin master
