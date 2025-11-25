@@ -351,14 +351,15 @@ section:
     },
     // Use JuliaFormatter instead of Runic
     "formatter": "JuliaFormatter",
-    // Suppress unused argument warnings
     "diagnostic": {
       "patterns": [
+        // Suppress toplevel/inference warnings in test folder
         {
-          "pattern": "lowering/unused-argument",
+          "pattern": "(toplevel|inference)/.*",
           "match_by": "code",
-          "match_type": "literal",
-          "severity": "off"
+          "match_type": "regex",
+          "severity": "off",
+          "path": "test/**/*.jl"
         }
       ]
     },
@@ -389,14 +390,15 @@ section:
         },
         // Use JuliaFormatter instead of Runic
         "formatter": "JuliaFormatter",
-        // Suppress unused argument warnings
         "diagnostic": {
           "patterns": [
+            // Suppress toplevel/inference warnings in test folder
             {
-              "pattern": "lowering/unused-argument",
+              "pattern": "(toplevel|inference)/.*",
               "match_by": "code",
-              "match_type": "literal",
-              "severity": "off"
+              "match_type": "regex",
+              "severity": "off",
+              "path": "test/**/*.jl"
             }
           ]
         },

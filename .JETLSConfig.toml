@@ -1,0 +1,7 @@
+# TODO Need to properly set and parse line number information for `@namespace`
+[[diagnostic.patterns]]
+pattern = "Macro name `@namespace` not found"
+match_by = "message"
+match_type = "regex"
+severity = "off"
+path = "LSP/**/*.jl"

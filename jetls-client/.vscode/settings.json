@@ -2,15 +2,8 @@
 	"editor.insertSpaces": false,
 	"typescript.tsc.autoDetect": "off",
 	"typescript.preferences.quoteStyle": "single",
-	"[julia]": {
-		"editor.rulers": [92],
-		"editor.tabSize": 4
-	},
 	"[markdown]": {
 		"editor.rulers": [80],
 		"editor.tabSize": 2
-	},
-	"cSpell.words": [
-		"uinteger"
-	]
+	}
 }

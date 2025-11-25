@@ -3,9 +3,14 @@ name: Documentation
 on:
   push:
     branches:
-      - master # update to match your development branch (master, main, dev, trunk, ...)
-    tags: '*'
+      - master
+    paths:
+      - "docs/**"
+      - ".github/workflows/Documentation.yml"
   pull_request:
+    paths:
+      - "docs/**"
+      - ".github/workflows/Documentation.yml"
 
 jobs:
   build:
@@ -33,5 +38,5 @@ jobs:
       - name: Build and deploy
         run: julia --color=yes --project=docs docs/make.jl
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # If authenticating with GitHub Actions token
-          DOCUMENTER_KEY: ${{ secrets.DOCUMENTER_KEY }} # If authenticating with SSH deploy key
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DOCUMENTER_KEY: ${{ secrets.DOCUMENTER_KEY }}

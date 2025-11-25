@@ -25,7 +25,8 @@ function withserver(f;
     out = Base.BufferStream()
     received_queue = Channel{Any}(Inf)
     sent_queue = Channel{Any}(Inf)
-    server = Server(Endpoint(in, out)) do s::Symbol, x
+    endpoint = Endpoint(in, out)
+    server = Server(endpoint) do s::Symbol, x
         @nospecialize x
         if s === :received
             put!(received_queue, x)
@@ -33,7 +34,7 @@ function withserver(f;
             put!(sent_queue, x)
         end
     end
-    t = Threads.@spawn :interactive runserver(server)
+    runserver_task = Threads.@spawn :interactive runserver(server)
     id_counter = Ref(0)
     old_env = Pkg.project().path
     root_path = nothing
@@ -133,7 +134,7 @@ function withserver(f;
 
     # do the server initialization
     let id = id_counter[] += 1
-        (; raw_msg, raw_res, json_res) = writereadmsg(
+        (; raw_msg, raw_res) = writereadmsg(
             InitializeRequest(;
                 id,
                 params=InitializeParams(;
@@ -166,10 +167,9 @@ function withserver(f;
                     json_res[:result] === nothing
             end
             writereadmsg(ExitNotification(); read=0)
-            result = fetch(t)
-            @test result isa @NamedTuple{exit_code::Int, endpoint::LSP.Endpoint}
-            @test result.exit_code == 0
-            @test !result.endpoint.isopen
+            exit_code = fetch(runserver_task)
+            @test exit_code == 0
+            @test !endpoint.isopen
         finally
             close(in)
             close(out)

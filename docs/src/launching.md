@@ -9,7 +9,7 @@ The JETLS server is launched using the `jetls` executable, which is the main
 entry point of launching JETLS that can be installed as an
 [executable app](https://pkgdocs.julialang.org/dev/apps/) via Pkg.jl:
 ```bash
-julia -e 'using Pkg; Pkg.Apps.add("https://github.com/aviatesk/JETLS.jl#release")'
+julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="release")'
 ```
 
 You can run `jetls` with various options to configure how the server communicates
@@ -131,29 +131,6 @@ jetls
     When using `stdio` mode, any `println(stdout, ...)` in your code or
     dependency packages may corrupt the LSP protocol and break the connection.
     Prefer `pipe` or `socket` modes when possible.
-
-## [Communication channel configuration for VSCode (`jetls-client`)](@id communication/vscode)
-
-The [`jetls-client`](https://marketplace.visualstudio.com/items?itemName=aviatesk.jetls-client)
-VSCode extension by default automatically selects the most appropriate
-communication channel based on your environment:
-
-- **Local development**: `pipe` (`pipe-connect`)
-- **Remote SSH/WSL**: `pipe` (`pipe-connect`, extension runs in remote environment)
-- **Dev Containers**: `stdio`
-
-This automatic selection ensures optimal performance and reliability without
-requiring manual configuration.
-
-### Manual channel selection
-
-You can override the automatic selection by configuring
-`jetls-client.communicationChannel` in VSCode settings:
-
-- `auto` (default): Automatic selection as described above
-- `pipe`: Uses `pipe-connect` mode
-- `socket`: Uses TCP socket (configure port with `jetls-client.socketPort`)
-- `stdio`: Uses standard input/output
 
 ## Client process monitoring
 
