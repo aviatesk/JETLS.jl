@@ -1,6 +1,28 @@
 using Documenter
 # using JETLS
 
+const devbranch = get(ENV, "DOCUMENTER_DEVBRANCH", "master")
+const release_date = get(ENV, "DOCUMENTER_RELEASE_DATE", "")
+const release_commit = get(ENV, "DOCUMENTER_RELEASE_COMMIT", "")
+
+# Insert release info admonition into index.md for release builds
+const index_md = joinpath(@__DIR__, "src", "index.md")
+const index_md_original = read(index_md, String)
+if devbranch == "release" && !isempty(release_date)
+    short_commit = isempty(release_commit) ? "" : release_commit[1:7]
+    release_info = """
+        !!! info "Release version"
+            This documentation is for the `$release_date` release ([`$short_commit`](https://github.com/aviatesk/JETLS.jl/commit/$release_commit)).
+            See the [CHANGELOG](https://github.com/aviatesk/JETLS.jl/blob/master/CHANGELOG.md#$release_date)
+            for details about this release.
+
+        """
+    # Insert after the title line
+    modified = replace(index_md_original,
+        r"^(# [^\n]+\n)"s => SubstitutionString("\\1\n" * release_info))
+    write(index_md, modified)
+end
+
 makedocs(;
     # modules = [JETLS],
     sitename = "JETLS.jl",
@@ -19,9 +41,6 @@ makedocs(;
     ],
 )
 
-const devbranch = get(ENV, "DOCUMENTER_DEVBRANCH", "master")
-const release_date = get(ENV, "DOCUMENTER_RELEASE_DATE", "")
-
 # Custom deploy configuration for `release` branch deployment
 # Documenter.jl normally only deploys to versioned folders (like `v1.0.0/`) when
 # triggered by a git tag. Since JETLS uses a `release` branch instead of tags,
@@ -39,15 +58,10 @@ Documenter.authentication_method(::ReleaseBranchConfig) = Documenter.SSH
 Documenter.authenticated_repo_url(::ReleaseBranchConfig) =
     "git@github.com:aviatesk/JETLS.jl.git"
 
-function deploy_versions()
-    label = isempty(release_date) ? "release" : "release ($release_date)"
-    return [label => "release", "dev" => "dev"]
-end
-
 deploydocs(;
     repo = "github.com/aviatesk/JETLS.jl",
     push_preview = true,
     devbranch,
     deploy_config = devbranch == "release" ? ReleaseBranchConfig() : Documenter.auto_detect_deploy_system(),
-    versions = deploy_versions(),
+    versions = ["release" => "release", "dev" => "dev"],
 )
