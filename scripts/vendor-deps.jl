@@ -450,16 +450,20 @@ function vendor_dependencies_from_branch(config::Config)
     @info "\n[Step 4/5] Running vendor isolation..."
     vendor_loaded_packages(config.use_local_path)
 
-    @info "\n[Step 5/5] Release preparation complete!"
+    @info "\n[Step 5/5] Cleaning manifest and reinstantiating..."
+    clean_manifests()
+    Pkg.instantiate()
+
+    @info "\nRelease preparation complete!"
     @info "Vendored package directory: $(VENDOR_DIR)"
 end
 
 function print_help()
     println("""
-    vendor-deps.jl - JETLS Dependency Vendoring Script
+    scripts/vendor-deps.jl - JETLS Dependency Vendoring Script
 
     USAGE:
-        julia vendor-deps.jl --source-branch=<branch> [--local]
+        julia scripts/vendor-deps.jl --source-branch=<branch> [--local]
 
     DESCRIPTION:
         Automates the JETLS release process by vendoring all non-stdlib, non-JLL
@@ -493,10 +497,10 @@ function print_help()
 
     EXAMPLE:
         # Prepare release branch with vendored dependencies from master
-        julia vendor-deps.jl --source-branch=master
+        julia scripts/vendor-deps.jl --source-branch=master
 
         # For CI testing or local development
-        julia vendor-deps.jl --source-branch=origin/master --local
+        julia scripts/vendor-deps.jl --source-branch=origin/master --local
 
     OUTPUT:
         vendor/         Vendored package sources with rewritten UUIDs
