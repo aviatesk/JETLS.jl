@@ -40,3 +40,12 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DOCUMENTER_KEY: ${{ secrets.DOCUMENTER_KEY }}
+      - name: Set release as default version
+        if: github.event_name == 'push'
+        run: |
+          git fetch origin gh-pages
+          git checkout gh-pages
+          echo '<meta http-equiv="refresh" content="0; url=./release/"/>' > index.html
+          git add index.html
+          git commit -m "Set release as default documentation version" || true
+          git push origin gh-pages
