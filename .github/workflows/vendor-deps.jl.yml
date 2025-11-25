@@ -39,7 +39,7 @@ jobs:
           git fetch origin ${{ github.head_ref || github.ref_name }}
       - name: Run vendor-deps.jl
         run: |
-          julia --startup-file=no scripts/vendor-deps.jl --source-branch=origin/${{ github.head_ref || github.ref_name }}
+          julia --startup-file=no --project=. scripts/vendor-deps.jl --source-branch=origin/${{ github.head_ref || github.ref_name }}
 
       - name: Show vendored packages
         run: |

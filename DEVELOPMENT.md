@@ -241,7 +241,7 @@ analyzing.
 
 3. Vendor dependency packages
    ```bash
-   julia scripts/vendor-deps.jl --source-branch=master
+   julia --startup-file=no --project=. scripts/vendor-deps.jl --source-branch=master
    ```
    This script performs the following:
    - Fetches the latest `Project.toml` from the `master` branch
