@@ -205,7 +205,7 @@ function runserver(server::Server; client_process_id::Union{Nothing,Int}=nothing
         close(seq_queue); close(con_queue); close(server.endpoint)
     end
     JETLS_DEV_MODE && @info "Exited JETLS server loop"
-    return (; exit_code, server.endpoint)
+    return exit_code
 end
 
 function is_sequential_msg(@nospecialize msg)

@@ -170,13 +170,13 @@ function (@main)(args::Vector{String})::Cint
                     end
                 end
             end
-            t = Threads.@spawn :interactive runserver(server; client_process_id)
+            runserver_task = Threads.@spawn :interactive runserver(server; client_process_id)
         else
-            t = Threads.@spawn :interactive runserver(endpoint; client_process_id)
+            runserver_task = Threads.@spawn :interactive runserver(endpoint; client_process_id)
         end
-        res = fetch(t)
-        @info "JETLS server stopped" res.exit_code
-        return res.exit_code
+        exit_code = fetch(runserver_task)
+        @info "JETLS server stopped" exit_code
+        return exit_code
     finally
         append!(LOAD_PATH, old_LOAD_PATH)
     end

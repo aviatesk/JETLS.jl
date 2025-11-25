@@ -22,5 +22,6 @@ makedocs(;
 deploydocs(;
     repo = "github.com/aviatesk/JETLS.jl",
     push_preview = true,
-    devbranch = "master",
+    devbranch = get(ENV, "DOCUMENTER_DEVBRANCH", "master"),
+    devurl = get(ENV, "DOCUMENTER_DEVBRANCH", "dev"),
 )
