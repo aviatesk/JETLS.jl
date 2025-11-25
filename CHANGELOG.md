@@ -19,6 +19,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- Updated JuliaSyntax.jl and JuliaLowering.jl dependencies to the latest
+  development versions.
 - Updated documentation deployment to use `release` as the default version.
   The documentation now has two versions in the selector: `release` (stable) and
   `dev` (development). The root URL redirects to `/release/` by default.
