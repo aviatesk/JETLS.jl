@@ -17,11 +17,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
-- Updated documentation deployment to show release date in version selector.
-  The documentation version selector now displays `release (YYYY-MM-DD)` instead
-  of just `stable`, making it clearer which release version is being viewed.
-  The release date is automatically extracted from the `release: YYYY-MM-DD`
-  commit message.
+- Updated documentation deployment to use `release` as the default version.
+  The documentation now has two versions in the selector: `release` (stable) and
+  `dev` (development). The root URL redirects to `/release/` by default.
+  The release documentation index page shows the release date extracted from
+  commit messages.
 
 ## [2025-11-25]
 
