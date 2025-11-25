@@ -5,6 +5,7 @@ Manifest.toml
 Manifest-*.toml
 .envrc
 **/.JETLSConfig.toml
+!.JETLSConfig.toml
 *.vsix
 docs/build/
 
