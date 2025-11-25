@@ -1,19 +1,23 @@
 #!/usr/bin/env julia
 
 """
-isolate-env.jl
+vendor-deps.jl
 
 This script automates the JETLS release process by vendoring all dependencies.
 
 Usage:
-    julia isolate-env.jl --source-branch=<branch>
+    julia vendor-deps.jl --source-branch=<branch>
 
 Process:
 1. Fetch Project.toml files from source branch
 2. Backup existing Project.toml files
 3. Clean Manifest files
 4. Update dependencies
-5. Vendor packages (copy sources, rewrite UUIDs, update references)
+5. Vendor packages:
+   - Copy package sources to vendor/ directory
+   - Rewrite UUIDs deterministically
+   - Remove unused weakdeps/extensions
+   - Update inter-package references
 6. Replace Project.toml with vendored versions
 """
 
@@ -86,7 +90,7 @@ function copy_package_source(mod::Module, pkg_name::AbstractString)
     @info "Copying $pkg_name from $src_dir to $dest_dir"
     cp(src_dir, dest_dir)
 
-    for (root, dirs, files) in walkdir(dest_dir)
+    for (root, _, files) in walkdir(dest_dir)
         for file in files
             filepath = joinpath(root, file)
             chmod(filepath, 0o644)
@@ -111,6 +115,108 @@ function rewrite_package_uuid(vendor_pkg_dir::AbstractString, new_uuid::UUID)
     end
 
     return project
+end
+
+function collect_loaded_package_uuids()
+    uuids = Set{UUID}()
+    for (pkgid, _) in Base.loaded_modules
+        pkgid.uuid === nothing && continue
+        push!(uuids, pkgid.uuid)
+    end
+    return uuids
+end
+
+function remove_unused_weakdeps_and_extensions!(
+        vendor_pkg_dir::AbstractString,
+        loaded_uuids::Set{UUID},
+        uuid_mapping::Dict{UUID,UUID}
+    )
+    project_path = joinpath(vendor_pkg_dir, "Project.toml")
+    isfile(project_path) || return
+
+    project = TOML.parsefile(project_path)
+    modified = false
+
+    weakdeps = get(project, "weakdeps", Dict{String,Any}())
+    extensions = get(project, "extensions", Dict{String,Any}())
+
+    isempty(weakdeps) && isempty(extensions) && return
+
+    weakdeps_to_keep = Set{String}()
+    extensions_to_keep = Set{String}()
+
+    for (ext_name, triggers) in extensions
+        trigger_list = triggers isa String ? [triggers] : triggers
+        trigger_uuids = [UUID(weakdeps[t]) for t in trigger_list if haskey(weakdeps, t)]
+        if any(uuid -> uuid in loaded_uuids, trigger_uuids)
+            push!(extensions_to_keep, ext_name)
+            for t in trigger_list
+                push!(weakdeps_to_keep, t)
+            end
+        end
+    end
+
+    weakdeps_to_remove = setdiff(keys(weakdeps), weakdeps_to_keep)
+    extensions_to_remove = setdiff(keys(extensions), extensions_to_keep)
+
+    if !isempty(weakdeps_to_remove)
+        @info "Removing unused weakdeps from $(basename(vendor_pkg_dir)): $weakdeps_to_remove"
+        for name in weakdeps_to_remove
+            delete!(weakdeps, name)
+        end
+        if isempty(weakdeps)
+            delete!(project, "weakdeps")
+        end
+        modified = true
+    end
+
+    if !isempty(weakdeps_to_keep)
+        for name in weakdeps_to_keep
+            original_uuid = UUID(weakdeps[name])
+            if haskey(uuid_mapping, original_uuid)
+                new_uuid = uuid_mapping[original_uuid]
+                weakdeps[name] = string(new_uuid)
+                @info "Updated weakdep UUID in $(basename(vendor_pkg_dir)): $name $original_uuid => $new_uuid"
+                modified = true
+            end
+        end
+    end
+
+    if !isempty(extensions_to_remove)
+        @info "Removing unused extensions from $(basename(vendor_pkg_dir)): $extensions_to_remove"
+        for name in extensions_to_remove
+            delete!(extensions, name)
+        end
+        if isempty(extensions)
+            delete!(project, "extensions")
+        end
+        modified = true
+
+        ext_dir = joinpath(vendor_pkg_dir, "ext")
+        if isdir(ext_dir)
+            for ext_name in extensions_to_remove
+                ext_file = joinpath(ext_dir, "$ext_name.jl")
+                ext_subdir = joinpath(ext_dir, ext_name)
+                if isfile(ext_file)
+                    @info "Removing $ext_file"
+                    rm(ext_file)
+                end
+                if isdir(ext_subdir)
+                    @info "Removing $ext_subdir"
+                    rm(ext_subdir; recursive=true)
+                end
+            end
+            if isempty(readdir(ext_dir))
+                rm(ext_dir)
+            end
+        end
+    end
+
+    if modified
+        open(project_path, "w") do io
+            TOML.print(io, project)
+        end
+    end
 end
 
 function update_vendored_dependencies!(
@@ -366,6 +472,7 @@ function print_help()
         5. Vendor packages:
            - Copy package sources to vendor/ directory
            - Rewrite UUIDs deterministically
+           - Remove unused weakdeps/extensions
            - Update inter-package references
         6. Replace Project.toml with vendored versions
 
@@ -417,8 +524,9 @@ function vendor_loaded_packages()
     # 1. Load JETLS to populate Base.loaded_modules
     # 2. Copy package sources to vendor/ directory
     # 3. Rewrite UUIDs in Project.toml files
-    # 4. Update dependency references between vendored packages
-    # 5. Update Project.toml with vendored UUIDs and [sources] entries
+    # 4. Remove unused weakdeps/extensions (they can interact with user's environment)
+    # 5. Update dependency references between vendored packages
+    # 6. Update Project.toml with vendored UUIDs and [sources] entries
 
     @info "Loading JETLS to populate Base.loaded_modules..."
     @eval using JETLS
@@ -451,17 +559,24 @@ function vendor_loaded_packages()
         rewrite_package_uuid(vendor_pkg_dir, new_uuid)
     end
 
-    @info "Step 2: Updating inter-package dependencies..."
+    @info "Step 2: Removing unused weakdeps and extensions..."
+    loaded_uuids = collect_loaded_package_uuids()
+    for (pkg_name, _) in packages
+        vendor_pkg_dir = joinpath(VENDOR_DIR, pkg_name)
+        remove_unused_weakdeps_and_extensions!(vendor_pkg_dir, loaded_uuids, uuid_mapping)
+    end
+
+    @info "Step 3: Updating inter-package dependencies..."
     current_branch = get_current_branch()
     for (pkg_name, _) in packages
         vendor_pkg_dir = joinpath(VENDOR_DIR, pkg_name)
         update_vendored_dependencies!(vendor_pkg_dir, uuid_mapping, current_branch)
     end
 
-    @info "Step 3: Updating Project.toml with vendored dependencies..."
+    @info "Step 4: Updating Project.toml with vendored dependencies..."
     update_project_with_vendored_deps(uuid_mapping, packages)
 
-    @info "Step 4: Tidying up Project.toml format..."
+    @info "Step 5: Tidying up Project.toml format..."
     project_path = joinpath(CURRENT_DIR, "Project.toml")
     project = Pkg.Types.read_project(project_path)
     Pkg.Types.write_project(project, project_path)

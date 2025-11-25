@@ -14,6 +14,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 >
 > - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 
+### Fixed
+
+- Fixed vendoring script to remove unused weakdeps and extensions from vendored
+  packages. These could interact with user's package environment unexpectedly.
+  Extensions that are actually used by JETLS are preserved with updated UUIDs.
+  Fixes aviatesk/JETLS.jl#312. (aviatesk/JETLS.jl#XXX)
+
 ## [2025-11-24]
 
 [2025-11-24]: https://github.com/aviatesk/JETLS.jl/commit/db47b8b
