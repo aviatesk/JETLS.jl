@@ -14,6 +14,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 >
 > - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 
+## [2025-11-25]
+
+[2025-11-25]: https://github.com/aviatesk/JETLS.jl/pull/323
+
+> [!note]
+>
+> - Commit: [`2be0cff`](https://github.com/aviatesk/JETLS.jl/commit/2be0cff)
+> - Diff: [`fac4eaf...2be0cff`](https://github.com/aviatesk/JETLS.jl/compare/fac4eaf...2be0cff)
+
 ### Added
 
 - Added CI workflow for testing the vendored release environment.
