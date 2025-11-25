@@ -90,11 +90,11 @@ reliability without requiring manual configuration.
 
 You can override the automatic selection using `"jetls-client.communicationChannel": string`:
 
-- `auto` (default): Automatic selection as described above
-- `pipe`: Uses Unix domain socket/named pipe
-- `socket`: Uses TCP socket (configure port with `"jetls-client.socketPort": number`,
+- `"auto"` (default): Automatic selection as described above
+- `"pipe"`: Uses Unix domain socket/named pipe
+- `"socket"`: Uses TCP socket (configure port with `"jetls-client.socketPort": number`,
   default `0` for auto-assign)
-- `stdio`: Uses standard input/output
+- `"stdio"`: Uses standard input/output
 
 For detailed information about each communication channel and when to use them,
 see the [Communication channels documentation](https://aviatesk.github.io/JETLS.jl/dev/launching/#Communication-channels).
@@ -137,21 +137,22 @@ For detailed configuration options and examples, see the
     },
     // Use JuliaFormatter instead of Runic
     "formatter": "JuliaFormatter",
-    // Suppress unused argument warnings
     "diagnostic": {
       "patterns": [
+        // Suppress toplevel/inference warnings in test folder
         {
-          "pattern": "lowering/unused-argument",
+          "pattern": "(toplevel|inference)/.*",
           "match_by": "code",
-          "match_type": "literal",
+          "match_type": "regex",
           "severity": "off",
-        },
-      ],
+          "path": "test/**/*.jl"
+        }
+      ]
     },
     "testrunner": {
       "executable": "/path/to/custom/testrunner",
-    },
-  },
+    }
+  }
 }
 ```
 
