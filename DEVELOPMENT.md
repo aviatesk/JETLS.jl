@@ -219,53 +219,63 @@ analyzing.
 
 ### Branch strategy
 
-- Development branch: `master`
-  - Regular development happens here
-  - Dependencies keep their original UUIDs
-- Release branch: `release`
-  - Distribution branch for users
-  - Dependencies are vendored with rewritten UUIDs
-  - Includes copies of dependency packages in the `vendor/` directory
+- `master`: Development branch where regular development happens. Dependencies
+  keep their original UUIDs.
+- `release`: Distribution branch for users. Dependencies are vendored with
+  rewritten UUIDs and the `vendor/` directory contains copies of all dependency
+  packages.
+- `releases/YYYY-MM-DD`: Release preparation branches. These branches are
+  created from `release`, merged with `master`, vendored, and then merged back
+  into `release` via pull requests on GitHub. These branches must be kept
+  (not deleted) because the `release` branch's `[sources]` entries reference
+  them by name.
 
 ### Release procedure
 
-1. Check out the `release` branch
+1. Create a release branch from `release` and merge `master`
    ```bash
    git checkout release
+   git pull origin release
+   git checkout -b releases/YYYY-MM-DD
+   git merge master -X theirs
    ```
 
-2. Merge changes from the development branch
-   ```bash
-   git merge -X theirs master
-   ```
-
-3. Vendor dependency packages
+2. Vendor dependency packages
    ```bash
    julia --startup-file=no --project=. scripts/vendor-deps.jl --source-branch=master
    ```
    This script performs the following:
-   - Fetches the latest `Project.toml` from the `master` branch
+   - Fetches the latest `Project.toml` from the specified source branch (`master`)
    - Backs it up as `Project.toml.bak`
-   - Cleans up `Manifest.toml`
-   - Updates dependencies with `Pkg.update()`
+   - Cleans up `Manifest.toml` and runs `Pkg.update()`
    - Loads JETLS and collects dependency packages from `Base.loaded_modules`
    - Copies each package to `vendor/` and rewrites its UUID
+   - Removes unused weakdeps and extensions from vendored packages
    - Updates `Project.toml` with vendored UUIDs and `[sources]` entries
+   - Cleans up `Manifest.toml` and runs `Pkg.instantiate()`
 
-4. Commit changes
+3. Commit and push
    ```bash
    git add -A
-   git commit -m 'release: 2025-11-23'
+   git commit -m 'release: YYYY-MM-DD'
+   git push -u origin releases/YYYY-MM-DD
    ```
 
-5. Push to remote
-   ```bash
-   git push origin release
-   ```
+4. Create a pull request from `releases/YYYY-MM-DD` to `release` and merge it.
+   The CI will run tests on the vendored environment before merging.
 
 Note: `vendor-deps.jl` generates UUIDs using `uuid5(original_uuid, "JETLS-vendor")`.
 This is deterministic, so the same vendored UUID is always generated for the same
 original UUID, ensuring consistency across multiple vendoring operations.
+
+### Local testing of vendored environment
+
+To test the vendored environment locally without committing:
+```bash
+julia --startup-file=no --project=. scripts/vendor-deps.jl --source-branch=master --local
+```
+The `--local` flag uses local path references in `[sources]` instead of GitHub
+URLs, allowing you to test with the locally generated `vendor/` directory.
 
 ## `jetls-client` development
 
