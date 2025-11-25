@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > [!note]
 >
 > - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
+> - Diff: [`250188fc...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/250188fc...HEAD)
 
 ## [v0.2.2]
 

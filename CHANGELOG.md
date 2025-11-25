@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > [!note]
 >
 > - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
+> - Diff: [`2be0cff...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/2be0cff...HEAD)
 
 ## [2025-11-25]
 
