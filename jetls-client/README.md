@@ -133,7 +133,7 @@ For detailed configuration options and examples, see the
 {
   "jetls-client.settings": {
     "full_analysis": {
-      "debounce": 2.0,
+      "debounce": 2.0
     },
     // Use JuliaFormatter instead of Runic
     "formatter": "JuliaFormatter",
@@ -150,7 +150,7 @@ For detailed configuration options and examples, see the
       ]
     },
     "testrunner": {
-      "executable": "/path/to/custom/testrunner",
+      "executable": "/path/to/custom/testrunner"
     }
   }
 }
