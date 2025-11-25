@@ -236,7 +236,8 @@ analyzing.
    ```bash
    git checkout release
    git pull origin release
-   git checkout -b releases/YYYY-MM-DD
+   JETLS_VERSION='YYYY-MM-DD'
+   git checkout -b releases/$JETLS_VERSION
    git merge master -X theirs
    ```
 
@@ -257,8 +258,8 @@ analyzing.
 3. Commit and push
    ```bash
    git add -A
-   git commit -m 'release: YYYY-MM-DD'
-   git push -u origin releases/YYYY-MM-DD
+   git commit -m "release: $JETLS_VERSION"
+   git push -u origin releases/$JETLS_VERSION
    ```
    **Important**: The commit message must follow the `release: YYYY-MM-DD` format
    exactly. The documentation CI extracts this date to display in the release
