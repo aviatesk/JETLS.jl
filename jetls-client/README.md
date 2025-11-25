@@ -58,8 +58,17 @@ executable from your `PATH`.
 > julia -e 'using Pkg; Pkg.Apps.update("JETLS")'
 > ```
 >
-> JETLS has not been officially released yet, so there is no versioning policy
-> at this time. In the future, you will be able to install specific versions.
+> When installed with `rev="release"` (as shown above), `Pkg.Apps.update("JETLS")`
+> will fetch the most recent version since the `release` branch always
+> points to the latest release.
+>
+> To pin a specific version instead, use `rev="releases/YYYY-MM-DD"`:
+>
+> ```bash
+> julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="releases/2025-11-25")'
+> ```
+>
+> Note that pinned versions will not be updated by `Pkg.Apps.update("JETLS")`.
 
 ## Launching configuration (advanced)
 
