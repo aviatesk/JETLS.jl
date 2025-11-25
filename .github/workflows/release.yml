@@ -10,7 +10,7 @@ on:
 
 jobs:
   test:
-    name: Test JETLS.jl with the release environment
+    name: Test JETLS.jl with release environment
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,7 +24,7 @@ jobs:
       - uses: julia-actions/julia-runtest@latest
 
   test_jetls:
-    name: Test jetls executable with the release environment
+    name: Test jetls executable with release environment
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
