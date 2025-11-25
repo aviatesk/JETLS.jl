@@ -60,40 +60,40 @@ test = ["Aqua", "BenchmarkTools", "Downloads", "Example", "JSON3", "Libdl", "Log
 
 [sources.JuliaSyntax]
 subdir = "vendor/JuliaSyntax"
-rev = "releases/2025-11-25"
+rev = "releases/2025-11-26"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.Compiler]
 subdir = "vendor/Compiler"
-rev = "releases/2025-11-25"
+rev = "releases/2025-11-26"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.PrecompileTools]
 subdir = "vendor/PrecompileTools"
-rev = "releases/2025-11-25"
+rev = "releases/2025-11-26"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.MacroTools]
 subdir = "vendor/MacroTools"
-rev = "releases/2025-11-25"
+rev = "releases/2025-11-26"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.LoweredCodeUtils]
 subdir = "vendor/LoweredCodeUtils"
-rev = "releases/2025-11-25"
+rev = "releases/2025-11-26"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.JuliaInterpreter]
 subdir = "vendor/JuliaInterpreter"
-rev = "releases/2025-11-25"
+rev = "releases/2025-11-26"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.Preferences]
 subdir = "vendor/Preferences"
-rev = "releases/2025-11-25"
+rev = "releases/2025-11-26"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.CodeTracking]
 subdir = "vendor/CodeTracking"
-rev = "releases/2025-11-25"
+rev = "releases/2025-11-26"
 url = "https://github.com/aviatesk/JETLS.jl"

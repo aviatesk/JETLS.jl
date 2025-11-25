@@ -16,10 +16,10 @@ TOML = "1"
 
 [sources.ExproniconLite]
 subdir = "vendor/ExproniconLite"
-rev = "releases/2025-11-25"
+rev = "releases/2025-11-26"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.OrderedCollections]
 subdir = "vendor/OrderedCollections"
-rev = "releases/2025-11-25"
+rev = "releases/2025-11-26"
 url = "https://github.com/aviatesk/JETLS.jl"

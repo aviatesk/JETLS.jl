@@ -35,5 +35,5 @@ test = ["CassetteOverlay", "DataFrames", "Dates", "DeepDiffs", "Distributed", "F
 
 [sources.CodeTracking]
 subdir = "vendor/CodeTracking"
-rev = "releases/2025-11-25"
+rev = "releases/2025-11-26"
 url = "https://github.com/aviatesk/JETLS.jl"
