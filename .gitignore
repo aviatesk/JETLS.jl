@@ -8,6 +8,7 @@ Manifest-*.toml
 !.JETLSConfig.toml
 *.vsix
 docs/build/
+LocalPreference.toml
 
 # The following line is negated on release branches
 /vendor
