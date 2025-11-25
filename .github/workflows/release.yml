@@ -58,9 +58,27 @@ jobs:
           using Pkg
           Pkg.develop(PackageSpec(path=pwd()))
           Pkg.instantiate()
+      - name: Get release date
+        id: release_date
+        run: |
+          # Extract date from the latest "release: YYYY-MM-DD" commit message
+          DATE=$(git log --oneline --grep="^release:" -1 --format="%s" | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}' || echo "")
+          if [ -z "$DATE" ]; then
+            DATE=$(date +%Y-%m-%d)
+          fi
+          echo "date=$DATE" >> $GITHUB_OUTPUT
       - name: Build and deploy
         run: julia --color=yes --project=docs docs/make.jl
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DOCUMENTER_KEY: ${{ secrets.DOCUMENTER_KEY }}
           DOCUMENTER_DEVBRANCH: release
+          DOCUMENTER_RELEASE_DATE: ${{ steps.release_date.outputs.date }}
+      - name: Set release as default version
+        run: |
+          git fetch origin gh-pages
+          git checkout gh-pages
+          echo '<meta http-equiv="refresh" content="0; url=./release/"/>' > index.html
+          git add index.html
+          git commit -m "Set release as default documentation version" || true
+          git push origin gh-pages
