@@ -112,6 +112,8 @@ jobs:
           [JET] # allow JET to be loaded on nightly
           JET_DEV_MODE = true
           ' > LocalPreferences.toml
+      - uses: julia-actions/julia-buildpkg@latest
+      - uses: julia-actions/julia-runtest@latest
 
   JULIA_NUM_THREADS:
     name: Test with `JULIA_NUM_THREADS = 4,2`
