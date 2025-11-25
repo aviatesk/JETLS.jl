@@ -1,0 +1,53 @@
+name: vendor-deps.jl
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - "src/**"
+      - "test/**"
+      - "LSP/**"
+      - "scripts/vendor-deps.jl"
+      - "Project.toml"
+      - ".github/workflows/vendor-deps.jl.yml"
+  pull_request:
+    branches-ignore:
+      - release
+    paths:
+      - "src/**"
+      - "test/**"
+      - "LSP/**"
+      - "scripts/vendor-deps.jl"
+      - "Project.toml"
+      - ".github/workflows/vendor-deps.jl.yml"
+
+jobs:
+  test:
+    name: Test JETLS.jl with vendored environment
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: "1.12" # most stable version
+          arch: x64
+      - uses: julia-actions/cache@v2
+
+      - name: Run vendor-deps.jl
+        run: |
+          julia --startup-file=no scripts/vendor-deps.jl --source-branch=${{ github.head_ref || github.ref_name }}
+
+      - name: Show vendored packages
+        run: |
+          echo "=== Vendored packages ==="
+          ls -la vendor/
+          echo ""
+          echo "=== Project.toml deps ==="
+          grep -A 100 '^\[deps\]' Project.toml | head -50
+          echo ""
+          echo "=== Project.toml sources ==="
+          grep -A 100 '^\[sources' Project.toml | head -50
+
+      - uses: julia-actions/julia-buildpkg@latest
+      - uses: julia-actions/julia-runtest@latest

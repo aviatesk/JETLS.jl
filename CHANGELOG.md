@@ -14,12 +14,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 >
 > - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 
+### Added
+
+- Added CI workflow for testing the vendored release environment.
+  This validates that changes to master don't break the release branch.
+  (aviatesk/JETLS.jl#321)
+- Added CI workflow for the `release` branch with tests and documentation deployment.
+  Documentation for the `release` branch is now available at <https://aviatesk.github.io/JETLS.jl/release/>.
+  (aviatesk/JETLS.jl#321)
+
 ### Fixed
 
 - Fixed vendoring script to remove unused weakdeps and extensions from vendored
   packages. These could interact with user's package environment unexpectedly.
   Extensions that are actually used by JETLS are preserved with updated UUIDs.
-  Fixes aviatesk/JETLS.jl#312. (aviatesk/JETLS.jl#XXX)
+  Fixes aviatesk/JETLS.jl#312. (aviatesk/JETLS.jl#320)
 
 ## [2025-11-24]
 

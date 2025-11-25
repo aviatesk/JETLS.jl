@@ -8,6 +8,8 @@ on:
       - "jetls-client/**"
       - ".github/workflows/jetls-client.yml"
   pull_request:
+    branches-ignore:
+      - release
     paths:
       - "jetls-client/**"
       - ".github/workflows/jetls-client.yml"
