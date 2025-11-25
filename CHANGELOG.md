@@ -32,11 +32,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [2025-11-24]
 
-[2025-11-24]: https://github.com/aviatesk/JETLS.jl/commit/db47b8b
+[2025-11-24]: https://github.com/aviatesk/JETLS.jl/commit/fac4eaf
 
 > [!note]
 >
-> - Commit: [`db47b8b`](https://github.com/aviatesk/JETLS.jl/commit/db47b8b)
+> - Commit: [`fac4eaf`](https://github.com/aviatesk/JETLS.jl/commit/fac4eaf)
 
 ### Changed / Breaking
 
