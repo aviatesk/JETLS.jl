@@ -9,7 +9,7 @@ WARNING: runserver.jl is deprecated and will be removed in a future release.
 Please use the `jetls` executable app instead.
 
 Installation:
-  julia -e 'using Pkg; Pkg.Apps.add("https://github.com/aviatesk/JETLS.jl#release")'
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="release")'
 
 Migration:
   Old: julia --project=/path/to/JETLS runserver.jl --socket=8080

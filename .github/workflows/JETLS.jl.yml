@@ -1,10 +1,22 @@
-name: CI
+name: JETLS.jl
 
 on:
   push:
     branches:
       - master
+    paths:
+      - "src/**"
+      - "test/**"
+      - "LSP/**"
+      - ".github/workflows/JETLS.jl.yml"
   pull_request:
+    branches-ignore:
+      - release
+    paths:
+      - "src/**"
+      - "test/**"
+      - "LSP/**"
+      - ".github/workflows/JETLS.jl.yml"
 
 jobs:
   test:
@@ -56,6 +68,8 @@ jobs:
       - uses: julia-actions/julia-runtest@latest
       - uses: julia-actions/julia-processcoverage@v1
       - uses: codecov/codecov-action@v5
+        with:
+          flags: JETLS.jl
 
   JETLS_DEV_MODE:
     name: Test with `JETLS_DEV_MODE = true`
@@ -79,8 +93,6 @@ jobs:
           ' > LocalPreferences.toml
       - uses: julia-actions/julia-buildpkg@latest
       - uses: julia-actions/julia-runtest@latest
-      - uses: julia-actions/julia-processcoverage@v1
-      - uses: codecov/codecov-action@v5
 
   JETLS_DEBUG_LOWERING:
     name: Test with `JETLS_DEBUG_LOWERING = true`
@@ -104,8 +116,6 @@ jobs:
           ' > LocalPreferences.toml
       - uses: julia-actions/julia-buildpkg@latest
       - uses: julia-actions/julia-runtest@latest
-      - uses: julia-actions/julia-processcoverage@v1
-      - uses: codecov/codecov-action@v5
 
   JULIA_NUM_THREADS:
     name: Test with `JULIA_NUM_THREADS = 4,2`
@@ -128,24 +138,6 @@ jobs:
       - uses: julia-actions/julia-runtest@latest
         env:
           JULIA_NUM_THREADS: "4,2"
-      - uses: julia-actions/julia-processcoverage@v1
-      - uses: codecov/codecov-action@v5
-
-  LSP:
-    name: Test LSP.jl
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: julia-actions/setup-julia@v1
-        with:
-          version: "1.12" # most stable version
-          arch: x64
-      - uses: julia-actions/cache@v2
-      - name: test LSP
-        shell: julia --color=yes --project=. {0}    # this is necessary for the next command to work on Windows
-        run: 'using Pkg; Pkg.activate(normpath(pwd(), "LSP")); Pkg.instantiate(); Pkg.test(; coverage=true)'
-      - uses: julia-actions/julia-processcoverage@v1
-      - uses: codecov/codecov-action@v5
 
   test_jetls:
     name: Test jetls executable
