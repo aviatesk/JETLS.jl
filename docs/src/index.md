@@ -1,7 +1,5 @@
 # JETLS.jl documentation
 
-[![](https://github.com/aviatesk/JETLS.jl/actions/workflows/Documentation.yml/badge.svg)](https://github.com/aviatesk/JETLS.jl/actions/workflows/Documentation.yml)
-
 The goal of this project is to develop a new language server for
 [Julia](https://julialang.org/), currently called "JETLS".
 JETLS aims to enhance developer productivity by providing advanced static
