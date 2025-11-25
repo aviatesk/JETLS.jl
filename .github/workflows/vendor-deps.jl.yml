@@ -34,9 +34,12 @@ jobs:
           arch: x64
       - uses: julia-actions/cache@v2
 
+      - name: Fetch branch for vendor-deps.jl
+        run: |
+          git fetch origin ${{ github.head_ref || github.ref_name }}
       - name: Run vendor-deps.jl
         run: |
-          julia --startup-file=no scripts/vendor-deps.jl --source-branch=${{ github.head_ref || github.ref_name }}
+          julia --startup-file=no scripts/vendor-deps.jl --source-branch=origin/${{ github.head_ref || github.ref_name }}
 
       - name: Show vendored packages
         run: |
