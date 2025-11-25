@@ -261,8 +261,8 @@ analyzing.
    git push -u origin releases/YYYY-MM-DD
    ```
    **Important**: The commit message must follow the `release: YYYY-MM-DD` format
-   exactly. The documentation CI extracts this date to display in the version
-   selector of Documentation (e.g., `release (2025-11-25)`).
+   exactly. The documentation CI extracts this date to display in the release
+   documentation's index page.
 
 4. Create a pull request from `releases/YYYY-MM-DD` to `release` and merge it
    using "Create a merge commit" (not squash or rebase). This preserves the
