@@ -10,6 +10,8 @@ on:
       - "LSP/**"
       - ".github/workflows/JETLS.jl.yml"
   pull_request:
+    branches-ignore:
+      - release
     paths:
       - "src/**"
       - "test/**"
