@@ -68,10 +68,8 @@ jobs:
       - name: Get release info
         id: release_info
         run: |
-          DATE=$(cat JETLS_VERSION)
-          COMMIT=$(git log --grep="^release:" -1 --format="%H" || git rev-parse HEAD)
-          echo "date=$DATE" >> $GITHUB_OUTPUT
-          echo "commit=$COMMIT" >> $GITHUB_OUTPUT
+          echo "date=$(cat JETLS_VERSION)" >> $GITHUB_OUTPUT
+          echo "commit=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
       - name: Build and deploy
         run: julia --color=yes --project=docs docs/make.jl
         env:
