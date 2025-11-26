@@ -19,11 +19,7 @@ with clients.
 ```@eval
 using JETLS
 using Markdown
-Markdown.parse("""
-````
-$(JETLS.help_message)
-````
-""")
+Markdown.parse('`'^3 * '\n' * JETLS.help_message * '\n' * '`'^3)
 ```
 
 ## Communication channels
