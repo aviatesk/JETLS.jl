@@ -16,27 +16,14 @@ You can run `jetls` with various options to configure how the server communicate
 with clients.
 
 > `jetls --help`
-```
-JETLS - A Julia language server with runtime-aware static analysis,
-powered by JET.jl, JuliaSyntax.jl, and JuliaLowering.jl
-
-Usage: jetls [OPTIONS]
-
-Communication channel options (choose one, default: --stdio):
-  --stdio                     Use standard input/output (not recommended)
-  --pipe-connect=<path>       Connect to client's Unix domain socket/named pipe
-  --pipe-listen=<path>        Listen on Unix domain socket/named pipe
-  --socket=<port>             Listen on TCP socket
-
-Options:
-  --clientProcessId=<pid>     Monitor client process (enables crash detection)
-  --help, -h                  Show this help message
-
-Examples:
-  jetls --pipe-listen=/tmp/jetls.sock
-  jetls --pipe-connect=/tmp/jetls.sock --clientProcessId=12345
-  jetls --socket=8080
-  jetls --threads=auto -- --clientProcessId=12345
+```@eval
+using JETLS
+using Markdown
+Markdown.parse("""
+````
+$(JETLS.help_message)
+````
+""")
 ```
 
 ## Communication channels
