@@ -29,13 +29,27 @@ include("utils.jl")
 
 # These values get populated by Revise
 
-# `method_info[mt => sig]` is either:
+# `method_info[MethodInfoKey(mt, sig)]` is either:
 #   - `missing`, to indicate that the method cannot be located
 #   - a list of `(lnn,ex)` pairs. In almost all cases there will be just one of these,
 #     but "mistakes" in moving methods from one file to another can result in more than
 #     one definition. The last pair in the list is the currently-active definition.
 
-const MethodInfoKey = Pair{Union{Nothing, MethodTable}, Type}
+struct MethodInfoKey
+    mt::Union{Nothing, MethodTable}
+    sig::Type
+    MethodInfoKey(mt::Union{Nothing, MethodTable}, @nospecialize(sig::Type)) = new(mt, sig)
+end
+
+function Base.iterate(mt_sig::MethodInfoKey, s::Union{Int,Nothing}=nothing)
+    if s === nothing
+        return mt_sig.mt, 1
+    elseif s == 1
+        return mt_sig.sig, 2
+    else
+        return nothing
+    end
+end
 
 const method_info = IdDict{MethodInfoKey,Union{Missing,Vector{Tuple{LineNumberNode,Expr}}}}()
 

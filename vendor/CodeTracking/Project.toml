@@ -1,7 +1,7 @@
 name = "CodeTracking"
 uuid = "29b28462-3302-58bb-873a-3f58224955cc"
 authors = ["Tim Holy <tim.holy@gmail.com>"]
-version = "2.0.2"
+version = "3.0.0"
 
 [deps]
 InteractiveUtils = "b77e0a4c-d291-57a0-90e8-8db25a27a240"
