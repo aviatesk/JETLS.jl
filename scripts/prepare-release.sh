@@ -57,18 +57,22 @@ git pull origin release
 git checkout -b "releases/$JETLS_VERSION"
 git merge origin/master -X theirs -m "Merge master into releases/$JETLS_VERSION"
 
-# Step 2: Vendor dependency packages
-echo "==> Step 2: Vendoring dependencies"
+# Step 2: Update JETLS_VERSION file
+echo "==> Step 2: Updating JETLS_VERSION"
+echo "$JETLS_VERSION" > JETLS_VERSION
+
+# Step 3: Vendor dependency packages
+echo "==> Step 3: Vendoring dependencies"
 julia --startup-file=no --project=. scripts/vendor-deps.jl --source-branch=master
 
-# Step 3: Commit and push
-echo "==> Step 3: Committing and pushing"
+# Step 4: Commit and push
+echo "==> Step 4: Committing and pushing"
 git add -A
 git commit -m "release: $JETLS_VERSION"
 git push -u origin "releases/$JETLS_VERSION"
 
-# Step 4: Create pull request
-echo "==> Step 4: Creating pull request"
+# Step 5: Create pull request
+echo "==> Step 5: Creating pull request"
 PR_URL=$(gh pr create \
     --base release \
     --head "releases/$JETLS_VERSION" \

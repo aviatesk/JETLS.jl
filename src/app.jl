@@ -4,6 +4,8 @@ const help_message = """
     JETLS - A Julia language server with runtime-aware static analysis,
     powered by JET.jl, JuliaSyntax.jl, and JuliaLowering.jl
 
+    VERSION: $JETLS_VERSION
+
     Usage: jetls [OPTIONS]
 
     Communication channel options (choose one, default: --stdio):
@@ -14,6 +16,7 @@ const help_message = """
 
     Options:
       --clientProcessId=<pid>     Monitor client process (enables crash detection)
+      --version, -v               Show version information
       --help, -h                  Show this help message
 
     Examples:
@@ -32,6 +35,9 @@ function (@main)(args::Vector{String})::Cint
         arg = args[i]
         if occursin(r"^(?:-h|--help|help)$", arg)
             println(stdout, help_message)
+            return Cint(0)
+        elseif occursin(r"^(?:-v|--version)$", arg)
+            println(stdout, "JETLS version $JETLS_VERSION")
             return Cint(0)
         elseif occursin(r"^(?:--)?stdio$", arg)
         elseif occursin(r"^(?:--)?pipe-connect$", arg)

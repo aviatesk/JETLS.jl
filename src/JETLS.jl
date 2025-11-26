@@ -2,6 +2,11 @@ module JETLS
 
 export Server, Endpoint, runserver
 
+const JETLS_VERSION = let
+    version_file = joinpath(pkgdir(@__MODULE__), "JETLS_VERSION")
+    isfile(version_file) ? strip(read(version_file, String)) : "unknown"
+end
+
 const __init__hooks__ = Any[]
 push_init_hooks!(hook) = push!(__init__hooks__, hook)
 function __init__()

@@ -18,6 +18,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- Added `--version` (`-v`) option to the `jetls` CLI to display version information.
+  The `--help` output now also includes the version. Version is stored in the
+  `JETLS_VERSION` file and automatically updated during releases.
 - Automatic GitHub Release creation when release PRs are merged.
   You can view releases at <https://github.com/aviatesk/JETLS.jl/releases>.
   The contents are and will be extracted from this CHANGELOG.md.
