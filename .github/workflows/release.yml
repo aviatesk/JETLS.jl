@@ -97,8 +97,49 @@ jobs:
           git diff --staged --quiet || git commit -m "Set release as default documentation version"
           git push origin gh-pages
 
+  create-release:
+    name: Create GitHub Release
+    if: github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'releases/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+
+      - name: Extract version
+        id: version
+        run: |
+          BRANCH="${{ github.event.pull_request.head.ref }}"
+          VERSION="${BRANCH#releases/}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Extract release notes from CHANGELOG
+        id: notes
+        run: |
+          NOTES=$(python3 scripts/update-changelog.py --extract-unreleased)
+          # Use heredoc to handle multiline content
+          {
+            echo 'content<<EOF'
+            echo "$NOTES"
+            echo 'EOF'
+          } >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_NOTES: ${{ steps.notes.outputs.content }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          gh release create "$VERSION" \
+            --target release \
+            --title "$VERSION" \
+            --notes "$RELEASE_NOTES"
+
   update-changelog:
     name: Update CHANGELOG on master
+    needs: create-release
     if: github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'releases/')
     runs-on: ubuntu-latest
     permissions:
@@ -122,10 +163,6 @@ jobs:
           SHORT_SHA="${MERGE_COMMIT:0:7}"
           echo "commit=$SHORT_SHA" >> $GITHUB_OUTPUT
 
-          # Get the PR number
-          PR_NUMBER="${{ github.event.pull_request.number }}"
-          echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
-
           # Get the previous release commit for diff link
           # Find the commit hash currently referenced in the Unreleased diff link
           PREV_COMMIT=$(grep -oP '(?<=Diff: \[`)[a-f0-9]+(?=\.\.\.HEAD)' CHANGELOG.md | head -1)
@@ -136,7 +173,6 @@ jobs:
           python3 scripts/update-changelog.py \
             "${{ steps.release_info.outputs.version }}" \
             "${{ steps.release_info.outputs.commit }}" \
-            "${{ steps.release_info.outputs.pr_number }}" \
             "${{ steps.release_info.outputs.prev_commit }}"
 
       - name: Commit and push

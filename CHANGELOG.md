@@ -16,6 +16,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 - Diff: [`6bc34f1...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/6bc34f1...HEAD)
 
+### Added
+
+- Automatic GitHub Release creation when release PRs are merged.
+  You can view releases at <https://github.com/aviatesk/JETLS.jl/releases>.
+  The contents are and will be extracted from this CHANGELOG.md.
+
+### Internal
+
+- Automation for release process: `scripts/prepare-release.sh` automates
+  release branch creation, dependency vendoring, and PR creation.
+- Automatic CHANGELOG.md updates via CI when release PRs are merged.
+
 ## 2025-11-26
 
 - Commit: [`6bc34f1`](https://github.com/aviatesk/JETLS.jl/commit/6bc34f1)
