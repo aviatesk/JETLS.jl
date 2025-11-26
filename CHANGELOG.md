@@ -13,19 +13,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## Unreleased
 
-> [!note]
->
-> - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-> - Diff: [`6bc34f1...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/6bc34f1...HEAD)
+- Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
+- Diff: [`6bc34f1...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/6bc34f1...HEAD)
 
-## [2025-11-26]
+## 2025-11-26
 
-[2025-11-26]: https://github.com/aviatesk/JETLS.jl/pull/326
-
-> [!note]
->
-> - Commit: [`6bc34f1`](https://github.com/aviatesk/JETLS.jl/commit/6bc34f1)
-> - Diff: [`2be0cff...6bc34f1`](https://github.com/aviatesk/JETLS.jl/compare/2be0cff...6bc34f1)
+- Commit: [`6bc34f1`](https://github.com/aviatesk/JETLS.jl/commit/6bc34f1)
+- Diff: [`2be0cff...6bc34f1`](https://github.com/aviatesk/JETLS.jl/compare/2be0cff...6bc34f1)
 
 ### Changed
 
@@ -37,14 +31,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   The release documentation index page shows the release date extracted from
   commit messages.
 
-## [2025-11-25]
+## 2025-11-25
 
-[2025-11-25]: https://github.com/aviatesk/JETLS.jl/pull/323
-
-> [!note]
->
-> - Commit: [`2be0cff`](https://github.com/aviatesk/JETLS.jl/commit/2be0cff)
-> - Diff: [`fac4eaf...2be0cff`](https://github.com/aviatesk/JETLS.jl/compare/fac4eaf...2be0cff)
+- Commit: [`2be0cff`](https://github.com/aviatesk/JETLS.jl/commit/2be0cff)
+- Diff: [`fac4eaf...2be0cff`](https://github.com/aviatesk/JETLS.jl/compare/fac4eaf...2be0cff)
 
 ### Added
 
@@ -62,13 +52,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Extensions that are actually used by JETLS are preserved with updated UUIDs.
   Fixes aviatesk/JETLS.jl#312. (aviatesk/JETLS.jl#320)
 
-## [2025-11-24]
+## 2025-11-24
 
-[2025-11-24]: https://github.com/aviatesk/JETLS.jl/commit/fac4eaf
-
-> [!note]
->
-> - Commit: [`fac4eaf`](https://github.com/aviatesk/JETLS.jl/commit/fac4eaf)
+- Commit: [`fac4eaf`](https://github.com/aviatesk/JETLS.jl/commit/fac4eaf)
 
 ### Changed / Breaking
 

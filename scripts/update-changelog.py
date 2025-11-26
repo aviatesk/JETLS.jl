@@ -3,34 +3,56 @@
 Update CHANGELOG.md after a release PR is merged.
 
 Usage:
-    python scripts/update-changelog.py <version> <commit> <pr_number> <prev_commit>
+    python scripts/update-changelog.py <version> <commit> <prev_commit>
+    python scripts/update-changelog.py --extract-section <version>
 
 Example:
-    python scripts/update-changelog.py 2025-11-26 6bc34f1 326 2be0cff
+    python scripts/update-changelog.py 2025-11-26 6bc34f1 2be0cff
+    python scripts/update-changelog.py --extract-section 2025-11-26
 
 This script:
 1. Creates a new dated release section with the content from "Unreleased"
 2. Updates the "Unreleased" diff link to start from the new release commit
+3. Links the version header to the GitHub Release page
+4. Can extract a specific version's section for use in release notes
 """
 
 import re
 import sys
 
 
-def update_changelog(version: str, commit: str, pr_number: str, prev_commit: str) -> bool:
+def extract_unreleased_content() -> str:
+    """Extract content from the Unreleased section (for use before update)."""
+    with open('CHANGELOG.md', 'r') as f:
+        content = f.read()
+
+    # Pattern to match the Unreleased section header and metadata
+    unreleased_header = r'## Unreleased\n\n- Commit: \[`HEAD`\]\(https://github\.com/aviatesk/JETLS\.jl/commit/HEAD\)\n- Diff: \[`[a-f0-9]+\.\.\.HEAD`\]\(https://github\.com/aviatesk/JETLS\.jl/compare/[a-f0-9]+\.\.\.HEAD\)\n'
+
+    # Find everything between the Unreleased header and the next release section
+    pattern = f'({unreleased_header})(.*?)(## \\d{{4}}-\\d{{2}}-\\d{{2}})'
+    match = re.search(pattern, content, re.DOTALL)
+
+    if not match:
+        return ""
+
+    return match.group(2).strip()
+
+
+def update_changelog(version: str, commit: str, prev_commit: str) -> bool:
     with open('CHANGELOG.md', 'r') as f:
         content = f.read()
 
     # Check if the release section already exists
-    if re.search(rf'^## \[{re.escape(version)}\]', content, re.MULTILINE):
+    if re.search(rf'^## {re.escape(version)}$', content, re.MULTILINE):
         print(f"Release {version} already exists in CHANGELOG.md, skipping update")
         return False
 
     # Pattern to match the Unreleased section header and metadata
-    unreleased_header = r'## Unreleased\n\n> \[!note\]\n>\n> - Commit: \[`HEAD`\]\(https://github\.com/aviatesk/JETLS\.jl/commit/HEAD\)\n> - Diff: \[`[a-f0-9]+\.\.\.HEAD`\]\(https://github\.com/aviatesk/JETLS\.jl/compare/[a-f0-9]+\.\.\.HEAD\)\n'
+    unreleased_header = r'## Unreleased\n\n- Commit: \[`HEAD`\]\(https://github\.com/aviatesk/JETLS\.jl/commit/HEAD\)\n- Diff: \[`[a-f0-9]+\.\.\.HEAD`\]\(https://github\.com/aviatesk/JETLS\.jl/compare/[a-f0-9]+\.\.\.HEAD\)\n'
 
     # Find everything between the Unreleased header and the next release section
-    pattern = f'({unreleased_header})(.*?)(## \\[\\d{{4}}-\\d{{2}}-\\d{{2}}\\])'
+    pattern = f'({unreleased_header})(.*?)(## \\d{{4}}-\\d{{2}}-\\d{{2}})'
     match = re.search(pattern, content, re.DOTALL)
 
     if not match:
@@ -43,22 +65,16 @@ def update_changelog(version: str, commit: str, pr_number: str, prev_commit: str
     # Build the new Unreleased header with updated commit
     new_unreleased_header = f"""## Unreleased
 
-> [!note]
->
-> - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-> - Diff: [`{commit}...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/{commit}...HEAD)
+- Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
+- Diff: [`{commit}...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/{commit}...HEAD)
 
 """
 
     # Build the new release section
-    new_release_section = f"""## [{version}]
+    new_release_section = f"""## {version}
 
-[{version}]: https://github.com/aviatesk/JETLS.jl/pull/{pr_number}
-
-> [!note]
->
-> - Commit: [`{commit}`](https://github.com/aviatesk/JETLS.jl/commit/{commit})
-> - Diff: [`{prev_commit}...{commit}`](https://github.com/aviatesk/JETLS.jl/compare/{prev_commit}...{commit})
+- Commit: [`{commit}`](https://github.com/aviatesk/JETLS.jl/commit/{commit})
+- Diff: [`{prev_commit}...{commit}`](https://github.com/aviatesk/JETLS.jl/compare/{prev_commit}...{commit})
 
 """
 
@@ -78,17 +94,24 @@ def update_changelog(version: str, commit: str, pr_number: str, prev_commit: str
 
 
 def main() -> int:
-    if len(sys.argv) != 5:
-        print(f"Usage: {sys.argv[0]} <version> <commit> <pr_number> <prev_commit>")
-        print(f"Example: {sys.argv[0]} 2025-11-26 6bc34f1 326 2be0cff")
+    if len(sys.argv) >= 2 and sys.argv[1] == '--extract-unreleased':
+        content = extract_unreleased_content()
+        if content:
+            print(content)
+            return 0
+        return 1
+
+    if len(sys.argv) != 4:
+        print(f"Usage: {sys.argv[0]} <version> <commit> <prev_commit>")
+        print(f"       {sys.argv[0]} --extract-unreleased")
+        print(f"Example: {sys.argv[0]} 2025-11-26 6bc34f1 2be0cff")
         return 1
 
     version = sys.argv[1]
     commit = sys.argv[2]
-    pr_number = sys.argv[3]
-    prev_commit = sys.argv[4]
+    prev_commit = sys.argv[3]
 
-    if update_changelog(version, commit, pr_number, prev_commit):
+    if update_changelog(version, commit, prev_commit):
         return 0
     return 1
 
