@@ -25,6 +25,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   You can view releases at <https://github.com/aviatesk/JETLS.jl/releases>.
   The contents are and will be extracted from this CHANGELOG.md.
 
+### Changed
+
+- Updated CodeTracking.jl, LoweredCodeUtils and JET.jldependencies to the latest
+  development versions.
+
 ### Internal
 
 - Automation for release process: `scripts/prepare-release.sh` automates
