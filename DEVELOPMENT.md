@@ -267,7 +267,12 @@ The `prepare-release.sh` script automates the following steps:
    git merge master -X theirs
    ```
 
-2. Vendor dependency packages
+2. Update the version file
+   ```bash
+   echo "$JETLS_VERSION" > JETLS_VERSION
+   ```
+
+3. Vendor dependency packages
    ```bash
    julia --startup-file=no --project=. scripts/vendor-deps.jl --source-branch=master
    ```
@@ -281,7 +286,7 @@ The `prepare-release.sh` script automates the following steps:
    - Updates `Project.toml` with vendored UUIDs and `[sources]` entries
    - Cleans up `Manifest.toml` and runs `Pkg.instantiate()`
 
-3. Commit and push
+4. Commit and push
    ```bash
    git add -A
    git commit -m "release: $JETLS_VERSION"
@@ -291,7 +296,7 @@ The `prepare-release.sh` script automates the following steps:
    exactly. The documentation CI extracts this date to display in the release
    documentation's index page.
 
-4. Create a pull request from `releases/YYYY-MM-DD` to `release`.
+5. Create a pull request from `releases/YYYY-MM-DD` to `release`.
 
 > [!note]
 > `vendor-deps.jl` generates UUIDs using `uuid5(original_uuid, "JETLS-vendor")`.
