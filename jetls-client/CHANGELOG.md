@@ -7,18 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-> [!note]
->
-> - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-> - Diff: [`250188fc...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/250188fc...HEAD)
+- Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
+- Diff: [`250188fc...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/250188fc...HEAD)
 
-## [v0.2.2]
+## v0.2.2
 
-[v0.2.2]: https://github.com/aviatesk/JETLS.jl/compare/250188fc...9008d1b
-
-> [!note]
-> - Commit: [`250188fc`](https://github.com/aviatesk/JETLS.jl/commit/9008d1b)
-> - Diff: [`34278b3...250188fc`](https://github.com/aviatesk/JETLS.jl/compare/250188fc...9008d1b)
+- Commit: [`250188fc`](https://github.com/aviatesk/JETLS.jl/commit/9008d1b)
+- Diff: [`34278b3...250188fc`](https://github.com/aviatesk/JETLS.jl/compare/250188fc...9008d1b)
 
 ### Fixed
 
@@ -26,26 +21,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the extension installation/update notification to use correct `Pkg.Apps.add`
   keyword argument format
 
-## [v0.2.1]
+## v0.2.1
 
-[v0.2.1]: https://github.com/aviatesk/JETLS.jl/compare/34278b3...250188fc
-
-> [!note]
-> - Commit: [`250188fc`](https://github.com/aviatesk/JETLS.jl/commit/250188fc)
-> - Diff: [`34278b3...250188fc`](https://github.com/aviatesk/JETLS.jl/compare/34278b3...250188fc)
+- Commit: [`250188fc`](https://github.com/aviatesk/JETLS.jl/commit/250188fc)
+- Diff: [`34278b3...250188fc`](https://github.com/aviatesk/JETLS.jl/compare/34278b3...250188fc)
 
 ### Fixed
 
 - Fixed installation command syntax in documentation and migration notification
   to use correct `Pkg.Apps.add` keyword argument format
 
-## [v0.2.0]
+## v0.2.0
 
-[v0.2.0]: https://github.com/aviatesk/JETLS.jl/compare/b0a4a4c...34278b3
-
-> [!note]
-> - Commit: [`34278b3`](https://github.com/aviatesk/JETLS.jl/commit/34278b3)
-> - Diff: [`b0a4a4c...34278b3`](https://github.com/aviatesk/JETLS.jl/compare/b0a4a4c...34278b3)
+- Commit: [`34278b3`](https://github.com/aviatesk/JETLS.jl/commit/34278b3)
+- Diff: [`b0a4a4c...34278b3`](https://github.com/aviatesk/JETLS.jl/compare/b0a4a4c...34278b3)
 
 > [!warning]
 > **Breaking changes**: JETLS installation method has changed significantly.
@@ -60,6 +49,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
    ```
 2. Make sure `~/.julia/bin` is in your `PATH`
 3. Restart VSCode
+
+### Added
+
+- Added update notification system that prompts users to update the JETLS server
+  when the extension is updated.
 
 ### Changed
 
@@ -84,8 +78,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   For more details, see <https://aviatesk.github.io/JETLS.jl/dev/configuration/#config/diagnostic-patterns>.
   (aviatesk/JETLS.jl#313)
 
-<!--- Added update notification system that prompts users to update the JETLS server when the extension is updated-->
-
 ### Breaking
 
 - Thread setting for JETLS process should now be set via `jetls-client.executable.threads` option,
@@ -94,28 +86,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   configuration options have been removed in favor of the new `jetls-client.executable` configuration
 - `jetls-client.jetlsSettings` has been renamed to `jetls-client.settings`
 
-## [v0.1.3]
+## v0.1.3
 
-[v0.1.3]: https://github.com/aviatesk/JETLS.jl/compare/6ac86f9...b0a4a4c
-
-> [!note]
->
-> - Commit: [`b0a4a4c`](https://github.com/aviatesk/JETLS.jl/commit/b0a4a4c)
-> - Diff: [`6ac86f9...b0a4a4c`](https://github.com/aviatesk/JETLS.jl/compare/6ac86f9...b0a4a4c)
+- Commit: [`b0a4a4c`](https://github.com/aviatesk/JETLS.jl/commit/b0a4a4c)
+- Diff: [`6ac86f9...b0a4a4c`](https://github.com/aviatesk/JETLS.jl/compare/6ac86f9...b0a4a4c)
 
 ### Added
 
 - Added `jetls-client.jetlsSettings.diagnostic` configuration to control
   diagnostic on/off state and severity levels (aviatesk/JETLS.jl#298)
 
-## [v0.1.2]
+## v0.1.2
 
-[v0.1.2]: https://github.com/aviatesk/JETLS.jl/compare/f199854...6ac86f9
-
-> [!note]
->
-> - Commit: [`6ac86f9`](https://github.com/aviatesk/JETLS.jl/commit/6ac86f9)
-> - Diff: [`f199854...6ac86f9`](https://github.com/aviatesk/JETLS.jl/compare/f199854...6ac86f9)
+- Commit: [`6ac86f9`](https://github.com/aviatesk/JETLS.jl/commit/6ac86f9)
+- Diff: [`f199854...6ac86f9`](https://github.com/aviatesk/JETLS.jl/compare/f199854...6ac86f9)
 
 ### Added
 
@@ -126,21 +110,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (aviatesk/JETLS.jl#284)
 - Added support for configuring JETLS through VSCode's `settings.json` file (aviatesk/JETLS.jl#296)
 
-## [v0.1.1]
+## v0.1.1
 
-[v0.1.1]: https://github.com/aviatesk/JETLS.jl/compare/bc91e4e...f199854
+- Commit: [`f199854`](https://github.com/aviatesk/JETLS.jl/commit/f199854)
+- Diff: [`bc91e4e...f199854`](https://github.com/aviatesk/JETLS.jl/compare/bc91e4e...f199854)
 
-> [!note]
->
-> - Commit: [`f199854`](https://github.com/aviatesk/JETLS.jl/commit/f199854)
-> - Diff: [`bc91e4e...f199854`](https://github.com/aviatesk/JETLS.jl/compare/bc91e4e...f199854)
+## v0.1.0
 
-## [v0.1.0]
-
-[v0.1.0]: https://github.com/aviatesk/JETLS.jl/commit/bc91e4e
-
-> [!note]
->
-> - Commit: [`bc91e4e`](https://github.com/aviatesk/JETLS.jl/commit/bc91e4e)
+- Commit: [`bc91e4e`](https://github.com/aviatesk/JETLS.jl/commit/bc91e4e)
 
 - Initial release
