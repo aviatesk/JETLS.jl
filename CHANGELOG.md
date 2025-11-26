@@ -38,8 +38,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
-- Updated CodeTracking.jl, LoweredCodeUtils and JET.jldependencies to the latest
-  development versions.
+- Updated CodeTracking.jl, LoweredCodeUtils and JET.jl dependencies to the
+  latest development versions.
 
 ### Internal
 
