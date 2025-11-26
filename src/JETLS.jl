@@ -3,7 +3,7 @@ module JETLS
 export Server, Endpoint, runserver
 
 const JETLS_VERSION = let
-    version_file = joinpath(pkgdir(@__MODULE__), "JETLS_VERSION")
+    version_file = joinpath(dirname(@__DIR__), "JETLS_VERSION")
     isfile(version_file) ? strip(read(version_file, String)) : "unknown"
 end
 
