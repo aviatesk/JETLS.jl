@@ -8,6 +8,7 @@ on:
       - "src/**"
       - "test/**"
       - "LSP/**"
+      - "Project.toml"
       - ".github/workflows/JETLS.jl.yml"
   pull_request:
     branches-ignore:
@@ -16,6 +17,7 @@ on:
       - "src/**"
       - "test/**"
       - "LSP/**"
+      - "Project.toml"
       - ".github/workflows/JETLS.jl.yml"
 
 jobs:
