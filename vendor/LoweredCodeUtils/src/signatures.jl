@@ -551,13 +551,13 @@ function methoddef!(interp::Interpreter, signatures::Vector{MethodInfoKey}, fram
             meth = whichtt(sigt, mt)
         end
         if isa(meth, Method) && (meth.sig <: sigt && sigt <: meth.sig)
-            push!(signatures, mt => meth.sig)
+            push!(signatures, MethodInfoKey(mt, meth.sig))
         else
             if arg1 === false || arg1 === nothing || isa(mt, MethodTable)
                 # If it's anonymous and not defined, define it
                 pc = step_expr!(interp, frame, stmt, true)
                 meth = whichtt(sigt, mt)
-                isa(meth, Method) && push!(signatures, mt => meth.sig)
+                isa(meth, Method) && push!(signatures, MethodInfoKey(mt, meth.sig))
                 return pc, pc3
             else
                 # guard against busted lookup, e.g., https://github.com/JuliaLang/julia/issues/31112
@@ -614,7 +614,7 @@ function methoddef!(interp::Interpreter, signatures::Vector{MethodInfoKey}, fram
         frame.pc = pc
         pc = define ? step_expr!(interp, frame, stmt, true) : next_or_nothing!(interp, frame)
         meth = whichtt(sigt, mt)
-        isa(meth, Method) && push!(signatures, mt => meth.sig) # inner methods are not visible
+        isa(meth, Method) && push!(signatures, MethodInfoKey(mt, meth.sig)) # inner methods are not visible
         name === name3 && return pc, pc3     # if this was an inner method we should keep going
         stmt = pc_expr(frame, pc)  # there *should* be more statements in this frame
     end

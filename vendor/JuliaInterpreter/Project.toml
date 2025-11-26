@@ -1,6 +1,6 @@
 name = "JuliaInterpreter"
 uuid = "87c368a4-672f-5de1-91ff-3cc7fc652fab"
-version = "0.10.7"
+version = "0.10.8"
 authors = ["Tim Holy <tim.holy@gmail.com>, Kristoffer Carlsson <kcarlsson89@gmail.com>, Shuhei Kadowaki <aviatesk@gmail.com> and contributors"]
 
 [deps]
@@ -28,12 +28,12 @@ Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
 
 [compat]
 julia = "1.10"
-CodeTracking = "2"
+CodeTracking = "2, 3"
 
 [targets]
 test = ["CassetteOverlay", "DataFrames", "Dates", "DeepDiffs", "Distributed", "FunctionWrappers", "HTTP", "LinearAlgebra", "Logging", "LoopVectorization", "Mmap", "PyCall", "SHA", "SparseArrays", "Test"]
 
 [sources.CodeTracking]
 subdir = "vendor/CodeTracking"
-rev = "releases/2025-11-26"
+rev = "releases/2025-11-27"
 url = "https://github.com/aviatesk/JETLS.jl"

@@ -97,7 +97,7 @@ bodymethtest5(x, y=Dict(1=>2)) = 5
 
     # Manually add the signature for the Caller constructor, since that was defined
     # outside of manual lowering
-    push!(signatures, nothing => Tuple{Type{Lowering.Caller}})
+    push!(signatures, MethodInfoKey(nothing, Tuple{Type{Lowering.Caller}}))
 
     nms = names(Lowering; all=true)
     modeval, modinclude = getfield(Lowering, :eval), getfield(Lowering, :include)
@@ -107,7 +107,7 @@ bodymethtest5(x, y=Dict(1=>2)) = 5
         isa(f, Base.Callable) || continue
         (f === modeval || f === modinclude) && continue
         for m in methods(f)
-            if (nothing => m.sig) ∉ signatures
+            if MethodInfoKey(nothing, m.sig) ∉ signatures
                 push!(failed, m.sig)
             end
         end
@@ -240,8 +240,8 @@ bodymethtest5(x, y=Dict(1=>2)) = 5
     if !LoweredCodeUtils.ismethod(stmt)
         pc = JuliaInterpreter.next_until!(LoweredCodeUtils.ismethod, frame, true)
     end
-    pc, pc3 = methoddef!(signatures, frame; define=false)  # this tests that the return isn't `nothing`
-    pc, pc3 = methoddef!(signatures, frame; define=false)
+    pc, _ = methoddef!(signatures, frame; define=false)  # this tests that the return isn't `nothing`
+    pc, _ = methoddef!(signatures, frame; define=false)
     @test length(signatures) == 2  # both the GeneratedFunctionStub and the main method
 
     # With anonymous functions in signatures
@@ -307,13 +307,13 @@ bodymethtest5(x, y=Dict(1=>2)) = 5
     frame = Frame(Lowering, ex)
     rename_framemethods!(frame)
     empty!(signatures)
-    pc, pc3 = methoddef!(signatures, frame; define=false)
+    pc, _ = methoddef!(signatures, frame; define=false)
     @test pc < length(frame.framecode.src.code)
     kw2sig = Tuple{typeof(Lowering.keywrd2), Any}
-    @test kw2sig ∉ signatures
+    @test MethodInfoKey(nothing, kw2sig) ∉ signatures
     pc = methoddefs!(signatures, frame; define=false)
     @test pc === nothing
-    @test (nothing => kw2sig) ∈ signatures
+    @test MethodInfoKey(nothing, kw2sig) ∈ signatures
 
     # Module-scoping
     ex = :(Base.@irrational π        3.14159265358979323846  pi)
@@ -339,7 +339,7 @@ bodymethtest5(x, y=Dict(1=>2)) = 5
     rename_framemethods!(frame)
     empty!(signatures)
     methoddefs!(signatures, frame; define=false)
-    @test (nothing => Tuple{typeof(Lowering.CustomMS)}) ∈ signatures
+    @test MethodInfoKey(nothing, Tuple{typeof(Lowering.CustomMS)}) ∈ signatures
 
     # https://github.com/timholy/Revise.jl/issues/398
     ex = quote
@@ -373,7 +373,7 @@ bodymethtest5(x, y=Dict(1=>2)) = 5
     frame = Frame(Lowering422, ex)
     rename_framemethods!(frame)
     pc = methoddefs!(signatures, frame; define=false)
-    @test typeof(Lowering422.fneg) ∈ Set(Base.unwrap_unionall(sig).parameters[1] for (mt, sig) in signatures)
+    @test typeof(Lowering422.fneg) ∈ Set(Base.unwrap_unionall(sig).parameters[1] for (_, sig) in signatures)
 
     # Scoped names (https://github.com/timholy/Revise.jl/issues/568)
     ex = :(f568() = -1)
@@ -388,7 +388,7 @@ bodymethtest5(x, y=Dict(1=>2)) = 5
         pc = JuliaInterpreter.step_expr!(frame, true)
     end
     pc = methoddef!(signatures, frame, pc; define=true)
-    @test (nothing => Tuple{typeof(Lowering.f568)}) ∈ signatures
+    @test MethodInfoKey(nothing, Tuple{typeof(Lowering.f568)}) ∈ signatures
     @test Lowering.f568() == -2
 
     # Undefined names
@@ -515,7 +515,7 @@ end
     ex = :(foo(x) = "foo")
     Core.eval(ExternalMT, ex)
     frame = Frame(ExternalMT, ex)
-    pc = methoddefs!(signatures, frame; define = false)
+    methoddefs!(signatures, frame; define = false)
     @test length(signatures) == 1
     (mt, sig) = pop!(signatures)
     @test (mt, sig) === (nothing, Tuple{typeof(ExternalMT.foo), Any})
@@ -523,7 +523,7 @@ end
     ex = :(Base.Experimental.@overlay method_table foo(x) = "overlayed foo")
     Core.eval(ExternalMT, ex)
     frame = Frame(ExternalMT, ex)
-    pc = methoddefs!(signatures, frame; define = false)
+    methoddefs!(signatures, frame; define = false)
     @test length(signatures) == 1
     (mt, sig) = pop!(signatures)
     @test (mt, sig) === (ExternalMT.method_table, Tuple{typeof(ExternalMT.foo), Any})
@@ -531,7 +531,7 @@ end
     ex = :(@overlay foo(x::Int64) = "overlayed foo, second edition")
     Core.eval(ExternalMT, ex)
     frame = Frame(ExternalMT, ex)
-    pc = methoddefs!(signatures, frame; define = false)
+    methoddefs!(signatures, frame; define = false)
     @test length(signatures) == 1
     (mt, sig) = pop!(signatures)
     @test (mt, sig) === (ExternalMT.method_table, Tuple{typeof(ExternalMT.foo), Int64})
