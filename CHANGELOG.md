@@ -25,6 +25,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `releases/2025-11-27`) will be kept until the end of December 2025 for
   backward compatibility.
 
+### Fixed
+
+- Fixed false `lowering/macro-expansion-error` diagnostics appearing before
+  initial full-analysis completes. These diagnostics are now skipped until
+  module context is available, then refreshed via `workspace/diagnostic/refresh`.
+  Fixes aviatesk/JETLS.jl#279 and aviatesk/JETLS.jl#290. (aviatesk/JETLS.jl#333)
+
 ### Removed
 
 - Removed the deprecated `runserver.jl` script. Users should use the `jetls`
