@@ -197,11 +197,16 @@ function runserver(server::Server; client_process_id::Union{Nothing,Int}=nothing
                 exit_code = 1
                 break
             elseif shutdown_requested
-                send(server, ResponseMessage(;
-                    id = msg.id,
-                    error = ResponseError(;
-                        code = ErrorCodes.InvalidRequest,
-                        message = "Received request after a shutdown request requested")))
+                if isdefined(msg, :id)
+                    send(server, ResponseMessage(;
+                        id = msg.id,
+                        error = ResponseError(;
+                            code = ErrorCodes.InvalidRequest,
+                            message = "Received request after a shutdown request requested")))
+                else
+                    # This is the case where some notification was sent.
+                    # In this case, there is no way to inform the client side that it was unexpected.
+                end
             elseif is_sequential_msg(msg)
                 put!(seq_queue, msg)
             else

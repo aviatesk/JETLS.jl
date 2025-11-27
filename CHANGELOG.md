@@ -23,6 +23,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Revise assumes it's loaded from a REPL session. Revise is now a direct
   dependency that's conditionally loaded at compile time based on the
   `JETLS_DEV_MODE` flag.
+- Fixed error when receiving notifications after shutdown request. The server
+  now silently ignores notifications instead of causing errors from invalid
+  property access (which is not possible for notifications).
 
 ## 2025-11-28
 
