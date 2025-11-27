@@ -24,16 +24,10 @@ CodeTracking = "3"
 test = ["InteractiveUtils", "Parameters", "Pkg", "Test"]
 
 [sources.Compiler]
-subdir = "vendor/Compiler"
-rev = "releases/2025-11-27"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../Compiler"
 
 [sources.JuliaInterpreter]
-subdir = "vendor/JuliaInterpreter"
-rev = "releases/2025-11-27"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../JuliaInterpreter"
 
 [sources.CodeTracking]
-subdir = "vendor/CodeTracking"
-rev = "releases/2025-11-27"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../CodeTracking"
