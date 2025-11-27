@@ -18,11 +18,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
-- Fixed Revise integration in development mode. The previous approach of
-  dynamically loading Revise via `Base.require` didn't work properly because
-  Revise assumes it's loaded from a REPL session. Revise is now a direct
-  dependency that's conditionally loaded at compile time based on the
-  `JETLS_DEV_MODE` flag.
 - Fixed error when receiving notifications after shutdown request. The server
   now silently ignores notifications instead of causing errors from invalid
   property access (which is not possible for notifications).
@@ -30,6 +25,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   opened simultaneously. Added global lock to `activate_do` to serialize
   environment switching operations. This fixes spurious "Failed to identify
   package environment" warnings.
+
+### Internal
+
+- Fixed Revise integration in development mode. The previous approach of
+  dynamically loading Revise via `Base.require` didn't work properly because
+  Revise assumes it's loaded from a REPL session. Revise is now a direct
+  dependency that's conditionally loaded at compile time based on the
+  `JETLS_DEV_MODE` flag.
 
 ## 2025-11-28
 
