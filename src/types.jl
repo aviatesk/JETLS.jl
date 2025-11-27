@@ -186,6 +186,7 @@ const PendingAnalyses = CASContainer{Dict{AnalysisEntry,Union{Nothing,AnalysisRe
 const CurrentGenerations = CASContainer{Dict{AnalysisEntry,Int}}
 const AnalyzedGenerations = CASContainer{Dict{AnalysisEntry,Int}}
 const DebouncedRequests = LWContainer{Dict{AnalysisEntry,Timer}, LWStats}
+const InstantiatedEnvs = LWContainer{Dict{String,Union{Nothing,Tuple{Base.PkgId,URI}}}}
 
 struct AnalysisManager
     cache::AnalysisCache
@@ -195,6 +196,7 @@ struct AnalysisManager
     current_generations::CurrentGenerations
     analyzed_generations::AnalyzedGenerations
     debounced::DebouncedRequests
+    instantiated_envs::InstantiatedEnvs
     function AnalysisManager(n_workers::Int)
         return new(
             AnalysisCache(Dict{URI,AnalysisInfo}()),
@@ -203,7 +205,8 @@ struct AnalysisManager
             Vector{Task}(undef, n_workers),
             CurrentGenerations(Dict{AnalysisEntry,Int}()),
             AnalyzedGenerations(Dict{AnalysisEntry,Int}()),
-            DebouncedRequests(Dict{AnalysisEntry,Timer}())
+            DebouncedRequests(Dict{AnalysisEntry,Timer}()),
+            InstantiatedEnvs(Dict{String,Union{Nothing,Tuple{Base.PkgId,URI}}}())
         )
     end
 end
@@ -316,8 +319,9 @@ _unwrap_maybe(::Type{T}) where {T} = T
 
 @option struct FullAnalysisConfig <: ConfigSection
     debounce::Maybe{Float64}
+    auto_instantiate::Maybe{Bool}
 end
-default_config(::Type{FullAnalysisConfig}) = FullAnalysisConfig(1.0)
+default_config(::Type{FullAnalysisConfig}) = FullAnalysisConfig(1.0, true)
 
 @option struct TestRunnerConfig <: ConfigSection
     executable::Maybe{String}

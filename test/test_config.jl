@@ -14,11 +14,11 @@ using JETLS
 
     @testset "`merge_setting`" begin
         base_config = JETLS.JETLSConfig(;
-            full_analysis=JETLS.FullAnalysisConfig(1.0),
+            full_analysis=JETLS.FullAnalysisConfig(; debounce=1.0),
             testrunner=JETLS.TestRunnerConfig("base_runner"),
         )
         overlay_config = JETLS.JETLSConfig(;
-            full_analysis=JETLS.FullAnalysisConfig(2.0),
+            full_analysis=JETLS.FullAnalysisConfig(; debounce=2.0),
         )
         merged = JETLS.merge_setting(base_config, overlay_config)
 
@@ -28,11 +28,11 @@ using JETLS
 
     @testset "`on_difference`" begin
         let config1 = JETLS.JETLSConfig(;
-                full_analysis=JETLS.FullAnalysisConfig(1.0),
+                full_analysis=JETLS.FullAnalysisConfig(; debounce=1.0),
                 testrunner=JETLS.TestRunnerConfig("runner1"),
             )
             config2 = JETLS.JETLSConfig(;
-                full_analysis=JETLS.FullAnalysisConfig(2.0),
+                full_analysis=JETLS.FullAnalysisConfig(; debounce=2.0),
                 testrunner=JETLS.TestRunnerConfig("runner2")
             )
             paths_called = []
@@ -116,7 +116,7 @@ end
     manager = JETLS.ConfigManager(JETLS.ConfigManagerData())
 
     test_config = JETLS.JETLSConfig(;
-        full_analysis=JETLS.FullAnalysisConfig(2.0),
+        full_analysis=JETLS.FullAnalysisConfig(; debounce=2.0),
         testrunner=JETLS.TestRunnerConfig("test_runner"),
     )
 
@@ -136,7 +136,7 @@ end
 
     # Test priority: file config has higher priority than LSP config
     lsp_config = JETLS.JETLSConfig(;
-        full_analysis=JETLS.FullAnalysisConfig(999.0),
+        full_analysis=JETLS.FullAnalysisConfig(; debounce=999.0),
         testrunner=JETLS.TestRunnerConfig("lsp_runner")
     )
     store_lsp_config!(manager, lsp_config)
@@ -147,7 +147,7 @@ end
     # Test updating config
     store_lsp_config!(manager, JETLS.EMPTY_CONFIG)
     updated_config = JETLS.JETLSConfig(;
-        full_analysis=JETLS.FullAnalysisConfig(3.0),
+        full_analysis=JETLS.FullAnalysisConfig(; debounce=3.0),
         testrunner=JETLS.TestRunnerConfig("new_runner"),
     )
     store_file_config!(manager, "/foo/bar/.JETLSConfig.toml", updated_config)
@@ -159,7 +159,7 @@ end
     manager = JETLS.ConfigManager(JETLS.ConfigManagerData())
 
     lsp_config = JETLS.JETLSConfig(;
-        full_analysis=JETLS.FullAnalysisConfig(2.0),
+        full_analysis=JETLS.FullAnalysisConfig(; debounce=2.0),
         testrunner=nothing
     )
     file_config = JETLS.JETLSConfig(;
@@ -179,7 +179,7 @@ end
 @testset "LSP configuration merging without file config" begin
     manager = JETLS.ConfigManager(JETLS.ConfigManagerData())
     lsp_config = JETLS.JETLSConfig(;
-        full_analysis=JETLS.FullAnalysisConfig(3.0),
+        full_analysis=JETLS.FullAnalysisConfig(; debounce=3.0),
         testrunner=JETLS.TestRunnerConfig("lsp_runner")
     )
     store_lsp_config!(manager, lsp_config)

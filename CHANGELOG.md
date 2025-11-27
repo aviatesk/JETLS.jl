@@ -16,6 +16,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 - Diff: [`eda08b5...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/eda08b5...HEAD)
 
+### Added
+
+- JETLS now automatically runs `Pkg.instantiate()` for packages that have not
+  been instantiated yet (e.g., freshly cloned repositories). This allows
+  full analysis to work immediately upon opening such packages. Note that this
+  will automatically create a `Manifest.toml` file when the package has not been
+  instantiated yet. This behavior is controlled by the `full_analysis.auto_instantiate`
+  configuration option (default: `true`). Set it to `false` to disable.
+
 ### Fixed
 
 - Fixed error when receiving notifications after shutdown request. The server
