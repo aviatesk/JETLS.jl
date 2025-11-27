@@ -185,8 +185,7 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
     # This ensures that clients using pull diagnostics (textDocument/diagnostic) will
     # re-request diagnostics now that module context is available, allowing
     # lowering/macro-expansion-error diagnostics to be properly reported.
-    if isnothing(request.prev_analysis_result) &&
-       supports(server, :workspace, :diagnostics, :refreshSupport)
+    if isnothing(request.prev_analysis_result) && supports(server, :workspace, :diagnostics, :refreshSupport)
         request_diagnostic_refresh!(server)
     end
 
@@ -399,7 +398,7 @@ function lookup_analysis_entry(server::Server, uri::URI)
             cached = get(load(instantiated_envs), env_path, missing)
             if cached === nothing
                 # Previously failed to detect package environment
-                return ScriptInEnvAnalysisEntry(env_path, uri)
+                return nothing
             elseif cached !== missing
                 pkgid, pkgfileuri = cached
                 return PackageSourceAnalysisEntry(env_path, pkgfileuri, pkgid)
