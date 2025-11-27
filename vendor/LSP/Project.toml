@@ -18,15 +18,15 @@ StructTypes = "1.11.0"
 
 [sources.PrecompileTools]
 subdir = "vendor/PrecompileTools"
-rev = "releases/2025-11-27"
+rev = "releases/2025-11-28"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.JSON3]
 subdir = "vendor/JSON3"
-rev = "releases/2025-11-27"
+rev = "releases/2025-11-28"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.StructTypes]
 subdir = "vendor/StructTypes"
-rev = "releases/2025-11-27"
+rev = "releases/2025-11-28"
 url = "https://github.com/aviatesk/JETLS.jl"

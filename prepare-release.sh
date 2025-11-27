@@ -1,0 +1,1 @@
+scripts/prepare-release.sh
