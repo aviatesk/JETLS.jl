@@ -99,7 +99,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.ref }}
+          ref: release
 
       - name: Extract version
         id: version
@@ -145,8 +145,8 @@ jobs:
       - name: Extract release info
         id: release_info
         run: |
-          git fetch origin ${{ github.event.pull_request.head.ref }}
-          VERSION=$(git show origin/${{ github.event.pull_request.head.ref }}:JETLS_VERSION)
+          git fetch origin release
+          VERSION=$(git show origin/release:JETLS_VERSION)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
           # Get the merge commit SHA (short form)
