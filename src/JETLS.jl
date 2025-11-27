@@ -18,7 +18,7 @@ const JETLS_DEV_MODE = Preferences.@load_preference("JETLS_DEV_MODE", false)
 const JETLS_TEST_MODE = Preferences.@load_preference("JETLS_TEST_MODE", false)
 const JETLS_DEBUG_LOWERING = Preferences.@load_preference("JETLS_DEBUG_LOWERING", false)
 function show_setup_info(msg)
-    @info msg Sys.BINDIR pkgdir(JETLS) Threads.nthreads() JETLS_DEV_MODE JETLS_TEST_MODE JETLS_DEBUG_LOWERING
+    @info msg Sys.BINDIR pkgdir(JETLS) Threads.nthreads() JETLS_VERSION JETLS_DEV_MODE JETLS_TEST_MODE JETLS_DEBUG_LOWERING
 end
 
 using LSP
@@ -336,6 +336,8 @@ function (dispatcher::ResponseMessageDispatcher)(server::Server, msg::Dict{Symbo
         handle_testrunner_testcase_progress_response(server, msg, request_caller, cancel_flag)
     elseif request_caller isa CodeLensRefreshRequestCaller
         handle_code_lens_refresh_response(server, msg, request_caller)
+    elseif request_caller isa DiagnosticRefreshRequestCaller
+        handle_diagnostic_refresh_response(server, msg, request_caller)
     elseif request_caller isa FormattingProgressCaller
         handle_formatting_progress_response(server, msg, request_caller)
     elseif request_caller isa RangeFormattingProgressCaller

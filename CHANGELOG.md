@@ -9,12 +9,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > as it is not registered in General due to environment isolation requirements.
 >
 > Each dated section below corresponds to a release that can be installed via
-> `Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="releases/YYYY-MM-DD")`
+> `Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="YYYY-MM-DD")`
 
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`6bc34f1...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/6bc34f1...HEAD)
+- Diff: [`6ec51e1...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/6ec51e1...HEAD)
+
+### Changed
+
+- Pinned installation now uses release tags (`rev="YYYY-MM-DD"`) instead of
+  branch names (`rev="releases/YYYY-MM-DD"`). The `releases/YYYY-MM-DD` branches
+  can now be deleted after merging since `[sources]` entries reference commit
+  SHAs directly. Existing release branches (`releases/2025-11-24` through
+  `releases/2025-11-27`) will be kept until the end of December 2025 for
+  backward compatibility.
+
+### Fixed
+
+- Fixed false `lowering/macro-expansion-error` diagnostics appearing before
+  initial full-analysis completes. These diagnostics are now skipped until
+  module context is available, then refreshed via `workspace/diagnostic/refresh`.
+  Fixes aviatesk/JETLS.jl#279 and aviatesk/JETLS.jl#290. (aviatesk/JETLS.jl#333)
+
+### Removed
+
+- Removed the deprecated `runserver.jl` script. Users should use the `jetls`
+  executable app instead. See the [2025-11-24](#2025-11-24) release notes for
+  migration details.
+
+## 2025-11-27
+
+- Commit: [`6ec51e1`](https://github.com/aviatesk/JETLS.jl/commit/6ec51e1)
+- Diff: [`6bc34f1...6ec51e1`](https://github.com/aviatesk/JETLS.jl/compare/6bc34f1...6ec51e1)
 
 ### Added
 
@@ -27,8 +54,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
-- Updated CodeTracking.jl, LoweredCodeUtils and JET.jldependencies to the latest
-  development versions.
+- Updated CodeTracking.jl, LoweredCodeUtils and JET.jl dependencies to the
+  latest development versions.
 
 ### Internal
 

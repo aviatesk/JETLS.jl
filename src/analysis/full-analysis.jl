@@ -178,6 +178,15 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
     mark_analyzed_generation!(manager, request)
     request.notify && notify_diagnostics!(server)
 
+    # Request diagnostic refresh for initial full-analysis completion.
+    # This ensures that clients using pull diagnostics (textDocument/diagnostic) will
+    # re-request diagnostics now that module context is available, allowing
+    # lowering/macro-expansion-error diagnostics to be properly reported.
+    if isnothing(request.prev_analysis_result) &&
+       supports(server, :workspace, :diagnostics, :refreshSupport)
+        request_diagnostic_refresh!(server)
+    end
+
     @label next_request
 
     notify(request.completion)

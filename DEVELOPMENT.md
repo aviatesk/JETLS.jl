@@ -226,9 +226,18 @@ analyzing.
   packages.
 - `releases/YYYY-MM-DD`: Release preparation branches. These branches are
   created from `release`, merged with `master`, vendored, and then merged back
-  into `release` via pull requests on GitHub. These branches must be kept
-  (not deleted) because the `release` branch's `[sources]` entries reference
-  them by name.
+  into `release` via pull requests on GitHub. These branches can be deleted
+  after merging because the `[sources]` entries reference specific commit SHAs,
+  not branch names.
+
+### Pinned installation
+
+Users can install a specific release version using Julia's package manager with
+the release tag:
+```julia
+julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="YYYY-MM-DD")'
+```
+Replace `YYYY-MM-DD` with the desired release date (e.g., `2025-11-27`).
 
 ### Release procedure
 
@@ -246,10 +255,8 @@ After the script completes:
    `master` commits are included in `release`. The CI will run tests on the
    vendored environment before merging.
 
-2. **Do NOT delete the `releases/YYYY-MM-DD` branch after merging.** These
-   branches must be kept because the `release` branch's `[sources]` entries
-   reference them by name. Keeping them also allows users to install specific
-   releases via the Julia package manager.
+2. The `releases/YYYY-MM-DD` branch can be deleted after merging. The `[sources]`
+   entries reference specific commit SHAs, so the branch is no longer needed.
 
 After the PR is merged, `CHANGELOG.md` on `master` will be automatically updated
 by the CI workflow.
@@ -267,36 +274,38 @@ The `prepare-release.sh` script automates the following steps:
    git merge master -X theirs
    ```
 
-2. Update the version file
+2. Vendor dependency packages with local paths
    ```bash
-   echo "$JETLS_VERSION" > JETLS_VERSION
+   julia --startup-file=no --project=. scripts/vendor-deps.jl --source-branch=master --local
    ```
+   This generates `vendor/` with local path references in `[sources]`.
 
-3. Vendor dependency packages
-   ```bash
-   julia --startup-file=no --project=. scripts/vendor-deps.jl --source-branch=master
-   ```
-   This script performs the following:
-   - Fetches the latest `Project.toml` from the specified source branch (`master`)
-   - Backs it up as `Project.toml.bak`
-   - Cleans up `Manifest.toml` and runs `Pkg.update()`
-   - Loads JETLS and collects dependency packages from `Base.loaded_modules`
-   - Copies each package to `vendor/` and rewrites its UUID
-   - Removes unused weakdeps and extensions from vendored packages
-   - Updates `Project.toml` with vendored UUIDs and `[sources]` entries
-   - Cleans up `Manifest.toml` and runs `Pkg.instantiate()`
-
-4. Commit and push
+3. Commit and push the vendor directory
    ```bash
    git add -A
-   git commit -m "release: $JETLS_VERSION"
+   git commit -m "release: update vendored dependencies ($JETLS_VERSION)"
    git push -u origin releases/$JETLS_VERSION
+   ```
+
+4. Update `[sources]` to reference the vendor commit SHA
+   ```bash
+   VENDOR_COMMIT=$(git rev-parse HEAD)
+   julia --startup-file=no --project=. scripts/vendor-deps.jl --source-branch=master --rev="$VENDOR_COMMIT"
+   ```
+   This updates `[sources]` entries to use the commit SHA instead of local paths.
+
+5. Commit and push the release
+   ```bash
+   echo "$JETLS_VERSION" > JETLS_VERSION
+   git add -A
+   git commit -m "release: $JETLS_VERSION"
+   git push origin releases/$JETLS_VERSION
    ```
    **Important**: The commit message must follow the `release: YYYY-MM-DD` format
    exactly. The documentation CI extracts this date to display in the release
    documentation's index page.
 
-5. Create a pull request from `releases/YYYY-MM-DD` to `release`.
+6. Create a pull request from `releases/YYYY-MM-DD` to `release`.
 
 > [!note]
 > `vendor-deps.jl` generates UUIDs using `uuid5(original_uuid, "JETLS-vendor")`.

@@ -1,5 +1,5 @@
 using Documenter
-# using JETLS
+using JETLS
 
 const devbranch = get(ENV, "DOCUMENTER_DEVBRANCH", "master")
 const release_date = get(ENV, "DOCUMENTER_RELEASE_DATE", "")
@@ -24,7 +24,7 @@ if devbranch == "release" && !isempty(release_date)
 end
 
 makedocs(;
-    # modules = [JETLS],
+    modules = [JETLS],
     sitename = "JETLS.jl",
     format = Documenter.HTML(;
         prettyurls = get(ENV, "CI", "false") == "true",
@@ -39,6 +39,7 @@ makedocs(;
         "Configuration" => "configuration.md",
         "Launching" => "launching.md",
     ],
+    warnonly = [:missing_docs]
 )
 
 # Custom deploy configuration for `release` branch deployment

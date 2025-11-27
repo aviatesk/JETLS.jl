@@ -3,10 +3,11 @@
 # Prepare a new JETLS release.
 #
 # Usage:
-#     ./scripts/prepare-release.sh YYYY-MM-DD
+#     ./scripts/prepare-release.sh YYYY-MM-DD [--local]
 #
 # Example:
 #     ./scripts/prepare-release.sh 2025-11-27
+#     ./scripts/prepare-release.sh 2025-11-27 --local  # skip push and PR creation
 #
 # This script automates the release procedure documented in DEVELOPMENT.md:
 # 1. Creates a release branch from `release` and merges `master`
@@ -16,13 +17,37 @@
 
 set -euo pipefail
 
-if [[ $# -ne 1 ]]; then
-    echo "Usage: $0 YYYY-MM-DD"
+LOCAL_MODE=false
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --local)
+            LOCAL_MODE=true
+            shift
+            ;;
+        -*)
+            echo "Unknown option: $1"
+            echo "Usage: $0 YYYY-MM-DD [--local]"
+            exit 1
+            ;;
+        *)
+            if [[ -z "${JETLS_VERSION:-}" ]]; then
+                JETLS_VERSION="$1"
+            else
+                echo "Error: Unexpected argument: $1"
+                echo "Usage: $0 YYYY-MM-DD [--local]"
+                exit 1
+            fi
+            shift
+            ;;
+    esac
+done
+
+if [[ -z "${JETLS_VERSION:-}" ]]; then
+    echo "Usage: $0 YYYY-MM-DD [--local]"
     echo "Example: $0 2025-11-27"
     exit 1
 fi
-
-JETLS_VERSION="$1"
 
 # Validate date format
 if ! [[ "$JETLS_VERSION" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
@@ -57,38 +82,60 @@ git pull origin release
 git checkout -b "releases/$JETLS_VERSION"
 git merge origin/master -X theirs -m "Merge master into releases/$JETLS_VERSION"
 
-# Step 2: Update JETLS_VERSION file
-echo "==> Step 2: Updating JETLS_VERSION"
+# Step 2: Vendor dependency packages with local paths
+echo "==> Step 2: Vendoring dependencies (local paths)"
+julia --startup-file=no --project=. scripts/vendor-deps.jl --source-branch=master --local
+
+# Step 3: Commit vendor/ directory
+echo "==> Step 3: Committing vendor/ directory"
+git add -A
+git commit -m "vendor: update vendored dependencies"
+if [[ "$LOCAL_MODE" == false ]]; then
+    git push -u origin "releases/$JETLS_VERSION"
+fi
+
+# Step 4: Get the commit SHA and update [sources] to reference it
+echo "==> Step 4: Updating [sources] to reference commit SHA"
+VENDOR_COMMIT=$(git rev-parse HEAD)
+echo "Vendor commit SHA: $VENDOR_COMMIT"
+julia --startup-file=no --project=. scripts/vendor-deps.jl --source-branch=master --rev="$VENDOR_COMMIT"
+
+# Step 5: Commit the final release
+echo "==> Step 5: Committing release"
 echo "$JETLS_VERSION" > JETLS_VERSION
-
-# Step 3: Vendor dependency packages
-echo "==> Step 3: Vendoring dependencies"
-julia --startup-file=no --project=. scripts/vendor-deps.jl --source-branch=master
-
-# Step 4: Commit and push
-echo "==> Step 4: Committing and pushing"
 git add -A
 git commit -m "release: $JETLS_VERSION"
-git push -u origin "releases/$JETLS_VERSION"
 
-# Step 5: Create pull request
-echo "==> Step 5: Creating pull request"
+if [[ "$LOCAL_MODE" == true ]]; then
+    echo ""
+    echo "==> Local mode: skipping push and PR creation"
+    echo ""
+    echo "Release branch prepared locally: releases/$JETLS_VERSION"
+    echo "To complete the release manually:"
+    echo "  1. git push -u origin releases/$JETLS_VERSION"
+    echo "  2. Create a PR from releases/$JETLS_VERSION to release"
+    exit 0
+fi
+
+git push origin "releases/$JETLS_VERSION"
+
+# Step 6: Create pull request
+echo "==> Step 6: Creating pull request"
+PR_BODY="This PR releases version \`$JETLS_VERSION\`.
+
+## Checklist
+- [ ] \`release / Test JETLS.jl with release environment\`
+- [ ] \`release / Test jetls executable with release environment\`
+
+## Post-merge
+- The \`releases/$JETLS_VERSION\` branch can be deleted after merging
+- CHANGELOG.md will be automatically updated on master"
+
 PR_URL=$(gh pr create \
     --base release \
     --head "releases/$JETLS_VERSION" \
     --title "release: $JETLS_VERSION" \
-    --body "$(cat <<EOF
-This PR releases version `$JETLS_VERSION`.
-
-## Checklist
-- [ ] `release / Test JETLS.jl with release environment`
-- [ ] `release / Test jetls executable with release environment`
-
-## Post-merge
-- Do NOT delete the \`releases/$JETLS_VERSION\` branch after merging
-- CHANGELOG.md will be automatically updated on master
-EOF
-)")
+    --body "$PR_BODY")
 
 echo ""
 echo "==> Release preparation complete!"
@@ -98,4 +145,4 @@ echo ""
 echo "Next steps:"
 echo "  1. Wait for CI to pass"
 echo "  2. Merge the PR using 'Create a merge commit' (not squash or rebase)"
-echo "  3. Do NOT delete the releases/$JETLS_VERSION branch"
+echo "  3. The releases/$JETLS_VERSION branch can be deleted after merging"
