@@ -162,17 +162,20 @@ end
 function resolve_analysis_request(server::Server, request::AnalysisRequest)
     manager = server.state.analysis_manager
 
-    is_staled_request(manager, request) || @goto next_request # skip analysis if the analyzed generation is still latest
+    if is_generation_analyzed(manager, request)
+        # Skip if this generation was already analyzed (no new changes since last analysis)
+        @goto next_request
+    end
 
     has_any_parse_errors(server, request) && @goto next_request
 
-    analysis_result = @something try
+    analysis_result = try
         execute_analysis_request(server, request)
     catch err
         @error "Error in `execute_analysis_request` for " request
         Base.display_error(stderr, err, catch_backtrace())
-        nothing
-    end @goto next_request
+        @goto next_request
+    end
 
     update_analysis_cache!(manager, analysis_result)
     mark_analyzed_generation!(manager, request)
@@ -222,9 +225,9 @@ end
 get_generation(manager::AnalysisManager, @nospecialize entry::AnalysisEntry) =
     get(load(manager.current_generations), entry, 0)
 
-function is_staled_request(manager::AnalysisManager, request::AnalysisRequest)
+function is_generation_analyzed(manager::AnalysisManager, request::AnalysisRequest)
     analyzed_generation = get(load(manager.analyzed_generations), request.entry, -1)
-    return analyzed_generation != request.generation
+    return analyzed_generation == request.generation
 end
 
 function has_any_parse_errors(server::Server, request::AnalysisRequest)
