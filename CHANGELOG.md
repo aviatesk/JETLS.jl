@@ -25,7 +25,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Pinned installation now uses release tags (`rev="YYYY-MM-DD"`) instead of
   branch names (`rev="releases/YYYY-MM-DD"`). The `releases/YYYY-MM-DD` branches
-  can now be deleted after merging since `[sources]` entries reference commit
+  will be deleted after merging since `[sources]` entries reference commit
   SHAs directly. Existing release branches (`releases/2025-11-24` through
   `releases/2025-11-27`) will be kept until the end of December 2025 for
   backward compatibility.
@@ -40,8 +40,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Removed
 
 - Removed the deprecated `runserver.jl` script. Users should use the `jetls`
-  executable app instead. See the [2025-11-24](#2025-11-24) release notes for
-  migration details.
+  executable app instead. See the [2025-11-24](https://github.com/aviatesk/JETLS.jl/blob/master/CHANGELOG.md#2025-11-24)
+  release notes for migration details.
 
 ## 2025-11-27
 
