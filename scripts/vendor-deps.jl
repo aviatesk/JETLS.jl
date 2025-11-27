@@ -12,6 +12,7 @@ const VENDOR_NAMESPACE = "JETLS-vendor"
 struct Config
     source_branch::String
     use_local_path::Bool
+    rev::Union{String, Nothing}
 end
 
 function is_jll_package(name::AbstractString)
@@ -203,7 +204,7 @@ function update_vendored_dependencies!(
         vendor_pkg_dir::AbstractString,
         uuid_mapping::Dict{UUID, UUID},
         use_local_path::Bool,
-        current_branch::AbstractString
+        rev::Union{String, Nothing}
     )
     project_path = joinpath(vendor_pkg_dir, "Project.toml")
     project = TOML.parsefile(project_path)
@@ -242,9 +243,9 @@ function update_vendored_dependencies!(
                 project["sources"][dep_name] = Dict{String, Any}(
                     "url" => jetls_url,
                     "subdir" => joinpath("vendor", dep_name),
-                    "rev" => current_branch
+                    "rev" => rev
                 )
-                @info "Added source entry in $(basename(vendor_pkg_dir)) for $dep_name with rev=$current_branch"
+                @info "Added source entry in $(basename(vendor_pkg_dir)) for $dep_name with rev=$rev"
             end
         end
         deps_updated = true
@@ -304,7 +305,7 @@ function update_project_with_vendored_deps(
         uuid_mapping::Dict{UUID, UUID},
         all_vendored_packages::Vector{Pair{String, UUID}},
         use_local_path::Bool,
-        current_branch::AbstractString
+        rev::Union{String, Nothing}
     )
     project_path = joinpath(CURRENT_DIR, "Project.toml")
     project = TOML.parsefile(project_path)
@@ -346,10 +347,10 @@ function update_project_with_vendored_deps(
                 new_source = Dict{String, Any}()
                 new_source["url"] = jetls_url
                 new_source["subdir"] = joinpath("vendor", pkg_name)
-                new_source["rev"] = current_branch
+                new_source["rev"] = rev
 
                 project["sources"][pkg_name] = new_source
-                @info "Added source entry for $pkg_name with rev=$current_branch"
+                @info "Added source entry for $pkg_name with rev=$rev"
             end
         end
     end
@@ -380,11 +381,6 @@ function fetch_project_from_branch(
     return result
 end
 
-function get_current_branch()::String
-    result = read(`git branch --show-current`, String)
-    return strip(result)
-end
-
 function get_workspace_projects()::Vector{String}
     project_path = joinpath(CURRENT_DIR, "Project.toml")
     isfile(project_path) || return String[]
@@ -411,6 +407,7 @@ function vendor_dependencies_from_branch(config::Config)
     @info "=== JETLS Vendoring Script ==="
     @info "Source branch: $(config.source_branch)"
     @info "Use local path: $(config.use_local_path)"
+    @info "Rev: $(something(config.rev, "(not set)"))"
 
     @info "\n[Step 1/5] Fetching Project.toml files from $(config.source_branch)..."
 
@@ -448,7 +445,7 @@ function vendor_dependencies_from_branch(config::Config)
     Pkg.update()
 
     @info "\n[Step 4/5] Running vendor isolation..."
-    vendor_loaded_packages(config.use_local_path)
+    vendor_loaded_packages(config.use_local_path, config.rev)
 
     @info "\n[Step 5/5] Cleaning manifest..."
     clean_manifests()
@@ -468,7 +465,7 @@ function print_help()
     scripts/vendor-deps.jl - JETLS Dependency Vendoring Script
 
     USAGE:
-        julia scripts/vendor-deps.jl --source-branch=<branch> [--local]
+        julia scripts/vendor-deps.jl --source-branch=<branch> [--local | --rev=<rev>]
 
     DESCRIPTION:
         Automates the JETLS release process by vendoring all non-stdlib, non-JLL
@@ -500,12 +497,17 @@ function print_help()
             This is useful for CI testing or local development where the
             vendor/ directory exists but is not committed to the repository.
 
+        --rev=<rev>
+            Git revision (commit SHA, tag, or branch) to use in [sources].
+            This is used for release builds where the vendor/ directory is
+            committed and referenced by a specific commit SHA.
+
     EXAMPLE:
         # Prepare release branch with vendored dependencies from master
-        julia scripts/vendor-deps.jl --source-branch=master
+        julia scripts/vendor-deps.jl --source-branch=master --local
 
-        # For CI testing or local development
-        julia scripts/vendor-deps.jl --source-branch=origin/master --local
+        # Update [sources] to reference a specific commit SHA
+        julia scripts/vendor-deps.jl --source-branch=master --rev=abc1234
 
     OUTPUT:
         vendor/         Vendored package sources with rewritten UUIDs
@@ -518,15 +520,18 @@ end
 function parse_args(args::Vector{String})
     source_branch = nothing
     use_local_path = false
+    rev = nothing
 
     for arg in args
         if arg == "--help" || arg == "-h"
             print_help()
             exit(0)
         elseif startswith(arg, "--source-branch=")
-            source_branch = split(arg, "=", limit=2)[2]
+            source_branch = split(arg, "="; limit=2)[2]
         elseif arg == "--local"
             use_local_path = true
+        elseif startswith(arg, "--rev=")
+            rev = split(arg, "="; limit=2)[2]
         else
             @warn "Unknown argument: $arg"
             println("\nRun with --help for usage information")
@@ -538,18 +543,18 @@ function parse_args(args::Vector{String})
         error("--source-branch argument is required\nRun with --help for usage information")
     end
 
-    return Config(source_branch, use_local_path)
+    if use_local_path && rev !== nothing
+        error("--local and --rev are mutually exclusive\nRun with --help for usage information")
+    end
+
+    if !use_local_path && rev === nothing
+        error("Either --local or --rev must be specified\nRun with --help for usage information")
+    end
+
+    return Config(source_branch, use_local_path, rev)
 end
 
-function vendor_loaded_packages(use_local_path::Bool=false)
-    # Core vendoring logic:
-    # 1. Load JETLS to populate Base.loaded_modules
-    # 2. Copy package sources to vendor/ directory
-    # 3. Rewrite UUIDs in Project.toml files
-    # 4. Remove unused weakdeps/extensions (they can interact with user's environment)
-    # 5. Update dependency references between vendored packages
-    # 6. Update Project.toml with vendored UUIDs and [sources] entries
-
+function vendor_loaded_packages(use_local_path::Bool, rev::Union{String, Nothing})
     @info "Loading JETLS to populate Base.loaded_modules..."
     @eval using JETLS
 
@@ -588,15 +593,14 @@ function vendor_loaded_packages(use_local_path::Bool=false)
         remove_unused_weakdeps_and_extensions!(vendor_pkg_dir, loaded_uuids, uuid_mapping)
     end
 
-    current_branch = get_current_branch()
     @info "Step 3: Updating inter-package dependencies..."
     for (pkg_name, _) in packages
         vendor_pkg_dir = joinpath(VENDOR_DIR, pkg_name)
-        update_vendored_dependencies!(vendor_pkg_dir, uuid_mapping, use_local_path, current_branch)
+        update_vendored_dependencies!(vendor_pkg_dir, uuid_mapping, use_local_path, rev)
     end
 
     @info "Step 4: Updating Project.toml with vendored dependencies..."
-    update_project_with_vendored_deps(uuid_mapping, packages, use_local_path, current_branch)
+    update_project_with_vendored_deps(uuid_mapping, packages, use_local_path, rev)
 
     @info "Step 5: Tidying up Project.toml format..."
     project_path = joinpath(CURRENT_DIR, "Project.toml")

@@ -9,12 +9,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > as it is not registered in General due to environment isolation requirements.
 >
 > Each dated section below corresponds to a release that can be installed via
-> `Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="releases/YYYY-MM-DD")`
+> `Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="YYYY-MM-DD")`
 
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 - Diff: [`6ec51e1...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/6ec51e1...HEAD)
+
+### Changed
+
+- Pinned installation now uses release tags (`rev="YYYY-MM-DD"`) instead of
+  branch names (`rev="releases/YYYY-MM-DD"`). The `releases/YYYY-MM-DD` branches
+  can now be deleted after merging since `[sources]` entries reference commit
+  SHAs directly. Existing release branches (`releases/2025-11-24` through
+  `releases/2025-11-27`) will be kept until the end of December 2025 for
+  backward compatibility.
 
 ### Removed
 

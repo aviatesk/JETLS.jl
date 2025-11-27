@@ -50,9 +50,9 @@ is properly added to your `PATH`.
     will fetch the most recent version since the `release` branch always
     points to the latest release.
 
-    To pin a specific version instead, use `rev="releases/YYYY-MM-DD"`:
+    To pin a specific version instead, use the release tag `rev="YYYY-MM-DD"`:
     ```bash
-    julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="releases/2025-11-25")'
+    julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2025-11-25")'
     ```
     Note that pinned versions will not be updated by `Pkg.Apps.update("JETLS")`.
 
