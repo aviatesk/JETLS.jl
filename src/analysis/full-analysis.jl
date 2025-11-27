@@ -59,20 +59,17 @@ function request_analysis!(
         notify::Bool = true, # used by tests
     )
     manager = server.state.analysis_manager
-    analysis_info = get_analysis_info(server.state.analysis_manager, uri)
-    prev_analysis_result = nothing
-    if isnothing(analysis_info)
-        entry = lookup_analysis_entry(server.state, uri)
-    elseif analysis_info isa OutOfScope
-        entry = analysis_info
-    else
-        analysis_result = analysis_info::AnalysisResult # cached analysis result
-        entry = analysis_result.entry
-        prev_analysis_result = analysis_result
-    end
-
-    if entry isa OutOfScope
-        local outofscope = entry
+    prev_analysis_result = get_analysis_info(server.state.analysis_manager, uri)
+    local outofscope::OutOfScope
+    if isnothing(prev_analysis_result)
+        entry = lookup_analysis_entry(server, uri)
+        if entry isa OutOfScope
+            outofscope = entry
+            @goto out_of_scope
+        end
+    elseif prev_analysis_result isa OutOfScope
+        outofscope = prev_analysis_result
+        @label out_of_scope
         store!(manager.cache) do cache
             if get(cache, uri, nothing) === outofscope
                 cache, nothing
@@ -83,6 +80,9 @@ function request_analysis!(
             end
         end
         return nothing
+    else
+        prev_analysis_result::AnalysisResult
+        entry = prev_analysis_result.entry
     end
     entry = entry::AnalysisEntry
 
@@ -324,40 +324,114 @@ function new_analysis_result(request::AnalysisRequest, result)
     return AnalysisResult(entry, uri2diagnostics, analyzer, analyzed_file_infos, actual2virtual)
 end
 
-function lookup_analysis_entry(state::ServerState, uri::URI)
+function ensure_instantiated(server::Server, env_path::String, context::String)
+    if get_config(server.state.config_manager, :full_analysis, :auto_instantiate)
+        try
+            JETLS_DEV_MODE && @info "Instantiating package environment" env_path context
+            Pkg.instantiate()
+        catch e
+            @error """Failed to instantiate package environment;
+            Unable to instantiate the environment of the target package for analysis,
+            so this package will be analyzed as a script instead.
+            This may cause various features such as diagnostics to not function properly.
+            It is recommended to fix the problem by referring to the following error""" env_path
+            Base.showerror(stderr, e, catch_backtrace())
+            show_warning_message(server, """
+                Failed to instantiate package environment at $env_path.
+                The package will be analyzed as a script, which may result in incomplete diagnostics.
+                See the language server log for details.
+                It is recommended to fix your environment setup and restart the language server.""")
+        end
+    end
+end
+
+function ensure_instantiated_if_needed(server::Server, env_path::String, context::String)
+    instantiated_envs = server.state.analysis_manager.instantiated_envs
+    activate_do(env_path) do
+        # Check if already processed (success or failure)
+        if haskey(load(instantiated_envs), env_path)
+            return
+        end
+        ensure_instantiated(server, env_path, context)
+        # Mark as processed
+        store!(instantiated_envs) do cache
+            if haskey(cache, env_path)
+                cache, nothing
+            else
+                new_cache = copy(cache)
+                new_cache[env_path] = nothing
+                new_cache, nothing
+            end
+        end
+    end
+end
+
+function lookup_analysis_entry(server::Server, uri::URI)
+    state = server.state
     maybe_env_path = find_analysis_env_path(state, uri)
     if maybe_env_path isa OutOfScope
-        return maybe_env_path
+        outofscope = maybe_env_path
+        return outofscope
     end
 
     env_path = maybe_env_path
     if isnothing(env_path)
         return ScriptAnalysisEntry(uri)
     elseif uri.scheme == "untitled"
+        ensure_instantiated_if_needed(server, env_path, "untitled")
         return ScriptInEnvAnalysisEntry(env_path, uri)
     end
 
     pkgname = find_pkg_name(env_path)
+    filepath = uri2filepath(uri)::String # uri.scheme === "file"
     if isnothing(pkgname)
+        ensure_instantiated_if_needed(server, env_path, "script: $filepath")
         return ScriptInEnvAnalysisEntry(env_path, uri)
     end
-    filepath = uri2filepath(uri)::String # uri.scheme === "file"
     filekind, filedir = find_package_directory(filepath, env_path)
     if filekind === :src
+        instantiated_envs = server.state.analysis_manager.instantiated_envs
         return @something activate_do(env_path) do
+            # Check cache inside lock to avoid race conditions
+            cached = get(load(instantiated_envs), env_path, missing)
+            if cached === nothing
+                # Previously failed to detect package environment
+                return ScriptInEnvAnalysisEntry(env_path, uri)
+            elseif cached !== missing
+                pkgid, pkgfileuri = cached
+                return PackageSourceAnalysisEntry(env_path, pkgfileuri, pkgid)
+            end
+            # Cache miss - perform environment detection
+            ensure_instantiated(server, env_path, "src: $filepath")
             pkgenv = @lock Base.require_lock @something Base.identify_package_env(pkgname) begin
-                @warn "Failed to identify package environment" pkgname
+                @warn "Failed to identify package environment" env_path pkgname filepath
+                store!(instantiated_envs) do cache
+                    new_cache = copy(cache)
+                    new_cache[env_path] = nothing
+                    new_cache, nothing
+                end
                 return nothing
             end
             pkgid, env = pkgenv
             pkgfile = @something Base.locate_package(pkgid, env) begin
                 @warn "Expected a package to have a source file" pkgname
+                store!(instantiated_envs) do cache
+                    new_cache = copy(cache)
+                    new_cache[env_path] = nothing
+                    new_cache, nothing
+                end
                 return nothing
             end
             pkgfileuri = filepath2uri(pkgfile)
+            store!(instantiated_envs) do cache
+                new_cache = copy(cache)
+                new_cache[env_path] = (pkgid, pkgfileuri)
+                new_cache, nothing
+            end
             PackageSourceAnalysisEntry(env_path, pkgfileuri, pkgid)
         end ScriptInEnvAnalysisEntry(env_path, uri)
     elseif filekind === :test
+        ensure_instantiated_if_needed(server, env_path, "test: $filepath")
         runtestsfile = joinpath(filedir, "runtests.jl")
         runtestsuri = filepath2uri(runtestsfile)
         return PackageTestAnalysisEntry(env_path, runtestsuri)
@@ -366,6 +440,7 @@ function lookup_analysis_entry(state::ServerState, uri::URI)
     else
         @assert filekind === :script
     end
+    ensure_instantiated_if_needed(server, env_path, "script: $filepath")
     return ScriptInEnvAnalysisEntry(env_path, uri)
 end
 
