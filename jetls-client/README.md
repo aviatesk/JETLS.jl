@@ -52,23 +52,17 @@ The extension will automatically use the `jetls` (or `jetls.exe` on Windows)
 executable from your `PATH`.
 
 > [!note]
-> To update JETLS to the latest version:
+> To update JETLS to the latest version, re-run the installation command:
 >
 > ```bash
-> julia -e 'using Pkg; Pkg.Apps.update("JETLS")'
+> julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="release")'
 > ```
->
-> When installed with `rev="release"` (as shown above), `Pkg.Apps.update("JETLS")`
-> will fetch the most recent version since the `release` branch always
-> points to the latest release.
 >
 > To pin a specific version instead, use the release tag `rev="YYYY-MM-DD"`:
 >
 > ```bash
 > julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2025-11-25")'
 > ```
->
-> Note that pinned versions will not be updated by `Pkg.Apps.update("JETLS")`.
 
 ## Launching configuration (advanced)
 
