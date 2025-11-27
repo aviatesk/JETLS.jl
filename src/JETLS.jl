@@ -21,6 +21,12 @@ function show_setup_info(msg)
     @info msg Sys.BINDIR pkgdir(JETLS) Threads.nthreads() JETLS_VERSION JETLS_DEV_MODE JETLS_TEST_MODE JETLS_DEBUG_LOWERING
 end
 
+if JETLS_DEV_MODE
+    using Revise: Revise
+else
+    const Revise = nothing
+end
+
 using LSP
 using LSP: LSP
 using LSP.URIs2

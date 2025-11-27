@@ -16,6 +16,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 - Diff: [`eda08b5...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/eda08b5...HEAD)
 
+### Fixed
+
+- Fixed Revise integration in development mode. The previous approach of
+  dynamically loading Revise via `Base.require` didn't work properly because
+  Revise assumes it's loaded from a REPL session. Revise is now a direct
+  dependency that's conditionally loaded at compile time based on the
+  `JETLS_DEV_MODE` flag.
+
 ## 2025-11-28
 
 - Commit: [`eda08b5`](https://github.com/aviatesk/JETLS.jl/commit/eda08b5)

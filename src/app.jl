@@ -158,21 +158,13 @@ function (@main)(args::Vector{String})::Cint
         push!(LOAD_PATH, "@", "@v$(VERSION.major).$(VERSION.minor)", "@stdlib")
 
         if JETLS_DEV_MODE
-            # Load Revise only in `JETLS_DEV_MODE`
-            Revise = try
-                @info "Loading Revise in JETLS_DEV_MODE"
-                Base.require(Base.PkgId(Base.UUID("295af30f-e4ad-537b-8983-00126c2a3abe"), "Revise"))
-            catch e
-                @warn "Failed to load Revise in JETLS_DEV_MODE" e
-                nothing
-            end
             global currently_running
             currently_running = server = Server(endpoint) do s::Symbol, x
                 @nospecialize x
                 # allow Revise to apply changes with the dev mode enabled
                 if s === :received
                     if !(x isa ShutdownRequest || x isa ExitNotification)
-                        Revise !== nothing && @invokelatest Revise.revise()
+                        Revise.revise()
                     end
                 end
             end
