@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 - Diff: [`250188fc...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/250188fc...HEAD)
 
+### Improved
+
+- Improved error handling when the JETLS executable is not found (ENOENT error).
+  The extension now displays a user-friendly error notification with:
+  - The command that was attempted
+  - The current PATH environment variable
+  - A hint to restart VS Code if JETLS is already installed
+  - Buttons to install JETLS or view the installation guide
+  (aviatesk/JETLS.jl#332)
+
 ## v0.2.2
 
 - Commit: [`250188fc`](https://github.com/aviatesk/JETLS.jl/commit/9008d1b)

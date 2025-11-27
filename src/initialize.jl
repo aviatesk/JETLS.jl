@@ -212,7 +212,7 @@ function handle_InitializeRequest(
         ),
         serverInfo = (;
             name = "JETLS",
-            version = "0.0.0"))
+            version = JETLS_VERSION))
 
     process_id = init_params.processId
     if !isnothing(process_id)
