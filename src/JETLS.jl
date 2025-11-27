@@ -336,6 +336,8 @@ function (dispatcher::ResponseMessageDispatcher)(server::Server, msg::Dict{Symbo
         handle_testrunner_testcase_progress_response(server, msg, request_caller, cancel_flag)
     elseif request_caller isa CodeLensRefreshRequestCaller
         handle_code_lens_refresh_response(server, msg, request_caller)
+    elseif request_caller isa DiagnosticRefreshRequestCaller
+        handle_diagnostic_refresh_response(server, msg, request_caller)
     elseif request_caller isa FormattingProgressCaller
         handle_formatting_progress_response(server, msg, request_caller)
     elseif request_caller isa RangeFormattingProgressCaller

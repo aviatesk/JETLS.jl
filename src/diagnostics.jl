@@ -501,7 +501,8 @@ function analyze_lowered_code!(diagnostics::Vector{Diagnostic},
 end
 
 function lowering_diagnostics!(
-        diagnostics::Vector{Diagnostic}, st0::JL.SyntaxTree, mod::Module, fi::FileInfo
+        diagnostics::Vector{Diagnostic}, st0::JL.SyntaxTree, mod::Module, fi::FileInfo;
+        skip_macro_expansion_errors::Bool = false
     )
     @assert JS.kind(st0) ∉ JS.KSet"toplevel module"
 
@@ -517,30 +518,32 @@ function lowering_diagnostics!(
                 code = LOWERING_ERROR_CODE,
                 codeDescription = diagnostic_code_description(LOWERING_ERROR_CODE)))
         elseif err isa JL.MacroExpansionError
-            st = scrub_expand_macro_stacktrace(stacktrace(catch_backtrace()))
-            msg = err.msg
-            inner = err.err
-            if msg == "Macro not found" && inner isa UndefVarError
-                msg = "Macro name `$(inner.var)` not found"
-                relatedInformation = nothing
-            else
-                msg *= "\n" * sprint(Base.showerror, inner)
-                relatedInformation = stacktrace_to_related_information(st)
+            if !skip_macro_expansion_errors
+                st = scrub_expand_macro_stacktrace(stacktrace(catch_backtrace()))
+                msg = err.msg
+                inner = err.err
+                if msg == "Macro not found" && inner isa UndefVarError
+                    msg = "Macro name `$(inner.var)` not found"
+                    relatedInformation = nothing
+                else
+                    msg *= "\n" * sprint(Base.showerror, inner)
+                    relatedInformation = stacktrace_to_related_information(st)
+                end
+                provs = JL.flattened_provenance(err.ex)
+                provs′ = @view provs[2:end]
+                if !isempty(provs′)
+                    relatedInformation = @something relatedInformation DiagnosticRelatedInformation[]
+                    provenances_to_related_information!(relatedInformation, provs′, msg)
+                end
+                push!(diagnostics, Diagnostic(;
+                    range = jsobj_to_range(first(provs), fi),
+                    severity = DiagnosticSeverity.Error,
+                    message = msg,
+                    source = DIAGNOSTIC_SOURCE,
+                    code = LOWERING_MACRO_EXPANSION_ERROR_CODE,
+                    codeDescription = diagnostic_code_description(LOWERING_MACRO_EXPANSION_ERROR_CODE),
+                    relatedInformation))
             end
-            provs = JL.flattened_provenance(err.ex)
-            provs′ = @view provs[2:end]
-            if !isempty(provs′)
-                relatedInformation = @something relatedInformation DiagnosticRelatedInformation[]
-                provenances_to_related_information!(relatedInformation, provs′, msg)
-            end
-            push!(diagnostics, Diagnostic(;
-                range = jsobj_to_range(first(provs), fi),
-                severity = DiagnosticSeverity.Error,
-                message = msg,
-                source = DIAGNOSTIC_SOURCE,
-                code = LOWERING_MACRO_EXPANSION_ERROR_CODE,
-                codeDescription = diagnostic_code_description(LOWERING_MACRO_EXPANSION_ERROR_CODE),
-                relatedInformation))
         else
             JETLS_DEBUG_LOWERING && @warn "Error in lowering (with macrocall nodes)"
             JETLS_DEBUG_LOWERING && showerror(stderr, err)
@@ -567,13 +570,20 @@ function toplevel_lowering_diagnostics(server::Server, uri::URI)
     diagnostics = Diagnostic[]
     file_info = get_file_info(server.state, uri)
     st0_top = build_syntax_tree(file_info)
+    analysis_info = get_analysis_info(server.state.analysis_manager, uri)
+    skip_macro_expansion_errors = !has_module_context(analysis_info, uri)
     iterate_toplevel_tree(st0_top) do st0::JL.SyntaxTree
         pos = offset_to_xy(file_info, JS.first_byte(st0))
         (; mod) = get_context_info(server.state, uri, pos)
-        lowering_diagnostics!(diagnostics, st0, mod, file_info)
+        lowering_diagnostics!(diagnostics, st0, mod, file_info; skip_macro_expansion_errors)
     end
     return diagnostics
 end
+
+has_module_context(::Nothing, ::URI) = false
+has_module_context(::OutOfScope, ::URI) = false
+has_module_context(analysis_result::AnalysisResult, uri::URI) =
+    analyzed_file_info(analysis_result, uri) !== nothing
 
 function iterate_toplevel_tree(callback, st0_top::JL.SyntaxTree)
     sl = JL.SyntaxList(st0_top)
@@ -765,4 +775,24 @@ function handle_DocumentDiagnosticRequest(server::Server, msg::DocumentDiagnosti
             result = RelatedFullDocumentDiagnosticReport(;
                 resultId,
                 items = diagnostics)))
+end
+
+# workspace/diagnostic/refresh
+# ============================
+
+struct DiagnosticRefreshRequestCaller <: RequestCaller end
+
+function request_diagnostic_refresh!(server::Server)
+    id = String(gensym(:WorkspaceDiagnosticRefreshRequest))
+    addrequest!(server, id=>DiagnosticRefreshRequestCaller())
+    return send(server, WorkspaceDiagnosticRefreshRequest(; id))
+end
+
+function handle_diagnostic_refresh_response(
+        server::Server, msg::Dict{Symbol,Any}, ::DiagnosticRefreshRequestCaller
+    )
+    if handle_response_error(server, msg, "refresh diagnostics")
+    else
+        # just valid request response cycle
+    end
 end
