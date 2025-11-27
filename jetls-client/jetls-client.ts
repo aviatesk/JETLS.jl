@@ -474,7 +474,15 @@ async function startLanguageServer() {
     .start()
     .then(() => {
       statusBarItem.hide();
-      outputChannel.appendLine("[jetls-client] JETLS is ready!");
+
+      const serverInfo = languageClient.initializeResult?.serverInfo;
+      if (serverInfo) {
+        outputChannel.appendLine(
+          `[jetls-client] JETLS is ready! (${serverInfo.name} [version: ${serverInfo.version ?? "unknown"}])`,
+        );
+      } else {
+        outputChannel.appendLine("[jetls-client] JETLS is ready!");
+      }
 
       // Register handler for workspace/configuration requests after client starts
       languageClient.onRequest(
