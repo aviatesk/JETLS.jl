@@ -26,6 +26,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed error when receiving notifications after shutdown request. The server
   now silently ignores notifications instead of causing errors from invalid
   property access (which is not possible for notifications).
+- Fixed race condition in package environment detection when multiple files are
+  opened simultaneously. Added global lock to `activate_do` to serialize
+  environment switching operations. This fixes spurious "Failed to identify
+  package environment" warnings.
 
 ## 2025-11-28
 

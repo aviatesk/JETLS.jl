@@ -42,13 +42,23 @@ function find_pkg_name(env_path::AbstractString)
     return pkg_name isa String ? pkg_name : nothing
 end
 
+const ACTIVATE_LOCK = ReentrantLock()
+
+"""
+    activate_do(func, env_path::String)
+
+Temporarily activate the environment at `env_path`, execute `func`, and restore the
+previous environment. Uses a global lock to prevent concurrent environment switching.
+"""
 function activate_do(func, env_path::String)
-    old_env = Pkg.project().path
-    try
-        Pkg.activate(env_path; io=devnull)
-        func()
-    finally
-        Pkg.activate(old_env; io=devnull)
+    @lock ACTIVATE_LOCK begin
+        old_env = Pkg.project().path
+        try
+            Pkg.activate(env_path; io=devnull)
+            func()
+        finally
+            Pkg.activate(old_env; io=devnull)
+        end
     end
 end
 
