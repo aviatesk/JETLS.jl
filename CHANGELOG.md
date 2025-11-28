@@ -24,6 +24,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   will automatically create a `Manifest.toml` file when the package has not been
   instantiated yet. This behavior is controlled by the `full_analysis.auto_instantiate`
   configuration option (default: `true`). Set it to `false` to disable.
+- When `full_analysis.auto_instantiate` is disabled, JETLS now checks if the
+  environment is instantiated and warns the user if not.
 
 ### Fixed
 
