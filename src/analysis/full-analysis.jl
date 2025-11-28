@@ -51,11 +51,28 @@ function handle_request_analysis_response(
     request_analysis!(server, uri; cancellable_token, onsave, wait=true)
 end
 
+"""
+    request_analysis!(server, uri; ...)
+
+Requests full analysis for a file, ensuring per-entry serialization.
+
+The `pending_analyses` mechanism ensures that analyses for the same `AnalysisEntry` are
+serialized (never run concurrently), which is essential for correctness when multiple
+analysis workers exist. When a new request arrives while an entry is being analyzed,
+it's stored as pending rather than queued, and processed after the current analysis
+completes. This also provides optimization by coalescing rapid successive requests
+(e.g., from frequent saves) - only the latest pending request is kept.
+
+The `generation` check (`is_generation_analyzed`) is a related but separate optimization
+that skips analysis when the file content hasn't changed since the last analysis.
+
+See https://publish.obsidian.md/jetls/work/JETLS/Make+JETLS+multithreaded#4.%20Multithreading%20Full-Analysis
+for the details of this concurrent analysis management.
+"""
 function request_analysis!(
         server::Server, uri::URI;
         cancellable_token::Union{Nothing,CancellableToken} = nothing,
-        onsave::Bool = false,
-        wait::Bool = false,
+        onsave::Bool = false, wait::Bool = false,
         notify::Bool = true, # used by tests
     )
     manager = server.state.analysis_manager
@@ -96,21 +113,8 @@ function request_analysis!(
     request = AnalysisRequest(
         entry, uri, generation, cancellable_token, notify, prev_analysis_result, completion)
 
-    # Check if already analyzing and handle pending requests
-    should_queue = store!(manager.pending_analyses) do analyses
-        if haskey(analyses, request.entry)
-            # Replace any existing pending request with this new one
-            local new_analyses = copy(analyses)
-            new_analyses[request.entry] = request
-            new_analyses, false  # Don't queue - just update pending
-        else
-            analyses, true  # Not analyzing - should queue
-        end
-    end
-    should_queue || @goto wait_or_return # Request saved as pending
-
     debounce = get_config(server.state.config_manager, :full_analysis, :debounce)
-    if onsave && debounce isa Float64 && debounce > 0
+    if onsave && debounce > 0
         local delay::Float64 = debounce
         store!(manager.debounced) do debounced
             # Cancel existing timer if any
@@ -125,13 +129,12 @@ function request_analysis!(
                     delete!(new_debounced′, request.entry)
                     return new_debounced′, nothing
                 end
-                # Queue the request after debounce period
-                queue_request!(manager, request)
+                queue_request!(server, request)
             end
             return new_debounced, nothing
         end
     else
-        queue_request!(manager, request)
+        queue_request!(server, request)
     end
 
     @label wait_or_return
@@ -139,13 +142,28 @@ function request_analysis!(
     nothing
 end
 
-function queue_request!(manager::AnalysisManager, request::AnalysisRequest)
-    store!(manager.pending_analyses) do analyses
-        new_analyses = copy(analyses)
-        new_analyses[request.entry] = nothing  # Mark as analyzing, no pending yet
-        return new_analyses, nothing
+function queue_request!(server::Server, request::AnalysisRequest)
+    manager = server.state.analysis_manager
+    # Check if already analyzing and handle pending requests.
+    # This check must happen here (after debounce) rather than in request_analysis!,
+    # otherwise multiple debounced requests for the same entry could all pass the check
+    # and end up in the queue, causing duplicate analyses with multiple workers.
+    should_queue = store!(manager.pending_analyses) do analyses
+        if haskey(analyses, request.entry)
+            # Already analyzing - store as pending (replaces any existing pending request)
+            local new_analyses = copy(analyses)
+            new_analyses[request.entry] = request
+            return new_analyses, false
+        else
+            # Not analyzing - mark as analyzing and queue
+            local new_analyses = copy(analyses)
+            new_analyses[request.entry] = nothing
+            return new_analyses, true
+        end
     end
-    put!(manager.queue, request)
+    if should_queue
+        put!(manager.queue, request)
+    end
 end
 
  # Analysis queue processing implementation (analysis serialized per AnalysisEntry)
