@@ -349,7 +349,6 @@ function ensure_instantiated(server::Server, env_path::String, context::String)
         try
             JETLS_DEV_MODE && @info "Instantiating package environment" env_path context
             Pkg.instantiate()
-            return true
         catch e
             @error """Failed to instantiate package environment;
             Unable to instantiate the environment of the target package for analysis,
@@ -362,12 +361,13 @@ function ensure_instantiated(server::Server, env_path::String, context::String)
                 The package will be analyzed as a script, which may result in incomplete diagnostics.
                 See the language server log for details.
                 It is recommended to fix your package environment setup and restart the language server.""")
-            return false
         end
     else
         is_instantiated = try
             Pkg.Operations.is_instantiated(Pkg.Types.EnvCache(env_path))
-        catch
+        catch e
+            @error "Failed to create cache for package environment" env_path
+            Base.showerror(stderr, e, catch_backtrace())
             false
         end
         if !is_instantiated
@@ -376,9 +376,7 @@ function ensure_instantiated(server::Server, env_path::String, context::String)
                 (`full_analysis.auto_instantiate` is disabled).
                 The package will be analyzed as a script, which may result in incomplete diagnostics.
                 It is recommended to instantiate your package environment and restart the language server.""")
-            return false
         end
-        return true
     end
 end
 
