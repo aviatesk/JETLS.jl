@@ -331,8 +331,10 @@ struct ResponseMessageDispatcher
 end
 function (dispatcher::ResponseMessageDispatcher)(server::Server, msg::Dict{Symbol,Any})
     (; cancel_flag, request_caller) = dispatcher
-    if request_caller isa RequestAnalysisCaller
-        handle_request_analysis_response(server, request_caller, cancel_flag)
+    if request_caller isa InstantiationProgressCaller
+        handle_instantiation_progress_response(server, request_caller)
+    elseif request_caller isa AnalysisProgressCaller
+        handle_analysis_progress_response(server, request_caller, cancel_flag)
     elseif request_caller isa ShowDocumentRequestCaller
         handle_show_document_response(server, msg, request_caller)
     elseif request_caller isa SetDocumentContentCaller

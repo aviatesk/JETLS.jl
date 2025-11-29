@@ -260,7 +260,7 @@ function with_completion_request(
             else
                 JETLS.cache_file_info!(server.state, uri, 1, clean_code)
                 JETLS.cache_saved_file_info!(server.state, uri, clean_code)
-                JETLS.request_analysis!(server, uri; notify_diagnostics=false)
+                JETLS.request_analysis!(server, uri, #=onsave=#false; wait=true, notify_diagnostics=false)
             end
 
             for (i, pos) in enumerate(positions)
