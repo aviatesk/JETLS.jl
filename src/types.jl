@@ -114,7 +114,7 @@ struct AnalysisRequest
     uri::URI
     generation::Int
     cancellable_token::Union{Nothing,CancellableToken}
-    notify::Bool
+    notify_diagnostics::Bool
     prev_analysis_result::Union{Nothing,AnalysisResult}
     completion::Base.Event
     function AnalysisRequest(
@@ -122,11 +122,11 @@ struct AnalysisRequest
             uri::URI,
             generation::Int,
             cancellable_token::Union{Nothing,CancellableToken},
-            notify::Bool,
+            notify_diagnostics::Bool,
             prev_analysis_result::Union{Nothing,AnalysisResult},
             completion::Base.Event = Base.Event()
         )
-        return new(entry, uri, generation, cancellable_token, notify, prev_analysis_result, completion)
+        return new(entry, uri, generation, cancellable_token, notify_diagnostics, prev_analysis_result, completion)
     end
 end
 
@@ -134,8 +134,8 @@ const AnalysisCache = LWContainer{Dict{URI,AnalysisInfo}, LWStats}
 const PendingAnalyses = CASContainer{Dict{AnalysisEntry,Union{Nothing,AnalysisRequest}}, CASStats}
 const CurrentGenerations = CASContainer{Dict{AnalysisEntry,Int}}
 const AnalyzedGenerations = CASContainer{Dict{AnalysisEntry,Int}}
-const DebouncedRequests = LWContainer{Dict{AnalysisEntry,Timer}, LWStats}
-const InstantiatedEnvs = LWContainer{Dict{String,Union{Nothing,Tuple{Base.PkgId,URI}}}}
+const DebouncedRequests = LWContainer{Dict{AnalysisEntry,Tuple{Timer,Base.Event}}, LWStats}
+const InstantiatedEnvs = LWContainer{Dict{String,Union{Nothing,Tuple{Base.PkgId,String}}}}
 
 struct AnalysisManager
     cache::AnalysisCache
