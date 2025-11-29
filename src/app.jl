@@ -34,7 +34,7 @@ function (@main)(args::Vector{String})::Cint
     while i <= length(args)
         arg = args[i]
         if occursin(r"^(?:-h|--help|help)$", arg)
-            println(stdout, help_message)
+            print(stdout, help_message)
             return Cint(0)
         elseif occursin(r"^(?:-v|--version)$", arg)
             println(stdout, "JETLS version $JETLS_VERSION")
