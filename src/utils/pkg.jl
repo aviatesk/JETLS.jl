@@ -63,12 +63,12 @@ function activate_do(func, env_path::String)
 end
 
 function find_package_directory(path::String, env_path::String)
-    dir = dirname(path)
     env_dir = dirname(env_path)
     src_dir = joinpath(env_dir, "src")
     test_dir = joinpath(env_dir, "test")
     docs_dir = joinpath(env_dir, "docs")
     ext_dir = joinpath(env_dir, "ext")
+    dir = dirname(path)
     while dir != env_dir
         dir == src_dir && return :src, src_dir
         dir == test_dir && return :test, test_dir

@@ -26,7 +26,7 @@ function request_analysis_on_open!(server::Server, uri::URI)
         params = WorkDoneProgressCreateParams(; token)
         send(server, WorkDoneProgressCreateRequest(; id, params))
     else
-        request_analysis!(server, uri)
+        Threads.@spawn :default request_analysis!(server, uri)
     end
 end
 
@@ -38,7 +38,7 @@ function request_analysis_on_save!(server::Server, uri::URI)
         params = WorkDoneProgressCreateParams(; token)
         send(server, WorkDoneProgressCreateRequest(; id, params))
     else
-        request_analysis!(server, uri; onsave=true)
+        Threads.@spawn :default request_analysis!(server, uri; onsave=true)
     end
 end
 
@@ -47,8 +47,14 @@ function handle_request_analysis_response(
     )
     (; uri, onsave, token) = request_caller
     cancellable_token = CancellableToken(token, cancel_flag)
-    # Each response message handler needs to be written synchronously, so we use `wait=true`
-    request_analysis!(server, uri; cancellable_token, onsave, wait=true)
+    # Each response message should be synchronous, so don't use `Threads.@spawn` here
+    request_analysis!(server, uri; cancellable_token, onsave)
+end
+
+mutable struct ProgressState
+    const cancellable_token::CancellableToken
+    begun::Bool
+    ProgressState(cancellable_token::CancellableToken) = new(cancellable_token, false)
 end
 
 """
@@ -72,17 +78,37 @@ for the details of this concurrent analysis management.
 function request_analysis!(
         server::Server, uri::URI;
         cancellable_token::Union{Nothing,CancellableToken} = nothing,
-        onsave::Bool = false, wait::Bool = false,
-        notify::Bool = true, # used by tests
+        kwargs...
+    )
+    completion = Base.Event()
+    try
+        _request_analysis!(server, uri, completion; cancellable_token, kwargs...)
+        wait(completion)
+    finally
+        if cancellable_token !== nothing
+            end_full_analysis_progress(server, cancellable_token)
+        end
+    end
+end
+
+function _request_analysis!(
+        server::Server, uri::URI, completion::Base.Event;
+        cancellable_token::Union{Nothing,CancellableToken} = nothing,
+        onsave::Bool = false,
+        notify_diagnostics::Bool = true, # used by tests
     )
     manager = server.state.analysis_manager
     prev_analysis_result = get_analysis_info(server.state.analysis_manager, uri)
     local outofscope::OutOfScope
     if isnothing(prev_analysis_result)
-        entry = lookup_analysis_entry(server, uri)
+        progress_state = cancellable_token !== nothing ? ProgressState(cancellable_token) : nothing
+        entry = lookup_analysis_entry(server, uri, progress_state)
         if entry isa OutOfScope
             outofscope = entry
             @goto out_of_scope
+        end
+        if cancellable_token !== nothing && progress_state !== nothing && !progress_state.begun
+            begin_full_analysis_progress(server, entry, false, cancellable_token)
         end
     elseif prev_analysis_result isa OutOfScope
         outofscope = prev_analysis_result
@@ -100,6 +126,9 @@ function request_analysis!(
     else
         prev_analysis_result::AnalysisResult
         entry = prev_analysis_result.entry
+        if cancellable_token !== nothing
+            begin_full_analysis_progress(server, entry, true, cancellable_token)
+        end
     end
     entry = entry::AnalysisEntry
 
@@ -109,9 +138,9 @@ function request_analysis!(
         generation = get_generation(manager, entry)
     end
 
-    completion = Base.Event()
     request = AnalysisRequest(
-        entry, uri, generation, cancellable_token, notify, prev_analysis_result, completion)
+        entry, uri, generation, cancellable_token, notify_diagnostics,
+        prev_analysis_result, completion)
 
     debounce = get_config(server.state.config_manager, :full_analysis, :debounce)
     if onsave && debounce > 0
@@ -119,7 +148,9 @@ function request_analysis!(
         store!(manager.debounced) do debounced
             # Cancel existing timer if any
             if haskey(debounced, request.entry)
-                close(debounced[request.entry])
+                debounce_timer, debounce_completion = debounced[request.entry]
+                close(debounce_timer)
+                notify(debounce_completion)
             end
             local new_debounced = copy(debounced)
             # Set debounce timer
@@ -130,16 +161,12 @@ function request_analysis!(
                     return new_debounced′, nothing
                 end
                 queue_request!(server, request)
-            end
+            end, request.completion
             return new_debounced, nothing
         end
     else
         queue_request!(server, request)
     end
-
-    @label wait_or_return
-    wait && Base.wait(completion)
-    nothing
 end
 
 function queue_request!(server::Server, request::AnalysisRequest)
@@ -151,8 +178,12 @@ function queue_request!(server::Server, request::AnalysisRequest)
     should_queue = store!(manager.pending_analyses) do analyses
         if haskey(analyses, request.entry)
             # Already analyzing - store as pending (replaces any existing pending request)
+            old_request = analyses[request.entry]
             local new_analyses = copy(analyses)
             new_analyses[request.entry] = request
+            if old_request !== nothing # replaced by the new request i.e. cancelled
+                notify(old_request.completion)
+            end
             return new_analyses, false
         else
             # Not analyzing - mark as analyzing and queue
@@ -197,7 +228,7 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
 
     update_analysis_cache!(manager, analysis_result)
     mark_analyzed_generation!(manager, request)
-    request.notify && notify_diagnostics!(server)
+    request.notify_diagnostics && notify_diagnostics!(server)
 
     # Request diagnostic refresh for initial full-analysis completion.
     # This ensures that clients using pull diagnostics (textDocument/diagnostic) will
@@ -274,47 +305,48 @@ function mark_analyzed_generation!(manager::AnalysisManager, request::AnalysisRe
     end
 end
 
-function begin_full_analysis_progress(server::Server, request::AnalysisRequest)
-    cancellable_token = @something request.cancellable_token return nothing
-    filename = uri2filename(entryuri(request.entry))
-    pre = isnothing(request.prev_analysis_result) ? "Analyzing" : "Reanalyzing"
-    title = "$(pre) $(basename(filename)) [$(entrykind(request.entry))]"
+function begin_full_analysis_progress(
+        server::Server, @nospecialize(entry::AnalysisEntry), reanalyzing::Bool,
+        cancellable_token::CancellableToken
+    )
+    title = (reanalyzing ? "Reanalyzing" : "Analyzing") * " " * progress_title(entry)
     send_progress(server, cancellable_token.token,
         WorkDoneProgressBegin(;
             title,
             cancellable = true,
-            message = "Full analysis initiated",
+            message = "Analysis requested",
             percentage = 0))
     yield_to_endpoint()
 end
 
-function end_full_analysis_progress(server::Server, request::AnalysisRequest)
-    cancellable_token = @something request.cancellable_token return nothing
+function begin_full_analysis_progress_by_instantiate(
+        server::Server, title::String, progress_state::ProgressState
+    )
+    send_progress(server, progress_state.cancellable_token.token,
+        WorkDoneProgressBegin(;
+            title = "Analyzing " * title,
+            cancellable = true,
+            message = "Instantiating environment",
+            percentage = 0))
+    progress_state.begun = true
+    yield_to_endpoint()
+end
+
+function end_full_analysis_progress(server::Server, cancellable_token::CancellableToken)
     send_progress(server, cancellable_token.token,
         WorkDoneProgressEnd(; message = "Full analysis finished"))
 end
 
 function analyze_parsed_if_exist(server::Server, request::AnalysisRequest, args...)
     uri = entryuri(request.entry)
-    jetconfigs = entryjetconfigs(request.entry)
+    jetconfigs = getjetconfigs(request.entry)
     fi = get_saved_file_info(server.state, uri)
     if !isnothing(fi)
         filename = @something uri2filename(uri) error(lazy"Unsupported URI: $uri")
-        parsed = fi.syntax_node
-        begin_full_analysis_progress(server, request)
-        try
-            return JET.analyze_and_report_expr!(LSInterpreter(server, request), parsed, filename, args...; jetconfigs...)
-        finally
-            end_full_analysis_progress(server, request)
-        end
+        return JET.analyze_and_report_expr!(LSInterpreter(server, request), fi.syntax_node, filename, args...; jetconfigs...)
     else
         filepath = @something uri2filepath(uri) error(lazy"Unsupported URI: $uri")
-        begin_full_analysis_progress(server, request)
-        try
-            return JET.analyze_and_report_file!(LSInterpreter(server, request), filepath, args...; jetconfigs...)
-        finally
-            end_full_analysis_progress(server, request)
-        end
+        return JET.analyze_and_report_file!(LSInterpreter(server, request), filepath, args...; jetconfigs...)
     end
 end
 
@@ -344,10 +376,16 @@ function new_analysis_result(request::AnalysisRequest, result)
     return AnalysisResult(entry, uri2diagnostics, analyzer, analyzed_file_infos, actual2virtual)
 end
 
-function ensure_instantiated(server::Server, env_path::String, context::String)
+function ensure_instantiated!(
+        server::Server, env_path::String, title::String,
+        progress_state::Union{Nothing,ProgressState}
+    )
     if get_config(server.state.config_manager, :full_analysis, :auto_instantiate)
+        if progress_state !== nothing
+            begin_full_analysis_progress_by_instantiate(server, title, progress_state)
+        end
         try
-            JETLS_DEV_MODE && @info "Instantiating package environment" env_path context
+            JETLS_DEV_MODE && @info "Instantiating package environment" env_path
             Pkg.instantiate()
         catch e
             @error """Failed to instantiate package environment;
@@ -380,14 +418,17 @@ function ensure_instantiated(server::Server, env_path::String, context::String)
     end
 end
 
-function ensure_instantiated_if_needed(server::Server, env_path::String, context::String)
+function ensure_instantiated_if_needed!(
+        server::Server, env_path::String, title::String,
+        progress_state::Union{Nothing,ProgressState}
+    )
     instantiated_envs = server.state.analysis_manager.instantiated_envs
     activate_do(env_path) do
         # Check if already processed (success or failure)
         if haskey(load(instantiated_envs), env_path)
             return
         end
-        ensure_instantiated(server, env_path, context)
+        ensure_instantiated!(server, env_path, title, progress_state)
         # Mark as processed
         store!(instantiated_envs) do cache
             if haskey(cache, env_path)
@@ -401,29 +442,69 @@ function ensure_instantiated_if_needed(server::Server, env_path::String, context
     end
 end
 
+function instantiate_package_environment!(
+        server::Server, env_path::String, pkgname::String,
+        progress_state::Union{Nothing,ProgressState}
+    )
+    instantiated_envs = server.state.analysis_manager.instantiated_envs
+    activate_do(env_path) do
+        # Check cache inside lock to avoid race conditions
+        cached = get(load(instantiated_envs), env_path, missing)
+        if cached !== missing
+            return cached
+        end
+        # Cache miss - perform environment detection
+        ensure_instantiated!(server, env_path, progress_title_for_pkg(pkgname), progress_state)
+        pkgenv = @lock Base.require_lock @something Base.identify_package_env(pkgname) begin
+            @warn "Failed to identify package environment" env_path pkgname filepath
+            return store!(instantiated_envs) do cache
+                new_cache = copy(cache)
+                new_cache[env_path] = nothing
+                new_cache, nothing
+            end
+        end
+        pkgid, env = pkgenv
+        pkgfile = @something Base.locate_package(pkgid, env) begin
+            @warn "Expected a package to have a source file" pkgname
+            return store!(instantiated_envs) do cache
+                new_cache = copy(cache)
+                new_cache[env_path] = nothing
+                new_cache, nothing
+            end
+        end
+        return store!(instantiated_envs) do cache
+            new_cache = copy(cache)
+            new_cache[env_path] = (pkgid, pkgfile)
+            new_cache, (pkgid, pkgfile)
+        end
+    end
+end
+
 entryuri(entry::AnalysisEntry) = entryuri_impl(entry)::URI
-entrykind(entry::AnalysisEntry) = entrykind_impl(entry)::String
-entryjetconfigs(entry::AnalysisEntry) = entryjetconfigs_impl(entry)::Dict{Symbol,Any}
+progress_title(entry::AnalysisEntry) = progress_title_impl(entry)::String
+getjetconfigs(entry::AnalysisEntry) = getjetconfigs_impl(entry)::Dict{Symbol,Any}
 
 let default_jetconfigs = Dict{Symbol,Any}(
         :toplevel_logger => nothing,
         # force concretization of documentation
         :concretization_patterns => [:($(Base.Docs.doc!)(xs__))])
-    global entryjetconfigs_impl(::AnalysisEntry) = default_jetconfigs
+    global getjetconfigs_impl(::AnalysisEntry) = default_jetconfigs
 end
 
 struct ScriptAnalysisEntry <: AnalysisEntry
     uri::URI
 end
 entryuri_impl(entry::ScriptAnalysisEntry) = entry.uri
-entrykind_impl(::ScriptAnalysisEntry) = "script"
+progress_title_impl(entry::ScriptAnalysisEntry) = progress_title_for_uri(entry.uri)
+progress_title_for_uri(uri::URI) = basename(uri2filename(uri)) * " [no env]"
 
 struct ScriptInEnvAnalysisEntry <: AnalysisEntry
     env_path::String
     uri::URI
 end
 entryuri_impl(entry::ScriptInEnvAnalysisEntry) = entry.uri
-entrykind_impl(::ScriptInEnvAnalysisEntry) = "script in env"
+progress_title_impl(entry::ScriptInEnvAnalysisEntry) = progress_title_for_uri_in_env(entry.uri)
+progress_title_for_uri_in_env(uri::URI) = basename(uri2filename(uri)) * " [in env]"
 
 struct PackageSourceAnalysisEntry <: AnalysisEntry
     env_path::String
@@ -431,22 +512,29 @@ struct PackageSourceAnalysisEntry <: AnalysisEntry
     pkgid::Base.PkgId
 end
 entryuri_impl(entry::PackageSourceAnalysisEntry) = entry.pkgfileuri
-entrykind_impl(::PackageSourceAnalysisEntry) = "pkg src"
+progress_title_impl(entry::PackageSourceAnalysisEntry) = progress_title_for_pkg(entry.pkgid)
+progress_title_for_pkg(pkgid::Base.PkgId) = progress_title_for_pkg(pkgid.name)
+progress_title_for_pkg(pkgname::AbstractString) = pkgname * ".jl" * " [package]"
 let jetconfigs = Dict{Symbol,Any}(
         :toplevel_logger => nothing,
         :analyze_from_definitions => true,
         :concretization_patterns => [:(x_)])
-    global entryjetconfigs_impl(::PackageSourceAnalysisEntry) = jetconfigs
+    global getjetconfigs_impl(::PackageSourceAnalysisEntry) = jetconfigs
 end
 
 struct PackageTestAnalysisEntry <: AnalysisEntry
     env_path::String
     runtestsuri::URI
+    pkgid::Base.PkgId
 end
 entryuri_impl(entry::PackageTestAnalysisEntry) = entry.runtestsuri
-entrykind_impl(::PackageTestAnalysisEntry) = "pkg test"
+progress_title_impl(entry::PackageTestAnalysisEntry) = progress_title_for_pkgtest(entry.pkgid)
+progress_title_for_pkgtest(pkgid::Base.PkgId) = pkgid.name * ".jl" * " [package test]"
 
-function lookup_analysis_entry(server::Server, uri::URI)
+function lookup_analysis_entry(
+        server::Server, uri::URI,
+        progress_state::Union{Nothing,ProgressState} = nothing,
+    )
     state = server.state
     maybe_env_path = find_analysis_env_path(state, uri)
     if maybe_env_path isa OutOfScope
@@ -458,69 +546,35 @@ function lookup_analysis_entry(server::Server, uri::URI)
     if isnothing(env_path)
         return ScriptAnalysisEntry(uri)
     elseif uri.scheme == "untitled"
-        ensure_instantiated_if_needed(server, env_path, "untitled")
+        ensure_instantiated_if_needed!(server, env_path, progress_title_for_uri_in_env(uri), progress_state)
         return ScriptInEnvAnalysisEntry(env_path, uri)
     end
 
     pkgname = find_pkg_name(env_path)
-    filepath = uri2filepath(uri)::String # uri.scheme === "file"
-    if isnothing(pkgname)
-        ensure_instantiated_if_needed(server, env_path, "script: $filepath")
+    filepath = uri2filepath(uri)::String # uri.scheme == "file"
+    if isnothing(pkgname) # TODO Test environment with workspace setup fails here
+        ensure_instantiated_if_needed!(server, env_path, progress_title_for_uri_in_env(uri), progress_state)
         return ScriptInEnvAnalysisEntry(env_path, uri)
     end
     filekind, filedir = find_package_directory(filepath, env_path)
     if filekind === :src
-        instantiated_envs = server.state.analysis_manager.instantiated_envs
-        return @something activate_do(env_path) do
-            # Check cache inside lock to avoid race conditions
-            cached = get(load(instantiated_envs), env_path, missing)
-            if cached === nothing
-                # Previously failed to detect package environment
-                return nothing
-            elseif cached !== missing
-                pkgid, pkgfileuri = cached
-                return PackageSourceAnalysisEntry(env_path, pkgfileuri, pkgid)
-            end
-            # Cache miss - perform environment detection
-            ensure_instantiated(server, env_path, "src: $filepath")
-            pkgenv = @lock Base.require_lock @something Base.identify_package_env(pkgname) begin
-                @warn "Failed to identify package environment" env_path pkgname filepath
-                store!(instantiated_envs) do cache
-                    new_cache = copy(cache)
-                    new_cache[env_path] = nothing
-                    new_cache, nothing
-                end
-                return nothing
-            end
-            pkgid, env = pkgenv
-            pkgfile = @something Base.locate_package(pkgid, env) begin
-                @warn "Expected a package to have a source file" pkgname
-                store!(instantiated_envs) do cache
-                    new_cache = copy(cache)
-                    new_cache[env_path] = nothing
-                    new_cache, nothing
-                end
-                return nothing
-            end
-            pkgfileuri = filepath2uri(pkgfile)
-            store!(instantiated_envs) do cache
-                new_cache = copy(cache)
-                new_cache[env_path] = (pkgid, pkgfileuri)
-                new_cache, nothing
-            end
-            PackageSourceAnalysisEntry(env_path, pkgfileuri, pkgid)
-        end ScriptInEnvAnalysisEntry(env_path, uri)
+        pkgid, pkgfile = @something(
+            instantiate_package_environment!(server, env_path, pkgname, progress_state),
+            return ScriptInEnvAnalysisEntry(env_path, uri))
+        pkgfileuri = filepath2uri(pkgfile)
+        return PackageSourceAnalysisEntry(env_path, pkgfileuri, pkgid)
     elseif filekind === :test
-        ensure_instantiated_if_needed(server, env_path, "test: $filepath")
-        runtestsfile = joinpath(filedir, "runtests.jl")
-        runtestsuri = filepath2uri(runtestsfile)
-        return PackageTestAnalysisEntry(env_path, runtestsuri)
+        pkgid, _ = @something(
+            instantiate_package_environment!(server, env_path, pkgname, progress_state),
+            return ScriptInEnvAnalysisEntry(env_path, uri))
+        runtestsuri = filepath2uri(joinpath(filedir, "runtests.jl"))
+        return PackageTestAnalysisEntry(env_path, runtestsuri, pkgid)
     elseif filekind === :docs # TODO
     elseif filekind === :ext # TODO
     else
         @assert filekind === :script
     end
-    ensure_instantiated_if_needed(server, env_path, "script: $filepath")
+    ensure_instantiated_if_needed!(server, env_path, progress_title_for_uri_in_env(uri), progress_state)
     return ScriptInEnvAnalysisEntry(env_path, uri)
 end
 
