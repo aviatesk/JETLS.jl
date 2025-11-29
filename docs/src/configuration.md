@@ -8,6 +8,7 @@ This documentation uses TOML format to describe the configuration schema.
 ```toml
 [full_analysis]
 debounce = 1.0             # number (seconds), default: 1.0
+auto_instantiate = true    # boolean, default: true
 
 formatter = "Runic"        # String preset: "Runic" (default) or "JuliaFormatter"
 
@@ -33,6 +34,7 @@ executable = "testrunner"  # string, default: "testrunner" (or "testrunner.bat" 
 
 - [`[full_analysis]`](@ref config/full_analysis)
     - [`[full_analysis] debounce`](@ref config/full_analysis-debounce)
+    - [`[full_analysis] auto_instantiate`](@ref config/full_analysis-auto_instantiate)
 - [`formatter`](@ref config/formatter)
 - [`[diagnostic]`](@ref config/diagnostic)
     - [`[diagnostic] enabled`](@ref config/diagnostic-enabled)
@@ -56,6 +58,23 @@ may delay diagnostic updates.
 ```toml
 [full_analysis]
 debounce = 2.0  # Wait 2 seconds after save before analyzing
+```
+
+#### [`[full_analysis] auto_instantiate`](@id config/full_analysis-auto_instantiate)
+
+- **Type**: boolean
+- **Default**: `true`
+
+When enabled, JETLS automatically runs `Pkg.resolve()` and `Pkg.instantiate()` for
+packages that have not been instantiated yet (e.g., freshly cloned repositories).
+This allows full analysis to work immediately upon opening such packages.
+When no manifest file exists, JETLS first creates a
+[versioned manifest](https://pkgdocs.julialang.org/v1/toml-files/#Different-Manifests-for-Different-Julia-versions)
+(e.g., `Manifest-v1.12.toml`).
+
+```toml
+[full_analysis]
+auto_instantiate = false  # Disable automatic instantiation
 ```
 
 ### [`formatter`](@id config/formatter)

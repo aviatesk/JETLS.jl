@@ -17,3 +17,21 @@ function Base.var"@nospecialize"(__context__::JL.MacroContext)
             __context__.macrocall,
             [JS.K"meta" "nospecialize"::JS.K"Symbol"])
 end
+
+# This is a mock definition to enable the minimum code lowering necessary
+# for LSP features such as rename/document highlight.
+# TODO Provide proper defintions of `@specialize`
+
+function Base.var"@specialize"(__context__::JL.MacroContext, exs...)
+    JL.@ast(__context__, __context__.macrocall, [JS.K"block" exs...])
+end
+
+function Base.var"@specialize"(__context__::JL.MacroContext, ex)
+    JL.@ast(__context__, __context__.macrocall, ex)
+end
+
+function Base.var"@specialize"(__context__::JL.MacroContext)
+    JL.@ast(__context__,
+            __context__.macrocall,
+            [JS.K"meta" "specialize"::JS.K"Symbol"])
+end

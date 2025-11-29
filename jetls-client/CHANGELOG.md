@@ -8,7 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`250188fc...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/250188fc...HEAD)
+- Diff: [`b6d20b6...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/b6d20b6...HEAD)
+
+## v0.2.3
+
+- Commit: [`b6d20b6`](https://github.com/aviatesk/JETLS.jl/commit/b6d20b6)
+- Diff: [`250188fc...b6d20b6`](https://github.com/aviatesk/JETLS.jl/compare/250188fc...b6d20b6)
 
 ### Improved
 
@@ -18,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - The current PATH environment variable
   - A hint to restart VS Code if JETLS is already installed
   - Buttons to install JETLS or view the installation guide
-  (aviatesk/JETLS.jl#332)
+  (aviatesk/JETLS.jl#335)
 
 ## v0.2.2
 

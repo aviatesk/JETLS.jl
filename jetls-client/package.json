@@ -4,7 +4,7 @@
   "description": "A new language server for Julia",
   "author": "Shuhei Kadowaki",
   "license": "MIT",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "repository": {
     "type": "git",
     "url": "https://github.com/aviatesk/JETLS.jl",
@@ -119,6 +119,11 @@
                   "default": 1,
                   "minimum": 0,
                   "markdownDescription": "Debounce time in seconds before triggering full analysis after a document change."
+                },
+                "auto_instantiate": {
+                  "type": "boolean",
+                  "default": true,
+                  "markdownDescription": "When enabled, JETLS automatically runs `Pkg.instantiate()` for packages that have not been instantiated yet (e.g., freshly cloned repositories). This allows full analysis to work immediately upon opening such packages. Note that this will automatically create a `Manifest.toml` file when the package has not been instantiated yet."
                 }
               }
             },
