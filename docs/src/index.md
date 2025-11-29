@@ -101,6 +101,24 @@ vim.lsp.config("jetls", {
 })
 vim.lsp.enable("jetls")
 ```
+### Sublime
+
+Minimal [Sublime](https://www.sublimetext.com/) setup using the
+[Sublime-LSP plugin](https://github.com/sublimelsp/LSP) and modifying the
+`LSP.sublime-settings` file:
+
+```json
+{
+    "clients": {
+        "jetls": {
+            "enabled": true,
+            "command": ["jetls", "--threads=auto", "--", "--socket=8080"],
+            "selector": "source.julia",
+            "tcp_port": 8080
+        }
+    }
+}
+```
 
 ### Zed
 
