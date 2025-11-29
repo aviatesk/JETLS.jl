@@ -27,16 +27,10 @@ ArrowTypes = "2.2"
 test = ["Arrow", "Test"]
 
 [sources.PrecompileTools]
-subdir = "vendor/PrecompileTools"
-rev = "1674a4e9183a44918d0114bb7deb1e1296b45a35"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../PrecompileTools"
 
 [sources.Parsers]
-subdir = "vendor/Parsers"
-rev = "1674a4e9183a44918d0114bb7deb1e1296b45a35"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../Parsers"
 
 [sources.StructTypes]
-subdir = "vendor/StructTypes"
-rev = "1674a4e9183a44918d0114bb7deb1e1296b45a35"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../StructTypes"
