@@ -44,6 +44,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Revise assumes it's loaded from a REPL session. Revise is now a direct
   dependency that's conditionally loaded at compile time based on the
   `JETLS_DEV_MODE` flag.
+- Significantly refactored the full-analysis pipeline implementation. Modified
+  the full-analysis pipeline behavior to output more detailed logs when
+  `JETLS_DEV_MODE` is enabled.
 
 ## 2025-11-28
 

@@ -14,7 +14,7 @@ function analyze_and_resolve(s::AbstractString; kwargs...)
         fileinfo = JETLS.cache_file_info!(state, uri, 1, text)
         JETLS.cache_saved_file_info!(state, uri, text)
         JETLS.start_analysis_workers!(server)
-        JETLS.request_analysis!(server, uri; notify_diagnostics=false)
+        JETLS.request_analysis!(server, uri, #=onsave=#false; wait=true, notify_diagnostics=false)
 
         (; mod, analyzer) = JETLS.get_context_info(state, uri, position)
 
