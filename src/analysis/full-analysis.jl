@@ -401,6 +401,51 @@ function ensure_instantiated_if_needed(server::Server, env_path::String, context
     end
 end
 
+entryuri(entry::AnalysisEntry) = entryuri_impl(entry)::URI
+entrykind(entry::AnalysisEntry) = entrykind_impl(entry)::String
+entryjetconfigs(entry::AnalysisEntry) = entryjetconfigs_impl(entry)::Dict{Symbol,Any}
+
+let default_jetconfigs = Dict{Symbol,Any}(
+        :toplevel_logger => nothing,
+        # force concretization of documentation
+        :concretization_patterns => [:($(Base.Docs.doc!)(xs__))])
+    global entryjetconfigs_impl(::AnalysisEntry) = default_jetconfigs
+end
+
+struct ScriptAnalysisEntry <: AnalysisEntry
+    uri::URI
+end
+entryuri_impl(entry::ScriptAnalysisEntry) = entry.uri
+entrykind_impl(::ScriptAnalysisEntry) = "script"
+
+struct ScriptInEnvAnalysisEntry <: AnalysisEntry
+    env_path::String
+    uri::URI
+end
+entryuri_impl(entry::ScriptInEnvAnalysisEntry) = entry.uri
+entrykind_impl(::ScriptInEnvAnalysisEntry) = "script in env"
+
+struct PackageSourceAnalysisEntry <: AnalysisEntry
+    env_path::String
+    pkgfileuri::URI
+    pkgid::Base.PkgId
+end
+entryuri_impl(entry::PackageSourceAnalysisEntry) = entry.pkgfileuri
+entrykind_impl(::PackageSourceAnalysisEntry) = "pkg src"
+let jetconfigs = Dict{Symbol,Any}(
+        :toplevel_logger => nothing,
+        :analyze_from_definitions => true,
+        :concretization_patterns => [:(x_)])
+    global entryjetconfigs_impl(::PackageSourceAnalysisEntry) = jetconfigs
+end
+
+struct PackageTestAnalysisEntry <: AnalysisEntry
+    env_path::String
+    runtestsuri::URI
+end
+entryuri_impl(entry::PackageTestAnalysisEntry) = entry.runtestsuri
+entrykind_impl(::PackageTestAnalysisEntry) = "pkg test"
+
 function lookup_analysis_entry(server::Server, uri::URI)
     state = server.state
     maybe_env_path = find_analysis_env_path(state, uri)
@@ -486,17 +531,17 @@ function execute_analysis_request(server::Server, request::AnalysisRequest)
         result = analyze_parsed_if_exist(server, request)
 
     elseif entry isa ScriptInEnvAnalysisEntry
-        result = activate_do(entryenvpath(entry)) do
+        result = activate_do(entry.env_path) do
             analyze_parsed_if_exist(server, request)
         end
 
     elseif entry isa PackageSourceAnalysisEntry
-        result = activate_do(entryenvpath(entry)) do
+        result = activate_do(entry.env_path) do
             analyze_parsed_if_exist(server, request, entry.pkgid)
         end
 
     elseif entry isa PackageTestAnalysisEntry
-        result = activate_do(entryenvpath(entry)) do
+        result = activate_do(entry.env_path) do
             analyze_parsed_if_exist(server, request)
         end
 
