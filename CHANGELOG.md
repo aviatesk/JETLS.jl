@@ -14,7 +14,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`eda08b5...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/eda08b5...HEAD)
+- Diff: [`f9b2c2f...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/f9b2c2f...HEAD)
+
+## 2025-11-30
+
+- Commit: [`f9b2c2f`](https://github.com/aviatesk/JETLS.jl/commit/f9b2c2f)
+- Diff: [`eda08b5...f9b2c2f`](https://github.com/aviatesk/JETLS.jl/compare/eda08b5...f9b2c2f)
 
 ### Added
 
