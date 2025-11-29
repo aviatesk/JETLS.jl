@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 - Diff: [`b6d20b6...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/b6d20b6...HEAD)
 
+### Added
+
+- Added `jetls-client.settings.full_analysis.auto_instantiate` configuration option
+  (default: `true`). When enabled, JETLS automatically runs `Pkg.instantiate()` for
+  packages that have not been instantiated yet (e.g., freshly cloned repositories).
+  See <https://aviatesk.github.io/JETLS.jl/dev/configuration/#config/full_analysis-auto_instantiate>
+  for more details. (aviatesk/JETLS.jl#337)
+
 ## v0.2.3
 
 - Commit: [`b6d20b6`](https://github.com/aviatesk/JETLS.jl/commit/b6d20b6)
