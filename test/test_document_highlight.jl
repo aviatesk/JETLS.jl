@@ -119,6 +119,33 @@ end
             end
         end
 
+        @testset "highlight with @nospecialize" begin
+            code = """
+            function func(@nospecialize(│xxx│), yyy)
+                zzz = │xxx│, yyy
+                zzz, yyy
+            end
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 4
+            fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
+            @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+            for pos in positions
+                highlights = JETLS.document_highlights(fi, pos)
+                @test length(highlights) == 2
+                @test any(highlights) do highlight
+                    highlight.range.start == positions[1] &&
+                    highlight.range.var"end" == positions[2] &&
+                    highlight.kind == DocumentHighlightKind.Write
+                end
+                @test any(highlights) do highlight
+                    highlight.range.start == positions[3] &&
+                    highlight.range.var"end" == positions[4] &&
+                    highlight.kind == DocumentHighlightKind.Read
+                end
+            end
+        end
+
         let code = """
             let │xxx│, │yyy│ = :yyy
                 │xxx│ = :xxx

@@ -65,11 +65,12 @@ debounce = 2.0  # Wait 2 seconds after save before analyzing
 - **Type**: boolean
 - **Default**: `true`
 
-When enabled, JETLS automatically runs `Pkg.instantiate()` for packages that have
-not been instantiated yet (e.g., freshly cloned repositories). This allows full
-analysis to work immediately upon opening such packages. Note that this will
-automatically create a `Manifest.toml` file when the package has not been
-instantiated yet.
+When enabled, JETLS automatically runs `Pkg.resolve()` and `Pkg.instantiate()` for
+packages that have not been instantiated yet (e.g., freshly cloned repositories).
+This allows full analysis to work immediately upon opening such packages.
+When no manifest file exists, JETLS first creates a
+[versioned manifest](https://pkgdocs.julialang.org/v1/toml-files/#Different-Manifests-for-Different-Julia-versions)
+(e.g., `Manifest-v1.12.toml`).
 
 ```toml
 [full_analysis]

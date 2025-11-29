@@ -18,11 +18,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
-- JETLS now automatically runs `Pkg.instantiate()` for packages that have not
-  been instantiated yet (e.g., freshly cloned repositories). This allows
-  full analysis to work immediately upon opening such packages. Note that this
-  will automatically create a `Manifest.toml` file when the package has not been
-  instantiated yet. This behavior is controlled by the `full_analysis.auto_instantiate`
+- JETLS now automatically runs `Pkg.resolve()` and `Pkg.instantiate()` for
+  packages that have not been instantiated yet (e.g., freshly cloned repositories).
+  This allows full analysis to work immediately upon opening such packages.
+  When no manifest file exists, JETLS first creates a
+  [versioned manifest](https://pkgdocs.julialang.org/v1/toml-files/#Different-Manifests-for-Different-Julia-versions)
+  (e.g., `Manifest-v1.12.toml`).
+  This behavior is controlled by the `full_analysis.auto_instantiate`
   configuration option (default: `true`). Set it to `false` to disable.
 - When `full_analysis.auto_instantiate` is disabled, JETLS now checks if the
   environment is instantiated and warns the user if not.
@@ -36,6 +38,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   opened simultaneously. Added global lock to `activate_do` to serialize
   environment switching operations. This fixes spurious "Failed to identify
   package environment" warnings.
+- Fixed document highlight and rename not working for function parameters
+  annotated with `@nospecialize` or `@specialize`.
 
 ### Internal
 

@@ -31,8 +31,30 @@ function without_kinds(st::JL.SyntaxTree, kinds::Tuple{Vararg{JS.Kind}})
         _without_kinds(st, kinds)[1])::JL.SyntaxTree
 end
 
+function is_nospecialize_or_specialize_macrocall(st::JL.SyntaxTree)
+    JS.kind(st) === JS.K"macrocall" || return false
+    JS.numchildren(st) >= 1 || return false
+    macro_name_node = st[1]
+    JS.kind(macro_name_node) === JS.K"macro_name" || return false
+    JS.numchildren(macro_name_node) >= 1 || return false
+    macro_name = macro_name_node[1]
+    JS.kind(macro_name) === JS.K"Identifier" || return false
+    hasproperty(macro_name, :name_val) || return false
+    return macro_name.name_val == "nospecialize" || macro_name.name_val == "specialize"
+end
+
 function _remove_macrocalls(st::JL.SyntaxTree)
     if JS.kind(st) === JS.K"macrocall"
+        if is_nospecialize_or_specialize_macrocall(st)
+            # Special case `@nospecialize`/`@specialize`:
+            # These macros are sometimes used in method definition argument lists, but
+            # if we apply the `_remove_macrocalls` transformation directly, it would
+            # result in a `:block` expression being inserted into the argument list,
+            # preventing generation of a correct lowered tree.
+            # Furthermore, JuliaLowering.jl provides new macro style definitions for
+            # these macros, so there's no need to remove them in the first place.
+            return st, false
+        end
         new_children = JL.SyntaxList(JL.syntax_graph(st))
         for i = 2:JS.numchildren(st)
             push!(new_children, _remove_macrocalls(st[i])[1])
