@@ -21,6 +21,12 @@ function show_setup_info(msg)
     @info msg Sys.BINDIR pkgdir(JETLS) Threads.nthreads() JETLS_VERSION JETLS_DEV_MODE JETLS_TEST_MODE JETLS_DEBUG_LOWERING
 end
 
+if JETLS_DEV_MODE
+    using Revise: Revise
+else
+    const Revise = nothing
+end
+
 using LSP
 using LSP: LSP
 using LSP.URIs2
@@ -191,11 +197,16 @@ function runserver(server::Server; client_process_id::Union{Nothing,Int}=nothing
                 exit_code = 1
                 break
             elseif shutdown_requested
-                send(server, ResponseMessage(;
-                    id = msg.id,
-                    error = ResponseError(;
-                        code = ErrorCodes.InvalidRequest,
-                        message = "Received request after a shutdown request requested")))
+                if isdefined(msg, :id)
+                    send(server, ResponseMessage(;
+                        id = msg.id,
+                        error = ResponseError(;
+                            code = ErrorCodes.InvalidRequest,
+                            message = "Received request after a shutdown request requested")))
+                else
+                    # This is the case where some notification was sent.
+                    # In this case, there is no way to inform the client side that it was unexpected.
+                end
             elseif is_sequential_msg(msg)
                 put!(seq_queue, msg)
             else
@@ -320,8 +331,10 @@ struct ResponseMessageDispatcher
 end
 function (dispatcher::ResponseMessageDispatcher)(server::Server, msg::Dict{Symbol,Any})
     (; cancel_flag, request_caller) = dispatcher
-    if request_caller isa RequestAnalysisCaller
-        handle_request_analysis_response(server, request_caller, cancel_flag)
+    if request_caller isa InstantiationProgressCaller
+        handle_instantiation_progress_response(server, request_caller)
+    elseif request_caller isa AnalysisProgressCaller
+        handle_analysis_progress_response(server, request_caller, cancel_flag)
     elseif request_caller isa ShowDocumentRequestCaller
         handle_show_document_response(server, msg, request_caller)
     elseif request_caller isa SetDocumentContentCaller

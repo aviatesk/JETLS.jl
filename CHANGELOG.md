@@ -14,13 +14,50 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`6ec51e1...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/6ec51e1...HEAD)
+- Diff: [`eda08b5...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/eda08b5...HEAD)
+
+### Added
+
+- JETLS now automatically runs `Pkg.instantiate()` for packages that have not
+  been instantiated yet (e.g., freshly cloned repositories). This allows
+  full analysis to work immediately upon opening such packages. Note that this
+  will automatically create a `Manifest.toml` file when the package has not been
+  instantiated yet. This behavior is controlled by the `full_analysis.auto_instantiate`
+  configuration option (default: `true`). Set it to `false` to disable.
+- When `full_analysis.auto_instantiate` is disabled, JETLS now checks if the
+  environment is instantiated and warns the user if not.
+
+### Fixed
+
+- Fixed error when receiving notifications after shutdown request. The server
+  now silently ignores notifications instead of causing errors from invalid
+  property access (which is not possible for notifications).
+- Fixed race condition in package environment detection when multiple files are
+  opened simultaneously. Added global lock to `activate_do` to serialize
+  environment switching operations. This fixes spurious "Failed to identify
+  package environment" warnings.
+
+### Internal
+
+- Fixed Revise integration in development mode. The previous approach of
+  dynamically loading Revise via `Base.require` didn't work properly because
+  Revise assumes it's loaded from a REPL session. Revise is now a direct
+  dependency that's conditionally loaded at compile time based on the
+  `JETLS_DEV_MODE` flag.
+- Significantly refactored the full-analysis pipeline implementation. Modified
+  the full-analysis pipeline behavior to output more detailed logs when
+  `JETLS_DEV_MODE` is enabled.
+
+## 2025-11-28
+
+- Commit: [`eda08b5`](https://github.com/aviatesk/JETLS.jl/commit/eda08b5)
+- Diff: [`6ec51e1...eda08b5`](https://github.com/aviatesk/JETLS.jl/compare/6ec51e1...eda08b5)
 
 ### Changed
 
 - Pinned installation now uses release tags (`rev="YYYY-MM-DD"`) instead of
   branch names (`rev="releases/YYYY-MM-DD"`). The `releases/YYYY-MM-DD` branches
-  can now be deleted after merging since `[sources]` entries reference commit
+  will be deleted after merging since `[sources]` entries reference commit
   SHAs directly. Existing release branches (`releases/2025-11-24` through
   `releases/2025-11-27`) will be kept until the end of December 2025 for
   backward compatibility.
@@ -35,8 +72,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Removed
 
 - Removed the deprecated `runserver.jl` script. Users should use the `jetls`
-  executable app instead. See the [2025-11-24](#2025-11-24) release notes for
-  migration details.
+  executable app instead. See the [2025-11-24](https://github.com/aviatesk/JETLS.jl/blob/master/CHANGELOG.md#2025-11-24)
+  release notes for migration details.
 
 ## 2025-11-27
 
@@ -126,9 +163,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     ```
     This installs the executable to `~/.julia/bin/` (as `jetls` on Unix-like systems, `jetls.exe` on Windows).
     Make sure `~/.julia/bin` is in your `PATH`.
-  - Updating: Update JETLS to the latest version using:
+  - Updating: Update JETLS to the latest version by re-running the installation command:
     ```bash
-    julia -e 'using Pkg; Pkg.Apps.update("JETLS")'
+    julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="release")'
     ```
   - Launching: Language clients should launch JETLS using the `jetls` executable with appropriate options.
     See <https://aviatesk.github.io/JETLS.jl/dev/launching/> for detailed launch options.

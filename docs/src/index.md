@@ -42,19 +42,15 @@ If this displays the help message, the installation was successful and `~/.julia
 is properly added to your `PATH`.
 
 !!! info "Updating JETLS"
-    To update JETLS to the latest version:
+    To update JETLS to the latest version, re-run the installation command:
     ```bash
-    julia -e 'using Pkg; Pkg.Apps.update("JETLS")'
+    julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="release")'
     ```
-    When installed with `rev="release"` (as shown above), `Pkg.Apps.update("JETLS")`
-    will fetch the most recent version since the `release` branch always
-    points to the latest release.
 
     To pin a specific version instead, use the release tag `rev="YYYY-MM-DD"`:
     ```bash
     julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2025-11-25")'
     ```
-    Note that pinned versions will not be updated by `Pkg.Apps.update("JETLS")`.
 
 ## Editor setup
 
@@ -104,6 +100,24 @@ vim.lsp.config("jetls", {
     filetypes = {"julia"},
 })
 vim.lsp.enable("jetls")
+```
+### Sublime
+
+Minimal [Sublime](https://www.sublimetext.com/) setup using the
+[Sublime-LSP plugin](https://github.com/sublimelsp/LSP) and modifying the
+`LSP.sublime-settings` file:
+
+```json
+{
+    "clients": {
+        "jetls": {
+            "enabled": true,
+            "command": ["jetls", "--threads=auto", "--", "--socket=8080"],
+            "selector": "source.julia",
+            "tcp_port": 8080
+        }
+    }
+}
 ```
 
 ### Zed

@@ -35,9 +35,9 @@ using JETLS.URIs2: filepath2uri
 
             filepath = joinpath(docs_dir, "make.jl")
             uri = filepath2uri(filepath)
-            state = JETLS.ServerState()
-            state.root_path = proj_dir
-            entry = lookup_analysis_entry(state, uri)
+            server = Server()
+            server.state.root_path = proj_dir
+            entry = lookup_analysis_entry(server, uri)
             @test entry isa ScriptInEnvAnalysisEntry
             @test entryenvpath(entry) == docs_env_path
         end
@@ -48,9 +48,9 @@ using JETLS.URIs2: filepath2uri
 
             filepath = joinpath(docs_dir, "make.jl")
             uri = filepath2uri(filepath)
-            state = JETLS.ServerState()
-            state.root_path = proj_dir
-            entry = lookup_analysis_entry(state, uri)
+            server = Server()
+            server.state.root_path = proj_dir
+            entry = lookup_analysis_entry(server, uri)
             @test entry isa ScriptInEnvAnalysisEntry
             @test entryenvpath(entry) == env_path
         end

@@ -42,23 +42,33 @@ function find_pkg_name(env_path::AbstractString)
     return pkg_name isa String ? pkg_name : nothing
 end
 
+const ACTIVATE_LOCK = ReentrantLock()
+
+"""
+    activate_do(func, env_path::String)
+
+Temporarily activate the environment at `env_path`, execute `func`, and restore the
+previous environment. Uses a global lock to prevent concurrent environment switching.
+"""
 function activate_do(func, env_path::String)
-    old_env = Pkg.project().path
-    try
-        Pkg.activate(env_path; io=devnull)
-        func()
-    finally
-        Pkg.activate(old_env; io=devnull)
+    @lock ACTIVATE_LOCK begin
+        old_env = Pkg.project().path
+        try
+            Pkg.activate(env_path; io=devnull)
+            func()
+        finally
+            Pkg.activate(old_env; io=devnull)
+        end
     end
 end
 
 function find_package_directory(path::String, env_path::String)
-    dir = dirname(path)
     env_dir = dirname(env_path)
     src_dir = joinpath(env_dir, "src")
     test_dir = joinpath(env_dir, "test")
     docs_dir = joinpath(env_dir, "docs")
     ext_dir = joinpath(env_dir, "ext")
+    dir = dirname(path)
     while dir != env_dir
         dir == src_dir && return :src, src_dir
         dir == test_dir && return :test, test_dir
