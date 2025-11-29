@@ -101,9 +101,12 @@ vim.lsp.config("jetls", {
 })
 vim.lsp.enable("jetls")
 ```
-## Sublime
+### Sublime
 
-Minimal [Sublime](https://www.sublimetext.com/) setup using the [Sublime-LSP plugin](https://github.com/sublimelsp/LSP) and modifying the `LSP.sublime-settings` file:
+Minimal [Sublime](https://www.sublimetext.com/) setup using the
+[Sublime-LSP plugin](https://github.com/sublimelsp/LSP) and modifying the
+`LSP.sublime-settings` file:
+
 
 ```json
 {
@@ -115,7 +118,7 @@ Minimal [Sublime](https://www.sublimetext.com/) setup using the [Sublime-LSP plu
             "selector": "source.julia",
             "tcp_port": 8080
         }
-    },
+    }
 }
 ```
 
