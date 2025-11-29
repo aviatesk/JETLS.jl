@@ -36,6 +36,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   opened simultaneously. Added global lock to `activate_do` to serialize
   environment switching operations. This fixes spurious "Failed to identify
   package environment" warnings.
+- Fixed document highlight and rename not working for function parameters
+  annotated with `@nospecialize` or `@specialize`.
 
 ### Internal
 
