@@ -107,11 +107,9 @@ Minimal [Sublime](https://www.sublimetext.com/) setup using the
 [Sublime-LSP plugin](https://github.com/sublimelsp/LSP) and modifying the
 `LSP.sublime-settings` file:
 
-
 ```json
 {
-    "clients":
-    {
+    "clients": {
         "jetls": {
             "enabled": true,
             "command": ["jetls", "--threads=auto", "--", "--socket=8080"],
