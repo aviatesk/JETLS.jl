@@ -219,7 +219,7 @@ function schedule_analysis!(
                 # Cancel existing timer if any
                 debounce_timer, debounce_completion = debounced[request.entry]
                 close(debounce_timer)
-                JETLS_DEV_MODE && @info "Cancelled analysis debounce timer:" entry=progress_title(request.entry) uri
+                JETLS_DEV_MODE && @info "Cancelled analysis debounce timer:" entry=progress_title(request.entry) uri generation
                 notify(debounce_completion)
             end
             local new_debounced = copy(debounced)
@@ -252,7 +252,7 @@ function queue_request!(server::Server, request::AnalysisRequest)
             local new_analyses = copy(analyses)
             new_analyses[request.entry] = request
             if old_request !== nothing # replaced by the new request i.e. cancelled
-                JETLS_DEV_MODE && @info "Cancelled staled pending analysis request:" entry=progress_title(request.entry) request.uri
+                JETLS_DEV_MODE && @info "Cancelled staled pending analysis request:" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
                 notify(old_request.completion)
             end
             return new_analyses, false
@@ -273,12 +273,12 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
 
     if is_generation_analyzed(manager, request)
         # Skip if this generation was already analyzed (no new changes since last analysis)
-        JETLS_DEV_MODE && @info "Skipped analysis for unchanged analysis unit" entry=progress_title(request.entry) request.uri
+        JETLS_DEV_MODE && @info "Skipped analysis for unchanged analysis unit" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
         @goto next_request
     end
 
     if has_any_parse_errors(server, request)
-        JETLS_DEV_MODE && @info "Requested analysis unit has parse errors" entry=progress_title(request.entry) request.uri
+        JETLS_DEV_MODE && @info "Requested analysis unit has parse errors" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
         @goto next_request
     end
 
@@ -288,6 +288,8 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
         begin_full_analysis_progress(server, cancellable_token, request.entry, initial_analysis)
     end
 
+    s = time()
+    JETLS_DEV_MODE && @info "Executing analysis for:" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
     analysis_result = try
         execute_analysis_request(server, request)
     catch err
@@ -299,6 +301,8 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
             end_full_analysis_progress(server, cancellable_token)
         end
     end
+    tm = round(time() - s, digits=2)
+    JETLS_DEV_MODE && @info "Analysis completed in $tm seconds:" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
 
     update_analysis_cache!(manager, analysis_result)
     mark_analyzed_generation!(manager, request)
