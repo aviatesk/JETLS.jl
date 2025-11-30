@@ -386,18 +386,18 @@ function execute_analysis_request(server::Server, request::AnalysisRequest)
         result = analyze_parsed_if_exist(server, request)
 
     elseif entry isa ScriptInEnvAnalysisEntry
-        result = activate_do(entry.env_path) do
-            analyze_parsed_if_exist(server, request)
+        result = activate_with_early_release(entry.env_path) do activation_done::Base.Event
+            analyze_parsed_if_exist(server, request; activation_done)
         end
 
     elseif entry isa PackageSourceAnalysisEntry
-        result = activate_do(entry.env_path) do
-            analyze_parsed_if_exist(server, request, entry.pkgid)
+        result = activate_with_early_release(entry.env_path) do activation_done::Base.Event
+            analyze_parsed_if_exist(server, request, entry.pkgid; activation_done)
         end
 
     elseif entry isa PackageTestAnalysisEntry
-        result = activate_do(entry.env_path) do
-            analyze_parsed_if_exist(server, request)
+        result = activate_with_early_release(entry.env_path) do activation_done::Base.Event
+            analyze_parsed_if_exist(server, request; activation_done)
         end
 
     else error("Unsupported analysis entry $entry") end
@@ -428,16 +428,21 @@ function end_full_analysis_progress(server::Server, cancellable_token::Cancellab
         WorkDoneProgressEnd(; message = "Analysis completed"))
 end
 
-function analyze_parsed_if_exist(server::Server, request::AnalysisRequest, args...)
+function analyze_parsed_if_exist(
+        server::Server, request::AnalysisRequest, args...;
+        activation_done::Union{Nothing,Base.Event} = nothing
+    )
     uri = entryuri(request.entry)
     jetconfigs = getjetconfigs(request.entry)
     fi = get_saved_file_info(server.state, uri)
     if !isnothing(fi)
         filename = @something uri2filename(uri) error(lazy"Unsupported URI: $uri")
-        return JET.analyze_and_report_expr!(LSInterpreter(server, request), fi.syntax_node, filename, args...; jetconfigs...)
+        interp = LSInterpreter(server, request; activation_done)
+        return JET.analyze_and_report_expr!(interp, fi.syntax_node, filename, args...; jetconfigs...)
     else
         filepath = @something uri2filepath(uri) error(lazy"Unsupported URI: $uri")
-        return JET.analyze_and_report_file!(LSInterpreter(server, request), filepath, args...; jetconfigs...)
+        interp = LSInterpreter(server, request; activation_done)
+        return JET.analyze_and_report_file!(interp, filepath, args...; jetconfigs...)
     end
 end
 
@@ -675,23 +680,25 @@ end
 
 function ensure_instantiated!(server::Server, env_path::String)
     if get_config(server.state.config_manager, :full_analysis, :auto_instantiate)
+        manifest_name = "Manifest-v$(VERSION.major).$(VERSION.minor).toml"
+        manifest_path = joinpath(dirname(env_path), manifest_name)
+        io = IOBuffer()
         try
-            manifest_name = "Manifest-v$(VERSION.major).$(VERSION.minor).toml"
-            manifest_path = joinpath(dirname(env_path), manifest_name)
             if !isfile(manifest_path)
                 JETLS_DEV_MODE && @info "Touching versioned manifest file" env_path
                 touch(manifest_path)
             end
             JETLS_DEV_MODE && @info "Resolving package environment" env_path
-            Pkg.resolve()
+            Pkg.resolve(; io)
             JETLS_DEV_MODE && @info "Instantiating package environment" env_path
-            Pkg.instantiate()
+            Pkg.instantiate(; io)
         catch e
             @error """Failed to instantiate package environment;
             Unable to instantiate the environment of the target package for analysis,
             so this package will be analyzed as a script instead.
             This may cause various features such as diagnostics to not function properly.
             It is recommended to fix the problem by referring to the following error""" env_path
+            print(stderr, String(take!(io)))
             Base.showerror(stderr, e, catch_backtrace())
             show_warning_message(server, """
                 Failed to instantiate package environment at $env_path.

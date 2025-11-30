@@ -23,24 +23,38 @@ struct LSInterpreter{S<:Server} <: JET.ConcreteInterpreter
     request::AnalysisRequest
     analyzer::LSAnalyzer
     counter::Counter
+    activation_done::Union{Nothing,Base.Event}
     state::JET.InterpretationState
-    function LSInterpreter(server::S, request::AnalysisRequest, analyzer::LSAnalyzer, counter::Counter) where S<:Server
-        return new{S}(server, request, analyzer, counter)
+    function LSInterpreter(
+            server::S, request::AnalysisRequest, analyzer::LSAnalyzer, counter::Counter,
+            activation_done::Union{Nothing,Base.Event}
+        ) where S<:Server
+        return new{S}(server, request, analyzer, counter, activation_done)
     end
-    function LSInterpreter(server::S, request::AnalysisRequest, analyzer::LSAnalyzer, counter::Counter, state::JET.InterpretationState) where S<:Server
-        return new{S}(server, request, analyzer, counter, state)
+    function LSInterpreter(
+            server::S, request::AnalysisRequest, analyzer::LSAnalyzer, counter::Counter,
+            activation_done::Union{Nothing,Base.Event}, state::JET.InterpretationState
+        ) where S<:Server
+        return new{S}(server, request, analyzer, counter, activation_done, state)
     end
 end
 
 # The main constructor
-LSInterpreter(server::Server, request::AnalysisRequest) = LSInterpreter(server, request, LSAnalyzer(request.entry), Counter())
+function LSInterpreter(
+        server::Server, request::AnalysisRequest;
+        activation_done::Union{Nothing,Base.Event} = nothing
+    )
+    return LSInterpreter(server, request, LSAnalyzer(request.entry), Counter(), activation_done)
+end
 
 # `JET.ConcreteInterpreter` interface
 JET.InterpretationState(interp::LSInterpreter) = interp.state
 function JET.ConcreteInterpreter(interp::LSInterpreter, state::JET.InterpretationState)
     # add `state` to `interp`, and update `interp.analyzer.cache`
     initialize_cache!(interp.analyzer, state.res.analyzed_files)
-    return LSInterpreter(interp.server, interp.request, interp.analyzer, interp.counter, state)
+    return LSInterpreter(
+        interp.server, interp.request, interp.analyzer, interp.counter,
+        interp.activation_done, state)
 end
 JET.ToplevelAbstractAnalyzer(interp::LSInterpreter) = interp.analyzer
 
@@ -58,6 +72,13 @@ function cache_intermediate_analysis_result!(interp::LSInterpreter)
 end
 
 function JET.analyze_from_definitions!(interp::LSInterpreter, config::JET.ToplevelConfig)
+    activation_done = interp.activation_done
+    if activation_done !== nothing
+        # The phase that requires code loading has finished, so this environment is no
+        # longer needed, so let's release the `ACTIVATION_LOCK`
+        notify(activation_done)
+    end
+
     # Cache intermediate analysis results after file analysis completes
     # This makes module context information available immediately for LS features
     cache_intermediate_analysis_result!(interp)
