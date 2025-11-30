@@ -16,6 +16,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 - Diff: [`f9b2c2f...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/f9b2c2f...HEAD)
 
+### Fixed
+
+- Fixed handling of messages received before the initialize request per
+  [LSP 3.17 specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#initialize).
+
 ## 2025-11-30
 
 - Commit: [`f9b2c2f`](https://github.com/aviatesk/JETLS.jl/commit/f9b2c2f)
