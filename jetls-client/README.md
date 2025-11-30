@@ -115,7 +115,10 @@ For detailed configuration options and examples, see the
 
 - `"jetls-client.settings.full_analysis.debounce": number`: Debounce time in seconds
   before triggering full analysis after a document change (default: `1.0`)
-- `"jetls-client.settings.formatter": string | { "executable": string, "range_executable": string }`:
+- `"jetls-client.settings.full_analysis.auto_instantiate": boolean`: When enabled,
+  JETLS automatically runs `Pkg.instantiate()` for packages that have not been
+  instantiated yet (default: `true`)
+- `"jetls-client.settings.formatter": string | { "custom": { "executable": string, "executable_range": string } }`:
   Formatter configuration. Can be a preset name (`"Runic"` or `"JuliaFormatter"`)
   or a custom formatter object (default: `"Runic"`)
 - `"jetls-client.settings.diagnostic.enabled": boolean`: Enable or disable all JETLS
