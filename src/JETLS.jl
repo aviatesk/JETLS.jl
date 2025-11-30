@@ -75,6 +75,7 @@ include("utils/binding.jl")
 include("utils/lsp.jl")
 include("utils/server.jl")
 
+include("init_options.jl")
 include("config.jl")
 include("workspace-configuration.jl")
 

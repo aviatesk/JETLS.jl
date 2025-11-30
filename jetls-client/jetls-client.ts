@@ -444,6 +444,8 @@ async function startLanguageServer() {
     };
   }
 
+  const initializationOptions = vscode.workspace.getConfiguration("jetls-client").get("initializationOptions", {});
+
   const clientOptions: LanguageClientOptions = {
     documentSelector: [
       {
@@ -455,6 +457,7 @@ async function startLanguageServer() {
         language: "julia",
       },
     ],
+    initializationOptions,
     outputChannel,
   };
 

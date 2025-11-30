@@ -72,8 +72,10 @@ end
 # ===============
 
 function start_analysis_workers!(server::Server)
-    for i = 1:length(server.state.analysis_manager.worker_tasks)
-        server.state.analysis_manager.worker_tasks[i] = Threads.@spawn :default try
+    n_workers = get_init_option(server.state.init_options, :n_analysis_workers)
+    @info "Starting $n_workers analysis workers"
+    for _ = 1:n_workers
+        Threads.@spawn :default try
             analysis_worker(server)
         catch err
             @error "Critical error happened in analysis worker"
@@ -82,7 +84,7 @@ function start_analysis_workers!(server::Server)
     end
 end
 
- # Analysis queue processing implementation (analysis serialized per AnalysisEntry)
+# Analysis queue processing implementation (analysis serialized per AnalysisEntry)
 function analysis_worker(server::Server)
     # Note: Currently single worker, but designed for future multi-worker scaling.
     # When multiple workers exist, the per-entry serialization ensures correctness.
