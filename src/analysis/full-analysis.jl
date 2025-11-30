@@ -252,7 +252,7 @@ function queue_request!(server::Server, request::AnalysisRequest)
             local new_analyses = copy(analyses)
             new_analyses[request.entry] = request
             if old_request !== nothing # replaced by the new request i.e. cancelled
-                JETLS_DEV_MODE && @info "Cancelled staled pending analysis request:" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
+                JETLS_DEV_MODE && @info "Cancelled duplicated pending analysis request:" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
                 notify(old_request.completion)
             end
             return new_analyses, false
