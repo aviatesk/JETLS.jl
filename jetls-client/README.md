@@ -103,6 +103,29 @@ You can override the automatic selection using `"jetls-client.communicationChann
 For detailed information about each communication channel and when to use them,
 see the [Communication channels documentation](https://aviatesk.github.io/JETLS.jl/dev/launching/#Communication-channels).
 
+### Initialization options
+
+Static options that are sent to JETLS during startup. These settings require a
+server restart to take effect.
+
+Configure via `"jetls-client.initializationOptions"`:
+
+- `"n_analysis_workers": number`: Number of concurrent analysis worker threads
+  (default: `1`, minimum: `1`)
+
+Example:
+
+```jsonc
+{
+  "jetls-client.initializationOptions": {
+    "n_analysis_workers": 3
+  }
+}
+```
+
+For more details, see the
+[Initialization options documentation](https://aviatesk.github.io/JETLS.jl/dev/launching/#Initialization-options).
+
 ## Configuring JETLS
 
 JETLS behavior (diagnostics, formatting, etc.) can be configured through VSCode's

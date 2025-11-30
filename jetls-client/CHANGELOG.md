@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 - Diff: [`dd21f78...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/dd21f78...HEAD)
 
+### Added
+
+- Added `jetls-client.initializationOptions` setting for static server options
+  that require a restart to take effect. Currently supports `n_analysis_workers`
+  for configuring concurrent analysis worker tasks.
+  See <https://aviatesk.github.io/JETLS.jl/dev/launching/#init-options> for details.
+
 ## v0.2.4
 
 - Commit: [`dd21f78`](https://github.com/aviatesk/JETLS.jl/commit/dd21f78)

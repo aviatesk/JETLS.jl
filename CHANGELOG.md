@@ -16,6 +16,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 - Diff: [`f9b2c2f...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/f9b2c2f...HEAD)
 
+### Added
+
+- Added support for LSP `initializationOptions` with the `n_analysis_workers`
+  option for configuring concurrent analysis worker tasks.
+  See [Initialization options](https://aviatesk.github.io/JETLS.jl/dev/launching/#init-options)
+  for details.
+
 ### Fixed
 
 - Fixed handling of messages received before the initialize request per
