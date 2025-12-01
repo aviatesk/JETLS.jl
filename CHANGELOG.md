@@ -37,6 +37,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed handling of messages received before the initialize request per
   [LSP 3.17 specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#initialize).
+- Fixed progress indicator not being cleaned up when analysis throws an error.
 
 ## 2025-11-30
 
