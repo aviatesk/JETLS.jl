@@ -145,7 +145,7 @@ require a server restart to take effect.
 
 ### [Reference](@id init-options/reference)
 
-#### [`n_analysis_workers`](@id init-options/n_analysis_workers)
+#### [`n_analysis_workers`](@id init-options/n_analysis_workers) (experimental)
 
 - **Type**: integer
 - **Default**: `1`
@@ -159,18 +159,27 @@ Number of concurrent analysis worker tasks for running full analysis.
 }
 ```
 
-!!! warning "Current limitations"
-    JETLS currently runs all analysis within a single server process. These
-    "workers" are concurrent tasks, not separate processes. Due to constraints
-    around package environment switching and world age management during code
-    loading, all workers are forced to execute sequentially during the code
-    loading phase of full analysis. Only the signature analysis phase of
-    package analysis actually runs in parallel.
+!!! note "Signature analysis parallelization"
+    The signature analysis phase is parallelized automatically using
+    `Threads.@spawn` when Julia is started with multiple threads. This
+    parallelization is independent of `n_analysis_workers` and generally
+    provides significant speedups (e.g., ~4x faster with 4 threads for large
+    packages).
 
-    As a result, increasing `n_analysis_workers` may not significantly speed up
-    overall analysis in many scenarios. The semantics of this option may also
-    change substantially in future versions as the full analysis architecture
-    evolves.
+!!! warning "Current limitations"
+    This option is experimental. JETLS currently runs all analysis within a
+    single server process. These "workers" are concurrent tasks, not separate
+    processes. Due to constraints around package environment switching and
+    world age management, the code loading phase of each analysis unit must
+    execute sequentially.
+
+    However, when multiple analysis units are open (e.g., package source code
+    and test code), increasing `n_analysis_workers` may reduce overall analysis
+    time: while one unit is in the signature analysis phase, another can begin
+    code loading concurrently.
+
+    The semantics of this option may change substantially in future versions as
+    the full analysis architecture evolves.
 
 ### [Client configuration](@id init-options/client-config)
 
