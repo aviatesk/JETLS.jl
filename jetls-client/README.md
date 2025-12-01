@@ -118,7 +118,7 @@ Example:
 ```jsonc
 {
   "jetls-client.initializationOptions": {
-    "n_analysis_workers": 3
+    "n_analysis_workers": 2
   }
 }
 ```

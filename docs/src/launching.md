@@ -153,12 +153,6 @@ require a server restart to take effect.
 
 Number of concurrent analysis worker tasks for running full analysis.
 
-```json
-{
-  "n_analysis_workers": 3
-}
-```
-
 !!! note "Signature analysis parallelization"
     The signature analysis phase is parallelized automatically using
     `Threads.@spawn` when Julia is started with multiple threads. This
@@ -190,7 +184,7 @@ Configure initialization options in VSCode's `settings.json`:
 ```json
 {
   "jetls-client.initializationOptions": {
-    "n_analysis_workers": 3
+    "n_analysis_workers": 2
   }
 }
 ```
@@ -204,7 +198,7 @@ Configure initialization options in Zed's `settings.json`:
   "lsp": {
     "JETLS": {
       "initialization_options": {
-        "n_analysis_workers": 3
+        "n_analysis_workers": 2
       }
     }
   }
