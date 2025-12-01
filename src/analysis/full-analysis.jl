@@ -72,8 +72,10 @@ end
 # ===============
 
 function start_analysis_workers!(server::Server)
-    for i = 1:length(server.state.analysis_manager.worker_tasks)
-        server.state.analysis_manager.worker_tasks[i] = Threads.@spawn :default try
+    n_workers = get_init_option(server.state.init_options, :n_analysis_workers)
+    @info "Starting $n_workers analysis workers"
+    for _ = 1:n_workers
+        Threads.@spawn :default try
             analysis_worker(server)
         catch err
             @error "Critical error happened in analysis worker"
@@ -82,7 +84,7 @@ function start_analysis_workers!(server::Server)
     end
 end
 
- # Analysis queue processing implementation (analysis serialized per AnalysisEntry)
+# Analysis queue processing implementation (analysis serialized per AnalysisEntry)
 function analysis_worker(server::Server)
     # Note: Currently single worker, but designed for future multi-worker scaling.
     # When multiple workers exist, the per-entry serialization ensures correctness.
@@ -219,7 +221,7 @@ function schedule_analysis!(
                 # Cancel existing timer if any
                 debounce_timer, debounce_completion = debounced[request.entry]
                 close(debounce_timer)
-                JETLS_DEV_MODE && @info "Cancelled analysis debounce timer:" entry=progress_title(request.entry) uri
+                JETLS_DEV_MODE && @info "Cancelled analysis debounce timer:" entry=progress_title(request.entry) uri generation
                 notify(debounce_completion)
             end
             local new_debounced = copy(debounced)
@@ -252,7 +254,7 @@ function queue_request!(server::Server, request::AnalysisRequest)
             local new_analyses = copy(analyses)
             new_analyses[request.entry] = request
             if old_request !== nothing # replaced by the new request i.e. cancelled
-                JETLS_DEV_MODE && @info "Cancelled staled pending analysis request:" entry=progress_title(request.entry) request.uri
+                JETLS_DEV_MODE && @info "Cancelled duplicated pending analysis request:" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
                 notify(old_request.completion)
             end
             return new_analyses, false
@@ -273,12 +275,12 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
 
     if is_generation_analyzed(manager, request)
         # Skip if this generation was already analyzed (no new changes since last analysis)
-        JETLS_DEV_MODE && @info "Skipped analysis for unchanged analysis unit" entry=progress_title(request.entry) request.uri
+        JETLS_DEV_MODE && @info "Skipped analysis for unchanged analysis unit" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
         @goto next_request
     end
 
     if has_any_parse_errors(server, request)
-        JETLS_DEV_MODE && @info "Requested analysis unit has parse errors" entry=progress_title(request.entry) request.uri
+        JETLS_DEV_MODE && @info "Requested analysis unit has parse errors" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
         @goto next_request
     end
 
@@ -288,17 +290,23 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
         begin_full_analysis_progress(server, cancellable_token, request.entry, initial_analysis)
     end
 
+    local failed::Bool = false
+    s = time()
+    JETLS_DEV_MODE && @info "Executing analysis for:" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
     analysis_result = try
         execute_analysis_request(server, request)
     catch err
         @error "Error in `execute_analysis_request` for " request
         Base.display_error(stderr, err, catch_backtrace())
-        @goto next_request
+        failed = true
     finally
         if cancellable_token !== nothing
             end_full_analysis_progress(server, cancellable_token)
         end
+        failed && @goto next_request
     end
+    tm = round(time() - s, digits=2)
+    JETLS_DEV_MODE && @info "Analysis completed in $tm seconds:" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
 
     update_analysis_cache!(manager, analysis_result)
     mark_analyzed_generation!(manager, request)
@@ -386,18 +394,18 @@ function execute_analysis_request(server::Server, request::AnalysisRequest)
         result = analyze_parsed_if_exist(server, request)
 
     elseif entry isa ScriptInEnvAnalysisEntry
-        result = activate_do(entry.env_path) do
-            analyze_parsed_if_exist(server, request)
+        result = activate_with_early_release(entry.env_path) do activation_done::Base.Event
+            analyze_parsed_if_exist(server, request; activation_done)
         end
 
     elseif entry isa PackageSourceAnalysisEntry
-        result = activate_do(entry.env_path) do
-            analyze_parsed_if_exist(server, request, entry.pkgid)
+        result = activate_with_early_release(entry.env_path) do activation_done::Base.Event
+            analyze_parsed_if_exist(server, request, entry.pkgid; activation_done)
         end
 
     elseif entry isa PackageTestAnalysisEntry
-        result = activate_do(entry.env_path) do
-            analyze_parsed_if_exist(server, request)
+        result = activate_with_early_release(entry.env_path) do activation_done::Base.Event
+            analyze_parsed_if_exist(server, request; activation_done)
         end
 
     else error("Unsupported analysis entry $entry") end
@@ -428,16 +436,21 @@ function end_full_analysis_progress(server::Server, cancellable_token::Cancellab
         WorkDoneProgressEnd(; message = "Analysis completed"))
 end
 
-function analyze_parsed_if_exist(server::Server, request::AnalysisRequest, args...)
+function analyze_parsed_if_exist(
+        server::Server, request::AnalysisRequest, args...;
+        activation_done::Union{Nothing,Base.Event} = nothing
+    )
     uri = entryuri(request.entry)
     jetconfigs = getjetconfigs(request.entry)
     fi = get_saved_file_info(server.state, uri)
     if !isnothing(fi)
         filename = @something uri2filename(uri) error(lazy"Unsupported URI: $uri")
-        return JET.analyze_and_report_expr!(LSInterpreter(server, request), fi.syntax_node, filename, args...; jetconfigs...)
+        interp = LSInterpreter(server, request; activation_done)
+        return JET.analyze_and_report_expr!(interp, fi.syntax_node, filename, args...; jetconfigs...)
     else
         filepath = @something uri2filepath(uri) error(lazy"Unsupported URI: $uri")
-        return JET.analyze_and_report_file!(LSInterpreter(server, request), filepath, args...; jetconfigs...)
+        interp = LSInterpreter(server, request; activation_done)
+        return JET.analyze_and_report_file!(interp, filepath, args...; jetconfigs...)
     end
 end
 
@@ -675,23 +688,25 @@ end
 
 function ensure_instantiated!(server::Server, env_path::String)
     if get_config(server.state.config_manager, :full_analysis, :auto_instantiate)
+        manifest_name = "Manifest-v$(VERSION.major).$(VERSION.minor).toml"
+        manifest_path = joinpath(dirname(env_path), manifest_name)
+        io = IOBuffer()
         try
-            manifest_name = "Manifest-v$(VERSION.major).$(VERSION.minor).toml"
-            manifest_path = joinpath(dirname(env_path), manifest_name)
             if !isfile(manifest_path)
                 JETLS_DEV_MODE && @info "Touching versioned manifest file" env_path
                 touch(manifest_path)
             end
             JETLS_DEV_MODE && @info "Resolving package environment" env_path
-            Pkg.resolve()
+            Pkg.resolve(; io)
             JETLS_DEV_MODE && @info "Instantiating package environment" env_path
-            Pkg.instantiate()
+            Pkg.instantiate(; io)
         catch e
             @error """Failed to instantiate package environment;
             Unable to instantiate the environment of the target package for analysis,
             so this package will be analyzed as a script instead.
             This may cause various features such as diagnostics to not function properly.
             It is recommended to fix the problem by referring to the following error""" env_path
+            print(stderr, String(take!(io)))
             Base.showerror(stderr, e, catch_backtrace())
             show_warning_message(server, """
                 Failed to instantiate package environment at $env_path.

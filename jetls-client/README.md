@@ -103,6 +103,29 @@ You can override the automatic selection using `"jetls-client.communicationChann
 For detailed information about each communication channel and when to use them,
 see the [Communication channels documentation](https://aviatesk.github.io/JETLS.jl/dev/launching/#Communication-channels).
 
+### Initialization options
+
+Static options that are sent to JETLS during startup. These settings require a
+server restart to take effect.
+
+Configure via `"jetls-client.initializationOptions"`:
+
+- `"n_analysis_workers": number`: Number of concurrent analysis worker threads
+  (default: `1`, minimum: `1`)
+
+Example:
+
+```jsonc
+{
+  "jetls-client.initializationOptions": {
+    "n_analysis_workers": 2
+  }
+}
+```
+
+For more details, see the
+[Initialization options documentation](https://aviatesk.github.io/JETLS.jl/dev/launching/#Initialization-options).
+
 ## Configuring JETLS
 
 JETLS behavior (diagnostics, formatting, etc.) can be configured through VSCode's
@@ -115,7 +138,10 @@ For detailed configuration options and examples, see the
 
 - `"jetls-client.settings.full_analysis.debounce": number`: Debounce time in seconds
   before triggering full analysis after a document change (default: `1.0`)
-- `"jetls-client.settings.formatter": string | { "executable": string, "range_executable": string }`:
+- `"jetls-client.settings.full_analysis.auto_instantiate": boolean`: When enabled,
+  JETLS automatically runs `Pkg.instantiate()` for packages that have not been
+  instantiated yet (default: `true`)
+- `"jetls-client.settings.formatter": string | { "custom": { "executable": string, "executable_range": string } }`:
   Formatter configuration. Can be a preset name (`"Runic"` or `"JuliaFormatter"`)
   or a custom formatter object (default: `"Runic"`)
 - `"jetls-client.settings.diagnostic.enabled": boolean`: Enable or disable all JETLS

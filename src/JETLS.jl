@@ -45,6 +45,12 @@ using Glob: Glob
 
 abstract type AnalysisEntry end # used by `Analyzer.LSAnalyzer`
 
+include("AtomicContainers/AtomicContainers.jl")
+using .AtomicContainers
+const SWStats  = JETLS_DEV_MODE ? AtomicContainers.SWStats : Nothing
+const LWStats  = JETLS_DEV_MODE ? AtomicContainers.LWStats : Nothing
+const CASStats = JETLS_DEV_MODE ? AtomicContainers.CASStats : Nothing
+
 include("analysis/Analyzer.jl")
 using .Analyzer
 
@@ -54,12 +60,7 @@ Analyzer.LSAnalyzer(args...; kwargs...) = LSAnalyzer(ScriptAnalysisEntry(filepat
 
 include("analysis/resolver.jl")
 
-include("AtomicContainers/AtomicContainers.jl")
 include("FixedSizeFIFOQueue/FixedSizeFIFOQueue.jl")
-using .AtomicContainers
-const SWStats  = JETLS_DEV_MODE ? AtomicContainers.SWStats : Nothing
-const LWStats  = JETLS_DEV_MODE ? AtomicContainers.LWStats : Nothing
-const CASStats = JETLS_DEV_MODE ? AtomicContainers.CASStats : Nothing
 
 include("utils/general.jl")
 
@@ -75,6 +76,7 @@ include("utils/binding.jl")
 include("utils/lsp.jl")
 include("utils/server.jl")
 
+include("init_options.jl")
 include("config.jl")
 include("workspace-configuration.jl")
 
@@ -159,7 +161,7 @@ runserver(args...; kwargs...) = runserver(Returns(nothing), args...; kwargs...) 
 runserver(callback, in::IO, out::IO; kwargs...) = runserver(callback, Endpoint(in, out); kwargs...)
 runserver(callback, endpoint::Endpoint; kwargs...) = runserver(Server(callback, endpoint); kwargs...)
 function runserver(server::Server; client_process_id::Union{Nothing,Int}=nothing)
-    shutdown_requested = false
+    initialize_requested = shutdown_requested = false
     local exit_code::Int = 1
     JETLS_DEV_MODE && @info "Running JETLS server loop"
     seq_queue = start_sequential_message_worker(server)
@@ -182,8 +184,9 @@ function runserver(server::Server; client_process_id::Union{Nothing,Int}=nothing
     try
         for msg in server.endpoint
             server.callback !== nothing && server.callback(:received, msg)
-            # handle lifecycle-related messages
+            # Handle lifecycle-related messages
             if msg isa InitializeRequest
+                initialize_requested = true
                 handle_InitializeRequest(server, msg; client_process_id)
             elseif msg isa InitializedNotification
                 handle_InitializedNotification(server)
@@ -196,6 +199,17 @@ function runserver(server::Server; client_process_id::Union{Nothing,Int}=nothing
             elseif msg === self_shutdown_token
                 exit_code = 1
                 break
+            # Handle messages received before initialization (LSP 3.17 spec):
+            # - For requests: respond with error code -32002 (ServerNotInitialized)
+            # - For notifications: drop silently (exit already handled above)
+            elseif !initialize_requested
+                if isdefined(msg, :id)
+                    send(server, ResponseMessage(;
+                        id = msg.id,
+                        error = ResponseError(;
+                            code = ErrorCodes.ServerNotInitialized,
+                            message = "Server has not been initialized")))
+                end
             elseif shutdown_requested
                 if isdefined(msg, :id)
                     send(server, ResponseMessage(;

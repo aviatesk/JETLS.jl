@@ -141,17 +141,15 @@ struct AnalysisManager
     cache::AnalysisCache
     pending_analyses::PendingAnalyses
     queue::Channel{AnalysisRequest}
-    worker_tasks::Vector{Task}
     current_generations::CurrentGenerations
     analyzed_generations::AnalyzedGenerations
     debounced::DebouncedRequests
     instantiated_envs::InstantiatedEnvs
-    function AnalysisManager(n_workers::Int)
+    function AnalysisManager()
         return new(
             AnalysisCache(Dict{URI,AnalysisInfo}()),
             PendingAnalyses(Dict{AnalysisEntry,Union{Nothing,AnalysisRequest}}()),
             Channel{AnalysisRequest}(Inf),
-            Vector{Task}(undef, n_workers),
             CurrentGenerations(Dict{AnalysisEntry,Int}()),
             AnalyzedGenerations(Dict{AnalysisEntry,Int}()),
             DebouncedRequests(Dict{AnalysisEntry,Timer}()),
@@ -417,6 +415,18 @@ function ConfigManagerData(
     return ConfigManagerData(file_config, lsp_config, file_config_path, initialized)
 end
 
+# Static initialization options from `InitializeParams.initializationOptions`.
+# These are set once during the initialize request and remain constant.
+@option struct InitOptions
+    n_analysis_workers::Maybe{Int}
+end
+function Base.show(io::IO, init_options::InitOptions)
+    print(io, "InitOptions(;")
+    n_analysis_workers = init_options.n_analysis_workers
+    n_analysis_workers === nothing || print(io, " n_analysis_workers=", n_analysis_workers)
+    print(io, ")")
+end
+
 # Type aliases for document-synchronization caches using `SWContainer` (sequential-only updates)
 const FileCache = SWContainer{Base.PersistentDict{URI,FileInfo}, SWStats}
 const SavedFileCache = SWContainer{Base.PersistentDict{URI,SavedFileInfo}, SWStats}
@@ -448,6 +458,7 @@ mutable struct ServerState
 
     # Lifecycle fields (set after initialization request)
     encoding::PositionEncodingKind.Ty
+    init_options::InitOptions
     workspaceFolders::Vector{URI}
     root_path::String
     root_env_path::String
@@ -457,7 +468,7 @@ mutable struct ServerState
             #=file_cache=# FileCache(Base.PersistentDict{URI,FileInfo}()),
             #=saved_file_cache=# SavedFileCache(Base.PersistentDict{URI,SavedFileInfo}()),
             #=testsetinfos_cache=# TestsetInfosCache(Base.PersistentDict{URI,TestsetInfos}()),
-            #=analysis_manager=# AnalysisManager(#=n_workers=# 1), # TODO multiple workers
+            #=analysis_manager=# AnalysisManager(),
             #=extra_diagnostics=# ExtraDiagnostics(ExtraDiagnosticsData()),
             #=currently_handled=# CurrentlyHandled(),
             #=handled_history=# HandledHistory(128),
@@ -466,6 +477,7 @@ mutable struct ServerState
             #=config_manager=# ConfigManager(ConfigManagerData()),
             #=completion_resolver_info=# CompletionResolverInfo(nothing),
             #=encoding=# PositionEncodingKind.UTF16, # initialize with UTF16 (for tests)
+            #=init_options=# DEFAULT_INIT_OPTIONS, # initialize with defaults
         )
     end
 end

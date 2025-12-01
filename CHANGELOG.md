@@ -14,7 +14,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`eda08b5...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/eda08b5...HEAD)
+- Diff: [`f9b2c2f...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/f9b2c2f...HEAD)
+
+### Added
+
+- Added support for LSP `initializationOptions` with the experimental
+  `n_analysis_workers` option for configuring concurrent analysis worker tasks.
+  See [Initialization options](https://aviatesk.github.io/JETLS.jl/dev/launching/#init-options)
+  for details.
+
+### Changed
+
+- Parallelized signature analysis phase using `Threads.@spawn`, leveraging the
+  thread-safe inference pipeline introduced in Julia v1.12. This parallelization
+  happens automatically when Julia is started with multiple threads, independent
+  of the newly added `n_analysis_workers` initialization option.
+  With 4 threads (`--threads=4,2` specifically), first-time analysis of CSV.jl
+  improved from 30s to 18s (~1.7x faster), and JETLS.jl itself from 154s to 36s
+  (~4.3x faster).
+
+### Fixed
+
+- Fixed handling of messages received before the initialize request per
+  [LSP 3.17 specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#initialize).
+- Fixed progress indicator not being cleaned up when analysis throws an error.
+
+## 2025-11-30
+
+- Commit: [`f9b2c2f`](https://github.com/aviatesk/JETLS.jl/commit/f9b2c2f)
+- Diff: [`eda08b5...f9b2c2f`](https://github.com/aviatesk/JETLS.jl/compare/eda08b5...f9b2c2f)
 
 ### Added
 

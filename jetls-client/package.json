@@ -4,7 +4,7 @@
   "description": "A new language server for Julia",
   "author": "Shuhei Kadowaki",
   "license": "MIT",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "repository": {
     "type": "git",
     "url": "https://github.com/aviatesk/JETLS.jl",
@@ -103,6 +103,21 @@
           "default": 0,
           "markdownDescription": "Port number for socket communication (`0` = auto-assign). Only used when `'socket'` communication channel is used.",
           "order": 3
+        },
+        "jetls-client.initializationOptions": {
+          "scope": "resource",
+          "type": "object",
+          "default": {},
+          "markdownDescription": "Static initialization options sent to JETLS during startup. These settings require a server restart to take effect.",
+          "properties": {
+            "n_analysis_workers": {
+              "type": "integer",
+              "default": 1,
+              "minimum": 1,
+              "markdownDescription": "Number of analysis worker tasks. Default is `1`. See [documentation](https://aviatesk.github.io/JETLS.jl/dev/launching/#init-options/n_analysis_workers) for details and current limitations."
+            }
+          },
+          "order": 4
         },
         "jetls-client.settings": {
           "scope": "resource",

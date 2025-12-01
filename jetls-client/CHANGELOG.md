@@ -8,7 +8,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`b6d20b6...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/b6d20b6...HEAD)
+- Diff: [`dd21f78...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/dd21f78...HEAD)
+
+### Added
+
+- Published extension to [Open VSX Registry](https://open-vsx.org/extension/aviatesk/jetls-client)
+  for users of VSCode-compatible editors like [Eclipse Theia](https://theia-ide.org/)
+  or [Cursor](https://cursor.com/).
+- Added `jetls-client.initializationOptions` setting for static server options
+  that require a restart to take effect. Currently supports `n_analysis_workers`
+  for configuring concurrent analysis worker tasks.
+  See <https://aviatesk.github.io/JETLS.jl/dev/launching/#init-options> for details.
+
+## v0.2.4
+
+- Commit: [`dd21f78`](https://github.com/aviatesk/JETLS.jl/commit/dd21f78)
+- Diff: [`b6d20b6...dd21f78`](https://github.com/aviatesk/JETLS.jl/compare/b6d20b6...dd21f78)
+
+### Added
+
+- Added `jetls-client.settings.full_analysis.auto_instantiate` configuration option
+  (default: `true`). When enabled, JETLS automatically runs `Pkg.instantiate()` for
+  packages that have not been instantiated yet (e.g., freshly cloned repositories).
+  See <https://aviatesk.github.io/JETLS.jl/dev/configuration/#config/full_analysis-auto_instantiate>
+  for more details. (aviatesk/JETLS.jl#337)
 
 ## v0.2.3
 
