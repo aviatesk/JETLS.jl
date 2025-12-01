@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Published extension to [Open VSX Registry](https://open-vsx.org/extension/aviatesk/jetls-client)
+  for users of VSCode-compatible editors like [Eclipse Theia](https://theia-ide.org/)
+  or [Cursor](https://cursor.com/).
 - Added `jetls-client.initializationOptions` setting for static server options
   that require a restart to take effect. Currently supports `n_analysis_workers`
   for configuring concurrent analysis worker tasks.
