@@ -290,6 +290,7 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
         begin_full_analysis_progress(server, cancellable_token, request.entry, initial_analysis)
     end
 
+    local failed::Bool = false
     s = time()
     JETLS_DEV_MODE && @info "Executing analysis for:" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
     analysis_result = try
@@ -297,11 +298,12 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
     catch err
         @error "Error in `execute_analysis_request` for " request
         Base.display_error(stderr, err, catch_backtrace())
-        @goto next_request
+        failed = true
     finally
         if cancellable_token !== nothing
             end_full_analysis_progress(server, cancellable_token)
         end
+        failed && @goto next_request
     end
     tm = round(time() - s, digits=2)
     JETLS_DEV_MODE && @info "Analysis completed in $tm seconds:" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
