@@ -7,6 +7,7 @@ using JET.JETInterface
 using JET: JET, CC
 
 using ..JETLS: AnalysisEntry
+using ..JETLS.AtomicContainers: CASContainer, CASStats, store!
 using ..LSP
 
 # JETLS internal interface
@@ -83,7 +84,10 @@ struct LSAnalyzer <: ToplevelAbstractAnalyzer
 end
 function LSAnalyzer(@nospecialize(entry::AnalysisEntry), state::AnalyzerState)
     analysis_cache_key = JET.compute_hash(entry, state.inf_params)
-    analysis_token = get!(AnalysisToken, LS_ANALYZER_CACHE, analysis_cache_key)
+    analysis_token = store!(LS_ANALYZER_CACHE) do cache
+        token = get!(AnalysisToken, cache, analysis_cache_key)
+        return cache, token
+    end
     cache = InterpretationStateCache()
     return LSAnalyzer(state, analysis_token, cache)
 end
@@ -110,7 +114,7 @@ function JETInterface.AbstractAnalyzer(analyzer::LSAnalyzer, state::AnalyzerStat
 end
 JETInterface.AnalysisToken(analyzer::LSAnalyzer) = analyzer.analysis_token
 
-const LS_ANALYZER_CACHE = Dict{UInt, AnalysisToken}()
+const LS_ANALYZER_CACHE = CASContainer{Dict{UInt,AnalysisToken},CASStats}(Dict{UInt,AnalysisToken}())
 
 # internal API
 # ============
