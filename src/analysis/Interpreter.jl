@@ -100,7 +100,7 @@ function JET.analyze_from_definitions!(interp::LSInterpreter, config::JET.Toplev
                 percentage = 50))
         yield_to_endpoint()
     end
-    next_interval = interval = 10 ^ max(round(Int, log10(n_sigs)) - 1, 0)
+    next_interval = interval = max(n_sigs ÷ 25, 1)
     all_reports = JET.InferenceErrorReport[]
     for i = 1:n_sigs
         if cancellable_token !== nothing
