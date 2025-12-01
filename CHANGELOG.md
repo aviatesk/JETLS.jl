@@ -23,6 +23,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   See [Initialization options](https://aviatesk.github.io/JETLS.jl/dev/launching/#init-options)
   for details.
 
+### Changed
+
+- Parallelized signature analysis phase using `Threads.@spawn`, leveraging the
+  thread-safe inference pipeline introduced in Julia v1.12. On a 4-core machine,
+  first-time analysis of CSV.jl improved from 30s to 18s (~1.7x faster), and
+  JETLS.jl itself from 154s to 36s (~4.3x faster).
+
 ### Fixed
 
 - Fixed handling of messages received before the initialize request per

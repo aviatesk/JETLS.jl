@@ -45,6 +45,12 @@ using Glob: Glob
 
 abstract type AnalysisEntry end # used by `Analyzer.LSAnalyzer`
 
+include("AtomicContainers/AtomicContainers.jl")
+using .AtomicContainers
+const SWStats  = JETLS_DEV_MODE ? AtomicContainers.SWStats : Nothing
+const LWStats  = JETLS_DEV_MODE ? AtomicContainers.LWStats : Nothing
+const CASStats = JETLS_DEV_MODE ? AtomicContainers.CASStats : Nothing
+
 include("analysis/Analyzer.jl")
 using .Analyzer
 
@@ -54,12 +60,7 @@ Analyzer.LSAnalyzer(args...; kwargs...) = LSAnalyzer(ScriptAnalysisEntry(filepat
 
 include("analysis/resolver.jl")
 
-include("AtomicContainers/AtomicContainers.jl")
 include("FixedSizeFIFOQueue/FixedSizeFIFOQueue.jl")
-using .AtomicContainers
-const SWStats  = JETLS_DEV_MODE ? AtomicContainers.SWStats : Nothing
-const LWStats  = JETLS_DEV_MODE ? AtomicContainers.LWStats : Nothing
-const CASStats = JETLS_DEV_MODE ? AtomicContainers.CASStats : Nothing
 
 include("utils/general.jl")
 
