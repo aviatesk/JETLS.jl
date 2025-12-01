@@ -154,6 +154,7 @@ function JET.analyze_from_definitions!(interp::LSInterpreter, config::JET.Toplev
                             percentage))
                 end
             end
+            yield() # Give other tasks a chance to run
         catch e
             @error "Error during signature analysis"
             Base.showerror(stderr, e, catch_backtrace())
