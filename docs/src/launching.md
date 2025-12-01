@@ -145,7 +145,7 @@ require a server restart to take effect.
 
 ### [Reference](@id init-options/reference)
 
-#### [`n_analysis_workers`](@id init-options/n_analysis_workers) (experimental)
+#### [`n_analysis_workers` (experimental)](@id init-options/n_analysis_workers)
 
 - **Type**: integer
 - **Default**: `1`
