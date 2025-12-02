@@ -1,8 +1,3 @@
-# NOTE: Static server settings that require a server restart to take effect should be
-# accessed during server initialization via `state.init_params.initializationOptions`.
-# These settings differ from dynamic configuration options managed by `ConfigManager`
-# that can be changed at throughout server lifecycle.
-
 """
 Receives `msg::InitializeRequest` and sets up the `server.state` based on `msg.params`.
 As a response to this `msg`, it returns an `InitializeResponse` and performs registration of
@@ -21,6 +16,12 @@ function handle_InitializeRequest(
     )
     state = server.state
     init_params = state.init_params = msg.params
+
+    # NOTE: Static server settings that require a server restart to take effect should be
+    # accessed during server initialization via `state.init_params.initializationOptions`.
+    # These settings differ from dynamic configuration options managed by `ConfigManager`
+    # that can be changed at throughout server lifecycle.
+    state.init_options = parse_init_options(init_params.initializationOptions)
 
     workspaceFolders = init_params.workspaceFolders
     if workspaceFolders !== nothing
@@ -427,4 +428,5 @@ function handle_InitializedNotification(server::Server)
     register(server, registrations)
 
     JETLS_DEV_MODE && show_setup_info("Initialized JETLS with the following setup:")
+    JETLS_DEV_MODE && @info "JETLS intialization options" init_options=state.init_options
 end

@@ -127,3 +127,74 @@ client cannot execute the normal LSP shutdown sequence.
     When specified via command line, the process ID should match the
     `processId` field that the client sends in the LSP `initialize` request
     parameters.
+
+## [Initialization options](@id init-options)
+
+JETLS accepts static initialization options via the LSP `initializationOptions`
+field in the `initialize` request. Unlike [dynamic configuration](@ref config/schema)
+that can be changed at runtime, these options are set once at server startup and
+require a server restart to take effect.
+
+### [Schema](@id init-options/schema)
+
+```json
+{
+  "n_analysis_workers": 1
+}
+```
+
+### [Reference](@id init-options/reference)
+
+#### [`n_analysis_workers` (experimental)](@id init-options/n_analysis_workers)
+
+- **Type**: integer
+- **Default**: `1`
+- **Minimum**: `1`
+
+Number of concurrent analysis worker tasks for running full analysis.
+
+The code loading phase must execute sequentially due to package environment and
+world age constraints. However, when multiple analysis units are open (e.g.,
+package source code and test code), increasing `n_analysis_workers` may reduce
+overall analysis time: while one unit is in the signature analysis phase,
+another can begin code loading concurrently.
+
+!!! warning "Experimental"
+    This option is experimental and may be removed or its semantics may be changed
+    substantially in future versions as the full analysis architecture evolves.
+
+!!! note "Signature analysis parallelization"
+    The signature analysis phase is parallelized automatically using
+    `Threads.@spawn` when Julia is started with multiple threads. This
+    parallelization is independent of `n_analysis_workers` and provides
+    significant speedups (e.g., ~4x faster with 4 threads for large packages).
+
+### [Client configuration](@id init-options/client-config)
+
+#### [VSCode (`jetls-client` extension)](@id init-options/client-config/vscode)
+
+Configure initialization options in VSCode's `settings.json`:
+
+```json
+{
+  "jetls-client.initializationOptions": {
+    "n_analysis_workers": 2
+  }
+}
+```
+
+#### [Zed (`aviatesk/zed-julia` extension)](@id init-options/client-config/zed)
+
+Configure initialization options in Zed's `settings.json`:
+
+```json
+{
+  "lsp": {
+    "JETLS": {
+      "initialization_options": {
+        "n_analysis_workers": 2
+      }
+    }
+  }
+}
+```
