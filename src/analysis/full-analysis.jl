@@ -306,6 +306,10 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
         if prev_result !== nothing
             cleanup_prev_methods(prev_result)
         end
+        # HACK This is a terrible hack to reduce Pkg.jl's memory footprint:
+        # This behavior should really be implemented as an environment variable that Pkg.jl understands,
+        # or perhaps this cache itself should be optimized.
+        empty!(Pkg.Registry.REGISTRY_CACHE)
         failed && @goto next_request
     end
     tm = round(time() - s, digits=2)
@@ -743,6 +747,11 @@ function ensure_instantiated!(server::Server, env_path::String)
                 The package will be analyzed as a script, which may result in incomplete diagnostics.
                 See the language server log for details.
                 It is recommended to fix your package environment setup and restart the language server.""")
+        finally
+            # HACK This is a terrible hack to reduce Pkg.jl's memory footprint:
+            # This behavior should really be implemented as an environment variable that Pkg.jl understands,
+            # or perhaps this cache itself should be optimized.
+            empty!(Pkg.Registry.REGISTRY_CACHE)
         end
     else
         is_instantiated = try
@@ -751,6 +760,11 @@ function ensure_instantiated!(server::Server, env_path::String)
             @error "Failed to create cache for package environment" env_path
             Base.showerror(stderr, e, catch_backtrace())
             false
+        finally
+            # HACK This is a terrible hack to reduce Pkg.jl's memory footprint:
+            # This behavior should really be implemented as an environment variable that Pkg.jl understands,
+            # or perhaps this cache itself should be optimized.
+            empty!(Pkg.Registry.REGISTRY_CACHE)
         end
         if !is_instantiated
             show_warning_message(server, """
