@@ -12,7 +12,9 @@ function did_change_watched_files_registration(server::Server)
         registerOptions = DidChangeWatchedFilesRegistrationOptions(;
             watchers = FileSystemWatcher[
                 FileSystemWatcher(;
-                    globPattern = "**/$CONFIG_FILE",
+                    globPattern = RelativePattern(;
+                        baseUri = root_uri,
+                        pattern = CONFIG_FILE),
                     kind = WatchKind.Create | WatchKind.Change | WatchKind.Delete),
                 FileSystemWatcher(;
                     globPattern = RelativePattern(;
