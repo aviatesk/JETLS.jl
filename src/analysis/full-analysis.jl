@@ -284,10 +284,10 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
         @goto next_request
     end
 
-    initial_analysis = request.prev_analysis_result === nothing
+    prev_result = request.prev_analysis_result
     cancellable_token = request.cancellable_token
     if cancellable_token !== nothing
-        begin_full_analysis_progress(server, cancellable_token, request.entry, initial_analysis)
+        begin_full_analysis_progress(server, cancellable_token, request.entry, prev_result === nothing)
     end
 
     local failed::Bool = false
@@ -303,6 +303,9 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
         if cancellable_token !== nothing
             end_full_analysis_progress(server, cancellable_token)
         end
+        if prev_result !== nothing
+            cleanup_prev_methods(prev_result)
+        end
         failed && @goto next_request
     end
     tm = round(time() - s, digits=2)
@@ -316,7 +319,7 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
     # This ensures that clients using pull diagnostics (textDocument/diagnostic) will
     # re-request diagnostics now that module context is available, allowing
     # lowering/macro-expansion-error diagnostics to be properly reported.
-    if initial_analysis && supports(server, :workspace, :diagnostics, :refreshSupport)
+    if prev_result === nothing && supports(server, :workspace, :diagnostics, :refreshSupport)
         request_diagnostic_refresh!(server)
     end
 
@@ -365,6 +368,33 @@ function has_any_parse_errors(server::Server, request::AnalysisRequest)
     return any(analyzed_file_uris(prev_analysis_result)) do uri::URI
         saved_fi = @something get_saved_file_info(server.state, uri) return false
         return !isempty(saved_fi.parsed_stream.diagnostics)
+    end
+end
+
+# Delete methods defined in previous analysis modules.
+# This doesn't free memory (Method objects remain in Core.methodtable), but removes them
+# from reflection APIs like `methods()`, preventing stale methods from appearing in
+# signature help or completions.
+function cleanup_prev_methods(prev_result::AnalysisResult)
+    prev_modules = IdSet{Module}()
+    for analyzed_file_info in values(prev_result.analyzed_file_infos)
+        for module_range_info in analyzed_file_info.module_range_infos
+            push!(prev_modules, last(module_range_info))
+        end
+    end
+    methods_to_delete = Method[]
+    Base.visit(Core.methodtable) do m::Method
+        if parentmodule(m) in prev_modules
+            push!(methods_to_delete, m)
+        end
+    end
+    for m in methods_to_delete
+        try
+            Base.delete_method(m)
+        catch e
+            JETLS_DEV_MODE && @warn "Failed to delete method $m"
+            JETLS_DEV_MODE && Base.showerror(stderr, e, catch_backtrace())
+        end
     end
 end
 

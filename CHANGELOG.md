@@ -21,6 +21,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `.JETLSConfig.toml` is now only recognized at the workspace root.
   Previously, config files in subdirectories were also loaded, which was
   inconsistent with [the documentation](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/file-based-config).
+- Clean up methods from previous analysis modules after re-analysis to prevent
+  stale overload methods from appearing in signature help or completions.
 
 ### Internal
 
