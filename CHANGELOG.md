@@ -16,6 +16,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 - Diff: [`aae52f5...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/aae52f5...HEAD)
 
+### Internal
+
+- Added heap snapshot profiling support. Create a `.JETLSProfile` file in the
+  workspace root to trigger a heap snapshot. The snapshot is saved as
+  `JETLS_YYYYMMDD_HHMMSS.heapsnapshot` and can be analyzed using Chrome DevTools.
+  See [DEVELOPMENT.md's Profiling](./DEVELOPMENT.md#profiling) section for details.
+
 ## 2025-12-02
 
 - Commit: [`aae52f5`](https://github.com/aviatesk/JETLS.jl/commit/aae52f5)

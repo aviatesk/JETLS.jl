@@ -8,6 +8,8 @@ Manifest-*.toml
 !.JETLSConfig.toml
 *.vsix
 docs/build/
+*.heapsnapshot
+.JETLSProfile
 
 # The following line is negated on release branches
 /vendor

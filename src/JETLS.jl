@@ -100,6 +100,7 @@ include("formatting.jl")
 include("inlay-hint.jl")
 include("rename.jl")
 include("testrunner/testrunner.jl")
+include("profile.jl")
 include("did-change-watched-files.jl")
 include("initialize.jl")
 
@@ -353,6 +354,8 @@ function (dispatcher::ResponseMessageDispatcher)(server::Server, msg::Dict{Symbo
         handle_show_document_response(server, msg, request_caller)
     elseif request_caller isa SetDocumentContentCaller
         handle_apply_workspace_edit_response(server, msg, request_caller)
+    elseif request_caller isa DeleteFileCaller
+        handle_apply_workspace_edit_response(server, msg, request_caller)
     elseif request_caller isa TestRunnerMessageRequestCaller2
         handle_test_runner_message_response2(server, msg, request_caller)
     elseif request_caller isa TestRunnerMessageRequestCaller4
@@ -369,6 +372,8 @@ function (dispatcher::ResponseMessageDispatcher)(server::Server, msg::Dict{Symbo
         handle_formatting_progress_response(server, msg, request_caller)
     elseif request_caller isa RangeFormattingProgressCaller
         handle_range_formatting_progress_response(server, msg, request_caller)
+    elseif request_caller isa ProfileProgressCaller
+        handle_profile_progress_response(server, msg, request_caller)
     elseif request_caller isa WorkspaceConfigurationCaller
         handle_workspace_configuration_response(server, msg, request_caller)
     elseif request_caller isa RegisterCapabilityRequestCaller || request_caller isa UnregisterCapabilityRequestCaller

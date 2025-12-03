@@ -1,4 +1,5 @@
 struct SetDocumentContentCaller <: RequestCaller end
+struct DeleteFileCaller <: RequestCaller end
 
 function set_document_content(server::Server, uri::URI, content::String; context::Union{Nothing,String}=nothing)
     edits = TextEdit[TextEdit(;
@@ -35,4 +36,23 @@ function handle_apply_workspace_edit_response(
     else
         show_error_message(server, "Unexpected response from workspace edit request")
     end
+end
+
+function request_delete_file(server::Server, uri::URI)
+    delete_op = DeleteFile(;
+        kind="delete",
+        uri,
+        options = DeleteFileOptions(;
+            ignoreIfNotExists = true))
+    documentChanges = DeleteFile[delete_op]
+    edit = WorkspaceEdit(; documentChanges)
+    id = String(gensym(:ApplyWorkspaceEditRequest))
+    addrequest!(server, id=>DeleteFileCaller())
+    return send(server, ApplyWorkspaceEditRequest(;
+        id,
+        params = ApplyWorkspaceEditParams(; label="Delete file", edit)))
+end
+
+function handle_apply_workspace_edit_response(::Server, ::Dict{Symbol,Any}, ::DeleteFileCaller)
+    # Silently ignore errors for file deletion
 end

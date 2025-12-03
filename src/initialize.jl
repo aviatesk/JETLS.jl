@@ -409,7 +409,7 @@ function handle_InitializedNotification(server::Server)
     end
 
     if supports(server, :workspace, :didChangeWatchedFiles, :dynamicRegistration)
-        push!(registrations, did_change_watched_files_registration())
+        push!(registrations, did_change_watched_files_registration(server))
         if JETLS_DEV_MODE
             @info "Dynamically registering 'workspace/didChangeWatchedFiles' upon `InitializedNotification`"
         end
