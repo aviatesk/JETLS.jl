@@ -243,17 +243,28 @@ be analyzed using Chrome DevTools:
 5. Use the "Summary" view to see memory usage by type (Constructor)
 6. Use the "Comparison" view to compare two snapshots and identify memory growth
 
-### What you can learn from snapshots
+### Understanding snapshot metrics
 
-- **Self size**: Memory directly held by objects of each type
-- **Retained size**: Total memory that would be freed if objects were garbage
-  collected
-- **Count**: Number of instances of each type
+If successful, you should see a view like the following:
 
-Common things to look for:
-- Large `Dict` or `Vector` instances that may be caching too much data
-- Growing counts of `FileInfo`, `AnalysisResult`, or other JETLS-specific types
-- Unexpected retention of objects that should have been garbage collected
+<img width="1267" height="775" alt="Chrome DevTools view" src="https://github.com/user-attachments/assets/720019db-518f-4c02-bc1d-183999f90248" />
+
+The Summary view shows several columns for each type (Constructor):
+
+- **Distance**: Shortest path length from GC roots to the object. Lower distance
+  means more directly reachable from roots.
+- **Shallow Size**: Memory held directly by the object itself (its own fields),
+  not including memory held by referenced objects.
+- **Retained Size**: Total memory that would be freed if this object were
+  garbage collected, including all objects exclusively retained by it. This is
+  the most useful metric for finding memory issues.
+
+### Using the Retainers panel
+
+When you select an object in the Summary view, the Retainers panel (bottom)
+shows what is keeping that object alive. This helps trace memory retention back
+to its root cause. Follow the retention chain upward to understand why objects
+aren't being garbage collected.
 
 ### Comparing snapshots
 
