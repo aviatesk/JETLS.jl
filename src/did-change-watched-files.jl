@@ -1,15 +1,24 @@
 const DID_CHANGE_WATCHED_FILES_REGISTRATION_ID = "jetls-did-change-watched-files"
 const DID_CHANGE_WATCHED_FILES_REGISTRATION_METHOD = "workspace/didChangeWatchedFiles"
 
-function did_change_watched_files_registration()
+const CONFIG_FILE = ".JETLSConfig.toml"
+const PROFILE_TRIGGER_FILE = ".JETLSProfile"
+
+function did_change_watched_files_registration(server::Server)
+    root_uri = filepath2uri(server.state.root_path)
     Registration(;
         id = DID_CHANGE_WATCHED_FILES_REGISTRATION_ID,
         method = DID_CHANGE_WATCHED_FILES_REGISTRATION_METHOD,
         registerOptions = DidChangeWatchedFilesRegistrationOptions(;
             watchers = FileSystemWatcher[
                 FileSystemWatcher(;
-                    globPattern = "**/.JETLSConfig.toml",
+                    globPattern = "**/$CONFIG_FILE",
                     kind = WatchKind.Create | WatchKind.Change | WatchKind.Delete),
+                FileSystemWatcher(;
+                    globPattern = RelativePattern(;
+                        baseUri = root_uri,
+                        pattern = PROFILE_TRIGGER_FILE),
+                    kind = WatchKind.Create),
             ]))
 end
 
@@ -17,7 +26,7 @@ end
 # unregister(currently_running, Unregistration(;
 #     id = DID_CHANGE_WATCHED_FILES_REGISTRATION_ID,
 #     method = DID_CHANGE_WATCHED_FILES_REGISTRATION_METHOD))
-# register(currently_running, did_change_watched_files_registration())
+# register(currently_running, did_change_watched_files_registration(currently_running))
 
 config_file_created_msg(path::AbstractString) = "JETLS configuration file loaded: $path"
 config_file_deleted_msg(path::AbstractString) = "JETLS configuration file removed: $path"
@@ -94,11 +103,15 @@ function delete_file_config!(callback, manager::ConfigManager, filepath::Abstrac
     end
 end
 
+is_profile_trigger_file(path::AbstractString) = endswith(path, PROFILE_TRIGGER_FILE)
+
 function handle_DidChangeWatchedFilesNotification(server::Server, msg::DidChangeWatchedFilesNotification)
     for change in msg.params.changes
-        changed_path = uri2filepath(change.uri)
-        if changed_path !== nothing && is_config_file(changed_path)
+        changed_path = @something uri2filepath(change.uri) continue
+        if is_config_file(changed_path)
             handle_config_file_change!(server, changed_path, change.type)
+        elseif is_profile_trigger_file(changed_path) && change.type == FileChangeType.Created
+            trigger_profile!(server, changed_path)
         end
     end
 end

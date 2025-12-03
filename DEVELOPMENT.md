@@ -210,6 +210,68 @@ That is, register it via the `client/registerCapability` request in response to
 notifications sent from the client, most likely `InitializedNotification`.
 The `JETLS.register` utility is especially useful for this purpose.
 
+## Profiling
+
+JETLS provides a mechanism for capturing heap snapshots of the language server
+process itself. This is useful for investigating JETLS's memory footprint and
+detecting potential memory leaks in the server implementation.
+
+### Taking a heap snapshot
+
+To trigger a heap snapshot, create a `.JETLSProfile` file in the workspace root
+directory:
+
+```bash
+touch .JETLSProfile
+```
+
+When JETLS detects this file, it will:
+1. Take a heap snapshot using `Profile.take_heap_snapshot`
+2. Save it as `JETLS_YYYYMMDD_HHMMSS.heapsnapshot` in the workspace root
+3. Show a notification with the file path
+4. Automatically delete the `.JETLSProfile` trigger file
+
+### Analyzing the snapshot
+
+The generated `.heapsnapshot` file uses the V8 heap snapshot format, which can
+be analyzed using Chrome DevTools:
+
+1. Open Chrome and navigate to any page
+2. Open DevTools (F12)
+3. Go to the "Memory" tab
+4. Click "Load" and select the `.heapsnapshot` file
+5. Use the "Summary" view to see memory usage by type (Constructor)
+6. Use the "Comparison" view to compare two snapshots and identify memory growth
+
+### What you can learn from snapshots
+
+- **Self size**: Memory directly held by objects of each type
+- **Retained size**: Total memory that would be freed if objects were garbage
+  collected
+- **Count**: Number of instances of each type
+
+Common things to look for:
+- Large `Dict` or `Vector` instances that may be caching too much data
+- Growing counts of `FileInfo`, `AnalysisResult`, or other JETLS-specific types
+- Unexpected retention of objects that should have been garbage collected
+
+### Comparing snapshots
+
+To investigate memory growth:
+1. Take a snapshot shortly after server startup
+2. Perform some operations (open files, trigger analysis, etc.)
+3. Take another snapshot
+4. Compare them in Chrome DevTools using the "Comparison" view
+
+This helps identify which types are accumulating over time.
+
+### Limitations
+
+- Only Julia GC-managed heap is captured; memory allocated by external libraries
+  (BLAS, LAPACK, etc.) is not included
+- The snapshot process itself requires additional memory, so for very large
+  processes, ensure sufficient memory is available
+
 ## Release process
 
 JETLS avoids dependency conflicts with packages being analyzed by rewriting the
