@@ -16,6 +16,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 - Diff: [`aae52f5...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/aae52f5...HEAD)
 
+### Fixed
+
+- `.JETLSConfig.toml` is now only recognized at the workspace root.
+  Previously, config files in subdirectories were also loaded, which was
+  inconsistent with [the documentation](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/file-based-config).
+
 ### Internal
 
 - Added heap snapshot profiling support. Create a `.JETLSProfile` file in the
