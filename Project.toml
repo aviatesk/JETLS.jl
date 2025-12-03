@@ -4,7 +4,7 @@ version = "0.0.0"
 authors = ["Shuhei Kadowaki <aviatesk@gmail.com>"]
 
 [workspace]
-projects = ["docs", "test"]
+projects = ["docs", "test", "scripts"]
 
 [deps]
 Configurations = "5218b696-f38b-4ac9-8b61-a12ec717816d"

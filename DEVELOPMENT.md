@@ -276,6 +276,18 @@ To investigate memory growth:
 
 This helps identify which types are accumulating over time.
 
+### Command-line analysis
+
+For text-based analysis (useful for sharing or automated processing), use the
+`analyze-heapsnapshot.jl` script:
+
+```bash
+julia --project=scripts scripts/analyze-heapsnapshot.jl JETLS_YYYYMMDD_HHMMSS.heapsnapshot
+```
+
+This displays a summary of memory usage by object type, sorted by shallow size.
+Use `--top=N` to control how many entries to show (default: 50).
+
 ### Limitations
 
 - Only Julia GC-managed heap is captured; memory allocated by external libraries
