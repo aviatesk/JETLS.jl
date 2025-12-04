@@ -2,9 +2,11 @@ function find_analysis_env_path(state::ServerState, uri::URI)
     if uri.scheme == "file"
         filepath = uri2filepath(uri)::String
         # HACK: we should support Base files properly
-        if issubdir(filepath, normpath(Sys.BUILD_ROOT_PATH, "base"))
+        if (issubdir(filepath, normpath(Sys.BUILD_ROOT_PATH, "base")) ||
+            issubdir(filepath, normpath(Sys.BINDIR, "..", "share", "julia", "base")))
             return OutOfScope(Base)
-        elseif issubdir(filepath, normpath(Sys.BUILD_ROOT_PATH, "Compiler", "src"))
+        elseif (issubdir(filepath, normpath(Sys.BUILD_ROOT_PATH, "Compiler", "src")) ||
+                issubdir(filepath, normpath(Sys.BINDIR, "..", "share", "julia", "Compiler", "src")))
             return OutOfScope(CC)
         end
         if isdefined(state, :root_path)
