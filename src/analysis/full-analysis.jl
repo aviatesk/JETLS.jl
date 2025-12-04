@@ -73,7 +73,7 @@ end
 
 function start_analysis_workers!(server::Server)
     n_workers = get_init_option(server.state.init_options, :n_analysis_workers)
-    @info "Starting $n_workers analysis workers"
+    JETLS_DEV_MODE && @info "Starting $n_workers analysis workers"
     for _ = 1:n_workers
         Threads.@spawn :default try
             analysis_worker(server)
