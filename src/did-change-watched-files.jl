@@ -65,7 +65,7 @@ If the file does not exist or cannot be parsed, just return leaving the current
 configuration unchanged. When there are unknown keys in the config file,
 send error message while leaving current configuration unchanged.
 """
-function load_file_config!(callback, server::Server, filepath::AbstractString;
+function load_file_config!(on_difference, server::Server, filepath::AbstractString;
                            reload::Bool = false)
     store!(server.state.config_manager) do old_data::ConfigManagerData
         if reload && old_data.file_config_path != filepath
@@ -85,7 +85,7 @@ function load_file_config!(callback, server::Server, filepath::AbstractString;
             file_config=new_file_config,
             file_config_path=filepath
         )
-        on_difference(callback, old_data.settings, new_data.settings)
+        track_setting_changes(on_difference, old_data.settings, new_data.settings)
         return new_data, nothing
     end
 end
@@ -93,14 +93,14 @@ end
 unmatched_keys_in_config_file_msg(filepath::AbstractString, unmatched_keys) =
     unmatched_keys_msg("Configuration file at $filepath contains unknown keys:", unmatched_keys)
 
-function delete_file_config!(callback, manager::ConfigManager, filepath::AbstractString)
+function delete_file_config!(on_difference, manager::ConfigManager, filepath::AbstractString)
     store!(manager) do old_data::ConfigManagerData
         old_data.file_config_path == filepath || return old_data, nothing
         new_data = ConfigManagerData(old_data;
             file_config=EMPTY_CONFIG,
             file_config_path=nothing
         )
-        on_difference(callback, old_data.settings, new_data.settings)
+        track_setting_changes(on_difference, old_data.settings, new_data.settings)
         return new_data, nothing
     end
 end

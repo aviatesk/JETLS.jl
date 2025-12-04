@@ -1,63 +1,78 @@
 is_config_file(filepath::AbstractString) =
     basename(filepath) == ".JETLSConfig.toml"
 
-@generated function on_difference(
-        callback,
+@generated function merge_and_track(
+        on_difference,
         old_config::T,
         new_config::T,
-        path::Tuple{Vararg{Symbol}}=()
+        path::Tuple{Vararg{Symbol}}
     ) where {T<:ConfigSection}
     entries = Expr[
-        :(on_difference(
-            callback,
+        :(merge_and_track(
+            on_difference,
             getfield(old_config, $(QuoteNode(fname))),
             getfield(new_config, $(QuoteNode(fname))),
             (path..., $(QuoteNode(fname)))))
         for fname in fieldnames(T)]
-    quote
-        $T($(entries...))
-    end
+    :(T($(entries...)))
 end
 
-@generated function on_difference(
-        callback,
+@generated function merge_and_track(
+        on_difference,
         old_val::T,
         ::Nothing,
         path::Tuple{Vararg{Symbol}}
     ) where T <: ConfigSection
     entries = Expr[
-        :(on_difference(
-            callback,
+        :(merge_and_track(
+            on_difference,
             getfield(old_val, $(QuoteNode(fname))),
             nothing,
             (path..., $(QuoteNode(fname)))))
         for fname in fieldnames(T)]
-    quote
-        $T($(entries...))
-    end
+    :(T($(entries...)))
 end
 
-@generated function on_difference(
-        callback,
+@generated function merge_and_track(
+        on_difference,
         ::Nothing,
         new_val::T,
         path::Tuple{Vararg{Symbol}}
     ) where T <: ConfigSection
     entries = Expr[
-        :(on_difference(
-            callback,
+        :(merge_and_track(
+            on_difference,
             nothing,
             getfield(new_val, $(QuoteNode(fname))),
             (path..., $(QuoteNode(fname)))))
         for fname in fieldnames(T)]
-    quote
-        $T($(entries...))
-    end
+    :(T($(entries...)))
 end
 
-on_difference(callback, old_val, new_val, path::Tuple{Vararg{Symbol}}) =
-    old_val !== new_val ? callback(old_val, new_val, path) : old_val
+function merge_and_track(on_difference, old_val, new_val, path::Tuple{Vararg{Symbol}})
+    old_val !== new_val && on_difference(old_val, new_val, path)
+    return new_val === nothing ? old_val : new_val
+end
 
+"""
+    track_setting_changes(on_difference, old_config, new_config) -> merged_config
+
+Recursively compares two configuration objects and invokes `on_difference(old_val, new_val, path)`
+for each leaf value that differs.
+"""
+track_setting_changes(on_difference, old_val, new_val) =
+    merge_and_track(on_difference, old_val, new_val, ())
+
+"""
+    merge_settings(base::JETLSConfig, overlay::JETLSConfig)
+
+Merges two configuration objects, with `overlay` taking precedence over `base`.
+If a field in `overlay` is `nothing`, the corresponding field from `base` is retained.
+"""
+merge_settings(base::JETLSConfig, overlay::JETLSConfig) =
+    merge_and_track(Returns(nothing), base, overlay, ())
+
+# TODO: Remove this. Now this is used for `collect_unmatched_keys` only. See the comment there.
 function parse_config_dict(config_dict::AbstractDict{String}, filepath::Union{Nothing,AbstractString} = nothing)
     try
         return Configurations.from_dict(JETLSConfig, config_dict)
@@ -94,17 +109,6 @@ function parse_config_dict(config_dict::AbstractDict{String}, filepath::Union{No
     end
 end
 
-"""
-    merge_setting(base::T, overlay::T) where {T<:ConfigSection} -> T
-
-Merges two configuration objects, with `overlay` taking precedence over `base`.
-If a field in `overlay` is `nothing`, the corresponding field from `base` is retained.
-"""
-merge_setting(base::T, overlay::T) where {T<:ConfigSection} =
-    on_difference((base_val, overlay_val, _) -> overlay_val === nothing ? base_val : overlay_val, base, overlay)
-
-# TODO: remove this.
-#       (now this is used for `collect_unmatched_keys` only. see that's comment)
 const UntypedConfigDict = Base.PersistentDict{String, Any}
 to_untyped_config_dict(dict::AbstractDict) =
     UntypedConfigDict((k => (v isa AbstractDict ? to_untyped_config_dict(v) : v) for (k, v) in dict)...)
@@ -141,7 +145,7 @@ julia> collect_unmatched_keys(
  ["key1"]
 ```
 
-TODO: remove this. This is a temporary workaround to report unknown keys in the config file
+TODO: Remove this. This is a temporary workaround to report unknown keys in the config file
       until Configurations.jl supports reporting full path of unknown keys.
 """
 function collect_unmatched_keys(this::UntypedConfigDict, ref::UntypedConfigDict=DEFAULT_UNTYPED_CONFIG_DICT)
@@ -209,7 +213,6 @@ function (tracker::ConfigChangeTracker)(old_val, new_val, path::Tuple{Vararg{Sym
             tracker.diagnostic_setting_changed = true
         end
     end
-    return new_val
 end
 
 function changed_settings_message(changed_settings::Vector{ConfigChange})

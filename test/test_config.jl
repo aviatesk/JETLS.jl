@@ -12,7 +12,7 @@ using JETLS
         @test_throws FieldError JETLS.get_default_config(:full_analysis, :nonexistent)
     end
 
-    @testset "`merge_setting`" begin
+    @testset "`merge_settings`" begin
         base_config = JETLS.JETLSConfig(;
             full_analysis=JETLS.FullAnalysisConfig(; debounce=1.0),
             testrunner=JETLS.TestRunnerConfig("base_runner"),
@@ -20,13 +20,13 @@ using JETLS
         overlay_config = JETLS.JETLSConfig(;
             full_analysis=JETLS.FullAnalysisConfig(; debounce=2.0),
         )
-        merged = JETLS.merge_setting(base_config, overlay_config)
+        merged = JETLS.merge_settings(base_config, overlay_config)
 
         @test JETLS.getobjpath(merged, :full_analysis, :debounce) == 2.0
         @test JETLS.getobjpath(merged, :testrunner, :executable) == "base_runner"
     end
 
-    @testset "`on_difference`" begin
+    @testset "`track_setting_changes`" begin
         let config1 = JETLS.JETLSConfig(;
                 full_analysis=JETLS.FullAnalysisConfig(; debounce=1.0),
                 testrunner=JETLS.TestRunnerConfig("runner1"),
@@ -36,9 +36,8 @@ using JETLS
                 testrunner=JETLS.TestRunnerConfig("runner2")
             )
             paths_called = []
-            JETLS.on_difference(config1, config2) do _, new_val, path
+            JETLS.track_setting_changes(config1, config2) do _, _, path
                 push!(paths_called, path)
-                new_val
             end
             @test Set(paths_called) == Set([
                 (:full_analysis, :debounce),

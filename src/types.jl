@@ -261,8 +261,8 @@ Finally, add the new config section to `JETLSConfig` struct below.
 """
 abstract type ConfigSection end
 
-_unwrap_maybe(::Type{Maybe{S}}) where {S} = S
-_unwrap_maybe(::Type{T}) where {T} = T
+default_config(::Type{T}) where T<:ConfigSection =
+    error(lazy"Missing `default_config` implementation for $T")
 
 @option struct FullAnalysisConfig <: ConfigSection
     debounce::Maybe{Float64}
@@ -394,10 +394,10 @@ struct ConfigManagerData
         #    - Takes precedence since clients don't properly support
         #      hierarchical configuration via scopeUri
         settings = DEFAULT_CONFIG
-        settings = merge_setting(settings, lsp_config)
-        settings = merge_setting(settings, file_config)
+        settings = merge_settings(settings, lsp_config)
+        settings = merge_settings(settings, file_config)
         # Create setting structs without `nothing` values for use by `get_config`
-        filled_settings = merge_setting(DEFAULT_CONFIG, settings)
+        filled_settings = merge_settings(DEFAULT_CONFIG, settings)
         return new(file_config, lsp_config, file_config_path,
                    settings, filled_settings, initialized)
     end
