@@ -253,9 +253,11 @@ which are important for our configuration notification system to work.
 Note that `TypeX` should not be defined to include the possibility of being `nothing` like `Union{Nothing,TypeX}`.
 In such cases, a further inner configuration level should be used.
 
-Then, overload the following methods properly:
-- `default_config(::Type{NewConfig}) -> NewConfig`
-  Returns the default configuration values.
+Then, overload `default_config(::Type{NewConfig}) -> NewConfig`, which returns the default configuration values.
+
+For `ConfigSection` subtypes that appear in `Vector` fields, you must also implement
+`merge_key(::Type{NewConfig}) -> Symbol`, which returns a field name to use as key when
+merging vectors. Elements with matching keys are merged together; others are preserved or added.
 
 Finally, add the new config section to `JETLSConfig` struct below.
 """
@@ -263,6 +265,8 @@ abstract type ConfigSection end
 
 default_config(::Type{T}) where T<:ConfigSection =
     error(lazy"Missing `default_config` implementation for $T")
+
+function merge_key end
 
 @option struct FullAnalysisConfig <: ConfigSection
     debounce::Maybe{Float64}
@@ -333,6 +337,7 @@ struct DiagnosticPattern <: ConfigSection
     match_type::String
     severity::Int
     path::Maybe{Glob.FilenameMatch{String}}
+    __pattern_value__::String # used for updated setting tracking
 end
 @define_eq_overloads DiagnosticPattern
 
@@ -340,6 +345,8 @@ end
 # `Configuration.to_dict(::DiagnosticConfig, config::AbstractDict{String})`
 Base.convert(::Type{DiagnosticPattern}, x::AbstractDict{String}) =
     parse_diagnostic_pattern(x)
+
+merge_key(::Type{DiagnosticPattern}) = :__pattern_value__
 
 # N.B. `@option` automatically adds `Base.:(==)` overloads for annotated types,
 # whose behavior is similar to those added by`@define_eq_overloads`

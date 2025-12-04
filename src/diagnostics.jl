@@ -123,7 +123,7 @@ function parse_diagnostic_pattern(x::AbstractDict{String})
         nothing
     end
 
-    return DiagnosticPattern(pattern, match_by, match_type, severity, path_glob)
+    return DiagnosticPattern(pattern, match_by, match_type, severity, path_glob, pattern_value)
 end
 
 # config application

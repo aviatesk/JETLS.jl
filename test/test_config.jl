@@ -24,6 +24,45 @@ using JETLS
 
         @test JETLS.getobjpath(merged, :full_analysis, :debounce) == 2.0
         @test JETLS.getobjpath(merged, :testrunner, :executable) == "base_runner"
+
+        @testset "`merge_settings` for `Vector{<:ConfigSection}`" begin
+            pattern1 = JETLS.DiagnosticPattern(r"error1", "code", "exact", 1, nothing, "error1")
+            pattern2 = JETLS.DiagnosticPattern(r"error2", "code", "exact", 2, nothing, "error2")
+            pattern3 = JETLS.DiagnosticPattern(r"error3", "code", "exact", 3, nothing, "error3")
+            pattern1_updated = JETLS.DiagnosticPattern(r"error1", "message", "regex", 4, nothing, "error1")
+
+            let base = JETLS.JETLSConfig(;
+                    diagnostic=JETLS.DiagnosticConfig(; patterns=[pattern1, pattern2]))
+                overlay = JETLS.JETLSConfig(;
+                    diagnostic=JETLS.DiagnosticConfig(; patterns=[pattern1_updated, pattern3]))
+                merged = JETLS.merge_settings(base, overlay)
+                patterns = JETLS.getobjpath(merged, :diagnostic, :patterns)
+                @test length(patterns) == 3
+                patterns_by_key = Dict(p.__pattern_value__ => p for p in patterns)
+                @test patterns_by_key["error1"].match_by == "message"
+                @test patterns_by_key["error1"].severity == 4
+                @test haskey(patterns_by_key, "error2")
+                @test haskey(patterns_by_key, "error3")
+            end
+
+            let base = JETLS.JETLSConfig(; diagnostic=JETLS.DiagnosticConfig(; patterns=nothing))
+                overlay = JETLS.JETLSConfig(;
+                    diagnostic=JETLS.DiagnosticConfig(; patterns=[pattern1]))
+                merged = JETLS.merge_settings(base, overlay)
+                patterns = JETLS.getobjpath(merged, :diagnostic, :patterns)
+                @test length(patterns) == 1
+                @test patterns[1] == pattern1
+            end
+
+            let base = JETLS.JETLSConfig(;
+                    diagnostic=JETLS.DiagnosticConfig(; patterns=[pattern1]))
+                overlay = JETLS.JETLSConfig(; diagnostic=JETLS.DiagnosticConfig(; patterns=nothing))
+                merged = JETLS.merge_settings(base, overlay)
+                patterns = JETLS.getobjpath(merged, :diagnostic, :patterns)
+                @test length(patterns) == 1
+                @test patterns[1] == pattern1
+            end
+        end
     end
 
     @testset "`track_setting_changes`" begin
@@ -43,6 +82,27 @@ using JETLS
                 (:full_analysis, :debounce),
                 (:testrunner, :executable),
             ])
+        end
+
+        let pattern1 = JETLS.DiagnosticPattern(r"error1", "code", "exact", 1, nothing, "error1")
+            pattern1_updated = JETLS.DiagnosticPattern(r"error1", "message", "regex", 4, nothing, "error1")
+            pattern2 = JETLS.DiagnosticPattern(r"error2", "code", "exact", 2, nothing, "error2")
+            config1 = JETLS.JETLSConfig(;
+                diagnostic=JETLS.DiagnosticConfig(; patterns=[pattern1]))
+            config2 = JETLS.JETLSConfig(;
+                diagnostic=JETLS.DiagnosticConfig(; patterns=[pattern1_updated, pattern2]))
+            changes = Tuple[]
+            JETLS.track_setting_changes(config1, config2) do old_val, new_val, path
+                push!(changes, (old_val, new_val, path))
+            end
+            @test any(changes) do (old_val, new_val, path)
+                path == (:diagnostic, :patterns, :match_by) &&
+                old_val == "code" && new_val == "message"
+            end
+            @test any(changes) do (old_val, new_val, path)
+                path == (:diagnostic, :patterns, :severity) &&
+                old_val == 1 && new_val == 4
+            end
         end
     end
 

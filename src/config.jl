@@ -17,6 +17,53 @@ is_config_file(filepath::AbstractString) =
     :(T($(entries...)))
 end
 
+function merge_and_track(
+        on_difference,
+        old_config::Vector{T},
+        new_config::Vector{T},
+        path::Tuple{Vararg{Symbol}}
+    ) where {T<:ConfigSection}
+    key = merge_key(T)
+    K = fieldtype(T, key)
+    old_by_key = Dict{K,T}(getfield(item, key) => item for item in old_config)
+    new_by_key = Dict{K,T}(getfield(item, key) => item for item in new_config)
+    result = T[]
+    for (k, old_item) in old_by_key
+        if haskey(new_by_key, k)
+            push!(result, merge_and_track(on_difference, old_item, new_by_key[k], path))
+        else
+            push!(result, merge_and_track(on_difference, old_item, nothing, path))
+        end
+    end
+    for (k, new_item) in new_by_key
+        if !haskey(old_by_key, k)
+            push!(result, merge_and_track(on_difference, nothing, new_item, path))
+        end
+    end
+    return result
+end
+
+function merge_and_track(
+        on_difference,
+        old_config::Vector{T},
+        ::Nothing,
+        path::Tuple{Vararg{Symbol}}
+    ) where {T<:ConfigSection}
+    for old_item in old_config
+        merge_and_track(on_difference, old_item, nothing, path)
+    end
+    return old_config
+end
+
+function merge_and_track(
+        on_difference,
+        ::Nothing,
+        new_config::Vector{T},
+        path::Tuple{Vararg{Symbol}}
+    ) where {T<:ConfigSection}
+    return T[merge_and_track(on_difference, nothing, new_item, path) for new_item in new_config]
+end
+
 @generated function merge_and_track(
         on_difference,
         old_val::T,

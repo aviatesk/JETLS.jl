@@ -16,6 +16,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 - Diff: [`aae52f5...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/aae52f5...HEAD)
 
+### Changed
+
+- `diagnostic.patterns` from LSP config and file config are now merged instead
+  of file config completely overriding LSP config. For patterns with the same
+  `pattern` value, file config wins. Patterns unique to either source are preserved.
+
 ### Fixed
 
 - `.JETLSConfig.toml` is now only recognized at the workspace root.
