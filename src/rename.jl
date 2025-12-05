@@ -24,17 +24,20 @@ end
 #     method = RENAME_REGISTRATION_METHOD))
 # register(currently_running, rename_registration())
 
-function handle_PrepareRenameRequest(server::Server, msg::PrepareRenameRequest)
+function handle_PrepareRenameRequest(
+        server::Server, msg::PrepareRenameRequest, cancel_flag::CancelFlag)
     uri = msg.params.textDocument.uri
     pos = msg.params.position
 
-    fi = @something get_file_info(server.state, uri) begin
+    result = get_file_info(server.state, uri, cancel_flag)
+    if result isa ResponseError
         return send(server,
             PrepareRenameResponse(;
                 id = msg.id,
                 result = nothing,
-                error = file_cache_error(uri)))
+                error = result))
     end
+    fi = result
 
     (; mod) = get_context_info(server.state, uri, pos)
     return send(server,
@@ -61,18 +64,21 @@ function local_binding_rename_preparation(fi::FileInfo, pos::Position, mod::Modu
     end
 end
 
-function handle_RenameRequest(server::Server, msg::RenameRequest)
+function handle_RenameRequest(
+        server::Server, msg::RenameRequest, cancel_flag::CancelFlag)
     uri = msg.params.textDocument.uri
     pos = msg.params.position
     newName = msg.params.newName
 
-    fi = @something get_file_info(server.state, uri) begin
+    result = get_file_info(server.state, uri, cancel_flag)
+    if result isa ResponseError
         return send(server,
             RenameResponse(;
                 id = msg.id,
                 result = nothing,
-                error = file_cache_error(uri)))
+                error = result))
     end
+    fi = result
 
     (; mod) = get_context_info(server.state, uri, pos)
     (; result, error) = @something(

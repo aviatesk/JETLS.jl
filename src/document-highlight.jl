@@ -23,17 +23,20 @@ end
 
 # TODO Add some syntactic highlight feature?
 
-function handle_DocumentHighlightRequest(server::Server, msg::DocumentHighlightRequest)
+function handle_DocumentHighlightRequest(
+        server::Server, msg::DocumentHighlightRequest, cancel_flag::CancelFlag)
     uri = msg.params.textDocument.uri
     pos = msg.params.position
 
-    fi = @something get_file_info(server.state, uri) begin
+    result = get_file_info(server.state, uri, cancel_flag)
+    if result isa ResponseError
         return send(server,
             DocumentHighlightResponse(;
                 id = msg.id,
                 result = nothing,
-                error = file_cache_error(uri)))
+                error = result))
     end
+    fi = result
 
     highlights = DocumentHighlight[]
     document_highlights!(highlights, fi, pos, (server.state, uri))

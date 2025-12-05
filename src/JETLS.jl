@@ -400,37 +400,37 @@ function (dispatcher::RequestMessageDispatcher)(server::Server, @nospecialize ms
                 result = nothing,
                 error = request_cancelled_error()))
     elseif msg isa CompletionRequest
-        handle_CompletionRequest(server, msg)
+        handle_CompletionRequest(server, msg, cancel_flag)
     elseif msg isa CompletionResolveRequest
         handle_CompletionResolveRequest(server, msg)
     elseif msg isa SignatureHelpRequest
-        handle_SignatureHelpRequest(server, msg)
+        handle_SignatureHelpRequest(server, msg, cancel_flag)
     elseif msg isa DefinitionRequest
-        handle_DefinitionRequest(server, msg)
+        handle_DefinitionRequest(server, msg, cancel_flag)
     elseif msg isa HoverRequest
-        handle_HoverRequest(server, msg)
+        handle_HoverRequest(server, msg, cancel_flag)
     elseif msg isa DocumentHighlightRequest
-        handle_DocumentHighlightRequest(server, msg)
+        handle_DocumentHighlightRequest(server, msg, cancel_flag)
     elseif msg isa DocumentDiagnosticRequest
-        handle_DocumentDiagnosticRequest(server, msg)
+        handle_DocumentDiagnosticRequest(server, msg, cancel_flag)
     elseif msg isa WorkspaceDiagnosticRequest
         @assert false "workspace/diagnostic should not be enabled"
     elseif msg isa CodeLensRequest
-        handle_CodeLensRequest(server, msg)
+        handle_CodeLensRequest(server, msg, cancel_flag)
     elseif msg isa CodeActionRequest
-        handle_CodeActionRequest(server, msg)
+        handle_CodeActionRequest(server, msg, cancel_flag)
     elseif msg isa ExecuteCommandRequest
         handle_ExecuteCommandRequest(server, msg)
     elseif msg isa InlayHintRequest
-        handle_InlayHintRequest(server, msg)
+        handle_InlayHintRequest(server, msg, cancel_flag)
     elseif msg isa DocumentFormattingRequest
         handle_DocumentFormattingRequest(server, msg)
     elseif msg isa DocumentRangeFormattingRequest
         handle_DocumentRangeFormattingRequest(server, msg)
     elseif msg isa RenameRequest
-        handle_RenameRequest(server, msg)
+        handle_RenameRequest(server, msg, cancel_flag)
     elseif msg isa PrepareRenameRequest
-        handle_PrepareRenameRequest(server, msg)
+        handle_PrepareRenameRequest(server, msg, cancel_flag)
     elseif JETLS_DEV_MODE
         if isdefined(msg, :method)
             _id = getfield(msg, :method)

@@ -21,15 +21,17 @@ end
 #     method = CODE_LENS_REGISTRATION_METHOD))
 # register(currently_running, code_lens_registration())
 
-function handle_CodeLensRequest(server::Server, msg::CodeLensRequest)
+function handle_CodeLensRequest(server::Server, msg::CodeLensRequest, cancel_flag::CancelFlag)
     uri = msg.params.textDocument.uri
-    fi = @something get_file_info(server.state, uri) begin
+    result = get_file_info(server.state, uri, cancel_flag)
+    if result isa ResponseError
         return send(server,
             CodeLensResponse(;
                 id = msg.id,
                 result = nothing,
-                error = file_cache_error(uri)))
+                error = result))
     end
+    fi = result
     code_lenses = CodeLens[]
     testsetinfos = get_testsetinfos(server.state, uri)
     isnothing(testsetinfos) ||

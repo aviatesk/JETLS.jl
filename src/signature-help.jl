@@ -467,16 +467,19 @@ end
 `textDocument/signatureHelp` is requested when one of the negotiated trigger characters is typed.
 Some clients, e.g. Eglot (emacs), requests it more frequently.
 """
-function handle_SignatureHelpRequest(server::Server, msg::SignatureHelpRequest)
+function handle_SignatureHelpRequest(
+        server::Server, msg::SignatureHelpRequest, cancel_flag::CancelFlag)
     state = server.state
     uri = msg.params.textDocument.uri
-    fi = @something get_file_info(state, uri) begin
+    result = get_file_info(state, uri, cancel_flag)
+    if result isa ResponseError
         return send(server,
             SignatureHelpResponse(;
                 id = msg.id,
                 result = nothing,
-                error = file_cache_error(uri)))
+                error = result))
     end
+    fi = result
     (; mod, analyzer, postprocessor) = get_context_info(state, uri, msg.params.position)
     b = xy_to_offset(fi, msg.params.position)
     signatures = cursor_siginfos(mod, fi, b, analyzer; postprocessor)

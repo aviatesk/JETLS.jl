@@ -844,7 +844,6 @@ function try_clear_testrunner_result!(server::Server, uri::URI, idx::Int, tsn::S
         return nothing
     end
 
-    fi = @something get_file_info(server.state, uri) return nothing
     testsetinfos = @something get_testsetinfos(server.state, uri) return nothing
     if !is_testsetinfo_valid(fi, testsetinfos, idx)
         # file is has been modified, just do nothing and return
