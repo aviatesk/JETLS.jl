@@ -420,8 +420,8 @@ end
         macro foo(x, y) \$(x) end
         macro bar(x, y) \$(x) end
         """
-        JETLS.cache_file_info!(server.state, uri, #=version=#0, text)
-        diagnostics = JETLS.toplevel_lowering_diagnostics(server, uri)
+        fi = JETLS.cache_file_info!(server.state, uri, #=version=#0, text)
+        diagnostics = JETLS.toplevel_lowering_diagnostics(server, uri, fi)
         @test length(diagnostics) == 2
         @test count(diagnostics) do diagnostic
             diagnostic.source == JETLS.DIAGNOSTIC_SOURCE &&

@@ -139,14 +139,15 @@ function to_completion(
         sortText = get_sort_text(sort_offset))
 end
 
-function local_completions!(items::Dict{String, CompletionItem},
-                            s::ServerState, uri::URI, params::CompletionParams)
+function local_completions!(
+        items::Dict{String,CompletionItem},
+        s::ServerState, uri::URI, fi::FileInfo, params::CompletionParams
+    )
     let context = params.context
         !isnothing(context) &&
             # Don't trigger completion just by typing a numeric character:
             context.triggerCharacter in NUMERIC_CHARACTERS && return nothing
     end
-    fi = @something get_file_info(s, uri) return nothing
     # NOTE don't bail out even if `length(fi.parsed_stream.diagnostics) ≠ 0`
     # so that we can get some completions even for incomplete code
     st0 = build_syntax_tree(fi)
@@ -168,14 +169,16 @@ end
 # global completions
 # ==================
 
-function global_completions!(items::Dict{String, CompletionItem}, state::ServerState, uri::URI, params::CompletionParams)
+function global_completions!(
+        items::Dict{String,CompletionItem},
+        state::ServerState, uri::URI, fi::FileInfo, params::CompletionParams
+    )
     let context = params.context
         !isnothing(context) &&
             # Don't trigger completion just by typing a numeric character:
             context.triggerCharacter in NUMERIC_CHARACTERS && return nothing
     end
     pos = params.position
-    fi = @something get_file_info(state, uri) return nothing
     (; mod, analyzer, postprocessor) = get_context_info(state, uri, pos)
     completion_module = mod
 
@@ -346,9 +349,10 @@ end
 
 # Add LaTeX and emoji completions to the items dictionary and return boolean indicating
 # whether any completions were added.
-function add_emoji_latex_completions!(items::Dict{String,CompletionItem}, state::ServerState, uri::URI, params::CompletionParams)
-    fi = @something get_file_info(state, uri) return nothing
-
+function add_emoji_latex_completions!(
+        items::Dict{String,CompletionItem},
+        state::ServerState, fi::FileInfo, params::CompletionParams
+    )
     pos = params.position
     backslash_offset, emojionly = @something get_backslash_offset(fi, pos) return nothing
     backslash_pos = offset_to_xy(fi, backslash_offset)
@@ -411,19 +415,30 @@ end
 # request handler
 # ===============
 
-function get_completion_items(state::ServerState, uri::URI, params::CompletionParams)
-    items = Dict{String, CompletionItem}()
+function get_completion_items(
+        state::ServerState, uri::URI, fi::FileInfo, params::CompletionParams)
+    items = Dict{String,CompletionItem}()
     # order matters; see local_completions!
     return collect(values(@something(
-        add_emoji_latex_completions!(items, state, uri, params),
-        global_completions!(items, state, uri, params),
-        local_completions!(items, state, uri, params),
+        add_emoji_latex_completions!(items, state, fi, params),
+        global_completions!(items, state, uri, fi, params),
+        local_completions!(items, state, uri, fi, params),
         items)))
 end
 
-function handle_CompletionRequest(server::Server, msg::CompletionRequest)
+function handle_CompletionRequest(
+        server::Server, msg::CompletionRequest, cancel_flag::CancelFlag)
     uri = msg.params.textDocument.uri
-    items = get_completion_items(server.state, uri, msg.params)
+    result = get_file_info(server.state, uri, cancel_flag)
+    if result isa ResponseError
+        return send(server,
+            CompletionResponse(;
+                id = msg.id,
+                result = nothing,
+                error = result))
+    end
+    fi = result
+    items = get_completion_items(server.state, uri, fi, msg.params)
     return send(server,
         CompletionResponse(;
             id = msg.id,

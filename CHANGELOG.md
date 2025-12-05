@@ -24,6 +24,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- Request handlers now wait for file cache to be populated instead of immediately
+  returning errors. This fixes "file cache not found" errors that occurred when
+  requests arrived before the cache was ready, particularly after opening files.
+  (aviatesk/JETLS.jl#273, aviatesk/JETLS.jl#274, aviatesk/JETLS.jl#327)
 - Fixed glob pattern matching for `diagnostic.patterns[].path`: `**` now
   correctly matches zero or more directory levels (e.g., `test/**/*.jl` matches
   `test/testfile.jl`), and wildcards no longer match hidden files/directories.

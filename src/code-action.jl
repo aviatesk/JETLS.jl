@@ -23,15 +23,18 @@ end
 #     method = CODE_ACTION_REGISTRATION_METHOD))
 # register(currently_running, code_action_registration())
 
-function handle_CodeActionRequest(server::Server, msg::CodeActionRequest)
+function handle_CodeActionRequest(
+        server::Server, msg::CodeActionRequest, cancel_flag::CancelFlag)
     uri = msg.params.textDocument.uri
-    fi = @something get_file_info(server.state, uri) begin
+    result = get_file_info(server.state, uri, cancel_flag)
+    if result isa ResponseError
         return send(server,
             CodeActionResponse(;
                 id = msg.id,
                 result = nothing,
-                error = file_cache_error(uri)))
+                error = result))
     end
+    fi = result
     code_actions = Union{CodeAction,Command}[]
     testsetinfos = get_testsetinfos(server.state, uri)
     isnothing(testsetinfos) ||
