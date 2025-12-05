@@ -347,6 +347,11 @@ end
                 pattern = only(config.patterns)
                 @test pattern.path !== nothing
                 @test pattern.path isa Glob.FilenameMatch
+                @test occursin(pattern.path, "test/dir/testfile.jl")
+                # `**` should also match empty path segments (requires the `d = PATHNAME` flag)
+                @test occursin(pattern.path, "test/testfile.jl")
+                # `*` and `**` should not match leading dots in path segments (requires the `p = PERIOD` flag)
+                @test !occursin(pattern.path, "test/.hidden/testfile.jl")
             end
         end
 

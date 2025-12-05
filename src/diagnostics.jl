@@ -114,7 +114,7 @@ function parse_diagnostic_pattern(x::AbstractDict{String})
                 lazy"Invalid `path` value for pattern \"$pattern_value\". Must be a string, got $(typeof(path_value))"))
         end
         try
-            Glob.FilenameMatch(path_value)
+            Glob.FilenameMatch(path_value, "dp")
         catch e
             throw(DiagnosticConfigError(
                 lazy"Invalid glob pattern \"$path_value\" for path: $(sprint(showerror, e))"))
