@@ -167,7 +167,7 @@ get_file_info(s::ServerState, t::TextDocumentIdentifier) = get_file_info(s, t.ur
 """
     get_file_info(
         s::ServerState, uri::URI, cancel_flag::CancelFlag;
-        timeout = 120.0, cancelled_error_data = nothing, cache_error_data = nothing
+        timeout = 30., cancelled_error_data = nothing, cache_error_data = nothing
     ) -> Union{FileInfo,ResponseError}
 
 Wait for cached `FileInfo` to become available, with cancellation and timeout support.
@@ -183,7 +183,7 @@ Returns a `ResponseError` in two cases:
 """
 function get_file_info(
         s::ServerState, uri::URI, cancel_flag::CancelFlag;
-        timeout::Float64 = 120.0, cancelled_error_data = nothing, cache_error_data = nothing
+        timeout::Float64 = 30., cancelled_error_data = nothing, cache_error_data = nothing
     )
     start = time()
     while true
@@ -192,7 +192,6 @@ function get_file_info(
         cache = get(load(s.file_cache), uri, nothing)
         cache !== nothing && return cache
         if time() - start > timeout
-            JETLS_DEV_MODE && @warn "Timeout waiting for file cache" uri
             return file_cache_error(uri;
                 data = cache_error_data)
         end
