@@ -253,16 +253,20 @@ which are important for our configuration notification system to work.
 Note that `TypeX` should not be defined to include the possibility of being `nothing` like `Union{Nothing,TypeX}`.
 In such cases, a further inner configuration level should be used.
 
-Then, overload the following methods properly:
-- `default_config(::Type{NewConfig}) -> NewConfig`
-  Returns the default configuration values.
+Then, overload `default_config(::Type{NewConfig}) -> NewConfig`, which returns the default configuration values.
+
+For `ConfigSection` subtypes that appear in `Vector` fields, you must also implement
+`merge_key(::Type{NewConfig}) -> Symbol`, which returns a field name to use as key when
+merging vectors. Elements with matching keys are merged together; others are preserved or added.
 
 Finally, add the new config section to `JETLSConfig` struct below.
 """
 abstract type ConfigSection end
 
-_unwrap_maybe(::Type{Maybe{S}}) where {S} = S
-_unwrap_maybe(::Type{T}) where {T} = T
+default_config(::Type{T}) where T<:ConfigSection =
+    error(lazy"Missing `default_config` implementation for $T")
+
+function merge_key end
 
 @option struct FullAnalysisConfig <: ConfigSection
     debounce::Maybe{Float64}
@@ -333,6 +337,7 @@ struct DiagnosticPattern <: ConfigSection
     match_type::String
     severity::Int
     path::Maybe{Glob.FilenameMatch{String}}
+    __pattern_value__::String # used for updated setting tracking
 end
 @define_eq_overloads DiagnosticPattern
 
@@ -340,6 +345,8 @@ end
 # `Configuration.to_dict(::DiagnosticConfig, config::AbstractDict{String})`
 Base.convert(::Type{DiagnosticPattern}, x::AbstractDict{String}) =
     parse_diagnostic_pattern(x)
+
+merge_key(::Type{DiagnosticPattern}) = :__pattern_value__
 
 # N.B. `@option` automatically adds `Base.:(==)` overloads for annotated types,
 # whose behavior is similar to those added by`@define_eq_overloads`
@@ -394,10 +401,10 @@ struct ConfigManagerData
         #    - Takes precedence since clients don't properly support
         #      hierarchical configuration via scopeUri
         settings = DEFAULT_CONFIG
-        settings = merge_setting(settings, lsp_config)
-        settings = merge_setting(settings, file_config)
+        settings = merge_settings(settings, lsp_config)
+        settings = merge_settings(settings, file_config)
         # Create setting structs without `nothing` values for use by `get_config`
-        filled_settings = merge_setting(DEFAULT_CONFIG, settings)
+        filled_settings = merge_settings(DEFAULT_CONFIG, settings)
         return new(file_config, lsp_config, file_config_path,
                    settings, filled_settings, initialized)
     end
@@ -415,15 +422,26 @@ function ConfigManagerData(
     return ConfigManagerData(file_config, lsp_config, file_config_path, initialized)
 end
 
+# Internal, undocumented configuration for full-analysis module overrides.
+struct ModuleOverride <: ConfigSection
+    module_name::String
+    path::Glob.FilenameMatch{String}
+end
+@define_eq_overloads ModuleOverride
+Base.convert(::Type{ModuleOverride}, x::AbstractDict{String}) = parse_module_override(x)
+
 # Static initialization options from `InitializeParams.initializationOptions`.
 # These are set once during the initialize request and remain constant.
 @option struct InitOptions
     n_analysis_workers::Maybe{Int}
+    module_overrides::Maybe{Vector{ModuleOverride}}
 end
 function Base.show(io::IO, init_options::InitOptions)
     print(io, "InitOptions(;")
     n_analysis_workers = init_options.n_analysis_workers
     n_analysis_workers === nothing || print(io, " n_analysis_workers=", n_analysis_workers)
+    module_overrides = init_options.module_overrides
+    module_overrides === nothing || print(io, " module_overrides=", module_overrides)
     print(io, ")")
 end
 

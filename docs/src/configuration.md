@@ -162,7 +162,8 @@ path = "src/**/*.jl"       # string (optional): restrict to specific files
 
 - `pattern` (**Type**: string): The pattern to match. For code matching, use diagnostic
   codes like `"lowering/unused-argument"`. For message matching, use text
-  patterns like `"Macro name .* not found"`.
+  patterns like `"Macro name .* not found"`. This value is also used as the key
+  when [merging configurations](@ref config/merge) from different sources.
 - `match_by` (**Type**: string): What to match against
   - `"code"`: Match against [diagnostic code](@ref diagnostic-code) (e.g., `"lowering/unused-argument"`)
   - `"message"`: Match against diagnostic message text
@@ -430,7 +431,7 @@ section:
 }
 ```
 
-## Configuration priority
+## [Configuration priority](@id config/priority)
 
 When multiple configuration sources are present, they are merged in priority
 order (highest first):
@@ -442,3 +443,10 @@ order (highest first):
 File-based configuration (`.JETLSConfig.toml`) takes precedence as it provides
 a **client-agnostic** way to configure JETLS that works consistently across all
 editors.
+
+### [Configuration merging](@id config/merge)
+
+For array-type configuration fields (such as [`diagnostic.patterns`](@ref config/diagnostic-patterns)),
+entries from both LSP config and file config are merged rather than one
+completely overriding the other. Entries with same keys are merged with file
+config taking precedence, while entries unique to either source are preserved.

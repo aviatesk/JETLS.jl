@@ -61,17 +61,20 @@ LSP.LocationLink(loc::Location, originSelectionRange::Range) =
         targetSelectionRange = loc.range,
         originSelectionRange)
 
-function handle_DefinitionRequest(server::Server, msg::DefinitionRequest)
+function handle_DefinitionRequest(
+        server::Server, msg::DefinitionRequest, cancel_flag::CancelFlag)
     origin_position = msg.params.position
     uri = msg.params.textDocument.uri
 
-    fi = @something get_file_info(server.state, uri) begin
+    result = get_file_info(server.state, uri, cancel_flag)
+    if result isa ResponseError
         return send(server,
             DefinitionResponse(;
                 id = msg.id,
                 result = nothing,
-                error = file_cache_error(uri)))
+                error = result))
     end
+    fi = result
 
     st0 = build_syntax_tree(fi)
     offset = xy_to_offset(fi, origin_position)

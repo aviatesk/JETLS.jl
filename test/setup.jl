@@ -75,7 +75,7 @@ function withserver(f;
     - `raw_res`: The raw response(s) sent by the server (or `nothing` if `read=0`)
     - `json_res`: The JSON-parsed response(s) from the server (or `nothing` if `read=0`)
     """
-    function writereadmsg(@nospecialize(msg); read::Int=1)
+    function writereadmsg(@nospecialize(msg); read::Int=1, check::Bool=true)
         @assert read ≥ 0 "`read::Int` must not be negative"
         LSP.writelsp(in, msg)
         raw_msg = take_with_timeout!(received_queue)
@@ -92,7 +92,7 @@ function withserver(f;
                 push!(json_res, LSP.readlsp(out))
             end
         end
-        @test isempty(received_queue) && isempty(sent_queue)
+        check && @test isempty(received_queue) && isempty(sent_queue)
         return (; raw_msg, raw_res, json_res)
     end
 

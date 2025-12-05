@@ -22,17 +22,20 @@ end
 #     method = INLAY_HINT_REGISTRATION_METHOD))
 # register(currently_running, inlay_hint_registration(#=static=#true))
 
-function handle_InlayHintRequest(server::Server, msg::InlayHintRequest)
+function handle_InlayHintRequest(
+        server::Server, msg::InlayHintRequest, cancel_flag::CancelFlag)
     uri = msg.params.textDocument.uri
     range = msg.params.range
 
-    fi = @something get_file_info(server.state, uri) begin
+    result = get_file_info(server.state, uri, cancel_flag)
+    if result isa ResponseError
         return send(server,
             InlayHintResponse(;
                 id = msg.id,
                 result = nothing,
-                error = file_cache_error(uri)))
+                error = result))
     end
+    fi = result
 
     inlay_hints = InlayHint[]
     syntactic_inlay_hints!(inlay_hints, fi, range)

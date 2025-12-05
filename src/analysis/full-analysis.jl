@@ -1,3 +1,25 @@
+# Configuration
+# =============
+
+function parse_module_override(x::AbstractDict{String})
+    if !haskey(x, "module_name")
+        error(lazy"Missing required field `module_name` in module_override")
+    end
+    module_name = x["module_name"]
+    if !(module_name isa String)
+        error(lazy"Invalid `module_name` value. Must be a string, got $(typeof(module_name))")
+    end
+    if !haskey(x, "path")
+        error(lazy"Missing required field `path` in module_override for module \"$module_name\"")
+    end
+    path_value = x["path"]
+    if !(path_value isa String)
+        error(lazy"Invalid `path` value for module \"$module_name\". Must be a string, got $(typeof(path_value))")
+    end
+    path_glob = Glob.FilenameMatch(path_value, "dp")
+    return ModuleOverride(module_name, path_glob)
+end
+
 # Progress support
 # ================
 
@@ -73,7 +95,7 @@ end
 
 function start_analysis_workers!(server::Server)
     n_workers = get_init_option(server.state.init_options, :n_analysis_workers)
-    @info "Starting $n_workers analysis workers"
+    JETLS_DEV_MODE && @info "Starting $n_workers analysis workers"
     for _ = 1:n_workers
         Threads.@spawn :default try
             analysis_worker(server)
@@ -284,10 +306,10 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
         @goto next_request
     end
 
-    initial_analysis = request.prev_analysis_result === nothing
+    prev_result = request.prev_analysis_result
     cancellable_token = request.cancellable_token
     if cancellable_token !== nothing
-        begin_full_analysis_progress(server, cancellable_token, request.entry, initial_analysis)
+        begin_full_analysis_progress(server, cancellable_token, request.entry, prev_result === nothing)
     end
 
     local failed::Bool = false
@@ -303,6 +325,13 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
         if cancellable_token !== nothing
             end_full_analysis_progress(server, cancellable_token)
         end
+        if prev_result !== nothing
+            cleanup_prev_methods(prev_result)
+        end
+        # HACK This is a terrible hack to reduce Pkg.jl's memory footprint:
+        # This behavior should really be implemented as an environment variable that Pkg.jl understands,
+        # or perhaps this cache itself should be optimized.
+        empty!(Pkg.Registry.REGISTRY_CACHE)
         failed && @goto next_request
     end
     tm = round(time() - s, digits=2)
@@ -316,7 +345,7 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
     # This ensures that clients using pull diagnostics (textDocument/diagnostic) will
     # re-request diagnostics now that module context is available, allowing
     # lowering/macro-expansion-error diagnostics to be properly reported.
-    if initial_analysis && supports(server, :workspace, :diagnostics, :refreshSupport)
+    if prev_result === nothing && supports(server, :workspace, :diagnostics, :refreshSupport)
         request_diagnostic_refresh!(server)
     end
 
@@ -365,6 +394,33 @@ function has_any_parse_errors(server::Server, request::AnalysisRequest)
     return any(analyzed_file_uris(prev_analysis_result)) do uri::URI
         saved_fi = @something get_saved_file_info(server.state, uri) return false
         return !isempty(saved_fi.parsed_stream.diagnostics)
+    end
+end
+
+# Delete methods defined in previous analysis modules.
+# This doesn't free memory (Method objects remain in Core.methodtable), but removes them
+# from reflection APIs like `methods()`, preventing stale methods from appearing in
+# signature help or completions.
+function cleanup_prev_methods(prev_result::AnalysisResult)
+    prev_modules = IdSet{Module}()
+    for analyzed_file_info in values(prev_result.analyzed_file_infos)
+        for module_range_info in analyzed_file_info.module_range_infos
+            push!(prev_modules, last(module_range_info))
+        end
+    end
+    methods_to_delete = Method[]
+    Base.visit(Core.methodtable) do m::Method
+        if parentmodule(m) in prev_modules
+            push!(methods_to_delete, m)
+        end
+    end
+    for m in methods_to_delete
+        try
+            Base.delete_method(m)
+        catch e
+            JETLS_DEV_MODE && @warn "Failed to delete method $m"
+            JETLS_DEV_MODE && Base.showerror(stderr, e, catch_backtrace())
+        end
     end
 end
 
@@ -713,6 +769,11 @@ function ensure_instantiated!(server::Server, env_path::String)
                 The package will be analyzed as a script, which may result in incomplete diagnostics.
                 See the language server log for details.
                 It is recommended to fix your package environment setup and restart the language server.""")
+        finally
+            # HACK This is a terrible hack to reduce Pkg.jl's memory footprint:
+            # This behavior should really be implemented as an environment variable that Pkg.jl understands,
+            # or perhaps this cache itself should be optimized.
+            empty!(Pkg.Registry.REGISTRY_CACHE)
         end
     else
         is_instantiated = try
@@ -721,6 +782,11 @@ function ensure_instantiated!(server::Server, env_path::String)
             @error "Failed to create cache for package environment" env_path
             Base.showerror(stderr, e, catch_backtrace())
             false
+        finally
+            # HACK This is a terrible hack to reduce Pkg.jl's memory footprint:
+            # This behavior should really be implemented as an environment variable that Pkg.jl understands,
+            # or perhaps this cache itself should be optimized.
+            empty!(Pkg.Registry.REGISTRY_CACHE)
         end
         if !is_instantiated
             show_warning_message(server, """

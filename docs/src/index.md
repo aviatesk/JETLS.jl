@@ -112,9 +112,9 @@ Minimal [Sublime](https://www.sublimetext.com/) setup using the
     "clients": {
         "jetls": {
             "enabled": true,
-            "command": ["jetls", "--threads=auto", "--", "--socket=8080"],
+            "command": ["jetls", "--threads=auto", "--", "--socket=${port}"],
             "selector": "source.julia",
-            "tcp_port": 8080
+            "tcp_port": 0
         }
     }
 }

@@ -171,9 +171,8 @@ end
     end
 end
 
-@testset "file cache error handling" begin
-    # Test requesting diagnostics for a file that hasn't been opened
-    # (i.e., no file cache exists)
+@testset "File cache error handling" begin
+    # Test requesting diagnostics for a file whose cache has not been populated yet
     withscript("# some code") do script_path
         uri = filepath2uri(script_path)
         withserver() do (; writereadmsg, id_counter)
@@ -192,6 +191,45 @@ end
                 @test raw_res.error.data isa DiagnosticServerCancellationData
                 @test raw_res.error.data.retriggerRequest === true
             end
+        end
+    end
+end
+
+@testset "Delayed file cache handling" begin
+    # Test requesting diagnostics for a file whose cache has not been populated yet
+    withscript("# some code") do script_path
+        uri = filepath2uri(script_path)
+        withserver() do (; writereadmsg, id_counter)
+            # Don't send DidOpenTextDocument notification, so no file cache is created
+            event = Base.Event()
+            local success::Bool = false
+            let id = id_counter[] += 1
+                Threads.@spawn try
+                    (; raw_res) = writereadmsg(
+                        DocumentDiagnosticRequest(;
+                            id,
+                            params = DocumentDiagnosticParams(;
+                                textDocument = TextDocumentIdentifier(; uri)
+                            ));
+                        read = 2)
+                    @test any(raw_res) do @nospecialize res
+                        res isa DocumentDiagnosticResponse &&
+                        res.result isa RelatedFullDocumentDiagnosticReport
+                    end
+                    @test any(raw_res) do @nospecialize res
+                        res isa PublishDiagnosticsNotification
+                    end
+                    success = true
+                catch e
+                    Base.showerror(stderr, e, catch_backtrace())
+                finally
+                    notify(event)
+                end
+            end
+            sleep(5.0)
+            writereadmsg(make_DidOpenTextDocumentNotification(uri, read(script_path, String)); read=0, check=false)
+            wait(event)
+            @test success
         end
     end
 end
@@ -347,6 +385,11 @@ end
                 pattern = only(config.patterns)
                 @test pattern.path !== nothing
                 @test pattern.path isa Glob.FilenameMatch
+                @test occursin(pattern.path, "test/dir/testfile.jl")
+                # `**` should also match empty path segments (requires the `d = PATHNAME` flag)
+                @test occursin(pattern.path, "test/testfile.jl")
+                # `*` and `**` should not match leading dots in path segments (requires the `p = PERIOD` flag)
+                @test !occursin(pattern.path, "test/.hidden/testfile.jl")
             end
         end
 

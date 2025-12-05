@@ -1,15 +1,45 @@
+function find_loaded_module(module_name::String)
+    for (pkgid, mod) in Base.loaded_modules
+        if pkgid.name == module_name
+            return mod
+        end
+    end
+    return nothing
+end
+
 function find_analysis_env_path(state::ServerState, uri::URI)
     if uri.scheme == "file"
         filepath = uri2filepath(uri)::String
         # HACK: we should support Base files properly
-        if issubdir(filepath, normpath(Sys.BUILD_ROOT_PATH, "base"))
+        if (issubdir(filepath, normpath(Sys.BUILD_ROOT_PATH, "base")) ||
+            issubdir(filepath, normpath(Sys.BINDIR, "..", "share", "julia", "base")))
             return OutOfScope(Base)
-        elseif issubdir(filepath, normpath(Sys.BUILD_ROOT_PATH, "Compiler", "src"))
+        elseif (issubdir(filepath, normpath(Sys.BUILD_ROOT_PATH, "Compiler", "src")) ||
+                issubdir(filepath, normpath(Sys.BINDIR, "..", "share", "julia", "Compiler", "src")))
             return OutOfScope(CC)
         end
         if isdefined(state, :root_path)
             if !issubdir(dirname(filepath), state.root_path)
                 return OutOfScope()
+            end
+        end
+        module_overrides = state.init_options.module_overrides
+        if module_overrides !== nothing
+            if isdefined(state, :root_path) && startswith(filepath, state.root_path)
+                path_for_glob = relpath(filepath, state.root_path)
+            else
+                path_for_glob = filepath
+            end
+            for override in module_overrides
+                if occursin(override.path, path_for_glob)
+                    mod = find_loaded_module(override.module_name)
+                    if mod !== nothing
+                        JETLS_DEV_MODE && @info "Analysis module overridden" module_name=override.module_name path=filepath
+                        return OutOfScope(mod)
+                    else
+                        @warn "Analysis module override specified but module not loaded" module_name=override.module_name path=filepath
+                    end
+                end
             end
         end
         return find_env_path(filepath)

@@ -5,3 +5,9 @@ match_by = "message"
 match_type = "regex"
 severity = "off"
 path = "LSP/**/*.jl"
+
+[[diagnostic.patterns]]
+pattern = "^Lowering TODO:"
+match_by = "message"
+match_type = "regex"
+severity = "info"

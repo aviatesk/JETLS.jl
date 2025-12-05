@@ -14,7 +14,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`f9b2c2f...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/f9b2c2f...HEAD)
+- Diff: [`aae52f5...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/aae52f5...HEAD)
+
+### Changed
+
+- `diagnostic.patterns` from LSP config and file config are now merged instead
+  of file config completely overriding LSP config. For patterns with the same
+  `pattern` value, file config wins. Patterns unique to either source are preserved.
+
+### Fixed
+
+- Request handlers now wait for file cache to be populated instead of immediately
+  returning errors. This fixes "file cache not found" errors that occurred when
+  requests arrived before the cache was ready, particularly after opening files.
+  (aviatesk/JETLS.jl#273, aviatesk/JETLS.jl#274, aviatesk/JETLS.jl#327)
+- Fixed glob pattern matching for `diagnostic.patterns[].path`: `**` now
+  correctly matches zero or more directory levels (e.g., `test/**/*.jl` matches
+  `test/testfile.jl`), and wildcards no longer match hidden files/directories.
+  (aviatesk/JETLS.jl#359)
+- `.JETLSConfig.toml` is now only recognized at the workspace root.
+  Previously, config files in subdirectories were also loaded, which was
+  inconsistent with [the documentation](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/file-based-config).
+- Clean up methods from previous analysis modules after re-analysis to prevent
+  stale overload methods from appearing in signature help or completions.
+
+### Internal
+
+- Added heap snapshot profiling support. Create a `.JETLSProfile` file in the
+  workspace root to trigger a heap snapshot. The snapshot is saved as
+  `JETLS_YYYYMMDD_HHMMSS.heapsnapshot` and can be analyzed using Chrome DevTools.
+  See [DEVELOPMENT.md's Profiling](./DEVELOPMENT.md#profiling) section for details.
+
+## 2025-12-02
+
+- Commit: [`aae52f5`](https://github.com/aviatesk/JETLS.jl/commit/aae52f5)
+- Diff: [`f9b2c2f...aae52f5`](https://github.com/aviatesk/JETLS.jl/compare/f9b2c2f...aae52f5)
 
 ### Added
 
