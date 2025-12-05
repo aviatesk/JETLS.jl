@@ -24,6 +24,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- Fixed glob pattern matching for `diagnostic.patterns[].path`: `**` now
+  correctly matches zero or more directory levels (e.g., `test/**/*.jl` matches
+  `test/testfile.jl`), and wildcards no longer match hidden files/directories.
+  (aviatesk/JETLS.jl#359)
 - `.JETLSConfig.toml` is now only recognized at the workspace root.
   Previously, config files in subdirectories were also loaded, which was
   inconsistent with [the documentation](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/file-based-config).
