@@ -5,7 +5,9 @@ const CONFIG_FILE = ".JETLSConfig.toml"
 const PROFILE_TRIGGER_FILE = ".JETLSProfile"
 
 function did_change_watched_files_registration(server::Server)
-    root_uri = filepath2uri(server.state.root_path)
+    state = server.state
+    isdefined(state, :root_path) || return nothing
+    root_uri = filepath2uri(state.root_path)
     Registration(;
         id = DID_CHANGE_WATCHED_FILES_REGISTRATION_ID,
         method = DID_CHANGE_WATCHED_FILES_REGISTRATION_METHOD,
