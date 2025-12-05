@@ -225,9 +225,33 @@ end
     @test occursin(fn"a*/**/test.gif"d, "ab/b/c/test.gif")
     @test !occursin(fn"a**/test.gif"d, "ab/b/h/test.gif")
 
+    # Test wildcards appearing both before and after **/
+    @test occursin(fn"a*/**/*b"d, "ax/y/z/wb")
+    @test occursin(fn"a*/**/*b"d, "ax/y/wb")
+    @test occursin(fn"a*/**/*b"d, "ax/wb")
+    @test occursin(fn"a*/**/*b"d, "a/wb")
+    @test !occursin(fn"a*/**/*b"d, "ax/y/z/w")
+    @test !occursin(fn"a*/**/*b"d, "x/y/z/wb")
+    @test occursin(fn"*a/**/*b"d, "xa/y/zb")
+    @test occursin(fn"*a/**/*b"d, "xa/zb")
+    @test occursin(fn"*a*/**/*b"d, "xaay/m/nb")
+    @test occursin(fn"a*x/**/*b"d, "ayx/z/wb")
+    @test occursin(fn"a*x/**/*b"d, "ayxx/z/wb")
+    @test occursin(fn"a*/**/b"d, "ax/y/b")
+    @test occursin(fn"a*/**/b"d, "ax/b")
+    @test !occursin(fn"a*/**/b"d, "ax/y/c")
+
     # Test ** without / (in non-pathname mode, matches any character including /)
     @test occursin(fn"a/**test.jl", "a/test.jl")
     @test occursin(fn"a/**test.jl", "a/b/test.jl")
+
+    # Test **/ matching zero or more directories
+    @test occursin(fn"a/**/b"d, "a/b")
+    @test occursin(fn"a/**/b"d, "a/x/b")
+    @test occursin(fn"a/**/b"d, "a/x/y/b")
+    @test occursin(fn"a/**/b"d, "a/x/y/z/b")
+    @test !occursin(fn"a/**/b"d, "a/b/c")
+    @test !occursin(fn"a/**/b"d, "x/a/b")
 end
 
 @test_types glob"ab/?/d".pattern (AbstractString, Glob.FilenameMatch, AbstractString)
@@ -261,43 +285,3 @@ test_string("""fn"base/*/a/[b]\"""")
 
 @test_throws ErrorException Glob.GlobMatch("")
 @test_throws ErrorException Glob.GlobMatch("/a/b/c")
-
-@test string(glob"**/*.jl") == "glob\"**/*.jl\""
-@test string(glob"src/**/test.jl") == "glob\"src/**/test.jl\""
-
-@testset "globstar for glob" begin; mktempdir() do tmpdir
-    cd(tmpdir) do
-        # Create directory structure:
-        # tmpdir/
-        #   file.yml
-        #   src/
-        #     main.jl
-        #   .github/
-        #     workflows/
-        #       ci.yml
-        mkdir("src")
-        mkdir(".github")
-        mkdir(joinpath(".github", "workflows"))
-        write("file.yml", "")
-        write(joinpath("src", "main.jl"), "")
-        write(joinpath(".github", "workflows", "ci.yml"), "")
-
-        # Test that **/*.yml does NOT traverse hidden directories
-        let all_yml = glob("**/*.yml")
-            @test "file.yml" in all_yml
-            # Should NOT find files in .github/ directory
-            @test !any(startswith(p, ".github") for p in all_yml)
-        end
-
-        # Test that hidden directories CAN be matched explicitly
-        let github_yml = glob(".github/**/*.yml")
-            # Should find files in .github/ when explicitly specified
-            @test ".github/workflows/ci.yml" in github_yml
-        end
-
-        # Test that **/*.jl does NOT find files in hidden directories
-        let all_jl = glob("**/*.jl")
-            @test only(all_jl) == "src/main.jl"  # Only src/main.jl, not anything in .github
-        end
-    end
-end; end

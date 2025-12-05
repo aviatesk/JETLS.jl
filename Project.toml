@@ -24,8 +24,8 @@ Markdown = "d6f4376e-aef5-505a-96c1-9c027394607a"
 OrderedCollections = "64c61135-0f01-5c34-beb9-07fc02084e85"
 Parsers = "2bf889ff-109e-5fa9-9ba3-339ee07cbe67"
 Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
-PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
-Preferences = "21216c6a-2e73-6563-6e65-726566657250"
+PrecompileTools = "32931bc0-5014-5544-84d5-53636ff9f6c5"
+Preferences = "cc588e5a-7be0-5224-8a6a-549b21958db9"
 Profile = "9abbd945-dff8-562f-b5e8-e1ebf5ef1b79"
 REPL = "3fa0cd96-eef1-5676-8a61-b3b8758bbffb"
 Revise = "295af30f-e4ad-537b-8983-00126c2a3abe"
@@ -34,24 +34,24 @@ StructTypes = "66bcceda-d870-5865-93dd-65803322e79e"
 TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 
 [sources]
-CodeTracking = {rev = "45a6add7f99dbbeae58c5da81aa6a9671d0d9d02", subdir = "vendor/CodeTracking", url = "https://github.com/aviatesk/JETLS.jl"}
-Compiler = {rev = "45a6add7f99dbbeae58c5da81aa6a9671d0d9d02", subdir = "vendor/Compiler", url = "https://github.com/aviatesk/JETLS.jl"}
-Configurations = {rev = "45a6add7f99dbbeae58c5da81aa6a9671d0d9d02", subdir = "vendor/Configurations", url = "https://github.com/aviatesk/JETLS.jl"}
-ExproniconLite = {rev = "45a6add7f99dbbeae58c5da81aa6a9671d0d9d02", subdir = "vendor/ExproniconLite", url = "https://github.com/aviatesk/JETLS.jl"}
-Glob = {rev = "45a6add7f99dbbeae58c5da81aa6a9671d0d9d02", subdir = "vendor/Glob", url = "https://github.com/aviatesk/JETLS.jl"}
-JET = {rev = "45a6add7f99dbbeae58c5da81aa6a9671d0d9d02", subdir = "vendor/JET", url = "https://github.com/aviatesk/JETLS.jl"}
-JSON3 = {rev = "45a6add7f99dbbeae58c5da81aa6a9671d0d9d02", subdir = "vendor/JSON3", url = "https://github.com/aviatesk/JETLS.jl"}
-JuliaInterpreter = {rev = "45a6add7f99dbbeae58c5da81aa6a9671d0d9d02", subdir = "vendor/JuliaInterpreter", url = "https://github.com/aviatesk/JETLS.jl"}
-JuliaLowering = {rev = "45a6add7f99dbbeae58c5da81aa6a9671d0d9d02", subdir = "vendor/JuliaLowering", url = "https://github.com/aviatesk/JETLS.jl"}
-JuliaSyntax = {rev = "45a6add7f99dbbeae58c5da81aa6a9671d0d9d02", subdir = "vendor/JuliaSyntax", url = "https://github.com/aviatesk/JETLS.jl"}
-LSP = {rev = "45a6add7f99dbbeae58c5da81aa6a9671d0d9d02", subdir = "vendor/LSP", url = "https://github.com/aviatesk/JETLS.jl"}
-LoweredCodeUtils = {rev = "45a6add7f99dbbeae58c5da81aa6a9671d0d9d02", subdir = "vendor/LoweredCodeUtils", url = "https://github.com/aviatesk/JETLS.jl"}
-MacroTools = {rev = "45a6add7f99dbbeae58c5da81aa6a9671d0d9d02", subdir = "vendor/MacroTools", url = "https://github.com/aviatesk/JETLS.jl"}
-OrderedCollections = {rev = "45a6add7f99dbbeae58c5da81aa6a9671d0d9d02", subdir = "vendor/OrderedCollections", url = "https://github.com/aviatesk/JETLS.jl"}
-Parsers = {rev = "45a6add7f99dbbeae58c5da81aa6a9671d0d9d02", subdir = "vendor/Parsers", url = "https://github.com/aviatesk/JETLS.jl"}
-PrecompileTools = {rev = "45a6add7f99dbbeae58c5da81aa6a9671d0d9d02", subdir = "vendor/PrecompileTools", url = "https://github.com/aviatesk/JETLS.jl"}
-Preferences = {rev = "45a6add7f99dbbeae58c5da81aa6a9671d0d9d02", subdir = "vendor/Preferences", url = "https://github.com/aviatesk/JETLS.jl"}
-StructTypes = {rev = "45a6add7f99dbbeae58c5da81aa6a9671d0d9d02", subdir = "vendor/StructTypes", url = "https://github.com/aviatesk/JETLS.jl"}
+CodeTracking = {path = "vendor/CodeTracking"}
+Compiler = {path = "vendor/Compiler"}
+Configurations = {path = "vendor/Configurations"}
+ExproniconLite = {path = "vendor/ExproniconLite"}
+Glob = {path = "vendor/Glob"}
+JET = {path = "vendor/JET"}
+JSON3 = {path = "vendor/JSON3"}
+JuliaInterpreter = {path = "vendor/JuliaInterpreter"}
+JuliaLowering = {path = "vendor/JuliaLowering"}
+JuliaSyntax = {path = "vendor/JuliaSyntax"}
+LSP = {path = "vendor/LSP"}
+LoweredCodeUtils = {path = "vendor/LoweredCodeUtils"}
+MacroTools = {path = "vendor/MacroTools"}
+OrderedCollections = {path = "vendor/OrderedCollections"}
+Parsers = {path = "vendor/Parsers"}
+PrecompileTools = {path = "vendor/PrecompileTools"}
+Preferences = {path = "vendor/Preferences"}
+StructTypes = {path = "vendor/StructTypes"}
 
 [compat]
 Configurations = "0.17.6"
