@@ -59,25 +59,41 @@ TOML = "1.0.3"
 test = ["Aqua", "BenchmarkTools", "Downloads", "Example", "JSON3", "Libdl", "Logging", "Random", "Revise", "StaticArrays", "TOML", "Test"]
 
 [sources.JuliaSyntax]
-path = "../JuliaSyntax"
+subdir = "vendor/JuliaSyntax"
+rev = "33ba143c5f05b90e3e0c2cd6757af49e44d5f192"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.Compiler]
-path = "../Compiler"
+subdir = "vendor/Compiler"
+rev = "33ba143c5f05b90e3e0c2cd6757af49e44d5f192"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.PrecompileTools]
-path = "../PrecompileTools"
+subdir = "vendor/PrecompileTools"
+rev = "33ba143c5f05b90e3e0c2cd6757af49e44d5f192"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.MacroTools]
-path = "../MacroTools"
+subdir = "vendor/MacroTools"
+rev = "33ba143c5f05b90e3e0c2cd6757af49e44d5f192"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.LoweredCodeUtils]
-path = "../LoweredCodeUtils"
+subdir = "vendor/LoweredCodeUtils"
+rev = "33ba143c5f05b90e3e0c2cd6757af49e44d5f192"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.JuliaInterpreter]
-path = "../JuliaInterpreter"
+subdir = "vendor/JuliaInterpreter"
+rev = "33ba143c5f05b90e3e0c2cd6757af49e44d5f192"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.Preferences]
-path = "../Preferences"
+subdir = "vendor/Preferences"
+rev = "33ba143c5f05b90e3e0c2cd6757af49e44d5f192"
+url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.CodeTracking]
-path = "../CodeTracking"
+subdir = "vendor/CodeTracking"
+rev = "33ba143c5f05b90e3e0c2cd6757af49e44d5f192"
+url = "https://github.com/aviatesk/JETLS.jl"
