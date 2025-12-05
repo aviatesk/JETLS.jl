@@ -210,6 +210,91 @@ That is, register it via the `client/registerCapability` request in response to
 notifications sent from the client, most likely `InitializedNotification`.
 The `JETLS.register` utility is especially useful for this purpose.
 
+## Profiling
+
+JETLS provides a mechanism for capturing heap snapshots of the language server
+process itself. This is useful for investigating JETLS's memory footprint and
+detecting potential memory leaks in the server implementation.
+
+### Taking a heap snapshot
+
+To trigger a heap snapshot, create a `.JETLSProfile` file in the workspace root
+directory:
+
+```bash
+touch .JETLSProfile
+```
+
+When JETLS detects this file, it will:
+1. Take a heap snapshot using `Profile.take_heap_snapshot`
+2. Save it as `JETLS_YYYYMMDD_HHMMSS.heapsnapshot` in the workspace root
+3. Show a notification with the file path
+4. Automatically delete the `.JETLSProfile` trigger file
+
+### Analyzing the snapshot
+
+The generated `.heapsnapshot` file uses the V8 heap snapshot format, which can
+be analyzed using Chrome DevTools:
+
+1. Open Chrome and navigate to any page
+2. Open DevTools (F12)
+3. Go to the "Memory" tab
+4. Click "Load" and select the `.heapsnapshot` file
+5. Use the "Summary" view to see memory usage by type (Constructor)
+6. Use the "Comparison" view to compare two snapshots and identify memory growth
+
+### Understanding snapshot metrics
+
+If successful, you should see a view like the following:
+
+<img width="1267" height="775" alt="Chrome DevTools view" src="https://github.com/user-attachments/assets/720019db-518f-4c02-bc1d-183999f90248" />
+
+The Summary view shows several columns for each type (Constructor):
+
+- **Distance**: Shortest path length from GC roots to the object. Lower distance
+  means more directly reachable from roots.
+- **Shallow Size**: Memory held directly by the object itself (its own fields),
+  not including memory held by referenced objects.
+- **Retained Size**: Total memory that would be freed if this object were
+  garbage collected, including all objects exclusively retained by it. This is
+  the most useful metric for finding memory issues.
+
+### Using the Retainers panel
+
+When you select an object in the Summary view, the Retainers panel (bottom)
+shows what is keeping that object alive. This helps trace memory retention back
+to its root cause. Follow the retention chain upward to understand why objects
+aren't being garbage collected.
+
+### Comparing snapshots
+
+To investigate memory growth:
+1. Take a snapshot shortly after server startup
+2. Perform some operations (open files, trigger analysis, etc.)
+3. Take another snapshot
+4. Compare them in Chrome DevTools using the "Comparison" view
+
+This helps identify which types are accumulating over time.
+
+### Command-line analysis
+
+For text-based analysis (useful for sharing or automated processing), use the
+`analyze-heapsnapshot.jl` script:
+
+```bash
+julia --project=scripts scripts/analyze-heapsnapshot.jl JETLS_YYYYMMDD_HHMMSS.heapsnapshot
+```
+
+This displays a summary of memory usage by object type, sorted by shallow size.
+Use `--top=N` to control how many entries to show (default: 50).
+
+### Limitations
+
+- Only Julia GC-managed heap is captured; memory allocated by external libraries
+  (BLAS, LAPACK, etc.) is not included
+- The snapshot process itself requires additional memory, so for very large
+  processes, ensure sufficient memory is available
+
 ## Release process
 
 JETLS avoids dependency conflicts with packages being analyzed by rewriting the

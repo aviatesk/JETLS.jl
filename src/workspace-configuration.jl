@@ -73,7 +73,7 @@ function store_lsp_config!(tracker::ConfigChangeTracker, server::Server, @nospec
             return old_data, nothing
         end
         new_data = ConfigManagerData(old_data; lsp_config=new_lsp_config)
-        on_difference(tracker, old_data.settings, new_data.settings)
+        track_setting_changes(tracker, old_data.settings, new_data.settings)
         return new_data, nothing
     end
 end
@@ -81,7 +81,7 @@ end
 function delete_lsp_config!(tracker::ConfigChangeTracker, server::Server)
     store!(server.state.config_manager) do old_data::ConfigManagerData
         new_data = ConfigManagerData(old_data; lsp_config=EMPTY_CONFIG)
-        on_difference(tracker, old_data.settings, new_data.settings)
+        track_setting_changes(tracker, old_data.settings, new_data.settings)
         return new_data, nothing
     end
 end

@@ -151,13 +151,57 @@ function getcapability(state::ServerState, paths::Symbol...)
 end
 
 """
-    get_file_info(s::ServerState, uri::URI) -> fi::Union{Nothing,FileInfo}
-    get_file_info(s::ServerState, t::TextDocumentIdentifier) -> fi::Union{Nothing,FileInfo}
+    get_file_info(s::ServerState, uri::URI) -> Union{Nothing,FileInfo}
 
-Fetch cached FileInfo given an LSclient-provided structure with a URI
+Fetch cached `FileInfo` immediately without waiting. Returns `nothing` if unavailable.
+
+Use this version only when waiting for cache is not necessary, e.g.: for formatting,
+if the file was closed, failing fast is appropriate rather than waiting for cache that
+might have already gone.
+
+For most request handlers, prefer the 3-argument version which waits for cache population.
 """
 get_file_info(s::ServerState, uri::URI) = get(load(s.file_cache), uri, nothing)
 get_file_info(s::ServerState, t::TextDocumentIdentifier) = get_file_info(s, t.uri)
+
+"""
+    get_file_info(
+        s::ServerState, uri::URI, cancel_flag::CancelFlag;
+        timeout = 30., cancelled_error_data = nothing, cache_error_data = nothing
+    ) -> Union{FileInfo,ResponseError}
+
+Wait for cached `FileInfo` to become available, with cancellation and timeout support.
+This is the recommended version for request handlers.
+
+Unlike the 2-argument version which returns `nothing` immediately if the cache is not
+available, this version polls until the cache is populated. This is useful for request
+handlers where the file cache may not yet be ready (e.g., immediately after file open).
+
+Returns a `ResponseError` in two cases:
+- Request is cancelled: returns `request_cancelled_error(; data=cancelled_error_data)`
+- Timeout is reached: returns `file_cache_error(uri; data=cache_error_data)`
+"""
+function get_file_info(
+        s::ServerState, uri::URI, cancel_flag::CancelFlag;
+        timeout::Float64 = 30., cancelled_error_data = nothing, cache_error_data = nothing
+    )
+    start = time()
+    while true
+        is_cancelled(cancel_flag) && return request_cancelled_error(;
+            data = cancelled_error_data)
+        cache = get(load(s.file_cache), uri, nothing)
+        cache !== nothing && return cache
+        if time() - start > timeout
+            return file_cache_error(uri;
+                data = cache_error_data)
+        end
+        JETLS_DEV_MODE && @info "Waiting for file cache" uri
+        sleep(0.5)
+    end
+    return
+end
+get_file_info(s::ServerState, t::TextDocumentIdentifier, cancel_flag::CancelFlag; kwargs...) =
+    get_file_info(s, t.uri, cancel_flag; kwargs...)
 
 """
     get_saved_file_info(s::ServerState, uri::URI) -> fi::Union{Nothing,SavedFileInfo}

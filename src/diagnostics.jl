@@ -114,7 +114,7 @@ function parse_diagnostic_pattern(x::AbstractDict{String})
                 lazy"Invalid `path` value for pattern \"$pattern_value\". Must be a string, got $(typeof(path_value))"))
         end
         try
-            Glob.FilenameMatch(path_value)
+            Glob.FilenameMatch(path_value, "dp")
         catch e
             throw(DiagnosticConfigError(
                 lazy"Invalid glob pattern \"$path_value\" for path: $(sprint(showerror, e))"))
@@ -123,7 +123,7 @@ function parse_diagnostic_pattern(x::AbstractDict{String})
         nothing
     end
 
-    return DiagnosticPattern(pattern, match_by, match_type, severity, path_glob)
+    return DiagnosticPattern(pattern, match_by, match_type, severity, path_glob, pattern_value)
 end
 
 # config application
@@ -566,9 +566,8 @@ lowering_diagnostics(args...) = lowering_diagnostics!(Diagnostic[], args...) # u
 
 # TODO use something like `JuliaInterpreter.ExprSplitter`
 
-function toplevel_lowering_diagnostics(server::Server, uri::URI)
+function toplevel_lowering_diagnostics(server::Server, uri::URI, file_info::FileInfo)
     diagnostics = Diagnostic[]
-    file_info = get_file_info(server.state, uri)
     st0_top = build_syntax_tree(file_info)
     analysis_info = get_analysis_info(server.state.analysis_manager, uri)
     skip_macro_expansion_errors = !has_module_context(analysis_info, uri)
@@ -729,7 +728,8 @@ end
 #     method = DIAGNOSTIC_REGISTRATION_METHOD))
 # register(currently_running, diagnostic_registration())
 
-function handle_DocumentDiagnosticRequest(server::Server, msg::DocumentDiagnosticRequest)
+function handle_DocumentDiagnosticRequest(
+        server::Server, msg::DocumentDiagnosticRequest, cancel_flag::CancelFlag)
     uri = msg.params.textDocument.uri
 
     # This `previousResultId` calculation is mostly meaningless, but it might help the
@@ -750,20 +750,22 @@ function handle_DocumentDiagnosticRequest(server::Server, msg::DocumentDiagnosti
         resultId = string(resultId+1)
     end
 
-    file_info = @something get_file_info(server.state, uri) begin
+    result = get_file_info(server.state, uri, cancel_flag;
+        cache_error_data = DiagnosticServerCancellationData(; retriggerRequest = true))
+    if result isa ResponseError
         return send(server,
             DocumentDiagnosticResponse(;
                 id = msg.id,
                 result = nothing,
-                error = file_cache_error(uri;
-                    data = DiagnosticServerCancellationData(; retriggerRequest = true))))
+                error = result))
     end
+    file_info = result
 
     parsed_stream = file_info.parsed_stream
     filename = uri2filename(uri)
     @assert !isnothing(filename) lazy"Unsupported URI: $uri"
     if isempty(parsed_stream.diagnostics)
-        diagnostics = toplevel_lowering_diagnostics(server, uri)
+        diagnostics = toplevel_lowering_diagnostics(server, uri, file_info)
     else
         diagnostics = parsed_stream_to_diagnostics(file_info)
     end

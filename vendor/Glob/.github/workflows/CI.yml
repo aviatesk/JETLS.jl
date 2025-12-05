@@ -6,7 +6,7 @@ on:
   push:
     branches:
       - master
-    tags: '*'
+
 jobs:
   test:
     name: Julia ${{ join(matrix.*, ' - ') }} - ${{ github.event_name }}
@@ -15,9 +15,9 @@ jobs:
       fail-fast: false
       matrix:
         version:
-          - '1.0'
-          - '1.6'
-          - '1.8'
+          - '1.0'      # Minimum compatible version
+          - '1.10'     # LTS
+          - '1'        # Current stable
           - 'nightly'
         os:
           - ubuntu-latest
@@ -34,7 +34,7 @@ jobs:
             os: macos-latest
             arch: default
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: julia-actions/setup-julia@v2
         with:
           version: ${{ matrix.version }}

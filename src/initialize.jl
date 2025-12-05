@@ -409,9 +409,12 @@ function handle_InitializedNotification(server::Server)
     end
 
     if supports(server, :workspace, :didChangeWatchedFiles, :dynamicRegistration)
-        push!(registrations, did_change_watched_files_registration())
-        if JETLS_DEV_MODE
-            @info "Dynamically registering 'workspace/didChangeWatchedFiles' upon `InitializedNotification`"
+        registration = did_change_watched_files_registration(server)
+        if registration !== nothing
+            push!(registrations, registration)
+            if JETLS_DEV_MODE
+                @info "Dynamically registering 'workspace/didChangeWatchedFiles' upon `InitializedNotification`"
+            end
         end
     else
         # NOTE `workspace/didChangeWatchedFiles` is not supported for static registration

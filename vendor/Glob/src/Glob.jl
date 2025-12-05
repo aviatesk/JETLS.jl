@@ -6,6 +6,26 @@ import Base: readdir, show, occursin
 
 export glob, @fn_str, @fn_mstr, @glob_str, @glob_mstr
 
+if !@isdefined(var"@something")
+macro something(args...)
+    noth = GlobalRef(Base, :nothing)
+    something = GlobalRef(Base, :something)
+    expr = :($something($noth))
+    for arg in reverse(args)
+        val = gensym()
+        expr = quote
+            $val = $(esc(arg))
+            if !isnothing($val)
+                $something($val)
+            else
+                $expr
+            end
+        end
+    end
+    return expr
+end
+end
+
 const CASELESS = 1 << 0 # i -- Do case-insensitive matching
 const PERIOD   = 1 << 1 # p -- A leading period (.) character must be exactly matched by a period (.) character
 const NOESCAPE = 1 << 2 # e -- Do not treat backslash (\) as a special character
@@ -65,8 +85,8 @@ function occursin(fn::FilenameMatch, s::AbstractString)
     pathname = (fn.options & PATHNAME) != 0
     extended = (fn.options & EXTENDED) != 0
 
-    # If pattern ends with "**", append "/*" to allow matching of all files (PR #39)
-    pathname && endswith(pattern, "**") && (pattern *= "/*")
+    # Track if pattern ends with "**" to allow matching of all files
+    trailing_globstar = pathname && endswith(pattern, "**")
 
     mi = firstindex(pattern) # current index into pattern
     i = firstindex(s) # current index into s
@@ -75,36 +95,55 @@ function occursin(fn::FilenameMatch, s::AbstractString)
     globstarmatch = 0  # Track globstar match position for directory-level backtracking
     globstar_mi = 0    # Pattern index after globstar
     globstar_period = false  # Track if period was encountered during globstar
+    globstar_star = 0  # Saved star state when entering globstar
+    globstar_starmatch = i  # Saved starmatch state when entering globstar
     period = periodfl
+    after_slash = true  # Track if previous pattern char was '/' (or at start)
     while true
         matchnext = iterate(s, i)
         matchnext === nothing && break
         patnext = iterate(pattern, mi)
         if patnext === nothing
-            match = false # string characters left to match, but no pattern left
+            # String characters left to match, but no pattern left
+            if trailing_globstar
+                # If trailing_globstar is set, the remaining string is matched by the implicit /*
+                return true
+            end
+            match = false
         else
             mc, mi = patnext
             if mc == '*'
-                # Check if this is a **/ globstar pattern (PR #39 style)
-                # Conditions: **, followed by /, and either at start or after /
-                if pathname && length(pattern) > mi && pattern[mi:nextind(pattern, mi)] == "*/" && (mi == 2 || mi > 2 && pattern[mi-2] == '/')
-                    # This is **/ globstar pattern - use directory-level backtracking
-                    mi += 2  # Skip past **/
-                    globstarmatch = i
-                    globstar_mi = mi
-                    c = '/'  # Fake previous character as /
-                    match = true
-                else
-                    # Not a globstar pattern - treat as regular *
-                    # Even if it's **, each * will be processed separately
-                    starmatch = i # backup the current search index
-                    star = mi
-                    c, _ = matchnext # peek-ahead
-                    if period & (c == '.')
-                        return false # * does not match leading .
+                # Check if this is a **/ globstar pattern
+                # Conditions: after '/' (or at start), followed by '*/'
+                # Use iterate to peek ahead without string allocation
+                peek1_c, peek1_s = @something iterate(pattern, mi) @goto no_globstar
+                if pathname && after_slash && peek1_c == '*'
+                    peek2_c, peek2_s = @something iterate(pattern, peek1_s) @goto no_globstar
+                    if peek2_c == '/'
+                        # This is **/ globstar pattern - use directory-level backtracking
+                        mi = peek2_s  # Skip past **/
+                        globstarmatch = i
+                        globstar_mi = mi
+                        # Save current star state for restoration on globstar backtrack
+                        globstar_star = star
+                        globstar_starmatch = starmatch
+                        after_slash = true  # After **/, we're effectively after a /
+                        c = '/'  # Fake previous character as /
+                        match = true
+                        continue
                     end
-                    match = true
                 end
+                @label no_globstar
+                # Not a globstar pattern - treat as regular *
+                # Even if it's **, each * will be processed separately
+                starmatch = i # backup the current search index
+                star = mi
+                c, _ = matchnext # peek-ahead
+                if period & (c == '.')
+                    return false # * does not match leading .
+                end
+                after_slash = false
+                match = true
             else
                 c, i = matchnext
                 if mc == '['
@@ -136,33 +175,35 @@ function occursin(fn::FilenameMatch, s::AbstractString)
                 if globstarmatch > 0 && period && (c == '.')
                     globstar_period = true
                 end
+                # Update after_slash for next iteration (track if pattern char was '/')
+                after_slash = (mc == '/')
             end
         end
         if !match # try to backtrack
-            if globstarmatch > 0
-                # Globstar backtracking: jump to next directory level
-                nextslash = findnext('/', s, globstarmatch)
-                if nextslash === nothing || globstar_period
-                    # Can't backtrack globstar anymore: no more slashes or period encountered
-                    globstarmatch = 0
-                end
-                if globstarmatch > 0
-                    # Jump to the character after the next /
-                    i = nextind(s, nextslash)
-                    globstarmatch = i
-                    mi = globstar_mi
-                    period = periodfl
+            # Try * backtracking first
+            if star != 0
+                c, i = something(iterate(s, starmatch))
+                if !(pathname & (c == '/'))
+                    mi = star
+                    starmatch = i
                     continue
                 end
             end
-            # Regular star backtracking
-            star == 0 && return false
-            c, i = something(iterate(s, starmatch)) # starmatch is strictly <= i, so it is known that it must be a valid index
-            if pathname & (c == '/')
-                return false # * does not match / in pathname mode
+            # Then try **/ backtracking
+            if globstarmatch > 0
+                nextslash = findnext('/', s, globstarmatch)
+                if nextslash !== nothing && !globstar_period
+                    i = nextind(s, nextslash)
+                    globstarmatch = i
+                    mi = globstar_mi
+                    star = globstar_star
+                    starmatch = globstar_starmatch
+                    period = periodfl
+                    continue
+                end
+                globstarmatch = 0
             end
-            mi = star
-            starmatch = i
+            return false
         end
         period = (periodfl & pathname & (c == '/'))
     end
@@ -349,8 +390,6 @@ Returns a `Glob.GlobMatch` object, which can be used with `glob()` or `readdir()
 macro glob_str(pattern) GlobMatch(pattern) end
 macro glob_mstr(pattern) GlobMatch(pattern) end
 
-struct GlobStar end
-
 struct GlobMatch
     pattern::Vector
     GlobMatch(pattern) = isempty(pattern) ? error("GlobMatch pattern cannot be an empty vector") : new(pattern)
@@ -365,16 +404,12 @@ function GlobMatch(pattern::AbstractString)
     if !isconcretetype(S)
         S = Any
     else
-        S = Union{S, FilenameMatch{S}, GlobStar}
+        S = Union{S, FilenameMatch{S}}
     end
     glob = Array{S}(undef, length(pat))
     extended = false
     for i = 1:length(pat)
         p = pat[i]
-        if p == "**"
-            glob[i] = GlobStar()
-            continue
-        end
         next = iterate(p)
         ispattern = false
         while next !== nothing
@@ -402,7 +437,7 @@ end
 
 function show(io::IO, gm::GlobMatch)
     for pat in gm.pattern
-        if !isa(pat, AbstractString) && !isa(pat, FilenameMatch) && !isa(pat, GlobStar)
+        if !isa(pat, AbstractString) && !isa(pat, FilenameMatch)
             print(io, "Glob.GlobMatch(")
             show(io, gm.pattern)
             print(io, ')')
@@ -416,8 +451,6 @@ function show(io::IO, gm::GlobMatch)
         notfirst = true
         if isa(pat, FilenameMatch)
             print(io, pat.pattern)
-        elseif isa(pat, GlobStar)
-            print(io, "**")
         else
             print(io, pat)
         end
@@ -501,35 +534,6 @@ function _glob!(matches, pat)
         end
     end
     return m2
-end
-
-function _glob!(matches, ::GlobStar)
-    m2 = String[]
-    # For each current match, add it (matching zero directories)
-    # and recursively add all subdirectories (matching one or more directories)
-    for m in matches
-        if isempty(m) || isdir(m)
-            push!(m2, m)
-            _globstar_recursive!(m2, m)
-        end
-    end
-    return m2
-end
-
-function _globstar_recursive!(results, dir)
-    entries = isempty(dir) ? readdir() : readdir(dir)
-    for entry in entries
-        # Skip hidden files/directories (those starting with .)
-        # This is consistent with POSIX behavior and the PERIOD flag used in FilenameMatch.
-        # Hidden directories can still be matched by explicitly specifying them (e.g., ".github/**/*.yml")
-        startswith(entry, '.') && continue
-        path = isempty(dir) ? entry : joinpath(dir, entry)
-        if isdir(path)
-            push!(results, path)
-            _globstar_recursive!(results, path)
-        end
-    end
-    return results
 end
 
 end # module

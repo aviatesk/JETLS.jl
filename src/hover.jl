@@ -54,17 +54,20 @@ function local_binding_hover_info(fi::FileInfo, uri::URI, definitions::JL.Syntax
     return String(take!(io))
 end
 
-function handle_HoverRequest(server::Server, msg::HoverRequest)
+function handle_HoverRequest(
+        server::Server, msg::HoverRequest, cancel_flag::CancelFlag)
     pos = msg.params.position
     uri = msg.params.textDocument.uri
 
-    fi = @something get_file_info(server.state, uri) begin
+    result = get_file_info(server.state, uri, cancel_flag)
+    if result isa ResponseError
         return send(server,
             HoverResponse(;
                 id = msg.id,
                 result = nothing,
-                error = file_cache_error(uri)))
+                error = result))
     end
+    fi = result
 
     st0_top = build_syntax_tree(fi)
     offset = xy_to_offset(fi, pos)

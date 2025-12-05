@@ -1,0 +1,5 @@
+[deps]
+JSON3 = "00ac8d46-747e-5902-8e12-fdfc767369c7"
+
+[sources.JSON3]
+path = "../vendor/JSON3"
