@@ -1,8 +1,9 @@
-const DEFAULT_INIT_OPTIONS = InitOptions(; n_analysis_workers=1)
+const DEFAULT_INIT_OPTIONS = InitOptions(; n_analysis_workers=1, module_overrides=ModuleOverride[])
 
 function merge_init_options(base::InitOptions, overlay::InitOptions)
     InitOptions(;
-        n_analysis_workers = something(overlay.n_analysis_workers, base.n_analysis_workers))
+        n_analysis_workers = something(overlay.n_analysis_workers, base.n_analysis_workers),
+        module_overrides = something(overlay.module_overrides, base.module_overrides))
 end
 
 function validate_init_options(opts::InitOptions)

@@ -422,15 +422,26 @@ function ConfigManagerData(
     return ConfigManagerData(file_config, lsp_config, file_config_path, initialized)
 end
 
+# Internal, undocumented configuration for full-analysis module overrides.
+struct ModuleOverride <: ConfigSection
+    module_name::String
+    path::Glob.FilenameMatch{String}
+end
+@define_eq_overloads ModuleOverride
+Base.convert(::Type{ModuleOverride}, x::AbstractDict{String}) = parse_module_override(x)
+
 # Static initialization options from `InitializeParams.initializationOptions`.
 # These are set once during the initialize request and remain constant.
 @option struct InitOptions
     n_analysis_workers::Maybe{Int}
+    module_overrides::Maybe{Vector{ModuleOverride}}
 end
 function Base.show(io::IO, init_options::InitOptions)
     print(io, "InitOptions(;")
     n_analysis_workers = init_options.n_analysis_workers
     n_analysis_workers === nothing || print(io, " n_analysis_workers=", n_analysis_workers)
+    module_overrides = init_options.module_overrides
+    module_overrides === nothing || print(io, " module_overrides=", module_overrides)
     print(io, ")")
 end
 
