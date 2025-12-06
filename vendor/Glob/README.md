@@ -48,9 +48,27 @@ Glob is implemented to have both a functional form and an object-oriented form. 
     * `i` = `CASELESS` : Performs case-insensitive matching
     * `p` = `PERIOD` : A leading period (`.`) character must be exactly matched by a period (`.`) character (not a `?`, `*`, or `[]`). A leading period is a period at the beginning of a string, or a period after a slash if PATHNAME is true.
     * `e` = `NOESCAPE` : Do not treat backslash (`\`) as a special character (in extended mode, this only outside of `[]`)
-    * `d` = `PATHNAME` : A slash (`/`) character must be exactly matched by a slash (`/`) character (not a `?`, `*`, or `[]`)
+    * `d` = `PATHNAME` : A slash (`/`) character must be exactly matched by a slash (`/`) character (not a `?`, `*`, or `[]`). When this flag is set, `**/` is treated as a globstar pattern that matches zero or more directories (see below).
     * `x` = `EXTENDED` : Additional features borrowed from newer shells, such as `bash` and `tcsh`
       * Backslash (`\`) characters in `[]` groups escape the next character
+
+## Globstar (`**`)
+
+When the `PATHNAME` flag (`d`) is enabled, `**/` is treated as a **globstar** pattern that matches zero or more directory components. This follows [zsh-style recursive globbing](https://zsh.sourceforge.io/Doc/Release/Expansion.html#Recursive-Globbing) semantics, not [bash's globstar](https://www.gnu.org/software/bash/manual/html_node/The-Shopt-Builtin.html).
+
+Notes:
+- `**/` matches zero or more directories, including none (e.g., `a/**/b` matches both `a/b` and `a/x/y/b`)
+- `**` at the end of a pattern matches everything remaining
+- `**` not followed by `/` is treated as a regular `*` wildcard
+
+Examples:
+```julia
+occursin(fn"**/*.png"d, "a/b/c.png")                # true - matches files in any subdirectory
+occursin(fn"**/*.png"d, "c.png")                    # true - **/ can match zero directories
+occursin(fn"a/**/b"d, "a/b")                        # true - zero directories between a and b
+occursin(fn"a/**/b"d, "a/x/y/z/b")                  # true - multiple directories
+occursin(fn"**/c/**/*.png"d, "a/b/c/d/e/test.png")  # true - multiple globstars
+```
 
 ## Unimplemented features
 

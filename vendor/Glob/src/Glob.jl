@@ -52,6 +52,7 @@ function FilenameMatch(pattern::AbstractString, flags::AbstractString)
     end
     return FilenameMatch(pattern, options)
 end
+
 """
     fn"pattern"ipedx
 
@@ -85,9 +86,6 @@ function occursin(fn::FilenameMatch, s::AbstractString)
     pathname = (fn.options & PATHNAME) != 0
     extended = (fn.options & EXTENDED) != 0
 
-    # Track if pattern ends with "**" to allow matching of all files
-    trailing_globstar = pathname && endswith(pattern, "**")
-
     mi = firstindex(pattern) # current index into pattern
     i = firstindex(s) # current index into s
     starmatch = i
@@ -105,10 +103,6 @@ function occursin(fn::FilenameMatch, s::AbstractString)
         patnext = iterate(pattern, mi)
         if patnext === nothing
             # String characters left to match, but no pattern left
-            if trailing_globstar
-                # If trailing_globstar is set, the remaining string is matched by the implicit /*
-                return true
-            end
             match = false
         else
             mc, mi = patnext
@@ -116,21 +110,23 @@ function occursin(fn::FilenameMatch, s::AbstractString)
                 # Check if this is a **/ globstar pattern
                 # Conditions: after '/' (or at start), followed by '*/'
                 # Use iterate to peek ahead without string allocation
-                peek1_c, peek1_s = @something iterate(pattern, mi) @goto no_globstar
-                if pathname && after_slash && peek1_c == '*'
-                    peek2_c, peek2_s = @something iterate(pattern, peek1_s) @goto no_globstar
-                    if peek2_c == '/'
-                        # This is **/ globstar pattern - use directory-level backtracking
-                        mi = peek2_s  # Skip past **/
-                        globstarmatch = i
-                        globstar_mi = mi
-                        # Save current star state for restoration on globstar backtrack
-                        globstar_star = star
-                        globstar_starmatch = starmatch
-                        after_slash = true  # After **/, we're effectively after a /
-                        c = '/'  # Fake previous character as /
-                        match = true
-                        continue
+                if pathname && after_slash
+                    peek1_c, peek1_s = @something iterate(pattern, mi) @goto no_globstar
+                    if peek1_c == '*'
+                        peek2_c, peek2_s = @something iterate(pattern, peek1_s) return true # this is trailing_globstar
+                        if peek2_c == '/'
+                            # This is **/ globstar pattern - use directory-level backtracking
+                            mi = peek2_s  # Skip past **/
+                            globstarmatch = i
+                            globstar_mi = mi
+                            # Save current star state for restoration on globstar backtrack
+                            globstar_star = star
+                            globstar_starmatch = starmatch
+                            after_slash = true  # After **/, we're effectively after a /
+                            c = '/'  # Fake previous character as /
+                            match = true
+                            continue
+                        end
                     end
                 end
                 @label no_globstar
@@ -177,6 +173,10 @@ function occursin(fn::FilenameMatch, s::AbstractString)
                 end
                 # Update after_slash for next iteration (track if pattern char was '/')
                 after_slash = (mc == '/')
+                if match && after_slash && pathname
+                    # in pathname mode, once matching a / explicitly, backtracking to starmatch will not be necessary
+                    star = 0
+                end
             end
         end
         if !match # try to backtrack
@@ -220,7 +220,7 @@ end
 
 filter!(fn::FilenameMatch, v) = filter!(x -> occursin(fn, x), v)
 filter(fn::FilenameMatch, v)  = filter(x -> occursin(fn, x), v)
-filter!(fn::FilenameMatch, d::Dict) = filter!(((k, v),) -> occursin(fn, k), d)
+filter!(fn::FilenameMatch, d::Dict) = filter!(((k, _),) -> occursin(fn, k), d)
 filter(fn::FilenameMatch, d::Dict) = filter!(fn, copy(d))
 
 function _match_bracket(pat::AbstractString, mc::Char, i, cl::Char, cu::Char) # returns (mc, i, valid, match)
@@ -235,7 +235,6 @@ function _match_bracket(pat::AbstractString, mc::Char, i, cl::Char, cu::Char) # 
     mc3 = mc4 = '\0'
     k0 = k1 = k2 = k3 = j
     next = iterate(pat, k3)
-    matchfail = false
     while mc3 != mc2 && mc4 != ']'
         if next === nothing
             return (mc, i, false, false)
@@ -298,7 +297,6 @@ function _match_bracket(pat::AbstractString, mc::Char, i, cl::Char, cu::Char) # 
         return (mc, k3, true, match)
     end
 end
-
 
 function _match(pat::AbstractString, i0, c::Char, caseless::Bool, extended::Bool) # returns (i, valid, match)
     if caseless
