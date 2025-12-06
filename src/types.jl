@@ -40,6 +40,7 @@ struct FileInfo
         new(version, parsed_stream, filename, encoding, testsetinfos)
     end
 end
+@define_override_constructor FileInfo # For testsetinfos update
 
 function FileInfo( # Constructor for production code (with URI)
         version::Int, parsed_stream::JS.ParseStream, uri::URI,
@@ -48,16 +49,6 @@ function FileInfo( # Constructor for production code (with URI)
     )
     filename = @something uri2filename(uri) error(lazy"Unsupported URI: $uri")
     return FileInfo(version, parsed_stream, filename, encoding, testsetinfos)
-end
-
-function FileInfo(fi::FileInfo;
-        version::Int = fi.version,
-        parsed_stream::JS.ParseStream = fi.parsed_stream,
-        filename::AbstractString = fi.filename,
-        encoding::LSP.PositionEncodingKind.Ty = fi.encoding,
-        testsetinfos::Vector{TestsetInfo} = fi.testsetinfos
-    )
-    FileInfo(version, parsed_stream, filename, encoding, testsetinfos)
 end
 
 function FileInfo( # Constructor for test code (with raw text input and filename)
@@ -422,6 +413,7 @@ end
 
 ConfigManagerData() = ConfigManagerData(EMPTY_CONFIG, EMPTY_CONFIG, nothing, false)
 
+# N.B. Can't use `@define_override_constructor` since the main constructor doesn't take all the fields
 function ConfigManagerData(
         data::ConfigManagerData;
         file_config::JETLSConfig = data.file_config,
