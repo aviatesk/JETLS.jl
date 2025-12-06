@@ -6,15 +6,15 @@ const TESTRUNNER_CLEAR_RESULT_TITLE = "✓ Clear result"
 const TESTRUNNER_INSTALLATION_URL = "https://github.com/aviatesk/JETLS.jl#prerequisites"
 
 const TEST_MACROS = [
-    "inferred",
-    "test",
-    "test_broken",
-    "test_deprecated",
-    "test_logs",
-    "test_nowarn",
-    "test_skip",
-    "test_throws",
-    "test_warn"
+    "@inferred",
+    "@test",
+    "@test_broken",
+    "@test_deprecated",
+    "@test_logs",
+    "@test_nowarn",
+    "@test_skip",
+    "@test_throws",
+    "@test_warn"
 ]
 
 function summary_testrunner_result(result::TestRunnerResult)
@@ -114,13 +114,10 @@ function find_executable_testsets(st0_top::SyntaxTree0)
             return TraversalNoRecurse()
         elseif JS.kind(st0) === JS.K"macrocall" && JS.numchildren(st0) ≥ 2
             macroname = st0[1]
-            if JS.kind(macroname) === JS.K"macro_name" && JS.numchildren(macroname) ≥ 1
-                macroname_s = macroname[1]
-                if hasproperty(macroname_s, :name_val) && macroname_s.name_val == "testset"
-                    testsetname = st0[2]
-                    if JS.kind(testsetname) === JS.K"string"
-                        push!(testsets, st0)
-                    end
+            if hasproperty(macroname, :name_val) && macroname.name_val == "@testset"
+                testsetname = st0[2]
+                if JS.kind(testsetname) === JS.K"string"
+                    push!(testsets, st0)
                 end
             end
         end
@@ -265,22 +262,19 @@ function testrunner_testcase_code_actions!(
             return TraversalNoRecurse()
         elseif JS.kind(st0) === JS.K"macrocall" && JS.numchildren(st0) ≥ 1
             macroname = st0[1]
-            if JS.kind(macroname) === JS.K"macro_name" && JS.numchildren(macroname) ≥ 1
-                macroname_s = macroname[1]
-                if hasproperty(macroname_s, :name_val) && macroname_s.name_val in TEST_MACROS
-                    tcr = jsobj_to_range(st0, fi; adjust_last=1) # +1 to support cases like `@test ...│`
-                    overlap(action_range, tcr) || return nothing
-                    tcl = JS.source_line(st0)
-                    tct = "`" * JS.sourcetext(st0) * "`"
-                    run_arguments = Any[uri, tcl, tct]
-                    title = "$TESTRUNNER_RUN_TITLE $tct"
-                    push!(code_actions, CodeAction(;
+            if hasproperty(macroname, :name_val) && macroname.name_val in TEST_MACROS
+                tcr = jsobj_to_range(st0, fi; adjust_last=1) # +1 to support cases like `@test ...│`
+                overlap(action_range, tcr) || return nothing
+                tcl = JS.source_line(st0)
+                tct = "`" * JS.sourcetext(st0) * "`"
+                run_arguments = Any[uri, tcl, tct]
+                title = "$TESTRUNNER_RUN_TITLE $tct"
+                push!(code_actions, CodeAction(;
+                    title,
+                    command = Command(;
                         title,
-                        command = Command(;
-                            title,
-                            command = COMMAND_TESTRUNNER_RUN_TESTCASE,
-                            arguments = run_arguments)))
-                end
+                        command = COMMAND_TESTRUNNER_RUN_TESTCASE,
+                        arguments = run_arguments)))
             end
         end
     end

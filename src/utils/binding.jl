@@ -179,10 +179,10 @@ function _select_target_binding(st0_top::JL.SyntaxTree, offset::Int, mod::Module
                                 caller::AbstractString = "_select_target_binding")
     st0 = @something greatest_local(st0_top, offset) return nothing # nothing we can lower
 
-    bas = byte_ancestors(st0′::JL.SyntaxTree->JS.kind(st0′)===JS.K"macro_name", st0, offset)
-    if !isempty(bas)
-        # Our definition generally won't be local, and lowering would destroy it
-        # anyway.  Defer to global logic.
+    bas = byte_ancestors(st0′::JL.SyntaxTree->JS.kind(st0′) in JS.KSet"macrocall", st0, offset)
+    if !isempty(bas) && offset in JS.byte_range(bas[1][1])
+        # In macrocall first arg.  Our definition can't be local, and lowering
+        # would destroy it anyway.  Defer to global logic.
         return nothing
     end
 
@@ -256,7 +256,7 @@ end
 
 function _lookup_binding_definitions!(sl::JL.SyntaxList, st3::JL.SyntaxTree, binding_id::Int)
     traverse(st3) do st::JL.SyntaxTree
-        if JS.kind(st) === JS.K"=" && JS.numchildren(st) ≥ 2
+        if JS.kind(st) in JS.KSet"= kw" && JS.numchildren(st) ≥ 2
             lhs = st[1]
             if is_same_binding(lhs, binding_id)
                 push!(sl, lhs)

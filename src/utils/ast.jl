@@ -34,13 +34,10 @@ end
 function is_nospecialize_or_specialize_macrocall(st::JL.SyntaxTree)
     JS.kind(st) === JS.K"macrocall" || return false
     JS.numchildren(st) >= 1 || return false
-    macro_name_node = st[1]
-    JS.kind(macro_name_node) === JS.K"macro_name" || return false
-    JS.numchildren(macro_name_node) >= 1 || return false
-    macro_name = macro_name_node[1]
+    macro_name = st[1]
     JS.kind(macro_name) === JS.K"Identifier" || return false
     hasproperty(macro_name, :name_val) || return false
-    return macro_name.name_val == "nospecialize" || macro_name.name_val == "specialize"
+    return macro_name.name_val == "@nospecialize" || macro_name.name_val == "@specialize"
 end
 
 function _remove_macrocalls(st::JL.SyntaxTree)
@@ -462,10 +459,20 @@ function is_trivia(tc::TokenCursor, pass_newlines::Bool)
     JS.is_whitespace(k) && (pass_newlines || k !== JS.K"NewlineWs")
 end
 
+# TODO: This is used so that `r"foo"|` or `r"foo" |` don't show signature help,
+# but this edge case might be acceptable given that `r"foo" anything|` shouldn't
+# show signature help
+is_special_macrocall(st0::JL.SyntaxTree) =
+    JS.kind(st0) === JS.K"macrocall" && JS.numchildren(st0) >= 1 &&
+    let mname = kind(st0[1]) === JS.K"." && JS.numchildren(st0[1]) === 2 ? st0[1][2] : st0[1]
+        mname_s = hasproperty(mname, :name_val) ? mname.name_val : ""
+        endswith(mname_s, "_str") || endswith(mname_s, "_cmd")
+    end
+
 noparen_macrocall(st0::JL.SyntaxTree) =
     JS.kind(st0) === JS.K"macrocall" &&
-    !(JS.numchildren(st0) ≥ 2 && JS.kind(st0[1]) === JS.K"StrMacroName") &&
-    !JS.has_flags(st0, JS.PARENS_FLAG)
+    !JS.has_flags(st0, JS.PARENS_FLAG) &&
+    !is_special_macrocall(st0)
 
 """
     select_target_node(st0::JL.SyntaxTree, offset::Int) -> target::Union{JL.SyntaxTree,Nothing}
@@ -481,8 +488,8 @@ refs:
 - https://github.com/rust-lang/rust-analyzer/blob/6acff6c1f8306a0a1d29be8fd1ffa63cff1ad598/crates/ide/src/goto_definition.rs#L47-L62
 - https://github.com/aviatesk/JETLS.jl/pull/61#discussion_r2134707773
 """
-function select_target_node(node0::Union{JS.SyntaxNode,JL.SyntaxTree}, offset::Int)
-    bas = byte_ancestors(node0, offset)
+function select_target_node(st0::JL.SyntaxTree, offset::Int)
+    bas = byte_ancestors(st0, offset)
 
     isempty(bas) && @goto minus1
     target = first(bas)
@@ -490,7 +497,7 @@ function select_target_node(node0::Union{JS.SyntaxNode,JL.SyntaxTree}, offset::I
         @label minus1
         offset > 0 || return nothing
         # Support cases like `var│`, `func│(5)`
-        bas = byte_ancestors(node0, offset - 1)
+        bas = byte_ancestors(st0, offset - 1)
         isempty(bas) && return nothing
         target = first(bas)
         if !JS.is_identifier(target)
@@ -503,8 +510,6 @@ function select_target_node(node0::Union{JS.SyntaxNode,JL.SyntaxTree}, offset::I
         if (JS.kind(basᵢ) === JS.K"." &&
             basᵢ[1] !== target) # e.g. don't allow jumps to `tmeet` from `Base.Compi│ler.tmeet`
             target = basᵢ
-        elseif JS.kind(basᵢ) === JS.K"macro_name"
-            target = basᵢ # treat the entire macro name as an identifier
         else
             return target
         end
