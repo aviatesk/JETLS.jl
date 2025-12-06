@@ -258,7 +258,7 @@ function with_completion_request(
                 @test raw_res isa PublishDiagnosticsNotification
                 @test raw_res.params.uri == uri
             else
-                JETLS.cache_file_info!(server.state, uri, 1, clean_code)
+                JETLS.cache_file_info!(server, uri, 1, clean_code)
                 JETLS.cache_saved_file_info!(server.state, uri, clean_code)
                 JETLS.request_analysis!(server, uri, #=onsave=#false; wait=true, notify_diagnostics=false)
             end
@@ -510,10 +510,10 @@ function test_backslash_offset(code::String, expected_result)
     text, positions = JETLS.get_text_and_positions(code)
     @assert length(positions) == 1 "test_backslash_offset requires exactly one cursor marker"
 
-    state = JETLS.ServerState()
+    server = JETLS.Server()
     filename = abspath("test_backslash.jl")
     uri = filename2uri(filename)
-    fi = JETLS.cache_file_info!(state, uri, 1, text)
+    fi = JETLS.cache_file_info!(server, uri, 1, text)
 
     result = JETLS.get_backslash_offset(fi, positions[1])
     @test result == expected_result

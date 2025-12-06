@@ -65,12 +65,14 @@ Get K"Identifier" tree from a kwarg tree (child of K"call" or K"parameters").
 `sig`: treat this as a signature rather than a call
                a => a
          (= a 1) => a
+        (kw a 1) => a
   (= (:: a T) 1) => a  # only when sig=true
+ (kw (:: a T) 1) => a  # only when sig=true
 """
 function kwname(a::JL.SyntaxTree; sig::Bool=false)
     ret = identitifier_like(a)
     isnothing(ret) || return ret
-    if kind(a) === K"="
+    if kind(a) === K"=" || kind(a) === K"kw"
         a1 = a[1]
         ret = identitifier_like(a1)
         isnothing(ret) || return ret
@@ -98,19 +100,22 @@ function identitifier_like(st::JL.SyntaxTree)
 end
 
 """
-Best-effort mapping of kwname to position in `args`.  args[kw_i] and later are
+Best-effort mapping of kwname to position in `args`.  `args[kw_i]` and later are
 after the semicolon.  False negatives are fine here; false positives would hide
 signatures.
 
-If `sig`, then K"=" trees before the semicolon should be interpreted as optional
-positional args instead of kwargs.
+If `sig`, then `=`/`kw` trees before the semicolon should be interpreted as
+optional positional args instead of kwargs.
 
 Keywords should be ignored if `cursor` is within the keyword's name.
+
+Note: the `=` form doesn't always correspond to a keyword arg after macro
+expansion, but signature help is only used on unexpanded code.
 """
 function find_kws(args::JL.SyntaxList, kw_i::Int; sig=false, cursor::Int=-1)
     out = Dict{String, Int}()
     for i in (sig ? (kw_i:lastindex(args)) : eachindex(args))
-        (kind(args[i]) != K"=") && i < kw_i && continue
+        !(kind(args[i]) in JS.KSet"= kw") && i < kw_i && continue
         n = kwname(args[i]; sig)
         if !isnothing(n) && !(JS.first_byte(n) <= cursor <= JS.last_byte(n) + 1)
             out[n.name_val] = i
@@ -151,7 +156,7 @@ function CallArgs(st0::JL.SyntaxTree, cursor::Int)
         if kind(args[i]) === K"..."
             ub = nothing
             pos_map[i] = (lb + 1, ub)
-        elseif kind(args[i]) != K"="
+        elseif !(kind(args[i]) in JS.KSet"= kw")
             lb += 1
             !isnothing(ub) && (ub += 1)
             pos_map[i] = (lb, ub)
@@ -234,7 +239,7 @@ function make_paraminfo(p::JL.SyntaxTree)
 
     if JS.is_leaf(p)
         documentation = nothing
-    elseif kind(p) === K"="
+    elseif kind(p) in JS.KSet"= kw"
         @assert JS.numchildren(p) === 2
         label = kwname(p; sig=true).name_val
     elseif kind(p) === K"::"
@@ -305,7 +310,7 @@ function make_siginfo(m::Method, ca::CallArgs, active_arg::Union{Int, Symbol};
         elseif kind(ca.args[i]) === K"..."
             # splat after semicolon
             maybe_var_kwp
-        elseif kind(ca.args[i]) === K"=" || i >= ca.kw_i
+        elseif kind(ca.args[i]) in JS.KSet"= kw" || i >= ca.kw_i
             n = kwname(ca.args[i]).name_val # we don't have a backwards mapping
             out = get(kwp_map, n, nothing)
             isnothing(out) ? maybe_var_kwp : out

@@ -70,19 +70,26 @@ function lower_step(iter, mod, world=Base.get_world_counter())
         push!(iter.todo, (ex, false, 1))
         return lower_step(iter, mod)
     elseif k == K"module"
-        name = ex[1]
+        name_or_version = ex[1]
+        version = nothing
+        if kind(name_or_version) == K"VERSION"
+            version = name_or_version.value
+            name = ex[2]
+        else
+            name = name_or_version
+        end
         if kind(name) != K"Identifier"
             throw(LoweringError(name, "Expected module name"))
         end
         newmod_name = Symbol(name.name_val)
-        body = ex[2]
+        body = ex[end]
         if kind(body) != K"block"
             throw(LoweringError(body, "Expected block in module body"))
         end
         std_defs = !has_flags(ex, JuliaSyntax.BARE_MODULE_FLAG)
         loc = source_location(LineNumberNode, ex)
         push!(iter.todo, (body, true, 1))
-        return Core.svec(:begin_module, newmod_name, std_defs, loc)
+        return Core.svec(:begin_module, version, newmod_name, std_defs, loc)
     else
         # Non macro expansion parts of lowering
         ctx2, ex2 = expand_forms_2(ctx1, ex)
@@ -405,13 +412,16 @@ function _to_lowered_expr(ex::SyntaxTree, stmt_offset::Int)
         Expr(:meta, args...)
     elseif k == K"static_eval"
         @assert numchildren(ex) == 1
-        _to_lowered_expr(ex[1], stmt_offset)
-    elseif k == K"cfunction"
-        args = Any[_to_lowered_expr(e, stmt_offset) for e in children(ex)]
-        if kind(ex[2]) == K"static_eval"
-            args[2] = QuoteNode(args[2])
+        if kind(ex[1]) === K"tuple"
+            # Should just be ccall library spec
+            @assert numchildren(ex[1]) === 2
+            Expr(:tuple, _to_lowered_expr(ex[1][1], stmt_offset),
+                 _to_lowered_expr(ex[1][2], stmt_offset))
+        elseif kind(ex[1]) === K"function"
+            QuoteNode(Expr(ex))
+        else
+            _to_lowered_expr(ex[1], stmt_offset)
         end
-        Expr(:cfunction, args...)
     else
         # Allowed forms according to https://docs.julialang.org/en/v1/devdocs/ast/
         #
@@ -431,6 +441,7 @@ function _to_lowered_expr(ex::SyntaxTree, stmt_offset::Int)
                k == K"gc_preserve_begin" ? :gc_preserve_begin :
                k == K"gc_preserve_end"   ? :gc_preserve_end   :
                k == K"foreigncall"       ? :foreigncall       :
+               k == K"cfunction"         ? :cfunction         :
                k == K"new_opaque_closure" ? :new_opaque_closure :
                nothing
         if isnothing(head)
@@ -467,10 +478,10 @@ function _eval(mod, iter)
         if type == :done
             break
         elseif type == :begin_module
-            filename = something(thunk[4].file, :none)
+            filename = something(thunk[5].file, :none)
             mod = @ccall jl_begin_new_module(
-                modules[end]::Any, thunk[2]::Symbol, thunk[3]::Cint,
-                filename::Cstring, thunk[4].line::Cint)::Module
+                modules[end]::Any, thunk[3]::Symbol, thunk[2]::Any, thunk[4]::Cint,
+                filename::Cstring, thunk[5].line::Cint)::Module
             push!(modules, mod)
         elseif type == :end_module
             @ccall jl_end_new_module(modules[end]::Module)::Cvoid
@@ -521,3 +532,5 @@ function include_string(mod::Module, code::AbstractString, filename::AbstractStr
                         expr_compat_mode=false)
     eval(mod, parseall(SyntaxTree, code; filename=filename); expr_compat_mode)
 end
+
+include(path::AbstractString) = include(JuliaLowering, path)

@@ -399,132 +399,130 @@ end
     @test JETLS.noparen_macrocall(jlparse("@interface AAA begin end"; rule=:statement))
     @test !JETLS.noparen_macrocall(jlparse("@test(true)"; rule=:statement))
     @test !JETLS.noparen_macrocall(jlparse("r\"xxx\""; rule=:statement))
+    @test !JETLS.noparen_macrocall(jlparse("cmdmac`xxx`"; rule=:statement))
 end
 
-select_target_node(::Type{JL.SyntaxTree}, code::AbstractString, pos::Int) = JETLS.select_target_node(jlparse(code), pos)
-select_target_node(::Type{JS.SyntaxNode}, code::AbstractString, pos::Int) = JETLS.select_target_node(jsparse(code), pos)
-function get_target_node(::Type{T}, code::AbstractString; kwargs...) where T
+select_target_node(code::AbstractString, pos::Int) = JETLS.select_target_node(jlparse(code), pos)
+function get_target_node(code::AbstractString; kwargs...)
     clean_code, positions = JETLS.get_text_and_positions(code; kwargs...)
     @assert length(positions) == 1
     fi = JETLS.FileInfo(1, clean_code, @__FILE__)
-    target_node = select_target_node(T, clean_code, JETLS.xy_to_offset(fi, positions[1]))
+    target_node = select_target_node(clean_code, JETLS.xy_to_offset(fi, positions[1]))
     return fi, target_node
 end
 
 @testset "`select_target_node` / `jsobj_to_range`" begin
-    @testset "with $T" for T in (JL.SyntaxTree, JS.SyntaxNode)
-        let code = """
-            test_│func(5)
-            """
-            fi, node = get_target_node(T, code)
-            @test (node !== nothing) && (JS.kind(node) === JS.K"Identifier")
-            @test JS.sourcetext(node) == "test_func"
-            let range = JETLS.jsobj_to_range(node, fi)
-                @test range.start.line == 0 && range.start.character == 0
-                @test range.var"end".line == 0 && range.var"end".character == sizeof("test_func")
-            end
+    let code = """
+        test_│func(5)
+        """
+        fi, node = get_target_node(code)
+        @test (node !== nothing) && (JS.kind(node) === JS.K"Identifier")
+        @test JS.sourcetext(node) == "test_func"
+        let range = JETLS.jsobj_to_range(node, fi)
+            @test range.start.line == 0 && range.start.character == 0
+            @test range.var"end".line == 0 && range.var"end".character == sizeof("test_func")
         end
+    end
 
-        let code = """
-            obj.│property = 42
-            """
-            fi, node = get_target_node(T, code)
-            @test node !== nothing
-            @test JS.kind(node) === JS.K"."
-            @test length(JS.children(node)) == 2
-            @test JS.sourcetext(JS.children(node)[1]) == "obj"
-            @test JS.sourcetext(JS.children(node)[2]) == "property"
-            let range = JETLS.jsobj_to_range(node, fi)
-                @test range.start.line == 0 && range.start.character == 0
-                @test range.var"end".line == 0 && range.var"end".character == sizeof("obj.property")
-            end
+    let code = """
+        obj.│property = 42
+        """
+        fi, node = get_target_node(code)
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"."
+        @test length(JS.children(node)) == 2
+        @test JS.sourcetext(JS.children(node)[1]) == "obj"
+        @test JS.sourcetext(JS.children(node)[2]) == "property"
+        let range = JETLS.jsobj_to_range(node, fi)
+            @test range.start.line == 0 && range.start.character == 0
+            @test range.var"end".line == 0 && range.var"end".character == sizeof("obj.property")
         end
+    end
 
-        let code = """
-            Core.Compiler.tme│et(x)
-            """
-            fi, node = get_target_node(T, code)
-            @test node !== nothing
-            @test JS.kind(node) === JS.K"."
-            let range = JETLS.jsobj_to_range(node, fi)
-                @test range.start.line == 0 && range.start.character == 0
-                @test range.var"end".line == 0 && range.var"end".character == sizeof("Core.Compiler.tmeet")
-            end
+    let code = """
+        Core.Compiler.tme│et(x)
+        """
+        fi, node = get_target_node(code)
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"."
+        let range = JETLS.jsobj_to_range(node, fi)
+            @test range.start.line == 0 && range.start.character == 0
+            @test range.var"end".line == 0 && range.var"end".character == sizeof("Core.Compiler.tmeet")
         end
+    end
 
-        let code = """
-            Core.Compi│ler.tmeet(x)
-            """
-            fi, node = get_target_node(T, code)
-            @test node !== nothing
-            @test JS.kind(node) === JS.K"."
-            let range = JETLS.jsobj_to_range(node, fi)
-                @test range.start.line == 0 && range.start.character == 0
-                @test range.var"end".line == 0 && range.var"end".character == sizeof("Core.Compiler")
-            end
+    let code = """
+        Core.Compi│ler.tmeet(x)
+        """
+        fi, node = get_target_node(code)
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"."
+        let range = JETLS.jsobj_to_range(node, fi)
+            @test range.start.line == 0 && range.start.character == 0
+            @test range.var"end".line == 0 && range.var"end".character == sizeof("Core.Compiler")
         end
+    end
 
-        let code = """
-            Cor│e.Compiler.tmeet(x)
-            """
-            fi, node = get_target_node(T, code)
-            @test node !== nothing
-            @test JS.kind(node) === JS.K"Identifier"
-            let range = JETLS.jsobj_to_range(node, fi)
-                @test range.start.line == 0 && range.start.character == 0
-                @test range.var"end".line == 0 && range.var"end".character == sizeof("Core")
-            end
+    let code = """
+        Cor│e.Compiler.tmeet(x)
+        """
+        fi, node = get_target_node(code)
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"Identifier"
+        let range = JETLS.jsobj_to_range(node, fi)
+            @test range.start.line == 0 && range.start.character == 0
+            @test range.var"end".line == 0 && range.var"end".character == sizeof("Core")
         end
+    end
 
-        let code = """
-            @inline│ callsin(x) = sin(x)
-            """
-            fi, node = get_target_node(T, code)
-            @test node !== nothing
-            @test JS.kind(node) === JS.K"macro_name"
-            let range = JETLS.jsobj_to_range(node, fi)
-                @test range.start.line == 0 && range.start.character == 0 # include @-mark
-                @test range.var"end".line == 0 && range.var"end".character == sizeof("@inline")
-            end
+    let code = """
+        @inline│ callsin(x) = sin(x)
+        """
+        fi, node = get_target_node(code)
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"Identifier"
+        let range = JETLS.jsobj_to_range(node, fi)
+            @test range.start.line == 0 && range.start.character == 0 # include @-mark
+            @test range.var"end".line == 0 && range.var"end".character == sizeof("@inline")
         end
+    end
 
-        let code = """
-            Base.@inline│ callsin(x) = sin(x)
-            """
-            fi, node = get_target_node(T, code)
-            @test node !== nothing
-            let range = JETLS.jsobj_to_range(node, fi)
-                @test range.start.line == 0 && range.start.character == 0 # include `Base.`
-                @test range.var"end".line == 0 && range.var"end".character == sizeof("Base.@inline")
-            end
+    let code = """
+        Base.@inline│ callsin(x) = sin(x)
+        """
+        fi, node = get_target_node(code)
+        @test node !== nothing
+        let range = JETLS.jsobj_to_range(node, fi)
+            @test range.start.line == 0 && range.start.character == 0 # include `Base.`
+            @test range.var"end".line == 0 && range.var"end".character == sizeof("Base.@inline")
         end
+    end
 
-        let code = """
-            text│"sin"
-            """
-            fi, node = get_target_node(T, code)
-            @test node !== nothing
-            let range = JETLS.jsobj_to_range(node, fi)
-                @test range.start.line == 0 && range.start.character == 0
-                @test range.var"end".line == 0 && range.var"end".character == sizeof("text")
-            end
+    let code = """
+        text│"sin"
+        """
+        fi, node = get_target_node(code)
+        @test node !== nothing
+        let range = JETLS.jsobj_to_range(node, fi)
+            @test range.start.line == 0 && range.start.character == 0
+            @test range.var"end".line == 0 && range.var"end".character == sizeof("text")
         end
+    end
 
-        let code = """
-            function test_func(x)
-                return x │ + 1
-            end
-            """
-            _, node = get_target_node(T, code)
-            @test node === nothing
+    let code = """
+        function test_func(x)
+            return x │ + 1
         end
+        """
+        _, node = get_target_node(code)
+        @test node === nothing
+    end
 
-        let code = """
-            │
-            """
-            _, node = get_target_node(T, code)
-            @test node === nothing
-        end
+    let code = """
+        │
+        """
+        _, node = get_target_node(code)
+        @test node === nothing
     end
 end
 
