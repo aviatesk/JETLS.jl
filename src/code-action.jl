@@ -36,8 +36,8 @@ function handle_CodeActionRequest(
     end
     fi = result
     code_actions = Union{CodeAction,Command}[]
-    testsetinfos = get_testsetinfos(server.state, uri)
-    isnothing(testsetinfos) ||
+    testsetinfos = fi.testsetinfos
+    isempty(testsetinfos) ||
         testrunner_code_actions!(code_actions, uri, fi, testsetinfos, msg.params.range)
     return send(server,
         CodeActionResponse(;

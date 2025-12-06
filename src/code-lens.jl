@@ -33,8 +33,8 @@ function handle_CodeLensRequest(server::Server, msg::CodeLensRequest, cancel_fla
     end
     fi = result
     code_lenses = CodeLens[]
-    testsetinfos = get_testsetinfos(server.state, uri)
-    isnothing(testsetinfos) ||
+    testsetinfos = fi.testsetinfos
+    isempty(testsetinfos) ||
         testrunner_code_lenses!(code_lenses, uri, fi, testsetinfos)
     return send(server,
         CodeLensResponse(;

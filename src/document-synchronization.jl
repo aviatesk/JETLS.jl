@@ -5,21 +5,36 @@ function ParseStream!(s::Union{AbstractString,Vector{UInt8}})
 end
 
 """
-    cache_file_info!(state::ServerState, uri::URI, version::Int, text::String)
-    cache_file_info!(state::ServerState, uri::URI, version::Int, parsed_stream::JS.ParseStream)
+    cache_file_info!(server::Server, uri::URI, version::Int, text::String)
+    cache_file_info!(server::Server, uri::URI, version::Int, parsed_stream::JS.ParseStream)
 
 Cache or update file information in the server state's file cache.
-If the file already exists in the cache, updates its version and parsed stream,
-then clears any cached syntax representations. Otherwise, creates a new `FileInfo`
-entry in the cache.
+Computes testsetinfos atomically as part of the caching operation,
+preserving test results from previous testsetinfos where possible.
 """
-cache_file_info!(state::ServerState, uri::URI, version::Int, text::String) =
-    cache_file_info!(state, uri, version, ParseStream!(text))
-function cache_file_info!(state::ServerState, uri::URI, version::Int, parsed_stream::JS.ParseStream)
-    fi = FileInfo(version, parsed_stream, uri, state.encoding)
-    return store!(state.file_cache) do cache
-        Base.PersistentDict(cache, uri => fi), fi
+cache_file_info!(server::Server, uri::URI, version::Int, text::String) =
+    cache_file_info!(server, uri, version, ParseStream!(text))
+function cache_file_info!(
+        server::Server, uri::URI, version::Int, parsed_stream::JS.ParseStream
+    )
+    state = server.state
+    prev_fi = get_file_info(state, uri)
+    prev_testsetinfos = prev_fi === nothing ? EMPTY_TESTSETINFOS : prev_fi.testsetinfos
+
+    filename = @something uri2filename(uri) error(lazy"Unsupported URI: $uri")
+    st0 = JS.build_tree(JL.SyntaxTree, parsed_stream; filename)
+    testsetinfos, any_deleted = compute_testsetinfos!(server, st0, prev_testsetinfos)
+
+    fi = FileInfo(version, parsed_stream, filename, state.encoding, testsetinfos)
+    store!(state.file_cache) do cache
+        Base.PersistentDict(cache, uri => fi), nothing
     end
+
+    if !state.suppress_notifications && any_deleted
+        notify_diagnostics!(server)
+    end
+
+    return fi
 end
 
 """
@@ -46,8 +61,7 @@ function handle_DidOpenTextDocumentNotification(server::Server, msg::DidOpenText
     uri = textDocument.uri
 
     parsed_stream = ParseStream!(textDocument.text)
-    fi = cache_file_info!(server.state, uri, textDocument.version, parsed_stream)
-    update_testsetinfos!(server, uri, fi)
+    cache_file_info!(server, uri, textDocument.version, parsed_stream)
     cache_saved_file_info!(server.state, uri, parsed_stream)
 
     request_analysis!(server, uri, #=onsave=#false)
@@ -60,8 +74,7 @@ function handle_DidChangeTextDocumentNotification(server::Server, msg::DidChange
         @assert contentChange.range === contentChange.rangeLength === nothing # since `change = TextDocumentSyncKind.Full`
     end
     text = last(contentChanges).text
-    fi = cache_file_info!(server.state, uri, textDocument.version, text)
-    update_testsetinfos!(server, uri, fi)
+    cache_file_info!(server, uri, textDocument.version, text)
 end
 
 function handle_DidSaveTextDocumentNotification(server::Server, msg::DidSaveTextDocumentNotification)
@@ -95,9 +108,6 @@ function handle_DidCloseTextDocumentNotification(server::Server, msg::DidCloseTe
         Base.delete(cache, uri), nothing
     end
     store!(server.state.saved_file_cache) do cache
-        Base.delete(cache, uri), nothing
-    end
-    store!(server.state.testsetinfos_cache) do cache
         Base.delete(cache, uri), nothing
     end
     if clear_extra_diagnostics!(server, uri)
