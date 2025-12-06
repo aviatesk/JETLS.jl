@@ -312,7 +312,7 @@ end
         foo(nothing,│)
         """
         cnt = 0
-        with_signature_help_request(text) do i, result, uri, script_path
+        with_signature_help_request(text) do _, result, _, script_path
             @test length(result.signatures) == 2
             @test any(result.signatures) do siginfo
                 siginfo.label == "foo(xxx)" &&
@@ -346,9 +346,6 @@ end
                 @test raw_res isa PublishDiagnosticsNotification
                 @test raw_res.params.uri == uri
 
-                # TODO Comment in the following
-                #      The following line doesn't work because `get_context_module` isn't synced
-                #      with `DidChangeTextDocumentNotification`
                 edited_code = """
                 foo(xxx) = :xxx
                 foo(xxx, yyy) = :xxx_yyy

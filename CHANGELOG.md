@@ -16,6 +16,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 - Diff: [`c23409d...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/c23409d...HEAD)
 
+### Fixed
+
+- TestRunner code lenses and code actions now properly wait for file cache
+  population before being computed.
+
 ### Changed
 
 - Updated JuliaSyntax.jl and JuliaLowering to the latest development versions.

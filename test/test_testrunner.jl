@@ -13,6 +13,22 @@ function mock_testrunner_result(; n_passed=1, n_failed=0, n_errored=0, n_broken=
     return JETLS.TestRunnerResult(; filename="test.jl", stats)
 end
 
+function update_testsetinfo_result!(
+        server::JETLS.Server, uri::URI, idx::Int, result::JETLS.TestsetResult
+    )
+    state = server.state
+    JETLS.store!(state.file_cache) do cache
+        fi = cache[uri]
+        testsetinfos = fi.testsetinfos
+        old_info = testsetinfos[idx]
+        new_info = JETLS.TestsetInfo(old_info.st0, result)
+        new_testsetinfos = copy(testsetinfos)
+        new_testsetinfos[idx] = new_info
+        new_fi = JETLS.FileInfo(fi; testsetinfos=new_testsetinfos)
+        Base.PersistentDict(cache, uri => new_fi), new_fi
+    end
+end
+
 @testset "find_executable_testsets" begin
     let st0 = """
         @testset "foo" begin
@@ -87,16 +103,15 @@ end
         end
         """
         uri = URI("file://runtests.jl")
-        fi = JETLS.cache_file_info!(server.state, uri, 1, test_code)
-        JETLS.update_testsetinfos!(server, uri, fi; notify_server=false)
-        testsetinfos = JETLS.get_testsetinfos(server.state, uri)
-        @test length(testsetinfos.infos) == 1
+        fi = JETLS.cache_file_info!(server, uri, 1, test_code)
+        testsetinfos = fi.testsetinfos
+        @test length(testsetinfos) == 1
 
         code_lenses = JETLS.testrunner_code_lenses(uri, fi, testsetinfos)
 
         @test length(code_lenses) == 1
         first_lens = code_lenses[1]
-        tsn = JETLS.testset_name(testsetinfos.infos[1])
+        tsn = JETLS.testset_name(testsetinfos[1])
         @test first_lens.command.title == "$(JETLS.TESTRUNNER_RUN_TITLE) $tsn"
         @test first_lens.command.command == JETLS.COMMAND_TESTRUNNER_RUN_TESTSET
         @test first_lens.command.arguments == [uri, 1, tsn]
@@ -114,21 +129,20 @@ end
         end
         """
         uri = URI("file://runtests.jl")
-        fi = JETLS.cache_file_info!(server.state, uri, 1, test_code)
-        JETLS.update_testsetinfos!(server, uri, fi; notify_server=false)
-        testsetinfos = JETLS.get_testsetinfos(server.state, uri)
-        @test length(testsetinfos.infos) == 2
+        fi = JETLS.cache_file_info!(server, uri, 1, test_code)
+        testsetinfos = fi.testsetinfos
+        @test length(testsetinfos) == 2
 
         result = mock_testrunner_result(; n_passed=1)
         key = JETLS.TestsetDiagnosticsKey(uri, "\"my_tests\"", 1)
-        testsetinfos.infos[1] = JETLS.TestsetInfo(testsetinfos.infos[1].st0, JETLS.TestsetResult(result, key))
+        testsetinfos[1] = JETLS.TestsetInfo(testsetinfos[1].st0, JETLS.TestsetResult(result, key))
 
         code_lenses = JETLS.testrunner_code_lenses(uri, fi, testsetinfos)
 
         @test length(code_lenses) == 4
 
         rerun_lens = code_lenses[1]
-        tsn1 = JETLS.testset_name(testsetinfos.infos[1])
+        tsn1 = JETLS.testset_name(testsetinfos[1])
         expected_title = "$(JETLS.TESTRUNNER_RERUN_TITLE) $tsn1 [ Total: 1 | Pass: 1 | Time: 1.0s ]"
         @test rerun_lens.command.title == expected_title
         @test rerun_lens.command.command == JETLS.COMMAND_TESTRUNNER_RUN_TESTSET
@@ -146,7 +160,7 @@ end
         @test clear_lens.command.arguments == [uri, 1, tsn1]
 
         run_lens = code_lenses[4]
-        tsn2 = JETLS.testset_name(testsetinfos.infos[2])
+        tsn2 = JETLS.testset_name(testsetinfos[2])
         @test run_lens.command.title == "$(JETLS.TESTRUNNER_RUN_TITLE) $tsn2"
         @test run_lens.command.command == JETLS.COMMAND_TESTRUNNER_RUN_TESTSET
         @test run_lens.command.arguments == [uri, 2, tsn2]
@@ -169,10 +183,9 @@ end
         test_code, positions = JETLS.get_text_and_positions(test_code_with_positions)
         @test length(positions) == 4
         uri = URI("file://runtests.jl")
-        fi = JETLS.cache_file_info!(server.state, uri, 1, test_code)
-        JETLS.update_testsetinfos!(server, uri, fi; notify_server=false)
-        testsetinfos = JETLS.get_testsetinfos(server.state, uri)
-        @test length(testsetinfos.infos) == 2
+        fi = JETLS.cache_file_info!(server, uri, 1, test_code)
+        testsetinfos = fi.testsetinfos
+        @test length(testsetinfos) == 2
 
         # Test action at position inside first testset
         first_testset_range = LSP.Range(;
@@ -181,7 +194,7 @@ end
 
         code_actions = JETLS.testrunner_code_actions(uri, fi, testsetinfos, first_testset_range)
         @test length(code_actions) == 2  # Now includes both @testset and @test actions
-        tsn1 = JETLS.testset_name(testsetinfos.infos[1])
+        tsn1 = JETLS.testset_name(testsetinfos[1])
         @test code_actions[1].title == "$(JETLS.TESTRUNNER_RUN_TITLE) $tsn1"
         @test code_actions[1].command.command == JETLS.COMMAND_TESTRUNNER_RUN_TESTSET
         @test code_actions[1].command.arguments == [uri, 1, tsn1]
@@ -197,7 +210,7 @@ end
 
         code_actions = JETLS.testrunner_code_actions(uri, fi, testsetinfos, second_testset_range)
         @test length(code_actions) == 1
-        tsn2 = JETLS.testset_name(testsetinfos.infos[2])
+        tsn2 = JETLS.testset_name(testsetinfos[2])
         @test code_actions[1].title == "$(JETLS.TESTRUNNER_RUN_TITLE) $tsn2"
         @test code_actions[1].command.command == JETLS.COMMAND_TESTRUNNER_RUN_TESTSET
         @test code_actions[1].command.arguments == [uri, 2, tsn2]
@@ -209,8 +222,8 @@ end
 
         code_actions = JETLS.testrunner_code_actions(uri, fi, testsetinfos, multi_range)
         @test length(code_actions) == 3  # Two @testset actions and one @test action (true)
-        tsn1 = JETLS.testset_name(testsetinfos.infos[1])
-        tsn2 = JETLS.testset_name(testsetinfos.infos[2])
+        tsn1 = JETLS.testset_name(testsetinfos[1])
+        tsn2 = JETLS.testset_name(testsetinfos[2])
         @test code_actions[1].title == "$(JETLS.TESTRUNNER_RUN_TITLE) $tsn1"
         @test code_actions[1].command.command == JETLS.COMMAND_TESTRUNNER_RUN_TESTSET
         @test code_actions[1].command.arguments == [uri, 1, tsn1]
@@ -228,7 +241,7 @@ end
 
         code_actions = JETLS.testrunner_code_actions(uri, fi, testsetinfos, after_end_range)
         @test length(code_actions) == 1
-        tsn2 = JETLS.testset_name(testsetinfos.infos[2])
+        tsn2 = JETLS.testset_name(testsetinfos[2])
         @test code_actions[1].title == "$(JETLS.TESTRUNNER_RUN_TITLE) $tsn2"
         @test code_actions[1].command.command == JETLS.COMMAND_TESTRUNNER_RUN_TESTSET
         @test code_actions[1].command.arguments == [uri, 2, tsn2]
@@ -252,14 +265,13 @@ end
         @test length(positions) == 1
 
         uri = URI("file://runtests.jl")
-        fi = JETLS.cache_file_info!(server.state, uri, 1, test_code)
-        JETLS.update_testsetinfos!(server, uri, fi; notify_server=false)
-        testsetinfos = JETLS.get_testsetinfos(server.state, uri)
-        @test length(testsetinfos.infos) == 1
+        fi = JETLS.cache_file_info!(server, uri, 1, test_code)
+        testsetinfos = fi.testsetinfos
+        @test length(testsetinfos) == 1
 
         result = mock_testrunner_result(; n_passed=1, duration=0.5)
         key = JETLS.TestsetDiagnosticsKey(uri, "\"test_with_results\"", 1)
-        testsetinfos.infos[1] = JETLS.TestsetInfo(testsetinfos.infos[1].st0, JETLS.TestsetResult(result, key))
+        testsetinfos[1] = JETLS.TestsetInfo(testsetinfos[1].st0, JETLS.TestsetResult(result, key))
 
         testset_range = LSP.Range(;
             start = positions[1],
@@ -268,7 +280,7 @@ end
         code_actions = JETLS.testrunner_code_actions(uri, fi, testsetinfos, testset_range)
         @test length(code_actions) == 3
 
-        tsn = JETLS.testset_name(testsetinfos.infos[1])
+        tsn = JETLS.testset_name(testsetinfos[1])
         @test code_actions[1].title == "$(JETLS.TESTRUNNER_RERUN_TITLE) $tsn [ Total: 1 | Pass: 1 | Time: 500.0ms ]"
         @test code_actions[1].command.command == JETLS.COMMAND_TESTRUNNER_RUN_TESTSET
         @test code_actions[1].command.arguments == [uri, 1, tsn]
@@ -305,9 +317,8 @@ end
         @test length(positions) == 4
 
         uri = URI("file://runtests.jl")
-        fi = JETLS.cache_file_info!(server.state, uri, 1, test_code)
-        JETLS.update_testsetinfos!(server, uri, fi; notify_server=false)
-        testsetinfos = JETLS.get_testsetinfos(server.state, uri)
+        fi = JETLS.cache_file_info!(server, uri, 1, test_code)
+        testsetinfos = fi.testsetinfos
 
         # Test action on standalone @test (outside any testset)
         standalone_range = LSP.Range(;
@@ -354,7 +365,8 @@ end
     end
 end
 
-@testset "update_testsetinfos!" begin
+@testset "testsetinfos preservation" begin
+    # Test that results are preserved when testset names match
     let server = JETLS.Server()
         test_code = """
         @testset "foo" begin
@@ -366,30 +378,29 @@ end
         end
         """
         uri = URI("file://runtests.jl")
-        fi1 = JETLS.cache_file_info!(server.state, uri, 1, test_code)
-        JETLS.update_testsetinfos!(server, uri, fi1; notify_server=false)
-        testsetinfos = JETLS.get_testsetinfos(server.state, uri)
-        @test length(testsetinfos.infos) == 2
+        fi = JETLS.cache_file_info!(server, uri, 1, test_code)
+        testsetinfos = fi.testsetinfos
+        @test length(testsetinfos) == 2
 
         result1 = mock_testrunner_result(; n_passed=1)
         key1 = JETLS.TestsetDiagnosticsKey(uri, "\"foo\"", 1)
         result2 = mock_testrunner_result(; n_passed=0, n_failed=1)
         key2 = JETLS.TestsetDiagnosticsKey(uri, "\"bar\"", 2)
 
-        testsetinfos.infos[1] = JETLS.TestsetInfo(testsetinfos.infos[1].st0, JETLS.TestsetResult(result1, key1))
-        testsetinfos.infos[2] = JETLS.TestsetInfo(testsetinfos.infos[2].st0, JETLS.TestsetResult(result2, key2))
+        update_testsetinfo_result!(server, uri, 1, JETLS.TestsetResult(result1, key1))
+        update_testsetinfo_result!(server, uri, 2, JETLS.TestsetResult(result2, key2))
 
         new_test_code = test_code * "\n" # new line inserted at the end
-        fi2 = JETLS.cache_file_info!(server.state, uri, 2, new_test_code)
-        @test !JETLS.update_testsetinfos!(server, uri, fi2; notify_server=false) # nothing changed
-        testsetinfos = JETLS.get_testsetinfos(server.state, uri)
-        @test length(testsetinfos.infos) == 2
-        @test isdefined(testsetinfos.infos[1], :result)
-        @test isdefined(testsetinfos.infos[2], :result)
-        @test testsetinfos.infos[1].result.result === result1
-        @test testsetinfos.infos[2].result.result === result2
+        fi = JETLS.cache_file_info!(server, uri, 2, new_test_code)
+        testsetinfos = fi.testsetinfos
+        @test length(testsetinfos) == 2
+        @test isdefined(testsetinfos[1], :result)
+        @test isdefined(testsetinfos[2], :result)
+        @test testsetinfos[1].result.result === result1
+        @test testsetinfos[2].result.result === result2
     end
 
+    # Test that results are preserved when testset content changes but name stays the same
     let server = JETLS.Server()
         test_code = """
         @testset "foo" begin
@@ -401,14 +412,13 @@ end
         end
         """
         uri = URI("file://runtests.jl")
-        fi1 = JETLS.cache_file_info!(server.state, uri, 1, test_code)
-        JETLS.update_testsetinfos!(server, uri, fi1; notify_server=false)
-        testsetinfos = JETLS.get_testsetinfos(server.state, uri)
-        @test length(testsetinfos.infos) == 2
+        fi = JETLS.cache_file_info!(server, uri, 1, test_code)
+        testsetinfos = fi.testsetinfos
+        @test length(testsetinfos) == 2
 
         result = mock_testrunner_result(; n_passed=1)
         key = JETLS.TestsetDiagnosticsKey(uri, "\"foo\"", 1)
-        testsetinfos.infos[1] = JETLS.TestsetInfo(testsetinfos.infos[1].st0, JETLS.TestsetResult(result, key))
+        update_testsetinfo_result!(server, uri, 1, JETLS.TestsetResult(result, key))
         val = JETLS.testrunner_result_to_diagnostics(result)
         JETLS.store!(server.state.extra_diagnostics) do data
             JETLS.ExtraDiagnosticsData(data, key=>val), nothing
@@ -423,15 +433,15 @@ end
             @test sin(0) == 1
         end
         """ # the testset "foo" has been modified
-        fi2 = JETLS.cache_file_info!(server.state, uri, 2, new_test_code)
-        @test !JETLS.update_testsetinfos!(server, uri, fi2; notify_server=false) # test results are still being mapped
+        fi = JETLS.cache_file_info!(server, uri, 2, new_test_code)
         @test haskey(JETLS.load(server.state.extra_diagnostics), key)
-        testsetinfos = JETLS.get_testsetinfos(server.state, uri)
-        @test length(testsetinfos.infos) == 2
-        @test isdefined(testsetinfos.infos[1], :result)
-        @test !isdefined(testsetinfos.infos[2], :result)
+        testsetinfos = fi.testsetinfos
+        @test length(testsetinfos) == 2
+        @test isdefined(testsetinfos[1], :result)
+        @test !isdefined(testsetinfos[2], :result)
     end
 
+    # Test that diagnostics are cleared when testset is deleted
     let server = JETLS.Server()
         test_code = """
         @testset "foo" begin
@@ -443,14 +453,13 @@ end
         end
         """
         uri = URI("file://runtests.jl")
-        fi1 = JETLS.cache_file_info!(server.state, uri, 1, test_code)
-        JETLS.update_testsetinfos!(server, uri, fi1; notify_server=false)
-        testsetinfos = JETLS.get_testsetinfos(server.state, uri)
-        @test length(testsetinfos.infos) == 2
+        fi = JETLS.cache_file_info!(server, uri, 1, test_code)
+        testsetinfos = fi.testsetinfos
+        @test length(testsetinfos) == 2
 
         result = mock_testrunner_result(; n_passed=1)
         key = JETLS.TestsetDiagnosticsKey(uri, "\"foo\"", 1)
-        testsetinfos.infos[1] = JETLS.TestsetInfo(testsetinfos.infos[1].st0, JETLS.TestsetResult(result, key))
+        update_testsetinfo_result!(server, uri, 1, JETLS.TestsetResult(result, key))
         val = JETLS.testrunner_result_to_diagnostics(result)
         JETLS.store!(server.state.extra_diagnostics) do data
             JETLS.ExtraDiagnosticsData(data, key=>val), nothing
@@ -461,15 +470,15 @@ end
             @test sin(0) == 1
         end
         """ # the testset "foo" has been deleted
-        fi2 = JETLS.cache_file_info!(server.state, uri, 2, new_test_code)
-        @test JETLS.update_testsetinfos!(server, uri, fi2; notify_server=false)
+        fi = JETLS.cache_file_info!(server, uri, 2, new_test_code)
         @test isempty(JETLS.load(server.state.extra_diagnostics).keys)
-        testsetinfos = JETLS.get_testsetinfos(server.state, uri)
-        @test length(testsetinfos.infos) == 1
-        @test !isdefined(testsetinfos.infos[1], :result)
+        testsetinfos = fi.testsetinfos
+        @test length(testsetinfos) == 1
+        @test !isdefined(testsetinfos[1], :result)
     end
 
-        let server = JETLS.Server()
+    # Test that diagnostics are cleared when testset is renamed
+    let server = JETLS.Server()
         test_code = """
         @testset "foo" begin
             @test 10 > 0
@@ -480,14 +489,13 @@ end
         end
         """
         uri = URI("file://runtests.jl")
-        fi1 = JETLS.cache_file_info!(server.state, uri, 1, test_code)
-        JETLS.update_testsetinfos!(server, uri, fi1; notify_server=false)
-        testsetinfos = JETLS.get_testsetinfos(server.state, uri)
-        @test length(testsetinfos.infos) == 2
+        fi = JETLS.cache_file_info!(server, uri, 1, test_code)
+        testsetinfos = fi.testsetinfos
+        @test length(testsetinfos) == 2
 
         result = mock_testrunner_result(; n_passed=1)
         key = JETLS.TestsetDiagnosticsKey(uri, "\"foo\"", 1)
-        testsetinfos.infos[1] = JETLS.TestsetInfo(testsetinfos.infos[1].st0, JETLS.TestsetResult(result, key))
+        update_testsetinfo_result!(server, uri, 1, JETLS.TestsetResult(result, key))
         val = JETLS.testrunner_result_to_diagnostics(result)
         JETLS.store!(server.state.extra_diagnostics) do data
             JETLS.ExtraDiagnosticsData(data, key=>val), nothing
@@ -502,15 +510,15 @@ end
             @test sin(0) == 1
         end
         """ # the testset "foo" has been renamed to "baz"
-        fi2 = JETLS.cache_file_info!(server.state, uri, 2, new_test_code)
-        @test JETLS.update_testsetinfos!(server, uri, fi2; notify_server=false)
+        fi = JETLS.cache_file_info!(server, uri, 2, new_test_code)
         @test !haskey(JETLS.load(server.state.extra_diagnostics), key)
-        testsetinfos = JETLS.get_testsetinfos(server.state, uri)
-        @test length(testsetinfos.infos) == 2
-        @test !isdefined(testsetinfos.infos[1], :result)
-        @test !isdefined(testsetinfos.infos[2], :result)
+        testsetinfos = fi.testsetinfos
+        @test length(testsetinfos) == 2
+        @test !isdefined(testsetinfos[1], :result)
+        @test !isdefined(testsetinfos[2], :result)
     end
 
+    # Test that results are preserved when new testset is added
     let server = JETLS.Server()
         test_code = """
         @testset "foo" begin
@@ -518,14 +526,13 @@ end
         end
         """
         uri = URI("file://runtests.jl")
-        fi1 = JETLS.cache_file_info!(server.state, uri, 1, test_code)
-        JETLS.update_testsetinfos!(server, uri, fi1; notify_server=false)
-        testsetinfos = JETLS.get_testsetinfos(server.state, uri)
-        @test length(testsetinfos.infos) == 1
+        fi = JETLS.cache_file_info!(server, uri, 1, test_code)
+        testsetinfos = fi.testsetinfos
+        @test length(testsetinfos) == 1
 
         result = mock_testrunner_result(; n_passed=1)
         key = JETLS.TestsetDiagnosticsKey(uri, "\"foo\"", 1)
-        testsetinfos.infos[1] = JETLS.TestsetInfo(testsetinfos.infos[1].st0, JETLS.TestsetResult(result, key))
+        update_testsetinfo_result!(server, uri, 1, JETLS.TestsetResult(result, key))
         val = JETLS.testrunner_result_to_diagnostics(result)
         JETLS.store!(server.state.extra_diagnostics) do data
             JETLS.ExtraDiagnosticsData(data, key=>val), nothing
@@ -540,14 +547,13 @@ end
             @test true
         end
         """
-        fi2 = JETLS.cache_file_info!(server.state, uri, 2, new_test_code)
-        @test !JETLS.update_testsetinfos!(server, uri, fi2; notify_server=false) # just the new testset has been added
+        fi = JETLS.cache_file_info!(server, uri, 2, new_test_code)
         @test haskey(JETLS.load(server.state.extra_diagnostics), key)
-        testsetinfos = JETLS.get_testsetinfos(server.state, uri)
-        @test length(testsetinfos.infos) == 2
-        @test isdefined(testsetinfos.infos[1], :result)
-        @test testsetinfos.infos[1].result.result === result
-        @test !isdefined(testsetinfos.infos[2], :result)
+        testsetinfos = fi.testsetinfos
+        @test length(testsetinfos) == 2
+        @test isdefined(testsetinfos[1], :result)
+        @test testsetinfos[1].result.result === result
+        @test !isdefined(testsetinfos[2], :result)
     end
 end
 

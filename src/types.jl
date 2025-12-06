@@ -1,44 +1,5 @@
 const SyntaxTree0 = typeof(JS.build_tree(JL.SyntaxTree, JS.parse!(JS.ParseStream(""))))
 
-struct FileInfo
-    version::Int
-    parsed_stream::JS.ParseStream
-    filename::String
-    encoding::LSP.PositionEncodingKind.Ty
-
-    function FileInfo(
-            version::Int, parsed_stream::JS.ParseStream, filename::AbstractString,
-            encoding::LSP.PositionEncodingKind.Ty = LSP.PositionEncodingKind.UTF16
-        )
-        new(version, parsed_stream, filename, encoding)
-    end
-end
-
-function FileInfo( # Constructor for production code (with URI)
-        version::Int, parsed_stream::JS.ParseStream, uri::URI,
-        encoding::LSP.PositionEncodingKind.Ty = LSP.PositionEncodingKind.UTF16
-    )
-    filename = @something uri2filename(uri) error(lazy"Unsupported URI: $uri")
-    return FileInfo(version, parsed_stream, filename, encoding)
-end
-
-function FileInfo( # Constructor for test code (with raw text input and filename)
-        version::Int, s::Union{Vector{UInt8},AbstractString}, args...
-    )
-    return FileInfo(version, ParseStream!(s), args...)
-end
-
-struct SavedFileInfo
-    parsed_stream::JS.ParseStream
-    syntax_node::JS.SyntaxNode
-
-    function SavedFileInfo(parsed_stream::JS.ParseStream, uri::URI)
-        filename = @something uri2filename(uri) error(lazy"Unsupported URI: $uri")
-        syntax_node = JS.build_tree(JS.SyntaxNode, parsed_stream; filename)
-        new(parsed_stream, syntax_node)
-    end
-end
-
 abstract type ExtraDiagnosticsKey end
 to_uri(key::ExtraDiagnosticsKey) = to_uri_impl(key)::URI
 @eval to_key(key::ExtraDiagnosticsKey) = hash(key, $(rand(UInt)))
@@ -62,9 +23,58 @@ struct TestsetInfo
     TestsetInfo(st0::SyntaxTree0, result::TestsetResult) = new(st0, result)
 end
 
-struct TestsetInfos
-    version::Int # document version
-    infos::Vector{TestsetInfo}
+const EMPTY_TESTSETINFOS = TestsetInfo[]
+
+struct FileInfo
+    version::Int
+    parsed_stream::JS.ParseStream
+    filename::String
+    encoding::LSP.PositionEncodingKind.Ty
+    testsetinfos::Vector{TestsetInfo}
+
+    function FileInfo(
+            version::Int, parsed_stream::JS.ParseStream, filename::AbstractString,
+            encoding::LSP.PositionEncodingKind.Ty = LSP.PositionEncodingKind.UTF16,
+            testsetinfos::Vector{TestsetInfo} = EMPTY_TESTSETINFOS
+        )
+        new(version, parsed_stream, filename, encoding, testsetinfos)
+    end
+end
+
+function FileInfo( # Constructor for production code (with URI)
+        version::Int, parsed_stream::JS.ParseStream, uri::URI,
+        encoding::LSP.PositionEncodingKind.Ty = LSP.PositionEncodingKind.UTF16,
+        testsetinfos::Vector{TestsetInfo} = EMPTY_TESTSETINFOS
+    )
+    filename = @something uri2filename(uri) error(lazy"Unsupported URI: $uri")
+    return FileInfo(version, parsed_stream, filename, encoding, testsetinfos)
+end
+
+function FileInfo(fi::FileInfo;
+        version::Int = fi.version,
+        parsed_stream::JS.ParseStream = fi.parsed_stream,
+        filename::AbstractString = fi.filename,
+        encoding::LSP.PositionEncodingKind.Ty = fi.encoding,
+        testsetinfos::Vector{TestsetInfo} = fi.testsetinfos
+    )
+    FileInfo(version, parsed_stream, filename, encoding, testsetinfos)
+end
+
+function FileInfo( # Constructor for test code (with raw text input and filename)
+        version::Int, s::Union{Vector{UInt8},AbstractString}, args...
+    )
+    return FileInfo(version, ParseStream!(s), args...)
+end
+
+struct SavedFileInfo
+    parsed_stream::JS.ParseStream
+    syntax_node::JS.SyntaxNode
+
+    function SavedFileInfo(parsed_stream::JS.ParseStream, uri::URI)
+        filename = @something uri2filename(uri) error(lazy"Unsupported URI: $uri")
+        syntax_node = JS.build_tree(JS.SyntaxNode, parsed_stream; filename)
+        new(parsed_stream, syntax_node)
+    end
 end
 
 mutable struct CancelFlag
@@ -448,7 +458,6 @@ end
 # Type aliases for document-synchronization caches using `SWContainer` (sequential-only updates)
 const FileCache = SWContainer{Base.PersistentDict{URI,FileInfo}, SWStats}
 const SavedFileCache = SWContainer{Base.PersistentDict{URI,SavedFileInfo}, SWStats}
-const TestsetInfosCache = SWContainer{Base.PersistentDict{URI,TestsetInfos}, SWStats}
 
 # Type aliases for concurrent updates using CASContainer (lightweight operations)
 const ExtraDiagnostics = CASContainer{ExtraDiagnosticsData, CASStats}
@@ -464,7 +473,6 @@ const HandledHistory = FixedSizeFIFOQueue{Union{Int,String}}
 mutable struct ServerState
     const file_cache::FileCache # syntactic analysis cache (synced with `textDocument/didChange`)
     const saved_file_cache::SavedFileCache # syntactic analysis cache (synced with `textDocument/didSave`)
-    const testsetinfos_cache::TestsetInfosCache
     const analysis_manager::AnalysisManager
     const extra_diagnostics::ExtraDiagnostics
     const currently_handled::CurrentlyHandled
@@ -473,6 +481,7 @@ mutable struct ServerState
     const currently_registered::CurrentlyRegistered
     const config_manager::ConfigManager
     const completion_resolver_info::CompletionResolverInfo
+    const suppress_notifications::Bool
 
     # Lifecycle fields (set after initialization request)
     encoding::PositionEncodingKind.Ty
@@ -481,11 +490,10 @@ mutable struct ServerState
     root_path::String
     root_env_path::String
     init_params::InitializeParams
-    function ServerState()
+    function ServerState(; suppress_notifications::Bool=false)
         return new(
             #=file_cache=# FileCache(Base.PersistentDict{URI,FileInfo}()),
             #=saved_file_cache=# SavedFileCache(Base.PersistentDict{URI,SavedFileInfo}()),
-            #=testsetinfos_cache=# TestsetInfosCache(Base.PersistentDict{URI,TestsetInfos}()),
             #=analysis_manager=# AnalysisManager(),
             #=extra_diagnostics=# ExtraDiagnostics(ExtraDiagnosticsData()),
             #=currently_handled=# CurrentlyHandled(),
@@ -494,6 +502,7 @@ mutable struct ServerState
             #=currently_registered=# CurrentlyRegistered(Set{Registered}()),
             #=config_manager=# ConfigManager(ConfigManagerData()),
             #=completion_resolver_info=# CompletionResolverInfo(nothing),
+            suppress_notifications,
             #=encoding=# PositionEncodingKind.UTF16, # initialize with UTF16 (for tests)
             #=init_options=# DEFAULT_INIT_OPTIONS, # initialize with defaults
         )
@@ -504,11 +513,12 @@ struct Server{Callback}
     endpoint::Endpoint
     callback::Callback
     state::ServerState
-    function Server(callback::Callback, endpoint::Endpoint) where Callback
+    function Server(callback::Callback, endpoint::Endpoint; suppress_notifications::Bool=false) where Callback
         return new{Callback}(
             endpoint,
             callback,
-            ServerState())
+            ServerState(; suppress_notifications))
     end
 end
-Server() = Server(Returns(nothing), Endpoint(IOBuffer(), IOBuffer())) # used for tests
+Server(; suppress_notifications::Bool=true) = # used for tests
+    Server(Returns(nothing), Endpoint(IOBuffer(), IOBuffer()); suppress_notifications)
