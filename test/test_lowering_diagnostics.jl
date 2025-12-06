@@ -308,7 +308,7 @@ end
         withscript(script) do script_path
             uri = filepath2uri(script_path)
             withserver() do (; writereadmsg, id_counter, server)
-                JETLS.cache_file_info!(server.state, uri, 1, script)
+                JETLS.cache_file_info!(server, uri, 1, script)
                 JETLS.cache_saved_file_info!(server.state, uri, script)
                 JETLS.request_analysis!(server, uri, #=onsave=#false; wait=true, notify_diagnostics=false)
 
@@ -420,7 +420,7 @@ end
         macro foo(x, y) \$(x) end
         macro bar(x, y) \$(x) end
         """
-        fi = JETLS.cache_file_info!(server.state, uri, #=version=#0, text)
+        fi = JETLS.cache_file_info!(server, uri, #=version=#0, text)
         diagnostics = JETLS.toplevel_lowering_diagnostics(server, uri, fi)
         @test length(diagnostics) == 2
         @test count(diagnostics) do diagnostic
@@ -444,7 +444,7 @@ end
         @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE
         @test diagnostic.message == "Macro name `@notexisting` not found"
         @test diagnostic.range.start.line == 0
-        @test diagnostic.range.start.character == sizeof("x = @")
+        @test diagnostic.range.start.character == sizeof("x = ")
         @test diagnostic.range.var"end".line == 0
         @test diagnostic.range.var"end".character == sizeof("x = @notexisting")
     end

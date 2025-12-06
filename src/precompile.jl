@@ -18,12 +18,11 @@ module __demo__ end
     mktemp() do filename, _
         uri = filepath2uri(filename)
         @compile_workload let
-            state = server.state
-            fi = cache_file_info!(state, uri, #=version=#1, text)
+            fi = cache_file_info!(server, uri, #=version=#1, text)
             let comp_params = CompletionParams(;
                     textDocument = TextDocumentIdentifier(; uri),
                     position)
-                items = get_completion_items(state, uri, fi, comp_params)
+                items = get_completion_items(server.state, uri, fi, comp_params)
                 any(item->item.label=="out", items) || @warn "completion seems to be broken"
                 any(item->item.label=="bar", items) || @warn "completion seems to be broken"
             end

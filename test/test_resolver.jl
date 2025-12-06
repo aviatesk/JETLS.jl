@@ -11,7 +11,7 @@ function analyze_and_resolve(s::AbstractString; kwargs...)
     state = server.state
     mktemp() do filename, _
         uri = filename2uri(filename)
-        fileinfo = JETLS.cache_file_info!(state, uri, 1, text)
+        fileinfo = JETLS.cache_file_info!(server, uri, 1, text)
         JETLS.cache_saved_file_info!(state, uri, text)
         JETLS.start_analysis_workers!(server)
         JETLS.request_analysis!(server, uri, #=onsave=#false; wait=true, notify_diagnostics=false)
