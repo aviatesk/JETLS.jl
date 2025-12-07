@@ -21,16 +21,17 @@ end
 #     method = HOVER_REGISTRATION_METHOD))
 # register(currently_running, hover_registration())
 
-function local_binding_hover(fi::FileInfo, uri::URI, st0_top::JL.SyntaxTree, offset::Int, mod::Module)
+function local_binding_hover(
+        state::ServerState, fi::FileInfo, uri::URI, st0_top::JL.SyntaxTree, offset::Int, mod::Module
+    )
     target_binding, definitions = @something begin
         select_target_binding_definitions(st0_top, offset, mod)
     end return nothing
     contents = MarkupContent(;
         kind = MarkupKind.Markdown,
         value = local_binding_hover_info(fi, uri, definitions))
-    return Hover(;
-        contents,
-        range = jsobj_to_range(target_binding, fi))
+    range, _ = unadjust_range(state, uri, jsobj_to_range(target_binding, fi))
+    return Hover(; contents, range)
 end
 
 function local_binding_hover_info(fi::FileInfo, uri::URI, definitions::JL.SyntaxList)
@@ -56,10 +57,11 @@ end
 
 function handle_HoverRequest(
         server::Server, msg::HoverRequest, cancel_flag::CancelFlag)
-    pos = msg.params.position
+    state = server.state
     uri = msg.params.textDocument.uri
+    pos = adjust_position(state, uri, msg.params.position)
 
-    result = get_file_info(server.state, uri, cancel_flag)
+    result = get_file_info(state, uri, cancel_flag)
     if result isa ResponseError
         return send(server,
             HoverResponse(;
@@ -71,9 +73,9 @@ function handle_HoverRequest(
 
     st0_top = build_syntax_tree(fi)
     offset = xy_to_offset(fi, pos)
-    (; mod, analyzer, postprocessor) = get_context_info(server.state, uri, pos)
+    (; mod, analyzer, postprocessor) = get_context_info(state, uri, pos)
 
-    local_hover = local_binding_hover(fi, uri, st0_top, offset, mod)
+    local_hover = local_binding_hover(state, fi, uri, st0_top, offset, mod)
     isnothing(local_hover) || return send(server, HoverResponse(;
         id = msg.id,
         result = local_hover))
@@ -110,7 +112,7 @@ function handle_HoverRequest(
     contents = MarkupContent(;
         kind = MarkupKind.Markdown,
         value)
-    range = jsobj_to_range(node, fi)
+    range, _ = unadjust_range(state, uri, jsobj_to_range(node, fi))
     return send(server, HoverResponse(;
         id = msg.id,
         result = Hover(; contents, range)))

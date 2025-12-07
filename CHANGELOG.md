@@ -16,6 +16,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 - Diff: [`fd5f113...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/fd5f113...HEAD)
 
+### Added
+
+- Jupyter notebook support: JETLS now provides language features for Julia code
+  cells in Jupyter notebooks, including completions, hover, go-to-definition,
+  rename, and diagnostics. All cells are analyzed together, so definitions from
+  earlier cells are available in later cells.
+
+  > JETLS × notebook LSP demo
+
+  https://github.com/user-attachments/assets/a3bc3937-37dd-4fe5-9a29-f608329d87a5
+
 ## 2025-12-06
 
 - Commit: [`fd5f113`](https://github.com/aviatesk/JETLS.jl/commit/fd5f113)

@@ -21,7 +21,7 @@ function cache_file_info!(
     prev_fi = get_file_info(state, uri)
     prev_testsetinfos = prev_fi === nothing ? EMPTY_TESTSETINFOS : prev_fi.testsetinfos
 
-    filename = @something uri2filename(uri) error(lazy"Unsupported URI: $uri")
+    filename = uri2filename(uri)
     st0 = JS.build_tree(JL.SyntaxTree, parsed_stream; filename)
     testsetinfos, any_deleted = compute_testsetinfos!(server, st0, prev_testsetinfos)
 

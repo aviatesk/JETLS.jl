@@ -229,9 +229,55 @@ To keep the type definition simple all properties are marked as optional.
 end
 
 """
-A document selector is the combination of one or more document filters.
+A notebook document filter denotes a notebook document by
+different properties.
+
+# Tags
+- since - 3.17.0
 """
-const DocumentSelector = Vector{DocumentFilter}
+@interface NotebookDocumentFilter begin
+    "The type of the enclosing notebook."
+    notebookType::Union{Nothing, String} = nothing
+
+    "A Uri scheme, like `file` or `untitled`."
+    scheme::Union{Nothing, String} = nothing
+
+    "A glob pattern."
+    pattern::Union{Nothing, String} = nothing
+end
+
+"""
+A notebook cell text document filter denotes a cell text
+document by different properties.
+
+# Tags
+- since - 3.17.0
+"""
+@interface NotebookCellTextDocumentFilter begin
+    """
+    A filter that matches against the notebook
+    containing the notebook cell. If a string
+    value is provided it matches against the
+    notebook type. '*' matches every notebook.
+    """
+    notebook::Union{String, NotebookDocumentFilter}
+
+    """
+    A language id like `python`.
+
+    Will be matched against the language id of the
+    notebook cell document. '*' matches every language.
+    """
+    language::Union{Nothing, String} = nothing
+end
+
+"""
+A document selector is the combination of one or more document filters.
+
+!!! note "3.17.0"
+    Since 3.17.0, a document selector can also include notebook cell text document filters.
+"""
+const DocumentSelector = Vector{Union{DocumentFilter, NotebookCellTextDocumentFilter}}
 
 # TextEdit & AnnotatedTextEdit
 # ============================
@@ -513,30 +559,6 @@ Diagnostic objects are only valid in the scope of a resource.
     - since – 3.16.0
     """
     data::Union{Any, Nothing} = nothing
-end
-
-# Utility constructor
-function Diagnostic(diag::Diagnostic;
-        range::Range = diag.range,
-        severity::Union{DiagnosticSeverity.Ty,Nothing} = diag.severity,
-        code::Union{String,Int,Nothing} = diag.code,
-        codeDescription::Union{CodeDescription,Nothing} = diag.codeDescription,
-        source::Union{String,Nothing} = diag.source,
-        message::String = diag.message,
-        tags::Union{Vector{DiagnosticTag.Ty},Nothing} = diag.tags,
-        relatedInformation::Union{Vector{DiagnosticRelatedInformation},Nothing} = diag.relatedInformation,
-        data::Any = diag.data
-    )
-    return Diagnostic(;
-        range,
-        severity,
-        code,
-        codeDescription,
-        source,
-        message,
-        tags,
-        relatedInformation,
-        data)
 end
 
 # Command
