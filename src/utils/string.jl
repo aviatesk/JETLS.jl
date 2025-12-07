@@ -2,6 +2,32 @@
 # These functions do the conversion.
 
 """
+    apply_text_change(
+        text::String, range::Range, new_text::String, encoding::PositionEncodingKind.Ty
+    ) -> String
+
+Apply a text change (replacement) to a string at the specified range.
+
+This function handles incremental text document changes as specified in the LSP protocol.
+It converts the LSP range (0-based line/character positions) to byte offsets and replaces
+the specified range with the new text.
+
+# Arguments
+- `text::String`: The original text content
+- `range::Range`: The LSP range to replace (0-based line and character positions)
+- `new_text::String`: The text to insert at the specified range
+- `encoding::PositionEncodingKind.Ty`: The encoding for character positions
+"""
+function apply_text_change(
+        text::String, range::Range, new_text::String, encoding::PositionEncodingKind.Ty
+    )
+    textbuf = Vector{UInt8}(text)
+    start_byte = _xy_to_offset(textbuf, range.start, encoding)
+    end_byte = _xy_to_offset(textbuf, range.var"end", encoding)
+    return String(textbuf[1:start_byte-1]) * new_text * String(textbuf[end_byte:end])
+end
+
+"""
     pos_to_utf8_offset(s::String, ch::UInt, encoding::PositionEncodingKind.Ty = PositionEncodingKind.UTF16) -> offset::Int
 
 Convert a character position to a UTF-8 byte offset in a Julia string.

@@ -36,6 +36,7 @@ makedocs(;
         "Diagnostic" => "diagnostic.md",
         "Formatter integration" => "formatting.md",
         "TestRunner integration" => "testrunner.md",
+        "Jupyter notebook support" => "notebook.md",
         "Configuration" => "configuration.md",
         "Launching" => "launching.md",
     ],

@@ -12,6 +12,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Jupyter notebook support: JETLS now provides language features for Julia code
+  cells in Jupyter notebooks, including completions, hover, go-to-definition,
+  rename, and diagnostics. All cells are analyzed together, so definitions from
+  earlier cells are available in later cells.
+
+  > JETLS × notebook LSP demo
+
+  https://github.com/user-attachments/assets/a3bc3937-37dd-4fe5-9a29-f608329d87a5
+
 - Published extension to [Open VSX Registry](https://open-vsx.org/extension/aviatesk/jetls-client)
   for users of VSCode-compatible editors like [Eclipse Theia](https://theia-ide.org/)
   or [Cursor](https://cursor.com/).
@@ -19,6 +28,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that require a restart to take effect. Currently supports `n_analysis_workers`
   for configuring concurrent analysis worker tasks.
   See <https://aviatesk.github.io/JETLS.jl/dev/launching/#init-options> for details.
+
+### Changed
+
+- Updated `vscode-languageclient` to 10.0.0-next.18 to enable pull diagnostics
+  support for Jupyter notebook cells.
 
 ## v0.2.4
 

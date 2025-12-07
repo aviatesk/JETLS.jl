@@ -12,6 +12,7 @@ overlap(rng1::Range, rng2::Range) = max(rng1.start, rng2.start) <= min(rng1.var"
 # LSP utilities
 
 @define_override_constructor LSP.CompletionItem
+@define_override_constructor LSP.Diagnostic
 @define_override_constructor LSP.Position
 @define_override_constructor LSP.Range
 

@@ -281,49 +281,6 @@ A notebook document.
 end
 
 """
-A notebook document filter denotes a notebook document by
-different properties.
-
-# Tags
-- since - 3.17.0
-"""
-@interface NotebookDocumentFilter begin
-    "The type of the enclosing notebook."
-    notebookType::Union{Nothing, String} = nothing
-
-    "A Uri scheme, like `file` or `untitled`."
-    scheme::Union{Nothing, String} = nothing
-
-    "A glob pattern."
-    pattern::Union{Nothing, String} = nothing
-end
-
-"""
-A notebook cell text document filter denotes a cell text
-document by different properties.
-
-# Tags
-- since - 3.17.0
-"""
-@interface NotebookCellTextDocumentFilter begin
-    """
-    A filter that matches against the notebook
-    containing the notebook cell. If a string
-    value is provided it matches against the
-    notebook type. '*' matches every notebook.
-    """
-    notebook::Union{String, NotebookDocumentFilter}
-
-    """
-    A language id like `python`.
-
-    Will be matched against the language id of the
-    notebook cell document. '*' matches every language.
-    """
-    language::Union{Nothing, String} = nothing
-end
-
-"""
 A literal to identify a notebook document in the client.
 
 # Tags

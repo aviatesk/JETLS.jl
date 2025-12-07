@@ -191,6 +191,11 @@ function get_file_info(
             data = cancelled_error_data)
         cache = get(load(s.file_cache), uri, nothing)
         cache !== nothing && return cache
+        notebook_uri = get_notebook_uri_for_cell(s, uri)
+        if notebook_uri !== nothing
+            cache = get(load(s.file_cache), notebook_uri, nothing)
+            cache !== nothing && return cache
+        end
         if time() - start > timeout
             return file_cache_error(uri;
                 data = cache_error_data)
@@ -209,7 +214,17 @@ get_file_info(s::ServerState, t::TextDocumentIdentifier, cancel_flag::CancelFlag
 
 Fetch cached saved FileInfo given an LSclient-provided structure with a URI
 """
-get_saved_file_info(s::ServerState, uri::URI) = get(load(s.saved_file_cache), uri, nothing)
+function get_saved_file_info(s::ServerState, uri::URI)
+    cache = get(load(s.saved_file_cache), uri, nothing)
+    if cache !== nothing
+        return cache
+    end
+    notebook_uri = get_notebook_uri_for_cell(s, uri)
+    if notebook_uri !== nothing
+        return get(load(s.saved_file_cache), notebook_uri, nothing)
+    end
+    return nothing
+end
 get_saved_file_info(s::ServerState, t::TextDocumentIdentifier) = get_saved_file_info(s, t.uri)
 
 """
@@ -224,9 +239,10 @@ Returns a named tuple containing:
   to recognize, which are caused by JET implementation details
 """
 function get_context_info(state::ServerState, uri::URI, pos::Position)
-    analysis_info = get_analysis_info(state.analysis_manager, uri)
-    mod = get_context_module(analysis_info, uri, pos)
-    analyzer = get_context_analyzer(analysis_info, uri)
+    lookup_uri = @something get_notebook_uri_for_cell(state, uri) uri
+    analysis_info = get_analysis_info(state.analysis_manager, lookup_uri)
+    mod = get_context_module(analysis_info, lookup_uri, pos)
+    analyzer = get_context_analyzer(analysis_info, lookup_uri)
     postprocessor = get_post_processor(analysis_info)
     return (; mod, analyzer, postprocessor)
 end

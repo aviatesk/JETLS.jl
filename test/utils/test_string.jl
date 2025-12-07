@@ -1,7 +1,7 @@
 module test_string
 
 using Test
-using JETLS: JETLS, pos_to_utf8_offset, offset_to_xy, xy_to_offset
+using JETLS: JETLS, apply_text_change, pos_to_utf8_offset, offset_to_xy, xy_to_offset
 using JETLS.LSP
 using JETLS.LSP.PositionEncodingKind: UTF8, UTF16, UTF32
 
@@ -486,6 +486,58 @@ length_utf16(s::AbstractString) = sum(c::Char -> codepoint(c) < 0x10000 ? 1 : 2,
         @test clean_text == "α = β + γ"
         @test length(positions) == 1
         @test positions[1] == Position(; line=0, character=length_utf16("α = β + "))
+    end
+end
+
+@testset "apply_text_change" begin
+    # Insert at beginning
+    let text = "hello"
+        range = Range(; start=Position(; line=0, character=0), var"end"=Position(; line=0, character=0))
+        @test apply_text_change(text, range, "world ", UTF16) == "world hello"
+    end
+
+    # Insert at end
+    let text = "hello"
+        range = Range(; start=Position(; line=0, character=5), var"end"=Position(; line=0, character=5))
+        @test apply_text_change(text, range, " world", UTF16) == "hello world"
+    end
+
+    # Replace in middle
+    let text = "hello world"
+        range = Range(; start=Position(; line=0, character=6), var"end"=Position(; line=0, character=11))
+        @test apply_text_change(text, range, "there", UTF16) == "hello there"
+    end
+
+    # Delete (replace with empty)
+    let text = "hello world"
+        range = Range(; start=Position(; line=0, character=5), var"end"=Position(; line=0, character=11))
+        @test apply_text_change(text, range, "", UTF16) == "hello"
+    end
+
+    # Multi-line: insert newline
+    let text = "ab"
+        range = Range(; start=Position(; line=0, character=1), var"end"=Position(; line=0, character=1))
+        @test apply_text_change(text, range, "\n", UTF16) == "a\nb"
+    end
+
+    # Multi-line: replace across lines
+    let text = "line1\nline2\nline3"
+        range = Range(; start=Position(; line=0, character=5), var"end"=Position(; line=2, character=0))
+        @test apply_text_change(text, range, "\n", UTF16) == "line1\nline3"
+    end
+
+    # Non-BMP character (emoji)
+    let text = "a😀b"
+        # After emoji: UTF-16 position is 3 (a=1 + 😀=2)
+        range = Range(; start=Position(; line=0, character=3), var"end"=Position(; line=0, character=3))
+        @test apply_text_change(text, range, "x", UTF16) == "a😀xb"
+    end
+
+    # BMP multi-byte character
+    let text = "café"
+        # Replace é (UTF-16 position 3, byte position 4-5)
+        range = Range(; start=Position(; line=0, character=3), var"end"=Position(; line=0, character=4))
+        @test apply_text_change(text, range, "e", UTF16) == "cafe"
     end
 end
 

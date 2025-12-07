@@ -25,10 +25,11 @@ end
 
 function handle_DocumentHighlightRequest(
         server::Server, msg::DocumentHighlightRequest, cancel_flag::CancelFlag)
+    state = server.state
     uri = msg.params.textDocument.uri
-    pos = msg.params.position
+    pos = adjust_position(state, uri, msg.params.position)
 
-    result = get_file_info(server.state, uri, cancel_flag)
+    result = get_file_info(state, uri, cancel_flag)
     if result isa ResponseError
         return send(server,
             DocumentHighlightResponse(;
@@ -39,7 +40,7 @@ function handle_DocumentHighlightRequest(
     fi = result
 
     highlights = DocumentHighlight[]
-    document_highlights!(highlights, fi, pos, (server.state, uri))
+    document_highlights!(highlights, fi, pos, (state, uri))
     return send(server, DocumentHighlightResponse(;
         id = msg.id,
         result = isempty(highlights) ? null : highlights
@@ -68,7 +69,7 @@ function document_highlights!(
     if binfo.kind === :global
         global_document_highlights!(highlights′, fi, st0_top, binfo, module_info)
     else
-        local_document_highlights!(highlights′, fi, ctx3, st3, binfo)
+        local_document_highlights!(highlights′, fi, ctx3, st3, binfo, module_info)
     end
 
     for (range, kind) in highlights′
@@ -79,9 +80,13 @@ end
 
 function add_highlight_for_occurrence!(
         highlights′::Dict{Range,DocumentHighlightKind.Ty},
-        fi::FileInfo, occurrence::BindingOccurence
+        fi::FileInfo, occurrence::BindingOccurence,
+        module_info::Union{Tuple{ServerState,URI},Module}
     )
     range = jsobj_to_range(occurrence.tree, fi)
+    if module_info isa Tuple{ServerState,URI}
+        range, _ = unadjust_range(module_info..., range)
+    end
     kind = document_highlight_kind(occurrence)
     highlights′[range] = max(kind, get(highlights′, range, DocumentHighlightKind.Text))
 end
@@ -111,7 +116,7 @@ function global_document_highlights!(
         for (binfo′, occurrences) in binding_occurrences
             if binfo′.mod === binfo.mod && binfo′.name == binfo.name
                 for occurrence in occurrences
-                    add_highlight_for_occurrence!(highlights′, fi, occurrence)
+                    add_highlight_for_occurrence!(highlights′, fi, occurrence, module_info)
                 end
             end
         end
@@ -121,12 +126,13 @@ end
 
 function local_document_highlights!(
         highlights′::Dict{Range,DocumentHighlightKind.Ty},
-        fi::FileInfo, ctx3, st3, binfo::JL.BindingInfo
+        fi::FileInfo, ctx3, st3, binfo::JL.BindingInfo,
+        module_info::Union{Tuple{ServerState,URI},Module}
     )
     binding_occurrences = compute_binding_occurrences(ctx3, st3)
     if haskey(binding_occurrences, binfo)
         for occurrence in binding_occurrences[binfo]
-            add_highlight_for_occurrence!(highlights′, fi, occurrence)
+            add_highlight_for_occurrence!(highlights′, fi, occurrence, module_info)
         end
     end
     return highlights′
