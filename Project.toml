@@ -28,7 +28,7 @@ Glob = {rev = "avi/globstar", url = "https://github.com/aviatesk/Glob.jl"}
 JET = {rev = "f577f65", url = "https://github.com/aviatesk/JET.jl"}
 JuliaLowering = {rev = "avi/JETLS-JSJL-head-2025-12-06", subdir = "JuliaLowering", url = "https://github.com/JuliaLang/julia"}
 JuliaSyntax = {rev = "avi/JETLS-JSJL-head-2025-12-06", subdir = "JuliaSyntax", url = "https://github.com/JuliaLang/julia"}
-LSP = {rev = "master", subdir = "LSP", url = "https://github.com/aviatesk/JETLS.jl"}
+LSP = {path = "LSP"}
 
 [compat]
 Configurations = "0.17.6"
