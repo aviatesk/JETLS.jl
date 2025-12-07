@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   > JETLS × notebook LSP demo
 
-  https://github.com/user-attachments/assets/a3bc3937-37dd-4fe5-9a29-f608329d87a5
+  https://github.com/user-attachments/assets/b5bb5201-d735-4a37-b430-932b519254ee
 
 - Published extension to [Open VSX Registry](https://open-vsx.org/extension/aviatesk/jetls-client)
   for users of VSCode-compatible editors like [Eclipse Theia](https://theia-ide.org/)

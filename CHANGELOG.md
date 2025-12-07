@@ -25,7 +25,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
   > JETLS × notebook LSP demo
 
-  https://github.com/user-attachments/assets/a3bc3937-37dd-4fe5-9a29-f608329d87a5
+  https://github.com/user-attachments/assets/b5bb5201-d735-4a37-b430-932b519254ee
 
 ## 2025-12-06
 
