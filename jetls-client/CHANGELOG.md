@@ -8,7 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`e552f0f...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/e552f0f...HEAD)
+- Diff: [`87c4b3f...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/87c4b3f...HEAD)
+
+## v0.2.6
+
+- Commit: [`87c4b3f`](https://github.com/aviatesk/JETLS.jl/commit/87c4b3f)
+- Diff: [`e552f0f...87c4b3f`](https://github.com/aviatesk/JETLS.jl/compare/e552f0f...87c4b3f)
 
 ### Fixed
 
