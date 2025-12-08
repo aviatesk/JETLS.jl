@@ -31,6 +31,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- Fixed `UndefVarError` during full analysis by updating the vendored
+  JuliaInterpreter.jl to v0.10.9.
 - Fixed source location links in hover content to use comma-delimited format
   (`#L<line>,<character>`) instead of `#L<line>C<character>`. The previous
   format was not correctly parsed by VS Code - the column position was ignored.
