@@ -19,9 +19,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Added
 
 - Jupyter notebook support: JETLS now provides language features for Julia code
-  cells in Jupyter notebooks, including completions, hover, go-to-definition,
-  rename, and diagnostics. All cells are analyzed together, so definitions from
-  earlier cells are available in later cells.
+  cells in Jupyter notebooks. As shown in the demo below, all code cells are
+  analyzed together as a single source, as if the notebook were a single Julia
+  script. JETLS is aware of all cells, so features like go-to-definition,
+  completions, and diagnostics work across cells just as they would in a
+  regular Julia script.
 
   > JETLS × notebook LSP demo
 
