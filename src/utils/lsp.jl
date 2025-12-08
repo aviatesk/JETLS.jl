@@ -27,10 +27,12 @@ const DEFAULT_DOCUMENT_SELECTOR = DocumentFilter[
 
 Create a markdown-style link to a source location that can be displayed in LSP clients.
 
-This function generates clickable links in the format `[display text](uri#L<line>C<character>)`
+This function generates clickable links in the format `[display text](uri#L<line>,<character>)`
 that LSP clients can use to navigate to specific file locations. While not explicitly part of
-the LSP specification, this markdown link format is widely supported by LSP clients including
-VS Code, Neovim, and others.
+the LSP specification, this markdown link format is supported by VS Code and LSP clients that
+follow the same convention (e.g. Sublime Text's LSP plugin).
+
+See: https://github.com/microsoft/vscode/blob/25c94ab342a6b167d4b97ade0829955d4f7e094e/src/vs/platform/opener/common/opener.ts#L131-L143
 
 # Arguments
 - `uri::URI`: The file URI to link to
@@ -43,8 +45,6 @@ VS Code, Neovim, and others.
 # Returns
 A markdown-formatted string containing the clickable link that can be rendered in hover
 documentation, completion items, or other LSP responses supporting markdown content.
-
-[remote file](http://example.com/file.jl#L5)
 
 # Examples
 ```julia
@@ -59,7 +59,7 @@ create_source_location_link(uri, "file.jl:42"; line=42)
 
 # Link with line and character position
 create_source_location_link(uri, "file.jl:42:10"; line=42, character=10)
-# Returns: "[file.jl:42:10](file:///path/to/file.jl#L42C10)"
+# Returns: "[file.jl:42:10](file:///path/to/file.jl#L42,10)"
 
 # Using URI with automatic display text
 uri = URI("file:///path/to/file.jl")
@@ -75,7 +75,7 @@ function create_source_location_link(uri::URI,
     if line !== nothing
         linktext *= "#L$line"
         if character !== nothing
-            linktext *= "C$character"
+            linktext *= ",$character"
         end
     end
     if isnothing(showtext)
