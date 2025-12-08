@@ -237,7 +237,9 @@ async function startLanguageServer() {
   );
 
   // On Windows, batch files must be spawned with shell: true
-  const spawnOptions = process.platform === "win32" ? { shell: true } : {};
+  const needsShell =
+    process.platform === "win32" && baseCommand.endsWith(".bat");
+  const spawnOptions = needsShell ? { shell: true } : {};
 
   let serverOptions: ServerOptions;
 
