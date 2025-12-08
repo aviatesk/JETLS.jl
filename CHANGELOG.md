@@ -29,6 +29,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
   https://github.com/user-attachments/assets/b5bb5201-d735-4a37-b430-932b519254ee
 
+### Fixed
+
+- Fixed source location links in hover content to use comma-delimited format
+  (`#L<line>,<character>`) instead of `#L<line>C<character>`. The previous
+  format was not correctly parsed by VS Code - the column position was ignored.
+  The new format follows VS Code's implementation and works with other LSP
+  clients like Sublime Text's LSP plugin. Fixes aviatesk/JETLS.jl#281.
+
 ## 2025-12-06
 
 - Commit: [`fd5f113`](https://github.com/aviatesk/JETLS.jl/commit/fd5f113)

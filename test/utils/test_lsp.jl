@@ -9,10 +9,10 @@ using JETLS.LSP.URIs2
     uri = URI("file:///path/to/file.jl")
     @test JETLS.create_source_location_link(uri) == "[/path/to/file.jl](file:///path/to/file.jl)"
     @test JETLS.create_source_location_link(uri; line=42) == "[/path/to/file.jl:42](file:///path/to/file.jl#L42)"
-    @test JETLS.create_source_location_link(uri; line=42, character=10) == "[/path/to/file.jl:42](file:///path/to/file.jl#L42C10)"
+    @test JETLS.create_source_location_link(uri; line=42, character=10) == "[/path/to/file.jl:42](file:///path/to/file.jl#L42,10)"
     @test JETLS.create_source_location_link(uri, "file.jl") == "[file.jl](file:///path/to/file.jl)"
     @test JETLS.create_source_location_link(uri, "file.jl:42"; line=42) == "[file.jl:42](file:///path/to/file.jl#L42)"
-    @test JETLS.create_source_location_link(uri, "file.jl:42:10"; line=42, character=10) == "[file.jl:42:10](file:///path/to/file.jl#L42C10)"
+    @test JETLS.create_source_location_link(uri, "file.jl:42:10"; line=42, character=10) == "[file.jl:42:10](file:///path/to/file.jl#L42,10)"
     @test JETLS.create_source_location_link(uri; character=10) == "[/path/to/file.jl](file:///path/to/file.jl)"
 
     http_uri = URI("http://example.com/file.jl")
