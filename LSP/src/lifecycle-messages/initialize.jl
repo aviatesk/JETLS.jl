@@ -73,10 +73,10 @@
     # """
     # implementationProvider::Union{Nothing, Bool, ImplementationOptions, ImplementationRegistrationOptions} = nothing
 
-    # """
-    # The server provides find references support.
-    # """
-    # referencesProvider::Union{Nothing, Bool, ReferenceOptions} = nothing
+    """
+    The server provides find references support.
+    """
+    referencesProvider::Union{Nothing, Bool, ReferenceOptions} = nothing
 
     """
     The server provides document highlight support.
@@ -366,10 +366,10 @@ end
     # """
     # implementation::Union{ImplementationClientCapabilities, Nothing} = nothing
 
-    # """
-    # Capabilities specific to the `textDocument/references` request.
-    # """
-    # references::Union{ReferenceClientCapabilities, Nothing} = nothing
+    """
+    Capabilities specific to the `textDocument/references` request.
+    """
+    references::Union{ReferenceClientCapabilities, Nothing} = nothing
 
     """
     Capabilities specific to the `textDocument/documentHighlight` request.
