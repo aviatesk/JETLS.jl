@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 - Diff: [`e552f0f...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/e552f0f...HEAD)
 
+### Fixed
+
+- Fixed Windows support by using `jetls.bat` instead of `jetls.exe` as the
+  default executable, and enabling shell spawn mode for batch files.
+  Fixes aviatesk/JETLS.jl#339. Thanks to @visr. (aviatesk/JETLS.jl#372)
+
 ## v0.2.5
 
 - Commit: [`e552f0f`](https://github.com/aviatesk/JETLS.jl/commit/e552f0f)
