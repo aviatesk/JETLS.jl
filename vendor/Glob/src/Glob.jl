@@ -6,7 +6,7 @@ import Base: readdir, show, occursin
 
 export glob, @fn_str, @fn_mstr, @glob_str, @glob_mstr
 
-if !@isdefined(var"@something")
+@static if VERSION < v"1.7"
 macro something(args...)
     noth = GlobalRef(Base, :nothing)
     something = GlobalRef(Base, :something)

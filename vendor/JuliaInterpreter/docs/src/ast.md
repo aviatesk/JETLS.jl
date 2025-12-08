@@ -82,7 +82,7 @@ branching into `@goto/@label` equivalents:
 
 This has very close correspondence to the lowered representation:
 
-```julia
+```julia-repl
 julia> code = @code_lowered debuginfo=:source summer(A)
 CodeInfo(
     @ REPL[1]:2 within `summer'
@@ -136,9 +136,9 @@ similar to how we named it in our alternative implementation above.)
 
 Let's look at a couple of the fields of the `CodeInfo`. First, the statements themselves:
 
-```julia
+```julia-repl
 julia> code.code
-16-element Array{Any,1}:
+16-element Vector{Any}:
  :(_3 = Main.zero($(Expr(:static_parameter, 1))))
  :(_2)
  :(_4 = Base.iterate(%2))
@@ -162,9 +162,9 @@ present in the statement list.
 The most noteworthy change here is the appearance of more objects like `_3`, which are
 references that index into local variable slots:
 
-```julia
+```julia-repl
 julia> code.slotnames
-5-element Array{Any,1}:
+5-element Vector{Any}:
  Symbol("#self#")
  :A
  :s

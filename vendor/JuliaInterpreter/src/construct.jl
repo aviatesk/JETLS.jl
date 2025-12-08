@@ -362,7 +362,7 @@ Optionally supply an initial `LineNumberNode` `lnn`.
 
 In a fresh session,
 
-```
+```julia-repl
 julia> expr = quote
            public_fn(x::Integer) = true
            module Private
@@ -412,7 +412,7 @@ For evaluation by JuliaInterpreter, the returned module/expression pairs can be 
 the `Frame` constructor. However, some expressions cannot be converted into `Frame`s and may need
 special handling:
 
-```julia
+```julia-repl
 julia> for (mod, ex) in ExprSplitter(Main, expr)
            if ex.head === :global
                # global declarations can't be lowered to a CodeInfo.

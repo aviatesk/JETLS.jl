@@ -60,6 +60,7 @@ Notes:
 - `**/` matches zero or more directories, including none (e.g., `a/**/b` matches both `a/b` and `a/x/y/b`)
 - `**` at the end of a pattern matches everything remaining
 - `**` not followed by `/` is treated as a regular `*` wildcard
+- `**` not preceded by `/` or at the start of a string is treated as a regular `*` wildcard
 
 Examples:
 ```julia
