@@ -616,8 +616,9 @@ end
 # ===============================
 
 function get_full_diagnostics(server::Server)
+    state = server.state
     uri2diagnostics = URI2Diagnostics()
-    for (uri, analysis_info) in load(server.state.analysis_manager.cache)
+    for (uri, analysis_info) in load(state.analysis_manager.cache)
         if analysis_info isa OutOfScope
             continue
         end
@@ -629,6 +630,7 @@ function get_full_diagnostics(server::Server)
         end
     end
     merge_extra_diagnostics!(uri2diagnostics, server)
+    map_notebook_diagnostics!(uri2diagnostics, state)
     return uri2diagnostics
 end
 
@@ -651,9 +653,10 @@ function notify_diagnostics!(server::Server)
 end
 
 function notify_diagnostics!(server::Server, uri2diagnostics::URI2Diagnostics)
+    state = server.state
+    root_path = isdefined(state, :root_path) ? state.root_path : nothing
     for (uri, diagnostics) in uri2diagnostics
-        root_path = isdefined(server.state, :root_path) ? server.state.root_path : nothing
-        apply_diagnostic_config!(diagnostics, server.state.config_manager, uri, root_path)
+        apply_diagnostic_config!(diagnostics, state.config_manager, uri, root_path)
         send(server, PublishDiagnosticsNotification(;
             params = PublishDiagnosticsParams(;
                 uri,
@@ -762,8 +765,6 @@ function handle_DocumentDiagnosticRequest(
     file_info = result
 
     parsed_stream = file_info.parsed_stream
-    filename = uri2filename(uri)
-    @assert !isnothing(filename) lazy"Unsupported URI: $uri"
     if isempty(parsed_stream.diagnostics)
         diagnostics = toplevel_lowering_diagnostics(server, uri, file_info)
     else
@@ -771,6 +772,10 @@ function handle_DocumentDiagnosticRequest(
     end
     root_path = isdefined(server.state, :root_path) ? server.state.root_path : nothing
     apply_diagnostic_config!(diagnostics, server.state.config_manager, uri, root_path)
+    notebook_uri = get_notebook_uri_for_cell(server.state, uri)
+    if notebook_uri !== nothing
+        diagnostics = map_cell_diagnostics(server.state, notebook_uri, uri, diagnostics)
+    end
     return send(server,
         DocumentDiagnosticResponse(;
             id = msg.id,

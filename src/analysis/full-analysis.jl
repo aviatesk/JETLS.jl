@@ -29,6 +29,18 @@ struct InstantiationRequest
     filekind::Symbol                 # :script, :src, :test
     filedir::String                  # used for :test to construct runtestsuri
     root_path::Union{String,Nothing} # used for progress
+    notebook::Bool
+end
+function InstantiationRequest(
+        env_path::String, root_path::Union{String,Nothing}, notebook::Bool=false
+    )
+    return InstantiationRequest(env_path, nothing, :script, "", root_path, notebook)
+end
+function InstantiationRequest(
+        env_path::String, pkgname::Union{Nothing,String}, filekind::Symbol,
+        filedir::String, root_path::Union{String,Nothing}
+    )
+    return InstantiationRequest(env_path, pkgname, filekind, filedir, root_path, #=notebook=#false)
 end
 
 struct InstantiationProgressCaller <: RequestCaller
@@ -500,7 +512,7 @@ function analyze_parsed_if_exist(
     jetconfigs = getjetconfigs(request.entry)
     fi = get_saved_file_info(server.state, uri)
     if !isnothing(fi)
-        filename = @something uri2filename(uri) error(lazy"Unsupported URI: $uri")
+        filename = uri2filename(uri)
         interp = LSInterpreter(server, request; activation_done)
         return JET.analyze_and_report_expr!(interp, fi.syntax_node, filename, args...; jetconfigs...)
     else
@@ -552,16 +564,26 @@ end
 
 struct ScriptAnalysisEntry <: AnalysisEntry
     uri::URI
+    notebook::Bool
 end
+ScriptAnalysisEntry(uri::URI) = ScriptAnalysisEntry(uri, false)
 entryuri_impl(entry::ScriptAnalysisEntry) = entry.uri
-progress_title_impl(entry::ScriptAnalysisEntry) = basename(uri2filename(entry.uri)) * " [no env]"
+function progress_title_impl(entry::ScriptAnalysisEntry)
+    suffix = entry.notebook ? " [notebook, no env]" : " [no env]"
+    return basename(uri2filename(entry.uri)) * suffix
+end
 
 struct ScriptInEnvAnalysisEntry <: AnalysisEntry
     env_path::String
     uri::URI
+    notebook::Bool
 end
+ScriptInEnvAnalysisEntry(env_path::String, uri::URI) = ScriptInEnvAnalysisEntry(env_path, uri, false)
 entryuri_impl(entry::ScriptInEnvAnalysisEntry) = entry.uri
-progress_title_impl(entry::ScriptInEnvAnalysisEntry) = basename(uri2filename(entry.uri)) * " [in env]"
+function progress_title_impl(entry::ScriptInEnvAnalysisEntry)
+    suffix = entry.notebook ? " [notebook, in env]" : " [in env]"
+    return basename(uri2filename(entry.uri)) * suffix
+end
 
 struct PackageSourceAnalysisEntry <: AnalysisEntry
     env_path::String
@@ -602,15 +624,16 @@ function lookup_analysis_entry(server::Server, uri::URI)
     end
 
     root_path = isdefined(state, :root_path) ? state.root_path : nothing
+    notebook = is_notebook_uri(state, uri)
 
     env_path = maybe_env_path
     if isnothing(env_path)
-        return ScriptAnalysisEntry(uri)
-    elseif uri.scheme == "untitled"
+        return ScriptAnalysisEntry(uri, notebook)
+    elseif uri.scheme == "untitled" || notebook
         if is_env_cached(server, env_path)
-            return ScriptInEnvAnalysisEntry(env_path, uri)
+            return ScriptInEnvAnalysisEntry(env_path, uri, notebook)
         else
-            return InstantiationRequest(env_path, nothing, :script, "", root_path)
+            return InstantiationRequest(env_path, root_path, notebook)
         end
     end
 
@@ -620,7 +643,7 @@ function lookup_analysis_entry(server::Server, uri::URI)
         if is_env_cached(server, env_path)
             return ScriptInEnvAnalysisEntry(env_path, uri)
         else
-            return InstantiationRequest(env_path, nothing, :script, "", root_path)
+            return InstantiationRequest(env_path, root_path)
         end
     end
 
@@ -651,7 +674,7 @@ function lookup_analysis_entry(server::Server, uri::URI)
     if is_env_cached(server, env_path)
         return ScriptInEnvAnalysisEntry(env_path, uri)
     else
-        return InstantiationRequest(env_path, nothing, :script, "", root_path)
+        return InstantiationRequest(env_path, root_path)
     end
 end
 
@@ -669,14 +692,14 @@ end
 # =========================
 
 function do_instantiation(server::Server, uri::URI, ins_request::InstantiationRequest)
-    (; env_path, pkgname, filekind, filedir) = ins_request
+    (; env_path, pkgname, filekind, filedir, notebook) = ins_request
     if pkgname === nothing
         ensure_instantiated_if_requested!(server, env_path)
-        return ScriptInEnvAnalysisEntry(env_path, uri)
+        return ScriptInEnvAnalysisEntry(env_path, uri, notebook)
     else
         pkgid, pkgfile = @something(
             instantiate_package_environment!(server, env_path, pkgname),
-            return ScriptInEnvAnalysisEntry(env_path, uri))
+            return ScriptInEnvAnalysisEntry(env_path, uri, notebook))
         if filekind === :src
             return PackageSourceAnalysisEntry(env_path, filepath2uri(pkgfile), pkgid)
         else # :test

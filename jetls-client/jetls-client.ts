@@ -1,7 +1,7 @@
 "use strict";
 
 import * as vscode from "vscode";
-import { ExtensionContext, OutputChannel } from "vscode";
+import { ExtensionContext, LogOutputChannel } from "vscode";
 
 import {
   LanguageClient,
@@ -15,7 +15,7 @@ import * as fs from "fs";
 import * as cp from "child_process";
 
 let languageClient: LanguageClient;
-let outputChannel: OutputChannel;
+let outputChannel: LogOutputChannel;
 let statusBarItem: vscode.StatusBarItem;
 
 type ExecutableConfig = { path?: string; threads?: string } | string[];
@@ -456,6 +456,10 @@ async function startLanguageServer() {
         scheme: "untitled",
         language: "julia",
       },
+      {
+        notebook: { notebookType: "jupyter-notebook" },
+        language: "julia",
+      },
     ],
     initializationOptions,
     outputChannel,
@@ -642,7 +646,7 @@ export function activate(context: ExtensionContext) {
     ),
   );
 
-  outputChannel = vscode.window.createOutputChannel("JETLS Language Server");
+  outputChannel = vscode.window.createOutputChannel("JETLS Language Server", { log: true });
 
   checkForUpdates(context);
 

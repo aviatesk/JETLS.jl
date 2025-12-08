@@ -63,10 +63,11 @@ LSP.LocationLink(loc::Location, originSelectionRange::Range) =
 
 function handle_DefinitionRequest(
         server::Server, msg::DefinitionRequest, cancel_flag::CancelFlag)
-    origin_position = msg.params.position
+    state = server.state
     uri = msg.params.textDocument.uri
+    origin_position = adjust_position(state, uri, msg.params.position)
 
-    result = get_file_info(server.state, uri, cancel_flag)
+    result = get_file_info(state, uri, cancel_flag)
     if result isa ResponseError
         return send(server,
             DefinitionResponse(;
@@ -78,20 +79,21 @@ function handle_DefinitionRequest(
 
     st0 = build_syntax_tree(fi)
     offset = xy_to_offset(fi, origin_position)
-    (; mod, analyzer) = get_context_info(server.state, uri, origin_position)
+    (; mod, analyzer) = get_context_info(state, uri, origin_position)
 
     locationlink_support = supports(server, :textDocument, :definition, :linkSupport)
 
     target_binding_definitions = select_target_binding_definitions(st0, offset, mod)
     if !isnothing(target_binding_definitions)
         target_binding, definitions = target_binding_definitions
-        local result = Location[
-            Location(; uri, range = jsobj_to_range(definition, fi))
-            for definition in definitions]
+        local result = Location[]
+        for definition in definitions
+            range, def_uri = unadjust_range(state, uri, jsobj_to_range(definition, fi))
+            push!(result, Location(; uri = def_uri, range))
+        end
         if locationlink_support
-            result = LocationLink[
-                LocationLink(loc, jsobj_to_range(target_binding, fi))
-                for loc in result]
+            target_range, _ = unadjust_range(state, uri, jsobj_to_range(target_binding, fi))
+            result = LocationLink[LocationLink(loc, target_range) for loc in result]
         end
         return send(server,
             DefinitionResponse(;
@@ -106,12 +108,12 @@ function handle_DefinitionRequest(
     objtyp isa Core.Const || return send(server, DefinitionResponse(; id = msg.id, result = null))
 
     objval = objtyp.val
-    originSelectionRange = jsobj_to_range(node, fi)
+    originSelectionRange, _ = unadjust_range(state, uri, jsobj_to_range(node, fi))
     if objval isa Module
         if is_location_unknown(objval)
             return send(server, DefinitionResponse(; id = msg.id, result = null))
         else
-            local result = Location(objval)
+            local result = unadjust_location(state, uri, Location(objval))
             if locationlink_support
                 result = LocationLink[LocationLink(result, originSelectionRange)] # only `result::Vector{LocationLink}` is supported
             end
@@ -125,7 +127,7 @@ function handle_DefinitionRequest(
         if isempty(target_methods)
             return send(server, DefinitionResponse(; id = msg.id, result = null))
         else
-            local result = Location.(target_methods)
+            local result = unadjust_location.(Ref(state), Ref(uri), Location.(target_methods))
             if locationlink_support
                 result = LocationLink.(result, Ref(originSelectionRange))
             end

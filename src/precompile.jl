@@ -19,10 +19,7 @@ module __demo__ end
         uri = filepath2uri(filename)
         @compile_workload let
             fi = cache_file_info!(server, uri, #=version=#1, text)
-            let comp_params = CompletionParams(;
-                    textDocument = TextDocumentIdentifier(; uri),
-                    position)
-                items = get_completion_items(server.state, uri, fi, comp_params)
+            let items = get_completion_items(server.state, uri, fi, position, nothing)
                 any(item->item.label=="out", items) || @warn "completion seems to be broken"
                 any(item->item.label=="bar", items) || @warn "completion seems to be broken"
             end

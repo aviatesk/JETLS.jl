@@ -485,8 +485,9 @@ function handle_SignatureHelpRequest(
                 error = result))
     end
     fi = result
-    (; mod, analyzer, postprocessor) = get_context_info(state, uri, msg.params.position)
-    b = xy_to_offset(fi, msg.params.position)
+    pos = adjust_position(state, uri, msg.params.position)
+    (; mod, analyzer, postprocessor) = get_context_info(state, uri, pos)
+    b = xy_to_offset(fi, pos)
     signatures = cursor_siginfos(mod, fi, b, analyzer; postprocessor)
     activeSignature = nothing
     activeParameter = nothing

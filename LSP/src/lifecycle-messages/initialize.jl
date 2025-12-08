@@ -21,13 +21,13 @@
     """
     textDocumentSync::Union{Nothing, TextDocumentSyncOptions, TextDocumentSyncKind.Ty} = nothing
 
-    # """
-    # Defines how notebook documents are synced.
+    """
+    Defines how notebook documents are synced.
 
-    # # Tags
-    # - since - 3.17.0
-    # """
-    # notebookDocumentSync::Union{Nothing, NotebookDocumentSyncOptions, NotebookDocumentSyncRegistrationOptions} = nothing
+    # Tags
+    - since - 3.17.0
+    """
+    notebookDocumentSync::Union{Nothing, NotebookDocumentSyncOptions, NotebookDocumentSyncRegistrationOptions} = nothing
 
     """
     The server provides completion support.
@@ -284,6 +284,36 @@
     Experimental server capabilities.
     """
     experimental::Union{Nothing, LSPAny} = nothing
+end
+
+"""
+Notebook specific client capabilities.
+
+# Tags
+- since - 3.17.0
+"""
+@interface NotebookDocumentSyncClientCapabilities begin
+    """
+    Whether implementation supports dynamic registration. If this is
+    set to `true` the client supports the new
+    `(NotebookDocumentSyncRegistrationOptions & NotebookDocumentSyncOptions)`
+    return value for the corresponding server capability as well.
+    """
+    dynamicRegistration::Union{Nothing, Bool} = nothing
+
+    "The client supports sending execution summary data per cell."
+    executionSummarySupport::Union{Nothing, Bool} = nothing
+end
+
+"""
+Capabilities specific to the notebook document support.
+
+# Tags
+- since - 3.17.0
+"""
+@interface NotebookDocumentClientCapabilities begin
+    "Capabilities specific to notebook document synchronization."
+    synchronization::NotebookDocumentSyncClientCapabilities
 end
 
 """
@@ -629,13 +659,13 @@ provides text document synchronization (e.g. open, changed and close notificatio
     "Text document specific client capabilities."
     textDocument::Union{TextDocumentClientCapabilities, Nothing} = nothing
 
-    # """
-    # Capabilities specific to the notebook document support.
+    """
+    Capabilities specific to the notebook document support.
 
-    # # Tags
-    # - since – 3.17.0
-    # """
-    # notebookDocument::Union{NotebookDocumentClientCapabilities, Nothing} = nothing
+    # Tags
+    - since – 3.17.0
+    """
+    notebookDocument::Union{NotebookDocumentClientCapabilities, Nothing} = nothing
 
     "Window specific client capabilities."
     window::Union{Nothing, @interface begin

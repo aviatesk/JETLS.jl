@@ -92,8 +92,33 @@ function withserver(f;
                 push!(json_res, LSP.readlsp(out))
             end
         end
-        check && @test isempty(received_queue) && isempty(sent_queue)
+        if check
+            if isempty(received_queue) && isempty(sent_queue)
+                @test true
+            else
+                @error "Non empty queue found"
+                isempty(received_queue) || @error "received_queue" take!(received_queue)
+                isempty(sent_queue) || @error "sent_queue" take!(sent_queue)
+                @test false
+            end
+        end
         return (; raw_msg, raw_res, json_res)
+    end
+
+    function writemsg(@nospecialize(msg); check::Bool=true)
+        LSP.writelsp(in, msg)
+        raw_msg = take_with_timeout!(received_queue)
+        if check
+            if isempty(received_queue) && isempty(sent_queue)
+                @test true
+            else
+                @error "Non empty queue found"
+                isempty(received_queue) || @error "received_queue" take!(received_queue)
+                isempty(sent_queue) || @error "sent_queue" take!(sent_queue)
+                @test false
+            end
+        end
+        return (; raw_msg)
     end
 
     """
@@ -113,7 +138,7 @@ function withserver(f;
     - `raw_msg`: The raw response(s) sent by the server (or `nothing` if `read=0`)
     - `json_msg`: The JSON-parsed response(s) from the server (or `nothing` if `read=0`)
     """
-    function readmsg(; read::Int=1)
+    function readmsg(; read::Int=1, check::Bool=true)
         @assert read ≥ 0 "`read::Int` must not be negative"
         raw_msg = json_msg = nothing
         if read == 0
@@ -128,7 +153,16 @@ function withserver(f;
                 push!(json_msg, LSP.readlsp(out))
             end
         end
-        @test isempty(received_queue) && isempty(sent_queue)
+        if check
+            if isempty(received_queue) && isempty(sent_queue)
+                @test true
+            else
+                @error "Non empty queue found"
+                isempty(received_queue) || @error "received_queue" take!(received_queue)
+                isempty(sent_queue) || @error "sent_queue" take!(sent_queue)
+                @test false
+            end
+        end
         return (; raw_msg, json_msg)
     end
 
@@ -150,7 +184,7 @@ function withserver(f;
         @test raw_res isa RegisterCapabilityRequest && raw_res.id isa String
     end
 
-    argnt = (; server, writereadmsg, readmsg, id_counter)
+    argnt = (; server, writemsg, readmsg, writereadmsg, id_counter)
     try
         # do the main callback
         return f(argnt)
