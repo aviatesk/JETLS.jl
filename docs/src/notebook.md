@@ -1,4 +1,4 @@
-# Jupyter notebook support
+# [Notebook support](@id notebook)
 
 !!! warning "Experimental"
     Notebook support is experimental. The LSP specification for notebooks is
@@ -6,7 +6,11 @@
     version of [`vscode-languageclient`](https://www.npmjs.com/package/vscode-languageclient)
     to fully enable this feature.
 
-JETLS provides language features for Julia code cells in Jupyter notebooks.
+JETLS provides language features for Julia code cells in notebooks. The LSP
+notebook protocol is designed to be generic and can handle various notebook
+formats, but JETLS currently focuses on Jupyter notebooks given the current
+state of client implementations
+(see the [Client support](@ref notebook/client-support) section below).
 
 ## Demo
 
@@ -23,15 +27,18 @@ as if the notebook were a single Julia script. The language server is aware of
 all cells, so features like go-to-definition, completions, and diagnostics work
 across cells just as they would in a regular Julia script.
 
-## Client support
+## [Client support](@id notebook/client-support)
 
 As of December 2025, notebook LSP is only supported by VS Code and VS Code-based
 editors (such as [Cursor](https://cursor.com/), [Eclipse Theia](https://theia-ide.org/),
 or [VS Codium](https://vscodium.com/)).
+
+These clients currently only support Jupyter notebooks (`.ipynb` files).
+
 Other editors like Neovim, Emacs, or Zed do not currently support the notebook
 LSP protocol, so this feature is not available in those environments.
 
-## Usage
+## [Usage](@id notebook/usage)
 
 1. Open a `.ipynb` file in VS Code
 2. Select "Julia" as the notebook kernel/language
