@@ -159,7 +159,7 @@ function createTimeoutHandler(
 function getServerConfig(): ServerConfig {
   const config = vscode.workspace.getConfiguration("jetls-client");
   const defaultExecutable =
-    process.platform === "win32" ? "jetls.exe" : "jetls";
+    process.platform === "win32" ? "jetls.bat" : "jetls";
   const executable = config.get<ExecutableConfig>("executable", {
     path: defaultExecutable,
     threads: "auto",
@@ -199,7 +199,7 @@ async function startLanguageServer() {
     baseArgs = args;
   } else {
     const defaultExecutable =
-      process.platform === "win32" ? "jetls.exe" : "jetls";
+      process.platform === "win32" ? "jetls.bat" : "jetls";
     baseCommand = serverConfig.executable.path || defaultExecutable;
     const threads = serverConfig.executable.threads || "auto";
     baseArgs = [`--threads=${threads}`, "--"];
@@ -236,6 +236,9 @@ async function startLanguageServer() {
     `[jetls-client] Using communication channel: ${commChannel}`,
   );
 
+  // On Windows, batch files must be spawned with shell: true
+  const spawnOptions = process.platform === "win32" ? { shell: true } : {};
+
   let serverOptions: ServerOptions;
 
   if (commChannel === "stdio") {
@@ -243,10 +246,12 @@ async function startLanguageServer() {
       run: {
         command: baseCommand,
         args: [...baseArgs, "--stdio"],
+        options: spawnOptions,
       },
       debug: {
         command: baseCommand,
         args: [...baseArgs, "--stdio"],
+        options: spawnOptions,
       },
     };
   } else if (commChannel === "socket") {
@@ -258,11 +263,11 @@ async function startLanguageServer() {
           `[jetls-client] Starting JETLS with TCP socket (port: ${port || "auto-assign"})...`,
         );
 
-        const jetlsProcess = cp.spawn(baseCommand, [
-          ...baseArgs,
-          "--socket",
-          port.toString(),
-        ]);
+        const jetlsProcess = cp.spawn(
+          baseCommand,
+          [...baseArgs, "--socket", port.toString()],
+          spawnOptions,
+        );
 
         let actualPort: number | null = null;
 
@@ -380,11 +385,11 @@ async function startLanguageServer() {
           );
 
           outputChannel.appendLine(`[jetls-client] Starting JETLS...`);
-          const jetlsProcess = cp.spawn(baseCommand, [
-            ...baseArgs,
-            "--pipe-connect",
-            socketPath,
-          ]);
+          const jetlsProcess = cp.spawn(
+            baseCommand,
+            [...baseArgs, "--pipe-connect", socketPath],
+            spawnOptions,
+          );
 
           // Setup monitoring with timeout
           const manager = setupProcessMonitoring(

@@ -274,7 +274,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     ```bash
     julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="release")'
     ```
-    This installs the executable to `~/.julia/bin/` (as `jetls` on Unix-like systems, `jetls.exe` on Windows).
+    This installs the executable to `~/.julia/bin/` (as `jetls` on Unix-like systems, `jetls.bat` on Windows).
     Make sure `~/.julia/bin` is in your `PATH`.
   - Updating: Update JETLS to the latest version by re-running the installation command:
     ```bash
