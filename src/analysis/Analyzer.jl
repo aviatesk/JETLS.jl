@@ -7,7 +7,6 @@ using JET.JETInterface
 using JET: JET, CC
 
 using ..JETLS: AnalysisEntry
-using ..JETLS.AtomicContainers: CASContainer, CASStats, store!
 using ..LSP
 
 # JETLS internal interface
