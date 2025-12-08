@@ -31,7 +31,7 @@ Install it with:
 julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="release")'
 ```
 
-This will install the `jetls` executable (`jetls.exe` on Windows) to `~/.julia/bin/`.
+This will install the `jetls` executable (`jetls.bat` on Windows) to `~/.julia/bin/`.
 Make sure `~/.julia/bin` is available on the `PATH` environment so the executable is accessible.
 
 You can verify the installation by running:

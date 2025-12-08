@@ -159,7 +159,7 @@ function createTimeoutHandler(
 function getServerConfig(): ServerConfig {
   const config = vscode.workspace.getConfiguration("jetls-client");
   const defaultExecutable =
-    process.platform === "win32" ? "jetls.exe" : "jetls";
+    process.platform === "win32" ? "jetls.bat" : "jetls";
   const executable = config.get<ExecutableConfig>("executable", {
     path: defaultExecutable,
     threads: "auto",
@@ -199,7 +199,7 @@ async function startLanguageServer() {
     baseArgs = args;
   } else {
     const defaultExecutable =
-      process.platform === "win32" ? "jetls.exe" : "jetls";
+      process.platform === "win32" ? "jetls.bat" : "jetls";
     baseCommand = serverConfig.executable.path || defaultExecutable;
     const threads = serverConfig.executable.threads || "auto";
     baseArgs = [`--threads=${threads}`, "--"];
