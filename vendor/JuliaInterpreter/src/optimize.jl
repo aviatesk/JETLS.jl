@@ -19,7 +19,9 @@ function lookup_stmt(stmts::Vector{Any}, @nospecialize arg)
         if isa(q, QuoteNode) && (qval = q.value; qval isa Symbol)
             mod = lookup_stmt(stmts, arg.args[2])
             if isa(mod, GlobalRef)
-                mod = @invokelatest getglobal(mod.mod, mod.name)
+                if @invokelatest isdefinedglobal(mod.mod, mod.name)
+                    mod = @invokelatest getglobal(mod.mod, mod.name)
+                end
             end
             if isa(mod, Module)
                 if @invokelatest isdefinedglobal(mod, qval)

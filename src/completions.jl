@@ -141,18 +141,16 @@ end
 
 function local_completions!(
         items::Dict{String,CompletionItem},
-        s::ServerState, uri::URI, fi::FileInfo, params::CompletionParams
+        s::ServerState, uri::URI, fi::FileInfo, pos::Position, context::Union{Nothing,CompletionContext}
     )
-    let context = params.context
-        !isnothing(context) &&
-            # Don't trigger completion just by typing a numeric character:
-            context.triggerCharacter in NUMERIC_CHARACTERS && return nothing
-    end
+    !isnothing(context) &&
+        # Don't trigger completion just by typing a numeric character:
+        context.triggerCharacter in NUMERIC_CHARACTERS && return nothing
     # NOTE don't bail out even if `length(fi.parsed_stream.diagnostics) ≠ 0`
     # so that we can get some completions even for incomplete code
     st0 = build_syntax_tree(fi)
-    (; mod) = get_context_info(s, uri, params.position)
-    cbs = @something cursor_bindings(st0, xy_to_offset(fi, params.position), mod) return nothing
+    (; mod) = get_context_info(s, uri, pos)
+    cbs = @something cursor_bindings(st0, xy_to_offset(fi, pos), mod) return nothing
     for (bi, st, dist) in cbs
         ci = to_completion(bi, st, dist, uri, fi)
         prev_ci = get(items, ci.label, nothing)
@@ -171,14 +169,11 @@ end
 
 function global_completions!(
         items::Dict{String,CompletionItem},
-        state::ServerState, uri::URI, fi::FileInfo, params::CompletionParams
+        state::ServerState, uri::URI, fi::FileInfo, pos::Position, context::Union{Nothing,CompletionContext},
     )
-    let context = params.context
-        !isnothing(context) &&
-            # Don't trigger completion just by typing a numeric character:
-            context.triggerCharacter in NUMERIC_CHARACTERS && return nothing
-    end
-    pos = params.position
+    !isnothing(context) &&
+        # Don't trigger completion just by typing a numeric character:
+        context.triggerCharacter in NUMERIC_CHARACTERS && return nothing
     (; mod, analyzer, postprocessor) = get_context_info(state, uri, pos)
     completion_module = mod
 
@@ -282,12 +277,14 @@ function global_completions!(
         else
             sortText = max_sort_text2
         end
-        textEdit = isnothing(edit_start_pos) ? nothing :
-            TextEdit(;
-                range = Range(;
-                    start = edit_start_pos,
-                    var"end" = pos),
-                newText)
+        textEdit = if isnothing(edit_start_pos)
+            nothing
+        else
+            range, _ = unadjust_range(state, uri, Range(;
+                start = edit_start_pos,
+                var"end" = pos))
+            TextEdit(; range, newText)
+        end
 
         items[s] = CompletionItem(;
             label,
@@ -351,11 +348,13 @@ end
 # whether any completions were added.
 function add_emoji_latex_completions!(
         items::Dict{String,CompletionItem},
-        state::ServerState, fi::FileInfo, params::CompletionParams
+        state::ServerState, uri::URI, fi::FileInfo, pos::Position
     )
-    pos = params.position
     backslash_offset, emojionly = @something get_backslash_offset(fi, pos) return nothing
     backslash_pos = offset_to_xy(fi, backslash_offset)
+    edit_range, _ = unadjust_range(state, uri, Range(;
+        start = backslash_pos,
+        var"end" = pos))
 
     # HACK Certain clients cannot properly sort/filter completion items that contain
     # characters like `\\` or `:`. To help with this, setting `sortText` or `filterText`,
@@ -379,9 +378,7 @@ function add_emoji_latex_completions!(
             sortText = helpText,
             filterText = helpText,
             textEdit = TextEdit(;
-                range = Range(;
-                    start = backslash_pos,
-                    var"end" = pos),
+                range = edit_range,
                 newText = val))
     end
 
@@ -416,20 +413,23 @@ end
 # ===============
 
 function get_completion_items(
-        state::ServerState, uri::URI, fi::FileInfo, params::CompletionParams)
+        state::ServerState, uri::URI, fi::FileInfo,
+        pos::Position, context::Union{Nothing,CompletionContext}
+    )
     items = Dict{String,CompletionItem}()
     # order matters; see local_completions!
     return collect(values(@something(
-        add_emoji_latex_completions!(items, state, fi, params),
-        global_completions!(items, state, uri, fi, params),
-        local_completions!(items, state, uri, fi, params),
+        add_emoji_latex_completions!(items, state, uri, fi, pos),
+        global_completions!(items, state, uri, fi, pos, context),
+        local_completions!(items, state, uri, fi, pos, context),
         items)))
 end
 
 function handle_CompletionRequest(
         server::Server, msg::CompletionRequest, cancel_flag::CancelFlag)
+    state = server.state
     uri = msg.params.textDocument.uri
-    result = get_file_info(server.state, uri, cancel_flag)
+    result = get_file_info(state, uri, cancel_flag)
     if result isa ResponseError
         return send(server,
             CompletionResponse(;
@@ -438,7 +438,8 @@ function handle_CompletionRequest(
                 error = result))
     end
     fi = result
-    items = get_completion_items(server.state, uri, fi, msg.params)
+    pos = adjust_position(state, uri, msg.params.position)
+    items = get_completion_items(state, uri, fi, pos, msg.params.context)
     return send(server,
         CompletionResponse(;
             id = msg.id,

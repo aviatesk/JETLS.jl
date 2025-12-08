@@ -26,10 +26,11 @@ end
 
 function handle_PrepareRenameRequest(
         server::Server, msg::PrepareRenameRequest, cancel_flag::CancelFlag)
+    state = server.state
     uri = msg.params.textDocument.uri
-    pos = msg.params.position
+    pos = adjust_position(state, uri, msg.params.position)
 
-    result = get_file_info(server.state, uri, cancel_flag)
+    result = get_file_info(state, uri, cancel_flag)
     if result isa ResponseError
         return send(server,
             PrepareRenameResponse(;
@@ -39,16 +40,18 @@ function handle_PrepareRenameRequest(
     end
     fi = result
 
-    (; mod) = get_context_info(server.state, uri, pos)
+    (; mod) = get_context_info(state, uri, pos)
     return send(server,
         PrepareRenameResponse(;
             id = msg.id,
             result = @something(
-                local_binding_rename_preparation(fi, pos, mod),
+                local_binding_rename_preparation(state, uri, fi, pos, mod),
                 null)))
 end
 
-function local_binding_rename_preparation(fi::FileInfo, pos::Position, mod::Module)
+function local_binding_rename_preparation(
+        state::ServerState, uri::URI, fi::FileInfo, pos::Position, mod::Module
+    )
     st0_top = build_syntax_tree(fi)
     offset = xy_to_offset(fi, pos)
 
@@ -58,7 +61,8 @@ function local_binding_rename_preparation(fi::FileInfo, pos::Position, mod::Modu
 
     binfo = JL.lookup_binding(ctx3, binding)
     if is_local_binding(binfo)
-        return (; range = jsobj_to_range(binding, fi), placeholder = binfo.name)
+        range, _ = unadjust_range(state, uri, jsobj_to_range(binding, fi))
+        return (; range, placeholder = binfo.name)
     else
         return nothing
     end
@@ -66,11 +70,12 @@ end
 
 function handle_RenameRequest(
         server::Server, msg::RenameRequest, cancel_flag::CancelFlag)
+    state = server.state
     uri = msg.params.textDocument.uri
-    pos = msg.params.position
+    pos = adjust_position(state, uri, msg.params.position)
     newName = msg.params.newName
 
-    result = get_file_info(server.state, uri, cancel_flag)
+    result = get_file_info(state, uri, cancel_flag)
     if result isa ResponseError
         return send(server,
             RenameResponse(;
@@ -80,14 +85,17 @@ function handle_RenameRequest(
     end
     fi = result
 
-    (; mod) = get_context_info(server.state, uri, pos)
+    (; mod) = get_context_info(state, uri, pos)
     (; result, error) = @something(
         local_binding_rename(server, uri, fi, pos, mod, newName),
         (; result = null, error = nothing))
     return send(server, RenameResponse(; id = msg.id, result, error))
 end
 
-function local_binding_rename(server::Server, uri::URI, fi::FileInfo, pos::Position, mod::Module, newName::String)
+function local_binding_rename(
+        server::Server, uri::URI, fi::FileInfo, pos::Position, mod::Module, newName::String
+    )
+    state = server.state
     st0_top = build_syntax_tree(fi)
     offset = xy_to_offset(fi, pos)
 
@@ -118,7 +126,8 @@ function local_binding_rename(server::Server, uri::URI, fi::FileInfo, pos::Posit
                 message = "Could not compute information for this local binding."))
     rename_ranges = Set{Range}()
     for occurrence in binding_occurrences[binfo]
-        push!(rename_ranges, jsobj_to_range(occurrence.tree, fi))
+        range, _ = unadjust_range(state, uri, jsobj_to_range(occurrence.tree, fi))
+        push!(rename_ranges, range)
     end
     edits = TextEdit[TextEdit(; range, newText = newName) for range in rename_ranges]
 

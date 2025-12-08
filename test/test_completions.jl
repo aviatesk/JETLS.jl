@@ -314,7 +314,7 @@ end
     """
 
     cnt = 0
-    with_completion_request(program) do i, result, uri
+    with_completion_request(program) do i, result, _
         items = result.items
         if i == 1
             @test any(items) do item
@@ -383,7 +383,7 @@ end
 
     context = CompletionContext(; triggerKind=CompletionTriggerKind.Invoked)
     cnt = 0
-    with_completion_request(text; context) do i, result, uri
+    with_completion_request(text; context) do _, result, _
         items = result.items
         @test any(items) do item
             item.label == "yyy"
@@ -397,7 +397,7 @@ end
 @testset "empty completion" begin
     let text = "│"
         cnt = 0
-        with_completion_request(text) do i, result, uri
+        with_completion_request(text) do _, result, _
             items = result.items
             # should not crash and return something
             @test length(items) > 0
@@ -408,7 +408,7 @@ end
 
     let text = "\n\n\n│"
         cnt = 0
-        with_completion_request(text) do i, result, uri
+        with_completion_request(text) do _, result, _
             items = result.items
             # should not crash and return something
             @test length(items) > 0
@@ -429,7 +429,7 @@ end
             triggerKind=CompletionTriggerKind.TriggerCharacter,
             triggerCharacter="@")
         cnt = 0
-        with_completion_request(text; context) do i, result, uri
+        with_completion_request(text; context) do _, result, _
             items = result.items
             @test any(items) do item
                 item.label == "@nospecialize" &&
@@ -451,7 +451,7 @@ end
         """
         context = CompletionContext(; triggerKind=CompletionTriggerKind.Invoked)
         cnt = 0
-        with_completion_request(text; context) do i, result, uri
+        with_completion_request(text; context) do _, result, _
             items = result.items
             @test any(items) do item
                 item.label == "@nospecialize" &&
@@ -473,7 +473,7 @@ end
         """
         context = CompletionContext(; triggerKind=CompletionTriggerKind.Invoked)
         cnt = 0
-        with_completion_request(text; context) do i, result, uri
+        with_completion_request(text; context) do _, result, _
             items = result.items
             @test any(items) do item
                 item.label == "yyy"
@@ -491,7 +491,7 @@ end
         """
         context = CompletionContext(; triggerKind=CompletionTriggerKind.Invoked)
         cnt = 0
-        with_completion_request(text; context) do i, result, uri
+        with_completion_request(text; context) do _, result, _
             items = result.items
             @test any(items) do item
                 item.label == "@nospecialize" &&
@@ -708,7 +708,7 @@ end
             triggerKind=CompletionTriggerKind.TriggerCharacter,
             triggerCharacter="\\")
         cnt = 0
-        with_completion_request(text; context) do i, result, uri
+        with_completion_request(text; context) do _, result, _
             items = result.items
             @test any(items) do item
                 item.label == "\\alpha"
@@ -731,7 +731,7 @@ end
             triggerKind=CompletionTriggerKind.TriggerCharacter,
             triggerCharacter=":")
         cnt = 0
-        with_completion_request(text; context) do i, result, uri
+        with_completion_request(text; context) do _, result, _
             items = result.items
             @test any(items) do item
                 item.label == "\\:pizza:"

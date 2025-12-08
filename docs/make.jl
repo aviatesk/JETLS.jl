@@ -36,6 +36,7 @@ makedocs(;
         "Diagnostic" => "diagnostic.md",
         "Formatter integration" => "formatting.md",
         "TestRunner integration" => "testrunner.md",
+        "Notebook support" => "notebook.md",
         "Configuration" => "configuration.md",
         "Launching" => "launching.md",
     ],

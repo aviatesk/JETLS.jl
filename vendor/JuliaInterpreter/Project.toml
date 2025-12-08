@@ -1,6 +1,6 @@
 name = "JuliaInterpreter"
 uuid = "87c368a4-672f-5de1-91ff-3cc7fc652fab"
-version = "0.10.8"
+version = "0.10.9"
 authors = ["Tim Holy <tim.holy@gmail.com>, Kristoffer Carlsson <kcarlsson89@gmail.com>, Shuhei Kadowaki <aviatesk@gmail.com> and contributors"]
 
 [deps]
@@ -35,5 +35,5 @@ test = ["CassetteOverlay", "DataFrames", "Dates", "DeepDiffs", "Distributed", "F
 
 [sources.CodeTracking]
 subdir = "vendor/CodeTracking"
-rev = "92a454d7ca27a3ca14c5a581e5097488a63f7908"
+rev = "9da400f7458ecff0f4d2a29c87da20b71c0ff882"
 url = "https://github.com/aviatesk/JETLS.jl"

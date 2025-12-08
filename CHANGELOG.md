@@ -14,7 +14,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`c23409d...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/c23409d...HEAD)
+- Diff: [`fd5f113...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/fd5f113...HEAD)
+
+### Added
+
+- Jupyter notebook support: JETLS now provides language features for Julia code
+  cells in Jupyter notebooks. As shown in the demo below, all code cells are
+  analyzed together as a single source, as if the notebook were a single Julia
+  script. JETLS is aware of all cells, so features like go-to-definition,
+  completions, and diagnostics work across cells just as they would in a
+  regular Julia script.
+
+  > JETLS × notebook LSP demo
+
+  https://github.com/user-attachments/assets/b5bb5201-d735-4a37-b430-932b519254ee
+
+### Fixed
+
+- Fixed `UndefVarError` during full analysis by updating the vendored
+  JuliaInterpreter.jl to v0.10.9.
+- Fixed source location links in hover content to use comma-delimited format
+  (`#L<line>,<character>`) instead of `#L<line>C<character>`. The previous
+  format was not correctly parsed by VS Code - the column position was ignored.
+  The new format follows VS Code's implementation and works with other LSP
+  clients like Sublime Text's LSP plugin. Fixes aviatesk/JETLS.jl#281.
+
+## 2025-12-06
+
+- Commit: [`fd5f113`](https://github.com/aviatesk/JETLS.jl/commit/fd5f113)
+- Diff: [`c23409d...fd5f113`](https://github.com/aviatesk/JETLS.jl/compare/c23409d...fd5f113)
 
 ### Fixed
 

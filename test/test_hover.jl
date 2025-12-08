@@ -248,7 +248,7 @@ function get_local_hover(mod::Module, text::AbstractString, pos::Position; filen
     st0_top = JETLS.build_syntax_tree(fi)
     @assert JS.kind(st0_top) === JS.K"toplevel"
     offset = JETLS.xy_to_offset(fi, pos)
-    return JETLS.local_binding_hover(fi, uri, st0_top, offset, mod)
+    return JETLS.local_binding_hover(JETLS.ServerState(), fi, uri, st0_top, offset, mod)
 end
 
 function func(xxx, yyy)

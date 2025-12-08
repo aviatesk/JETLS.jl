@@ -197,6 +197,14 @@ function handle_InitializeRequest(
                 change = TextDocumentSyncKind.Full,
                 save = SaveOptions(;
                     includeText = true)),
+            notebookDocumentSync = NotebookDocumentSyncOptions(;
+                notebookSelector = NotebookDocumentSyncOptionsNotebookSelectorItem[
+                    NotebookDocumentSyncOptionsNotebookSelectorItem(;
+                        notebook = "jupyter-notebook",
+                        cells = NotebookDocumentSyncOptionsNotebookSelectorCellsItem[
+                            NotebookDocumentSyncOptionsNotebookSelectorCellsItem(;
+                                language = "julia")])],
+                save = true),
             completionProvider,
             signatureHelpProvider,
             definitionProvider,

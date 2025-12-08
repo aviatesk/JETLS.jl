@@ -40,24 +40,15 @@ struct FileInfo
         new(version, parsed_stream, filename, encoding, testsetinfos)
     end
 end
+@define_override_constructor FileInfo # For testsetinfos update
 
 function FileInfo( # Constructor for production code (with URI)
         version::Int, parsed_stream::JS.ParseStream, uri::URI,
         encoding::LSP.PositionEncodingKind.Ty = LSP.PositionEncodingKind.UTF16,
         testsetinfos::Vector{TestsetInfo} = EMPTY_TESTSETINFOS
     )
-    filename = @something uri2filename(uri) error(lazy"Unsupported URI: $uri")
+    filename = uri2filename(uri)
     return FileInfo(version, parsed_stream, filename, encoding, testsetinfos)
-end
-
-function FileInfo(fi::FileInfo;
-        version::Int = fi.version,
-        parsed_stream::JS.ParseStream = fi.parsed_stream,
-        filename::AbstractString = fi.filename,
-        encoding::LSP.PositionEncodingKind.Ty = fi.encoding,
-        testsetinfos::Vector{TestsetInfo} = fi.testsetinfos
-    )
-    FileInfo(version, parsed_stream, filename, encoding, testsetinfos)
 end
 
 function FileInfo( # Constructor for test code (with raw text input and filename)
@@ -71,11 +62,39 @@ struct SavedFileInfo
     syntax_node::JS.SyntaxNode
 
     function SavedFileInfo(parsed_stream::JS.ParseStream, uri::URI)
-        filename = @something uri2filename(uri) error(lazy"Unsupported URI: $uri")
+        filename = uri2filename(uri)
         syntax_node = JS.build_tree(JS.SyntaxNode, parsed_stream; filename)
         new(parsed_stream, syntax_node)
     end
 end
+
+# Notebook document synchronization
+# =================================
+
+struct NotebookCellInfo
+    uri::URI
+    kind::LSP.NotebookCellKind.Ty
+    text::String
+end
+
+struct CellRange
+    cell_uri::URI
+    line_offset::Int  # 0-based line offset in concatenated source
+end
+
+struct ConcatenatedNotebook
+    source::String
+    cell_ranges::Vector{CellRange}
+end
+
+struct NotebookInfo
+    version::Int
+    notebookType::String
+    encoding::LSP.PositionEncodingKind.Ty
+    cells::Vector{NotebookCellInfo}
+    concat::ConcatenatedNotebook
+end
+@define_override_constructor NotebookInfo
 
 mutable struct CancelFlag
     @atomic cancelled::Bool
@@ -422,6 +441,7 @@ end
 
 ConfigManagerData() = ConfigManagerData(EMPTY_CONFIG, EMPTY_CONFIG, nothing, false)
 
+# N.B. Can't use `@define_override_constructor` since the main constructor doesn't take all the fields
 function ConfigManagerData(
         data::ConfigManagerData;
         file_config::JETLSConfig = data.file_config,
@@ -458,6 +478,8 @@ end
 # Type aliases for document-synchronization caches using `SWContainer` (sequential-only updates)
 const FileCache = SWContainer{Base.PersistentDict{URI,FileInfo}, SWStats}
 const SavedFileCache = SWContainer{Base.PersistentDict{URI,SavedFileInfo}, SWStats}
+const NotebookCache = SWContainer{Base.PersistentDict{URI,NotebookInfo}, SWStats}
+const CellToNotebookMap = SWContainer{Base.PersistentDict{URI,URI}, SWStats} # cell URI -> notebook URI
 
 # Type aliases for concurrent updates using CASContainer (lightweight operations)
 const ExtraDiagnostics = CASContainer{ExtraDiagnosticsData, CASStats}
@@ -473,6 +495,8 @@ const HandledHistory = FixedSizeFIFOQueue{Union{Int,String}}
 mutable struct ServerState
     const file_cache::FileCache # syntactic analysis cache (synced with `textDocument/didChange`)
     const saved_file_cache::SavedFileCache # syntactic analysis cache (synced with `textDocument/didSave`)
+    const notebook_cache::NotebookCache # notebook document cache (synced with `notebookDocument/did*`), mapping notebook URIs to their notebook info
+    const cell_to_notebook::CellToNotebookMap # maps cell URIs to their notebook URI
     const analysis_manager::AnalysisManager
     const extra_diagnostics::ExtraDiagnostics
     const currently_handled::CurrentlyHandled
@@ -494,6 +518,8 @@ mutable struct ServerState
         return new(
             #=file_cache=# FileCache(Base.PersistentDict{URI,FileInfo}()),
             #=saved_file_cache=# SavedFileCache(Base.PersistentDict{URI,SavedFileInfo}()),
+            #=notebook_cache=# NotebookCache(Base.PersistentDict{URI,NotebookInfo}()),
+            #=cell_to_notebook=# CellToNotebookMap(Base.PersistentDict{URI,URI}()),
             #=analysis_manager=# AnalysisManager(),
             #=extra_diagnostics=# ExtraDiagnostics(ExtraDiagnosticsData()),
             #=currently_handled=# CurrentlyHandled(),

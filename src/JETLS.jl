@@ -84,6 +84,7 @@ include("analysis/Interpreter.jl")
 using .Interpreter
 
 include("document-synchronization.jl")
+include("notebook.jl")
 include("analysis/full-analysis.jl")
 include("registration.jl")
 include("apply-edit.jl")
@@ -243,7 +244,11 @@ function is_sequential_msg(@nospecialize msg)
     return msg isa DidOpenTextDocumentNotification ||
            msg isa DidChangeTextDocumentNotification ||
            msg isa DidCloseTextDocumentNotification ||
-           msg isa DidSaveTextDocumentNotification
+           msg isa DidSaveTextDocumentNotification ||
+           msg isa DidOpenNotebookDocumentNotification ||
+           msg isa DidChangeNotebookDocumentNotification ||
+           msg isa DidCloseNotebookDocumentNotification ||
+           msg isa DidSaveNotebookDocumentNotification
 end
 
 function start_sequential_message_worker(server::Server)
@@ -278,6 +283,14 @@ function handle_sequential_message(server::Server, @nospecialize msg)
         handle_DidCloseTextDocumentNotification(server, msg)
     elseif msg isa DidSaveTextDocumentNotification
         handle_DidSaveTextDocumentNotification(server, msg)
+    elseif msg isa DidOpenNotebookDocumentNotification
+        handle_DidOpenNotebookDocumentNotification(server, msg)
+    elseif msg isa DidChangeNotebookDocumentNotification
+        handle_DidChangeNotebookDocumentNotification(server, msg)
+    elseif msg isa DidCloseNotebookDocumentNotification
+        handle_DidCloseNotebookDocumentNotification(server, msg)
+    elseif msg isa DidSaveNotebookDocumentNotification
+        handle_DidSaveNotebookDocumentNotification(server, msg)
     elseif JETLS_DEV_MODE
         if isdefined(msg, :method)
             _id = getfield(msg, :method)
