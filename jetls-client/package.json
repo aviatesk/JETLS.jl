@@ -59,7 +59,7 @@
                 "path": {
                   "type": "string",
                   "default": "jetls",
-                  "markdownDescription": "Path to the `jetls` executable. Default is `'jetls'` (`'jetls.bat'` on Windows) which expects the executable to be in your `PATH`."
+                  "markdownDescription": "Path to the `jetls` executable. Default is `'jetls'` which expects the executable to be in your `PATH`."
                 },
                 "threads": {
                   "type": "string",

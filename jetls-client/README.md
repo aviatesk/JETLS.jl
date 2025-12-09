@@ -33,7 +33,7 @@ diagnostic, macro-aware go-to definition and such.
    ```bash
    julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="release")'
    ```
-   This will install the `jetls` executable (`jetls.bat` on Windows) to `~/.julia/bin/`.
+   This will install the `jetls` executable to `~/.julia/bin/`.
 2. Make sure `~/.julia/bin` is available on the `PATH` environment so the `jetls` executable is accessible.
    You can verify the installation by running:
    ```bash
@@ -48,8 +48,7 @@ diagnostic, macro-aware go-to definition and such.
    - Click `Install`
 4. Open any Julia file
 
-The extension will automatically use the `jetls` (or `jetls.bat` on Windows)
-executable from your `PATH`.
+The extension will automatically use the `jetls` executable from your `PATH`.
 
 > [!note]
 > To update JETLS to the latest version, re-run the installation command:

@@ -158,8 +158,7 @@ function createTimeoutHandler(
 
 function getServerConfig(): ServerConfig {
   const config = vscode.workspace.getConfiguration("jetls-client");
-  const defaultExecutable =
-    process.platform === "win32" ? "jetls.bat" : "jetls";
+  const defaultExecutable = "jetls";
   const executable = config.get<ExecutableConfig>("executable", {
     path: defaultExecutable,
     threads: "auto",
@@ -198,8 +197,7 @@ async function startLanguageServer() {
     baseCommand = cmd;
     baseArgs = args;
   } else {
-    const defaultExecutable =
-      process.platform === "win32" ? "jetls.bat" : "jetls";
+    const defaultExecutable = "jetls";
     baseCommand = serverConfig.executable.path || defaultExecutable;
     const threads = serverConfig.executable.threads || "auto";
     baseArgs = [`--threads=${threads}`, "--"];
@@ -237,9 +235,7 @@ async function startLanguageServer() {
   );
 
   // On Windows, batch files must be spawned with shell: true
-  const needsShell =
-    process.platform === "win32" && baseCommand.endsWith(".bat");
-  const spawnOptions = needsShell ? { shell: true } : {};
+  const spawnOptions = process.platform === "win32" ? { shell: true } : {};
 
   let serverOptions: ServerOptions;
 
