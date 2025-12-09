@@ -86,40 +86,6 @@ Minimal [Emacs](https://www.gnu.org/software/emacs/)
                 :autoport))
 ```
 
-### Neovim
-
-Minimal [Neovim](https://neovim.io/) setup (requires Neovim v0.11):
-
-```lua
-vim.lsp.config("jetls", {
-    cmd = {
-        "jetls",
-        "--threads=auto",
-        "--",
-    },
-    filetypes = {"julia"},
-})
-vim.lsp.enable("jetls")
-```
-### Sublime
-
-Minimal [Sublime](https://www.sublimetext.com/) setup using the
-[Sublime-LSP plugin](https://github.com/sublimelsp/LSP) and modifying the
-`LSP.sublime-settings` file:
-
-```json
-{
-    "clients": {
-        "jetls": {
-            "enabled": true,
-            "command": ["jetls", "--threads=auto", "--", "--socket=${port}"],
-            "selector": "source.julia",
-            "tcp_port": 0
-        }
-    }
-}
-```
-
 ### Vim
 Minimal [Vim](https://www.vim.org) setup using the
 [Vim9 LSP plugin](https://github.com/yegappan/lsp)
@@ -133,6 +99,41 @@ call LspAddServer([#{name: 'JETLS.jl',
                  \       '--'
                  \   ]
                  \ }])
+```
+
+### Neovim
+
+Minimal [Neovim](https://neovim.io/) setup (requires Neovim v0.11):
+
+```lua
+vim.lsp.config("jetls", {
+    cmd = {
+        "jetls",
+        "--threads=auto",
+        "--",
+    },
+    filetypes = {"julia"}
+})
+vim.lsp.enable("jetls")
+```
+
+### Sublime
+
+Minimal [Sublime](https://www.sublimetext.com/) setup using the
+[Sublime-LSP plugin](https://github.com/sublimelsp/LSP) and modifying the
+`LSP.sublime-settings` file:
+
+```json
+{
+  "clients": {
+    "jetls": {
+      "enabled": true,
+      "command": ["jetls", "--threads=auto", "--", "--socket=${port}"],
+      "selector": "source.julia",
+      "tcp_port": 0
+    }
+  }
+}
 ```
 
 ### Zed
