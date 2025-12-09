@@ -120,6 +120,21 @@ Minimal [Sublime](https://www.sublimetext.com/) setup using the
 }
 ```
 
+### Vim
+Minimal [Vim](https://www.vim.org) setup using the
+[Vim9 LSP plugin](https://github.com/yegappan/lsp)
+
+```vim
+call LspAddServer([#{name: 'JETLS.jl',
+                 \   filetype: 'julia',
+                 \   path: 'jetls',
+                 \   args: [
+                 \       '--threads=auto',
+                 \       '--'
+                 \   ]
+                 \ }])
+```
+
 ### Zed
 
 [Zed](https://zed.dev/) extension for Julia/JETLS is available:
