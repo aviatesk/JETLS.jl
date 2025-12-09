@@ -54,7 +54,7 @@ the list itself is subject to change.
   - [x] LaTeX/Emoji completion
   - [ ] Method signature completion
   - [ ] Property completion
-- Signature Help
+- Signature help
   - [x] Basic implementation
   - [x] Macro support
   - [ ] Argument type based suggestion
@@ -68,19 +68,27 @@ the list itself is subject to change.
   - [x] Global binding documentation
   - [x] Local binding location
   - [ ] Type-aware method documentation
-  - [ ] Type of local binding on hover
+  - [ ] Type of binding
+- Inlay hint
+  - [ ] Method parameter name
+  - [ ] Type of binding
 - Formatting
   - [x] [Runic](https://github.com/fredrikekre/Runic.jl) integration
   - [x] [JuliaFormatter](https://github.com/domluna/JuliaFormatter.jl) integration
   - [x] Make formatting backend configurable
-- Document Highlight
+- Document highlight
   - [x] Local binding
   - [x] Global binding
-  - [ ] Field name, dot-accessed bindings
+  - [ ] Field name / Dot-accessed bindings
+- Find references
+  - [ ] Local binding
+  - [ ] Global binding
+  - [ ] Field name
 - Rename
   - [x] Local binding
   - [ ] Global binding
   - [ ] Field name
+- [ ] Workspace symbol
 - TestRunner.jl integration
   - [x] Code lens for running individual `@testset`s
   - [x] Code actions for running individual `@testset`s
