@@ -1,0 +1,1 @@
+release/siteinfo.js

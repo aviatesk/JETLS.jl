@@ -1,0 +1,1 @@
+release/search_index.js
