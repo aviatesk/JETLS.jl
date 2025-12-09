@@ -448,12 +448,12 @@ To test the extension locally in VSCode:
 
 ### Publishing
 
-To package the extension for distribution:
+To publish the extension to the marketplace:
 
 ```bash
 cd jetls-client
-vsce publish -m "jetls-client: v0.x.y"
+vsce publish [patch|minor|major] -m "jetls-client: vX.Y.Z"
 ```
 
-This creates a `.vsix` file that can be installed in VSCode and publish it to
-the marketplace.
+This will bump the version in `package.json`, create a git commit and tag with
+the specified message, and publish to the marketplace in one step.
