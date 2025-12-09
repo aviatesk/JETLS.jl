@@ -8,7 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`7917aad...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/7917aad...HEAD)
+- Diff: [`76146d0...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/76146d0...HEAD)
+
+## v0.3.0
+
+- Commit: [`76146d0`](https://github.com/aviatesk/JETLS.jl/commit/76146d0)
+- Diff: [`7917aad...76146d0`](https://github.com/aviatesk/JETLS.jl/compare/7917aad...76146d0)
+
+### Fixed
+
+- Fixed Windows spawning when using default settings (without explicit
+  `jetls-client.executable` configuration). The previous fix in v0.2.6 only
+  worked when users explicitly set the executable path to `jetls.bat`.
+  Now the extension always uses shell spawning on Windows, allowing `jetls`
+  to resolve to `jetls.bat` automatically. Thanks to @visr. (aviatesk/JETLS.jl#375)
 
 ## v0.2.7
 
