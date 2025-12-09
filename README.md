@@ -1,6 +1,6 @@
 # JETLS
 
-[![](https://img.shields.io/badge/docs-user_guide-9558B2?logo=julia)](https://aviatesk.github.io/JETLS.jl/dev/)
+[![](https://img.shields.io/badge/docs-user_guide-9558B2?logo=julia)](https://aviatesk.github.io/JETLS.jl/)
 [![](https://img.shields.io/badge/docs-dev_notes-7C3AED?logo=obsidian)](https://publish.obsidian.md/jetls)
 [![](https://github.com/aviatesk/JETLS.jl/actions/workflows/JETLS.jl.yml/badge.svg)](https://github.com/aviatesk/JETLS.jl/actions/workflows/JETLS.jl.yml)
 [![](https://codecov.io/gh/aviatesk/JETLS.jl/branch/master/graph/badge.svg?flag=JETLS.jl)](https://codecov.io/gh/aviatesk/JETLS.jl&flags[0]=JETLS.jl)
@@ -23,7 +23,7 @@ a sample VSCode extension that serves as a language client for testing JETLS.
 ## Documentation
 
 For end-user documentation including installation instructions, configuration
-options, and feature guides, please visit the **[user guide documentation](https://aviatesk.github.io/JETLS.jl/dev/)**.
+options, and feature guides, please visit the **[user guide documentation](https://aviatesk.github.io/JETLS.jl/)**.
 
 This README focuses on development-related information such as the project
 roadmap, implementation status, and developer resources.

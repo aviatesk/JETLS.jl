@@ -101,7 +101,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Added support for LSP `initializationOptions` with the experimental
   `n_analysis_workers` option for configuring concurrent analysis worker tasks.
-  See [Initialization options](https://aviatesk.github.io/JETLS.jl/dev/launching/#init-options)
+  See [Initialization options](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options)
   for details.
 
 ### Changed
@@ -281,7 +281,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="release")'
     ```
   - Launching: Language clients should launch JETLS using the `jetls` executable with appropriate options.
-    See <https://aviatesk.github.io/JETLS.jl/dev/launching/> for detailed launch options.
+    See <https://aviatesk.github.io/JETLS.jl/release/launching/> for detailed launch options.
   - The VSCode language client `jetls-client` and Zed extension `aviatesk/zed-julia` has been updated accordingly.
 - Changed diagnostic configuration schema from `[diagnostic.codes]` to `[[diagnostic.patterns]]` for more flexible pattern matching. (aviatesk/JETLS.jl#299)
 - Renamed configuration section from `[diagnostics]` to `[diagnostic]` for consistency. (aviatesk/JETLS.jl#299)
