@@ -111,7 +111,8 @@ function global_document_highlights!(
             (; mod) = get_context_info(module_info..., offset_to_xy(fi, JS.first_byte(st0)))
         end
         (; ctx3, st3) = try
-            jl_lower_for_scope_resolution(mod, st0)
+            # Remove macros to preserve precise source locations
+            jl_lower_for_scope_resolution(mod, remove_macrocalls(st0))
         catch
             return
         end

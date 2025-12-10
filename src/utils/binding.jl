@@ -186,9 +186,9 @@ function _select_target_binding(st0_top::JL.SyntaxTree, offset::Int, mod::Module
         return nothing
     end
 
-    st0′ = remove_macrocalls(st0)
     (; ctx3, st3) = try
-        jl_lower_for_scope_resolution(mod, st0′)
+        # Remove macros to preserve precise source locations
+        jl_lower_for_scope_resolution(mod, remove_macrocalls(st0))
     catch err
         JETLS_DEBUG_LOWERING && @warn "Error in lowering ($caller)" err
         JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())

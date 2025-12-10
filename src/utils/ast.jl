@@ -85,9 +85,16 @@ macrocalls. As a result, LSP features that rely on binding source information (p
 using surface AST level information) can work in many cases based on binding resolution
 performed on the transformed tree `st0′`.
 
-This enables various LSP features to function correctly with local variables inside
-macrocalls, even when precise provenance information would otherwise be lost during
-macro expansion.
+This is useful because JuliaLowering's macro expansion (for old-style macros) loses
+fine-grained provenance information, reducing it to line-level granularity. For example,
+in `@noop foo`, highlighting `foo` would incorrectly highlight `@noop foo` entirely
+if macro expansion were performed. By removing macrocalls before lowering, we
+preserve precise source locations for bindings outside of macrocalls.
+
+Note that bindings inside macrocalls will not be analyzed, but this trade-off might be
+preferable to having incorrect source ranges. This is especially true for LSP features
+like document-highlight and find-references where source-level information is critical,
+as information inside macros is often not needed for these features.
 """
 remove_macrocalls(st0::JL.SyntaxTree) = first(_remove_macrocalls(st0))
 
