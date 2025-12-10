@@ -21,6 +21,8 @@ macro just_return(x)
     :($(esc(x)))
 end
 
+length_utf16(s::AbstractString) = sum(c::Char -> codepoint(c) < 0x10000 ? 1 : 2, collect(s); init=0)
+
 @testset "unused binding detection" begin
     let diagnostics = get_lowered_diagnostics("""
         y = let x = 42
@@ -378,7 +380,6 @@ end
         @test diagnostic.range.var"end".character == length("func(@just_return x")
     end
 
-    length_utf16(s::AbstractString) = sum(c::Char -> codepoint(c) < 0x10000 ? 1 : 2, collect(s); init=0)
     @testset "Handle position encoding" begin
         diagnostics = get_lowered_diagnostics("""
         f(😀, x) = 😀
@@ -389,6 +390,43 @@ end
         @test diagnostic.range.start.character == length_utf16("f(😀, ")
         @test diagnostic.range.var"end".line == 0
         @test diagnostic.range.var"end".character == length_utf16("f(😀, x")
+    end
+
+    @testset "comprehension" begin
+        let diagnostics = get_lowered_diagnostics("""
+            func(xs) = [x for x in xs]
+            """)
+            @test isempty(diagnostics)
+        end
+
+        let diagnostics = get_lowered_diagnostics("""
+            func(xs) = [x for (i, x) in enumerate(xs)]
+            """)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.range.start.line == 0
+            @test diagnostic.range.start.character == length_utf16("func(xs) = [x for (")
+            @test diagnostic.range.var"end".line == 0
+            @test diagnostic.range.var"end".character == length_utf16("func(xs) = [x for (i")
+        end
+
+        # aviatesk/JETLS.jl#360
+        let diagnostics = get_lowered_diagnostics("""
+            func(xs) = [x for (i, x) in enumerate(xs) if isodd(i)]
+            """)
+            @test isempty(diagnostics)
+        end
+
+        let diagnostics = get_lowered_diagnostics("""
+            func(xs) = [x for (i, x) in xs if true]
+            """)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.range.start.line == 0
+            @test diagnostic.range.start.character == length_utf16("func(xs) = [x for (")
+            @test diagnostic.range.var"end".line == 0
+            @test diagnostic.range.var"end".character == length_utf16("func(xs) = [x for (i")
+        end
     end
 end
 

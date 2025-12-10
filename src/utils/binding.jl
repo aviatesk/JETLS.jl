@@ -318,17 +318,15 @@ function compute_binding_occurrences(
     occurrences = Dict{JL.BindingInfo,Set{BindingOccurence{Tree3}}}()
 
     same_arg_bindings = Dict{Symbol,Vector{Int}}() # group together argument bindings with the same name
-    same_sparam_bindings = Dict{Symbol,Vector{Int}}() # group together static parameter bindings with the same name
+    same_location_bindings = Dict{Tuple{Symbol,Int,Int},Vector{Int}}() # group together local bindings with the same location and name
 
     for (i, binfo) = enumerate(ctx3.bindings.info)
         binfo.is_internal && continue
         if binfo.kind === :argument
             push!(get!(Vector{Int}, same_arg_bindings, Symbol(binfo.name)), i)
-        elseif binfo.kind === :static_parameter
-            push!(get!(Vector{Int}, same_sparam_bindings, Symbol(binfo.name)), i)
-        elseif binfo.kind === :local
-            # :local static parameter binding is introduced to evaluate signature type
-            push!(get!(Vector{Int}, same_sparam_bindings, Symbol(binfo.name)), i)
+        elseif binfo.kind === :static_parameter || binfo.kind === :local
+            lockey = (Symbol(binfo.name), JS.source_location(JL.binding_ex(ctx3, binfo.id))...)
+            push!(get!(Vector{Int}, same_location_bindings, lockey), i)
         elseif binfo.kind === :global
             include_global_bindings || continue
         else
@@ -341,12 +339,12 @@ function compute_binding_occurrences(
 
     compute_binding_occurrences!(occurrences, ctx3, st3; ismacro)
 
-    # Fix up usedness information of arguments that are only used within the argument list.
-    # E.g. this is necessary to avoid reporting "unused variable diagnostics" for `a` in cases like:
-    # ```julia
-    # hasmatch(x::RegexMatch, y::Bool=isempty(x.matches)) = y
-    # ```
-    for (_, idxs) in same_arg_bindings
+    # Aggregate occurrences for bindings that have the same name and location.
+    # JL sometimes represents bindings that are considered "identical" at the source level
+    # as multiple copies for the sake of the actual semantics of the lowered code.
+    # Therefore, such aggregation is necessary to map occurrences in the lowered representation
+    # to usage information at the source level.
+    for (_, idxs) in same_location_bindings
         length(idxs) == 1 && continue
         newoccurrences = union!((occurrences[ctx3.bindings.info[idx]] for idx in idxs)...)
         for idx in idxs
@@ -354,12 +352,21 @@ function compute_binding_occurrences(
         end
     end
 
-    # The same goes for static parameter bindings
-    for (_, idxs) in same_sparam_bindings
+    # Fix up usedness information of arguments that are only used within the argument list.
+    # to avoid reporting "unused variable diagnostics" for `x` in cases like:
+    # ```julia
+    # hasmatch(x::RegexMatch, y::Bool=isempty(x.matches)) = y
+    # ```
+    # N.B. This needs to be done separately from `same_location_bindings`.
+    # This is because if argument lists were also aggregated by "name & location" key,
+    # then even when `x` is truly unused, the usage in methods that fill default parameters
+    # and call the full-argument list method would be aggregated, causing us to miss reports
+    # in such cases, e.g.
+    # ```julia
+    # hasmatch(x::RegexMatch, y::Bool=false) = nothing
+    # ```
+    for (_, idxs) in same_arg_bindings
         length(idxs) == 1 && continue
-        if !any(i::Int->ctx3.bindings.info[i].kind===:static_parameter, idxs)
-            continue # if this doesn't contain static parameters, ignore it.
-        end
         newoccurrences = union!((occurrences[ctx3.bindings.info[idx]] for idx in idxs)...)
         for idx in idxs
             occurrences[ctx3.bindings.info[idx]] = newoccurrences
