@@ -220,10 +220,10 @@
     """
     diagnosticProvider::Union{Nothing, DiagnosticOptions, DiagnosticRegistrationOptions} = nothing
 
-    # """
-    # The server provides workspace symbol support.
-    # """
-    # workspaceSymbolProvider::Union{Nothing, Bool, WorkspaceSymbolOptions} = nothing
+    """
+    The server provides workspace symbol support.
+    """
+    workspaceSymbolProvider::Union{Nothing, Bool, WorkspaceSymbolOptions} = nothing
 
     """
     Workspace specific server capabilities
@@ -555,10 +555,10 @@ provides text document synchronization (e.g. open, changed and close notificatio
         """
         didChangeWatchedFiles::Union{DidChangeWatchedFilesClientCapabilities, Nothing} = nothing
 
-        # """
-        # Capabilities specific to the `workspace/symbol` request.
-        # """
-        # symbol::Union{WorkspaceSymbolClientCapabilities, Nothing} = nothing
+        """
+        Capabilities specific to the `workspace/symbol` request.
+        """
+        symbol::Union{WorkspaceSymbolClientCapabilities, Nothing} = nothing
 
         """
         Capabilities specific to the `workspace/executeCommand` request.
