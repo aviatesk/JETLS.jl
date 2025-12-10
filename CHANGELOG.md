@@ -16,6 +16,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 - Diff: [`9b39829...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/9b39829...HEAD)
 
+### Fixed
+
+- Fixed false positive unused variable diagnostics in comprehensions with filter
+  conditions. For example, `[x for (i, x) in enumerate(xs) if isodd(i)]` no
+  longer incorrectly reports `i` as unused. Fixes aviatesk/JETLS.jl#360.
+
 ## 2025-12-08
 
 - Commit: [`9b39829`](https://github.com/aviatesk/JETLS.jl/commit/9b39829)
