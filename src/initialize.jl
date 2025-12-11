@@ -94,6 +94,15 @@ function handle_InitializeRequest(
         end
     end
 
+    if supports(server, :textDocument, :references, :dynamicRegistration)
+        referencesProvider = nothing # will be registered dynamically
+    else
+        referencesProvider = references_options(server)
+        if JETLS_DEV_MODE
+            @info "Registering 'textDocument/references' with `InitializeResponse`"
+        end
+    end
+
     if supports(server, :textDocument, :hover, :dynamicRegistration)
         hoverProvider = nothing # will be registered dynamically
     else
@@ -208,6 +217,7 @@ function handle_InitializeRequest(
             completionProvider,
             signatureHelpProvider,
             definitionProvider,
+            referencesProvider,
             documentHighlightProvider,
             hoverProvider,
             diagnosticProvider,
@@ -326,6 +336,16 @@ function handle_InitializedNotification(server::Server)
         end
     else
         # NOTE If documentHighlight's `dynamicRegistration` is not supported,
+        # it needs to be registered along with initialization in the `InitializeResponse`.
+    end
+
+    if supports(server, :textDocument, :references, :dynamicRegistration)
+        push!(registrations, references_registration(server))
+        if JETLS_DEV_MODE
+            @info "Dynamically registering 'textDocument/references' upon `InitializedNotification`"
+        end
+    else
+        # NOTE If references's `dynamicRegistration` is not supported,
         # it needs to be registered along with initialization in the `InitializeResponse`.
     end
 

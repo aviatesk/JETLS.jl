@@ -20,6 +20,58 @@ function parse_module_override(x::AbstractDict{String})
     return ModuleOverride(module_name, path_glob)
 end
 
+# Cache lookup
+# ============
+
+get_analysis_info(manager::AnalysisManager, uri::URI) = get(load(manager.cache), uri, nothing)
+get_analysis_info(f, manager::AnalysisManager, uri::URI) = get(f, load(manager.cache), uri)
+
+# Collect URIs to search: the current file and all files in the same analysis unit
+function collect_search_uris(server::Server, uri::URI)
+    uris_to_search = Set{URI}((uri,))
+    analysis_info = get_analysis_info(server.state.analysis_manager, uri)
+    if analysis_info isa AnalysisResult
+        for analyzed_uri in analyzed_file_uris(analysis_info)
+            push!(uris_to_search, analyzed_uri)
+        end
+    elseif analysis_info isa OutOfScope && @isdefined(Revise)
+        # TODO: This implementation should be revisited when Revise is integrated into full-analysis
+        pkgid = Base.PkgId(analysis_info.module_context)
+        if haskey(Revise.pkgdatas, pkgid)
+            pkgdata = Revise.pkgdatas[pkgid]
+            for file in Revise.srcfiles(pkgdata)
+                tracked_uri = filepath2uri(joinpath(Revise.basedir(pkgdata), file))
+                push!(uris_to_search, tracked_uri)
+            end
+        end
+    end
+    return uris_to_search
+end
+
+function lookup_out_of_scope!(state::ServerState, uri::URI)
+    env = find_analysis_env_path(state, uri)
+    if env isa OutOfScope
+        outofscope = env
+        cache_out_of_scope!(state.analysis_manager, uri, outofscope)
+        return outofscope
+    end
+    return nothing
+end
+gen_lookup_out_of_scope!(state::ServerState, uri::URI) =
+    () -> lookup_out_of_scope!(state, uri)
+
+function cache_out_of_scope!(manager::AnalysisManager, uri::URI, outofscope::OutOfScope)
+    store!(manager.cache) do cache
+        if get(cache, uri, nothing) === outofscope
+            cache, nothing
+        else
+            local new_cache = copy(cache)
+            new_cache[uri] = outofscope
+            new_cache, nothing
+        end
+    end
+end
+
 # Progress support
 # ================
 
@@ -192,20 +244,6 @@ function request_analysis!(
         completion = Base.Event()
         schedule_analysis!(server, uri, entry, prev_analysis_result, onsave; completion, notify_diagnostics)
         wait && Base.wait(completion)
-    end
-end
-
-get_analysis_info(manager::AnalysisManager, uri::URI) = get(load(manager.cache), uri, nothing)
-
-function cache_out_of_scope!(manager::AnalysisManager, uri::URI, outofscope::OutOfScope)
-    store!(manager.cache) do cache
-        if get(cache, uri, nothing) === outofscope
-            cache, nothing
-        else
-            local new_cache = copy(cache)
-            new_cache[uri] = outofscope
-            new_cache, nothing
-        end
     end
 end
 

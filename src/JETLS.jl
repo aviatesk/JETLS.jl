@@ -94,6 +94,7 @@ include("execute-command.jl")
 include("completions.jl")
 include("signature-help.jl")
 include("definition.jl")
+include("references.jl")
 include("hover.jl")
 include("document-highlight.jl")
 include("diagnostics.jl")
@@ -387,6 +388,8 @@ function (dispatcher::ResponseMessageDispatcher)(server::Server, msg::Dict{Symbo
         handle_formatting_progress_response(server, msg, request_caller)
     elseif request_caller isa RangeFormattingProgressCaller
         handle_range_formatting_progress_response(server, msg, request_caller)
+    elseif request_caller isa ReferencesProgressCaller
+        handle_references_progress_response(server, msg, request_caller)
     elseif request_caller isa ProfileProgressCaller
         handle_profile_progress_response(server, msg, request_caller)
     elseif request_caller isa WorkspaceConfigurationCaller
@@ -422,6 +425,8 @@ function (dispatcher::RequestMessageDispatcher)(server::Server, @nospecialize ms
         handle_SignatureHelpRequest(server, msg, cancel_flag)
     elseif msg isa DefinitionRequest
         handle_DefinitionRequest(server, msg, cancel_flag)
+    elseif msg isa ReferencesRequest
+        handle_ReferencesRequest(server, msg, cancel_flag)
     elseif msg isa HoverRequest
         handle_HoverRequest(server, msg, cancel_flag)
     elseif msg isa DocumentHighlightRequest
