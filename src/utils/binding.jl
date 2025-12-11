@@ -552,3 +552,29 @@ function compute_binding_occurrences!(
 
     return occurrences, ismacro
 end
+
+function find_global_binding_occurrences!(
+        state::ServerState, uri::URI, fi::FileInfo, st0_top::JL.SyntaxTree,
+        binfo::JL.BindingInfo;
+        lookup_func = gen_lookup_out_of_scope!(state, uri)
+    )
+    ret = Set{BindingOccurence}()
+    iterate_toplevel_tree(st0_top) do st0::JL.SyntaxTree
+        (; mod) = get_context_info(state, uri, offset_to_xy(fi, JS.first_byte(st0)); lookup_func)
+        (; ctx3, st3) = try
+            # Remove macros to preserve precise source locations
+            jl_lower_for_scope_resolution(mod, remove_macrocalls(st0))
+        catch
+            return
+        end
+        binding_occurrences = compute_binding_occurrences(ctx3, st3; include_global_bindings=true)
+        for (binfo′, occurrences) in binding_occurrences
+            if binfo′.mod === binfo.mod && binfo′.name == binfo.name
+                for occurrence in occurrences
+                    push!(ret, occurrence)
+                end
+            end
+        end
+    end
+    return ret
+end

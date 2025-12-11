@@ -16,6 +16,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 - Diff: [`9b39829...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/9b39829...HEAD)
 
+### Added
+
+- Added `textDocument/references` support for bindings. Both local and global
+  bindings are supported, although currently the support for global references
+  is experimental and has some notable limitations:
+  - References can only be found within the same analysis unit. For example,
+    when finding references to `somebinding` defined in `PkgA/src/somefile.jl`,
+    usages in `PkgA/src/` can be found, but usages in `PkgA/test/` cannot be
+    detected because test files are in a separate analysis unit.
+  - Aliasing is not considered. Usages via `using ..PkgA: somebinding as otherbinding`
+    or module-qualified access like `PkgA.somebinding` are not detected.
+
 ### Fixed
 
 - Fixed false positive unused variable diagnostics in comprehensions with filter

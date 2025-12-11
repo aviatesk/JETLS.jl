@@ -81,8 +81,11 @@ the list itself is subject to change.
   - [x] Global binding
   - [ ] Field name / Dot-accessed bindings
 - Find references
-  - [ ] Local binding
-  - [ ] Global binding
+  - [x] Local binding
+  - Global reference
+    - [x] Minimum support
+    - [ ] Cross-analysis-unit reference detection
+    - [ ] Aliased reference support
   - [ ] Field name
 - Rename
   - [x] Local binding
