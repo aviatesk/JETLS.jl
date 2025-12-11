@@ -22,6 +22,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   conditions. For example, `[x for (i, x) in enumerate(xs) if isodd(i)]` no
   longer incorrectly reports `i` as unused. Fixes aviatesk/JETLS.jl#360.
 
+### Changed
+
+- Updated JuliaSyntax.jl and JuliaLowering.jl dependencies to the latest
+  development versions, which fixes spurious lowering diagnostics that occurred
+  in edge cases such as JuliaLang/julia#60309.
+
 ## 2025-12-08
 
 - Commit: [`9b39829`](https://github.com/aviatesk/JETLS.jl/commit/9b39829)
