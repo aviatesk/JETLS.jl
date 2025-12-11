@@ -32,6 +32,8 @@ using LSP: LSP
 using LSP.URIs2
 using LSP.Communication: Endpoint
 
+const MessageId = Union{String, Int}
+
 using Pkg
 using JET: CC, JET
 using JuliaSyntax: JuliaSyntax as JS
@@ -305,7 +307,7 @@ struct ConcurrentMessageHandler
     queue::Channel{Any}
 end
 struct HandledToken
-    id::Union{String, Int}
+    id::MessageId
 end
 function (dispatcher::ConcurrentMessageHandler)(server::Server, @nospecialize msg)
     # Handle `currently_handled` processing serially within the concurrent message worker thread
@@ -401,7 +403,7 @@ end
 
 struct RequestMessageDispatcher
     queue::Channel{Any}
-    id::Union{String, Int}
+    id::MessageId
     cancel_flag::CancelFlag
 end
 function (dispatcher::RequestMessageDispatcher)(server::Server, @nospecialize msg)
