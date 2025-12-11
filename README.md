@@ -89,7 +89,10 @@ the list itself is subject to change.
   - [ ] Field name
 - Rename
   - [x] Local binding
-  - [ ] Global binding
+  - Global binding
+    - [x] Minimum support
+    - [ ] Cross-analysis-unit rename
+    - [ ] Aliased rename support
   - [ ] Field name
 - [ ] Workspace symbol
 - TestRunner.jl integration

@@ -27,6 +27,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     detected because test files are in a separate analysis unit.
   - Aliasing is not considered. Usages via `using ..PkgA: somebinding as otherbinding`
     or module-qualified access like `PkgA.somebinding` are not detected.
+- Added `textDocument/rename` support for global bindings. Similar to global
+  references, this feature is experimental and has the same limitations
+  regarding analysis unit boundaries and aliasing.
 
 ### Fixed
 
