@@ -390,6 +390,8 @@ function (dispatcher::ResponseMessageDispatcher)(server::Server, msg::Dict{Symbo
         handle_range_formatting_progress_response(server, msg, request_caller)
     elseif request_caller isa ReferencesProgressCaller
         handle_references_progress_response(server, msg, request_caller)
+    elseif request_caller isa RenameProgressCaller
+        handle_rename_progress_response(server, msg, request_caller)
     elseif request_caller isa ProfileProgressCaller
         handle_profile_progress_response(server, msg, request_caller)
     elseif request_caller isa WorkspaceConfigurationCaller

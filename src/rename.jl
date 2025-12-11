@@ -1,28 +1,36 @@
 const RENAME_REGISTRATION_ID = "jetls-rename"
 const RENAME_REGISTRATION_METHOD = "textDocument/rename"
 
-function rename_options()
-    return RenameOptions(;
-        prepareProvider = true
-    )
+struct RenameProgressCaller <: RequestCaller
+    uri::URI
+    fi::FileInfo
+    pos::Position
+    newName::String
+    msg_id::MessageId
+    token::ProgressToken
 end
 
-function rename_registration()
+function rename_options(server::Server)
+    return RenameOptions(;
+        prepareProvider = true,
+        workDoneProgress = supports(server, :window, :workDoneProgress))
+end
+
+function rename_registration(server::Server)
     return Registration(;
         id = RENAME_REGISTRATION_ID,
         method = RENAME_REGISTRATION_METHOD,
         registerOptions = RenameRegistrationOptions(;
             documentSelector = DEFAULT_DOCUMENT_SELECTOR,
-            prepareProvider = true
-        )
-    )
+            prepareProvider = true,
+            workDoneProgress = supports(server, :window, :workDoneProgress)))
 end
 
 # # For dynamic registrations during development
 # unregister(currently_running, Unregistration(;
 #     id = RENAME_REGISTRATION_ID,
 #     method = RENAME_REGISTRATION_METHOD))
-# register(currently_running, rename_registration())
+# register(currently_running, rename_registration(currently_running))
 
 function handle_PrepareRenameRequest(
         server::Server, msg::PrepareRenameRequest, cancel_flag::CancelFlag)
@@ -46,6 +54,7 @@ function handle_PrepareRenameRequest(
             id = msg.id,
             result = @something(
                 local_binding_rename_preparation(state, uri, fi, pos, mod),
+                global_binding_rename_preparation(state, uri, fi, pos, mod),
                 null)))
 end
 
@@ -61,6 +70,25 @@ function local_binding_rename_preparation(
 
     binfo = JL.lookup_binding(ctx3, binding)
     if is_local_binding(binfo)
+        range, _ = unadjust_range(state, uri, jsobj_to_range(binding, fi))
+        return (; range, placeholder = binfo.name)
+    else
+        return nothing
+    end
+end
+
+function global_binding_rename_preparation(
+        state::ServerState, uri::URI, fi::FileInfo, pos::Position, mod::Module
+    )
+    st0_top = build_syntax_tree(fi)
+    offset = xy_to_offset(fi, pos)
+
+    (; ctx3, binding) = @something begin
+        _select_target_binding(st0_top, offset, mod; caller="global_binding_rename_preparation")
+    end return nothing
+
+    binfo = JL.lookup_binding(ctx3, binding)
+    if binfo.kind === :global
         range, _ = unadjust_range(state, uri, jsobj_to_range(binding, fi))
         return (; range, placeholder = binfo.name)
     else
@@ -85,11 +113,53 @@ function handle_RenameRequest(
     end
     fi = result
 
-    (; mod) = get_context_info(state, uri, pos)
-    (; result, error) = @something(
+    workDoneToken = msg.params.workDoneToken
+    if workDoneToken !== nothing
+        do_rename_with_progress(server, uri, fi, pos, newName, msg.id, workDoneToken)
+    elseif supports(server, :window, :workDoneProgress)
+        id = String(gensym(:WorkDoneProgressCreateRequest_rename))
+        token = String(gensym(:RenameProgress))
+        addrequest!(server, id => RenameProgressCaller(uri, fi, pos, newName, msg.id, token))
+        params = WorkDoneProgressCreateParams(; token)
+        send(server, WorkDoneProgressCreateRequest(; id, params))
+    else
+        do_rename(server, uri, fi, pos, newName, msg.id)
+    end
+
+    return nothing
+end
+
+function handle_rename_progress_response(
+        server::Server, msg::Dict{Symbol,Any}, request_caller::RenameProgressCaller)
+    if handle_response_error(server, msg, "create work done progress")
+        return
+    end
+    (; uri, fi, pos, newName, msg_id, token) = request_caller
+    do_rename_with_progress(server, uri, fi, pos, newName, msg_id, token)
+end
+
+function do_rename_with_progress(
+        server::Server, uri::URI, fi::FileInfo, pos::Position,
+        newName::String, msg_id::MessageId, token::ProgressToken)
+    (; result, error) = do_rename(server, uri, fi, pos, newName; token)
+    return send(server, RenameResponse(; id = msg_id, result, error))
+end
+
+function do_rename(
+        server::Server, uri::URI, fi::FileInfo, pos::Position,
+        newName::String, msg_id::MessageId)
+    (; result, error) = do_rename(server, uri, fi, pos, newName)
+    return send(server, RenameResponse(; id = msg_id, result, error))
+end
+
+function do_rename(
+        server::Server, uri::URI, fi::FileInfo, pos::Position, newName::String;
+        token::Union{Nothing,ProgressToken} = nothing)
+    (; mod) = get_context_info(server.state, uri, pos)
+    return @something(
         local_binding_rename(server, uri, fi, pos, mod, newName),
+        global_binding_rename(server, uri, fi, pos, mod, newName; token),
         (; result = null, error = nothing))
-    return send(server, RenameResponse(; id = msg.id, result, error))
 end
 
 function local_binding_rename(
@@ -139,4 +209,112 @@ function local_binding_rename(
     end
 
     return (; result, error = nothing)
+end
+
+function global_binding_rename(
+        server::Server, uri::URI, fi::FileInfo, pos::Position, mod::Module, newName::String;
+        token::Union{Nothing,ProgressToken} = nothing
+    )
+    state = server.state
+    st0_top = build_syntax_tree(fi)
+    offset = xy_to_offset(fi, pos)
+
+    (; ctx3, binding) = @something begin
+        _select_target_binding(st0_top, offset, mod; caller="global_binding_rename")
+    end return nothing
+
+    binfo = JL.lookup_binding(ctx3, binding)
+    binfo.kind === :global || return nothing
+    if !Base.isidentifier(newName)
+        error = ResponseError(;
+            code = ErrorCodes.RequestFailed,
+            message = "This variable name cannot be used. Change the name or use var\"...\" syntax.")
+        pt = @something(
+            prev_nontrivia(fi.parsed_stream, JS.first_byte(binding); strict=true),
+            return (; result = nothing, error))
+        ppt = @something prev_tok(pt) return (; result = nothing, error)
+        if !(JS.kind(pt) === JS.K"\"" && JS.kind(ppt) === JS.K"var")
+            return (; result = nothing, error)
+        end
+    end
+
+    uris_to_search = collect_search_uris(server, uri)
+
+    n_files = length(uris_to_search)
+    if token !== nothing && n_files > 1
+        send_progress(server, token,
+            WorkDoneProgressBegin(; title="Renaming symbol", percentage=0))
+    end
+
+    if supports(server, :workspace, :workspaceEdit, :documentChanges)
+        changes = TextDocumentEdit[]
+    else
+        changes = Dict{URI,Vector{TextEdit}}()
+    end
+    seen_ranges = Set{Range}()
+    total_edits = 0
+
+    for (i, search_uri) in enumerate(uris_to_search)
+        empty!(seen_ranges)
+
+        if search_uri == uri
+            search_fi = fi
+            version = fi.version
+        else
+            search_fi = get_file_info(server.state, search_uri)
+            if search_fi === nothing
+                search_fi = create_dummy_file_info(search_uri, fi)
+                version = nothing
+            else
+                version = search_fi.version
+            end
+        end
+
+        if token !== nothing && n_files > 1
+            percentage = round(Int, 100 * (i - 1) / n_files)
+            message = "Searching $(basename(uri2filename(search_uri))) ($i/$n_files)"
+            send_progress(server, token,
+                WorkDoneProgressReport(; message, percentage))
+        end
+
+        search_st0_top = build_syntax_tree(search_fi)
+        collect_global_rename_ranges_in_file!(
+            seen_ranges, state, search_uri, search_fi, search_st0_top, binfo)
+
+        if !isempty(seen_ranges)
+            edits = TextEdit[TextEdit(; range, newText=newName) for range in seen_ranges]
+            total_edits += length(edits)
+            if changes isa Vector{TextDocumentEdit}
+                textDocument = OptionalVersionedTextDocumentIdentifier(;
+                    uri=search_uri, version)
+                push!(changes, TextDocumentEdit(; textDocument, edits))
+            else
+                changes[search_uri] = edits
+            end
+        end
+    end
+
+    if token !== nothing && n_files > 1
+        send_progress(server, token,
+            WorkDoneProgressEnd(; message="Renamed $total_edits occurrences"))
+    end
+
+    if changes isa Vector{TextDocumentEdit}
+        result = WorkspaceEdit(; documentChanges = changes)
+    else
+        result = WorkspaceEdit(; changes)
+    end
+
+    return (; result, error = nothing)
+end
+
+function collect_global_rename_ranges_in_file!(
+        seen_ranges::Set{Range}, state::ServerState, uri::URI, fi::FileInfo,
+        st0_top::JL.SyntaxTree, binfo::JL.BindingInfo
+    )
+    for occurrence in find_global_binding_occurrences!(state, uri, fi, st0_top, binfo)
+        range, _ = unadjust_range(state, uri, jsobj_to_range(occurrence.tree, fi))
+        push!(seen_ranges, range)
+    end
+    return seen_ranges
 end

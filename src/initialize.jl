@@ -182,7 +182,7 @@ function handle_InitializeRequest(
     if supports(server, :textDocument, :rename, :dynamicRegistration)
         renameProvider = nothing # will be registered dynamically
     else
-        renameProvider = rename_options()
+        renameProvider = rename_options(server)
         if JETLS_DEV_MODE
             @info "Registering 'textDocument/rename' with `InitializeResponse`"
         end
@@ -412,7 +412,7 @@ function handle_InitializedNotification(server::Server)
     end
 
     if supports(server, :textDocument, :rename, :dynamicRegistration)
-        push!(registrations, rename_registration())
+        push!(registrations, rename_registration(server))
         if JETLS_DEV_MODE
             @info "Dynamically registering 'textDocument/rename' upon `InitializedNotification`"
         end
