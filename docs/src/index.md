@@ -156,7 +156,7 @@ language-servers = [ "jetls" ]
 jetls = { command = "jetls", args = ["--threads=auto", "--"] }
 ```
 
-## Using local JETLS checkout
+### Advanced: using local JETLS checkout
 
 Advanced users can run JETLS directly from a local checkout by replacing
 the `jetls` executable with `julia -m JETLS`:
