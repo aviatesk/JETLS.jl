@@ -2,6 +2,8 @@ module test_binding
 
 using Test
 using JETLS: JETLS
+using JETLS.LSP
+using JETLS.LSP.URIs2
 
 include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
 
@@ -804,6 +806,115 @@ ismacro_callback(ismacro) = @test ismacro[]
                 JS.sourcetext(occurrence.tree) == "xxx" &&
                 JS.source_line(occurrence.tree) == 2
             end
+        end
+    end
+end
+
+function with_global_binding_occurrences(
+        f, text::AbstractString, target_name::String;
+        filename::String = joinpath(@__DIR__, "testfile.jl"))
+    clean_code, positions = JETLS.get_text_and_positions(text)
+    fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
+    st0_top = jlparse(clean_code)
+    furi = filename2uri(filename)
+    state = JETLS.ServerState()
+
+    @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+
+    pos = first(positions)
+    offset = JETLS.xy_to_offset(clean_code, pos, filename)
+    (; ctx3, binding) = @something(
+        JETLS._select_target_binding(st0_top, offset, lowering_module),
+        error("No binding found at cursor position"))
+    target_binfo = JL.lookup_binding(ctx3, binding)
+    @test target_binfo.kind === :global
+    @test target_binfo.name == target_name
+
+    occurrences = JETLS.find_global_binding_occurrences!(
+        state, furi, fi, st0_top, target_binfo;
+        lookup_func = Returns(JETLS.OutOfScope(lowering_module)))
+
+    ranges = Set{Range}()
+    for occ in occurrences
+        push!(ranges, JETLS.jsobj_to_range(occ.tree, fi))
+    end
+    f(ranges, positions)
+end
+
+macro noop(ex) esc(ex) end
+
+@testset "find_global_binding_occurrences!" begin
+    @testset "function definitions and calls" begin
+        with_global_binding_occurrences("""
+            │foo│() = 42
+            bar() = │foo│()
+            │foo│(x) = x + 1
+            """, "foo") do ranges, positions
+            @test length(positions) == 6
+            @test length(ranges) == 3
+            @test Range(; start=positions[1], var"end"=positions[2]) in ranges
+            @test Range(; start=positions[3], var"end"=positions[4]) in ranges
+            @test Range(; start=positions[5], var"end"=positions[6]) in ranges
+        end
+    end
+
+    @testset "global constant" begin
+        with_global_binding_occurrences("""
+            global │MY_CONST│ = 100
+            use_const() = │MY_CONST│ * 2
+            another_use() = │MY_CONST│ + 1
+            """, "MY_CONST") do ranges, positions
+            @test length(positions) == 6
+            @test length(ranges) == 3
+            @test Range(; start=positions[1], var"end"=positions[2]) in ranges
+            @test Range(; start=positions[3], var"end"=positions[4]) in ranges
+            @test Range(; start=positions[5], var"end"=positions[6]) in ranges
+        end
+    end
+
+    @testset "struct type" begin
+        with_global_binding_occurrences("""
+            struct │MyType│
+                x::Int
+            end
+            make_mytype() = │MyType│(42)
+            """, "MyType") do ranges, positions
+            @test length(positions) == 4
+            @test length(ranges) == 2
+            @test Range(; start=positions[1], var"end"=positions[2]) in ranges
+            @test Range(; start=positions[3], var"end"=positions[4]) in ranges
+        end
+    end
+
+    @testset "multiple toplevel expressions" begin
+        with_global_binding_occurrences("""
+            const │global_var│ = 1
+
+            function use_global()
+                return │global_var│
+            end
+
+            function modify_global()
+                global │global_var│ = 2
+            end
+            """, "global_var") do ranges, positions
+            @test length(positions) == 6
+            @test length(ranges) == 3
+            @test Range(; start=positions[1], var"end"=positions[2]) in ranges
+            @test Range(; start=positions[3], var"end"=positions[4]) in ranges
+            @test Range(; start=positions[5], var"end"=positions[6]) in ranges
+        end
+    end
+
+    @testset "within macro calls" begin
+        with_global_binding_occurrences("""
+            │foo│() = 42
+            bar() = @noop │foo│()
+            """, "foo") do ranges, positions
+            @test length(positions) == 4
+            @test length(ranges) == 2
+            @test Range(; start=positions[1], var"end"=positions[2]) in ranges
+            @test Range(; start=positions[3], var"end"=positions[4]) in ranges
         end
     end
 end

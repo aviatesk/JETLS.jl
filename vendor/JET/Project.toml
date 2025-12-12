@@ -60,40 +60,40 @@ test = ["Aqua", "BenchmarkTools", "Downloads", "Example", "JSON3", "Libdl", "Log
 
 [sources.JuliaSyntax]
 subdir = "vendor/JuliaSyntax"
-rev = "9da400f7458ecff0f4d2a29c87da20b71c0ff882"
+rev = "a2f3a7ec14e8ddaa9c2e4c1a06142ac1e1be6904"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.Compiler]
 subdir = "vendor/Compiler"
-rev = "9da400f7458ecff0f4d2a29c87da20b71c0ff882"
+rev = "a2f3a7ec14e8ddaa9c2e4c1a06142ac1e1be6904"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.PrecompileTools]
 subdir = "vendor/PrecompileTools"
-rev = "9da400f7458ecff0f4d2a29c87da20b71c0ff882"
+rev = "a2f3a7ec14e8ddaa9c2e4c1a06142ac1e1be6904"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.MacroTools]
 subdir = "vendor/MacroTools"
-rev = "9da400f7458ecff0f4d2a29c87da20b71c0ff882"
+rev = "a2f3a7ec14e8ddaa9c2e4c1a06142ac1e1be6904"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.LoweredCodeUtils]
 subdir = "vendor/LoweredCodeUtils"
-rev = "9da400f7458ecff0f4d2a29c87da20b71c0ff882"
+rev = "a2f3a7ec14e8ddaa9c2e4c1a06142ac1e1be6904"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.JuliaInterpreter]
 subdir = "vendor/JuliaInterpreter"
-rev = "9da400f7458ecff0f4d2a29c87da20b71c0ff882"
+rev = "a2f3a7ec14e8ddaa9c2e4c1a06142ac1e1be6904"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.Preferences]
 subdir = "vendor/Preferences"
-rev = "9da400f7458ecff0f4d2a29c87da20b71c0ff882"
+rev = "a2f3a7ec14e8ddaa9c2e4c1a06142ac1e1be6904"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.CodeTracking]
 subdir = "vendor/CodeTracking"
-rev = "9da400f7458ecff0f4d2a29c87da20b71c0ff882"
+rev = "a2f3a7ec14e8ddaa9c2e4c1a06142ac1e1be6904"
 url = "https://github.com/aviatesk/JETLS.jl"

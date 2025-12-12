@@ -56,7 +56,31 @@ jobs:
           git stash --include-untracked
           git fetch origin gh-pages
           git checkout gh-pages
-          echo '<meta http-equiv="refresh" content="0; url=./release/"/>' > index.html
-          git add index.html
-          git diff --staged --quiet || git commit -m "Set release as default documentation version"
+          # Create redirect pages for each directory under release/
+          for item in release/*/; do
+            name=$(basename "$item")
+            [ -d "$name" ] && continue  # Skip if already exists (e.g., dev, previews)
+            mkdir -p "$name"
+            cat > "$name/index.html" << EOF
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <script>window.location.href = "/JETLS.jl/release/$name/" + window.location.hash;</script>
+            <noscript><meta http-equiv="refresh" content="0; url=/JETLS.jl/release/$name/"></noscript>
+          </head>
+          </html>
+          EOF
+          done
+          # Root redirect
+          cat > index.html << 'EOF'
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <script>window.location.href = "/JETLS.jl/release/" + window.location.hash;</script>
+            <noscript><meta http-equiv="refresh" content="0; url=/JETLS.jl/release/"></noscript>
+          </head>
+          </html>
+          EOF
+          git add -A
+          git diff --staged --quiet || git commit -m "Update root redirects to release content"
           git push origin gh-pages

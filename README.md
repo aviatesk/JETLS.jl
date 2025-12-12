@@ -1,6 +1,6 @@
 # JETLS
 
-[![](https://img.shields.io/badge/docs-user_guide-9558B2?logo=julia)](https://aviatesk.github.io/JETLS.jl/dev/)
+[![](https://img.shields.io/badge/docs-user_guide-9558B2?logo=julia)](https://aviatesk.github.io/JETLS.jl/)
 [![](https://img.shields.io/badge/docs-dev_notes-7C3AED?logo=obsidian)](https://publish.obsidian.md/jetls)
 [![](https://github.com/aviatesk/JETLS.jl/actions/workflows/JETLS.jl.yml/badge.svg)](https://github.com/aviatesk/JETLS.jl/actions/workflows/JETLS.jl.yml)
 [![](https://codecov.io/gh/aviatesk/JETLS.jl/branch/master/graph/badge.svg?flag=JETLS.jl)](https://codecov.io/gh/aviatesk/JETLS.jl&flags[0]=JETLS.jl)
@@ -23,7 +23,7 @@ a sample VSCode extension that serves as a language client for testing JETLS.
 ## Documentation
 
 For end-user documentation including installation instructions, configuration
-options, and feature guides, please visit the **[user guide documentation](https://aviatesk.github.io/JETLS.jl/dev/)**.
+options, and feature guides, please visit the **[user guide documentation](https://aviatesk.github.io/JETLS.jl/)**.
 
 This README focuses on development-related information such as the project
 roadmap, implementation status, and developer resources.
@@ -54,7 +54,7 @@ the list itself is subject to change.
   - [x] LaTeX/Emoji completion
   - [ ] Method signature completion
   - [ ] Property completion
-- Signature Help
+- Signature help
   - [x] Basic implementation
   - [x] Macro support
   - [ ] Argument type based suggestion
@@ -68,19 +68,33 @@ the list itself is subject to change.
   - [x] Global binding documentation
   - [x] Local binding location
   - [ ] Type-aware method documentation
-  - [ ] Type of local binding on hover
+  - [ ] Type of binding
+- Inlay hint
+  - [ ] Method parameter name
+  - [ ] Type of binding
 - Formatting
   - [x] [Runic](https://github.com/fredrikekre/Runic.jl) integration
   - [x] [JuliaFormatter](https://github.com/domluna/JuliaFormatter.jl) integration
   - [x] Make formatting backend configurable
-- Document Highlight
+- Document highlight
   - [x] Local binding
   - [x] Global binding
-  - [ ] Field name, dot-accessed bindings
+  - [ ] Field name / Dot-accessed bindings
+- Find references
+  - [x] Local binding
+  - Global reference
+    - [x] Minimum support
+    - [ ] Cross-analysis-unit reference detection
+    - [ ] Aliased reference support
+  - [ ] Field name
 - Rename
   - [x] Local binding
-  - [ ] Global binding
+  - Global binding
+    - [x] Minimum support
+    - [ ] Cross-analysis-unit rename
+    - [ ] Aliased rename support
   - [ ] Field name
+- [ ] Workspace symbol
 - TestRunner.jl integration
   - [x] Code lens for running individual `@testset`s
   - [x] Code actions for running individual `@testset`s

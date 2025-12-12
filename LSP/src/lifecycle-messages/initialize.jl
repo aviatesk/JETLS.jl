@@ -73,10 +73,10 @@
     # """
     # implementationProvider::Union{Nothing, Bool, ImplementationOptions, ImplementationRegistrationOptions} = nothing
 
-    # """
-    # The server provides find references support.
-    # """
-    # referencesProvider::Union{Nothing, Bool, ReferenceOptions} = nothing
+    """
+    The server provides find references support.
+    """
+    referencesProvider::Union{Nothing, Bool, ReferenceOptions} = nothing
 
     """
     The server provides document highlight support.
@@ -220,10 +220,10 @@
     """
     diagnosticProvider::Union{Nothing, DiagnosticOptions, DiagnosticRegistrationOptions} = nothing
 
-    # """
-    # The server provides workspace symbol support.
-    # """
-    # workspaceSymbolProvider::Union{Nothing, Bool, WorkspaceSymbolOptions} = nothing
+    """
+    The server provides workspace symbol support.
+    """
+    workspaceSymbolProvider::Union{Nothing, Bool, WorkspaceSymbolOptions} = nothing
 
     """
     Workspace specific server capabilities
@@ -366,10 +366,10 @@ end
     # """
     # implementation::Union{ImplementationClientCapabilities, Nothing} = nothing
 
-    # """
-    # Capabilities specific to the `textDocument/references` request.
-    # """
-    # references::Union{ReferenceClientCapabilities, Nothing} = nothing
+    """
+    Capabilities specific to the `textDocument/references` request.
+    """
+    references::Union{ReferenceClientCapabilities, Nothing} = nothing
 
     """
     Capabilities specific to the `textDocument/documentHighlight` request.
@@ -555,10 +555,10 @@ provides text document synchronization (e.g. open, changed and close notificatio
         """
         didChangeWatchedFiles::Union{DidChangeWatchedFilesClientCapabilities, Nothing} = nothing
 
-        # """
-        # Capabilities specific to the `workspace/symbol` request.
-        # """
-        # symbol::Union{WorkspaceSymbolClientCapabilities, Nothing} = nothing
+        """
+        Capabilities specific to the `workspace/symbol` request.
+        """
+        symbol::Union{WorkspaceSymbolClientCapabilities, Nothing} = nothing
 
         """
         Capabilities specific to the `workspace/executeCommand` request.

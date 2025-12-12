@@ -8,7 +8,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`dd21f78...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/dd21f78...HEAD)
+- Diff: [`76146d0...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/76146d0...HEAD)
+
+## v0.3.0
+
+- Commit: [`76146d0`](https://github.com/aviatesk/JETLS.jl/commit/76146d0)
+- Diff: [`7917aad...76146d0`](https://github.com/aviatesk/JETLS.jl/compare/7917aad...76146d0)
+
+### Fixed
+
+- Fixed Windows spawning when using default settings (without explicit
+  `jetls-client.executable` configuration). The previous fix in v0.2.6 only
+  worked when users explicitly set the executable path to `jetls.bat`.
+  Now the extension always uses shell spawning on Windows, allowing `jetls`
+  to resolve to `jetls.bat` automatically. Thanks to @visr. (aviatesk/JETLS.jl#375)
+
+## v0.2.7
+
+- Commit: [`7917aad`](https://github.com/aviatesk/JETLS.jl/commit/7917aad)
+- Diff: [`87c4b3f...7917aad`](https://github.com/aviatesk/JETLS.jl/compare/87c4b3f...7917aad)
+
+### Fixed
+
+- Fixed the release process.
+
+## v0.2.6
+
+- Commit: [`87c4b3f`](https://github.com/aviatesk/JETLS.jl/commit/87c4b3f)
+- Diff: [`e552f0f...87c4b3f`](https://github.com/aviatesk/JETLS.jl/compare/e552f0f...87c4b3f)
+
+### Fixed
+
+- Fixed Windows support by using `jetls.bat` instead of `jetls.exe` as the
+  default executable, and enabling shell spawn mode for batch files.
+  Fixes aviatesk/JETLS.jl#339. Thanks to @visr. (aviatesk/JETLS.jl#372)
+
+## v0.2.5
+
+- Commit: [`e552f0f`](https://github.com/aviatesk/JETLS.jl/commit/e552f0f)
+- Diff: [`dd21f78...e552f0f`](https://github.com/aviatesk/JETLS.jl/compare/dd21f78...e552f0f)
 
 ### Added
 
@@ -29,7 +67,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `jetls-client.initializationOptions` setting for static server options
   that require a restart to take effect. Currently supports `n_analysis_workers`
   for configuring concurrent analysis worker tasks.
-  See <https://aviatesk.github.io/JETLS.jl/dev/launching/#init-options> for details.
+  See <https://aviatesk.github.io/JETLS.jl/release/launching/#init-options> for details.
 
 ### Changed
 
@@ -46,7 +84,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `jetls-client.settings.full_analysis.auto_instantiate` configuration option
   (default: `true`). When enabled, JETLS automatically runs `Pkg.instantiate()` for
   packages that have not been instantiated yet (e.g., freshly cloned repositories).
-  See <https://aviatesk.github.io/JETLS.jl/dev/configuration/#config/full_analysis-auto_instantiate>
+  See <https://aviatesk.github.io/JETLS.jl/release/configuration/#config/full_analysis-auto_instantiate>
   for more details. (aviatesk/JETLS.jl#337)
 
 ## v0.2.3
@@ -112,12 +150,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - JETLS launch configuration has been significantly updated with the migration to the `jetls` executable app.
-  See <https://aviatesk.github.io/JETLS.jl/dev/#Getting-started> for the new installation and configuration guide.
+  See <https://aviatesk.github.io/JETLS.jl/release/#Server-installation> for the new installation and configuration guide.
   Most users can complete the migration by installing the `jetls` executable app:
   ```bash
   julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="release")'
   ```
-- [JETLS configuration](https://aviatesk.github.io/JETLS.jl/dev/configuration/)
+- [JETLS configuration](https://aviatesk.github.io/JETLS.jl/release/configuration/)
   should now be set with `jetls-client.settings` section,
   not with `jetls-client.jetlsSettings`.
 - Added detailed markdown descriptions for all configuration options.
@@ -129,7 +167,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added support for applying diagnostic configuration to specific files only by
   specifying glob patterns in the `path` field of
   `jetls-client.settings.diagnostic.patterns`.
-  For more details, see <https://aviatesk.github.io/JETLS.jl/dev/configuration/#config/diagnostic-patterns>.
+  For more details, see <https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic-patterns>.
   (aviatesk/JETLS.jl#313)
 
 ### Breaking
@@ -160,7 +198,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `jetls-client.jetlsSettings.formatter` configuration to switch formatter
   backend between [Runic](github.com/fredrikekre/Runic.jl) and
   [JuliaFormatter](github.com/fredrikekre/Runic.jl).
-  See <https://aviatesk.github.io/JETLS.jl/dev/formatting/> for more details.
+  See <https://aviatesk.github.io/JETLS.jl/release/formatting/> for more details.
   (aviatesk/JETLS.jl#284)
 - Added support for configuring JETLS through VSCode's `settings.json` file (aviatesk/JETLS.jl#296)
 

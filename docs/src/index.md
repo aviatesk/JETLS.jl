@@ -31,7 +31,7 @@ Install it with:
 julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="release")'
 ```
 
-This will install the `jetls` executable (`jetls.exe` on Windows) to `~/.julia/bin/`.
+This will install the `jetls` executable to `~/.julia/bin/`.
 Make sure `~/.julia/bin` is available on the `PATH` environment so the executable is accessible.
 
 You can verify the installation by running:
@@ -86,6 +86,21 @@ Minimal [Emacs](https://www.gnu.org/software/emacs/)
                 :autoport))
 ```
 
+### Vim
+Minimal [Vim](https://www.vim.org) setup using the
+[Vim9 LSP plugin](https://github.com/yegappan/lsp)
+
+```vim
+call LspAddServer([#{name: 'JETLS.jl',
+                 \   filetype: 'julia',
+                 \   path: 'jetls',
+                 \   args: [
+                 \       '--threads=auto',
+                 \       '--'
+                 \   ]
+                 \ }])
+```
+
 ### Neovim
 
 Minimal [Neovim](https://neovim.io/) setup (requires Neovim v0.11):
@@ -97,10 +112,11 @@ vim.lsp.config("jetls", {
         "--threads=auto",
         "--",
     },
-    filetypes = {"julia"},
+    filetypes = {"julia"}
 })
 vim.lsp.enable("jetls")
 ```
+
 ### Sublime
 
 Minimal [Sublime](https://www.sublimetext.com/) setup using the
@@ -109,14 +125,14 @@ Minimal [Sublime](https://www.sublimetext.com/) setup using the
 
 ```json
 {
-    "clients": {
-        "jetls": {
-            "enabled": true,
-            "command": ["jetls", "--threads=auto", "--", "--socket=${port}"],
-            "selector": "source.julia",
-            "tcp_port": 0
-        }
+  "clients": {
+    "jetls": {
+      "enabled": true,
+      "command": ["jetls", "--threads=auto", "--", "--socket=${port}"],
+      "selector": "source.julia",
+      "tcp_port": 0
     }
+  }
 }
 ```
 
@@ -139,6 +155,20 @@ language-servers = [ "jetls" ]
 [language-server]
 jetls = { command = "jetls", args = ["--threads=auto", "--"] }
 ```
+
+## Using local JETLS checkout
+
+Advanced users can run JETLS directly from a local checkout by replacing
+the `jetls` executable with `julia -m JETLS`:
+```bash
+julia --startup-file=no --project=/path/to/JETLS -m JETLS
+```
+
+!!! warning
+    When using a local checkout other than the `release` branch (e.g. `master`),
+    JETLS dependencies may conflict with the dependencies of the code being
+    analyzed. The `release` branch avoids this by vendoring dependencies with
+    rewritten UUIDs.
 
 ## Quick links
 

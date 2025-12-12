@@ -8,7 +8,7 @@ const JULIAFORMATTER_INSTALLATION_URL = "https://github.com/domluna/JuliaFormatt
 struct FormattingProgressCaller <: RequestCaller
     uri::URI
     options::FormattingOptions
-    msg_id::Union{String,Int}
+    msg_id::MessageId
     token::ProgressToken
 end
 
@@ -16,7 +16,7 @@ struct RangeFormattingProgressCaller <: RequestCaller
     uri::URI
     range::Range
     options::FormattingOptions
-    msg_id::Union{String,Int}
+    msg_id::MessageId
     token::ProgressToken
 end
 
@@ -93,7 +93,7 @@ end
 
 function do_format_with_progress(
         server::Server, uri::URI, options::FormattingOptions,
-        msg_id::Union{String,Int}, token::ProgressToken
+        msg_id::MessageId, token::ProgressToken
     )
     send_progress(server, token,
         WorkDoneProgressBegin(; title = "Formatting document"))
@@ -110,7 +110,7 @@ end
 
 function do_format(
         server::Server, uri::URI, options::FormattingOptions,
-        msg_id::Union{String,Int}
+        msg_id::MessageId
     )
     result = format_result(server.state, uri, options)
     if result isa ResponseError
@@ -217,7 +217,7 @@ end
 
 function do_range_format_with_progress(
         server::Server, uri::URI, range::Range, options::FormattingOptions,
-        msg_id::Union{String,Int}, token::ProgressToken
+        msg_id::MessageId, token::ProgressToken
     )
     send_progress(server, token,
         WorkDoneProgressBegin(; title = "Formatting document range"))
@@ -234,7 +234,7 @@ end
 
 function do_range_format(
         server::Server, uri::URI, range::Range, options::FormattingOptions,
-        msg_id::Union{String,Int}
+        msg_id::MessageId
     )
     result = range_format_result(server.state, uri, range, options)
     if result isa ResponseError

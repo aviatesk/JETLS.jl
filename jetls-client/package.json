@@ -4,7 +4,7 @@
   "description": "A new language server for Julia",
   "author": "Shuhei Kadowaki",
   "license": "MIT",
-  "version": "0.2.4",
+  "version": "0.3.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/aviatesk/JETLS.jl",
@@ -59,7 +59,7 @@
                 "path": {
                   "type": "string",
                   "default": "jetls",
-                  "markdownDescription": "Path to the `jetls` executable. Default is `'jetls'` (`'jetls.exe'` on Windows) which expects the executable to be in your `PATH`."
+                  "markdownDescription": "Path to the `jetls` executable. Default is `'jetls'` which expects the executable to be in your `PATH`."
                 },
                 "threads": {
                   "type": "string",
@@ -94,7 +94,7 @@
             "socket"
           ],
           "default": "auto",
-          "markdownDescription": "Communication channel for the language server:\n- `'auto'` (default) selects the best option based on environment\n- `'pipe'` for local development with stdout isolation\n- `'socket'` for network communication\n- `'stdio'` for maximum compatibility (but risk of stdout pollution).\n\nSee [Communication channels](https://aviatesk.github.io/JETLS.jl/dev/launching/#Communication-channels) documentation for more details.",
+          "markdownDescription": "Communication channel for the language server:\n- `'auto'` (default) selects the best option based on environment\n- `'pipe'` for local development with stdout isolation\n- `'socket'` for network communication\n- `'stdio'` for maximum compatibility (but risk of stdout pollution).\n\nSee [Communication channels](https://aviatesk.github.io/JETLS.jl/release/launching/#Communication-channels) documentation for more details.",
           "order": 2
         },
         "jetls-client.socketPort": {
@@ -114,7 +114,7 @@
               "type": "integer",
               "default": 1,
               "minimum": 1,
-              "markdownDescription": "Number of analysis worker tasks. Default is `1`. See [documentation](https://aviatesk.github.io/JETLS.jl/dev/launching/#init-options/n_analysis_workers) for details and current limitations."
+              "markdownDescription": "Number of analysis worker tasks. Default is `1`. See [documentation](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options/n_analysis_workers) for details and current limitations."
             }
           },
           "order": 4
@@ -123,11 +123,11 @@
           "scope": "resource",
           "type": "object",
           "default": {},
-          "markdownDescription": "JETLS server configuration settings. See [Configuration documentation](https://aviatesk.github.io/JETLS.jl/dev/configuration/) for detailed information.",
+          "markdownDescription": "JETLS server configuration settings. See [Configuration documentation](https://aviatesk.github.io/JETLS.jl/release/configuration/) for detailed information.",
           "properties": {
             "full_analysis": {
               "type": "object",
-              "markdownDescription": "Configuration for full JET analysis. See [Full analysis configuration](https://aviatesk.github.io/JETLS.jl/dev/configuration/#config/full_analysis).",
+              "markdownDescription": "Configuration for full JET analysis. See [Full analysis configuration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/full_analysis).",
               "properties": {
                 "debounce": {
                   "type": "number",
@@ -173,11 +173,11 @@
                 }
               ],
               "default": "Runic",
-              "markdownDescription": "Formatter configuration. Can be a preset name (`'Runic'` or `'JuliaFormatter'`) or a custom formatter object. See [Formatting configuration](https://aviatesk.github.io/JETLS.jl/dev/configuration/#config/formatter)."
+              "markdownDescription": "Formatter configuration. Can be a preset name (`'Runic'` or `'JuliaFormatter'`) or a custom formatter object. See [Formatting configuration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/formatter)."
             },
             "diagnostic": {
               "type": "object",
-              "markdownDescription": "Diagnostic configuration. See [Diagnostic configuration](https://aviatesk.github.io/JETLS.jl/dev/configuration/#config/diagnostic).",
+              "markdownDescription": "Diagnostic configuration. See [Diagnostic configuration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic).",
               "properties": {
                 "enabled": {
                   "type": "boolean",
@@ -187,7 +187,7 @@
                 "patterns": {
                   "type": "array",
                   "default": [],
-                  "markdownDescription": "Fine-grained control over diagnostics through pattern matching. See [Pattern-based diagnostic configuration](https://aviatesk.github.io/JETLS.jl/dev/configuration/#config/diagnostic/patterns).",
+                  "markdownDescription": "Fine-grained control over diagnostics through pattern matching. See [Pattern-based diagnostic configuration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic/patterns).",
                   "items": {
                     "type": "object",
                     "required": [
@@ -255,7 +255,7 @@
             },
             "testrunner": {
               "type": "object",
-              "markdownDescription": "TestRunner integration configuration. See [TestRunner integration](https://aviatesk.github.io/JETLS.jl/dev/configuration/#config/testrunner).",
+              "markdownDescription": "TestRunner integration configuration. See [TestRunner integration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/testrunner).",
               "properties": {
                 "executable": {
                   "type": "string",

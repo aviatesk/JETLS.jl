@@ -355,6 +355,8 @@ end
                     make_DidChangeTextDocumentNotification(uri, edited_code, #=version=#2);
                     read = 0)
 
+                sleep(2.0) # sleep to propagate the document change to the cache (requried for multithreading env)
+
                 let id = id_counter[] += 1
                     (; raw_res) = writereadmsg(SignatureHelpRequest(;
                         id,

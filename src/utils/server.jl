@@ -208,6 +208,22 @@ end
 get_file_info(s::ServerState, t::TextDocumentIdentifier, cancel_flag::CancelFlag; kwargs...) =
     get_file_info(s, t.uri, cancel_flag; kwargs...)
 
+# This `search_uri` may have been analyzed by full-analysis but not yet synced
+# by document-synchronization, or simply have been "out of analysis scope".
+# Construct a `ParseStream` from the filename and create a dummy `FileInfo`
+# for the purpose of global binding analysis.
+function create_dummy_file_info(uri::URI, ref_fi::FileInfo)
+    filename = uri2filename(uri)
+    parsed_stream = try
+        ParseStream!(read(filename))
+    catch e
+        JETLS_DEV_MODE && @error "Error parsing file $(filename)"
+        JETLS_DEV_MODE && Base.showerror(stderr, e, catch_backtrace)
+        return nothing
+    end
+    return FileInfo(ref_fi; version=0, parsed_stream, filename)
+end
+
 """
     get_saved_file_info(s::ServerState, uri::URI) -> fi::Union{Nothing,SavedFileInfo}
     get_saved_file_info(s::ServerState, t::TextDocumentIdentifier) -> fi::Union{Nothing,SavedFileInfo}
@@ -238,9 +254,13 @@ Returns a named tuple containing:
 - `postprocessor::JET.PostProcessor`: The post-processor for fixing `var"..."` strings that users don't need
   to recognize, which are caused by JET implementation details
 """
-function get_context_info(state::ServerState, uri::URI, pos::Position)
+function get_context_info(state::ServerState, uri::URI, pos::Position; lookup_func=nothing)
     lookup_uri = @something get_notebook_uri_for_cell(state, uri) uri
-    analysis_info = get_analysis_info(state.analysis_manager, lookup_uri)
+    if lookup_func !== nothing
+        analysis_info = get_analysis_info(lookup_func, state.analysis_manager, lookup_uri)
+    else
+        analysis_info = get_analysis_info(state.analysis_manager, lookup_uri)
+    end
     mod = get_context_module(analysis_info, lookup_uri, pos)
     analyzer = get_context_analyzer(analysis_info, lookup_uri)
     postprocessor = get_post_processor(analysis_info)

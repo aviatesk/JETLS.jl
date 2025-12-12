@@ -15,10 +15,10 @@ macro something(args...)
         val = gensym()
         expr = quote
             $val = $(esc(arg))
-            if !isnothing($val)
-                $something($val)
-            else
+            if $val === $noth
                 $expr
+            else
+                $something($val)
             end
         end
     end
@@ -191,7 +191,7 @@ function occursin(fn::FilenameMatch, s::AbstractString)
             end
             # Then try **/ backtracking
             if globstarmatch > 0
-                nextslash = findnext('/', s, globstarmatch)
+                nextslash = findnext(==('/'), s, globstarmatch)
                 if nextslash !== nothing && !globstar_period
                     i = nextind(s, nextslash)
                     globstarmatch = i
