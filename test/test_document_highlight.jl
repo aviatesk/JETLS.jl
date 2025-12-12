@@ -300,6 +300,35 @@ end
         end
 
         let code = """
+            const │MYCONST│ = "constant"
+
+            macro noop(ex) esc(ex) end
+
+            function get_const()
+                @noop │MYCONST│
+            end
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 4
+            fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
+            @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+            for pos in positions
+                highlights = JETLS.document_highlights(fi, pos, @__MODULE__)
+                @test length(highlights) == 2
+                @test count(highlights) do highlight
+                    highlight.range.start == positions[1] &&
+                    highlight.range.var"end" == positions[2] &&
+                    highlight.kind == DocumentHighlightKind.Write
+                end == 1
+                @test count(highlights) do highlight
+                    highlight.range.start == positions[3] &&
+                    highlight.range.var"end" == positions[4] &&
+                    highlight.kind == DocumentHighlightKind.Read
+                end == 1
+            end
+        end
+
+        let code = """
             struct │MyType│
                 field::Int
             end

@@ -113,7 +113,7 @@ struct CancellableToken
     cancel_flag::CancelFlag
 end
 
-const CurrentlyHandled = Dict{Union{Int,String}, CancelFlag}
+const CurrentlyHandled = Dict{MessageId, CancelFlag}
 
 const URI2Diagnostics = Dict{URI,Vector{Diagnostic}}
 
@@ -490,7 +490,7 @@ const CompletionResolverInfo = CASContainer{Union{Nothing,Tuple{Module,LSPostPro
 # Type aliases for concurrent updates using LWContainer (non-retriable operations)
 const ConfigManager = LWContainer{ConfigManagerData, LWStats}
 
-const HandledHistory = FixedSizeFIFOQueue{Union{Int,String}}
+const HandledHistory = FixedSizeFIFOQueue{MessageId}
 
 mutable struct ServerState
     const file_cache::FileCache # syntactic analysis cache (synced with `textDocument/didChange`)

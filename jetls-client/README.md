@@ -1,6 +1,6 @@
 # jetls-client
 
-[![](https://img.shields.io/badge/docs-user_guide-9558B2?logo=julia)](https://aviatesk.github.io/JETLS.jl/dev/)
+[![](https://img.shields.io/badge/docs-user_guide-9558B2?logo=julia)](https://aviatesk.github.io/JETLS.jl/release/)
 [![](https://img.shields.io/badge/docs-dev_notes-7C3AED?logo=obsidian)](https://publish.obsidian.md/jetls)
 [![](https://github.com/aviatesk/JETLS.jl/actions/workflows/jetls-client.yml/badge.svg)](https://github.com/aviatesk/JETLS.jl/actions/workflows/jetls-client.yml)
 
@@ -33,7 +33,7 @@ diagnostic, macro-aware go-to definition and such.
    ```bash
    julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="release")'
    ```
-   This will install the `jetls` executable (`jetls.exe` on Windows) to `~/.julia/bin/`.
+   This will install the `jetls` executable to `~/.julia/bin/`.
 2. Make sure `~/.julia/bin` is available on the `PATH` environment so the `jetls` executable is accessible.
    You can verify the installation by running:
    ```bash
@@ -48,8 +48,7 @@ diagnostic, macro-aware go-to definition and such.
    - Click `Install`
 4. Open any Julia file
 
-The extension will automatically use the `jetls` (or `jetls.exe` on Windows)
-executable from your `PATH`.
+The extension will automatically use the `jetls` executable from your `PATH`.
 
 > [!note]
 > To update JETLS to the latest version, re-run the installation command:
@@ -101,7 +100,7 @@ You can override the automatic selection using `"jetls-client.communicationChann
 - `"stdio"`: Uses standard input/output
 
 For detailed information about each communication channel and when to use them,
-see the [Communication channels documentation](https://aviatesk.github.io/JETLS.jl/dev/launching/#Communication-channels).
+see the [Communication channels documentation](https://aviatesk.github.io/JETLS.jl/release/launching/#Communication-channels).
 
 ### Initialization options
 
@@ -124,7 +123,7 @@ Example:
 ```
 
 For more details, see the
-[Initialization options documentation](https://aviatesk.github.io/JETLS.jl/dev/launching/#Initialization-options).
+[Initialization options documentation](https://aviatesk.github.io/JETLS.jl/release/launching/#Initialization-options).
 
 ## Configuring JETLS
 
@@ -132,7 +131,7 @@ JETLS behavior (diagnostics, formatting, etc.) can be configured through VSCode'
 `settings.json` file using the `jetls-client.settings` section.
 
 For detailed configuration options and examples, see the
-[Configuration documentation](https://aviatesk.github.io/JETLS.jl/dev/configuration/).
+[Configuration documentation](https://aviatesk.github.io/JETLS.jl/release/configuration/).
 
 ### Available settings
 

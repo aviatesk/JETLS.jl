@@ -14,7 +14,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`fd5f113...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/fd5f113...HEAD)
+- Diff: [`9b39829...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/9b39829...HEAD)
+
+### Added
+
+- Added `textDocument/references` support for bindings. Both local and global
+  bindings are supported, although currently the support for global references
+  is experimental and has some notable limitations:
+  - References can only be found within the same analysis unit. For example,
+    when finding references to `somebinding` defined in `PkgA/src/somefile.jl`,
+    usages in `PkgA/src/` can be found, but usages in `PkgA/test/` cannot be
+    detected because test files are in a separate analysis unit.
+  - Aliasing is not considered. Usages via `using ..PkgA: somebinding as otherbinding`
+    or module-qualified access like `PkgA.somebinding` are not detected.
+- Added `textDocument/rename` support for global bindings. Similar to global
+  references, this feature is experimental and has the same limitations
+  regarding analysis unit boundaries and aliasing.
+
+### Fixed
+
+- Fixed false positive unused variable diagnostics in comprehensions with filter
+  conditions. For example, `[x for (i, x) in enumerate(xs) if isodd(i)]` no
+  longer incorrectly reports `i` as unused. Fixes aviatesk/JETLS.jl#360.
+
+### Changed
+
+- Updated JuliaSyntax.jl and JuliaLowering.jl dependencies to the latest
+  development versions, which fixes spurious lowering diagnostics that occurred
+  in edge cases such as JuliaLang/julia#60309.
+
+## 2025-12-08
+
+- Commit: [`9b39829`](https://github.com/aviatesk/JETLS.jl/commit/9b39829)
+- Diff: [`fd5f113...9b39829`](https://github.com/aviatesk/JETLS.jl/compare/fd5f113...9b39829)
 
 ### Added
 
@@ -96,7 +128,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Added support for LSP `initializationOptions` with the experimental
   `n_analysis_workers` option for configuring concurrent analysis worker tasks.
-  See [Initialization options](https://aviatesk.github.io/JETLS.jl/dev/launching/#init-options)
+  See [Initialization options](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options)
   for details.
 
 ### Changed
@@ -269,14 +301,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     ```bash
     julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="release")'
     ```
-    This installs the executable to `~/.julia/bin/` (as `jetls` on Unix-like systems, `jetls.exe` on Windows).
+    This installs the executable to `~/.julia/bin/jetls`.
     Make sure `~/.julia/bin` is in your `PATH`.
   - Updating: Update JETLS to the latest version by re-running the installation command:
     ```bash
     julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="release")'
     ```
   - Launching: Language clients should launch JETLS using the `jetls` executable with appropriate options.
-    See <https://aviatesk.github.io/JETLS.jl/dev/launching/> for detailed launch options.
+    See <https://aviatesk.github.io/JETLS.jl/release/launching/> for detailed launch options.
   - The VSCode language client `jetls-client` and Zed extension `aviatesk/zed-julia` has been updated accordingly.
 - Changed diagnostic configuration schema from `[diagnostic.codes]` to `[[diagnostic.patterns]]` for more flexible pattern matching. (aviatesk/JETLS.jl#299)
 - Renamed configuration section from `[diagnostics]` to `[diagnostic]` for consistency. (aviatesk/JETLS.jl#299)

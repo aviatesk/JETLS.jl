@@ -1182,6 +1182,108 @@ A parameter literal used to pass a partial result token.
     partialResultToken::Union{ProgressToken, Nothing} = nothing
 end
 
+# Symbol
+# ======
+
+"""
+A symbol kind.
+"""
+@namespace SymbolKind::Int begin
+    File = 1
+    Module = 2
+    Namespace = 3
+    Package = 4
+    Class = 5
+    Method = 6
+    Property = 7
+    Field = 8
+    Constructor = 9
+    Enum = 10
+    Interface = 11
+    Function = 12
+    Variable = 13
+    Constant = 14
+    String = 15
+    Number = 16
+    Boolean = 17
+    Array = 18
+    Object = 19
+    Key = 20
+    Null = 21
+    EnumMember = 22
+    Struct = 23
+    Event = 24
+    Operator = 25
+    TypeParameter = 26
+end
+
+"""
+Symbol tags are extra annotations that tweak the rendering of a symbol.
+
+# Tags
+- since - 3.16
+"""
+@namespace SymbolTag::Int begin
+    """
+    Render a symbol as obsolete, usually using a strike-out.
+    """
+    Deprecated = 1
+end
+
+"""
+Represents information about programming constructs like variables, classes,
+interfaces etc.
+
+@deprecated use DocumentSymbol or WorkspaceSymbol instead.
+"""
+@interface SymbolInformation begin
+    """
+    The name of this symbol.
+    """
+    name::String
+
+    """
+    The kind of this symbol.
+    """
+    kind::SymbolKind.Ty
+
+    """
+    Tags for this symbol.
+
+    # Tags
+    - since - 3.16.0
+    """
+    tags::Union{Nothing, Vector{SymbolTag.Ty}} = nothing
+
+    """
+    Indicates if this symbol is deprecated.
+
+    @deprecated Use tags instead
+    """
+    deprecated::Union{Nothing, Bool} = nothing
+
+    """
+    The location of this symbol. The location's range is used by a tool
+    to reveal the location in the editor. If the symbol is selected in the
+    tool the range's start information is used to position the cursor. So
+    the range usually spans more then the actual symbol's name and does
+    normally include things like visibility modifiers.
+
+    The range doesn't have to denote a node range in the sense of an abstract
+    syntax tree. It can therefore not be used to re-construct a hierarchy of
+    the symbols.
+    """
+    location::Location
+
+    """
+    The name of the symbol containing this symbol. This information is for
+    user interface purposes (e.g. to render a qualifier in the user interface
+    if necessary). It can't be used to re-infer a hierarchy for the document
+    symbols.
+    """
+    containerName::Union{Nothing, String} = nothing
+end
+
 # Trace value
 # ===========
 

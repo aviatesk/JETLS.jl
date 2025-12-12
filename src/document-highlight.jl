@@ -55,8 +55,10 @@ function document_highlights!(
     offset = xy_to_offset(fi, pos)
     if module_info isa Module
         mod = module_info
+        location_info = nothing
     else
         (; mod) = get_context_info(module_info..., pos)
+        location_info = module_info
     end
 
     (; ctx3, st3, binding) = @something begin
@@ -69,7 +71,7 @@ function document_highlights!(
     if binfo.kind === :global
         global_document_highlights!(highlights′, fi, st0_top, binfo, module_info)
     else
-        local_document_highlights!(highlights′, fi, ctx3, st3, binfo, module_info)
+        local_document_highlights!(highlights′, fi, ctx3, st3, binfo, location_info)
     end
 
     for (range, kind) in highlights′
@@ -81,11 +83,11 @@ end
 function add_highlight_for_occurrence!(
         highlights′::Dict{Range,DocumentHighlightKind.Ty},
         fi::FileInfo, occurrence::BindingOccurence,
-        module_info::Union{Tuple{ServerState,URI},Module}
+        location_info::Union{Tuple{ServerState,URI},Nothing} = nothing
     )
     range = jsobj_to_range(occurrence.tree, fi)
-    if module_info isa Tuple{ServerState,URI}
-        range, _ = unadjust_range(module_info..., range)
+    if location_info !== nothing
+        range, _ = unadjust_range(location_info..., range)
     end
     kind = document_highlight_kind(occurrence)
     highlights′[range] = max(kind, get(highlights′, range, DocumentHighlightKind.Text))
@@ -101,6 +103,7 @@ function global_document_highlights!(
         fi::FileInfo, st0_top::JL.SyntaxTree, binfo::JL.BindingInfo,
         module_info::Union{Tuple{ServerState,URI},Module},
     )
+    location_info = module_info isa Module ? nothing : module_info
     iterate_toplevel_tree(st0_top) do st0::JL.SyntaxTree
         if module_info isa Module
             mod = module_info
@@ -108,7 +111,8 @@ function global_document_highlights!(
             (; mod) = get_context_info(module_info..., offset_to_xy(fi, JS.first_byte(st0)))
         end
         (; ctx3, st3) = try
-            jl_lower_for_scope_resolution(mod, st0)
+            # Remove macros to preserve precise source locations
+            jl_lower_for_scope_resolution(mod, remove_macrocalls(st0))
         catch
             return
         end
@@ -116,7 +120,7 @@ function global_document_highlights!(
         for (binfo′, occurrences) in binding_occurrences
             if binfo′.mod === binfo.mod && binfo′.name == binfo.name
                 for occurrence in occurrences
-                    add_highlight_for_occurrence!(highlights′, fi, occurrence, module_info)
+                    add_highlight_for_occurrence!(highlights′, fi, occurrence, location_info)
                 end
             end
         end
@@ -127,12 +131,12 @@ end
 function local_document_highlights!(
         highlights′::Dict{Range,DocumentHighlightKind.Ty},
         fi::FileInfo, ctx3, st3, binfo::JL.BindingInfo,
-        module_info::Union{Tuple{ServerState,URI},Module}
+        location_info::Union{Tuple{ServerState,URI},Nothing} = nothing
     )
     binding_occurrences = compute_binding_occurrences(ctx3, st3)
     if haskey(binding_occurrences, binfo)
         for occurrence in binding_occurrences[binfo]
-            add_highlight_for_occurrence!(highlights′, fi, occurrence, module_info)
+            add_highlight_for_occurrence!(highlights′, fi, occurrence, location_info)
         end
     end
     return highlights′

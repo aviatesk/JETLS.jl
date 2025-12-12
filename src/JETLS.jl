@@ -32,6 +32,8 @@ using LSP: LSP
 using LSP.URIs2
 using LSP.Communication: Endpoint
 
+const MessageId = Union{String, Int}
+
 using Pkg
 using JET: CC, JET
 using JuliaSyntax: JuliaSyntax as JS
@@ -92,6 +94,7 @@ include("execute-command.jl")
 include("completions.jl")
 include("signature-help.jl")
 include("definition.jl")
+include("references.jl")
 include("hover.jl")
 include("document-highlight.jl")
 include("diagnostics.jl")
@@ -305,7 +308,7 @@ struct ConcurrentMessageHandler
     queue::Channel{Any}
 end
 struct HandledToken
-    id::Union{String, Int}
+    id::MessageId
 end
 function (dispatcher::ConcurrentMessageHandler)(server::Server, @nospecialize msg)
     # Handle `currently_handled` processing serially within the concurrent message worker thread
@@ -385,6 +388,10 @@ function (dispatcher::ResponseMessageDispatcher)(server::Server, msg::Dict{Symbo
         handle_formatting_progress_response(server, msg, request_caller)
     elseif request_caller isa RangeFormattingProgressCaller
         handle_range_formatting_progress_response(server, msg, request_caller)
+    elseif request_caller isa ReferencesProgressCaller
+        handle_references_progress_response(server, msg, request_caller)
+    elseif request_caller isa RenameProgressCaller
+        handle_rename_progress_response(server, msg, request_caller)
     elseif request_caller isa ProfileProgressCaller
         handle_profile_progress_response(server, msg, request_caller)
     elseif request_caller isa WorkspaceConfigurationCaller
@@ -401,7 +408,7 @@ end
 
 struct RequestMessageDispatcher
     queue::Channel{Any}
-    id::Union{String, Int}
+    id::MessageId
     cancel_flag::CancelFlag
 end
 function (dispatcher::RequestMessageDispatcher)(server::Server, @nospecialize msg)
@@ -420,6 +427,8 @@ function (dispatcher::RequestMessageDispatcher)(server::Server, @nospecialize ms
         handle_SignatureHelpRequest(server, msg, cancel_flag)
     elseif msg isa DefinitionRequest
         handle_DefinitionRequest(server, msg, cancel_flag)
+    elseif msg isa ReferencesRequest
+        handle_ReferencesRequest(server, msg, cancel_flag)
     elseif msg isa HoverRequest
         handle_HoverRequest(server, msg, cancel_flag)
     elseif msg isa DocumentHighlightRequest
