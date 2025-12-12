@@ -6,6 +6,25 @@ This section contains meta-documentation related to development.
 For more detailed coding guidelines, please refer to [AGENTS.md](./AGENTS.md),
 which has been organized to be easily recognized by AI agents.
 
+## Using local JETLS checkout
+
+During development, you can run JETLS directly from your local checkout using
+Julia's `-m` (module run) flag:
+```bash
+julia --startup-file=no --project=/path/to/JETLS -m JETLS
+```
+
+This is useful for testing changes without installing the `jetls` executable.
+Combined with the [`JETLS_DEV_MODE`](#jetls_dev_mode) preference,
+this allows you to edit JETLS source code and have Revise pick up changes
+without restarting the server.
+
+> [!warning]
+> When using a local checkout other than the `release` branch (e.g. `master`),
+> JETLS dependencies may conflict with the dependencies of the code being
+> analyzed. The `release` branch avoids this by vendoring dependencies with
+> rewritten UUIDs.
+
 ## `[sources]` dependencies
 
 In JETLS, since we need to use packages that aren’t yet registered
@@ -445,6 +464,22 @@ To test the extension locally in VSCode:
 1. Open the `jetls-client` directory in VSCode
 2. Press F5 to launch the Extension Development Host
 3. The extension will be loaded in the new VSCode window
+
+To use a local JETLS.jl checkout with the development extension (see
+[Using local JETLS checkout](#using-local-jetls-checkout)), configure
+`jetls-client.executable` in your `settings.json` using the array form:
+```jsonc
+{
+  "jetls-client.executable": [
+    "julia",
+    "--startup-file=no",
+    "--history-file=no",
+    "--project=/path/to/JETLS",
+    "-m",
+    "JETLS"
+  ]
+}
+```
 
 ### Publishing
 

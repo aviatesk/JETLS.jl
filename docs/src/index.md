@@ -156,6 +156,20 @@ language-servers = [ "jetls" ]
 jetls = { command = "jetls", args = ["--threads=auto", "--"] }
 ```
 
+## Using local JETLS checkout
+
+Advanced users can run JETLS directly from a local checkout by replacing
+the `jetls` executable with `julia -m JETLS`:
+```bash
+julia --startup-file=no --project=/path/to/JETLS -m JETLS
+```
+
+!!! warning
+    When using a local checkout other than the `release` branch (e.g. `master`),
+    JETLS dependencies may conflict with the dependencies of the code being
+    analyzed. The `release` branch avoids this by vendoring dependencies with
+    rewritten UUIDs.
+
 ## Quick links
 
 ```@contents
