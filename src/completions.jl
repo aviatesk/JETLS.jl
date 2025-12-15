@@ -403,33 +403,39 @@ end
 # ===================
 
 function get_keyword_doc(kwname::Symbol)
-    if haskey(Base.Docs.keywords, kwname)
-        kwdocstr = Base.Docs.keywords[kwname]
-        kwdocobj = kwdocstr.object
-        if kwdocobj isa Markdown.MD
-            docmd = kwdocobj
-        else
-            docmd = Markdown.parse(kwdocstr.text[1])
-        end
+    if kwname in (Symbol("true"), Symbol("false"))
         return MarkupContent(;
             kind = MarkupKind.Markdown,
-            value = string(docmd))
+            value = string(@doc true))
     end
-    return nothing
+    kwdocstr = Base.Docs.keywords[kwname]
+    kwdocobj = kwdocstr.object
+    if kwdocobj isa Markdown.MD
+        docmd = kwdocobj
+    else
+        docmd = Markdown.parse(kwdocstr.text[1])
+    end
+    return MarkupContent(;
+        kind = MarkupKind.Markdown,
+        value = string(docmd))
 end
 
-const KEYWORD_COMPLETIONS = let
-    items = Dict{String,CompletionItem}()
-    keywords = union(REPL.REPLCompletions.sorted_keywords, REPL.REPLCompletions.sorted_keyvals)
+const KEYWORD_COMPLETIONS = Dict{String,CompletionItem}()
+const KEYWORD_DOCS = Dict{String,MarkupContent}()
+let keywords = Set{String}()
+    union!(keywords, REPL.REPLCompletions.sorted_keywords, REPL.REPLCompletions.sorted_keyvals)
     for keyword in keywords
-        items[keyword] = CompletionItem(;
+        documentation = get_keyword_doc(Symbol(keyword))
+        KEYWORD_COMPLETIONS[keyword] = CompletionItem(;
             label = keyword,
             labelDetails = CompletionItemLabelDetails(; description = "keyword"),
             kind = CompletionItemKind.Keyword,
             sortText = max_sort_text3,
-            documentation = get_keyword_doc(Symbol(keyword)))
+            documentation)
     end
-    items
+    for keyword in keys(Base.Docs.keywords)
+        KEYWORD_DOCS[String(keyword)] = get_keyword_doc(keyword)
+    end
 end
 
 const var_quote_doc = get_keyword_doc(Symbol("var\"name\""))

@@ -19,6 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Added
 
 - Added completion support for Julia keywords. Closes aviatesk/JETLS.jl#386.
+- Added hover documentation for Julia keywords (`if`, `for`, `true`, etc.).
 
 ### Fixed
 
