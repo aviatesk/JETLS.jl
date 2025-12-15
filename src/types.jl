@@ -453,25 +453,25 @@ function ConfigManagerData(
 end
 
 # Internal, undocumented configuration for full-analysis module overrides.
-struct ModuleOverride <: ConfigSection
+struct AnalysisOverride <: ConfigSection
     module_name::Maybe{String}
     path::Glob.FilenameMatch{String}
 end
-@define_eq_overloads ModuleOverride
-Base.convert(::Type{ModuleOverride}, x::AbstractDict{String}) = parse_module_override(x)
+@define_eq_overloads AnalysisOverride
+Base.convert(::Type{AnalysisOverride}, x::AbstractDict{String}) = parse_analysis_override(x)
 
 # Static initialization options from `InitializeParams.initializationOptions`.
 # These are set once during the initialize request and remain constant.
 @option struct InitOptions
     n_analysis_workers::Maybe{Int}
-    module_overrides::Maybe{Vector{ModuleOverride}}
+    analysis_overrides::Maybe{Vector{AnalysisOverride}}
 end
 function Base.show(io::IO, init_options::InitOptions)
     print(io, "InitOptions(;")
     n_analysis_workers = init_options.n_analysis_workers
     n_analysis_workers === nothing || print(io, " n_analysis_workers=", n_analysis_workers)
-    module_overrides = init_options.module_overrides
-    module_overrides === nothing || print(io, " module_overrides=", module_overrides)
+    analysis_overrides = init_options.analysis_overrides
+    analysis_overrides === nothing || print(io, " analysis_overrides=", analysis_overrides)
     print(io, ")")
 end
 

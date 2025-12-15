@@ -23,14 +23,14 @@ function find_analysis_env_path(state::ServerState, uri::URI)
                 return OutOfScope()
             end
         end
-        module_overrides = state.init_options.module_overrides
-        if module_overrides !== nothing
+        analysis_overrides = state.init_options.analysis_overrides
+        if analysis_overrides !== nothing
             if isdefined(state, :root_path) && startswith(filepath, state.root_path)
                 path_for_glob = relpath(filepath, state.root_path)
             else
                 path_for_glob = filepath
             end
-            for override in module_overrides
+            for override in analysis_overrides
                 if occursin(override.path, path_for_glob)
                     module_name = override.module_name
                     if module_name === nothing
