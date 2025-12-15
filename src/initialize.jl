@@ -55,10 +55,10 @@ function handle_InitializeRequest(
     # These settings differ from dynamic configuration options managed by `ConfigManager`
     # that can be changed at throughout server lifecycle.
     # Priority: file config > client config > default
-    state.init_options = parse_init_options(init_params.initializationOptions)
+    state.init_options = parse_init_options(server, init_params.initializationOptions)
     if isdefined(state, :root_path)
         config_path = joinpath(state.root_path, ".JETLSConfig.toml")
-        file_init_options = load_file_init_options(config_path)
+        file_init_options = load_file_init_options(server, config_path)
         if file_init_options !== nothing
             state.init_options = merge_init_options(state.init_options, file_init_options)
         end
