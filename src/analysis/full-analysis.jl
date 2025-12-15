@@ -2,19 +2,16 @@
 # =============
 
 function parse_module_override(x::AbstractDict{String})
-    if !haskey(x, "module_name")
-        error(lazy"Missing required field `module_name` in module_override")
-    end
-    module_name = x["module_name"]
-    if !(module_name isa String)
+    module_name = get(x, "module_name", nothing)
+    if module_name !== nothing && !(module_name isa String)
         error(lazy"Invalid `module_name` value. Must be a string, got $(typeof(module_name))")
     end
     if !haskey(x, "path")
-        error(lazy"Missing required field `path` in module_override for module \"$module_name\"")
+        error(lazy"Missing required field `path` in module_override")
     end
     path_value = x["path"]
     if !(path_value isa String)
-        error(lazy"Invalid `path` value for module \"$module_name\". Must be a string, got $(typeof(path_value))")
+        error(lazy"Invalid `path` value in module_override. Must be a string, got $(typeof(path_value))")
     end
     path_glob = Glob.FilenameMatch(path_value, "dp")
     return ModuleOverride(module_name, path_glob)

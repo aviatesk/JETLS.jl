@@ -32,12 +32,19 @@ function find_analysis_env_path(state::ServerState, uri::URI)
             end
             for override in module_overrides
                 if occursin(override.path, path_for_glob)
-                    mod = find_loaded_module(override.module_name)
-                    if mod !== nothing
-                        JETLS_DEV_MODE && @info "Analysis module overridden" module_name=override.module_name path=filepath
-                        return OutOfScope(mod)
+                    module_name = override.module_name
+                    if module_name === nothing
+                        @info "Analysis for this file is disabled" path=filepath
+                        return OutOfScope()
                     else
-                        @warn "Analysis module override specified but module not loaded" module_name=override.module_name path=filepath
+                        mod = find_loaded_module(override.module_name)
+                        if mod !== nothing
+                            JETLS_DEV_MODE && @info "Analysis module overridden" module_name=override.module_name path=filepath
+                            return OutOfScope(mod)
+                        else
+                            @warn "Analysis module override specified but module not found" module_name=override.module_name path=filepath
+                            return OutOfScope()
+                        end
                     end
                 end
             end

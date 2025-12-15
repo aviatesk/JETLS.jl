@@ -454,7 +454,7 @@ end
 
 # Internal, undocumented configuration for full-analysis module overrides.
 struct ModuleOverride <: ConfigSection
-    module_name::String
+    module_name::Maybe{String}
     path::Glob.FilenameMatch{String}
 end
 @define_eq_overloads ModuleOverride
