@@ -305,7 +305,15 @@ function jet_result_to_diagnostics!(uri2diagnostics::URI2Diagnostics, result::JE
         end
         push!(uri2diagnostics[uri], diagnostic)
     end
-    for report in result.res.inference_error_reports
+    jet_inference_error_reports_to_diagnostics!(uri2diagnostics, postprocessor, result.res.inference_error_reports)
+    return uri2diagnostics
+end
+
+function jet_inference_error_reports_to_diagnostics!(
+        uri2diagnostics::URI2Diagnostics, postprocessor::JET.PostProcessor,
+        reports::Vector{JET.InferenceErrorReport}
+    )
+    for report in reports
         diagnostic = jet_inference_error_report_to_diagnostic(postprocessor, report)
         topframeidx = first(inference_error_report_stack(report))
         topframe = report.vst[topframeidx]
