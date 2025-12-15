@@ -16,6 +16,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 - Diff: [`048d9a5...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/048d9a5...HEAD)
 
+### Added
+
+- Added completion support for Julia keywords. Closes aviatesk/JETLS.jl#386.
+
 ### Fixed
 
 - Fixed false negative unused argument diagnostics for functions with keyword

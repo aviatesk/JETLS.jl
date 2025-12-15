@@ -59,6 +59,7 @@ const sort_texts, max_sort_text = let
 end
 const max_sort_text1 = "10000"
 const max_sort_text2 = "100000"
+const max_sort_text3 = "1000000"
 function get_sort_text(offset::Int)
     return get(sort_texts, offset, max_sort_text)
 end
@@ -161,7 +162,7 @@ function local_completions!(
             items[ci.label] = ci
         end
     end
-    return items
+    return nothing
 end
 
 # global completions
@@ -299,7 +300,7 @@ function global_completions!(
             filterText,
             insertTextFormat,
             textEdit,
-            data = CompletionData(#=name=#resolveName))
+            data = CompletionData(resolveName))
     end
 
     return is_completed ? items : nothing
@@ -398,6 +399,63 @@ function add_emoji_latex_completions!(
     return items
 end
 
+# keyword completions
+# ===================
+
+function get_keyword_doc(kwname::Symbol)
+    if haskey(Base.Docs.keywords, kwname)
+        kwdocstr = Base.Docs.keywords[kwname]
+        kwdocobj = kwdocstr.object
+        if kwdocobj isa Markdown.MD
+            docmd = kwdocobj
+        else
+            docmd = Markdown.parse(kwdocstr.text[1])
+        end
+        return MarkupContent(;
+            kind = MarkupKind.Markdown,
+            value = string(docmd))
+    end
+    return nothing
+end
+
+const KEYWORD_COMPLETIONS = let
+    items = Dict{String,CompletionItem}()
+    keywords = union(REPL.REPLCompletions.sorted_keywords, REPL.REPLCompletions.sorted_keyvals)
+    for keyword in keywords
+        items[keyword] = CompletionItem(;
+            label = keyword,
+            labelDetails = CompletionItemLabelDetails(; description = "keyword"),
+            kind = CompletionItemKind.Keyword,
+            sortText = max_sort_text3,
+            documentation = get_keyword_doc(Symbol(keyword)))
+    end
+    items
+end
+
+const var_quote_doc = get_keyword_doc(Symbol("var\"name\""))
+
+function keyword_completions!(items::Dict{String,CompletionItem}, state::ServerState)
+    merge!(items, KEYWORD_COMPLETIONS)
+    if supports(state, :textDocument, :completion, :completionItem, :snippetSupport)
+        items["var\"\""] = CompletionItem(;
+            label = "var\"\"",
+            labelDetails = CompletionItemLabelDetails(; description = "keyword"),
+            kind = CompletionItemKind.Keyword,
+            sortText = max_sort_text3,
+            insertText = "var\"\${1:name}\"\$0",
+            insertTextFormat = InsertTextFormat.Snippet,
+            documentation = var_quote_doc)
+    else
+        items["var\"\""] = CompletionItem(;
+            label = "var\"\"",
+            labelDetails = CompletionItemLabelDetails(; description = "keyword"),
+            kind = CompletionItemKind.Keyword,
+            sortText = max_sort_text3,
+            documentation = var_quote_doc)
+    end
+    return nothing
+end
+
 # completion resolver
 # ===================
 
@@ -427,6 +485,7 @@ function get_completion_items(
         add_emoji_latex_completions!(items, state, uri, fi, pos),
         global_completions!(items, state, uri, fi, pos, context),
         local_completions!(items, state, uri, fi, pos, context),
+        keyword_completions!(items, state),
         items)))
 end
 

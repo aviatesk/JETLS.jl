@@ -444,6 +444,10 @@ end
             @test !any(items) do item
                 item.label == "foo" || item.label == "xxx" || item.label == "yyy"
             end
+            # keywords should NOT appear in macro context
+            @test !any(items) do item
+                item.label == "function"
+            end
             cnt += 1
         end
         @test cnt == 1
@@ -722,6 +726,10 @@ end
             @test !any(items) do item
                 item.label == "foo" || # should not include global completions
                 item.label == "β"      # should not include local completions
+            end
+            # keywords should NOT appear in latex/emoji completion context
+            @test !any(items) do item
+                item.label == "function"
             end
             cnt += 1
         end
