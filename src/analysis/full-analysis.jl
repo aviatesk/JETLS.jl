@@ -6,7 +6,7 @@ function parse_analysis_override(x::AbstractDict{String})
         error(lazy"Missing required field `path` in analysis_override")
     path_value = x["path"]
     path_value isa String ||
-        error(lazy"Invalid `path` value in analysis_override for `$path`. Must be a string, got `$(typeof(path_value))`")
+        error(lazy"Invalid `path` value in analysis_override for `$path_value`. Must be a string, got `$(typeof(path_value))`")
 
     path_glob = try
         Glob.FilenameMatch(path_value, "dp")
@@ -16,7 +16,7 @@ function parse_analysis_override(x::AbstractDict{String})
 
     module_name = get(x, "module_name", nothing)
     if module_name !== nothing && !(module_name isa String)
-        error(lazy"Invalid `module_name` value found in analysis_override for `$path`. Must be a string, got `$(typeof(module_name))`")
+        error(lazy"Invalid `module_name` value found in analysis_override for `$path_value`. Must be a string, got `$(typeof(module_name))`")
     end
 
     return AnalysisOverride(path_glob, module_name)
