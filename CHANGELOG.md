@@ -16,6 +16,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 - Diff: [`048d9a5...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/048d9a5...HEAD)
 
+### Fixed
+
+- Fixed false negative unused argument diagnostics for functions with keyword
+  arguments. For example, `func(a; kw) = a` now correctly reports `kw` as unused.
+  Fixes aviatesk/JETLS.jl#390.
+
 ## 2025-12-12
 
 - Commit: [`048d9a5`](https://github.com/aviatesk/JETLS.jl/commit/048d9a5)

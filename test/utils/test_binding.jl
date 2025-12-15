@@ -808,6 +808,33 @@ ismacro_callback(ismacro) = @test ismacro[]
             end
         end
     end
+
+    @testset "keyword arguments" begin
+        with_binding_occurrences("func(a; kw) = kw"; ismacro_callback = nomacro_callback) do binding_occurrences
+            @test !any(binding_occurrences) do (binding, occurrences)
+                binding.name == "a" && binding.kind === :argument && any(o->o.kind===:use, occurrences)
+            end
+            @test any(binding_occurrences) do (binding, occurrences)
+                binding.name == "kw" && binding.kind === :argument && any(o->o.kind===:use, occurrences)
+            end
+        end
+        with_binding_occurrences("func(a; kw) = a"; ismacro_callback = nomacro_callback) do binding_occurrences
+            @test any(binding_occurrences) do (binding, occurrences)
+                binding.name == "a" && binding.kind === :argument && any(o->o.kind===:use, occurrences)
+            end
+            @test !any(binding_occurrences) do (binding, occurrences)
+                binding.name == "kw" && binding.kind === :argument && any(o->o.kind===:use, occurrences)
+            end
+        end
+        with_binding_occurrences("func(a; kw) = nothing"; ismacro_callback = nomacro_callback) do binding_occurrences
+            @test !any(binding_occurrences) do (binding, occurrences)
+                binding.name == "a" && binding.kind === :argument && any(o->o.kind===:use, occurrences)
+            end
+            @test !any(binding_occurrences) do (binding, occurrences)
+                binding.name == "kw" && binding.kind === :argument && any(o->o.kind===:use, occurrences)
+            end
+        end
+    end
 end
 
 function with_global_binding_occurrences(
