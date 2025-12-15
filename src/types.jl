@@ -130,8 +130,8 @@ analyzed_file_uris(analysis_result::AnalysisResult) = keys(analysis_result.analy
 analyzed_file_info(analysis_result::AnalysisResult, uri::URI) = get(analysis_result.analyzed_file_infos, uri, nothing)
 
 struct OutOfScope
-    module_context::Module
-    OutOfScope() = new() # really unknown context
+    module_context::Union{Nothing,Module}
+    OutOfScope() = new(nothing) # really unknown context
     OutOfScope(module_context::Module) = new(module_context)
 end
 

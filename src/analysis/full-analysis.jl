@@ -36,7 +36,8 @@ function collect_search_uris(server::Server, uri::URI)
         end
     elseif analysis_info isa OutOfScope && @isdefined(Revise)
         # TODO: This implementation should be revisited when Revise is integrated into full-analysis
-        pkgid = Base.PkgId(analysis_info.module_context)
+        out_of_scope = analysis_info
+        pkgid = Base.PkgId(something(out_of_scope.module_context, Main))
         if haskey(Revise.pkgdatas, pkgid)
             pkgdata = Revise.pkgdatas[pkgid]
             for file in Revise.srcfiles(pkgdata)
