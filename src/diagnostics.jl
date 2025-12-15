@@ -117,7 +117,7 @@ function parse_diagnostic_pattern(x::AbstractDict{String})
             Glob.FilenameMatch(path_value, "dp")
         catch e
             throw(DiagnosticConfigError(
-                lazy"Invalid glob pattern \"$path_value\" for path: $(sprint(showerror, e))"))
+                lazy"Invalid glob pattern \"$path_value\" for pattern \"$pattern_value\": $(sprint(showerror, e))"))
         end
     else
         nothing
@@ -204,7 +204,7 @@ function _apply_diagnostic_config(
     best_specificity = 0
     for pattern_config in patterns
         globpath = pattern_config.path
-        if globpath !== nothing && !Glob.occursin(globpath, path_for_glob)
+        if globpath !== nothing && !occursin(globpath, path_for_glob)
             continue
         end
         target = pattern_config.match_by == "message" ? message : code

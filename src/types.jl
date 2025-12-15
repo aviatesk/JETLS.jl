@@ -379,8 +379,8 @@ end
 
 # Internal, undocumented configuration for full-analysis module overrides.
 struct AnalysisOverride <: ConfigSection
-    module_name::Maybe{String}
     path::Glob.FilenameMatch{String}
+    module_name::Maybe{String}
 end
 @define_eq_overloads AnalysisOverride
 Base.convert(::Type{AnalysisOverride}, x::AbstractDict{String}) = parse_analysis_override(x)
