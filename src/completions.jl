@@ -215,12 +215,17 @@ function global_completions!(
     dotprefix = select_dotprefix_node(st, offset)
     if !isnothing(dotprefix)
         prefixtyp = resolve_type(analyzer, completion_module, dotprefix)
+        # If dotprefix is not a module, cancel completion entirely.
+        # TODO In the future, let's add property completions and such.
+        enable_completions = false
         if prefixtyp isa Core.Const
             prefixval = prefixtyp.val
             if prefixval isa Module
                 completion_module = prefixval
+                enable_completions = true
             end
         end
+        enable_completions || return items
         # disable local completions for dot-prefixed code for now
         is_completed |= true
     end
