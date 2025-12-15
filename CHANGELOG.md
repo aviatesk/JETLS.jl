@@ -16,6 +16,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 - Diff: [`048d9a5...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/048d9a5...HEAD)
 
+> [!warning]
+> JETLS currently has a known memory leak issue where memory usage grows with
+> each re-analysis (aviatesk/JETLS.jl#357).
+> As a temporary workaround, you can disable full-analysis for specific paths
+> using the `analysis_overrides`
+> [initialization option](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options):
+> ```jsonc
+> // VSCode settings.json example
+> {
+>   "jetls-client.initializationOptions": {
+>     "analysis_overrides": [
+>       { "path": "src/**/*.jl" },
+>       { "path": "test/**/*.jl" }
+>     ]
+>   }
+> }
+> ```
+> This disables analysis for matched files. Basic features like completion still
+> might work, but most LSP features will be unfunctional.
+> Note that `analysis_overrides` is provided as a temporary workaround and may
+> be removed or changed at any time. A proper fix is being worked on.
+
 ### Added
 
 - Added completion support for Julia keywords. Closed aviatesk/JETLS.jl#386.
