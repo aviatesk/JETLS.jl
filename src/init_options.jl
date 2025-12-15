@@ -1,9 +1,5 @@
-const DEFAULT_INIT_OPTIONS = InitOptions(; n_analysis_workers=1, analysis_overrides=AnalysisOverride[])
-
 function merge_init_options(base::InitOptions, overlay::InitOptions)
-    InitOptions(;
-        n_analysis_workers = something(overlay.n_analysis_workers, base.n_analysis_workers),
-        analysis_overrides = something(overlay.analysis_overrides, base.analysis_overrides))
+    merge_and_track(Returns(nothing), base, overlay, ())
 end
 
 function validate_init_options(server::Server, opts::InitOptions)

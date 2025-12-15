@@ -263,12 +263,26 @@ function (tracker::ConfigChangeTracker)(old_val, new_val, path::Tuple{Vararg{Sym
 end
 
 function changed_settings_message(changed_settings::Vector{ConfigChange})
-    body = map(changed_settings) do config_change
+    applied = String[]
+    pending_restart = String[]
+    for config_change in changed_settings
         old_repr = repr(config_change.old_val)
         new_repr = repr(config_change.new_val)
-        "`$(config_change.path)` (`$old_repr` => `$new_repr`)"
-    end |> (x -> join(x, ", "))
-    return "Changes applied: $body"
+        entry = "`$(config_change.path)` (`$old_repr` => `$new_repr`)"
+        if startswith(config_change.path, "initialization_options")
+            push!(pending_restart, entry)
+        else
+            push!(applied, entry)
+        end
+    end
+    parts = String[]
+    if !isempty(applied)
+        push!(parts, "Changes applied: " * join(applied, ", "))
+    end
+    if !isempty(pending_restart)
+        push!(parts, "Changes pending server restart: " * join(pending_restart, ", "))
+    end
+    return join(parts, ".\n")
 end
 
 function notify_config_changes(

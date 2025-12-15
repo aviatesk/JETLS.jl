@@ -282,9 +282,7 @@ which are important for our configuration notification system to work.
 Note that `TypeX` should not be defined to include the possibility of being `nothing` like `Union{Nothing,TypeX}`.
 In such cases, a further inner configuration level should be used.
 
-Then, overload `default_config(::Type{NewConfig}) -> NewConfig`, which returns the default configuration values.
-
-For `ConfigSection` subtypes that appear in `Vector` fields, you must also implement
+For `ConfigSection` subtypes that appear in `Vector` fields, you must implement
 `merge_key(::Type{NewConfig}) -> Symbol`, which returns a field name to use as key when
 merging vectors. Elements with matching keys are merged together; others are preserved or added.
 
@@ -292,21 +290,16 @@ Finally, add the new config section to `JETLSConfig` struct below.
 """
 abstract type ConfigSection end
 
-default_config(::Type{T}) where T<:ConfigSection =
-    error(lazy"Missing `default_config` implementation for $T")
-
 function merge_key end
 
 @option struct FullAnalysisConfig <: ConfigSection
     debounce::Maybe{Float64}
     auto_instantiate::Maybe{Bool}
 end
-default_config(::Type{FullAnalysisConfig}) = FullAnalysisConfig(1.0, true)
 
 @option struct TestRunnerConfig <: ConfigSection
     executable::Maybe{String}
 end
-default_config(::Type{TestRunnerConfig}) = TestRunnerConfig(@static Sys.iswindows() ? "testrunner.bat" : "testrunner")
 
 @option "custom" struct CustomFormatterConfig
     executable::Maybe{String}
@@ -314,7 +307,6 @@ default_config(::Type{TestRunnerConfig}) = TestRunnerConfig(@static Sys.iswindow
 end
 
 const FormatterConfig = Union{String,CustomFormatterConfig}
-default_config(::Type{FormatterConfig}) = "Runic"
 
 function default_executable(formatter::String)
     if formatter == "Runic"
@@ -384,23 +376,55 @@ merge_key(::Type{DiagnosticPattern}) = :__pattern_value__
     enabled::Maybe{Bool}
     patterns::Maybe{Vector{DiagnosticPattern}}
 end
-default_config(::Type{DiagnosticConfig}) = DiagnosticConfig(true, DiagnosticPattern[])
+
+# Internal, undocumented configuration for full-analysis module overrides.
+struct AnalysisOverride <: ConfigSection
+    module_name::Maybe{String}
+    path::Glob.FilenameMatch{String}
+end
+@define_eq_overloads AnalysisOverride
+Base.convert(::Type{AnalysisOverride}, x::AbstractDict{String}) = parse_analysis_override(x)
+merge_key(::Type{AnalysisOverride}) = :path
+
+# Static initialization options from `InitializeParams.initializationOptions`.
+# These are set once during the initialize request and remain constant.
+@option struct InitOptions <: ConfigSection
+    n_analysis_workers::Maybe{Int}
+    analysis_overrides::Maybe{Vector{AnalysisOverride}}
+end
+function Base.show(io::IO, init_options::InitOptions)
+    print(io, "InitOptions(;")
+    n_analysis_workers = init_options.n_analysis_workers
+    n_analysis_workers === nothing || print(io, " n_analysis_workers=", n_analysis_workers)
+    analysis_overrides = init_options.analysis_overrides
+    analysis_overrides === nothing || print(io, " analysis_overrides=", analysis_overrides)
+    print(io, ")")
+end
+const DEFAULT_INIT_OPTIONS = InitOptions(; n_analysis_workers=1, analysis_overrides=AnalysisOverride[])
 
 @option struct JETLSConfig <: ConfigSection
     diagnostic::Maybe{DiagnosticConfig}
     full_analysis::Maybe{FullAnalysisConfig}
     testrunner::Maybe{TestRunnerConfig}
     formatter::Maybe{FormatterConfig}
+    # This initialization options are read once at the server initialization and held in
+    # `server.state.init_options`, so it might seem strange to hold them here also,
+    # but they need to be set here for cases where initialization options are set in
+    # .JETLSConfig.toml.
+    initialization_options::Maybe{InitOptions}
 end
 
-const DEFAULT_CONFIG = JETLSConfig(
-    diagnostic = default_config(DiagnosticConfig),
-    full_analysis = default_config(FullAnalysisConfig),
-    testrunner = default_config(TestRunnerConfig),
-    formatter = default_config(FormatterConfig),
-)
+const DEFAULT_CONFIG = JETLSConfig(;
+    diagnostic = DiagnosticConfig(true, DiagnosticPattern[]),
+    full_analysis = FullAnalysisConfig(1.0, true),
+    testrunner = TestRunnerConfig(@static Sys.iswindows() ? "testrunner.bat" : "testrunner"),
+    formatter = "Runic",
+    initialization_options = DEFAULT_INIT_OPTIONS)
 
 function get_default_config(path::Symbol...)
+    if length(path) ≥ 1
+        @assert first(path) !== :initialization_options "Do not use `JETLSConfig` to get initialization options"
+    end
     config = getobjpath(DEFAULT_CONFIG, path...)
     @assert !isnothing(config) "Invalid default configuration values"
     return config
@@ -450,29 +474,6 @@ function ConfigManagerData(
         initialized::Bool = data.initialized
     )
     return ConfigManagerData(file_config, lsp_config, file_config_path, initialized)
-end
-
-# Internal, undocumented configuration for full-analysis module overrides.
-struct AnalysisOverride <: ConfigSection
-    module_name::Maybe{String}
-    path::Glob.FilenameMatch{String}
-end
-@define_eq_overloads AnalysisOverride
-Base.convert(::Type{AnalysisOverride}, x::AbstractDict{String}) = parse_analysis_override(x)
-
-# Static initialization options from `InitializeParams.initializationOptions`.
-# These are set once during the initialize request and remain constant.
-@option struct InitOptions
-    n_analysis_workers::Maybe{Int}
-    analysis_overrides::Maybe{Vector{AnalysisOverride}}
-end
-function Base.show(io::IO, init_options::InitOptions)
-    print(io, "InitOptions(;")
-    n_analysis_workers = init_options.n_analysis_workers
-    n_analysis_workers === nothing || print(io, " n_analysis_workers=", n_analysis_workers)
-    analysis_overrides = init_options.analysis_overrides
-    analysis_overrides === nothing || print(io, " analysis_overrides=", analysis_overrides)
-    print(io, ")")
 end
 
 # Type aliases for document-synchronization caches using `SWContainer` (sequential-only updates)
