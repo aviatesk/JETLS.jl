@@ -18,20 +18,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
-- Added completion support for Julia keywords. Closes aviatesk/JETLS.jl#386.
-- Added hover documentation for Julia keywords (`if`, `for`, `true`, etc.).
+- Added completion support for Julia keywords. Closed aviatesk/JETLS.jl#386.
+- Added hover documentation for Julia keywords.
 
 ### Fixed
 
 - Fixed false negative unused argument diagnostics for functions with keyword
-  arguments. For example, `func(a; kw) = a` now correctly reports `kw` as unused.
-  Fixes aviatesk/JETLS.jl#390.
+  arguments. For example, `func(a; kw=nothing) = kw` now correctly reports
+  `a` as unused. Fixed aviatesk/JETLS.jl#390.
 
 ### Changed
 
 - Completions now return no results when the prefix type is unknown.
   Previously, irrelevant completions were shown for expressions like
-  `xarg.x` where `xarg`'s type could not be resolved. Fixes aviatesk/JETLS.jl#389.
+  `obj.x` where `obj`'s type could not be resolved. Fixed aviatesk/JETLS.jl#389.
 
 ## 2025-12-12
 
