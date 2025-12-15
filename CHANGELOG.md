@@ -42,6 +42,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Added completion support for Julia keywords. Closed aviatesk/JETLS.jl#386.
 - Added hover documentation for Julia keywords.
+- Initialization options can now be configured via `.JETLSConfig.toml` using the
+  `[initialization_options]` section. See the [documentation](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options/configure)
+  for details.
 
 ### Fixed
 
