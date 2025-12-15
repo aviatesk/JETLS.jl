@@ -11,3 +11,19 @@ pattern = "^Lowering TODO:"
 match_by = "message"
 match_type = "regex"
 severity = "info"
+
+[[initialization_options.analysis_overrides]]
+module_name = "JETLS"
+path = "src/**/*.jl"
+
+[[initialization_options.analysis_overrides]]
+module_name = "LSP"
+path = "LSP/**/*.jl"
+
+# Just disable analysis for test files for now
+
+[[initialization_options.analysis_overrides]]
+path = "test/**/*.jl"
+
+[[initialization_options.analysis_overrides]]
+path = "LSP/test/**/*.jl"

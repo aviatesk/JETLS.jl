@@ -10,19 +10,6 @@ end
 function find_analysis_env_path(state::ServerState, uri::URI)
     if uri.scheme == "file"
         filepath = uri2filepath(uri)::String
-        # HACK: we should support Base files properly
-        if (issubdir(filepath, normpath(Sys.BUILD_ROOT_PATH, "base")) ||
-            issubdir(filepath, normpath(Sys.BINDIR, "..", "share", "julia", "base")))
-            return OutOfScope(Base)
-        elseif (issubdir(filepath, normpath(Sys.BUILD_ROOT_PATH, "Compiler", "src")) ||
-                issubdir(filepath, normpath(Sys.BINDIR, "..", "share", "julia", "Compiler", "src")))
-            return OutOfScope(CC)
-        end
-        if isdefined(state, :root_path)
-            if !issubdir(dirname(filepath), state.root_path)
-                return OutOfScope()
-            end
-        end
         analysis_overrides = state.init_options.analysis_overrides
         if analysis_overrides !== nothing
             if isdefined(state, :root_path) && startswith(filepath, state.root_path)
@@ -34,19 +21,32 @@ function find_analysis_env_path(state::ServerState, uri::URI)
                 if occursin(override.path, path_for_glob)
                     module_name = override.module_name
                     if module_name === nothing
-                        @info "Analysis for this file is disabled" path=filepath
+                        JETLS_DEV_MODE && @info "Analysis for this file is disabled" path=filepath
                         return OutOfScope()
                     else
                         mod = find_loaded_module(override.module_name)
                         if mod !== nothing
                             JETLS_DEV_MODE && @info "Analysis module overridden" module_name=override.module_name path=filepath
-                            return OutOfScope(mod)
+                            return KnownModule(mod)
                         else
                             @warn "Analysis module override specified but module not found" module_name=override.module_name path=filepath
                             return OutOfScope()
                         end
                     end
                 end
+            end
+        end
+        # HACK: we should support Base files properly
+        if (issubdir(filepath, normpath(Sys.BUILD_ROOT_PATH, "base")) ||
+            issubdir(filepath, normpath(Sys.BINDIR, "..", "share", "julia", "base")))
+            return OutOfScope(Base)
+        elseif (issubdir(filepath, normpath(Sys.BUILD_ROOT_PATH, "Compiler", "src")) ||
+                issubdir(filepath, normpath(Sys.BINDIR, "..", "share", "julia", "Compiler", "src")))
+            return OutOfScope(CC)
+        end
+        if isdefined(state, :root_path)
+            if !issubdir(dirname(filepath), state.root_path)
+                return OutOfScope()
             end
         end
         return find_env_path(filepath)
