@@ -28,3 +28,18 @@ function parse_init_options(@nospecialize init_options)
 end
 
 get_init_option(opts::InitOptions, key::Symbol) = @something getfield(opts, key) error(lazy"Invalid init option: $key")
+
+function load_file_init_options(filepath::AbstractString)
+    isfile(filepath) || return nothing
+    parsed = TOML.tryparsefile(filepath)
+    parsed isa TOML.ParserError && return nothing
+    init_options_dict = get(parsed, "initialization_options", nothing)
+    init_options_dict === nothing && return nothing
+    init_options_dict isa AbstractDict || return nothing
+    try
+        return validate_init_options(Configurations.from_dict(InitOptions, init_options_dict))
+    catch err
+        @warn "Failed to parse initialization_options from config file, ignoring" filepath err
+        return nothing
+    end
+end
