@@ -29,15 +29,27 @@ function find_analysis_env_path(state::ServerState, uri::URI)
                     if module_name === nothing
                         JETLS_DEV_MODE && @info "Analysis for this file is disabled" path=filepath
                         return OutOfScope()
-                    else
-                        mod = find_loaded_module(override.module_name)
-                        if mod !== nothing
-                            JETLS_DEV_MODE && @info "Analysis module overridden" module_name=override.module_name path=filepath
-                            return KnownModule(mod)
-                        else
-                            @warn "Analysis module override specified but module not found" module_name=override.module_name path=filepath
+                    elseif module_name == ""
+                        env_path = @something find_env_path(filepath) begin
+                            @warn "Analysis for this file is disabled, since Project.toml was not found" path=filepath
                             return OutOfScope()
                         end
+                        pkg_name = @something find_pkg_name(env_path) begin
+                            @warn "New analysis is not supported for non-package code" path=filepath
+                            return OutOfScope()
+                        end
+                        pkg_uuid = @something find_pkg_uuid(env_path) begin
+                            @warn "New analysis is not supported for non-package code" path=filepath
+                            return OutOfScope()
+                        end
+                        return UserModule(env_path, pkg_name, pkg_uuid)
+                    else
+                        mod = @something find_loaded_module(module_name) begin
+                            @warn "Analysis module override specified but module not found" module_name path=filepath
+                            return OutOfScope()
+                        end
+                        JETLS_DEV_MODE && @info "Analysis module overridden" module_name path=filepath
+                        return KnownModule(mod)
                     end
                 end
             end
@@ -72,15 +84,29 @@ function find_uri_env_path(state::ServerState, uri::URI)
     error(lazy"Unsupported URI: $uri")
 end
 
-function find_pkg_name(env_path::AbstractString)
-    env_toml = try
-        TOML.parsefile(env_path)
+find_pkg_name(env_path::AbstractString) =
+    find_pkg_name(@something parse_project_toml(env_path) return nothing)
+
+function find_pkg_name(project_toml_dict::Dict{String})
+    pkg_name = get(project_toml_dict, "name", nothing)
+    return pkg_name isa String ? pkg_name : nothing
+end
+
+find_pkg_uuid(env_path::AbstractString) =
+    find_pkg_uuid(@something parse_project_toml(env_path) return nothing)
+
+function find_pkg_uuid(project_toml_dict::Dict{String})
+    pkg_uuid = get(project_toml_dict, "uuid", nothing)
+    return pkg_uuid isa String ? pkg_uuid : nothing
+end
+
+function parse_project_toml(env_path::AbstractString)
+    try
+        return TOML.parsefile(env_path)
     catch err
         err isa TOML.ParserError || rethrow(err)
         return nothing
     end
-    pkg_name = get(env_toml, "name", nothing)
-    return pkg_name isa String ? pkg_name : nothing
 end
 
 const PKG_ACTIVATION_LOCK = ReentrantLock()
