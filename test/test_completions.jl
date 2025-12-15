@@ -305,6 +305,7 @@ end
         end
         function dot_completion_test(xarg)
             ModuleCompletion.x│
+            xarg.x│
         end
 
         function str_macro_test()
@@ -363,6 +364,11 @@ end
             @test isnothing(findfirst(item->item.label=="xarg", items)) # local completion should be disabled
             cnt += 1
         elseif i == 4
+            # `dot_completion_test`: dot-prefixed global completion
+            # https://github.com/aviatesk/JETLS.jl/issues/389
+            @test isempty(items) # completions should be disabled if the prefix type/value is unknown
+            cnt += 1
+        elseif i == 5
             # `str_macro_test`: string macro case
             @test any(items) do item
                 item.label == "text\"\"" &&
@@ -371,7 +377,7 @@ end
             cnt += 1
         end
     end
-    @test cnt == 4
+    @test cnt == 5
 end
 
 @testset "local completion for methods with `@nospecialize`" begin

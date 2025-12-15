@@ -22,6 +22,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   arguments. For example, `func(a; kw) = a` now correctly reports `kw` as unused.
   Fixes aviatesk/JETLS.jl#390.
 
+### Changed
+
+- Completions now return no results when the prefix type is unknown.
+  Previously, irrelevant completions were shown for expressions like
+  `xarg.x` where `xarg`'s type could not be resolved. Fixes aviatesk/JETLS.jl#389.
+
 ## 2025-12-12
 
 - Commit: [`048d9a5`](https://github.com/aviatesk/JETLS.jl/commit/048d9a5)
