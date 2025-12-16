@@ -51,7 +51,7 @@ end
 JET.InterpretationState(interp::LSInterpreter) = interp.state
 function JET.ConcreteInterpreter(interp::LSInterpreter, state::JET.InterpretationState)
     # add `state` to `interp`, and update `interp.analyzer.cache`
-    initialize_cache!(interp.analyzer, state.res.analyzed_files)
+    initialize_target_modules!(interp.analyzer, state.res.analyzed_files)
     return LSInterpreter(
         interp.server, interp.request, interp.analyzer, interp.counter,
         interp.activation_done, state)
@@ -95,8 +95,10 @@ function JET.analyze_from_definitions!(interp::LSInterpreter, config::JET.Toplev
     # This makes module context information available immediately for LS features
     cache_intermediate_analysis_result!(interp)
 
-    entrypoint = config.analyze_from_definitions
     res = JET.InterpretationState(interp).res
+    initialize_target_modules!(interp.analyzer, res.analyzed_files)
+
+    entrypoint = config.analyze_from_definitions
     n_sigs = length(res.toplevel_signatures)
     n_sigs == 0 && return
     cancellable_token = interp.request.cancellable_token

@@ -1,6 +1,6 @@
 module Analyzer
 
-export LSAnalyzer, inference_error_report_stack, inference_error_report_severity, initialize_cache!
+export LSAnalyzer, inference_error_report_stack, inference_error_report_severity, initialize_target_modules!
 
 using Core.IR
 using JET.JETInterface
@@ -31,31 +31,22 @@ inference_error_report_severity(@nospecialize report::JET.InferenceErrorReport) 
 """
     InterpretationStateCache
 
-Internal state that allows `LSAnalyzer` to access the state of `LSInterpreter`.
-Initialized when `LSInterpreter` receives a new `JET.InterpretationState`,
-and lazily computes cache information when utility functions are used.
+Internal state of `LSAnalyzer` that allows it to access the state of `LSInterpreter`.
 """
-mutable struct InterpretationStateCache
-    info::Union{Dict{String,JET.AnalyzedFileInfo}, Set{Module}}
-    InterpretationStateCache() = new()
-end
-
-const empty_analyzed_modules = Set{Module}()
-
-function _analyzed_modules!(cache::InterpretationStateCache)
-    isdefined(cache, :info) || return empty_analyzed_modules
-    info = cache.info
-    if info isa Set{Module}
-        return info
-    end
-    newinfo = Set{Module}()
-    for (_, analyzed_file_info) in info
-        for module_range_info in analyzed_file_info.module_range_infos
-            push!(newinfo, last(module_range_info))
+struct InterpretationStateCache
+    target_modules::Set{Module}
+    function InterpretationStateCache(;
+            target_modules = nothing
+        )
+        if target_modules === nothing
+            new(copy(empty_target_modules))
+        else
+            new(Set{Module}(target_modules))
         end
     end
-    return cache.info = newinfo
 end
+
+const empty_target_modules = Set{Module}()
 
 """
     LSAnalyzer <: AbstractAnalyzer
@@ -81,10 +72,13 @@ struct LSAnalyzer <: ToplevelAbstractAnalyzer
         return new(state, analysis_token, cache, method_table)
     end
 end
-function LSAnalyzer(@nospecialize(entry::AnalysisEntry), state::AnalyzerState)
+function LSAnalyzer(
+        @nospecialize(entry::AnalysisEntry), state::AnalyzerState;
+        target_modules = nothing
+    )
     analysis_cache_key = JET.compute_hash(entry, state.inf_params)
     analysis_token = @lock LS_ANALYZER_CACHE_LOCK get!(AnalysisToken, LS_ANALYZER_CACHE, analysis_cache_key)
-    cache = InterpretationStateCache()
+    cache = InterpretationStateCache(; target_modules)
     return LSAnalyzer(state, analysis_token, cache)
 end
 
@@ -116,19 +110,23 @@ const LS_ANALYZER_CACHE_LOCK = ReentrantLock()
 # internal API
 # ============
 
-function initialize_cache!(analyzer::LSAnalyzer, analyzed_files::Dict{String,JET.AnalyzedFileInfo})
-    analyzer.cache.info = analyzed_files
+function initialize_target_modules!(analyzer::LSAnalyzer, analyzed_files::Dict{String,JET.AnalyzedFileInfo})
+    target_modules = analyzer.cache.target_modules
+    empty!(target_modules)
+    for (_, analyzed_file_info) in analyzed_files
+        for module_range_info in analyzed_file_info.module_range_infos
+            push!(target_modules, last(module_range_info))
+        end
+    end
     nothing
 end
 
 # utilities
 # =========
 
-analyzed_modules!(analyzer::LSAnalyzer) = _analyzed_modules!(analyzer.cache)
-
 function should_analyze(analyzer::LSAnalyzer, sv::CC.InferenceState)
-    analyzed_modules = analyzed_modules!(analyzer)
-    return isempty(analyzed_modules) || CC.frame_module(sv) ∈ analyzed_modules
+    target_modules = analyzer.cache.target_modules
+    return isempty(target_modules) || CC.frame_module(sv) ∈ target_modules
 end
 
 # analysis injections
@@ -273,6 +271,7 @@ end
 # the entry constructor
 function LSAnalyzer(@nospecialize(entry::AnalysisEntry),
                     world::UInt = Base.get_world_counter();
+                    target_modules = nothing,
                     jetconfigs...)
     jetconfigs = JET.kwargs_dict(jetconfigs)
     jetconfigs[:aggressive_constant_propagation] = true
@@ -283,10 +282,10 @@ function LSAnalyzer(@nospecialize(entry::AnalysisEntry),
     # make the situation worse.
     jetconfigs[:assume_bindings_static] = true
     state = AnalyzerState(world; jetconfigs...)
-    return LSAnalyzer(entry, state)
+    return LSAnalyzer(entry, state; target_modules)
 end
 
-const LS_ANALYZER_CONFIGURATIONS = Set{Symbol}(())
+const LS_ANALYZER_CONFIGURATIONS = Set{Symbol}((:target_modules,))
 
 let valid_keys = JET.GENERAL_CONFIGURATIONS ∪ LS_ANALYZER_CONFIGURATIONS
     @eval JETInterface.valid_configurations(::LSAnalyzer) = $valid_keys

@@ -59,4 +59,26 @@ end
     end
 end
 
+module TestTargetModule
+    function func()
+        undefvar
+    end
+end
+
+@testset "target_modules" begin
+    let result = analyze_call(; target_modules=()) do
+            TestTargetModule.func()
+        end
+        @test isempty(get_reports(result))
+    end
+    let result = analyze_call(; target_modules=(TestTargetModule,)) do
+            TestTargetModule.func()
+        end
+        reports = get_reports(result)
+        @test length(reports) == 1
+        r = only(reports)
+        @test r isa UndefVarErrorReport && r.var == GlobalRef(TestTargetModule, :undefvar)
+    end
+end
+
 end # module test_LSAnalyzer
