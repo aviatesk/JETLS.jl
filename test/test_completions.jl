@@ -7,7 +7,7 @@ using JETLS.LSP
 using JETLS.URIs2
 
 include("setup.jl")
-include("jsjl_utils.jl")
+include("jsjl-utils.jl")
 
 global lowering_module::Module = Module()
 function get_cursor_bindings(fi::JETLS.FileInfo, b::Int)

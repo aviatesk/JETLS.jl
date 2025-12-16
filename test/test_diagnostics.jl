@@ -1,7 +1,7 @@
 module test_diagnostics
 
 include("setup.jl")
-include("jsjl_utils.jl")
+include("jsjl-utils.jl")
 
 using Test
 using JETLS

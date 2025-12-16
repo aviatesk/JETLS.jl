@@ -5,7 +5,7 @@ using JETLS
 using JETLS: JL, JS
 
 include(normpath(pkgdir(JETLS), "test", "setup.jl"))
-include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
+include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
 
 module lowering_module end
 
@@ -494,7 +494,7 @@ macro m_gen_invalid(n)
 end
 
 include(normpath(pkgdir(JETLS), "test", "fixtures", "macros.jl"))
-let filename = normpath(pkgdir(JETLS), "test", "fixtures", "macros_JL.jl")
+let filename = normpath(pkgdir(JETLS), "test", "fixtures", "macros-JL.jl")
     JL.include_string(@__MODULE__, read(filename,String), filename)
 end
 

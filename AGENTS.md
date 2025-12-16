@@ -19,6 +19,12 @@
   Finally, if you write code yourself, include a "Written by Claude" footer at
   the end of the commit message (no emoji nonsense). However, when simply asked
   to write a commit message, there's no need to add that footer.
+- For file names, use `-` (hyphen) as the word separator by default.
+  However, if the file name corresponds directly to Julia code (e.g., a module
+  name), use `_` (underscore) instead, since Julia identifiers cannot contain
+  hyphens (unless we use `var"..."`). For example, test files like
+  `test_completions.jl` define a module `module test_completions`,
+  so they use underscores.
 
 # Coding rules
 - When writing functions, use the most restrictive signature type possible.

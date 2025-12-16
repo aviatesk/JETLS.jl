@@ -1,7 +1,7 @@
-module test_LSAnalyzer
+module test_Analyzer
 
 using Test
-include("interactive_utils.jl")
+include("interactive-utils.jl")
 using JETLS.JET: get_reports
 using JETLS.Analyzer: UndefVarErrorReport
 
