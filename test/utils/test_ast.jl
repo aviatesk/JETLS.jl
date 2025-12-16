@@ -4,7 +4,7 @@ using Test
 using JETLS
 using JETLS: JL, JS
 
-include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
+include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
 
 @testset "`byte_ancestors`" begin
     # Test with a simple function
