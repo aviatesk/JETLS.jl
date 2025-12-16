@@ -20,6 +20,11 @@ This repository manages JETLS.jl, a Julia package that implements a language
 server, and [`jetls-client`](https://marketplace.visualstudio.com/items?itemName=aviatesk.jetls-client),
 a sample VSCode extension that serves as a language client for testing JETLS.
 
+> [!warning]
+> **Experimental**: JETLS is under active development.
+> Not production-ready; APIs and behavior may change.
+> Stability and performance are limited. Expect bugs and rough edges.
+
 ## Documentation
 
 For end-user documentation including installation instructions, configuration

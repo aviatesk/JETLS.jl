@@ -11,6 +11,11 @@ By leveraging tooling technologies like
 JETLS aims to offer enhanced language features such as type-sensitive
 diagnostic, macro-aware go-to definition and such.
 
+!!! warning "Experimental"
+    JETLS is under active development.
+    Not production-ready; APIs and behavior may change.
+    Stability and performance are limited. Expect bugs and rough edges.
+
 ## Server installation
 
 Editor clients for JETLS generally do not bundle the JETLS server itself.
