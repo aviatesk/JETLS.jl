@@ -7,6 +7,12 @@ function find_loaded_module(module_name::String)
     return nothing
 end
 
+const JULIA_DIR = let
+    p1 = normpath(Sys.BINDIR, "..", "..")
+    p2 = normpath(Sys.BINDIR, Base.DATAROOTDIR, "julia")
+    ispath(normpath(p1, "base")) ? p1 : p2
+end
+
 function find_analysis_env_path(state::ServerState, uri::URI)
     if uri.scheme == "file"
         filepath = uri2filepath(uri)::String
@@ -37,11 +43,9 @@ function find_analysis_env_path(state::ServerState, uri::URI)
             end
         end
         # HACK: we should support Base files properly
-        if (issubdir(filepath, normpath(Sys.BUILD_ROOT_PATH, "base")) ||
-            issubdir(filepath, normpath(Sys.BINDIR, "..", "share", "julia", "base")))
+        if issubdir(filepath, joinpath(JULIA_DIR, "base"))
             return OutOfScope(Base)
-        elseif (issubdir(filepath, normpath(Sys.BUILD_ROOT_PATH, "Compiler", "src")) ||
-                issubdir(filepath, normpath(Sys.BINDIR, "..", "share", "julia", "Compiler", "src")))
+        elseif issubdir(filepath, joinpath(JULIA_DIR, "Compiler", "src"))
             return OutOfScope(CC)
         end
         if isdefined(state, :root_path)
