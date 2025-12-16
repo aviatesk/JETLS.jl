@@ -367,13 +367,12 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
         begin_full_analysis_progress(server, cancellable_token, request.entry, prev_result === nothing)
     end
 
-    local failed::Bool = false
     s = time()
     JETLS_DEV_MODE && @info "Executing analysis for:" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
-    local analysis_result::AnalysisResult
-    local cleanup::Bool = false
-    try
-        analysis_result, cleanup = execute_analysis_request(server, request)
+    local cleanup::Bool = local failed::Bool = false
+    analysis_result = try
+        result, cleanup = execute_analysis_request(server, request)
+        result
     catch err
         @error "Error in `execute_analysis_request` for " request
         Base.display_error(stderr, err, catch_backtrace())
