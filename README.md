@@ -93,7 +93,7 @@ the list itself is subject to change.
     - [ ] Aliased reference support
   - [ ] Field name
   - [x] File rename support (Julia-side rename)
-  - [ ] File rename support (client-side rename)
+  - [ ] File rename support (external rename)
 - [ ] Workspace symbol
 - TestRunner.jl integration
   - [x] Code lens for running individual `@testset`s
