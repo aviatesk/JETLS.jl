@@ -150,6 +150,30 @@ non-concrete call sites in a toplevel frame created by `JET.virtual_process`.
 """
 CC.bail_out_toplevel_call(::LSAnalyzer, ::CC.InferenceState) = false
 
+function CC.abstract_call_gf_by_type(analyzer::LSAnalyzer,
+    @nospecialize(func), arginfo::CC.ArgInfo, si::CC.StmtInfo, @nospecialize(atype), sv::CC.InferenceState,
+    max_methods::Int)
+    ret = @invoke CC.abstract_call_gf_by_type(analyzer::ToplevelAbstractAnalyzer,
+        func::Any, arginfo::CC.ArgInfo, si::CC.StmtInfo, atype::Any, sv::CC.InferenceState, max_methods::Int)
+    if !should_analyze(analyzer, sv)
+        return ret
+    elseif func === Base.copy! # FIXME disable errors from `@testset`
+        return ret
+    end
+    atype′ = Ref{Any}(atype)
+    function after_abstract_call_gf_by_type(analyzer′::LSAnalyzer, sv′::CC.InferenceState)
+        ret′ = ret[]
+        report_method_error!(analyzer′, sv′, ret′, arginfo, atype′[])
+        return true
+    end
+    if isready(ret)
+        after_abstract_call_gf_by_type(analyzer, sv)
+    else
+        push!(sv.tasks, after_abstract_call_gf_by_type)
+    end
+    return ret
+end
+
 # TODO Better to factor out and share it with `JET.JETAnalyzer`
 function CC.abstract_eval_globalref(analyzer::LSAnalyzer,
     g::GlobalRef, saw_latestworld::Bool, sv::CC.InferenceState)
@@ -183,6 +207,81 @@ end
 
 # analysis
 # ========
+
+# MethodErrorReport
+# -----------------
+
+@jetreport struct MethodErrorReport <: InferenceErrorReport
+    @nospecialize t # ::Union{Type, Vector{Type}}
+    union_split::Int
+end
+function JETInterface.print_report_message(io::IO, report::MethodErrorReport)
+    print(io, "no matching method found ")
+    if report.union_split == 0
+        print_callsig(io, report.t)
+    else
+        ts = report.t::Vector{Any}
+        nts = length(ts)
+        for i = 1:nts
+            print_callsig(io, ts[i])
+            i == nts || print(io, ", ")
+        end
+        print(io, " (", nts, '/', report.union_split, " union split)")
+    end
+end
+function print_callsig(io, @nospecialize(t))
+    print(io, '`')
+    Base.show_tuple_as_call(io, Symbol(""), t)
+    print(io, '`')
+end
+inference_error_report_stack_impl(r::MethodErrorReport) = length(r.vst):-1:1
+inference_error_report_severity_impl(r::MethodErrorReport) = DiagnosticSeverity.Warning
+
+function report_method_error!(analyzer::LSAnalyzer,
+    sv::CC.InferenceState, call::CC.CallMeta, arginfo::CC.ArgInfo, @nospecialize(atype))
+    info = call.info
+    if isa(info, CC.ConstCallInfo)
+        info = info.call
+    end
+    if isa(info, CC.MethodMatchInfo)
+        report_method_error!(analyzer, sv, info, atype)
+    elseif isa(info, CC.UnionSplitInfo)
+        report_method_error_for_union_split!(analyzer, sv, info, arginfo)
+    end
+end
+
+function report_method_error!(analyzer::LSAnalyzer, sv::CC.InferenceState, info::CC.MethodMatchInfo, @nospecialize(atype))
+    if CC.isempty(info.results)
+        report = MethodErrorReport(sv, atype, 0)
+        add_new_report!(analyzer, sv.result, report)
+        return true
+    end
+    return false
+end
+
+function report_method_error_for_union_split!(analyzer::LSAnalyzer, sv::CC.InferenceState, info::CC.UnionSplitInfo, arginfo::CC.ArgInfo)
+    # check each match for union-split signature
+    split_argtypes = empty_matches = nothing
+    reported = false
+    for (i, matchinfo) in enumerate(info.split)
+        if CC.isempty(matchinfo.results)
+            if isnothing(split_argtypes)
+                split_argtypes = CC.switchtupleunion(CC.typeinf_lattice(analyzer), arginfo.argtypes)
+            end
+            argtypes′ = split_argtypes[i]::Vector{Any}
+            if empty_matches === nothing
+                empty_matches = (Any[], length(info.split))
+            end
+            sig_n = CC.argtypes_to_type(argtypes′)
+            push!(empty_matches[1], sig_n)
+        end
+    end
+    if empty_matches !== nothing
+        add_new_report!(analyzer, sv.result, MethodErrorReport(sv, empty_matches...))
+        reported |= true
+    end
+    return reported
+end
 
 # UndefVarErrorReport
 # -------------------
@@ -278,7 +377,7 @@ function LSAnalyzer(@nospecialize(entry::AnalysisEntry),
     # Enable the `assume_bindings_static` option to terminate analysis a bit earlier when
     # there are undefined bindings detected. Note that this option will cause inference
     # cache inconsistency until JuliaLang/julia#40399 is merged. But the analysis cache of
-    # JETAnalyzer has the same problem already anyway, so enabling this option does not
+    # LSAnalyzer has the same problem already anyway, so enabling this option does not
     # make the situation worse.
     jetconfigs[:assume_bindings_static] = true
     state = AnalyzerState(world; jetconfigs...)

@@ -337,6 +337,7 @@ const TOPLEVEL_ERROR_CODE = "toplevel/error"
 const INFERENCE_UNDEF_GLOBAL_VAR_CODE = "inference/undef-global-var"
 const INFERENCE_UNDEF_LOCAL_VAR_CODE = "inference/undef-local-var"
 const INFERENCE_UNDEF_STATIC_PARAM_CODE = "inference/undef-static-param" # currently not reported
+const INFERENCE_METHOD_ERROR_CODE = "inference/method-error"
 const TESTRUNNER_TEST_FAILURE_CODE = "testrunner/test-failure"
 
 const ALL_DIAGNOSTIC_CODES = Set{String}(String[
@@ -349,6 +350,7 @@ const ALL_DIAGNOSTIC_CODES = Set{String}(String[
     INFERENCE_UNDEF_GLOBAL_VAR_CODE,
     INFERENCE_UNDEF_LOCAL_VAR_CODE,
     INFERENCE_UNDEF_STATIC_PARAM_CODE,
+    INFERENCE_METHOD_ERROR_CODE,
     TESTRUNNER_TEST_FAILURE_CODE,
 ])
 
