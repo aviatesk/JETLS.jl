@@ -58,10 +58,10 @@ JET.ToplevelAbstractAnalyzer(interp::LSInterpreter) = interp.analyzer
 function JET.ToplevelAbstractAnalyzer(
         interp::LSInterpreter, concretized::BitVector;
         refresh_local_cache::Bool = true,    # This option is used by JET v0.10. TODO We can remove this once we update JET to v0.11.
-        refresh_target_modules::Bool = true, # LSInterpreter specific option
+        reset_report_target_modules::Bool = true, # LSInterpreter specific option
     )
-    if refresh_target_modules
-        initialize_target_modules!(interp.analyzer, JET.InterpretationState(interp).res.analyzed_files)
+    if reset_report_target_modules
+        reset_report_target_modules!(interp.analyzer, JET.InterpretationState(interp).res.analyzed_files)
     end
     return @invoke JET.ToplevelAbstractAnalyzer(
         interp::JET.ConcreteInterpreter, concretized::BitVector;
@@ -106,7 +106,7 @@ function JET.analyze_from_definitions!(interp::LSInterpreter, config::JET.Toplev
     cache_intermediate_analysis_result!(interp)
 
     res = JET.InterpretationState(interp).res
-    initialize_target_modules!(interp.analyzer, res.analyzed_files)
+    reset_report_target_modules!(interp.analyzer, res.analyzed_files)
 
     entrypoint = config.analyze_from_definitions
     n_sigs = length(res.toplevel_signatures)
@@ -135,7 +135,7 @@ function JET.analyze_from_definitions!(interp::LSInterpreter, config::JET.Toplev
             # Create a new analyzer with fresh local caches (`inf_cache` and `analysis_results`)
             # to avoid data races between concurrent signature analysis tasks
             analyzer = JET.ToplevelAbstractAnalyzer(interp, JET.non_toplevel_concretized;
-                refresh_target_modules = false,
+                reset_report_target_modules = false,
                 refresh_local_cache = true)
             match = Base._which(tt;
                 # NOTE use the latest world counter with `method_table(analyzer)` unwrapped,
