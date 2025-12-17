@@ -623,7 +623,7 @@ end
 # textDocument/publishDiagnostics
 # ===============================
 
-function get_full_diagnostics(server::Server)
+function get_full_diagnostics(server::Server; ensure_cleared::Union{Nothing,URI} = nothing)
     state = server.state
     uri2diagnostics = URI2Diagnostics()
     for (uri, analysis_info) in load(state.analysis_manager.cache)
@@ -638,6 +638,9 @@ function get_full_diagnostics(server::Server)
         end
     end
     merge_extra_diagnostics!(uri2diagnostics, server)
+    if ensure_cleared !== nothing && !haskey(uri2diagnostics, ensure_cleared)
+        uri2diagnostics[ensure_cleared] = Diagnostic[]
+    end
     map_notebook_diagnostics!(uri2diagnostics, state)
     return uri2diagnostics
 end
@@ -656,8 +659,19 @@ function merge_diagnostics!(uri2diagnostics::URI2Diagnostics, other_uri2diagnost
     return uri2diagnostics
 end
 
-function notify_diagnostics!(server::Server)
-    notify_diagnostics!(server, get_full_diagnostics(server))
+"""
+    notify_diagnostics!(server::Server; ensure_cleared::Union{Nothing,URI} = nothing)
+
+Send `textDocument/publishDiagnostics` notifications to the client. This combines
+diagnostics from full-analysis with extra diagnostics provided by sources like the
+test runner.
+
+When `ensure_cleared` is specified, guarantees that a notification is sent for that URI
+even if it no longer has any diagnostics, ensuring the client clears any previously
+displayed diagnostics for that URI.
+"""
+function notify_diagnostics!(server::Server; ensure_cleared::Union{Nothing,URI} = nothing)
+    notify_diagnostics!(server, get_full_diagnostics(server; ensure_cleared))
 end
 
 function notify_diagnostics!(server::Server, uri2diagnostics::URI2Diagnostics)

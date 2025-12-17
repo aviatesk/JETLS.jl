@@ -54,6 +54,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed false negative unused argument diagnostics for functions with keyword
   arguments. For example, `func(a; kw=nothing) = kw` now correctly reports
   `a` as unused. Fixed aviatesk/JETLS.jl#390.
+- Fixed stale diagnostics not being cleared when a file is closed or when test
+  structure changes remove all diagnostics for a URI.
 
 ### Changed
 
