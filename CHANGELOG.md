@@ -11,6 +11,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > Each dated section below corresponds to a release that can be installed via
 > `Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="YYYY-MM-DD")`
 
+## Unreleased
+
+- Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
+- Diff: [`048d9a5...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/048d9a5...HEAD)
+
+### Announcement
+
 > [!warning]
 > JETLS currently has a known memory leak issue where memory usage grows with
 > each re-analysis (aviatesk/JETLS.jl#357).
@@ -32,11 +39,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > might work, but most LSP features will be unfunctional.
 > Note that `analysis_overrides` is provided as a temporary workaround and may
 > be removed or changed at any time. A proper fix is being worked on.
-
-## Unreleased
-
-- Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`048d9a5...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/048d9a5...HEAD)
 
 ### Added
 
