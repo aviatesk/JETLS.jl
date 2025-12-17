@@ -62,6 +62,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `a` as unused. Fixed aviatesk/JETLS.jl#390.
 - Fixed stale diagnostics not being cleared when a file is closed or when test
   structure changes remove all diagnostics for a URI.
+- Fixed wrong message for diagnostic with multiple stack frames.
+  The diagnostic message could be incorrectly overwritten when there are multiple
+  stack frames, causing "message must be set" errors in VSCode.
+  Fixed aviatesk/JETLS.jl#393.
 
 ### Changed
 

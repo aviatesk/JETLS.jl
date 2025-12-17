@@ -359,7 +359,7 @@ function jet_inference_error_report_to_diagnostic(postprocessor::JET.PostProcess
     for i = 2:length(rstack)
         frame = report.vst[rstack[i]]
         location = @something jet_frame_to_location(frame) continue
-        message = postprocessor(sprint(JET.print_frame_sig, frame, JET.PrintConfig()))
+        local message = postprocessor(sprint(JET.print_frame_sig, frame, JET.PrintConfig()))
         push!(relatedInformation, DiagnosticRelatedInformation(; location, message))
     end
     code = inference_error_report_code(report)
