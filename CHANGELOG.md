@@ -50,6 +50,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Added file rename support. When renaming a string literal that refers to a
   valid file path (e.g., in `include("foo.jl")`), JETLS now renames both the
   file on disk and updates the string reference in the source code.
+  Note that this feature only works when initiating rename from within the
+  Julia source code; renaming files externally (e.g., via editor file explorer)
+  will not automatically update code references.
 
 ### Fixed
 
@@ -65,7 +68,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Completions now return no results when the prefix type is unknown.
   Previously, irrelevant completions were shown for expressions like
   `obj.x` where `obj`'s type could not be resolved. Fixed aviatesk/JETLS.jl#389.
-- Initialization options errors are now reported to the user via editor
+- Invalid initialization options are now reported to the user via editor
   notifications instead of only being logged to the server.
 
 ## 2025-12-12
