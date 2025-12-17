@@ -526,6 +526,27 @@ end
     end
 end
 
+select_target_string(code::AbstractString, pos::Int) = JETLS.select_target_string(jlparse(code), pos)
+function get_target_string(code::AbstractString; kwargs...)
+    clean_code, positions = JETLS.get_text_and_positions(code; kwargs...)
+    @assert length(positions) == 1
+    return select_target_string(clean_code, JETLS.xy_to_offset(clean_code, positions[1], @__FILE__))
+end
+@testset "`select_target_string`" begin
+    let node = get_target_string("include(\"fo│o.jl\")")
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"String"
+        @test JL.hasattr(node, :value)
+        @test node.value == "foo.jl"
+    end
+    let node = get_target_string("x = \"hello│ world\"")
+        @test node !== nothing
+        @test node.value == "hello world"
+    end
+    @test isnothing(get_target_string("x = 42│"))
+    @test isnothing(get_target_string("foo│()"))
+end
+
 get_dotprefix_identifier(code::AbstractString, pos::Int) = JETLS.select_dotprefix_identifier(jlparse(code), pos)
 function get_dotprefix_identifier(code::AbstractString; kwargs...)
     clean_code, positions = JETLS.get_text_and_positions(code; kwargs...)

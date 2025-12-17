@@ -55,6 +55,7 @@ function handle_PrepareRenameRequest(
             result = @something(
                 local_binding_rename_preparation(state, uri, fi, pos, mod),
                 global_binding_rename_preparation(state, uri, fi, pos, mod),
+                file_rename_preparation(state, uri, fi, pos),
                 null)))
 end
 
@@ -94,6 +95,23 @@ function global_binding_rename_preparation(
     else
         return nothing
     end
+end
+
+function file_rename_preparation(
+        state::ServerState, uri::URI, fi::FileInfo, pos::Position,
+    )
+    st0_top = build_syntax_tree(fi)
+    offset = xy_to_offset(fi, pos)
+
+    string_node = @something begin
+        select_target_string(st0_top, offset)
+    end return nothing
+
+    JL.hasattr(string_node, :value) || return nothing
+    str = string_node.value
+    ispath(joinpath(dirname(uri2filename(uri)), str)) || return nothing
+    range, _ = unadjust_range(state, uri, jsobj_to_range(string_node, fi))
+    return (; range, placeholder = str)
 end
 
 function handle_RenameRequest(
@@ -159,6 +177,7 @@ function do_rename(
     return @something(
         local_binding_rename(server, uri, fi, pos, mod, newName),
         global_binding_rename(server, uri, fi, pos, mod, newName; token),
+        file_rename(server, uri, fi, pos, newName),
         (; result = null, error = nothing))
 end
 
@@ -317,4 +336,40 @@ function collect_global_rename_ranges_in_file!(
         push!(seen_ranges, range)
     end
     return seen_ranges
+end
+
+function file_rename(
+        server::Server, uri::URI, fi::FileInfo, pos::Position, newName::String
+    )
+    state = server.state
+    st0_top = build_syntax_tree(fi)
+    offset = xy_to_offset(fi, pos)
+
+    string_node = @something begin
+        select_target_string(st0_top, offset)
+    end return nothing
+
+    JL.hasattr(string_node, :value) || return nothing
+    oldName = string_node.value
+    basedir = dirname(uri2filename(uri))
+    oldPath = joinpath(basedir, oldName)
+    ispath(oldPath) || return nothing
+    newPath = joinpath(basedir, newName)
+
+    oldUri = filename2uri(oldPath)
+    newUri = filename2uri(newPath)
+    renameFile = RenameFile(; oldUri, newUri)
+
+    range, _ = unadjust_range(state, uri, jsobj_to_range(string_node, fi))
+    textEdit = TextEdit(; range, newText = newName)
+
+    if supports(server, :workspace, :workspaceEdit, :documentChanges)
+        textDocument = OptionalVersionedTextDocumentIdentifier(; uri, fi.version)
+        textDocumentEdit = TextDocumentEdit(; textDocument, edits = [textEdit])
+        result = WorkspaceEdit(; documentChanges = [textDocumentEdit, renameFile])
+    else
+        result = WorkspaceEdit(; changes = Dict(uri => [textEdit]))
+    end
+
+    return (; result, error = nothing)
 end

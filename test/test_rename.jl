@@ -310,4 +310,60 @@ end
     end
 end
 
+@testset "file_rename_preparation" begin
+    state = JETLS.ServerState()
+    mktempdir() do dir
+        touch(joinpath(dir, "foo.jl"))
+        mkdir(joinpath(dir, "subdir"))
+        touch(joinpath(dir, "subdir/foo.jl"))
+        touch(joinpath(dir, "README.md"))
+
+        for target_name = ("foo.jl", "subdir/foo.jl", "README.md")
+            let code = """include("│$(target_name)│")"""
+                filename = joinpath(dir, "main.jl")
+                clean_code, positions = JETLS.get_text_and_positions(code)
+                @test length(positions) == 2
+                fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
+                furi = filename2uri(filename)
+                for pos in positions
+                    rename_prep = JETLS.file_rename_preparation(state, furi, fi, pos)
+                    @test !isnothing(rename_prep)
+                    @test rename_prep.placeholder == target_name
+                end
+            end
+        end
+
+        let code = """include("│nonexistent.jl│")"""
+            filename = joinpath(dir, "main.jl")
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
+            furi = filename2uri(filename)
+            rename_prep = JETLS.file_rename_preparation(state, furi, fi, positions[1])
+            @test isnothing(rename_prep)
+        end
+    end
+end
+
+@testset "file_rename" begin
+    server = JETLS.Server()
+    mktempdir() do dir
+        touch(joinpath(dir, "foo.jl"))
+        let code = """include("│foo.jl│")"""
+            filename = joinpath(dir, "main.jl")
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 2
+            fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
+            furi = filename2uri(filename)
+            for pos in positions
+                (; result, error) = JETLS.file_rename(server, furi, fi, pos, "bar.jl")
+                @test result isa WorkspaceEdit && isnothing(error)
+                @test length(result.changes) == 1
+                edits = result.changes[furi]
+                @test length(edits) == 1
+                @test edits[1].newText == "bar.jl"
+            end
+        end
+    end
+end
+
 end # test_rename

@@ -47,6 +47,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Initialization options can now be configured via `.JETLSConfig.toml` using the
   `[initialization_options]` section. See the [documentation](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options/configure)
   for details.
+- Added file rename support. When renaming a string literal that refers to a
+  valid file path (e.g., in `include("foo.jl")`), JETLS now renames both the
+  file on disk and updates the string reference in the source code.
 
 ### Fixed
 
