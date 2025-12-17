@@ -516,6 +516,16 @@ function select_target_identifier(st0::JL.SyntaxTree, offset::Int)
     return select_target_node(filter, selector, st0, offset)
 end
 
+function select_target_string(st0::JL.SyntaxTree, offset::Int)
+    filter = function (bas)
+        JS.kind(first(bas)) === JS.K"String"
+    end
+    selector = function (bas)
+        return first(bas)
+    end
+    return select_target_node(filter, selector, st0, offset)
+end
+
 function select_target_node(filter, selector, st0::JL.SyntaxTree, offset::Int)
     bas = byte_ancestors(st0, offset)
 
