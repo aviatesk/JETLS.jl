@@ -496,65 +496,42 @@ refs:
 - https://github.com/aviatesk/JETLS.jl/pull/61#discussion_r2134707773
 """
 function select_target_identifier(st0::JL.SyntaxTree, offset::Int)
-    bas = byte_ancestors(st0, offset)
-
-    isempty(bas) && @goto minus1
-    target = first(bas)
-    if !JS.is_identifier(target)
-        @label minus1
-        offset > 0 || return nothing
-        # Support cases like `var│`, `func│(5)`
-        bas = byte_ancestors(st0, offset - 1)
-        isempty(bas) && return nothing
+    filter = function (bas)
+        JS.is_identifier(first(bas))
+    end
+    selector = function (bas)
         target = first(bas)
-        if !JS.is_identifier(target)
-            return nothing
-        end
-    end
-
-    for i = 2:length(bas)
-        basᵢ = bas[i]
-        if (JS.kind(basᵢ) === JS.K"." &&
-            basᵢ[1] !== target) # e.g. don't allow jumps to `tmeet` from `Base.Compi│ler.tmeet`
+        for i = 2:length(bas)
+            basᵢ = bas[i]
+            if (JS.kind(basᵢ) === JS.K"." &&
+                basᵢ[1] !== target) # e.g. don't allow jumps to `tmeet` from `Base.Compi│ler.tmeet`
             target = basᵢ
-        else
-            return target
+            else
+                return target
+            end
         end
+        # Unreachable: we always have toplevel node
+        return nothing
     end
-
-    # Unreachable: we always have toplevel node
-    return nothing
+    return select_target_node(filter, selector, st0, offset)
 end
 
-function select_target_identifier(st0::JL.SyntaxTree, offset::Int)
+function select_target_node(filter, selector, st0::JL.SyntaxTree, offset::Int)
     bas = byte_ancestors(st0, offset)
 
     isempty(bas) && @goto minus1
-    target = first(bas)
-    if !JS.is_identifier(target)
+    if !filter(bas)
         @label minus1
         offset > 0 || return nothing
         # Support cases like `var│`, `func│(5)`
         bas = byte_ancestors(st0, offset - 1)
         isempty(bas) && return nothing
-        target = first(bas)
-        if !JS.is_identifier(target)
+        if !filter(bas)
             return nothing
         end
     end
 
-    for i = 2:length(bas)
-        basᵢ = bas[i]
-        if (JS.kind(basᵢ) === JS.K"." &&
-            basᵢ[1] !== target) # e.g. don't allow jumps to `tmeet` from `Base.Compi│ler.tmeet`
-            target = basᵢ
-        else
-            return target
-        end
-    end
-
-    # Unreachable: we always have toplevel node
-    return nothing
+    return selector(bas)
 end
 
 """
