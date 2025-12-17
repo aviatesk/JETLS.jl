@@ -213,7 +213,7 @@ function global_completions!(
 
     st = build_syntax_tree(fi)
     offset = xy_to_offset(fi, pos)
-    dotprefix = select_dotprefix_node(st, offset)
+    dotprefix = select_dotprefix_identifier(st, offset)
     if !isnothing(dotprefix)
         prefixtyp = resolve_type(analyzer, completion_module, dotprefix)
         # If dotprefix is not a module, cancel completion entirely.

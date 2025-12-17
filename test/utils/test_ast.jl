@@ -402,20 +402,20 @@ end
     @test !JETLS.noparen_macrocall(jlparse("cmdmac`xxx`"; rule=:statement))
 end
 
-select_target_node(code::AbstractString, pos::Int) = JETLS.select_target_node(jlparse(code), pos)
-function get_target_node(code::AbstractString; kwargs...)
+select_target_identifier(code::AbstractString, pos::Int) = JETLS.select_target_identifier(jlparse(code), pos)
+function get_target_identifier(code::AbstractString; kwargs...)
     clean_code, positions = JETLS.get_text_and_positions(code; kwargs...)
     @assert length(positions) == 1
     fi = JETLS.FileInfo(1, clean_code, @__FILE__)
-    target_node = select_target_node(clean_code, JETLS.xy_to_offset(fi, positions[1]))
+    target_node = select_target_identifier(clean_code, JETLS.xy_to_offset(fi, positions[1]))
     return fi, target_node
 end
 
-@testset "`select_target_node` / `jsobj_to_range`" begin
+@testset "`select_target_identifier` / `jsobj_to_range`" begin
     let code = """
         test_│func(5)
         """
-        fi, node = get_target_node(code)
+        fi, node = get_target_identifier(code)
         @test (node !== nothing) && (JS.kind(node) === JS.K"Identifier")
         @test JS.sourcetext(node) == "test_func"
         let range = JETLS.jsobj_to_range(node, fi)
@@ -427,7 +427,7 @@ end
     let code = """
         obj.│property = 42
         """
-        fi, node = get_target_node(code)
+        fi, node = get_target_identifier(code)
         @test node !== nothing
         @test JS.kind(node) === JS.K"."
         @test length(JS.children(node)) == 2
@@ -442,7 +442,7 @@ end
     let code = """
         Core.Compiler.tme│et(x)
         """
-        fi, node = get_target_node(code)
+        fi, node = get_target_identifier(code)
         @test node !== nothing
         @test JS.kind(node) === JS.K"."
         let range = JETLS.jsobj_to_range(node, fi)
@@ -454,7 +454,7 @@ end
     let code = """
         Core.Compi│ler.tmeet(x)
         """
-        fi, node = get_target_node(code)
+        fi, node = get_target_identifier(code)
         @test node !== nothing
         @test JS.kind(node) === JS.K"."
         let range = JETLS.jsobj_to_range(node, fi)
@@ -466,7 +466,7 @@ end
     let code = """
         Cor│e.Compiler.tmeet(x)
         """
-        fi, node = get_target_node(code)
+        fi, node = get_target_identifier(code)
         @test node !== nothing
         @test JS.kind(node) === JS.K"Identifier"
         let range = JETLS.jsobj_to_range(node, fi)
@@ -478,7 +478,7 @@ end
     let code = """
         @inline│ callsin(x) = sin(x)
         """
-        fi, node = get_target_node(code)
+        fi, node = get_target_identifier(code)
         @test node !== nothing
         @test JS.kind(node) === JS.K"Identifier"
         let range = JETLS.jsobj_to_range(node, fi)
@@ -490,7 +490,7 @@ end
     let code = """
         Base.@inline│ callsin(x) = sin(x)
         """
-        fi, node = get_target_node(code)
+        fi, node = get_target_identifier(code)
         @test node !== nothing
         let range = JETLS.jsobj_to_range(node, fi)
             @test range.start.line == 0 && range.start.character == 0 # include `Base.`
@@ -501,7 +501,7 @@ end
     let code = """
         text│"sin"
         """
-        fi, node = get_target_node(code)
+        fi, node = get_target_identifier(code)
         @test node !== nothing
         let range = JETLS.jsobj_to_range(node, fi)
             @test range.start.line == 0 && range.start.character == 0
@@ -514,39 +514,39 @@ end
             return x │ + 1
         end
         """
-        _, node = get_target_node(code)
+        _, node = get_target_identifier(code)
         @test node === nothing
     end
 
     let code = """
         │
         """
-        _, node = get_target_node(code)
+        _, node = get_target_identifier(code)
         @test node === nothing
     end
 end
 
-get_dotprefix_node(code::AbstractString, pos::Int) = JETLS.select_dotprefix_node(jlparse(code), pos)
-function get_dotprefix_node(code::AbstractString; kwargs...)
+get_dotprefix_identifier(code::AbstractString, pos::Int) = JETLS.select_dotprefix_identifier(jlparse(code), pos)
+function get_dotprefix_identifier(code::AbstractString; kwargs...)
     clean_code, positions = JETLS.get_text_and_positions(code; kwargs...)
     @assert length(positions) == 1
-    return get_dotprefix_node(clean_code, JETLS.xy_to_offset(clean_code, positions[1], @__FILE__))
+    return get_dotprefix_identifier(clean_code, JETLS.xy_to_offset(clean_code, positions[1], @__FILE__))
 end
-@testset "`select_dotprefix_node`" begin
-    @test isnothing(get_dotprefix_node("isnothing│"))
-    let node = get_dotprefix_node("Base.Sys.│")
+@testset "`select_dotprefix_identifier`" begin
+    @test isnothing(get_dotprefix_identifier("isnothing│"))
+    let node = get_dotprefix_identifier("Base.Sys.│")
         @test !isnothing(node)
         @test JS.sourcetext(node) == "Base.Sys"
     end
-    let node = get_dotprefix_node("Base.Sys.CPU│")
+    let node = get_dotprefix_identifier("Base.Sys.CPU│")
         @test !isnothing(node)
         @test JS.sourcetext(node) == "Base.Sys"
     end
-    let node = get_dotprefix_node("Base.Sy│s")
+    let node = get_dotprefix_identifier("Base.Sy│s")
         @test !isnothing(node)
         @test JS.sourcetext(node) == "Base"
     end
-    let node = get_dotprefix_node("""
+    let node = get_dotprefix_identifier("""
         function foo(x)
             Core.│
         end
@@ -554,7 +554,7 @@ end
         @test !isnothing(node)
         @test JS.sourcetext(node) == "Core"
     end
-    let node = get_dotprefix_node("""
+    let node = get_dotprefix_identifier("""
         function foo(x = Base.│)
         end
         """)

@@ -80,7 +80,7 @@ function handle_HoverRequest(
         id = msg.id,
         result = local_hover))
 
-    node = @something select_target_node(st0_top, offset) begin
+    node = @something select_target_identifier(st0_top, offset) begin
         tok = @something token_at_offset(fi, pos) begin
             return send(server, HoverResponse(; id = msg.id, result = null))
         end

@@ -201,7 +201,7 @@ end
 """
     select_target_binding(st0_top::JL.SyntaxTree, offset::Int, mod::Module) -> target_binding::Union{Nothing,JL.SyntaxTree}
 
-For the same purpose as [`select_target_node`](@ref), returns the `target_binding::JL.SyntaxTree`
+For the same purpose as [`select_target_identifier`](@ref), returns the `target_binding::JL.SyntaxTree`
 closest to the cursor at the `offset` position.
 It is guaranteed that `target_binding` satisfies `JS.kind(target_binding) === JS.K"BindingId"`.
 """
