@@ -20,7 +20,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 > [!warning]
 > JETLS currently has a known memory leak issue where memory usage grows with
-> each re-analysis (aviatesk/JETLS.jl#357).
+> each re-analysis (https://github.com/aviatesk/JETLS.jl/issues/357).
 > As a temporary workaround, you can disable full-analysis for specific files
 > using the `analysis_overrides`
 > [initialization option](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options):
@@ -40,6 +40,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > Note that `analysis_overrides` is provided as a temporary workaround and may
 > be removed or changed at any time. A proper fix is being worked on.
 
+### Added
+
+- Added CHANGELOG page to the documentation.
+
 ## 2025-12-18
 
 - Commit: [`c9c5729`](https://github.com/aviatesk/JETLS.jl/commit/c9c5729)
@@ -49,11 +53,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Added `inference/field-error` diagnostic for detecting access to non-existent
   struct fields (e.g., `x.propert` when the field is `property`).
-  Closes aviatesk/JETLS.jl#392.
+  Closed https://github.com/aviatesk/JETLS.jl/issues/392.
 - Added `inference/bounds-error` diagnostic for detecting out-of-bounds field
   access by index (e.g., `tpl[2]` on a `tpl::Tuple{Int}`).
   Note that this diagnostic is for struct/tuple field access, not array indexing.
-- Added completion support for Julia keywords. Closed aviatesk/JETLS.jl#386.
+- Added completion support for Julia keywords.
+  Closed https://github.com/aviatesk/JETLS.jl/issues/386.
 - Added hover documentation for Julia keywords.
 - Initialization options can now be configured via `.JETLSConfig.toml` using the
   `[initialization_options]` section. See the [documentation](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options/configure)
@@ -70,19 +75,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Small adjustments for using JETLS with Julia v1.12.3
 - Fixed false negative unused argument diagnostics for functions with keyword
   arguments. For example, `func(a; kw=nothing) = kw` now correctly reports
-  `a` as unused. Fixed aviatesk/JETLS.jl#390.
+  `a` as unused. Fixed https://github.com/aviatesk/JETLS.jl/issues/390.
 - Fixed stale diagnostics not being cleared when a file is closed or when test
   structure changes remove all diagnostics for a URI.
 - Fixed wrong message for diagnostic with multiple stack frames.
   The diagnostic message could be incorrectly overwritten when there are multiple
   stack frames, causing "message must be set" errors in VSCode.
-  Fixed aviatesk/JETLS.jl#393.
+  Fixed https://github.com/aviatesk/JETLS.jl/issues/393.
 
 ### Changed
 
 - Completions now return no results when the prefix type is unknown.
   Previously, irrelevant completions were shown for expressions like
-  `obj.x` where `obj`'s type could not be resolved. Fixed aviatesk/JETLS.jl#389.
+  `obj.x` where `obj`'s type could not be resolved.
+  Fixed https://github.com/aviatesk/JETLS.jl/issues/389.
 - Invalid initialization options are now reported to the user via editor
   notifications instead of only being logged to the server.
 
@@ -110,7 +116,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed false positive unused variable diagnostics in comprehensions with filter
   conditions. For example, `[x for (i, x) in enumerate(xs) if isodd(i)]` no
-  longer incorrectly reports `i` as unused. Fixes aviatesk/JETLS.jl#360.
+  longer incorrectly reports `i` as unused.
+  Fixes https://github.com/aviatesk/JETLS.jl/issues/360.
 
 ### Changed
 
@@ -144,7 +151,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   (`#L<line>,<character>`) instead of `#L<line>C<character>`. The previous
   format was not correctly parsed by VS Code - the column position was ignored.
   The new format follows VS Code's implementation and works with other LSP
-  clients like Sublime Text's LSP plugin. Fixes aviatesk/JETLS.jl#281.
+  clients like Sublime Text's LSP plugin.
+  Fixes https://github.com/aviatesk/JETLS.jl/issues/281.
 
 ## 2025-12-06
 
@@ -176,11 +184,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Request handlers now wait for file cache to be populated instead of immediately
   returning errors. This fixes "file cache not found" errors that occurred when
   requests arrived before the cache was ready, particularly after opening files.
-  (aviatesk/JETLS.jl#273, aviatesk/JETLS.jl#274, aviatesk/JETLS.jl#327)
+  (https://github.com/aviatesk/JETLS.jl/issues/273,
+   https://github.com/aviatesk/JETLS.jl/issues/274,
+   https://github.com/aviatesk/JETLS.jl/issues/327)
 - Fixed glob pattern matching for `diagnostic.patterns[].path`: `**` now
   correctly matches zero or more directory levels (e.g., `test/**/*.jl` matches
   `test/testfile.jl`), and wildcards no longer match hidden files/directories.
-  (aviatesk/JETLS.jl#359)
+  (https://github.com/aviatesk/JETLS.jl/pull/359)
 - `.JETLSConfig.toml` is now only recognized at the workspace root.
   Previously, config files in subdirectories were also loaded, which was
   inconsistent with [the documentation](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/file-based-config).
@@ -282,7 +292,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed false `lowering/macro-expansion-error` diagnostics appearing before
   initial full-analysis completes. These diagnostics are now skipped until
   module context is available, then refreshed via `workspace/diagnostic/refresh`.
-  Fixes aviatesk/JETLS.jl#279 and aviatesk/JETLS.jl#290. (aviatesk/JETLS.jl#333)
+  Fixes https://github.com/aviatesk/JETLS.jl/issues/279 and
+  https://github.com/aviatesk/JETLS.jl/issues/290.
+  (https://github.com/aviatesk/JETLS.jl/pull/333)
 
 ### Removed
 
@@ -339,17 +351,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Added CI workflow for testing the vendored release environment.
   This validates that changes to master don't break the release branch.
-  (aviatesk/JETLS.jl#321)
+  (https://github.com/aviatesk/JETLS.jl/pull/321)
 - Added CI workflow for the `release` branch with tests and documentation deployment.
   Documentation for the `release` branch is now available at <https://aviatesk.github.io/JETLS.jl/release/>.
-  (aviatesk/JETLS.jl#321)
+  (https://github.com/aviatesk/JETLS.jl/pull/321)
 
 ### Fixed
 
 - Fixed vendoring script to remove unused weakdeps and extensions from vendored
   packages. These could interact with user's package environment unexpectedly.
   Extensions that are actually used by JETLS are preserved with updated UUIDs.
-  Fixes aviatesk/JETLS.jl#312. (aviatesk/JETLS.jl#320)
+  Fixes https://github.com/aviatesk/JETLS.jl/issues/312.
+  (https://github.com/aviatesk/JETLS.jl/pull/320)
 
 ## 2025-11-24
 
@@ -364,14 +377,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   This resolves issues where version conflicts between JETLS and analyzed
   packages would prevent analysis.
   Users should install JETLS from the `release` branch using
-  `Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="release")`. (aviatesk/JETLS.jl#314)
+  `Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="release")`.
+  (https://github.com/aviatesk/JETLS.jl/pull/314)
   - For developers:
     See <https://github.com/aviatesk/JETLS.jl/blob/master/DEVELOPMENT.md#release-process>
     for details on the release process.
 - Migrated the JETLS entry point from the `runserver.jl` script to the `jetls`
   [executable app](https://pkgdocs.julialang.org/dev/apps/) defined by JETLS.jl itself.
   This significantly changes how JETLS is installed and launched,
-  while the new methods are generally simpler: (aviatesk/JETLS.jl#314)
+  while the new methods are generally simpler:
+  (https://github.com/aviatesk/JETLS.jl/pull/314)
   - Installation: Install the `jetls` executable app using:
     ```bash
     julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="release")'
@@ -385,8 +400,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - Launching: Language clients should launch JETLS using the `jetls` executable with appropriate options.
     See <https://aviatesk.github.io/JETLS.jl/release/launching/> for detailed launch options.
   - The VSCode language client `jetls-client` and Zed extension `aviatesk/zed-julia` has been updated accordingly.
-- Changed diagnostic configuration schema from `[diagnostic.codes]` to `[[diagnostic.patterns]]` for more flexible pattern matching. (aviatesk/JETLS.jl#299)
-- Renamed configuration section from `[diagnostics]` to `[diagnostic]` for consistency. (aviatesk/JETLS.jl#299)
+- Changed diagnostic configuration schema from `[diagnostic.codes]` to
+  `[[diagnostic.patterns]]` for more flexible pattern matching.
+  (https://github.com/aviatesk/JETLS.jl/pull/299)
+- Renamed configuration section from `[diagnostics]` to `[diagnostic]` for consistency.
+  (https://github.com/aviatesk/JETLS.jl/pull/299)
 
 ### Added
 
@@ -394,21 +412,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   codes in `"category/kind"` format.
   Users can now control which diagnostics are displayed and their severity
   levels through fine-grained configuration.
-  (aviatesk/JETLS.jl#298)
+  (https://github.com/aviatesk/JETLS.jl/pull/298)
 - Added pattern-based diagnostic configuration supporting message-based
   matching in addition to code-based matching.
   Supports both `literal` and `regex` patterns with a four-tier priority system.
-  (aviatesk/JETLS.jl#299)
+  (https://github.com/aviatesk/JETLS.jl/pull/299)
 - Added file path-based filtering for diagnostic patterns.
   Users can specify glob patterns (e.g., `"test/**/*.jl"`) to apply diagnostic
   configurations to specific files or directories.
-  (aviatesk/JETLS.jl#313)
+  (https://github.com/aviatesk/JETLS.jl/pull/313)
 - Added LSP `codeDescription` implementation with clickable documentation links
-  for diagnostics. (aviatesk/JETLS.jl#298)
-- Added this change log. (aviatesk/JETLS.jl#316)
+  for diagnostics. (https://github.com/aviatesk/JETLS.jl/pull/298)
+- Added this change log. (https://github.com/aviatesk/JETLS.jl/pull/316)
 
 ### Fixed
 
 - Fixed UTF-8 position encoding to use byte offsets instead of character counts.
   This resolves misalignment issues in UTF-8-based editors like Helix while maintaining compatibility with UTF-16 editors like VS Code.
-  (aviatesk/JETLS.jl#306)
+  (https://github.com/aviatesk/JETLS.jl/pull/306)
