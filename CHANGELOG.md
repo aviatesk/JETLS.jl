@@ -44,6 +44,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Added CHANGELOG page to the documentation.
 
+### Fixed
+
+- Fixed `inference/undef-global-var` diagnostic being unintentially reported for
+  undefined global bindings in dependency packages.
+
 ## 2025-12-18
 
 - Commit: [`c9c5729`](https://github.com/aviatesk/JETLS.jl/commit/c9c5729)

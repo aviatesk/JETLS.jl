@@ -164,7 +164,7 @@ function should_analyze_for_builtins(analyzer::LSAnalyzer, sv::CC.InferenceState
     return nothing
 end
 
-# analysis injections
+# Inference overloads
 # ===================
 
 """
@@ -210,15 +210,20 @@ function CC.concrete_eval_call(
 end
 end # @static if VERSION ≥ v"1.12.2"
 
+# Analysis injections
+# ===================
+
 # TODO Better to factor out and share it with `JET.JETAnalyzer`
-function CC.abstract_eval_globalref(analyzer::LSAnalyzer,
-    g::GlobalRef, saw_latestworld::Bool, sv::CC.InferenceState)
+function CC.abstract_eval_globalref(
+        analyzer::LSAnalyzer, g::GlobalRef, saw_latestworld::Bool, sv::CC.InferenceState;
+        allowed_offset::Int = 1
+    )
     if saw_latestworld
         return CC.RTEffects(Any, Any, CC.generic_getglobal_effects)
     end
     (valid_worlds, ret) = CC.scan_leaf_partitions(analyzer, g, sv.world) do analyzer::LSAnalyzer, binding::Core.Binding, partition::Core.BindingPartition
         offset = should_analyze_for_builtins(analyzer, sv)
-        if offset !== nothing
+        if offset !== nothing && offset ≤ allowed_offset
             if partition.min_world ≤ sv.world.this ≤ partition.max_world # XXX This should probably be fixed on the Julia side
                 report_undef_global_var!(analyzer, sv, binding, partition, offset)
             end
@@ -253,8 +258,12 @@ function CC.builtin_tfunction(analyzer::LSAnalyzer,
     return ret
 end
 
-# inject report pass for undefined local variables
 function CC.abstract_eval_special_value(analyzer::LSAnalyzer, @nospecialize(e), sstate::CC.StatementState, sv::CC.InferenceState)
+    # GlobalRefs directly embedded in source code are analyzed with allowed_offset=0
+    if e isa GlobalRef
+        return CC.abstract_eval_globalref(analyzer, e, sstate.saw_latestworld, sv; allowed_offset=0)
+    end
+    # inject report pass for undefined local variables
     if should_analyze(analyzer, sv)
         if e isa SlotNumber
             vtypes = sstate.vtypes
