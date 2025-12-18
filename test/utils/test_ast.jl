@@ -30,21 +30,6 @@ include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
             @test JS.kind(ancestors[4]) === JS.K"function"
             @test JS.kind(ancestors[end]) === JS.K"toplevel"
         end
-
-        sn = jsparse(clean_code)
-        let ancestors = JETLS.byte_ancestors(sn, 1)
-            @test length(ancestors) >= 2
-            @test JS.kind(ancestors[1]) === JS.K"function"
-            @test JS.kind(ancestors[end]) === JS.K"toplevel"
-        end
-        let ancestors = JETLS.byte_ancestors(sn, return_pos)
-            @test length(ancestors) >= 4
-            @test JS.kind(ancestors[1]) === JS.K"call"  # x + 1
-            @test JS.kind(ancestors[2]) === JS.K"return"
-            @test JS.kind(ancestors[3]) === JS.K"block"
-            @test JS.kind(ancestors[4]) === JS.K"function"
-            @test JS.kind(ancestors[end]) === JS.K"toplevel"
-        end
     end
 
     # Test with range
@@ -67,13 +52,6 @@ include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
             @test any(node -> JS.kind(node) === JS.K"function", ancestors)
             @test any(node -> JS.kind(node) === JS.K"module", ancestors)
         end
-        let sn = jsparse(clean_code),
-            ancestors = JETLS.byte_ancestors(sn, hello_start:hello_end)
-            @test any(node -> JS.kind(node) === JS.K"string" && JS.sourcetext(node) == "\"hello\"", ancestors)
-            @test any(node -> JS.kind(node) === JS.K"call", ancestors)
-            @test any(node -> JS.kind(node) === JS.K"function", ancestors)
-            @test any(node -> JS.kind(node) === JS.K"module", ancestors)
-        end
     end
 
     # Test edge cases
@@ -85,17 +63,12 @@ include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
         x_pos = JETLS.xy_to_offset(clean_code, positions[1], @__FILE__)
 
         st = jlparse(clean_code)
-        sn = jsparse(clean_code)
 
         # Test at position beyond code length should return empty
         @test isempty(JETLS.byte_ancestors(st, 1000))
-        @test isempty(JETLS.byte_ancestors(sn, 1000))
 
         # Test at exact boundaries
         let ancestors = JETLS.byte_ancestors(st, x_pos)
-            @test any(node -> JS.kind(node) === JS.K"Identifier" && JS.sourcetext(node) == "x", ancestors)
-        end
-        let ancestors = JETLS.byte_ancestors(sn, x_pos)
             @test any(node -> JS.kind(node) === JS.K"Identifier" && JS.sourcetext(node) == "x", ancestors)
         end
     end
@@ -111,11 +84,6 @@ include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
             ancestors = JETLS.byte_ancestors(st, c_pos)
             @test any(node -> JS.kind(node) === JS.K"Identifier" && JS.sourcetext(node) == "c", ancestors)
         end
-
-        let sn = jsparse(clean_code),
-            ancestors = JETLS.byte_ancestors(sn, c_pos)
-            @test any(node -> JS.kind(node) === JS.K"Identifier" && JS.sourcetext(node) == "c", ancestors)
-        end
     end
 
     # Test with multi-byte characters
@@ -127,11 +95,6 @@ include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
 
         let st = jlparse(clean_code),
             ancestors = JETLS.byte_ancestors(st, γ_pos)
-            @test any(node -> JS.kind(node) === JS.K"Identifier" && JS.sourcetext(node) == "γ", ancestors)
-        end
-
-        let sn = jsparse(clean_code)
-            ancestors = JETLS.byte_ancestors(sn, γ_pos)
             @test any(node -> JS.kind(node) === JS.K"Identifier" && JS.sourcetext(node) == "γ", ancestors)
         end
     end

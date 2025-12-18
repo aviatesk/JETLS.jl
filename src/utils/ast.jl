@@ -144,11 +144,6 @@ end
 
 Get a SyntaxList of `SyntaxTree`s containing certain bytes.
 
-    byte_ancestors([flt,] sn::JS.SyntaxNode, rng::UnitRange{Int})
-    byte_ancestors([flt,] sn::JS.SyntaxNode, byte::Int)
-
-Get a list of `SyntaxNode`s containing certain bytes.
-
 Output should be topologically sorted, children first.  If we know that parent
 ranges contain all child ranges, and that siblings don't have overlapping ranges
 (this is not true after lowering, but appears to be true after parsing), each
@@ -157,8 +152,6 @@ tree in the result will be a child of the next.
 An optional filter function `flt` can be provided to include only nodes
 that satisfy the predicate.
 """
-function byte_ancestors end
-
 byte_ancestors(args...) = byte_ancestors(Returns(true), args...)
 
 function byte_ancestors(flt, st::JL.SyntaxTree, rng::UnitRange{<:Integer})
@@ -178,22 +171,6 @@ function byte_ancestors(flt, st::JL.SyntaxTree, rng::UnitRange{<:Integer})
     return reverse!(deduplicate_syntaxlist(sl))
 end
 byte_ancestors(flt, st::JL.SyntaxTree, byte::Integer) = byte_ancestors(flt, st, byte:byte)
-
-function byte_ancestors(flt, sn::JS.SyntaxNode, rng::UnitRange{<:Integer})
-    out = JS.SyntaxNode[]
-    if rng ⊆ JS.byte_range(sn) && flt(sn)
-        push!(out, sn)
-    else
-        return out
-    end
-    traverse(sn) do sn′
-        if rng ⊆ JS.byte_range(sn′) && flt(sn′)
-            push!(out, sn′)
-        end
-    end
-    return reverse!(out)
-end
-byte_ancestors(flt, sn::JS.SyntaxNode, byte::Integer) = byte_ancestors(flt, sn, byte:byte)
 
 """
     greatest_local(st0::JL.SyntaxTree, offset::Int) -> st::Union{JL.SyntaxTree, Nothing}
