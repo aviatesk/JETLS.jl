@@ -561,7 +561,7 @@ function _testrunner_run_testset(
             end
         end
     end
-    notify_diagnostics!(server)
+    notify_diagnostics!(server; ensure_cleared=uri)
 
     if supports(server, :workspace, :codeLens, :refreshSupport)
         request_codelens_refresh!(server)
@@ -656,7 +656,7 @@ function _testrunner_run_testcase(
     notify_temporary_diagnostics!(server, uri2diagnostics)
     Threads.@spawn begin
         sleep(10)
-        notify_diagnostics!(server) # refresh diagnostics after 5 sec
+        notify_diagnostics!(server; ensure_cleared=uri) # refresh diagnostics after 5 sec
     end
 
     extra_message = isempty(uri2diagnostics) ? nothing : """\n
