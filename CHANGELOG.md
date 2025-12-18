@@ -16,17 +16,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 - Diff: [`c9c5729...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/c9c5729...HEAD)
 
-## 2025-12-18
-
-- Commit: [`c9c5729`](https://github.com/aviatesk/JETLS.jl/commit/c9c5729)
-- Diff: [`048d9a5...c9c5729`](https://github.com/aviatesk/JETLS.jl/compare/048d9a5...c9c5729)
-
 ### Announcement
 
 > [!warning]
 > JETLS currently has a known memory leak issue where memory usage grows with
 > each re-analysis (aviatesk/JETLS.jl#357).
-> As a temporary workaround, you can disable full-analysis for specific paths
+> As a temporary workaround, you can disable full-analysis for specific files
 > using the `analysis_overrides`
 > [initialization option](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options):
 > ```jsonc
@@ -44,6 +39,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > might work, but most LSP features will be unfunctional.
 > Note that `analysis_overrides` is provided as a temporary workaround and may
 > be removed or changed at any time. A proper fix is being worked on.
+
+## 2025-12-18
+
+- Commit: [`c9c5729`](https://github.com/aviatesk/JETLS.jl/commit/c9c5729)
+- Diff: [`048d9a5...c9c5729`](https://github.com/aviatesk/JETLS.jl/compare/048d9a5...c9c5729)
 
 ### Added
 
