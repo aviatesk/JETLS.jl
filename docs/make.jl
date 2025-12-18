@@ -37,6 +37,21 @@ let CHANGELOG_md = joinpath(@__DIR__, "..", "CHANGELOG.md")
     write(joinpath(@__DIR__, "src", "CHANGELOG.md"), CHANGELOG_md_text)
 end
 
+const pages = Any[
+    "Index" => "index.md",
+    "Diagnostic" => "diagnostic.md",
+    "Formatter integration" => "formatting.md",
+    "TestRunner integration" => "testrunner.md",
+    "Notebook support" => "notebook.md",
+    "Configuration" => "configuration.md",
+    "Launching" => "launching.md",
+    "CHANGELOG" => "CHANGELOG.md"]
+const quick_links_pages = let pages = last.(pages)
+    pop!(pages)      # exclude CHANGELOG.md
+    popfirst!(pages) # exclude index.md itself
+    pages
+end
+
 makedocs(;
     modules = [JETLS],
     sitename = "JETLS.jl",
@@ -45,16 +60,7 @@ makedocs(;
         canonical = "https://aviatesk.github.io/JETLS.jl",
         assets = ["assets/extras.css"],
     ),
-    pages = Any[
-        "Index" => "index.md",
-        "Diagnostic" => "diagnostic.md",
-        "Formatter integration" => "formatting.md",
-        "TestRunner integration" => "testrunner.md",
-        "Notebook support" => "notebook.md",
-        "Configuration" => "configuration.md",
-        "Launching" => "launching.md",
-        "CHANGELOG" => "CHANGELOG.md"
-    ],
+    pages,
     warnonly = [:missing_docs]
 )
 

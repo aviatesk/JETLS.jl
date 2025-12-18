@@ -177,4 +177,5 @@ julia --startup-file=no --project=/path/to/JETLS -m JETLS
 ## Quick links
 
 ```@contents
+Pages = Main.quick_links_pages
 ```
