@@ -74,9 +74,9 @@ end
 
 function find_pkg_name(env_path::AbstractString)
     env_toml = try
-        Pkg.TOML.parsefile(env_path)
+        TOML.parsefile(env_path)
     catch err
-        err isa Base.TOML.ParseError || rethrow(err)
+        err isa TOML.ParserError || rethrow(err)
         return nothing
     end
     pkg_name = get(env_toml, "name", nothing)
