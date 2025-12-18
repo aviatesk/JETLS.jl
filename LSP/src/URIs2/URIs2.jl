@@ -9,7 +9,7 @@ export URI, uri2filename, uri2filepath, filename2uri, filepath2uri, @uri_str
 
 using StructTypes: StructTypes
 
-include("vendored_from_uris.jl")
+include("vendored-from-uris.jl")
 
 """
     struct URI
@@ -255,6 +255,6 @@ end
 
 macro uri_str(s::AbstractString) URI(s) end
 
-include("uri_helpers.jl")
+include("uri-helpers.jl")
 
 end

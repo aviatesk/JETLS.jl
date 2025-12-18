@@ -5,7 +5,7 @@ using JETLS
 using JETLS: JL, JS
 
 include(normpath(pkgdir(JETLS), "test", "setup.jl"))
-include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
+include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
 
 module lowering_module end
 
@@ -230,6 +230,62 @@ length_utf16(s::AbstractString) = sum(c::Char -> codepoint(c) < 0x10000 ? 1 : 2,
         @test isempty(diagnostics)
     end
 
+    @testset "keyword function" begin
+        # https://github.com/aviatesk/JETLS.jl/issues/390
+        @test isempty(get_lowered_diagnostics("func(a; kw) = a, kw"))
+        @test isempty(get_lowered_diagnostics("func(a; kw=a) = kw"))
+        @test isempty(get_lowered_diagnostics("func(a; kw1, kw2) = a, kw1, kw2"))
+        @test isempty(get_lowered_diagnostics("func(a; kws...) = a, kws"))
+        @test isempty(get_lowered_diagnostics("func(a; kw, kws...) = a, kw, kws"))
+        let diagnostics = get_lowered_diagnostics("func(a; kw) = a")
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.message == "Unused argument `kw`"
+            @test diagnostic.range.start.line == 0
+        end
+        let diagnostics = get_lowered_diagnostics("func(a; kw) = kw")
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.message == "Unused argument `a`"
+            @test diagnostic.range.start.line == 0
+        end
+        let diagnostics = get_lowered_diagnostics("func(a; kws...) = a")
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.message == "Unused argument `kws`"
+            @test diagnostic.range.start.line == 0
+        end
+        let diagnostics = get_lowered_diagnostics("func(a; kw1, kw2) = kw1, kw2")
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.message == "Unused argument `a`"
+            @test diagnostic.range.start.line == 0
+        end
+        let diagnostics = get_lowered_diagnostics("func(a; kw1, kw2) = a, kw2")
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.message == "Unused argument `kw1`"
+            @test diagnostic.range.start.line == 0
+        end
+        let diagnostics = get_lowered_diagnostics("func(a; kw, kws...) = a, kw")
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.message == "Unused argument `kws`"
+            @test diagnostic.range.start.line == 0
+        end
+        let diagnostics = get_lowered_diagnostics("func(a; kw) = nothing")
+            @test length(diagnostics) == 2
+            @test any(diagnostics) do diagnostic
+                diagnostic.message == "Unused argument `a`" &&
+                diagnostic.range.start.line == 0
+            end
+            @test any(diagnostics) do diagnostic
+                diagnostic.message == "Unused argument `kw`" &&
+                diagnostic.range.start.line == 0
+            end
+        end
+    end
+
     @testset "macro definition" begin
         @test isempty(get_lowered_diagnostics("macro mymacro() end"))
         @test isempty(get_lowered_diagnostics("macro mymacro(x) x end"))
@@ -438,7 +494,7 @@ macro m_gen_invalid(n)
 end
 
 include(normpath(pkgdir(JETLS), "test", "fixtures", "macros.jl"))
-let filename = normpath(pkgdir(JETLS), "test", "fixtures", "macros_JL.jl")
+let filename = normpath(pkgdir(JETLS), "test", "fixtures", "macros-JL.jl")
     JL.include_string(@__MODULE__, read(filename,String), filename)
 end
 

@@ -268,7 +268,7 @@ function get_context_info(state::ServerState, uri::URI, pos::Position; lookup_fu
 end
 
 get_context_module(::Nothing, ::URI, ::Position) = Main
-get_context_module(oos::OutOfScope, ::URI, ::Position) = isdefined(oos, :module_context) ? oos.module_context : Main
+get_context_module(oos::OutOfScope, ::URI, ::Position) = something(oos.module_context, Main)
 function get_context_module(analysis_result::AnalysisResult, uri::URI, pos::Position)
     safi = @something analyzed_file_info(analysis_result, uri) return Main
     curline = Int(pos.line) + 1

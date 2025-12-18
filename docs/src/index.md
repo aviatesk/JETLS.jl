@@ -11,6 +11,11 @@ By leveraging tooling technologies like
 JETLS aims to offer enhanced language features such as type-sensitive
 diagnostic, macro-aware go-to definition and such.
 
+!!! warning "Experimental"
+    JETLS is under active development.
+    Not production-ready; APIs and behavior may change.
+    Stability and performance are limited. Expect bugs and rough edges.
+
 ## Server installation
 
 Editor clients for JETLS generally do not bundle the JETLS server itself.
@@ -18,8 +23,7 @@ You need to install the `jetls` executable separately before using any editor in
 
 ### Prerequisites
 
-JETLS requires [Julia `v"1.12"`](https://julialang.org/downloads) or higher,
-so ensure that the Julia version of the `julia` command you use is v1.12 or higher.
+JETLS requires [Julia `v"1.12"`](https://julialang.org/downloads) or higher (1.12.2+ recommended).
 
 ### Installing the `jetls` executable
 
@@ -156,7 +160,7 @@ language-servers = [ "jetls" ]
 jetls = { command = "jetls", args = ["--threads=auto", "--"] }
 ```
 
-## Using local JETLS checkout
+### Advanced: using local JETLS checkout
 
 Advanced users can run JETLS directly from a local checkout by replacing
 the `jetls` executable with `julia -m JETLS`:

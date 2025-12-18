@@ -31,7 +31,7 @@ function cache_file_info!(
     end
 
     if !state.suppress_notifications && any_deleted
-        notify_diagnostics!(server)
+        notify_diagnostics!(server; ensure_cleared=uri)
     end
 
     return fi
@@ -111,7 +111,7 @@ function handle_DidCloseTextDocumentNotification(server::Server, msg::DidCloseTe
         Base.delete(cache, uri), nothing
     end
     if clear_extra_diagnostics!(server, uri)
-        notify_diagnostics!(server)
+        notify_diagnostics!(server; ensure_cleared=uri)
     end
 
     nothing

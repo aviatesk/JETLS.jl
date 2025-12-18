@@ -1,23 +1,25 @@
 # Configuration
 # =============
 
-function parse_module_override(x::AbstractDict{String})
-    if !haskey(x, "module_name")
-        error(lazy"Missing required field `module_name` in module_override")
-    end
-    module_name = x["module_name"]
-    if !(module_name isa String)
-        error(lazy"Invalid `module_name` value. Must be a string, got $(typeof(module_name))")
-    end
-    if !haskey(x, "path")
-        error(lazy"Missing required field `path` in module_override for module \"$module_name\"")
-    end
+function parse_analysis_override(x::AbstractDict{String})
+    haskey(x, "path") ||
+        error(lazy"Missing required field `path` in analysis_override")
     path_value = x["path"]
-    if !(path_value isa String)
-        error(lazy"Invalid `path` value for module \"$module_name\". Must be a string, got $(typeof(path_value))")
+    path_value isa String ||
+        error(lazy"Invalid `path` value in analysis_override for `$path_value`. Must be a string, got `$(typeof(path_value))`")
+
+    path_glob = try
+        Glob.FilenameMatch(path_value, "dp")
+    catch e
+        error(lazy"Invalid glob pattern in analysis_override for \"$path_value\": $(sprint(showerror, e))")
     end
-    path_glob = Glob.FilenameMatch(path_value, "dp")
-    return ModuleOverride(module_name, path_glob)
+
+    module_name = get(x, "module_name", nothing)
+    if module_name !== nothing && !(module_name isa String)
+        error(lazy"Invalid `module_name` value found in analysis_override for `$path_value`. Must be a string, got `$(typeof(module_name))`")
+    end
+
+    return AnalysisOverride(path_glob, module_name)
 end
 
 # Cache lookup
@@ -36,7 +38,8 @@ function collect_search_uris(server::Server, uri::URI)
         end
     elseif analysis_info isa OutOfScope && @isdefined(Revise)
         # TODO: This implementation should be revisited when Revise is integrated into full-analysis
-        pkgid = Base.PkgId(analysis_info.module_context)
+        out_of_scope = analysis_info
+        pkgid = Base.PkgId(something(out_of_scope.module_context, Main))
         if haskey(Revise.pkgdatas, pkgid)
             pkgdata = Revise.pkgdatas[pkgid]
             for file in Revise.srcfiles(pkgdata)
@@ -49,11 +52,13 @@ function collect_search_uris(server::Server, uri::URI)
 end
 
 function lookup_out_of_scope!(state::ServerState, uri::URI)
-    env = find_analysis_env_path(state, uri)
-    if env isa OutOfScope
-        outofscope = env
+    result = find_analysis_env_path(state, uri)
+    if result isa OutOfScope
+        outofscope = result
         cache_out_of_scope!(state.analysis_manager, uri, outofscope)
         return outofscope
+    elseif result isa KnownModule
+        return OutOfScope(result.mod)
     end
     return nothing
 end
@@ -362,11 +367,12 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
         begin_full_analysis_progress(server, cancellable_token, request.entry, prev_result === nothing)
     end
 
-    local failed::Bool = false
     s = time()
     JETLS_DEV_MODE && @info "Executing analysis for:" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
+    local cleanup::Bool = local failed::Bool = false
     analysis_result = try
-        execute_analysis_request(server, request)
+        result, cleanup = execute_analysis_request(server, request)
+        result
     catch err
         @error "Error in `execute_analysis_request` for " request
         Base.display_error(stderr, err, catch_backtrace())
@@ -375,7 +381,7 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
         if cancellable_token !== nothing
             end_full_analysis_progress(server, cancellable_token)
         end
-        if prev_result !== nothing
+        if cleanup && prev_result !== nothing
             cleanup_prev_methods(prev_result)
         end
         # HACK This is a terrible hack to reduce Pkg.jl's memory footprint:
@@ -496,31 +502,31 @@ end
 function execute_analysis_request(server::Server, request::AnalysisRequest)
     entry = request.entry
 
+    if entry isa NewAnalysisEntry
+        return analyze_package_with_revise(server, request), false
+    end
+
     if entry isa ScriptAnalysisEntry
         result = analyze_parsed_if_exist(server, request)
-
     elseif entry isa ScriptInEnvAnalysisEntry
         result = activate_with_early_release(entry.env_path) do activation_done::Base.Event
             analyze_parsed_if_exist(server, request; activation_done)
         end
-
     elseif entry isa PackageSourceAnalysisEntry
         result = activate_with_early_release(entry.env_path) do activation_done::Base.Event
             analyze_parsed_if_exist(server, request, entry.pkgid; activation_done)
         end
-
     elseif entry isa PackageTestAnalysisEntry
         result = activate_with_early_release(entry.env_path) do activation_done::Base.Event
             analyze_parsed_if_exist(server, request; activation_done)
         end
-
     else error("Unsupported analysis entry $entry") end
 
     ret = new_analysis_result(request, result)
 
     # TODO Request fallback analysis in cases this script was not analyzed by the analysis entry
     # request.uri ∉ analyzed_file_uris(ret)
-    return ret
+    return ret, true
 end
 
 function begin_full_analysis_progress(
@@ -586,6 +592,201 @@ function new_analysis_result(request::AnalysisRequest, result)
     return AnalysisResult(entry, uri2diagnostics, analyzer, analyzed_file_infos, actual2virtual)
 end
 
+# Revise-based package analysis
+# =============================
+
+struct SigAnalysisResult
+    reports::Vector{JET.InferenceErrorReport}
+    codeinst::CC.CodeInstance
+end
+
+if JETLS_DEV_MODE
+# Revise is currently only loaded in JETLS_DEV_MODE
+struct SigWorkItem
+    siginfos::Vector{Revise.SigInfo}
+    index::Int
+end
+end
+
+mutable struct ReviseAnalysisProgress
+    const reports::Vector{JET.InferenceErrorReport}
+    const reports_lock::ReentrantLock
+    @atomic done::Int
+    @atomic analyzed::Int
+    @atomic cached::Int
+    const interval::Int
+    @atomic next_interval::Int
+    function ReviseAnalysisProgress(n_sigs::Int)
+        interval = max(n_sigs ÷ 25, 1)
+        new(JET.InferenceErrorReport[], ReentrantLock(), 0, 0, 0, interval, interval)
+    end
+end
+
+function analyze_package_with_revise(server::Server, request::AnalysisRequest)
+    entry = request.entry::NewAnalysisEntry
+    pkgid = entry.pkgid
+    haskey(Revise.pkgdatas, pkgid) || Revise.watch_package(pkgid)
+    haskey(Revise.pkgdatas, pkgid) || error(lazy"Package $(pkgid.name) is not analyzable by Revise")
+
+    # Package should already be loaded during instantiation
+    pkgdata = Revise.pkgdatas[pkgid]
+    pkgmod = @something(
+        Base.get(Base.loaded_modules, pkgid, nothing),
+        error(lazy"Package $(pkgid.name) is not loaded"))
+
+    # If Revise hasn't instantiated signatures yet, populate that cache here
+    for file in Revise.srcfiles(pkgdata)
+        # fi = try
+        #     Revise.maybe_parse_from_cache!(pkgdata, file)
+        # catch
+        #     # Fallback: read source directly from file (e.g., for newly created packages)
+        #     # See https://github.com/JuliaLang/julia/issues/42404
+        #     fi = Revise.fileinfo(pkgdata, file)
+        #     if isempty(fi.modexsigs) && (!isempty(fi.cachefile) || !isempty(fi.cacheexprs))
+        #         filep = joinpath(Revise.basedir(pkgdata), file)
+        #         src = read(filep, String)
+        #         topmod = first(keys(fi.modexsigs))
+        #         if Revise.parse_source!(fi.modexsigs, src, filep, topmod) === nothing
+        #             @error "failed to parse source text for $filep"
+        #         end
+        #         Revise.add_modexs!(fi, fi.cacheexprs)
+        #         empty!(fi.cacheexprs)
+        #         fi.parsed[] = true
+        #     end
+        #     fi
+        # end
+        fi = Revise.maybe_parse_from_cache!(pkgdata, file)
+        Revise.maybe_extract_sigs!(fi)
+    end
+
+    analyzer = LSAnalyzer(entry; report_target_modules=(pkgmod,)) # TODO Revisit (submodules)
+    # Revise's signature population may execute code, which can increment the world age,
+    # so we update to the latest world age here
+    newstate = JET.AnalyzerState(JET.AnalyzerState(analyzer); world = Base.get_world_counter())
+    analyzer = JET.AbstractAnalyzer(analyzer, newstate)
+
+    workitems = SigWorkItem[]
+    for fi in pkgdata.fileinfos, (_, exsigs) in fi.modexsigs, (_, siginfos) in exsigs
+        isnothing(siginfos) && continue
+        for (i, _) in enumerate(siginfos)
+            push!(workitems, SigWorkItem(siginfos, i))
+        end
+    end
+
+    n_sigs = length(workitems)
+    progress = ReviseAnalysisProgress(n_sigs)
+    inf_world = CC.get_inference_world(analyzer)
+    cancellable_token = request.cancellable_token
+
+    if cancellable_token !== nothing
+        if is_cancelled(cancellable_token.cancel_flag)
+            @goto completed
+        end
+        send_progress(server, cancellable_token.token,
+            WorkDoneProgressReport(;
+                cancellable = true,
+                message = "0 / $n_sigs [signature analysis]",
+                percentage = 0))
+        yield_to_endpoint()
+    end
+
+    tasks = map(workitems) do workitem
+        (; siginfos, index) = workitem
+        siginfo = siginfos[index]
+        Threads.@spawn :default try
+            if cancellable_token !== nothing && is_cancelled(cancellable_token.cancel_flag)
+                return
+            end
+            ext = Revise.get_extended_data(siginfo, :JETLS)
+            local reports::Vector{JET.InferenceErrorReport}
+            if ext !== nothing && ext.data isa SigAnalysisResult
+                prev_result = ext.data::SigAnalysisResult
+                if (CC.cache_owner(analyzer) === prev_result.codeinst.owner &&
+                    prev_result.codeinst.max_world ≥ inf_world ≥ prev_result.codeinst.min_world)
+                    @atomic progress.cached += 1
+                    reports = prev_result.reports
+                    @goto gotreports
+                end
+            end
+            # Create a new analyzer with fresh local caches (`inf_cache` and `analysis_results`)
+            # to avoid data races between concurrent signature analysis tasks
+            task_analyzer = JET.AbstractAnalyzer(analyzer,
+                JET.AnalyzerState(JET.AnalyzerState(analyzer), #=refresh_local_cache=#true))
+            match = Base._which(siginfo.sig;
+                method_table = CC.method_table(task_analyzer),
+                world = inf_world,
+                raise = false)
+            if match !== nothing
+                task_analyzer, result = JET.analyze_method_signature!(task_analyzer,
+                    match.method, match.spec_types, match.sparams)
+                @atomic progress.analyzed += 1
+                reports = JET.get_reports(task_analyzer, result)
+                # Cache the result if CodeInstance is available
+                if isdefined(result, :ci)
+                    siginfos[index] = Revise.replace_extended_data(siginfo, :JETLS, SigAnalysisResult(reports, result.ci))
+                end
+            else
+                JETLS_DEV_MODE && @warn "Couldn't find a single matching method for the signature" siginfo.sig
+                reports = JET.InferenceErrorReport[]
+            end
+            @label gotreports
+            isempty(reports) || @lock progress.reports_lock append!(progress.reports, reports)
+        catch err
+            @error "Error analyzing method signature" siginfo.sig
+            Base.showerror(stderr, err, catch_backtrace())
+        finally
+            done = (@atomic progress.done += 1)
+            if cancellable_token !== nothing
+                current_next = @atomic progress.next_interval
+                if done >= current_next
+                    @atomicreplace progress.next_interval current_next => current_next + progress.interval
+                    percentage = min(round(Int, (done / n_sigs) * 100), 100)
+                    send_progress(server, cancellable_token.token,
+                        WorkDoneProgressReport(;
+                            cancellable = true,
+                            message = "$done / $n_sigs [signature analysis]",
+                            percentage))
+                end
+            end
+        end
+    end
+
+    waitall(tasks)
+
+    @label completed
+
+    analyzed_file_infos = Dict{URI,JET.AnalyzedFileInfo}()
+    basedir = Revise.basedir(pkgdata)
+    for file in Revise.srcfiles(pkgdata)
+        filepath = joinpath(basedir, file)
+        uri = filepath2uri(filepath)
+        # Build module range info from Revise's tracked modules
+        # For simplicity, associate the entire file with the package module
+        module_range_infos = Pair{UnitRange{Int},Module}[(1:typemax(Int)) => pkgmod]
+        analyzed_file_infos[uri] = JET.AnalyzedFileInfo(module_range_infos)
+    end
+    uri2diagnostics = URI2Diagnostics(uri => Diagnostic[] for uri in keys(analyzed_file_infos))
+    postprocessor = JET.PostProcessor()
+
+    reports = collect_displayable_reports(progress.reports, keys(uri2diagnostics))
+    reports = unique!(JET.aggregation_policy(analyzer), reports)
+    uri2diagnostics = jet_inference_error_reports_to_diagnostics!(uri2diagnostics, postprocessor, reports)
+    actual2virtual = pkgmod => pkgmod # No virtual module for Revise-based analysis
+
+    return AnalysisResult(entry, uri2diagnostics, update_analyzer_world(analyzer), analyzed_file_infos, actual2virtual)
+end
+
+function collect_displayable_reports(
+        reports::Vector{JET.InferenceErrorReport}, target_uris
+    )
+    filter(reports) do report::JET.InferenceErrorReport
+        stk = inference_error_report_stack(report)
+        topframe = report.vst[first(stk)]
+        uri = @something jet_frame_to_uri(topframe) return false
+        return uri in target_uris
+    end
+end
+
 # Analysis entry lookup
 # =====================
 
@@ -629,7 +830,7 @@ struct PackageSourceAnalysisEntry <: AnalysisEntry
     pkgid::Base.PkgId
 end
 entryuri_impl(entry::PackageSourceAnalysisEntry) = entry.pkgfileuri
-progress_title_impl(entry::PackageSourceAnalysisEntry) = entry.pkgid.name * ".jl" * " [package]"
+progress_title_impl(entry::PackageSourceAnalysisEntry) = entry.pkgid.name * ".jl [package]"
 let jetconfigs = Dict{Symbol,Any}(
         :toplevel_logger => nothing,
         :analyze_from_definitions => true,
@@ -643,7 +844,17 @@ struct PackageTestAnalysisEntry <: AnalysisEntry
     pkgid::Base.PkgId
 end
 entryuri_impl(entry::PackageTestAnalysisEntry) = entry.runtestsuri
-progress_title_impl(entry::PackageTestAnalysisEntry) = entry.pkgid.name * ".jl" * " [package test]"
+progress_title_impl(entry::PackageTestAnalysisEntry) = entry.pkgid.name * ".jl [package test]"
+
+struct NewAnalysisEntry <: AnalysisEntry
+    pkgid::Base.PkgId
+end
+entryuri_impl(::NewAnalysisEntry) = error("")
+progress_title_impl(entry::NewAnalysisEntry) = entry.pkgid.name * ".jl [new analysis]"
+
+struct KnownModule
+    mod::Module
+end
 
 """
     lookup_analysis_entry(server, uri) -> AnalysisEntry | InstantiationRequest | OutOfScope
@@ -656,15 +867,16 @@ Phase 1 of analysis entry lookup. Returns immediately without blocking.
 """
 function lookup_analysis_entry(server::Server, uri::URI)
     state = server.state
-    maybe_env_path = find_analysis_env_path(state, uri)
-    if maybe_env_path isa OutOfScope
-        return maybe_env_path
+    result = find_analysis_env_path(state, uri)
+    if result isa OutOfScope
+        return result
+    elseif result isa KnownModule
+        return NewAnalysisEntry(Base.PkgId(result.mod))
     end
 
     root_path = isdefined(state, :root_path) ? state.root_path : nothing
     notebook = is_notebook_uri(state, uri)
-
-    env_path = maybe_env_path
+    env_path = result
     if isnothing(env_path)
         return ScriptAnalysisEntry(uri, notebook)
     elseif uri.scheme == "untitled" || notebook

@@ -1,0 +1,67 @@
+name = "Revise"
+uuid = "d54aa4ff-5f0d-5e64-8d83-7613e0a93f9b"
+version = "3.12.3"
+
+[deps]
+LibGit2 = "76f85450-5226-5b5a-8eaa-529ad045b433"
+OrderedCollections = "64c61135-0f01-5c34-beb9-07fc02084e85"
+REPL = "3fa0cd96-eef1-5676-8a61-b3b8758bbffb"
+LoweredCodeUtils = "01ede001-ea10-5720-9c31-2e53839707a9"
+FileWatching = "7b1f6079-737a-58dc-b8bc-7a2ca5c1b5ee"
+JuliaInterpreter = "87c368a4-672f-5de1-91ff-3cc7fc652fab"
+UUIDs = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
+Requires = "ae029012-a4dd-5104-9daa-d747884805df"
+Unicode = "4ec0a83e-493e-50e2-b9ac-8f72acf5a8f5"
+CodeTracking = "29b28462-3302-58bb-873a-3f58224955cc"
+
+[workspace]
+projects = ["docs", "test"]
+
+[extras]
+Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+Distributed = "8ba89e20-285c-5b6f-9357-94700520ee1b"
+IndirectArrays = "9b13fd28-a010-5f03-acff-a1bbcff69959"
+MappedArrays = "dbb5928d-eab1-5f90-85c2-b9b0edb7c900"
+UnsafeArrays = "c4a57d5a-5b31-53a6-b365-19f8c011fbd6"
+Example = "7876af07-990d-54b4-ab0e-23690620f79a"
+RoundingIntegers = "d5f540fe-1c90-5db3-b776-2e2f362d9394"
+MacroTools = "1914dd2f-81c6-5fcd-8719-6d5c9610ff09"
+CatIndices = "aafaddc9-749c-510e-ac4f-586e18779b91"
+InteractiveUtils = "b77e0a4c-d291-57a0-90e8-8db25a27a240"
+EponymTuples = "97e2ac4a-e175-5f49-beb1-4d6866a6cdc3"
+EndpointRanges = "340492b5-2a47-5f55-813d-aca7ddf97656"
+Requires = "ae029012-a4dd-5104-9daa-d747884805df"
+
+[compat]
+julia = "1.10"
+OrderedCollections = "1"
+LoweredCodeUtils = "3.5"
+JuliaInterpreter = "0.10.8"
+Requires = "~1.0, ^1.1.1"
+Distributed = "1"
+CodeTracking = "3"
+
+[targets]
+test = ["CatIndices", "Distributed", "EndpointRanges", "EponymTuples", "Example", "IndirectArrays", "InteractiveUtils", "MacroTools", "MappedArrays", "Pkg", "Random", "Requires", "RoundingIntegers", "Test", "UnsafeArrays"]
+
+[sources.OrderedCollections]
+subdir = "vendor/OrderedCollections"
+rev = "89644bc09f58bd6f8eb5ab6d9e922da30a764512"
+url = "https://github.com/aviatesk/JETLS.jl"
+
+[sources.LoweredCodeUtils]
+subdir = "vendor/LoweredCodeUtils"
+rev = "89644bc09f58bd6f8eb5ab6d9e922da30a764512"
+url = "https://github.com/aviatesk/JETLS.jl"
+
+[sources.JuliaInterpreter]
+subdir = "vendor/JuliaInterpreter"
+rev = "89644bc09f58bd6f8eb5ab6d9e922da30a764512"
+url = "https://github.com/aviatesk/JETLS.jl"
+
+[sources.CodeTracking]
+subdir = "vendor/CodeTracking"
+rev = "89644bc09f58bd6f8eb5ab6d9e922da30a764512"
+url = "https://github.com/aviatesk/JETLS.jl"

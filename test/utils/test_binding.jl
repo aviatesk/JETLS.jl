@@ -5,7 +5,7 @@ using JETLS: JETLS
 using JETLS.LSP
 using JETLS.LSP.URIs2
 
-include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
+include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
 
 global lowering_module::Module = Module()
 
@@ -805,6 +805,33 @@ ismacro_callback(ismacro) = @test ismacro[]
                 occurrence.kind === :use &&
                 JS.sourcetext(occurrence.tree) == "xxx" &&
                 JS.source_line(occurrence.tree) == 2
+            end
+        end
+    end
+
+    @testset "keyword arguments" begin
+        with_binding_occurrences("func(a; kw) = kw"; ismacro_callback = nomacro_callback) do binding_occurrences
+            @test !any(binding_occurrences) do (binding, occurrences)
+                binding.name == "a" && binding.kind === :argument && any(o->o.kind===:use, occurrences)
+            end
+            @test any(binding_occurrences) do (binding, occurrences)
+                binding.name == "kw" && binding.kind === :argument && any(o->o.kind===:use, occurrences)
+            end
+        end
+        with_binding_occurrences("func(a; kw) = a"; ismacro_callback = nomacro_callback) do binding_occurrences
+            @test any(binding_occurrences) do (binding, occurrences)
+                binding.name == "a" && binding.kind === :argument && any(o->o.kind===:use, occurrences)
+            end
+            @test !any(binding_occurrences) do (binding, occurrences)
+                binding.name == "kw" && binding.kind === :argument && any(o->o.kind===:use, occurrences)
+            end
+        end
+        with_binding_occurrences("func(a; kw) = nothing"; ismacro_callback = nomacro_callback) do binding_occurrences
+            @test !any(binding_occurrences) do (binding, occurrences)
+                binding.name == "a" && binding.kind === :argument && any(o->o.kind===:use, occurrences)
+            end
+            @test !any(binding_occurrences) do (binding, occurrences)
+                binding.name == "kw" && binding.kind === :argument && any(o->o.kind===:use, occurrences)
             end
         end
     end

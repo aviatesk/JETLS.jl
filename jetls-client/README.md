@@ -20,7 +20,7 @@ diagnostic, macro-aware go-to definition and such.
 ## Requirements
 
 - [VSCode](https://code.visualstudio.com/) v1.96.0 or higher
-- [Julia `v"1.12"`](https://julialang.org/downloads) or higher
+- [Julia `v"1.12"`](https://julialang.org/downloads) or higher (1.12.2+ recommended)
 
 ## Installation
 

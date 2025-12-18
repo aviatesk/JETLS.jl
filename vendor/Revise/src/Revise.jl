@@ -1,0 +1,46 @@
+"""
+Revise.jl tracks source code changes and incorporates the changes to a running Julia session.
+
+Revise.jl works behind-the-scenes. To track a package, e.g. `Example`:
+```julia-repl
+(@v1.6) pkg> dev Example        # make a development copy of the package
+[...pkg output omitted...]
+
+julia> using Revise             # this must come before the package under development
+
+julia> using Example
+
+[...develop the package...]     # Revise.jl will automatically update package functionality to match code changes
+
+```
+
+Functions in Revise.jl that may come handy in special circumstances:
+- `Revise.track`: track updates to `Base` Julia itself or `Core.Compiler`
+- `includet`: load a file and track future changes. Intended for small, quick works
+- `entr`: call an additional function whenever code updates
+- `revise`: evaluate any changes in `Revise.revision_queue` or every definition in a module
+- `Revise.retry`: perform previously-failed revisions. Useful in cases of order-dependent errors
+- `Revise.errors`: report the errors represented in `Revise.queue_errors`
+"""
+module Revise
+
+# We use a code structure where all `using` and `import`
+# statements in the package that load anything other than
+# a Julia base or stdlib package are located in this file here.
+# Nothing else should appear in this file here, apart from
+# the `include("packagedef.jl")` statement, which loads what
+# we would normally consider the bulk of the package code.
+# This somewhat unusual structure is in place to support
+# the VS Code extension integration.
+
+using OrderedCollections, CodeTracking, JuliaInterpreter, LoweredCodeUtils
+
+using CodeTracking: PkgFiles, basedir, srcfiles, basepath, MethodInfoKey
+using JuliaInterpreter: Compiled, Frame, Interpreter, LineTypes, RecursiveInterpreter
+using JuliaInterpreter: codelocs, get_return, is_doc_expr, isassign, is_quotenode_egal,
+                        linetable, lookup, moduleof, pc_expr, step_expr!
+using LoweredCodeUtils: next_or_nothing!, callee_matches
+
+include("packagedef.jl")
+
+end # module

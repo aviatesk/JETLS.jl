@@ -1,4 +1,3 @@
-
 const TESTRUNNER_RUN_TITLE = "▶ Run"
 const TESTRUNNER_RERUN_TITLE = "▶ Rerun"
 const TESTRUNNER_OPEN_LOGS_TITLE = "☰ Open logs"
@@ -562,7 +561,7 @@ function _testrunner_run_testset(
             end
         end
     end
-    notify_diagnostics!(server)
+    notify_diagnostics!(server; ensure_cleared=uri)
 
     if supports(server, :workspace, :codeLens, :refreshSupport)
         request_codelens_refresh!(server)
@@ -657,7 +656,7 @@ function _testrunner_run_testcase(
     notify_temporary_diagnostics!(server, uri2diagnostics)
     Threads.@spawn begin
         sleep(10)
-        notify_diagnostics!(server) # refresh diagnostics after 5 sec
+        notify_diagnostics!(server; ensure_cleared=uri) # refresh diagnostics after 5 sec
     end
 
     extra_message = isempty(uri2diagnostics) ? nothing : """\n
@@ -844,7 +843,7 @@ function try_clear_testrunner_result!(server::Server, uri::URI, idx::Int, tsn::S
     updated || return nothing
 
     if clear_extra_diagnostics!(server, TestsetDiagnosticsKey(uri, tsn, idx))
-        notify_diagnostics!(server)
+        notify_diagnostics!(server; ensure_cleared=uri)
     end
 
     # Also refresh code lens if supported

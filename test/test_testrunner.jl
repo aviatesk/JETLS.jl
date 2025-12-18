@@ -6,7 +6,7 @@ using JETLS: JS, JL
 using JETLS.LSP
 using JETLS.LSP.URIs2
 
-include("jsjl_utils.jl")
+include("jsjl-utils.jl")
 
 function mock_testrunner_result(; n_passed=1, n_failed=0, n_errored=0, n_broken=0, duration=1.0)
     stats = JETLS.TestRunnerStats(; n_passed, n_failed, n_errored, n_broken, duration)

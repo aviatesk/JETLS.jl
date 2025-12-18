@@ -130,10 +130,10 @@ client cannot execute the normal LSP shutdown sequence.
 
 ## [Initialization options](@id init-options)
 
-JETLS accepts static initialization options via the LSP `initializationOptions`
-field in the `initialize` request. Unlike [dynamic configuration](@ref config/schema)
-that can be changed at runtime, these options are set once at server startup and
-require a server restart to take effect.
+JETLS accepts static initialization options that are set once at server startup
+and require a server restart to take effect. Unlike
+[dynamic configuration](@ref config/schema) that can be changed at runtime,
+these options configure fundamental server behavior.
 
 ### [Schema](@id init-options/schema)
 
@@ -169,9 +169,37 @@ another can begin code loading concurrently.
     parallelization is independent of `n_analysis_workers` and provides
     significant speedups (e.g., ~4x faster with 4 threads for large packages).
 
-### [Client configuration](@id init-options/client-config)
+### [How to configure initialization options](@id init-options/configure)
 
-#### [VSCode (`jetls-client` extension)](@id init-options/client-config/vscode)
+Initialization options can be configured via:
+- [Editor-specific settings](@ref init-options/client-config)
+- The `[initialization_options]` section in [`.JETLSConfig.toml`](@ref init-options/file-config)
+
+When both sources are present, file-based configuration takes precedence
+(file > client > default), as like [JETLS configuration priority](@ref config/priority).
+
+#### [File-based configuration](@id init-options/file-config)
+
+Configure initialization options in [`.JETLSConfig.toml`](@ref config/file-based-config)
+at your project root:
+
+```toml
+[initialization_options]
+n_analysis_workers = 2
+```
+
+This method is client-agnostic and can be easily committed to version control.
+
+#### [Client configuration](@id init-options/client-config)
+
+The method and format for specifying initialization options varies by editor.
+Consult your editor's documentation on how to configure LSP initialization
+options. Below are examples for VSCode and Zed.
+
+If your editor does not support specifying initialization options, use the
+[file-based configuration](@ref init-options/file-config) instead.
+
+##### [VSCode (`jetls-client` extension)](@id init-options/client-config/vscode)
 
 Configure initialization options in VSCode's `settings.json`:
 
@@ -183,7 +211,7 @@ Configure initialization options in VSCode's `settings.json`:
 }
 ```
 
-#### [Zed (`aviatesk/zed-julia` extension)](@id init-options/client-config/zed)
+##### [Zed (`aviatesk/zed-julia` extension)](@id init-options/client-config/zed)
 
 Configure initialization options in Zed's `settings.json`:
 

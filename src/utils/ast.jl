@@ -144,11 +144,6 @@ end
 
 Get a SyntaxList of `SyntaxTree`s containing certain bytes.
 
-    byte_ancestors([flt,] sn::JS.SyntaxNode, rng::UnitRange{Int})
-    byte_ancestors([flt,] sn::JS.SyntaxNode, byte::Int)
-
-Get a list of `SyntaxNode`s containing certain bytes.
-
 Output should be topologically sorted, children first.  If we know that parent
 ranges contain all child ranges, and that siblings don't have overlapping ranges
 (this is not true after lowering, but appears to be true after parsing), each
@@ -157,8 +152,6 @@ tree in the result will be a child of the next.
 An optional filter function `flt` can be provided to include only nodes
 that satisfy the predicate.
 """
-function byte_ancestors end
-
 byte_ancestors(args...) = byte_ancestors(Returns(true), args...)
 
 function byte_ancestors(flt, st::JL.SyntaxTree, rng::UnitRange{<:Integer})
@@ -178,22 +171,6 @@ function byte_ancestors(flt, st::JL.SyntaxTree, rng::UnitRange{<:Integer})
     return reverse!(deduplicate_syntaxlist(sl))
 end
 byte_ancestors(flt, st::JL.SyntaxTree, byte::Integer) = byte_ancestors(flt, st, byte:byte)
-
-function byte_ancestors(flt, sn::JS.SyntaxNode, rng::UnitRange{<:Integer})
-    out = JS.SyntaxNode[]
-    if rng ⊆ JS.byte_range(sn) && flt(sn)
-        push!(out, sn)
-    else
-        return out
-    end
-    traverse(sn) do sn′
-        if rng ⊆ JS.byte_range(sn′) && flt(sn′)
-            push!(out, sn′)
-        end
-    end
-    return reverse!(out)
-end
-byte_ancestors(flt, sn::JS.SyntaxNode, byte::Integer) = byte_ancestors(flt, sn, byte:byte)
 
 """
     greatest_local(st0::JL.SyntaxTree, offset::Int) -> st::Union{JL.SyntaxTree, Nothing}
@@ -482,7 +459,7 @@ noparen_macrocall(st0::JL.SyntaxTree) =
     !is_special_macrocall(st0)
 
 """
-    select_target_node(st0::JL.SyntaxTree, offset::Int) -> target::Union{JL.SyntaxTree,Nothing}
+    select_target_identifier(st0::JL.SyntaxTree, offset::Int) -> target::Union{JL.SyntaxTree,Nothing}
 
 Determines the node that the user most likely intends to navigate to.
 Returns `nothing` if no suitable one is found.
@@ -495,45 +472,63 @@ refs:
 - https://github.com/rust-lang/rust-analyzer/blob/6acff6c1f8306a0a1d29be8fd1ffa63cff1ad598/crates/ide/src/goto_definition.rs#L47-L62
 - https://github.com/aviatesk/JETLS.jl/pull/61#discussion_r2134707773
 """
-function select_target_node(st0::JL.SyntaxTree, offset::Int)
+function select_target_identifier(st0::JL.SyntaxTree, offset::Int)
+    filter = function (bas)
+        JS.is_identifier(first(bas))
+    end
+    selector = function (bas)
+        target = first(bas)
+        for i = 2:length(bas)
+            basᵢ = bas[i]
+            if (JS.kind(basᵢ) === JS.K"." &&
+                basᵢ[1] !== target) # e.g. don't allow jumps to `tmeet` from `Base.Compi│ler.tmeet`
+            target = basᵢ
+            else
+                return target
+            end
+        end
+        # Unreachable: we always have toplevel node
+        return nothing
+    end
+    return select_target_node(filter, selector, st0, offset)
+end
+
+function select_target_string(st0::JL.SyntaxTree, offset::Int)
+    filter = function (bas)
+        JS.kind(first(bas)) === JS.K"String"
+    end
+    selector = function (bas)
+        return first(bas)
+    end
+    return select_target_node(filter, selector, st0, offset)
+end
+
+function select_target_node(filter, selector, st0::JL.SyntaxTree, offset::Int)
     bas = byte_ancestors(st0, offset)
 
     isempty(bas) && @goto minus1
-    target = first(bas)
-    if !JS.is_identifier(target)
+    if !filter(bas)
         @label minus1
         offset > 0 || return nothing
         # Support cases like `var│`, `func│(5)`
         bas = byte_ancestors(st0, offset - 1)
         isempty(bas) && return nothing
-        target = first(bas)
-        if !JS.is_identifier(target)
+        if !filter(bas)
             return nothing
         end
     end
 
-    for i = 2:length(bas)
-        basᵢ = bas[i]
-        if (JS.kind(basᵢ) === JS.K"." &&
-            basᵢ[1] !== target) # e.g. don't allow jumps to `tmeet` from `Base.Compi│ler.tmeet`
-            target = basᵢ
-        else
-            return target
-        end
-    end
-
-    # Unreachable: we always have toplevel node
-    return nothing
+    return selector(bas)
 end
 
 """
-    select_dotprefix_node(st::JL.SyntaxTree, offset::Int) -> dotprefix::Union{JL.SyntaxTree,Nothing}
+    select_dotprefix_identifier(st::JL.SyntaxTree, offset::Int) -> dotprefix::Union{JL.SyntaxTree,Nothing}
 
 If the code at `offset` position is dot accessor code, get the code being dot accessed.
 For example, `Base.show_│` returns the `SyntaxTree` of `Base`.
 If it's not dot accessor code, return `nothing`.
 """
-function select_dotprefix_node(st::JL.SyntaxTree, offset::Int)
+function select_dotprefix_identifier(st::JL.SyntaxTree, offset::Int)
     bas = byte_ancestors(st, offset-1)
     dotprefix = nothing
     for i = 1:length(bas)

@@ -67,6 +67,8 @@ Here is a summary table of the diagnostics explained in this section:
 | [`toplevel/error`](@ref diagnostic/toplevel/error)                                 | `Error`               | Errors during code loading (missing deps, type failures, etc.) |
 | [`inference/undef-global-var`](@ref diagnostic/inference/undef-global-var)         | `Warning`             | References to undefined global variables                       |
 | [`inference/undef-local-var`](@ref diagnostic/inference/undef-local-var)           | `Information/Warning` | References to undefined local variables                        |
+| [`inference/field-error`](@ref diagnostic/inference/field-error)                   | `Warning`             | Access to non-existent struct fields                           |
+| [`inference/bounds-error`](@ref diagnostic/inference/bounds-error)                 | `Warning`             | Out-of-bounds field access by index                            |
 | [`testrunner/test-failure`](@ref diagnostic/testrunner/test-failure)               | `Error`               | Test failures from TestRunner integration                      |
 
 ### [Syntax diagnostic (`syntax/*`)](@id diagnostic/syntax)
@@ -238,6 +240,45 @@ function undef_local_var()
         x = 1
     end
     return x  # local variable `x` may be undefined (JETLS inference/undef-local-var)
+end
+```
+
+#### [Field error (`inference/field-error`)](@id diagnostic/inference/field-error)
+
+**Default severity:** `Warning`
+
+Access to non-existent struct fields. This diagnostic is reported when code
+attempts to access a field that doesn't exist on a struct type.
+
+Example:
+
+```julia
+struct MyStruct
+    property::Int
+end
+function field_error()
+    x = MyStruct(42)
+    return x.propert  # FieldError: type MyStruct has no field `propert`, available fields: `property` (JETLS inference/field-error)
+end
+```
+
+#### [Bounds error (`inference/bounds-error`)](@id diagnostic/inference/bounds-error)
+
+**Default severity:** `Warning`
+
+Out-of-bounds field access by index. This diagnostic is reported when code
+attempts to access a struct field using an integer index that is out of bounds,
+such as `getfield(x, i)` or tuple indexing `tpl[i]`.
+
+!!! note
+    This diagnostic is not reported for arrays, since the compiler doesn't
+    track array shape information.
+
+Example:
+
+```julia
+function bounds_error(tpl::Tuple{Int})
+    return tpl[2]  # BoundsError: attempt to access Tuple{Int64} at index [2] (JETLS inference/bounds-error)
 end
 ```
 

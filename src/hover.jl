@@ -80,7 +80,22 @@ function handle_HoverRequest(
         id = msg.id,
         result = local_hover))
 
-    node = @something select_target_node(st0_top, offset) begin
+    node = @something select_target_identifier(st0_top, offset) begin
+        tok = @something token_at_offset(fi, pos) begin
+            return send(server, HoverResponse(; id = msg.id, result = null))
+        end
+        byterng = JS.byte_range(tok)
+        tokstr = String(fi.parsed_stream.textbuf[byterng])
+        if haskey(KEYWORD_DOCS, tokstr)
+            contents = KEYWORD_DOCS[tokstr]
+            range = Range(;
+                start = offset_to_xy(fi, first(byterng)),
+                var"end" = offset_to_xy(fi, last(byterng)+1))
+            range, _ = unadjust_range(state, uri, range)
+            return send(server, HoverResponse(;
+                id = msg.id,
+                result = Hover(; contents, range)))
+        end
         return send(server, HoverResponse(; id = msg.id, result = null))
     end
 

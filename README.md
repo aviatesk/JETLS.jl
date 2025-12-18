@@ -20,6 +20,11 @@ This repository manages JETLS.jl, a Julia package that implements a language
 server, and [`jetls-client`](https://marketplace.visualstudio.com/items?itemName=aviatesk.jetls-client),
 a sample VSCode extension that serves as a language client for testing JETLS.
 
+> [!warning]
+> **Experimental**: JETLS is under active development.
+> Not production-ready; APIs and behavior may change.
+> Stability and performance are limited. Expect bugs and rough edges.
+
 ## Documentation
 
 For end-user documentation including installation instructions, configuration
@@ -80,20 +85,15 @@ the list itself is subject to change.
   - [x] Local binding
   - [x] Global binding
   - [ ] Field name / Dot-accessed bindings
-- Find references
+- Find references / Rename
   - [x] Local binding
   - Global reference
     - [x] Minimum support
     - [ ] Cross-analysis-unit reference detection
     - [ ] Aliased reference support
   - [ ] Field name
-- Rename
-  - [x] Local binding
-  - Global binding
-    - [x] Minimum support
-    - [ ] Cross-analysis-unit rename
-    - [ ] Aliased rename support
-  - [ ] Field name
+  - [x] File rename support (Julia-side rename)
+  - [ ] File rename support (external rename)
 - [ ] Workspace symbol
 - TestRunner.jl integration
   - [x] Code lens for running individual `@testset`s

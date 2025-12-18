@@ -50,13 +50,23 @@ end
 # `JET.ConcreteInterpreter` interface
 JET.InterpretationState(interp::LSInterpreter) = interp.state
 function JET.ConcreteInterpreter(interp::LSInterpreter, state::JET.InterpretationState)
-    # add `state` to `interp`, and update `interp.analyzer.cache`
-    initialize_cache!(interp.analyzer, state.res.analyzed_files)
     return LSInterpreter(
         interp.server, interp.request, interp.analyzer, interp.counter,
         interp.activation_done, state)
 end
 JET.ToplevelAbstractAnalyzer(interp::LSInterpreter) = interp.analyzer
+function JET.ToplevelAbstractAnalyzer(
+        interp::LSInterpreter, concretized::BitVector;
+        refresh_local_cache::Bool = true,    # This option is used by JET v0.10. TODO We can remove this once we update JET to v0.11.
+        reset_report_target_modules::Bool = true, # LSInterpreter specific option
+    )
+    if reset_report_target_modules
+        reset_report_target_modules!(interp.analyzer, JET.InterpretationState(interp).res.analyzed_files)
+    end
+    return @invoke JET.ToplevelAbstractAnalyzer(
+        interp::JET.ConcreteInterpreter, concretized::BitVector;
+        refresh_local_cache)
+end
 
 # overloads
 # =========
@@ -95,8 +105,10 @@ function JET.analyze_from_definitions!(interp::LSInterpreter, config::JET.Toplev
     # This makes module context information available immediately for LS features
     cache_intermediate_analysis_result!(interp)
 
-    entrypoint = config.analyze_from_definitions
     res = JET.InterpretationState(interp).res
+    reset_report_target_modules!(interp.analyzer, res.analyzed_files)
+
+    entrypoint = config.analyze_from_definitions
     n_sigs = length(res.toplevel_signatures)
     n_sigs == 0 && return
     cancellable_token = interp.request.cancellable_token
@@ -123,6 +135,7 @@ function JET.analyze_from_definitions!(interp::LSInterpreter, config::JET.Toplev
             # Create a new analyzer with fresh local caches (`inf_cache` and `analysis_results`)
             # to avoid data races between concurrent signature analysis tasks
             analyzer = JET.ToplevelAbstractAnalyzer(interp, JET.non_toplevel_concretized;
+                reset_report_target_modules = false,
                 refresh_local_cache = true)
             match = Base._which(tt;
                 # NOTE use the latest world counter with `method_table(analyzer)` unwrapped,

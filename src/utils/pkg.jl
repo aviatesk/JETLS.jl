@@ -7,39 +7,50 @@ function find_loaded_module(module_name::String)
     return nothing
 end
 
+const JULIA_DIR = let
+    p1 = normpath(Sys.BINDIR, "..", "..")
+    p2 = normpath(Sys.BINDIR, Base.DATAROOTDIR, "julia")
+    ispath(normpath(p1, "base")) ? p1 : p2
+end
+
 function find_analysis_env_path(state::ServerState, uri::URI)
     if uri.scheme == "file"
         filepath = uri2filepath(uri)::String
-        # HACK: we should support Base files properly
-        if (issubdir(filepath, normpath(Sys.BUILD_ROOT_PATH, "base")) ||
-            issubdir(filepath, normpath(Sys.BINDIR, "..", "share", "julia", "base")))
-            return OutOfScope(Base)
-        elseif (issubdir(filepath, normpath(Sys.BUILD_ROOT_PATH, "Compiler", "src")) ||
-                issubdir(filepath, normpath(Sys.BINDIR, "..", "share", "julia", "Compiler", "src")))
-            return OutOfScope(CC)
-        end
-        if isdefined(state, :root_path)
-            if !issubdir(dirname(filepath), state.root_path)
-                return OutOfScope()
-            end
-        end
-        module_overrides = state.init_options.module_overrides
-        if module_overrides !== nothing
+        analysis_overrides = state.init_options.analysis_overrides
+        if analysis_overrides !== nothing
             if isdefined(state, :root_path) && startswith(filepath, state.root_path)
                 path_for_glob = relpath(filepath, state.root_path)
             else
                 path_for_glob = filepath
             end
-            for override in module_overrides
+            for override in analysis_overrides
                 if occursin(override.path, path_for_glob)
-                    mod = find_loaded_module(override.module_name)
-                    if mod !== nothing
-                        JETLS_DEV_MODE && @info "Analysis module overridden" module_name=override.module_name path=filepath
-                        return OutOfScope(mod)
+                    module_name = override.module_name
+                    if module_name === nothing
+                        JETLS_DEV_MODE && @info "Analysis for this file is disabled" path=filepath
+                        return OutOfScope()
                     else
-                        @warn "Analysis module override specified but module not loaded" module_name=override.module_name path=filepath
+                        mod = find_loaded_module(override.module_name)
+                        if mod !== nothing
+                            JETLS_DEV_MODE && @info "Analysis module overridden" module_name=override.module_name path=filepath
+                            return KnownModule(mod)
+                        else
+                            @warn "Analysis module override specified but module not found" module_name=override.module_name path=filepath
+                            return OutOfScope()
+                        end
                     end
                 end
+            end
+        end
+        # HACK: we should support Base files properly
+        if issubdir(filepath, joinpath(JULIA_DIR, "base"))
+            return OutOfScope(Base)
+        elseif issubdir(filepath, joinpath(JULIA_DIR, "Compiler", "src"))
+            return OutOfScope(CC)
+        end
+        if isdefined(state, :root_path)
+            if !issubdir(dirname(filepath), state.root_path)
+                return OutOfScope()
             end
         end
         return find_env_path(filepath)
@@ -63,9 +74,9 @@ end
 
 function find_pkg_name(env_path::AbstractString)
     env_toml = try
-        Pkg.TOML.parsefile(env_path)
+        TOML.parsefile(env_path)
     catch err
-        err isa Base.TOML.ParseError || rethrow(err)
+        err isa TOML.ParserError || rethrow(err)
         return nothing
     end
     pkg_name = get(env_toml, "name", nothing)

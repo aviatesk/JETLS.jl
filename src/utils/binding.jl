@@ -201,7 +201,7 @@ end
 """
     select_target_binding(st0_top::JL.SyntaxTree, offset::Int, mod::Module) -> target_binding::Union{Nothing,JL.SyntaxTree}
 
-For the same purpose as [`select_target_node`](@ref), returns the `target_binding::JL.SyntaxTree`
+For the same purpose as [`select_target_identifier`](@ref), returns the `target_binding::JL.SyntaxTree`
 closest to the cursor at the `offset` position.
 It is guaranteed that `target_binding` satisfies `JS.kind(target_binding) === JS.K"BindingId"`.
 """
@@ -417,6 +417,9 @@ function is_kwcall_lambda(ctx3::JL.VariableAnalysisContext, st3::JL.SyntaxTree)
         end
 end
 
+is_selffunc(b::JL.BindingInfo) = b.name == "#self#"
+is_kwsorter_func(b::JL.BindingInfo) = startswith(b.name, '#') && endswith(b.name, r"#\d+$")
+
 function compute_binding_occurrences!(
         occurrences::Dict{JL.BindingInfo,Set{BindingOccurence{Tree3}}},
         ctx3::JL.VariableAnalysisContext, st3::Tree3;
@@ -469,7 +472,7 @@ function compute_binding_occurrences!(
             end
         elseif infunc && k === JS.K"block" && nc ≥ 1
             blk1 = st[1]
-            if JS.kind(blk1) === JS.K"function_decl" && infunc && JS.numchildren(blk1) ≥ 1
+            if JS.kind(blk1) === JS.K"function_decl" && JS.numchildren(blk1) ≥ 1
                 # This is an inner function definition -- the binding of this inner function
                 # is "used" in the language constructs required to define the method,
                 # but what we're interested in is whether it's actually used in the outer scope.
@@ -506,7 +509,7 @@ function compute_binding_occurrences!(
                     # These bindings are never actually used, so simply recursing would cause
                     # this pass to report them as unused local bindings.
                     # We avoid this problem by setting `include_decls` when recursing.
-                    for i = 1:nc
+                    for i = start_idx:nc
                         compute_binding_occurrences!(occurrences, ctx3, st[i]; ismacro, include_decls=true)
                     end
                     continue
@@ -528,12 +531,26 @@ function compute_binding_occurrences!(
             end
         elseif k === JS.K"call" && nc ≥ 1
             arg1 = st[1]
-            if JS.kind(arg1) === JS.K"BindingId" && JL.lookup_binding(ctx3, arg1).name == "#self#"
-                # Don't count self arguments used in self calls as "usage".
-                # This is necessary to issue unused argument diagnostics for `x` in cases like:
-                # ```julia
-                # hasmatch(x::RegexMatch, y::Bool=false) = nothing
-                # ```
+            skip_arguments = false
+            if JS.kind(arg1) === JS.K"BindingId"
+                funcbind = JL.lookup_binding(ctx3, arg1)
+                if is_selffunc(funcbind)
+                    # Don't count self arguments used in self calls as "usage".
+                    # This is necessary to issue unused argument diagnostics for `x` in cases like:
+                    # ```julia
+                    # hasmatch(x::RegexMatch, y::Bool=false) = nothing
+                    # ```
+                    skip_arguments = true
+                elseif is_kwsorter_func(funcbind)
+                    # Argument uses in keyword function calls also need to be skipped for the same reason.
+                    # Without this, `:use` of `a` in `func(a; x) = x` would be counted.
+                    skip_arguments = true
+                end
+            elseif JS.kind(arg1) === JS.K"top" && get(arg1, :name_val, "") == "kwerr"
+                # Skip argument uses for `kwerr` calls as well
+                skip_arguments = true
+            end
+            if skip_arguments
                 for i = nc:-1:2 # reversed since we use `pop!`
                     argⱼ = st[i]
                     if JS.kind(argⱼ) === JS.K"BindingId" && JL.lookup_binding(ctx3, argⱼ).kind === :argument
