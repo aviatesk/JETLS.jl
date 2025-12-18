@@ -23,8 +23,7 @@ You need to install the `jetls` executable separately before using any editor in
 
 ### Prerequisites
 
-JETLS requires [Julia `v"1.12"`](https://julialang.org/downloads) or higher,
-so ensure that the Julia version of the `julia` command you use is v1.12 or higher.
+JETLS requires [Julia `v"1.12"`](https://julialang.org/downloads) or higher (1.12.2+ recommended).
 
 ### Installing the `jetls` executable
 

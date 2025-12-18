@@ -42,6 +42,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- Added `inference/field-error` diagnostic for detecting access to non-existent
+  struct fields (e.g., `x.propert` when the field is `property`).
+  Closes aviatesk/JETLS.jl#392.
+- Added `inference/bounds-error` diagnostic for detecting out-of-bounds field
+  access by index (e.g., `tpl[2]` on a `tpl::Tuple{Int}`).
+  Note that this diagnostic is for struct/tuple field access, not array indexing.
 - Added completion support for Julia keywords. Closed aviatesk/JETLS.jl#386.
 - Added hover documentation for Julia keywords.
 - Initialization options can now be configured via `.JETLSConfig.toml` using the

@@ -305,7 +305,8 @@ function jet_result_to_diagnostics!(uri2diagnostics::URI2Diagnostics, result::JE
         end
         push!(uri2diagnostics[uri], diagnostic)
     end
-    jet_inference_error_reports_to_diagnostics!(uri2diagnostics, postprocessor, result.res.inference_error_reports)
+    displayable_reports = collect_displayable_reports(result.res.inference_error_reports, keys(uri2diagnostics))
+    jet_inference_error_reports_to_diagnostics!(uri2diagnostics, postprocessor, displayable_reports)
     return uri2diagnostics
 end
 
@@ -318,13 +319,8 @@ function jet_inference_error_reports_to_diagnostics!(
         topframeidx = first(inference_error_report_stack(report))
         topframe = report.vst[topframeidx]
         topframe.file === :none && continue # TODO Figure out why this is necessary
-        filename = String(topframe.file)
-        if startswith(filename, "Untitled")
-            uri = filename2uri(filename)
-        else
-            uri = filepath2uri(to_full_path(filename))
-        end
-        push!(uri2diagnostics[uri], diagnostic)
+        uri = jet_frame_to_uri(topframe)
+        push!(uri2diagnostics[uri], diagnostic) # collect_displayable_reports asserts that this `uri` key exists for `uri2diagnostics`
     end
     return uri2diagnostics
 end
@@ -374,7 +370,7 @@ function jet_inference_error_report_to_diagnostic(postprocessor::JET.PostProcess
 end
 
 function inference_error_report_code(@nospecialize report::JET.InferenceErrorReport)
-    if report isa Analyzer.UndefVarErrorReport
+    if report isa UndefVarErrorReport
         if report.var isa GlobalRef
             return INFERENCE_UNDEF_GLOBAL_VAR_CODE
         elseif report.var isa TypeVar
@@ -382,6 +378,10 @@ function inference_error_report_code(@nospecialize report::JET.InferenceErrorRep
         else
             return INFERENCE_UNDEF_LOCAL_VAR_CODE
         end
+    elseif report isa FieldErrorReport
+        return INFERENCE_FIELD_ERROR_CODE
+    elseif report isa BoundsErrorReport
+        return INFERENCE_BOUNDS_ERROR_CODE
     end
     error(lazy"Diagnostic code is not defined for this report: $report")
 end
@@ -389,8 +389,19 @@ end
 function jet_frame_to_location(frame)
     frame.file === :none && return nothing
     return Location(;
-        uri = filepath2uri(to_full_path(frame.file)),
+        uri = something(jet_frame_to_uri(frame)),
         range = jet_frame_to_range(frame))
+end
+
+function jet_frame_to_uri(frame)
+    frame.file === :none && return nothing
+    filename = String(frame.file)
+    # TODO Clean this up and make we can always use `filename2uri` here.
+    if startswith(filename, "Untitled")
+        return filename2uri(filename)
+    else
+        return filepath2uri(to_full_path(filename))
+    end
 end
 
 function jet_frame_to_range(frame)

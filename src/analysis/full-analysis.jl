@@ -659,7 +659,7 @@ function analyze_package_with_revise(server::Server, request::AnalysisRequest)
         Revise.maybe_extract_sigs!(fi)
     end
 
-    analyzer = LSAnalyzer(entry)
+    analyzer = LSAnalyzer(entry; report_target_modules=(pkgmod,)) # TODO Revisit (submodules)
     # Revise's signature population may execute code, which can increment the world age,
     # so we update to the latest world age here
     newstate = JET.AnalyzerState(JET.AnalyzerState(analyzer); world = Base.get_world_counter())
@@ -767,11 +767,24 @@ function analyze_package_with_revise(server::Server, request::AnalysisRequest)
     end
     uri2diagnostics = URI2Diagnostics(uri => Diagnostic[] for uri in keys(analyzed_file_infos))
     postprocessor = JET.PostProcessor()
-    reports = JET.configured_reports(progress.reports; target_modules=(pkgmod,))
+
+    # TODO Do aggregation here?
+    reports = collect_displayable_reports(progress.reports, keys(uri2diagnostics))
     uri2diagnostics = jet_inference_error_reports_to_diagnostics!(uri2diagnostics, postprocessor, reports)
     actual2virtual = pkgmod => pkgmod # No virtual module for Revise-based analysis
 
     return AnalysisResult(entry, uri2diagnostics, update_analyzer_world(analyzer), analyzed_file_infos, actual2virtual)
+end
+
+function collect_displayable_reports(
+        reports::Vector{JET.InferenceErrorReport}, target_uris
+    )
+    filter(reports) do report::JET.InferenceErrorReport
+        stk = inference_error_report_stack(report)
+        topframe = report.vst[first(stk)]
+        uri = @something jet_frame_to_uri(topframe) return false
+        return uri in target_uris
+    end
 end
 
 # Analysis entry lookup
