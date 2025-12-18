@@ -768,8 +768,8 @@ function analyze_package_with_revise(server::Server, request::AnalysisRequest)
     uri2diagnostics = URI2Diagnostics(uri => Diagnostic[] for uri in keys(analyzed_file_infos))
     postprocessor = JET.PostProcessor()
 
-    # TODO Do aggregation here?
     reports = collect_displayable_reports(progress.reports, keys(uri2diagnostics))
+    reports = unique!(JET.aggregation_policy(analyzer), reports)
     uri2diagnostics = jet_inference_error_reports_to_diagnostics!(uri2diagnostics, postprocessor, reports)
     actual2virtual = pkgmod => pkgmod # No virtual module for Revise-based analysis
 
