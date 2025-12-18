@@ -6,7 +6,7 @@ using JETLS.LSP
 using JETLS.LSP.URIs2
 
 include(normpath(pkgdir(JETLS), "test", "setup.jl"))
-include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
+include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
 
 @testset "'Hover' request/responce (pkg)" begin
     pkg_code = """

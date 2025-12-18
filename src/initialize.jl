@@ -17,12 +17,6 @@ function handle_InitializeRequest(
     state = server.state
     init_params = state.init_params = msg.params
 
-    # NOTE: Static server settings that require a server restart to take effect should be
-    # accessed during server initialization via `state.init_params.initializationOptions`.
-    # These settings differ from dynamic configuration options managed by `ConfigManager`
-    # that can be changed at throughout server lifecycle.
-    state.init_options = parse_init_options(init_params.initializationOptions)
-
     workspaceFolders = init_params.workspaceFolders
     if workspaceFolders !== nothing
         state.workspaceFolders = URI[uri for (; uri) in workspaceFolders]
@@ -54,6 +48,20 @@ function handle_InitializeRequest(
     else
         @warn "Multiple workspaceFolders are not supported - using limited functionality" state.workspaceFolders
         # leave Refs undefined
+    end
+
+    # NOTE: Static server settings that require a server restart to take effect should be
+    # accessed during server initialization via `state.init_params.initializationOptions`.
+    # These settings differ from dynamic configuration options managed by `ConfigManager`
+    # that can be changed at throughout server lifecycle.
+    # Priority: file config > client config > default
+    state.init_options = parse_init_options(server, init_params.initializationOptions)
+    if isdefined(state, :root_path)
+        config_path = joinpath(state.root_path, ".JETLSConfig.toml")
+        file_init_options = load_file_init_options(server, config_path)
+        if file_init_options !== nothing
+            state.init_options = merge_init_options(state.init_options, file_init_options)
+        end
     end
 
     start_analysis_workers!(server)

@@ -101,7 +101,7 @@ function handle_DefinitionRequest(
                 result))
     end
 
-    node = @something select_target_node(st0, offset) begin
+    node = @something select_target_identifier(st0, offset) begin
         return send(server, DefinitionResponse(; id = msg.id, result = null))
     end
     objtyp = resolve_type(analyzer, mod, node)

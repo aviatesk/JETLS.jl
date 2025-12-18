@@ -5,7 +5,7 @@ using JETLS
 using JETLS.LSP
 
 include(normpath(pkgdir(JETLS), "test", "setup.jl"))
-include(normpath(pkgdir(JETLS), "test", "jsjl_utils.jl"))
+include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
 
 @testset "syntactic_inlay_hints!" begin
     @testset "module inlay hints" begin

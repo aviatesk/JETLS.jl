@@ -14,7 +14,77 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`9b39829...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/9b39829...HEAD)
+- Diff: [`048d9a5...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/048d9a5...HEAD)
+
+### Announcement
+
+> [!warning]
+> JETLS currently has a known memory leak issue where memory usage grows with
+> each re-analysis (aviatesk/JETLS.jl#357).
+> As a temporary workaround, you can disable full-analysis for specific paths
+> using the `analysis_overrides`
+> [initialization option](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options):
+> ```jsonc
+> // VSCode settings.json example
+> {
+>   "jetls-client.initializationOptions": {
+>     "analysis_overrides": [
+>       { "path": "src/**/*.jl" },
+>       { "path": "test/**/*.jl" }
+>     ]
+>   }
+> }
+> ```
+> This disables analysis for matched files. Basic features like completion still
+> might work, but most LSP features will be unfunctional.
+> Note that `analysis_overrides` is provided as a temporary workaround and may
+> be removed or changed at any time. A proper fix is being worked on.
+
+### Added
+
+- Added `inference/field-error` diagnostic for detecting access to non-existent
+  struct fields (e.g., `x.propert` when the field is `property`).
+  Closes aviatesk/JETLS.jl#392.
+- Added `inference/bounds-error` diagnostic for detecting out-of-bounds field
+  access by index (e.g., `tpl[2]` on a `tpl::Tuple{Int}`).
+  Note that this diagnostic is for struct/tuple field access, not array indexing.
+- Added completion support for Julia keywords. Closed aviatesk/JETLS.jl#386.
+- Added hover documentation for Julia keywords.
+- Initialization options can now be configured via `.JETLSConfig.toml` using the
+  `[initialization_options]` section. See the [documentation](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options/configure)
+  for details.
+- Added file rename support. When renaming a string literal that refers to a
+  valid file path (e.g., in `include("foo.jl")`), JETLS now renames both the
+  file on disk and updates the string reference in the source code.
+  Note that this feature only works when initiating rename from within the
+  Julia source code; renaming files externally (e.g., via editor file explorer)
+  will not automatically update code references.
+
+### Fixed
+
+- Small adjustments for using JETLS with Julia v1.12.3
+- Fixed false negative unused argument diagnostics for functions with keyword
+  arguments. For example, `func(a; kw=nothing) = kw` now correctly reports
+  `a` as unused. Fixed aviatesk/JETLS.jl#390.
+- Fixed stale diagnostics not being cleared when a file is closed or when test
+  structure changes remove all diagnostics for a URI.
+- Fixed wrong message for diagnostic with multiple stack frames.
+  The diagnostic message could be incorrectly overwritten when there are multiple
+  stack frames, causing "message must be set" errors in VSCode.
+  Fixed aviatesk/JETLS.jl#393.
+
+### Changed
+
+- Completions now return no results when the prefix type is unknown.
+  Previously, irrelevant completions were shown for expressions like
+  `obj.x` where `obj`'s type could not be resolved. Fixed aviatesk/JETLS.jl#389.
+- Invalid initialization options are now reported to the user via editor
+  notifications instead of only being logged to the server.
+
+## 2025-12-12
+
+- Commit: [`048d9a5`](https://github.com/aviatesk/JETLS.jl/commit/048d9a5)
+- Diff: [`9b39829...048d9a5`](https://github.com/aviatesk/JETLS.jl/compare/9b39829...048d9a5)
 
 ### Added
 

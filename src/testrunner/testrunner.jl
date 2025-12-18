@@ -1,4 +1,3 @@
-
 const TESTRUNNER_RUN_TITLE = "▶ Run"
 const TESTRUNNER_RERUN_TITLE = "▶ Rerun"
 const TESTRUNNER_OPEN_LOGS_TITLE = "☰ Open logs"
@@ -844,7 +843,7 @@ function try_clear_testrunner_result!(server::Server, uri::URI, idx::Int, tsn::S
     updated || return nothing
 
     if clear_extra_diagnostics!(server, TestsetDiagnosticsKey(uri, tsn, idx))
-        notify_diagnostics!(server)
+        notify_diagnostics!(server; ensure_cleared=uri)
     end
 
     # Also refresh code lens if supported

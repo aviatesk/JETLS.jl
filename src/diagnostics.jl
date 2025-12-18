@@ -117,7 +117,7 @@ function parse_diagnostic_pattern(x::AbstractDict{String})
             Glob.FilenameMatch(path_value, "dp")
         catch e
             throw(DiagnosticConfigError(
-                lazy"Invalid glob pattern \"$path_value\" for path: $(sprint(showerror, e))"))
+                lazy"Invalid glob pattern \"$path_value\" for pattern \"$pattern_value\": $(sprint(showerror, e))"))
         end
     else
         nothing
@@ -204,7 +204,7 @@ function _apply_diagnostic_config(
     best_specificity = 0
     for pattern_config in patterns
         globpath = pattern_config.path
-        if globpath !== nothing && !Glob.occursin(globpath, path_for_glob)
+        if globpath !== nothing && !occursin(globpath, path_for_glob)
             continue
         end
         target = pattern_config.match_by == "message" ? message : code
@@ -305,18 +305,22 @@ function jet_result_to_diagnostics!(uri2diagnostics::URI2Diagnostics, result::JE
         end
         push!(uri2diagnostics[uri], diagnostic)
     end
-    for report in result.res.inference_error_reports
+    displayable_reports = collect_displayable_reports(result.res.inference_error_reports, keys(uri2diagnostics))
+    jet_inference_error_reports_to_diagnostics!(uri2diagnostics, postprocessor, displayable_reports)
+    return uri2diagnostics
+end
+
+function jet_inference_error_reports_to_diagnostics!(
+        uri2diagnostics::URI2Diagnostics, postprocessor::JET.PostProcessor,
+        reports::Vector{JET.InferenceErrorReport}
+    )
+    for report in reports
         diagnostic = jet_inference_error_report_to_diagnostic(postprocessor, report)
         topframeidx = first(inference_error_report_stack(report))
         topframe = report.vst[topframeidx]
         topframe.file === :none && continue # TODO Figure out why this is necessary
-        filename = String(topframe.file)
-        if startswith(filename, "Untitled")
-            uri = filename2uri(filename)
-        else
-            uri = filepath2uri(to_full_path(filename))
-        end
-        push!(uri2diagnostics[uri], diagnostic)
+        uri = jet_frame_to_uri(topframe)
+        push!(uri2diagnostics[uri], diagnostic) # collect_displayable_reports asserts that this `uri` key exists for `uri2diagnostics`
     end
     return uri2diagnostics
 end
@@ -351,7 +355,7 @@ function jet_inference_error_report_to_diagnostic(postprocessor::JET.PostProcess
     for i = 2:length(rstack)
         frame = report.vst[rstack[i]]
         location = @something jet_frame_to_location(frame) continue
-        message = postprocessor(sprint(JET.print_frame_sig, frame, JET.PrintConfig()))
+        local message = postprocessor(sprint(JET.print_frame_sig, frame, JET.PrintConfig()))
         push!(relatedInformation, DiagnosticRelatedInformation(; location, message))
     end
     code = inference_error_report_code(report)
@@ -366,7 +370,7 @@ function jet_inference_error_report_to_diagnostic(postprocessor::JET.PostProcess
 end
 
 function inference_error_report_code(@nospecialize report::JET.InferenceErrorReport)
-    if report isa Analyzer.UndefVarErrorReport
+    if report isa UndefVarErrorReport
         if report.var isa GlobalRef
             return INFERENCE_UNDEF_GLOBAL_VAR_CODE
         elseif report.var isa TypeVar
@@ -374,6 +378,10 @@ function inference_error_report_code(@nospecialize report::JET.InferenceErrorRep
         else
             return INFERENCE_UNDEF_LOCAL_VAR_CODE
         end
+    elseif report isa FieldErrorReport
+        return INFERENCE_FIELD_ERROR_CODE
+    elseif report isa BoundsErrorReport
+        return INFERENCE_BOUNDS_ERROR_CODE
     end
     error(lazy"Diagnostic code is not defined for this report: $report")
 end
@@ -381,8 +389,19 @@ end
 function jet_frame_to_location(frame)
     frame.file === :none && return nothing
     return Location(;
-        uri = filepath2uri(to_full_path(frame.file)),
+        uri = something(jet_frame_to_uri(frame)),
         range = jet_frame_to_range(frame))
+end
+
+function jet_frame_to_uri(frame)
+    frame.file === :none && return nothing
+    filename = String(frame.file)
+    # TODO Clean this up and make we can always use `filename2uri` here.
+    if startswith(filename, "Untitled")
+        return filename2uri(filename)
+    else
+        return filepath2uri(to_full_path(filename))
+    end
 end
 
 function jet_frame_to_range(frame)
@@ -615,7 +634,7 @@ end
 # textDocument/publishDiagnostics
 # ===============================
 
-function get_full_diagnostics(server::Server)
+function get_full_diagnostics(server::Server; ensure_cleared::Union{Nothing,URI} = nothing)
     state = server.state
     uri2diagnostics = URI2Diagnostics()
     for (uri, analysis_info) in load(state.analysis_manager.cache)
@@ -630,6 +649,9 @@ function get_full_diagnostics(server::Server)
         end
     end
     merge_extra_diagnostics!(uri2diagnostics, server)
+    if ensure_cleared !== nothing && !haskey(uri2diagnostics, ensure_cleared)
+        uri2diagnostics[ensure_cleared] = Diagnostic[]
+    end
     map_notebook_diagnostics!(uri2diagnostics, state)
     return uri2diagnostics
 end
@@ -648,8 +670,19 @@ function merge_diagnostics!(uri2diagnostics::URI2Diagnostics, other_uri2diagnost
     return uri2diagnostics
 end
 
-function notify_diagnostics!(server::Server)
-    notify_diagnostics!(server, get_full_diagnostics(server))
+"""
+    notify_diagnostics!(server::Server; ensure_cleared::Union{Nothing,URI} = nothing)
+
+Send `textDocument/publishDiagnostics` notifications to the client. This combines
+diagnostics from full-analysis with extra diagnostics provided by sources like the
+test runner.
+
+When `ensure_cleared` is specified, guarantees that a notification is sent for that URI
+even if it no longer has any diagnostics, ensuring the client clears any previously
+displayed diagnostics for that URI.
+"""
+function notify_diagnostics!(server::Server; ensure_cleared::Union{Nothing,URI} = nothing)
+    notify_diagnostics!(server, get_full_diagnostics(server; ensure_cleared))
 end
 
 function notify_diagnostics!(server::Server, uri2diagnostics::URI2Diagnostics)
