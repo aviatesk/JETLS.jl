@@ -63,9 +63,7 @@ After installing the `jetls` executable, set up your editor to use it.
 ### VSCode
 
 [`jetls-client`](https://marketplace.visualstudio.com/items?itemName=aviatesk.jetls-client)
-is a [VSCode](https://code.visualstudio.com/) client extension for JETLS.[^1]
-
-[^1]: Requires [VSCode](https://code.visualstudio.com/) v1.96.0 or higher.
+is a [VSCode](https://code.visualstudio.com/) client extension for JETLS.
 
 Install the `jetls-client` extension from the VSCode Extensions marketplace
 (search for `"JETLS Client"` from the extensions view), then open any Julia file.
@@ -73,6 +71,19 @@ The extension will automatically use the `jetls` executable from your `PATH`.
 
 For advanced launching configurations and JETLS behavior settings, see the
 [jetls-client README](https://github.com/aviatesk/JETLS.jl/blob/master/jetls-client/README.md#advanced-launching-configuration).
+
+!!! note
+    Currently, JETLS.jl is not integrated with the
+    [`julia-vscode` extension](https://www.julia-vscode.org/).
+    To use JETLS from VSCode, install the `jetls-client` extension.
+    While we generally recommend disabling `julia-vscode` when using `jetls-client`,
+    this is not required; you can use both `julia-vscode` and `jetls-client`
+    in the same VSCode session.
+    However, since the LSP features provided by JETLS.jl differ in both type and quality
+    from those provided by `julia-vscode`'s language server backend
+    ([LanguageServer.jl](https://github.com/julia-vscode/LanguageServer.jl)),
+    you may encounter confusing situations where, for example, completion candidates
+    are provided from different backends.
 
 ### Emacs
 
