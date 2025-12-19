@@ -16,11 +16,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 - Diff: [`afc5137...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/afc5137...HEAD)
 
-## 2025-12-19
-
-- Commit: [`afc5137`](https://github.com/aviatesk/JETLS.jl/commit/afc5137)
-- Diff: [`c9c5729...afc5137`](https://github.com/aviatesk/JETLS.jl/compare/c9c5729...afc5137)
-
 ### Announcement
 
 > [!warning]
@@ -44,6 +39,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > might work, but most LSP features will be unfunctional.
 > Note that `analysis_overrides` is provided as a temporary workaround and may
 > be removed or changed at any time. A proper fix is being worked on.
+
+## 2025-12-19
+
+- Commit: [`afc5137`](https://github.com/aviatesk/JETLS.jl/commit/afc5137)
+- Diff: [`c9c5729...afc5137`](https://github.com/aviatesk/JETLS.jl/compare/c9c5729...afc5137)
 
 ### Added
 
