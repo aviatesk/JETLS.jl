@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>Configuration · JETLS.jl</title><meta name="title" content="Configuration · JETLS.jl"/><meta property="og:title" content="Configuration · JETLS.jl"/><meta property="twitter:title" content="Configuration · JETLS.jl"/><meta name="description" content="Documentation for JETLS.jl."/><meta property="og:description" content="Documentation for JETLS.jl."/><meta property="twitter:description" content="Documentation for JETLS.jl."/><meta property="og:url" content="https://aviatesk.github.io/JETLS.jl/configuration/"/><meta property="twitter:url" content="https://aviatesk.github.io/JETLS.jl/configuration/"/><link rel="canonical" href="https://aviatesk.github.io/JETLS.jl/configuration/"/><script data-outdated-warner src="../assets/warner.js"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.050/juliamono.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.8/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL=".."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="../assets/documenter.js"></script><script src="../search_index.js"></script><script src="../siteinfo.js"></script><script src="../../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/catppuccin-mocha.css" data-theme-name="catppuccin-mocha"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/catppuccin-macchiato.css" data-theme-name="catppuccin-macchiato"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/catppuccin-frappe.css" data-theme-name="catppuccin-frappe"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/catppuccin-latte.css" data-theme-name="catppuccin-latte"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="../assets/themeswap.js"></script><link href="../assets/extras.css" rel="stylesheet" type="text/css"/></head><body><div id="documenter"><nav class="docs-sidebar"><div class="docs-package-name"><span class="docs-autofit"><a href="../">JETLS.jl</a></span></div><button class="docs-search-query input is-rounded is-small is-clickable my-2 mx-auto py-1 px-2" id="documenter-search-query">Search docs (Ctrl + /)</button><ul class="docs-menu"><li><a class="tocitem" href="../">Index</a></li><li><a class="tocitem" href="../diagnostic/">Diagnostic</a></li><li><a class="tocitem" href="../formatting/">Formatter integration</a></li><li><a class="tocitem" href="../testrunner/">TestRunner integration</a></li><li><a class="tocitem" href="../notebook/">Notebook support</a></li><li class="is-active"><a class="tocitem" href>Configuration</a><ul class="internal"><li><a class="tocitem" href="#config/schema"><span>Configuration schema</span></a></li><li><a class="tocitem" href="#config/reference"><span>Configuration reference</span></a></li><li><a class="tocitem" href="#How-to-configure-JETLS"><span>How to configure JETLS</span></a></li><li><a class="tocitem" href="#config/priority"><span>Configuration priority</span></a></li></ul></li><li><a class="tocitem" href="../launching/">Launching</a></li><li><a class="tocitem" href="../CHANGELOG/">CHANGELOG</a></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><a class="docs-sidebar-button docs-navbar-link fa-solid fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a><nav class="breadcrumb"><ul class="is-hidden-mobile"><li class="is-active"><a href>Configuration</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href>Configuration</a></li></ul></nav><div class="docs-right"><a class="docs-navbar-link" href="https://github.com/aviatesk/JETLS.jl" title="View the repository on GitHub"><span class="docs-icon fa-brands"></span><span class="docs-label is-hidden-touch">GitHub</span></a><a class="docs-navbar-link" href="https://github.com/aviatesk/JETLS.jl/blob/master/docs/src/configuration.md" title="Edit source on GitHub"><span class="docs-icon fa-solid"></span></a><a class="docs-settings-button docs-navbar-link fa-solid fa-gear" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-article-toggle-button fa-solid fa-chevron-up" id="documenter-article-toggle-button" href="javascript:;" title="Collapse all docstrings"></a></div></header><article class="content" id="documenter-page"><h1 id="JETLS-configuration"><a class="docs-heading-anchor" href="#JETLS-configuration">JETLS configuration</a><a id="JETLS-configuration-1"></a><a class="docs-heading-anchor-permalink" href="#JETLS-configuration" title="Permalink"></a></h1><p>JETLS supports various configuration options. This documentation uses TOML format to describe the configuration schema.</p><h2 id="config/schema"><a class="docs-heading-anchor" href="#config/schema">Configuration schema</a><a id="config/schema-1"></a><a class="docs-heading-anchor-permalink" href="#config/schema" title="Permalink"></a></h2><pre><code class="language-toml hljs">[full_analysis]
+debounce = 1.0             # number (seconds), default: 1.0
+auto_instantiate = true    # boolean, default: true
+
+formatter = &quot;Runic&quot;        # String preset: &quot;Runic&quot; (default) or &quot;JuliaFormatter&quot;
+
+[formatter.custom]         # Or custom formatter configuration
+executable = &quot;&quot;            # string (path), optional
+executable_range = &quot;&quot;      # string (path), optional
+
+[diagnostic]
+enabled = true             # boolean, default: true
+
+[[diagnostic.patterns]]
+pattern = &quot;&quot;               # string, required
+match_by = &quot;&quot;              # string, required, &quot;code&quot; or &quot;message&quot;
+match_type = &quot;&quot;            # string, required, &quot;literal&quot; or &quot;regex&quot;
+severity = &quot;&quot;              # string or number, required, &quot;error&quot;/&quot;warning&quot;/&quot;warn&quot;/&quot;information&quot;/&quot;info&quot;/&quot;hint&quot;/&quot;off&quot; or 0/1/2/3/4
+path = &quot;&quot;                  # string (optional), glob pattern for file paths
+
+[testrunner]
+executable = &quot;testrunner&quot;  # string, default: &quot;testrunner&quot; (or &quot;testrunner.bat&quot; on Windows)</code></pre><h2 id="config/reference"><a class="docs-heading-anchor" href="#config/reference">Configuration reference</a><a id="config/reference-1"></a><a class="docs-heading-anchor-permalink" href="#config/reference" title="Permalink"></a></h2><ul><li><a href="#config/full_analysis"><code>[full_analysis]</code></a><ul><li><a href="#config/full_analysis-debounce"><code>[full_analysis] debounce</code></a></li><li><a href="#config/full_analysis-auto_instantiate"><code>[full_analysis] auto_instantiate</code></a></li></ul></li><li><a href="#config/formatter"><code>formatter</code></a></li><li><a href="#config/diagnostic"><code>[diagnostic]</code></a><ul><li><a href="#config/diagnostic-enabled"><code>[diagnostic] enabled</code></a></li><li><a href="#config/diagnostic-patterns"><code>[[diagnostic.patterns]]</code></a></li></ul></li><li><a href="#config/testrunner"><code>[testrunner]</code></a><ul><li><a href="#config/testrunner-executable"><code>[testrunner] executable</code></a></li></ul></li></ul><h3 id="config/full_analysis"><a class="docs-heading-anchor" href="#config/full_analysis"><code>[full_analysis]</code></a><a id="config/full_analysis-1"></a><a class="docs-heading-anchor-permalink" href="#config/full_analysis" title="Permalink"></a></h3><h4 id="config/full_analysis-debounce"><a class="docs-heading-anchor" href="#config/full_analysis-debounce"><code>[full_analysis] debounce</code></a><a id="config/full_analysis-debounce-1"></a><a class="docs-heading-anchor-permalink" href="#config/full_analysis-debounce" title="Permalink"></a></h4><ul><li><strong>Type</strong>: number (seconds)</li><li><strong>Default</strong>: <code>1.0</code></li></ul><p>Debounce time in seconds before triggering full analysis after a file save. JETLS performs type-aware analysis using <a href="https://github.com/aviatesk/JET.jl">JET.jl</a> to detect potential errors. The debounce prevents excessive analysis when you save files frequently. Higher values reduce analysis frequency (saving CPU) but may delay diagnostic updates.</p><pre><code class="language-toml hljs">[full_analysis]
+debounce = 2.0  # Wait 2 seconds after save before analyzing</code></pre><h4 id="config/full_analysis-auto_instantiate"><a class="docs-heading-anchor" href="#config/full_analysis-auto_instantiate"><code>[full_analysis] auto_instantiate</code></a><a id="config/full_analysis-auto_instantiate-1"></a><a class="docs-heading-anchor-permalink" href="#config/full_analysis-auto_instantiate" title="Permalink"></a></h4><ul><li><strong>Type</strong>: boolean</li><li><strong>Default</strong>: <code>true</code></li></ul><p>When enabled, JETLS automatically runs <code>Pkg.resolve()</code> and <code>Pkg.instantiate()</code> for packages that have not been instantiated yet (e.g., freshly cloned repositories). This allows full analysis to work immediately upon opening such packages. When no manifest file exists, JETLS first creates a <a href="https://pkgdocs.julialang.org/v1/toml-files/#Different-Manifests-for-Different-Julia-versions">versioned manifest</a> (e.g., <code>Manifest-v1.12.toml</code>).</p><pre><code class="language-toml hljs">[full_analysis]
+auto_instantiate = false  # Disable automatic instantiation</code></pre><h3 id="config/formatter"><a class="docs-heading-anchor" href="#config/formatter"><code>formatter</code></a><a id="config/formatter-1"></a><a class="docs-heading-anchor-permalink" href="#config/formatter" title="Permalink"></a></h3><ul><li><strong>Type</strong>: string or table</li><li><strong>Default</strong>: <code>&quot;Runic&quot;</code></li></ul><p>Formatter configuration. Can be a preset name or a custom formatter object.</p><p>Preset options:</p><ul><li><code>&quot;Runic&quot;</code> (default): Uses <a href="https://github.com/fredrikekre/Runic.jl">Runic.jl</a> (<code>&quot;runic&quot;</code> or <code>&quot;runic.bat&quot;</code> on Windows)</li><li><code>&quot;JuliaFormatter&quot;</code>: Uses <a href="https://github.com/domluna/JuliaFormatter.jl">JuliaFormatter.jl</a> (<code>&quot;jlfmt&quot;</code> or <code>&quot;jlfmt.bat&quot;</code> on Windows)</li></ul><p>Custom formatter configuration:</p><ul><li><code>formatter.custom.executable</code> (string, optional): Path to custom formatter executable for document formatting. The formatter should read Julia code from stdin and output formatted code to stdout.</li><li><code>formatter.custom.executable_range</code> (string, optional): Path to custom formatter executable for range formatting. Should accept <code>--lines=START:END</code> argument.</li></ul><p>Examples:</p><pre><code class="language-toml hljs"># Use JuliaFormatter preset
+formatter = &quot;JuliaFormatter&quot;
+
+# Or use custom formatter (both fields optional)
+[formatter.custom]
+executable = &quot;/path/to/custom-formatter&quot;
+executable_range = &quot;/path/to/custom-range-formatter&quot;</code></pre><p>See <a href="../formatting/#Formatting">Formatting</a> for detailed configuration instructions and setup requirements.</p><h3 id="config/diagnostic"><a class="docs-heading-anchor" href="#config/diagnostic"><code>[diagnostic]</code></a><a id="config/diagnostic-1"></a><a class="docs-heading-anchor-permalink" href="#config/diagnostic" title="Permalink"></a></h3><p>Configure how JETLS reports diagnostic messages (errors, warnings, infos, hints) in your editor. JETLS uses hierarchical diagnostic codes in the format <code>&quot;category/kind&quot;</code> (following the <a href="https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#diagnostic">LSP specification</a>) to allow fine-grained control over which diagnostics to show and at what severity level.</p><p>See the <a href="../diagnostic/#Diagnostic">Diagnostic</a> section for complete diagnostic reference including all available codes, their meanings, and examples.</p><h4 id="config/diagnostic-enabled"><a class="docs-heading-anchor" href="#config/diagnostic-enabled"><code>[diagnostic] enabled</code></a><a id="config/diagnostic-enabled-1"></a><a class="docs-heading-anchor-permalink" href="#config/diagnostic-enabled" title="Permalink"></a></h4><ul><li><strong>Type</strong>: boolean</li><li><strong>Default</strong>: <code>true</code></li></ul><p>Enable or disable all JETLS diagnostics. When set to <code>false</code>, no diagnostic messages will be shown.</p><pre><code class="language-toml hljs">[diagnostic]
+enabled = false  # Disable all diagnostics</code></pre><h4 id="config/diagnostic-patterns"><a class="docs-heading-anchor" href="#config/diagnostic-patterns"><code>[[diagnostic.patterns]]</code></a><a id="config/diagnostic-patterns-1"></a><a class="docs-heading-anchor-permalink" href="#config/diagnostic-patterns" title="Permalink"></a></h4><p>Fine-grained control over diagnostics through pattern matching against either <a href="../diagnostic/#diagnostic-code">diagnostic codes</a> or messages.</p><p>See the <a href="../diagnostic/#diagnostic-reference">diagnostic reference</a> section for a complete list of all available diagnostic codes, their default severity levels, and detailed explanations with examples.</p><h5 id="Configuration-syntax"><a class="docs-heading-anchor" href="#Configuration-syntax">Configuration syntax</a><a id="Configuration-syntax-1"></a><a class="docs-heading-anchor-permalink" href="#Configuration-syntax" title="Permalink"></a></h5><p>Each pattern is defined as a table array entry with the following fields:</p><pre><code class="language-toml hljs">[[diagnostic.patterns]]
+pattern = &quot;pattern-value&quot;  # string: the pattern to match
+match_by = &quot;code&quot;          # string: &quot;code&quot; or &quot;message&quot;
+match_type = &quot;literal&quot;     # string: &quot;literal&quot; or &quot;regex&quot;
+severity = &quot;hint&quot;          # string or number: severity level
+path = &quot;src/**/*.jl&quot;       # string (optional): restrict to specific files</code></pre><ul><li><code>pattern</code> (<strong>Type</strong>: string): The pattern to match. For code matching, use diagnostic codes like <code>&quot;lowering/unused-argument&quot;</code>. For message matching, use text patterns like <code>&quot;Macro name .* not found&quot;</code>. This value is also used as the key when <a href="#config/merge">merging configurations</a> from different sources.</li><li><code>match_by</code> (<strong>Type</strong>: string): What to match against<ul><li><code>&quot;code&quot;</code>: Match against <a href="../diagnostic/#diagnostic-code">diagnostic code</a> (e.g., <code>&quot;lowering/unused-argument&quot;</code>)</li><li><code>&quot;message&quot;</code>: Match against diagnostic message text</li></ul></li><li><code>match_type</code> (<strong>Type</strong>: string): How to interpret the pattern<ul><li><code>&quot;literal&quot;</code>: Exact string match</li><li><code>&quot;regex&quot;</code>: Regular expression match</li></ul></li><li><code>severity</code> (<strong>Type</strong>: string or number): Severity level to apply</li><li><code>path</code> (<strong>Type</strong>: string, optional): Glob pattern to restrict this configuration to specific files. Patterns are matched against <em>file paths relative to the workspace root</em>. Supports globstar (<code>**</code>) for matching directories recursively. If omitted, the pattern applies to all files.</li></ul><h5 id="Severity-values"><a class="docs-heading-anchor" href="#Severity-values">Severity values</a><a id="Severity-values-1"></a><a class="docs-heading-anchor-permalink" href="#Severity-values" title="Permalink"></a></h5><p><a href="../diagnostic/#diagnostic-severity">Severity level</a> to apply. Can be specified using either string or number values:</p><ul><li><code>&quot;error&quot;</code> or <code>1</code>: Critical issues that prevent code from working correctly</li><li><code>&quot;warning&quot;</code> or <code>&quot;warn&quot;</code> or <code>2</code>: Potential problems that should be reviewed</li><li><code>&quot;information&quot;</code> or <code>&quot;info&quot;</code> or <code>3</code>: Informational messages about code that may benefit from attention</li><li><code>&quot;hint&quot;</code> or <code>4</code>: Suggestions for improvements or best practices</li><li><code>&quot;off&quot;</code> or <code>0</code>: Disable the diagnostic</li></ul><p>String values are case-insensitive. The numeric values correspond to the <a href="https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#diagnosticSeverity">LSP specification</a>, while <code>&quot;off&quot;</code>/<code>0</code> is a JETLS-specific extension for disabling diagnostics.</p><h5 id="Pattern-matching-priority"><a class="docs-heading-anchor" href="#Pattern-matching-priority">Pattern matching priority</a><a id="Pattern-matching-priority-1"></a><a class="docs-heading-anchor-permalink" href="#Pattern-matching-priority" title="Permalink"></a></h5><p>When multiple patterns match the same diagnostic, more specific patterns take precedence. The priority order (highest to lowest) is:</p><ol><li><code>message</code> literal match</li><li><code>message</code> regex match</li><li><code>code</code> literal match</li><li><code>code</code> regex match</li></ol><p>This priority strategy allows message-based patterns to override code-based patterns, enabling fine-grained control for specific diagnostic instances.</p><p>Example showing priority:</p><pre><code class="language-toml hljs"># Lower priority: matches all lowering diagnostics
+[[diagnostic.patterns]]
+pattern = &quot;lowering/.*&quot;
+match_by = &quot;code&quot;
+match_type = &quot;regex&quot;
+severity = &quot;error&quot;
+
+# Higher priority: matches specific message
+[[diagnostic.patterns]]
+pattern = &quot;Unused argument `x`&quot;
+match_by = &quot;message&quot;
+match_type = &quot;literal&quot;
+severity = &quot;off&quot;
+
+# Highest priority among code patterns: exact code match
+[[diagnostic.patterns]]
+pattern = &quot;lowering/unused-argument&quot;
+match_by = &quot;code&quot;
+match_type = &quot;literal&quot;
+severity = &quot;hint&quot;</code></pre><div class="admonition is-info" id="Note-8ef237154d6dfcb1"><header class="admonition-header">Note<a class="admonition-anchor" href="#Note-8ef237154d6dfcb1" title="Permalink"></a></header><div class="admonition-body"><p>When <a href="#config/diagnostic-enabled"><code>diagnostic.enabled</code></a> is <code>false</code>, all diagnostics are disabled regardless of pattern settings.</p></div></div><h4 id="[diagnostic]-configuration-examples"><a class="docs-heading-anchor" href="#[diagnostic]-configuration-examples"><code>[diagnostic]</code> configuration examples</a><a id="[diagnostic]-configuration-examples-1"></a><a class="docs-heading-anchor-permalink" href="#[diagnostic]-configuration-examples" title="Permalink"></a></h4><pre><code class="language-toml hljs">[diagnostic]
+enabled = true
+
+# Pattern matching against diagnostic code
+[[diagnostic.patterns]]
+pattern = &quot;lowering/.*&quot;
+match_by = &quot;code&quot;
+match_type = &quot;regex&quot;
+severity = &quot;warning&quot;
+
+# Disable inference diagnostic entirely
+[[diagnostic.patterns]]
+pattern = &quot;inference/.*&quot;
+match_by = &quot;code&quot;
+match_type = &quot;regex&quot;
+severity = &quot;off&quot;
+
+# Show unused arguments as hints (overrides category setting)
+[[diagnostic.patterns]]
+pattern = &quot;lowering/unused-argument&quot;
+match_by = &quot;code&quot;
+match_type = &quot;literal&quot;
+severity = &quot;hint&quot;
+
+# Completely disable unused local variable diagnostics using integer value
+[[diagnostic.patterns]]
+pattern = &quot;lowering/unused-local&quot;
+match_by = &quot;code&quot;
+match_type = &quot;literal&quot;
+severity = 0
+
+# Pattern matching against diagnostic message
+[[diagnostic.patterns]]
+pattern = &quot;Macro name `@interface` not found&quot;
+match_by = &quot;message&quot;
+match_type = &quot;literal&quot;
+severity = &quot;off&quot;
+
+# Suppress all macro not found errors using regex
+[[diagnostic.patterns]]
+pattern = &quot;Macro name `.*` not found&quot;
+match_by = &quot;message&quot;
+match_type = &quot;regex&quot;
+severity = &quot;off&quot;
+
+# File path-based filtering: downgrade unused arguments in test files
+[[diagnostic.patterns]]
+pattern = &quot;lowering/unused-argument&quot;
+match_by = &quot;code&quot;
+match_type = &quot;literal&quot;
+severity = &quot;hint&quot;
+path = &quot;test/**/*.jl&quot;
+
+# Disable all diagnostics for generated files
+[[diagnostic.patterns]]
+pattern = &quot;.*&quot;
+match_by = &quot;code&quot;
+match_type = &quot;regex&quot;
+severity = &quot;off&quot;
+path = &quot;gen/**/*.jl&quot;</code></pre><p>See the <a href="../diagnostic/#configuring-diagnostic">configuring diagnostics</a> section for additional examples and common use cases.</p><h3 id="config/testrunner"><a class="docs-heading-anchor" href="#config/testrunner"><code>[testrunner]</code></a><a id="config/testrunner-1"></a><a class="docs-heading-anchor-permalink" href="#config/testrunner" title="Permalink"></a></h3><h4 id="config/testrunner-executable"><a class="docs-heading-anchor" href="#config/testrunner-executable"><code>[testrunner] executable</code></a><a id="config/testrunner-executable-1"></a><a class="docs-heading-anchor-permalink" href="#config/testrunner-executable" title="Permalink"></a></h4><ul><li><strong>Type</strong>: string</li><li><strong>Default</strong>: <code>&quot;testrunner&quot;</code> or <code>&quot;testrunner.bat&quot;</code> on Windows</li></ul><p>Path to the <a href="https://github.com/aviatesk/TestRunner.jl">TestRunner.jl</a> executable for running individual <code>@testset</code> blocks and <code>@test</code> cases.</p><pre><code class="language-toml hljs">[testrunner]
+executable = &quot;/path/to/custom/testrunner&quot;</code></pre><p>See <a href="../testrunner/#TestRunner-integration">TestRunner integration</a> for setup instructions.</p><h2 id="How-to-configure-JETLS"><a class="docs-heading-anchor" href="#How-to-configure-JETLS">How to configure JETLS</a><a id="How-to-configure-JETLS-1"></a><a class="docs-heading-anchor-permalink" href="#How-to-configure-JETLS" title="Permalink"></a></h2><h3 id="config/file-based-config"><a class="docs-heading-anchor" href="#config/file-based-config">Method 1: File-based configuration</a><a id="config/file-based-config-1"></a><a class="docs-heading-anchor-permalink" href="#config/file-based-config" title="Permalink"></a></h3><p>Create a <code>.JETLSConfig.toml</code> file in your project root. This configuration method works client-agnostically, thus allows projects to commit configuration to VCS without writing JETLS configurations in various formats that each client can understand.</p><blockquote><p>Example <code>.JETLSConfig.toml</code>:</p></blockquote><pre><code class="language-toml hljs">[full_analysis]
+debounce = 2.0
+
+# Use JuliaFormatter instead of Runic
+formatter = &quot;JuliaFormatter&quot;
+
+# Suppress unused argument warnings
+[[diagnostic.patterns]]
+pattern = &quot;lowering/unused-argument&quot;
+match_by = &quot;code&quot;
+match_type = &quot;literal&quot;
+severity = &quot;off&quot;
+
+[testrunner]
+executable = &quot;/path/to/custom/testrunner&quot;</code></pre><h3 id="config/lsp-config"><a class="docs-heading-anchor" href="#config/lsp-config">Method 2: Editor configuration via LSP</a><a id="config/lsp-config-1"></a><a class="docs-heading-anchor-permalink" href="#config/lsp-config" title="Permalink"></a></h3><p>If your client supports <a href="#workspace-configuration-support"><code>workspace/configuration</code></a>, you can configure JETLS in a client-specific manner. As examples, we show the configuration methods for the VSCode extension <a href="https://marketplace.visualstudio.com/items?itemName=aviatesk.jetls-client"><code>jetls-client</code></a>, and the Zed extension <a href="https://github.com/aviatesk/zed-julia/tree/avi/JETLS"><code>aviatesk/zed-julia#avi/JETLS</code></a>.</p><h4 id="config/lsp-config/vscode"><a class="docs-heading-anchor" href="#config/lsp-config/vscode">VSCode (<code>jetls-client</code> extension)</a><a id="config/lsp-config/vscode-1"></a><a class="docs-heading-anchor-permalink" href="#config/lsp-config/vscode" title="Permalink"></a></h4><p>Configure JETLS in VSCode&#39;s settings.json file with <code>jetls-client.settings</code> section:</p><blockquote><p>Example <code>.vscode/settings.json</code>:</p></blockquote><pre><code class="language-json hljs">{
+  &quot;jetls-client.settings&quot;: {
+    &quot;full_analysis&quot;: {
+      &quot;debounce&quot;: 2.0
+    },
+    // Use JuliaFormatter instead of Runic
+    &quot;formatter&quot;: &quot;JuliaFormatter&quot;,
+    &quot;diagnostic&quot;: {
+      &quot;patterns&quot;: [
+        // Suppress toplevel/inference warnings in test folder
+        {
+          &quot;pattern&quot;: &quot;(toplevel|inference)/.*&quot;,
+          &quot;match_by&quot;: &quot;code&quot;,
+          &quot;match_type&quot;: &quot;regex&quot;,
+          &quot;severity&quot;: &quot;off&quot;,
+          &quot;path&quot;: &quot;test/**/*.jl&quot;
+        }
+      ]
+    },
+    &quot;testrunner&quot;: {
+      &quot;executable&quot;: &quot;/path/to/custom/testrunner&quot;
+    }
+  }
+}</code></pre><p>See <a href="https://github.com/aviatesk/JETLS.jl/blob/master/package.json"><code>package.json</code></a> for the complete list of available VSCode settings and their descriptions.</p><h4 id="config/lsp-config/zed"><a class="docs-heading-anchor" href="#config/lsp-config/zed">Zed (<code>aviatesk/zed-julia#avi/JETLS</code> extension)</a><a id="config/lsp-config/zed-1"></a><a class="docs-heading-anchor-permalink" href="#config/lsp-config/zed" title="Permalink"></a></h4><p>Configure JETLS in Zed&#39;s settings.json file with the <code>lsp.JETLS.settings</code> section:</p><blockquote><p>Example <code>.zed/settings.json</code>:</p></blockquote><pre><code class="language-json hljs">{
+  &quot;lsp&quot;: {
+    &quot;JETLS&quot;: {
+      &quot;settings&quot;: {
+        &quot;full_analysis&quot;: {
+          &quot;debounce&quot;: 2.0
+        },
+        // Use JuliaFormatter instead of Runic
+        &quot;formatter&quot;: &quot;JuliaFormatter&quot;,
+        &quot;diagnostic&quot;: {
+          &quot;patterns&quot;: [
+            // Suppress toplevel/inference warnings in test folder
+            {
+              &quot;pattern&quot;: &quot;(toplevel|inference)/.*&quot;,
+              &quot;match_by&quot;: &quot;code&quot;,
+              &quot;match_type&quot;: &quot;regex&quot;,
+              &quot;severity&quot;: &quot;off&quot;,
+              &quot;path&quot;: &quot;test/**/*.jl&quot;
+            }
+          ]
+        },
+        &quot;testrunner&quot;: {
+          &quot;executable&quot;: &quot;/path/to/custom/testrunner&quot;
+        }
+      }
+    }
+  }
+}</code></pre><h2 id="config/priority"><a class="docs-heading-anchor" href="#config/priority">Configuration priority</a><a id="config/priority-1"></a><a class="docs-heading-anchor-permalink" href="#config/priority" title="Permalink"></a></h2><p>When multiple configuration sources are present, they are merged in priority order (highest first):</p><ol><li>File-based configuration (<code>.JETLSConfig.toml</code>)</li><li>Editor configuration via LSP (<code>workspace/configuration</code>)</li><li>Built-in defaults</li></ol><p>File-based configuration (<code>.JETLSConfig.toml</code>) takes precedence as it provides a <strong>client-agnostic</strong> way to configure JETLS that works consistently across all editors.</p><h3 id="config/merge"><a class="docs-heading-anchor" href="#config/merge">Configuration merging</a><a id="config/merge-1"></a><a class="docs-heading-anchor-permalink" href="#config/merge" title="Permalink"></a></h3><p>For array-type configuration fields (such as <a href="#config/diagnostic-patterns"><code>diagnostic.patterns</code></a>), entries from both LSP config and file config are merged rather than one completely overriding the other. Entries with same keys are merged with file config taking precedence, while entries unique to either source are preserved.</p></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../notebook/">« Notebook support</a><a class="docs-footer-nextpage" href="../launching/">Launching »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.16.1 on <span class="colophon-date" title="Friday 19 December 2025 15:00">Friday 19 December 2025</span>. Using Julia version 1.12.3.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
