@@ -10,6 +10,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 >
 > Each dated section below corresponds to a release that can be installed via
 > `Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="YYYY-MM-DD")`
+>
+> To install the latest version regardless of date, re-run the installation command:
+> ```bash
+> julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="release")'
+> ```
 
 ## Unreleased
 
@@ -17,6 +22,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Diff: [`afc5137...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/afc5137...HEAD)
 
 ### Announcement
+
+> [!info]
+> To install or update JETLS to the latest version, run:
+> ```bash
+> julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="release")'
+> ```
 
 > [!warning]
 > JETLS currently has a known memory leak issue where memory usage grows with
