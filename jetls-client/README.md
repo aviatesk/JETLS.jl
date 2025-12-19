@@ -17,6 +17,18 @@ By leveraging tooling technologies like
 JETLS aims to offer enhanced language features such as type-sensitive
 diagnostic, macro-aware go-to definition and such.
 
+> [!note]
+> JETLS.jl is not integrated with the [`julia-vscode` extension](https://www.julia-vscode.org/) yet.
+> To use JETLS from VSCode, install this `jetls-client` extension.
+> While we generally recommend disabling `julia-vscode` when using `jetls-client`,
+> this is not required; you can use both `julia-vscode` and `jetls-client`
+> in the same VSCode session.
+> However, since the LSP features provided by JETLS.jl differ in both type and quality
+> from those provided by `julia-vscode`'s language server backend
+> ([LanguageServer.jl](https://github.com/julia-vscode/LanguageServer.jl)),
+> you may encounter confusing situations where, for example, completion candidates
+> are provided from different backends.
+
 ## Requirements
 
 - [VSCode](https://code.visualstudio.com/) v1.96.0 or higher

@@ -13,14 +13,43 @@ if devbranch == "release" && !isempty(release_date)
     release_info = """
         !!! info "Release version"
             This documentation is for the `$release_date` release ([`$short_commit`](https://github.com/aviatesk/JETLS.jl/commit/$release_commit)).
-            See the [CHANGELOG](https://github.com/aviatesk/JETLS.jl/blob/master/CHANGELOG.md#$release_date)
-            for details about this release.
+            See the [CHANGELOG](@ref $release_date) for details about this release.
 
         """
     # Insert after the title line
     modified = replace(index_md_original,
         r"^(# [^\n]+\n)"s => SubstitutionString("\\1\n" * release_info))
     write(index_md, modified)
+end
+
+let CHANGELOG_md = joinpath(@__DIR__, "..", "CHANGELOG.md")
+    CHANGELOG_md_text = read(CHANGELOG_md, String)
+    CHANGELOG_md_text = replace(CHANGELOG_md_text,
+        "./DEVELOPMENT.md#profiling" => "https://github.com/aviatesk/JETLS.jl/blob/master/DEVELOPMENT.md#profiling")
+    CHANGELOG_md_text = replace(CHANGELOG_md_text,
+        r"> \[!(.+)\]" => s"!!! \1")
+    CHANGELOG_md_text = replace(CHANGELOG_md_text,
+        r"^\> (.+)$"m=>s"    \1")
+    CHANGELOG_md_text = replace(CHANGELOG_md_text,
+        r"^\>$"m=>s"")
+    CHANGELOG_md_text = replace(CHANGELOG_md_text,
+        r"(https://github\.com/aviatesk/JETLS\.jl/(?:issues|pull)/(\d+))" => s"[aviatesk/JETLS.jl#\2](\1)")
+    write(joinpath(@__DIR__, "src", "CHANGELOG.md"), CHANGELOG_md_text)
+end
+
+const pages = Any[
+    "Index" => "index.md",
+    "Diagnostic" => "diagnostic.md",
+    "Formatter integration" => "formatting.md",
+    "TestRunner integration" => "testrunner.md",
+    "Notebook support" => "notebook.md",
+    "Configuration" => "configuration.md",
+    "Launching" => "launching.md",
+    "CHANGELOG" => "CHANGELOG.md"]
+const quick_links_pages = let pages = last.(pages)
+    pop!(pages)      # exclude CHANGELOG.md
+    popfirst!(pages) # exclude index.md itself
+    pages
 end
 
 makedocs(;
@@ -31,15 +60,7 @@ makedocs(;
         canonical = "https://aviatesk.github.io/JETLS.jl",
         assets = ["assets/extras.css"],
     ),
-    pages = Any[
-        "Index" => "index.md",
-        "Diagnostic" => "diagnostic.md",
-        "Formatter integration" => "formatting.md",
-        "TestRunner integration" => "testrunner.md",
-        "Notebook support" => "notebook.md",
-        "Configuration" => "configuration.md",
-        "Launching" => "launching.md",
-    ],
+    pages,
     warnonly = [:missing_docs]
 )
 

@@ -9,7 +9,7 @@
 The `Preferences` package provides a convenient, integrated way for packages to store configuration switches to persistent TOML files, and use those pieces of information at both run time and compile time in Julia v1.6+.
 This enables the user to modify the behavior of a package, and have that choice reflected in everything from run time algorithm choice to code generation at compile time.
 Preferences are stored as TOML dictionaries and are, by default, stored within a `(Julia)LocalPreferences.toml` file next to the currently-active project.
-If a preference is "exported" (`export_prefs=true`), it is instead stored within the `(Julia)Project.toml`.
+If a preference is "exported" (`export_prefs=true`), it is instead stored within the `[preferences]` section in the `(Julia)Project.toml` file.
 The intention is to allow shared projects to contain shared preferences, while allowing for users themselves to override those preferences with their own settings in the `LocalPreferences.toml` file, which should be `.gitignore`d as the name implies.
 
 Preferences can be set with depot-wide defaults; if package `Foo` is installed within your global environment and it has preferences set, these preferences will apply as long as your global environment is part of your [`LOAD_PATH`](https://docs.julialang.org/en/v1/manual/code-loading/#Environment-stacks).

@@ -82,7 +82,7 @@ end
 
 struct InstantiationRequest
     env_path::String
-    pkgname::Union{Nothing,String}
+    pkgname::Union{Nothing,String,Base.PkgId}
     filekind::Symbol                 # :script, :src, :test
     filedir::String                  # used for :test to construct runtestsuri
     root_path::Union{String,Nothing} # used for progress
@@ -98,6 +98,11 @@ function InstantiationRequest(
         filedir::String, root_path::Union{String,Nothing}
     )
     return InstantiationRequest(env_path, pkgname, filekind, filedir, root_path, #=notebook=#false)
+end
+function InstantiationRequest(
+        env_path::String, pkgid::Base.PkgId, root_path::Union{String,Nothing}
+    )
+    return InstantiationRequest(env_path, pkgid, :src, "", root_path, #=notebook=#false)
 end
 
 struct InstantiationProgressCaller <: RequestCaller
@@ -503,7 +508,15 @@ function execute_analysis_request(server::Server, request::AnalysisRequest)
     entry = request.entry
 
     if entry isa NewAnalysisEntry
-        return analyze_package_with_revise(server, request), false
+        env_path = entry.env_path
+        if env_path === nothing
+            result = analyze_package_with_revise(server, request, entry.pkgid)
+        else
+            result = activate_with_early_release(env_path) do activation_done::Base.Event
+                analyze_package_with_revise(server, request, entry.pkgid, activation_done)
+            end
+        end
+        return result, false
     end
 
     if entry isa ScriptAnalysisEntry
@@ -622,19 +635,27 @@ mutable struct ReviseAnalysisProgress
     end
 end
 
-function analyze_package_with_revise(server::Server, request::AnalysisRequest)
-    entry = request.entry::NewAnalysisEntry
-    pkgid = entry.pkgid
+function analyze_package_with_revise(
+        server::Server, request::AnalysisRequest, pkgid::Base.PkgId,
+        activation_done::Union{Nothing,Base.Event} = nothing
+    )
+    pkgmod = get(Base.loaded_modules, pkgid, nothing)
+    if pkgmod === nothing
+        pkgmod = try
+            Base.require(pkgid)
+        catch e
+            show_error_message(server, "Failed to load package $(pkgid.name): $(sprint(Base.showerror, e))")
+            error(lazy"Package $(pkgid.name) is not loadable") # TODO
+        finally
+            notify(activation_done)
+        end
+    end
+
     haskey(Revise.pkgdatas, pkgid) || Revise.watch_package(pkgid)
     haskey(Revise.pkgdatas, pkgid) || error(lazy"Package $(pkgid.name) is not analyzable by Revise")
 
-    # Package should already be loaded during instantiation
-    pkgdata = Revise.pkgdatas[pkgid]
-    pkgmod = @something(
-        Base.get(Base.loaded_modules, pkgid, nothing),
-        error(lazy"Package $(pkgid.name) is not loaded"))
-
     # If Revise hasn't instantiated signatures yet, populate that cache here
+    pkgdata = Revise.pkgdatas[pkgid]
     for file in Revise.srcfiles(pkgdata)
         # fi = try
         #     Revise.maybe_parse_from_cache!(pkgdata, file)
@@ -659,7 +680,7 @@ function analyze_package_with_revise(server::Server, request::AnalysisRequest)
         Revise.maybe_extract_sigs!(fi)
     end
 
-    analyzer = LSAnalyzer(entry; report_target_modules=(pkgmod,)) # TODO Revisit (submodules)
+    analyzer = LSAnalyzer(request.entry; report_target_modules=(pkgmod,)) # TODO Revisit (submodules)
     # Revise's signature population may execute code, which can increment the world age,
     # so we update to the latest world age here
     newstate = JET.AnalyzerState(JET.AnalyzerState(analyzer); world = Base.get_world_counter())
@@ -773,7 +794,7 @@ function analyze_package_with_revise(server::Server, request::AnalysisRequest)
     uri2diagnostics = jet_inference_error_reports_to_diagnostics!(uri2diagnostics, postprocessor, reports)
     actual2virtual = pkgmod => pkgmod # No virtual module for Revise-based analysis
 
-    return AnalysisResult(entry, uri2diagnostics, update_analyzer_world(analyzer), analyzed_file_infos, actual2virtual)
+    return AnalysisResult(request.entry, uri2diagnostics, update_analyzer_world(analyzer), analyzed_file_infos, actual2virtual)
 end
 
 function collect_displayable_reports(
@@ -848,9 +869,18 @@ progress_title_impl(entry::PackageTestAnalysisEntry) = entry.pkgid.name * ".jl [
 
 struct NewAnalysisEntry <: AnalysisEntry
     pkgid::Base.PkgId
+    env_path::Union{Nothing,String}
+    NewAnalysisEntry(pkgid::Base.PkgId, env_path::String) = new(pkgid, env_path)
+    NewAnalysisEntry(pkgid::Base.PkgId) = new(pkgid, nothing)
 end
 entryuri_impl(::NewAnalysisEntry) = error("")
-progress_title_impl(entry::NewAnalysisEntry) = entry.pkgid.name * ".jl [new analysis]"
+progress_title_impl(entry::NewAnalysisEntry) = entry.pkgid.name * ".jl [incremental]"
+
+struct UserModule
+    env_path::String
+    pkg_name::String
+    pkg_uuid::String
+end
 
 struct KnownModule
     mod::Module
@@ -868,13 +898,20 @@ Phase 1 of analysis entry lookup. Returns immediately without blocking.
 function lookup_analysis_entry(server::Server, uri::URI)
     state = server.state
     result = find_analysis_env_path(state, uri)
+    root_path = isdefined(state, :root_path) ? state.root_path : nothing
     if result isa OutOfScope
         return result
     elseif result isa KnownModule
         return NewAnalysisEntry(Base.PkgId(result.mod))
+    elseif result isa UserModule
+        pkgid = Base.PkgId(Base.UUID(result.pkg_uuid), result.pkg_name)
+        if is_env_cached(server, result.env_path)
+            return NewAnalysisEntry(pkgid, result.env_path)
+        else
+            return InstantiationRequest(result.env_path, pkgid, root_path)
+        end
     end
 
-    root_path = isdefined(state, :root_path) ? state.root_path : nothing
     notebook = is_notebook_uri(state, uri)
     env_path = result
     if isnothing(env_path)
@@ -946,6 +983,10 @@ function do_instantiation(server::Server, uri::URI, ins_request::InstantiationRe
     if pkgname === nothing
         ensure_instantiated_if_requested!(server, env_path)
         return ScriptInEnvAnalysisEntry(env_path, uri, notebook)
+    elseif pkgname isa Base.PkgId
+        pkgid = pkgname
+        instantiate_package_environment!(server, env_path, pkgid.name)
+        return NewAnalysisEntry(pkgid, env_path)
     else
         pkgid, pkgfile = @something(
             instantiate_package_environment!(server, env_path, pkgname),

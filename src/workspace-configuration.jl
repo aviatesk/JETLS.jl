@@ -110,6 +110,7 @@ function handle_lsp_config_change!(server::Server, tracker::ConfigChangeTracker,
     end
     if tracker.diagnostic_setting_changed
         notify_diagnostics!(server)
+        request_diagnostic_refresh!(server)
     end
 end
 

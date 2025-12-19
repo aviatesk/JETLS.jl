@@ -822,6 +822,12 @@ end
 
 struct DiagnosticRefreshRequestCaller <: RequestCaller end
 
+# This function is currently used to refresh `textDocument/diagnostic`.
+# The LSP specification states that clients receiving `workspace/diagnostic/refresh`
+# should refresh both document and workspace diagnostics, but client implementations
+# vary. As of now (2025-12-19), VSCode refreshes `textDocument/diagnostic` when it
+# receives `workspace/diagnostic/refresh`, but Zed handles this request without
+# refreshing `textDocument/diagnostic`.
 function request_diagnostic_refresh!(server::Server)
     id = String(gensym(:WorkspaceDiagnosticRefreshRequest))
     addrequest!(server, id=>DiagnosticRefreshRequestCaller())

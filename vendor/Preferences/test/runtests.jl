@@ -86,19 +86,32 @@ up_path = joinpath(@__DIR__, "UsesPreferences")
 
         # Now show that it forces recompilation
         function did_precompile(output)
+            # TODO: When we support only Julia v1.10+, remove this function and
+            # only use `Base.isprecompiled` to check this.
             occursin("Precompiling UsesPreferences [$(string(up_uuid))]", output) ||
             occursin("Precompiling\e[22m\e[39m UsesPreferences", output) ||
             occursin(r"\e\[32m +✓ +\e\[39mUsesPreferences", output)
         end
-        cuda_test = """
-        using UsesPreferences, Test
+        cuda_test_base = """
+        using UsesPreferences
+        isdefined(Base, :isprecompiled) && @test Base.isprecompiled(Base.identify_package("UsesPreferences"))
         @test UsesPreferences.backend == "CUDA"
         """
-        output = activate_and_run(up_path, cuda_test; env=Dict("JULIA_DEBUG" => "loading"))
+        cuda_test_did_precompile = """
+        using Test
+        # Make sure `UsesPreferences` has to be recompiled
+        isdefined(Base, :isprecompiled) && @test !Base.isprecompiled(Base.identify_package("UsesPreferences"))
+        """ * cuda_test_base
+        output = activate_and_run(up_path, cuda_test_did_precompile; env=Dict("JULIA_DEBUG" => "loading"))
         @test did_precompile(output)
 
         # Show that it does not force a recompile the second time
-        output = activate_and_run(up_path, cuda_test; env=Dict("JULIA_DEBUG" => "loading"))
+        cuda_test_didnt_precompile = """
+        using Test
+        # Make sure `UsesPreferences` is already precompiled
+        isdefined(Base, :isprecompiled) && @test Base.isprecompiled(Base.identify_package("UsesPreferences"))
+        """ * cuda_test_base
+        output = activate_and_run(up_path, cuda_test_didnt_precompile; env=Dict("JULIA_DEBUG" => "loading"))
         @test !did_precompile(output)
 
         # Test non-compiletime preferences a bit
@@ -114,7 +127,11 @@ up_path = joinpath(@__DIR__, "UsesPreferences")
 
         # This does not cause a recompilation, and we can also get the username back again:
         username_test = """
-        using UsesPreferences, Test, Preferences
+        using Test
+        # Make sure `UsesPreferences` is already precompiled
+        isdefined(Base, :isprecompiled) && @test Base.isprecompiled(Base.identify_package("UsesPreferences"))
+        using UsesPreferences, Preferences
+        isdefined(Base, :isprecompiled) && @test Base.isprecompiled(Base.identify_package("UsesPreferences"))
         @test UsesPreferences.get_username() == "giordano"
         """
         output = activate_and_run(up_path, username_test; env=Dict("JULIA_DEBUG" => "loading"))
@@ -422,9 +439,9 @@ end
         try
             Preferences.main_uuid[] = Pkg.project().dependencies["PkgA"]
             PkgA = include(normpath(PkgA_DIR, "src", "PkgA.jl"))
-            @test PkgA.PkgAConfig
-            @test 1 == Base.invokelatest(PkgA.PkgARuntimeConfig_macro)
-            @test 1 == Base.invokelatest(PkgA.PkgARuntimeConfig_func)
+            @test Base.invokelatest(getproperty, PkgA, :PkgAConfig)
+            @test 1 == Base.invokelatest(Base.invokelatest(getproperty, PkgA, :PkgARuntimeConfig_macro))
+            @test 1 == Base.invokelatest(Base.invokelatest(getproperty, PkgA, :PkgARuntimeConfig_func))
         finally
             Preferences.main_uuid[] = nothing
         end
@@ -432,13 +449,14 @@ end
         try
             Preferences.main_uuid[] = Pkg.project().dependencies["PkgB"]
             PkgB = include(normpath(PkgB_DIR, "src", "PkgB.jl"))
-            @test PkgB.PkgBConfig
-            @test 2 == Base.invokelatest(PkgB.PkgBRuntimeConfig_macro)
-            @test 2 == Base.invokelatest(PkgB.PkgBRuntimeConfig_func)
+            @test Base.invokelatest(getproperty, PkgB ,:PkgBConfig)
+            @test 2 == Base.invokelatest(Base.invokelatest(getproperty, PkgB, :PkgBRuntimeConfig_macro))
+            @test 2 == Base.invokelatest(Base.invokelatest(getproperty, PkgB, :PkgBRuntimeConfig_func))
 
             # the overridden configuration should persist across the same session
-            @test 1 == Base.invokelatest(PkgA.PkgARuntimeConfig_macro)
-            @test 1 == Base.invokelatest(PkgA.PkgARuntimeConfig_func)
+            pkgA = Base.invokelatest(getproperty, Main, :PkgA)
+            @test 1 == Base.invokelatest(Base.invokelatest(getproperty, pkgA, :PkgARuntimeConfig_macro))
+            @test 1 == Base.invokelatest(Base.invokelatest(getproperty, pkgA, :PkgARuntimeConfig_func))
         finally
             Preferences.main_uuid[] = nothing
         end

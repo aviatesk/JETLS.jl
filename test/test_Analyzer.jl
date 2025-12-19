@@ -254,6 +254,14 @@ end
         @test isempty(get_reports(result))
     end
 
+    # For `GlobalRef`s used directly at the source level (i.e. global binding access that is not `getglobal`),
+    # only analyze those from modules directly specified in `report_target_modules`
+    let result = analyze_call(; report_target_modules=(@__MODULE__,)) do
+            TestTargetModule.func()
+        end
+        @test isempty(get_reports(result))
+    end
+
     # FieldErrorReport
     let result = analyze_call(issue392; report_target_modules=(@__MODULE__,))
         reports = get_reports(result)
