@@ -17,7 +17,7 @@ on:
 jobs:
   test:
     name: Test JETLS.jl with release environment
-    if: github.event.action != 'closed'
+    if: github.event.action != 'closed' && github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -32,7 +32,7 @@ jobs:
 
   test_jetls:
     name: Test jetls executable with release environment
-    if: github.event.action != 'closed'
+    if: github.event.action != 'closed' && github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -56,6 +56,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Get latest CHANGELOG from master
+        run: git fetch origin master && git checkout origin/master -- CHANGELOG.md
       - uses: julia-actions/setup-julia@v2
         with:
           version: "1"
@@ -186,12 +188,6 @@ jobs:
 
           git commit -m "docs: update CHANGELOG.md for $VERSION release"
           git push origin master
-
-          # Merge the same commit to release branch
-          git fetch origin release
-          git checkout release
-          git merge master
-          git push origin release
 
           # Trigger documentation build for release branch
           gh workflow run release.yml --ref release
