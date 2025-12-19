@@ -12,6 +12,7 @@ on:
       - synchronize
       - reopened
       - closed
+  workflow_dispatch:
 
 jobs:
   test:
@@ -46,7 +47,7 @@ jobs:
 
   docs:
     name: Documentation
-    if: github.event_name == 'push'
+    if: github.event_name == 'workflow_dispatch'
     permissions:
       actions: write
       contents: write
@@ -68,8 +69,12 @@ jobs:
       - name: Get release info
         id: release_info
         run: |
-          echo "date=$(cat JETLS_VERSION)" >> $GITHUB_OUTPUT
-          echo "commit=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+          VERSION=$(cat JETLS_VERSION)
+          echo "date=$VERSION" >> $GITHUB_OUTPUT
+          COMMIT=$(gh api repos/${{ github.repository }}/git/refs/tags/$VERSION --jq '.object.sha' | head -c 7)
+          echo "commit=$COMMIT" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ github.token }}
       - name: Build and deploy
         run: julia --color=yes --project=docs docs/make.jl
         env:
@@ -181,3 +186,14 @@ jobs:
 
           git commit -m "docs: update CHANGELOG.md for $VERSION release"
           git push origin master
+
+          # Merge the same commit to release branch
+          git fetch origin release
+          git checkout release
+          git merge master
+          git push origin release
+
+          # Trigger documentation build for release branch
+          gh workflow run release.yml --ref release
+        env:
+          GH_TOKEN: ${{ github.token }}

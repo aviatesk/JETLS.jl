@@ -8,6 +8,7 @@ Manifest-*.toml
 !.JETLSConfig.toml
 *.vsix
 docs/build/
+docs/src/CHANGELOG.md
 *.heapsnapshot
 .JETLSProfile
 
