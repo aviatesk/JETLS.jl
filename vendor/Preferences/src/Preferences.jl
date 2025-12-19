@@ -233,6 +233,8 @@ function _get_project_toml(u, active_project_only)
         end
     end
 
+    project_toml === nothing && error("could not locate Project.toml")
+
     # X-ref: https://github.com/JuliaPackaging/Preferences.jl/issues/34
     # We need to handle the edge cases where `project_toml` doesn't exist yet
     if !isfile(project_toml)
