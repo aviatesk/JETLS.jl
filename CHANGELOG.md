@@ -48,6 +48,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed `inference/undef-global-var` diagnostic being unintentially reported for
   undefined global bindings in dependency packages.
+- Fixed syntax/lowering diagnostics not being refreshed when diagnostic
+  configuration change via `.JETLSConfig.toml` or LSP configuration. The server
+  now sends `workspace/diagnostic/refresh` request to prompt clients to re-pull
+  diagnostics. Note that client support varies; e.g. VSCode refreshes
+  `textDocument/diagnostic` in response, but Zed does not.
 
 ## 2025-12-18
 

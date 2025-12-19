@@ -57,6 +57,7 @@ function handle_config_file_change!(
     notify_config_changes(server, tracker, source)
     if tracker.diagnostic_setting_changed
         notify_diagnostics!(server)
+        request_diagnostic_refresh!(server)
     end
 end
 
