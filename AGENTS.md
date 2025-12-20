@@ -10,12 +10,14 @@
     title case. For example:
     - Good: `## Conclusion and alternative approaches`
     - Bad: `## Conclusion And Alternative Approaches`
-- When writing commit messages, follow the format `component: Brief summary` for
+- When writing commit messages, follow the format "component: Brief summary" for
   the title. In the body of the commit message, provide a brief prose summary of
   the purpose of the changes made.
+  Use backticks for code elements (function names, variables, file paths, etc.)
+  to improve readability.
   Also, ensure that the maximum line length never exceeds 72 characters.
   When referencing external GitHub PRs or issues, use proper GitHub interlinking
-  format (e.g., `owner/repo#123` for PRs/issues).
+  format (e.g., "owner/repo#123" for PRs/issues).
   Finally, if you write code yourself, include a "Written by Claude" footer at
   the end of the commit message (no emoji nonsense). However, when simply asked
   to write a commit message, there's no need to add that footer.
@@ -74,20 +76,25 @@
 # Running test code
 Please make sure to test new code when you wrote.
 
-If explicit test file or code is provided, prioritize running that.
-Otherwise, you can run the entire test suite for the JETLS project by executing
-`using Pkg; Pkg.test()` from the root directory of this repository.
-
-For example, if you receive a prompt like this:
-> Improve the error message of diagnostics.
-> Use test/test_diagnostics for the test cases.
-
-The command you should run is:
+When working on a specific component (e.g., completions, diagnostics),
+run the component-specific test instead of the full test suite:
 ```bash
-julia --startup-file=no -e 'using Test; @testset "test_diagnostics" include("test/test_diagnostics")'
+julia --startup-file=no --project=test -e 'using Test; @testset "test_XXX" include("test/test_XXX.jl")'
 ```
-Note that the usage of the `--startup-file=no` flag, which avoids loading
-unnecessary startup utilities.
+Note:
+- `--startup-file=no` avoids loading unnecessary startup utilities
+- `--project=test` enables `JETLS_TEST_MODE` for proper test execution
+
+For even faster iteration on a specific `@testset`, use
+[TestRunner.jl](#using-testrunnerjl):
+```bash
+testrunner --project=test test/test_XXX.jl "testset_name"
+```
+
+Running `Pkg.test()` takes about 8 minutes (as of December 2025), so avoid it unless:
+- Changes affect multiple components
+- The user explicitly requests the full test suite
+- You're unsure which tests are relevant
 
 # Test code structure
 Testing language server functionality is challenging.
@@ -169,6 +176,8 @@ end
 end # module test_completions
 ```
 
+## Using TestRunner.jl
+
 Additionally, by using `@testset` as shown above, not only are tests hierarchized,
 but through integration with [TestRunner.jl](https://github.com/aviatesk/TestRunner.jl),
 you can also selectively execute specific `@testset`s, without executing the
@@ -178,7 +187,7 @@ from code lenses or code actions within test files. If you need to run them from
 the command line, you can use commands like the following
 (assuming the `testrunner` executable is installed):
 ```bash
-testrunner --verbose test/test_completions "some_completion_func"
+testrunner --project=test --verbose test/test_completions "some_completion_func"
 ```
 Note that TestRunner.jl is still experimental.
 The most reliable way to run tests is still to execute test files standalone.
@@ -198,3 +207,12 @@ For example, if the user has deleted a function you wrote, do not reintroduce
 that function in subsequent code generation.
 If you believe that changes made by the user are potentially problematic,
 please clearly explain your concerns and ask the user for clarification.
+
+# Git operations
+Only perform Git operations when the user explicitly requests them.
+After completing a Git operation, do not perform additional operations based on
+conversational context alone. Wait for explicit instructions.
+
+When the user provides feedback or points out issues with a commit:
+- Do NOT automatically amend the commit or create a fixup commit
+- Explain what could be changed, then wait for explicit instruction
