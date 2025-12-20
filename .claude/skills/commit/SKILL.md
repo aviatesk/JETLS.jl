@@ -71,4 +71,4 @@ propagation after failed concrete evaluation for better accuracy.
 
 # Safety guideline
 
-See the ["Git operations" section in CLAUDE.md](../../CLAUDE.md#git-operations).
+See the ["Git operations" section in CLAUDE.md](../../../CLAUDE.md#git-operations).
