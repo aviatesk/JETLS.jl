@@ -21,6 +21,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 - Diff: [`afc5137...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/afc5137...HEAD)
 
+### Fixed
+
+- Added patch to vendored JuliaLowering to support `@.` macro expansion.
+  This was addressed with a specific patch for the `@.` case, but many of these
+  JuliaLowering macro compatibility issues are planned to be resolved
+  generically in the future. Fixed https://github.com/aviatesk/JETLS.jl/issues/409.
+
 ### Announcement
 
 > [!note]
