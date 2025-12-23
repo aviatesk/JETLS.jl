@@ -1,0 +1,8 @@
+[deps]
+Glob = "c27321d9-0574-5035-807b-f59d2c89b15c"
+JETLS = "a3b70258-0602-4ee2-b5a6-54c2470400db"
+Struct2JSONSchema = "6b9a66ba-ce23-4e49-9189-ad500babf267"
+
+[sources]
+JETLS = {path = "../.."}
+Struct2JSONSchema = {rev = "main", url = "https://github.com/abap34/Struct2JSONSchema.jl"}
