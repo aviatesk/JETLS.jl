@@ -119,7 +119,7 @@ the list itself is subject to change.
   - [x] Type stable config object implementation
   - [x] Support LSP configurations
   - [x] Documentation
-  - [ ] Schema support
+  - [x] Schema support
 - [x] Parallel/concurrent message handling
 - [x] Work done progress support
 - [x] Message cancellation support
