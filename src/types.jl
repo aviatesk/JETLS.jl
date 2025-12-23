@@ -301,20 +301,34 @@ end
     executable::Maybe{String}
 end
 
+@enum PresetFormatter Runic JuliaFormatter UnknownPreset
+
 @option "custom" struct CustomFormatterConfig
     executable::Maybe{String}
     executable_range::Maybe{String}
 end
 
-const FormatterConfig = Union{String,CustomFormatterConfig}
+const FormatterConfig = Union{PresetFormatter,CustomFormatterConfig}
 
-function default_executable(formatter::String)
-    if formatter == "Runic"
-        return @static Sys.iswindows() ? "runic.bat" : "runic"
-    elseif formatter == "JuliaFormatter"
-        return @static Sys.iswindows() ? "jlfmt.bat" : "jlfmt"
+function Base.convert(::Type{PresetFormatter}, s::String)
+    if s == "Runic"
+        return Runic
+    elseif s == "JuliaFormatter"
+        return JuliaFormatter
     else
+        return UnknownPreset
+    end
+end
+
+function default_executable(formatter::PresetFormatter)
+    if formatter == Runic
+        return @static Sys.iswindows() ? "runic.bat" : "runic"
+    elseif formatter == JuliaFormatter
+        return @static Sys.iswindows() ? "jlfmt.bat" : "jlfmt"
+    elseif formatter == UnknownPreset
         return nothing
+    else
+        error("unreachable")
     end
 end
 
@@ -422,7 +436,7 @@ const DEFAULT_CONFIG = JETLSConfig(;
     diagnostic = DiagnosticConfig(true, DiagnosticPattern[]),
     full_analysis = FullAnalysisConfig(1.0, true),
     testrunner = TestRunnerConfig(@static Sys.iswindows() ? "testrunner.bat" : "testrunner"),
-    formatter = "Runic",
+    formatter = Runic,
     initialization_options = DEFAULT_INIT_OPTIONS)
 
 function get_default_config(path::Symbol...)

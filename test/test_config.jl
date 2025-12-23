@@ -7,7 +7,7 @@ using JETLS
     @testset "`get_default_config`" begin
         @test JETLS.get_default_config(:testrunner, :executable) ==
             (@static Sys.iswindows() ? "testrunner.bat" : "testrunner")
-        @test JETLS.get_default_config(:formatter) == "Runic"
+        @test JETLS.get_default_config(:formatter) == JETLS.Runic
         @test_throws FieldError JETLS.get_default_config(:nonexistent)
         @test_throws FieldError JETLS.get_default_config(:full_analysis, :nonexistent)
     end
@@ -249,16 +249,16 @@ end
 @testset "Formatter configuration" begin
     @testset "preset formatter: Runic" begin
         manager = JETLS.ConfigManager(JETLS.ConfigManagerData())
-        config = JETLS.JETLSConfig(; formatter="Runic")
+        config = JETLS.JETLSConfig(; formatter=JETLS.Runic)
         store_file_config!(manager, "/path/.JETLSConfig.toml", config)
-        @test JETLS.get_config(manager, :formatter) == "Runic"
+        @test JETLS.get_config(manager, :formatter) == JETLS.Runic
     end
 
     @testset "preset formatter: JuliaFormatter" begin
         manager = JETLS.ConfigManager(JETLS.ConfigManagerData())
-        config = JETLS.JETLSConfig(; formatter="JuliaFormatter")
+        config = JETLS.JETLSConfig(; formatter=JETLS.JuliaFormatter)
         store_file_config!(manager, "/path/.JETLSConfig.toml", config)
-        @test JETLS.get_config(manager, :formatter) == "JuliaFormatter"
+        @test JETLS.get_config(manager, :formatter) == JETLS.JuliaFormatter
     end
 
     @testset "custom formatter" begin

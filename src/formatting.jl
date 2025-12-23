@@ -121,24 +121,23 @@ function do_format(
 end
 
 function get_formatter_executable(formatter::FormatterConfig, for_range::Bool)
-    if formatter isa String
-        # Preset formatter: "Runic" or "JuliaFormatter"
+    if formatter isa PresetFormatter
         executable = default_executable(formatter)
         executable === nothing &&
             return request_failed_error(
-                "Unknown formatter preset \"$formatter\". " *
+                "Unknown formatter preset. " *
                 "Valid presets are: \"Runic\", \"JuliaFormatter\". " *
                 "For custom formatters, use [formatter.custom] configuration.")
 
-        if for_range && formatter == "JuliaFormatter"
+        if for_range && formatter == JuliaFormatter
             return request_failed_error(
                 "JuliaFormatter does not support range formatting. " *
                 "Please use document formatting instead or configure a custom " *
                 "formatter with `executable_range`.")
         else
-            additional_msg = if formatter == "JuliaFormatter"
+            additional_msg = if formatter == JuliaFormatter
                 install_instruction_message(executable, JULIAFORMATTER_INSTALLATION_URL)
-            elseif formatter == "Runic"
+            elseif formatter == Runic
                 install_instruction_message(executable, RUNIC_INSTALLATION_URL)
             else
                 check_settings_message(:formatter)
@@ -269,15 +268,14 @@ function format_file(
         exe::String, uri::URI, fi::FileInfo, lines::Union{Nothing,AbstractString},
         options::FormattingOptions, formatter::FormatterConfig
     )
-    cmd = if formatter isa String
-        # Preset formatter: "Runic" or "JuliaFormatter"
-        if formatter == "Runic"
+    cmd = if formatter isa PresetFormatter
+        if formatter == Runic
             if isnothing(lines)
                 `$exe`
             else
                 `$exe --lines=$lines`
             end
-        elseif formatter == "JuliaFormatter"
+        elseif formatter == JuliaFormatter
             # JuliaFormatter doesn't support range formatting
             # (should not reach here due to earlier validation)
             if isnothing(lines)
