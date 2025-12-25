@@ -67,6 +67,7 @@ override_field!(ctx, JETLS.JETLSConfig, :formatter) do _
     )
 end
 
+register_optional_fields!(ctx, JETLS.JETLSConfig, :formatter)
 
 desc = TOML.parsefile(joinpath(@__DIR__, "description.toml"))
 
