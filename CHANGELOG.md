@@ -19,7 +19,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`9c00dfe...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/9c00dfe...HEAD)
+- Diff: [`afc5137...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/afc5137...HEAD)
+
+### Added
+
+- Added JSON Schema for `.JETLSConfig.toml` configuration. The schema is
+  automatically generated at release time and published as a release asset,
+  enabling autocompletion and type validation in editors that support
+  schema-based TOML editing.
+  (https://github.com/aviatesk/JETLS.jl/pull/413)
+
 
 ### Announcement
 
