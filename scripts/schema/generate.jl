@@ -62,6 +62,7 @@ register_field_override!(ctx, JETLS.JETLSConfig, :formatter) do ctx
     )
 end
 
+register_optional_fields!(ctx, JETLS.JETLSConfig, :formatter)
 
 schema = generate_schema(JETLS.JETLSConfig; ctx = ctx)
 output_path = joinpath(@__DIR__, "..", "..", "jetls-config.schema.json")
