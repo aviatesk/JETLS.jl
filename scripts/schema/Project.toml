@@ -5,4 +5,3 @@ Struct2JSONSchema = "6b9a66ba-ce23-4e49-9189-ad500babf267"
 
 [sources]
 JETLS = {path = "../.."}
-Struct2JSONSchema = {rev = "main", url = "https://github.com/abap34/Struct2JSONSchema.jl"}
