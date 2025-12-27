@@ -1,3 +1,4 @@
+using TOML
 using JETLS
 using Struct2JSONSchema
 using JSON
@@ -64,6 +65,28 @@ register_field_override!(ctx, JETLS.JETLSConfig, :formatter) do ctx
 end
 
 register_optional_fields!(ctx, JETLS.JETLSConfig, :formatter)
+
+desc = TOML.parsefile(joinpath(@__DIR__, "description.toml"))
+
+for (struct_name, fields) in desc
+    struct_sym = Symbol(struct_name)
+    if !isdefined(JETLS, struct_sym)
+        error("Struct '$struct_name' not found in JETLS module (from description.toml)")
+    end
+    struct_type = getproperty(JETLS, struct_sym)
+
+    struct_fieldnames = fieldnames(struct_type)
+    for (field_name, field_desc) in fields
+        field_sym = Symbol(field_name)
+        if field_sym ∉ struct_fieldnames
+            error(
+                "Field '$field_name' not found in struct '$struct_name' " *
+                "(from description.toml). Available fields: $(struct_fieldnames)"
+            )
+        end
+        register_field_description!(ctx, struct_type, field_sym, field_desc)
+    end
+end
 
 schema = generate_schema(JETLS.JETLSConfig; ctx = ctx)
 output_path = joinpath(@__DIR__, "..", "..", "jetls-config.schema.json")
