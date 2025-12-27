@@ -6,7 +6,8 @@ using Glob
 ctx = SchemaContext(; verbose = true)
 treat_union_nothing_as_optional!(ctx)
 
-register_optional_fields!(ctx, JETLS.DiagnosticPattern, :__pattern_value__)
+# `__pattern_value__` is an internal field
+register_skip_fields!(ctx, JETLS.DiagnosticPattern, :__pattern_value__)
 
 register_field_override!(ctx, JETLS.DiagnosticPattern, :match_by) do ctx
     Dict("type" => "string", "enum" => ["code", "message"])
