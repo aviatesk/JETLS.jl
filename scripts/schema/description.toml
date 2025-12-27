@@ -1,0 +1,31 @@
+[JETLSConfig]
+diagnostic = "Diagnostic configuration. See [Diagnostic configuration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic)."
+full_analysis = "Configuration for full JET analysis. See [Full analysis configuration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/full_analysis)."
+testrunner = "TestRunner integration configuration. See [TestRunner integration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/testrunner)."
+formatter = "Formatter configuration. Can be a preset name ('Runic' or 'JuliaFormatter') or a custom formatter object. See [Formatting configuration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/formatter)."
+initialization_options = "Static initialization options sent to JETLS during startup. These settings require a server restart to take effect."
+
+[DiagnosticConfig]
+enabled = "Enable or disable all JETLS diagnostics. When set to false, no diagnostic messages will be shown."
+patterns = "Fine-grained control over diagnostics through pattern matching. See [Pattern-based diagnostic configuration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic/patterns)."
+
+[DiagnosticPattern]
+pattern = "The pattern to match (e.g., 'lowering/unused-argument' for code matching, or 'Macro name .*' for message matching)."
+match_by = "What to match against: 'code' matches against diagnostic codes (e.g., 'lowering/unused-argument'), 'message' matches against diagnostic message text."
+match_type = "How to interpret the pattern: 'literal' for exact string match, 'regex' for regular expression match."
+severity = "Severity level: 'error'/1 for critical issues, 'warning'/'warn'/2 for potential problems, 'information'/'info'/3 for informational messages, 'hint'/4 for suggestions, 'off'/0 to disable."
+path = "Optional glob pattern to restrict this configuration to specific files (e.g., 'test/**/*.jl'). Patterns are matched against file paths relative to the workspace root. Supports globstar (**) for matching directories recursively."
+
+[FullAnalysisConfig]
+debounce = "Debounce time in seconds before triggering full analysis after a document change."
+auto_instantiate = "When enabled, JETLS automatically runs Pkg.instantiate() for packages that have not been instantiated yet (e.g., freshly cloned repositories). This allows full analysis to work immediately upon opening such packages. Note that this will automatically create a Manifest.toml file when the package has not been instantiated yet."
+
+[TestRunnerConfig]
+executable = "Path to the TestRunner.jl executable. If not set, uses 'testrunner' from PATH."
+
+[CustomFormatterConfig]
+executable = "Path to custom formatter executable for document formatting."
+executable_range = "Path to custom formatter executable for range formatting."
+
+[InitOptions]
+n_analysis_workers = "Number of analysis worker tasks. Default is 1. See [documentation](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options/n_analysis_workers) for details and current limitations."
