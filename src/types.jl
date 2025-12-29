@@ -379,6 +379,7 @@ merge_key(::Type{DiagnosticPattern}) = :__pattern_value__
 @option struct DiagnosticConfig <: ConfigSection
     enabled::Maybe{Bool}
     patterns::Maybe{Vector{DiagnosticPattern}}
+    allow_unused_underscore::Maybe{Bool}
 end
 
 # Internal, undocumented configuration for full-analysis module overrides.
@@ -419,7 +420,7 @@ const DEFAULT_INIT_OPTIONS = InitOptions(; n_analysis_workers=1, analysis_overri
 end
 
 const DEFAULT_CONFIG = JETLSConfig(;
-    diagnostic = DiagnosticConfig(true, DiagnosticPattern[]),
+    diagnostic = DiagnosticConfig(true, DiagnosticPattern[], true),
     full_analysis = FullAnalysisConfig(1.0, true),
     testrunner = TestRunnerConfig(@static Sys.iswindows() ? "testrunner.bat" : "testrunner"),
     formatter = "Runic",

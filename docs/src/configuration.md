@@ -38,6 +38,7 @@ executable = "testrunner"  # string, default: "testrunner" (or "testrunner.bat" 
 - [`formatter`](@ref config/formatter)
 - [`[diagnostic]`](@ref config/diagnostic)
     - [`[diagnostic] enabled`](@ref config/diagnostic-enabled)
+    - [`[diagnostic] allow_unused_underscore`](@ref config/diagnostic-allow_unused_underscore)
     - [`[[diagnostic.patterns]]`](@ref config/diagnostic-patterns)
 - [`[testrunner]`](@ref config/testrunner)
     - [`[testrunner] executable`](@ref config/testrunner-executable)
@@ -136,6 +137,23 @@ messages will be shown.
 ```toml
 [diagnostic]
 enabled = false  # Disable all diagnostics
+```
+
+#### [`[diagnostic] allow_unused_underscore`](@id config/diagnostic-allow_unused_underscore)
+
+- **Type**: boolean
+- **Default**: `true`
+
+When enabled, unused variable diagnostics
+([`lowering/unused-argument`](@ref diagnostic/lowering/unused-argument) and
+[`lowering/unused-local`](@ref diagnostic/lowering/unused-local)) are suppressed
+for names starting with `_` (underscore). This follows the common convention
+in many programming languages where `_`-prefixed names indicate intentionally
+unused variables.
+
+```toml
+[diagnostic]
+allow_unused_underscore = false  # Report all unused variables
 ```
 
 #### [`[[diagnostic.patterns]]`](@id config/diagnostic-patterns)

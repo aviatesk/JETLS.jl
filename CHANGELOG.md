@@ -21,6 +21,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 - Diff: [`afc5137...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/afc5137...HEAD)
 
+### Added
+
+- Added `diagnostic.allow_unused_underscore` configuration option (default: `true`).
+  When enabled, unused variable diagnostics (`lowering/unused-argument` and
+  `lowering/unused-local`) are suppressed for names starting with `_`.
+
 ### Fixed
 
 - Added patch to vendored JuliaLowering to support `@.` macro expansion.
