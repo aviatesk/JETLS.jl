@@ -137,6 +137,7 @@ end
 **Default severity:** `Information`
 
 Function arguments that are declared but never used in the function body.
+
 By default, arguments with names starting with `_` are not reported; see
 [`allow_unused_underscore`](@ref config/diagnostic-allow_unused_underscore).
 
@@ -153,6 +154,7 @@ end
 **Default severity:** `Information`
 
 Local variables that are assigned but never read.
+
 By default, variables with names starting with `_` are not reported; see
 [`allow_unused_underscore`](@ref config/diagnostic-allow_unused_underscore).
 
