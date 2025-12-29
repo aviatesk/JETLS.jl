@@ -21,22 +21,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 - Diff: [`afc5137...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/afc5137...HEAD)
 
-### Added
-
-- Added `diagnostic.allow_unused_underscore` configuration option (default: `true`).
-  When enabled, unused variable diagnostics (`lowering/unused-argument` and
-  `lowering/unused-local`) are suppressed for names starting with `_`.
-- Added code action to prefix unused variables with `_`. When triggered on an
-  unused variable diagnostic, this quickfix inserts `_` at the beginning of
-  the variable name to suppress the warning.
-
-### Fixed
-
-- Added patch to vendored JuliaLowering to support `@.` macro expansion.
-  This was addressed with a specific patch for the `@.` case, but many of these
-  JuliaLowering macro compatibility issues are planned to be resolved
-  generically in the future. Fixed https://github.com/aviatesk/JETLS.jl/issues/409.
-
 ### Announcement
 
 > [!note]
@@ -66,6 +50,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > might work, but most LSP features will be unfunctional.
 > Note that `analysis_overrides` is provided as a temporary workaround and may
 > be removed or changed at any time. A proper fix is being worked on.
+
+### Added
+
+- Added `diagnostic.allow_unused_underscore` configuration option (default: `true`).
+  When enabled, unused variable diagnostics (`lowering/unused-argument` and
+  `lowering/unused-local`) are suppressed for names starting with `_`.
+- Added code action to prefix unused variables with `_`. When triggered on an
+  unused variable diagnostic, this quickfix inserts `_` at the beginning of
+  the variable name to suppress the warning.
+
+### Fixed
+
+- Added patch to vendored JuliaLowering to support `@.` macro expansion.
+  This was addressed with a specific patch for the `@.` case, but many of these
+  JuliaLowering macro compatibility issues are planned to be resolved
+  generically in the future. Fixed https://github.com/aviatesk/JETLS.jl/issues/409.
 
 ## 2025-12-19
 
