@@ -26,6 +26,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Added `diagnostic.allow_unused_underscore` configuration option (default: `true`).
   When enabled, unused variable diagnostics (`lowering/unused-argument` and
   `lowering/unused-local`) are suppressed for names starting with `_`.
+- Added code action to prefix unused variables with `_`. When triggered on an
+  unused variable diagnostic, this quickfix inserts `_` at the beginning of
+  the variable name to suppress the warning.
 
 ### Fixed
 
