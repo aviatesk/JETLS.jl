@@ -9,12 +9,12 @@ include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
 
 module lowering_module end
 
-get_lowered_diagnostics(text::AbstractString) = get_lowered_diagnostics(lowering_module, text)
-function get_lowered_diagnostics(mod::Module, text::AbstractString)
+get_lowered_diagnostics(text::AbstractString; kwargs...) = get_lowered_diagnostics(lowering_module, text; kwargs...)
+function get_lowered_diagnostics(mod::Module, text::AbstractString; kwargs...)
     fi = JETLS.FileInfo(#=version=#0, text, @__FILE__)
     st0 = JETLS.build_syntax_tree(fi)
     @assert JS.kind(st0) === JS.K"toplevel"
-    return JETLS.lowering_diagnostics(st0[1], mod, fi)
+    return JETLS.lowering_diagnostics(st0[1], mod, fi; kwargs...)
 end
 
 macro just_return(x)
@@ -299,7 +299,7 @@ length_utf16(s::AbstractString) = sum(c::Char -> codepoint(c) < 0x10000 ? 1 : 2,
             function foo(__module__, name)
                 getglobal(@__MODULE__, name)
             end
-            """)
+            """; allow_unused_underscore=false)
             @test length(diagnostics) == 1
             diagnostic = only(diagnostics)
             @test diagnostic.message == "Unused argument `__module__`"
@@ -482,6 +482,44 @@ length_utf16(s::AbstractString) = sum(c::Char -> codepoint(c) < 0x10000 ? 1 : 2,
             @test diagnostic.range.start.character == length_utf16("func(xs) = [x for (")
             @test diagnostic.range.var"end".line == 0
             @test diagnostic.range.var"end".character == length_utf16("func(xs) = [x for (i")
+        end
+    end
+
+    @testset "allow_unused_underscore" begin
+        let diagnostics = get_lowered_diagnostics("""
+            function foo(_x, y)
+                return y
+            end
+            """)
+            @test isempty(diagnostics)
+        end
+
+        let diagnostics = get_lowered_diagnostics("""
+            function foo(_x, y)
+                return y
+            end
+            """; allow_unused_underscore=false)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.message == "Unused argument `_x`"
+        end
+
+        let diagnostics = get_lowered_diagnostics("""
+            y = let _x = 42
+                sin(42)
+            end
+            """)
+            @test isempty(diagnostics)
+        end
+
+        let diagnostics = get_lowered_diagnostics("""
+            y = let _x = 42
+                sin(42)
+            end
+            """; allow_unused_underscore=false)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.message == "Unused local binding `_x`"
         end
     end
 end

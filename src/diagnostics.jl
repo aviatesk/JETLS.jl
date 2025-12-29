@@ -482,7 +482,8 @@ struct LoweringDiagnosticKey
 end
 
 function analyze_lowered_code!(diagnostics::Vector{Diagnostic},
-        ctx3::JL.VariableAnalysisContext, st3::JL.SyntaxTree, fi::FileInfo
+        ctx3::JL.VariableAnalysisContext, st3::JL.SyntaxTree, fi::FileInfo;
+        allow_unused_underscore::Bool = true
     )
     ismacro = Ref(false)
     binding_occurrences = compute_binding_occurrences(ctx3, st3; ismacro)
@@ -493,6 +494,9 @@ function analyze_lowered_code!(diagnostics::Vector{Diagnostic},
         end
         bn = binfo.name
         if ismacro[] && (bn == "__module__" || bn == "__source__")
+            continue
+        end
+        if allow_unused_underscore && startswith(bn, '_')
             continue
         end
         provs = JL.flattened_provenance(JL.binding_ex(ctx3, binfo.id))
@@ -521,7 +525,8 @@ end
 
 function lowering_diagnostics!(
         diagnostics::Vector{Diagnostic}, st0::JL.SyntaxTree, mod::Module, fi::FileInfo;
-        skip_macro_expansion_errors::Bool = false
+        skip_macro_expansion_errors::Bool = false,
+        allow_unused_underscore::Bool = true
     )
     @assert JS.kind(st0) ∉ JS.KSet"toplevel module"
 
@@ -579,9 +584,9 @@ function lowering_diagnostics!(
         end
     end
 
-    return analyze_lowered_code!(diagnostics, ctx3, st3, fi)
+    return analyze_lowered_code!(diagnostics, ctx3, st3, fi; allow_unused_underscore)
 end
-lowering_diagnostics(args...) = lowering_diagnostics!(Diagnostic[], args...) # used by tests
+lowering_diagnostics(args...; kwargs...) = lowering_diagnostics!(Diagnostic[], args...; kwargs...) # used by tests
 
 # TODO use something like `JuliaInterpreter.ExprSplitter`
 
@@ -590,10 +595,11 @@ function toplevel_lowering_diagnostics(server::Server, uri::URI, file_info::File
     st0_top = build_syntax_tree(file_info)
     analysis_info = get_analysis_info(server.state.analysis_manager, uri)
     skip_macro_expansion_errors = !has_module_context(analysis_info, uri)
+    allow_unused_underscore = get_config(server.state.config_manager, :diagnostic, :allow_unused_underscore)
     iterate_toplevel_tree(st0_top) do st0::JL.SyntaxTree
         pos = offset_to_xy(file_info, JS.first_byte(st0))
         (; mod) = get_context_info(server.state, uri, pos)
-        lowering_diagnostics!(diagnostics, st0, mod, file_info; skip_macro_expansion_errors)
+        lowering_diagnostics!(diagnostics, st0, mod, file_info; skip_macro_expansion_errors, allow_unused_underscore)
     end
     return diagnostics
 end

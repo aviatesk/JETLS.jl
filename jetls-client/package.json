@@ -184,6 +184,11 @@
                   "default": true,
                   "markdownDescription": "Enable or disable all JETLS diagnostics. When set to `false`, no diagnostic messages will be shown."
                 },
+                "allow_unused_underscore": {
+                  "type": "boolean",
+                  "default": true,
+                  "markdownDescription": "When enabled, unused variable diagnostics (`lowering/unused-argument`, `lowering/unused-local`) are suppressed for names starting with `_` (underscore). This follows the common convention where `_`-prefixed names indicate intentionally unused variables."
+                },
                 "patterns": {
                   "type": "array",
                   "default": [],
