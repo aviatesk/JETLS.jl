@@ -707,9 +707,14 @@ end
         JETLS.unused_variable_code_actions!(code_actions, uri, [diagnostic]; allow_unused_underscore=false)
         @test length(code_actions) == 1
         action = only(code_actions)
-        @test action.disabled !== nothing
-        @test action.disabled.reason == "Disabled because `diagnostic.allow_unused_underscore` is false"
-        @test action.isPreferred == false
+        @test action.title == "Replace with '_' to indicate intentionally unused"
+        @test action.isPreferred == true
+        @test action.disabled === nothing
+        edits = action.edit.changes[uri]
+        edit = only(edits)
+        @test edit.range.start.character == 13
+        @test edit.range.var"end".character == 14
+        @test edit.newText == "_"
     end
 
     let diagnostic = Diagnostic(;
