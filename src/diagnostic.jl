@@ -435,19 +435,20 @@ toplevel_warning_report_to_uri(report::ToplevelWarningReport) = toplevel_warning
 toplevel_warning_report_to_uri_impl(::ToplevelWarningReport) =
     error("Missing `toplevel_warning_report_to_uri_impl(::ToplevelWarningReport)` interface")
 
-toplevel_warning_report_to_diagnostic(report::ToplevelWarningReport, postprocessor::JET.PostProcessor) =
-    toplevel_warning_report_to_diagnostic_impl(report, postprocessor)::Diagnostic
-toplevel_warning_report_to_diagnostic_impl(::ToplevelWarningReport, ::JET.PostProcessor) =
-    error("Missing `toplevel_warning_report_to_diagnostic_impl(::ToplevelWarningReport, ::JET.PostProcessor)` interface")
+toplevel_warning_report_to_diagnostic(report::ToplevelWarningReport, sfi::SavedFileInfo, postprocessor::JET.PostProcessor) =
+    toplevel_warning_report_to_diagnostic_impl(report, sfi, postprocessor)::Diagnostic
+toplevel_warning_report_to_diagnostic_impl(::ToplevelWarningReport, ::SavedFileInfo, ::JET.PostProcessor) =
+    error("Missing `toplevel_warning_report_to_diagnostic_impl(::ToplevelWarningReport, ::SavedFileInfo, ::JET.PostProcessor)` interface")
 
 function toplevel_warning_reports_to_diagnostics!(
         uri2diagnostics::URI2Diagnostics, reports::Vector{ToplevelWarningReport},
-        postprocessor::JET.PostProcessor
+        server::Server, postprocessor::JET.PostProcessor
     )
     for report in reports
         uri = toplevel_warning_report_to_uri(report)
         haskey(uri2diagnostics, uri) || continue
-        diagnostic = toplevel_warning_report_to_diagnostic(report, postprocessor)
+        sfi = @something get_saved_file_info(server.state, uri) continue
+        diagnostic = toplevel_warning_report_to_diagnostic(report, sfi, postprocessor)
         push!(uri2diagnostics[uri], diagnostic)
     end
     return uri2diagnostics
@@ -468,7 +469,7 @@ end
 
 toplevel_warning_report_to_uri_impl(report::MethodOverwriteReport) = filepath2uri(report.filepath)
 
-function toplevel_warning_report_to_diagnostic_impl(report::MethodOverwriteReport, postprocessor::JET.PostProcessor)
+function toplevel_warning_report_to_diagnostic_impl(report::MethodOverwriteReport, ::SavedFileInfo, postprocessor::JET.PostProcessor)
     sig_str = postprocessor(sprint(Base.show_tuple_as_call, Symbol(""), report.sig))
     mod_str = postprocessor(sprint(show, report.mod))
     message = "Method definition $sig_str in module $mod_str overwritten"
@@ -491,23 +492,25 @@ end
 
 struct AbstractFieldReport <: ToplevelWarningReport
     filepath::String
-    line::Int
+    fieldline::Union{Int,JS.SyntaxNode}
     typ::Type
     fname::Symbol
     ft
     AbstractFieldReport(
-        filepath::AbstractString, line::Int, @nospecialize(typ::Type), fname::Symbol, @nospecialize(ft)
-    ) = new(filepath, line, typ, fname, ft)
+        filepath::AbstractString, fieldline::Union{Int,JS.SyntaxNode}, @nospecialize(typ::Type), fname::Symbol, @nospecialize(ft)
+    ) = new(filepath, fieldline, typ, fname, ft)
 end
 
 toplevel_warning_report_to_uri_impl(report::AbstractFieldReport) = filepath2uri(report.filepath)
 
-function toplevel_warning_report_to_diagnostic_impl(report::AbstractFieldReport, postprocessor::JET.PostProcessor)
+function toplevel_warning_report_to_diagnostic_impl(report::AbstractFieldReport, sfi::SavedFileInfo, postprocessor::JET.PostProcessor)
     typ_str = postprocessor(sprint(show, report.typ))
     ft_str = postprocessor(sprint(show, report.ft))
     message = "`$typ_str` has abstract field `$(report.fname)::$ft_str`"
+    fieldline = report.fieldline
+    range = fieldline isa Int ? line_range(fieldline) : jsobj_to_range(fieldline, sfi)
     return Diagnostic(;
-        range = line_range(report.line),
+        range,
         severity = DiagnosticSeverity.Information,
         message,
         source = DIAGNOSTIC_SOURCE,

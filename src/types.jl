@@ -60,11 +60,12 @@ end
 struct SavedFileInfo
     parsed_stream::JS.ParseStream
     syntax_node::JS.SyntaxNode
+    encoding::LSP.PositionEncodingKind.Ty
 
-    function SavedFileInfo(parsed_stream::JS.ParseStream, uri::URI)
+    function SavedFileInfo(parsed_stream::JS.ParseStream, uri::URI, encoding::LSP.PositionEncodingKind.Ty)
         filename = uri2filename(uri)
         syntax_node = JS.build_tree(JS.SyntaxNode, parsed_stream; filename)
-        new(parsed_stream, syntax_node)
+        new(parsed_stream, syntax_node, encoding)
     end
 end
 

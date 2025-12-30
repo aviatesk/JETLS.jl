@@ -547,7 +547,7 @@ end
 
 """
     jsobj_to_range(
-            obj, fi::FileInfo;
+            obj, fi::Union{FileInfo,SavedFileInfo};
             adjust_first::Int = 0, adjust_last::Int = 0
         ) -> range::LSP.Range
 
@@ -579,7 +579,7 @@ This follows the standard convention where the end position points to the first
 character/byte that is NOT part of the range.
 """
 function jsobj_to_range(
-        obj, fi::FileInfo;
+        obj, fi::Union{FileInfo,SavedFileInfo};
         adjust_first::Int = 0, adjust_last::Int = 0
     )
     fb = JS.first_byte(obj)

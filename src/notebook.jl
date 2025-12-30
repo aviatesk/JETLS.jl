@@ -33,7 +33,7 @@ end
 function cache_notebook_saved_file_info!(server::Server, notebook_uri::URI, notebook_info::NotebookInfo)
     state = server.state
     parsed_stream = ParseStream!(notebook_info.concat.source)
-    sfi = SavedFileInfo(parsed_stream, notebook_uri)
+    sfi = SavedFileInfo(parsed_stream, notebook_uri, state.encoding)
     return store!(state.saved_file_cache) do cache
         Base.PersistentDict(cache, notebook_uri => sfi), sfi
     end
