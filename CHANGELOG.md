@@ -56,18 +56,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Added `diagnostic.allow_unused_underscore` configuration option (default: `true`).
   When enabled, unused variable diagnostics (`lowering/unused-argument` and
   `lowering/unused-local`) are suppressed for names starting with `_`.
+  (https://github.com/aviatesk/JETLS.jl/pull/415)
 - Added code action to prefix unused variables with `_`. When triggered on an
   unused variable diagnostic, this quickfix inserts `_` at the beginning of
   the variable name to suppress the warning.
+  (https://github.com/aviatesk/JETLS.jl/pull/416)
 - Added warning diagnostic for method overwrites (`toplevel/method-overwrite`).
   When a method with the same signature is defined multiple times within a
   package, a warning is reported at the overwriting definition with a link to
   the original definition. Addresses
   https://github.com/aviatesk/JETLS.jl/issues/387.
+  (https://github.com/aviatesk/JETLS.jl/pull/417)
+
+  <img alt="toplevel/method-overwrite showcase" src="https://github.com/user-attachments/assets/5c4aa6f7-ebd8-4e07-b3c6-ad6159a76508">
+
 - Added information diagnostic for abstract field types (`toplevel/abstract-field`).
   Reports when a struct field has an abstract type (e.g., `Vector{Integer}` or
   `AbstractVector{Int}`), which often causes performance issues due to type
   instability.
+  (https://github.com/aviatesk/JETLS.jl/pull/418, (https://github.com/aviatesk/JETLS.jl/pull/419)
+
+  <img alt="toplevel/abstract-field showcase" src="https://github.com/user-attachments/assets/b5f925bb-d518-4e6c-893d-2f91fb1965f6">
 
 ### Fixed
 
