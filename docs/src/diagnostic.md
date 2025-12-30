@@ -65,6 +65,7 @@ Here is a summary table of the diagnostics explained in this section:
 | [`lowering/unused-argument`](@ref diagnostic/lowering/unused-argument)             | `Information`         | Function arguments that are never used                         |
 | [`lowering/unused-local`](@ref diagnostic/lowering/unused-local)                   | `Information`         | Local variables that are assigned but never read               |
 | [`toplevel/error`](@ref diagnostic/toplevel/error)                                 | `Error`               | Errors during code loading (missing deps, type failures, etc.) |
+| [`toplevel/method-overwrite`](@ref diagnostic/toplevel/method-overwrite)           | `Warning`             | Method definitions that overwrite previously defined methods   |
 | [`inference/undef-global-var`](@ref diagnostic/inference/undef-global-var)         | `Warning`             | References to undefined global variables                       |
 | [`inference/undef-local-var`](@ref diagnostic/inference/undef-local-var)           | `Information/Warning` | References to undefined local variables                        |
 | [`inference/field-error`](@ref diagnostic/inference/field-error)                   | `Warning`             | Access to non-existent struct fields                           |
@@ -208,6 +209,30 @@ These errors prevent JETLS from fully analyzing your code, which means
 the top-level errors are resolved. To fix these errors, ensure your package
 environment is properly set up by running `Pkg.instantiate()` in your package
 directory, and verify that your package can be loaded successfully in a Julia REPL.
+
+#### [Method overwrite (`toplevel/method-overwrite`)](@id diagnostic/toplevel/method-overwrite)
+
+**Default severity:** `Warning`
+
+Reported when a method with the same signature is defined multiple times within
+a package. This typically indicates an unintentional redefinition that
+overwrites the previous method.
+
+Example:
+
+```julia
+function duplicate(x::Int)
+    return x + 1
+end
+
+function duplicate(x::Int, y::Int=2)  # Method definition duplicate(x::Int) in module MyPkg overwritten
+                                      # (JETLS toplevel/method-overwrite)
+    return x + y
+end
+```
+
+The diagnostic includes a link to the original definition location via
+`relatedInformation`, making it easy to navigate to the first definition.
 
 ### [Inference diagnostic (`inference/*`)](@id inference-diagnostic)
 

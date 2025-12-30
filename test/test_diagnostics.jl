@@ -159,6 +159,50 @@ end
     end
 end
 
+@testset "method overwrite diagnostic" begin
+    withpackage("TestMethodOverwrite", """
+        module TestMethodOverwrite
+
+        function duplicate(x::Int)
+            return x + 1
+        end
+
+        function duplicate(x::Int, y::Int=2)
+            return x + y
+        end
+
+        end # module TestMethodOverwrite
+        """) do pkg_path
+        rootUri = filepath2uri(pkg_path)
+        src_path = normpath(pkg_path, "src", "TestMethodOverwrite.jl")
+        uri = filepath2uri(src_path)
+        withserver(; rootUri) do (; writereadmsg)
+            (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, read(src_path, String)))
+
+            @test raw_res isa PublishDiagnosticsNotification
+            @test raw_res.params.uri == uri
+
+            found_diagnostic = false
+            for diag in raw_res.params.diagnostics
+                if (diag.source == JETLS.DIAGNOSTIC_SOURCE &&
+                    diag.code == JETLS.TOPLEVEL_METHOD_OVERWRITE_CODE &&
+                    occursin("duplicate(::$Int)", diag.message) &&
+                    occursin("overwritten", diag.message))
+                    found_diagnostic = true
+                    @test !isempty(diag.relatedInformation)
+                    if !isempty(diag.relatedInformation)
+                        related = first(diag.relatedInformation)
+                        @test related.location.uri == uri
+                        @test occursin("first method definition", related.message)
+                    end
+                    break
+                end
+            end
+            @test found_diagnostic
+        end
+    end
+end
+
 @testset "Empty package analysis" begin
     withpackage("TestEmptyPackageAnalysis", "module TestEmptyPackageAnalysis end") do pkg_path
         rootUri = filepath2uri(pkg_path)

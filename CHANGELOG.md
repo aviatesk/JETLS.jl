@@ -59,6 +59,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Added code action to prefix unused variables with `_`. When triggered on an
   unused variable diagnostic, this quickfix inserts `_` at the beginning of
   the variable name to suppress the warning.
+- Added warning diagnostic for method overwrites (`toplevel/method-overwrite`).
+  When a method with the same signature is defined multiple times within a
+  package, a warning is reported at the overwriting definition with a link to
+  the original definition. Addresses
+  https://github.com/aviatesk/JETLS.jl/issues/387.
 
 ### Fixed
 

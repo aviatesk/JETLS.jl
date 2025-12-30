@@ -334,6 +334,7 @@ const LOWERING_UNUSED_LOCAL_CODE = "lowering/unused-local"
 const LOWERING_ERROR_CODE = "lowering/error"
 const LOWERING_MACRO_EXPANSION_ERROR_CODE = "lowering/macro-expansion-error"
 const TOPLEVEL_ERROR_CODE = "toplevel/error"
+const TOPLEVEL_METHOD_OVERWRITE_CODE = "toplevel/method-overwrite"
 const INFERENCE_UNDEF_GLOBAL_VAR_CODE = "inference/undef-global-var"
 const INFERENCE_UNDEF_LOCAL_VAR_CODE = "inference/undef-local-var"
 const INFERENCE_UNDEF_STATIC_PARAM_CODE = "inference/undef-static-param" # currently not reported
@@ -348,6 +349,7 @@ const ALL_DIAGNOSTIC_CODES = Set{String}(String[
     LOWERING_ERROR_CODE,
     LOWERING_MACRO_EXPANSION_ERROR_CODE,
     TOPLEVEL_ERROR_CODE,
+    TOPLEVEL_METHOD_OVERWRITE_CODE,
     INFERENCE_UNDEF_GLOBAL_VAR_CODE,
     INFERENCE_UNDEF_LOCAL_VAR_CODE,
     INFERENCE_UNDEF_STATIC_PARAM_CODE,

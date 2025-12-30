@@ -224,7 +224,7 @@ function _apply_diagnostic_config(
     elseif severity == diagnostic.severity
         return nothing
     else
-        return Diagnostic(diagnostic; severity=severity)
+        return Diagnostic(diagnostic; severity)
     end
 end
 
@@ -280,12 +280,6 @@ end
 
 # toplevel / inference diagnostic
 # ===============================
-
-function jet_result_to_diagnostics(file_uris, result::JET.JETToplevelResult)
-    uri2diagnostics = URI2Diagnostics(uri => Diagnostic[] for uri in file_uris)
-    jet_result_to_diagnostics!(uri2diagnostics, result)
-    return uri2diagnostics
-end
 
 function jet_result_to_diagnostics!(uri2diagnostics::URI2Diagnostics, result::JET.JETToplevelResult)
     postprocessor = JET.PostProcessor(result.res.actual2virtual)
@@ -386,6 +380,41 @@ function inference_error_report_code(@nospecialize report::JET.InferenceErrorRep
     error(lazy"Diagnostic code is not defined for this report: $report")
 end
 
+# toplevel warning diagnostic
+# ===========================
+
+function toplevel_warning_reports_to_diagnostics!(
+        uri2diagnostics::URI2Diagnostics, reports::Vector{ToplevelWarningReport}
+    )
+    for report in reports
+        uri = filepath2uri(report.filepath)
+        haskey(uri2diagnostics, uri) || continue
+        diagnostic = toplevel_warning_report_to_diagnostic(report)
+        push!(uri2diagnostics[uri], diagnostic)
+    end
+    return uri2diagnostics
+end
+
+function toplevel_warning_report_to_diagnostic(report::MethodOverwriteReport)
+    sig_str = sprint(Base.show_tuple_as_call, Symbol(""), report.sig)
+    message = "Method definition $sig_str in module $(report.mod) overwritten"
+    relatedInformation = DiagnosticRelatedInformation[
+        DiagnosticRelatedInformation(;
+            location = Location(;
+                uri = filepath2uri(report.original_filepath),
+                range = lines_range(report.original_lines)),
+            message = "The first method definition $sig_str")
+    ]
+    return Diagnostic(;
+        range = lines_range(report.lines),
+        severity = DiagnosticSeverity.Warning,
+        message,
+        source = DIAGNOSTIC_SOURCE,
+        code = TOPLEVEL_METHOD_OVERWRITE_CODE,
+        codeDescription = diagnostic_code_description(TOPLEVEL_METHOD_OVERWRITE_CODE),
+        relatedInformation)
+end
+
 function jet_frame_to_location(frame)
     frame.file === :none && return nothing
     return Location(;
@@ -414,6 +443,13 @@ function line_range(line::Int)
     line = line < 1 ? 0 : line - 1
     start = Position(; line, character=0)
     var"end" = Position(; line, character=Int(typemax(Int32)))
+    return Range(; start, var"end")
+end
+function lines_range((start_line, end_line)::Pair{Int,Int})
+    start_line = start_line < 1 ? 0 : start_line - 1
+    end_line = end_line < 1 ? 0 : end_line - 1
+    start = Position(; line=start_line, character=0)
+    var"end" = Position(; line=end_line, character=Int(typemax(Int32)))
     return Range(; start, var"end")
 end
 
