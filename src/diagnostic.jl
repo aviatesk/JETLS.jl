@@ -1,8 +1,8 @@
 # configuration
 # =============
 
-# config parse/validation
-# -----------------------
+# parse and validation
+# --------------------
 
 struct DiagnosticConfigError <: Exception
     msg::AbstractString
@@ -126,8 +126,8 @@ function parse_diagnostic_pattern(x::AbstractDict{String})
     return DiagnosticPattern(pattern, match_by, match_type, severity, path_glob, pattern_value)
 end
 
-# config application
-# ------------------
+# application
+# -----------
 
 """
     calculate_match_specificity(pattern, target, is_message_match) -> UInt
@@ -319,8 +319,8 @@ function jsdiag_to_lspdiag(diagnostic::JS.Diagnostic, fi::FileInfo)
         codeDescription = diagnostic_code_description(SYNTAX_DIAGNOSTIC_CODE))
 end
 
-# toplevel / inference diagnostic
-# ===============================
+# JET diagnostics
+# ===============
 
 function jet_result_to_diagnostics!(uri2diagnostics::URI2Diagnostics, result::JET.JETToplevelResult, postprocessor::JET.PostProcessor)
     for report in result.res.toplevel_error_reports
@@ -344,20 +344,8 @@ function jet_result_to_diagnostics!(uri2diagnostics::URI2Diagnostics, result::JE
     return uri2diagnostics
 end
 
-function jet_inference_error_reports_to_diagnostics!(
-        uri2diagnostics::URI2Diagnostics, postprocessor::JET.PostProcessor,
-        reports::Vector{JET.InferenceErrorReport}
-    )
-    for report in reports
-        diagnostic = jet_inference_error_report_to_diagnostic(postprocessor, report)
-        topframeidx = first(inference_error_report_stack(report))
-        topframe = report.vst[topframeidx]
-        topframe.file === :none && continue # TODO Figure out why this is necessary
-        uri = jet_frame_to_uri(topframe)
-        push!(uri2diagnostics[uri], diagnostic) # collect_displayable_reports asserts that this `uri` key exists for `uri2diagnostics`
-    end
-    return uri2diagnostics
-end
+# toplevel diagnostic
+# -------------------
 
 function jet_toplevel_error_report_to_diagnostic(
         postprocessor::JET.PostProcessor, @nospecialize report::JET.ToplevelErrorReport
@@ -377,6 +365,24 @@ function jet_toplevel_error_report_to_diagnostic(
         source = DIAGNOSTIC_SOURCE,
         code = TOPLEVEL_ERROR_CODE,
         codeDescription = diagnostic_code_description(TOPLEVEL_ERROR_CODE))
+end
+
+# inference diagnostic
+# --------------------
+
+function jet_inference_error_reports_to_diagnostics!(
+        uri2diagnostics::URI2Diagnostics, postprocessor::JET.PostProcessor,
+        reports::Vector{JET.InferenceErrorReport}
+    )
+    for report in reports
+        diagnostic = jet_inference_error_report_to_diagnostic(postprocessor, report)
+        topframeidx = first(inference_error_report_stack(report))
+        topframe = report.vst[topframeidx]
+        topframe.file === :none && continue # TODO Figure out why this is necessary
+        uri = jet_frame_to_uri(topframe)
+        push!(uri2diagnostics[uri], diagnostic) # collect_displayable_reports asserts that this `uri` key exists for `uri2diagnostics`
+    end
+    return uri2diagnostics
 end
 
 function jet_inference_error_report_to_diagnostic(postprocessor::JET.PostProcessor, @nospecialize report::JET.InferenceErrorReport)
@@ -459,6 +465,7 @@ struct MethodOverwriteReport <: ToplevelWarningReport
         original_filepath::AbstractString, original_lines::Pair{Int,Int}
     ) = new(mod, sig, filepath, lines, original_filepath, original_lines)
 end
+
 toplevel_warning_report_to_uri_impl(report::MethodOverwriteReport) = filepath2uri(report.filepath)
 
 function toplevel_warning_report_to_diagnostic_impl(report::MethodOverwriteReport, postprocessor::JET.PostProcessor)
@@ -492,6 +499,7 @@ struct AbstractFieldReport <: ToplevelWarningReport
         filepath::AbstractString, line::Int, @nospecialize(typ::Type), fname::Symbol, @nospecialize(ft)
     ) = new(filepath, line, typ, fname, ft)
 end
+
 toplevel_warning_report_to_uri_impl(report::AbstractFieldReport) = filepath2uri(report.filepath)
 
 function toplevel_warning_report_to_diagnostic_impl(report::AbstractFieldReport, postprocessor::JET.PostProcessor)
