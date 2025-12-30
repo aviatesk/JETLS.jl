@@ -32,7 +32,7 @@ end
     @testset "hover" include("test_hover.jl")
     @testset "inlay hint" include("test_inlay_hint.jl")
     @testset "LSAnalyzer" include("test_Analyzer.jl")
-    @testset "diagnostics" include("test_diagnostics.jl")
+    @testset "diagnostics" include("test_diagnostic.jl")
     @testset "did-change-watched-files" include("test_did_change_watched_files.jl")
     @testset "rename" include("test_rename.jl")
     @testset "testrunner" include("test_testrunner.jl")

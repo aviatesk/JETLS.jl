@@ -49,7 +49,7 @@ Otherwise, creates a new `SavedFileInfo` entry in the cache.
 cache_saved_file_info!(state::ServerState, uri::URI, text::String) =
     cache_saved_file_info!(state, uri, ParseStream!(text))
 function cache_saved_file_info!(state::ServerState, uri::URI, parsed_stream::JS.ParseStream)
-    sfi = SavedFileInfo(parsed_stream, uri)
+    sfi = SavedFileInfo(parsed_stream, uri, state.encoding)
     store!(state.saved_file_cache) do cache
         Base.PersistentDict(cache, uri => sfi), sfi
     end

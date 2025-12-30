@@ -1,8 +1,8 @@
 # configuration
 # =============
 
-# config parse/validation
-# -----------------------
+# parse and validation
+# --------------------
 
 struct DiagnosticConfigError <: Exception
     msg::AbstractString
@@ -126,8 +126,8 @@ function parse_diagnostic_pattern(x::AbstractDict{String})
     return DiagnosticPattern(pattern, match_by, match_type, severity, path_glob, pattern_value)
 end
 
-# config application
-# ------------------
+# application
+# -----------
 
 """
     calculate_match_specificity(pattern, target, is_message_match) -> UInt
@@ -224,7 +224,7 @@ function _apply_diagnostic_config(
     elseif severity == diagnostic.severity
         return nothing
     else
-        return Diagnostic(diagnostic; severity=severity)
+        return Diagnostic(diagnostic; severity)
     end
 end
 
@@ -253,6 +253,47 @@ function diagnostic_code_description(code::AbstractString)
         href = URI("https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/$code"))
 end
 
+# utilities
+# =========
+
+function jet_frame_to_location(frame)
+    frame.file === :none && return nothing
+    return Location(;
+        uri = something(jet_frame_to_uri(frame)),
+        range = jet_frame_to_range(frame))
+end
+
+function jet_frame_to_uri(frame)
+    frame.file === :none && return nothing
+    filename = String(frame.file)
+    # TODO Clean this up and make we can always use `filename2uri` here.
+    if startswith(filename, "Untitled")
+        return filename2uri(filename)
+    else
+        return filepath2uri(to_full_path(filename))
+    end
+end
+
+function jet_frame_to_range(frame)
+    line = JET.fixed_line_number(frame)
+    return line_range(line)
+end
+
+# 1 based line to LSP-compatible line range
+function line_range(line::Int)
+    line = line < 1 ? 0 : line - 1
+    start = Position(; line, character=0)
+    var"end" = Position(; line, character=Int(typemax(Int32)))
+    return Range(; start, var"end")
+end
+function lines_range((start_line, end_line)::Pair{Int,Int})
+    start_line = start_line < 1 ? 0 : start_line - 1
+    end_line = end_line < 1 ? 0 : end_line - 1
+    start = Position(; line=start_line, character=0)
+    var"end" = Position(; line=end_line, character=Int(typemax(Int32)))
+    return Range(; start, var"end")
+end
+
 # syntax diagnotics
 # =================
 
@@ -278,17 +319,10 @@ function jsdiag_to_lspdiag(diagnostic::JS.Diagnostic, fi::FileInfo)
         codeDescription = diagnostic_code_description(SYNTAX_DIAGNOSTIC_CODE))
 end
 
-# toplevel / inference diagnostic
-# ===============================
+# JET diagnostics
+# ===============
 
-function jet_result_to_diagnostics(file_uris, result::JET.JETToplevelResult)
-    uri2diagnostics = URI2Diagnostics(uri => Diagnostic[] for uri in file_uris)
-    jet_result_to_diagnostics!(uri2diagnostics, result)
-    return uri2diagnostics
-end
-
-function jet_result_to_diagnostics!(uri2diagnostics::URI2Diagnostics, result::JET.JETToplevelResult)
-    postprocessor = JET.PostProcessor(result.res.actual2virtual)
+function jet_result_to_diagnostics!(uri2diagnostics::URI2Diagnostics, result::JET.JETToplevelResult, postprocessor::JET.PostProcessor)
     for report in result.res.toplevel_error_reports
         if report isa JET.LoweringErrorReport || report isa JET.MacroExpansionErrorReport
             # the equivalent report should have been reported by `lowering_diagnostics!`
@@ -310,20 +344,8 @@ function jet_result_to_diagnostics!(uri2diagnostics::URI2Diagnostics, result::JE
     return uri2diagnostics
 end
 
-function jet_inference_error_reports_to_diagnostics!(
-        uri2diagnostics::URI2Diagnostics, postprocessor::JET.PostProcessor,
-        reports::Vector{JET.InferenceErrorReport}
-    )
-    for report in reports
-        diagnostic = jet_inference_error_report_to_diagnostic(postprocessor, report)
-        topframeidx = first(inference_error_report_stack(report))
-        topframe = report.vst[topframeidx]
-        topframe.file === :none && continue # TODO Figure out why this is necessary
-        uri = jet_frame_to_uri(topframe)
-        push!(uri2diagnostics[uri], diagnostic) # collect_displayable_reports asserts that this `uri` key exists for `uri2diagnostics`
-    end
-    return uri2diagnostics
-end
+# toplevel diagnostic
+# -------------------
 
 function jet_toplevel_error_report_to_diagnostic(
         postprocessor::JET.PostProcessor, @nospecialize report::JET.ToplevelErrorReport
@@ -343,6 +365,24 @@ function jet_toplevel_error_report_to_diagnostic(
         source = DIAGNOSTIC_SOURCE,
         code = TOPLEVEL_ERROR_CODE,
         codeDescription = diagnostic_code_description(TOPLEVEL_ERROR_CODE))
+end
+
+# inference diagnostic
+# --------------------
+
+function jet_inference_error_reports_to_diagnostics!(
+        uri2diagnostics::URI2Diagnostics, postprocessor::JET.PostProcessor,
+        reports::Vector{JET.InferenceErrorReport}
+    )
+    for report in reports
+        diagnostic = jet_inference_error_report_to_diagnostic(postprocessor, report)
+        topframeidx = first(inference_error_report_stack(report))
+        topframe = report.vst[topframeidx]
+        topframe.file === :none && continue # TODO Figure out why this is necessary
+        uri = jet_frame_to_uri(topframe)
+        push!(uri2diagnostics[uri], diagnostic) # collect_displayable_reports asserts that this `uri` key exists for `uri2diagnostics`
+    end
+    return uri2diagnostics
 end
 
 function jet_inference_error_report_to_diagnostic(postprocessor::JET.PostProcessor, @nospecialize report::JET.InferenceErrorReport)
@@ -386,35 +426,96 @@ function inference_error_report_code(@nospecialize report::JET.InferenceErrorRep
     error(lazy"Diagnostic code is not defined for this report: $report")
 end
 
-function jet_frame_to_location(frame)
-    frame.file === :none && return nothing
-    return Location(;
-        uri = something(jet_frame_to_uri(frame)),
-        range = jet_frame_to_range(frame))
-end
+# toplevel warning diagnostic
+# ===========================
 
-function jet_frame_to_uri(frame)
-    frame.file === :none && return nothing
-    filename = String(frame.file)
-    # TODO Clean this up and make we can always use `filename2uri` here.
-    if startswith(filename, "Untitled")
-        return filename2uri(filename)
-    else
-        return filepath2uri(to_full_path(filename))
+abstract type ToplevelWarningReport end
+
+toplevel_warning_report_to_uri(report::ToplevelWarningReport) = toplevel_warning_report_to_uri_impl(report)::URI
+toplevel_warning_report_to_uri_impl(::ToplevelWarningReport) =
+    error("Missing `toplevel_warning_report_to_uri_impl(::ToplevelWarningReport)` interface")
+
+toplevel_warning_report_to_diagnostic(report::ToplevelWarningReport, sfi::SavedFileInfo, postprocessor::JET.PostProcessor) =
+    toplevel_warning_report_to_diagnostic_impl(report, sfi, postprocessor)::Diagnostic
+toplevel_warning_report_to_diagnostic_impl(::ToplevelWarningReport, ::SavedFileInfo, ::JET.PostProcessor) =
+    error("Missing `toplevel_warning_report_to_diagnostic_impl(::ToplevelWarningReport, ::SavedFileInfo, ::JET.PostProcessor)` interface")
+
+function toplevel_warning_reports_to_diagnostics!(
+        uri2diagnostics::URI2Diagnostics, reports::Vector{ToplevelWarningReport},
+        server::Server, postprocessor::JET.PostProcessor
+    )
+    for report in reports
+        uri = toplevel_warning_report_to_uri(report)
+        haskey(uri2diagnostics, uri) || continue
+        sfi = @something get_saved_file_info(server.state, uri) continue
+        diagnostic = toplevel_warning_report_to_diagnostic(report, sfi, postprocessor)
+        push!(uri2diagnostics[uri], diagnostic)
     end
+    return uri2diagnostics
 end
 
-function jet_frame_to_range(frame)
-    line = JET.fixed_line_number(frame)
-    return line_range(line)
+struct MethodOverwriteReport <: ToplevelWarningReport
+    mod::Module
+    sig::Type
+    filepath::String
+    lines::Pair{Int,Int}
+    original_filepath::String
+    original_lines::Pair{Int,Int}
+    MethodOverwriteReport(
+        mod::Module, @nospecialize(sig::Type), filepath::AbstractString, lines::Pair{Int,Int},
+        original_filepath::AbstractString, original_lines::Pair{Int,Int}
+    ) = new(mod, sig, filepath, lines, original_filepath, original_lines)
 end
 
-# 1 based line to LSP-compatible line range
-function line_range(line::Int)
-    line = line < 1 ? 0 : line - 1
-    start = Position(; line, character=0)
-    var"end" = Position(; line, character=Int(typemax(Int32)))
-    return Range(; start, var"end")
+toplevel_warning_report_to_uri_impl(report::MethodOverwriteReport) = filepath2uri(report.filepath)
+
+function toplevel_warning_report_to_diagnostic_impl(report::MethodOverwriteReport, ::SavedFileInfo, postprocessor::JET.PostProcessor)
+    sig_str = postprocessor(sprint(Base.show_tuple_as_call, Symbol(""), report.sig))
+    mod_str = postprocessor(sprint(show, report.mod))
+    message = "Method definition $sig_str in module $mod_str overwritten"
+    relatedInformation = DiagnosticRelatedInformation[
+        DiagnosticRelatedInformation(;
+            location = Location(;
+                uri = filepath2uri(report.original_filepath),
+                range = lines_range(report.original_lines)),
+            message = "The first method definition $sig_str")
+    ]
+    return Diagnostic(;
+        range = lines_range(report.lines),
+        severity = DiagnosticSeverity.Warning,
+        message,
+        source = DIAGNOSTIC_SOURCE,
+        code = TOPLEVEL_METHOD_OVERWRITE_CODE,
+        codeDescription = diagnostic_code_description(TOPLEVEL_METHOD_OVERWRITE_CODE),
+        relatedInformation)
+end
+
+struct AbstractFieldReport <: ToplevelWarningReport
+    filepath::String
+    fieldline::Union{Int,JS.SyntaxNode}
+    typ::Type
+    fname::Symbol
+    ft
+    AbstractFieldReport(
+        filepath::AbstractString, fieldline::Union{Int,JS.SyntaxNode}, @nospecialize(typ::Type), fname::Symbol, @nospecialize(ft)
+    ) = new(filepath, fieldline, typ, fname, ft)
+end
+
+toplevel_warning_report_to_uri_impl(report::AbstractFieldReport) = filepath2uri(report.filepath)
+
+function toplevel_warning_report_to_diagnostic_impl(report::AbstractFieldReport, sfi::SavedFileInfo, postprocessor::JET.PostProcessor)
+    typ_str = postprocessor(sprint(show, report.typ))
+    ft_str = postprocessor(sprint(show, report.ft))
+    message = "`$typ_str` has abstract field `$(report.fname)::$ft_str`"
+    fieldline = report.fieldline
+    range = fieldline isa Int ? line_range(fieldline) : jsobj_to_range(fieldline, sfi)
+    return Diagnostic(;
+        range,
+        severity = DiagnosticSeverity.Information,
+        message,
+        source = DIAGNOSTIC_SOURCE,
+        code = TOPLEVEL_ABSTRACT_FIELD_CODE,
+        codeDescription = diagnostic_code_description(TOPLEVEL_ABSTRACT_FIELD_CODE))
 end
 
 # lowering diagnostic
@@ -482,7 +583,8 @@ struct LoweringDiagnosticKey
 end
 
 function analyze_lowered_code!(diagnostics::Vector{Diagnostic},
-        ctx3::JL.VariableAnalysisContext, st3::JL.SyntaxTree, fi::FileInfo
+        ctx3::JL.VariableAnalysisContext, st3::JL.SyntaxTree, fi::FileInfo;
+        allow_unused_underscore::Bool = true
     )
     ismacro = Ref(false)
     binding_occurrences = compute_binding_occurrences(ctx3, st3; ismacro)
@@ -493,6 +595,9 @@ function analyze_lowered_code!(diagnostics::Vector{Diagnostic},
         end
         bn = binfo.name
         if ismacro[] && (bn == "__module__" || bn == "__source__")
+            continue
+        end
+        if allow_unused_underscore && startswith(bn, '_')
             continue
         end
         provs = JL.flattened_provenance(JL.binding_ex(ctx3, binfo.id))
@@ -521,7 +626,8 @@ end
 
 function lowering_diagnostics!(
         diagnostics::Vector{Diagnostic}, st0::JL.SyntaxTree, mod::Module, fi::FileInfo;
-        skip_macro_expansion_errors::Bool = false
+        skip_macro_expansion_errors::Bool = false,
+        allow_unused_underscore::Bool = true
     )
     @assert JS.kind(st0) ∉ JS.KSet"toplevel module"
 
@@ -579,9 +685,9 @@ function lowering_diagnostics!(
         end
     end
 
-    return analyze_lowered_code!(diagnostics, ctx3, st3, fi)
+    return analyze_lowered_code!(diagnostics, ctx3, st3, fi; allow_unused_underscore)
 end
-lowering_diagnostics(args...) = lowering_diagnostics!(Diagnostic[], args...) # used by tests
+lowering_diagnostics(args...; kwargs...) = lowering_diagnostics!(Diagnostic[], args...; kwargs...) # used by tests
 
 # TODO use something like `JuliaInterpreter.ExprSplitter`
 
@@ -590,10 +696,11 @@ function toplevel_lowering_diagnostics(server::Server, uri::URI, file_info::File
     st0_top = build_syntax_tree(file_info)
     analysis_info = get_analysis_info(server.state.analysis_manager, uri)
     skip_macro_expansion_errors = !has_module_context(analysis_info, uri)
+    allow_unused_underscore = get_config(server.state.config_manager, :diagnostic, :allow_unused_underscore)
     iterate_toplevel_tree(st0_top) do st0::JL.SyntaxTree
         pos = offset_to_xy(file_info, JS.first_byte(st0))
         (; mod) = get_context_info(server.state, uri, pos)
-        lowering_diagnostics!(diagnostics, st0, mod, file_info; skip_macro_expansion_errors)
+        lowering_diagnostics!(diagnostics, st0, mod, file_info; skip_macro_expansion_errors, allow_unused_underscore)
     end
     return diagnostics
 end

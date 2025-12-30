@@ -547,4 +547,29 @@ end
     end
 end
 
+@testset "`_try_extract_field_line`" begin
+    @test JETLS.Interpreter._try_extract_field_line(jsparse("""
+        struct A
+            xs::Vector{Int}
+        end
+    """), :A, :xs) |> !isnothing
+    @test JETLS.Interpreter._try_extract_field_line(jsparse("""
+        struct A{T}
+            xs::Vector{T}
+        end
+    """), :A, :xs) |> !isnothing
+    @test JETLS.Interpreter._try_extract_field_line(jsparse("""
+        struct A
+            xs
+        end
+    """), :A, :xs) |> !isnothing
+    @test JETLS.Interpreter._try_extract_field_line(jsparse("""
+        begin
+            struct A
+                xs
+            end
+        end
+    """), :A, :xs) |> !isnothing
+end
+
 end # module test_ast
