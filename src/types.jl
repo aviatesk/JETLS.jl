@@ -60,11 +60,12 @@ end
 struct SavedFileInfo
     parsed_stream::JS.ParseStream
     syntax_node::JS.SyntaxNode
+    encoding::LSP.PositionEncodingKind.Ty
 
-    function SavedFileInfo(parsed_stream::JS.ParseStream, uri::URI)
+    function SavedFileInfo(parsed_stream::JS.ParseStream, uri::URI, encoding::LSP.PositionEncodingKind.Ty)
         filename = uri2filename(uri)
         syntax_node = JS.build_tree(JS.SyntaxNode, parsed_stream; filename)
-        new(parsed_stream, syntax_node)
+        new(parsed_stream, syntax_node, encoding)
     end
 end
 
@@ -334,6 +335,8 @@ const LOWERING_UNUSED_LOCAL_CODE = "lowering/unused-local"
 const LOWERING_ERROR_CODE = "lowering/error"
 const LOWERING_MACRO_EXPANSION_ERROR_CODE = "lowering/macro-expansion-error"
 const TOPLEVEL_ERROR_CODE = "toplevel/error"
+const TOPLEVEL_METHOD_OVERWRITE_CODE = "toplevel/method-overwrite"
+const TOPLEVEL_ABSTRACT_FIELD_CODE = "toplevel/abstract-field"
 const INFERENCE_UNDEF_GLOBAL_VAR_CODE = "inference/undef-global-var"
 const INFERENCE_UNDEF_LOCAL_VAR_CODE = "inference/undef-local-var"
 const INFERENCE_UNDEF_STATIC_PARAM_CODE = "inference/undef-static-param" # currently not reported
@@ -348,6 +351,8 @@ const ALL_DIAGNOSTIC_CODES = Set{String}(String[
     LOWERING_ERROR_CODE,
     LOWERING_MACRO_EXPANSION_ERROR_CODE,
     TOPLEVEL_ERROR_CODE,
+    TOPLEVEL_METHOD_OVERWRITE_CODE,
+    TOPLEVEL_ABSTRACT_FIELD_CODE,
     INFERENCE_UNDEF_GLOBAL_VAR_CODE,
     INFERENCE_UNDEF_LOCAL_VAR_CODE,
     INFERENCE_UNDEF_STATIC_PARAM_CODE,
@@ -379,6 +384,7 @@ merge_key(::Type{DiagnosticPattern}) = :__pattern_value__
 @option struct DiagnosticConfig <: ConfigSection
     enabled::Maybe{Bool}
     patterns::Maybe{Vector{DiagnosticPattern}}
+    allow_unused_underscore::Maybe{Bool}
 end
 
 # Internal, undocumented configuration for full-analysis module overrides.
@@ -419,7 +425,7 @@ const DEFAULT_INIT_OPTIONS = InitOptions(; n_analysis_workers=1, analysis_overri
 end
 
 const DEFAULT_CONFIG = JETLSConfig(;
-    diagnostic = DiagnosticConfig(true, DiagnosticPattern[]),
+    diagnostic = DiagnosticConfig(true, DiagnosticPattern[], true),
     full_analysis = FullAnalysisConfig(1.0, true),
     testrunner = TestRunnerConfig(@static Sys.iswindows() ? "testrunner.bat" : "testrunner"),
     formatter = "Runic",

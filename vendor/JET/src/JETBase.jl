@@ -424,9 +424,15 @@ These configurations are always active.
   settings and hidden otherwise. `target_modules` should be an iterator of whose element is
   either of the data types below that match [`report::InferenceErrorReport`](@ref InferenceErrorReport)'s
   context module as follows:
-  - `m::Module` or `JET.LastFrameModule(m::Module)`: matches if the module context of  `report`'s innermost stack frame is `m`
-  - `JET.AnyFrameModule(m::Module)`: matches if module context of any of `report`'s stack frame is `m`
-  - user-type `T`: matches according to user-definition overload `match_module(::T, report::InferenceErrorReport)`
+  - `m::Module` or `JET.LastFrameModule(m::Module)`: matches if the module context of `report`'s innermost stack frame is `m` or any of its submodules
+  - `name::Symbol` or `JET.LastFrameModule(name::Symbol)`: matches if the module name of `report`'s innermost stack frame is `name` or any of its parent modules is named `name`
+  - `JET.AnyFrameModule(m::Module)`: matches if the module context of any of `report`'s stack frames is `m` or any of its submodules
+  - `JET.AnyFrameModule(name::Symbol)`: matches if the module name of any of `report`'s stack frames is `name` or any of its parent modules is named `name`
+  - `JET.LastFrameModuleExact(m::Module)`: matches if the module context of `report`'s innermost stack frame is exactly `m`, excluding submodules
+  - `JET.LastFrameModuleExact(name::Symbol)`: matches if the module name of `report`'s innermost stack frame is exactly `name`
+  - `JET.AnyFrameModuleExact(m::Module)`: matches if the module context of any of `report`'s stack frames is exactly `m`, excluding submodules
+  - `JET.AnyFrameModuleExact(name::Symbol)`: matches if the module name of any of `report`'s stack frames is exactly `name`
+  - user-type `T <: JET.ReportMatcher`: matches according to user-definition overload `match_report(::T, report::InferenceErrorReport)`
 ---
 - `ignored_modules = nothing` \\
   A configuration to filter out reports by specifying module contexts where problems should be ignored.
@@ -436,9 +442,15 @@ These configurations are always active.
   settings and reported otherwise. `ignored_modules` should be an iterator of whose element is
   either of the data types below that match [`report::InferenceErrorReport`](@ref InferenceErrorReport)'s
   context module as follows:
-  - `m::Module` or `JET.LastFrameModule(m::Module)`: matches if the module context of  `report`'s innermost stack frame is `m`
-  - `JET.AnyFrameModule(m::Module)`: matches if module context of any of `report`'s stack frame is `m`
-  - user-type `T`: matches according to user-definition overload `match_module(::T, report::InferenceErrorReport)`
+  - `m::Module` or `JET.LastFrameModule(m::Module)`: matches if the module context of `report`'s innermost stack frame is `m` or any of its submodules
+  - `name::Symbol` or `JET.LastFrameModule(name::Symbol)`: matches if the module name of `report`'s innermost stack frame is `name` or any of its parent modules is named `name`
+  - `JET.AnyFrameModule(m::Module)`: matches if the module context of any of `report`'s stack frames is `m` or any of its submodules
+  - `JET.AnyFrameModule(name::Symbol)`: matches if the module name of any of `report`'s stack frames is `name` or any of its parent modules is named `name`
+  - `JET.LastFrameModuleExact(m::Module)`: matches if the module context of `report`'s innermost stack frame is exactly `m`, excluding submodules
+  - `JET.LastFrameModuleExact(name::Symbol)`: matches if the module name of `report`'s innermost stack frame is exactly `name`
+  - `JET.AnyFrameModuleExact(m::Module)`: matches if the module context of any of `report`'s stack frames is exactly `m`, excluding submodules
+  - `JET.AnyFrameModuleExact(name::Symbol)`: matches if the module name of any of `report`'s stack frames is exactly `name`
+  - user-type `T <: JET.ReportMatcher`: matches according to user-definition overload `match_report(::T, report::InferenceErrorReport)`
 ---
 - `report_config = nothing` \\
   Additional configuration layer to filter out reports with user-specified strategies.
@@ -501,6 +513,13 @@ julia> @report_call ignored_modules=(Base,) foo("julia")
 ┌ foo(a::String) @ Main ./REPL[14]:3
 │ `Main.undefsum` is not defined: r2 = undefsum(a::String)
 └────────────────────
+
+# alternatively, you can use Symbol to specify the module name without requiring it as a dependency:
+julia> @report_call ignored_modules=(:Base,) foo("julia")
+═════ 1 possible error found ═════
+┌ foo(a::String) @ Main ./REPL[14]:3
+│ `Main.undefsum` is not defined: r2 = undefsum(a::String)
+└────────────────────
 ```
 ---
 """
@@ -518,28 +537,87 @@ struct ReportConfig{S,T}
     ignored_modules::T
 end
 
-struct LastFrameModule; mod::Module; end
-struct AnyFrameModule;  mod::Module; end
+abstract type ReportMatcher end
 
-match_module(mod::Module, @nospecialize(report::InferenceErrorReport)) = match_module(LastFrameModule(mod), report)
-function match_module(mod::LastFrameModule, @nospecialize(report::InferenceErrorReport))
-    return linfomod(last(report.vst).linfo) === mod.mod
+struct LastFrameModule <: ReportMatcher
+    mod::Union{Module,Symbol}
 end
-function match_module(mod::AnyFrameModule, @nospecialize(report::InferenceErrorReport))
-    return any(vsf->linfomod(vsf.linfo)===mod.mod, report.vst)
+struct AnyFrameModule <: ReportMatcher
+    mod::Union{Module,Symbol}
 end
-@noinline match_module(x::Any, @nospecialize(report::InferenceErrorReport)) =
-    error(lazy"`JET.match_module(::$x, ::InferenceErrorReport)` is not implemented")
+struct LastFrameModuleExact <: ReportMatcher
+    mod::Union{Module,Symbol}
+end
+struct AnyFrameModuleExact <: ReportMatcher
+    mod::Union{Module,Symbol}
+end
+
+function issubmodule(child::Module, parent::Module)
+    child === parent && return true
+    pm = parentmodule(child)
+    pm === child && return false
+    return issubmodule(pm, parent)
+end
+
+function issubmoduleof(mod::Module, name::Symbol)
+    nameof(mod) === name && return true
+    pm = parentmodule(mod)
+    pm === mod && return false
+    return issubmoduleof(pm, name)
+end
+
+function match_report(matcher::LastFrameModule, @nospecialize(report::InferenceErrorReport))
+    m = linfomod(last(report.vst).linfo)
+    mod = matcher.mod
+    return mod isa Module ? issubmodule(m, mod) : issubmoduleof(m, mod)
+end
+function match_report(matcher::AnyFrameModule, @nospecialize(report::InferenceErrorReport))
+    mod = matcher.mod
+    if mod isa Module
+        return any(report.vst) do vsf
+            issubmodule(linfomod(vsf.linfo), mod)
+        end
+    else
+        return any(report.vst) do vsf
+            issubmoduleof(linfomod(vsf.linfo), mod)
+        end
+    end
+end
+function match_report(matcher::LastFrameModuleExact, @nospecialize(report::InferenceErrorReport))
+    m = linfomod(last(report.vst).linfo)
+    mod = matcher.mod
+    return matcher.mod isa Module ? m === mod : nameof(m) === mod
+end
+function match_report(matcher::AnyFrameModuleExact, @nospecialize(report::InferenceErrorReport))
+    mod = matcher.mod
+    if mod isa Module
+        return any(report.vst) do vsf
+            linfomod(vsf.linfo) === mod
+        end
+    else
+        return any(report.vst) do vsf
+            nameof(linfomod(vsf.linfo)) === mod
+        end
+    end
+end
+@noinline match_report(x::ReportMatcher, @nospecialize(_::InferenceErrorReport)) =
+    error(lazy"`JET.match_report(::$(typeof(x)), ::InferenceErrorReport)` is not implemented")
 
 function configured_reports(config::ReportConfig, reports::Vector{InferenceErrorReport})
     if config.target_modules !== nothing
         reports = filter(reports) do @nospecialize report
-            return any(m->match_module(m,report), config.target_modules)
+            return any(config.target_modules) do m
+                m isa ReportMatcher || (m = LastFrameModule(m))
+                match_report(m,report)
+            end
         end
     end
     if config.ignored_modules !== nothing
         reports = filter(reports) do @nospecialize report
-            return !any(m->match_module(m,report), config.ignored_modules)
+            return !any(config.ignored_modules) do m
+                m isa ReportMatcher || (m = LastFrameModule(m))
+                match_report(m,report)
+            end
         end
     end
     return reports
@@ -745,8 +823,7 @@ function apply_file_config(jetconfigs, filename::AbstractString)
     if !isnothing(configfile)
         config = parse_config_file(configfile)
         merge!(jetconfigs, config) # overwrite configurations
-        toplevel_logger = get(jetconfigs, :toplevel_logger, nothing)
-        with_toplevel_logger(toplevel_logger; filter=≥(JET_LOGGER_LEVEL_INFO)) do @nospecialize(io)
+        toplevel_logger(get(jetconfigs, :toplevel_logger, nothing); filter=≥(JET_LOGGER_LEVEL_INFO)) do @nospecialize(io::IO)
             println(io, lazy"applied configurations in $configfile")
         end
     end

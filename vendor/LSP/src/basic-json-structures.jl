@@ -188,7 +188,9 @@ can for example honor or ignore the selection direction to make LSP request
     consistent with features implemented internally.
 """
 @interface TextDocumentPositionParams begin
+    "The text document."
     textDocument::TextDocumentIdentifier
+    "The position inside the text document."
     position::Position
 end
 

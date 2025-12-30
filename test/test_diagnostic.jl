@@ -50,7 +50,7 @@ using JETLS.Glob
     end
 end
 
-@testset "lowering diagnostic" include("test_lowering_diagnostics.jl")
+@testset "lowering diagnostic" include("test_lowering_diagnostic.jl")
 
 @testset "top-level error diagnostic" begin
     # Test with code that has syntax errors
@@ -155,6 +155,100 @@ end
                 end
             end
             @test found_diagnostic
+        end
+    end
+end
+
+@testset "method overwrite diagnostic" begin
+    withpackage("TestMethodOverwrite", """
+        module TestMethodOverwrite
+
+        function duplicate(x::Int)
+            return x + 1
+        end
+
+        function duplicate(x::Int, y::Int=2)
+            return x + y
+        end
+
+        end # module TestMethodOverwrite
+        """) do pkg_path
+        rootUri = filepath2uri(pkg_path)
+        src_path = normpath(pkg_path, "src", "TestMethodOverwrite.jl")
+        uri = filepath2uri(src_path)
+        withserver(; rootUri) do (; writereadmsg)
+            (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, read(src_path, String)))
+
+            @test raw_res isa PublishDiagnosticsNotification
+            @test raw_res.params.uri == uri
+
+            found_diagnostic = false
+            for diag in raw_res.params.diagnostics
+                if (diag.source == JETLS.DIAGNOSTIC_SOURCE &&
+                    diag.code == JETLS.TOPLEVEL_METHOD_OVERWRITE_CODE &&
+                    occursin("duplicate(::$Int)", diag.message) &&
+                    occursin("overwritten", diag.message))
+                    found_diagnostic = true
+                    @test !isempty(diag.relatedInformation)
+                    if !isempty(diag.relatedInformation)
+                        related = first(diag.relatedInformation)
+                        @test related.location.uri == uri
+                        @test occursin("first method definition", related.message)
+                    end
+                    break
+                end
+            end
+            @test found_diagnostic
+        end
+    end
+end
+
+@testset "abstract field diagnostic" begin
+    withpackage("TestAbstractField", """
+        module TestAbstractField
+
+        struct BadStruct1
+            xs::Vector{Integer}
+        end
+
+        struct BadStruct2
+            xs::Vector{<:Integer}
+        end
+
+        end # module TestAbstractField
+        """) do pkg_path
+        rootUri = filepath2uri(pkg_path)
+        src_path = normpath(pkg_path, "src", "TestAbstractField.jl")
+        uri = filepath2uri(src_path)
+        withserver(; rootUri) do (; writereadmsg)
+            (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, read(src_path, String)))
+
+            @test raw_res isa PublishDiagnosticsNotification
+            @test raw_res.params.uri == uri
+
+            found_diagnostic1 = false
+            for diag in raw_res.params.diagnostics
+                if (diag.source == JETLS.DIAGNOSTIC_SOURCE &&
+                    diag.code == JETLS.TOPLEVEL_ABSTRACT_FIELD_CODE &&
+                    occursin("BadStruct1", diag.message) &&
+                    occursin("xs::Vector{Integer}", diag.message))
+                    found_diagnostic1 = true
+                    break
+                end
+            end
+            @test found_diagnostic1
+
+            found_diagnostic2 = false
+            for diag in raw_res.params.diagnostics
+                if (diag.source == JETLS.DIAGNOSTIC_SOURCE &&
+                    diag.code == JETLS.TOPLEVEL_ABSTRACT_FIELD_CODE &&
+                    occursin("BadStruct2", diag.message) &&
+                    occursin("xs::Vector{<:Integer}", diag.message))
+                    found_diagnostic2 = true
+                    break
+                end
+            end
+            @test found_diagnostic2
         end
     end
 end

@@ -116,6 +116,7 @@ end
 
 """
     offset_to_xy(fi::FileInfo, byte::Integer) -> pos::Position
+    offset_to_xy(sfi::SavedFileInfo, byte::Integer) -> pos::Position
 
 Convert a 1-based byte offset to a 0-based line and character number.
 
@@ -136,6 +137,8 @@ to the specified encoding per LSP specification:
 function offset_to_xy end
 
 offset_to_xy(fi::FileInfo, byte::Integer) = _offset_to_xy(fi.parsed_stream.textbuf, byte, fi.encoding)
+offset_to_xy(sfi::SavedFileInfo, byte::Integer) = _offset_to_xy(sfi.parsed_stream.textbuf, byte, sfi.encoding)
+
 offset_to_xy( # used by tests
     s::Union{Vector{UInt8},AbstractString}, byte::Integer, filename::AbstractString,
     encoding::PositionEncodingKind.Ty = PositionEncodingKind.UTF16

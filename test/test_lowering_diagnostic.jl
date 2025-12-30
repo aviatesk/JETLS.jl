@@ -3,18 +3,20 @@ module test_lowering_diagnostics
 using Test
 using JETLS
 using JETLS: JL, JS
+using JETLS.LSP
+using JETLS.LSP.URIs2
 
 include(normpath(pkgdir(JETLS), "test", "setup.jl"))
 include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
 
 module lowering_module end
 
-get_lowered_diagnostics(text::AbstractString) = get_lowered_diagnostics(lowering_module, text)
-function get_lowered_diagnostics(mod::Module, text::AbstractString)
+get_lowered_diagnostics(text::AbstractString; kwargs...) = get_lowered_diagnostics(lowering_module, text; kwargs...)
+function get_lowered_diagnostics(mod::Module, text::AbstractString; kwargs...)
     fi = JETLS.FileInfo(#=version=#0, text, @__FILE__)
     st0 = JETLS.build_syntax_tree(fi)
     @assert JS.kind(st0) === JS.K"toplevel"
-    return JETLS.lowering_diagnostics(st0[1], mod, fi)
+    return JETLS.lowering_diagnostics(st0[1], mod, fi; kwargs...)
 end
 
 macro just_return(x)
@@ -299,7 +301,7 @@ length_utf16(s::AbstractString) = sum(c::Char -> codepoint(c) < 0x10000 ? 1 : 2,
             function foo(__module__, name)
                 getglobal(@__MODULE__, name)
             end
-            """)
+            """; allow_unused_underscore=false)
             @test length(diagnostics) == 1
             diagnostic = only(diagnostics)
             @test diagnostic.message == "Unused argument `__module__`"
@@ -484,6 +486,44 @@ length_utf16(s::AbstractString) = sum(c::Char -> codepoint(c) < 0x10000 ? 1 : 2,
             @test diagnostic.range.var"end".character == length_utf16("func(xs) = [x for (i")
         end
     end
+
+    @testset "allow_unused_underscore" begin
+        let diagnostics = get_lowered_diagnostics("""
+            function foo(_x, y)
+                return y
+            end
+            """)
+            @test isempty(diagnostics)
+        end
+
+        let diagnostics = get_lowered_diagnostics("""
+            function foo(_x, y)
+                return y
+            end
+            """; allow_unused_underscore=false)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.message == "Unused argument `_x`"
+        end
+
+        let diagnostics = get_lowered_diagnostics("""
+            y = let _x = 42
+                sin(42)
+            end
+            """)
+            @test isempty(diagnostics)
+        end
+
+        let diagnostics = get_lowered_diagnostics("""
+            y = let _x = 42
+                sin(42)
+            end
+            """; allow_unused_underscore=false)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.message == "Unused local binding `_x`"
+        end
+    end
 end
 
 macro m_throw(x)
@@ -607,6 +647,87 @@ end
         @test diagnostic.message == "`return` not allowed inside comprehension or generator"
         @test diagnostic.range.start.line == 2
         @test diagnostic.range.var"end".line == 2
+    end
+end
+
+@testset "unused_variable_code_actions" begin
+    uri = URI("file:///test.jl")
+
+    let diagnostic = Diagnostic(;
+            range = Range(;
+                start = Position(; line=0, character=13),
+                var"end" = Position(; line=0, character=14)),
+            severity = DiagnosticSeverity.Information,
+            message = "Unused argument `y`",
+            source = JETLS.DIAGNOSTIC_SOURCE,
+            code = JETLS.LOWERING_UNUSED_ARGUMENT_CODE)
+        code_actions = Union{CodeAction,Command}[]
+        JETLS.unused_variable_code_actions!(code_actions, uri, [diagnostic])
+        @test length(code_actions) == 1
+        action = only(code_actions)
+        @test action.title == "Prefix with '_' to indicate intentionally unused"
+        @test action.isPreferred == true
+        @test action.edit !== nothing
+        changes = action.edit.changes
+        @test haskey(changes, uri)
+        edits = changes[uri]
+        @test length(edits) == 1
+        edit = only(edits)
+        @test edit.range.start.line == 0
+        @test edit.range.start.character == 13
+        @test edit.newText == "_"
+    end
+
+    let diagnostic = Diagnostic(;
+            range = Range(;
+                start = Position(; line=1, character=10),
+                var"end" = Position(; line=1, character=11)),
+            severity = DiagnosticSeverity.Information,
+            message = "Unused local binding `x`",
+            source = JETLS.DIAGNOSTIC_SOURCE,
+            code = JETLS.LOWERING_UNUSED_LOCAL_CODE)
+        code_actions = Union{CodeAction,Command}[]
+        JETLS.unused_variable_code_actions!(code_actions, uri, [diagnostic])
+        @test length(code_actions) == 1
+        action = only(code_actions)
+        @test action.title == "Prefix with '_' to indicate intentionally unused"
+        @test action.disabled === nothing
+        @test action.isPreferred == true
+    end
+
+    let diagnostic = Diagnostic(;
+            range = Range(;
+                start = Position(; line=0, character=13),
+                var"end" = Position(; line=0, character=14)),
+            severity = DiagnosticSeverity.Information,
+            message = "Unused argument `y`",
+            source = JETLS.DIAGNOSTIC_SOURCE,
+            code = JETLS.LOWERING_UNUSED_ARGUMENT_CODE)
+        code_actions = Union{CodeAction,Command}[]
+        JETLS.unused_variable_code_actions!(code_actions, uri, [diagnostic]; allow_unused_underscore=false)
+        @test length(code_actions) == 1
+        action = only(code_actions)
+        @test action.title == "Replace with '_' to indicate intentionally unused"
+        @test action.isPreferred == true
+        @test action.disabled === nothing
+        edits = action.edit.changes[uri]
+        edit = only(edits)
+        @test edit.range.start.character == 13
+        @test edit.range.var"end".character == 14
+        @test edit.newText == "_"
+    end
+
+    let diagnostic = Diagnostic(;
+            range = Range(;
+                start = Position(; line=0, character=0),
+                var"end" = Position(; line=0, character=10)),
+            severity = DiagnosticSeverity.Error,
+            message = "Some other error",
+            source = JETLS.DIAGNOSTIC_SOURCE,
+            code = JETLS.LOWERING_ERROR_CODE)
+        code_actions = Union{CodeAction,Command}[]
+        JETLS.unused_variable_code_actions!(code_actions, uri, [diagnostic])
+        @test isempty(code_actions)
     end
 end
 

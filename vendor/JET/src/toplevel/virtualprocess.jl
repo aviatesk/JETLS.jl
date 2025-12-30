@@ -383,16 +383,41 @@ default_concretization_patterns() = (
     :(const T_ = U_{P__}), :(T_ = U_{P__}),
 )
 
+const toplevel_logger_io_lock = ReentrantLock()
+
 @nospecialize
-with_toplevel_logger(f, config::ToplevelConfig; kwargs...) =
-    with_toplevel_logger(f, config.toplevel_logger; kwargs...)
-function with_toplevel_logger(f, io; filter=≥(DEFAULT_LOGGER_LEVEL), pre=identity)
+toplevel_logger(f, config::ToplevelConfig; kwargs...) =
+    toplevel_logger(f, config.toplevel_logger; kwargs...)
+function toplevel_logger(
+        f, io;
+        filter = ≥(DEFAULT_LOGGER_LEVEL),
+        pre = nothing
+    )
     isa(io, IO) || return false
     level = jet_logger_level(io)
     filter(level) || return
-    pre(io)
-    print(io, "[toplevel-$(JET_LOGGER_LEVELS[level])] ")
-    f(io)
+    # N.B. When calling this logger from a parallel execution task (`Threads.@spawn`),
+    # particularly when calling multiple `print`s, irregular scrambling of print
+    # behavior was observed (Julia v1.12).
+    # The workaround here is that we first use `IOBuffer` to initially obtain the string
+    # that should be printed, and then perform the actual IO writing with a single `print`
+    # call (while also setting a global lock for IO writing).
+    # By doing this, printing does not seem to get scrambled when called from `Threads.@spawn`.
+    buf = IOBuffer()
+    ioctx = IOContext(buf, io)
+    pre === nothing || pre(ioctx)
+    print(ioctx, "[toplevel-", JET_LOGGER_LEVELS[level], "] ")
+    f(ioctx)
+    log = String(take!(buf))
+    if Threads.nthreads(:interactive) == 0 && Threads.nthreads(:default) == 1
+        # In this case, the original task is busy, so without sequential execution,
+        # logs will not be output
+        print(io, log)
+    else
+        # Without `Threads.@spawn :interactive`, when the caller's task thread is busy,
+        # task switching may not occur and logs may not appear
+        wait(Threads.@spawn :interactive @lock toplevel_logger_io_lock print(io, log))
+    end
 end
 @specialize
 
@@ -404,6 +429,16 @@ struct AnalyzedFileInfo
 end
 AnalyzedFileInfo() = AnalyzedFileInfo(ModuleRangeInfo[])
 
+struct SignatureInfo
+    filename::String
+    mod::Module
+    tt::Type
+    src::CodeInfo
+    SignatureInfo(
+        filename::AbstractString, mod::Module, @nospecialize(tt::Type), src::CodeInfo
+    ) = new(filename, mod, tt, src)
+end
+
 """
     res::VirtualProcessResult
 
@@ -414,14 +449,14 @@ AnalyzedFileInfo() = AnalyzedFileInfo(ModuleRangeInfo[])
     have precedence over `inference_error_reports`
 - `res.inference_error_reports::Vector{InferenceErrorReport}`: possible error reports found
     by `ToplevelAbstractAnalyzer`
-- `res.toplevel_signatures`: signatures of methods defined within the analyzed files
+- `res.signature_infos`: signatures of methods defined within the analyzed files
 - `res.actual2virtual::$Actual2Virtual`: keeps actual and virtual module
 """
 struct VirtualProcessResult
     analyzed_files::Dict{String,AnalyzedFileInfo}
     toplevel_error_reports::Vector{ToplevelErrorReport}
     inference_error_reports::Vector{InferenceErrorReport}
-    toplevel_signatures::Vector{Type}
+    signature_infos::Vector{SignatureInfo}
     actual2virtual::Union{Actual2Virtual,Nothing}
     VirtualProcessResult(actual2virtual::Union{Actual2Virtual,Nothing}) =
         new(Dict{String,AnalyzedFileInfo}(),
@@ -502,7 +537,7 @@ Subtypes are expected to implement:
     """)
 end
 
-@noinline function ConcreteInterpreter(interp::ConcreteInterpreter, state::InterpretationState)
+@noinline function ConcreteInterpreter(interp::ConcreteInterpreter, ::InterpretationState)
     InterpType = nameof(typeof(interp))
     error(lazy"""
     Missing `JET.ConcreteInterpreter` API:
@@ -578,7 +613,7 @@ function virtual_process(interp::ConcreteInterpreter,
 
         start = time()
         virtual = virtualize_module_context(actual)
-        with_toplevel_logger(config) do @nospecialize(io)
+        toplevel_logger(config) do @nospecialize(io::IO)
             sec = round(time() - start; digits = 3)
             println(io, "virtualized the context of $actual (took $sec sec)")
         end
@@ -705,9 +740,9 @@ function analyze_from_definitions!(interp::ConcreteInterpreter, config::Toplevel
     end
     entrypoint = config.analyze_from_definitions
     res = InterpretationState(interp).res
-    n_sigs = length(res.toplevel_signatures)
+    n_sigs = length(res.signature_infos)
     for i = 1:n_sigs
-        tt = res.toplevel_signatures[i]
+        (; tt) = res.signature_infos[i]
         match = Base._which(tt;
             # NOTE use the latest world counter with `method_table(analyzer)` unwrapped,
             # otherwise it may use a world counter when this method isn't defined yet
@@ -718,8 +753,8 @@ function analyze_from_definitions!(interp::ConcreteInterpreter, config::Toplevel
             (!(entrypoint isa Symbol) || # implies `analyze_from_definitions===true`
              match.method.name === entrypoint))
             succeeded[] += 1
-            with_toplevel_logger(config; pre=clearline) do @nospecialize(io)
-                (i == n_sigs ? println : print)(io, "analyzing from top-level definitions ($(succeeded[])/$n_sigs)")
+            toplevel_logger(config; pre=clearline) do @nospecialize(io::IO)
+                print(io, "analyzing from top-level definitions ($(succeeded[])/$n_sigs)")
             end
             analyzer, result = analyze_method_signature!(analyzer,
                 match.method, match.spec_types, match.sparams)
@@ -727,12 +762,12 @@ function analyze_from_definitions!(interp::ConcreteInterpreter, config::Toplevel
             append!(res.inference_error_reports, reports)
         else
             # something went wrong
-            with_toplevel_logger(config; filter=≥(JET_LOGGER_LEVEL_DEBUG), pre=clearline) do @nospecialize(io)
+            toplevel_logger(config; filter=≥(JET_LOGGER_LEVEL_DEBUG), pre=clearline) do @nospecialize(io::IO)
                 println(io, "couldn't find a single method matching the signature `", tt, "`")
             end
         end
     end
-    with_toplevel_logger(config) do @nospecialize(io)
+    toplevel_logger(config; pre=println) do @nospecialize(io::IO)
         sec = round(time() - start; digits = 3)
         println(io, "analyzed $(succeeded[]) top-level definitions (took $sec sec)")
     end
@@ -755,7 +790,7 @@ function _virtual_process!(interp::ConcreteInterpreter,
     start = time()
     state = InterpretationState(interp)
     (; config, filename) = state
-    with_toplevel_logger(config) do @nospecialize(io)
+    toplevel_logger(config) do @nospecialize(io::IO)
         println(io, "entered into $(filename)")
     end
 
@@ -776,7 +811,7 @@ function _virtual_process!(interp::ConcreteInterpreter,
         end
     end
 
-    with_toplevel_logger(config) do @nospecialize(io)
+    toplevel_logger(config) do @nospecialize(io::IO)
         sec = round(time() - start; digits = 3)
         println(io, " exited from $(filename) (took $sec sec)")
     end
@@ -934,7 +969,7 @@ function _virtual_process!(interp::ConcreteInterpreter,
         if !force_concretize
             for pat in state.config.concretization_patterns
                 if @capture(x, $pat)
-                    with_toplevel_logger(state.config; filter=≥(JET_LOGGER_LEVEL_DEBUG)) do @nospecialize(io)
+                    toplevel_logger(state.config; filter=≥(JET_LOGGER_LEVEL_DEBUG)) do @nospecialize(io::IO)
                         x′ = striplines(normalise(x))
                         println(io, "concretization pattern `$pat` matched `$x′` at $(state.filename):$(state.curline)")
                     end
@@ -1246,7 +1281,7 @@ function partially_interpret!(interp::ConcreteInterpreter, concretize::BitVector
     fill!(resize!(concretize, length(src.code)), false)
     select_statements!(concretize, mod, src)
 
-    with_toplevel_logger(InterpretationState(interp).config; filter=≥(JET_LOGGER_LEVEL_DEBUG)) do @nospecialize(io)
+    toplevel_logger(InterpretationState(interp).config; filter=≥(JET_LOGGER_LEVEL_DEBUG)) do @nospecialize(io::IO)
         println(io, "concretization plan at $(InterpretationState(interp).filename):$(InterpretationState(interp).curline):")
         LoweredCodeUtils.print_with_code(io, src, concretize)
     end
@@ -1612,12 +1647,17 @@ function collect_toplevel_signature!(interp::ConcreteInterpreter, frame::Frame, 
             return nothing
         end
     end
-    sigs = node.args[2]
     atype_params, sparams, #=linenode=#_ =
-        JuliaInterpreter.lookup(frame, sigs)::SimpleVector
+        JuliaInterpreter.lookup(frame, node.args[2])::SimpleVector
     tt = form_method_signature(atype_params::SimpleVector, sparams::SimpleVector)
-    @assert !CC.has_free_typevars(tt) "free type variable left in toplevel_signatures"
-    push!(state.res.toplevel_signatures, tt)
+    @assert !CC.has_free_typevars(tt) "free type variable left in signature_infos"
+    if !(tt isa Type)
+        @warn "Found non-Type method signature" tt
+        return nothing
+    end
+    mod = JuliaInterpreter.moduleof(frame)
+    src = JuliaInterpreter.lookup(frame, node.args[3])::Core.CodeInfo
+    push!(state.res.signature_infos, SignatureInfo(state.filename, mod, tt, src))
 end
 
 # form a method signature from the first and second parameters of lowered `:method` expression

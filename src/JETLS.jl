@@ -82,6 +82,8 @@ include("init-options.jl")
 include("config.jl")
 include("workspace-configuration.jl")
 
+include("diagnostic.jl")
+
 include("analysis/Interpreter.jl")
 using .Interpreter
 
@@ -97,7 +99,6 @@ include("definition.jl")
 include("references.jl")
 include("hover.jl")
 include("document-highlight.jl")
-include("diagnostics.jl")
 include("code-action.jl")
 include("code-lens.jl")
 include("formatting.jl")

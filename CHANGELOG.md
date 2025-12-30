@@ -10,18 +10,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 >
 > Each dated section below corresponds to a release that can be installed via
 > `Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="YYYY-MM-DD")`
+>
+> To install the latest version regardless of date, re-run the installation command:
+> ```bash
+> julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="release")'
+> ```
 
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 - Diff: [`afc5137...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/afc5137...HEAD)
 
-## 2025-12-19
-
-- Commit: [`afc5137`](https://github.com/aviatesk/JETLS.jl/commit/afc5137)
-- Diff: [`c9c5729...afc5137`](https://github.com/aviatesk/JETLS.jl/compare/c9c5729...afc5137)
-
 ### Announcement
+
+> [!note]
+> To install or update JETLS to the latest version, run:
+> ```bash
+> julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="release")'
+> ```
 
 > [!warning]
 > JETLS currently has a known memory leak issue where memory usage grows with
@@ -44,6 +50,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > might work, but most LSP features will be unfunctional.
 > Note that `analysis_overrides` is provided as a temporary workaround and may
 > be removed or changed at any time. A proper fix is being worked on.
+
+### Added
+
+- Added `diagnostic.allow_unused_underscore` configuration option (default: `true`).
+  When enabled, unused variable diagnostics (`lowering/unused-argument` and
+  `lowering/unused-local`) are suppressed for names starting with `_`.
+  (https://github.com/aviatesk/JETLS.jl/pull/415)
+- Added code action to prefix unused variables with `_`. When triggered on an
+  unused variable diagnostic, this quickfix inserts `_` at the beginning of
+  the variable name to suppress the warning.
+  (https://github.com/aviatesk/JETLS.jl/pull/416)
+- Added warning diagnostic for method overwrites (`toplevel/method-overwrite`).
+  When a method with the same signature is defined multiple times within a
+  package, a warning is reported at the overwriting definition with a link to
+  the original definition. Addresses
+  https://github.com/aviatesk/JETLS.jl/issues/387.
+  (https://github.com/aviatesk/JETLS.jl/pull/417)
+
+  <img alt="toplevel/method-overwrite showcase" src="https://github.com/user-attachments/assets/5c4aa6f7-ebd8-4e07-b3c6-ad6159a76508">
+
+- Added information diagnostic for abstract field types (`toplevel/abstract-field`).
+  Reports when a struct field has an abstract type (e.g., `Vector{Integer}` or
+  `Pair{Int}`), which often causes performance issues such as dynamic dispatch.
+  (https://github.com/aviatesk/JETLS.jl/pull/418, https://github.com/aviatesk/JETLS.jl/pull/419)
+
+  <img alt="toplevel/abstract-field showcase" src="https://github.com/user-attachments/assets/b5f925bb-d518-4e6c-893d-2f91fb1965f6">
+
+### Fixed
+
+- Added patch to vendored JuliaLowering to support `@.` macro expansion.
+  This was addressed with a specific patch for the `@.` case, but many of these
+  JuliaLowering macro compatibility issues are planned to be resolved
+  generically in the future. Fixed https://github.com/aviatesk/JETLS.jl/issues/409.
+
+## 2025-12-19
+
+- Commit: [`afc5137`](https://github.com/aviatesk/JETLS.jl/commit/afc5137)
+- Diff: [`c9c5729...afc5137`](https://github.com/aviatesk/JETLS.jl/compare/c9c5729...afc5137)
 
 ### Added
 
