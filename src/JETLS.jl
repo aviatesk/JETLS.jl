@@ -82,6 +82,21 @@ include("init-options.jl")
 include("config.jl")
 include("workspace-configuration.jl")
 
+abstract type ToplevelWarningReport end
+
+struct MethodOverwriteReport <: ToplevelWarningReport
+    mod::Module
+    sig::Type
+    filepath::String
+    lines::Pair{Int,Int}
+    original_filepath::String
+    original_lines::Pair{Int,Int}
+    MethodOverwriteReport(
+        mod::Module, @nospecialize(sig::Type), filepath::AbstractString, lines::Pair{Int,Int},
+        original_filepath::AbstractString, original_lines::Pair{Int,Int}
+    ) = new(mod, sig, filepath, lines, original_filepath, original_lines)
+end
+
 include("analysis/Interpreter.jl")
 using .Interpreter
 

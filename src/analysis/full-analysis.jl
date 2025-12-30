@@ -520,22 +520,22 @@ function execute_analysis_request(server::Server, request::AnalysisRequest)
     end
 
     if entry isa ScriptAnalysisEntry
-        result = analyze_parsed_if_exist(server, request)
+        interp, result = analyze_parsed_if_exist(server, request)
     elseif entry isa ScriptInEnvAnalysisEntry
-        result = activate_with_early_release(entry.env_path) do activation_done::Base.Event
+        interp, result = activate_with_early_release(entry.env_path) do activation_done::Base.Event
             analyze_parsed_if_exist(server, request; activation_done)
         end
     elseif entry isa PackageSourceAnalysisEntry
-        result = activate_with_early_release(entry.env_path) do activation_done::Base.Event
+        interp, result = activate_with_early_release(entry.env_path) do activation_done::Base.Event
             analyze_parsed_if_exist(server, request, entry.pkgid; activation_done)
         end
     elseif entry isa PackageTestAnalysisEntry
-        result = activate_with_early_release(entry.env_path) do activation_done::Base.Event
+        interp, result = activate_with_early_release(entry.env_path) do activation_done::Base.Event
             analyze_parsed_if_exist(server, request; activation_done)
         end
     else error("Unsupported analysis entry $entry") end
 
-    ret = new_analysis_result(request, result)
+    ret = new_analysis_result(interp, request, result)
 
     # TODO Request fallback analysis in cases this script was not analyzed by the analysis entry
     # request.uri ∉ analyzed_file_uris(ret)
@@ -571,11 +571,11 @@ function analyze_parsed_if_exist(
     if !isnothing(fi)
         filename = uri2filename(uri)
         interp = LSInterpreter(server, request; activation_done)
-        return JET.analyze_and_report_expr!(interp, fi.syntax_node, filename, args...; jetconfigs...)
+        return interp, JET.analyze_and_report_expr!(interp, fi.syntax_node, filename, args...; jetconfigs...)
     else
         filepath = @something uri2filepath(uri) error(lazy"Unsupported URI: $uri")
         interp = LSInterpreter(server, request; activation_done)
-        return JET.analyze_and_report_file!(interp, filepath, args...; jetconfigs...)
+        return interp, JET.analyze_and_report_file!(interp, filepath, args...; jetconfigs...)
     end
 end
 
@@ -586,13 +586,15 @@ function update_analyzer_world(analyzer::LSAnalyzer)
     return JET.AbstractAnalyzer(analyzer, newstate)
 end
 
-function new_analysis_result(request::AnalysisRequest, result)
+function new_analysis_result(interp::LSInterpreter, request::AnalysisRequest, result)
     analyzed_file_infos = Dict{URI,JET.AnalyzedFileInfo}(
         # `filepath` is an absolute path (since `path` is specified as absolute)
         filename2uri(filepath) => analyzed_file_info
         for (filepath, analyzed_file_info) in result.res.analyzed_files)
 
-    uri2diagnostics = jet_result_to_diagnostics(keys(analyzed_file_infos), result)
+    uri2diagnostics = URI2Diagnostics(uri => Diagnostic[] for uri in keys(analyzed_file_infos))
+    toplevel_warning_reports_to_diagnostics!(uri2diagnostics, interp.warning_reports)
+    jet_result_to_diagnostics!(uri2diagnostics, result)
 
     (; entry, prev_analysis_result) = request
     if !(isempty(result.res.toplevel_error_reports) || isnothing(prev_analysis_result))
@@ -616,9 +618,17 @@ end
 if JETLS_DEV_MODE
 # Revise is currently only loaded in JETLS_DEV_MODE
 struct SigWorkItem
+    file::String
+    mod::Module
+    rex::Revise.RelocatableExpr
     siginfos::Vector{Revise.SigInfo}
     index::Int
 end
+
+struct MethodDefinitionInfo
+    file::String
+    mod::Module
+    rex::Revise.RelocatableExpr
 end
 
 mutable struct ReviseAnalysisProgress
@@ -633,6 +643,26 @@ mutable struct ReviseAnalysisProgress
         interval = max(n_sigs ÷ 25, 1)
         new(JET.InferenceErrorReport[], ReentrantLock(), 0, 0, 0, interval, interval)
     end
+end
+
+end # if JETLS_DEV_MODE
+
+const empty_lines_range = typemax(Int) => typemin(Int)
+
+get_lines_in_ex(filepath::AbstractString, ex::Expr) = _get_lines_in_ex(empty_lines_range, filepath, ex)
+
+function _get_lines_in_ex(lines::Pair{Int,Int}, filepath::AbstractString, @nospecialize ex)
+    if ex isa Expr
+        for i = 1:length(ex.args)
+            lines = _get_lines_in_ex(lines, filepath, ex.args[i])
+        end
+    elseif ex isa LineNumberNode
+        file = ex.file
+        if file isa Symbol && filepath == String(file)
+            return min(ex.line,first(lines)) => max(ex.line,last(lines))
+        end
+    end
+    return lines
 end
 
 function analyze_package_with_revise(
@@ -687,10 +717,31 @@ function analyze_package_with_revise(
     analyzer = JET.AbstractAnalyzer(analyzer, newstate)
 
     workitems = SigWorkItem[]
-    for fi in pkgdata.fileinfos, (_, exsigs) in fi.modexsigs, (_, siginfos) in exsigs
+    for (file, fi) in zip(Revise.CodeTracking.srcfiles(pkgdata), pkgdata.fileinfos),
+        (mod, exsigs) in fi.modexsigs,
+        (rex, siginfos) in exsigs
         isnothing(siginfos) && continue
         for (i, _) in enumerate(siginfos)
-            push!(workitems, SigWorkItem(siginfos, i))
+            push!(workitems, SigWorkItem(file, mod, rex, siginfos, i))
+        end
+    end
+
+    # Detect method overwrites
+    warning_reports = ToplevelWarningReport[]
+    seen_sigs = IdDict{Revise.MethodInfoKey,MethodDefinitionInfo}()
+    for workitem in workitems
+        siginfo = workitem.siginfos[workitem.index]::Revise.SigInfo
+        key = Revise.MethodInfoKey(siginfo.mt, siginfo.sig)
+        (; file, mod, rex) = workitem
+        if haskey(seen_sigs, key)
+            filepath = joinpath(Revise.CodeTracking.basedir(pkgdata), file)
+            lines = get_lines_in_ex(filepath, rex.ex)
+            original_definition = seen_sigs[key]
+            original_filepath = joinpath(Revise.CodeTracking.basedir(pkgdata), original_definition.file)
+            original_lines = get_lines_in_ex(original_filepath, original_definition.rex.ex)
+            push!(warning_reports, MethodOverwriteReport(mod, siginfo.sig, filepath, lines, original_filepath, original_lines))
+        else
+            seen_sigs[key] = MethodDefinitionInfo(file, mod, rex)
         end
     end
 
@@ -698,7 +749,6 @@ function analyze_package_with_revise(
     progress = ReviseAnalysisProgress(n_sigs)
     inf_world = CC.get_inference_world(analyzer)
     cancellable_token = request.cancellable_token
-
     if cancellable_token !== nothing
         if is_cancelled(cancellable_token.cancel_flag)
             @goto completed
@@ -789,9 +839,10 @@ function analyze_package_with_revise(
     uri2diagnostics = URI2Diagnostics(uri => Diagnostic[] for uri in keys(analyzed_file_infos))
     postprocessor = JET.PostProcessor()
 
-    reports = collect_displayable_reports(progress.reports, keys(uri2diagnostics))
-    reports = unique!(JET.aggregation_policy(analyzer), reports)
-    uri2diagnostics = jet_inference_error_reports_to_diagnostics!(uri2diagnostics, postprocessor, reports)
+    toplevel_warning_reports_to_diagnostics!(uri2diagnostics, warning_reports)
+    inference_reports = collect_displayable_reports(progress.reports, keys(uri2diagnostics))
+    unique!(JET.aggregation_policy(analyzer), inference_reports)
+    jet_inference_error_reports_to_diagnostics!(uri2diagnostics, postprocessor, inference_reports)
     actual2virtual = pkgmod => pkgmod # No virtual module for Revise-based analysis
 
     return AnalysisResult(request.entry, uri2diagnostics, update_analyzer_world(analyzer), analyzed_file_infos, actual2virtual)
