@@ -74,7 +74,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Reports when a struct field has an abstract type (e.g., `Vector{Integer}` or
   `AbstractVector{Int}`), which often causes performance issues due to type
   instability.
-  (https://github.com/aviatesk/JETLS.jl/pull/418, (https://github.com/aviatesk/JETLS.jl/pull/419)
+  (https://github.com/aviatesk/JETLS.jl/pull/418, https://github.com/aviatesk/JETLS.jl/pull/419)
 
   <img alt="toplevel/abstract-field showcase" src="https://github.com/user-attachments/assets/b5f925bb-d518-4e6c-893d-2f91fb1965f6">
 
