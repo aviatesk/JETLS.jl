@@ -594,7 +594,7 @@ function new_analysis_result(interp::LSInterpreter, request::AnalysisRequest, re
 
     uri2diagnostics = URI2Diagnostics(uri => Diagnostic[] for uri in keys(analyzed_file_infos))
     postprocessor = JET.PostProcessor(result.res.actual2virtual)
-    toplevel_warning_reports_to_diagnostics!(uri2diagnostics, interp.warning_reports, postprocessor)
+    toplevel_warning_reports_to_diagnostics!(uri2diagnostics, interp.warning_reports, interp.server, postprocessor)
     jet_result_to_diagnostics!(uri2diagnostics, result, postprocessor)
 
     (; entry, prev_analysis_result) = request
@@ -840,7 +840,7 @@ function analyze_package_with_revise(
     uri2diagnostics = URI2Diagnostics(uri => Diagnostic[] for uri in keys(analyzed_file_infos))
     postprocessor = JET.PostProcessor()
 
-    toplevel_warning_reports_to_diagnostics!(uri2diagnostics, warning_reports, postprocessor)
+    toplevel_warning_reports_to_diagnostics!(uri2diagnostics, warning_reports, interp.server, postprocessor)
     inference_reports = collect_displayable_reports(progress.reports, keys(uri2diagnostics))
     unique!(JET.aggregation_policy(analyzer), inference_reports)
     jet_inference_error_reports_to_diagnostics!(uri2diagnostics, inference_reports, postprocessor)

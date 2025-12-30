@@ -25,20 +25,24 @@ struct LSInterpreter{S<:Server} <: JET.ConcreteInterpreter
     counter::Counter
     activation_done::Union{Nothing,Base.Event}
     warning_reports::Vector{JETLS.ToplevelWarningReport}
+    current_node::Base.RefValue{JS.SyntaxNode}
     state::JET.InterpretationState
     function LSInterpreter(
             server::S, request::AnalysisRequest, analyzer::LSAnalyzer, counter::Counter,
             activation_done::Union{Nothing,Base.Event}
         ) where S<:Server
-        return new{S}(server, request, analyzer, counter, activation_done, JETLS.ToplevelWarningReport[])
+        return new{S}(server, request, analyzer, counter, activation_done,
+            JETLS.ToplevelWarningReport[], Base.RefValue{JS.SyntaxNode}())
     end
     function LSInterpreter(
             server::S, request::AnalysisRequest, analyzer::LSAnalyzer, counter::Counter,
             activation_done::Union{Nothing,Base.Event},
             warning_reports::Vector{JETLS.ToplevelWarningReport},
+            current_node::Base.RefValue{JS.SyntaxNode},
             state::JET.InterpretationState,
         ) where S<:Server
-        return new{S}(server, request, analyzer, counter, activation_done, warning_reports, state)
+        return new{S}(server, request, analyzer, counter, activation_done,
+            warning_reports, current_node, state)
     end
 end
 
@@ -55,7 +59,7 @@ JET.InterpretationState(interp::LSInterpreter) = interp.state
 function JET.ConcreteInterpreter(interp::LSInterpreter, state::JET.InterpretationState)
     return LSInterpreter(
         interp.server, interp.request, interp.analyzer, interp.counter,
-        interp.activation_done, interp.warning_reports, state)
+        interp.activation_done, interp.warning_reports, interp.current_node, state)
 end
 JET.ToplevelAbstractAnalyzer(interp::LSInterpreter) = interp.analyzer
 function JET.ToplevelAbstractAnalyzer(
@@ -266,6 +270,12 @@ function JET.try_read_file(interp::LSInterpreter, _include_context::Module, file
     return read(filename, String)
 end
 
+# XXX This is an ad-hoc overload to make `node` available in the following `JuliaInterpreter.step_expr!`
+function JET.lower_with_err_handling(interp::LSInterpreter, node::JS.SyntaxNode, xblk::Expr)
+    interp.current_node[] = node
+    @invoke JET.lower_with_err_handling(interp::JET.ConcreteInterpreter, node::JS.SyntaxNode, xblk::Expr)
+end
+
 function JuliaInterpreter.step_expr!(
         interp::LSInterpreter, frame::JuliaInterpreter.Frame, @nospecialize(node),
         istoplevel::Bool
@@ -280,9 +290,8 @@ function JuliaInterpreter.step_expr!(
                 for (fname, ft) in zip(fnames, ftypes)
                     if JETLS.is_abstract_fieldtype(ft)
                         filename = JET.InterpretationState(interp).filename
-                        # TODO This line is where `Core._typebody!` is called, not the field definition line
-                        line = JuliaInterpreter.linenumber(frame)
-                        push!(interp.warning_reports, JETLS.AbstractFieldReport(filename, line, structtyp, fname, ft))
+                        fieldline = try_extract_field_line(interp, frame, nameof(structtyp), fname)
+                        push!(interp.warning_reports, JETLS.AbstractFieldReport(filename, fieldline, structtyp, fname, ft))
                     end
                 end
             end
@@ -292,6 +301,39 @@ function JuliaInterpreter.step_expr!(
         interp::JET.ConcreteInterpreter, frame::JuliaInterpreter.Frame, node::Any,
         istoplevel::Bool
     )
+end
+
+# TODO Use lowered `SyntaxTree` for finding field line for macro-generated structs
+function try_extract_field_line(interp::LSInterpreter, frame::JuliaInterpreter.Frame, structname::Symbol, fname::Symbol)
+    isassigned(interp.current_node) || return JuliaInterpreter.linenumber(frame)
+    node = interp.current_node[]
+    return @something _try_extract_field_line(node, structname, fname) return JuliaInterpreter.linenumber(frame)
+end
+
+function _try_extract_field_line(node::JS.SyntaxNode, structname::Symbol, fname::Symbol)
+    if JS.kind(node) === JS.K"struct" && JS.numchildren(node) ≥ 2
+        structnm = node[1]
+        if JS.kind(structnm) === JS.K"curly" && JS.numchildren(structnm) ≥ 1
+            structnm = structnm[1]
+        end
+        if (let data = structnm.data; data !== nothing && data.val === structname; end)
+            for i = 1:JS.numchildren(node[2])
+                field = node[2][i]
+                if (JS.kind(field) === JS.K"::" && JS.numchildren(field) ≥ 1 &&
+                    let data = field[1].data; data !== nothing && data.val === fname; end)
+                    return field
+                elseif let data = field.data; data !== nothing && data.val === fname; end
+                    return field
+                end
+            end
+        end
+        return nothing
+    else
+        for i = 1:JS.numchildren(node)
+            return @something _try_extract_field_line(node[i], structname, fname) continue
+        end
+        return nothing
+    end
 end
 
 end # module Interpreter
