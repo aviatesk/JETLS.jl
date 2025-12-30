@@ -3,7 +3,7 @@ module Interpreter
 export LSInterpreter
 
 using JuliaSyntax: JuliaSyntax as JS
-using JET: CC, JET
+using JET: CC, JET, JuliaInterpreter
 using ..JETLS:
     AnalysisRequest, AnalysisResult, SavedFileInfo, Server, JETLS, JETLS_DEV_MODE,
     is_cancelled, send_progress, yield_to_endpoint
@@ -251,7 +251,7 @@ function JET.virtual_process!(interp::LSInterpreter,
     return res
 end
 
-function JET.try_read_file(interp::LSInterpreter, include_context::Module, filename::AbstractString)
+function JET.try_read_file(interp::LSInterpreter, _include_context::Module, filename::AbstractString)
     uri = filename2uri(filename)
     fi = JETLS.get_saved_file_info(interp.server.state, uri)
     if !isnothing(fi)
@@ -264,6 +264,34 @@ function JET.try_read_file(interp::LSInterpreter, include_context::Module, filen
     end
     # fallback to the default file-system-based include
     return read(filename, String)
+end
+
+function JuliaInterpreter.step_expr!(
+        interp::LSInterpreter, frame::JuliaInterpreter.Frame, @nospecialize(node),
+        istoplevel::Bool
+    )
+    if Meta.isexpr(node, :call) && length(node.args) ≥ 4
+        func = JuliaInterpreter.lookup(frame, node.args[1])
+        if func === Core._typebody!
+            structtyp = JuliaInterpreter.lookup(frame, node.args[3])
+            if structtyp isa Type
+                ftypes = JuliaInterpreter.lookup(frame, node.args[4])::Core.SimpleVector
+                fnames = fieldnames(structtyp)
+                for (fname, ft) in zip(fnames, ftypes)
+                    if JETLS.is_abstract_fieldtype(ft)
+                        filename = JET.InterpretationState(interp).filename
+                        # TODO This line is where `Core._typebody!` is called, not the field definition line
+                        line = JuliaInterpreter.linenumber(frame)
+                        push!(interp.warning_reports, JETLS.AbstractFieldReport(filename, line, structtyp, fname, ft))
+                    end
+                end
+            end
+        end
+    end
+    @invoke JuliaInterpreter.step_expr!(
+        interp::JET.ConcreteInterpreter, frame::JuliaInterpreter.Frame, node::Any,
+        istoplevel::Bool
+    )
 end
 
 end # module Interpreter

@@ -253,6 +253,47 @@ function diagnostic_code_description(code::AbstractString)
         href = URI("https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/$code"))
 end
 
+# utilities
+# =========
+
+function jet_frame_to_location(frame)
+    frame.file === :none && return nothing
+    return Location(;
+        uri = something(jet_frame_to_uri(frame)),
+        range = jet_frame_to_range(frame))
+end
+
+function jet_frame_to_uri(frame)
+    frame.file === :none && return nothing
+    filename = String(frame.file)
+    # TODO Clean this up and make we can always use `filename2uri` here.
+    if startswith(filename, "Untitled")
+        return filename2uri(filename)
+    else
+        return filepath2uri(to_full_path(filename))
+    end
+end
+
+function jet_frame_to_range(frame)
+    line = JET.fixed_line_number(frame)
+    return line_range(line)
+end
+
+# 1 based line to LSP-compatible line range
+function line_range(line::Int)
+    line = line < 1 ? 0 : line - 1
+    start = Position(; line, character=0)
+    var"end" = Position(; line, character=Int(typemax(Int32)))
+    return Range(; start, var"end")
+end
+function lines_range((start_line, end_line)::Pair{Int,Int})
+    start_line = start_line < 1 ? 0 : start_line - 1
+    end_line = end_line < 1 ? 0 : end_line - 1
+    start = Position(; line=start_line, character=0)
+    var"end" = Position(; line=end_line, character=Int(typemax(Int32)))
+    return Range(; start, var"end")
+end
+
 # syntax diagnotics
 # =================
 
@@ -281,8 +322,7 @@ end
 # toplevel / inference diagnostic
 # ===============================
 
-function jet_result_to_diagnostics!(uri2diagnostics::URI2Diagnostics, result::JET.JETToplevelResult)
-    postprocessor = JET.PostProcessor(result.res.actual2virtual)
+function jet_result_to_diagnostics!(uri2diagnostics::URI2Diagnostics, result::JET.JETToplevelResult, postprocessor::JET.PostProcessor)
     for report in result.res.toplevel_error_reports
         if report isa JET.LoweringErrorReport || report isa JET.MacroExpansionErrorReport
             # the equivalent report should have been reported by `lowering_diagnostics!`
@@ -383,21 +423,48 @@ end
 # toplevel warning diagnostic
 # ===========================
 
+abstract type ToplevelWarningReport end
+
+toplevel_warning_report_to_uri(report::ToplevelWarningReport) = toplevel_warning_report_to_uri_impl(report)::URI
+toplevel_warning_report_to_uri_impl(::ToplevelWarningReport) =
+    error("Missing `toplevel_warning_report_to_uri_impl(::ToplevelWarningReport)` interface")
+
+toplevel_warning_report_to_diagnostic(report::ToplevelWarningReport, postprocessor::JET.PostProcessor) =
+    toplevel_warning_report_to_diagnostic_impl(report, postprocessor)::Diagnostic
+toplevel_warning_report_to_diagnostic_impl(::ToplevelWarningReport, ::JET.PostProcessor) =
+    error("Missing `toplevel_warning_report_to_diagnostic_impl(::ToplevelWarningReport, ::JET.PostProcessor)` interface")
+
 function toplevel_warning_reports_to_diagnostics!(
-        uri2diagnostics::URI2Diagnostics, reports::Vector{ToplevelWarningReport}
+        uri2diagnostics::URI2Diagnostics, reports::Vector{ToplevelWarningReport},
+        postprocessor::JET.PostProcessor
     )
     for report in reports
-        uri = filepath2uri(report.filepath)
+        uri = toplevel_warning_report_to_uri(report)
         haskey(uri2diagnostics, uri) || continue
-        diagnostic = toplevel_warning_report_to_diagnostic(report)
+        diagnostic = toplevel_warning_report_to_diagnostic(report, postprocessor)
         push!(uri2diagnostics[uri], diagnostic)
     end
     return uri2diagnostics
 end
 
-function toplevel_warning_report_to_diagnostic(report::MethodOverwriteReport)
-    sig_str = sprint(Base.show_tuple_as_call, Symbol(""), report.sig)
-    message = "Method definition $sig_str in module $(report.mod) overwritten"
+struct MethodOverwriteReport <: ToplevelWarningReport
+    mod::Module
+    sig::Type
+    filepath::String
+    lines::Pair{Int,Int}
+    original_filepath::String
+    original_lines::Pair{Int,Int}
+    MethodOverwriteReport(
+        mod::Module, @nospecialize(sig::Type), filepath::AbstractString, lines::Pair{Int,Int},
+        original_filepath::AbstractString, original_lines::Pair{Int,Int}
+    ) = new(mod, sig, filepath, lines, original_filepath, original_lines)
+end
+toplevel_warning_report_to_uri_impl(report::MethodOverwriteReport) = filepath2uri(report.filepath)
+
+function toplevel_warning_report_to_diagnostic_impl(report::MethodOverwriteReport, postprocessor::JET.PostProcessor)
+    sig_str = postprocessor(sprint(Base.show_tuple_as_call, Symbol(""), report.sig))
+    mod_str = postprocessor(sprint(show, report.mod))
+    message = "Method definition $sig_str in module $mod_str overwritten"
     relatedInformation = DiagnosticRelatedInformation[
         DiagnosticRelatedInformation(;
             location = Location(;
@@ -415,42 +482,29 @@ function toplevel_warning_report_to_diagnostic(report::MethodOverwriteReport)
         relatedInformation)
 end
 
-function jet_frame_to_location(frame)
-    frame.file === :none && return nothing
-    return Location(;
-        uri = something(jet_frame_to_uri(frame)),
-        range = jet_frame_to_range(frame))
+struct AbstractFieldReport <: ToplevelWarningReport
+    filepath::String
+    line::Int
+    typ::Type
+    fname::Symbol
+    ft
+    AbstractFieldReport(
+        filepath::AbstractString, line::Int, @nospecialize(typ::Type), fname::Symbol, @nospecialize(ft)
+    ) = new(filepath, line, typ, fname, ft)
 end
+toplevel_warning_report_to_uri_impl(report::AbstractFieldReport) = filepath2uri(report.filepath)
 
-function jet_frame_to_uri(frame)
-    frame.file === :none && return nothing
-    filename = String(frame.file)
-    # TODO Clean this up and make we can always use `filename2uri` here.
-    if startswith(filename, "Untitled")
-        return filename2uri(filename)
-    else
-        return filepath2uri(to_full_path(filename))
-    end
-end
-
-function jet_frame_to_range(frame)
-    line = JET.fixed_line_number(frame)
-    return line_range(line)
-end
-
-# 1 based line to LSP-compatible line range
-function line_range(line::Int)
-    line = line < 1 ? 0 : line - 1
-    start = Position(; line, character=0)
-    var"end" = Position(; line, character=Int(typemax(Int32)))
-    return Range(; start, var"end")
-end
-function lines_range((start_line, end_line)::Pair{Int,Int})
-    start_line = start_line < 1 ? 0 : start_line - 1
-    end_line = end_line < 1 ? 0 : end_line - 1
-    start = Position(; line=start_line, character=0)
-    var"end" = Position(; line=end_line, character=Int(typemax(Int32)))
-    return Range(; start, var"end")
+function toplevel_warning_report_to_diagnostic_impl(report::AbstractFieldReport, postprocessor::JET.PostProcessor)
+    typ_str = postprocessor(sprint(show, report.typ))
+    ft_str = postprocessor(sprint(show, report.ft))
+    message = "`$typ_str` has abstract field `$(report.fname)::$ft_str`"
+    return Diagnostic(;
+        range = line_range(report.line),
+        severity = DiagnosticSeverity.Information,
+        message,
+        source = DIAGNOSTIC_SOURCE,
+        code = TOPLEVEL_ABSTRACT_FIELD_CODE,
+        codeDescription = diagnostic_code_description(TOPLEVEL_ABSTRACT_FIELD_CODE))
 end
 
 # lowering diagnostic

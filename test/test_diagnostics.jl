@@ -203,6 +203,56 @@ end
     end
 end
 
+@testset "abstract field diagnostic" begin
+    withpackage("TestAbstractField", """
+        module TestAbstractField
+
+        struct BadStruct1
+            xs::Vector{Integer}
+        end
+
+        struct BadStruct2
+            xs::Vector{<:Integer}
+        end
+
+        end # module TestAbstractField
+        """) do pkg_path
+        rootUri = filepath2uri(pkg_path)
+        src_path = normpath(pkg_path, "src", "TestAbstractField.jl")
+        uri = filepath2uri(src_path)
+        withserver(; rootUri) do (; writereadmsg)
+            (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, read(src_path, String)))
+
+            @test raw_res isa PublishDiagnosticsNotification
+            @test raw_res.params.uri == uri
+
+            found_diagnostic1 = false
+            for diag in raw_res.params.diagnostics
+                if (diag.source == JETLS.DIAGNOSTIC_SOURCE &&
+                    diag.code == JETLS.TOPLEVEL_ABSTRACT_FIELD_CODE &&
+                    occursin("BadStruct1", diag.message) &&
+                    occursin("xs::Vector{Integer}", diag.message))
+                    found_diagnostic1 = true
+                    break
+                end
+            end
+            @test found_diagnostic1
+
+            found_diagnostic2 = false
+            for diag in raw_res.params.diagnostics
+                if (diag.source == JETLS.DIAGNOSTIC_SOURCE &&
+                    diag.code == JETLS.TOPLEVEL_ABSTRACT_FIELD_CODE &&
+                    occursin("BadStruct2", diag.message) &&
+                    occursin("xs::Vector{<:Integer}", diag.message))
+                    found_diagnostic2 = true
+                    break
+                end
+            end
+            @test found_diagnostic2
+        end
+    end
+end
+
 @testset "Empty package analysis" begin
     withpackage("TestEmptyPackageAnalysis", "module TestEmptyPackageAnalysis end") do pkg_path
         rootUri = filepath2uri(pkg_path)
