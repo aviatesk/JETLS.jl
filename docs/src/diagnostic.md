@@ -66,6 +66,7 @@ Here is a summary table of the diagnostics explained in this section:
 | [`lowering/unused-local`](@ref diagnostic/lowering/unused-local)                   | `Information`         | Local variables that are assigned but never read               |
 | [`toplevel/error`](@ref diagnostic/toplevel/error)                                 | `Error`               | Errors during code loading (missing deps, type failures, etc.) |
 | [`toplevel/method-overwrite`](@ref diagnostic/toplevel/method-overwrite)           | `Warning`             | Method definitions that overwrite previously defined methods   |
+| [`toplevel/abstract-field`](@ref diagnostic/toplevel/abstract-field)               | `Information`         | Struct fields with abstract types that may cause performance issues |
 | [`inference/undef-global-var`](@ref diagnostic/inference/undef-global-var)         | `Warning`             | References to undefined global variables                       |
 | [`inference/undef-local-var`](@ref diagnostic/inference/undef-local-var)           | `Information/Warning` | References to undefined local variables                        |
 | [`inference/field-error`](@ref diagnostic/inference/field-error)                   | `Warning`             | Access to non-existent struct fields                           |
@@ -233,6 +234,55 @@ end
 
 The diagnostic includes a link to the original definition location via
 `relatedInformation`, making it easy to navigate to the first definition.
+
+#### [Abstract field type (`toplevel/abstract-field`)](@id diagnostic/toplevel/abstract-field)
+
+**Default severity:** `Information`
+
+Reported when a struct field has an abstract type, which can cause performance
+issues due to type instability. Storing values in abstractly-typed fields
+often prevents the compiler from generating optimized code.
+
+Example:
+
+```julia
+struct MyStruct
+    xs::Vector{Integer}  # `MyStruct` has abstract field `xs::Vector{Integer}`
+                         # (JETLS toplevel/abstract-field)
+end
+
+struct AnotherStruct
+    data::AbstractVector{Int}  # `AnotherStruct` has abstract field `data::AbstractVector{Int}`
+                               # (JETLS toplevel/abstract-field)
+end
+```
+
+To fix this, use concrete types or parameterize your struct:
+
+```julia
+struct MyStruct
+    xs::Vector{Int}  # Concrete element type
+end
+
+struct AnotherStruct{T<:AbstractVector{Int}}
+    data::T  # Parameterized field allows concrete types
+end
+```
+
+!!! tip
+    If you intentionally use abstract field types (e.g., in cases where data
+    types are inherently only known at compile time[^nospecialize-tip]),
+    you can suppress this diagnostic using [pattern-based configuration](@ref config/diagnostic-patterns):
+    ```toml
+    [[diagnostic.patterns]]
+    pattern = "`MyStruct` has abstract field `.*`"
+    match_by = "message"
+    match_type = "regex"
+    severity = "off"
+    ```
+
+[^nospecialize-tip]: For such cases, You can use `@nospecialize` to allow the
+  use-site methods to handle abstract data types while avoiding excessive compilation.
 
 ### [Inference diagnostic (`inference/*`)](@id inference-diagnostic)
 

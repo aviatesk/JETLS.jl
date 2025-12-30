@@ -593,8 +593,9 @@ function new_analysis_result(interp::LSInterpreter, request::AnalysisRequest, re
         for (filepath, analyzed_file_info) in result.res.analyzed_files)
 
     uri2diagnostics = URI2Diagnostics(uri => Diagnostic[] for uri in keys(analyzed_file_infos))
-    toplevel_warning_reports_to_diagnostics!(uri2diagnostics, interp.warning_reports)
-    jet_result_to_diagnostics!(uri2diagnostics, result)
+    postprocessor = JET.PostProcessor(result.res.actual2virtual)
+    toplevel_warning_reports_to_diagnostics!(uri2diagnostics, interp.warning_reports, postprocessor)
+    jet_result_to_diagnostics!(uri2diagnostics, result, postprocessor)
 
     (; entry, prev_analysis_result) = request
     if !(isempty(result.res.toplevel_error_reports) || isnothing(prev_analysis_result))
@@ -839,10 +840,10 @@ function analyze_package_with_revise(
     uri2diagnostics = URI2Diagnostics(uri => Diagnostic[] for uri in keys(analyzed_file_infos))
     postprocessor = JET.PostProcessor()
 
-    toplevel_warning_reports_to_diagnostics!(uri2diagnostics, warning_reports)
+    toplevel_warning_reports_to_diagnostics!(uri2diagnostics, warning_reports, postprocessor)
     inference_reports = collect_displayable_reports(progress.reports, keys(uri2diagnostics))
     unique!(JET.aggregation_policy(analyzer), inference_reports)
-    jet_inference_error_reports_to_diagnostics!(uri2diagnostics, postprocessor, inference_reports)
+    jet_inference_error_reports_to_diagnostics!(uri2diagnostics, inference_reports, postprocessor)
     actual2virtual = pkgmod => pkgmod # No virtual module for Revise-based analysis
 
     return AnalysisResult(request.entry, uri2diagnostics, update_analyzer_world(analyzer), analyzed_file_infos, actual2virtual)

@@ -64,6 +64,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   package, a warning is reported at the overwriting definition with a link to
   the original definition. Addresses
   https://github.com/aviatesk/JETLS.jl/issues/387.
+- Added information diagnostic for abstract field types (`toplevel/abstract-field`).
+  Reports when a struct field has an abstract type (e.g., `Vector{Integer}` or
+  `AbstractVector{Int}`), which often causes performance issues due to type
+  instability.
 
 ### Fixed
 

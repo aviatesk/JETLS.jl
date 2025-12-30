@@ -34,4 +34,13 @@ using JETLS
     @test JETLS.format_duration(119.99) == "1m 60.0s" # 119.99s = 1m 59.99s, rounds to 60.0s
 end
 
+@testset "is_abstract_fieldtype" begin
+    @test !JETLS.is_abstract_fieldtype(Int)
+    @test !JETLS.is_abstract_fieldtype(Vector{Int})
+    @test JETLS.is_abstract_fieldtype(AbstractVector{Int})
+    @test JETLS.is_abstract_fieldtype(Vector{Integer})
+    @test JETLS.is_abstract_fieldtype(Vector{<:Integer})
+    @test !JETLS.is_abstract_fieldtype(Vector{TypeVar(:T)}) # For cases like `struct A{T}; xs::Vector{T}; end`
+end
+
 end # module test_general
