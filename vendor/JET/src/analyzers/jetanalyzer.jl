@@ -111,9 +111,7 @@ CC.ipo_lattice(::JETAnalyzer) = CC.InferenceLattice(IntrinsicErrorCheckLattice(C
 JETInterface.AnalyzerState(analyzer::JETAnalyzer) = analyzer.state
 function JETInterface.AbstractAnalyzer(analyzer::T, state::AnalyzerState) where T<:JETAnalyzer
     method_table = CachedMethodTable(OverlayMethodTable(state.world, JET_METHOD_TABLE))
-    cache_key = compute_hash(state.inf_params, nameof(T), analyzer.config)
-    analysis_token = get!(AnalysisToken, JET_ANALYZER_CACHE, cache_key)
-    return T(state, analysis_token, method_table, analyzer.config)
+    return T(state, analyzer.analysis_token, method_table, analyzer.config)
 end
 JETInterface.AnalysisToken(analyzer::JETAnalyzer) = analyzer.analysis_token
 JETInterface.typeinf_world(::BasicJETAnalyzer) = JET_TYPEINF_WORLD[]
@@ -317,7 +315,6 @@ function CC.abstract_eval_statement_expr(analyzer::JETAnalyzer, e::Expr, sstate:
     ret = @invoke CC.abstract_eval_statement_expr(analyzer::ToplevelAbstractAnalyzer, e::Expr, sstate::StatementState, sv::InferenceState)
     if e.head === :static_parameter
         function after_abstract_eval_statement_expr(analyzer′::JETAnalyzer, sv′::InferenceState)
-            ret′ = ret[]
             report_undef_static_param!(analyzer′, sv′, e.args[1]::Int)
             return true
         end
@@ -1271,6 +1268,7 @@ function field_error_msg(@nospecialize(typ), name::Symbol)
     end
     @static if VERSION ≥ v"1.12.0-beta4.14"
         # JuliaLang/julia#58507
+        typ = Base.unwrap_unionall(typ)::DataType
         tname = string(typ.name.wrapper)
     else
         tname = nameof(typ)
