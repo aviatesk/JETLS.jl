@@ -66,7 +66,7 @@ Here is a summary table of the diagnostics explained in this section:
 | [`lowering/unused-local`](@ref diagnostic/lowering/unused-local)                   | `Information`         | Local variables that are assigned but never read               |
 | [`toplevel/error`](@ref diagnostic/toplevel/error)                                 | `Error`               | Errors during code loading (missing deps, type failures, etc.) |
 | [`toplevel/method-overwrite`](@ref diagnostic/toplevel/method-overwrite)           | `Warning`             | Method definitions that overwrite previously defined methods   |
-| [`toplevel/abstract-field`](@ref diagnostic/toplevel/abstract-field)               | `Information`         | Struct fields with abstract types that may cause performance issues |
+| [`toplevel/abstract-field`](@ref diagnostic/toplevel/abstract-field)               | `Information`         | Struct fields with abstract types                              |
 | [`inference/undef-global-var`](@ref diagnostic/inference/undef-global-var)         | `Warning`             | References to undefined global variables                       |
 | [`inference/undef-local-var`](@ref diagnostic/inference/undef-local-var)           | `Information/Warning` | References to undefined local variables                        |
 | [`inference/field-error`](@ref diagnostic/inference/field-error)                   | `Warning`             | Access to non-existent struct fields                           |
@@ -271,7 +271,7 @@ end
 
 !!! tip
     If you intentionally use abstract field types (e.g., in cases where data
-    types are inherently only known at compile time[^nospecialize-tip]),
+    types are inherently only known at compile time[^nospecializetip]),
     you can suppress this diagnostic using [pattern-based configuration](@ref config/diagnostic-patterns):
     ```toml
     [[diagnostic.patterns]]
@@ -281,8 +281,7 @@ end
     severity = "off"
     ```
 
-[^nospecialize-tip]: For such cases, You can use `@nospecialize` to allow the
-  use-site methods to handle abstract data types while avoiding excessive compilation.
+[^nospecializetip]: For such cases, you can add `@nospecialize` to the use-site methods to allow them to handle abstract data types while avoiding excessive compilation.
 
 ### [Inference diagnostic (`inference/*`)](@id inference-diagnostic)
 

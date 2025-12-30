@@ -82,7 +82,7 @@ include("init-options.jl")
 include("config.jl")
 include("workspace-configuration.jl")
 
-include("diagnostics.jl")
+include("diagnostic.jl")
 
 include("analysis/Interpreter.jl")
 using .Interpreter
