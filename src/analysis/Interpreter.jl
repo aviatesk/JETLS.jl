@@ -291,7 +291,7 @@ function JuliaInterpreter.step_expr!(
                 for (fname, ft) in zip(fnames, ftypes)
                     if JETLS.is_abstract_fieldtype(ft)
                         filename = JET.InterpretationState(interp).filename
-                        fieldline = try_extract_field_line(interp, frame, nameof(structtyp), fname)
+                        fieldline = extract_field_line(interp, frame, nameof(structtyp), fname)
                         push!(interp.warning_reports, JETLS.AbstractFieldReport(filename, fieldline, structtyp, fname, ft))
                     end
                 end
@@ -305,36 +305,12 @@ function JuliaInterpreter.step_expr!(
 end
 
 # TODO Use lowered `SyntaxTree` for finding field line for macro-generated structs
-function try_extract_field_line(interp::LSInterpreter, frame::JuliaInterpreter.Frame, structname::Symbol, fname::Symbol)
+function extract_field_line(interp::LSInterpreter, frame::JuliaInterpreter.Frame, structname::Symbol, fname::Symbol)
     isassigned(interp.current_node) || return JuliaInterpreter.linenumber(frame)
-    node = interp.current_node[]
-    return @something _try_extract_field_line(node, structname, fname) return JuliaInterpreter.linenumber(frame)
-end
-
-function _try_extract_field_line(node::JS.SyntaxNode, structname::Symbol, fname::Symbol)
-    if JS.kind(node) === JS.K"struct" && JS.numchildren(node) ≥ 2
-        structnm = node[1]
-        if JS.kind(structnm) === JS.K"curly" && JS.numchildren(structnm) ≥ 1
-            structnm = structnm[1]
-        end
-        if (let data = structnm.data; data !== nothing && data.val === structname; end)
-            for i = 1:JS.numchildren(node[2])
-                field = node[2][i]
-                if (JS.kind(field) === JS.K"::" && JS.numchildren(field) ≥ 1 &&
-                    let data = field[1].data; data !== nothing && data.val === fname; end)
-                    return field
-                elseif let data = field.data; data !== nothing && data.val === fname; end
-                    return field
-                end
-            end
-        end
-        return nothing
-    else
-        for i = 1:JS.numchildren(node)
-            return @something _try_extract_field_line(node[i], structname, fname) continue
-        end
-        return nothing
-    end
+    return @something(
+        JETLS.try_extract_field_line(interp.current_node[], structname, fname),
+        JuliaInterpreter.linenumber(frame)
+    )
 end
 
 end # module Interpreter
