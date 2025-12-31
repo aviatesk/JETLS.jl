@@ -81,22 +81,8 @@ end
 struct MethodDefinitionInfo
     filename::String
     mod::Module
-    src::Core.CodeInfo
-end
-
-const empty_lines_range = typemax(Int) => typemin(Int)
-
-function get_lines_in_src(filepath::AbstractString, src::Core.CodeInfo)
-    lines = empty_lines_range
-    for pc in 1:length(src.code)
-        lins = Base.IRShow.buildLineInfoNode(src.debuginfo, nothing, pc)
-        for lin in lins
-            if filepath == String(lin.file)
-                lines = min(lin.line,first(lines)) => max(lin.line,last(lines))
-            end
-        end
-    end
-    return lines
+    src
+    MethodDefinitionInfo(filename::AbstractString, mod::Module, @nospecialize(src)) = new(filename, mod, src)
 end
 
 mutable struct SignatureAnalysisProgress
@@ -141,10 +127,25 @@ function JET.analyze_from_definitions!(interp::LSInterpreter, config::JET.Toplev
     for signature_info in res.signature_infos
         (; filename, mod, tt, src) = signature_info
         if haskey(seen_sigs, tt)
-            lines = get_lines_in_src(filename, src)
+            lines = if src isa Core.CodeInfo
+                JETLS.get_lines_in_src(filename, src)
+            elseif src isa Expr
+                JETLS.get_lines_in_ex(filename, src)
+            else
+                @warn "Unsupported source type found" filename mod tt typeof(src)
+                continue
+            end
             original_definition = seen_sigs[tt]
             original_filename = original_definition.filename
-            original_lines = get_lines_in_src(original_filename, original_definition.src)
+            original_src = original_definition.src
+            original_lines = if src isa Core.CodeInfo
+                JETLS.get_lines_in_src(original_filename, original_src)
+            elseif src isa Expr
+                JETLS.get_lines_in_ex(original_filename, original_src)
+            else
+                @warn "Unsupported source type found" original_filename typeof(original_src)
+                continue
+            end
             push!(interp.warning_reports, JETLS.MethodOverwriteReport(mod, tt, filename, lines, original_filename, original_lines))
         else
             seen_sigs[tt] = MethodDefinitionInfo(filename, mod, src)
@@ -290,7 +291,7 @@ function JuliaInterpreter.step_expr!(
                 for (fname, ft) in zip(fnames, ftypes)
                     if JETLS.is_abstract_fieldtype(ft)
                         filename = JET.InterpretationState(interp).filename
-                        fieldline = try_extract_field_line(interp, frame, nameof(structtyp), fname)
+                        fieldline = extract_field_line(interp, frame, nameof(structtyp), fname)
                         push!(interp.warning_reports, JETLS.AbstractFieldReport(filename, fieldline, structtyp, fname, ft))
                     end
                 end
@@ -304,36 +305,12 @@ function JuliaInterpreter.step_expr!(
 end
 
 # TODO Use lowered `SyntaxTree` for finding field line for macro-generated structs
-function try_extract_field_line(interp::LSInterpreter, frame::JuliaInterpreter.Frame, structname::Symbol, fname::Symbol)
+function extract_field_line(interp::LSInterpreter, frame::JuliaInterpreter.Frame, structname::Symbol, fname::Symbol)
     isassigned(interp.current_node) || return JuliaInterpreter.linenumber(frame)
-    node = interp.current_node[]
-    return @something _try_extract_field_line(node, structname, fname) return JuliaInterpreter.linenumber(frame)
-end
-
-function _try_extract_field_line(node::JS.SyntaxNode, structname::Symbol, fname::Symbol)
-    if JS.kind(node) === JS.K"struct" && JS.numchildren(node) ≥ 2
-        structnm = node[1]
-        if JS.kind(structnm) === JS.K"curly" && JS.numchildren(structnm) ≥ 1
-            structnm = structnm[1]
-        end
-        if (let data = structnm.data; data !== nothing && data.val === structname; end)
-            for i = 1:JS.numchildren(node[2])
-                field = node[2][i]
-                if (JS.kind(field) === JS.K"::" && JS.numchildren(field) ≥ 1 &&
-                    let data = field[1].data; data !== nothing && data.val === fname; end)
-                    return field
-                elseif let data = field.data; data !== nothing && data.val === fname; end
-                    return field
-                end
-            end
-        end
-        return nothing
-    else
-        for i = 1:JS.numchildren(node)
-            return @something _try_extract_field_line(node[i], structname, fname) continue
-        end
-        return nothing
-    end
+    return @something(
+        JETLS.try_extract_field_line(interp.current_node[], structname, fname),
+        JuliaInterpreter.linenumber(frame)
+    )
 end
 
 end # module Interpreter

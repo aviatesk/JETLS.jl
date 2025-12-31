@@ -547,29 +547,73 @@ end
     end
 end
 
-@testset "`_try_extract_field_line`" begin
-    @test JETLS.Interpreter._try_extract_field_line(jsparse("""
-        struct A
-            xs::Vector{Int}
-        end
-    """), :A, :xs) |> !isnothing
-    @test JETLS.Interpreter._try_extract_field_line(jsparse("""
-        struct A{T}
-            xs::Vector{T}
-        end
-    """), :A, :xs) |> !isnothing
-    @test JETLS.Interpreter._try_extract_field_line(jsparse("""
-        struct A
-            xs
-        end
-    """), :A, :xs) |> !isnothing
-    @test JETLS.Interpreter._try_extract_field_line(jsparse("""
-        begin
+@testset "`try_extract_field_line`" begin
+    let fieldline = JETLS.try_extract_field_line(jsparse("""
+            struct A
+                xs::Vector{Int}
+            end
+        """), :A, :xs)
+        @test !isnothing(fieldline)
+        @test JS.sourcetext(fieldline) == "xs::Vector{Int}"
+    end
+    let fieldline = JETLS.try_extract_field_line(jsparse("""
+            struct A{T}
+                xs::Vector{T}
+            end
+        """), :A, :xs)
+        @test !isnothing(fieldline)
+        @test JS.sourcetext(fieldline) == "xs::Vector{T}"
+    end
+    let fieldline = JETLS.try_extract_field_line(jsparse("""
+            struct A <: AbstractVector{Int}
+                xs::Vector{Int}
+            end
+        """), :A, :xs)
+        @test !isnothing(fieldline)
+        @test JS.sourcetext(fieldline) == "xs::Vector{Int}"
+    end
+    let fieldline = JETLS.try_extract_field_line(jsparse("""
+            struct A{T} <: AbstractVector{T}
+                xs::Vector{T}
+            end
+        """), :A, :xs)
+        @test !isnothing(fieldline)
+        @test JS.sourcetext(fieldline) == "xs::Vector{T}"
+    end
+    let fieldline = JETLS.try_extract_field_line(jsparse("""
+            mutable struct A
+                x::Int
+            end
+        """), :A, :x)
+        @test !isnothing(fieldline)
+        @test JS.sourcetext(fieldline) == "x::Int"
+    end
+    let fieldline = JETLS.try_extract_field_line(jsparse("""
+            mutable struct A
+                const x::Int
+            end
+        """), :A, :x)
+        @test !isnothing(fieldline)
+        @test JS.sourcetext(fieldline) == "const x::Int"
+    end
+    let fieldline = JETLS.try_extract_field_line(jsparse("""
             struct A
                 xs
             end
-        end
-    """), :A, :xs) |> !isnothing
+        """), :A, :xs)
+        @test !isnothing(fieldline)
+        @test JS.sourcetext(fieldline) == "xs"
+    end
+    let fieldline = JETLS.try_extract_field_line(jsparse("""
+            begin
+                struct A
+                    xs
+                end
+            end
+        """), :A, :xs)
+        @test !isnothing(fieldline)
+        @test JS.sourcetext(fieldline) == "xs"
+    end
 end
 
 end # module test_ast
