@@ -51,6 +51,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > Note that `analysis_overrides` is provided as a temporary workaround and may
 > be removed or changed at any time. A proper fix is being worked on.
 
+### Fixed
+
+- Fixed method overwrite detection to handle both `Core.CodeInfo` and `Expr`
+  source types, making the analysis more robust. (https://github.com/aviatesk/JETLS.jl/pull/421)
+- Fixed `toplevel/abstract-field` diagnostic to report correct field locations
+  for structs with `<:` subtyping syntax and `const` field modifiers. (https://github.com/aviatesk/JETLS.jl/pull/422)
+
 ## 2025-12-31
 
 - Commit: [`b61b6fa`](https://github.com/aviatesk/JETLS.jl/commit/b61b6fa)
