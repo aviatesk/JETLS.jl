@@ -329,7 +329,7 @@ function jet_result_to_diagnostics!(uri2diagnostics::URI2Diagnostics, result::JE
             # with more precise location information
             continue
         end
-        diagnostic = jet_toplevel_error_report_to_diagnostic(postprocessor, report)
+        diagnostic = jet_toplevel_error_report_to_diagnostic(report, postprocessor)
         filename = report.file
         filename === :none && continue
         if startswith(filename, "Untitled")
@@ -340,7 +340,7 @@ function jet_result_to_diagnostics!(uri2diagnostics::URI2Diagnostics, result::JE
         push!(uri2diagnostics[uri], diagnostic)
     end
     displayable_reports = collect_displayable_reports(result.res.inference_error_reports, keys(uri2diagnostics))
-    jet_inference_error_reports_to_diagnostics!(uri2diagnostics, postprocessor, displayable_reports)
+    jet_inference_error_reports_to_diagnostics!(uri2diagnostics, displayable_reports, postprocessor)
     return uri2diagnostics
 end
 
@@ -348,7 +348,7 @@ end
 # -------------------
 
 function jet_toplevel_error_report_to_diagnostic(
-        postprocessor::JET.PostProcessor, @nospecialize report::JET.ToplevelErrorReport
+        @nospecialize(report::JET.ToplevelErrorReport), postprocessor::JET.PostProcessor
     )
     if report isa JET.ParseErrorReport
         # TODO: Pass correct encoding here
@@ -371,11 +371,11 @@ end
 # --------------------
 
 function jet_inference_error_reports_to_diagnostics!(
-        uri2diagnostics::URI2Diagnostics, postprocessor::JET.PostProcessor,
-        reports::Vector{JET.InferenceErrorReport}
+        uri2diagnostics::URI2Diagnostics, reports::Vector{JET.InferenceErrorReport},
+        postprocessor::JET.PostProcessor
     )
     for report in reports
-        diagnostic = jet_inference_error_report_to_diagnostic(postprocessor, report)
+        diagnostic = jet_inference_error_report_to_diagnostic(report, postprocessor)
         topframeidx = first(inference_error_report_stack(report))
         topframe = report.vst[topframeidx]
         topframe.file === :none && continue # TODO Figure out why this is necessary
@@ -385,7 +385,7 @@ function jet_inference_error_reports_to_diagnostics!(
     return uri2diagnostics
 end
 
-function jet_inference_error_report_to_diagnostic(postprocessor::JET.PostProcessor, @nospecialize report::JET.InferenceErrorReport)
+function jet_inference_error_report_to_diagnostic(@nospecialize(report::JET.InferenceErrorReport), postprocessor::JET.PostProcessor)
     rstack = inference_error_report_stack(report)
     topframe = report.vst[first(rstack)]
     message = JET.with_bufferring(:limit=>true) do io
