@@ -666,6 +666,19 @@ function _get_lines_in_ex(lines::Pair{Int,Int}, filepath::AbstractString, @nospe
     return lines
 end
 
+function get_lines_in_src(filepath::AbstractString, src::Core.CodeInfo)
+    lines = empty_lines_range
+    for pc in 1:length(src.code)
+        lins = Base.IRShow.buildLineInfoNode(src.debuginfo, nothing, pc)
+        for lin in lins
+            if filepath == String(lin.file)
+                lines = min(lin.line,first(lines)) => max(lin.line,last(lines))
+            end
+        end
+    end
+    return lines
+end
+
 function analyze_package_with_revise(
         server::Server, request::AnalysisRequest, pkgid::Base.PkgId,
         activation_done::Union{Nothing,Base.Event} = nothing

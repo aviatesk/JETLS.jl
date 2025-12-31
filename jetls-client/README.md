@@ -116,15 +116,15 @@ see the [Communication channels documentation](https://aviatesk.github.io/JETLS.
 
 ### Initialization options
 
-Static options that are sent to JETLS during startup. These settings require a
-server restart to take effect.
+Static options that are sent to JETLS during startup can be configured through
+VSCode's `settings.json` file using the `"jetls-client.initializationOptions"`
+section.
+These settings require a server restart to take effect.
 
-Configure via `"jetls-client.initializationOptions"`:
+For detailed initialization options and examples, see the
+[Initialization options documentation](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options).
 
-- `"n_analysis_workers": number`: Number of concurrent analysis worker threads
-  (default: `1`, minimum: `1`)
-
-Example:
+### Example initialization options
 
 ```jsonc
 {
@@ -134,9 +134,6 @@ Example:
 }
 ```
 
-For more details, see the
-[Initialization options documentation](https://aviatesk.github.io/JETLS.jl/release/launching/#Initialization-options).
-
 ## Configuring JETLS
 
 JETLS behavior (diagnostics, formatting, etc.) can be configured through VSCode's
@@ -144,27 +141,6 @@ JETLS behavior (diagnostics, formatting, etc.) can be configured through VSCode'
 
 For detailed configuration options and examples, see the
 [Configuration documentation](https://aviatesk.github.io/JETLS.jl/release/configuration/).
-
-### Available settings
-
-- `"jetls-client.settings.full_analysis.debounce": number`: Debounce time in seconds
-  before triggering full analysis after a document change (default: `1.0`)
-- `"jetls-client.settings.full_analysis.auto_instantiate": boolean`: When enabled,
-  JETLS automatically runs `Pkg.instantiate()` for packages that have not been
-  instantiated yet (default: `true`)
-- `"jetls-client.settings.formatter": string | { "custom": { "executable": string, "executable_range": string } }`:
-  Formatter configuration. Can be a preset name (`"Runic"` or `"JuliaFormatter"`)
-  or a custom formatter object (default: `"Runic"`)
-- `"jetls-client.settings.diagnostic.enabled": boolean`: Enable or disable all JETLS
-  diagnostics (default: `true`)
-- `"jetls-client.settings.diagnostic.patterns": { "pattern": string, "match_by": string, "match_type": string, "serverity": string | number, "path": string? }[]`:
-  Fine-grained control over diagnostics through pattern matching.
-  Each pattern supports `pattern`, `match_by` (`"code"` or `"message"`),
-  `match_type` (`"literal"` or `"regex"`), `severity`,
-  and optional `path` (glob pattern) fields
-- `"jetls-client.settings.testrunner.executable": string`:
-  Path to the TestRunner.jl executable
-  (default: `"testrunner"` or `"testrunner.exe"` on Windows)
 
 ### Example configuration
 

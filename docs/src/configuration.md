@@ -7,27 +7,28 @@ This documentation uses TOML format to describe the configuration schema.
 
 ```toml
 [full_analysis]
-debounce = 1.0             # number (seconds), default: 1.0
-auto_instantiate = true    # boolean, default: true
+debounce = 1.0                   # number (seconds), default: 1.0
+auto_instantiate = true          # boolean, default: true
 
-formatter = "Runic"        # String preset: "Runic" (default) or "JuliaFormatter"
+formatter = "Runic"              # String preset: "Runic" (default) or "JuliaFormatter"
 
-[formatter.custom]         # Or custom formatter configuration
-executable = ""            # string (path), optional
-executable_range = ""      # string (path), optional
+[formatter.custom]               # Or custom formatter configuration
+executable = ""                  # string (path), optional
+executable_range = ""            # string (path), optional
 
 [diagnostic]
-enabled = true             # boolean, default: true
+enabled = true                   # boolean, default: true
+allow_unused_underscore = false  # boolean, default: false
 
 [[diagnostic.patterns]]
-pattern = ""               # string, required
-match_by = ""              # string, required, "code" or "message"
-match_type = ""            # string, required, "literal" or "regex"
-severity = ""              # string or number, required, "error"/"warning"/"warn"/"information"/"info"/"hint"/"off" or 0/1/2/3/4
-path = ""                  # string (optional), glob pattern for file paths
+pattern = ""                     # string, required
+match_by = ""                    # string, required, "code" or "message"
+match_type = ""                  # string, required, "literal" or "regex"
+severity = ""                    # string or number, required, "error"/"warning"/"warn"/"information"/"info"/"hint"/"off" or 0/1/2/3/4
+path = ""                        # string (optional), glob pattern for file paths
 
 [testrunner]
-executable = "testrunner"  # string, default: "testrunner" (or "testrunner.bat" on Windows)
+executable = "testrunner"        # string, default: "testrunner" (or "testrunner.bat" on Windows)
 ```
 
 ## [Configuration reference](@id config/reference)
