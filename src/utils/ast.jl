@@ -602,3 +602,35 @@ function jsobj_to_range(
         return Range(; start = spos, var"end" = epos)
     end
 end
+
+function try_extract_field_line(node::JS.SyntaxNode, structname::Symbol, fname::Symbol)
+    if JS.kind(node) === JS.K"struct" && JS.numchildren(node) ≥ 2
+        structnm = node[1]
+        if JS.kind(structnm) === JS.K"<:" && JS.numchildren(structnm) ≥ 1
+            structnm = structnm[1]
+        end
+        if JS.kind(structnm) === JS.K"curly" && JS.numchildren(structnm) ≥ 1
+            structnm = structnm[1]
+        end
+        if (let data = structnm.data; data !== nothing && data.val === structname; end)
+            for i = 1:JS.numchildren(node[2])
+                retfield = field = node[2][i]
+                if JS.kind(field) === JS.K"const" && JS.numchildren(field) ≥ 1
+                    field = field[1]
+                end
+                if JS.kind(field) === JS.K"::" && JS.numchildren(field) ≥ 1
+                    field = field[1]
+                end
+                if let data = field.data; data !== nothing && data.val === fname; end
+                    return retfield
+                end
+            end
+        end
+        return nothing
+    else
+        for i = 1:JS.numchildren(node)
+            return @something try_extract_field_line(node[i], structname, fname) continue
+        end
+        return nothing
+    end
+end
