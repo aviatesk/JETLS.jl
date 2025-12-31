@@ -622,7 +622,7 @@ struct SigWorkItem
     file::String
     mod::Module
     rex::Revise.RelocatableExpr
-    siginfos::Vector{Revise.SigInfo}
+    siginfos::Vector{Union{Revise.SigInfo,Revise.TypeInfo}}
     index::Int
 end
 
@@ -707,11 +707,11 @@ function analyze_package_with_revise(
         #     # Fallback: read source directly from file (e.g., for newly created packages)
         #     # See https://github.com/JuliaLang/julia/issues/42404
         #     fi = Revise.fileinfo(pkgdata, file)
-        #     if isempty(fi.modexsigs) && (!isempty(fi.cachefile) || !isempty(fi.cacheexprs))
+        #     if isempty(fi.mod_exs_infos) && (!isempty(fi.cachefile) || !isempty(fi.cacheexprs))
         #         filep = joinpath(Revise.basedir(pkgdata), file)
         #         src = read(filep, String)
-        #         topmod = first(keys(fi.modexsigs))
-        #         if Revise.parse_source!(fi.modexsigs, src, filep, topmod) === nothing
+        #         topmod = first(keys(fi.mod_exs_infos))
+        #         if Revise.parse_source!(fi.mod_exs_infos, src, filep, topmod) === nothing
         #             @error "failed to parse source text for $filep"
         #         end
         #         Revise.add_modexs!(fi, fi.cacheexprs)
@@ -732,11 +732,13 @@ function analyze_package_with_revise(
 
     workitems = SigWorkItem[]
     for (file, fi) in zip(Revise.CodeTracking.srcfiles(pkgdata), pkgdata.fileinfos),
-        (mod, exsigs) in fi.modexsigs,
-        (rex, siginfos) in exsigs
-        isnothing(siginfos) && continue
-        for (i, _) in enumerate(siginfos)
-            push!(workitems, SigWorkItem(file, mod, rex, siginfos, i))
+        (mod, exs_infos) in fi.mod_exs_infos,
+        (rex, exinfos) in exs_infos
+        isnothing(exinfos) && continue
+        for (i, exinfo) in enumerate(exinfos)
+            if exinfo isa Revise.SigInfo
+                push!(workitems, SigWorkItem(file, mod, rex, exinfos, i))
+            end
         end
     end
 
@@ -777,7 +779,7 @@ function analyze_package_with_revise(
 
     tasks = map(workitems) do workitem
         (; siginfos, index) = workitem
-        siginfo = siginfos[index]
+        siginfo = siginfos[index]::Revise.SigInfo
         Threads.@spawn :default try
             if cancellable_token !== nothing && is_cancelled(cancellable_token.cancel_flag)
                 return
@@ -853,7 +855,7 @@ function analyze_package_with_revise(
     uri2diagnostics = URI2Diagnostics(uri => Diagnostic[] for uri in keys(analyzed_file_infos))
     postprocessor = JET.PostProcessor()
 
-    toplevel_warning_reports_to_diagnostics!(uri2diagnostics, warning_reports, interp.server, postprocessor)
+    toplevel_warning_reports_to_diagnostics!(uri2diagnostics, warning_reports, server, postprocessor)
     inference_reports = collect_displayable_reports(progress.reports, keys(uri2diagnostics))
     unique!(JET.aggregation_policy(analyzer), inference_reports)
     jet_inference_error_reports_to_diagnostics!(uri2diagnostics, inference_reports, postprocessor)

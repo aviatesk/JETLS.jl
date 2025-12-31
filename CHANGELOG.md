@@ -51,6 +51,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > Note that `analysis_overrides` is provided as a temporary workaround and may
 > be removed or changed at any time. A proper fix is being worked on.
 
+### Changed
+
+- Updated Revise.jl dependency version to v3.13.
+
 ## 2026-01-01
 
 - Commit: [`c5f3c0d`](https://github.com/aviatesk/JETLS.jl/commit/c5f3c0d)
