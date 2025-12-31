@@ -81,22 +81,8 @@ end
 struct MethodDefinitionInfo
     filename::String
     mod::Module
-    src::Core.CodeInfo
-end
-
-const empty_lines_range = typemax(Int) => typemin(Int)
-
-function get_lines_in_src(filepath::AbstractString, src::Core.CodeInfo)
-    lines = empty_lines_range
-    for pc in 1:length(src.code)
-        lins = Base.IRShow.buildLineInfoNode(src.debuginfo, nothing, pc)
-        for lin in lins
-            if filepath == String(lin.file)
-                lines = min(lin.line,first(lines)) => max(lin.line,last(lines))
-            end
-        end
-    end
-    return lines
+    src
+    MethodDefinitionInfo(filename::AbstractString, mod::Module, @nospecialize(src)) = new(filename, mod, src)
 end
 
 mutable struct SignatureAnalysisProgress
@@ -141,10 +127,25 @@ function JET.analyze_from_definitions!(interp::LSInterpreter, config::JET.Toplev
     for signature_info in res.signature_infos
         (; filename, mod, tt, src) = signature_info
         if haskey(seen_sigs, tt)
-            lines = get_lines_in_src(filename, src)
+            lines = if src isa Core.CodeInfo
+                JETLS.get_lines_in_src(filename, src)
+            elseif src isa Expr
+                JETLS.get_lines_in_ex(filename, src)
+            else
+                @warn "Unsupported source type found" filename mod tt typeof(src)
+                continue
+            end
             original_definition = seen_sigs[tt]
             original_filename = original_definition.filename
-            original_lines = get_lines_in_src(original_filename, original_definition.src)
+            original_src = original_definition.src
+            original_lines = if src isa Core.CodeInfo
+                JETLS.get_lines_in_src(original_filename, original_src)
+            elseif src isa Expr
+                JETLS.get_lines_in_ex(original_filename, original_src)
+            else
+                @warn "Unsupported source type found" original_filename typeof(original_src)
+                continue
+            end
             push!(interp.warning_reports, JETLS.MethodOverwriteReport(mod, tt, filename, lines, original_filename, original_lines))
         else
             seen_sigs[tt] = MethodDefinitionInfo(filename, mod, src)
