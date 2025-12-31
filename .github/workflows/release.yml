@@ -10,6 +10,8 @@ on:
       - reopened
       - closed
   workflow_dispatch:
+  repository_dispatch:
+    types: [build-docs]
 
 jobs:
   test:
@@ -44,7 +46,7 @@ jobs:
 
   docs:
     name: Documentation
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'repository_dispatch'
     permissions:
       actions: write
       contents: write
@@ -53,6 +55,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: release
       - name: Get latest CHANGELOG from master
         run: git fetch origin master && git checkout origin/master -- CHANGELOG.md
       - uses: julia-actions/setup-julia@v2
@@ -188,6 +192,7 @@ jobs:
           git push origin master
 
           # Trigger documentation build for release branch
-          gh workflow run release.yml --ref release
+          gh api repos/${{ github.repository }}/dispatches \
+            -f event_type=build-docs
         env:
           GH_TOKEN: ${{ github.token }}
