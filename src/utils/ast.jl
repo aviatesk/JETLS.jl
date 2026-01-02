@@ -98,6 +98,13 @@ as information inside macros is often not needed for these features.
 """
 remove_macrocalls(st0::JL.SyntaxTree) = first(_remove_macrocalls(st0))
 
+function unwrap_where(node::JL.SyntaxTree)
+    while JS.kind(node) === JS.K"where" && JS.numchildren(node) ≥ 1
+        node = node[1]
+    end
+    return node
+end
+
 """
 Like `Base.unique`, but over node ids, and with this comment promising that the
 lowest-index copy of each node is kept.
