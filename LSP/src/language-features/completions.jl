@@ -231,7 +231,13 @@ end
 struct GlobalCompletionData
     name::String
 end
-export GlobalCompletionData
+struct MethodSignatureCompletionData
+    moduleidx::Int
+    names::Vector{String}
+    methodname::String
+    methodidx::Int
+end
+export GlobalCompletionData, MethodSignatureCompletionData
 
 @interface CompletionItem begin
     """
@@ -414,7 +420,7 @@ export GlobalCompletionData
     A data entry field that is preserved on a completion item between
     a completion and a completion resolve request.
     """
-    data::Union{GlobalCompletionData, Nothing} = nothing
+    data::Union{GlobalCompletionData, MethodSignatureCompletionData, Nothing} = nothing
 end
 
 """
@@ -489,7 +495,8 @@ presented in the editor.
         # Tags
         - since - 3.17.0
         """
-        data::Union{GlobalCompletionData, Nothing} = nothing
+
+        data::Union{GlobalCompletionData, MethodSignatureCompletionData, Nothing} = nothing
     end} = nothing
 
     """
