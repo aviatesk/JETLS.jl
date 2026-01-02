@@ -53,6 +53,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- Enhanced global completion items with detailed kind information (`[function]`,
+  `[type]`, `[module]`, etc.) resolved lazily via `completionItem/resolve`.
+  The visibility of these enhancements varies by client: VSCode updates only
+  the `detail` field (shown above documentation), while Zed can update all
+  fields including `kind` for richer presentation with label highlighting
+  (combined with https://github.com/aviatesk/zed-julia/pull/1). (https://github.com/aviatesk/JETLS.jl/pull/425)
+
+  > Demo with [aviatesk/zed-julia](https://github.com/aviatesk/zed-julia)
+
+  https://github.com/user-attachments/assets/a39d7bc5-c46e-40c8-a9ee-0458b3abdcae
+
 - Updated Revise.jl dependency version to v3.13.
 
 ## 2026-01-01
