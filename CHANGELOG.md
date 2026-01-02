@@ -64,6 +64,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
   https://github.com/user-attachments/assets/a39d7bc5-c46e-40c8-a9ee-0458b3abdcae
 
+- Improved signature help filtering when a semicolon is present in function calls.
+  Methods that require more positional arguments than provided are now filtered
+  out once the user enters the keyword argument region (e.g., `g(42;│)` no longer
+  shows `g(x, y)` which requires 2 positional arguments). (https://github.com/aviatesk/JETLS.jl/pull/426)
+
 - Updated Revise.jl dependency version to v3.13.
 
 ## 2026-01-01
