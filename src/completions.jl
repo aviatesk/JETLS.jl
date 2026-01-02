@@ -2,11 +2,13 @@
 # ==============
 
 const NUMERIC_CHARACTERS = tuple(string.('0':'9')...)
+const METHOD_COMPLETION_TRIGGER_CHARACTERS = ("(", ",", " ")
 const COMPLETION_TRIGGER_CHARACTERS = [
     "@",  # macro completion
     "\\", # LaTeX completion
     ":",  # emoji completion
     ";",  # keyword argument completion
+    METHOD_COMPLETION_TRIGGER_CHARACTERS...,
     NUMERIC_CHARACTERS..., # allow these characters to be recognized by `CompletionContext.triggerCharacter`
 ]
 
@@ -236,7 +238,7 @@ function global_completions!(
                 enable_completions = true
             end
         end
-        enable_completions || return items
+        enable_completions || return #=isIncomplete=#false
         # disable local completions for dot-prefixed code for now
         is_completed |= true
     end
@@ -315,7 +317,7 @@ function global_completions!(
             data = GlobalCompletionData(resolveName))
     end
 
-    return is_completed ? items : nothing
+    return is_completed ? #=isIncomplete=#false : nothing
 end
 
 # LaTeX and emoji completions
@@ -408,7 +410,7 @@ function add_emoji_latex_completions!(
     end
 
     # if we reached here, we have added all emoji and latex completions
-    return items
+    return #=isIncomplete=#false
 end
 
 # keyword completions
@@ -477,6 +479,142 @@ function keyword_completions!(
             documentation = var_quote_doc)
     end
     return nothing
+end
+
+# method signature completions
+# ============================
+
+function extract_param_text(p::JL.SyntaxTree)
+     k = JS.kind(p)
+    if k === JS.K"Identifier"
+        hasproperty(p, :name_val) || return nothing
+        return p.name_val::String
+    elseif k === JS.K"::"
+        if JS.numchildren(p) ≠ 2
+            return nothing
+        else
+            name = @something extract_param_text(p[1]) return nothing
+            typ = JS.sourcetext(p[2])
+            return String(name * "::" * typ)
+        end
+    elseif k === JS.K"var" && JS.numchildren(p) == 1
+        inner = p[1]
+        if JS.kind(inner) === JS.K"Identifier" && hasproperty(inner, :name_val)
+            return inner.name_val::String
+        end
+    end
+    return nothing
+end
+
+escape_snippet_text(s::AbstractString) =
+    replace(s, '\\' => "\\\\", '$' => "\\\$", '}' => "\\}")
+
+function make_insert_text(msig::AbstractString, num_existing_args::Int, use_snippet::Bool)
+    mnode = JS.parsestmt(JL.SyntaxTree, msig; ignore_errors=true)
+    while JS.kind(mnode) === JS.K"where" && JS.numchildren(mnode) ≥ 1
+        mnode = mnode[1]
+    end
+    JS.kind(mnode) in CALL_KINDS || return nothing
+    params, kwp_i, _ = flatten_args(mnode)
+    pos_params_count = kwp_i - 1
+    remaining_start = num_existing_args + 1
+    remaining_start > pos_params_count && return nothing
+    parts = String[]
+    snippet_idx = 1
+    for i in remaining_start:pos_params_count
+        p = params[i]
+        k = JS.kind(p)
+        k in JS.KSet"= kw" && continue
+        if k === JS.K"..." && JS.numchildren(p) ≥ 1
+            inner = p[1]
+            text = extract_param_text(inner)
+            isnothing(text) && continue
+            text = text * "..."
+        else
+            text = extract_param_text(p)
+            isnothing(text) && continue
+        end
+        if use_snippet
+            push!(parts, "\${$(snippet_idx):$(escape_snippet_text(text))}")
+            snippet_idx += 1
+        else
+            push!(parts, text)
+        end
+    end
+    isempty(parts) && return nothing
+    return join(parts, ", ")
+end
+
+function prepare_method_signature_data(m::Method, methodidx::Int, modules::Vector{Module})
+    methodname = String(m.name)
+    mod = m.module
+    names = String[]
+    while true
+        pmod = parentmodule(mod)
+        pmod == mod && break
+        pushfirst!(names, String(nameof(mod)))
+        mod = pmod
+    end
+    moduleidx = @something findfirst(m::Module->m==mod, modules) return nothing
+    return MethodSignatureCompletionData(moduleidx, names, methodname, methodidx)
+end
+
+function method_signature_completions!(
+        items::Dict{String,CompletionItem},
+        state::ServerState, uri::URI, fi::FileInfo, pos::Position,
+        context::Union{Nothing,CompletionContext}
+    )
+    isnothing(context) && return nothing
+    context.triggerCharacter ∉ METHOD_COMPLETION_TRIGGER_CHARACTERS && return nothing
+
+    st0 = build_syntax_tree(fi)
+    b = xy_to_offset(fi, pos)
+    call = @something cursor_call(fi.parsed_stream, st0, b) return nothing
+    ca = CallArgs(call, b)
+    ca.has_semicolon && return nothing
+
+    (; mod, analyzer, postprocessor) = get_context_info(state, uri, pos)
+    fntyp = resolve_type(analyzer, mod, call[1])
+    fntyp isa Core.Const || return nothing
+    candidate_methods = methods(fntyp.val)
+    isempty(candidate_methods) && return nothing
+
+    num_existing_args = ca.kw_i - 1
+    use_snippet = supports(state, :textDocument, :completion, :completionItem, :snippetSupport)
+
+    sort_idx = 1
+    modules = Base.loaded_modules_array()
+    for (i, m) in enumerate(candidate_methods)
+        startswith(String(m.name), '@') && continue # TODO skip macro signature completion for now
+        compatible_method(m, ca) || continue
+        msig = @something get_sig_str(m, ca) continue
+        msig = postprocessor(msig)
+        base_text = make_insert_text(msig, num_existing_args, use_snippet)
+        newText = if isnothing(base_text)
+            ""
+        else
+            prefix = (num_existing_args > 0 && context.triggerCharacter == ",") ? " " : ""
+            prefix * base_text
+        end
+        insertTextFormat = use_snippet ? InsertTextFormat.Snippet : InsertTextFormat.PlainText
+        label = String(msig)
+        items[label] = CompletionItem(;
+            label,
+            labelDetails = CompletionItemLabelDetails(; description = "method"),
+            kind = CompletionItemKind.Method,
+            # Use `textEdit` instead of `insertText`: when `insertText` is empty,
+            # clients fall back to inserting the `label`, but with `textEdit` we can
+            # insert nothing (empty `newText`) for methods with all args filled.
+            textEdit = TextEdit(; range=Range(pos, pos), newText),
+            insertTextFormat,
+            sortText = get_sort_text(sort_idx),
+            data = prepare_method_signature_data(m, i, modules),
+        )
+        sort_idx += 1
+    end
+
+    isempty(items) && return nothing
+    return #=isIncomplete=#true
 end
 
 # keyword argument completion
@@ -567,11 +705,35 @@ function keyword_argument_completions!(
             )
         end
     end
-    return ca.has_semicolon ? items : nothing
+    return ca.has_semicolon ? #=isIncomplete=#false : nothing
 end
 
 # completion resolver
 # ===================
+
+function lookup_method_from_data(data::MethodSignatureCompletionData)
+    modules = Base.loaded_modules_array()
+    checkbounds(Bool, modules, data.methodidx) || return nothing
+    mod = modules[data.moduleidx]
+    for name in data.names
+        name = Symbol(name)
+        isdefinedglobal(mod, name) || return nothing
+        mod = getglobal(mod, name)
+    end
+    methodname = Symbol(data.methodname)
+    isdefinedglobal(mod, methodname) || return nothing
+    mfunc = getglobal(mod, methodname)
+    ms = methods(mfunc)
+    checkbounds(Bool, ms, data.methodidx) || return nothing
+    return Pair{Any,Method}(mfunc, ms[data.methodidx])
+end
+
+function lookup_method_documentation(@nospecialize(mfunc), m::Method)
+    tt = Base.unwrap_unionall(m.sig)
+    tt isa DataType || return nothing
+    sig = Tuple{tt.parameters[2:end]...}
+    return Base.Docs.doc(mfunc, sig)::Markdown.MD
+end
 
 const builtin_functions = Core.Builtin[getglobal(Core, n) for n in names(Core) if getglobal(Core, n) isa Core.Builtin]
 const builtin_types = Type[getglobal(Core, n) for n in names(Core) if getglobal(Core, n) isa Type]
@@ -626,9 +788,57 @@ function resolve_completion_item(state::ServerState, item::CompletionItem)
             documentation = MarkupContent(;
                 kind = MarkupKind.Markdown,
                 value = docs))
+    elseif data isa MethodSignatureCompletionData
+        mfunc, m = @something lookup_method_from_data(data) return item
+        doc = @something lookup_method_documentation(mfunc, m) return item
+        documentation = string(doc)
+        _, result = infer_method!(CC.NativeInterpreter(Base.get_world_counter()), m)
+        tt = result.result
+        detail = "::" * postprocessor(string(CC.widenconst(tt)))
+        return CompletionItem(item;
+            labelDetails = CompletionItemLabelDetails(; detail, description = "method"),
+            detail,
+            documentation = MarkupContent(;
+                kind = MarkupKind.Markdown,
+                value = documentation))
     else
         return item
     end
+end
+
+infer_method!(interp::CC.NativeInterpreter, m::Method) =
+    infer_method_signature!(interp, m, m.sig, method_sparams(m))
+
+function method_sparams(m::Method)
+    s = TypeVar[]
+    sig = m.sig
+    while isa(sig, UnionAll)
+        push!(s, sig.var)
+        sig = sig.body
+    end
+    return Core.svec(s...)
+end
+
+function infer_method_signature!(interp::CC.NativeInterpreter, m::Method, @nospecialize(atype), sparams::Core.SimpleVector)
+    mi = CC.specialize_method(m, atype, sparams)::Core.MethodInstance
+    return infer_method_instance!(interp, mi)
+end
+
+function infer_method_instance!(interp::CC.NativeInterpreter, mi::Core.MethodInstance)
+    result = CC.InferenceResult(mi)
+    frame = CC.InferenceState(result, #=cache_mode=#:no, interp)
+    isnothing(frame) && return interp, result
+    return infer_frame!(interp, frame)
+end
+
+function infer_frame!(interp::CC.NativeInterpreter, frame::CC.InferenceState)
+    Base.invoke_in_world(RT_INF_WORLD[], CC.typeinf, interp, frame)
+    return interp, frame.result
+end
+
+const RT_INF_WORLD = Ref{UInt}(typemax(UInt))
+push_init_hooks!() do
+    RT_INF_WORLD[] = Base.get_world_counter()
 end
 
 # request handler
@@ -640,13 +850,15 @@ function get_completion_items(
     )
     items = Dict{String,CompletionItem}()
     # order matters; see local_completions!
-    return collect(values(@something(
+    isIncomplete = @something(
         add_emoji_latex_completions!(items, state, uri, fi, pos),
+        method_signature_completions!(items, state, uri, fi, pos, context),
         keyword_argument_completions!(items, state, uri, fi, pos),
         global_completions!(items, state, uri, fi, pos, context),
         local_completions!(items, state, uri, fi, pos, context),
         keyword_completions!(items, state, context),
-        items)))
+        false)
+    return collect(values(items)), isIncomplete
 end
 
 function handle_CompletionRequest(
@@ -663,13 +875,15 @@ function handle_CompletionRequest(
     end
     fi = result
     pos = adjust_position(state, uri, msg.params.position)
-    items = get_completion_items(state, uri, fi, pos, msg.params.context)
+    items, isIncomplete = get_completion_items(state, uri, fi, pos, msg.params.context)
+    # For method signature completions, set `isIncomplete = true` so that when
+    # the user continues typing (e.g., an identifier), the client will re-request
+    # and trigger global/local completions instead of continuing to filter
+    # method signatures.
     return send(server,
         CompletionResponse(;
             id = msg.id,
-            result = CompletionList(;
-                isIncomplete = false,
-                items)))
+            result = CompletionList(; isIncomplete, items)))
 end
 
 function handle_CompletionResolveRequest(server::Server, msg::CompletionResolveRequest)

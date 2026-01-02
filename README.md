@@ -62,8 +62,8 @@ the list itself is subject to change.
   - [x] Global symbol completion
   - [x] Local binding completion
   - [x] LaTeX/Emoji completion
-  - [ ] Method signature completion
-  - [ ] Juno-like return type annotation for method completions
+  - [x] Method signature completion
+  - [x] Juno-like return type annotation for method completions
   - [x] Keyword argument name completion
   - [ ] Property completion
 - Signature help

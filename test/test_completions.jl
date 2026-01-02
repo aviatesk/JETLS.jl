@@ -762,6 +762,198 @@ end
     end
 end
 
+# method signature completions
+# ============================
+
+@testset "extract_param_text" begin
+    function parse_param(s::AbstractString)
+        call = JS.parsestmt(JL.SyntaxTree, "f($s)")
+        return JS.children(call)[2]
+    end
+
+    let p = parse_param("x")
+        @test JETLS.extract_param_text(p) == "x"
+    end
+    let p = parse_param("x::Int")
+        @test JETLS.extract_param_text(p) == "x::Int"
+    end
+    let p = parse_param("::Int")
+        @test JETLS.extract_param_text(p) === nothing
+    end
+    let p = parse_param("x::Vector{Int}")
+        @test JETLS.extract_param_text(p) == "x::Vector{Int}"
+    end
+end
+
+@testset "make_insert_text" begin
+    @testset "use_snippet=true" begin
+        let msig = "sin(x::Number)"
+            @test JETLS.make_insert_text(msig, 0, true) == "\${1:x::Number}"
+            @test JETLS.make_insert_text(msig, 1, true) === nothing
+        end
+        let msig = "filter(f, itr)"
+            @test JETLS.make_insert_text(msig, 0, true) == "\${1:f}, \${2:itr}"
+            @test JETLS.make_insert_text(msig, 1, true) == "\${1:itr}"
+            @test JETLS.make_insert_text(msig, 2, true) === nothing
+        end
+        let msig = "foo(a, b, c)"
+            @test JETLS.make_insert_text(msig, 0, true) == "\${1:a}, \${2:b}, \${3:c}"
+            @test JETLS.make_insert_text(msig, 1, true) == "\${1:b}, \${2:c}"
+            @test JETLS.make_insert_text(msig, 2, true) == "\${1:c}"
+            @test JETLS.make_insert_text(msig, 3, true) === nothing
+        end
+        let msig = "foo(a, b=1)"
+            @test JETLS.make_insert_text(msig, 0, true) == "\${1:a}"
+            @test JETLS.make_insert_text(msig, 1, true) === nothing
+        end
+        let msig = "foo(a, args...)"
+            @test JETLS.make_insert_text(msig, 0, true) == "\${1:a}, \${2:args...}"
+            @test JETLS.make_insert_text(msig, 1, true) == "\${1:args...}"
+            @test JETLS.make_insert_text(msig, 2, true) === nothing
+        end
+        let msig = "filter(f, a::Array{T, N}) where {T, N}"
+            @test JETLS.make_insert_text(msig, 0, true) == "\${1:f}, \${2:a::Array{T, N\\}}"
+            @test JETLS.make_insert_text(msig, 1, true) == "\${1:a::Array{T, N\\}}"
+            @test JETLS.make_insert_text(msig, 2, true) === nothing
+        end
+        let msig = "foo(x::T) where T where S"
+            @test JETLS.make_insert_text(msig, 0, true) == "\${1:x::T}"
+        end
+    end
+
+    @testset "use_snippet=false" begin
+        let msig = "sin(x::Number)"
+            @test JETLS.make_insert_text(msig, 0, false) == "x::Number"
+        end
+        let msig = "filter(f, itr)"
+            @test JETLS.make_insert_text(msig, 0, false) == "f, itr"
+            @test JETLS.make_insert_text(msig, 1, false) == "itr"
+        end
+    end
+end
+
+@testset "MethodSignatureCompletionData de/serialization cycle" begin
+    modules = Base.loaded_modules_array()
+    for (i, m) in enumerate(methods(sin))
+        data = JETLS.prepare_method_signature_data(m, i, modules)
+        @test !isnothing(data)
+        mfunc, m′ = JETLS.lookup_method_from_data(data)
+        @test mfunc == sin
+        @test m == m′
+    end
+end
+
+@testset "method signature completion" begin
+    get_newText(item::CompletionItem) =
+        (@something item.textEdit return nothing).newText
+
+    let text = """
+        sin(│
+        """
+        context = CompletionContext(;
+            triggerKind = CompletionTriggerKind.TriggerCharacter,
+            triggerCharacter = "(")
+        cnt = 0
+        with_completion_request(text; context) do _, result, _
+            items = result.items
+            @test any(items) do item
+                item.labelDetails !== nothing &&
+                    item.labelDetails.description == "method" &&
+                    !isnothing(get_newText(item))
+            end
+            cnt += 1
+        end
+        @test cnt == 1
+    end
+
+    let text = """
+        filter(isodd,│
+        """
+        context = CompletionContext(;
+            triggerKind = CompletionTriggerKind.TriggerCharacter,
+            triggerCharacter = ",")
+        cnt = 0
+        with_completion_request(text; context) do _, result, _
+            items = result.items
+            @test all(items) do item
+                newText = get_newText(item)
+                item.labelDetails !== nothing &&
+                    item.labelDetails.description == "method" &&
+                    !isnothing(newText) &&
+                    (newText == "" || startswith(newText, " ")) # Allow `newText == ""` for `filter(f)` case
+            end
+            cnt += 1
+        end
+        @test cnt == 1
+    end
+
+    let text = """
+        filter(isodd, │
+        """
+        context = CompletionContext(;
+            triggerKind = CompletionTriggerKind.TriggerCharacter,
+            triggerCharacter = " ")
+        cnt = 0
+        with_completion_request(text; context) do _, result, _
+            items = result.items
+            @test all(items) do item
+                newText = get_newText(item)
+                item.labelDetails !== nothing &&
+                    item.labelDetails.description == "method" &&
+                    !isnothing(newText) &&
+                    (newText == "" || !startswith(newText, " ")) # Allow `newText == ""` for `filter(f)` case
+            end
+            cnt += 1
+        end
+        @test cnt == 1
+    end
+
+
+    # Test case where all positional args are filled (textEdit.newText should be empty)
+    let text = """
+        println(stdout, │
+        """
+        context = CompletionContext(;
+            triggerKind = CompletionTriggerKind.TriggerCharacter,
+            triggerCharacter = " ")
+        cnt = 0
+        with_completion_request(text; context) do _, result, _
+            items = result.items
+            method_items = filter(items) do item
+                item.labelDetails !== nothing &&
+                    item.labelDetails.description == "method"
+            end
+            # Should include methods where args are already filled (empty newText)
+            @test any(item -> get_newText(item) == "", method_items)
+            # Should also include methods with remaining args
+            @test any(item -> !isempty(something(get_newText(item), "")), method_items)
+            cnt += 1
+        end
+        @test cnt == 1
+    end
+
+    # Test case where all args are filled - newText should be empty
+    let text = """
+        sin(x, │
+        """
+        context = CompletionContext(;
+            triggerKind = CompletionTriggerKind.TriggerCharacter,
+            triggerCharacter = ",")
+        cnt = 0
+        with_completion_request(text; context) do _, result, _
+            items = result.items
+            @test all(items) do item
+                newText = get_newText(item)
+                item.labelDetails !== nothing &&
+                    item.labelDetails.description == "method" &&
+                    newText == ""
+            end
+            cnt += 1
+        end
+        @test cnt == 1
+    end
+end
+
 # keyword argument completion
 # ===========================
 

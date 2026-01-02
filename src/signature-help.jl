@@ -255,7 +255,7 @@ function make_paraminfo(p::JL.SyntaxTree)
     if JS.is_leaf(p)
         documentation = nothing
     elseif kind(p) in JS.KSet"= kw"
-        @assert JS.numchildren(p) === 2
+        @assert JS.numchildren(p) == 2
         label = extract_kwarg_name(p; sig=true).name_val
     elseif kind(p) === K"::"
         if JS.numchildren(p) === 1
