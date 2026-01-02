@@ -140,13 +140,23 @@ function to_completion(
         sortText = get_sort_text(sort_offset))
 end
 
+should_invoke_auto_completion(::Nothing, ::Bool=false) = true
+function should_invoke_auto_completion(context::CompletionContext, allow_macro::Bool=false)
+    if !allow_macro || context.triggerCharacter != "@"
+        # Don't trigger completion just by typing a numeric character, etc.
+        if context.triggerKind != CompletionTriggerKind.Invoked
+            return false
+        end
+    end
+    return true
+end
+
 function local_completions!(
         items::Dict{String,CompletionItem},
         s::ServerState, uri::URI, fi::FileInfo, pos::Position, context::Union{Nothing,CompletionContext}
     )
-    !isnothing(context) &&
-        # Don't trigger completion just by typing a numeric character:
-        context.triggerCharacter in NUMERIC_CHARACTERS && return nothing
+    should_invoke_auto_completion(context) || return nothing
+
     # NOTE don't bail out even if `length(fi.parsed_stream.diagnostics) ≠ 0`
     # so that we can get some completions even for incomplete code
     st0 = build_syntax_tree(fi)
@@ -172,9 +182,8 @@ function global_completions!(
         items::Dict{String,CompletionItem},
         state::ServerState, uri::URI, fi::FileInfo, pos::Position, context::Union{Nothing,CompletionContext},
     )
-    !isnothing(context) &&
-        # Don't trigger completion just by typing a numeric character:
-        context.triggerCharacter in NUMERIC_CHARACTERS && return nothing
+    should_invoke_auto_completion(context, #=allow_macro=#true) || return nothing
+
     (; mod, analyzer, postprocessor) = get_context_info(state, uri, pos)
     completion_module = mod
 
@@ -257,11 +266,11 @@ function global_completions!(
         end
 
         resolveName = newText = label = s
-        filterText = nothing
+        detail = filterText = nothing
         insertTextFormat = InsertTextFormat.PlainText
         if startswith_at
             if endswith(s, "_str")
-                description = "string macro"
+                detail = "[string macro]"
                 strname = replace(lstrip(s, '@'), r"_str$" => "")
                 label = strname * "\"\""
                 if supports(state, :textDocument, :completion, :completionItem, :snippetSupport)
@@ -273,10 +282,8 @@ function global_completions!(
                 filterText = strname
                 resolveName = s
             else
-                description = "macro"
+                detail = "[macro]"
             end
-        else
-            description = "global"
         end
         if name in prioritized_names
             sortText = max_sort_text1
@@ -292,15 +299,19 @@ function global_completions!(
             TextEdit(; range, newText)
         end
 
+        labelDetails = CompletionItemLabelDetails(; description = "global")
+
+        # N.B. Don't set `kind` here to prevent Zed from applying highlights to the `label` at this stage.
+        # The determination of `kind` involves reflection such as `getglobal`, so it is lazily resolved (see `resolve_completion_item`)
         items[s] = CompletionItem(;
             label,
-            labelDetails = CompletionItemLabelDetails(; description),
-            kind = CompletionItemKind.Variable,
+            labelDetails,
+            detail,
             sortText,
             filterText,
             insertTextFormat,
             textEdit,
-            data = CompletionData(resolveName))
+            data = GlobalCompletionData(resolveName))
     end
 
     return is_completed ? items : nothing
@@ -440,7 +451,12 @@ end
 
 const var_quote_doc = get_keyword_doc(Symbol("var\"name\""))
 
-function keyword_completions!(items::Dict{String,CompletionItem}, state::ServerState)
+function keyword_completions!(
+        items::Dict{String,CompletionItem}, state::ServerState,
+        context::Union{Nothing,CompletionContext}
+    )
+    should_invoke_auto_completion(context) || return nothing
+
     merge!(items, KEYWORD_COMPLETIONS)
     if supports(state, :textDocument, :completion, :completionItem, :snippetSupport)
         items["var\"\""] = CompletionItem(;
@@ -465,17 +481,62 @@ end
 # completion resolver
 # ===================
 
+const builtin_functions = Core.Builtin[getglobal(Core, n) for n in names(Core) if getglobal(Core, n) isa Core.Builtin]
+const builtin_types = Type[getglobal(Core, n) for n in names(Core) if getglobal(Core, n) isa Type]
+
 function resolve_completion_item(state::ServerState, item::CompletionItem)
     mod, postprocessor = @something load(state.completion_resolver_info) return item
     data = item.data
-    data isa CompletionData || return item
-    name = Symbol(data.name)
-    binding = Base.Docs.Binding(mod, name)
-    docs = postprocessor(Base.Docs.doc(binding))
-    return CompletionItem(item;
-        documentation = MarkupContent(;
-            kind = MarkupKind.Markdown,
-            value = docs))
+    if data isa GlobalCompletionData
+        name = Symbol(data.name)
+        binding = Base.Docs.Binding(mod, name)
+        docs = postprocessor(Base.Docs.doc(binding))
+        (; labelDetails, detail) = item
+        # This `kind` doesn't have much meaning in itself, but at least by setting `kind`,
+        # we enable tree-sitter-based highlighting of the `label` in zed-julia
+        kind = CompletionItemKind.Snippet
+        if isnothing(detail) || isnothing(kind)
+            if isdefinedglobal(mod, name)
+                obj = getglobal(mod, name)
+                if obj isa Type
+                    if obj in builtin_types
+                        detail = "[builtin type]"
+                        kind = CompletionItemKind.Constant
+                    else
+                        detail = "[type]"
+                        kind = CompletionItemKind.Struct
+                    end
+                elseif obj isa Function
+                    if obj isa Core.Builtin && obj in builtin_functions
+                        detail = "[builtin function]"
+                        kind = CompletionItemKind.Constant
+                    else
+                        detail = "[function]"
+                        kind = CompletionItemKind.Function
+                    end
+                elseif obj isa Module
+                    detail = "[module]"
+                    kind = CompletionItemKind.Module
+                elseif isconst(mod, name)
+                    detail = "[constant variable]"
+                    kind = CompletionItemKind.Constant
+                else
+                    detail = "[variable]"
+                    kind = CompletionItemKind.Variable
+                end
+            end
+        end
+        if !isnothing(detail)
+            labelDetails = CompletionItemLabelDetails(; description = "global " * detail)
+        end
+        return CompletionItem(item;
+            labelDetails, kind, detail,
+            documentation = MarkupContent(;
+                kind = MarkupKind.Markdown,
+                value = docs))
+    else
+        return item
+    end
 end
 
 # request handler
@@ -491,7 +552,7 @@ function get_completion_items(
         add_emoji_latex_completions!(items, state, uri, fi, pos),
         global_completions!(items, state, uri, fi, pos, context),
         local_completions!(items, state, uri, fi, pos, context),
-        keyword_completions!(items, state),
+        keyword_completions!(items, state, context),
         items)))
 end
 

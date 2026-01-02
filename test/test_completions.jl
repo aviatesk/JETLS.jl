@@ -372,7 +372,7 @@ end
             # `str_macro_test`: string macro case
             @test any(items) do item
                 item.label == "text\"\"" &&
-                item.data isa CompletionData && item.data.name == "@text_str"
+                item.data isa GlobalCompletionData && item.data.name == "@text_str"
             end
             cnt += 1
         end
@@ -387,7 +387,7 @@ end
     end
     """
 
-    context = CompletionContext(; triggerKind=CompletionTriggerKind.Invoked)
+    context = CompletionContext(; triggerKind = CompletionTriggerKind.Invoked)
     cnt = 0
     with_completion_request(text; context) do _, result, _
         items = result.items
@@ -432,8 +432,8 @@ end
         end
         """
         context = CompletionContext(;
-            triggerKind=CompletionTriggerKind.TriggerCharacter,
-            triggerCharacter="@")
+            triggerKind = CompletionTriggerKind.TriggerCharacter,
+            triggerCharacter = "@")
         cnt = 0
         with_completion_request(text; context) do _, result, _
             items = result.items
@@ -459,7 +459,7 @@ end
             @no│
         end
         """
-        context = CompletionContext(; triggerKind=CompletionTriggerKind.Invoked)
+        context = CompletionContext(; triggerKind = CompletionTriggerKind.Invoked)
         cnt = 0
         with_completion_request(text; context) do _, result, _
             items = result.items
@@ -481,7 +481,7 @@ end
             @nospecialize xxx y│
         end
         """
-        context = CompletionContext(; triggerKind=CompletionTriggerKind.Invoked)
+        context = CompletionContext(; triggerKind = CompletionTriggerKind.Invoked)
         cnt = 0
         with_completion_request(text; context) do _, result, _
             items = result.items
@@ -499,7 +499,7 @@ end
             nospecia│
         end
         """
-        context = CompletionContext(; triggerKind=CompletionTriggerKind.Invoked)
+        context = CompletionContext(; triggerKind = CompletionTriggerKind.Invoked)
         cnt = 0
         with_completion_request(text; context) do _, result, _
             items = result.items
@@ -715,8 +715,8 @@ end
         end
         """
         context = CompletionContext(;
-            triggerKind=CompletionTriggerKind.TriggerCharacter,
-            triggerCharacter="\\")
+            triggerKind = CompletionTriggerKind.TriggerCharacter,
+            triggerCharacter = "\\")
         cnt = 0
         with_completion_request(text; context) do _, result, _
             items = result.items
@@ -742,8 +742,8 @@ end
         end
         """
         context = CompletionContext(;
-            triggerKind=CompletionTriggerKind.TriggerCharacter,
-            triggerCharacter=":")
+            triggerKind = CompletionTriggerKind.TriggerCharacter,
+            triggerCharacter = ":")
         cnt = 0
         with_completion_request(text; context) do _, result, _
             items = result.items
