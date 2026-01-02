@@ -72,7 +72,7 @@ Get K"Identifier" tree from a kwarg tree (child of K"call" or K"parameters").
   (= (:: a T) 1) => a  # only when sig=true
  (kw (:: a T) 1) => a  # only when sig=true
 """
-function kwname(a::JL.SyntaxTree; sig::Bool=false)
+function extract_kwarg_name(a::JL.SyntaxTree; sig::Bool=false)
     ret = identitifier_like(a)
     isnothing(ret) || return ret
     if kind(a) === K"=" || kind(a) === K"kw"
@@ -119,7 +119,7 @@ function find_kws(args::JL.SyntaxList, kw_i::Int; sig=false, cursor::Int=-1)
     out = Dict{String, Int}()
     for i in (sig ? (kw_i:lastindex(args)) : eachindex(args))
         !(kind(args[i]) in JS.KSet"= kw") && i < kw_i && continue
-        n = kwname(args[i]; sig)
+        n = extract_kwarg_name(args[i]; sig)
         if !isnothing(n) && !(JS.first_byte(n) <= cursor <= JS.last_byte(n) + 1)
             out[n.name_val] = i
         end
@@ -256,7 +256,7 @@ function make_paraminfo(p::JL.SyntaxTree)
         documentation = nothing
     elseif kind(p) in JS.KSet"= kw"
         @assert JS.numchildren(p) === 2
-        label = kwname(p; sig=true).name_val
+        label = extract_kwarg_name(p; sig=true).name_val
     elseif kind(p) === K"::"
         if JS.numchildren(p) === 1
             documentation = "(unused) " * documentation
@@ -326,7 +326,7 @@ function make_siginfo(m::Method, ca::CallArgs, active_arg::Union{Int, Symbol};
             # splat after semicolon
             maybe_var_kwp
         elseif kind(ca.args[i]) in JS.KSet"= kw" || i >= ca.kw_i
-            n = kwname(ca.args[i]).name_val # we don't have a backwards mapping
+            n = extract_kwarg_name(ca.args[i]).name_val # we don't have a backwards mapping
             out = get(kwp_map, n, nothing)
             isnothing(out) ? maybe_var_kwp : out
         else
