@@ -33,8 +33,9 @@ end
 # =====
 
 """
-Return (args, first_kwarg_i), one SyntaxTree per argument to call.  Ignore function
-name and K"error" (e.g. missing closing paren)
+Return (args, first_kwarg_i, has_semicolon), one SyntaxTree per argument to call.
+Ignore function name and K"error" (e.g. missing closing paren).
+`has_semicolon` is true if the call contains a K"parameters" node (explicit semicolon).
 """
 function flatten_args(call::JL.SyntaxTree)
     if kind(call) === K"where"
@@ -46,18 +47,20 @@ function flatten_args(call::JL.SyntaxTree)
 
     args = JL.SyntaxList(orig.graph)
     kw_i = 1
+    has_semicolon = false
     for i in eachindex(orig)
         iskw = kind(orig[i]) === K"parameters"
         if !iskw
             push!(args, orig[i])
             kw_i += 1
         elseif i === lastindex(orig) && iskw
+            has_semicolon = true
             for p in filter(usable, JS.children(orig[i]))
                 push!(args, p)
             end
         end
     end
-    return args, kw_i
+    return args, kw_i, has_semicolon
 end
 
 """
@@ -133,6 +136,7 @@ Information from one call's arguments for filtering signatures.
                  --> a => (1, 1), b => (2, nothing), c => (2, nothing)
 - pos_args_*: lower and upper bounds on # of positional args
 - kw_map: kwname => position in `args`.  Excludes any WIP kw (see find_kws)
+- has_semicolon: whether the call contains an explicit semicolon (K"parameters")
 - kind: Item in `CALL_KINDS`
 
 TODO: types
@@ -144,12 +148,13 @@ struct CallArgs
     pos_args_lb::Int
     pos_args_ub::Union{Int, Nothing}
     kw_map::Dict{String, Int}
+    has_semicolon::Bool
     kind::JS.Kind
 end
 
 function CallArgs(st0::JL.SyntaxTree, cursor::Int)
     @assert !(-1 in JS.byte_range(st0))
-    args, kw_i = flatten_args(st0)
+    args, kw_i, has_semicolon = flatten_args(st0)
     pos_map = Dict{Int, Tuple{Int, Union{Int, Nothing}}}()
     lb = 0; ub = 0
     for i in eachindex(args[1:kw_i-1])
@@ -163,7 +168,7 @@ function CallArgs(st0::JL.SyntaxTree, cursor::Int)
         end
     end
     kw_map = find_kws(args, kw_i; sig=false, cursor)
-    CallArgs(args, kw_i, pos_map, lb, ub, kw_map, kind(st0))
+    CallArgs(args, kw_i, pos_map, lb, ub, kw_map, has_semicolon, kind(st0))
 end
 
 """
@@ -173,7 +178,7 @@ function compatible_method(m::Method, ca::CallArgs)
     msig = @something get_sig_str(m, ca) return false
     mnode = JS.parsestmt(JL.SyntaxTree, msig; ignore_errors=true)
 
-    params, kwp_i = flatten_args(mnode)
+    params, kwp_i, _ = flatten_args(mnode)
     has_var_params = kwp_i > 1 && kind(params[kwp_i - 1]) === K"..."
     has_var_kwp = kwp_i <= length(params) && kind(params[end]) === K"..."
 
@@ -181,6 +186,16 @@ function compatible_method(m::Method, ca::CallArgs)
 
     !has_var_params && (ca.pos_args_lb >= kwp_i) && return false
     !has_var_kwp && !(keys(ca.kw_map) ⊆ keys(kwp_map)) && return false
+    if ca.has_semicolon
+        # Filter out methods where user hasn't provided enough positional args
+        # e.g., g(42;│) should not match g(x, y) which requires 2 positional args
+        if !has_var_params
+            required_pos_args = count(1:kwp_i-1) do i
+                !(kind(params[i]) in JS.KSet"= kw ...")
+            end
+            ca.pos_args_lb < required_pos_args && return false
+        end
+    end
     return true
 end
 
@@ -212,7 +227,7 @@ function get_sig_str(m::Method, ca::CallArgs)
     end
     @static if VERSION < v"1.13.0-DEV.5"
         # HACK: Use JuliaLang/julia#57268 for v1.12. Delete me.
-        for (kws, rep) in keyword_matchers
+        for (_, rep) in keyword_matchers
             msig = replace(msig, rep)
         end
     end
@@ -287,7 +302,7 @@ function make_siginfo(m::Method, ca::CallArgs, active_arg::Union{Int, Symbol};
     #     kind = MarkupKind.Markdown,
     #     value = string(Base.Docs.doc(Base.Docs.Binding(m.var"module", m.name))))
 
-    params, kwp_i = flatten_args(mnode)
+    params, kwp_i, _ = flatten_args(mnode)
     maybe_var_params = kwp_i > 1 && kind(params[kwp_i - 1]) === K"..." ?
         kwp_i - 1 : nothing
     maybe_var_kwp = kwp_i <= length(params) && kind(params[end]) === K"..." ?

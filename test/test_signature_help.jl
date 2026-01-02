@@ -162,16 +162,43 @@ end
     @test 1 === n_si(M_filterk, "f(;kw1=1│)")
 
     # mix
-    @test 2 === n_si(M_filterk, "f(kw2=2,kw3=3;│)")
-    @test 2 === n_si(M_filterk, "f(kw2=2; kw3=3│)")
-    @test 1 === n_si(M_filterk, "f(kw2=2; kw6=6│)")
+    @test 1 === n_si(M_filterk, "f(kw2=2,kw3=3;│)")
+    @test 1 === n_si(M_filterk, "f(kw2=2; kw3=3│)")
+    @test 0 === n_si(M_filterk, "f(kw2=2; kw6=6│)")
 
-    # don't filter on a kw if the cursor could be editing it
-    @test 2 === n_si(M_filterk, "f(;kw1│)")
-    @test 2 === n_si(M_filterk, "f(;kw1│=1)")
-    @test 2 === n_si(M_filterk, "f(;kw│1)")
-    @test 2 === n_si(M_filterk, "f(;│kw1)")
+    # When nothing before semicolon, filter methods with required positional args
+    # (regardless of whether cursor is editing a kwarg name)
+    @test 1 === n_si(M_filterk, "f(;kw1│)")
+    @test 1 === n_si(M_filterk, "f(;kw1│=1)")
+    @test 1 === n_si(M_filterk, "f(;kw│1)")
+    @test 1 === n_si(M_filterk, "f(;│kw1)")
     @test 1 === n_si(M_filterk, "f(;kw1=1, kw1│)")
+end
+
+module M_pos_vs_kw
+f(a::Int, b::Int) = 0
+f(; a, b) = 0
+g(x::Int, y::Int) = 0
+g(x::Int; kw=nothing) = 0
+h(; kw) = 0
+h(x::Int; kw) = 0
+end
+@testset "filter positional-only methods when semicolon is present" begin
+    # Without semicolon, both methods are shown
+    @test 2 === n_si(M_pos_vs_kw, "f(│)")
+
+    # With semicolon but no kwarg yet, only keyword-accepting methods should match
+    @test 1 === n_si(M_pos_vs_kw, "f(;│)")
+    @test 1 === n_si(M_pos_vs_kw, "g(42;│)") # Should exclude `g(::Int, ::Int)`
+
+    # With semicolon and kwarg, only keyword-accepting methods should match
+    @test 1 === n_si(M_pos_vs_kw, "f(;a,│)")
+    @test 1 === n_si(M_pos_vs_kw, "f(;a=1│)")
+
+    # Filter out methods with required positional args when semicolon is present
+    @test 2 === n_si(M_pos_vs_kw, "h(│)")     # Without semicolon, both shown
+    @test 1 === n_si(M_pos_vs_kw, "h(;│)")    # h(x::Int; kw) has required pos arg, filtered
+    @test 1 === n_si(M_pos_vs_kw, "h(;kw│)")  # Same filtering applies
 end
 
 module M_highlight
