@@ -762,4 +762,95 @@ end
     end
 end
 
+# keyword argument completion
+# ===========================
+
+@testset "keyword argument completion" begin
+    let text = """
+        printstyled(; │
+        """
+        context = CompletionContext(;
+            triggerKind = CompletionTriggerKind.TriggerCharacter,
+            triggerCharacter = ";")
+        cnt = 0
+        with_completion_request(text; context) do _, result, _
+            items = result.items
+            keyword_items = filter(items) do item
+                item.labelDetails !== nothing &&
+                    item.labelDetails.description == "keyword argument"
+            end
+            @test !isempty(keyword_items)
+            @test any(item -> item.label == "bold", keyword_items)
+            @test any(item -> item.label == "color", keyword_items)
+            @test all(keyword_items) do item
+                item.insertText !== nothing && endswith(item.insertText, " = ")
+            end
+            cnt += 1
+        end
+        @test cnt == 1
+    end
+
+    # Test keyword name completion excludes already-specified keywords
+    let text = """
+        printstyled(; bold=true, │
+        """
+        context = CompletionContext(;
+            triggerKind = CompletionTriggerKind.TriggerCharacter,
+            triggerCharacter = " ")
+        cnt = 0
+        with_completion_request(text; context) do _, result, _
+            items = result.items
+            keyword_items = filter(items) do item
+                item.labelDetails !== nothing &&
+                    item.labelDetails.description == "keyword argument"
+            end
+            @test !isempty(keyword_items)
+            @test !any(item -> item.label == "bold", keyword_items)
+            @test any(item -> item.label == "color", keyword_items)
+            cnt += 1
+        end
+        @test cnt == 1
+    end
+
+    # Test no keyword completion after `=`
+    let text = """
+        printstyled(; bold=│
+        """
+        context = CompletionContext(;
+            triggerKind = CompletionTriggerKind.TriggerCharacter,
+            triggerCharacter = "=")
+        cnt = 0
+        with_completion_request(text; context) do _, result, _
+            items = result.items
+            keyword_items = filter(items) do item
+                item.labelDetails !== nothing &&
+                    item.labelDetails.description == "keyword argument"
+            end
+            @test isempty(keyword_items)
+            cnt += 1
+        end
+        @test cnt == 1
+    end
+end
+
+@testset "should_insert_spaces_around_equal" begin
+    function test_should_insert_spaces(text::AbstractString)
+        clean_text, positions = JETLS.get_text_and_positions(text)
+        fi = JETLS.FileInfo(0, clean_text, "test.jl")
+        st0 = JETLS.build_syntax_tree(fi)
+        b = JETLS.xy_to_offset(fi, positions[1])
+        call = JETLS.cursor_call(fi.parsed_stream, st0, b)
+        ca = JETLS.CallArgs(call, b)
+        return JETLS.should_insert_spaces_around_equal(fi, ca)
+    end
+    @test test_should_insert_spaces("func(; │)")
+    @test !test_should_insert_spaces("func(; a=1, │)")
+    @test !test_should_insert_spaces("func(; a=1, b=2, │)")
+    @test test_should_insert_spaces("func(; a = 1, │)")
+    @test test_should_insert_spaces("func(; a = 1, b = 2, │)")
+    @test test_should_insert_spaces("func(; a = 1, b = 2, c=3, │)")
+    @test !test_should_insert_spaces("func(; a=1, b=2, c = 3, │)")
+    @test test_should_insert_spaces("func(; a = 1, b=2, │)")
+end
+
 end # module test_completions
