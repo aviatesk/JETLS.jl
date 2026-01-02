@@ -64,6 +64,7 @@ the list itself is subject to change.
   - [x] LaTeX/Emoji completion
   - [ ] Method signature completion
   - [ ] Juno-like return type annotation for method completions
+  - [x] Keyword argument name completion
   - [ ] Property completion
 - Signature help
   - [x] Basic implementation
