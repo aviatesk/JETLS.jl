@@ -53,6 +53,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- Method signature completion for function calls. When typing inside a function
+  call (triggered by `(`, `,`, or ` `), compatible method signatures are
+  suggested based on already-provided arguments. Selecting a completion inserts
+  remaining positional arguments as snippet placeholders with type annotations.
+  Lazy resolution via `completionItem/resolve` adds inferred return type and
+  documentation. (https://github.com/aviatesk/JETLS.jl/pull/428)
+
+  https://github.com/user-attachments/assets/19d320a6-459f-4788-9669-d3936920b625
+
 - Keyword argument name completion for function calls. When typing inside a
   function call (e.g., `func(; |)` or `func(k|)`), available keyword arguments
   are suggested with `=` appended. Already-specified keywords are excluded from
