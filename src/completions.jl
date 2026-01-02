@@ -6,6 +6,7 @@ const COMPLETION_TRIGGER_CHARACTERS = [
     "@",  # macro completion
     "\\", # LaTeX completion
     ":",  # emoji completion
+    ";",  # keyword argument completion
     NUMERIC_CHARACTERS..., # allow these characters to be recognized by `CompletionContext.triggerCharacter`
 ]
 
@@ -478,6 +479,97 @@ function keyword_completions!(
     return nothing
 end
 
+# keyword argument completion
+# ===========================
+
+function is_after_equals(ca::CallArgs, b::Int)
+    for arg in ca.args
+        br = JS.byte_range(arg)
+        first(br) ≤ b ≤ last(br) + 1 || continue
+        JS.kind(arg) in JS.KSet"= kw" || return false
+        JS.numchildren(arg) ≥ 1 || return false
+        lhs_end = JS.last_byte(arg[1])
+        return lhs_end < b
+    end
+    return false
+end
+
+function extract_kwarg_name_str(p::JL.SyntaxTree)
+    node = @something extract_kwarg_name(p; sig=true) return nothing
+    hasproperty(node, :name_val) || return nothing
+    return node.name_val::String
+end
+
+function should_insert_spaces_around_equal(fi::FileInfo, ca::CallArgs)
+    has_whitespaces = has_equals = 0
+    for i in values(ca.kw_map)
+        kwnode = ca.args[i]
+        JS.kind(kwnode) === JS.K"kw" || continue
+        has_equals += 1
+        pos = offset_to_xy(fi, JS.first_byte(kwnode))
+        tok = token_at_offset(fi, pos)
+        while JS.is_whitespace(this(tok))
+            tok = next_tok(tok)
+        end
+        JS.kind(this(tok)) === JS.K"Identifier" || continue
+        tok = next_tok(tok)
+        JS.is_whitespace(this(tok)) || continue
+        tok = next_tok(tok)
+        JS.is_plain_equals(this(tok)) || continue
+        tok = next_tok(tok)
+        JS.is_whitespace(this(tok)) || continue
+        has_whitespaces += 1
+    end
+    return has_whitespaces ≥ has_equals - has_whitespaces
+end
+
+function keyword_argument_completions!(
+        items::Dict{String,CompletionItem},
+        state::ServerState, uri::URI, fi::FileInfo, pos::Position
+    )
+    st0 = build_syntax_tree(fi)
+    b = xy_to_offset(fi, pos)
+    call = @something cursor_call(fi.parsed_stream, st0, b) return nothing
+    ca = CallArgs(call, b)
+    is_after_equals(ca, b) && return nothing
+
+    (; mod, analyzer) = get_context_info(state, uri, pos)
+    fntyp = resolve_type(analyzer, mod, call[1])
+    fntyp isa Core.Const || return nothing
+    candidate_methods = methods(fntyp.val)
+    isempty(candidate_methods) && return nothing
+
+    existing_kws = Set{String}(keys(ca.kw_map))
+    seen_kwarg_names = Set{String}()
+    insert_spaces = should_insert_spaces_around_equal(fi, ca)
+    for m in candidate_methods
+        startswith(String(m.name), '@') && continue
+        compatible_method(m, ca) || continue
+        msig = @something get_sig_str(m, ca) continue
+        mnode = JS.parsestmt(JL.SyntaxTree, msig; ignore_errors=true)
+        while JS.kind(mnode) === JS.K"where" && JS.numchildren(mnode) ≥ 1
+            mnode = mnode[1]
+        end
+        JS.kind(mnode) in CALL_KINDS || continue
+        params, kwp_i, _ = flatten_args(mnode)
+        for i in kwp_i:lastindex(params)
+            p = params[i]
+            JS.kind(p) === JS.K"..." && continue
+            kwarg_name = @something extract_kwarg_name_str(p) continue
+            kwarg_name in existing_kws && continue
+            kwarg_name in seen_kwarg_names && continue
+            push!(seen_kwarg_names, kwarg_name)
+            items[kwarg_name] = CompletionItem(;
+                label = kwarg_name,
+                labelDetails = CompletionItemLabelDetails(; description = "keyword argument"),
+                insertText = kwarg_name * (insert_spaces ? " = " : "="),
+                sortText = max_sort_text1, # Give the same prioirty to the (prioritized) global completions
+            )
+        end
+    end
+    return ca.has_semicolon ? items : nothing
+end
+
 # completion resolver
 # ===================
 
@@ -550,6 +642,7 @@ function get_completion_items(
     # order matters; see local_completions!
     return collect(values(@something(
         add_emoji_latex_completions!(items, state, uri, fi, pos),
+        keyword_argument_completions!(items, state, uri, fi, pos),
         global_completions!(items, state, uri, fi, pos, context),
         local_completions!(items, state, uri, fi, pos, context),
         keyword_completions!(items, state, context),
