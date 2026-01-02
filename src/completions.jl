@@ -626,7 +626,9 @@ function call_completions!(
     kwarg_comp_info = should_complete_kwargs ? (;
         existing_kws = Set{String}(keys(ca.kw_map)),
         seen_kwarg_names = Set{String}(),
-        insert_spaces = should_insert_spaces_around_equal(fi, ca)) : nothing
+        insert_spaces = should_insert_spaces_around_equal(fi, ca),
+        local_bindings = cursor_bindings(st0, b, mod),
+        ) : nothing
 
     for (i, m) in enumerate(candidate_methods)
         startswith(String(m.name), '@') && continue
@@ -656,7 +658,7 @@ function call_completions!(
             method_sig_sort_idx += 1
         else
             @assert should_complete_kwargs && !isnothing(kwarg_comp_info)
-            (; existing_kws, seen_kwarg_names, insert_spaces) = kwarg_comp_info
+            (; existing_kws, seen_kwarg_names, insert_spaces, local_bindings) = kwarg_comp_info
             mnode = JS.parsestmt(JL.SyntaxTree, msig; ignore_errors=true)
             mnode = unwrap_where(mnode)
             JS.kind(mnode) in CALL_KINDS || continue
@@ -668,10 +670,12 @@ function call_completions!(
                 kwarg_name in existing_kws && continue
                 kwarg_name in seen_kwarg_names && continue
                 push!(seen_kwarg_names, kwarg_name)
+                local_var_existing = !isnothing(local_bindings) &&
+                    any(((binding,_,_),)->binding.name==kwarg_name, local_bindings)
                 items[kwarg_name] = CompletionItem(;
                     label = kwarg_name,
                     labelDetails = CompletionItemLabelDetails(; description = "keyword argument"),
-                    insertText = kwarg_name * (insert_spaces ? " = " : "="),
+                    insertText = local_var_existing ? kwarg_name : (kwarg_name * (insert_spaces ? " = " : "=")),
                     sortText = max_sort_text1,
                 )
             end

@@ -1023,6 +1023,30 @@ end
         end
         @test cnt == 1
     end
+
+    # Don't insert `=` if the same local variable exists in the scope
+    let text = """
+        let bold = false
+            printstyled(; │
+        end
+        """
+        context = CompletionContext(;
+            triggerKind = CompletionTriggerKind.TriggerCharacter,
+            triggerCharacter = " ")
+        cnt = 0
+        with_completion_request(text; context) do _, result, _
+            items = result.items
+            keyword_items = filter(items) do item
+                item.labelDetails !== nothing &&
+                    item.labelDetails.description == "keyword argument"
+            end
+            @test !isempty(keyword_items)
+            @test any(item -> item.label == "bold" && item.insertText == "bold", keyword_items)
+            @test any(item -> item.label == "color" && item.insertText == "color = ", keyword_items)
+            cnt += 1
+        end
+        @test cnt == 1
+    end
 end
 
 @testset "should_insert_spaces_around_equal" begin
