@@ -51,6 +51,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > Note that `analysis_overrides` is provided as a temporary workaround and may
 > be removed or changed at any time. A proper fix is being worked on.
 
+### Added
+
+- Keyword argument name completion for function calls. When typing inside a
+  function call (e.g., `func(; |)` or `func(k|)`), available keyword arguments
+  are suggested with `=` appended. Already-specified keywords are excluded from
+  suggestions, and the spacing around `=` follows the existing style in the call.
+  (https://github.com/aviatesk/JETLS.jl/pull/427)
+
+  https://github.com/user-attachments/assets/d3cdecea-d2eb-4d14-9043-6bc62a6f2833
+
 ### Changed
 
 - Enhanced global completion items with detailed kind information (`[function]`,
