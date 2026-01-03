@@ -131,18 +131,19 @@ function find_kws(args::JL.SyntaxList, kw_i::Int; sig=false, cursor::Int=-1)
 end
 
 """
-Information from one call's arguments for filtering signatures.
-- args: Every valid child of the K"call" and its K"parameters" if present
-- kw_i: One plus the number of args not in K"parameters" (semicolon)
-- pos_map: Map from position in `args` to (min, max) possible positional arg
-           e.g. f(a, k=1, b..., c)
-                 --> a => (1, 1), b => (2, nothing), c => (2, nothing)
-- pos_args_*: lower and upper bounds on # of positional args
-- kw_map: kwname => position in `args`.  Excludes any WIP kw (see find_kws)
-- has_semicolon: whether the call contains an explicit semicolon (K"parameters")
-- kind: Item in `CALL_KINDS`
+    CallArgs
 
-TODO: types
+Information from a call site's arguments for filtering method signatures.
+- `args`: Every valid child of the `K"call"` and its `K"parameters"` if present
+- `kw_i`: Index where `K"parameters"` (semicolon) args begin; `length(args)+1` if no semicolon
+- `pos_map`: Map from index in `args` to `(min, max)` possible positional arg index.
+             `K"=" K"kw"` forms are excluded. `max` is `nothing` when a splat precedes.
+             e.g. `f(a, k=1, b..., c)` -> `{1 => (1, 1), 3 => (2, nothing), 4 => (2, nothing)}`
+- `pos_args_lb`: Number of definite positional args (excludes splats)
+- `pos_args_ub`: Upper bound on positional args; `nothing` if splat is present
+- `kw_map`: kwname => index in `args`. Excludes any WIP kw (see `find_kws`)
+- `has_semicolon`: whether the call contains an explicit semicolon (`K"parameters"`)
+- `kind`: Item in `CALL_KINDS`
 """
 struct CallArgs
     args::JL.SyntaxList
@@ -178,6 +179,13 @@ end
     compatible_method(m::Method, ca::CallArgs) -> Bool
 
 Return `false` if we can definitely rule out `f(args...|` from being a call to `m`.
+
+This is an analysis based on the number of arguments and keyword names, and fundamentally
+the type-based filtering performed by `find_all_matches` is generally more accurate.
+However, especially in cases involving splats like `func(xs...,1,2,3|)`, when `find_all_matches`
+cannot analyze the type of `xs`, it cannot perform effective method filtering, whereas
+this method can filter out candidates like `func(::Int,::Int)` using the information after
+the splat (`1,2,3`), making it beneficial in some cases.
 """
 function compatible_method(m::Method, ca::CallArgs)
     msig = @something get_sig_str(m, ca) return false
@@ -190,7 +198,7 @@ function compatible_method(m::Method, ca::CallArgs)
     kwp_map = find_kws(params, kwp_i; sig=true)
 
     !has_var_params && (ca.pos_args_lb >= kwp_i) && return false
-    !has_var_kwp && !(keys(ca.kw_map) ⊆ keys(kwp_map)) && return false
+    !has_var_kwp && (keys(ca.kw_map) ⊈ keys(kwp_map)) && return false
     if ca.has_semicolon
         # Filter out methods where user hasn't provided enough positional args
         # e.g., g(42;│) should not match g(x, y) which requires 2 positional args
@@ -439,6 +447,66 @@ function cursor_call(ps::JS.ParseStream, st0::JL.SyntaxTree, b::Int)
     return isnothing(i) ? nothing : bas[i]
 end
 
+"""
+    collect_call_argtypes(analyzer::LSAnalyzer, mod::Module, ca::CallArgs) -> argtypes::Vector{Any}
+
+Infer the types of positional arguments contained in `ca` and return them as `argtypes::Vector{Any}`.
+Note that neither `ca` nor `argtypes` include the type of the function object itself.
+Also note that this function resolves the type of each argument in `ca` in the global scope,
+completely ignoring information arising from the local scope in which it is contained.
+
+In the future, with the integration of `JL.SyntaxTree` and the full-analysis,
+this method should be replaced with a query to a cached typed-`JL.SyntaxTree`.
+"""
+function collect_call_argtypes(analyzer::LSAnalyzer, mod::Module, ca::CallArgs)
+    argtypes = Any[]
+    for i in sort!(collect(keys(ca.pos_map)))
+        arg = ca.args[i]
+        if JS.kind(arg) === JS.K"..."
+            # This is a very crude and poor modeling of `abstract_apply`, and is also
+            # too conservative than necessary.
+            # This implementation that imperfectly mimics the infernece behavior should be
+            # discarded, and instead the type of this splat argument should be extracted
+            # as a query to the Typed-AST.
+            arg = Expr(:tuple, Expr(arg))
+            argtype = CC.widenconst(@something resolve_type(analyzer, mod, arg) @goto bailout)
+            argtype isa DataType || @goto bailout
+            argtype.name === Tuple.name || @goto bailout
+            any(Base.isvarargtype, argtype.parameters) && @goto bailout
+            for i = 1:length(argtype.parameters)
+                push!(argtypes, argtype.parameters[i])
+            end
+        else
+            push!(argtypes, CC.widenconst(@something resolve_type(analyzer, mod, arg) Any))
+        end
+    end
+    if !ca.has_semicolon
+        @label bailout
+        push!(argtypes, Vararg{Any})
+    end
+    return argtypes
+end
+
+function fixup_argtypes!(argtypes::Vector{Any}, @nospecialize(fntyp))
+    if fntyp isa Core.Const
+        fn = fntyp.val
+        if fn isa Function && startswith(String(nameof(fn)), '@')
+            pushfirst!(argtypes, LineNumberNode, Module) # TODO The new style macro?
+        end
+    end
+    pushfirst!(argtypes, CC.widenconst(fntyp))
+    return argtypes
+end
+
+function find_all_matches(
+        argtypes::Vector{Any};
+        world::UInt = Base.get_world_counter(),
+        limit::Int = -1
+    )
+    atype = Tuple{argtypes...}
+    return CC._findall(atype, nothing, world, limit)
+end
+
 function cursor_siginfos(mod::Module, fi::FileInfo, b::Int, analyzer::LSAnalyzer;
                          postprocessor::LSPostProcessor=LSPostProcessor())
     st0 = build_syntax_tree(fi)
@@ -452,13 +520,14 @@ function cursor_siginfos(mod::Module, fi::FileInfo, b::Int, analyzer::LSAnalyzer
     # TODO: We could be calling a local variable.  If it shadows a method, our
     # ignoring it is misleading.  We need to either know about local variables
     # in this scope (maybe by caching completion info) or duplicate some work.
-    fntyp = resolve_type(analyzer, mod, call[1])
-    fntyp isa Core.Const || return empty_siginfos
-    fn = fntyp.val
-    candidate_methods = methods(fn)
-    isempty(candidate_methods) && return empty_siginfos
+    fntyp = @something resolve_type(analyzer, mod, call[1]) return empty_siginfos
 
     ca = CallArgs(call, b)
+
+    argtypes = collect_call_argtypes(analyzer, mod, ca)
+    fixup_argtypes!(argtypes, fntyp)
+    matches = find_all_matches(argtypes)
+    isempty(matches) && return empty_siginfos
 
     # Influence parameter highlighting by selecting the active argument (which
     # may be mapped to a parameter in make_siginfo).  If cursor is after all
@@ -477,12 +546,12 @@ function cursor_siginfos(mod::Module, fi::FileInfo, b::Int, analyzer::LSAnalyzer
     end
 
     out = SignatureInformation[]
-    for m in candidate_methods
-        if compatible_method(m, ca)
-            siginfo = make_siginfo(m, ca, active_arg; postprocessor)
-            if siginfo !== nothing
-                push!(out, siginfo)
-            end
+    for match in matches
+        m = match.method
+        compatible_method(m, ca) || continue
+        siginfo = make_siginfo(m, ca, active_arg; postprocessor)
+        if siginfo !== nothing
+            push!(out, siginfo)
         end
     end
     return out

@@ -622,10 +622,12 @@ function call_completions!(
     should_complete_method_sigs || should_complete_kwargs || return nothing
 
     (; mod, analyzer, postprocessor) = get_context_info(state, uri, pos)
-    fntyp = resolve_type(analyzer, mod, call[1])
-    fntyp isa Core.Const || return nothing
-    candidate_methods = methods(fntyp.val)
-    isempty(candidate_methods) && return nothing
+    fntyp = @something resolve_type(analyzer, mod, call[1]) return nothing
+
+    argtypes = collect_call_argtypes(analyzer, mod, ca)
+    fixup_argtypes!(argtypes, fntyp)
+    matches = find_all_matches(argtypes)
+    isempty(matches) && return nothing
 
     num_existing_args = ca.kw_i - 1
     use_snippet = supports(state, :textDocument, :completion, :completionItem, :snippetSupport)
@@ -639,7 +641,8 @@ function call_completions!(
         local_bindings = has_equals ? nothing : cursor_bindings(st0, b, mod),
         ) : nothing
 
-    for (i, m) in enumerate(candidate_methods)
+    for (i, match) in enumerate(matches)
+        m = match.method
         startswith(String(m.name), '@') && continue
         compatible_method(m, ca) || continue
         msig = @something get_sig_str(m, ca) continue

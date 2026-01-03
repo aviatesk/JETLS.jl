@@ -316,6 +316,22 @@ end
     @test 0 === n_si(M_invalid, "f1(fake= \n │)")
 end
 
+module M_argtype_filtering
+const gx1 = 42
+const gx2 = 43
+func(x::Int) = x
+func(x::Int, y::Int) = x + y
+func(x::Float64) = x
+func(x::Float64, y::Float64) = x + y
+end
+@testset "Argument type based filtering" begin
+    @test 2 == n_si(M_argtype_filtering, "func(1,│)")
+    @test 1 == n_si(M_argtype_filtering, "func(1,2,│)")
+    @test 2 == n_si(M_argtype_filtering, "func(gx1,│)")
+    @test 1 == n_si(M_argtype_filtering, "func(gx1,gx2,│)")
+    @test_broken 2 == n_si(M_argtype_filtering, "let x = 1; func(x,│); end")
+end
+
 include("setup.jl")
 
 function with_signature_help_request(tester, text::AbstractString; kwargs...)

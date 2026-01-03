@@ -88,6 +88,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   out once the user enters the keyword argument region (e.g., `g(42;│)` no longer
   shows `g(x, y)` which requires 2 positional arguments). (https://github.com/aviatesk/JETLS.jl/pull/426)
 
+- Signature help and method completion now use type-based filtering. Method
+  candidates are filtered based on the inferred types of already-provided
+  arguments. For example, signature help and method completions triggered by
+  typing `sin(1,│` now shows only `sin(::Real)` instead of all `sin` methods.
+  Global constants are also resolved (e.g., `sin(gx,│)` with `const gx = 42`
+  correctly infers `Int`). Note that local variable types are not yet resolved,
+  (e.g., `let x = 1; sin(x,│); end` would still show all `sin` methods).
+
 - Updated Revise.jl dependency version to v3.13.
 
 ## 2026-01-01
