@@ -777,8 +777,8 @@ end
     let p = parse_param("x::Int")
         @test JETLS.extract_param_text(p) == "x::Int"
     end
-    let p = parse_param("::Int")
-        @test JETLS.extract_param_text(p) === nothing
+    let p = parse_param("::Nothing")
+        @test JETLS.extract_param_text(p) === "::Nothing"
     end
     let p = parse_param("x::Vector{Int}")
         @test JETLS.extract_param_text(p) == "x::Vector{Int}"
@@ -818,6 +818,16 @@ end
         end
         let msig = "foo(x::T) where T where S"
             @test JETLS.make_insert_text(msig, 0, true) == "\${1:x::T}"
+        end
+        # anonymous typed parameters
+        let msig = "foo(::Nothing)"
+            @test JETLS.make_insert_text(msig, 0, true) == "\${1:::Nothing}"
+            @test JETLS.make_insert_text(msig, 1, true) === nothing
+        end
+        let msig = "foo(x, ::Nothing)"
+            @test JETLS.make_insert_text(msig, 0, true) == "\${1:x}, \${2:::Nothing}"
+            @test JETLS.make_insert_text(msig, 1, true) == "\${1:::Nothing}"
+            @test JETLS.make_insert_text(msig, 2, true) === nothing
         end
     end
 

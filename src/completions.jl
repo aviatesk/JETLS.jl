@@ -485,20 +485,23 @@ end
 function extract_param_text(p::JL.SyntaxTree)
      k = JS.kind(p)
     if k === JS.K"Identifier"
-        hasproperty(p, :name_val) || return nothing
-        return p.name_val::String
+        return extract_name_val(p)
     elseif k === JS.K"::"
-        if JS.numchildren(p) ≠ 2
-            return nothing
-        else
+        n = JS.numchildren(p)
+        if n == 1
+            typ = JS.sourcetext(p[1])
+            return String("::" * typ)
+        elseif n == 2
             name = @something extract_param_text(p[1]) return nothing
             typ = JS.sourcetext(p[2])
             return String(name * "::" * typ)
+        else
+            return nothing
         end
     elseif k === JS.K"var" && JS.numchildren(p) == 1
         inner = p[1]
-        if JS.kind(inner) === JS.K"Identifier" && hasproperty(inner, :name_val)
-            return inner.name_val::String
+        if JS.kind(inner) === JS.K"Identifier"
+            return extract_name_val(inner)
         end
     end
     return nothing
@@ -575,8 +578,7 @@ end
 
 function extract_kwarg_name_str(p::JL.SyntaxTree)
     node = @something extract_kwarg_name(p; sig=true) return nothing
-    hasproperty(node, :name_val) || return nothing
-    return node.name_val::String
+    return extract_name_val(node)
 end
 
 function should_insert_spaces_around_equal(fi::FileInfo, ca::CallArgs)
