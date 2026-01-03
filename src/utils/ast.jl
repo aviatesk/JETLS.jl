@@ -105,6 +105,9 @@ function unwrap_where(node::JL.SyntaxTree)
     return node
 end
 
+extract_name_val(node::JL.SyntaxTree) =
+    hasproperty(node, :name_val) ? node.name_val::String : nothing
+
 """
 Like `Base.unique`, but over node ids, and with this comment promising that the
 lowest-index copy of each node is kept.
