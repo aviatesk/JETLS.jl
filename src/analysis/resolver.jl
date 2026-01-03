@@ -48,6 +48,8 @@ function resolve_type(analyzer::LSAnalyzer, context_module::Module, @nospecializ
             return isdefined(res, :typ) ? res.typ : nothing
         end
         return Core.Const(res)
+    elseif !(lwr isa Expr) # literal
+        return Core.Const(lwr)
     end
     Meta.isexpr(lwr, :thunk) || return nothing
     length(lwr.args) == 1 || return nothing
@@ -60,14 +62,18 @@ function resolve_type(analyzer::LSAnalyzer, context_module::Module, @nospecializ
     # create a new state with `concretized::BitVector` whose length is appropriate
     # for inferring this top-level thunk
     state = JET.AnalyzerState(analyzer)
-    newstate = JET.AnalyzerState(state; concretized=falses(length(src.code)))
-    interp = JET.AbstractAnalyzer(analyzer, newstate)
+    newstate = JET.AnalyzerState(state;
+        # By setting `assume_bindings_static = false`, we avoid annotating `Union{}`
+        # for global bindings whose types are unknown, allowing us to obtain the final inferred result
+        inf_params = CC.InferenceParams(state.inf_params; assume_bindings_static = false),
+        concretized = falses(length(src.code)))
+    interp = JET.AbstractAnalyzer(analyzer, newstate; resolver_mode=true)
     result = CC.InferenceResult(mi)
     JET.init_result!(interp, result)
     frame = CC.InferenceState(result, src, #=cache=#:no, interp)
     CC.typeinf(interp, frame)
 
-    result = frame.result.result
-    result === Union{} && return nothing # for whatever reason, callers expect this as the Bottom and/or Top type instead
-    return result
+    inferred = frame.result.result
+    inferred === Union{} && return nothing # for whatever reason, callers expect this as the Bottom and/or Top type instead
+    return inferred
 end
