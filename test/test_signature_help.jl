@@ -182,6 +182,8 @@ g(x::Int, y::Int) = 0
 g(x::Int; kw=nothing) = 0
 h(; kw) = 0
 h(x::Int; kw) = 0
+i(x, y) = 0
+i(; kw) = 0
 end
 @testset "filter positional-only methods when semicolon is present" begin
     # Without semicolon, both methods are shown
@@ -199,6 +201,13 @@ end
     @test 2 === n_si(M_pos_vs_kw, "h(│)")     # Without semicolon, both shown
     @test 1 === n_si(M_pos_vs_kw, "h(;│)")    # h(x::Int; kw) has required pos arg, filtered
     @test 1 === n_si(M_pos_vs_kw, "h(;kw│)")  # Same filtering applies
+
+    # Splat args should not filter out methods with required positional args
+    # because splat could expand to enough args
+    @test 2 === n_si(M_pos_vs_kw, "i(│)")
+    @test 1 === n_si(M_pos_vs_kw, "i(;│)")           # Without splat, i(x, y) is filtered
+    @test 2 === n_si(M_pos_vs_kw, "i(args...;│)")   # With splat, i(x, y) should match
+    @test 1 === n_si(M_pos_vs_kw, "i(a, b...;│)")   # i(; kw) filtered (already has pos arg)
 end
 
 module M_highlight

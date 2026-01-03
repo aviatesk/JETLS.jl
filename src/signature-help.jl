@@ -33,9 +33,12 @@ end
 # =====
 
 """
-Return (args, first_kwarg_i, has_semicolon), one SyntaxTree per argument to call.
-Ignore function name and K"error" (e.g. missing closing paren).
-`has_semicolon` is true if the call contains a K"parameters" node (explicit semicolon).
+    flatten_args(call::JL.SyntaxTree) -> (args::JL.SyntaxList, first_kwarg_i::Int, has_semicolon::Bool)
+
+Return `(args::JL.SyntaxList, first_kwarg_i::Int, has_semicolon::Bool)`,
+one `SyntaxTree` per argument to call.
+Ignore function name and `K"error"` (e.g. missing closing paren).
+`has_semicolon` is true if the call contains a `K"parameters"` node (explicit semicolon).
 """
 function flatten_args(call::JL.SyntaxTree)
     if kind(call) === K"where"
@@ -172,7 +175,9 @@ function CallArgs(st0::JL.SyntaxTree, cursor::Int)
 end
 
 """
-Return `false` if we can definitely rule out `f(args...|` from being a call to `m`
+    compatible_method(m::Method, ca::CallArgs) -> Bool
+
+Return `false` if we can definitely rule out `f(args...|` from being a call to `m`.
 """
 function compatible_method(m::Method, ca::CallArgs)
     msig = @something get_sig_str(m, ca) return false
@@ -193,7 +198,7 @@ function compatible_method(m::Method, ca::CallArgs)
             required_pos_args = count(1:kwp_i-1) do i
                 !(kind(params[i]) in JS.KSet"= kw ...")
             end
-            ca.pos_args_lb < required_pos_args && return false
+            !isnothing(ca.pos_args_ub) && ca.pos_args_ub < required_pos_args && return false
         end
     end
     return true
