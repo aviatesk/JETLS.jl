@@ -1047,6 +1047,26 @@ end
         end
         @test cnt == 1
     end
+
+    # Test no `=` insertion when cursor is before existing `=`
+    let text = """
+        printstyled(; bol│=true)
+        """
+        context = CompletionContext(; triggerKind = CompletionTriggerKind.Invoked)
+        cnt = 0
+        with_completion_request(text; context) do _, result, _
+            items = result.items
+            keyword_items = filter(items) do item
+                item.labelDetails !== nothing &&
+                    item.labelDetails.description == "keyword argument"
+            end
+            @test all(keyword_items) do item
+                !occursin("=", something(item.insertText, ""))
+            end
+            cnt += 1
+        end
+        @test cnt == 1
+    end
 end
 
 @testset "should_insert_spaces_around_equal" begin
@@ -1067,6 +1087,62 @@ end
     @test test_should_insert_spaces("func(; a = 1, b = 2, c=3, │)")
     @test !test_should_insert_spaces("func(; a=1, b=2, c = 3, │)")
     @test test_should_insert_spaces("func(; a = 1, b=2, │)")
+end
+
+@testset "cursor_equals_position" begin
+    function test_cursor_equals_position(text::AbstractString)
+        clean_text, positions = JETLS.get_text_and_positions(text)
+        fi = JETLS.FileInfo(0, clean_text, "test.jl")
+        st0 = JETLS.build_syntax_tree(fi)
+        b = JETLS.xy_to_offset(fi, positions[1])
+        call = JETLS.cursor_call(fi.parsed_stream, st0, b)
+        ca = JETLS.CallArgs(call, b)
+        return JETLS.cursor_equals_position(ca, b)
+    end
+
+    # cursor after `=` in keyword argument → true
+    @test test_cursor_equals_position("func(; a=│)") === true
+    @test test_cursor_equals_position("func(; a=│1)") === true
+    @test test_cursor_equals_position("func(; a=1│)") === true
+    @test test_cursor_equals_position("func(; a = │)") === true
+    @test test_cursor_equals_position("func(; a = │1)") === true
+    @test test_cursor_equals_position("func(; a = 1│)") === true
+    @test test_cursor_equals_position("func(; a=1, b=│)") === true
+    @test test_cursor_equals_position("func(; a=1, b=│2)") === true
+    @test test_cursor_equals_position("func(a=│)") === true
+    @test test_cursor_equals_position("func(a=│1)") === true
+    @test test_cursor_equals_position("func(a=1│)") === true
+    @test test_cursor_equals_position("func(; a=│") === true  # incomplete
+    @test test_cursor_equals_position("func(; a=│1") === true  # incomplete
+    @test test_cursor_equals_position("func(; a=1│") === true  # incomplete
+    @test test_cursor_equals_position("func(; a = │") === true  # incomplete
+    @test test_cursor_equals_position("func(; a = │1") === true  # incomplete
+    @test test_cursor_equals_position("func(; a = 1│") === true  # incomplete
+    @test test_cursor_equals_position("func(; a=1, b=│") === true  # incomplete
+    @test test_cursor_equals_position("func(; a=1, b=│2") === true  # incomplete
+    @test test_cursor_equals_position("func(a=│") === true  # incomplete
+    @test test_cursor_equals_position("func(a=│1") === true  # incomplete
+    @test test_cursor_equals_position("func(a=1│") === true  # incomplete
+
+    # cursor before `=` sign in kw arg → false (has `=`, don't insert)
+    @test test_cursor_equals_position("func(; a│=1)") === false
+    @test test_cursor_equals_position("func(; a=1, b│=2)") === false
+    @test test_cursor_equals_position("func(a│=1)") === false
+    @test test_cursor_equals_position("func(; │a=1)") === false
+    @test test_cursor_equals_position("func(│a=1)") === false
+    @test test_cursor_equals_position("func(; a=1, │b=2)") === false
+    @test test_cursor_equals_position("func(; a│=1") === false  # incomplete
+    @test test_cursor_equals_position("func(; a=1, b│=2") === false  # incomplete
+    @test test_cursor_equals_position("func(a│=1") === false  # incomplete
+    @test test_cursor_equals_position("func(; │a=1") === false  # incomplete
+    @test test_cursor_equals_position("func(│a=1") === false  # incomplete
+    @test test_cursor_equals_position("func(; a=1, │b=2") === false  # incomplete
+
+    # cursor not in any kw arg → nothing (no `=`, insert it)
+    @test test_cursor_equals_position("func(; │)") === nothing
+    @test test_cursor_equals_position("func(; a=1, │)") === nothing
+    @test test_cursor_equals_position("func(; │") === nothing  # incomplete
+    @test test_cursor_equals_position("func(; a=1, │") === nothing  # incomplete
 end
 
 end # module test_completions
