@@ -99,9 +99,7 @@ function to_completion(
         uri::URI, fi::FileInfo
     )
     label_kind = CompletionItemKind.Variable
-    label_detail = nothing
-    label_desc = nothing
-    documentation = nothing
+    label_detail = label_desc = documentation = nothing
 
     if binding.is_const
         label_kind = CompletionItemKind.Constant
@@ -481,8 +479,8 @@ function keyword_completions!(
     return nothing
 end
 
-# method signature completions
-# ============================
+# call completions (method signatures and keyword arguments)
+# ==========================================================
 
 function extract_param_text(p::JL.SyntaxTree)
      k = JS.kind(p)
@@ -511,9 +509,7 @@ escape_snippet_text(s::AbstractString) =
 
 function make_insert_text(msig::AbstractString, num_existing_args::Int, use_snippet::Bool)
     mnode = JS.parsestmt(JL.SyntaxTree, msig; ignore_errors=true)
-    while JS.kind(mnode) === JS.K"where" && JS.numchildren(mnode) ≥ 1
-        mnode = mnode[1]
-    end
+    mnode = unwrap_where(mnode)
     JS.kind(mnode) in CALL_KINDS || return nothing
     params, kwp_i, _ = flatten_args(mnode)
     pos_params_count = kwp_i - 1
@@ -559,67 +555,6 @@ function prepare_method_signature_data(m::Method, methodidx::Int, modules::Vecto
     return MethodSignatureCompletionData(moduleidx, names, methodname, methodidx)
 end
 
-function method_signature_completions!(
-        items::Dict{String,CompletionItem},
-        state::ServerState, uri::URI, fi::FileInfo, pos::Position,
-        context::Union{Nothing,CompletionContext}
-    )
-    isnothing(context) && return nothing
-    context.triggerCharacter ∉ METHOD_COMPLETION_TRIGGER_CHARACTERS && return nothing
-
-    st0 = build_syntax_tree(fi)
-    b = xy_to_offset(fi, pos)
-    call = @something cursor_call(fi.parsed_stream, st0, b) return nothing
-    ca = CallArgs(call, b)
-    ca.has_semicolon && return nothing
-
-    (; mod, analyzer, postprocessor) = get_context_info(state, uri, pos)
-    fntyp = resolve_type(analyzer, mod, call[1])
-    fntyp isa Core.Const || return nothing
-    candidate_methods = methods(fntyp.val)
-    isempty(candidate_methods) && return nothing
-
-    num_existing_args = ca.kw_i - 1
-    use_snippet = supports(state, :textDocument, :completion, :completionItem, :snippetSupport)
-
-    sort_idx = 1
-    modules = Base.loaded_modules_array()
-    for (i, m) in enumerate(candidate_methods)
-        startswith(String(m.name), '@') && continue # TODO skip macro signature completion for now
-        compatible_method(m, ca) || continue
-        msig = @something get_sig_str(m, ca) continue
-        msig = postprocessor(msig)
-        base_text = make_insert_text(msig, num_existing_args, use_snippet)
-        newText = if isnothing(base_text)
-            ""
-        else
-            prefix = (num_existing_args > 0 && context.triggerCharacter == ",") ? " " : ""
-            prefix * base_text
-        end
-        insertTextFormat = use_snippet ? InsertTextFormat.Snippet : InsertTextFormat.PlainText
-        label = String(msig)
-        items[label] = CompletionItem(;
-            label,
-            labelDetails = CompletionItemLabelDetails(; description = "method"),
-            kind = CompletionItemKind.Method,
-            # Use `textEdit` instead of `insertText`: when `insertText` is empty,
-            # clients fall back to inserting the `label`, but with `textEdit` we can
-            # insert nothing (empty `newText`) for methods with all args filled.
-            textEdit = TextEdit(; range=Range(pos, pos), newText),
-            insertTextFormat,
-            sortText = get_sort_text(sort_idx),
-            data = prepare_method_signature_data(m, i, modules),
-        )
-        sort_idx += 1
-    end
-
-    isempty(items) && return nothing
-    return #=isIncomplete=#true
-end
-
-# keyword argument completion
-# ===========================
-
 function is_after_equals(ca::CallArgs, b::Int)
     for arg in ca.args
         br = JS.byte_range(arg)
@@ -661,51 +596,94 @@ function should_insert_spaces_around_equal(fi::FileInfo, ca::CallArgs)
     return has_whitespaces ≥ has_equals - has_whitespaces
 end
 
-function keyword_argument_completions!(
+function call_completions!(
         items::Dict{String,CompletionItem},
-        state::ServerState, uri::URI, fi::FileInfo, pos::Position
+        state::ServerState, uri::URI, fi::FileInfo, pos::Position,
+        context::Union{Nothing,CompletionContext}
     )
     st0 = build_syntax_tree(fi)
     b = xy_to_offset(fi, pos)
     call = @something cursor_call(fi.parsed_stream, st0, b) return nothing
     ca = CallArgs(call, b)
-    is_after_equals(ca, b) && return nothing
 
-    (; mod, analyzer) = get_context_info(state, uri, pos)
+    after_equals = is_after_equals(ca, b)
+    should_complete_method_sigs = !ca.has_semicolon && !isnothing(context) &&
+        context.triggerCharacter ∈ METHOD_COMPLETION_TRIGGER_CHARACTERS
+    should_complete_kwargs = !after_equals
+
+    should_complete_method_sigs || should_complete_kwargs || return nothing
+
+    (; mod, analyzer, postprocessor) = get_context_info(state, uri, pos)
     fntyp = resolve_type(analyzer, mod, call[1])
     fntyp isa Core.Const || return nothing
     candidate_methods = methods(fntyp.val)
     isempty(candidate_methods) && return nothing
 
-    existing_kws = Set{String}(keys(ca.kw_map))
-    seen_kwarg_names = Set{String}()
-    insert_spaces = should_insert_spaces_around_equal(fi, ca)
-    for m in candidate_methods
+    num_existing_args = ca.kw_i - 1
+    use_snippet = supports(state, :textDocument, :completion, :completionItem, :snippetSupport)
+    modules = should_complete_method_sigs ? Base.loaded_modules_array() : Module[]
+    method_sig_sort_idx = 1
+    kwarg_comp_info = should_complete_kwargs ? (;
+        existing_kws = Set{String}(keys(ca.kw_map)),
+        seen_kwarg_names = Set{String}(),
+        insert_spaces = should_insert_spaces_around_equal(fi, ca)) : nothing
+
+    for (i, m) in enumerate(candidate_methods)
         startswith(String(m.name), '@') && continue
         compatible_method(m, ca) || continue
         msig = @something get_sig_str(m, ca) continue
-        mnode = JS.parsestmt(JL.SyntaxTree, msig; ignore_errors=true)
-        while JS.kind(mnode) === JS.K"where" && JS.numchildren(mnode) ≥ 1
-            mnode = mnode[1]
-        end
-        JS.kind(mnode) in CALL_KINDS || continue
-        params, kwp_i, _ = flatten_args(mnode)
-        for i in kwp_i:lastindex(params)
-            p = params[i]
-            JS.kind(p) === JS.K"..." && continue
-            kwarg_name = @something extract_kwarg_name_str(p) continue
-            kwarg_name in existing_kws && continue
-            kwarg_name in seen_kwarg_names && continue
-            push!(seen_kwarg_names, kwarg_name)
-            items[kwarg_name] = CompletionItem(;
-                label = kwarg_name,
-                labelDetails = CompletionItemLabelDetails(; description = "keyword argument"),
-                insertText = kwarg_name * (insert_spaces ? " = " : "="),
-                sortText = max_sort_text1, # Give the same prioirty to the (prioritized) global completions
+
+        if should_complete_method_sigs
+            msig_label = postprocessor(msig)
+            base_text = make_insert_text(msig_label, num_existing_args, use_snippet)
+            newText = if isnothing(base_text)
+                ""
+            else
+                prefix = (num_existing_args > 0 && context.triggerCharacter == ",") ? " " : ""
+                prefix * base_text
+            end
+            insertTextFormat = use_snippet ? InsertTextFormat.Snippet : InsertTextFormat.PlainText
+            label = String(msig_label)
+            items[label] = CompletionItem(;
+                label,
+                labelDetails = CompletionItemLabelDetails(; description = "method"),
+                kind = CompletionItemKind.Method,
+                textEdit = TextEdit(; range=Range(pos, pos), newText),
+                insertTextFormat,
+                sortText = get_sort_text(method_sig_sort_idx),
+                data = prepare_method_signature_data(m, i, modules),
             )
+            method_sig_sort_idx += 1
+        else
+            @assert should_complete_kwargs && !isnothing(kwarg_comp_info)
+            (; existing_kws, seen_kwarg_names, insert_spaces) = kwarg_comp_info
+            mnode = JS.parsestmt(JL.SyntaxTree, msig; ignore_errors=true)
+            mnode = unwrap_where(mnode)
+            JS.kind(mnode) in CALL_KINDS || continue
+            params, kwp_i, _ = flatten_args(mnode)
+            for j in kwp_i:lastindex(params)
+                p = params[j]
+                JS.kind(p) === JS.K"..." && continue
+                kwarg_name = @something extract_kwarg_name_str(p) continue
+                kwarg_name in existing_kws && continue
+                kwarg_name in seen_kwarg_names && continue
+                push!(seen_kwarg_names, kwarg_name)
+                items[kwarg_name] = CompletionItem(;
+                    label = kwarg_name,
+                    labelDetails = CompletionItemLabelDetails(; description = "keyword argument"),
+                    insertText = kwarg_name * (insert_spaces ? " = " : "="),
+                    sortText = max_sort_text1,
+                )
+            end
         end
     end
-    return ca.has_semicolon ? #=isIncomplete=#false : nothing
+
+    if should_complete_kwargs && ca.has_semicolon
+        return #=isIncomplete=#false
+    elseif should_complete_method_sigs && method_sig_sort_idx > 1
+        return #=isIncomplete=#true
+    end
+    return nothing
 end
 
 # completion resolver
@@ -852,8 +830,7 @@ function get_completion_items(
     # order matters; see local_completions!
     isIncomplete = @something(
         add_emoji_latex_completions!(items, state, uri, fi, pos),
-        method_signature_completions!(items, state, uri, fi, pos, context),
-        keyword_argument_completions!(items, state, uri, fi, pos),
+        call_completions!(items, state, uri, fi, pos, context),
         global_completions!(items, state, uri, fi, pos, context),
         local_completions!(items, state, uri, fi, pos, context),
         keyword_completions!(items, state, context),
