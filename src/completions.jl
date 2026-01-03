@@ -555,16 +555,22 @@ function prepare_method_signature_data(m::Method, methodidx::Int, modules::Vecto
     return MethodSignatureCompletionData(moduleidx, names, methodname, methodidx)
 end
 
-function is_after_equals(ca::CallArgs, b::Int)
+function cursor_equals_position(ca::CallArgs, b::Int)::Union{Nothing,Bool}
     for arg in ca.args
         br = JS.byte_range(arg)
         first(br) ≤ b ≤ last(br) + 1 || continue
-        JS.kind(arg) in JS.KSet"= kw" || return false
-        JS.numchildren(arg) ≥ 1 || return false
-        lhs_end = JS.last_byte(arg[1])
-        return lhs_end < b
+        JS.kind(arg) in JS.KSet"= kw" || return nothing
+        JS.numchildren(arg) ≥ 2 || return nothing
+        rhs = arg[2]
+        after_equals = if JS.kind(rhs) === JS.K"error"
+            lhs_end = JS.last_byte(arg[1])
+            b > lhs_end + 1
+        else
+            b ≥ JS.first_byte(rhs)
+        end
+        return after_equals
     end
-    return false
+    return nothing
 end
 
 function extract_kwarg_name_str(p::JL.SyntaxTree)
@@ -606,10 +612,10 @@ function call_completions!(
     call = @something cursor_call(fi.parsed_stream, st0, b) return nothing
     ca = CallArgs(call, b)
 
-    after_equals = is_after_equals(ca, b)
+    equals_pos = cursor_equals_position(ca, b)
     should_complete_method_sigs = !ca.has_semicolon && !isnothing(context) &&
         context.triggerCharacter ∈ METHOD_COMPLETION_TRIGGER_CHARACTERS
-    should_complete_kwargs = !after_equals
+    should_complete_kwargs = !(equals_pos === true) # is not after `=`
 
     should_complete_method_sigs || should_complete_kwargs || return nothing
 
@@ -623,11 +629,12 @@ function call_completions!(
     use_snippet = supports(state, :textDocument, :completion, :completionItem, :snippetSupport)
     modules = should_complete_method_sigs ? Base.loaded_modules_array() : Module[]
     method_sig_sort_idx = 1
+    has_equals = equals_pos === false
     kwarg_comp_info = should_complete_kwargs ? (;
         existing_kws = Set{String}(keys(ca.kw_map)),
         seen_kwarg_names = Set{String}(),
         insert_spaces = should_insert_spaces_around_equal(fi, ca),
-        local_bindings = cursor_bindings(st0, b, mod),
+        local_bindings = has_equals ? nothing : cursor_bindings(st0, b, mod),
         ) : nothing
 
     for (i, m) in enumerate(candidate_methods)
@@ -670,12 +677,21 @@ function call_completions!(
                 kwarg_name in existing_kws && continue
                 kwarg_name in seen_kwarg_names && continue
                 push!(seen_kwarg_names, kwarg_name)
-                local_var_existing = !isnothing(local_bindings) &&
-                    any(((binding,_,_),)->binding.name==kwarg_name, local_bindings)
+                if has_equals
+                    suffix = ""
+                else
+                    local_var_existing = !isnothing(local_bindings) &&
+                        any(((binding,_,_),)->binding.name==kwarg_name, local_bindings)
+                    if local_var_existing
+                        suffix = ""
+                    else
+                        suffix = insert_spaces ? " = " : "="
+                    end
+                end
                 items[kwarg_name] = CompletionItem(;
                     label = kwarg_name,
                     labelDetails = CompletionItemLabelDetails(; description = "keyword argument"),
-                    insertText = local_var_existing ? kwarg_name : (kwarg_name * (insert_spaces ? " = " : "=")),
+                    insertText = kwarg_name * suffix,
                     sortText = max_sort_text1,
                 )
             end
