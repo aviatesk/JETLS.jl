@@ -866,11 +866,53 @@ end
         cnt = 0
         with_completion_request(text; context) do _, result, _
             items = result.items
-            @test any(items) do item
+            @test count(items) do item
                 item.labelDetails !== nothing &&
                     item.labelDetails.description == "method" &&
-                    !isnothing(get_newText(item))
-            end
+                    !isnothing(get_newText(item)) &&
+                    occursin("sin", item.label)
+            end == length(methods(sin))
+            cnt += 1
+        end
+        @test cnt == 1
+    end
+
+    # Type-based filtering
+    let text = """
+        sin(42,│
+        """
+        context = CompletionContext(;
+            triggerKind = CompletionTriggerKind.TriggerCharacter,
+            triggerCharacter = ",")
+        cnt = 0
+        with_completion_request(text; context) do _, result, _
+            items = result.items
+            @test count(items) do item
+                item.labelDetails !== nothing &&
+                    item.labelDetails.description == "method" &&
+                    !isnothing(get_newText(item)) &&
+                    occursin("sin", item.label)
+            end == 1
+            cnt += 1
+        end
+        @test cnt == 1
+    end
+
+    let text = """let x = 42
+            sin(x,│
+        end"""
+        context = CompletionContext(;
+            triggerKind = CompletionTriggerKind.TriggerCharacter,
+            triggerCharacter = ",")
+        cnt = 0
+        with_completion_request(text; context) do _, result, _
+            items = result.items
+            @test_broken count(items) do item
+                item.labelDetails !== nothing &&
+                    item.labelDetails.description == "method" &&
+                    !isnothing(get_newText(item)) &&
+                    occursin("sin", item.label)
+            end == 1
             cnt += 1
         end
         @test cnt == 1
