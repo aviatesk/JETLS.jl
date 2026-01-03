@@ -94,9 +94,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   typing `sin(1,│` now shows only `sin(::Real)` instead of all `sin` methods.
   Global constants are also resolved (e.g., `sin(gx,│)` with `const gx = 42`
   correctly infers `Int`). Note that local variable types are not yet resolved,
-  (e.g., `let x = 1; sin(x,│); end` would still show all `sin` methods).
+  (e.g., `let x = 1; sin(x,│); end` would still show all `sin` methods). (https://github.com/aviatesk/JETLS.jl/pull/436)
 
 - Updated Revise.jl dependency version to v3.13.
+
+### Fixed
+
+- Improved type resolver robustness, eliminating `UndefVarError` messages that
+  could appear in server logs during signature help. Fixed https://github.com/aviatesk/JETLS.jl/issues/391. (https://github.com/aviatesk/JETLS.jl/pull/435)
 
 ## 2026-01-01
 
