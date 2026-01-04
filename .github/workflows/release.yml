@@ -110,16 +110,27 @@ jobs:
         with:
           ref: release
 
-      - name: Extract version
-        id: version
+      - name: Extract release info
+        id: release_info
         run: |
           VERSION=$(cat JETLS_VERSION)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
+          # Get the merge commit SHA (short form)
+          MERGE_COMMIT="${{ github.event.pull_request.merge_commit_sha }}"
+          SHORT_SHA="${MERGE_COMMIT:0:7}"
+          echo "commit=$SHORT_SHA" >> $GITHUB_OUTPUT
+
+          # Get the previous release commit from the Unreleased diff link
+          PREV_COMMIT=$(grep -oP '(?<=Diff: \[`)[a-f0-9]+(?=\.\.\.HEAD)' CHANGELOG.md | head -1)
+          echo "prev_commit=$PREV_COMMIT" >> $GITHUB_OUTPUT
+
       - name: Extract release notes from CHANGELOG
         id: notes
         run: |
-          NOTES=$(python3 scripts/update-changelog.py --extract-unreleased)
+          COMMIT="${{ steps.release_info.outputs.commit }}"
+          PREV_COMMIT="${{ steps.release_info.outputs.prev_commit }}"
+          NOTES=$(python3 scripts/update-changelog.py --extract-unreleased "$COMMIT" "$PREV_COMMIT")
           # Use heredoc to handle multiline content
           {
             echo 'content<<EOF'
@@ -132,7 +143,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_NOTES: ${{ steps.notes.outputs.content }}
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
+          VERSION="${{ steps.release_info.outputs.version }}"
           gh release create "$VERSION" \
             --target release \
             --title "$VERSION" \
