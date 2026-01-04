@@ -51,8 +51,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   call (triggered by `(`, `,`, or ` `), compatible method signatures are
   suggested based on already-provided arguments. Selecting a completion inserts
   remaining positional arguments as snippet placeholders with type annotations.
-  Lazy resolution via `completionItem/resolve` adds inferred return type and
-  documentation. (https://github.com/aviatesk/JETLS.jl/pull/428)
+  When you select a completion item in the list, additional details such as
+  inferred return type and documentation are displayed (resolved lazily for
+  performance). (https://github.com/aviatesk/JETLS.jl/pull/428)
 
   <https://github.com/user-attachments/assets/19d320a6-459f-4788-9669-d3936920b625>
 
@@ -93,10 +94,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Changed
 
 - Enhanced global completion items with detailed kind information (`[function]`,
-  `[type]`, `[module]`, etc.) resolved lazily via `completionItem/resolve`.
-  The visibility of these enhancements varies by client: VSCode updates only
-  the `detail` field (shown above documentation), while Zed can update all
-  fields including `kind` for richer presentation with label highlighting
+  `[type]`, `[module]`, etc.). When you select a completion item, these
+  details are displayed (resolved lazily for performance). The visibility of
+  these enhancements varies by client: VSCode updates only the `CompletionItem.detail`
+  field (shown above documentation), while Zed is able to update all fields including
+  `CompletionItem.kind` for richer presentation with label highlighting
   (combined with https://github.com/aviatesk/zed-julia/pull/1). (https://github.com/aviatesk/JETLS.jl/pull/425)
 
   > Demo with [aviatesk/zed-julia](https://github.com/aviatesk/zed-julia)
@@ -119,6 +121,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Signature help now displays the inferred argument type for the active
   parameter. The parameter documentation shows the passed argument expression
   and its type (e.g., `p ← (arg) :: Int64`).
+
+  https://github.com/user-attachments/assets/a222a44d-9d46-435c-8759-8157005cfc38
 
 - Updated Revise.jl dependency version to v3.13.
 
