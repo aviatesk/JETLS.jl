@@ -149,6 +149,29 @@ jobs:
             --title "$VERSION" \
             --notes "$RELEASE_NOTES"
 
+      - name: Strip Announcement from previous release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Find the previous release tag (date-based version before current)
+          PREV_TAG=$(gh release list --limit 10 --json tagName --jq '.[].tagName' | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' | head -1)
+          if [ -z "$PREV_TAG" ]; then
+            echo "No previous release found, skipping"
+            exit 0
+          fi
+          echo "Updating previous release: $PREV_TAG"
+          # Get current release notes
+          PREV_NOTES=$(gh release view "$PREV_TAG" --json body --jq '.body')
+          # Strip announcement section
+          NEW_NOTES=$(echo "$PREV_NOTES" | python3 scripts/update-changelog.py --strip-announcement)
+          # Update the release if notes changed
+          if [ "$PREV_NOTES" != "$NEW_NOTES" ]; then
+            gh release edit "$PREV_TAG" --notes "$NEW_NOTES"
+            echo "Announcement stripped from $PREV_TAG"
+          else
+            echo "No Announcement section found in $PREV_TAG"
+          fi
+
   update-changelog:
     name: Update CHANGELOG on master
     needs: create-release

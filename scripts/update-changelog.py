@@ -140,7 +140,40 @@ def update_changelog(version: str, commit: str, prev_commit: str) -> bool:
     return True
 
 
+def strip_announcement(text: str) -> str:
+    """Remove the Announcement section from release notes.
+
+    Returns the text with only the metadata header and changelog entries.
+    """
+    lines = text.split('\n')
+    result_lines = []
+    in_announcement = False
+
+    # Standard changelog entry headers that end the Announcement section
+    entry_header_pattern = re.compile(r'^### (?:Added|Changed|Fixed|Removed|Deprecated|Security|Internal)')
+
+    for line in lines:
+        if line.startswith('### Announcement'):
+            in_announcement = True
+            continue
+        if in_announcement and entry_header_pattern.match(line):
+            in_announcement = False
+        if not in_announcement:
+            result_lines.append(line)
+
+    # Clean up extra blank lines
+    result = '\n'.join(result_lines)
+    result = re.sub(r'\n{3,}', '\n\n', result)
+    return result.strip()
+
+
 def main() -> int:
+    if len(sys.argv) >= 2 and sys.argv[1] == '--strip-announcement':
+        # Read from stdin and strip announcement section
+        text = sys.stdin.read()
+        print(strip_announcement(text))
+        return 0
+
     if len(sys.argv) >= 2 and sys.argv[1] == '--extract-unreleased':
         # Optional: --extract-unreleased <commit> <prev_commit>
         commit = sys.argv[2] if len(sys.argv) > 2 else ""
@@ -154,6 +187,7 @@ def main() -> int:
     if len(sys.argv) != 4:
         print(f"Usage: {sys.argv[0]} <version> <commit> <prev_commit>")
         print(f"       {sys.argv[0]} --extract-unreleased [<commit> <prev_commit>]")
+        print(f"       {sys.argv[0]} --strip-announcement < input.md")
         print(f"Example: {sys.argv[0]} 2025-11-26 6bc34f1 2be0cff")
         return 1
 
