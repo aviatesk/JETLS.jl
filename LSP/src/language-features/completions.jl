@@ -229,13 +229,12 @@ end
 
 # JETLS specific data structures for `data` field of `CompletionItem`
 struct GlobalCompletionData
+    resolver_id::String
     name::String
 end
 struct MethodSignatureCompletionData
-    moduleidx::Int
-    names::Vector{String}
-    methodname::String
-    methodidx::Int
+    resolver_id::String
+    match_idx::Int
 end
 export GlobalCompletionData, MethodSignatureCompletionData
 
