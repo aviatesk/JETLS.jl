@@ -240,8 +240,9 @@ function global_completions!(
         # disable local completions for dot-prefixed code for now
         is_completed |= true
     end
+    resolver_id = String(gensym("GlobalCompletionResolverInfo_resovler_id"))
     store!(state.completion_resolver_info) do _
-        (completion_module, postprocessor), nothing
+        GlobalCompletionResolverInfo(resolver_id, completion_module, postprocessor), nothing
     end
 
     prioritized_names = let s = Set{Symbol}()
@@ -312,7 +313,7 @@ function global_completions!(
             filterText,
             insertTextFormat,
             textEdit,
-            data = GlobalCompletionData(resolveName))
+            data = GlobalCompletionData(resolver_id, resolveName))
     end
 
     return is_completed ? #=isIncomplete=#false : nothing
@@ -544,20 +545,6 @@ function make_insert_text(msig::AbstractString, num_existing_args::Int, use_snip
     return join(parts, ", ")
 end
 
-function prepare_method_signature_data(m::Method, methodidx::Int, modules::Vector{Module})
-    methodname = String(m.name)
-    mod = m.module
-    names = String[]
-    while true
-        pmod = parentmodule(mod)
-        pmod == mod && break
-        pushfirst!(names, String(nameof(mod)))
-        mod = pmod
-    end
-    moduleidx = @something findfirst(m::Module->m==mod, modules) return nothing
-    return MethodSignatureCompletionData(moduleidx, names, methodname, methodidx)
-end
-
 function cursor_equals_position(ca::CallArgs, b::Int)::Union{Nothing,Bool}
     for arg in ca.args
         br = JS.byte_range(arg)
@@ -630,16 +617,25 @@ function call_completions!(
     isempty(matches) && return nothing
 
     num_existing_args = ca.kw_i - 1
-    use_snippet = supports(state, :textDocument, :completion, :completionItem, :snippetSupport)
-    modules = should_complete_method_sigs ? Base.loaded_modules_array() : Module[]
     method_sig_sort_idx = 1
     has_equals = equals_pos === false
-    kwarg_comp_info = should_complete_kwargs ? (;
-        existing_kws = Set{String}(keys(ca.kw_map)),
-        seen_kwarg_names = Set{String}(),
-        insert_spaces = should_insert_spaces_around_equal(fi, ca),
-        local_bindings = has_equals ? nothing : cursor_bindings(st0, b, mod),
-        ) : nothing
+    local method_sig_comp_info, kwarg_comp_info
+    if should_complete_method_sigs
+        local resolver_id = String(gensym("MethodSignatureCompletionResolverInfo_resovler_id"))
+        store!(state.completion_resolver_info) do _
+            MethodSignatureCompletionResolverInfo(resolver_id, matches, postprocessor), nothing
+        end
+        method_sig_comp_info = (;
+            resolver_id,
+            use_snippet = supports(state, :textDocument, :completion, :completionItem, :snippetSupport))
+    else
+        @assert should_complete_kwargs
+        kwarg_comp_info = (;
+            existing_kws = Set{String}(keys(ca.kw_map)),
+            seen_kwarg_names = Set{String}(),
+            insert_spaces = should_insert_spaces_around_equal(fi, ca),
+            local_bindings = has_equals ? nothing : cursor_bindings(st0, b, mod))
+    end
 
     for (i, match) in enumerate(matches)
         m = match.method
@@ -647,7 +643,8 @@ function call_completions!(
         compatible_method(m, ca) || continue
         msig = @something get_sig_str(m, ca) continue
 
-        if should_complete_method_sigs
+        if @isdefined(method_sig_comp_info) # i.e. should_complete_method_sigs
+            local (; resolver_id, use_snippet) = method_sig_comp_info
             msig_label = postprocessor(msig)
             base_text = make_insert_text(msig_label, num_existing_args, use_snippet)
             newText = if isnothing(base_text)
@@ -656,20 +653,18 @@ function call_completions!(
                 prefix = (num_existing_args > 0 && context.triggerCharacter == ",") ? " " : ""
                 prefix * base_text
             end
-            insertTextFormat = use_snippet ? InsertTextFormat.Snippet : InsertTextFormat.PlainText
             label = String(msig_label)
             items[label] = CompletionItem(;
                 label,
                 labelDetails = CompletionItemLabelDetails(; description = "method"),
                 kind = CompletionItemKind.Method,
                 textEdit = TextEdit(; range=Range(pos, pos), newText),
-                insertTextFormat,
+                insertTextFormat = use_snippet ? InsertTextFormat.Snippet : InsertTextFormat.PlainText,
                 sortText = get_sort_text(method_sig_sort_idx),
-                data = prepare_method_signature_data(m, i, modules),
+                data = MethodSignatureCompletionData(resolver_id, i),
             )
             method_sig_sort_idx += 1
-        else
-            @assert should_complete_kwargs && !isnothing(kwarg_comp_info)
+        elseif @isdefined(kwarg_comp_info) # i.e. should_complete_kwargs
             (; existing_kws, seen_kwarg_names, insert_spaces, local_bindings) = kwarg_comp_info
             mnode = JS.parsestmt(JL.SyntaxTree, msig; ignore_errors=true)
             mnode = unwrap_where(mnode)
@@ -700,7 +695,7 @@ function call_completions!(
                     sortText = max_sort_text1,
                 )
             end
-        end
+        else error("Unreachable") end
     end
 
     if should_complete_kwargs && ca.has_semicolon
@@ -714,24 +709,10 @@ end
 # completion resolver
 # ===================
 
-function lookup_method_from_data(data::MethodSignatureCompletionData)
-    modules = Base.loaded_modules_array()
-    checkbounds(Bool, modules, data.methodidx) || return nothing
-    mod = modules[data.moduleidx]
-    for name in data.names
-        name = Symbol(name)
-        isdefinedglobal(mod, name) || return nothing
-        mod = getglobal(mod, name)
-    end
-    methodname = Symbol(data.methodname)
-    isdefinedglobal(mod, methodname) || return nothing
-    mfunc = getglobal(mod, methodname)
-    ms = methods(mfunc)
-    checkbounds(Bool, ms, data.methodidx) || return nothing
-    return Pair{Any,Method}(mfunc, ms[data.methodidx])
-end
-
-function lookup_method_documentation(@nospecialize(mfunc), m::Method)
+function lookup_method_documentation(match::Core.MethodMatch)
+    m = match.method
+    isdefinedglobal(m.module, m.name) || return nothing
+    mfunc = getglobal(m.module, m.name)
     tt = Base.unwrap_unionall(m.sig)
     tt isa DataType || return nothing
     sig = Tuple{tt.parameters[2:end]...}
@@ -742,9 +723,11 @@ const builtin_functions = Core.Builtin[getglobal(Core, n) for n in names(Core) i
 const builtin_types = Type[getglobal(Core, n) for n in names(Core) if getglobal(Core, n) isa Type]
 
 function resolve_completion_item(state::ServerState, item::CompletionItem)
-    mod, postprocessor = @something load(state.completion_resolver_info) return item
+    completion_resolver_info = @something load(state.completion_resolver_info) return item
     data = item.data
-    if data isa GlobalCompletionData
+    if (data isa GlobalCompletionData && completion_resolver_info isa GlobalCompletionResolverInfo &&
+        data.resolver_id == completion_resolver_info.id)
+        (; mod, postprocessor) = completion_resolver_info
         name = Symbol(data.name)
         binding = Base.Docs.Binding(mod, name)
         docs = postprocessor(Base.Docs.doc(binding))
@@ -791,13 +774,16 @@ function resolve_completion_item(state::ServerState, item::CompletionItem)
             documentation = MarkupContent(;
                 kind = MarkupKind.Markdown,
                 value = docs))
-    elseif data isa MethodSignatureCompletionData
-        mfunc, m = @something lookup_method_from_data(data) return item
-        doc = @something lookup_method_documentation(mfunc, m) return item
-        documentation = string(doc)
-        _, result = infer_method!(CC.NativeInterpreter(Base.get_world_counter()), m)
-        tt = result.result
-        detail = "::" * postprocessor(string(CC.widenconst(tt)))
+    elseif (data isa MethodSignatureCompletionData &&
+            completion_resolver_info isa MethodSignatureCompletionResolverInfo &&
+            data.resolver_id == completion_resolver_info.id)
+        1 ≤ data.match_idx ≤ length(completion_resolver_info.matches) || return item # just to make sure
+        match = completion_resolver_info.matches[data.match_idx]
+        doc = @something lookup_method_documentation(match) return item
+        documentation = completion_resolver_info.postprocessor(string(doc))
+        _, result = infer_match!(CC.NativeInterpreter(Base.get_world_counter()), match)
+        rettyp = CC.widenconst(result.result)
+        detail = " -> " * completion_resolver_info.postprocessor(string(rettyp))
         return CompletionItem(item;
             labelDetails = CompletionItemLabelDetails(; detail, description = "method"),
             detail,
@@ -809,23 +795,8 @@ function resolve_completion_item(state::ServerState, item::CompletionItem)
     end
 end
 
-infer_method!(interp::CC.NativeInterpreter, m::Method) =
-    infer_method_signature!(interp, m, m.sig, method_sparams(m))
-
-function method_sparams(m::Method)
-    s = TypeVar[]
-    sig = m.sig
-    while isa(sig, UnionAll)
-        push!(s, sig.var)
-        sig = sig.body
-    end
-    return Core.svec(s...)
-end
-
-function infer_method_signature!(interp::CC.NativeInterpreter, m::Method, @nospecialize(atype), sparams::Core.SimpleVector)
-    mi = CC.specialize_method(m, atype, sparams)::Core.MethodInstance
-    return infer_method_instance!(interp, mi)
-end
+infer_match!(interp::CC.NativeInterpreter, match::Core.MethodMatch) =
+    infer_method_instance!(interp, CC.specialize_method(match))
 
 function infer_method_instance!(interp::CC.NativeInterpreter, mi::Core.MethodInstance)
     result = CC.InferenceResult(mi)

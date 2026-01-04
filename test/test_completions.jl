@@ -842,17 +842,6 @@ end
     end
 end
 
-@testset "MethodSignatureCompletionData de/serialization cycle" begin
-    modules = Base.loaded_modules_array()
-    for (i, m) in enumerate(methods(sin))
-        data = JETLS.prepare_method_signature_data(m, i, modules)
-        @test !isnothing(data)
-        mfunc, m′ = JETLS.lookup_method_from_data(data)
-        @test mfunc == sin
-        @test m == m′
-    end
-end
-
 @testset "method signature completion" begin
     get_newText(item::CompletionItem) =
         (@something item.textEdit return nothing).newText

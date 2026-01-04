@@ -486,6 +486,18 @@ function ConfigManagerData(
     return ConfigManagerData(file_config, lsp_config, file_config_path, initialized)
 end
 
+struct GlobalCompletionResolverInfo
+    id::String
+    mod::Module
+    postprocessor::LSPostProcessor
+end
+
+struct MethodSignatureCompletionResolverInfo
+    id::String
+    matches::CC.MethodLookupResult
+    postprocessor::LSPostProcessor
+end
+
 # Type aliases for document-synchronization caches using `SWContainer` (sequential-only updates)
 const FileCache = SWContainer{Base.PersistentDict{URI,FileInfo}, SWStats}
 const SavedFileCache = SWContainer{Base.PersistentDict{URI,SavedFileInfo}, SWStats}
@@ -496,7 +508,7 @@ const CellToNotebookMap = SWContainer{Base.PersistentDict{URI,URI}, SWStats} # c
 const ExtraDiagnostics = CASContainer{ExtraDiagnosticsData, CASStats}
 const CurrentlyRequested = CASContainer{Base.PersistentDict{String,RequestCaller}, CASStats}
 const CurrentlyRegistered = CASContainer{Set{Registered}, CASStats}
-const CompletionResolverInfo = CASContainer{Union{Nothing,Tuple{Module,LSPostProcessor}}, CASStats}
+const CompletionResolverInfo = CASContainer{Union{Nothing,GlobalCompletionResolverInfo,MethodSignatureCompletionResolverInfo}, CASStats}
 
 # Type aliases for concurrent updates using LWContainer (non-retriable operations)
 const ConfigManager = LWContainer{ConfigManagerData, LWStats}
