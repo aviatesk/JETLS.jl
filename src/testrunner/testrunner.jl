@@ -260,7 +260,7 @@ function testrunner_testcase_code_actions!(
                 tcr = jsobj_to_range(st0, fi; adjust_last=1) # +1 to support cases like `@test ...│`
                 overlap(action_range, tcr) || return nothing
                 tcl = JS.source_line(st0)
-                tct = "`" * JS.sourcetext(st0) * "`"
+                tct = backtick(JS.sourcetext(st0))
                 run_arguments = Any[uri, tcl, tct]
                 title = "$TESTRUNNER_RUN_TITLE $tct"
                 push!(code_actions, CodeAction(;

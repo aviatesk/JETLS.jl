@@ -116,6 +116,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   correctly infers `Int`). Note that local variable types are not yet resolved,
   (e.g., `let x = 1; sin(x,│); end` would still show all `sin` methods). (https://github.com/aviatesk/JETLS.jl/pull/436)
 
+- Signature help now displays the inferred argument type for the active
+  parameter. The parameter documentation shows the passed argument expression
+  and its type (e.g., `p ← (arg) :: Int64`).
+
 - Updated Revise.jl dependency version to v3.13.
 
 ### Fixed
