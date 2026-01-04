@@ -70,7 +70,10 @@ def extract_unreleased_content(commit: str = "", prev_commit: str = "") -> str:
     if commit and prev_commit:
         header = f"""- Commit: [`{commit}`](https://github.com/aviatesk/JETLS.jl/commit/{commit})
 - Diff: [`{prev_commit}...{commit}`](https://github.com/aviatesk/JETLS.jl/compare/{prev_commit}...{commit})
-- Installation: `julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="{commit}")'`
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="{commit}")'
+  ```
 
 """
         return header + unreleased_content
@@ -121,7 +124,10 @@ def update_changelog(version: str, commit: str, prev_commit: str) -> bool:
 
 - Commit: [`{commit}`](https://github.com/aviatesk/JETLS.jl/commit/{commit})
 - Diff: [`{prev_commit}...{commit}`](https://github.com/aviatesk/JETLS.jl/compare/{prev_commit}...{commit})
-- Installation: `julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="{commit}")'`
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="{commit}")'
+  ```
 
 """
 
