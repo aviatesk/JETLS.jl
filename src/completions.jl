@@ -783,6 +783,7 @@ function resolve_completion_item(state::ServerState, item::CompletionItem)
         documentation = completion_resolver_info.postprocessor(string(doc))
         _, result = infer_match!(CC.NativeInterpreter(Base.get_world_counter()), match)
         rettyp = CC.widenconst(result.result)
+        # TODO Show effects and exception type?
         detail = " -> " * completion_resolver_info.postprocessor(string(rettyp))
         return CompletionItem(item;
             labelDetails = CompletionItemLabelDetails(; detail, description = "method"),
