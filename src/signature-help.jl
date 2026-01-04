@@ -309,8 +309,11 @@ function make_siginfo(
     activeParameter =
         if active_arg === nothing # none
             nothing
-        elseif active_arg === missing # next pos arg if able
-            kwp_i > ca.kw_i ? ca.kw_i : nothing
+        elseif active_arg === missing # next pos arg if able (no semicolon)
+            # If the given positional argument list is larger than the positional parameter
+            # list, then use the position of the last parameter position, which is likely a
+            # vararg parameter, otherwise use the exact argument position.
+            max(1, ca.kw_i ≥ kwp_i ? kwp_i-1 : ca.kw_i)
         elseif active_arg in keys(ca.pos_map)
             lb, ub = get(ca.pos_map, active_arg, (1, nothing))
             if !isnothing(maybe_var_params) && lb >= maybe_var_params

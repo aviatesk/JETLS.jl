@@ -231,6 +231,14 @@ end
     @test 3 == active_parameter(M_highlight, "f(0, 1, 2, 3, x...│)")
     @test 3 == active_parameter(M_highlight, "f(0, 1, 2, x...│)")
 
+    @test 1 == active_parameter(M_highlight, "f1(0,│)")
+    @test 1 == active_parameter(M_highlight, "f1(0, 1│)")
+    @test 1 == active_parameter(M_highlight, "f1(0, 1,│)")
+    @test 1 == active_parameter(M_highlight, "f1(0, 1, 2│)")
+    @test 1 == active_parameter(M_highlight, "f1(0, 1, 2,│)")
+    @test 1 == active_parameter(M_highlight, "f1(0, 1, 2, 3│)")
+    @test 1 == active_parameter(M_highlight, "f1(0, 1, 2, 3,│)")
+
     # splat contains 0 or more args; use what we know
     @test nothing === active_parameter(M_highlight, "f(x...│, 0, 1, 2, 3, x...)")
     @test nothing === active_parameter(M_highlight, "f(x..., 0, 1, 2│, 3, x...)")
