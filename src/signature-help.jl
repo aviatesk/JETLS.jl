@@ -56,7 +56,7 @@ function flatten_args(call::JL.SyntaxTree)
         if !iskw
             push!(args, orig[i])
             kw_i += 1
-        elseif i === lastindex(orig) && iskw
+        elseif i == lastindex(orig) && iskw
             has_semicolon = true
             for p in filter(usable, JS.children(orig[i]))
                 push!(args, p)
@@ -156,7 +156,7 @@ struct CallArgs
     kind::JS.Kind
 end
 
-function CallArgs(st0::JL.SyntaxTree, cursor::Int)
+function CallArgs(st0::JL.SyntaxTree, cursor::Int=-1)
     @assert !(-1 in JS.byte_range(st0))
     args, kw_i, has_semicolon = flatten_args(st0)
     pos_map = Dict{Int, Tuple{Int, Union{Int, Nothing}}}()
@@ -165,7 +165,7 @@ function CallArgs(st0::JL.SyntaxTree, cursor::Int)
         if kind(args[i]) === K"..."
             ub = nothing
             pos_map[i] = (lb + 1, ub)
-        elseif !(kind(args[i]) in JS.KSet"= kw")
+        elseif kind(args[i]) ∉ JS.KSet"= kw"
             lb += 1
             !isnothing(ub) && (ub += 1)
             pos_map[i] = (lb, ub)
@@ -203,9 +203,7 @@ function compatible_method(m::Method, ca::CallArgs)
         # Filter out methods where user hasn't provided enough positional args
         # e.g., g(42;│) should not match g(x, y) which requires 2 positional args
         if !has_var_params
-            required_pos_args = count(1:kwp_i-1) do i
-                !(kind(params[i]) in JS.KSet"= kw ...")
-            end
+            required_pos_args = count(i::Int->kind(params[i]) ∉ JS.KSet"= kw ...", 1:kwp_i-1)
             !isnothing(ca.pos_args_ub) && ca.pos_args_ub < required_pos_args && return false
         end
     end
@@ -271,10 +269,10 @@ function make_paraminfo(p::JL.SyntaxTree)
         @assert JS.numchildren(p) == 2
         label = extract_kwarg_name(p; sig=true).name_val
     elseif kind(p) === K"::"
-        if JS.numchildren(p) === 1
+        if JS.numchildren(p) == 1
             documentation = "(unused) " * documentation
         else
-            @assert JS.numchildren(p) === 2
+            @assert JS.numchildren(p) == 2
             label = srcloc(p[1])
         end
     elseif kind(p) === K"..."
@@ -333,7 +331,7 @@ function make_siginfo(m::Method, ca::CallArgs, active_arg::Union{Int, Symbol};
             if !isnothing(maybe_var_params) && lb >= maybe_var_params
                 maybe_var_params
             else
-                lb === ub ? lb : nothing
+                lb == ub ? lb : nothing
             end
         elseif kind(ca.args[i]) === K"..."
             # splat after semicolon
@@ -535,7 +533,7 @@ function cursor_siginfos(mod::Module, fi::FileInfo, b::Int, analyzer::LSAnalyzer
     # exist.  Otherwise, highlight the param for the arg we're in.
     #
     # We don't keep commas---do we want the green node here?
-    active_arg = let no_args = ca.kw_i === 1,
+    active_arg = let no_args = ca.kw_i == 1,
         past_pos_args = no_args || b > JS.last_byte(ca.args[ca.kw_i - 1]) + 1
         if past_pos_args && !after_semicolon
             :next
