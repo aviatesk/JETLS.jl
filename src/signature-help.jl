@@ -121,7 +121,7 @@ expansion, but signature help is only used on unexpanded code.
 function find_kws(args::JL.SyntaxList, kw_i::Int; sig=false, cursor::Int=-1)
     out = Dict{String, Int}()
     for i in (sig ? (kw_i:lastindex(args)) : eachindex(args))
-        !(kind(args[i]) in JS.KSet"= kw") && i < kw_i && continue
+        kind(args[i]) ∉ JS.KSet"= kw" && i < kw_i && continue
         n = extract_kwarg_name(args[i]; sig)
         if !isnothing(n) && !(JS.first_byte(n) <= cursor <= JS.last_byte(n) + 1)
             out[n.name_val] = i
@@ -155,7 +155,7 @@ struct CallArgs
     has_semicolon::Bool
     kind::JS.Kind
     function CallArgs(st0::JL.SyntaxTree, cursor::Int=-1)
-        @assert !(-1 in JS.byte_range(st0))
+        @assert -1 ∉ JS.byte_range(st0)
         args, kw_i, has_semicolon = flatten_args(st0)
         pos_map = Dict{Int, Tuple{Int, Union{Int, Nothing}}}()
         lb = 0; ub = 0
@@ -275,7 +275,7 @@ end
 
 # active_arg is either an argument index, or :next (available pos. arg), or :none
 function make_siginfo(
-        m::Method, ca::CallArgs, active_arg::Union{Nothing,Missing,Int};
+        m::Method, ca::CallArgs, active_arg::Union{Nothing,Bool,Int};
         postprocessor::LSPostProcessor = LSPostProcessor()
     )
     msig = @something get_sig_str(m, ca)
@@ -309,11 +309,29 @@ function make_siginfo(
     activeParameter =
         if active_arg === nothing # none
             nothing
-        elseif active_arg === missing # next pos arg if able (no semicolon)
-            # If the given positional argument list is larger than the positional parameter
-            # list, then use the position of the last parameter position, which is likely a
-            # vararg parameter, otherwise use the exact argument position.
-            max(1, ca.kw_i ≥ kwp_i ? kwp_i-1 : ca.kw_i)
+        elseif active_arg isa Bool # next arg if able
+            if active_arg # After semicolon
+                # Find the first keyword parameter not in the given keyword argument list;
+                # fallback to variadic keyword parameter
+                local active_kw = maybe_var_kwp
+                rev_kwp_map = Pair{Int,String}[]
+                for (kw, i) in kwp_map
+                    push!(rev_kwp_map, i=>kw)
+                end
+                sort!(rev_kwp_map; by=first)
+                for (i, kw) in rev_kwp_map
+                    if kw ∉ keys(ca.kw_map)
+                        active_kw = i
+                        break
+                    end
+                end
+                active_kw
+            else
+                # If the given positional argument list is larger than the positional parameter
+                # list, then use the position of the last parameter position, which is likely a
+                # vararg parameter, otherwise use the exact argument position.
+                max(1, ca.kw_i ≥ kwp_i ? kwp_i-1 : ca.kw_i)
+            end
         elseif active_arg in keys(ca.pos_map)
             lb, ub = get(ca.pos_map, active_arg, (1, nothing))
             if !isnothing(maybe_var_params) && lb >= maybe_var_params
@@ -498,7 +516,7 @@ function cursor_siginfos(mod::Module, fi::FileInfo, b::Int, analyzer::LSAnalyzer
     call = cursor_call(fi.parsed_stream, st0, b)
     isnothing(call) && return empty_siginfos
     after_semicolon = let
-        params_i = findfirst(st -> kind(st) === K"parameters", JS.children(call))
+        params_i = findfirst(st::JL.SyntaxTree -> kind(st) === K"parameters", JS.children(call))
         !isnothing(params_i) && b > JS.first_byte(call[params_i])
     end
 
@@ -520,12 +538,14 @@ function cursor_siginfos(mod::Module, fi::FileInfo, b::Int, analyzer::LSAnalyzer
     # exist.  Otherwise, highlight the param for the arg we're in.
     #
     # We don't keep commas---do we want the green node here?
-    active_arg = let no_args = ca.kw_i == 1,
-        past_pos_args = no_args || b > JS.last_byte(ca.args[ca.kw_i - 1]) + 1
-        if past_pos_args && !after_semicolon
-            missing # next
-        else
-            findfirst(a::JL.SyntaxTree -> JS.first_byte(a) <= b <= JS.last_byte(a) + 1, ca.args)
+    no_args = ca.kw_i == 1
+    past_pos_args = no_args || b > JS.last_byte(ca.args[ca.kw_i - 1]) + 1
+    if past_pos_args && !after_semicolon
+        active_arg = false # before semicolon, highlight next positional arg
+    else
+        active_arg = findfirst(a::JL.SyntaxTree -> JS.first_byte(a) <= b <= JS.last_byte(a) + 1, ca.args)
+        if active_arg === nothing && after_semicolon
+            active_arg = true # after semicolon, highlight next keyword arg
         end
     end
 

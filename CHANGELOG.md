@@ -96,10 +96,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Improved type resolver robustness, eliminating `UndefVarError` messages that
   could appear in server logs during signature help. Fixed https://github.com/aviatesk/JETLS.jl/issues/391. (https://github.com/aviatesk/JETLS.jl/pull/435)
-- Fixed signature help parameter highlighting for vararg functions. When the
-  number of positional arguments exceeds the number of positional parameters,
-  the last (vararg) parameter is now correctly highlighted instead of showing
-  no highlight (e.g. `println(stdout,"foo","bar",│)`).
+
+- Fixed signature help parameter highlighting when cursor is not inside any
+  argument. For positional arguments exceeding the parameter count, the last
+  (vararg) parameter is now highlighted (e.g. `println(stdout,"foo","bar",│)`).
+  For keyword arguments after a semicolon, the next unspecified keyword
+  parameter is highlighted (e.g., `printstyled("foo"; bold=true,│)` highlights `italic`).
 
 ## 2026-01-01
 
