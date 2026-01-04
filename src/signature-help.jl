@@ -251,41 +251,25 @@ end
 # LSP objects and handler
 # =======================
 
-function make_paraminfo(p::JL.SyntaxTree)
-    # A parameter's `label` is either a string the client searches for, or
-    # an inclusive-exclusive range within in the signature.
-    srcloc = (x::JL.SyntaxTree) -> let r = JS.byte_range(x);
-        [UInt(r.start-1), UInt(r.stop)]
+function make_paraminfo(param::JL.SyntaxTree)
+    label = let r = JS.byte_range(param)
+        UInt[UInt(r.start-1), UInt(r.stop)]
     end
-
-    # defaults: whole parameter expression
-    label = srcloc(p)
-    documentation = string('`', JS.sourcetext(p), '`')
-
-    if JS.is_leaf(p)
+    if JS.is_leaf(param)
         documentation = nothing
-    elseif kind(p) in JS.KSet"= kw"
-        @assert JS.numchildren(p) == 2
-        label = extract_kwarg_name(p; sig=true).name_val
-    elseif kind(p) === K"::"
-        if JS.numchildren(p) == 1
-            documentation = "(unused) " * documentation
-        else
-            @assert JS.numchildren(p) == 2
-            label = srcloc(p[1])
+    else
+        docs = string('`', JS.sourcetext(param), '`')
+        if kind(param) === K"::" && JS.numchildren(param) == 1
+            docs = "(unused) " * docs
         end
-    elseif kind(p) === K"..."
-        label = make_paraminfo(p[1]).label
+        documentation = MarkupContent(;
+            kind = MarkupKind.Markdown,
+            value = docs)
     end
     # do clients tolerate string labels better?
     # if !isa(label, String)
     #     label = string(p.source.file[label[1]+1:label[2]])
     # end
-    if documentation !== nothing
-        documentation = MarkupContent(;
-            kind = MarkupKind.Markdown,
-            value = documentation)
-    end
     return ParameterInformation(; label, documentation)
 end
 
