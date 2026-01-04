@@ -274,8 +274,10 @@ function make_paraminfo(param::JL.SyntaxTree)
 end
 
 # active_arg is either an argument index, or :next (available pos. arg), or :none
-function make_siginfo(m::Method, ca::CallArgs, active_arg::Union{Int, Symbol};
-                      postprocessor::LSPostProcessor = LSPostProcessor())
+function make_siginfo(
+        m::Method, ca::CallArgs, active_arg::Union{Nothing,Missing,Int};
+        postprocessor::LSPostProcessor = LSPostProcessor()
+    )
     msig = @something get_sig_str(m, ca)
     msig = postprocessor(msig)
     mnode = JS.parsestmt(JL.SyntaxTree, msig; ignore_errors=true)
@@ -304,30 +306,29 @@ function make_siginfo(m::Method, ca::CallArgs, active_arg::Union{Int, Symbol};
     kwp_map = find_kws(params, kwp_i; sig=true)
 
     # Map active arg to active param, or nothing
-    activeParameter = let i = active_arg
-        if i === :none
+    activeParameter =
+        if active_arg === nothing # none
             nothing
-        elseif i === :next # next pos arg if able
+        elseif active_arg === missing # next pos arg if able
             kwp_i > ca.kw_i ? ca.kw_i : nothing
-        elseif i in keys(ca.pos_map)
-            lb, ub = get(ca.pos_map, i, (1, nothing))
+        elseif active_arg in keys(ca.pos_map)
+            lb, ub = get(ca.pos_map, active_arg, (1, nothing))
             if !isnothing(maybe_var_params) && lb >= maybe_var_params
                 maybe_var_params
             else
                 lb == ub ? lb : nothing
             end
-        elseif kind(ca.args[i]) === K"..."
+        elseif kind(ca.args[active_arg]) === K"..."
             # splat after semicolon
             maybe_var_kwp
-        elseif kind(ca.args[i]) in JS.KSet"= kw" || i >= ca.kw_i
-            n = extract_kwarg_name(ca.args[i]).name_val # we don't have a backwards mapping
+        elseif kind(ca.args[active_arg]) in JS.KSet"= kw" || active_arg >= ca.kw_i
+            n = extract_kwarg_name(ca.args[active_arg]).name_val # we don't have a backwards mapping
             out = get(kwp_map, n, nothing)
             isnothing(out) ? maybe_var_kwp : out
         else
-            JETLS_DEBUG_LOWERING && @info "No active arg" i ca.args[i]
+            JETLS_DEBUG_LOWERING && @info "No active arg" active_arg ca.args[active_arg]
             nothing
         end
-    end
 
     !isnothing(activeParameter) && (activeParameter -= 1) # shift to 0-based
     parameters = map(make_paraminfo, params)
@@ -519,10 +520,9 @@ function cursor_siginfos(mod::Module, fi::FileInfo, b::Int, analyzer::LSAnalyzer
     active_arg = let no_args = ca.kw_i == 1,
         past_pos_args = no_args || b > JS.last_byte(ca.args[ca.kw_i - 1]) + 1
         if past_pos_args && !after_semicolon
-            :next
+            missing # next
         else
-            arg_i = findfirst(a -> JS.first_byte(a) <= b <= JS.last_byte(a) + 1, ca.args)
-            isnothing(arg_i) ? :none : arg_i
+            findfirst(a::JL.SyntaxTree -> JS.first_byte(a) <= b <= JS.last_byte(a) + 1, ca.args)
         end
     end
 
