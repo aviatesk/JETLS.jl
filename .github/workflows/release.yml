@@ -110,16 +110,27 @@ jobs:
         with:
           ref: release
 
-      - name: Extract version
-        id: version
+      - name: Extract release info
+        id: release_info
         run: |
           VERSION=$(cat JETLS_VERSION)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
+          # Get the merge commit SHA (short form)
+          MERGE_COMMIT="${{ github.event.pull_request.merge_commit_sha }}"
+          SHORT_SHA="${MERGE_COMMIT:0:7}"
+          echo "commit=$SHORT_SHA" >> $GITHUB_OUTPUT
+
+          # Get the previous release commit from the Unreleased diff link
+          PREV_COMMIT=$(grep -oP '(?<=Diff: \[`)[a-f0-9]+(?=\.\.\.HEAD)' CHANGELOG.md | head -1)
+          echo "prev_commit=$PREV_COMMIT" >> $GITHUB_OUTPUT
+
       - name: Extract release notes from CHANGELOG
         id: notes
         run: |
-          NOTES=$(python3 scripts/update-changelog.py --extract-unreleased)
+          COMMIT="${{ steps.release_info.outputs.commit }}"
+          PREV_COMMIT="${{ steps.release_info.outputs.prev_commit }}"
+          NOTES=$(python3 scripts/update-changelog.py --extract-unreleased "$COMMIT" "$PREV_COMMIT")
           # Use heredoc to handle multiline content
           {
             echo 'content<<EOF'
@@ -132,11 +143,34 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_NOTES: ${{ steps.notes.outputs.content }}
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
+          VERSION="${{ steps.release_info.outputs.version }}"
           gh release create "$VERSION" \
             --target release \
             --title "$VERSION" \
             --notes "$RELEASE_NOTES"
+
+      - name: Strip Announcement from previous release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Find the previous release tag (date-based version before current)
+          PREV_TAG=$(gh release list --limit 10 --json tagName --jq '.[].tagName' | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' | head -1)
+          if [ -z "$PREV_TAG" ]; then
+            echo "No previous release found, skipping"
+            exit 0
+          fi
+          echo "Updating previous release: $PREV_TAG"
+          # Get current release notes
+          PREV_NOTES=$(gh release view "$PREV_TAG" --json body --jq '.body')
+          # Strip announcement section
+          NEW_NOTES=$(echo "$PREV_NOTES" | python3 scripts/update-changelog.py --strip-announcement)
+          # Update the release if notes changed
+          if [ "$PREV_NOTES" != "$NEW_NOTES" ]; then
+            gh release edit "$PREV_TAG" --notes "$NEW_NOTES"
+            echo "Announcement stripped from $PREV_TAG"
+          else
+            echo "No Announcement section found in $PREV_TAG"
+          fi
 
   update-changelog:
     name: Update CHANGELOG on master
