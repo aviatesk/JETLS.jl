@@ -323,12 +323,21 @@ func(x::Int) = x
 func(x::Int, y::Int) = x + y
 func(x::Float64) = x
 func(x::Float64, y::Float64) = x + y
+
+kwfunc(x::Int, y::Int; kw1=nothing, kw2=nothing) = x, kw1
+kwfunc(x::Float64, y::Float64; kw1=nothing, kw2=nothing) = x, kw1
 end
 @testset "Argument type based filtering" begin
     @test 2 == n_si(M_argtype_filtering, "func(1,│)")
     @test 1 == n_si(M_argtype_filtering, "func(1,2,│)")
     @test 2 == n_si(M_argtype_filtering, "func(gx1,│)")
     @test 1 == n_si(M_argtype_filtering, "func(gx1,gx2,│)")
+    @test 1 == n_si(M_argtype_filtering, "kwfunc(1,│)")
+    @test 1 == n_si(M_argtype_filtering, "kwfunc(1,2,│)")
+    @test 1 == n_si(M_argtype_filtering, "kwfunc(1,kw1=nothing,│)")
+    @test 1 == n_si(M_argtype_filtering, "kwfunc(1,kw1=nothing,2,│)")
+    @test 1 == n_si(M_argtype_filtering, "kwfunc(1,2;│)")
+    @test 1 == n_si(M_argtype_filtering, "kwfunc(1,2; kw1=nothing,│)")
     @test_broken 2 == n_si(M_argtype_filtering, "let x = 1; func(x,│); end")
 end
 
