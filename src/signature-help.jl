@@ -154,25 +154,24 @@ struct CallArgs
     kw_map::Dict{String, Int}
     has_semicolon::Bool
     kind::JS.Kind
-end
-
-function CallArgs(st0::JL.SyntaxTree, cursor::Int=-1)
-    @assert !(-1 in JS.byte_range(st0))
-    args, kw_i, has_semicolon = flatten_args(st0)
-    pos_map = Dict{Int, Tuple{Int, Union{Int, Nothing}}}()
-    lb = 0; ub = 0
-    for i in eachindex(args[1:kw_i-1])
-        if kind(args[i]) === K"..."
-            ub = nothing
-            pos_map[i] = (lb + 1, ub)
-        elseif kind(args[i]) ∉ JS.KSet"= kw"
-            lb += 1
-            !isnothing(ub) && (ub += 1)
-            pos_map[i] = (lb, ub)
+    function CallArgs(st0::JL.SyntaxTree, cursor::Int=-1)
+        @assert !(-1 in JS.byte_range(st0))
+        args, kw_i, has_semicolon = flatten_args(st0)
+        pos_map = Dict{Int, Tuple{Int, Union{Int, Nothing}}}()
+        lb = 0; ub = 0
+        for i in eachindex(args[1:kw_i-1])
+            if kind(args[i]) === K"..."
+                ub = nothing
+                pos_map[i] = (lb + 1, ub)
+            elseif kind(args[i]) ∉ JS.KSet"= kw"
+                lb += 1
+                !isnothing(ub) && (ub += 1)
+                pos_map[i] = (lb, ub)
+            end
         end
+        kw_map = find_kws(args, kw_i; sig=false, cursor)
+        new(args, kw_i, pos_map, lb, ub, kw_map, has_semicolon, kind(st0))
     end
-    kw_map = find_kws(args, kw_i; sig=false, cursor)
-    CallArgs(args, kw_i, pos_map, lb, ub, kw_map, has_semicolon, kind(st0))
 end
 
 """
