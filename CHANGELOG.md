@@ -54,7 +54,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Lazy resolution via `completionItem/resolve` adds inferred return type and
   documentation. (https://github.com/aviatesk/JETLS.jl/pull/428)
 
-  https://github.com/user-attachments/assets/19d320a6-459f-4788-9669-d3936920b625
+  <https://github.com/user-attachments/assets/19d320a6-459f-4788-9669-d3936920b625>
 
 - Keyword argument name completion for function calls. When typing inside a
   function call (e.g., `func(; |)` or `func(k|)`), available keyword arguments
@@ -62,7 +62,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   suggestions, and the spacing around `=` follows the existing style in the call.
   (https://github.com/aviatesk/JETLS.jl/pull/427)
 
-  https://github.com/user-attachments/assets/d3cdecea-d2eb-4d14-9043-6bc62a6f2833
+  <https://github.com/user-attachments/assets/d3cdecea-d2eb-4d14-9043-6bc62a6f2833>
 
 - Added `completion.latex_emoji.strip_prefix` configuration option to control
   prefix stripping in LaTeX/emoji completions. Some editors (e.g., Zed) don't
@@ -101,7 +101,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
   > Demo with [aviatesk/zed-julia](https://github.com/aviatesk/zed-julia)
 
-  https://github.com/user-attachments/assets/a39d7bc5-c46e-40c8-a9ee-0458b3abdcae
+  <https://github.com/user-attachments/assets/a39d7bc5-c46e-40c8-a9ee-0458b3abdcae>
 
 - Improved signature help filtering when a semicolon is present in function calls.
   Methods that require more positional arguments than provided are now filtered
@@ -313,7 +313,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
   > JETLS × notebook LSP demo
 
-  https://github.com/user-attachments/assets/b5bb5201-d735-4a37-b430-932b519254ee
+  <https://github.com/user-attachments/assets/b5bb5201-d735-4a37-b430-932b519254ee>
 
 ### Fixed
 
