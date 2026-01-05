@@ -385,7 +385,7 @@ function add_emoji_latex_completions!(
 
     function create_ci(key, val, is_emoji::Bool)
         description = is_emoji ? "emoji" : "latex-symbol"
-        helpText = client_supports_sort_text ? key : lstrip(lstrip(key, '\\'), ':')
+        helpText = client_supports_sort_text ? key : rstrip(lstrip(lstrip(key, '\\'), ':'), ':')
         return CompletionItem(;
             label = helpText,
             labelDetails = CompletionItemLabelDetails(;
