@@ -133,7 +133,7 @@ in your editor. JETLS uses hierarchical diagnostic codes in the format
 to allow fine-grained control over which diagnostics to show and at what
 severity level.
 
-See the [Diagnostic](@ref) section for complete diagnostic reference
+See the [Diagnostic](@ref diagnostic) section for complete diagnostic reference
 including all available codes, their meanings, and examples.
 
 #### [`[diagnostic] enabled`](@id config/diagnostic-enabled)
@@ -155,8 +155,8 @@ enabled = false  # Disable all diagnostics
 - **Default**: `true`
 
 When enabled, unused variable diagnostics
-([`lowering/unused-argument`](@ref diagnostic/lowering/unused-argument) and
-[`lowering/unused-local`](@ref diagnostic/lowering/unused-local)) are suppressed
+([`lowering/unused-argument`](@ref diagnostic/reference/lowering/unused-argument) and
+[`lowering/unused-local`](@ref diagnostic/reference/lowering/unused-local)) are suppressed
 for names starting with `_` (underscore). This follows the common convention
 in many programming languages where `_`-prefixed names indicate intentionally
 unused variables.
@@ -169,9 +169,9 @@ allow_unused_underscore = false  # Report all unused variables
 #### [`[[diagnostic.patterns]]`](@id config/diagnostic-patterns)
 
 Fine-grained control over diagnostics through pattern matching against either
-[diagnostic codes](@ref diagnostic-code) or messages.
+[diagnostic codes](@ref diagnostic/code) or messages.
 
-See the [diagnostic reference](@ref diagnostic-reference) section for
+See the [diagnostic reference](@ref diagnostic/reference) section for
 a complete list of all available diagnostic codes, their default severity
 levels, and detailed explanations with examples.
 
@@ -193,7 +193,7 @@ path = "src/**/*.jl"       # string (optional): restrict to specific files
   patterns like `"Macro name .* not found"`. This value is also used as the key
   when [merging configurations](@ref config/merge) from different sources.
 - `match_by` (**Type**: string): What to match against
-  - `"code"`: Match against [diagnostic code](@ref diagnostic-code) (e.g., `"lowering/unused-argument"`)
+  - `"code"`: Match against [diagnostic code](@ref diagnostic/code) (e.g., `"lowering/unused-argument"`)
   - `"message"`: Match against diagnostic message text
 - `match_type` (**Type**: string): How to interpret the pattern
   - `"literal"`: Exact string match
@@ -207,7 +207,7 @@ path = "src/**/*.jl"       # string (optional): restrict to specific files
 
 ##### Severity values
 
-[Severity level](@ref diagnostic-severity) to apply.
+[Severity level](@ref diagnostic/severity) to apply.
 Can be specified using either string or number values:
 
 - `"error"` or `1`: Critical issues that prevent code from working correctly
@@ -327,7 +327,7 @@ severity = "off"
 path = "gen/**/*.jl"
 ```
 
-See the [configuring diagnostics](@ref configuring-diagnostic) section for
+See the [configuring diagnostics](@ref diagnostic/configuring) section for
 additional examples and common use cases.
 
 ### [`[completion]`](@id config/completion)
