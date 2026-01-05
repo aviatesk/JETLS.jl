@@ -45,11 +45,11 @@ def split_announcement_and_entries(text: str) -> tuple[str, str]:
     return "", text.strip()
 
 
-def extract_unreleased_content(commit: str = "", prev_commit: str = "") -> str:
+def extract_unreleased_content(version: str = "", commit: str = "", prev_commit: str = "") -> str:
     """Extract full content from the Unreleased section for GitHub Release notes.
 
     This includes the Announcement section and all changelog entries.
-    If commit and prev_commit are provided, a metadata header is prepended.
+    If version, commit and prev_commit are provided, a metadata header is prepended.
     """
     with open('CHANGELOG.md', 'r') as f:
         content = f.read()
@@ -66,13 +66,13 @@ def extract_unreleased_content(commit: str = "", prev_commit: str = "") -> str:
 
     unreleased_content = match.group(2).strip()
 
-    # Prepend metadata header if commit info is provided
-    if commit and prev_commit:
+    # Prepend metadata header if release info is provided
+    if version and commit and prev_commit:
         header = f"""- Commit: [`{commit}`](https://github.com/aviatesk/JETLS.jl/commit/{commit})
 - Diff: [`{prev_commit}...{commit}`](https://github.com/aviatesk/JETLS.jl/compare/{prev_commit}...{commit})
 - Installation:
   ```bash
-  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="{commit}")'
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="{version}")'
   ```
 
 """
@@ -126,7 +126,7 @@ def update_changelog(version: str, commit: str, prev_commit: str) -> bool:
 - Diff: [`{prev_commit}...{commit}`](https://github.com/aviatesk/JETLS.jl/compare/{prev_commit}...{commit})
 - Installation:
   ```bash
-  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="{commit}")'
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="{version}")'
   ```
 
 """
@@ -181,10 +181,11 @@ def main() -> int:
         return 0
 
     if len(sys.argv) >= 2 and sys.argv[1] == '--extract-unreleased':
-        # Optional: --extract-unreleased <commit> <prev_commit>
-        commit = sys.argv[2] if len(sys.argv) > 2 else ""
-        prev_commit = sys.argv[3] if len(sys.argv) > 3 else ""
-        content = extract_unreleased_content(commit, prev_commit)
+        # Optional: --extract-unreleased <version> <commit> <prev_commit>
+        version = sys.argv[2] if len(sys.argv) > 2 else ""
+        commit = sys.argv[3] if len(sys.argv) > 3 else ""
+        prev_commit = sys.argv[4] if len(sys.argv) > 4 else ""
+        content = extract_unreleased_content(version, commit, prev_commit)
         if content:
             print(content)
             return 0
@@ -192,7 +193,7 @@ def main() -> int:
 
     if len(sys.argv) != 4:
         print(f"Usage: {sys.argv[0]} <version> <commit> <prev_commit>")
-        print(f"       {sys.argv[0]} --extract-unreleased [<commit> <prev_commit>]")
+        print(f"       {sys.argv[0]} --extract-unreleased [<version> <commit> <prev_commit>]")
         print(f"       {sys.argv[0]} --strip-announcement < input.md")
         print(f"Example: {sys.argv[0]} 2025-11-26 6bc34f1 2be0cff")
         return 1

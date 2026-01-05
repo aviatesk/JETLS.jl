@@ -128,9 +128,10 @@ jobs:
       - name: Extract release notes from CHANGELOG
         id: notes
         run: |
+          VERSION="${{ steps.release_info.outputs.version }}"
           COMMIT="${{ steps.release_info.outputs.commit }}"
           PREV_COMMIT="${{ steps.release_info.outputs.prev_commit }}"
-          NOTES=$(python3 scripts/update-changelog.py --extract-unreleased "$COMMIT" "$PREV_COMMIT")
+          NOTES=$(python3 scripts/update-changelog.py --extract-unreleased "$VERSION" "$COMMIT" "$PREV_COMMIT")
           # Use heredoc to handle multiline content
           {
             echo 'content<<EOF'
