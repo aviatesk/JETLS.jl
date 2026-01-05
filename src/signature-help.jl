@@ -251,21 +251,24 @@ end
 # LSP objects and handler
 # =======================
 
-function make_paraminfo(param::JL.SyntaxTree)
+function make_paraminfo(
+        param::JL.SyntaxTree, active_argtree::Union{Nothing,JL.SyntaxTree},
+        @nospecialize(active_argtype), postprocessor::LSPostProcessor
+    )
     label = let r = JS.byte_range(param)
         UInt[UInt(r.start-1), UInt(r.stop)]
     end
-    if JS.is_leaf(param)
-        documentation = nothing
-    else
-        docs = string('`', JS.sourcetext(param), '`')
-        if kind(param) === K"::" && JS.numchildren(param) == 1
-            docs = "(unused) " * docs
+    docs = backtick(JS.sourcetext(param))
+    if !isnothing(active_argtree)
+        argrepr = JS.sourcetext(active_argtree)
+        if !isnothing(active_argtype)
+            argrepr = string('(', argrepr, ')', " :: ", postprocessor(string(active_argtype)))
         end
-        documentation = MarkupContent(;
-            kind = MarkupKind.Markdown,
-            value = docs)
+        docs *= " ← " * backtick(argrepr)
     end
+    documentation = MarkupContent(;
+        kind = MarkupKind.Markdown,
+        value = docs)
     # do clients tolerate string labels better?
     # if !isa(label, String)
     #     label = string(p.source.file[label[1]+1:label[2]])
@@ -275,7 +278,7 @@ end
 
 # active_arg is either an argument index, or :next (available pos. arg), or :none
 function make_siginfo(
-        m::Method, ca::CallArgs, active_arg::Union{Nothing,Bool,Int};
+        m::Method, ca::CallArgs, active_arg::Union{Nothing,Bool,Int}, argtypes::Vector{Any};
         postprocessor::LSPostProcessor = LSPostProcessor()
     )
     msig = @something get_sig_str(m, ca)
@@ -351,8 +354,14 @@ function make_siginfo(
             nothing
         end
 
-    !isnothing(activeParameter) && (activeParameter -= 1) # shift to 0-based
-    parameters = map(make_paraminfo, params)
+    parameters = ParameterInformation[]
+    for (i, param) in enumerate(params)
+        isactive = !isnothing(activeParameter) && activeParameter == i
+        active_argtree = isactive && checkbounds(Bool, ca.args, activeParameter) ? ca.args[activeParameter] : nothing
+        active_argtype = isactive && checkbounds(Bool, argtypes, activeParameter) ? argtypes[activeParameter] : nothing
+        push!(parameters, make_paraminfo(param, active_argtree, active_argtype, postprocessor))
+    end
+    isnothing(activeParameter) || (activeParameter -= 1) # shift to 0-based
     return SignatureInformation(; label, documentation, parameters, activeParameter)
 end
 
@@ -528,6 +537,7 @@ function cursor_siginfos(mod::Module, fi::FileInfo, b::Int, analyzer::LSAnalyzer
     ca = CallArgs(call, b)
 
     argtypes = collect_call_argtypes(analyzer, mod, ca)
+    argtypes′ = copy(argtypes)
     fixup_argtypes!(argtypes, fntyp)
     matches = find_all_matches(argtypes)
     isempty(matches) && return empty_siginfos
@@ -553,7 +563,7 @@ function cursor_siginfos(mod::Module, fi::FileInfo, b::Int, analyzer::LSAnalyzer
     for match in matches
         m = match.method
         compatible_method(m, ca) || continue
-        siginfo = make_siginfo(m, ca, active_arg; postprocessor)
+        siginfo = make_siginfo(m, ca, active_arg, argtypes′; postprocessor)
         if siginfo !== nothing
             push!(out, siginfo)
         end
