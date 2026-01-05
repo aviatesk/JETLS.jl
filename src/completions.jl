@@ -375,21 +375,19 @@ function add_emoji_latex_completions!(
         start = backslash_pos,
         var"end" = pos))
 
-    # HACK Certain clients cannot properly sort/filter completion items that contain
-    # characters like `\\` or `:`. To help with this, setting `sortText` or `filterText`,
-    # or removing `\\` or `:` from the `label`, can cause completion to not trigger
-    # in other clients (for example, VSCode falls into this category)...
-    # To quickly absorb the differences between each client, we enumerate clients that
-    # properly implement `filterText`/`sortText` here, and set `sortText`/`filterText`
-    # for those specific clients.
+    # HACK Some clients (e.g., Zed) don't properly use `sortText` for completion items
+    # containing `\\` or `:`, falling back to `label`-based sorting. For these clients,
+    # we strip `\\` and `:` from `label` so sorting works correctly.
+    # Other clients (e.g., VSCode) properly use `sortText`, so we keep `label` as-is.
     # TODO This should be configurable in the future.
-    use_smart_filter = getobjpath(state, :init_params, :clientInfo, :name) ∉ ("Zed", "Zed Dev")
+    client_supports_sort_text =
+        getobjpath(state, :init_params, :clientInfo, :name) ∉ ("Zed", "Zed Dev")
 
     function create_ci(key, val, is_emoji::Bool)
         description = is_emoji ? "emoji" : "latex-symbol"
-        helpText = use_smart_filter ? nothing : lstrip(lstrip(key, '\\'), ':')
+        helpText = client_supports_sort_text ? key : lstrip(lstrip(key, '\\'), ':')
         return CompletionItem(;
-            label = key,
+            label = helpText,
             labelDetails = CompletionItemLabelDetails(;
                 description),
             kind = CompletionItemKind.Snippet,
