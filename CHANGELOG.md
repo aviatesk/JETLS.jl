@@ -23,12 +23,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Announcement
 
-> [!note]
-> To install or update JETLS to the latest version, run:
-> ```bash
-> julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="release")'
-> ```
-
 > [!warning]
 > JETLS currently has a known memory leak issue where memory usage grows with
 > each re-analysis (https://github.com/aviatesk/JETLS.jl/issues/357).
