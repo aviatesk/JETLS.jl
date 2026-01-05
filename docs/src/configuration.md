@@ -364,9 +364,9 @@ option.
 strip_prefix = true  # Force prefix stripping for clients with sortText issues
 ```
 
-!!! tip
+!!! tip "Help improve auto-detection"
     If explicitly setting this option clearly improves behavior for your client,
-    consider submitting a PR to add your client to the auto-detection logic.
+    consider submitting a PR to add your client to the [auto-detection](https://github.com/aviatesk/JETLS.jl/blob/14fdc847252579c27e41cd50820aee509f8fd7bd/src/completions.jl#L386) logic.
 
 #### [`[completion.method_signature] prepend_inference_result`](@id config/completion-method_signature-prepend_inference_result)
 
@@ -396,9 +396,9 @@ explicitly setting this option.
 prepend_inference_result = true  # Show return type in documentation
 ```
 
-!!! tip
+!!! tip "Help improve auto-detection"
     If explicitly setting this option clearly improves behavior for your client,
-    consider submitting a PR to add your client to the auto-detection logic.
+    consider submitting a PR to add your client to the [auto-detection](https://github.com/aviatesk/JETLS.jl/blob/14fdc847252579c27e41cd50820aee509f8fd7bd/src/completions.jl#L386) logic.
 
 ### [`[testrunner]`](@id config/testrunner)
 

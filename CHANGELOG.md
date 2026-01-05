@@ -82,11 +82,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   so users experiencing visibility issues should explicitly set this option.
 
 > [!tip]
+> **Help improve auto-detection**:
+>
 > Some completion configuration options (e.g., `completion.latex_emoji.strip_prefix`,
 > `completion.method_signature.prepend_inference_result`) use client-based
 > auto-detection for default behavior. If explicitly setting these options clearly
 > improves behavior for your client, consider submitting a PR to add your client
-> to the auto-detection logic.
+> to the [auto-detection](https://github.com/aviatesk/JETLS.jl/blob/14fdc847252579c27e41cd50820aee509f8fd7bd/src/completions.jl#L386) logic.
 
 ### Changed
 
