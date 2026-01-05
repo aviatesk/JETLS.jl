@@ -514,20 +514,16 @@ function select_target_string(st0::JL.SyntaxTree, offset::Int)
 end
 
 function select_target_node(filter, selector, st0::JL.SyntaxTree, offset::Int)
-    bas = byte_ancestors(st0, offset)
-
-    isempty(bas) && @goto minus1
+    bas = @somereal byte_ancestors(st0, offset) @goto minus1
     if !filter(bas)
         @label minus1
         offset > 0 || return nothing
         # Support cases like `var│`, `func│(5)`
-        bas = byte_ancestors(st0, offset - 1)
-        isempty(bas) && return nothing
+        bas = @somereal byte_ancestors(st0, offset - 1) return nothing
         if !filter(bas)
             return nothing
         end
     end
-
     return selector(bas)
 end
 

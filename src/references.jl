@@ -71,7 +71,7 @@ function do_find_references_with_progress(
     locations = find_references(server, uri, fi, pos; token, include_declaration)
     return send(server, ReferencesResponse(;
         id = msg_id,
-        result = isempty(locations) ? null : locations))
+        result = @somereal locations null))
 end
 
 function do_find_references(
@@ -80,7 +80,7 @@ function do_find_references(
     locations = find_references(server, uri, fi, pos; include_declaration)
     return send(server, ReferencesResponse(;
         id = msg_id,
-        result = isempty(locations) ? null : locations))
+        result = @somereal locations null))
 end
 
 function find_references(

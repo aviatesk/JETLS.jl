@@ -43,4 +43,58 @@ end
     @test !JETLS.is_abstract_fieldtype(Vector{TypeVar(:T)}) # For cases like `struct A{T}; xs::Vector{T}; end`
 end
 
+maybenothing(x) = rand((x, nothing))
+maybemissing(x) = rand((x, missing))
+
+@testset "@somereal" begin
+    @test_throws "No values present" JETLS.@somereal
+    let cnt = 0
+        nonreal(x) = (cnt += x; nothing)
+        a = 3
+        @test 3 == JETLS.@somereal a nonreal(1) nonreal(2)
+        @test cnt == 0
+        @test 3 == JETLS.@somereal a nonreal(1) nonreal(2) error("Unable to find default for `a`")
+        @test cnt == 0
+        @test 3 == JETLS.@somereal nonreal(1) nonreal(2) a
+        @test cnt == 3
+        @test 3 == JETLS.@somereal nonreal(1) nonreal(2) a error("Unable to find default for `a`")
+        @test cnt == 6
+    end
+    let cnt = 0
+        nonreal(x) = (cnt += x; nothing)
+        a = missing
+        @test_throws "Unable to find default for `a`" JETLS.@somereal a nonreal(1) nonreal(2) error("Unable to find default for `a`")
+        @test cnt == 3
+        @test_throws "No values present" JETLS.@somereal a nonreal(1) nonreal(2)
+        @test cnt == 6
+        @test_throws "Unable to find default for `a`" JETLS.@somereal nonreal(1) nonreal(2) a error("Unable to find default for `a`")
+        @test cnt == 9
+        @test_throws "No values present" JETLS.@somereal nonreal(1) nonreal(2) a
+        @test cnt == 12
+    end
+    let cnt = 0
+        nonreal(x) = (cnt += x; nothing)
+        a = Int[]
+        @test [1,2] == JETLS.@somereal a [1,2] nonreal(1)
+        @test cnt == 0
+        @test [1,2] == JETLS.@somereal a nonreal(1) [1,2]
+        @test cnt == 1
+        @test_throws "No values present" JETLS.@somereal a nonreal(1)
+        @test cnt == 2
+    end
+
+    @test Int == Base.infer_return_type((Int,)) do x
+        JETLS.@somereal maybenothing(x)
+    end
+    @test Int == Base.infer_return_type((Int,Int,)) do x, y
+        JETLS.@somereal maybenothing(x) maybenothing(y)
+    end
+    @test Int == Base.infer_return_type((Int,)) do x
+        JETLS.@somereal maybemissing(x)
+    end
+    @test Int == Base.infer_return_type((Int,Int,)) do x, y
+        JETLS.@somereal maybemissing(x) maybemissing(y)
+    end
+end
+
 end # module test_general

@@ -380,11 +380,10 @@ function add_emoji_latex_completions!(
     # we strip `\\` and `:` from `label` so sorting works correctly.
     # Other clients (e.g., VSCode) properly handles `\` character appearing in `sortText`,
     # so we keep `label` as-is.
-    strip_prefix = get_config(state.config_manager, :completion, :latex_emoji, :strip_prefix)
-    if strip_prefix === missing
+    strip_prefix = @somereal(
+        get_config(state.config_manager, :completion, :latex_emoji, :strip_prefix),
         # auto-detect based on client
-        strip_prefix = getobjpath(state, :init_params, :clientInfo, :name) ∈ ("Zed", "Zed Dev")
-    end
+        getobjpath(state, :init_params, :clientInfo, :name) ∈ ("Zed", "Zed Dev"))
 
     function create_ci(key, val, is_emoji::Bool)
         description = is_emoji ? "emoji" : "latex-symbol"
@@ -787,11 +786,10 @@ function resolve_completion_item(state::ServerState, item::CompletionItem)
         # TODO Show effects and exception type?
         typstr = completion_resolver_info.postprocessor(string(rettyp))
         detail = " ::" * typstr
-        prepend_inference_result = get_config(state.config_manager, :completion, :method_signature, :prepend_inference_result)
-        if prepend_inference_result === missing
+        prepend_inference_result = @somereal(
+            get_config(state.config_manager, :completion, :method_signature, :prepend_inference_result),
             # auto-detect based on client
-            prepend_inference_result = getobjpath(state, :init_params, :clientInfo, :name) ∈ ("Zed", "Zed Dev")
-        end
+            getobjpath(state, :init_params, :clientInfo, :name) ∈ ("Zed", "Zed Dev"))
         if prepend_inference_result
             documentation = """
             ```julia

@@ -224,8 +224,7 @@ has no definitions. Otherwise returns a tuple of `(binding, definitions)` where:
 function select_target_binding_definitions(st0_top::JL.SyntaxTree, offset::Int, mod::Module)
     (; ctx3, st3, binding) = @something _select_target_binding(st0_top, offset, mod) return nothing
     binfo = JL.lookup_binding(ctx3, binding)
-    definitions = lookup_binding_definitions(st3, binfo)
-    isempty(definitions) && return nothing
+    definitions = @somereal lookup_binding_definitions(st3, binfo) return nothing
     return binding, definitions
 end
 
