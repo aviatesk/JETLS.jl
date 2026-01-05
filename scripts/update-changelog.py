@@ -48,7 +48,7 @@ def split_announcement_and_entries(text: str) -> tuple[str, str]:
 def extract_unreleased_content(version: str = "", commit: str = "", prev_commit: str = "") -> str:
     """Extract full content from the Unreleased section for GitHub Release notes.
 
-    This includes the Announcement section and all changelog entries.
+    This includes the Announcement section (if non-empty) and all changelog entries.
     If version, commit and prev_commit are provided, a metadata header is prepended.
     """
     with open('CHANGELOG.md', 'r') as f:
@@ -66,6 +66,18 @@ def extract_unreleased_content(version: str = "", commit: str = "", prev_commit:
 
     unreleased_content = match.group(2).strip()
 
+    # Split into announcement and entries, skip empty announcement
+    announcement, entries = split_announcement_and_entries(unreleased_content)
+
+    # Check if announcement has content beyond just the header
+    announcement_has_content = announcement and not announcement.strip() == "### Announcement"
+
+    # Reconstruct content, excluding empty announcement
+    if announcement_has_content:
+        final_content = announcement + "\n\n" + entries if entries else announcement
+    else:
+        final_content = entries
+
     # Prepend metadata header if release info is provided
     if version and commit and prev_commit:
         header = f"""- Commit: [`{commit}`](https://github.com/aviatesk/JETLS.jl/commit/{commit})
@@ -76,9 +88,9 @@ def extract_unreleased_content(version: str = "", commit: str = "", prev_commit:
   ```
 
 """
-        return header + unreleased_content
+        return header + final_content
 
-    return unreleased_content
+    return final_content
 
 
 def update_changelog(version: str, commit: str, prev_commit: str) -> bool:
