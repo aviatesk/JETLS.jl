@@ -42,7 +42,7 @@ function handle_InlayHintRequest(
 
     return send(server, InlayHintResponse(;
         id = msg.id,
-        result = isempty(inlay_hints) ? null : inlay_hints))
+        result = @somereal inlay_hints null))
 end
 
 function syntactic_inlay_hints!(inlay_hints::Vector{InlayHint}, fi::FileInfo, range::Range)

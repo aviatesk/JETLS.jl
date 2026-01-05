@@ -28,6 +28,89 @@ macro time(msg, ex)
 end
 
 """
+    @somereal(x...)
+
+Short-circuiting version of [`somereal`](@ref).
+Like [`@something`](@ref), but also skips `missing` values and empty collections.
+
+The following values are skipped:
+- `nothing`
+- `missing`
+- empty `AbstractVector`
+
+Values wrapped in `Some` are unwrapped.
+
+# Examples
+```julia
+julia> f(x) = (println("f(\$x)"); nothing);
+
+julia> a = 3;
+
+julia> @somereal a f(1) f(2) error("Unable to find default for `a`")
+f(1)
+f(2)
+3
+
+julia> b = missing;
+
+julia> @somereal b f(1) f(2) error("Unable to find default for `b`")
+f(1)
+f(2)
+ERROR: ArgumentError: No value arguments present
+Stacktrace:
+
+julia> c = Int[];
+
+julia> c = @somereal c [1, 2] error("Unable to find default for `c`")
+2-element Vector{Int64}:
+ 1
+ 2
+```
+"""
+macro somereal(args...)
+    somereal = GlobalRef(@__MODULE__, :somereal)
+    issomereal = GlobalRef(@__MODULE__, :issomereal)
+    expr = :(throw(ArgumentError("No values present")))
+    for arg in reverse(args)
+        expr = :(let val = $(esc(arg))
+            if $issomereal(val)
+                $somereal(val)
+            else
+                $expr
+            end
+        end)
+    end
+    return expr
+end
+
+issomereal(::Nothing) = false
+issomereal(::Missing) = false
+issomereal(xs::AbstractVector) = !isempty(xs)
+issomereal(::Any) = true
+
+"""
+    somereal(x...)
+
+Like [`something`](@ref), but also skips `missing` values and empty collections.
+
+The following values are skipped:
+- `nothing`
+- `missing`
+- empty `AbstractVector`
+
+Values wrapped in `Some` are unwrapped.
+Throws `ArgumentError` if no valid value found.
+"""
+function somereal end
+
+somereal() = throw(ArgumentError("No values present"))
+somereal(::Nothing, xs...) = somereal(xs...)
+somereal(::Missing, xs...) = somereal(xs...)
+somereal(x::Some, _xs...) = x.value
+somereal(x::AbstractVector, xs...) = !isempty(x) ? x : somereal(xs...)
+somereal(x::Any, _xs...) = x
+
+"""
     @define_override_constructor T
 
 Takes a type `T` and defines a constructor for `T` as follows:

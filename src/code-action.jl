@@ -44,7 +44,7 @@ function handle_CodeActionRequest(
     return send(server,
         CodeActionResponse(;
             id = msg.id,
-            result = isempty(code_actions) ? null : code_actions))
+            result = @somereal code_actions null))
 end
 
 function unused_variable_code_actions!(

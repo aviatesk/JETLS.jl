@@ -43,7 +43,7 @@ function handle_DocumentHighlightRequest(
     document_highlights!(highlights, fi, pos, (state, uri))
     return send(server, DocumentHighlightResponse(;
         id = msg.id,
-        result = isempty(highlights) ? null : highlights
+        result = @somereal highlights null
     ))
 end
 
