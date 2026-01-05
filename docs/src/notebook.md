@@ -16,8 +16,8 @@ state of client implementations
 
 ```@raw html
 <center>
-<iframe class="display-light-only" style="width:100%;height:min(500px,70vh);aspect-ratio:16/9" src="https://github.com/user-attachments/assets/b5bb5201-d735-4a37-b430-932b519254ee" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
-<iframe class="display-dark-only" style="width:100%;height:min(500px,70vh);aspect-ratio:16/9" src="https://github.com/user-attachments/assets/f7476257-7a53-44a1-8c8c-1ad57e136a63" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+<iframe class="display-light-only" style="width:100%;height:min(500px,70vh);aspect-ratio:16/9" src="https://github.com/user-attachments/assets/b5bb5201-d735-4a37-b430-932b519254ee" frameborder="0" allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+<iframe class="display-dark-only" style="width:100%;height:min(500px,70vh);aspect-ratio:16/9" src="https://github.com/user-attachments/assets/f7476257-7a53-44a1-8c8c-1ad57e136a63" frameborder="0" allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
 </center>
 ```
 
