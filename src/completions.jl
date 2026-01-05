@@ -378,14 +378,17 @@ function add_emoji_latex_completions!(
     # HACK Some clients (e.g., Zed) don't properly use `sortText` for completion items
     # containing `\\` or `:`, falling back to `label`-based sorting. For these clients,
     # we strip `\\` and `:` from `label` so sorting works correctly.
-    # Other clients (e.g., VSCode) properly use `sortText`, so we keep `label` as-is.
-    # TODO This should be configurable in the future.
-    client_supports_sort_text =
-        getobjpath(state, :init_params, :clientInfo, :name) ∉ ("Zed", "Zed Dev")
+    # Other clients (e.g., VSCode) properly handles `\` character appearing in `sortText`,
+    # so we keep `label` as-is.
+    strip_prefix = get_config(state.config_manager, :completion, :latex_emoji, :strip_prefix)
+    if strip_prefix === missing
+        # auto-detect based on client
+        strip_prefix = getobjpath(state, :init_params, :clientInfo, :name) ∈ ("Zed", "Zed Dev")
+    end
 
     function create_ci(key, val, is_emoji::Bool)
         description = is_emoji ? "emoji" : "latex-symbol"
-        helpText = client_supports_sort_text ? key : rstrip(lstrip(lstrip(key, '\\'), ':'), ':')
+        helpText = strip_prefix ? rstrip(lstrip(lstrip(key, '\\'), ':'), ':') : key
         return CompletionItem(;
             label = helpText,
             labelDetails = CompletionItemLabelDetails(;

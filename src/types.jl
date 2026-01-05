@@ -412,11 +412,20 @@ function Base.show(io::IO, init_options::InitOptions)
 end
 const DEFAULT_INIT_OPTIONS = InitOptions(; n_analysis_workers=1, analysis_overrides=AnalysisOverride[])
 
+@option struct LaTeXEmojiConfig <: ConfigSection
+    strip_prefix::Maybe{Union{Missing,Bool}} # missing is used as sentinel for default setting value
+end
+
+@option struct CompletionConfig <: ConfigSection
+    latex_emoji::Maybe{LaTeXEmojiConfig}
+end
+
 @option struct JETLSConfig <: ConfigSection
     diagnostic::Maybe{DiagnosticConfig}
     full_analysis::Maybe{FullAnalysisConfig}
     testrunner::Maybe{TestRunnerConfig}
     formatter::Maybe{FormatterConfig}
+    completion::Maybe{CompletionConfig}
     # This initialization options are read once at the server initialization and held in
     # `server.state.init_options`, so it might seem strange to hold them here also,
     # but they need to be set here for cases where initialization options are set in
@@ -429,6 +438,7 @@ const DEFAULT_CONFIG = JETLSConfig(;
     full_analysis = FullAnalysisConfig(1.0, true),
     testrunner = TestRunnerConfig(@static Sys.iswindows() ? "testrunner.bat" : "testrunner"),
     formatter = "Runic",
+    completion = CompletionConfig(LaTeXEmojiConfig(missing)),
     initialization_options = DEFAULT_INIT_OPTIONS)
 
 function get_default_config(path::Symbol...)

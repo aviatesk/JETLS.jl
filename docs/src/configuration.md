@@ -27,6 +27,9 @@ match_type = ""                  # string, required, "literal" or "regex"
 severity = ""                    # string or number, required, "error"/"warning"/"warn"/"information"/"info"/"hint"/"off" or 0/1/2/3/4
 path = ""                        # string (optional), glob pattern for file paths
 
+[completion.latex_emoji]
+strip_prefix = false             # boolean, default: (unset) auto-detect
+
 [testrunner]
 executable = "testrunner"        # string, default: "testrunner" (or "testrunner.bat" on Windows)
 ```
@@ -41,6 +44,8 @@ executable = "testrunner"        # string, default: "testrunner" (or "testrunner
     - [`[diagnostic] enabled`](@ref config/diagnostic-enabled)
     - [`[diagnostic] allow_unused_underscore`](@ref config/diagnostic-allow_unused_underscore)
     - [`[[diagnostic.patterns]]`](@ref config/diagnostic-patterns)
+- [`[completion]`](@ref config/completion)
+    - [`[completion.latex_emoji] strip_prefix`](@ref config/completion-latex_emoji-strip_prefix)
 - [`[testrunner]`](@ref config/testrunner)
     - [`[testrunner] executable`](@ref config/testrunner-executable)
 
@@ -320,6 +325,40 @@ path = "gen/**/*.jl"
 
 See the [configuring diagnostics](@ref configuring-diagnostic) section for
 additional examples and common use cases.
+
+### [`[completion]`](@id config/completion)
+
+Configure completion behavior.
+
+#### [`[completion.latex_emoji] strip_prefix`](@id config/completion-latex_emoji-strip_prefix)
+
+- **Type**: boolean
+- **Default**: (unset) auto-detect based on client
+
+Controls whether to strip the `\` or `:` prefix from LaTeX/emoji completion item
+labels.
+
+Some editors (e.g., Zed) don't handle backslash characters in the LSP `sortText`
+field, falling back to sorting by `label`. This can cause the expected completion
+item to not appear at the top when typing sequences like `\le` for `≤`.
+
+When set to `true`, JETLS strips the prefix from the label (e.g., `\le` becomes
+`le`), allowing these editors to sort completions correctly.
+
+When set to `false`, JETLS keeps the full label with the prefix, which works
+correctly in editors (e.g., VSCode) that properly handle backslash characters
+in the `sortText` field.
+
+When not set (default), JETLS auto-detects based on the client name and applies
+the appropriate behavior. Note that the auto-detection only covers a limited set
+of known clients, so if you experience LaTeX/emoji completion sorting issues
+(e.g., expected items not appearing at the top), try explicitly setting this
+option.
+
+```toml
+[completion.latex_emoji]
+strip_prefix = true  # Force prefix stripping for clients with sortText issues
+```
 
 ### [`[testrunner]`](@id config/testrunner)
 

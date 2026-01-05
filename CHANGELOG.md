@@ -64,6 +64,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
   https://github.com/user-attachments/assets/d3cdecea-d2eb-4d14-9043-6bc62a6f2833
 
+- Added `completion.latex_emoji.strip_prefix` configuration option to control
+  prefix stripping in LaTeX/emoji completions. Some editors (e.g., Zed) don't
+  handle backslash characters in the LSP `sortText` field, causing incorrect
+  completion order. Set to `true` to strip prefixes, `false` to keep them.
+  If not set, JETLS auto-detects based on client. The auto-detection covers
+  only a limited set of known clients, so users experiencing sorting issues
+  should explicitly set this option.
+
 ### Changed
 
 - Enhanced global completion items with detailed kind information (`[function]`,
