@@ -121,7 +121,7 @@ expansion, but signature help is only used on unexpanded code.
 function find_kws(args::JL.SyntaxList, kw_i::Int; sig=false, cursor::Int=-1)
     out = Dict{String, Int}()
     for i in (sig ? (kw_i:lastindex(args)) : eachindex(args))
-        !(kind(args[i]) in JS.KSet"= kw") && i < kw_i && continue
+        kind(args[i]) ∉ JS.KSet"= kw" && i < kw_i && continue
         n = extract_kwarg_name(args[i]; sig)
         if !isnothing(n) && !(JS.first_byte(n) <= cursor <= JS.last_byte(n) + 1)
             out[n.name_val] = i
@@ -155,7 +155,7 @@ struct CallArgs
     has_semicolon::Bool
     kind::JS.Kind
     function CallArgs(st0::JL.SyntaxTree, cursor::Int=-1)
-        @assert !(-1 in JS.byte_range(st0))
+        @assert -1 ∉ JS.byte_range(st0)
         args, kw_i, has_semicolon = flatten_args(st0)
         pos_map = Dict{Int, Tuple{Int, Union{Int, Nothing}}}()
         lb = 0; ub = 0
@@ -274,8 +274,10 @@ function make_paraminfo(param::JL.SyntaxTree)
 end
 
 # active_arg is either an argument index, or :next (available pos. arg), or :none
-function make_siginfo(m::Method, ca::CallArgs, active_arg::Union{Int, Symbol};
-                      postprocessor::LSPostProcessor = LSPostProcessor())
+function make_siginfo(
+        m::Method, ca::CallArgs, active_arg::Union{Nothing,Bool,Int};
+        postprocessor::LSPostProcessor = LSPostProcessor()
+    )
     msig = @something get_sig_str(m, ca)
     msig = postprocessor(msig)
     mnode = JS.parsestmt(JL.SyntaxTree, msig; ignore_errors=true)
@@ -304,30 +306,50 @@ function make_siginfo(m::Method, ca::CallArgs, active_arg::Union{Int, Symbol};
     kwp_map = find_kws(params, kwp_i; sig=true)
 
     # Map active arg to active param, or nothing
-    activeParameter = let i = active_arg
-        if i === :none
+    activeParameter =
+        if active_arg === nothing # none
             nothing
-        elseif i === :next # next pos arg if able
-            kwp_i > ca.kw_i ? ca.kw_i : nothing
-        elseif i in keys(ca.pos_map)
-            lb, ub = get(ca.pos_map, i, (1, nothing))
+        elseif active_arg isa Bool # next arg if able
+            if active_arg # After semicolon
+                # Find the first keyword parameter not in the given keyword argument list;
+                # fallback to variadic keyword parameter
+                local active_kw = maybe_var_kwp
+                rev_kwp_map = Pair{Int,String}[]
+                for (kw, i) in kwp_map
+                    push!(rev_kwp_map, i=>kw)
+                end
+                sort!(rev_kwp_map; by=first)
+                for (i, kw) in rev_kwp_map
+                    if kw ∉ keys(ca.kw_map)
+                        active_kw = i
+                        break
+                    end
+                end
+                active_kw
+            else
+                # If the given positional argument list is larger than the positional parameter
+                # list, then use the position of the last parameter position, which is likely a
+                # vararg parameter, otherwise use the exact argument position.
+                max(1, ca.kw_i ≥ kwp_i ? kwp_i-1 : ca.kw_i)
+            end
+        elseif active_arg in keys(ca.pos_map)
+            lb, ub = get(ca.pos_map, active_arg, (1, nothing))
             if !isnothing(maybe_var_params) && lb >= maybe_var_params
                 maybe_var_params
             else
                 lb == ub ? lb : nothing
             end
-        elseif kind(ca.args[i]) === K"..."
+        elseif kind(ca.args[active_arg]) === K"..."
             # splat after semicolon
             maybe_var_kwp
-        elseif kind(ca.args[i]) in JS.KSet"= kw" || i >= ca.kw_i
-            n = extract_kwarg_name(ca.args[i]).name_val # we don't have a backwards mapping
+        elseif kind(ca.args[active_arg]) in JS.KSet"= kw" || active_arg >= ca.kw_i
+            n = extract_kwarg_name(ca.args[active_arg]).name_val # we don't have a backwards mapping
             out = get(kwp_map, n, nothing)
             isnothing(out) ? maybe_var_kwp : out
         else
-            JETLS_DEBUG_LOWERING && @info "No active arg" i ca.args[i]
+            JETLS_DEBUG_LOWERING && @info "No active arg" active_arg ca.args[active_arg]
             nothing
         end
-    end
 
     !isnothing(activeParameter) && (activeParameter -= 1) # shift to 0-based
     parameters = map(make_paraminfo, params)
@@ -494,7 +516,7 @@ function cursor_siginfos(mod::Module, fi::FileInfo, b::Int, analyzer::LSAnalyzer
     call = cursor_call(fi.parsed_stream, st0, b)
     isnothing(call) && return empty_siginfos
     after_semicolon = let
-        params_i = findfirst(st -> kind(st) === K"parameters", JS.children(call))
+        params_i = findfirst(st::JL.SyntaxTree -> kind(st) === K"parameters", JS.children(call))
         !isnothing(params_i) && b > JS.first_byte(call[params_i])
     end
 
@@ -516,13 +538,14 @@ function cursor_siginfos(mod::Module, fi::FileInfo, b::Int, analyzer::LSAnalyzer
     # exist.  Otherwise, highlight the param for the arg we're in.
     #
     # We don't keep commas---do we want the green node here?
-    active_arg = let no_args = ca.kw_i == 1,
-        past_pos_args = no_args || b > JS.last_byte(ca.args[ca.kw_i - 1]) + 1
-        if past_pos_args && !after_semicolon
-            :next
-        else
-            arg_i = findfirst(a -> JS.first_byte(a) <= b <= JS.last_byte(a) + 1, ca.args)
-            isnothing(arg_i) ? :none : arg_i
+    no_args = ca.kw_i == 1
+    past_pos_args = no_args || b > JS.last_byte(ca.args[ca.kw_i - 1]) + 1
+    if past_pos_args && !after_semicolon
+        active_arg = false # before semicolon, highlight next positional arg
+    else
+        active_arg = findfirst(a::JL.SyntaxTree -> JS.first_byte(a) <= b <= JS.last_byte(a) + 1, ca.args)
+        if active_arg === nothing && after_semicolon
+            active_arg = true # after semicolon, highlight next keyword arg
         end
     end
 

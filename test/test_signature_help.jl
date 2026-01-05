@@ -213,6 +213,7 @@ end
 module M_highlight
 f(a0, a1, a2, va3...; kw4=0, kw5=0, kws6...) = 0
 f1(x, xs...) = 0
+kwfunc(; kw0, kw1, kws2...) = nothing
 end
 @testset "Active param highlighting" begin
     function active_parameter(mod::Module, code::AbstractString; kwargs...)
@@ -230,6 +231,23 @@ end
     @test 3 == active_parameter(M_highlight, "f(0, 1, 2, 3, 3│)")
     @test 3 == active_parameter(M_highlight, "f(0, 1, 2, 3, x...│)")
     @test 3 == active_parameter(M_highlight, "f(0, 1, 2, x...│)")
+
+    @test 1 == active_parameter(M_highlight, "f1(0,│)")
+    @test 1 == active_parameter(M_highlight, "f1(0, 1│)")
+    @test 1 == active_parameter(M_highlight, "f1(0, 1,│)")
+    @test 1 == active_parameter(M_highlight, "f1(0, 1, 2│)")
+    @test 1 == active_parameter(M_highlight, "f1(0, 1, 2,│)")
+    @test 1 == active_parameter(M_highlight, "f1(0, 1, 2, 3│)")
+    @test 1 == active_parameter(M_highlight, "f1(0, 1, 2, 3,│)")
+
+    @test 0 == active_parameter(M_highlight, "kwfunc(; │)")
+    @test 1 == active_parameter(M_highlight, "kwfunc(; kw0,│)")
+    @test 1 == active_parameter(M_highlight, "kwfunc(; kw0=0,│)")
+    @test 2 == active_parameter(M_highlight, "kwfunc(; kw0=0,kw1,│)")
+    @test 2 == active_parameter(M_highlight, "kwfunc(; kw0=0,kw1=1,│)")
+    @test 2 == active_parameter(M_highlight, "kwfunc(; kw0=0,kw1=1,kw2,│)")
+    @test 2 == active_parameter(M_highlight, "kwfunc(; kw0=0,kw1=1,kw2=2,│)")
+    @test 2 == active_parameter(M_highlight, "kwfunc(; kw0=0,kw1=1,kws2...,│)")
 
     # splat contains 0 or more args; use what we know
     @test nothing === active_parameter(M_highlight, "f(x...│, 0, 1, 2, 3, x...)")
