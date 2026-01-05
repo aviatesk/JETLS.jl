@@ -416,8 +416,13 @@ const DEFAULT_INIT_OPTIONS = InitOptions(; n_analysis_workers=1, analysis_overri
     strip_prefix::Maybe{Union{Missing,Bool}} # missing is used as sentinel for default setting value
 end
 
+@option struct MethodSignatureConfig <: ConfigSection
+    prepend_inference_result::Maybe{Union{Missing,Bool}} # missing is used as sentinel for default setting value
+end
+
 @option struct CompletionConfig <: ConfigSection
     latex_emoji::Maybe{LaTeXEmojiConfig}
+    method_signature::Maybe{MethodSignatureConfig}
 end
 
 @option struct JETLSConfig <: ConfigSection
@@ -438,7 +443,7 @@ const DEFAULT_CONFIG = JETLSConfig(;
     full_analysis = FullAnalysisConfig(1.0, true),
     testrunner = TestRunnerConfig(@static Sys.iswindows() ? "testrunner.bat" : "testrunner"),
     formatter = "Runic",
-    completion = CompletionConfig(LaTeXEmojiConfig(missing)),
+    completion = CompletionConfig(LaTeXEmojiConfig(missing), MethodSignatureConfig(missing)),
     initialization_options = DEFAULT_INIT_OPTIONS)
 
 function get_default_config(path::Symbol...)

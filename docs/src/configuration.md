@@ -7,31 +7,34 @@ This documentation uses TOML format to describe the configuration schema.
 
 ```toml
 [full_analysis]
-debounce = 1.0                   # number (seconds), default: 1.0
-auto_instantiate = true          # boolean, default: true
+debounce = 1.0                     # number (seconds), default: 1.0
+auto_instantiate = true            # boolean, default: true
 
-formatter = "Runic"              # String preset: "Runic" (default) or "JuliaFormatter"
+formatter = "Runic"                # String preset: "Runic" (default) or "JuliaFormatter"
 
-[formatter.custom]               # Or custom formatter configuration
-executable = ""                  # string (path), optional
-executable_range = ""            # string (path), optional
+[formatter.custom]                 # Or custom formatter configuration
+executable = ""                    # string (path), optional
+executable_range = ""              # string (path), optional
 
 [diagnostic]
-enabled = true                   # boolean, default: true
-allow_unused_underscore = false  # boolean, default: false
+enabled = true                     # boolean, default: true
+allow_unused_underscore = false    # boolean, default: false
 
 [[diagnostic.patterns]]
-pattern = ""                     # string, required
-match_by = ""                    # string, required, "code" or "message"
-match_type = ""                  # string, required, "literal" or "regex"
-severity = ""                    # string or number, required, "error"/"warning"/"warn"/"information"/"info"/"hint"/"off" or 0/1/2/3/4
-path = ""                        # string (optional), glob pattern for file paths
+pattern = ""                       # string, required
+match_by = ""                      # string, required, "code" or "message"
+match_type = ""                    # string, required, "literal" or "regex"
+severity = ""                      # string or number, required, "error"/"warning"/"warn"/"information"/"info"/"hint"/"off" or 0/1/2/3/4
+path = ""                          # string (optional), glob pattern for file paths
 
 [completion.latex_emoji]
-strip_prefix = false             # boolean, default: (unset) auto-detect
+strip_prefix = false               # boolean, default: (unset) auto-detect
+
+[completion.method_signature]
+prepend_inference_result = false   # boolean, default: (unset) auto-detect
 
 [testrunner]
-executable = "testrunner"        # string, default: "testrunner" (or "testrunner.bat" on Windows)
+executable = "testrunner"          # string, default: "testrunner" (or "testrunner.bat" on Windows)
 ```
 
 ## [Configuration reference](@id config/reference)
@@ -46,6 +49,7 @@ executable = "testrunner"        # string, default: "testrunner" (or "testrunner
     - [`[[diagnostic.patterns]]`](@ref config/diagnostic-patterns)
 - [`[completion]`](@ref config/completion)
     - [`[completion.latex_emoji] strip_prefix`](@ref config/completion-latex_emoji-strip_prefix)
+    - [`[completion.method_signature] prepend_inference_result`](@ref config/completion-method_signature-prepend_inference_result)
 - [`[testrunner]`](@ref config/testrunner)
     - [`[testrunner] executable`](@ref config/testrunner-executable)
 
@@ -359,6 +363,42 @@ option.
 [completion.latex_emoji]
 strip_prefix = true  # Force prefix stripping for clients with sortText issues
 ```
+
+!!! tip
+    If explicitly setting this option clearly improves behavior for your client,
+    consider submitting a PR to add your client to the auto-detection logic.
+
+#### [`[completion.method_signature] prepend_inference_result`](@id config/completion-method_signature-prepend_inference_result)
+
+- **Type**: boolean
+- **Default**: (unset) auto-detect based on client
+
+Controls whether to prepend inferred return type information to the documentation
+of method signature completion items.
+
+In some editors (e.g., Zed), additional information like inferred return type
+displayed when an item is selected may be cut off in the UI when the method
+signature text is long.
+
+When set to `true`, JETLS prepends the return type as a code block to the
+documentation, ensuring it is always visible.
+
+When set to `false`, the return type is only shown alongside the completion item
+(as `CompletionItem.detail` in LSP terms, which may be cut off in some editors).
+
+When not set (default), JETLS auto-detects based on the client name and applies
+the appropriate behavior. Note that the auto-detection only covers a limited set
+of known clients, so if you experience issues with return type visibility, try
+explicitly setting this option.
+
+```toml
+[completion.method_signature]
+prepend_inference_result = true  # Show return type in documentation
+```
+
+!!! tip
+    If explicitly setting this option clearly improves behavior for your client,
+    consider submitting a PR to add your client to the auto-detection logic.
 
 ### [`[testrunner]`](@id config/testrunner)
 

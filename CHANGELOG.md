@@ -72,6 +72,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   only a limited set of known clients, so users experiencing sorting issues
   should explicitly set this option.
 
+- Added `completion.method_signature.prepend_inference_result` configuration
+  option to control whether to prepend inferred return type information to the
+  documentation of method signature completion items. In some editors (e.g., Zed),
+  additional information like inferred return type displayed when an item is
+  selected may be cut off in the UI when method signature text is long. Set to
+  `true` to show return type in documentation. If not set, JETLS auto-detects
+  based on client. The auto-detection covers only a limited set of known clients,
+  so users experiencing visibility issues should explicitly set this option.
+
+> [!tip]
+> Some completion configuration options (e.g., `completion.latex_emoji.strip_prefix`,
+> `completion.method_signature.prepend_inference_result`) use client-based
+> auto-detection for default behavior. If explicitly setting these options clearly
+> improves behavior for your client, consider submitting a PR to add your client
+> to the auto-detection logic.
+
 ### Changed
 
 - Enhanced global completion items with detailed kind information (`[function]`,

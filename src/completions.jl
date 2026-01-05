@@ -785,7 +785,20 @@ function resolve_completion_item(state::ServerState, item::CompletionItem)
         _, result = infer_match!(CC.NativeInterpreter(Base.get_world_counter()), match)
         rettyp = CC.widenconst(result.result)
         # TODO Show effects and exception type?
-        detail = " ::" * completion_resolver_info.postprocessor(string(rettyp))
+        typstr = completion_resolver_info.postprocessor(string(rettyp))
+        detail = " ::" * typstr
+        prepend_inference_result = get_config(state.config_manager, :completion, :method_signature, :prepend_inference_result)
+        if prepend_inference_result === missing
+            # auto-detect based on client
+            prepend_inference_result = getobjpath(state, :init_params, :clientInfo, :name) ∈ ("Zed", "Zed Dev")
+        end
+        if prepend_inference_result
+            documentation = """
+            ```julia
+            ::$(typstr)
+            ```
+            """ * documentation
+        end
         return CompletionItem(item;
             labelDetails = CompletionItemLabelDetails(; detail, description = "method"),
             detail,
