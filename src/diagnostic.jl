@@ -582,6 +582,50 @@ struct LoweringDiagnosticKey
     name::String
 end
 
+function analyze_unused_bindings!(
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::JL.SyntaxTree, ctx3::JL.VariableAnalysisContext,
+        binding_occurrences, ismacro, reported::Set{LoweringDiagnosticKey};
+        allow_unused_underscore::Bool
+    )
+    for (binfo, occurrences) in binding_occurrences
+        bk = binfo.kind
+        bk === :global && continue
+        if any(occurrence::BindingOccurence->occurrence.kind===:use, occurrences)
+            continue
+        end
+        bn = binfo.name
+        if ismacro[] && (bn == "__module__" || bn == "__source__")
+            continue
+        end
+        if allow_unused_underscore && startswith(bn, '_')
+            continue
+        end
+        provs = JL.flattened_provenance(JL.binding_ex(ctx3, binfo.id))
+        prov = first(provs)
+        range = jsobj_to_range(prov, fi)
+        key = LoweringDiagnosticKey(range, bk, bn)
+        key in reported ? continue : push!(reported, key)
+        if bk === :argument
+            message = "Unused argument `$bn`"
+            code = LOWERING_UNUSED_ARGUMENT_CODE
+            data = nothing
+        else
+            message = "Unused local binding `$bn`"
+            code = LOWERING_UNUSED_LOCAL_CODE
+            data = compute_unused_variable_data(st0, prov, fi)
+        end
+        push!(diagnostics, Diagnostic(;
+            range,
+            severity = DiagnosticSeverity.Information,
+            message,
+            source = DIAGNOSTIC_SOURCE,
+            code,
+            codeDescription = diagnostic_code_description(code),
+            tags = DiagnosticTag.Ty[DiagnosticTag.Unnecessary],
+            data))
+    end
+end
+
 # This analysis reports `lowering/undef-global-var` on a change basis, utilizing an already
 # analyzed analysis context. Full-analysis also reports similar diagnostics as
 # `inference/undef-global-var`. These two diagnostics have the following differences:
@@ -593,7 +637,7 @@ end
 #   cannot analyze cases like `Base.undefvar`, so it basically detects a subset of what
 #   full-analysis reports.
 function analyze_undefined_global_bindings!(
-        diagnostics::Vector{Diagnostic}, ctx3::JL.VariableAnalysisContext, fi::FileInfo,
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, ctx3::JL.VariableAnalysisContext,
         binding_occurrences, reported::Set{LoweringDiagnosticKey};
         postprocessor::LSPostProcessor = LSPostProcessor()
     )
@@ -659,46 +703,10 @@ function analyze_lowered_code!(
     binding_occurrences = compute_binding_occurrences(ctx3, st3; ismacro, include_global_bindings=true)
     reported = Set{LoweringDiagnosticKey}() # to prevent duplicate reports for unused default or keyword arguments
 
-    for (binfo, occurrences) in binding_occurrences
-        bk = binfo.kind
-        bk === :global && continue
-        if any(occurrence::BindingOccurence->occurrence.kind===:use, occurrences)
-            continue
-        end
-        bn = binfo.name
-        if ismacro[] && (bn == "__module__" || bn == "__source__")
-            continue
-        end
-        if allow_unused_underscore && startswith(bn, '_')
-            continue
-        end
-        provs = JL.flattened_provenance(JL.binding_ex(ctx3, binfo.id))
-        prov = first(provs)
-        range = jsobj_to_range(prov, fi)
-        key = LoweringDiagnosticKey(range, bk, bn)
-        key in reported ? continue : push!(reported, key)
-        if bk === :argument
-            message = "Unused argument `$bn`"
-            code = LOWERING_UNUSED_ARGUMENT_CODE
-            data = nothing
-        else
-            message = "Unused local binding `$bn`"
-            code = LOWERING_UNUSED_LOCAL_CODE
-            data = compute_unused_variable_data(st0, prov, fi)
-        end
-        push!(diagnostics, Diagnostic(;
-            range,
-            severity = DiagnosticSeverity.Information,
-            message,
-            source = DIAGNOSTIC_SOURCE,
-            code,
-            codeDescription = diagnostic_code_description(code),
-            tags = DiagnosticTag.Ty[DiagnosticTag.Unnecessary],
-            data))
-    end
+    analyze_unused_bindings!(diagnostics, fi, st0, ctx3, binding_occurrences, ismacro, reported; allow_unused_underscore)
 
     skip_errors_requiring_analysis ||
-        analyze_undefined_global_bindings!(diagnostics, ctx3, fi, binding_occurrences, reported; postprocessor)
+        analyze_undefined_global_bindings!(diagnostics, fi, ctx3, binding_occurrences, reported; postprocessor)
 
     return diagnostics
 end
