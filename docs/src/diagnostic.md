@@ -59,15 +59,16 @@ Here is a summary table of the diagnostics explained in this section:
 
 | Code                                                                               | Default Severity      | Description                                                    |
 | ---------------------------------------------------------------------------------- | --------------------- | -------------------------------------------------------------- |
-| [`syntax/parse-error`](@ref diagnostic/reference/syntax/parse-error)                         | `Error`               | Syntax parsing errors detected by JuliaSyntax.jl               |
-| [`lowering/error`](@ref diagnostic/reference/lowering/error)                                 | `Error`               | General lowering errors                                        |
-| [`lowering/macro-expansion-error`](@ref diagnostic/reference/lowering/macro-expansion-error) | `Error`               | Errors during macro expansion                                  |
-| [`lowering/unused-argument`](@ref diagnostic/reference/lowering/unused-argument)             | `Information`         | Function arguments that are never used                         |
-| [`lowering/unused-local`](@ref diagnostic/reference/lowering/unused-local)                   | `Information`         | Local variables that are assigned but never read               |
-| [`toplevel/error`](@ref diagnostic/reference/toplevel/error)                                 | `Error`               | Errors during code loading (missing deps, type failures, etc.) |
-| [`toplevel/method-overwrite`](@ref diagnostic/reference/toplevel/method-overwrite)           | `Warning`             | Method definitions that overwrite previously defined methods   |
-| [`toplevel/abstract-field`](@ref diagnostic/reference/toplevel/abstract-field)               | `Information`         | Struct fields with abstract types                              |
-| [`inference/undef-global-var`](@ref diagnostic/reference/inference/undef-global-var)         | `Warning`             | References to undefined global variables                       |
+| [`syntax/parse-error`](@ref diagnostic/reference/syntax/parse-error)                         | `Error`               | Syntax parsing errors detected by JuliaSyntax.jl                   |
+| [`lowering/error`](@ref diagnostic/reference/lowering/error)                                 | `Error`               | General lowering errors                           |
+| [`lowering/macro-expansion-error`](@ref diagnostic/reference/lowering/macro-expansion-error) | `Error`               | Errors during macro expansion                        |
+| [`lowering/unused-argument`](@ref diagnostic/reference/lowering/unused-argument)             | `Information`         | Function arguments that are never used                             |
+| [`lowering/unused-local`](@ref diagnostic/reference/lowering/unused-local)                   | `Information`         | Local variables that are assigned but never read                   |
+| [`lowering/undef-global-var`](@ref diagnostic/reference/lowering/undef-global-var)           | `Warning`             | References to undefined global variables (triggered on change)  |
+| [`toplevel/error`](@ref diagnostic/reference/toplevel/error)                                 | `Error`               | Errors during code loading (missing deps, type failures, etc.)       |
+| [`toplevel/method-overwrite`](@ref diagnostic/reference/toplevel/method-overwrite)           | `Warning`             | Method definitions that overwrite previously defined methods       |
+| [`toplevel/abstract-field`](@ref diagnostic/reference/toplevel/abstract-field)               | `Information`         | Struct fields with abstract types                            |
+| [`inference/undef-global-var`](@ref diagnostic/reference/inference/undef-global-var)         | `Warning`             | References to undefined global variables (triggered on save)    |
 | [`inference/undef-local-var`](@ref diagnostic/reference/inference/undef-local-var)           | `Information/Warning` | References to undefined local variables                        |
 | [`inference/field-error`](@ref diagnostic/reference/inference/field-error)                   | `Warning`             | Access to non-existent struct fields                           |
 | [`inference/bounds-error`](@ref diagnostic/reference/inference/bounds-error)                 | `Warning`             | Out-of-bounds field access by index                            |
@@ -168,6 +169,28 @@ function unused_local()
     return println(10)
 end
 ```
+
+#### [Undefined global variable (`lowering/undef-global-var`)](@id diagnostic/reference/lowering/undef-global-var)
+
+**Default severity:** `Warning`
+
+References to undefined global variables, detected during lowering analysis.
+This diagnostic is reported on change (as you type), providing immediate
+feedback.
+
+Example:
+
+```julia
+function undef_global_var()
+    ret = sin(undefined_var)  # `Main.undefined_var` is not defined (JETLS lowering/undef-global-var)
+    return ret
+end
+```
+
+This diagnostic detects simple undefined global variable references. For more
+comprehensive detection (including qualified references like `Base.undefvar`),
+see [`inference/undef-global-var`](@ref diagnostic/reference/inference/undef-global-var),
+which runs on save.
 
 ### [Top-level diagnostic (`toplevel/*`)](@id diagnostic/reference/toplevel)
 
@@ -286,15 +309,18 @@ end
 ### [Inference diagnostic (`inference/*`)](@id diagnostic/reference/inference)
 
 Inference diagnostic uses JET.jl to perform type-aware analysis and detect
-potential errors through static analysis. These diagnostics are also reported by
-JETLS's full analysis feature (see [Top-level diagnostic](@ref diagnostic/reference/toplevel)
-for details on when analysis runs).
+potential errors through static analysis. These diagnostics are reported by
+JETLS's full analysis feature, which runs when you save a file (similar to
+[Top-level diagnostic](@ref diagnostic/reference/toplevel)).
 
 #### [Undefined global variable (`inference/undef-global-var`)](@id diagnostic/reference/inference/undef-global-var)
 
 **Default severity:** `Warning`
 
-References to undefined global variables.
+References to undefined global variables, detected through full analysis. This
+diagnostic runs on save and can detect comprehensive cases including qualified
+references (e.g., `Base.undefvar`). Position information is reported on a line
+basis.
 
 Example:
 
@@ -303,6 +329,11 @@ function undef_global_var()
     return undefined_global  # `undefined_global` is not defined (JETLS inference/undef-global-var)
 end
 ```
+
+For faster feedback while editing, see
+[`lowering/undef-global-var`](@ref diagnostic/reference/lowering/undef-global-var),
+which reports a subset of undefined variable cases on change with accurate
+position information.
 
 #### [Undefined local variable (`inference/undef-local-var`)](@id diagnostic/reference/inference/undef-local-var)
 

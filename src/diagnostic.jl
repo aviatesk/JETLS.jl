@@ -582,14 +582,57 @@ struct LoweringDiagnosticKey
     name::String
 end
 
+# This analysis reports `lowering/undef-global-var` on a change basis, utilizing an already
+# analyzed analysis context. Full-analysis also reports similar diagnostics as
+# `inference/undef-global-var`. These two diagnostics have the following differences:
+# - `inference/undef-global-var` (full-analysis): Triggered on a save basis. Since it's not
+#   integrated with JuliaLowering, position information can only be reported on a line basis.
+#   On the other hand, it can also report cases like `Base.undefvar` and generally is more correct.
+# - `lowering/undef-global-var` (lowering analysis): Triggered on a change basis, so feedback is
+#   faster. Since it's based on JuliaLowering, position information is accurate. However, it
+#   cannot analyze cases like `Base.undefvar`, so it basically detects a subset of what
+#   full-analysis reports.
+function analyze_undefined_global_bindings!(
+        diagnostics::Vector{Diagnostic}, ctx3::JL.VariableAnalysisContext, fi::FileInfo,
+        binding_occurrences, reported::Set{LoweringDiagnosticKey};
+        postprocessor::LSPostProcessor = LSPostProcessor()
+    )
+    for (binfo, occurrences) in binding_occurrences
+        bk = binfo.kind
+        bk === :global || continue
+        binfo.is_internal && continue
+        startswith(binfo.name, '#') && continue
+        any(o->o.kind===:def, occurrences) && continue
+        isdefinedglobal(binfo.mod, Symbol(binfo.name)) && continue
+        bn = binfo.name
+        provs = JL.flattened_provenance(JL.binding_ex(ctx3, binfo.id))
+        range = jsobj_to_range(first(provs), fi)
+        key = LoweringDiagnosticKey(range, bk, bn)
+        key in reported ? continue : push!(reported, key)
+        code = LOWERING_UNDEF_GLOBAL_VAR_CODE
+        push!(diagnostics, Diagnostic(;
+            range,
+            severity = DiagnosticSeverity.Warning,
+            message = postprocessor("`$(binfo.mod).$(binfo.name)` is not defined"),
+            source = DIAGNOSTIC_SOURCE,
+            code,
+            codeDescription = diagnostic_code_description(code)))
+    end
+end
+
 function analyze_lowered_code!(diagnostics::Vector{Diagnostic},
         ctx3::JL.VariableAnalysisContext, st3::JL.SyntaxTree, fi::FileInfo;
-        allow_unused_underscore::Bool = true
+        skip_errors_requiring_analysis::Bool = false,
+        allow_unused_underscore::Bool = true,
+        postprocessor::LSPostProcessor = LSPostProcessor()
     )
     ismacro = Ref(false)
-    binding_occurrences = compute_binding_occurrences(ctx3, st3; ismacro)
+    binding_occurrences = compute_binding_occurrences(ctx3, st3; ismacro, include_global_bindings=true)
     reported = Set{LoweringDiagnosticKey}() # to prevent duplicate reports for unused default or keyword arguments
+
     for (binfo, occurrences) in binding_occurrences
+        bk = binfo.kind
+        bk === :global && continue
         if any(occurrence::BindingOccurence->occurrence.kind===:use, occurrences)
             continue
         end
@@ -601,7 +644,6 @@ function analyze_lowered_code!(diagnostics::Vector{Diagnostic},
             continue
         end
         provs = JL.flattened_provenance(JL.binding_ex(ctx3, binfo.id))
-        bk = binfo.kind
         range = jsobj_to_range(first(provs), fi)
         key = LoweringDiagnosticKey(range, bk, bn)
         key in reported ? continue : push!(reported, key)
@@ -621,13 +663,18 @@ function analyze_lowered_code!(diagnostics::Vector{Diagnostic},
             codeDescription = diagnostic_code_description(code),
             tags = DiagnosticTag.Ty[DiagnosticTag.Unnecessary]))
     end
+
+    skip_errors_requiring_analysis ||
+        analyze_undefined_global_bindings!(diagnostics, ctx3, fi, binding_occurrences, reported; postprocessor)
+
     return diagnostics
 end
 
 function lowering_diagnostics!(
         diagnostics::Vector{Diagnostic}, st0::JL.SyntaxTree, mod::Module, fi::FileInfo;
-        skip_macro_expansion_errors::Bool = false,
-        allow_unused_underscore::Bool = true
+        skip_errors_requiring_analysis::Bool = false,
+        allow_unused_underscore::Bool = true,
+        postprocessor::LSPostProcessor = LSPostProcessor(),
     )
     @assert JS.kind(st0) ∉ JS.KSet"toplevel module"
 
@@ -643,7 +690,7 @@ function lowering_diagnostics!(
                 code = LOWERING_ERROR_CODE,
                 codeDescription = diagnostic_code_description(LOWERING_ERROR_CODE)))
         elseif err isa JL.MacroExpansionError
-            if !skip_macro_expansion_errors
+            if !skip_errors_requiring_analysis
                 st = scrub_expand_macro_stacktrace(stacktrace(catch_backtrace()))
                 msg = err.msg
                 inner = err.err
@@ -685,7 +732,7 @@ function lowering_diagnostics!(
         end
     end
 
-    return analyze_lowered_code!(diagnostics, ctx3, st3, fi; allow_unused_underscore)
+    return analyze_lowered_code!(diagnostics, ctx3, st3, fi; skip_errors_requiring_analysis, allow_unused_underscore, postprocessor)
 end
 lowering_diagnostics(args...; kwargs...) = lowering_diagnostics!(Diagnostic[], args...; kwargs...) # used by tests
 
@@ -695,19 +742,19 @@ function toplevel_lowering_diagnostics(server::Server, uri::URI, file_info::File
     diagnostics = Diagnostic[]
     st0_top = build_syntax_tree(file_info)
     analysis_info = get_analysis_info(server.state.analysis_manager, uri)
-    skip_macro_expansion_errors = !has_module_context(analysis_info, uri)
+    skip_errors_requiring_analysis = !has_analyzed_context(analysis_info, uri)
     allow_unused_underscore = get_config(server.state.config_manager, :diagnostic, :allow_unused_underscore)
     iterate_toplevel_tree(st0_top) do st0::JL.SyntaxTree
         pos = offset_to_xy(file_info, JS.first_byte(st0))
-        (; mod) = get_context_info(server.state, uri, pos)
-        lowering_diagnostics!(diagnostics, st0, mod, file_info; skip_macro_expansion_errors, allow_unused_underscore)
+        (; mod, postprocessor) = get_context_info(server.state, uri, pos)
+        lowering_diagnostics!(diagnostics, st0, mod, file_info; skip_errors_requiring_analysis, allow_unused_underscore, postprocessor)
     end
     return diagnostics
 end
 
-has_module_context(::Nothing, ::URI) = false
-has_module_context(::OutOfScope, ::URI) = false
-has_module_context(analysis_result::AnalysisResult, uri::URI) =
+has_analyzed_context(::Nothing, ::URI) = false
+has_analyzed_context(outofscope::OutOfScope, ::URI) = !isnothing(outofscope.module_context)
+has_analyzed_context(analysis_result::AnalysisResult, uri::URI) =
     analyzed_file_info(analysis_result, uri) !== nothing
 
 function iterate_toplevel_tree(callback, st0_top::JL.SyntaxTree)

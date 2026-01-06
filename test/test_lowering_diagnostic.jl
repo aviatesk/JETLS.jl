@@ -87,7 +87,7 @@ length_utf16(s::AbstractString) = sum(c::Char -> codepoint(c) < 0x10000 ? 1 : 2,
 
     let diagnostics = get_lowered_diagnostics("""
         let x = collect(1:10)
-            ys = [x for (i, x) in enumarate(x)]
+            ys = [x for (i, x) in enumerate(x)]
             ys
         end
         """)
@@ -647,6 +647,43 @@ end
         @test diagnostic.message == "`return` not allowed inside comprehension or generator"
         @test diagnostic.range.start.line == 2
         @test diagnostic.range.var"end".line == 2
+    end
+end
+
+module TestLoweringUndefGlobalBinding
+const myfunc = (x) -> x
+end
+
+@testset "Undefined global binding report" begin
+    @test isempty(get_lowered_diagnostics(@__MODULE__, "let x = 42; println(sin(x)); end"))
+    let diagnostics = get_lowered_diagnostics(@__MODULE__, """let x = 42
+            undeffunc(x)
+        end
+        """)
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE
+        @test diagnostic.code == JETLS.LOWERING_UNDEF_GLOBAL_VAR_CODE
+        @test diagnostic.message == "`$(@__MODULE__).undeffunc` is not defined"
+        @test diagnostic.range.start.line == 1
+        @test diagnostic.range.start.character == 4
+        @test diagnostic.range.var"end".line == 1
+        @test diagnostic.range.var"end".character == 13
+    end
+
+    @test isempty(get_lowered_diagnostics(TestLoweringUndefGlobalBinding, "let x = 42; println(myfunc(x)); end"))
+    let diagnostics = get_lowered_diagnostics(TestLoweringUndefGlobalBinding, """let x = 42
+            undeffunc(x)
+        end
+        """)
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE
+        @test diagnostic.message == "`$(TestLoweringUndefGlobalBinding).undeffunc` is not defined"
+        @test diagnostic.range.start.line == 1
+        @test diagnostic.range.start.character == 4
+        @test diagnostic.range.var"end".line == 1
+        @test diagnostic.range.var"end".character == 13
     end
 end
 
