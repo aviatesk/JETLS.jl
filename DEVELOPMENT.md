@@ -28,9 +28,9 @@ without restarting the server.
 ## `[sources]` dependencies
 
 In JETLS, since we need to use packages that aren’t yet registered
-(e.g., [JuliaLowering.jl](https://github.com/c42f/JuliaLowering.jl)) or
+(e.g., [JuliaLowering.jl](https://github.com/JuliaLang/julia/tree/master/JuliaLowering)) or
 specific branches of [JET.jl](https://github.com/c42f/JuliaLowering.jl) and
-[JuliaSyntax.jl](https://github.com/JuliaLang/JuliaSyntax.jl),
+[JuliaSyntax.jl](https://github.com/JuliaLang/julia/tree/master/JuliaSyntax),
 the [Project.toml](./Project.toml) includes
 [`[sources]` section](https://pkgdocs.julialang.org/v1/toml-files/#The-[sources]-section).
 The `[sources]` section allows simply running `Pkg.instantiate()` to install all
