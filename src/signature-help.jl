@@ -412,51 +412,54 @@ function cursor_call(ps::JS.ParseStream, st0::JL.SyntaxTree, b::Int)
         return nothing
     end
 
-    bas = byte_ancestors(st0, b)
-    i = findfirst(is_relevant_call, bas)
-    if !isnothing(i)
-        basᵢ = bas[i]
-        if call_is_decl(bas, i, basᵢ)
-            return nothing
-        elseif is_crossline_noparen_macrocall(basᵢ, b)
-            # Consider cases like:
-            # @testset begin
-            #     ... | ...
-            # end
-            return nothing
-        elseif any(j::Int->JS.kind(bas[j])===JS.K"do", 1:i)
-            # bail out if this is actually within a `do` block
-            return nothing
+    let bas = byte_ancestors(st0, b),
+        i = findfirst(is_relevant_call, bas)
+        if !isnothing(i)
+            basᵢ = bas[i]
+            if call_is_decl(bas, i, basᵢ)
+                return nothing
+            elseif is_crossline_noparen_macrocall(basᵢ, b)
+                # Consider cases like:
+                # @testset begin
+                #     ... | ...
+                # end
+                return nothing
+            elseif any(j::Int->JS.kind(bas[j])===JS.K"do", 1:i)
+                # bail out if this is actually within a `do` block
+                return nothing
+            end
+            return basᵢ
         end
-        return basᵢ
     end
 
     # `i` is nothing.  Eat preceding whitespace and check again.
-    pnb = prev_nontrivia_byte(ps, b-1; pass_newlines=true)
-    (isnothing(pnb) || pnb == b) && return nothing
-    bas = byte_ancestors(st0, pnb)
-    # If the previous nontrivia byte is part of a call or macrocall, and it is
-    # missing a closing paren, use that.
-    i = findfirst(st::JL.SyntaxTree -> is_relevant_call(st) && !noparen_macrocall(st), bas)
-    if !isnothing(i)
-        basᵢ = bas[i]
-        if JS.is_error(JS.children(basᵢ)[end])
-            return call_is_decl(bas, i, basᵢ) ? nothing : basᵢ
+    let pnb = prev_nontrivia_byte(ps, b-1; pass_newlines=true)
+        (isnothing(pnb) || pnb == b) && return nothing
+        bas = byte_ancestors(st0, pnb)
+        # If the previous nontrivia byte is part of a call or macrocall, and it is
+        # missing a closing paren, use that.
+        i = findfirst(st::JL.SyntaxTree -> is_relevant_call(st) && !noparen_macrocall(st), bas)
+        if !isnothing(i)
+            basᵢ = bas[i]
+            if JS.is_error(JS.children(basᵢ)[end])
+                return call_is_decl(bas, i, basᵢ) ? nothing : basᵢ
+            end
         end
     end
 
     # If the previous nontrivia byte within this line is part of an
     # unparenthesized macrocall, use that.
-    pnb_line = prev_nontrivia_byte(ps, b-1; pass_newlines=false, strict=true)
-    (isnothing(pnb_line) || pnb_line == b) && return nothing
-    # Don't provide completion if the current position is within a newline token and crosses over that newline
-    pnt_line = prev_nontrivia(ps, b-1; pass_newlines=false) # include the current token (`strict=false`)
-    if !isnothing(pnt_line) && any(==(UInt8('\n')), @view ps.textbuf[JS.first_byte(pnt_line):b-1])
-        return nothing
+    let pnb_line = prev_nontrivia_byte(ps, b-1; pass_newlines=false, strict=true)
+        (isnothing(pnb_line) || pnb_line == b) && return nothing
+        # Don't provide completion if the current position is within a newline token and crosses over that newline
+        pnt_line = prev_nontrivia(ps, b-1; pass_newlines=false) # include the current token (`strict=false`)
+        if !isnothing(pnt_line) && any(==(UInt8('\n')), @view ps.textbuf[JS.first_byte(pnt_line):b-1])
+            return nothing
+        end
+        bas = byte_ancestors(st0, pnb_line)
+        i = findfirst(noparen_macrocall, bas)
+        return isnothing(i) ? nothing : bas[i]
     end
-    bas = byte_ancestors(st0, pnb_line)
-    i = findfirst(noparen_macrocall, bas)
-    return isnothing(i) ? nothing : bas[i]
 end
 
 """
