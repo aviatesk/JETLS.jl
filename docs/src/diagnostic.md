@@ -57,18 +57,18 @@ diagnostic, you'll find:
 
 Here is a summary table of the diagnostics explained in this section:
 
-| Code                                                                               | Default Severity      | Description                                                    |
-| ---------------------------------------------------------------------------------- | --------------------- | -------------------------------------------------------------- |
-| [`syntax/parse-error`](@ref diagnostic/reference/syntax/parse-error)                         | `Error`               | Syntax parsing errors detected by JuliaSyntax.jl                   |
-| [`lowering/error`](@ref diagnostic/reference/lowering/error)                                 | `Error`               | General lowering errors                           |
-| [`lowering/macro-expansion-error`](@ref diagnostic/reference/lowering/macro-expansion-error) | `Error`               | Errors during macro expansion                        |
-| [`lowering/unused-argument`](@ref diagnostic/reference/lowering/unused-argument)             | `Information`         | Function arguments that are never used                             |
-| [`lowering/unused-local`](@ref diagnostic/reference/lowering/unused-local)                   | `Information`         | Local variables that are assigned but never read                   |
-| [`lowering/undef-global-var`](@ref diagnostic/reference/lowering/undef-global-var)           | `Warning`             | References to undefined global variables (triggered on change)  |
-| [`toplevel/error`](@ref diagnostic/reference/toplevel/error)                                 | `Error`               | Errors during code loading (missing deps, type failures, etc.)       |
-| [`toplevel/method-overwrite`](@ref diagnostic/reference/toplevel/method-overwrite)           | `Warning`             | Method definitions that overwrite previously defined methods       |
-| [`toplevel/abstract-field`](@ref diagnostic/reference/toplevel/abstract-field)               | `Information`         | Struct fields with abstract types                            |
-| [`inference/undef-global-var`](@ref diagnostic/reference/inference/undef-global-var)         | `Warning`             | References to undefined global variables (triggered on save)    |
+| Code                                                                                         | Default Severity      | Description                                                    |
+| -------------------------------------------------------------------------------------------- | --------------------- | -------------------------------------------------------------- |
+| [`syntax/parse-error`](@ref diagnostic/reference/syntax/parse-error)                         | `Error`               | Syntax parsing errors detected by JuliaSyntax.jl               |
+| [`lowering/error`](@ref diagnostic/reference/lowering/error)                                 | `Error`               | General lowering errors                                        |
+| [`lowering/macro-expansion-error`](@ref diagnostic/reference/lowering/macro-expansion-error) | `Error`               | Errors during macro expansion                                  |
+| [`lowering/unused-argument`](@ref diagnostic/reference/lowering/unused-argument)             | `Information`         | Function arguments that are never used                         |
+| [`lowering/unused-local`](@ref diagnostic/reference/lowering/unused-local)                   | `Information`         | Local variables that are assigned but never read               |
+| [`lowering/undef-global-var`](@ref diagnostic/reference/lowering/undef-global-var)           | `Warning`             | References to undefined global variables (triggered on change) |
+| [`toplevel/error`](@ref diagnostic/reference/toplevel/error)                                 | `Error`               | Errors during code loading (missing deps, type failures, etc.) |
+| [`toplevel/method-overwrite`](@ref diagnostic/reference/toplevel/method-overwrite)           | `Warning`             | Method definitions that overwrite previously defined methods   |
+| [`toplevel/abstract-field`](@ref diagnostic/reference/toplevel/abstract-field)               | `Information`         | Struct fields with abstract types                              |
+| [`inference/undef-global-var`](@ref diagnostic/reference/inference/undef-global-var)         | `Warning`             | References to undefined global variables (triggered on save)   |
 | [`inference/undef-local-var`](@ref diagnostic/reference/inference/undef-local-var)           | `Information/Warning` | References to undefined local variables                        |
 | [`inference/field-error`](@ref diagnostic/reference/inference/field-error)                   | `Warning`             | Access to non-existent struct fields                           |
 | [`inference/bounds-error`](@ref diagnostic/reference/inference/bounds-error)                 | `Warning`             | Out-of-bounds field access by index                            |
