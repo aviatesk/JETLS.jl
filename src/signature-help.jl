@@ -44,7 +44,10 @@ function flatten_args(call::JL.SyntaxTree)
     if kind(call) === K"where"
         return flatten_args(call[1])
     end
-    @assert kind(call) in CALL_KINDS
+    if !(kind(call) in CALL_KINDS)
+        println(stderr, JL.sourcetext(call))
+        error(lazy"Unexpected call kind: $(kind(call))")
+    end
     usable = (arg::JL.SyntaxTree) -> kind(arg) != K"error"
     orig = filter(usable, JS.children(call)[2:end])
 
