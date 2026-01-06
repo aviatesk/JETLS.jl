@@ -620,13 +620,41 @@ function analyze_undefined_global_bindings!(
     end
 end
 
+function compute_unused_variable_data(
+        st0::JL.SyntaxTree,
+        prov::JL.SyntaxTree,
+        fi::FileInfo
+    )
+    # Find parent K"=" node using byte_ancestors
+    ancestors = byte_ancestors(st::JL.SyntaxTree->JS.kind(st)===JS.K"=", st0, JS.byte_range(prov))
+    isempty(ancestors) && return nothing
+
+    assignment = first(ancestors)
+    JS.numchildren(assignment) ≥ 2 || return nothing
+
+    lhs, rhs = assignment[1], assignment[2]
+
+    # Check for destructuring patterns (tuple unpacking)
+    is_tuple = JS.kind(lhs) === JS.K"tuple"
+    if is_tuple
+        return UnusedVariableData(true, nothing, nothing)
+    end
+
+    # lhs_eq_range: from LHS start to RHS start (exclusive)
+    assignment_range = jsobj_to_range(assignment, fi)
+    lhs_start = offset_to_xy(fi, JS.first_byte(lhs))
+    rhs_start = offset_to_xy(fi, JS.first_byte(rhs))
+    lhs_eq_range = Range(; start=lhs_start, var"end"=rhs_start)
+    return UnusedVariableData(false, assignment_range, lhs_eq_range)
+end
+
 function analyze_lowered_code!(
         diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo, res::NamedTuple;
         skip_errors_requiring_analysis::Bool = false,
         allow_unused_underscore::Bool = true,
         postprocessor::LSPostProcessor = LSPostProcessor()
     )
-    (; ctx3, st3) = res
+    (; st0, ctx3, st3) = res
     ismacro = Ref(false)
     binding_occurrences = compute_binding_occurrences(ctx3, st3; ismacro, include_global_bindings=true)
     reported = Set{LoweringDiagnosticKey}() # to prevent duplicate reports for unused default or keyword arguments
@@ -645,15 +673,18 @@ function analyze_lowered_code!(
             continue
         end
         provs = JL.flattened_provenance(JL.binding_ex(ctx3, binfo.id))
-        range = jsobj_to_range(first(provs), fi)
+        prov = first(provs)
+        range = jsobj_to_range(prov, fi)
         key = LoweringDiagnosticKey(range, bk, bn)
         key in reported ? continue : push!(reported, key)
         if bk === :argument
             message = "Unused argument `$bn`"
             code = LOWERING_UNUSED_ARGUMENT_CODE
+            data = nothing
         else
             message = "Unused local binding `$bn`"
             code = LOWERING_UNUSED_LOCAL_CODE
+            data = compute_unused_variable_data(st0, prov, fi)
         end
         push!(diagnostics, Diagnostic(;
             range,
@@ -662,7 +693,8 @@ function analyze_lowered_code!(
             source = DIAGNOSTIC_SOURCE,
             code,
             codeDescription = diagnostic_code_description(code),
-            tags = DiagnosticTag.Ty[DiagnosticTag.Unnecessary]))
+            tags = DiagnosticTag.Ty[DiagnosticTag.Unnecessary],
+            data))
     end
 
     skip_errors_requiring_analysis ||
