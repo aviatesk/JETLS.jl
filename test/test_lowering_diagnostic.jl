@@ -14,9 +14,10 @@ module lowering_module end
 get_lowered_diagnostics(text::AbstractString; kwargs...) = get_lowered_diagnostics(lowering_module, text; kwargs...)
 function get_lowered_diagnostics(mod::Module, text::AbstractString; kwargs...)
     fi = JETLS.FileInfo(#=version=#0, text, @__FILE__)
+    uri = JETLS.LSP.URIs2.filepath2uri(@__FILE__)
     st0 = JETLS.build_syntax_tree(fi)
     @assert JS.kind(st0) === JS.K"toplevel"
-    return JETLS.lowering_diagnostics(st0[1], mod, fi; kwargs...)
+    return JETLS.lowering_diagnostics(uri, fi, mod, st0[1]; kwargs...)
 end
 
 macro just_return(x)

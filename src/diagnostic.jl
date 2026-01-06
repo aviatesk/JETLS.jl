@@ -620,12 +620,13 @@ function analyze_undefined_global_bindings!(
     end
 end
 
-function analyze_lowered_code!(diagnostics::Vector{Diagnostic},
-        ctx3::JL.VariableAnalysisContext, st3::JL.SyntaxTree, fi::FileInfo;
+function analyze_lowered_code!(
+        diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo, res::NamedTuple;
         skip_errors_requiring_analysis::Bool = false,
         allow_unused_underscore::Bool = true,
         postprocessor::LSPostProcessor = LSPostProcessor()
     )
+    (; ctx3, st3) = res
     ismacro = Ref(false)
     binding_occurrences = compute_binding_occurrences(ctx3, st3; ismacro, include_global_bindings=true)
     reported = Set{LoweringDiagnosticKey}() # to prevent duplicate reports for unused default or keyword arguments
@@ -671,14 +672,14 @@ function analyze_lowered_code!(diagnostics::Vector{Diagnostic},
 end
 
 function lowering_diagnostics!(
-        diagnostics::Vector{Diagnostic}, st0::JL.SyntaxTree, mod::Module, fi::FileInfo;
+        diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo, mod::Module, st0::JL.SyntaxTree;
         skip_errors_requiring_analysis::Bool = false,
         allow_unused_underscore::Bool = true,
         postprocessor::LSPostProcessor = LSPostProcessor(),
     )
     @assert JS.kind(st0) ∉ JS.KSet"toplevel module"
 
-    (; ctx3, st3) = try
+    res = try
         jl_lower_for_scope_resolution(mod, st0; recover_from_macro_errors=false)
     catch err
         if err isa JL.LoweringError
@@ -732,7 +733,7 @@ function lowering_diagnostics!(
         end
     end
 
-    return analyze_lowered_code!(diagnostics, ctx3, st3, fi; skip_errors_requiring_analysis, allow_unused_underscore, postprocessor)
+    return analyze_lowered_code!(diagnostics, uri, fi, res; skip_errors_requiring_analysis, allow_unused_underscore, postprocessor)
 end
 lowering_diagnostics(args...; kwargs...) = lowering_diagnostics!(Diagnostic[], args...; kwargs...) # used by tests
 
@@ -747,7 +748,7 @@ function toplevel_lowering_diagnostics(server::Server, uri::URI, file_info::File
     iterate_toplevel_tree(st0_top) do st0::JL.SyntaxTree
         pos = offset_to_xy(file_info, JS.first_byte(st0))
         (; mod, postprocessor) = get_context_info(server.state, uri, pos)
-        lowering_diagnostics!(diagnostics, st0, mod, file_info; skip_errors_requiring_analysis, allow_unused_underscore, postprocessor)
+        lowering_diagnostics!(diagnostics, uri, file_info, mod, st0; skip_errors_requiring_analysis, allow_unused_underscore, postprocessor)
     end
     return diagnostics
 end
