@@ -51,6 +51,7 @@ the list itself is subject to change.
   - [x] Lowering errors
   - [x] Macro expansion error
   - [x] Unused bindings
+  - [x] Captured boxed variables
   - [x] Method overwrite
   - [x] Abstract struct field
   - [x] Undefined bindings
