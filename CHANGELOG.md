@@ -47,6 +47,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- Added `lowering/undef-global-var` diagnostic that reports undefined global
+  variable references on document change (as you type). This provides faster
+  feedback compared to `inference/undef-global-var`, which runs on save.
+  The on-change diagnostic detects simple undefined references with accurate
+  position information, while the on-save version detects a superset of
+  undefined global binding references, including qualified references like
+  `Base.undefvar`.
+
 - Method signature completion for function calls. When typing inside a function
   call (triggered by `(`, `,`, or ` `), compatible method signatures are
   suggested based on already-provided arguments. Selecting a completion inserts
