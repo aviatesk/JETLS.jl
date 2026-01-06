@@ -101,6 +101,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > improves behavior for your client, consider submitting a PR to add your client
 > to the [auto-detection](https://github.com/aviatesk/JETLS.jl/blob/14fdc847252579c27e41cd50820aee509f8fd7bd/src/completions.jl#L386) logic.
 
+- Added code actions to delete unused variable assignments. For unused local
+  bindings like `y = println(x)`, two new quick fix actions are now available:
+  - "Delete assignment": removes `y = `, leaving just `println(x)`
+  - "Delete statement": removes the entire assignment statement
+  These actions are not shown for (named)tuple destructuring patterns like
+  `x, y, z = func()` where deletion would change semantics.
+
 ### Changed
 
 - Enhanced global completion items with detailed kind information (`[function]`,

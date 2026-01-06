@@ -4,6 +4,7 @@ using Test
 using JETLS
 using JETLS: JL, JS
 using JETLS.LSP
+using JETLS.LSP: UnusedVariableData
 using JETLS.LSP.URIs2
 
 include(normpath(pkgdir(JETLS), "test", "setup.jl"))
@@ -766,6 +767,55 @@ end
         code_actions = Union{CodeAction,Command}[]
         JETLS.unused_variable_code_actions!(code_actions, uri, [diagnostic])
         @test isempty(code_actions)
+    end
+
+    # Test delete actions for unused local bindings with UnusedVariableData
+    let assignment_range = Range(;
+            start = Position(; line=1, character=4),
+            var"end" = Position(; line=1, character=18))
+        lhs_eq_range = Range(;
+            start = Position(; line=1, character=4),
+            var"end" = Position(; line=1, character=8))
+        data = UnusedVariableData(false, assignment_range, lhs_eq_range)
+        diagnostic = Diagnostic(;
+            range = Range(;
+                start = Position(; line=1, character=4),
+                var"end" = Position(; line=1, character=5)),
+            severity = DiagnosticSeverity.Information,
+            message = "Unused local binding `y`",
+            source = JETLS.DIAGNOSTIC_SOURCE,
+            code = JETLS.LOWERING_UNUSED_LOCAL_CODE,
+            data)
+        code_actions = Union{CodeAction,Command}[]
+        JETLS.unused_variable_code_actions!(code_actions, uri, [diagnostic])
+        @test length(code_actions) == 3  # _ prefix + delete assignment + delete statement
+        @test code_actions[1].title == "Prefix with '_' to indicate intentionally unused"
+        @test code_actions[1].isPreferred == true
+        @test code_actions[2].title == "Delete assignment"
+        @test code_actions[2].isPreferred === nothing
+        @test code_actions[2].edit.changes[uri][1].range == lhs_eq_range
+        @test code_actions[2].edit.changes[uri][1].newText == ""
+        @test code_actions[3].title == "Delete statement"
+        @test code_actions[3].isPreferred === nothing
+        @test code_actions[3].edit.changes[uri][1].range == assignment_range
+        @test code_actions[3].edit.changes[uri][1].newText == ""
+    end
+
+    # Test no delete actions for tuple unpacking
+    let data = UnusedVariableData(true, nothing, nothing)
+        diagnostic = Diagnostic(;
+            range = Range(;
+                start = Position(; line=1, character=7),
+                var"end" = Position(; line=1, character=8)),
+            severity = DiagnosticSeverity.Information,
+            message = "Unused local binding `y`",
+            source = JETLS.DIAGNOSTIC_SOURCE,
+            code = JETLS.LOWERING_UNUSED_LOCAL_CODE,
+            data)
+        code_actions = Union{CodeAction,Command}[]
+        JETLS.unused_variable_code_actions!(code_actions, uri, [diagnostic])
+        @test length(code_actions) == 1  # only _ prefix
+        @test code_actions[1].title == "Prefix with '_' to indicate intentionally unused"
     end
 end
 
