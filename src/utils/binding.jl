@@ -500,33 +500,11 @@ function compute_binding_occurrences!(
                     end
                     start_idx = 3
                 end
-                if is_kwcall_lambda(ctx3, st)
-                    # This is `kwcall` method -- now need to perform some special case
-                    # Julia checks whether keyword arguments are assigned in `kwcall` methods,
-                    # but JL actually introduces local bindings for those keyword arguments for reflection purposes:
-                    # https://github.com/c42f/JuliaLowering.jl/blob/4b12ab19dad40c64767558be0a8a338eb4cc9172/src/desugaring.jl#L2633-L2637
-                    # These bindings are never actually used, so simply recursing would cause
-                    # this pass to report them as unused local bindings.
-                    # We avoid this problem by setting `include_decls` when recursing.
-                    for i = start_idx:nc
-                        compute_binding_occurrences!(occurrences, ctx3, st[i]; ismacro, include_decls=true)
-                    end
-                    continue
-                end
             end
         elseif k === JS.K"="
             start_idx = 2 # the left hand side, i.e. "definition", does not account for usage
             if nc ≥ 1
                 record_occurrence!(occurrences, :def, st[1], ctx3)
-                if nc ≥ 2
-                    rhs = st[2]
-                    # In struct definitions, `local struct_name` is somehow introduced,
-                    # so special case it here: https://github.com/c42f/JuliaLowering.jl/blob/4b12ab19dad40c64767558be0a8a338eb4cc9172/src/desugaring.jl#L3833
-                    # TODO investigate why this local binding introduction is necessary on the JL side
-                    if JS.kind(rhs) === JS.K"BindingId" && JL.lookup_binding(ctx3, rhs).name == "struct_type"
-                        start_idx = 1
-                    end
-                end
             end
         elseif k === JS.K"call" && nc ≥ 1
             arg1 = st[1]
