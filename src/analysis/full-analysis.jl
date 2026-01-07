@@ -285,11 +285,7 @@ function schedule_analysis!(
     )
     manager = server.state.analysis_manager
 
-    if onsave
-        generation = increment_generation!(manager, entry)
-    else
-        generation = get_generation(manager, entry)
-    end
+    generation = onsave ? increment_generation!(manager, entry) : get_generation(manager, entry)
 
     request = AnalysisRequest(
         entry, uri, generation, cancellable_token, notify_diagnostics,
@@ -297,7 +293,6 @@ function schedule_analysis!(
 
     debounce = get_config(server.state.config_manager, :full_analysis, :debounce)
     if onsave && debounce > 0
-        local delay::Float64 = debounce
         store!(manager.debounced) do debounced
             if haskey(debounced, request.entry)
                 # Cancel existing timer if any
@@ -307,7 +302,7 @@ function schedule_analysis!(
                 notify(debounce_completion)
             end
             local new_debounced = copy(debounced)
-            timer = Timer(delay) do _
+            timer = Timer(debounce) do _
                 store!(manager.debounced) do debounced′
                     local new_debounced′ = copy(debounced′)
                     delete!(new_debounced′, request.entry)
@@ -725,11 +720,13 @@ function analyze_package_with_revise(
         Revise.maybe_extract_sigs!(fi)
     end
 
-    analyzer = LSAnalyzer(request.entry; report_target_modules=(pkgmod,)) # TODO Revisit (submodules)
-    # Revise's signature population may execute code, which can increment the world age,
-    # so we update to the latest world age here
-    newstate = JET.AnalyzerState(JET.AnalyzerState(analyzer); world = Base.get_world_counter())
-    analyzer = JET.AbstractAnalyzer(analyzer, newstate)
+    analyzer = let analyzer # avoid captured boxes
+        analyzer = LSAnalyzer(request.entry; report_target_modules=(pkgmod,)) # TODO Revisit (submodules)
+        # Revise's signature population may execute code, which can increment the world age,
+        # so we update to the latest world age here
+        newstate = JET.AnalyzerState(JET.AnalyzerState(analyzer); world = Base.get_world_counter())
+        JET.AbstractAnalyzer(analyzer, newstate)
+    end
 
     workitems = SigWorkItem[]
     for (file, fi) in zip(Revise.CodeTracking.srcfiles(pkgdata), pkgdata.fileinfos),
@@ -1079,7 +1076,7 @@ function instantiate_package_environment!(server::Server, env_path::String, pkgn
         # Cache miss - perform environment detection
         ensure_instantiated!(server, env_path)
         pkgenv = @lock Base.require_lock @something Base.identify_package_env(pkgname) begin
-            @warn "Failed to identify package environment" env_path pkgname filepath
+            @warn "Failed to identify package environment" env_path pkgname
             return store!(instantiated_envs) do cache
                 new_cache = copy(cache)
                 new_cache[env_path] = nothing
