@@ -110,7 +110,7 @@ end
 
 function find_global_references!(
         locations::Vector{Location}, server::Server,
-        uri::URI, fi::FileInfo, st0_top::JL.SyntaxTree, binfo::JL.BindingInfo,
+        uri::URI, fi::FileInfo, st0_top::JS.SyntaxTree, binfo::JL.BindingInfo,
         token::Union{Nothing,ProgressToken};
         include_declaration::Bool=true,
     )
@@ -159,7 +159,7 @@ end
 
 function global_find_references_in_file!(
         seen_locations::Set{Tuple{URI,Range}}, state::ServerState, uri::URI, fi::FileInfo,
-        st0_top::JL.SyntaxTree, binfo::JL.BindingInfo;
+        st0_top::JS.SyntaxTree, binfo::JL.BindingInfo;
         include_declaration::Bool=true,
     )
     for occurrence in find_global_binding_occurrences!(state, uri, fi, st0_top, binfo)

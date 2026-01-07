@@ -1,5 +1,5 @@
 """
-    resolve_type(analyzer::LSAnalyzer, context_module::Module, s0::Union{JS.SyntaxNode,JL.SyntaxTree})
+    resolve_type(analyzer::LSAnalyzer, context_module::Module, s0::Union{JS.SyntaxNode,JS.SyntaxTree})
     resolve_type(analyzer::LSAnalyzer, context_module::Module, ex::Expr)
 
 Resolves the type of `s0` in the `context_module` that has been analyzed by the `analyzer`.
@@ -24,7 +24,7 @@ and `resolve_type` will be implemented as a query against these type inference r
 However, this implementation requires JL to be able to lower arbitrary user code,
 which first requires integration of JL into Base.
 """
-resolve_type(analyzer::LSAnalyzer, context_module::Module, s0::Union{JS.SyntaxNode,JL.SyntaxTree}) =
+resolve_type(analyzer::LSAnalyzer, context_module::Module, s0::Union{JS.SyntaxNode,JS.SyntaxTree}) =
     resolve_type(analyzer, context_module, Expr(s0))
 function resolve_type(analyzer::LSAnalyzer, context_module::Module, @nospecialize ex)
     # TODO use JL once it supports general macro expansion

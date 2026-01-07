@@ -100,11 +100,11 @@ document_highlight_kind(occurrence::BindingOccurence) =
 
 function global_document_highlights!(
         highlights′::Dict{Range,DocumentHighlightKind.Ty},
-        fi::FileInfo, st0_top::JL.SyntaxTree, binfo::JL.BindingInfo,
+        fi::FileInfo, st0_top::JS.SyntaxTree, binfo::JL.BindingInfo,
         module_info::Union{Tuple{ServerState,URI},Module},
     )
     location_info = module_info isa Module ? nothing : module_info
-    iterate_toplevel_tree(st0_top) do st0::JL.SyntaxTree
+    iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
         if module_info isa Module
             mod = module_info
         else
