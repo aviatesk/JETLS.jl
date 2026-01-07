@@ -694,7 +694,7 @@ end
 
 function analyze_lowered_code!(
         diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo, res::NamedTuple;
-        skip_errors_requiring_analysis::Bool = false,
+        skip_analysis_requiring_context::Bool = false,
         allow_unused_underscore::Bool = true,
         postprocessor::LSPostProcessor = LSPostProcessor()
     )
@@ -705,7 +705,7 @@ function analyze_lowered_code!(
 
     analyze_unused_bindings!(diagnostics, fi, st0, ctx3, binding_occurrences, ismacro, reported; allow_unused_underscore)
 
-    skip_errors_requiring_analysis ||
+    skip_analysis_requiring_context ||
         analyze_undefined_global_bindings!(diagnostics, fi, ctx3, binding_occurrences, reported; postprocessor)
 
     return diagnostics
@@ -713,9 +713,7 @@ end
 
 function lowering_diagnostics!(
         diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo, mod::Module, st0::JL.SyntaxTree;
-        skip_errors_requiring_analysis::Bool = false,
-        allow_unused_underscore::Bool = true,
-        postprocessor::LSPostProcessor = LSPostProcessor(),
+        skip_analysis_requiring_context::Bool = false, kwargs...
     )
     @assert JS.kind(st0) ∉ JS.KSet"toplevel module"
 
@@ -731,7 +729,7 @@ function lowering_diagnostics!(
                 code = LOWERING_ERROR_CODE,
                 codeDescription = diagnostic_code_description(LOWERING_ERROR_CODE)))
         elseif err isa JL.MacroExpansionError
-            if !skip_errors_requiring_analysis
+            if !skip_analysis_requiring_context
                 st = scrub_expand_macro_stacktrace(stacktrace(catch_backtrace()))
                 msg = err.msg
                 inner = err.err
@@ -773,7 +771,7 @@ function lowering_diagnostics!(
         end
     end
 
-    return analyze_lowered_code!(diagnostics, uri, fi, res; skip_errors_requiring_analysis, allow_unused_underscore, postprocessor)
+    return analyze_lowered_code!(diagnostics, uri, fi, res; skip_analysis_requiring_context, kwargs...)
 end
 lowering_diagnostics(args...; kwargs...) = lowering_diagnostics!(Diagnostic[], args...; kwargs...) # used by tests
 
@@ -783,12 +781,12 @@ function toplevel_lowering_diagnostics(server::Server, uri::URI, file_info::File
     diagnostics = Diagnostic[]
     st0_top = build_syntax_tree(file_info)
     analysis_info = get_analysis_info(server.state.analysis_manager, uri)
-    skip_errors_requiring_analysis = !has_analyzed_context(analysis_info, uri)
+    skip_analysis_requiring_context = !has_analyzed_context(analysis_info, uri)
     allow_unused_underscore = get_config(server.state.config_manager, :diagnostic, :allow_unused_underscore)
     iterate_toplevel_tree(st0_top) do st0::JL.SyntaxTree
         pos = offset_to_xy(file_info, JS.first_byte(st0))
         (; mod, postprocessor) = get_context_info(server.state, uri, pos)
-        lowering_diagnostics!(diagnostics, uri, file_info, mod, st0; skip_errors_requiring_analysis, allow_unused_underscore, postprocessor)
+        lowering_diagnostics!(diagnostics, uri, file_info, mod, st0; skip_analysis_requiring_context, allow_unused_underscore, postprocessor)
     end
     return diagnostics
 end
