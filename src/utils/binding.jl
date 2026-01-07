@@ -160,7 +160,7 @@ function find_target_binding(ctx3::JL.VariableAnalysisContext, st3::JL.SyntaxTre
         end
         offset in JS.byte_range(st) || return nothing
         k === JS.K"BindingId" || return nothing
-        binfo = JL.lookup_binding(ctx3, st)
+        binfo = JL.get_binding(ctx3, st)
         if binfo.is_internal || startswith(binfo.name, "#")
             return nothing
         end
@@ -223,7 +223,7 @@ has no definitions. Otherwise returns a tuple of `(binding, definitions)` where:
 """
 function select_target_binding_definitions(st0_top::JL.SyntaxTree, offset::Int, mod::Module)
     (; ctx3, st3, binding) = @something _select_target_binding(st0_top, offset, mod) return nothing
-    binfo = JL.lookup_binding(ctx3, binding)
+    binfo = JL.get_binding(ctx3, binding)
     definitions = @somereal lookup_binding_definitions(st3, binfo) return nothing
     return binding, definitions
 end
@@ -380,7 +380,7 @@ function record_occurrence!(occurrences::Dict{JL.BindingInfo,Set{BindingOccurenc
         skip_recording::Union{Nothing,Set{JL.BindingInfo}} = nothing
     ) where Tree3<:JL.SyntaxTree
     if JS.kind(st) === JS.K"BindingId"
-        binfo = JL.lookup_binding(ctx3, st)
+        binfo = JL.get_binding(ctx3, st)
         record_occurrence!(occurrences, kind, st, binfo; skip_recording)
     end
     return occurrences
@@ -403,15 +403,15 @@ function is_kwcall_lambda(ctx3::JL.VariableAnalysisContext, st3::JL.SyntaxTree)
     na = JS.numchildren(arglist)
     return na ≥ 3 &&
         JS.kind(arglist[1]) === JS.K"BindingId" &&
-        let arg1info = JL.lookup_binding(ctx3, arglist[1])
+        let arg1info = JL.get_binding(ctx3, arglist[1])
             arg1info.is_internal && arg1info.name == "#self#"
         end &&
         JS.kind(arglist[2]) === JS.K"BindingId" &&
-        let arg2info = JL.lookup_binding(ctx3, arglist[2])
+        let arg2info = JL.get_binding(ctx3, arglist[2])
             arg2info.is_internal && arg2info.name == "kws"
         end &&
         JS.kind(arglist[3]) === JS.K"BindingId" &&
-        let arg3info = JL.lookup_binding(ctx3, arglist[3])
+        let arg3info = JL.get_binding(ctx3, arglist[3])
             arg3info.is_internal && (arg3info.name == "#self#" || arg3info.name == "#ctor-self#")
         end
 end
@@ -452,7 +452,7 @@ function compute_binding_occurrences!(
             if nc ≥ 1
                 local func = st[1]
                 if JS.kind(func) === JS.K"BindingId"
-                    binfo = JL.lookup_binding(ctx3, func)
+                    binfo = JL.get_binding(ctx3, func)
                     record_occurrence!(occurrences, :decl, func, binfo)
                     if !isnothing(ismacro)
                         ismacro[] |= startswith(binfo.name, "@")
@@ -464,7 +464,7 @@ function compute_binding_occurrences!(
             if nc ≥ 1
                 local global_binding = st[1]
                 if JS.kind(global_binding) === JS.K"BindingId"
-                    binfo = JL.lookup_binding(ctx3, global_binding)
+                    binfo = JL.get_binding(ctx3, global_binding)
                     record_occurrence!(occurrences, :def, global_binding, binfo)
                     start_idx = 2
                 end
@@ -478,7 +478,7 @@ function compute_binding_occurrences!(
                 # We add this inner function to `skip_recording_uses` and recurse.
                 local func = blk1[1]
                 if JS.kind(func) === JS.K"BindingId"
-                    innerfuncinfo = JL.lookup_binding(ctx3, func)
+                    innerfuncinfo = JL.get_binding(ctx3, func)
                     compute_binding_occurrences!(occurrences, ctx3, st; ismacro,
                         skip_recording_uses = Set((innerfuncinfo,)))
                     continue
@@ -523,7 +523,7 @@ function compute_binding_occurrences!(
                     # In struct definitions, `local struct_name` is somehow introduced,
                     # so special case it here: https://github.com/c42f/JuliaLowering.jl/blob/4b12ab19dad40c64767558be0a8a338eb4cc9172/src/desugaring.jl#L3833
                     # TODO investigate why this local binding introduction is necessary on the JL side
-                    if JS.kind(rhs) === JS.K"BindingId" && JL.lookup_binding(ctx3, rhs).name == "struct_type"
+                    if JS.kind(rhs) === JS.K"BindingId" && JL.get_binding(ctx3, rhs).name == "struct_type"
                         start_idx = 1
                     end
                 end
@@ -532,7 +532,7 @@ function compute_binding_occurrences!(
             arg1 = st[1]
             skip_arguments = false
             if JS.kind(arg1) === JS.K"BindingId"
-                funcbind = JL.lookup_binding(ctx3, arg1)
+                funcbind = JL.get_binding(ctx3, arg1)
                 if is_selffunc(funcbind)
                     # Don't count self arguments used in self calls as "usage".
                     # This is necessary to issue unused argument diagnostics for `x` in cases like:
@@ -552,7 +552,7 @@ function compute_binding_occurrences!(
             if skip_arguments
                 for i = nc:-1:2 # reversed since we use `pop!`
                     argⱼ = st[i]
-                    if JS.kind(argⱼ) === JS.K"BindingId" && JL.lookup_binding(ctx3, argⱼ).kind === :argument
+                    if JS.kind(argⱼ) === JS.K"BindingId" && JL.get_binding(ctx3, argⱼ).kind === :argument
                         continue # skip this argument
                     end
                     push!(stack, st[i])

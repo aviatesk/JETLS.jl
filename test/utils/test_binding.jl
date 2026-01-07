@@ -75,11 +75,11 @@ end
             if i in (1, 2)
                 @test JS.sourcetext(binding) == "kw"
                 @test JS.source_line(binding) == 1
-                binfo = JL.lookup_binding(ctx3, binding)
+                binfo = JL.get_binding(ctx3, binding)
             else
                 @test JS.sourcetext(binding) == "kw"
                 @test JS.source_line(binding) == 2
-                @test JL.lookup_binding(ctx3, binding).id == binfo.id
+                @test JL.get_binding(ctx3, binding).id == binfo.id
             end
             cnt += 1
         end
@@ -98,11 +98,11 @@ end
             if i in (1, 2)
                 @test JS.sourcetext(binding) == "xxx"
                 @test JS.source_line(binding) == 2
-                binfo = JL.lookup_binding(ctx3, binding)
+                binfo = JL.get_binding(ctx3, binding)
             else
                 @test JS.sourcetext(binding) == "xxx"
                 @test JS.source_line(binding) == 3
-                @test JL.lookup_binding(ctx3, binding).id == binfo.id
+                @test JL.get_binding(ctx3, binding).id == binfo.id
             end
             cnt += 1
         end
@@ -853,7 +853,7 @@ function with_global_binding_occurrences(
     (; ctx3, binding) = @something(
         JETLS._select_target_binding(st0_top, offset, lowering_module),
         error("No binding found at cursor position"))
-    target_binfo = JL.lookup_binding(ctx3, binding)
+    target_binfo = JL.get_binding(ctx3, binding)
     @test target_binfo.kind === :global
     @test target_binfo.name == target_name
 

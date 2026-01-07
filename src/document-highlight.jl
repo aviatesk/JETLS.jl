@@ -65,7 +65,7 @@ function document_highlights!(
         _select_target_binding(st0_top, offset, mod; caller="document_highlights!")
     end return highlights
 
-    binfo = JL.lookup_binding(ctx3, binding)
+    binfo = JL.get_binding(ctx3, binding)
 
     highlights′ = Dict{Range,DocumentHighlightKind.Ty}()
     if binfo.kind === :global
