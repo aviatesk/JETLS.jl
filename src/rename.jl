@@ -69,7 +69,7 @@ function local_binding_rename_preparation(
         _select_target_binding(st0_top, offset, mod; caller="local_binding_rename_preparation")
     end return nothing
 
-    binfo = JL.lookup_binding(ctx3, binding)
+    binfo = JL.get_binding(ctx3, binding)
     if is_local_binding(binfo)
         range, _ = unadjust_range(state, uri, jsobj_to_range(binding, fi))
         return (; range, placeholder = binfo.name)
@@ -88,7 +88,7 @@ function global_binding_rename_preparation(
         _select_target_binding(st0_top, offset, mod; caller="global_binding_rename_preparation")
     end return nothing
 
-    binfo = JL.lookup_binding(ctx3, binding)
+    binfo = JL.get_binding(ctx3, binding)
     if binfo.kind === :global
         range, _ = unadjust_range(state, uri, jsobj_to_range(binding, fi))
         return (; range, placeholder = binfo.name)
@@ -192,7 +192,7 @@ function local_binding_rename(
         _select_target_binding(st0_top, offset, mod; caller="local_binding_rename")
     end return nothing
 
-    binfo = JL.lookup_binding(ctx3, binding)
+    binfo = JL.get_binding(ctx3, binding)
     is_local_binding(binfo) || return nothing
     if !Base.isidentifier(newName)
         error = ResponseError(;
@@ -242,7 +242,7 @@ function global_binding_rename(
         _select_target_binding(st0_top, offset, mod; caller="global_binding_rename")
     end return nothing
 
-    binfo = JL.lookup_binding(ctx3, binding)
+    binfo = JL.get_binding(ctx3, binding)
     binfo.kind === :global || return nothing
     if !Base.isidentifier(newName)
         error = ResponseError(;

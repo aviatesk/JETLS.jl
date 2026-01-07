@@ -97,7 +97,7 @@ function find_references(
         _select_target_binding(st0_top, offset, mod; caller="find_references!")
     end return locations
 
-    binfo = JL.lookup_binding(ctx3, binding)
+    binfo = JL.get_binding(ctx3, binding)
     if binfo.kind === :global
         find_global_references!(locations, server, uri, fi, st0_top, binfo, token;
             include_declaration)
