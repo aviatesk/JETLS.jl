@@ -155,7 +155,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           # Find the previous release tag (date-based version before current)
-          PREV_TAG=$(gh release list --limit 10 --json tagName --jq '.[].tagName' | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' | head -1)
+          # Skip the current release (which was just created) by excluding it from the list
+          CURRENT_VERSION="${{ steps.release_info.outputs.version }}"
+          PREV_TAG=$(gh release list --limit 10 --json tagName --jq '.[].tagName' | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' | grep -v "^${CURRENT_VERSION}$" | head -1)
           if [ -z "$PREV_TAG" ]; then
             echo "No previous release found, skipping"
             exit 0
