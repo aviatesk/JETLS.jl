@@ -19,7 +19,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`368e0a1...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/368e0a1...HEAD)
+- Diff: [`cbcdc3c...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/cbcdc3c...HEAD)
+
+## 2026-01-09
+
+- Commit: [`cbcdc3c`](https://github.com/aviatesk/JETLS.jl/commit/cbcdc3c)
+- Diff: [`368e0a1...cbcdc3c`](https://github.com/aviatesk/JETLS.jl/compare/368e0a1...cbcdc3c)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-01-09")'
+  ```
 
 ### Fixed
 
