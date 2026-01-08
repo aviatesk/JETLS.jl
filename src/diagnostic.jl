@@ -647,7 +647,7 @@ function analyze_undefined_global_bindings!(
         binfo.is_internal && continue
         startswith(binfo.name, '#') && continue
         any(o->o.kind===:def, occurrences) && continue
-        isdefinedglobal(binfo.mod, Symbol(binfo.name)) && continue
+        invokelatest(isdefinedglobal, binfo.mod, Symbol(binfo.name))::Bool && continue
         bn = binfo.name
         provs = JS.flattened_provenance(JL.binding_ex(ctx3, binfo.id))
         range = jsobj_to_range(first(provs), fi)
