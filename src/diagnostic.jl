@@ -780,8 +780,7 @@ lowering_diagnostics(args...; kwargs...) = lowering_diagnostics!(Diagnostic[], a
 function toplevel_lowering_diagnostics(server::Server, uri::URI, file_info::FileInfo)
     diagnostics = Diagnostic[]
     st0_top = build_syntax_tree(file_info)
-    analysis_info = get_analysis_info(server.state.analysis_manager, uri)
-    skip_analysis_requiring_context = !has_analyzed_context(analysis_info, uri)
+    skip_analysis_requiring_context = !has_analyzed_context(server.state, uri)
     allow_unused_underscore = get_config(server.state.config_manager, :diagnostic, :allow_unused_underscore)
     iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
         pos = offset_to_xy(file_info, JS.first_byte(st0))
@@ -790,11 +789,6 @@ function toplevel_lowering_diagnostics(server::Server, uri::URI, file_info::File
     end
     return diagnostics
 end
-
-has_analyzed_context(::Nothing, ::URI) = false
-has_analyzed_context(outofscope::OutOfScope, ::URI) = !isnothing(outofscope.module_context)
-has_analyzed_context(analysis_result::AnalysisResult, uri::URI) =
-    analyzed_file_info(analysis_result, uri) !== nothing
 
 function iterate_toplevel_tree(callback, st0_top::JS.SyntaxTree)
     sl = JS.SyntaxList(st0_top)

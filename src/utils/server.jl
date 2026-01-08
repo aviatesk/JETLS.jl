@@ -288,3 +288,13 @@ get_context_analyzer(analysis_result::AnalysisResult, ::URI) = analysis_result.a
 get_post_processor(::Nothing) = LSPostProcessor(JET.PostProcessor())
 get_post_processor(::OutOfScope) = LSPostProcessor(JET.PostProcessor())
 get_post_processor(analysis_result::AnalysisResult) = LSPostProcessor(JET.PostProcessor(analysis_result.actual2virtual))
+
+function has_analyzed_context(state::ServerState, uri::URI)
+    lookup_uri = @something get_notebook_uri_for_cell(state, uri) uri
+    analysis_info = get_analysis_info(state.analysis_manager, lookup_uri)
+    return _has_analyzed_context(analysis_info, lookup_uri)
+end
+_has_analyzed_context(::Nothing, ::URI) = false
+_has_analyzed_context(outofscope::OutOfScope, ::URI) = !isnothing(outofscope.module_context)
+_has_analyzed_context(analysis_result::AnalysisResult, uri::URI) =
+    analyzed_file_info(analysis_result, uri) !== nothing
