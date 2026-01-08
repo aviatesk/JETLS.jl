@@ -521,7 +521,7 @@ end
 # lowering diagnostic
 # ===================
 
-const JL_MACRO_FILE = only(methods(JL.expand_macro, (JL.MacroExpansionContext,JL.SyntaxTree))).file
+const JL_MACRO_FILE = only(methods(JL.expand_macro, (JL.MacroExpansionContext,JS.SyntaxTree))).file
 function scrub_expand_macro_stacktrace(stacktrace::Vector{Base.StackTraces.StackFrame})
     idx = @something findfirst(stacktrace) do stackframe::Base.StackTraces.StackFrame
         stackframe.func === :expand_macro && stackframe.file === JL_MACRO_FILE
@@ -554,8 +554,8 @@ function provenances_to_related_information!(relatedInformation::Vector{Diagnost
     for prov in provs
         filename = JS.filename(prov)
         uri = filepath2uri(to_full_path(filename))
-        sr = JL.sourceref(prov)
-        if sr isa JL.SourceRef
+        sr = JS.sourceref(prov)
+        if sr isa JS.SourceRef
             # use precise location information if available
             sf = JS.sourcefile(sr)
             code = JS.sourcetext(sf)
@@ -583,7 +583,7 @@ struct LoweringDiagnosticKey
 end
 
 function analyze_unused_bindings!(
-        diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::JL.SyntaxTree, ctx3::JL.VariableAnalysisContext,
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::JS.SyntaxTree, ctx3::JL.VariableAnalysisContext,
         binding_occurrences, ismacro, reported::Set{LoweringDiagnosticKey};
         allow_unused_underscore::Bool
     )
@@ -600,7 +600,7 @@ function analyze_unused_bindings!(
         if allow_unused_underscore && startswith(bn, '_')
             continue
         end
-        provs = JL.flattened_provenance(JL.binding_ex(ctx3, binfo.id))
+        provs = JS.flattened_provenance(JL.binding_ex(ctx3, binfo.id))
         prov = first(provs)
         range = jsobj_to_range(prov, fi)
         key = LoweringDiagnosticKey(range, bk, bn)
@@ -649,7 +649,7 @@ function analyze_undefined_global_bindings!(
         any(o->o.kind===:def, occurrences) && continue
         isdefinedglobal(binfo.mod, Symbol(binfo.name)) && continue
         bn = binfo.name
-        provs = JL.flattened_provenance(JL.binding_ex(ctx3, binfo.id))
+        provs = JS.flattened_provenance(JL.binding_ex(ctx3, binfo.id))
         range = jsobj_to_range(first(provs), fi)
         key = LoweringDiagnosticKey(range, bk, bn)
         key in reported ? continue : push!(reported, key)
@@ -665,12 +665,12 @@ function analyze_undefined_global_bindings!(
 end
 
 function compute_unused_variable_data(
-        st0::JL.SyntaxTree,
-        prov::JL.SyntaxTree,
+        st0::JS.SyntaxTree,
+        prov::JS.SyntaxTree,
         fi::FileInfo
     )
     # Find parent K"=" node using byte_ancestors
-    ancestors = byte_ancestors(st::JL.SyntaxTree->JS.kind(st)===JS.K"=", st0, JS.byte_range(prov))
+    ancestors = byte_ancestors(st::JS.SyntaxTree->JS.kind(st)===JS.K"=", st0, JS.byte_range(prov))
     isempty(ancestors) && return nothing
 
     assignment = first(ancestors)
@@ -712,7 +712,7 @@ function analyze_lowered_code!(
 end
 
 function lowering_diagnostics!(
-        diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo, mod::Module, st0::JL.SyntaxTree;
+        diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo, mod::Module, st0::JS.SyntaxTree;
         skip_analysis_requiring_context::Bool = false, kwargs...
     )
     @assert JS.kind(st0) ∉ JS.KSet"toplevel module"
@@ -740,7 +740,7 @@ function lowering_diagnostics!(
                     msg *= "\n" * sprint(Base.showerror, inner)
                     relatedInformation = stacktrace_to_related_information(st)
                 end
-                provs = JL.flattened_provenance(err.ex)
+                provs = JS.flattened_provenance(err.ex)
                 provs′ = @view provs[2:end]
                 if !isempty(provs′)
                     relatedInformation = @something relatedInformation DiagnosticRelatedInformation[]
@@ -783,7 +783,7 @@ function toplevel_lowering_diagnostics(server::Server, uri::URI, file_info::File
     analysis_info = get_analysis_info(server.state.analysis_manager, uri)
     skip_analysis_requiring_context = !has_analyzed_context(analysis_info, uri)
     allow_unused_underscore = get_config(server.state.config_manager, :diagnostic, :allow_unused_underscore)
-    iterate_toplevel_tree(st0_top) do st0::JL.SyntaxTree
+    iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
         pos = offset_to_xy(file_info, JS.first_byte(st0))
         (; mod, postprocessor) = get_context_info(server.state, uri, pos)
         lowering_diagnostics!(diagnostics, uri, file_info, mod, st0; skip_analysis_requiring_context, allow_unused_underscore, postprocessor)
@@ -796,8 +796,8 @@ has_analyzed_context(outofscope::OutOfScope, ::URI) = !isnothing(outofscope.modu
 has_analyzed_context(analysis_result::AnalysisResult, uri::URI) =
     analyzed_file_info(analysis_result, uri) !== nothing
 
-function iterate_toplevel_tree(callback, st0_top::JL.SyntaxTree)
-    sl = JL.SyntaxList(st0_top)
+function iterate_toplevel_tree(callback, st0_top::JS.SyntaxTree)
+    sl = JS.SyntaxList(st0_top)
     push!(sl, st0_top)
     while !isempty(sl)
         st0 = pop!(sl)

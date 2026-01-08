@@ -95,7 +95,7 @@ Sending (4) and (5) to the client can happen eagerly in response to <TAB>
 in later versions.
 """
 function to_completion(
-        binding::JL.BindingInfo, st::JL.SyntaxTree, sort_offset::Int,
+        binding::JL.BindingInfo, st::JS.SyntaxTree, sort_offset::Int,
         uri::URI, fi::FileInfo
     )
     label_kind = CompletionItemKind.Variable
@@ -483,7 +483,7 @@ end
 # call completions (method signatures and keyword arguments)
 # ==========================================================
 
-function extract_param_text(p::JL.SyntaxTree)
+function extract_param_text(p::JS.SyntaxTree)
      k = JS.kind(p)
     if k === JS.K"Identifier"
         return extract_name_val(p)
@@ -512,7 +512,7 @@ escape_snippet_text(s::AbstractString) =
     replace(s, '\\' => "\\\\", '$' => "\\\$", '}' => "\\}")
 
 function make_insert_text(msig::AbstractString, num_existing_args::Int, use_snippet::Bool)
-    mnode = JS.parsestmt(JL.SyntaxTree, msig; ignore_errors=true)
+    mnode = JS.parsestmt(JS.SyntaxTree, msig; ignore_errors=true)
     mnode = unwrap_where(mnode)
     JS.kind(mnode) in CALL_KINDS || return nothing
     params, kwp_i, _ = flatten_args(mnode)
@@ -563,7 +563,7 @@ function cursor_equals_position(ca::CallArgs, b::Int)::Union{Nothing,Bool}
     return nothing
 end
 
-function extract_kwarg_name_str(p::JL.SyntaxTree)
+function extract_kwarg_name_str(p::JS.SyntaxTree)
     node = @something extract_kwarg_name(p; sig=true) return nothing
     return extract_name_val(node)
 end
@@ -666,7 +666,7 @@ function call_completions!(
             method_sig_sort_idx += 1
         elseif @isdefined(kwarg_comp_info) # i.e. should_complete_kwargs
             (; existing_kws, seen_kwarg_names, insert_spaces, local_bindings) = kwarg_comp_info
-            mnode = JS.parsestmt(JL.SyntaxTree, msig; ignore_errors=true)
+            mnode = JS.parsestmt(JS.SyntaxTree, msig; ignore_errors=true)
             mnode = unwrap_where(mnode)
             JS.kind(mnode) in CALL_KINDS || continue
             params, kwp_i, _ = flatten_args(mnode)

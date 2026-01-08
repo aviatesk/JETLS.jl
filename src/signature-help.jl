@@ -33,14 +33,14 @@ end
 # =====
 
 """
-    flatten_args(call::JL.SyntaxTree) -> (args::JL.SyntaxList, first_kwarg_i::Int, has_semicolon::Bool)
+    flatten_args(call::JS.SyntaxTree) -> (args::JS.SyntaxList, first_kwarg_i::Int, has_semicolon::Bool)
 
-Return `(args::JL.SyntaxList, first_kwarg_i::Int, has_semicolon::Bool)`,
+Return `(args::JS.SyntaxList, first_kwarg_i::Int, has_semicolon::Bool)`,
 one `SyntaxTree` per argument to call.
 Ignore function name and `K"error"` (e.g. missing closing paren).
 `has_semicolon` is true if the call contains a `K"parameters"` node (explicit semicolon).
 """
-function flatten_args(call::JL.SyntaxTree)
+function flatten_args(call::JS.SyntaxTree)
     if kind(call) === K"where"
         return flatten_args(call[1])
     end
@@ -48,10 +48,10 @@ function flatten_args(call::JL.SyntaxTree)
         println(stderr, JL.sourcetext(call))
         error(lazy"Unexpected call kind: $(kind(call))")
     end
-    usable = (arg::JL.SyntaxTree) -> kind(arg) != K"error"
+    usable = (arg::JS.SyntaxTree) -> kind(arg) != K"error"
     orig = filter(usable, JS.children(call)[2:end])
 
-    args = JL.SyntaxList(orig.graph)
+    args = JS.SyntaxList(orig.graph)
     kw_i = 1
     has_semicolon = false
     for i in eachindex(orig)
@@ -78,7 +78,7 @@ Get K"Identifier" tree from a kwarg tree (child of K"call" or K"parameters").
   (= (:: a T) 1) => a  # only when sig=true
  (kw (:: a T) 1) => a  # only when sig=true
 """
-function extract_kwarg_name(a::JL.SyntaxTree; sig::Bool=false)
+function extract_kwarg_name(a::JS.SyntaxTree; sig::Bool=false)
     ret = identitifier_like(a)
     isnothing(ret) || return ret
     if kind(a) === K"=" || kind(a) === K"kw"
@@ -96,7 +96,7 @@ function extract_kwarg_name(a::JL.SyntaxTree; sig::Bool=false)
     return nothing
 end
 
-function identitifier_like(st::JL.SyntaxTree)
+function identitifier_like(st::JS.SyntaxTree)
     if kind(st) === K"Identifier"
         return st
     elseif kind(st) === K"var"
@@ -121,7 +121,7 @@ Keywords should be ignored if `cursor` is within the keyword's name.
 Note: the `=` form doesn't always correspond to a keyword arg after macro
 expansion, but signature help is only used on unexpanded code.
 """
-function find_kws(args::JL.SyntaxList, kw_i::Int; sig=false, cursor::Int=-1)
+function find_kws(args::JS.SyntaxList, kw_i::Int; sig=false, cursor::Int=-1)
     out = Dict{String, Int}()
     for i in (sig ? (kw_i:lastindex(args)) : eachindex(args))
         kind(args[i]) ∉ JS.KSet"= kw" && i < kw_i && continue
@@ -149,7 +149,7 @@ Information from a call site's arguments for filtering method signatures.
 - `kind`: Item in `CALL_KINDS`
 """
 struct CallArgs
-    args::JL.SyntaxList
+    args::JS.SyntaxList
     kw_i::Int
     pos_map::Dict{Int, Tuple{Int, Union{Int, Nothing}}}
     pos_args_lb::Int
@@ -157,7 +157,7 @@ struct CallArgs
     kw_map::Dict{String, Int}
     has_semicolon::Bool
     kind::JS.Kind
-    function CallArgs(st0::JL.SyntaxTree, cursor::Int=-1)
+    function CallArgs(st0::JS.SyntaxTree, cursor::Int=-1)
         @assert -1 ∉ JS.byte_range(st0)
         args, kw_i, has_semicolon = flatten_args(st0)
         pos_map = Dict{Int, Tuple{Int, Union{Int, Nothing}}}()
@@ -191,7 +191,7 @@ the splat (`1,2,3`), making it beneficial in some cases.
 """
 function compatible_method(m::Method, ca::CallArgs)
     msig = @something get_sig_str(m, ca) return false
-    mnode = JS.parsestmt(JL.SyntaxTree, msig; ignore_errors=true)
+    mnode = JS.parsestmt(JS.SyntaxTree, msig; ignore_errors=true)
 
     params, kwp_i, _ = flatten_args(mnode)
     has_var_params = kwp_i > 1 && kind(params[kwp_i - 1]) === K"..."
@@ -255,7 +255,7 @@ end
 # =======================
 
 function make_paraminfo(
-        param::JL.SyntaxTree, active_argtree::Union{Nothing,JL.SyntaxTree},
+        param::JS.SyntaxTree, active_argtree::Union{Nothing,JS.SyntaxTree},
         @nospecialize(active_argtype), postprocessor::LSPostProcessor
     )
     label = let r = JS.byte_range(param)
@@ -286,7 +286,7 @@ function make_siginfo(
     )
     msig = @something get_sig_str(m, ca)
     msig = postprocessor(msig)
-    mnode = JS.parsestmt(JL.SyntaxTree, msig; ignore_errors=true)
+    mnode = JS.parsestmt(JS.SyntaxTree, msig; ignore_errors=true)
     label = String(msig)
     documentation = let
         mdl = postprocessor(string(Base.parentmodule(m)))
@@ -370,7 +370,7 @@ end
 
 const empty_siginfos = SignatureInformation[]
 
-function is_relevant_call(call::JL.SyntaxTree)
+function is_relevant_call(call::JS.SyntaxTree)
     kind(call) in CALL_KINDS &&
         # don't show help for a+b, M', etc., where call[1] isn't the function
         !(JS.is_infix_op_call(call) || JS.is_postfix_op_call(call))
@@ -378,7 +378,7 @@ end
 
 # If parents of our call are like (macro/function (where (where... (call |) ...))),
 # we're actually in a declaration, and shouldn't show signature help.
-function call_is_decl(_bas::JL.SyntaxList, i::Int, _basᵢ::JL.SyntaxTree = _bas[i])
+function call_is_decl(_bas::JS.SyntaxList, i::Int, _basᵢ::JS.SyntaxTree = _bas[i])
     kind(_basᵢ) != JS.K"call" && return false
     j = i + 1
     while j <= lastindex(_bas) && kind(_bas[j]) === JS.K"where"
@@ -392,7 +392,7 @@ end
 
 # Find cases where a macro call is not surrounded by parentheses
 # and the current cursor position is on a different line from the `@` macro call
-function is_crossline_noparen_macrocall(call::JL.SyntaxTree, cursor_byte::Int)
+function is_crossline_noparen_macrocall(call::JS.SyntaxTree, cursor_byte::Int)
     return noparen_macrocall(call) && let source_file = JS.sourcefile(call)
         # Check if cursor is on a different line from the @ symbol
         JS.numchildren(call) ≥ 1 &&
@@ -408,7 +408,7 @@ call expression, e.g. `foo(#=hi=# |`, `@bar |`.  A more accurate description
 would be: return the nearest call in `st0` such that stuff inserted at the
 cursor would be descendents of it.
 """
-function cursor_call(ps::JS.ParseStream, st0::JL.SyntaxTree, b::Int)
+function cursor_call(ps::JS.ParseStream, st0::JS.SyntaxTree, b::Int)
     # disable signature help if invoked within comment scope
     tc = token_before_offset(ps, b)
     if !isnothing(tc) && JS.kind(tc) === K"Comment"
@@ -441,7 +441,7 @@ function cursor_call(ps::JS.ParseStream, st0::JL.SyntaxTree, b::Int)
         bas = byte_ancestors(st0, pnb)
         # If the previous nontrivia byte is part of a call or macrocall, and it is
         # missing a closing paren, use that.
-        i = findfirst(st::JL.SyntaxTree -> is_relevant_call(st) && !noparen_macrocall(st), bas)
+        i = findfirst(st::JS.SyntaxTree -> is_relevant_call(st) && !noparen_macrocall(st), bas)
         if !isnothing(i)
             basᵢ = bas[i]
             if JS.is_error(JS.children(basᵢ)[end])
@@ -473,8 +473,8 @@ Note that neither `ca` nor `argtypes` include the type of the function object it
 Also note that this function resolves the type of each argument in `ca` in the global scope,
 completely ignoring information arising from the local scope in which it is contained.
 
-In the future, with the integration of `JL.SyntaxTree` and the full-analysis,
-this method should be replaced with a query to a cached typed-`JL.SyntaxTree`.
+In the future, with the integration of `JS.SyntaxTree` and the full-analysis,
+this method should be replaced with a query to a cached typed-`JS.SyntaxTree`.
 """
 function collect_call_argtypes(analyzer::LSAnalyzer, mod::Module, ca::CallArgs)
     argtypes = Any[]
@@ -531,7 +531,7 @@ function cursor_siginfos(mod::Module, fi::FileInfo, b::Int, analyzer::LSAnalyzer
     call = cursor_call(fi.parsed_stream, st0, b)
     isnothing(call) && return empty_siginfos
     after_semicolon = let
-        params_i = findfirst(st::JL.SyntaxTree -> kind(st) === K"parameters", JS.children(call))
+        params_i = findfirst(st::JS.SyntaxTree -> kind(st) === K"parameters", JS.children(call))
         !isnothing(params_i) && b > JS.first_byte(call[params_i])
     end
 
@@ -559,7 +559,7 @@ function cursor_siginfos(mod::Module, fi::FileInfo, b::Int, analyzer::LSAnalyzer
     if past_pos_args && !after_semicolon
         active_arg = false # before semicolon, highlight next positional arg
     else
-        active_arg = findfirst(a::JL.SyntaxTree -> JS.first_byte(a) <= b <= JS.last_byte(a) + 1, ca.args)
+        active_arg = findfirst(a::JS.SyntaxTree -> JS.first_byte(a) <= b <= JS.last_byte(a) + 1, ca.args)
         if active_arg === nothing && after_semicolon
             active_arg = true # after semicolon, highlight next keyword arg
         end

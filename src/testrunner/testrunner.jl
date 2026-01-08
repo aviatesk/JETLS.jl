@@ -30,9 +30,9 @@ function summary_testrunner_result(result::TestRunnerResult)
 end
 
 testset_name(testsetinfo::TestsetInfo) = testset_name(testsetinfo.st0)
-testset_name(testset::JL.SyntaxTree) = JS.sourcetext(testset[2])
+testset_name(testset::JS.SyntaxTree) = JS.sourcetext(testset[2])
 testset_line(testsetinfo::TestsetInfo) = testset_line(testsetinfo.st0)
-testset_line(testset::JL.SyntaxTree) = JS.source_line(testset[2])
+testset_line(testset::JS.SyntaxTree) = JS.source_line(testset[2])
 
 """
     compute_testsetinfos!(server::Server, st0::SyntaxTree0, prev_testsetinfos::Vector{TestsetInfo})
@@ -99,7 +99,7 @@ function compute_testsetinfos!(
 end
 
 function find_executable_testsets(st0_top::SyntaxTree0)
-    testsets = JL.SyntaxList(st0_top)
+    testsets = JS.SyntaxList(st0_top)
     traverse(st0_top) do st0::SyntaxTree0
         if JS.kind(st0) in JS.KSet"function macro"
             # avoid visit inside function scope

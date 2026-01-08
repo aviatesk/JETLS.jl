@@ -141,6 +141,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
   https://github.com/user-attachments/assets/a222a44d-9d46-435c-8759-8157005cfc38
 
+- Updated JuliaSyntax.jl and JuliaLowering.jl dependency versions to latest.
+
 - Updated Revise.jl dependency version to v3.13.
 
 ### Fixed

@@ -1,4 +1,4 @@
-const SyntaxTree0 = typeof(JS.build_tree(JL.SyntaxTree, JS.parse!(JS.ParseStream(""))))
+const SyntaxTree0 = typeof(JS.build_tree(JS.SyntaxTree, JS.parse!(JS.ParseStream(""))))
 
 abstract type ExtraDiagnosticsKey end
 to_uri(key::ExtraDiagnosticsKey) = to_uri_impl(key)::URI

@@ -18,7 +18,7 @@ function analyze_and_resolve(s::AbstractString; kwargs...)
 
         (; mod, analyzer) = JETLS.get_context_info(state, uri, position)
 
-        st_top = JS.build_tree(JL.SyntaxTree, fileinfo.parsed_stream; filename)
+        st_top = JS.build_tree(JS.SyntaxTree, fileinfo.parsed_stream; filename)
         byte = JETLS.xy_to_offset(fileinfo, position)
 
         # TODO use a proper utility to find "resolvable" node

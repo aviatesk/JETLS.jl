@@ -22,7 +22,7 @@ end
 # register(currently_running, hover_registration())
 
 function local_binding_hover(
-        state::ServerState, fi::FileInfo, uri::URI, st0_top::JL.SyntaxTree, offset::Int, mod::Module
+        state::ServerState, fi::FileInfo, uri::URI, st0_top::JS.SyntaxTree, offset::Int, mod::Module
     )
     target_binding, definitions = @something begin
         select_target_binding_definitions(st0_top, offset, mod)
@@ -34,7 +34,7 @@ function local_binding_hover(
     return Hover(; contents, range)
 end
 
-function local_binding_hover_info(fi::FileInfo, uri::URI, definitions::JL.SyntaxList)
+function local_binding_hover_info(fi::FileInfo, uri::URI, definitions::JS.SyntaxList)
     io = IOBuffer()
     n = length(definitions)
     for (i, definition) in enumerate(definitions)

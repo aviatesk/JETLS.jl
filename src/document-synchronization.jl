@@ -22,7 +22,7 @@ function cache_file_info!(
     prev_testsetinfos = prev_fi === nothing ? EMPTY_TESTSETINFOS : prev_fi.testsetinfos
 
     filename = uri2filename(uri)
-    st0 = JS.build_tree(JL.SyntaxTree, parsed_stream; filename)
+    st0 = JS.build_tree(JS.SyntaxTree, parsed_stream; filename)
     testsetinfos, any_deleted = compute_testsetinfos!(server, st0, prev_testsetinfos)
 
     fi = FileInfo(version, parsed_stream, filename, state.encoding, testsetinfos)
