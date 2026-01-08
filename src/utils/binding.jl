@@ -423,7 +423,6 @@ function compute_binding_occurrences!(
         occurrences::Dict{JL.BindingInfo,Set{BindingOccurence{Tree3}}},
         ctx3::JL.VariableAnalysisContext, st3::Tree3;
         ismacro::Union{Nothing,Base.RefValue{Bool}} = nothing,
-        include_decls::Bool = false,
         skip_recording_uses::Union{Nothing,Set{JL.BindingInfo}} = nothing
     ) where Tree3<:JS.SyntaxTree
     stack = JS.SyntaxList(st3)
@@ -436,9 +435,7 @@ function compute_binding_occurrences!(
         if k === JS.K"local" # || k === JS.K"function_decl"
             if nc ≥ 1
                 record_occurrence!(occurrences, :decl, st[1], ctx3)
-                if !include_decls
-                    continue # avoid to recurse to skip recording use
-                end
+                continue # avoid to recurse to skip recording use
             end
         end
 
@@ -499,19 +496,6 @@ function compute_binding_occurrences!(
                         record_occurrence!(occurrences, :def, sparamlist[i], ctx3)
                     end
                     start_idx = 3
-                end
-                if is_kwcall_lambda(ctx3, st)
-                    # This is `kwcall` method -- now need to perform some special case
-                    # Julia checks whether keyword arguments are assigned in `kwcall` methods,
-                    # but JL actually introduces local bindings for those keyword arguments for reflection purposes:
-                    # https://github.com/c42f/JuliaLowering.jl/blob/4b12ab19dad40c64767558be0a8a338eb4cc9172/src/desugaring.jl#L2633-L2637
-                    # These bindings are never actually used, so simply recursing would cause
-                    # this pass to report them as unused local bindings.
-                    # We avoid this problem by setting `include_decls` when recursing.
-                    for i = start_idx:nc
-                        compute_binding_occurrences!(occurrences, ctx3, st[i]; ismacro, include_decls=true)
-                    end
-                    continue
                 end
             end
         elseif k === JS.K"="
