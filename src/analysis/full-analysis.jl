@@ -285,11 +285,7 @@ function schedule_analysis!(
     )
     manager = server.state.analysis_manager
 
-    if onsave
-        generation = increment_generation!(manager, entry)
-    else
-        generation = get_generation(manager, entry)
-    end
+    generation = onsave ? increment_generation!(manager, entry) : get_generation(manager, entry)
 
     request = AnalysisRequest(
         entry, uri, generation, cancellable_token, notify_diagnostics,
@@ -297,7 +293,6 @@ function schedule_analysis!(
 
     debounce = get_config(server.state.config_manager, :full_analysis, :debounce)
     if onsave && debounce > 0
-        local delay::Float64 = debounce
         store!(manager.debounced) do debounced
             if haskey(debounced, request.entry)
                 # Cancel existing timer if any
@@ -307,7 +302,7 @@ function schedule_analysis!(
                 notify(debounce_completion)
             end
             local new_debounced = copy(debounced)
-            timer = Timer(delay) do _
+            timer = Timer(debounce) do _
                 store!(manager.debounced) do debounced′
                     local new_debounced′ = copy(debounced′)
                     delete!(new_debounced′, request.entry)
@@ -402,11 +397,12 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
     mark_analyzed_generation!(manager, request)
     request.notify_diagnostics && notify_diagnostics!(server)
 
-    # Request diagnostic refresh for initial full-analysis completion.
+    # Request diagnostic refresh for full-analysis completion.
     # This ensures that clients using pull diagnostics (textDocument/diagnostic) will
-    # re-request diagnostics now that module context is available, allowing
-    # lowering/macro-expansion-error diagnostics to be properly reported.
-    if prev_result === nothing && supports(server, :workspace, :diagnostics, :refreshSupport)
+    # re-request diagnostics now that new module context is available, allowing
+    # lowering/macro-expansion-error and lowering/undef-global-var diagnostics
+    # to be properly reported.
+    if supports(server, :workspace, :diagnostics, :refreshSupport)
         request_diagnostic_refresh!(server)
     end
 
@@ -622,7 +618,7 @@ struct SigWorkItem
     file::String
     mod::Module
     rex::Revise.RelocatableExpr
-    siginfos::Vector{Revise.SigInfo}
+    siginfos::Vector{Union{Revise.SigInfo,Revise.TypeInfo}}
     index::Int
 end
 
@@ -707,11 +703,11 @@ function analyze_package_with_revise(
         #     # Fallback: read source directly from file (e.g., for newly created packages)
         #     # See https://github.com/JuliaLang/julia/issues/42404
         #     fi = Revise.fileinfo(pkgdata, file)
-        #     if isempty(fi.modexsigs) && (!isempty(fi.cachefile) || !isempty(fi.cacheexprs))
+        #     if isempty(fi.mod_exs_infos) && (!isempty(fi.cachefile) || !isempty(fi.cacheexprs))
         #         filep = joinpath(Revise.basedir(pkgdata), file)
         #         src = read(filep, String)
-        #         topmod = first(keys(fi.modexsigs))
-        #         if Revise.parse_source!(fi.modexsigs, src, filep, topmod) === nothing
+        #         topmod = first(keys(fi.mod_exs_infos))
+        #         if Revise.parse_source!(fi.mod_exs_infos, src, filep, topmod) === nothing
         #             @error "failed to parse source text for $filep"
         #         end
         #         Revise.add_modexs!(fi, fi.cacheexprs)
@@ -724,19 +720,23 @@ function analyze_package_with_revise(
         Revise.maybe_extract_sigs!(fi)
     end
 
-    analyzer = LSAnalyzer(request.entry; report_target_modules=(pkgmod,)) # TODO Revisit (submodules)
-    # Revise's signature population may execute code, which can increment the world age,
-    # so we update to the latest world age here
-    newstate = JET.AnalyzerState(JET.AnalyzerState(analyzer); world = Base.get_world_counter())
-    analyzer = JET.AbstractAnalyzer(analyzer, newstate)
+    analyzer = let analyzer # avoid captured boxes
+        analyzer = LSAnalyzer(request.entry; report_target_modules=(pkgmod,)) # TODO Revisit (submodules)
+        # Revise's signature population may execute code, which can increment the world age,
+        # so we update to the latest world age here
+        newstate = JET.AnalyzerState(JET.AnalyzerState(analyzer); world = Base.get_world_counter())
+        JET.AbstractAnalyzer(analyzer, newstate)
+    end
 
     workitems = SigWorkItem[]
     for (file, fi) in zip(Revise.CodeTracking.srcfiles(pkgdata), pkgdata.fileinfos),
-        (mod, exsigs) in fi.modexsigs,
-        (rex, siginfos) in exsigs
-        isnothing(siginfos) && continue
-        for (i, _) in enumerate(siginfos)
-            push!(workitems, SigWorkItem(file, mod, rex, siginfos, i))
+        (mod, exs_infos) in fi.mod_exs_infos,
+        (rex, exinfos) in exs_infos
+        isnothing(exinfos) && continue
+        for (i, exinfo) in enumerate(exinfos)
+            if exinfo isa Revise.SigInfo
+                push!(workitems, SigWorkItem(file, mod, rex, exinfos, i))
+            end
         end
     end
 
@@ -777,7 +777,7 @@ function analyze_package_with_revise(
 
     tasks = map(workitems) do workitem
         (; siginfos, index) = workitem
-        siginfo = siginfos[index]
+        siginfo = siginfos[index]::Revise.SigInfo
         Threads.@spawn :default try
             if cancellable_token !== nothing && is_cancelled(cancellable_token.cancel_flag)
                 return
@@ -853,7 +853,7 @@ function analyze_package_with_revise(
     uri2diagnostics = URI2Diagnostics(uri => Diagnostic[] for uri in keys(analyzed_file_infos))
     postprocessor = JET.PostProcessor()
 
-    toplevel_warning_reports_to_diagnostics!(uri2diagnostics, warning_reports, interp.server, postprocessor)
+    toplevel_warning_reports_to_diagnostics!(uri2diagnostics, warning_reports, server, postprocessor)
     inference_reports = collect_displayable_reports(progress.reports, keys(uri2diagnostics))
     unique!(JET.aggregation_policy(analyzer), inference_reports)
     jet_inference_error_reports_to_diagnostics!(uri2diagnostics, inference_reports, postprocessor)
@@ -1076,7 +1076,7 @@ function instantiate_package_environment!(server::Server, env_path::String, pkgn
         # Cache miss - perform environment detection
         ensure_instantiated!(server, env_path)
         pkgenv = @lock Base.require_lock @something Base.identify_package_env(pkgname) begin
-            @warn "Failed to identify package environment" env_path pkgname filepath
+            @warn "Failed to identify package environment" env_path pkgname
             return store!(instantiated_envs) do cache
                 new_cache = copy(cache)
                 new_cache[env_path] = nothing
@@ -1190,7 +1190,10 @@ function do_instantiation_with_progress(
             title = "Instantiating environment",
             message = message_path,
             cancellable = false))
-    entry = do_instantiation(server, uri, ins_request)
-    send_progress(server, token, WorkDoneProgressEnd())
+    entry = try
+        do_instantiation(server, uri, ins_request)
+    finally
+        send_progress(server, token, WorkDoneProgressEnd())
+    end
     return entry
 end

@@ -250,7 +250,7 @@ end
 
 function diagnostic_code_description(code::AbstractString)
     return CodeDescription(;
-        href = URI("https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/$code"))
+        href = URI("https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/$code"))
 end
 
 # utilities
@@ -329,7 +329,7 @@ function jet_result_to_diagnostics!(uri2diagnostics::URI2Diagnostics, result::JE
             # with more precise location information
             continue
         end
-        diagnostic = jet_toplevel_error_report_to_diagnostic(postprocessor, report)
+        diagnostic = jet_toplevel_error_report_to_diagnostic(report, postprocessor)
         filename = report.file
         filename === :none && continue
         if startswith(filename, "Untitled")
@@ -340,7 +340,7 @@ function jet_result_to_diagnostics!(uri2diagnostics::URI2Diagnostics, result::JE
         push!(uri2diagnostics[uri], diagnostic)
     end
     displayable_reports = collect_displayable_reports(result.res.inference_error_reports, keys(uri2diagnostics))
-    jet_inference_error_reports_to_diagnostics!(uri2diagnostics, postprocessor, displayable_reports)
+    jet_inference_error_reports_to_diagnostics!(uri2diagnostics, displayable_reports, postprocessor)
     return uri2diagnostics
 end
 
@@ -348,7 +348,7 @@ end
 # -------------------
 
 function jet_toplevel_error_report_to_diagnostic(
-        postprocessor::JET.PostProcessor, @nospecialize report::JET.ToplevelErrorReport
+        @nospecialize(report::JET.ToplevelErrorReport), postprocessor::JET.PostProcessor
     )
     if report isa JET.ParseErrorReport
         # TODO: Pass correct encoding here
@@ -371,11 +371,11 @@ end
 # --------------------
 
 function jet_inference_error_reports_to_diagnostics!(
-        uri2diagnostics::URI2Diagnostics, postprocessor::JET.PostProcessor,
-        reports::Vector{JET.InferenceErrorReport}
+        uri2diagnostics::URI2Diagnostics, reports::Vector{JET.InferenceErrorReport},
+        postprocessor::JET.PostProcessor
     )
     for report in reports
-        diagnostic = jet_inference_error_report_to_diagnostic(postprocessor, report)
+        diagnostic = jet_inference_error_report_to_diagnostic(report, postprocessor)
         topframeidx = first(inference_error_report_stack(report))
         topframe = report.vst[topframeidx]
         topframe.file === :none && continue # TODO Figure out why this is necessary
@@ -385,7 +385,7 @@ function jet_inference_error_reports_to_diagnostics!(
     return uri2diagnostics
 end
 
-function jet_inference_error_report_to_diagnostic(postprocessor::JET.PostProcessor, @nospecialize report::JET.InferenceErrorReport)
+function jet_inference_error_report_to_diagnostic(@nospecialize(report::JET.InferenceErrorReport), postprocessor::JET.PostProcessor)
     rstack = inference_error_report_stack(report)
     topframe = report.vst[first(rstack)]
     message = JET.with_bufferring(:limit=>true) do io
@@ -521,7 +521,7 @@ end
 # lowering diagnostic
 # ===================
 
-const JL_MACRO_FILE = only(methods(JL.expand_macro, (JL.MacroExpansionContext,JL.SyntaxTree))).file
+const JL_MACRO_FILE = only(methods(JL.expand_macro, (JL.MacroExpansionContext,JS.SyntaxTree))).file
 function scrub_expand_macro_stacktrace(stacktrace::Vector{Base.StackTraces.StackFrame})
     idx = @something findfirst(stacktrace) do stackframe::Base.StackTraces.StackFrame
         stackframe.func === :expand_macro && stackframe.file === JL_MACRO_FILE
@@ -554,8 +554,8 @@ function provenances_to_related_information!(relatedInformation::Vector{Diagnost
     for prov in provs
         filename = JS.filename(prov)
         uri = filepath2uri(to_full_path(filename))
-        sr = JL.sourceref(prov)
-        if sr isa JL.SourceRef
+        sr = JS.sourceref(prov)
+        if sr isa JS.SourceRef
             # use precise location information if available
             sf = JS.sourcefile(sr)
             code = JS.sourcetext(sf)
@@ -582,14 +582,14 @@ struct LoweringDiagnosticKey
     name::String
 end
 
-function analyze_lowered_code!(diagnostics::Vector{Diagnostic},
-        ctx3::JL.VariableAnalysisContext, st3::JL.SyntaxTree, fi::FileInfo;
-        allow_unused_underscore::Bool = true
+function analyze_unused_bindings!(
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::JS.SyntaxTree, ctx3::JL.VariableAnalysisContext,
+        binding_occurrences, ismacro, reported::Set{LoweringDiagnosticKey};
+        allow_unused_underscore::Bool
     )
-    ismacro = Ref(false)
-    binding_occurrences = compute_binding_occurrences(ctx3, st3; ismacro)
-    reported = Set{LoweringDiagnosticKey}() # to prevent duplicate reports for unused default or keyword arguments
     for (binfo, occurrences) in binding_occurrences
+        bk = binfo.kind
+        bk === :global && continue
         if any(occurrence::BindingOccurence->occurrence.kind===:use, occurrences)
             continue
         end
@@ -600,17 +600,19 @@ function analyze_lowered_code!(diagnostics::Vector{Diagnostic},
         if allow_unused_underscore && startswith(bn, '_')
             continue
         end
-        provs = JL.flattened_provenance(JL.binding_ex(ctx3, binfo.id))
-        bk = binfo.kind
-        range = jsobj_to_range(first(provs), fi)
+        provs = JS.flattened_provenance(JL.binding_ex(ctx3, binfo.id))
+        prov = first(provs)
+        range = jsobj_to_range(prov, fi)
         key = LoweringDiagnosticKey(range, bk, bn)
         key in reported ? continue : push!(reported, key)
         if bk === :argument
             message = "Unused argument `$bn`"
             code = LOWERING_UNUSED_ARGUMENT_CODE
+            data = nothing
         else
             message = "Unused local binding `$bn`"
             code = LOWERING_UNUSED_LOCAL_CODE
+            data = compute_unused_variable_data(st0, prov, fi)
         end
         push!(diagnostics, Diagnostic(;
             range,
@@ -619,19 +621,103 @@ function analyze_lowered_code!(diagnostics::Vector{Diagnostic},
             source = DIAGNOSTIC_SOURCE,
             code,
             codeDescription = diagnostic_code_description(code),
-            tags = DiagnosticTag.Ty[DiagnosticTag.Unnecessary]))
+            tags = DiagnosticTag.Ty[DiagnosticTag.Unnecessary],
+            data))
     end
+end
+
+# This analysis reports `lowering/undef-global-var` on a change basis, utilizing an already
+# analyzed analysis context. Full-analysis also reports similar diagnostics as
+# `inference/undef-global-var`. These two diagnostics have the following differences:
+# - `inference/undef-global-var` (full-analysis): Triggered on a save basis. Since it's not
+#   integrated with JuliaLowering, position information can only be reported on a line basis.
+#   On the other hand, it can also report cases like `Base.undefvar` and generally is more correct.
+# - `lowering/undef-global-var` (lowering analysis): Triggered on a change basis, so feedback is
+#   faster. Since it's based on JuliaLowering, position information is accurate. However, it
+#   cannot analyze cases like `Base.undefvar`, so it basically detects a subset of what
+#   full-analysis reports.
+function analyze_undefined_global_bindings!(
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, ctx3::JL.VariableAnalysisContext,
+        binding_occurrences, reported::Set{LoweringDiagnosticKey};
+        postprocessor::LSPostProcessor = LSPostProcessor()
+    )
+    for (binfo, occurrences) in binding_occurrences
+        bk = binfo.kind
+        bk === :global || continue
+        binfo.is_internal && continue
+        startswith(binfo.name, '#') && continue
+        any(o->o.kind===:def, occurrences) && continue
+        isdefinedglobal(binfo.mod, Symbol(binfo.name)) && continue
+        bn = binfo.name
+        provs = JS.flattened_provenance(JL.binding_ex(ctx3, binfo.id))
+        range = jsobj_to_range(first(provs), fi)
+        key = LoweringDiagnosticKey(range, bk, bn)
+        key in reported ? continue : push!(reported, key)
+        code = LOWERING_UNDEF_GLOBAL_VAR_CODE
+        push!(diagnostics, Diagnostic(;
+            range,
+            severity = DiagnosticSeverity.Warning,
+            message = postprocessor("`$(binfo.mod).$(binfo.name)` is not defined"),
+            source = DIAGNOSTIC_SOURCE,
+            code,
+            codeDescription = diagnostic_code_description(code)))
+    end
+end
+
+function compute_unused_variable_data(
+        st0::JS.SyntaxTree,
+        prov::JS.SyntaxTree,
+        fi::FileInfo
+    )
+    # Find parent K"=" node using byte_ancestors
+    ancestors = byte_ancestors(st::JS.SyntaxTree->JS.kind(st)===JS.K"=", st0, JS.byte_range(prov))
+    isempty(ancestors) && return nothing
+
+    assignment = first(ancestors)
+    JS.numchildren(assignment) ≥ 2 || return nothing
+
+    lhs, rhs = assignment[1], assignment[2]
+
+    # Check for destructuring patterns (tuple unpacking)
+    is_tuple = JS.kind(lhs) === JS.K"tuple"
+    if is_tuple
+        return UnusedVariableData(true, nothing, nothing)
+    end
+
+    # lhs_eq_range: from LHS start to RHS start (exclusive)
+    assignment_range = jsobj_to_range(assignment, fi)
+    lhs_start = offset_to_xy(fi, JS.first_byte(lhs))
+    rhs_start = offset_to_xy(fi, JS.first_byte(rhs))
+    lhs_eq_range = Range(; start=lhs_start, var"end"=rhs_start)
+    return UnusedVariableData(false, assignment_range, lhs_eq_range)
+end
+
+function analyze_lowered_code!(
+        diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo, res::NamedTuple;
+        skip_analysis_requiring_context::Bool = false,
+        allow_unused_underscore::Bool = true,
+        postprocessor::LSPostProcessor = LSPostProcessor()
+    )
+    (; st0, ctx3, st3) = res
+    ismacro = Ref(false)
+    binding_occurrences = compute_binding_occurrences(ctx3, st3; ismacro, include_global_bindings=true)
+    reported = Set{LoweringDiagnosticKey}() # to prevent duplicate reports for unused default or keyword arguments
+
+    analyze_unused_bindings!(diagnostics, fi, st0, ctx3, binding_occurrences, ismacro, reported; allow_unused_underscore)
+
+    skip_analysis_requiring_context ||
+        analyze_undefined_global_bindings!(diagnostics, fi, ctx3, binding_occurrences, reported; postprocessor)
+
     return diagnostics
 end
 
 function lowering_diagnostics!(
-        diagnostics::Vector{Diagnostic}, st0::JL.SyntaxTree, mod::Module, fi::FileInfo;
-        skip_macro_expansion_errors::Bool = false,
-        allow_unused_underscore::Bool = true
+        diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo, mod::Module, st0::JS.SyntaxTree;
+        skip_analysis_requiring_context::Bool = false, kwargs...
     )
     @assert JS.kind(st0) ∉ JS.KSet"toplevel module"
 
-    (; ctx3, st3) = try
+    res = try
         jl_lower_for_scope_resolution(mod, st0; recover_from_macro_errors=false)
     catch err
         if err isa JL.LoweringError
@@ -643,7 +729,7 @@ function lowering_diagnostics!(
                 code = LOWERING_ERROR_CODE,
                 codeDescription = diagnostic_code_description(LOWERING_ERROR_CODE)))
         elseif err isa JL.MacroExpansionError
-            if !skip_macro_expansion_errors
+            if !skip_analysis_requiring_context
                 st = scrub_expand_macro_stacktrace(stacktrace(catch_backtrace()))
                 msg = err.msg
                 inner = err.err
@@ -654,7 +740,7 @@ function lowering_diagnostics!(
                     msg *= "\n" * sprint(Base.showerror, inner)
                     relatedInformation = stacktrace_to_related_information(st)
                 end
-                provs = JL.flattened_provenance(err.ex)
+                provs = JS.flattened_provenance(err.ex)
                 provs′ = @view provs[2:end]
                 if !isempty(provs′)
                     relatedInformation = @something relatedInformation DiagnosticRelatedInformation[]
@@ -685,7 +771,7 @@ function lowering_diagnostics!(
         end
     end
 
-    return analyze_lowered_code!(diagnostics, ctx3, st3, fi; allow_unused_underscore)
+    return analyze_lowered_code!(diagnostics, uri, fi, res; skip_analysis_requiring_context, kwargs...)
 end
 lowering_diagnostics(args...; kwargs...) = lowering_diagnostics!(Diagnostic[], args...; kwargs...) # used by tests
 
@@ -695,23 +781,23 @@ function toplevel_lowering_diagnostics(server::Server, uri::URI, file_info::File
     diagnostics = Diagnostic[]
     st0_top = build_syntax_tree(file_info)
     analysis_info = get_analysis_info(server.state.analysis_manager, uri)
-    skip_macro_expansion_errors = !has_module_context(analysis_info, uri)
+    skip_analysis_requiring_context = !has_analyzed_context(analysis_info, uri)
     allow_unused_underscore = get_config(server.state.config_manager, :diagnostic, :allow_unused_underscore)
-    iterate_toplevel_tree(st0_top) do st0::JL.SyntaxTree
+    iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
         pos = offset_to_xy(file_info, JS.first_byte(st0))
-        (; mod) = get_context_info(server.state, uri, pos)
-        lowering_diagnostics!(diagnostics, st0, mod, file_info; skip_macro_expansion_errors, allow_unused_underscore)
+        (; mod, postprocessor) = get_context_info(server.state, uri, pos)
+        lowering_diagnostics!(diagnostics, uri, file_info, mod, st0; skip_analysis_requiring_context, allow_unused_underscore, postprocessor)
     end
     return diagnostics
 end
 
-has_module_context(::Nothing, ::URI) = false
-has_module_context(::OutOfScope, ::URI) = false
-has_module_context(analysis_result::AnalysisResult, uri::URI) =
+has_analyzed_context(::Nothing, ::URI) = false
+has_analyzed_context(outofscope::OutOfScope, ::URI) = !isnothing(outofscope.module_context)
+has_analyzed_context(analysis_result::AnalysisResult, uri::URI) =
     analyzed_file_info(analysis_result, uri) !== nothing
 
-function iterate_toplevel_tree(callback, st0_top::JL.SyntaxTree)
-    sl = JL.SyntaxList(st0_top)
+function iterate_toplevel_tree(callback, st0_top::JS.SyntaxTree)
+    sl = JS.SyntaxList(st0_top)
     push!(sl, st0_top)
     while !isempty(sl)
         st0 = pop!(sl)

@@ -227,11 +227,16 @@ Additional details for a completion item label
     description::Union{String, Nothing} = nothing
 end
 
-# our own data structure for `data` field of `CompletionItem`
-struct CompletionData
+# JETLS specific data structures for `data` field of `CompletionItem`
+struct GlobalCompletionData
+    resolver_id::String
     name::String
 end
-export CompletionData
+struct MethodSignatureCompletionData
+    resolver_id::String
+    match_idx::Int
+end
+export GlobalCompletionData, MethodSignatureCompletionData
 
 @interface CompletionItem begin
     """
@@ -414,7 +419,7 @@ export CompletionData
     A data entry field that is preserved on a completion item between
     a completion and a completion resolve request.
     """
-    data::Union{CompletionData, Nothing} = nothing
+    data::Union{GlobalCompletionData, MethodSignatureCompletionData, Nothing} = nothing
 end
 
 """
@@ -489,7 +494,8 @@ presented in the editor.
         # Tags
         - since - 3.17.0
         """
-        data::Union{CompletionData, Nothing} = nothing
+
+        data::Union{GlobalCompletionData, MethodSignatureCompletionData, Nothing} = nothing
     end} = nothing
 
     """

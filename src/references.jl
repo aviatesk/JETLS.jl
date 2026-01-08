@@ -71,7 +71,7 @@ function do_find_references_with_progress(
     locations = find_references(server, uri, fi, pos; token, include_declaration)
     return send(server, ReferencesResponse(;
         id = msg_id,
-        result = isempty(locations) ? null : locations))
+        result = @somereal locations null))
 end
 
 function do_find_references(
@@ -80,7 +80,7 @@ function do_find_references(
     locations = find_references(server, uri, fi, pos; include_declaration)
     return send(server, ReferencesResponse(;
         id = msg_id,
-        result = isempty(locations) ? null : locations))
+        result = @somereal locations null))
 end
 
 function find_references(
@@ -97,7 +97,7 @@ function find_references(
         _select_target_binding(st0_top, offset, mod; caller="find_references!")
     end return locations
 
-    binfo = JL.lookup_binding(ctx3, binding)
+    binfo = JL.get_binding(ctx3, binding)
     if binfo.kind === :global
         find_global_references!(locations, server, uri, fi, st0_top, binfo, token;
             include_declaration)
@@ -110,7 +110,7 @@ end
 
 function find_global_references!(
         locations::Vector{Location}, server::Server,
-        uri::URI, fi::FileInfo, st0_top::JL.SyntaxTree, binfo::JL.BindingInfo,
+        uri::URI, fi::FileInfo, st0_top::JS.SyntaxTree, binfo::JL.BindingInfo,
         token::Union{Nothing,ProgressToken};
         include_declaration::Bool=true,
     )
@@ -159,7 +159,7 @@ end
 
 function global_find_references_in_file!(
         seen_locations::Set{Tuple{URI,Range}}, state::ServerState, uri::URI, fi::FileInfo,
-        st0_top::JL.SyntaxTree, binfo::JL.BindingInfo;
+        st0_top::JS.SyntaxTree, binfo::JL.BindingInfo;
         include_declaration::Bool=true,
     )
     for occurrence in find_global_binding_occurrences!(state, uri, fi, st0_top, binfo)

@@ -12,7 +12,7 @@ jsparse(parsed_stream::JS.ParseStream; filename::AbstractString=@__FILE__, first
 
 jlparse(s::AbstractString; rule::Symbol=:all, kwargs...) = jlparse(parsedstream(s; rule); kwargs...)
 jlparse(parsed_stream::JS.ParseStream; filename::AbstractString=@__FILE__, first_line::Int=1) =
-    JS.build_tree(JL.SyntaxTree, parsed_stream; filename, first_line)
+    JS.build_tree(JS.SyntaxTree, parsed_stream; filename, first_line)
 
 macro expect_jl_err(ex)
     if JETLS.JETLS_DEBUG_LOWERING
@@ -34,7 +34,7 @@ end
 
 # dump all intermediate ctx and st into the global scope for inspection
 # use `stop` if some lowering pass mutates ctx in a way you don't want
-function jldebug(mod::Module, st0_in::JL.SyntaxTree, stop::Int=5)
+function jldebug(mod::Module, st0_in::JS.SyntaxTree, stop::Int=5)
     global st0 = st0_in
     global st1, st2, st3, st4, st5
     global ctx1, ctx2, ctx3, ctx4, ctx5
@@ -50,14 +50,14 @@ jldebug(mod::Module, s::AbstractString, stop::Int=5) = jldebug(mod, jlparse(s; r
 jldebug(args...) = jldebug(@__MODULE__, args...)
 
 # Select a node by ID from a tree (its underlying graph), graph, or ctx
-function jlnode(g::JL.SyntaxGraph, i::JL.NodeId)
-    t = JL.SyntaxTree(g, i)
+function jlnode(g::JL.SyntaxGraph, i::JS.NodeId)
+    t = JS.SyntaxTree(g, i)
     # show(stdout, MIME("text/x.sexpression"), t)
     return t
 end
-function jlnode(st::JL.SyntaxTree, i::JL.NodeId)
-    return JL.SyntaxTree(st._graph, i)
+function jlnode(st::JS.SyntaxTree, i::JS.NodeId)
+    return JS.SyntaxTree(st._graph, i)
 end
-function jlnode(ctx::T where {T<:JL.AbstractLoweringContext}, i::JL.NodeId)
-    return JL.SyntaxTree(ctx.graph, i)
+function jlnode(ctx::T where {T<:JL.AbstractLoweringContext}, i::JS.NodeId)
+    return JS.SyntaxTree(ctx.graph, i)
 end

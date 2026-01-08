@@ -30,9 +30,9 @@ function summary_testrunner_result(result::TestRunnerResult)
 end
 
 testset_name(testsetinfo::TestsetInfo) = testset_name(testsetinfo.st0)
-testset_name(testset::JL.SyntaxTree) = JS.sourcetext(testset[2])
+testset_name(testset::JS.SyntaxTree) = JS.sourcetext(testset[2])
 testset_line(testsetinfo::TestsetInfo) = testset_line(testsetinfo.st0)
-testset_line(testset::JL.SyntaxTree) = JS.source_line(testset[2])
+testset_line(testset::JS.SyntaxTree) = JS.source_line(testset[2])
 
 """
     compute_testsetinfos!(server::Server, st0::SyntaxTree0, prev_testsetinfos::Vector{TestsetInfo})
@@ -99,7 +99,7 @@ function compute_testsetinfos!(
 end
 
 function find_executable_testsets(st0_top::SyntaxTree0)
-    testsets = JL.SyntaxList(st0_top)
+    testsets = JS.SyntaxList(st0_top)
     traverse(st0_top) do st0::SyntaxTree0
         if JS.kind(st0) in JS.KSet"function macro"
             # avoid visit inside function scope
@@ -260,7 +260,7 @@ function testrunner_testcase_code_actions!(
                 tcr = jsobj_to_range(st0, fi; adjust_last=1) # +1 to support cases like `@test ...│`
                 overlap(action_range, tcr) || return nothing
                 tcl = JS.source_line(st0)
-                tct = "`" * JS.sourcetext(st0) * "`"
+                tct = backtick(JS.sourcetext(st0))
                 run_arguments = Any[uri, tcl, tct]
                 title = "$TESTRUNNER_RUN_TITLE $tct"
                 push!(code_actions, CodeAction(;

@@ -7,28 +7,34 @@ This documentation uses TOML format to describe the configuration schema.
 
 ```toml
 [full_analysis]
-debounce = 1.0                   # number (seconds), default: 1.0
-auto_instantiate = true          # boolean, default: true
+debounce = 1.0                     # number (seconds), default: 1.0
+auto_instantiate = true            # boolean, default: true
 
-formatter = "Runic"              # String preset: "Runic" (default) or "JuliaFormatter"
+formatter = "Runic"                # String preset: "Runic" (default) or "JuliaFormatter"
 
-[formatter.custom]               # Or custom formatter configuration
-executable = ""                  # string (path), optional
-executable_range = ""            # string (path), optional
+[formatter.custom]                 # Or custom formatter configuration
+executable = ""                    # string (path), optional
+executable_range = ""              # string (path), optional
 
 [diagnostic]
-enabled = true                   # boolean, default: true
-allow_unused_underscore = false  # boolean, default: false
+enabled = true                     # boolean, default: true
+allow_unused_underscore = false    # boolean, default: false
 
 [[diagnostic.patterns]]
-pattern = ""                     # string, required
-match_by = ""                    # string, required, "code" or "message"
-match_type = ""                  # string, required, "literal" or "regex"
-severity = ""                    # string or number, required, "error"/"warning"/"warn"/"information"/"info"/"hint"/"off" or 0/1/2/3/4
-path = ""                        # string (optional), glob pattern for file paths
+pattern = ""                       # string, required
+match_by = ""                      # string, required, "code" or "message"
+match_type = ""                    # string, required, "literal" or "regex"
+severity = ""                      # string or number, required, "error"/"warning"/"warn"/"information"/"info"/"hint"/"off" or 0/1/2/3/4
+path = ""                          # string (optional), glob pattern for file paths
+
+[completion.latex_emoji]
+strip_prefix = false               # boolean, default: (unset) auto-detect
+
+[completion.method_signature]
+prepend_inference_result = false   # boolean, default: (unset) auto-detect
 
 [testrunner]
-executable = "testrunner"        # string, default: "testrunner" (or "testrunner.bat" on Windows)
+executable = "testrunner"          # string, default: "testrunner" (or "testrunner.bat" on Windows)
 ```
 
 ## [Configuration reference](@id config/reference)
@@ -41,6 +47,9 @@ executable = "testrunner"        # string, default: "testrunner" (or "testrunner
     - [`[diagnostic] enabled`](@ref config/diagnostic-enabled)
     - [`[diagnostic] allow_unused_underscore`](@ref config/diagnostic-allow_unused_underscore)
     - [`[[diagnostic.patterns]]`](@ref config/diagnostic-patterns)
+- [`[completion]`](@ref config/completion)
+    - [`[completion.latex_emoji] strip_prefix`](@ref config/completion-latex_emoji-strip_prefix)
+    - [`[completion.method_signature] prepend_inference_result`](@ref config/completion-method_signature-prepend_inference_result)
 - [`[testrunner]`](@ref config/testrunner)
     - [`[testrunner] executable`](@ref config/testrunner-executable)
 
@@ -124,7 +133,7 @@ in your editor. JETLS uses hierarchical diagnostic codes in the format
 to allow fine-grained control over which diagnostics to show and at what
 severity level.
 
-See the [Diagnostic](@ref) section for complete diagnostic reference
+See the [Diagnostic](@ref diagnostic) section for complete diagnostic reference
 including all available codes, their meanings, and examples.
 
 #### [`[diagnostic] enabled`](@id config/diagnostic-enabled)
@@ -146,8 +155,8 @@ enabled = false  # Disable all diagnostics
 - **Default**: `true`
 
 When enabled, unused variable diagnostics
-([`lowering/unused-argument`](@ref diagnostic/lowering/unused-argument) and
-[`lowering/unused-local`](@ref diagnostic/lowering/unused-local)) are suppressed
+([`lowering/unused-argument`](@ref diagnostic/reference/lowering/unused-argument) and
+[`lowering/unused-local`](@ref diagnostic/reference/lowering/unused-local)) are suppressed
 for names starting with `_` (underscore). This follows the common convention
 in many programming languages where `_`-prefixed names indicate intentionally
 unused variables.
@@ -160,9 +169,9 @@ allow_unused_underscore = false  # Report all unused variables
 #### [`[[diagnostic.patterns]]`](@id config/diagnostic-patterns)
 
 Fine-grained control over diagnostics through pattern matching against either
-[diagnostic codes](@ref diagnostic-code) or messages.
+[diagnostic codes](@ref diagnostic/code) or messages.
 
-See the [diagnostic reference](@ref diagnostic-reference) section for
+See the [diagnostic reference](@ref diagnostic/reference) section for
 a complete list of all available diagnostic codes, their default severity
 levels, and detailed explanations with examples.
 
@@ -184,7 +193,7 @@ path = "src/**/*.jl"       # string (optional): restrict to specific files
   patterns like `"Macro name .* not found"`. This value is also used as the key
   when [merging configurations](@ref config/merge) from different sources.
 - `match_by` (**Type**: string): What to match against
-  - `"code"`: Match against [diagnostic code](@ref diagnostic-code) (e.g., `"lowering/unused-argument"`)
+  - `"code"`: Match against [diagnostic code](@ref diagnostic/code) (e.g., `"lowering/unused-argument"`)
   - `"message"`: Match against diagnostic message text
 - `match_type` (**Type**: string): How to interpret the pattern
   - `"literal"`: Exact string match
@@ -198,7 +207,7 @@ path = "src/**/*.jl"       # string (optional): restrict to specific files
 
 ##### Severity values
 
-[Severity level](@ref diagnostic-severity) to apply.
+[Severity level](@ref diagnostic/severity) to apply.
 Can be specified using either string or number values:
 
 - `"error"` or `1`: Critical issues that prevent code from working correctly
@@ -318,8 +327,78 @@ severity = "off"
 path = "gen/**/*.jl"
 ```
 
-See the [configuring diagnostics](@ref configuring-diagnostic) section for
+See the [configuring diagnostics](@ref diagnostic/configuring) section for
 additional examples and common use cases.
+
+### [`[completion]`](@id config/completion)
+
+Configure completion behavior.
+
+#### [`[completion.latex_emoji] strip_prefix`](@id config/completion-latex_emoji-strip_prefix)
+
+- **Type**: boolean
+- **Default**: (unset) auto-detect based on client
+
+Controls whether to strip the `\` or `:` prefix from LaTeX/emoji completion item
+labels.
+
+Some editors (e.g., Zed) don't handle backslash characters in the LSP `sortText`
+field, falling back to sorting by `label`. This can cause the expected completion
+item to not appear at the top when typing sequences like `\le` for `≤`.
+
+When set to `true`, JETLS strips the prefix from the label (e.g., `\le` becomes
+`le`), allowing these editors to sort completions correctly.
+
+When set to `false`, JETLS keeps the full label with the prefix, which works
+correctly in editors (e.g., VSCode) that properly handle backslash characters
+in the `sortText` field.
+
+When not set (default), JETLS auto-detects based on the client name and applies
+the appropriate behavior. Note that the auto-detection only covers a limited set
+of known clients, so if you experience LaTeX/emoji completion sorting issues
+(e.g., expected items not appearing at the top), try explicitly setting this
+option.
+
+```toml
+[completion.latex_emoji]
+strip_prefix = true  # Force prefix stripping for clients with sortText issues
+```
+
+!!! tip "Help improve auto-detection"
+    If explicitly setting this option clearly improves behavior for your client,
+    consider submitting a PR to add your client to the [auto-detection](https://github.com/aviatesk/JETLS.jl/blob/14fdc847252579c27e41cd50820aee509f8fd7bd/src/completions.jl#L386) logic.
+
+#### [`[completion.method_signature] prepend_inference_result`](@id config/completion-method_signature-prepend_inference_result)
+
+- **Type**: boolean
+- **Default**: (unset) auto-detect based on client
+
+Controls whether to prepend inferred return type information to the documentation
+of method signature completion items.
+
+In some editors (e.g., Zed), additional information like inferred return type
+displayed when an item is selected may be cut off in the UI when the method
+signature text is long.
+
+When set to `true`, JETLS prepends the return type as a code block to the
+documentation, ensuring it is always visible.
+
+When set to `false`, the return type is only shown alongside the completion item
+(as `CompletionItem.detail` in LSP terms, which may be cut off in some editors).
+
+When not set (default), JETLS auto-detects based on the client name and applies
+the appropriate behavior. Note that the auto-detection only covers a limited set
+of known clients, so if you experience issues with return type visibility, try
+explicitly setting this option.
+
+```toml
+[completion.method_signature]
+prepend_inference_result = true  # Show return type in documentation
+```
+
+!!! tip "Help improve auto-detection"
+    If explicitly setting this option clearly improves behavior for your client,
+    consider submitting a PR to add your client to the [auto-detection](https://github.com/aviatesk/JETLS.jl/blob/14fdc847252579c27e41cd50820aee509f8fd7bd/src/completions.jl#L386) logic.
 
 ### [`[testrunner]`](@id config/testrunner)
 

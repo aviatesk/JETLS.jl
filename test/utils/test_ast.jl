@@ -499,7 +499,7 @@ end
     let node = get_target_string("include(\"fo│o.jl\")")
         @test node !== nothing
         @test JS.kind(node) === JS.K"String"
-        @test JL.hasattr(node, :value)
+        @test JS.hasattr(node, :value)
         @test node.value == "foo.jl"
     end
     let node = get_target_string("x = \"hello│ world\"")

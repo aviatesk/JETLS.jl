@@ -34,6 +34,26 @@ let CHANGELOG_md = joinpath(@__DIR__, "..", "CHANGELOG.md")
         r"^\>$"m=>s"")
     CHANGELOG_md_text = replace(CHANGELOG_md_text,
         r"(https://github\.com/aviatesk/JETLS\.jl/(?:issues|pull)/(\d+))" => s"[aviatesk/JETLS.jl#\2](\1)")
+    # Convert GitHub video URLs to Documenter-compatible iframe embeds
+    CHANGELOG_md_text = replace(CHANGELOG_md_text,
+        r"^\s*<?(https://github\.com/user-attachments/assets/[a-f0-9-]+)>?\s*$"m =>
+        s"""
+```@raw html
+<center>
+<iframe style="width:100%;height:min(500px,70vh);aspect-ratio:16/9" src="\1" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+</center>
+```
+""")
+    # Convert <img> tags to centered Documenter-compatible format
+    CHANGELOG_md_text = replace(CHANGELOG_md_text,
+        r"^\s*<img (.+)>\s*$"m =>
+        s"""
+```@raw html
+<center>
+<img \1>
+</center>
+```
+""")
     write(joinpath(@__DIR__, "src", "CHANGELOG.md"), CHANGELOG_md_text)
 end
 

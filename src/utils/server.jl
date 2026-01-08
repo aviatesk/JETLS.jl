@@ -186,6 +186,7 @@ function get_file_info(
         timeout::Float64 = 30., cancelled_error_data = nothing, cache_error_data = nothing
     )
     start = time()
+    request_id = objectid(cancel_flag) # Each request uses a unique `cancel_flag`, so this objectid can be used as a request-unique ID
     while true
         is_cancelled(cancel_flag) && return request_cancelled_error(;
             data = cancelled_error_data)
@@ -200,7 +201,7 @@ function get_file_info(
             return file_cache_error(uri;
                 data = cache_error_data)
         end
-        JETLS_DEV_MODE && @info "Waiting for file cache" uri
+        JETLS_DEV_MODE && @info "Waiting for file cache" uri _id=request_id maxlog=1
         sleep(0.5)
     end
     return

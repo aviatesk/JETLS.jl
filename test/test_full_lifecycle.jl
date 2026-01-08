@@ -53,7 +53,7 @@ let (pkgcode, positions) = JETLS.get_text_and_positions("""
             if idx !== nothing
                 item = result.items[idx]
                 data = item.data
-                @test data isa CompletionData
+                @test data isa GlobalCompletionData
                 @test isnothing(item.documentation)
 
                 let id = id_counter[] += 1, raw_res, result

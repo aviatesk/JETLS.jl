@@ -1,4 +1,4 @@
-# Diagnostic
+# [Diagnostic](@id diagnostic)
 
 JETLS reports various diagnostic messages (errors, warnings, hints) to help you
 catch potential issues in your Julia code. Each diagnostic has a unique code
@@ -7,12 +7,12 @@ that identifies its category and type.
 This document describes all available diagnostic codes, their meanings, default
 severity levels, and how to configure them to match your project's needs.
 
-## [Diagnostic codes](@id diagnostic-code)
+## [Diagnostic codes](@id diagnostic/code)
 
 JETLS reports diagnostics using hierarchical codes in the format
 `"category/kind"`, following the [LSP specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#diagnostic).
 This structure allows fine-grained control over which diagnostics to show and at
-what [severity level](@ref diagnostic-severity) through configuration.
+what [severity level](@ref diagnostic/severity) through configuration.
 
 All available diagnostic codes are listed below. Each category (e.g.,
 `syntax/*`, `lowering/*`) contains one or more specific diagnostic codes:
@@ -22,7 +22,7 @@ Pages = ["diagnostic.md"]
 Depth = 3:4
 ```
 
-## [Diagnostic severity levels](@id diagnostic-severity)
+## [Diagnostic severity levels](@id diagnostic/severity)
 
 Each diagnostic has a severity level that indicates how serious the issue is.
 JETLS supports four severity levels defined by the [LSP specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#diagnosticSeverity):
@@ -41,11 +41,11 @@ etc.), but most clients use color-coded underlines and gutter markers that
 correspond to these severity levels.
 
 You can change the severity of any diagnostic by
-[configuring `diagnostic` section](@ref configuring-diagnostic).
+[configuring `diagnostic` section](@ref diagnostic/configuring).
 Additionally, JETLS supports disabling diagnostics entirely using the special
 severity value `"off"` (or `0`).
 
-## [Diagnostic reference](@id diagnostic-reference)
+## [Diagnostic reference](@id diagnostic/reference)
 
 This section provides detailed explanations for each diagnostic code. For every
 diagnostic, you'll find:
@@ -57,25 +57,26 @@ diagnostic, you'll find:
 
 Here is a summary table of the diagnostics explained in this section:
 
-| Code                                                                               | Default Severity      | Description                                                    |
-| ---------------------------------------------------------------------------------- | --------------------- | -------------------------------------------------------------- |
-| [`syntax/parse-error`](@ref diagnostic/syntax/parse-error)                         | `Error`               | Syntax parsing errors detected by JuliaSyntax.jl               |
-| [`lowering/error`](@ref diagnostic/lowering/error)                                 | `Error`               | General lowering errors                                        |
-| [`lowering/macro-expansion-error`](@ref diagnostic/lowering/macro-expansion-error) | `Error`               | Errors during macro expansion                                  |
-| [`lowering/unused-argument`](@ref diagnostic/lowering/unused-argument)             | `Information`         | Function arguments that are never used                         |
-| [`lowering/unused-local`](@ref diagnostic/lowering/unused-local)                   | `Information`         | Local variables that are assigned but never read               |
-| [`toplevel/error`](@ref diagnostic/toplevel/error)                                 | `Error`               | Errors during code loading (missing deps, type failures, etc.) |
-| [`toplevel/method-overwrite`](@ref diagnostic/toplevel/method-overwrite)           | `Warning`             | Method definitions that overwrite previously defined methods   |
-| [`toplevel/abstract-field`](@ref diagnostic/toplevel/abstract-field)               | `Information`         | Struct fields with abstract types                              |
-| [`inference/undef-global-var`](@ref diagnostic/inference/undef-global-var)         | `Warning`             | References to undefined global variables                       |
-| [`inference/undef-local-var`](@ref diagnostic/inference/undef-local-var)           | `Information/Warning` | References to undefined local variables                        |
-| [`inference/field-error`](@ref diagnostic/inference/field-error)                   | `Warning`             | Access to non-existent struct fields                           |
-| [`inference/bounds-error`](@ref diagnostic/inference/bounds-error)                 | `Warning`             | Out-of-bounds field access by index                            |
-| [`testrunner/test-failure`](@ref diagnostic/testrunner/test-failure)               | `Error`               | Test failures from TestRunner integration                      |
+| Code                                                                                         | Default Severity      | Description                                                    |
+| -------------------------------------------------------------------------------------------- | --------------------- | -------------------------------------------------------------- |
+| [`syntax/parse-error`](@ref diagnostic/reference/syntax/parse-error)                         | `Error`               | Syntax parsing errors detected by JuliaSyntax.jl               |
+| [`lowering/error`](@ref diagnostic/reference/lowering/error)                                 | `Error`               | General lowering errors                                        |
+| [`lowering/macro-expansion-error`](@ref diagnostic/reference/lowering/macro-expansion-error) | `Error`               | Errors during macro expansion                                  |
+| [`lowering/unused-argument`](@ref diagnostic/reference/lowering/unused-argument)             | `Information`         | Function arguments that are never used                         |
+| [`lowering/unused-local`](@ref diagnostic/reference/lowering/unused-local)                   | `Information`         | Local variables that are assigned but never read               |
+| [`lowering/undef-global-var`](@ref diagnostic/reference/lowering/undef-global-var)           | `Warning`             | References to undefined global variables (triggered on change) |
+| [`toplevel/error`](@ref diagnostic/reference/toplevel/error)                                 | `Error`               | Errors during code loading (missing deps, type failures, etc.) |
+| [`toplevel/method-overwrite`](@ref diagnostic/reference/toplevel/method-overwrite)           | `Warning`             | Method definitions that overwrite previously defined methods   |
+| [`toplevel/abstract-field`](@ref diagnostic/reference/toplevel/abstract-field)               | `Information`         | Struct fields with abstract types                              |
+| [`inference/undef-global-var`](@ref diagnostic/reference/inference/undef-global-var)         | `Warning`             | References to undefined global variables (triggered on save)   |
+| [`inference/undef-local-var`](@ref diagnostic/reference/inference/undef-local-var)           | `Information/Warning` | References to undefined local variables                        |
+| [`inference/field-error`](@ref diagnostic/reference/inference/field-error)                   | `Warning`             | Access to non-existent struct fields                           |
+| [`inference/bounds-error`](@ref diagnostic/reference/inference/bounds-error)                 | `Warning`             | Out-of-bounds field access by index                            |
+| [`testrunner/test-failure`](@ref diagnostic/reference/testrunner/test-failure)               | `Error`               | Test failures from TestRunner integration                      |
 
-### [Syntax diagnostic (`syntax/*`)](@id diagnostic/syntax)
+### [Syntax diagnostic (`syntax/*`)](@id diagnostic/reference/syntax)
 
-#### [Syntax parse error (`syntax/parse-error`)](@id diagnostic/syntax/parse-error)
+#### [Syntax parse error (`syntax/parse-error`)](@id diagnostic/reference/syntax/parse-error)
 
 **Default severity:** `Error`
 
@@ -90,12 +91,12 @@ function parse_error(x)
 end
 ```
 
-### [Lowering diagnostic (`lowering/*`)](@id diagnostic/lowering)
+### [Lowering diagnostic (`lowering/*`)](@id diagnostic/reference/lowering)
 
 Lowering diagnostic is detected during Julia's lowering phase, which
 transforms parsed syntax into a simpler intermediate representation.
 
-#### [Lowering error (`lowering/error`)](@id diagnostic/lowering/error)
+#### [Lowering error (`lowering/error`)](@id diagnostic/reference/lowering/error)
 
 **Default severity:** `Error`
 
@@ -109,7 +110,7 @@ function lowering_error(x)
 end
 ```
 
-#### [Macro expansion error (`lowering/macro-expansion-error`)](@id diagnostic/lowering/macro-expansion-error)
+#### [Macro expansion error (`lowering/macro-expansion-error`)](@id diagnostic/reference/lowering/macro-expansion-error)
 
 **Default severity:** `Error`
 
@@ -134,7 +135,7 @@ end
                                # Expected long function definition (JETLS lowering/macro-expansion-error)
 ```
 
-#### [Unused argument (`lowering/unused-argument`)](@id diagnostic/lowering/unused-argument)
+#### [Unused argument (`lowering/unused-argument`)](@id diagnostic/reference/lowering/unused-argument)
 
 **Default severity:** `Information`
 
@@ -151,7 +152,7 @@ function unused_argument(x, y)  # Unused argument `y` (JETLS lowering/unused-arg
 end
 ```
 
-#### [Unused local variable (`lowering/unused-local`)](@id diagnostic/lowering/unused-local)
+#### [Unused local variable (`lowering/unused-local`)](@id diagnostic/reference/lowering/unused-local)
 
 **Default severity:** `Information`
 
@@ -169,14 +170,36 @@ function unused_local()
 end
 ```
 
-### [Top-level diagnostic (`toplevel/*`)](@id toplevel-diagnostic)
+#### [Undefined global variable (`lowering/undef-global-var`)](@id diagnostic/reference/lowering/undef-global-var)
+
+**Default severity:** `Warning`
+
+References to undefined global variables, detected during lowering analysis.
+This diagnostic is reported on change (as you type), providing immediate
+feedback.
+
+Example:
+
+```julia
+function undef_global_var()
+    ret = sin(undefined_var)  # `Main.undefined_var` is not defined (JETLS lowering/undef-global-var)
+    return ret
+end
+```
+
+This diagnostic detects simple undefined global variable references. For more
+comprehensive detection (including qualified references like `Base.undefvar`),
+see [`inference/undef-global-var`](@ref diagnostic/reference/inference/undef-global-var),
+which runs on save.
+
+### [Top-level diagnostic (`toplevel/*`)](@id diagnostic/reference/toplevel)
 
 Top-level diagnostic are reported by JETLS's full analysis feature, which runs
 when you save a file. To prevent excessive analysis on frequent saves, JETLS
 uses a debounce mechanism. See the [`[full_analysis] debounce`](@ref config/full_analysis-debounce)
 configuration documentation to adjust the debounce period.
 
-#### [Top-level error (`toplevel/error`)](@id diagnostic/toplevel/error)
+#### [Top-level error (`toplevel/error`)](@id diagnostic/reference/toplevel/error)
 
 **Default severity:** `Error`
 
@@ -206,12 +229,12 @@ using UnexistingPkg  # Package JETLS does not have UnexistingPkg in its dependen
 ```
 
 These errors prevent JETLS from fully analyzing your code, which means
-[Inference diagnostic](@ref inference-diagnostic) will not be available until
+[Inference diagnostic](@ref diagnostic/reference/inference) will not be available until
 the top-level errors are resolved. To fix these errors, ensure your package
 environment is properly set up by running `Pkg.instantiate()` in your package
 directory, and verify that your package can be loaded successfully in a Julia REPL.
 
-#### [Method overwrite (`toplevel/method-overwrite`)](@id diagnostic/toplevel/method-overwrite)
+#### [Method overwrite (`toplevel/method-overwrite`)](@id diagnostic/reference/toplevel/method-overwrite)
 
 **Default severity:** `Warning`
 
@@ -235,7 +258,7 @@ end
 The diagnostic includes a link to the original definition location via
 `relatedInformation`, making it easy to navigate to the first definition.
 
-#### [Abstract field type (`toplevel/abstract-field`)](@id diagnostic/toplevel/abstract-field)
+#### [Abstract field type (`toplevel/abstract-field`)](@id diagnostic/reference/toplevel/abstract-field)
 
 **Default severity:** `Information`
 
@@ -283,18 +306,21 @@ end
 
 [^nospecializetip]: For such cases, you can add `@nospecialize` to the use-site methods to allow them to handle abstract data types while avoiding excessive compilation.
 
-### [Inference diagnostic (`inference/*`)](@id inference-diagnostic)
+### [Inference diagnostic (`inference/*`)](@id diagnostic/reference/inference)
 
 Inference diagnostic uses JET.jl to perform type-aware analysis and detect
-potential errors through static analysis. These diagnostics are also reported by
-JETLS's full analysis feature (see [Top-level diagnostic](@ref
-toplevel-diagnostic) for details on when analysis runs).
+potential errors through static analysis. These diagnostics are reported by
+JETLS's full analysis feature, which runs when you save a file (similar to
+[Top-level diagnostic](@ref diagnostic/reference/toplevel)).
 
-#### [Undefined global variable (`inference/undef-global-var`)](@id diagnostic/inference/undef-global-var)
+#### [Undefined global variable (`inference/undef-global-var`)](@id diagnostic/reference/inference/undef-global-var)
 
 **Default severity:** `Warning`
 
-References to undefined global variables.
+References to undefined global variables, detected through full analysis. This
+diagnostic runs on save and can detect comprehensive cases including qualified
+references (e.g., `Base.undefvar`). Position information is reported on a line
+basis.
 
 Example:
 
@@ -304,7 +330,12 @@ function undef_global_var()
 end
 ```
 
-#### [Undefined local variable (`inference/undef-local-var`)](@id diagnostic/inference/undef-local-var)
+For faster feedback while editing, see
+[`lowering/undef-global-var`](@ref diagnostic/reference/lowering/undef-global-var),
+which reports a subset of undefined variable cases on change with accurate
+position information.
+
+#### [Undefined local variable (`inference/undef-local-var`)](@id diagnostic/reference/inference/undef-local-var)
 
 **Default severity:** `Information` or `Warning`
 
@@ -323,7 +354,7 @@ function undef_local_var()
 end
 ```
 
-#### [Field error (`inference/field-error`)](@id diagnostic/inference/field-error)
+#### [Field error (`inference/field-error`)](@id diagnostic/reference/inference/field-error)
 
 **Default severity:** `Warning`
 
@@ -342,7 +373,7 @@ function field_error()
 end
 ```
 
-#### [Bounds error (`inference/bounds-error`)](@id diagnostic/inference/bounds-error)
+#### [Bounds error (`inference/bounds-error`)](@id diagnostic/reference/inference/bounds-error)
 
 **Default severity:** `Warning`
 
@@ -362,27 +393,27 @@ function bounds_error(tpl::Tuple{Int})
 end
 ```
 
-### [TestRunner diagnostic (`testrunner/*`)](@id diagnostic/testrunner)
+### [TestRunner diagnostic (`testrunner/*`)](@id diagnostic/reference/testrunner)
 
-#### [Test failure (`testrunner/test-failure`)](@id diagnostic/testrunner/test-failure)
+#### [Test failure (`testrunner/test-failure`)](@id diagnostic/reference/testrunner/test-failure)
 
 **Default severity:** `Error`
 
 Test failures reported by [TestRunner integration](@ref) that happened during
 running individual `@testset` blocks or `@test` cases.
 
-## [Configuring diagnostic](@id configuring-diagnostic)
+## [Configuring diagnostic](@id diagnostic/configuring)
 
-You can configure which diagnostics are shown and at what [severity level](@ref diagnostic-severity)
+You can configure which diagnostics are shown and at what [severity level](@ref diagnostic/severity)
 under the `[diagnostic]` section. This allows you to customize JETLS's
 behavior to match your project's coding standards and preferences.
 
 ```@example
-nothing # This is an internal comment for this documenation: # hide
+nothing # This is an internal comment for this documentaion: # hide
 nothing # Use H5 for subsections in this section so that the `@contents` block above works as intended. # hide
 ```
 
-##### Common use cases
+##### [Common use cases](@id diagnostic/configuring/common-use-cases)
 
 Suppress specific macro expansion errors:
 

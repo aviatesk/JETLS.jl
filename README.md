@@ -11,8 +11,8 @@ JETLS aims to enhance developer productivity by providing advanced static
 analysis and seamless integration with the Julia runtime.
 By leveraging tooling technologies like
 [JET.jl](https://github.com/aviatesk/JET.jl),
-[JuliaSyntax.jl](https://github.com/JuliaLang/JuliaSyntax.jl) and
-[JuliaLowering.jl](https://github.com/c42f/JuliaLowering.jl),
+[JuliaSyntax.jl](https://github.com/JuliaLang/julia/tree/master/JuliaSyntax) and
+[JuliaLowering.jl](https://github.com/JuliaLang/julia/tree/master/JuliaLowering),
 JETLS aims to offer enhanced language features such as type-sensitive
 diagnostics, macro-aware go-to definition and such.
 
@@ -42,27 +42,35 @@ the list itself is subject to change.
 
 - Analysis
   - [x] Document synchronization
-  - [ ] Incremental analysis
+  - [/] Incremental analysis
   - [ ] JuliaLowering integration
   - [ ] Recursive analysis for dependencies
   - [ ] Cross-server-process cache system
 - Diagnostic
   - [x] Syntax errors
   - [x] Lowering errors
-  - [x] Undefined bindings
+  - [x] Macro expansion error
   - [x] Unused bindings
+  - [x] Method overwrite
+  - [x] Abstract struct field
+  - [x] Undefined bindings
+  - [x] Non-existent struct fields
+  - [x] Out-of-bounds field access by index
   - [ ] Potential `MethodError`
   - [x] Configuration support
 - Completion
   - [x] Global symbol completion
   - [x] Local binding completion
   - [x] LaTeX/Emoji completion
-  - [ ] Method signature completion
+  - [x] Method signature completion
+  - [/] Argument type based matched method filtering
+  - [x] [Juno](https://junolab.org/)-like return type annotation for method completions
+  - [x] Keyword argument name completion
   - [ ] Property completion
 - Signature help
   - [x] Basic implementation
   - [x] Macro support
-  - [ ] Argument type based suggestion
+  - [/] Argument type based matched method filtering
 - Definition
   - [x] Method defintion
   - [ ] Global binding definition
@@ -72,8 +80,8 @@ the list itself is subject to change.
   - [x] Method documentation
   - [x] Global binding documentation
   - [x] Local binding location
+  - [ ] Type of local binding
   - [ ] Type-aware method documentation
-  - [ ] Type of binding
 - Inlay hint
   - [ ] Method parameter name
   - [ ] Type of binding

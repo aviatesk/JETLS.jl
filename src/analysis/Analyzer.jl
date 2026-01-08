@@ -52,6 +52,8 @@ struct LSAnalyzer <: ToplevelAbstractAnalyzer
     """
     report_target_modules::Union{Nothing,Set{Module}}
 
+    invariable_analysis_hash::UInt
+
     """
         LSAnalyzer(state::AnalyzerState, analysis_token::AnalysisToken, report_target_modules::Set{Module})
 
@@ -59,10 +61,12 @@ struct LSAnalyzer <: ToplevelAbstractAnalyzer
     Used for both initial construction and creating a new [`LSAnalyzer`](@ref) from an existing one.
     """
     function LSAnalyzer(
-            state::AnalyzerState, analysis_token::AnalysisToken, report_target_modules::Union{Nothing,Set{Module}}
+            state::AnalyzerState, analysis_token::AnalysisToken,
+            report_target_modules::Union{Nothing,Set{Module}},
+            invariable_analysis_hash::UInt
         )
         method_table = CC.CachedMethodTable(CC.InternalMethodTable(state.world))
-        return new(state, analysis_token, method_table, report_target_modules)
+        return new(state, analysis_token, method_table, report_target_modules, invariable_analysis_hash)
     end
 end
 
@@ -91,14 +95,15 @@ function LSAnalyzer(
     # analysis is performed by creating anonymous modules that essentially represent the same module,
     # so there is no need to separate the cache by the identity of those anonymous modules
     report_target_modules_hash = objectid(report_target_modules)
-    analysis_cache_key = JET.compute_hash(entry, state.inf_params, report_target_modules_hash)
+    invariable_analysis_hash = JET.compute_hash(entry, report_target_modules_hash)
+    analysis_cache_key = JET.compute_hash(state.inf_params, invariable_analysis_hash)
     analysis_token = @lock LS_ANALYZER_CACHE_LOCK get!(AnalysisToken, LS_ANALYZER_CACHE, analysis_cache_key)
     if report_target_modules === missing
         report_target_modules = Set{Module}()
     elseif report_target_modules !== nothing
         report_target_modules = Set{Module}(report_target_modules)
     end
-    return LSAnalyzer(state, analysis_token, report_target_modules)
+    return LSAnalyzer(state, analysis_token, report_target_modules, invariable_analysis_hash)
 end
 
 # AbstractInterpreter API
@@ -116,10 +121,26 @@ CC.ipo_lattice(::LSAnalyzer) =
 # AbstractAnalyzer API
 # ====================
 
+const empty_target_modules = Set{Module}()
+const resolver_hash = rand(UInt)
+
 JETInterface.AnalyzerState(analyzer::LSAnalyzer) = analyzer.state
-function JETInterface.AbstractAnalyzer(analyzer::LSAnalyzer, state::AnalyzerState)
-    # XXX `analyzer.analysis_token` doesn't respect changes in `state.inf_params`
-    return LSAnalyzer(state, analyzer.analysis_token, analyzer.report_target_modules)
+function JETInterface.AbstractAnalyzer(
+        analyzer::LSAnalyzer, state::AnalyzerState;
+        resolver_mode::Bool = false
+    )
+    if resolver_mode
+        # Use special analysis cache for resolver purposes
+        analysis_cache_key = JET.compute_hash(state, analyzer.invariable_analysis_hash, resolver_hash)
+        # Force target modules to be empty and shutdown the report system
+        @assert isempty(empty_target_modules)
+        report_target_modules = empty_target_modules
+    else
+        analysis_cache_key = JET.compute_hash(state.inf_params, analyzer.invariable_analysis_hash)
+        report_target_modules = analyzer.report_target_modules
+    end
+    analysis_token = @lock LS_ANALYZER_CACHE_LOCK get!(AnalysisToken, LS_ANALYZER_CACHE, analysis_cache_key)
+    return LSAnalyzer(state, analysis_token, report_target_modules, analyzer.invariable_analysis_hash)
 end
 JETInterface.AnalysisToken(analyzer::LSAnalyzer) = analyzer.analysis_token
 
