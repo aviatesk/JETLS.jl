@@ -28,6 +28,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `isdefinedglobal` was not seeing the latest module bindings
   when `!JETLS_DEV_MODE`. (https://github.com/aviatesk/JETLS.jl/issues/457)
 
+- Fixed false positive `lowering/undef-global-var` diagnostic for keyword slurp
+  arguments with dependent defaults (e.g., `f(; a=1, b=a, kws...)`). The slurp
+  parameter name was incorrectly resolved as a global binding.
+  (JuliaLang/julia#60600)
+
 ### Announcement
 
 > [!warning]
