@@ -48,6 +48,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Fixed
 
 - Fixed `textDocument/diagnostic` for notebook cells.
+- Fixed `textDocument/formatting` and `textDocument/rangeFormatting` for
+  notebook cells (https://github.com/aviatesk/JETLS.jl/issues/442).
 
 ## 2026-01-09
 

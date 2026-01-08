@@ -447,9 +447,9 @@ function (dispatcher::RequestMessageDispatcher)(server::Server, @nospecialize ms
     elseif msg isa InlayHintRequest
         handle_InlayHintRequest(server, msg, cancel_flag)
     elseif msg isa DocumentFormattingRequest
-        handle_DocumentFormattingRequest(server, msg)
+        handle_DocumentFormattingRequest(server, msg, cancel_flag)
     elseif msg isa DocumentRangeFormattingRequest
-        handle_DocumentRangeFormattingRequest(server, msg)
+        handle_DocumentRangeFormattingRequest(server, msg, cancel_flag)
     elseif msg isa RenameRequest
         handle_RenameRequest(server, msg, cancel_flag)
     elseif msg isa PrepareRenameRequest
