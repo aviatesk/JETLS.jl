@@ -21,6 +21,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 - Diff: [`368e0a1...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/368e0a1...HEAD)
 
+### Fixed
+
+- Fixed `lowering/undef-global-var` diagnostic incorrectly reporting imported
+  symbols from dependency packages as undefined. The issue occurred because
+  `isdefinedglobal` was not seeing the latest module bindings
+  when `!JETLS_DEV_MODE`. (https://github.com/aviatesk/JETLS.jl/issues/457)
+
 ### Announcement
 
 > [!warning]
