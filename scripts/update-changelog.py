@@ -25,20 +25,21 @@ def split_announcement_and_entries(text: str) -> tuple[str, str]:
     """Split content into Announcement section and changelog entries.
 
     Returns (announcement, entries) tuple.
-    The Announcement section spans from ### Announcement to the first
-    changelog entry header (### Added, ### Changed, ### Fixed, etc.).
+    The Announcement section is extracted regardless of its position in the text.
     """
     # Standard changelog entry headers
     entry_headers = r'### (?:Added|Changed|Fixed|Removed|Deprecated|Security|Internal)'
 
-    # Find the Announcement section
-    announcement_match = re.search(r'(### Announcement.*?)(' + entry_headers + r')', text, re.DOTALL)
+    # Find the Announcement section (may be anywhere in the text)
+    announcement_pattern = re.compile(r'### Announcement.*?(?=' + entry_headers + r'|\Z)', re.DOTALL)
+    announcement_match = announcement_pattern.search(text)
 
     if announcement_match:
-        announcement = announcement_match.group(1).strip()
-        # Get everything from the first entry header onwards
-        entries_start = announcement_match.start(2)
-        entries = text[entries_start:].strip()
+        announcement = announcement_match.group(0).strip()
+        # Remove the Announcement section from text to get entries
+        entries = (text[:announcement_match.start()] + text[announcement_match.end():]).strip()
+        # Clean up any extra blank lines that might result from removal
+        entries = re.sub(r'\n{3,}', '\n\n', entries)
         return announcement, entries
 
     # No Announcement section found, treat everything as entries

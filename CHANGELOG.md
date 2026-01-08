@@ -21,27 +21,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 - Diff: [`cbcdc3c...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/cbcdc3c...HEAD)
 
-## 2026-01-09
-
-- Commit: [`cbcdc3c`](https://github.com/aviatesk/JETLS.jl/commit/cbcdc3c)
-- Diff: [`368e0a1...cbcdc3c`](https://github.com/aviatesk/JETLS.jl/compare/368e0a1...cbcdc3c)
-- Installation:
-  ```bash
-  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-01-09")'
-  ```
-
-### Fixed
-
-- Fixed `lowering/undef-global-var` diagnostic incorrectly reporting imported
-  symbols from dependency packages as undefined. The issue occurred because
-  `isdefinedglobal` was not seeing the latest module bindings
-  when `!JETLS_DEV_MODE`. (https://github.com/aviatesk/JETLS.jl/issues/457)
-
-- Fixed false positive `lowering/undef-global-var` diagnostic for keyword slurp
-  arguments with dependent defaults (e.g., `f(; a=1, b=a, kws...)`). The slurp
-  parameter name was incorrectly resolved as a global binding.
-  (JuliaLang/julia#60600)
-
 ### Announcement
 
 > [!warning]
@@ -65,6 +44,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > might work, but most LSP features will be unfunctional.
 > Note that `analysis_overrides` is provided as a temporary workaround and may
 > be removed or changed at any time. A proper fix is being worked on.
+
+## 2026-01-09
+
+- Commit: [`cbcdc3c`](https://github.com/aviatesk/JETLS.jl/commit/cbcdc3c)
+- Diff: [`368e0a1...cbcdc3c`](https://github.com/aviatesk/JETLS.jl/compare/368e0a1...cbcdc3c)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-01-09")'
+  ```
+
+### Fixed
+
+- Fixed `lowering/undef-global-var` diagnostic incorrectly reporting imported
+  symbols from dependency packages as undefined. The issue occurred because
+  `isdefinedglobal` was not seeing the latest module bindings
+  when `!JETLS_DEV_MODE`. (https://github.com/aviatesk/JETLS.jl/issues/457)
+
+- Fixed false positive `lowering/undef-global-var` diagnostic for keyword slurp
+  arguments with dependent defaults (e.g., `f(; a=1, b=a, kws...)`). The slurp
+  parameter name was incorrectly resolved as a global binding.
+  (JuliaLang/julia#60600)
 
 ## 2026-01-08
 
