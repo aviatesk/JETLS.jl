@@ -1,18 +1,15 @@
-relpath_safe(path::AbstractString, startpath::AbstractString) = isempty(startpath) ? path : relpath(path, startpath)
+function relpath_safe(path::AbstractString, startpath::AbstractString)
+    isempty(startpath) && return path
+    if ispath(path)
+        path = relpath(realpath(path), realpath(startpath))
+        !isabspath(path) && return path
+    end
+    return relpath(path, startpath)
+end
 
 function Base.relpath(filename::AbstractString, pkgdata::PkgData)
     if isabspath(filename)
-        # `Base.locate_package`, which is how `pkgdata` gets initialized, might strip pieces of the path.
-        # For example, on Travis macOS the paths returned by `abspath`
-        # can be preceded by "/private" which is not present in the value returned by `Base.locate_package`.
-        idx = findfirst(basedir(pkgdata), filename)
-        if idx !== nothing
-            idx = first(idx)
-            if idx > 1
-                filename = filename[idx:end]
-            end
-            filename = relpath_safe(filename, basedir(pkgdata))
-        end
+        filename = relpath_safe(filename, basedir(pkgdata))
     elseif startswith(filename, "compiler")
         # Core.Compiler's pkgid includes "compiler/" in the path
         filename = relpath(filename, "compiler")
@@ -31,6 +28,20 @@ function unique_dirs(iter)
         push!(udirs, dir)
     end
     return udirs
+end
+
+function abspath_no_normalize(a)
+    if !isabspath(a)
+        cwd = pwd()
+        a_drive, a_nodrive = splitdrive(a)
+        if a_drive != "" && lowercase(splitdrive(cwd)[1]) != lowercase(a_drive)
+            cwd = a_drive * path_separator
+            a = joinpath(cwd, a_nodrive)
+        else
+            a = joinpath(cwd, a)
+        end
+    end
+    return a
 end
 
 function file_exists(filename::AbstractString)
@@ -94,14 +105,14 @@ function unwrap_where(ex::Expr)
     return ex::Expr
 end
 
-function pushex!(exsigs::ExprsSigs, ex::Expr)
+function pushex!(exs_infos::ExprsInfos, ex::Expr)
     uex = unwrap(ex)
     if is_doc_expr(uex)
         body = uex.args[4]
         # Don't trigger for exprs where the documented expression is just a signature
         # (e.g. `"docstr" f(x::Int)`, `"docstr" f(x::T) where T` etc.)
         if isa(body, Expr) && unwrap_where(body).head !== :call
-            exsigs[RelocatableExpr(body)] = nothing
+            exs_infos[RelocatableExpr(body)] = nothing
         end
         if length(uex.args) < 5
             push!(uex.args, false)
@@ -109,8 +120,8 @@ function pushex!(exsigs::ExprsSigs, ex::Expr)
             uex.args[5] = false
         end
     end
-    exsigs[RelocatableExpr(ex)] = nothing
-    return exsigs
+    exs_infos[RelocatableExpr(ex)] = nothing
+    return exs_infos
 end
 
 ## WatchList utilities

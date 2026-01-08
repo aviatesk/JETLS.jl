@@ -80,11 +80,6 @@ function _register_kinds!(kind_modules, int_to_kindstr, kind_str_to_int, mod, mo
         error("Kind module id $module_id is out of range")
     elseif length(names) >= 1 << _kind_nbits
         error("Too many kind names")
-    elseif occursin("##JETVirtualModule", string(mod))
-        # This hack is necessary when analyzing packages that use `register_kinds!` like
-        # JuliaLowering with JET.
-        # This way only packages that JuliaSyntax has pre-registered can be analyzed,
-        # but this is sufficient for analyzing JuliaLowering at least.
     elseif !haskey(kind_modules, module_id)
         kind_modules[module_id] = mod
     else
@@ -1061,6 +1056,20 @@ register_kinds!(JuliaSyntax, 0, [
         # Container for a single statement/atom plus any trivia and errors
         "wrapper"
     "END_SYNTAX_KINDS"
+
+    # Kinds not corresponding to surface syntax in RawGreenNode, but required
+    # for parsing to a provenance-containing structure that is compatible with
+    # Expr.  May shrink with syntax evolution.
+    "BEGIN_SYNTAXTREE_KINDS"
+        # A literal Julia value of any kind, as might be inserted into the
+        # AST during macro expansion.  Only used in parsing to SyntaxTree.
+        "Value"
+        "core"
+        "unknown_head"
+        "flatten"
+        # QuoteNode; not quasiquote
+        "inert"
+    "END_SYNTAXTREE_KINDS"
 
     # Special tokens
     "TOMBSTONE"    # Empty placeholder for kind to be filled later

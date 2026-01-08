@@ -23,7 +23,7 @@ them to the client. If the computed set is empty it has to push the empty array 
 former diagnostics. Newly pushed diagnostics always replace previously pushed diagnostics.
 There is no merging that happens on the client side.
 
-See also the [Diagnostic](@ref) section.
+See also the [Diagnostic](@ref diagnostic) section.
 """
 
 @interface PublishDiagnosticsClientCapabilities begin

@@ -9,14 +9,14 @@ detected during tracking are applied immediately. Optionally, if `revise_throw` 
 `true`, `revise()` will throw if any exceptions are encountered while revising.
 """
 function track(mod::Module; modified_files=revision_queue, revise_throw::Bool=!isinteractive())
-    id = Base.moduleroot(mod) == Core.Compiler ?
-        PkgId(mod, "Core.Compiler") :
-        PkgId(mod)
+    id = pkgidid_for_mod(mod)
     modname = nameof(mod)
     ret = _track(id, modname; modified_files=modified_files)
     revise(; throw=revise_throw) # force revision so following calls in the same block work
     return ret
 end
+
+pkgidid_for_mod(mod) = id = Base.moduleroot(mod) == Core.Compiler ? PkgId(mod, "Core.Compiler") : PkgId(mod)
 
 const vstring = "v$(VERSION.major).$(VERSION.minor)"
 
@@ -67,8 +67,17 @@ function _track(id::PkgId, modname::Symbol; modified_files=revision_queue)
         if pkgdata === nothing
             pkgdata = PkgData(id, srcdir)
         end
-        lock(revision_queue_lock) do
-            for (submod, filename) in Iterators.drop(Base._included_files, 1)  # stepping through sysimg.jl rebuilds Base, omit it
+        ret = Revise.pkg_fileinfo(id)
+        if ret !== nothing
+            cachefile, _ = ret
+            if cachefile === nothing
+                @error "unable to find cache file for $id, tracking is not possible"
+            end
+        else
+            cachefile = basesrccache
+        end
+        @lock revision_queue_lock begin
+            for (submod, filename) in modulefiles_basestlibs(id)
                 ffilename = fixpath(filename)
                 inpath(ffilename, dirs) || continue
                 keypath = ffilename[1:last(findfirst(dirs[end], ffilename))]
@@ -78,7 +87,7 @@ function _track(id::PkgId, modname::Symbol; modified_files=revision_queue)
                     cache_file_key[fullpath] = filename
                     src_file_key[filename] = fullpath
                 end
-                push!(pkgdata, rpath=>FileInfo(submod, basesrccache))
+                push!(pkgdata, rpath=>FileInfo(submod, cachefile))
                 if mtime(ffilename) > mtcache
                     with_logger(_debug_logger) do
                         @debug "Recipe for Base/StdLib" _group="Watching" filename=filename mtime=mtime(filename) mtimeref=mtcache
@@ -94,8 +103,8 @@ function _track(id::PkgId, modname::Symbol; modified_files=revision_queue)
         # Save the result (unnecessary if already in pkgdatas, but doesn't hurt either)
         @lock pkgdatas_lock pkgdatas[id] = pkgdata
     elseif modname === :Compiler
-        compilerdir = normpath(joinpath(juliadir, "Compiler", "src"))
-        compilerdir_pre_112 = normpath(joinpath(juliadir, "base", "compiler"))
+        compilerdir = joinpath(juliadir, "Compiler", "src")
+        compilerdir_pre_112 = joinpath(juliadir, "base", "compiler")
         isdir(compilerdir) || (compilerdir = compilerdir_pre_112)
         pkgdata = get(pkgdatas, id, nothing)
         if pkgdata === nothing
@@ -140,11 +149,11 @@ function track_subdir_from_git!(pkgdata::PkgData, subdir::AbstractString; commit
     if repo == nothing
         throw(GitRepoException(subdir))
     end
-    prefix = string(relpath(subdir, repo_path), "/")   # git-relative path of this subdir
+    prefix = string(relpath(realpath(subdir), realpath(repo_path)), "/")   # git-relative path of this subdir
     tree = git_tree(repo, commit)
     files = Iterators.filter(file->startswith(file, prefix) && endswith(file, ".jl"), keys(tree))
     ccall((:giterr_clear, :libgit2), Cvoid, ())  # necessary to avoid errors like "the global/xdg file 'attributes' doesn't exist: No such file or directory"
-    lock(revision_queue_lock) do
+    @lock revision_queue_lock begin
         for file in files
             fullpath = joinpath(repo_path, file)
             rpath = relpath(fullpath, pkgdata)  # this might undo the above, except for Core.Compiler
@@ -178,10 +187,10 @@ function track_subdir_from_git!(pkgdata::PkgData, subdir::AbstractString; commit
                 push!(modified_files, (pkgdata, rpath))
             end
             fi = FileInfo(fmod)
-            if parse_source!(fi.modexsigs, src, file, fmod) === nothing
+            if parse_source!(fi.mod_exs_infos, src, file, fmod) === nothing
                 @warn "failed to parse Git source text for $file"
             else
-                instantiate_sigs!(fi.modexsigs)
+                instantiate_sigs!(fi.mod_exs_infos)
             end
             push!(pkgdata, rpath=>fi)
         end
@@ -208,7 +217,8 @@ const stdlib_names = Set([
 
 # This replacement is needed because the path written during compilation differs from
 # the git source path
-const stdlib_rep = joinpath("usr", "share", "julia", "stdlib", "v$(VERSION.major).$(VERSION.minor)") => "stdlib"
+const stdpath_rep = (joinpath("usr", "share", "julia", "stdlib", "v$(VERSION.major).$(VERSION.minor)") => "stdlib",
+                    joinpath("usr", "share", "julia", "Compiler") => "Compiler")
 
-const juliaf2m = Dict(normpath(replace(file, stdlib_rep))=>mod
+const juliaf2m = Dict(normpath(replace(file, stdpath_rep...))=>mod
     for (mod,file) in Base._included_files)

@@ -2,7 +2,7 @@ const JS = JuliaSyntax
 
 function _insert_tree_node(graph::SyntaxGraph, k::Kind, src::SourceAttrType,
                            attrs=[], flags::UInt16=0x0000)
-    id = newnode!(graph)
+    id = new_id!(graph)
     setattr!(graph, id, :kind, k)
     flags !== 0 && setattr!(graph, id, :syntax_flags, flags)
     setattr!(graph, id, :source, src)
@@ -209,7 +209,7 @@ function _insert_convert_expr(@nospecialize(e), graph::SyntaxGraph, src::SourceA
     elseif e isa String
         st_id = _insert_tree_node(graph, K"string", src)
         id_inner = _insert_tree_node(graph, K"String", src, [:value=>e])
-        setchildren!(graph, st_id, [id_inner])
+        JuliaSyntax.setchildren!(graph, st_id, [id_inner])
         return st_id, src
     elseif !(e isa Expr)
         # There are other kinds we could potentially back-convert (e.g. Float),
@@ -244,10 +244,10 @@ function _insert_convert_expr(@nospecialize(e), graph::SyntaxGraph, src::SourceA
         @assert s[end] === '=' && nargs === 2
         if s[1] === '.'
             st_k = K".op="
-            op = s[2:end-1]
+            op = s[nextind(s,1):prevind(s,end)]
         else
             st_k = K"op="
-            op = s[1:end-1]
+            op = s[1:prevind(s,end)]
         end
         child_exprs = Any[e.args[1], Symbol(op), e.args[2]]
     elseif e.head === :comparison
@@ -267,12 +267,11 @@ function _insert_convert_expr(@nospecialize(e), graph::SyntaxGraph, src::SourceA
             src = child_exprs[2]
         end
         deleteat!(child_exprs, 2)
-        # if a1 isa Symbol && a1 === Symbol("@__dot__")
-        #     child_exprs[1] = Symbol("@.")
-        # elseif a1 isa Expr && nargs === 2 && a1.args[2] === Symbol("@__dot__")
-        #     child_exprs[1] = Expr(a1.head, a1.args[1], Symbol("@."))
-        # elseif a1 isa GlobalRef && a1.mod === Core
-        if a1 isa GlobalRef && a1.mod === Core
+        if a1 isa Symbol && a1 === Symbol("@__dot__")
+            child_exprs[1] = Symbol("@.")
+        elseif a1 isa Expr && nargs === 2 && a1.args[2] === Symbol("@__dot__")
+            child_exprs[1] = Expr(a1.head, a1.args[1], Symbol("@."))
+        elseif a1 isa GlobalRef && a1.mod === Core
             # Syntax-introduced macrocalls are listed here for reference.  We
             # probably don't need to convert these.
             if a1.name === Symbol("@cmd")
@@ -521,15 +520,6 @@ function _insert_convert_expr(@nospecialize(e), graph::SyntaxGraph, src::SourceA
     elseif e.head === :islocal || e.head === :isglobal
         st_k = K"extension"
         child_exprs = [Expr(:quoted_symbol, e.head), e.args[1]]
-    elseif e.head === :block && nargs >= 1 &&
-        e.args[1] isa Expr && e.args[1].head === :softscope
-        # (block (softscope true) ex) produced with every REPL prompt.
-        # :hardscope exists too, but should just be a let, and appears to be
-        # unused in the wild.
-        ensure_attributes!(graph; scope_type=Symbol)
-        st_k = K"scope_block"
-        st_attrs[:scope_type] = :soft
-        child_exprs = e.args[2:end]
     end
 
     #---------------------------------------------------------------------------
@@ -570,7 +560,7 @@ function _insert_convert_expr(@nospecialize(e), graph::SyntaxGraph, src::SourceA
         return st_id, src
     else
         st_child_ids, last_src = _insert_child_exprs(e.head, child_exprs, graph, src)
-        setchildren!(graph, st_id, st_child_ids)
+        JuliaSyntax.setchildren!(graph, st_id, st_child_ids)
         return st_id, last_src
     end
 end
@@ -593,4 +583,170 @@ function _insert_child_exprs(head::Symbol, child_exprs::Vector{Any},
         end
     end
     return st_child_ids, last_src
+end
+
+#-------------------------------------------------------------------------------
+# SyntaxTree->Expr overrides
+
+function JuliaSyntax._expr_leaf_val(ex::SyntaxTree, _...)
+    name = get(ex, :name_val, nothing)
+    if !isnothing(name)
+        n = Symbol(name)
+        if kind(ex) === K"Symbol"
+            return QuoteNode(n)
+        elseif hasattr(ex, :scope_layer)
+            Expr(:scope_layer, n, ex.scope_layer)
+        else
+            n
+        end
+    else
+        val = get(ex, :value, nothing)
+        if kind(ex) == K"Value" && val isa Expr || val isa LineNumberNode
+            # Expr AST embedded in a SyntaxTree should be quoted rather than
+            # becoming part of the output AST.
+            QuoteNode(val)
+        else
+            val
+        end
+    end
+end
+
+function JuliaSyntax.fixup_Expr_child(::Type{<:SyntaxTree}, head::SyntaxHead,
+                                      @nospecialize(arg), first::Bool)
+    isa(arg, Expr) || return arg
+    k = kind(head)
+    coalesce_dot = k in KSet"call dotcall curly" ||
+                   (k == K"quote" && has_flags(head, JuliaSyntax.COLON_QUOTE))
+    if @isexpr(arg, :., 1) && arg.args[1] isa Tuple
+        h, a = arg.args[1]::Tuple{SyntaxHead,Any}
+        arg = ((coalesce_dot && first) || is_syntactic_operator(h)) ?
+            Symbol(".", a) : Expr(:., a)
+    end
+    return arg
+end
+
+Base.Expr(ex::SyntaxTree) = JuliaSyntax.to_expr(ex)
+
+#-------------------------------------------------------------------------------
+# WIP: Expr<->EST
+
+function expr_to_est(@nospecialize(e), lnn::LineNumberNode=LineNumberNode(0, :none))
+    graph = ensure_attributes!(
+        SyntaxGraph(),
+        kind=Kind, syntax_flags=UInt16,
+        source=SourceAttrType, var_id=Int, value=Any,
+        name_val=String, is_toplevel_thunk=Bool,
+        scope_layer=LayerId, meta=CompileHints,
+        toplevel_pure=Bool)
+    SyntaxTree(graph, _expr_to_est(graph, e, lnn)[1])
+end
+
+function _get_inner_lnn(e::Expr, default::LineNumberNode)
+    e.head in (:function, :macro, :module) || return default
+    length(e.args) >= 2 || return default
+    b = e.args[end]
+    b isa Expr && b.head === :block || return default
+    length(b.args) >= 1 && b.args[1] isa LineNumberNode || return default
+    return b.args[1]
+end
+
+# List of Expr-AST forms that are always converted to some SyntaxTree form and
+# never inserted as an opaque `K"Value"`. Note no LineNumberNode, which appears
+# unwrapped in a macrocall (possibly generated functions too, TODO check)
+isa_lowering_ast_node(@nospecialize(e)) =
+    e isa Symbol || e isa QuoteNode || e isa Expr # || e isa GlobalRef
+
+function is_expr_value(st::SyntaxTree)
+    k = kind(st)
+    return JuliaSyntax.is_literal(k) || k === K"Value" ||
+        k === K"core" && st.name_val === "nothing"
+end
+
+function _expr_to_est(graph::SyntaxGraph, @nospecialize(e), src::LineNumberNode)
+    st = if e === Core.nothing
+        # e.value can't be nothing in `K"Value"`, so represent with K"core"
+        setattr!(newleaf(graph, src, K"core"), :name_val, "nothing")
+    elseif e isa Symbol
+        setattr!(newleaf(graph, src, K"Identifier"), :name_val, String(e))
+    elseif e isa QuoteNode
+        cid, _ = _expr_to_est(graph, e.value, src)
+        newnode(graph, src, K"inert", NodeId[cid])
+    elseif e isa Expr && e.head === :scope_layer
+        @assert length(e.args) === 2 && e.args[1] isa Symbol
+        ident = newleaf(graph, src, K"Identifier")
+        setattr!(ident, :name_val, String(e.args[1]))
+        setattr!(ident, :scope_layer, e.args[2])
+    elseif e isa Expr
+        head_s = string(e.head)
+        st_k = find_kind(head_s)
+        old_src = _get_inner_lnn(e, src)
+        cs = NodeId[]
+        rm_linenodes = e.head in (:block, :toplevel)
+        for arg in e.args
+            if rm_linenodes && arg isa LineNumberNode
+                src = arg
+            else
+                cid, src = _expr_to_est(graph, arg, src)
+                push!(cs, cid)
+            end
+        end
+        if isnothing(st_k)
+            setattr!(newnode(graph, src, K"unknown_head", cs), :name_val, head_s)
+        else
+            newnode(graph, old_src, st_k, cs)
+        end
+    # elseif e isa GlobalRef
+        # TODO: Better-behaved as K"globalref", but lowering doesn't know this
+    else
+        # We may want additional special cases for other types where
+        # `Base.isa_ast_node(e)`, but `K"Value"` should be fine for most, since
+        # most are produced in or after lowering
+        if e isa LineNumberNode
+            # linenode oustside of block or toplevel
+            src = e
+        end
+        setattr!(newleaf(graph, src, K"Value"), :value, e)
+    end
+    @assert isa_lowering_ast_node(e) || is_expr_value(st)
+
+    return st._id, src
+end
+
+function est_to_expr(st::SyntaxTree)
+    k = kind(st)
+    return if k === K"core" && numchildren(st) === 0 && st.name_val === "nothing"
+        nothing
+    elseif is_leaf(st) && hasattr(st, :name_val)
+        n = Symbol(st.name_val)
+        hasattr(st, :scope_layer) ? Expr(:scope_layer, n, st.scope_layer) : n
+    elseif is_leaf(st) && is_expr_value(st)
+        v = st.value
+        # Let `st.value isa Symbol` (or other AST node).  Since we enforce that
+        # this is never produced by the reverse Expr->SyntaxTree transformation,
+        # there is no lonely Expr for which `st` is the only SyntaxTree
+        # representation.  This means we can pick some other expr this
+        # represents, namely Expr(`(inert ,st.value)) rather than
+        # Expr(st.value).
+        isa_lowering_ast_node(v) ? QuoteNode(v) : v
+    elseif k === K"inert"
+        QuoteNode(est_to_expr(st[1]))
+    else
+        @assert !is_leaf(st)
+        # In a partially-expanded or quoted AST, there may be heads with no
+        # corresponding kind
+        head = Symbol(k === K"unknown_head" ? st.name_val : untokenize(k))
+        need_lnns = head in (:block, :toplevel)
+        out = Expr(head)
+        for c in children(st)
+            need_lnns && push!(out.args, source_location(LineNumberNode, c))
+            push!(out.args, est_to_expr(c))
+        end
+        # extra linenodes
+        n = length(out.args)
+        if (k === K"module" && 3 <= n <= 4 && kind(st[end]) === K"block") ||
+            (k in KSet"function macro" && n === 2 && kind(st[end]) === K"block")
+            pushfirst!(out.args[end].args, source_location(LineNumberNode, st))
+        end
+        out
+    end
 end

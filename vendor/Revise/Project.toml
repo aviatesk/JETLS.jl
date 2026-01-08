@@ -1,17 +1,17 @@
 name = "Revise"
 uuid = "d54aa4ff-5f0d-5e64-8d83-7613e0a93f9b"
-version = "3.12.3"
+version = "3.13.1"
 
 [deps]
 LibGit2 = "76f85450-5226-5b5a-8eaa-529ad045b433"
+InteractiveUtils = "b77e0a4c-d291-57a0-90e8-8db25a27a240"
 OrderedCollections = "64c61135-0f01-5c34-beb9-07fc02084e85"
 REPL = "3fa0cd96-eef1-5676-8a61-b3b8758bbffb"
 LoweredCodeUtils = "01ede001-ea10-5720-9c31-2e53839707a9"
 FileWatching = "7b1f6079-737a-58dc-b8bc-7a2ca5c1b5ee"
 JuliaInterpreter = "87c368a4-672f-5de1-91ff-3cc7fc652fab"
 UUIDs = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
-Requires = "ae029012-a4dd-5104-9daa-d747884805df"
-Unicode = "4ec0a83e-493e-50e2-b9ac-8f72acf5a8f5"
+Preferences = "cc588e5a-7be0-5224-8a6a-549b21958db9"
 CodeTracking = "29b28462-3302-58bb-873a-3f58224955cc"
 
 [workspace]
@@ -36,9 +36,11 @@ Requires = "ae029012-a4dd-5104-9daa-d747884805df"
 
 [compat]
 julia = "1.10"
+InteractiveUtils = "1.10, 1.11"
 OrderedCollections = "1"
 LoweredCodeUtils = "3.5"
 JuliaInterpreter = "0.10.8"
+Preferences = "1.5.0"
 Requires = "~1.0, ^1.1.1"
 Distributed = "1"
 CodeTracking = "3"
@@ -47,21 +49,16 @@ CodeTracking = "3"
 test = ["CatIndices", "Distributed", "EndpointRanges", "EponymTuples", "Example", "IndirectArrays", "InteractiveUtils", "MacroTools", "MappedArrays", "Pkg", "Random", "Requires", "RoundingIntegers", "Test", "UnsafeArrays"]
 
 [sources.OrderedCollections]
-subdir = "vendor/OrderedCollections"
-rev = "7e238ecf2e0a09379a264faf0116d1eeca8fb7d8"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../OrderedCollections"
 
 [sources.LoweredCodeUtils]
-subdir = "vendor/LoweredCodeUtils"
-rev = "7e238ecf2e0a09379a264faf0116d1eeca8fb7d8"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../LoweredCodeUtils"
 
 [sources.JuliaInterpreter]
-subdir = "vendor/JuliaInterpreter"
-rev = "7e238ecf2e0a09379a264faf0116d1eeca8fb7d8"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../JuliaInterpreter"
+
+[sources.Preferences]
+path = "../Preferences"
 
 [sources.CodeTracking]
-subdir = "vendor/CodeTracking"
-rev = "7e238ecf2e0a09379a264faf0116d1eeca8fb7d8"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../CodeTracking"
