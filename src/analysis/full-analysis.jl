@@ -1190,7 +1190,10 @@ function do_instantiation_with_progress(
             title = "Instantiating environment",
             message = message_path,
             cancellable = false))
-    entry = do_instantiation(server, uri, ins_request)
-    send_progress(server, token, WorkDoneProgressEnd())
+    entry = try
+        do_instantiation(server, uri, ins_request)
+    finally
+        send_progress(server, token, WorkDoneProgressEnd())
+    end
     return entry
 end
