@@ -59,6 +59,14 @@ function make_DocumentDiagnosticRequest(id::Int, uri::URI)
             textDocument = TextDocumentIdentifier(; uri)))
 end
 
+function make_DocumentFormattingRequest(id::Int, uri::URI)
+    return DocumentFormattingRequest(;
+        id,
+        params = DocumentFormattingParams(;
+            textDocument = TextDocumentIdentifier(; uri),
+            options = FormattingOptions(; tabSize = 4, insertSpaces = true)))
+end
+
 @testset "notebook end to end" begin
     old_env = Pkg.project().path
     mktempdir() do tempdir; try
@@ -230,6 +238,72 @@ end
     finally
         Pkg.activate(old_env; io=devnull)
     end; end
+end
+
+@testset "notebook formatting" begin
+    mktempdir() do tempdir
+        notebook_uri = filepath2uri(normpath(tempdir, "test.ipynb"))
+
+        # Use `cat` as a test formatter (just echoes input)
+        settings = Dict{String,Any}(
+            "formatter" => Dict{String,Any}(
+                "custom" => Dict{String,Any}(
+                    "executable" => "cat"
+                )
+            )
+        )
+
+        withserver(; settings) do (; server, writemsg, writereadmsg, id_counter)
+            cell1_uri = make_cell_uri(tempdir, 1)
+            cell2_uri = make_cell_uri(tempdir, 2)
+
+            # Open notebook with two cells and wait for diagnostics
+            # read=2: PublishDiagnosticsNotification for each cell
+            let cell1_text = "x = 1"
+                cell2_text = "y = 2\nz = 3"
+                cells = NotebookCell[
+                    NotebookCell(; kind = NotebookCellKind.Code, document = cell1_uri),
+                    NotebookCell(; kind = NotebookCellKind.Code, document = cell2_uri),
+                ]
+                cell_texts = Dict{URI,String}(cell1_uri => cell1_text, cell2_uri => cell2_text)
+                writereadmsg(make_DidOpenNotebookDocumentNotification(notebook_uri, cells, cell_texts); read=2)
+            end
+
+            # Request formatting for cell 1 only
+            let id = id_counter[] += 1
+                (; raw_res) = writereadmsg(make_DocumentFormattingRequest(id, cell1_uri))
+                @test raw_res isa DocumentFormattingResponse
+                edits = raw_res.result
+                @test edits !== nothing
+                @test length(edits) == 1
+                edit = edits[1]
+                # Verify the range is cell-local (covers just "x = 1")
+                @test edit.range.start.line == 0
+                @test edit.range.start.character == 0
+                @test edit.range.var"end".line == 0
+                @test edit.range.var"end".character == 5
+                # Verify the formatted text (cat just echoes input)
+                @test edit.newText == "x = 1"
+            end
+
+            # Verify cell 2 is independent - request formatting for cell 2
+            let id = id_counter[] += 1
+                (; raw_res) = writereadmsg(make_DocumentFormattingRequest(id, cell2_uri))
+                @test raw_res isa DocumentFormattingResponse
+                edits = raw_res.result
+                @test edits !== nothing
+                @test length(edits) == 1
+                edit = edits[1]
+                # Verify the range is cell-local (covers "y = 2\nz = 3")
+                @test edit.range.start.line == 0
+                @test edit.range.start.character == 0
+                @test edit.range.var"end".line == 1
+                @test edit.range.var"end".character == 5
+                # Verify the formatted text (cat just echoes input)
+                @test edit.newText == "y = 2\nz = 3"
+            end
+        end
+    end
 end
 
 end # module test_notebook

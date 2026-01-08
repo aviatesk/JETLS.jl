@@ -10,6 +10,7 @@ struct FormattingProgressCaller <: RequestCaller
     options::FormattingOptions
     msg_id::MessageId
     token::ProgressToken
+    cancel_flag::CancelFlag
 end
 
 struct RangeFormattingProgressCaller <: RequestCaller
@@ -18,6 +19,7 @@ struct RangeFormattingProgressCaller <: RequestCaller
     options::FormattingOptions
     msg_id::MessageId
     token::ProgressToken
+    cancel_flag::CancelFlag
 end
 
 function formatting_options(server::Server)
@@ -61,21 +63,42 @@ end
 document_text(fi::FileInfo) = JS.sourcetext(fi.parsed_stream)
 document_range(fi::FileInfo) = jsobj_to_range(fi.parsed_stream, fi)
 
-function handle_DocumentFormattingRequest(server::Server, msg::DocumentFormattingRequest)
+function get_cell_text(state::ServerState, cell_uri::URI)
+    notebook_uri = @something get_notebook_uri_for_cell(state, cell_uri) return nothing
+    notebook_info = @something get_notebook_info(state, notebook_uri) return nothing
+    for cell in notebook_info.cells
+        if cell.uri == cell_uri && cell.kind == NotebookCellKind.Code
+            return cell.text
+        end
+    end
+    return nothing
+end
+
+function cell_range(text::AbstractString, encoding::PositionEncodingKind.Ty)
+    textbuf = Vector{UInt8}(text)
+    end_pos = _offset_to_xy(textbuf, sizeof(text) + 1, encoding)
+    return Range(;
+        start = Position(; line = 0, character = 0),
+        var"end" = end_pos)
+end
+
+function handle_DocumentFormattingRequest(
+        server::Server, msg::DocumentFormattingRequest, cancel_flag::CancelFlag
+    )
     uri = msg.params.textDocument.uri
     options = msg.params.options
 
     workDoneToken = msg.params.workDoneToken
     if workDoneToken !== nothing
-        do_format_with_progress(server, uri, options, msg.id, workDoneToken)
+        do_format_with_progress(server, uri, options, msg.id, workDoneToken, cancel_flag)
     elseif supports(server, :window, :workDoneProgress)
         id = String(gensym(:WorkDoneProgressCreateRequest_formatting))
         token = String(gensym(:FormattingProgress))
-        addrequest!(server, id=>FormattingProgressCaller(uri, options, msg.id, token))
+        addrequest!(server, id => FormattingProgressCaller(uri, options, msg.id, token, cancel_flag))
         params = WorkDoneProgressCreateParams(; token)
         send(server, WorkDoneProgressCreateRequest(; id, params))
     else
-        do_format(server, uri, options, msg.id)
+        do_format(server, uri, options, msg.id, cancel_flag)
     end
 
     return nothing
@@ -87,19 +110,19 @@ function handle_formatting_progress_response(
     if handle_response_error(server, msg, "create work done progress")
         return
     end
-    (; uri, options, msg_id, token) = request_caller
-    do_format_with_progress(server, uri, options, msg_id, token)
+    (; uri, options, msg_id, token, cancel_flag) = request_caller
+    do_format_with_progress(server, uri, options, msg_id, token, cancel_flag)
 end
 
 function do_format_with_progress(
         server::Server, uri::URI, options::FormattingOptions,
-        msg_id::MessageId, token::ProgressToken
+        msg_id::MessageId, token::ProgressToken, cancel_flag::CancelFlag
     )
     send_progress(server, token,
         WorkDoneProgressBegin(; title = "Formatting document"))
     completed = false
     try
-        do_format(server, uri, options, msg_id)
+        do_format(server, uri, options, msg_id, cancel_flag)
         completed = true
     finally
         send_progress(server, token,
@@ -110,9 +133,9 @@ end
 
 function do_format(
         server::Server, uri::URI, options::FormattingOptions,
-        msg_id::MessageId
+        msg_id::MessageId, cancel_flag::CancelFlag
     )
-    result = format_result(server.state, uri, options)
+    result = format_result(server.state, uri, options, cancel_flag)
     if result isa ResponseError
         return send(server, DocumentFormattingResponse(; id = msg_id, result = nothing, error = result))
     else
@@ -169,8 +192,12 @@ function get_formatter_executable(formatter::FormatterConfig, for_range::Bool)
     end
 end
 
-function format_result(state::ServerState, uri::URI, options::FormattingOptions)
-    fi = @something get_file_info(state, uri) return file_cache_error(uri)
+function format_result(
+        state::ServerState, uri::URI, options::FormattingOptions, cancel_flag::CancelFlag
+    )
+    result = get_file_info(state, uri, cancel_flag)
+    result isa ResponseError && return result
+    fi = result
 
     formatter = get_config(state.config_manager, :formatter)
     exe = get_formatter_executable(formatter, false)
@@ -178,28 +205,27 @@ function format_result(state::ServerState, uri::URI, options::FormattingOptions)
         return exe
     end
 
-    newText = @something format_file(exe, uri, fi, nothing, options, formatter) begin
-        return request_failed_error("Formatter returned an error. See server logs for details.")
-    end
-    return TextEdit[TextEdit(; range = document_range(fi), newText)]
+    return format_file(state, exe, uri, fi, nothing, options, formatter)
 end
 
-function handle_DocumentRangeFormattingRequest(server::Server, msg::DocumentRangeFormattingRequest)
+function handle_DocumentRangeFormattingRequest(
+        server::Server, msg::DocumentRangeFormattingRequest, cancel_flag::CancelFlag
+    )
     uri = msg.params.textDocument.uri
     range = msg.params.range
     options = msg.params.options
 
     workDoneToken = msg.params.workDoneToken
     if workDoneToken !== nothing
-        do_range_format_with_progress(server, uri, range, options, msg.id, workDoneToken)
+        do_range_format_with_progress(server, uri, range, options, msg.id, workDoneToken, cancel_flag)
     elseif supports(server, :window, :workDoneProgress)
         id = String(gensym(:WorkDoneProgressCreateRequest_rangeFormatting))
         token = String(gensym(:RangeFormattingProgress))
-        addrequest!(server, id => RangeFormattingProgressCaller(uri, range, options, msg.id, token))
+        addrequest!(server, id => RangeFormattingProgressCaller(uri, range, options, msg.id, token, cancel_flag))
         params = WorkDoneProgressCreateParams(; token)
         send(server, WorkDoneProgressCreateRequest(; id, params))
     else
-        do_range_format(server, uri, range, options, msg.id)
+        do_range_format(server, uri, range, options, msg.id, cancel_flag)
     end
 
     return nothing
@@ -211,19 +237,19 @@ function handle_range_formatting_progress_response(
     if handle_response_error(server, msg, "create work done progress")
         return
     end
-    (; uri, range, options, msg_id, token) = request_caller
-    do_range_format_with_progress(server, uri, range, options, msg_id, token)
+    (; uri, range, options, msg_id, token, cancel_flag) = request_caller
+    do_range_format_with_progress(server, uri, range, options, msg_id, token, cancel_flag)
 end
 
 function do_range_format_with_progress(
         server::Server, uri::URI, range::Range, options::FormattingOptions,
-        msg_id::MessageId, token::ProgressToken
+        msg_id::MessageId, token::ProgressToken, cancel_flag::CancelFlag
     )
     send_progress(server, token,
         WorkDoneProgressBegin(; title = "Formatting document range"))
     completed = false
     try
-        do_range_format(server, uri, range, options, msg_id)
+        do_range_format(server, uri, range, options, msg_id, cancel_flag)
         completed = true
     finally
         send_progress(server, token,
@@ -234,9 +260,9 @@ end
 
 function do_range_format(
         server::Server, uri::URI, range::Range, options::FormattingOptions,
-        msg_id::MessageId
+        msg_id::MessageId, cancel_flag::CancelFlag
     )
-    result = range_format_result(server.state, uri, range, options)
+    result = range_format_result(server.state, uri, range, options, cancel_flag)
     if result isa ResponseError
         return send(server, DocumentRangeFormattingResponse(; id = msg_id, result = nothing, error = result))
     else
@@ -245,9 +271,12 @@ function do_range_format(
 end
 
 function range_format_result(
-        state::ServerState, uri::URI, range::Range, options::FormattingOptions
+        state::ServerState, uri::URI, range::Range, options::FormattingOptions,
+        cancel_flag::CancelFlag
     )
-    fi = @something get_file_info(state, uri) return file_cache_error(uri)
+    result = get_file_info(state, uri, cancel_flag)
+    result isa ResponseError && return result
+    fi = result
 
     formatter = get_config(state.config_manager, :formatter)
     exe = get_formatter_executable(formatter, true)
@@ -255,19 +284,33 @@ function range_format_result(
         return exe
     end
 
-    startline = Int(range.start.line + 1)
-    endline = Int(range.var"end".line + 1)
-    lines = "$startline:$endline"
-    newText = @something format_file(exe, uri, fi, lines, options, formatter) begin
-        return request_failed_error("Formatter returned an error. See server logs for details.")
-    end
-    edit = TextEdit(; range = document_range(fi), newText)
-    return TextEdit[edit]
+    return format_file(state, exe, uri, fi, range, options, formatter)
 end
 
 function format_file(
-        exe::String, uri::URI, fi::FileInfo, lines::Union{Nothing,AbstractString},
+        state::ServerState, exe::String, uri::URI, fi::FileInfo, range::Union{Range,Nothing},
         options::FormattingOptions, formatter::FormatterConfig
+    )
+    cell_text = get_cell_text(state, uri)
+    text = cell_text !== nothing ? cell_text : document_text(fi)
+    lines = if range !== nothing
+        startline = Int(range.start.line + 1)
+        endline = Int(range.var"end".line + 1)
+        "$startline:$endline"
+    else
+        nothing
+    end
+
+    newText = @something run_formatter(exe, text, lines, uri, options, formatter) begin
+        return request_failed_error("Formatter returned an error. See server logs for details.")
+    end
+    edit_range = cell_text !== nothing ? cell_range(cell_text, fi.encoding) : document_range(fi)
+    return TextEdit[TextEdit(; range = edit_range, newText)]
+end
+
+function run_formatter(
+        exe::String, text::AbstractString, lines::Union{Nothing,AbstractString},
+        uri::URI, options::FormattingOptions, formatter::FormatterConfig
     )
     cmd = if formatter isa String
         # Preset formatter: "Runic" or "JuliaFormatter"
@@ -312,7 +355,7 @@ function format_file(
     end
 
     proc = open(cmd; read = true, write = true)
-    write(proc, document_text(fi))
+    write(proc, text)
     close(proc.in)
     wait(proc)
     if proc.exitcode ≠ 0
