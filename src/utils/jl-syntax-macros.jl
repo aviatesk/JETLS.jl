@@ -6,7 +6,7 @@
 
 # @nospecialize on >=2 args
 function Base.var"@nospecialize"(__context__::JL.MacroContext, ex1, ex2, exs...)
-    to_nospecialize = JL.SyntaxTree[ex1, ex2, exs...]
+    to_nospecialize = JS.SyntaxTree[ex1, ex2, exs...]
     JL.@ast(__context__,
             __context__.macrocall,
             [JS.K"block" map(st->JL._apply_nospecialize(__context__, st), to_nospecialize)...])

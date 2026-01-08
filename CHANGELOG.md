@@ -19,15 +19,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`b61b6fa...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/b61b6fa...HEAD)
+- Diff: [`c5f3c0d...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/c5f3c0d...HEAD)
 
 ### Announcement
-
-> [!note]
-> To install or update JETLS to the latest version, run:
-> ```bash
-> julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="release")'
-> ```
 
 > [!warning]
 > JETLS currently has a known memory leak issue where memory usage grows with
@@ -51,6 +45,126 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > Note that `analysis_overrides` is provided as a temporary workaround and may
 > be removed or changed at any time. A proper fix is being worked on.
 
+### Added
+
+- Added `lowering/undef-global-var` diagnostic that reports undefined global
+  variable references on document change (as you type). This provides faster
+  feedback compared to `inference/undef-global-var`, which runs on save.
+  The on-change diagnostic detects simple undefined references with accurate
+  position information, while the on-save version detects a superset of
+  undefined global binding references, including qualified references like
+  `Base.undefvar`. (https://github.com/aviatesk/JETLS.jl/pull/450)
+
+  <https://github.com/user-attachments/assets/7825c938-5dae-4bb8-9c84-b95e788461e8>
+
+- Method signature completion for function calls. When typing inside a function
+  call (triggered by `(`, `,`, or ` `), compatible method signatures are
+  suggested based on already-provided arguments. Selecting a completion inserts
+  remaining positional arguments as snippet placeholders with type annotations.
+  When you select a completion item in the list, additional details such as
+  inferred return type and documentation are displayed (resolved lazily for
+  performance). (https://github.com/aviatesk/JETLS.jl/pull/428)
+
+  <https://github.com/user-attachments/assets/19d320a6-459f-4788-9669-d3936920b625>
+
+- Keyword argument name completion for function calls. When typing inside a
+  function call (e.g., `func(; |)` or `func(k|)`), available keyword arguments
+  are suggested with `=` appended. Already-specified keywords are excluded from
+  suggestions, and the spacing around `=` follows the existing style in the call.
+  (https://github.com/aviatesk/JETLS.jl/pull/427)
+
+  <https://github.com/user-attachments/assets/d3cdecea-d2eb-4d14-9043-6bc62a6f2833>
+
+- Added `completion.latex_emoji.strip_prefix` configuration option to control
+  prefix stripping in LaTeX/emoji completions. Some editors (e.g., Zed) don't
+  handle backslash characters in the LSP `sortText` field, causing incorrect
+  completion order. Set to `true` to strip prefixes, `false` to keep them.
+  If not set, JETLS auto-detects based on client. The auto-detection covers
+  only a limited set of known clients, so users experiencing sorting issues
+  should explicitly set this option.
+
+- Added `completion.method_signature.prepend_inference_result` configuration
+  option to control whether to prepend inferred return type information to the
+  documentation of method signature completion items. In some editors (e.g., Zed),
+  additional information like inferred return type displayed when an item is
+  selected may be cut off in the UI when method signature text is long. Set to
+  `true` to show return type in documentation. If not set, JETLS auto-detects
+  based on client. The auto-detection covers only a limited set of known clients,
+  so users experiencing visibility issues should explicitly set this option.
+
+> [!tip]
+> **Help improve auto-detection**:
+>
+> Some completion configuration options (e.g., `completion.latex_emoji.strip_prefix`,
+> `completion.method_signature.prepend_inference_result`) use client-based
+> auto-detection for default behavior. If explicitly setting these options clearly
+> improves behavior for your client, consider submitting a PR to add your client
+> to the [auto-detection](https://github.com/aviatesk/JETLS.jl/blob/14fdc847252579c27e41cd50820aee509f8fd7bd/src/completions.jl#L386) logic.
+
+- Added code actions to delete unused variable assignments. For unused local
+  bindings like `y = println(x)`, two new quick fix actions are now available:
+  - "Delete assignment": removes `y = `, leaving just `println(x)`
+  - "Delete statement": removes the entire assignment statement
+  These actions are not shown for (named)tuple destructuring patterns like
+  `x, y, z = func()` where deletion would change semantics.
+
+### Changed
+
+- Enhanced global completion items with detailed kind information (`[function]`,
+  `[type]`, `[module]`, etc.). When you select a completion item, these
+  details are displayed (resolved lazily for performance). The visibility of
+  these enhancements varies by client: VSCode updates only the `CompletionItem.detail`
+  field (shown above documentation), while Zed is able to update all fields including
+  `CompletionItem.kind` for richer presentation with label highlighting
+  (combined with https://github.com/aviatesk/zed-julia/pull/1). (https://github.com/aviatesk/JETLS.jl/pull/425)
+
+  > Demo with [aviatesk/zed-julia](https://github.com/aviatesk/zed-julia)
+
+  <https://github.com/user-attachments/assets/a39d7bc5-c46e-40c8-a9ee-0458b3abdcae>
+
+- Improved signature help filtering when a semicolon is present in function calls.
+  Methods that require more positional arguments than provided are now filtered
+  out once the user enters the keyword argument region (e.g., `g(42;│)` no longer
+  shows `g(x, y)` which requires 2 positional arguments). (https://github.com/aviatesk/JETLS.jl/pull/426)
+
+- Signature help and method completion now use type-based filtering. Method
+  candidates are filtered based on the inferred types of already-provided
+  arguments. For example, signature help and method completions triggered by
+  typing `sin(1,│` now shows only `sin(::Real)` instead of all `sin` methods.
+  Global constants are also resolved (e.g., `sin(gx,│)` with `const gx = 42`
+  correctly infers `Int`). Note that local variable types are not yet resolved,
+  (e.g., `let x = 1; sin(x,│); end` would still show all `sin` methods). (https://github.com/aviatesk/JETLS.jl/pull/436)
+
+- Signature help now displays the inferred argument type for the active
+  parameter. The parameter documentation shows the passed argument expression
+  and its type (e.g., `p ← (arg) :: Int64`).
+
+  https://github.com/user-attachments/assets/a222a44d-9d46-435c-8759-8157005cfc38
+
+- Updated JuliaSyntax.jl and JuliaLowering.jl dependency versions to latest.
+
+- Updated Revise.jl dependency version to v3.13.
+
+### Fixed
+
+- Improved type resolver robustness, eliminating `UndefVarError` messages that
+  could appear in server logs during signature help. Fixed https://github.com/aviatesk/JETLS.jl/issues/391. (https://github.com/aviatesk/JETLS.jl/pull/435)
+
+- Fixed signature help parameter highlighting when cursor is not inside any
+  argument. For positional arguments exceeding the parameter count, the last
+  (vararg) parameter is now highlighted (e.g. `println(stdout,"foo","bar",│)`).
+  For keyword arguments after a semicolon, the next unspecified keyword
+  parameter is highlighted (e.g., `printstyled("foo"; bold=true,│)` highlights `italic`).
+
+## 2026-01-01
+
+- Commit: [`c5f3c0d`](https://github.com/aviatesk/JETLS.jl/commit/c5f3c0d)
+- Diff: [`b61b6fa...c5f3c0d`](https://github.com/aviatesk/JETLS.jl/compare/b61b6fa...c5f3c0d)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-01-01")'
+  ```
+
 ### Fixed
 
 - Fixed method overwrite detection to handle both `Core.CodeInfo` and `Expr`
@@ -62,6 +176,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Commit: [`b61b6fa`](https://github.com/aviatesk/JETLS.jl/commit/b61b6fa)
 - Diff: [`afc5137...b61b6fa`](https://github.com/aviatesk/JETLS.jl/compare/afc5137...b61b6fa)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2025-12-31")'
+  ```
 
 ### Added
 
@@ -100,6 +218,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Commit: [`afc5137`](https://github.com/aviatesk/JETLS.jl/commit/afc5137)
 - Diff: [`c9c5729...afc5137`](https://github.com/aviatesk/JETLS.jl/compare/c9c5729...afc5137)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2025-12-19")'
+  ```
 
 ### Added
 
@@ -119,6 +241,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Commit: [`c9c5729`](https://github.com/aviatesk/JETLS.jl/commit/c9c5729)
 - Diff: [`048d9a5...c9c5729`](https://github.com/aviatesk/JETLS.jl/compare/048d9a5...c9c5729)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2025-12-18")'
+  ```
 
 ### Added
 
@@ -167,6 +293,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Commit: [`048d9a5`](https://github.com/aviatesk/JETLS.jl/commit/048d9a5)
 - Diff: [`9b39829...048d9a5`](https://github.com/aviatesk/JETLS.jl/compare/9b39829...048d9a5)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2025-12-12")'
+  ```
 
 ### Added
 
@@ -200,6 +330,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Commit: [`9b39829`](https://github.com/aviatesk/JETLS.jl/commit/9b39829)
 - Diff: [`fd5f113...9b39829`](https://github.com/aviatesk/JETLS.jl/compare/fd5f113...9b39829)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2025-12-08")'
+  ```
 
 ### Added
 
@@ -212,7 +346,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
   > JETLS × notebook LSP demo
 
-  https://github.com/user-attachments/assets/b5bb5201-d735-4a37-b430-932b519254ee
+  <https://github.com/user-attachments/assets/b5bb5201-d735-4a37-b430-932b519254ee>
 
 ### Fixed
 
@@ -229,6 +363,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Commit: [`fd5f113`](https://github.com/aviatesk/JETLS.jl/commit/fd5f113)
 - Diff: [`c23409d...fd5f113`](https://github.com/aviatesk/JETLS.jl/compare/c23409d...fd5f113)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2025-12-06")'
+  ```
 
 ### Fixed
 
@@ -243,6 +381,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Commit: [`c23409d`](https://github.com/aviatesk/JETLS.jl/commit/c23409d)
 - Diff: [`aae52f5...c23409d`](https://github.com/aviatesk/JETLS.jl/compare/aae52f5...c23409d)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2025-12-05")'
+  ```
 
 ### Changed
 
@@ -279,6 +421,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Commit: [`aae52f5`](https://github.com/aviatesk/JETLS.jl/commit/aae52f5)
 - Diff: [`f9b2c2f...aae52f5`](https://github.com/aviatesk/JETLS.jl/compare/f9b2c2f...aae52f5)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2025-12-02")'
+  ```
 
 ### Added
 
@@ -307,6 +453,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Commit: [`f9b2c2f`](https://github.com/aviatesk/JETLS.jl/commit/f9b2c2f)
 - Diff: [`eda08b5...f9b2c2f`](https://github.com/aviatesk/JETLS.jl/compare/eda08b5...f9b2c2f)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2025-11-30")'
+  ```
 
 ### Added
 
@@ -348,6 +498,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Commit: [`eda08b5`](https://github.com/aviatesk/JETLS.jl/commit/eda08b5)
 - Diff: [`6ec51e1...eda08b5`](https://github.com/aviatesk/JETLS.jl/compare/6ec51e1...eda08b5)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2025-11-28")'
+  ```
 
 ### Changed
 
@@ -377,6 +531,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Commit: [`6ec51e1`](https://github.com/aviatesk/JETLS.jl/commit/6ec51e1)
 - Diff: [`6bc34f1...6ec51e1`](https://github.com/aviatesk/JETLS.jl/compare/6bc34f1...6ec51e1)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2025-11-27")'
+  ```
 
 ### Added
 
@@ -402,6 +560,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Commit: [`6bc34f1`](https://github.com/aviatesk/JETLS.jl/commit/6bc34f1)
 - Diff: [`2be0cff...6bc34f1`](https://github.com/aviatesk/JETLS.jl/compare/2be0cff...6bc34f1)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2025-11-26")'
+  ```
 
 ### Changed
 
@@ -417,6 +579,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Commit: [`2be0cff`](https://github.com/aviatesk/JETLS.jl/commit/2be0cff)
 - Diff: [`fac4eaf...2be0cff`](https://github.com/aviatesk/JETLS.jl/compare/fac4eaf...2be0cff)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2025-11-25")'
+  ```
 
 ### Added
 

@@ -75,11 +75,11 @@ end
             if i in (1, 2)
                 @test JS.sourcetext(binding) == "kw"
                 @test JS.source_line(binding) == 1
-                binfo = JL.lookup_binding(ctx3, binding)
+                binfo = JL.get_binding(ctx3, binding)
             else
                 @test JS.sourcetext(binding) == "kw"
                 @test JS.source_line(binding) == 2
-                @test JL.lookup_binding(ctx3, binding).id == binfo.id
+                @test JL.get_binding(ctx3, binding).id == binfo.id
             end
             cnt += 1
         end
@@ -98,11 +98,11 @@ end
             if i in (1, 2)
                 @test JS.sourcetext(binding) == "xxx"
                 @test JS.source_line(binding) == 2
-                binfo = JL.lookup_binding(ctx3, binding)
+                binfo = JL.get_binding(ctx3, binding)
             else
                 @test JS.sourcetext(binding) == "xxx"
                 @test JS.source_line(binding) == 3
-                @test JL.lookup_binding(ctx3, binding).id == binfo.id
+                @test JL.get_binding(ctx3, binding).id == binfo.id
             end
             cnt += 1
         end
@@ -128,9 +128,9 @@ end
     """) do _, res
         @test !isnothing(res)
         binding, defs = res
-        @test JS.source_line(JL.sourceref(binding)) == 2
+        @test JS.source_line(JS.sourceref(binding)) == 2
         @test length(defs) == 1
-        @test JS.source_line(JL.sourceref(only(defs))) == 3
+        @test JS.source_line(JS.sourceref(only(defs))) == 3
     end
 
     @testset "simple" begin
@@ -144,16 +144,16 @@ end
             if i == 1 # x│
                 @test !isnothing(res)
                 binding, defs = res
-                @test JS.source_line(JL.sourceref(binding)) == 2
+                @test JS.source_line(JS.sourceref(binding)) == 2
                 @test length(defs) == 1
-                @test JS.source_line(JL.sourceref(only(defs))) == 1
+                @test JS.source_line(JS.sourceref(only(defs))) == 1
                 cnt += 1
             elseif i == 2 # y│
                 @test !isnothing(res)
                 binding, defs = res
-                @test JS.source_line(JL.sourceref(binding)) == 3
+                @test JS.source_line(JS.sourceref(binding)) == 3
                 @test length(defs) == 1
-                @test JS.source_line(JL.sourceref(only(defs))) == 2
+                @test JS.source_line(JS.sourceref(only(defs))) == 2
                 cnt += 1
             end
         end
@@ -172,18 +172,18 @@ end
             if i == 1 # x│
                 @test !isnothing(res)
                 binding, defs = res
-                @test JS.source_line(JL.sourceref(binding)) == 3
+                @test JS.source_line(JS.sourceref(binding)) == 3
                 @test length(defs) == 2 # Both parameter x and local x = 1
                 # The definitions should include both x = 1 on line 2 and the parameter x on line 1
-                @test any(d -> JS.source_line(JL.sourceref(d)) == 1, defs) # parameter
-                @test any(d -> JS.source_line(JL.sourceref(d)) == 2, defs) # local assignment
+                @test any(d -> JS.source_line(JS.sourceref(d)) == 1, defs) # parameter
+                @test any(d -> JS.source_line(JS.sourceref(d)) == 2, defs) # local assignment
                 cnt += 1
             elseif i == 2 # y│
                 @test !isnothing(res)
                 binding, defs = res
-                @test JS.source_line(JL.sourceref(binding)) == 4
+                @test JS.source_line(JS.sourceref(binding)) == 4
                 @test length(defs) == 1
-                @test JS.source_line(JL.sourceref(only(defs))) == 3
+                @test JS.source_line(JS.sourceref(only(defs))) == 3
                 cnt += 1
             end
         end
@@ -199,10 +199,10 @@ end
         """) do _, res
             @test !isnothing(res)
             binding, defs = res
-            @test JS.source_line(JL.sourceref(binding)) == 2
+            @test JS.source_line(JS.sourceref(binding)) == 2
             @test length(defs) >= 1
             @test any(defs) do def
-                JS.source_line(JL.sourceref(def)) == 1
+                JS.source_line(JS.sourceref(def)) == 1
             end
             cnt += 1
         end
@@ -218,9 +218,9 @@ end
         """) do _, res
             @test !isnothing(res)
             binding, defs = res
-            @test JS.source_line(JL.sourceref(binding)) == 2
+            @test JS.source_line(JS.sourceref(binding)) == 2
             @test length(defs) == 1
-            @test JS.source_line(JL.sourceref(only(defs))) == 1
+            @test JS.source_line(JS.sourceref(only(defs))) == 1
             cnt += 1
         end
         @test cnt == 1
@@ -240,16 +240,16 @@ end
             if i == 1 # x│
                 @test !isnothing(res)
                 binding, defs = res
-                @test JS.source_line(JL.sourceref(binding)) == 4
+                @test JS.source_line(JS.sourceref(binding)) == 4
                 @test length(defs) == 1
-                @test JS.source_line(JL.sourceref(only(defs))) == 2
+                @test JS.source_line(JS.sourceref(only(defs))) == 2
                 cnt += 1
             elseif i == 2 # y│
                 @test !isnothing(res)
                 binding, defs = res
-                @test JS.source_line(JL.sourceref(binding)) == 4
+                @test JS.source_line(JS.sourceref(binding)) == 4
                 @test length(defs) == 1
-                @test JS.source_line(JL.sourceref(only(defs))) == 3
+                @test JS.source_line(JS.sourceref(only(defs))) == 3
                 cnt += 1
             end
         end
@@ -269,16 +269,16 @@ end
             if i == 1 # x│
                 @test !isnothing(res)
                 binding, defs = res
-                @test JS.source_line(JL.sourceref(binding)) == 3
+                @test JS.source_line(JS.sourceref(binding)) == 3
                 @test length(defs) == 1
-                @test JS.source_line(JL.sourceref(only(defs))) == 2
+                @test JS.source_line(JS.sourceref(only(defs))) == 2
                 cnt += 1
             elseif i == 2 # y│
                 @test !isnothing(res)
                 binding, defs = res
-                @test JS.source_line(JL.sourceref(binding)) == 4
+                @test JS.source_line(JS.sourceref(binding)) == 4
                 @test length(defs) == 1
-                @test JS.source_line(JL.sourceref(only(defs))) == 3
+                @test JS.source_line(JS.sourceref(only(defs))) == 3
                 cnt += 1
             end
         end
@@ -296,9 +296,9 @@ end
         """) do _, res
             @test !isnothing(res)
             binding, defs = res
-            @test JS.source_line(JL.sourceref(binding)) == 3
+            @test JS.source_line(JS.sourceref(binding)) == 3
             @test length(defs) == 1
-            @test JS.source_line(JL.sourceref(only(defs))) == 2
+            @test JS.source_line(JS.sourceref(only(defs))) == 2
             cnt += 1
         end
         @test cnt == 1
@@ -314,9 +314,9 @@ end
         """) do _, res
             @test !isnothing(res)
             binding, defs = res
-            @test JS.source_line(JL.sourceref(binding)) == 2
+            @test JS.source_line(JS.sourceref(binding)) == 2
             @test length(defs) == 1
-            @test JS.source_line(JL.sourceref(only(defs))) == 2
+            @test JS.source_line(JS.sourceref(only(defs))) == 2
             cnt += 1
         end
         @test cnt == 1
@@ -333,16 +333,16 @@ end
             if i == 1 # a│
                 @test !isnothing(res)
                 binding, defs = res
-                @test JS.source_line(JL.sourceref(binding)) == 3
+                @test JS.source_line(JS.sourceref(binding)) == 3
                 @test length(defs) == 1
-                @test JS.source_line(JL.sourceref(only(defs))) == 2
+                @test JS.source_line(JS.sourceref(only(defs))) == 2
                 cnt += 1
             elseif i == 2 # b│
                 @test !isnothing(res)
                 binding, defs = res
-                @test JS.source_line(JL.sourceref(binding)) == 3
+                @test JS.source_line(JS.sourceref(binding)) == 3
                 @test length(defs) == 1
-                @test JS.source_line(JL.sourceref(only(defs))) == 2
+                @test JS.source_line(JS.sourceref(only(defs))) == 2
                 cnt += 1
             end
         end
@@ -361,9 +361,9 @@ end
         """) do _, res
             @test !isnothing(res)
             binding, defs = res
-            @test JS.source_line(JL.sourceref(binding)) == 5
+            @test JS.source_line(JS.sourceref(binding)) == 5
             @test length(defs) == 1
-            @test JS.source_line(JL.sourceref(only(defs))) == 3
+            @test JS.source_line(JS.sourceref(only(defs))) == 3
             cnt += 1
         end
         @test cnt == 1
@@ -382,9 +382,9 @@ end
         """) do _, res
             @test !isnothing(res)
             binding, defs = res
-            @test JS.source_line(JL.sourceref(binding)) == 5
+            @test JS.source_line(JS.sourceref(binding)) == 5
             @test length(defs) == 1
-            @test JS.source_line(JL.sourceref(only(defs))) == 4
+            @test JS.source_line(JS.sourceref(only(defs))) == 4
             cnt += 1
         end
         @test cnt == 1
@@ -401,9 +401,9 @@ end
         """) do _, res
             @test !isnothing(res)
             binding, defs = res
-            @test JS.source_line(JL.sourceref(binding)) == 3
+            @test JS.source_line(JS.sourceref(binding)) == 3
             @test length(defs) == 1
-            @test JS.source_line(JL.sourceref(only(defs))) == 2
+            @test JS.source_line(JS.sourceref(only(defs))) == 2
             cnt += 1
         end
         @test cnt == 1
@@ -416,9 +416,9 @@ end
         """) do _, res
             @test !isnothing(res)
             binding, defs = res
-            @test JS.source_line(JL.sourceref(binding)) == 1
+            @test JS.source_line(JS.sourceref(binding)) == 1
             @test length(defs) == 1
-            @test JS.source_line(JL.sourceref(only(defs))) == 1
+            @test JS.source_line(JS.sourceref(only(defs))) == 1
             cnt += 1
         end
         @test cnt == 1
@@ -437,9 +437,9 @@ end
         """) do _, res
             @test !isnothing(res)
             binding, defs = res
-            @test JS.source_line(JL.sourceref(binding)) == 4
+            @test JS.source_line(JS.sourceref(binding)) == 4
             @test length(defs) == 1
-            @test JS.source_line(JL.sourceref(only(defs))) == 3
+            @test JS.source_line(JS.sourceref(only(defs))) == 3
             cnt += 1
         end
         @test cnt == 1
@@ -457,9 +457,9 @@ end
         """) do _, res
             @test !isnothing(res)
             binding, defs = res
-            @test JS.source_line(JL.sourceref(binding)) == 4
+            @test JS.source_line(JS.sourceref(binding)) == 4
             @test length(defs) == 1
-            @test JS.source_line(JL.sourceref(only(defs))) == 3
+            @test JS.source_line(JS.sourceref(only(defs))) == 3
             cnt += 1
         end
         @test cnt == 1
@@ -477,10 +477,10 @@ end
         """) do _, res
             @test !isnothing(res)
             binding, defs = res
-            @test JS.source_line(JL.sourceref(binding)) == 3
+            @test JS.source_line(JS.sourceref(binding)) == 3
             @test length(defs) == 2
-            @test any(def -> JS.source_line(JL.sourceref(def)) == 2, defs)
-            @test any(def -> JS.source_line(JL.sourceref(def)) == 4, defs)
+            @test any(def -> JS.source_line(JS.sourceref(def)) == 2, defs)
+            @test any(def -> JS.source_line(JS.sourceref(def)) == 4, defs)
             cnt += 1
         end
         @test cnt == 1
@@ -496,16 +496,16 @@ end
             if i == 1 # a│
                 @test !isnothing(res)
                 binding, defs = res
-                @test JS.source_line(JL.sourceref(binding)) == 2
+                @test JS.source_line(JS.sourceref(binding)) == 2
                 @test length(defs) == 1
-                @test JS.source_line(JL.sourceref(only(defs))) == 1
+                @test JS.source_line(JS.sourceref(only(defs))) == 1
                 cnt += 1
             elseif i == 2 # b│
                 @test !isnothing(res)
                 binding, defs = res
-                @test JS.source_line(JL.sourceref(binding)) == 2
+                @test JS.source_line(JS.sourceref(binding)) == 2
                 @test length(defs) == 1
-                @test JS.source_line(JL.sourceref(only(defs))) == 1
+                @test JS.source_line(JS.sourceref(only(defs))) == 1
                 cnt += 1
             end
         end
@@ -525,9 +525,9 @@ end
         """) do _, res
             @test !isnothing(res)
             binding, defs = res
-            @test JS.source_line(JL.sourceref(binding)) == 4
+            @test JS.source_line(JS.sourceref(binding)) == 4
             @test length(defs) == 1
-            @test JS.source_line(JL.sourceref(only(defs))) == 3
+            @test JS.source_line(JS.sourceref(only(defs))) == 3
             cnt += 1
         end
         @test cnt == 1
@@ -549,9 +549,9 @@ end
         """) do _, res
             @test !isnothing(res)
             binding, defs = res
-            @test JS.source_line(JL.sourceref(binding)) == 5
+            @test JS.source_line(JS.sourceref(binding)) == 5
             @test length(defs) == 1
-            @test JS.source_line(JL.sourceref(only(defs))) == 7
+            @test JS.source_line(JS.sourceref(only(defs))) == 7
             cnt += 1
         end
         @test cnt == 1
@@ -853,7 +853,7 @@ function with_global_binding_occurrences(
     (; ctx3, binding) = @something(
         JETLS._select_target_binding(st0_top, offset, lowering_module),
         error("No binding found at cursor position"))
-    target_binfo = JL.lookup_binding(ctx3, binding)
+    target_binfo = JL.get_binding(ctx3, binding)
     @test target_binfo.kind === :global
     @test target_binfo.name == target_name
 

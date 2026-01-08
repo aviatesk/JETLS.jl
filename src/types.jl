@@ -1,4 +1,4 @@
-const SyntaxTree0 = typeof(JS.build_tree(JL.SyntaxTree, JS.parse!(JS.ParseStream(""))))
+const SyntaxTree0 = typeof(JS.build_tree(JS.SyntaxTree, JS.parse!(JS.ParseStream(""))))
 
 abstract type ExtraDiagnosticsKey end
 to_uri(key::ExtraDiagnosticsKey) = to_uri_impl(key)::URI
@@ -334,6 +334,7 @@ const LOWERING_UNUSED_ARGUMENT_CODE = "lowering/unused-argument"
 const LOWERING_UNUSED_LOCAL_CODE = "lowering/unused-local"
 const LOWERING_ERROR_CODE = "lowering/error"
 const LOWERING_MACRO_EXPANSION_ERROR_CODE = "lowering/macro-expansion-error"
+const LOWERING_UNDEF_GLOBAL_VAR_CODE = "lowering/undef-global-var"
 const TOPLEVEL_ERROR_CODE = "toplevel/error"
 const TOPLEVEL_METHOD_OVERWRITE_CODE = "toplevel/method-overwrite"
 const TOPLEVEL_ABSTRACT_FIELD_CODE = "toplevel/abstract-field"
@@ -350,6 +351,7 @@ const ALL_DIAGNOSTIC_CODES = Set{String}(String[
     LOWERING_UNUSED_LOCAL_CODE,
     LOWERING_ERROR_CODE,
     LOWERING_MACRO_EXPANSION_ERROR_CODE,
+    LOWERING_UNDEF_GLOBAL_VAR_CODE,
     TOPLEVEL_ERROR_CODE,
     TOPLEVEL_METHOD_OVERWRITE_CODE,
     TOPLEVEL_ABSTRACT_FIELD_CODE,
@@ -412,11 +414,25 @@ function Base.show(io::IO, init_options::InitOptions)
 end
 const DEFAULT_INIT_OPTIONS = InitOptions(; n_analysis_workers=1, analysis_overrides=AnalysisOverride[])
 
+@option struct LaTeXEmojiConfig <: ConfigSection
+    strip_prefix::Maybe{Union{Missing,Bool}} # missing is used as sentinel for default setting value
+end
+
+@option struct MethodSignatureConfig <: ConfigSection
+    prepend_inference_result::Maybe{Union{Missing,Bool}} # missing is used as sentinel for default setting value
+end
+
+@option struct CompletionConfig <: ConfigSection
+    latex_emoji::Maybe{LaTeXEmojiConfig}
+    method_signature::Maybe{MethodSignatureConfig}
+end
+
 @option struct JETLSConfig <: ConfigSection
     diagnostic::Maybe{DiagnosticConfig}
     full_analysis::Maybe{FullAnalysisConfig}
     testrunner::Maybe{TestRunnerConfig}
     formatter::Maybe{FormatterConfig}
+    completion::Maybe{CompletionConfig}
     # This initialization options are read once at the server initialization and held in
     # `server.state.init_options`, so it might seem strange to hold them here also,
     # but they need to be set here for cases where initialization options are set in
@@ -429,6 +445,7 @@ const DEFAULT_CONFIG = JETLSConfig(;
     full_analysis = FullAnalysisConfig(1.0, true),
     testrunner = TestRunnerConfig(@static Sys.iswindows() ? "testrunner.bat" : "testrunner"),
     formatter = "Runic",
+    completion = CompletionConfig(LaTeXEmojiConfig(missing), MethodSignatureConfig(missing)),
     initialization_options = DEFAULT_INIT_OPTIONS)
 
 function get_default_config(path::Symbol...)
@@ -486,6 +503,18 @@ function ConfigManagerData(
     return ConfigManagerData(file_config, lsp_config, file_config_path, initialized)
 end
 
+struct GlobalCompletionResolverInfo
+    id::String
+    mod::Module
+    postprocessor::LSPostProcessor
+end
+
+struct MethodSignatureCompletionResolverInfo
+    id::String
+    matches::CC.MethodLookupResult
+    postprocessor::LSPostProcessor
+end
+
 # Type aliases for document-synchronization caches using `SWContainer` (sequential-only updates)
 const FileCache = SWContainer{Base.PersistentDict{URI,FileInfo}, SWStats}
 const SavedFileCache = SWContainer{Base.PersistentDict{URI,SavedFileInfo}, SWStats}
@@ -496,7 +525,7 @@ const CellToNotebookMap = SWContainer{Base.PersistentDict{URI,URI}, SWStats} # c
 const ExtraDiagnostics = CASContainer{ExtraDiagnosticsData, CASStats}
 const CurrentlyRequested = CASContainer{Base.PersistentDict{String,RequestCaller}, CASStats}
 const CurrentlyRegistered = CASContainer{Set{Registered}, CASStats}
-const CompletionResolverInfo = CASContainer{Union{Nothing,Tuple{Module,LSPostProcessor}}, CASStats}
+const CompletionResolverInfo = CASContainer{Union{Nothing,GlobalCompletionResolverInfo,MethodSignatureCompletionResolverInfo}, CASStats}
 
 # Type aliases for concurrent updates using LWContainer (non-retriable operations)
 const ConfigManager = LWContainer{ConfigManagerData, LWStats}

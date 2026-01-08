@@ -1,6 +1,8 @@
 # JuliaSyntax/JuliaLowering uses byte offsets; LSP uses lineno and UTF-* character offset.
 # These functions do the conversion.
 
+backtick(s...) = string('`', s..., '`')::String
+
 """
     apply_text_change(
         text::String, range::Range, new_text::String, encoding::PositionEncodingKind.Ty

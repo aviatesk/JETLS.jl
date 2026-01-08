@@ -69,7 +69,7 @@ function local_binding_rename_preparation(
         _select_target_binding(st0_top, offset, mod; caller="local_binding_rename_preparation")
     end return nothing
 
-    binfo = JL.lookup_binding(ctx3, binding)
+    binfo = JL.get_binding(ctx3, binding)
     if is_local_binding(binfo)
         range, _ = unadjust_range(state, uri, jsobj_to_range(binding, fi))
         return (; range, placeholder = binfo.name)
@@ -88,7 +88,7 @@ function global_binding_rename_preparation(
         _select_target_binding(st0_top, offset, mod; caller="global_binding_rename_preparation")
     end return nothing
 
-    binfo = JL.lookup_binding(ctx3, binding)
+    binfo = JL.get_binding(ctx3, binding)
     if binfo.kind === :global
         range, _ = unadjust_range(state, uri, jsobj_to_range(binding, fi))
         return (; range, placeholder = binfo.name)
@@ -107,7 +107,7 @@ function file_rename_preparation(
         select_target_string(st0_top, offset)
     end return nothing
 
-    JL.hasattr(string_node, :value) || return nothing
+    JS.hasattr(string_node, :value) || return nothing
     str = string_node.value
     ispath(joinpath(dirname(uri2filename(uri)), str)) || return nothing
     range, _ = unadjust_range(state, uri, jsobj_to_range(string_node, fi))
@@ -192,7 +192,7 @@ function local_binding_rename(
         _select_target_binding(st0_top, offset, mod; caller="local_binding_rename")
     end return nothing
 
-    binfo = JL.lookup_binding(ctx3, binding)
+    binfo = JL.get_binding(ctx3, binding)
     is_local_binding(binfo) || return nothing
     if !Base.isidentifier(newName)
         error = ResponseError(;
@@ -242,7 +242,7 @@ function global_binding_rename(
         _select_target_binding(st0_top, offset, mod; caller="global_binding_rename")
     end return nothing
 
-    binfo = JL.lookup_binding(ctx3, binding)
+    binfo = JL.get_binding(ctx3, binding)
     binfo.kind === :global || return nothing
     if !Base.isidentifier(newName)
         error = ResponseError(;
@@ -329,7 +329,7 @@ end
 
 function collect_global_rename_ranges_in_file!(
         seen_ranges::Set{Range}, state::ServerState, uri::URI, fi::FileInfo,
-        st0_top::JL.SyntaxTree, binfo::JL.BindingInfo
+        st0_top::JS.SyntaxTree, binfo::JL.BindingInfo
     )
     for occurrence in find_global_binding_occurrences!(state, uri, fi, st0_top, binfo)
         range, _ = unadjust_range(state, uri, jsobj_to_range(occurrence.tree, fi))
@@ -349,7 +349,7 @@ function file_rename(
         select_target_string(st0_top, offset)
     end return nothing
 
-    JL.hasattr(string_node, :value) || return nothing
+    JS.hasattr(string_node, :value) || return nothing
     oldName = string_node.value
     basedir = dirname(uri2filename(uri))
     oldPath = joinpath(basedir, oldName)

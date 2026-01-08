@@ -1,18 +1,18 @@
 function build_syntax_tree(fi::FileInfo)
-    return JS.build_tree(JL.SyntaxTree, fi.parsed_stream; filename = fi.filename)
+    return JS.build_tree(JS.SyntaxTree, fi.parsed_stream; filename = fi.filename)
 end
 
 """
 Return a tree where all nodes of `kinds` are removed.  Should not modify any
 nodes, and should not create new nodes unnecessarily.
 """
-function _without_kinds(st::JL.SyntaxTree, kinds::Tuple{Vararg{JS.Kind}})
+function _without_kinds(st::JS.SyntaxTree, kinds::Tuple{Vararg{JS.Kind}})
     if JS.kind(st) in kinds
         return (nothing, true)
     elseif JS.is_leaf(st)
         return (st, false)
     end
-    new_children = JL.SyntaxList(JL.syntax_graph(st))
+    new_children = JS.SyntaxList(JS.syntax_graph(st))
     changed = false
     for c in JS.children(st)
         nc, cc = _without_kinds(c, kinds)
@@ -21,17 +21,17 @@ function _without_kinds(st::JL.SyntaxTree, kinds::Tuple{Vararg{JS.Kind}})
     end
     k = JS.kind(st)
     new_node = changed ?
-        JL.@ast(JL.syntax_graph(st), st, [k new_children...]) : st
+        JL.@ast(JS.syntax_graph(st), st, [k new_children...]) : st
     return (new_node, changed)
 end
 
-function without_kinds(st::JL.SyntaxTree, kinds::Tuple{Vararg{JS.Kind}})
+function without_kinds(st::JS.SyntaxTree, kinds::Tuple{Vararg{JS.Kind}})
     return (JS.kind(st) in kinds ?
-        JL.@ast(JL.syntax_graph(st), st, [JS.K"TOMBSTONE"]) :
-        _without_kinds(st, kinds)[1])::JL.SyntaxTree
+        JL.@ast(JS.syntax_graph(st), st, [JS.K"TOMBSTONE"]) :
+        _without_kinds(st, kinds)[1])::JS.SyntaxTree
 end
 
-function is_nospecialize_or_specialize_macrocall(st::JL.SyntaxTree)
+function is_nospecialize_or_specialize_macrocall(st::JS.SyntaxTree)
     JS.kind(st) === JS.K"macrocall" || return false
     JS.numchildren(st) >= 1 || return false
     macro_name = st[1]
@@ -40,7 +40,7 @@ function is_nospecialize_or_specialize_macrocall(st::JL.SyntaxTree)
     return macro_name.name_val == "@nospecialize" || macro_name.name_val == "@specialize"
 end
 
-function _remove_macrocalls(st::JL.SyntaxTree)
+function _remove_macrocalls(st::JS.SyntaxTree)
     if JS.kind(st) === JS.K"macrocall"
         if is_nospecialize_or_specialize_macrocall(st)
             # Special case `@nospecialize`/`@specialize`:
@@ -52,15 +52,15 @@ function _remove_macrocalls(st::JL.SyntaxTree)
             # these macros, so there's no need to remove them in the first place.
             return st, false
         end
-        new_children = JL.SyntaxList(JL.syntax_graph(st))
+        new_children = JS.SyntaxList(JS.syntax_graph(st))
         for i = 2:JS.numchildren(st)
             push!(new_children, _remove_macrocalls(st[i])[1])
         end
-        return JL.@ast(JL.syntax_graph(st), st, [JS.K"block" new_children...]), true
+        return JL.@ast(JS.syntax_graph(st), st, [JS.K"block" new_children...]), true
     elseif JS.is_leaf(st)
         return st, false
     end
-    new_children = JL.SyntaxList(JL.syntax_graph(st))
+    new_children = JS.SyntaxList(JS.syntax_graph(st))
     changed = false
     for c in JS.children(st)
         nc, cc = _remove_macrocalls(c)
@@ -69,12 +69,12 @@ function _remove_macrocalls(st::JL.SyntaxTree)
     end
     k = JS.kind(st)
     new_node = changed ?
-        JL.@ast(JL.syntax_graph(st), st, [k new_children...]) : st
+        JL.@ast(JS.syntax_graph(st), st, [k new_children...]) : st
     return (new_node, changed)
 end
 
 """
-    remove_macrocalls(st0::JL.SyntaxTree) -> JL.SyntaxTree
+    remove_macrocalls(st0::JS.SyntaxTree) -> JS.SyntaxTree
 
 Convert `macrocall` nodes to `block` nodes while preserving binding provenance information
 in the arguments passed to macrocalls.
@@ -96,15 +96,25 @@ preferable to having incorrect source ranges. This is especially true for LSP fe
 like document-highlight and find-references where source-level information is critical,
 as information inside macros is often not needed for these features.
 """
-remove_macrocalls(st0::JL.SyntaxTree) = first(_remove_macrocalls(st0))
+remove_macrocalls(st0::JS.SyntaxTree) = first(_remove_macrocalls(st0))
+
+function unwrap_where(node::JS.SyntaxTree)
+    while JS.kind(node) === JS.K"where" && JS.numchildren(node) ≥ 1
+        node = node[1]
+    end
+    return node
+end
+
+extract_name_val(node::JS.SyntaxTree) =
+    hasproperty(node, :name_val) ? node.name_val::String : nothing
 
 """
 Like `Base.unique`, but over node ids, and with this comment promising that the
 lowest-index copy of each node is kept.
 """
-function deduplicate_syntaxlist(sl::JL.SyntaxList)
-    sl2 = JL.SyntaxList(sl.graph)
-    seen = Set{JL.NodeId}()
+function deduplicate_syntaxlist(sl::JS.SyntaxList)
+    sl2 = JS.SyntaxList(sl.graph)
+    seen = Set{JS.NodeId}()
     for st in sl
         if !(st._id in seen)
             push!(sl2, st._id)
@@ -114,12 +124,12 @@ function deduplicate_syntaxlist(sl::JL.SyntaxList)
     return sl2
 end
 
-function traverse(@specialize(callback), st::JL.SyntaxTree)
-    stack = JL.SyntaxList(st)
+function traverse(@specialize(callback), st::JS.SyntaxTree)
+    stack = JS.SyntaxList(st)
     push!(stack, st)
     _traverse!(callback, stack)
 end
-traverse(@specialize(callback), sn::JL.SyntaxNode) = _traverse!(callback, JS.SyntaxNode[sn])
+traverse(@specialize(callback), sn::JS.SyntaxNode) = _traverse!(callback, JS.SyntaxNode[sn])
 
 struct TraversalTerminator end
 struct TraversalNoRecurse end
@@ -139,8 +149,8 @@ function _traverse!(@specialize(callback), stack)
 end
 
 """
-    byte_ancestors([flt,] st::JL.SyntaxTree, rng::UnitRange{Int})
-    byte_ancestors([flt,] st::JL.SyntaxTree, byte::Int)
+    byte_ancestors([flt,] st::JS.SyntaxTree, rng::UnitRange{Int})
+    byte_ancestors([flt,] st::JS.SyntaxTree, byte::Int)
 
 Get a SyntaxList of `SyntaxTree`s containing certain bytes.
 
@@ -154,8 +164,8 @@ that satisfy the predicate.
 """
 byte_ancestors(args...) = byte_ancestors(Returns(true), args...)
 
-function byte_ancestors(flt, st::JL.SyntaxTree, rng::UnitRange{<:Integer})
-    sl = JL.SyntaxList(st)
+function byte_ancestors(flt, st::JS.SyntaxTree, rng::UnitRange{<:Integer})
+    sl = JS.SyntaxList(st)
     if rng ⊆ JS.byte_range(st) && flt(st)
         push!(sl, st)
     else
@@ -170,17 +180,17 @@ function byte_ancestors(flt, st::JL.SyntaxTree, rng::UnitRange{<:Integer})
     # delete later duplicates when sorted parent->child
     return reverse!(deduplicate_syntaxlist(sl))
 end
-byte_ancestors(flt, st::JL.SyntaxTree, byte::Integer) = byte_ancestors(flt, st, byte:byte)
+byte_ancestors(flt, st::JS.SyntaxTree, byte::Integer) = byte_ancestors(flt, st, byte:byte)
 
 """
-    greatest_local(st0::JL.SyntaxTree, offset::Int) -> st::Union{JL.SyntaxTree, Nothing}
+    greatest_local(st0::JS.SyntaxTree, offset::Int) -> st::Union{JS.SyntaxTree, Nothing}
 
 Return the largest tree that can introduce local bindings that are visible to the cursor
 (if any such tree exists).
 """
-function greatest_local(st0::JL.SyntaxTree, offset::Int)
+function greatest_local(st0::JS.SyntaxTree, offset::Int)
     bas = byte_ancestors(st0, offset)
-    first_global = findfirst(st::JL.SyntaxTree -> JL.kind(st) in JS.KSet"toplevel module", bas)
+    first_global = findfirst(st::JS.SyntaxTree -> JS.kind(st) in JS.KSet"toplevel module", bas)
     isnothing(first_global) && return nothing
 
     if first_global == 1
@@ -188,7 +198,7 @@ function greatest_local(st0::JL.SyntaxTree, offset::Int)
     end
 
     i = first_global - 1
-    while JL.kind(bas[i]) === JS.K"block"
+    while JS.kind(bas[i]) === JS.K"block"
         if any(j::Int -> JS.kind(bas[i][j]) === JS.K"local", 1:JS.numchildren(bas[i]))
             # If this `block` contains `local`, it may introduce local bindings.
             # For correct scope analysis, we need to analyze this entire block
@@ -446,20 +456,20 @@ end
 # TODO: This is used so that `r"foo"|` or `r"foo" |` don't show signature help,
 # but this edge case might be acceptable given that `r"foo" anything|` shouldn't
 # show signature help
-is_special_macrocall(st0::JL.SyntaxTree) =
+is_special_macrocall(st0::JS.SyntaxTree) =
     JS.kind(st0) === JS.K"macrocall" && JS.numchildren(st0) >= 1 &&
     let mname = kind(st0[1]) === JS.K"." && JS.numchildren(st0[1]) === 2 ? st0[1][2] : st0[1]
         mname_s = hasproperty(mname, :name_val) ? mname.name_val : ""
         endswith(mname_s, "_str") || endswith(mname_s, "_cmd")
     end
 
-noparen_macrocall(st0::JL.SyntaxTree) =
+noparen_macrocall(st0::JS.SyntaxTree) =
     JS.kind(st0) === JS.K"macrocall" &&
     !JS.has_flags(st0, JS.PARENS_FLAG) &&
     !is_special_macrocall(st0)
 
 """
-    select_target_identifier(st0::JL.SyntaxTree, offset::Int) -> target::Union{JL.SyntaxTree,Nothing}
+    select_target_identifier(st0::JS.SyntaxTree, offset::Int) -> target::Union{JS.SyntaxTree,Nothing}
 
 Determines the node that the user most likely intends to navigate to.
 Returns `nothing` if no suitable one is found.
@@ -472,7 +482,7 @@ refs:
 - https://github.com/rust-lang/rust-analyzer/blob/6acff6c1f8306a0a1d29be8fd1ffa63cff1ad598/crates/ide/src/goto_definition.rs#L47-L62
 - https://github.com/aviatesk/JETLS.jl/pull/61#discussion_r2134707773
 """
-function select_target_identifier(st0::JL.SyntaxTree, offset::Int)
+function select_target_identifier(st0::JS.SyntaxTree, offset::Int)
     filter = function (bas)
         JS.is_identifier(first(bas))
     end
@@ -493,7 +503,7 @@ function select_target_identifier(st0::JL.SyntaxTree, offset::Int)
     return select_target_node(filter, selector, st0, offset)
 end
 
-function select_target_string(st0::JL.SyntaxTree, offset::Int)
+function select_target_string(st0::JS.SyntaxTree, offset::Int)
     filter = function (bas)
         JS.kind(first(bas)) === JS.K"String"
     end
@@ -503,32 +513,28 @@ function select_target_string(st0::JL.SyntaxTree, offset::Int)
     return select_target_node(filter, selector, st0, offset)
 end
 
-function select_target_node(filter, selector, st0::JL.SyntaxTree, offset::Int)
-    bas = byte_ancestors(st0, offset)
-
-    isempty(bas) && @goto minus1
+function select_target_node(filter, selector, st0::JS.SyntaxTree, offset::Int)
+    bas = @somereal byte_ancestors(st0, offset) @goto minus1
     if !filter(bas)
         @label minus1
         offset > 0 || return nothing
         # Support cases like `var│`, `func│(5)`
-        bas = byte_ancestors(st0, offset - 1)
-        isempty(bas) && return nothing
+        bas = @somereal byte_ancestors(st0, offset - 1) return nothing
         if !filter(bas)
             return nothing
         end
     end
-
     return selector(bas)
 end
 
 """
-    select_dotprefix_identifier(st::JL.SyntaxTree, offset::Int) -> dotprefix::Union{JL.SyntaxTree,Nothing}
+    select_dotprefix_identifier(st::JS.SyntaxTree, offset::Int) -> dotprefix::Union{JS.SyntaxTree,Nothing}
 
 If the code at `offset` position is dot accessor code, get the code being dot accessed.
 For example, `Base.show_│` returns the `SyntaxTree` of `Base`.
 If it's not dot accessor code, return `nothing`.
 """
-function select_dotprefix_identifier(st::JL.SyntaxTree, offset::Int)
+function select_dotprefix_identifier(st::JS.SyntaxTree, offset::Int)
     bas = byte_ancestors(st, offset-1)
     dotprefix = nothing
     for i = 1:length(bas)

@@ -43,4 +43,84 @@ end
     @test !JETLS.is_abstract_fieldtype(Vector{TypeVar(:T)}) # For cases like `struct A{T}; xs::Vector{T}; end`
 end
 
+maybenothing(x) = rand((x, nothing))
+maybemissing(x) = rand((x, missing))
+maybenothing(c::Bool, x) = c ? x : nothing
+maybemissing(c::Bool, x) = c ? x : missing
+
+@testset "@somereal" begin
+    @test_throws "No values present" JETLS.@somereal
+    let cnt = 0
+        nonreal(x) = (cnt += x; nothing)
+        a = 3
+        @test 3 == JETLS.@somereal a nonreal(1) nonreal(2)
+        @test cnt == 0
+        @test 3 == JETLS.@somereal a nonreal(1) nonreal(2) error("Unable to find default for `a`")
+        @test cnt == 0
+        @test 3 == JETLS.@somereal nonreal(1) nonreal(2) a
+        @test cnt == 3
+        @test 3 == JETLS.@somereal nonreal(1) nonreal(2) a error("Unable to find default for `a`")
+        @test cnt == 6
+        @test nothing == JETLS.@somereal nonreal(1) nonreal(2) Some(nothing)
+        @test cnt == 9
+    end
+    let cnt = 0
+        nonreal(x) = (cnt += x; nothing)
+        a = missing
+        @test_throws "Unable to find default for `a`" JETLS.@somereal a nonreal(1) nonreal(2) error("Unable to find default for `a`")
+        @test cnt == 3
+        @test_throws "No values present" JETLS.@somereal a nonreal(1) nonreal(2)
+        @test cnt == 6
+        @test_throws "Unable to find default for `a`" JETLS.@somereal nonreal(1) nonreal(2) a error("Unable to find default for `a`")
+        @test cnt == 9
+        @test_throws "No values present" JETLS.@somereal nonreal(1) nonreal(2) a
+        @test cnt == 12
+        @test nothing == JETLS.@somereal nonreal(1) nonreal(2) a Some(nothing)
+        @test cnt == 15
+    end
+    let cnt = 0
+        nonreal(x) = (cnt += x; nothing)
+        a = Int[]
+        @test [1,2] == JETLS.@somereal a [1,2] nonreal(1)
+        @test cnt == 0
+        @test [1,2] == JETLS.@somereal a nonreal(1) [1,2]
+        @test cnt == 1
+        @test_throws "No values present" JETLS.@somereal a nonreal(1)
+        @test cnt == 2
+        @test [] == JETLS.@somereal a nonreal(1) Some([])
+        @test cnt == 3
+    end
+
+    @test Int == Base.infer_return_type((Int,)) do x
+        JETLS.@somereal maybenothing(x)
+    end
+    @test Int == Base.infer_return_type((Int,Int,)) do x, y
+        JETLS.@somereal maybenothing(x) maybenothing(y)
+    end
+    @test Union{Nothing,Int} == Base.infer_return_type((Int,)) do x
+        JETLS.@somereal maybenothing(x) Some(nothing)
+    end
+    @test Base.infer_effects((Bool,Int,)) do c, x
+        JETLS.@somereal maybenothing(c, x)
+    end |> !Base.Compiler.is_nothrow
+    @test Base.infer_effects((Bool,Int,)) do c, x
+        JETLS.@somereal maybenothing(c, x) Some(nothing)
+    end |> Base.Compiler.is_nothrow
+    @test Int == Base.infer_return_type((Int,)) do x
+        JETLS.@somereal maybemissing(x)
+    end
+    @test Int == Base.infer_return_type((Int,Int,)) do x, y
+        JETLS.@somereal maybemissing(x) maybemissing(y)
+    end
+    @test Union{Missing,Int} == Base.infer_return_type((Int,)) do x
+        JETLS.@somereal maybemissing(x) Some(missing)
+    end
+    @test Base.infer_effects((Bool,Int,)) do c, x
+        JETLS.@somereal maybemissing(c, x)
+    end |> !Base.Compiler.is_nothrow
+    @test Base.infer_effects((Bool,Int,)) do c, x
+        JETLS.@somereal maybemissing(c, x) Some(missing)
+    end |> Base.Compiler.is_nothrow
+end
+
 end # module test_general

@@ -6,8 +6,8 @@ JETLS aims to enhance developer productivity by providing advanced static
 analysis and seamless integration with the Julia runtime.
 By leveraging tooling technologies like
 [JET.jl](https://github.com/aviatesk/JET.jl),
-[JuliaSyntax.jl](https://github.com/JuliaLang/JuliaSyntax.jl) and
-[JuliaLowering.jl](https://github.com/c42f/JuliaLowering.jl),
+[JuliaSyntax.jl](https://github.com/JuliaLang/julia/tree/master/JuliaSyntax) and
+[JuliaLowering.jl](https://github.com/JuliaLang/julia/tree/master/JuliaLowering),
 JETLS aims to offer enhanced language features such as type-sensitive
 diagnostic, macro-aware go-to definition and such.
 

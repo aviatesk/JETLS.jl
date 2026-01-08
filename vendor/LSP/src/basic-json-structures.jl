@@ -503,6 +503,14 @@ Structure to capture a description for an error code.
     href::URI
 end
 
+# JETLS specific data structures for `data` field of `Diagnostic`
+struct UnusedVariableData
+    is_tuple_unpacking::Bool
+    assignment_range::Union{Nothing,Range}
+    lhs_eq_range::Union{Nothing,Range}
+end
+export UnusedVariableData
+
 """
 Represents a diagnostic, such as a compiler error or warning.
 Diagnostic objects are only valid in the scope of a resource.
@@ -560,7 +568,7 @@ Diagnostic objects are only valid in the scope of a resource.
     # Tags
     - since – 3.16.0
     """
-    data::Union{Any, Nothing} = nothing
+    data::Union{UnusedVariableData, Nothing} = nothing
 end
 
 # Command

@@ -40,7 +40,7 @@ do_test("Backedges") && @testset "Backedges" begin
         return planetdiameters[name]
     end
     """
-    mexs = Revise.parse_source!(Revise.ModuleExprsSigs(BackEdgesTest), src, "backedges_test.jl", BackEdgesTest)
+    mexs = Revise.parse_source!(Revise.ModuleExprsInfos(BackEdgesTest), src, "backedges_test.jl", BackEdgesTest)
     Revise.instantiate_sigs!(mexs)
     @test isempty(methods(BackEdgesTest.getdiameter))
     @test !isdefined(BackEdgesTest, :planetdiameters)
@@ -81,5 +81,4 @@ do_test("Backedges") && @testset "Backedges" begin
     """
     ex = Meta.parse(src)
     @test Revise.methods_by_execution(BackEdgesTest, ex) isa Tuple
-
 end

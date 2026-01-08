@@ -39,7 +39,7 @@ function handle_CodeLensRequest(server::Server, msg::CodeLensRequest, cancel_fla
     return send(server,
         CodeLensResponse(;
             id = msg.id,
-            result = isempty(code_lenses) ? null : code_lenses))
+            result = @somereal code_lenses null))
 end
 
 struct CodeLensRefreshRequestCaller <: RequestCaller end

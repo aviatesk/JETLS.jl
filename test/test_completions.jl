@@ -372,7 +372,7 @@ end
             # `str_macro_test`: string macro case
             @test any(items) do item
                 item.label == "text\"\"" &&
-                item.data isa CompletionData && item.data.name == "@text_str"
+                item.data isa GlobalCompletionData && item.data.name == "@text_str"
             end
             cnt += 1
         end
@@ -387,7 +387,7 @@ end
     end
     """
 
-    context = CompletionContext(; triggerKind=CompletionTriggerKind.Invoked)
+    context = CompletionContext(; triggerKind = CompletionTriggerKind.Invoked)
     cnt = 0
     with_completion_request(text; context) do _, result, _
         items = result.items
@@ -432,8 +432,8 @@ end
         end
         """
         context = CompletionContext(;
-            triggerKind=CompletionTriggerKind.TriggerCharacter,
-            triggerCharacter="@")
+            triggerKind = CompletionTriggerKind.TriggerCharacter,
+            triggerCharacter = "@")
         cnt = 0
         with_completion_request(text; context) do _, result, _
             items = result.items
@@ -459,7 +459,7 @@ end
             @no│
         end
         """
-        context = CompletionContext(; triggerKind=CompletionTriggerKind.Invoked)
+        context = CompletionContext(; triggerKind = CompletionTriggerKind.Invoked)
         cnt = 0
         with_completion_request(text; context) do _, result, _
             items = result.items
@@ -481,7 +481,7 @@ end
             @nospecialize xxx y│
         end
         """
-        context = CompletionContext(; triggerKind=CompletionTriggerKind.Invoked)
+        context = CompletionContext(; triggerKind = CompletionTriggerKind.Invoked)
         cnt = 0
         with_completion_request(text; context) do _, result, _
             items = result.items
@@ -499,7 +499,7 @@ end
             nospecia│
         end
         """
-        context = CompletionContext(; triggerKind=CompletionTriggerKind.Invoked)
+        context = CompletionContext(; triggerKind = CompletionTriggerKind.Invoked)
         cnt = 0
         with_completion_request(text; context) do _, result, _
             items = result.items
@@ -715,8 +715,8 @@ end
         end
         """
         context = CompletionContext(;
-            triggerKind=CompletionTriggerKind.TriggerCharacter,
-            triggerCharacter="\\")
+            triggerKind = CompletionTriggerKind.TriggerCharacter,
+            triggerCharacter = "\\")
         cnt = 0
         with_completion_request(text; context) do _, result, _
             items = result.items
@@ -742,8 +742,8 @@ end
         end
         """
         context = CompletionContext(;
-            triggerKind=CompletionTriggerKind.TriggerCharacter,
-            triggerCharacter=":")
+            triggerKind = CompletionTriggerKind.TriggerCharacter,
+            triggerCharacter = ":")
         cnt = 0
         with_completion_request(text; context) do _, result, _
             items = result.items
@@ -760,6 +760,430 @@ end
         end
         @test cnt == 1
     end
+end
+
+# method signature completions
+# ============================
+
+@testset "extract_param_text" begin
+    function parse_param(s::AbstractString)
+        call = JS.parsestmt(JS.SyntaxTree, "f($s)")
+        return JS.children(call)[2]
+    end
+
+    let p = parse_param("x")
+        @test JETLS.extract_param_text(p) == "x"
+    end
+    let p = parse_param("x::Int")
+        @test JETLS.extract_param_text(p) == "x::Int"
+    end
+    let p = parse_param("::Nothing")
+        @test JETLS.extract_param_text(p) === "::Nothing"
+    end
+    let p = parse_param("x::Vector{Int}")
+        @test JETLS.extract_param_text(p) == "x::Vector{Int}"
+    end
+end
+
+@testset "make_insert_text" begin
+    @testset "use_snippet=true" begin
+        let msig = "sin(x::Number)"
+            @test JETLS.make_insert_text(msig, 0, true) == "\${1:x::Number}"
+            @test JETLS.make_insert_text(msig, 1, true) === nothing
+        end
+        let msig = "filter(f, itr)"
+            @test JETLS.make_insert_text(msig, 0, true) == "\${1:f}, \${2:itr}"
+            @test JETLS.make_insert_text(msig, 1, true) == "\${1:itr}"
+            @test JETLS.make_insert_text(msig, 2, true) === nothing
+        end
+        let msig = "foo(a, b, c)"
+            @test JETLS.make_insert_text(msig, 0, true) == "\${1:a}, \${2:b}, \${3:c}"
+            @test JETLS.make_insert_text(msig, 1, true) == "\${1:b}, \${2:c}"
+            @test JETLS.make_insert_text(msig, 2, true) == "\${1:c}"
+            @test JETLS.make_insert_text(msig, 3, true) === nothing
+        end
+        let msig = "foo(a, b=1)"
+            @test JETLS.make_insert_text(msig, 0, true) == "\${1:a}"
+            @test JETLS.make_insert_text(msig, 1, true) === nothing
+        end
+        let msig = "foo(a, args...)"
+            @test JETLS.make_insert_text(msig, 0, true) == "\${1:a}, \${2:args...}"
+            @test JETLS.make_insert_text(msig, 1, true) == "\${1:args...}"
+            @test JETLS.make_insert_text(msig, 2, true) === nothing
+        end
+        let msig = "filter(f, a::Array{T, N}) where {T, N}"
+            @test JETLS.make_insert_text(msig, 0, true) == "\${1:f}, \${2:a::Array{T, N\\}}"
+            @test JETLS.make_insert_text(msig, 1, true) == "\${1:a::Array{T, N\\}}"
+            @test JETLS.make_insert_text(msig, 2, true) === nothing
+        end
+        let msig = "foo(x::T) where T where S"
+            @test JETLS.make_insert_text(msig, 0, true) == "\${1:x::T}"
+        end
+        # anonymous typed parameters
+        let msig = "foo(::Nothing)"
+            @test JETLS.make_insert_text(msig, 0, true) == "\${1:::Nothing}"
+            @test JETLS.make_insert_text(msig, 1, true) === nothing
+        end
+        let msig = "foo(x, ::Nothing)"
+            @test JETLS.make_insert_text(msig, 0, true) == "\${1:x}, \${2:::Nothing}"
+            @test JETLS.make_insert_text(msig, 1, true) == "\${1:::Nothing}"
+            @test JETLS.make_insert_text(msig, 2, true) === nothing
+        end
+    end
+
+    @testset "use_snippet=false" begin
+        let msig = "sin(x::Number)"
+            @test JETLS.make_insert_text(msig, 0, false) == "x::Number"
+        end
+        let msig = "filter(f, itr)"
+            @test JETLS.make_insert_text(msig, 0, false) == "f, itr"
+            @test JETLS.make_insert_text(msig, 1, false) == "itr"
+        end
+    end
+end
+
+@testset "method signature completion" begin
+    get_newText(item::CompletionItem) =
+        (@something item.textEdit return nothing).newText
+
+    let text = """
+        sin(│
+        """
+        context = CompletionContext(;
+            triggerKind = CompletionTriggerKind.TriggerCharacter,
+            triggerCharacter = "(")
+        cnt = 0
+        with_completion_request(text; context) do _, result, _
+            items = result.items
+            @test count(items) do item
+                item.labelDetails !== nothing &&
+                    item.labelDetails.description == "method" &&
+                    !isnothing(get_newText(item)) &&
+                    occursin("sin", item.label)
+            end == length(methods(sin))
+            cnt += 1
+        end
+        @test cnt == 1
+    end
+
+    # Type-based filtering
+    let text = """
+        sin(42,│
+        """
+        context = CompletionContext(;
+            triggerKind = CompletionTriggerKind.TriggerCharacter,
+            triggerCharacter = ",")
+        cnt = 0
+        with_completion_request(text; context) do _, result, _
+            items = result.items
+            @test count(items) do item
+                item.labelDetails !== nothing &&
+                    item.labelDetails.description == "method" &&
+                    !isnothing(get_newText(item)) &&
+                    occursin("sin", item.label)
+            end == 1
+            cnt += 1
+        end
+        @test cnt == 1
+    end
+
+    let text = """let x = 42
+            sin(x,│
+        end"""
+        context = CompletionContext(;
+            triggerKind = CompletionTriggerKind.TriggerCharacter,
+            triggerCharacter = ",")
+        cnt = 0
+        with_completion_request(text; context) do _, result, _
+            items = result.items
+            @test_broken count(items) do item
+                item.labelDetails !== nothing &&
+                    item.labelDetails.description == "method" &&
+                    !isnothing(get_newText(item)) &&
+                    occursin("sin", item.label)
+            end == 1
+            cnt += 1
+        end
+        @test cnt == 1
+    end
+
+    let text = """
+        filter(isodd,│
+        """
+        context = CompletionContext(;
+            triggerKind = CompletionTriggerKind.TriggerCharacter,
+            triggerCharacter = ",")
+        cnt = 0
+        with_completion_request(text; context) do _, result, _
+            items = result.items
+            @test all(items) do item
+                newText = get_newText(item)
+                item.labelDetails !== nothing &&
+                    item.labelDetails.description == "method" &&
+                    !isnothing(newText) &&
+                    (newText == "" || startswith(newText, " ")) # Allow `newText == ""` for `filter(f)` case
+            end
+            cnt += 1
+        end
+        @test cnt == 1
+    end
+
+    let text = """
+        filter(isodd, │
+        """
+        context = CompletionContext(;
+            triggerKind = CompletionTriggerKind.TriggerCharacter,
+            triggerCharacter = " ")
+        cnt = 0
+        with_completion_request(text; context) do _, result, _
+            items = result.items
+            @test all(items) do item
+                newText = get_newText(item)
+                item.labelDetails !== nothing &&
+                    item.labelDetails.description == "method" &&
+                    !isnothing(newText) &&
+                    (newText == "" || !startswith(newText, " ")) # Allow `newText == ""` for `filter(f)` case
+            end
+            cnt += 1
+        end
+        @test cnt == 1
+    end
+
+
+    # Test case where all positional args are filled (textEdit.newText should be empty)
+    let text = """
+        println(stdout, │
+        """
+        context = CompletionContext(;
+            triggerKind = CompletionTriggerKind.TriggerCharacter,
+            triggerCharacter = " ")
+        cnt = 0
+        with_completion_request(text; context) do _, result, _
+            items = result.items
+            method_items = filter(items) do item
+                item.labelDetails !== nothing &&
+                    item.labelDetails.description == "method"
+            end
+            # Should include methods where args are already filled (empty newText)
+            @test any(item -> get_newText(item) == "", method_items)
+            # Should also include methods with remaining args
+            @test any(item -> !isempty(something(get_newText(item), "")), method_items)
+            cnt += 1
+        end
+        @test cnt == 1
+    end
+
+    # Test case where all args are filled - newText should be empty
+    let text = """
+        sin(x, │
+        """
+        context = CompletionContext(;
+            triggerKind = CompletionTriggerKind.TriggerCharacter,
+            triggerCharacter = ",")
+        cnt = 0
+        with_completion_request(text; context) do _, result, _
+            items = result.items
+            @test all(items) do item
+                newText = get_newText(item)
+                item.labelDetails !== nothing &&
+                    item.labelDetails.description == "method" &&
+                    newText == ""
+            end
+            cnt += 1
+        end
+        @test cnt == 1
+    end
+end
+
+# keyword argument completion
+# ===========================
+
+@testset "keyword argument completion" begin
+    let text = """
+        printstyled(; │
+        """
+        context = CompletionContext(;
+            triggerKind = CompletionTriggerKind.TriggerCharacter,
+            triggerCharacter = ";")
+        cnt = 0
+        with_completion_request(text; context) do _, result, _
+            items = result.items
+            keyword_items = filter(items) do item
+                item.labelDetails !== nothing &&
+                    item.labelDetails.description == "keyword argument"
+            end
+            @test !isempty(keyword_items)
+            @test any(item -> item.label == "bold", keyword_items)
+            @test any(item -> item.label == "color", keyword_items)
+            @test all(keyword_items) do item
+                item.insertText !== nothing && endswith(item.insertText, " = ")
+            end
+            cnt += 1
+        end
+        @test cnt == 1
+    end
+
+    # Test keyword name completion excludes already-specified keywords
+    let text = """
+        printstyled(; bold=true, │
+        """
+        context = CompletionContext(;
+            triggerKind = CompletionTriggerKind.TriggerCharacter,
+            triggerCharacter = " ")
+        cnt = 0
+        with_completion_request(text; context) do _, result, _
+            items = result.items
+            keyword_items = filter(items) do item
+                item.labelDetails !== nothing &&
+                    item.labelDetails.description == "keyword argument"
+            end
+            @test !isempty(keyword_items)
+            @test !any(item -> item.label == "bold", keyword_items)
+            @test any(item -> item.label == "color", keyword_items)
+            cnt += 1
+        end
+        @test cnt == 1
+    end
+
+    # Test no keyword completion after `=`
+    let text = """
+        printstyled(; bold=│
+        """
+        context = CompletionContext(;
+            triggerKind = CompletionTriggerKind.TriggerCharacter,
+            triggerCharacter = "=")
+        cnt = 0
+        with_completion_request(text; context) do _, result, _
+            items = result.items
+            keyword_items = filter(items) do item
+                item.labelDetails !== nothing &&
+                    item.labelDetails.description == "keyword argument"
+            end
+            @test isempty(keyword_items)
+            cnt += 1
+        end
+        @test cnt == 1
+    end
+
+    # Don't insert `=` if the same local variable exists in the scope
+    let text = """
+        let bold = false
+            printstyled(; │
+        end
+        """
+        context = CompletionContext(;
+            triggerKind = CompletionTriggerKind.TriggerCharacter,
+            triggerCharacter = " ")
+        cnt = 0
+        with_completion_request(text; context) do _, result, _
+            items = result.items
+            keyword_items = filter(items) do item
+                item.labelDetails !== nothing &&
+                    item.labelDetails.description == "keyword argument"
+            end
+            @test !isempty(keyword_items)
+            @test any(item -> item.label == "bold" && item.insertText == "bold", keyword_items)
+            @test any(item -> item.label == "color" && item.insertText == "color = ", keyword_items)
+            cnt += 1
+        end
+        @test cnt == 1
+    end
+
+    # Test no `=` insertion when cursor is before existing `=`
+    let text = """
+        printstyled(; bol│=true)
+        """
+        context = CompletionContext(; triggerKind = CompletionTriggerKind.Invoked)
+        cnt = 0
+        with_completion_request(text; context) do _, result, _
+            items = result.items
+            keyword_items = filter(items) do item
+                item.labelDetails !== nothing &&
+                    item.labelDetails.description == "keyword argument"
+            end
+            @test all(keyword_items) do item
+                !occursin("=", something(item.insertText, ""))
+            end
+            cnt += 1
+        end
+        @test cnt == 1
+    end
+end
+
+@testset "should_insert_spaces_around_equal" begin
+    function test_should_insert_spaces(text::AbstractString)
+        clean_text, positions = JETLS.get_text_and_positions(text)
+        fi = JETLS.FileInfo(0, clean_text, "test.jl")
+        st0 = JETLS.build_syntax_tree(fi)
+        b = JETLS.xy_to_offset(fi, positions[1])
+        call = JETLS.cursor_call(fi.parsed_stream, st0, b)
+        ca = JETLS.CallArgs(call, b)
+        return JETLS.should_insert_spaces_around_equal(fi, ca)
+    end
+    @test test_should_insert_spaces("func(; │)")
+    @test !test_should_insert_spaces("func(; a=1, │)")
+    @test !test_should_insert_spaces("func(; a=1, b=2, │)")
+    @test test_should_insert_spaces("func(; a = 1, │)")
+    @test test_should_insert_spaces("func(; a = 1, b = 2, │)")
+    @test test_should_insert_spaces("func(; a = 1, b = 2, c=3, │)")
+    @test !test_should_insert_spaces("func(; a=1, b=2, c = 3, │)")
+    @test test_should_insert_spaces("func(; a = 1, b=2, │)")
+end
+
+@testset "cursor_equals_position" begin
+    function test_cursor_equals_position(text::AbstractString)
+        clean_text, positions = JETLS.get_text_and_positions(text)
+        fi = JETLS.FileInfo(0, clean_text, "test.jl")
+        st0 = JETLS.build_syntax_tree(fi)
+        b = JETLS.xy_to_offset(fi, positions[1])
+        call = JETLS.cursor_call(fi.parsed_stream, st0, b)
+        ca = JETLS.CallArgs(call, b)
+        return JETLS.cursor_equals_position(ca, b)
+    end
+
+    # cursor after `=` in keyword argument → true
+    @test test_cursor_equals_position("func(; a=│)") === true
+    @test test_cursor_equals_position("func(; a=│1)") === true
+    @test test_cursor_equals_position("func(; a=1│)") === true
+    @test test_cursor_equals_position("func(; a = │)") === true
+    @test test_cursor_equals_position("func(; a = │1)") === true
+    @test test_cursor_equals_position("func(; a = 1│)") === true
+    @test test_cursor_equals_position("func(; a=1, b=│)") === true
+    @test test_cursor_equals_position("func(; a=1, b=│2)") === true
+    @test test_cursor_equals_position("func(a=│)") === true
+    @test test_cursor_equals_position("func(a=│1)") === true
+    @test test_cursor_equals_position("func(a=1│)") === true
+    @test test_cursor_equals_position("func(; a=│") === true  # incomplete
+    @test test_cursor_equals_position("func(; a=│1") === true  # incomplete
+    @test test_cursor_equals_position("func(; a=1│") === true  # incomplete
+    @test test_cursor_equals_position("func(; a = │") === true  # incomplete
+    @test test_cursor_equals_position("func(; a = │1") === true  # incomplete
+    @test test_cursor_equals_position("func(; a = 1│") === true  # incomplete
+    @test test_cursor_equals_position("func(; a=1, b=│") === true  # incomplete
+    @test test_cursor_equals_position("func(; a=1, b=│2") === true  # incomplete
+    @test test_cursor_equals_position("func(a=│") === true  # incomplete
+    @test test_cursor_equals_position("func(a=│1") === true  # incomplete
+    @test test_cursor_equals_position("func(a=1│") === true  # incomplete
+
+    # cursor before `=` sign in kw arg → false (has `=`, don't insert)
+    @test test_cursor_equals_position("func(; a│=1)") === false
+    @test test_cursor_equals_position("func(; a=1, b│=2)") === false
+    @test test_cursor_equals_position("func(a│=1)") === false
+    @test test_cursor_equals_position("func(; │a=1)") === false
+    @test test_cursor_equals_position("func(│a=1)") === false
+    @test test_cursor_equals_position("func(; a=1, │b=2)") === false
+    @test test_cursor_equals_position("func(; a│=1") === false  # incomplete
+    @test test_cursor_equals_position("func(; a=1, b│=2") === false  # incomplete
+    @test test_cursor_equals_position("func(a│=1") === false  # incomplete
+    @test test_cursor_equals_position("func(; │a=1") === false  # incomplete
+    @test test_cursor_equals_position("func(│a=1") === false  # incomplete
+    @test test_cursor_equals_position("func(; a=1, │b=2") === false  # incomplete
+
+    # cursor not in any kw arg → nothing (no `=`, insert it)
+    @test test_cursor_equals_position("func(; │)") === nothing
+    @test test_cursor_equals_position("func(; a=1, │)") === nothing
+    @test test_cursor_equals_position("func(; │") === nothing  # incomplete
+    @test test_cursor_equals_position("func(; a=1, │") === nothing  # incomplete
 end
 
 end # module test_completions
