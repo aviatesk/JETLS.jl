@@ -639,15 +639,21 @@ end
 function analyze_undefined_global_bindings!(
         diagnostics::Vector{Diagnostic}, fi::FileInfo, ctx3::JL.VariableAnalysisContext,
         binding_occurrences, reported::Set{LoweringDiagnosticKey};
+        analyzer::Union{Nothing,LSAnalyzer} = nothing,
         postprocessor::LSPostProcessor = LSPostProcessor()
     )
+    world = Base.get_world_counter()
     for (binfo, occurrences) in binding_occurrences
         bk = binfo.kind
         bk === :global || continue
         binfo.is_internal && continue
         startswith(binfo.name, '#') && continue
         any(o->o.kind===:def, occurrences) && continue
-        invokelatest(isdefinedglobal, binfo.mod, Symbol(binfo.name))::Bool && continue
+        Base.invoke_in_world(world, isdefinedglobal, binfo.mod, Symbol(binfo.name))::Bool && continue
+        if !isnothing(analyzer)
+            bp = Base.lookup_binding_partition(world, GlobalRef(binfo.mod, Symbol(binfo.name)))
+            haskey(JET.AnalyzerState(analyzer).binding_states, bp) && continue
+        end
         bn = binfo.name
         provs = JS.flattened_provenance(JL.binding_ex(ctx3, binfo.id))
         range = jsobj_to_range(first(provs), fi)
@@ -696,6 +702,7 @@ function analyze_lowered_code!(
         diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo, res::NamedTuple;
         skip_analysis_requiring_context::Bool = false,
         allow_unused_underscore::Bool = true,
+        analyzer::Union{Nothing,LSAnalyzer} = nothing,
         postprocessor::LSPostProcessor = LSPostProcessor()
     )
     (; st0, ctx3, st3) = res
@@ -706,7 +713,7 @@ function analyze_lowered_code!(
     analyze_unused_bindings!(diagnostics, fi, st0, ctx3, binding_occurrences, ismacro, reported; allow_unused_underscore)
 
     skip_analysis_requiring_context ||
-        analyze_undefined_global_bindings!(diagnostics, fi, ctx3, binding_occurrences, reported; postprocessor)
+        analyze_undefined_global_bindings!(diagnostics, fi, ctx3, binding_occurrences, reported; analyzer, postprocessor)
 
     return diagnostics
 end
@@ -784,8 +791,8 @@ function toplevel_lowering_diagnostics(server::Server, uri::URI, file_info::File
     allow_unused_underscore = get_config(server.state.config_manager, :diagnostic, :allow_unused_underscore)
     iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
         pos = offset_to_xy(file_info, JS.first_byte(st0))
-        (; mod, postprocessor) = get_context_info(server.state, uri, pos)
-        lowering_diagnostics!(diagnostics, uri, file_info, mod, st0; skip_analysis_requiring_context, allow_unused_underscore, postprocessor)
+        (; mod, analyzer, postprocessor) = get_context_info(server.state, uri, pos)
+        lowering_diagnostics!(diagnostics, uri, file_info, mod, st0; skip_analysis_requiring_context, allow_unused_underscore, analyzer, postprocessor)
     end
     return diagnostics
 end
