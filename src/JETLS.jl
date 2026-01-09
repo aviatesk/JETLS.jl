@@ -373,9 +373,9 @@ function handle_response_message(
     elseif request_caller isa DiagnosticRefreshRequestCaller
         handle_diagnostic_refresh_response(server, msg, request_caller)
     elseif request_caller isa FormattingProgressCaller
-        handle_formatting_progress_response(server, msg, request_caller)
+        handle_formatting_progress_response(server, msg, request_caller, cancel_flag)
     elseif request_caller isa RangeFormattingProgressCaller
-        handle_range_formatting_progress_response(server, msg, request_caller)
+        handle_range_formatting_progress_response(server, msg, request_caller, cancel_flag)
     elseif request_caller isa ReferencesProgressCaller
         handle_references_progress_response(server, msg, request_caller)
     elseif request_caller isa RenameProgressCaller

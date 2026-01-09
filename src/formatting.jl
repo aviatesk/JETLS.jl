@@ -12,6 +12,7 @@ struct FormattingProgressCaller <: RequestCaller
     token::ProgressToken
     cancel_flag::CancelFlag
 end
+cancellable_token(caller::FormattingProgressCaller) = caller.token
 
 struct RangeFormattingProgressCaller <: RequestCaller
     uri::URI
@@ -21,6 +22,7 @@ struct RangeFormattingProgressCaller <: RequestCaller
     token::ProgressToken
     cancel_flag::CancelFlag
 end
+cancellable_token(caller::RangeFormattingProgressCaller) = caller.token
 
 function formatting_options(server::Server)
     return DocumentFormattingOptions(;
@@ -106,20 +108,22 @@ end
 
 function handle_formatting_progress_response(
         server::Server, msg::Dict{Symbol, Any}, request_caller::FormattingProgressCaller,
+        progress_cancel_flag::CancelFlag
     )
     if handle_response_error(server, msg, "create work done progress")
         return
     end
     (; uri, options, msg_id, token, cancel_flag) = request_caller
-    do_format_with_progress(server, uri, options, msg_id, token, cancel_flag)
+    combined_flag = CombinedCancelFlag(cancel_flag, progress_cancel_flag)
+    do_format_with_progress(server, uri, options, msg_id, token, combined_flag)
 end
 
 function do_format_with_progress(
         server::Server, uri::URI, options::FormattingOptions,
-        msg_id::MessageId, token::ProgressToken, cancel_flag::CancelFlag
+        msg_id::MessageId, token::ProgressToken, cancel_flag::AbstractCancelFlag
     )
     send_progress(server, token,
-        WorkDoneProgressBegin(; title = "Formatting document"))
+        WorkDoneProgressBegin(; title = "Formatting document", cancellable = true))
     completed = false
     try
         do_format(server, uri, options, msg_id, cancel_flag)
@@ -133,7 +137,7 @@ end
 
 function do_format(
         server::Server, uri::URI, options::FormattingOptions,
-        msg_id::MessageId, cancel_flag::CancelFlag
+        msg_id::MessageId, cancel_flag::AbstractCancelFlag
     )
     result = format_result(server.state, uri, options, cancel_flag)
     if result isa ResponseError
@@ -193,7 +197,7 @@ function get_formatter_executable(formatter::FormatterConfig, for_range::Bool)
 end
 
 function format_result(
-        state::ServerState, uri::URI, options::FormattingOptions, cancel_flag::CancelFlag
+        state::ServerState, uri::URI, options::FormattingOptions, cancel_flag::AbstractCancelFlag
     )
     result = get_file_info(state, uri, cancel_flag)
     result isa ResponseError && return result
@@ -232,21 +236,23 @@ function handle_DocumentRangeFormattingRequest(
 end
 
 function handle_range_formatting_progress_response(
-        server::Server, msg::Dict{Symbol, Any}, request_caller::RangeFormattingProgressCaller
+        server::Server, msg::Dict{Symbol, Any}, request_caller::RangeFormattingProgressCaller,
+        progress_cancel_flag::CancelFlag
     )
     if handle_response_error(server, msg, "create work done progress")
         return
     end
     (; uri, range, options, msg_id, token, cancel_flag) = request_caller
-    do_range_format_with_progress(server, uri, range, options, msg_id, token, cancel_flag)
+    combined_flag = CombinedCancelFlag(cancel_flag, progress_cancel_flag)
+    do_range_format_with_progress(server, uri, range, options, msg_id, token, combined_flag)
 end
 
 function do_range_format_with_progress(
         server::Server, uri::URI, range::Range, options::FormattingOptions,
-        msg_id::MessageId, token::ProgressToken, cancel_flag::CancelFlag
+        msg_id::MessageId, token::ProgressToken, cancel_flag::AbstractCancelFlag
     )
     send_progress(server, token,
-        WorkDoneProgressBegin(; title = "Formatting document range"))
+        WorkDoneProgressBegin(; title = "Formatting document range", cancellable = true))
     completed = false
     try
         do_range_format(server, uri, range, options, msg_id, cancel_flag)
@@ -260,7 +266,7 @@ end
 
 function do_range_format(
         server::Server, uri::URI, range::Range, options::FormattingOptions,
-        msg_id::MessageId, cancel_flag::CancelFlag
+        msg_id::MessageId, cancel_flag::AbstractCancelFlag
     )
     result = range_format_result(server.state, uri, range, options, cancel_flag)
     if result isa ResponseError
@@ -272,7 +278,7 @@ end
 
 function range_format_result(
         state::ServerState, uri::URI, range::Range, options::FormattingOptions,
-        cancel_flag::CancelFlag
+        cancel_flag::AbstractCancelFlag
     )
     result = get_file_info(state, uri, cancel_flag)
     result isa ResponseError && return result

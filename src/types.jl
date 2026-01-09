@@ -104,9 +104,24 @@ struct NotebookInfo
 end
 @define_override_constructor NotebookInfo
 
-mutable struct CancelFlag
+abstract type AbstractCancelFlag end
+function is_cancelled(::AbstractCancelFlag) end
+
+"""
+    CancelFlag
+
+A thread-safe cancellation flag used to signal that an operation should be cancelled.
+
+Cancellation can occur via two LSP mechanisms:
+1. `\$/cancelRequest` - Client cancels a request by its message ID
+2. `window/workDoneProgress/cancel` - Client cancels a server-initiated progress by its token
+
+When either notification arrives, the corresponding `CancelFlag` in `server.state.currently_handled`
+is looked up (by message ID or progress token) and `cancel!` is called on it.
+Long-running operations should periodically check `is_cancelled(cancel_flag)` and abort if true.
+"""
+mutable struct CancelFlag <: AbstractCancelFlag
     @atomic cancelled::Bool
-    # on_cancelled::LWContainer{IdSet{Any}, LWStats} for cancellation callback?
 end
 const DUMMY_CANCEL_FLAG = CancelFlag(false)
 
@@ -115,6 +130,25 @@ function cancel!(cancel_flag::CancelFlag)
 end
 
 is_cancelled(cancel_flag::CancelFlag) = @atomic :acquire cancel_flag.cancelled
+
+"""
+    CombinedCancelFlag
+
+Combines two `CancelFlag`s so that `is_cancelled` returns true if either flag is cancelled.
+
+This is used for server-initiated progress where cancellation can come from two sources:
+- `flag1`: The original request's cancel flag (cancelled via `\$/cancelRequest`)
+- `flag2`: The progress token's cancel flag (cancelled via `window/workDoneProgress/cancel`)
+
+When using server-initiated progress, the original request's `CancelFlag` is stored in the
+`RequestCaller` struct. When the progress response arrives, a `CombinedCancelFlag` is created
+to check both the original request cancellation and the progress UI cancellation.
+"""
+struct CombinedCancelFlag <: AbstractCancelFlag
+    flag1::CancelFlag
+    flag2::CancelFlag
+end
+is_cancelled(cf::CombinedCancelFlag) = is_cancelled(cf.flag1) || is_cancelled(cf.flag2)
 
 struct CancellableToken
     token::ProgressToken
