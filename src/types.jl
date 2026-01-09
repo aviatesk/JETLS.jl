@@ -25,6 +25,9 @@ end
 
 const EMPTY_TESTSETINFOS = TestsetInfo[]
 
+# Primary file cache for document synchronization.
+# Created on `textDocument/didOpen` and updated on `textDocument/didChange`.
+# Contains the current editor state, including unsaved edits.
 struct FileInfo
     version::Int
     parsed_stream::JS.ParseStream
@@ -57,6 +60,10 @@ function FileInfo( # Constructor for test code (with raw text input and filename
     return FileInfo(version, ParseStream!(s), args...)
 end
 
+# Secondary file cache representing on-disk state.
+# Created on `textDocument/didOpen` and updated on `textDocument/didSave`.
+# Used primarily for testrunner integration where consistency between on-disk state
+# and editor state needs to be verified.
 struct SavedFileInfo
     parsed_stream::JS.ParseStream
     syntax_node::JS.SyntaxNode
