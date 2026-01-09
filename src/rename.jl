@@ -234,7 +234,6 @@ function global_binding_rename(
         token::Union{Nothing,ProgressToken} = nothing,
         cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG
     )
-    state = server.state
     st0_top = build_syntax_tree(fi)
     offset = xy_to_offset(fi, pos)
 
@@ -258,32 +257,70 @@ function global_binding_rename(
     end
 
     uris_to_search = collect_search_uris(server, uri)
-
-    n_files = length(uris_to_search)
-    if token !== nothing && n_files > 1
+    if token !== nothing
         send_progress(server, token,
-            WorkDoneProgressBegin(; title="Renaming symbol", cancellable = true, percentage=0))
+            WorkDoneProgressBegin(; title = "Renaming symbol", cancellable = true, percentage = 0))
     end
-
     if supports(server, :workspace, :workspaceEdit, :documentChanges)
         changes = TextDocumentEdit[]
     else
         changes = Dict{URI,Vector{TextEdit}}()
     end
-    seen_ranges = Set{Range}()
-    total_edits = 0
+    local completed = errored = false
+    try
+        completed = collect_global_rename_edits!(
+            changes, server, uri, fi, uris_to_search, binfo, newName, cancel_flag, token)
+    catch err
+        @error "Error in `global_binding_rename`"
+        Base.display_error(stderr, err, catch_backtrace())
+        errored = true
+    finally
+        if token !== nothing
+            send_progress(server, token,
+                WorkDoneProgressEnd(;
+                    message = errored ? "Failed renaming symbol" :
+                        !completed ? "Cancelled renaming symbol" :
+                        "Completed renaming symbol"))
+        end
+    end
+    if errored
+        return (; result = nothing, error = request_failed_error("global_binding_rename failed"))
+    elseif !completed
+        return (; result = nothing, error = request_cancelled_error("global_binding_rename cancelled"))
+    end
+    if changes isa Vector{TextDocumentEdit}
+        result = WorkspaceEdit(; documentChanges = changes)
+    else
+        result = WorkspaceEdit(; changes)
+    end
+    return (; result, error = nothing)
+end
 
+function collect_global_rename_edits!(
+        changes::Union{Vector{TextDocumentEdit},Dict{URI,Vector{TextEdit}}},
+        server::Server, uri::URI, fi::FileInfo, uris_to_search::Set{URI},
+        binfo::JL.BindingInfo, newName::String, cancel_flag::AbstractCancelFlag,
+        token::Union{Nothing,ProgressToken})
+    state = server.state
+    n_files = length(uris_to_search)
+    seen_ranges = Set{Range}()
     for (i, search_uri) in enumerate(uris_to_search)
         if is_cancelled(cancel_flag)
-            break
+            return false
         end
-        empty!(seen_ranges)
+
+        if token !== nothing
+            percentage = round(Int, 100 * (i - 1) / n_files)
+            message = "Searching $(basename(uri2filename(search_uri))) ($i/$n_files)"
+            send_progress(server, token,
+                WorkDoneProgressReport(; cancellable = true, message, percentage))
+        end
 
         if search_uri == uri
             search_fi = fi
             version = fi.version
         else
-            search_fi = get_file_info(server.state, search_uri)
+            search_fi = get_file_info(state, search_uri)
             if search_fi === nothing
                 search_fi = create_dummy_file_info(search_uri, fi)
                 version = nothing
@@ -291,43 +328,23 @@ function global_binding_rename(
                 version = search_fi.version
             end
         end
-
-        if token !== nothing && n_files > 1
-            percentage = round(Int, 100 * (i - 1) / n_files)
-            message = "Searching $(basename(uri2filename(search_uri))) ($i/$n_files)"
-            send_progress(server, token,
-                WorkDoneProgressReport(; cancellable = true, message, percentage))
-        end
-
+        empty!(seen_ranges)
         search_st0_top = build_syntax_tree(search_fi)
         collect_global_rename_ranges_in_file!(
             seen_ranges, state, search_uri, search_fi, search_st0_top, binfo)
 
         if !isempty(seen_ranges)
-            edits = TextEdit[TextEdit(; range, newText=newName) for range in seen_ranges]
-            total_edits += length(edits)
+            edits = TextEdit[TextEdit(; range, newText = newName) for range in seen_ranges]
             if changes isa Vector{TextDocumentEdit}
                 textDocument = OptionalVersionedTextDocumentIdentifier(;
-                    uri=search_uri, version)
+                    uri = search_uri, version)
                 push!(changes, TextDocumentEdit(; textDocument, edits))
             else
                 changes[search_uri] = edits
             end
         end
     end
-
-    if token !== nothing && n_files > 1
-        send_progress(server, token,
-            WorkDoneProgressEnd(; message="Renamed $total_edits occurrences"))
-    end
-
-    if changes isa Vector{TextDocumentEdit}
-        result = WorkspaceEdit(; documentChanges = changes)
-    else
-        result = WorkspaceEdit(; changes)
-    end
-
-    return (; result, error = nothing)
+    return true
 end
 
 function collect_global_rename_ranges_in_file!(
