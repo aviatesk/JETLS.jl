@@ -539,6 +539,10 @@ const ConfigManager = LWContainer{ConfigManagerData, LWStats}
 
 const HandledHistory = FixedSizeFIFOQueue{MessageId}
 
+struct HandledToken
+    id::MessageId
+end
+
 mutable struct ServerState
     const file_cache::FileCache # syntactic analysis cache (synced with `textDocument/didChange`)
     const saved_file_cache::SavedFileCache # syntactic analysis cache (synced with `textDocument/didSave`)
@@ -548,6 +552,7 @@ mutable struct ServerState
     const extra_diagnostics::ExtraDiagnostics
     const currently_handled::CurrentlyHandled
     const handled_history::HandledHistory
+    const message_queue::Channel{Any}
     const currently_requested::CurrentlyRequested
     const currently_registered::CurrentlyRegistered
     const config_manager::ConfigManager
@@ -571,6 +576,7 @@ mutable struct ServerState
             #=extra_diagnostics=# ExtraDiagnostics(ExtraDiagnosticsData()),
             #=currently_handled=# CurrentlyHandled(),
             #=handled_history=# HandledHistory(128),
+            #=message_queue=# Channel{Any}(Inf),
             #=currently_requested=# CurrentlyRequested(Base.PersistentDict{String,RequestCaller}()),
             #=currently_registered=# CurrentlyRegistered(Set{Registered}()),
             #=config_manager=# ConfigManager(ConfigManagerData()),

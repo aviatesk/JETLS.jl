@@ -267,10 +267,9 @@ function start_sequential_message_worker(server::Server)
 end
 
 function start_concurrent_message_worker(server::Server)
-    queue = Channel{Any}(Inf)
+    queue = server.state.message_queue
     Threads.@spawn :default while true
         msg = take!(queue)
-        handler_concurrent_message = ConcurrentMessageHandler(queue)
         @tryinvokelatest handler_concurrent_message(server, msg)
         GC.safepoint()
         isopen(queue) || break
@@ -305,13 +304,7 @@ function handle_sequential_message(server::Server, @nospecialize msg)
     end
 end
 
-struct ConcurrentMessageHandler
-    queue::Channel{Any}
-end
-struct HandledToken
-    id::MessageId
-end
-function (dispatcher::ConcurrentMessageHandler)(server::Server, @nospecialize msg)
+function handler_concurrent_message(server::Server, @nospecialize msg)
     # Handle `currently_handled` processing serially within the concurrent message worker thread
     if msg isa CancelRequestNotification
         if msg.params.id in server.state.handled_history
@@ -339,30 +332,24 @@ function (dispatcher::ConcurrentMessageHandler)(server::Server, @nospecialize ms
             token = cancellable_token(request_caller)
             cancel_flag = isnothing(token) ? DUMMY_CANCEL_FLAG :
                 get!(()->CancelFlag(false), server.state.currently_handled, token)
-            handle_response_message = ResponseMessageDispatcher(dispatcher.queue, token, cancel_flag, request_caller)
-            Threads.@spawn :default @tryinvokelatest handle_response_message(server, msg)
+            Threads.@spawn :default @tryinvokelatest handle_response_message(server, msg, request_caller, cancel_flag)
         elseif JETLS_DEV_MODE
             # Not a response to our request, or untyped message - log if in dev mode
             _id = get(()->get(msg, :id, nothing), msg, :method)
-            @warn "[ConcurrentMessageHandler] Unhandled message" msg _id=_id maxlog=1
+            @warn "[handler_concurrent_message] Unhandled message" msg _id=_id maxlog=1
         end
     elseif isdefined(msg, :id) && (id = msg.id; id isa String || id isa Int)
         cancel_flag = get!(()->CancelFlag(false), server.state.currently_handled, id)
-        handle_request_message = RequestMessageDispatcher(dispatcher.queue, id, cancel_flag)
-        Threads.@spawn :default @tryinvokelatest handle_request_message(server, msg)
+        Threads.@spawn :default @tryinvokelatest handle_request_message(server, msg, cancel_flag)
     else
         Threads.@spawn :default @tryinvokelatest handle_notification_message(server, msg)
     end
 end
 
-struct ResponseMessageDispatcher
-    queue::Channel{Any}
-    token::Union{Nothing,ProgressToken}
-    cancel_flag::CancelFlag
-    request_caller::RequestCaller
-end
-function (dispatcher::ResponseMessageDispatcher)(server::Server, msg::Dict{Symbol,Any})
-    (; cancel_flag, request_caller) = dispatcher
+function handle_response_message(
+        server::Server, msg::Dict{Symbol,Any}, @nospecialize(request_caller::RequestCaller),
+        cancel_flag::CancelFlag
+    )
     if request_caller isa InstantiationProgressCaller
         handle_instantiation_progress_response(server, request_caller)
     elseif request_caller isa AnalysisProgressCaller
@@ -402,18 +389,10 @@ function (dispatcher::ResponseMessageDispatcher)(server::Server, msg::Dict{Symbo
     else
         error("Unknown request caller type")
     end
-    id = dispatcher.token
-    isnothing(id) || put!(dispatcher.queue, HandledToken(id))
     nothing
 end
 
-struct RequestMessageDispatcher
-    queue::Channel{Any}
-    id::MessageId
-    cancel_flag::CancelFlag
-end
-function (dispatcher::RequestMessageDispatcher)(server::Server, @nospecialize msg)
-    (; queue, id, cancel_flag) = dispatcher
+function handle_request_message(server::Server, @nospecialize(msg), cancel_flag::CancelFlag)
     if is_cancelled(cancel_flag)
         send(server,
             ResponseMessage(;
@@ -460,9 +439,8 @@ function (dispatcher::RequestMessageDispatcher)(server::Server, @nospecialize ms
         else
             _id = typeof(msg)
         end
-        @warn "[RequestMessageDispatcher] Unhandled message" msg _id=_id maxlog=1
+        @warn "[handle_request_message] Unhandled message" msg _id=_id maxlog=1
     end
-    put!(queue, HandledToken(id))
     nothing
 end
 

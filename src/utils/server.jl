@@ -19,6 +19,10 @@ as well as for sending requests and notifications from the server to the client.
 function send(server::Server, @nospecialize msg)
     LSP.Communication.send(server.endpoint, msg)
     server.callback !== nothing && server.callback(:sent, msg)
+    # Mark request as handled when sending a response
+    if isdefined(msg, :id) && isdefined(msg, :result) && isdefined(msg, :error) # i.e. msg isa ResponseMessage
+        put!(server.state.message_queue, HandledToken(msg.id::MessageId))
+    end
     nothing
 end
 
