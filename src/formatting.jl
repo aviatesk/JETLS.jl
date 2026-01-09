@@ -140,7 +140,9 @@ function do_format(
         msg_id::MessageId, cancel_flag::AbstractCancelFlag
     )
     result = format_result(server.state, uri, options, cancel_flag)
-    if result isa ResponseError
+    if isnothing(result)
+        return send(server, DocumentFormattingResponse(; id = msg_id, result = null))
+    elseif result isa ResponseError
         return send(server, DocumentFormattingResponse(; id = msg_id, result = nothing, error = result))
     else
         return send(server, DocumentFormattingResponse(; id = msg_id, result))
@@ -199,7 +201,7 @@ end
 function format_result(
         state::ServerState, uri::URI, options::FormattingOptions, cancel_flag::AbstractCancelFlag
     )
-    result = get_file_info(state, uri, cancel_flag)
+    result = @something get_file_info(state, uri, cancel_flag) return nothing
     result isa ResponseError && return result
     fi = result
 
@@ -269,7 +271,9 @@ function do_range_format(
         msg_id::MessageId, cancel_flag::AbstractCancelFlag
     )
     result = range_format_result(server.state, uri, range, options, cancel_flag)
-    if result isa ResponseError
+    if isnothing(result)
+        return send(server, DocumentRangeFormattingResponse(; id = msg_id, result = null))
+    elseif result isa ResponseError
         return send(server, DocumentRangeFormattingResponse(; id = msg_id, result = nothing, error = result))
     else
         return send(server, DocumentRangeFormattingResponse(; id = msg_id, result))
@@ -280,7 +284,7 @@ function range_format_result(
         state::ServerState, uri::URI, range::Range, options::FormattingOptions,
         cancel_flag::AbstractCancelFlag
     )
-    result = get_file_info(state, uri, cancel_flag)
+    result = @something get_file_info(state, uri, cancel_flag) return nothing
     result isa ResponseError && return result
     fi = result
 

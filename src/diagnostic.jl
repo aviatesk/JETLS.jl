@@ -980,14 +980,13 @@ function handle_DocumentDiagnosticRequest(
         resultId = string(resultId+1)
     end
 
-    result = get_file_info(server.state, uri, cancel_flag;
-        cache_error_data = DiagnosticServerCancellationData(; retriggerRequest = true))
-    if result isa ResponseError
-        return send(server,
-            DocumentDiagnosticResponse(;
-                id = msg.id,
-                result = nothing,
-                error = result))
+    result = get_file_info(server.state, uri, cancel_flag)
+    if isnothing(result)
+        return send(server, DocumentDiagnosticResponse(;
+            id = msg.id,
+            result = RelatedFullDocumentDiagnosticReport(; resultId, items = Diagnostic[])))
+    elseif result isa ResponseError
+        return send(server, DocumentDiagnosticResponse(; id = msg.id, result = nothing, error = result))
     end
     file_info = result
 

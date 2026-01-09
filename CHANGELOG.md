@@ -57,6 +57,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed `textDocument/formatting` and `textDocument/rangeFormatting` for
   notebook cells (https://github.com/aviatesk/JETLS.jl/issues/442).
 
+- Return empty results instead of errors for LSP requests on documents that
+  haven't been synchronized via `textDocument/didOpen`
+  (Fixed https://github.com/aviatesk/JETLS.jl/issues/442).
+
 - Fixed `lowering/undef-global-var` diagnostic incorrectly reporting
   non-constant but defined symbols as undefined in the file-analysis mode.
 

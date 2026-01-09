@@ -171,8 +171,8 @@ get_file_info(s::ServerState, t::TextDocumentIdentifier) = get_file_info(s, t.ur
 """
     get_file_info(
         s::ServerState, uri::URI, cancel_flag::CancelFlag;
-        timeout = 30., cancelled_error_data = nothing, cache_error_data = nothing
-    ) -> Union{FileInfo,ResponseError}
+        timeout = 10., cancelled_error_data = nothing
+    ) -> Union{FileInfo,ResponseError,Nothing}
 
 Wait for cached `FileInfo` to become available, with cancellation and timeout support.
 This is the recommended version for request handlers.
@@ -181,13 +181,14 @@ Unlike the 2-argument version which returns `nothing` immediately if the cache i
 available, this version polls until the cache is populated. This is useful for request
 handlers where the file cache may not yet be ready (e.g., immediately after file open).
 
-Returns a `ResponseError` in two cases:
-- Request is cancelled: returns `request_cancelled_error(; data=cancelled_error_data)`
-- Timeout is reached: returns `file_cache_error(uri; data=cache_error_data)`
+Returns:
+- `FileInfo`: when cache is available
+- `ResponseError`: when request is cancelled (`request_cancelled_error(; data=cancelled_error_data)`)
+- `nothing`: when timeout is reached (file not synced via `textDocument/didOpen`)
 """
 function get_file_info(
         s::ServerState, uri::URI, cancel_flag::CancelFlag;
-        timeout::Float64 = 30., cancelled_error_data = nothing, cache_error_data = nothing
+        timeout::Float64 = 10., cancelled_error_data = nothing
     )
     start = time()
     request_id = objectid(cancel_flag) # Each request uses a unique `cancel_flag`, so this objectid can be used as a request-unique ID
@@ -202,13 +203,13 @@ function get_file_info(
             cache !== nothing && return cache
         end
         if time() - start > timeout
-            return file_cache_error(uri;
-                data = cache_error_data)
+            JETLS_TEST_MODE || @warn "File cache not found" uri _id=uri maxlog=1 # Some tests intentionally call this path, so this log is probably not necessary.
+            return nothing
         end
         JETLS_DEV_MODE && @info "Waiting for file cache" uri _id=request_id maxlog=1
         sleep(0.5)
     end
-    return
+    return nothing
 end
 get_file_info(s::ServerState, t::TextDocumentIdentifier, cancel_flag::CancelFlag; kwargs...) =
     get_file_info(s, t.uri, cancel_flag; kwargs...)

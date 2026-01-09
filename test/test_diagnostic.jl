@@ -278,12 +278,8 @@ end
                         textDocument = TextDocumentIdentifier(; uri)
                     )))
                 @test raw_res isa DocumentDiagnosticResponse
-                @test raw_res.result === nothing
-                @test raw_res.error isa ResponseError
-                @test raw_res.error.code == ErrorCodes.RequestFailed
-                @test occursin("File cache for $uri is not found", raw_res.error.message)
-                @test raw_res.error.data isa DiagnosticServerCancellationData
-                @test raw_res.error.data.retriggerRequest === true
+                @test raw_res.result isa RelatedFullDocumentDiagnosticReport
+                @test isempty(raw_res.result.items)
             end
         end
     end

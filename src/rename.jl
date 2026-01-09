@@ -41,12 +41,10 @@ function handle_PrepareRenameRequest(
     pos = adjust_position(state, uri, msg.params.position)
 
     result = get_file_info(state, uri, cancel_flag)
-    if result isa ResponseError
-        return send(server,
-            PrepareRenameResponse(;
-                id = msg.id,
-                result = nothing,
-                error = result))
+    if isnothing(result)
+        return send(server, PrepareRenameResponse(; id = msg.id, result = null))
+    elseif result isa ResponseError
+        return send(server, PrepareRenameResponse(; id = msg.id, result = nothing, error = result))
     end
     fi = result
 
@@ -124,12 +122,10 @@ function handle_RenameRequest(
     newName = msg.params.newName
 
     result = get_file_info(state, uri, cancel_flag)
-    if result isa ResponseError
-        return send(server,
-            RenameResponse(;
-                id = msg.id,
-                result = nothing,
-                error = result))
+    if isnothing(result)
+        return send(server, RenameResponse(; id = msg.id, result = null))
+    elseif result isa ResponseError
+        return send(server, RenameResponse(; id = msg.id, result = nothing, error = result))
     end
     fi = result
 
