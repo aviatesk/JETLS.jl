@@ -60,6 +60,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed `lowering/undef-global-var` diagnostic incorrectly reporting
   non-constant but defined symbols as undefined in the file-analysis mode.
 
+- Fixed cancellation not working for requests that use server-initiated progress
+  (e.g., `textDocument/formatting`, `textDocument/rename`, `textDocument/references`).
+  Previously, these requests were marked as handled immediately when the handler
+  returned, causing `$/cancelRequest` to be ignored.
+
+- Fixed progress UI cancel button not being displayed for `textDocument/formatting`,
+  `textDocument/rangeFormatting`, `textDocument/references`, and
+  `textDocument/rename` requests. The server now properly handles both
+  `$/cancelRequest` and `window/workDoneProgress/cancel` to abort these requests.
+
 ## 2026-01-09
 
 - Commit: [`cbcdc3c`](https://github.com/aviatesk/JETLS.jl/commit/cbcdc3c)
