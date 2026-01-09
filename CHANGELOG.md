@@ -45,11 +45,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > Note that `analysis_overrides` is provided as a temporary workaround and may
 > be removed or changed at any time. A proper fix is being worked on.
 
+### Changed
+
+- Keyword argument name completion items are now sorted according to their order
+  in the method definition.
+
 ### Fixed
 
 - Fixed `textDocument/diagnostic` for notebook cells.
+
 - Fixed `textDocument/formatting` and `textDocument/rangeFormatting` for
   notebook cells (https://github.com/aviatesk/JETLS.jl/issues/442).
+
+- Fixed `lowering/undef-global-var` diagnostic incorrectly reporting
+  non-constant but defined symbols as undefined in the file-analysis mode.
 
 ## 2026-01-09
 
@@ -63,13 +72,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Fixed
 
 - Fixed `lowering/undef-global-var` diagnostic incorrectly reporting imported
-  symbols from dependency packages as undefined. The issue occurred because
-  `isdefinedglobal` was not seeing the latest module bindings
+  symbols from dependency packages as undefined.
   when `!JETLS_DEV_MODE`. (https://github.com/aviatesk/JETLS.jl/issues/457)
 
 - Fixed false positive `lowering/undef-global-var` diagnostic for keyword slurp
-  arguments with dependent defaults (e.g., `f(; a=1, b=a, kws...)`). The slurp
-  parameter name was incorrectly resolved as a global binding.
+  arguments with dependent defaults (e.g., `f(; a=1, b=a, kws...)`).
   (JuliaLang/julia#60600)
 
 ## 2026-01-08
