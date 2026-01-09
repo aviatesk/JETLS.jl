@@ -8,7 +8,9 @@ struct ReferencesProgressCaller <: RequestCaller
     include_declaration::Bool
     msg_id::MessageId
     token::ProgressToken
+    cancel_flag::CancelFlag
 end
+cancellable_token(caller::ReferencesProgressCaller) = caller.token
 
 function references_options(server::Server)
     return ReferenceOptions(;
@@ -42,42 +44,36 @@ function handle_ReferencesRequest(
 
     workDoneToken = msg.params.workDoneToken
     if workDoneToken !== nothing
-        do_find_references_with_progress(server, uri, fi, pos, include_declaration, msg.id, workDoneToken)
+        do_find_references(server, uri, fi, pos, include_declaration, msg.id, cancel_flag; token = workDoneToken)
     elseif supports(server, :window, :workDoneProgress)
         id = String(gensym(:WorkDoneProgressCreateRequest_references))
         token = String(gensym(:ReferencesProgress))
-        addrequest!(server, id => ReferencesProgressCaller(uri, fi, pos, include_declaration, msg.id, token))
+        addrequest!(server, id => ReferencesProgressCaller(uri, fi, pos, include_declaration, msg.id, token, cancel_flag))
         params = WorkDoneProgressCreateParams(; token)
         send(server, WorkDoneProgressCreateRequest(; id, params))
     else
-        do_find_references(server, uri, fi, pos, include_declaration, msg.id)
+        do_find_references(server, uri, fi, pos, include_declaration, msg.id, cancel_flag)
     end
 
     return nothing
 end
 
 function handle_references_progress_response(
-        server::Server, msg::Dict{Symbol,Any}, request_caller::ReferencesProgressCaller)
+        server::Server, msg::Dict{Symbol,Any}, request_caller::ReferencesProgressCaller,
+        progress_cancel_flag::CancelFlag)
     if handle_response_error(server, msg, "create work done progress")
         return
     end
-    (; uri, fi, pos, include_declaration, msg_id, token) = request_caller
-    do_find_references_with_progress(server, uri, fi, pos, include_declaration, msg_id, token)
-end
-
-function do_find_references_with_progress(
-        server::Server, uri::URI, fi::FileInfo, pos::Position,
-        include_declaration::Bool, msg_id::MessageId, token::ProgressToken)
-    locations = find_references(server, uri, fi, pos; token, include_declaration)
-    return send(server, ReferencesResponse(;
-        id = msg_id,
-        result = @somereal locations null))
+    (; uri, fi, pos, include_declaration, msg_id, token, cancel_flag) = request_caller
+    combined_flag = CombinedCancelFlag(cancel_flag, progress_cancel_flag)
+    do_find_references(server, uri, fi, pos, include_declaration, msg_id, combined_flag; token)
 end
 
 function do_find_references(
         server::Server, uri::URI, fi::FileInfo, pos::Position,
-        include_declaration::Bool, msg_id::MessageId)
-    locations = find_references(server, uri, fi, pos; include_declaration)
+        include_declaration::Bool, msg_id::MessageId, cancel_flag::AbstractCancelFlag;
+        token::Union{Nothing,ProgressToken} = nothing)
+    locations = find_references(server, uri, fi, pos; token, include_declaration, cancel_flag)
     return send(server, ReferencesResponse(;
         id = msg_id,
         result = @somereal locations null))
@@ -87,7 +83,7 @@ function find_references(
         server::Server, uri::URI, fi::FileInfo, pos::Position;
         token::Union{Nothing,ProgressToken} = nothing,
         include_declaration::Bool = true,
-    )
+        cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG)
     st0_top = build_syntax_tree(fi)
     offset = xy_to_offset(fi, pos)
     (; mod) = get_context_info(server.state, uri, pos)
@@ -100,7 +96,7 @@ function find_references(
     binfo = JL.get_binding(ctx3, binding)
     if binfo.kind === :global
         find_global_references!(locations, server, uri, fi, st0_top, binfo, token;
-            include_declaration)
+            include_declaration, cancel_flag)
     else
         find_local_references!(locations, server, uri, fi, ctx3, st3, binfo; include_declaration)
     end
@@ -113,17 +109,21 @@ function find_global_references!(
         uri::URI, fi::FileInfo, st0_top::JS.SyntaxTree, binfo::JL.BindingInfo,
         token::Union{Nothing,ProgressToken};
         include_declaration::Bool=true,
+        cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG
     )
     uris_to_search = collect_search_uris(server, uri)
 
     n_files = length(uris_to_search)
     if token !== nothing && n_files > 1
         send_progress(server, token,
-            WorkDoneProgressBegin(; title="Finding references", percentage=0))
+            WorkDoneProgressBegin(; title = "Finding references", cancellable = true, percentage = 0))
     end
 
     seen_locations = Set{Tuple{URI,Range}}()
     for (i, search_uri) in enumerate(uris_to_search)
+        if is_cancelled(cancel_flag)
+            break
+        end
         if search_uri == uri
             search_fi = fi
         else
@@ -137,7 +137,7 @@ function find_global_references!(
             percentage = round(Int, 100 * (i - 1) / n_files)
             message = "Searching $(basename(uri2filename(search_uri))) ($i/$n_files)"
             send_progress(server, token,
-                WorkDoneProgressReport(; message, percentage))
+                WorkDoneProgressReport(; message, cancellable = true, percentage))
         end
 
         search_st0_top = build_syntax_tree(search_fi)

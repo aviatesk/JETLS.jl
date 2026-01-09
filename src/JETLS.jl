@@ -377,9 +377,9 @@ function handle_response_message(
     elseif request_caller isa RangeFormattingProgressCaller
         handle_range_formatting_progress_response(server, msg, request_caller, cancel_flag)
     elseif request_caller isa ReferencesProgressCaller
-        handle_references_progress_response(server, msg, request_caller)
+        handle_references_progress_response(server, msg, request_caller, cancel_flag)
     elseif request_caller isa RenameProgressCaller
-        handle_rename_progress_response(server, msg, request_caller)
+        handle_rename_progress_response(server, msg, request_caller, cancel_flag)
     elseif request_caller isa ProfileProgressCaller
         handle_profile_progress_response(server, msg, request_caller)
     elseif request_caller isa WorkspaceConfigurationCaller
