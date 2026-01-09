@@ -102,6 +102,15 @@ function handle_InitializeRequest(
         end
     end
 
+    if supports(server, :textDocument, :documentSymbol, :dynamicRegistration)
+        documentSymbolProvider = nothing # will be registered dynamically
+    else
+        documentSymbolProvider = document_symbol_options()
+        if JETLS_DEV_MODE
+            @info "Registering 'textDocument/documentSymbol' with `InitializeResponse`"
+        end
+    end
+
     if supports(server, :textDocument, :references, :dynamicRegistration)
         referencesProvider = nothing # will be registered dynamically
     else
@@ -227,6 +236,7 @@ function handle_InitializeRequest(
             definitionProvider,
             referencesProvider,
             documentHighlightProvider,
+            documentSymbolProvider,
             hoverProvider,
             diagnosticProvider,
             codeActionProvider,
@@ -344,6 +354,16 @@ function handle_InitializedNotification(server::Server)
         end
     else
         # NOTE If documentHighlight's `dynamicRegistration` is not supported,
+        # it needs to be registered along with initialization in the `InitializeResponse`.
+    end
+
+    if supports(server, :textDocument, :documentSymbol, :dynamicRegistration)
+        push!(registrations, document_symbol_registration())
+        if JETLS_DEV_MODE
+            @info "Dynamically registering 'textDocument/documentSymbol' upon `InitializedNotification`"
+        end
+    else
+        # NOTE If documentSymbol's `dynamicRegistration` is not supported,
         # it needs to be registered along with initialization in the `InitializeResponse`.
     end
 
