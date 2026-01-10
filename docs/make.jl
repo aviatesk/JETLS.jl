@@ -40,7 +40,7 @@ let CHANGELOG_md = joinpath(@__DIR__, "..", "CHANGELOG.md")
         s"""
 ```@raw html
 <center>
-<iframe style="width:100%;height:min(500px,70vh);aspect-ratio:16/9" src="\1" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+<iframe style="width:100%;height:min(500px,70vh);aspect-ratio:16/9" src="\1" frameborder="0" allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
 </center>
 ```
 """)
@@ -59,6 +59,7 @@ end
 
 const pages = Any[
     "Index" => "index.md",
+    "Features" => "features.md",
     "Diagnostic" => "diagnostic.md",
     "Formatter integration" => "formatting.md",
     "TestRunner integration" => "testrunner.md",

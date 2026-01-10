@@ -16,6 +16,15 @@ diagnostic, macro-aware go-to definition and such.
     Not production-ready; APIs and behavior may change.
     Stability and performance are limited. Expect bugs and rough edges.
 
+## Features overview
+
+JETLS aims to be a fully-featured language server for Julia, providing
+comprehensive [language server features](https://microsoft.github.io/language-server-protocol/)
+including diagnostics, code completion, signature help, go-to definition,
+find references, rename, hover, formatting, and more.
+
+See [Features](@ref features) for visual demonstrations of each feature.
+
 ## Server installation
 
 Editor clients for JETLS generally do not bundle the JETLS server itself.
