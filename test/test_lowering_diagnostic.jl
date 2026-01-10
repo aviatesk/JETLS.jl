@@ -689,6 +689,161 @@ end
     end
 end
 
+@testset "captured boxed variable detection" begin
+    # Variable modified after capture -> boxed
+    let diagnostics = get_lowered_diagnostics("""
+        function foo()
+            x = 1
+            f = () -> x
+            x = 2
+            return f
+        end
+        """)
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.message == "`x` is captured and boxed"
+        @test diagnostic.code == JETLS.LOWERING_CAPTURED_BOXED_VARIABLE_CODE
+        @test diagnostic.severity == DiagnosticSeverity.Information
+        @test diagnostic.range.start.line == 1
+        @test diagnostic.range.var"end".line == 1
+        @test length(diagnostic.relatedInformation) == 1
+        ri = only(diagnostic.relatedInformation)
+        @test ri.message == "Closure at L3:9 captures `x`"
+        @test ri.location.range.start.line == 2
+        @test ri.location.range.start.character == length("    f = () -> ") # points to `x`, not `() -> x`
+    end
+
+    # Multiple captured variables
+    let diagnostics = get_lowered_diagnostics("""
+        function bar()
+            a = b = 1
+            f = () -> (a, b)
+            a = b = 2
+            return f
+        end
+        """)
+        @test length(diagnostics) == 2
+        @test all(d -> d.code == JETLS.LOWERING_CAPTURED_BOXED_VARIABLE_CODE, diagnostics)
+        names = Set(match(r"`(\w+)`", d.message).captures[1] for d in diagnostics)
+        @test names == Set(["a", "b"])
+    end
+
+    # No capture, no modification -> no diagnostic
+    @test isempty(get_lowered_diagnostics("""
+        function baz(x)
+            y = x
+            return sin(y)
+        end
+        """))
+
+    # Multiple closures capturing same variable
+    let diagnostics = get_lowered_diagnostics("""
+        function multi()
+            x = 1
+            f = () -> x
+            g = () -> x + 1
+            x = 2
+            return f, g
+        end
+        """)
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.message == "`x` is captured and boxed"
+        # Should have 2 related information entries (one for each closure)
+        @test diagnostic.relatedInformation !== nothing
+        @test length(diagnostic.relatedInformation) == 2
+    end
+
+    # Nested closure
+    let diagnostics = get_lowered_diagnostics("""
+        function nested()
+            x = 1
+            f = () -> begin
+                g = () -> x
+                g
+            end
+            x = 2
+            return f
+        end
+        """)
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.message == "`x` is captured and boxed"
+        @test diagnostic.relatedInformation !== nothing
+        @test length(diagnostic.relatedInformation) == 2
+    end
+
+    # do block capture
+    let diagnostics = get_lowered_diagnostics("""
+        function with_do()
+            x = 1
+            result = map([1,2,3]) do i
+                i + x
+            end
+            x = 2
+            return result
+        end
+        """)
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.message == "`x` is captured and boxed"
+    end
+
+    # From performance tips
+    let diagnostics = get_lowered_diagnostics("""
+        function abmult1(r::Int)
+            if r < 0
+                r = -r
+            end
+            f = x -> x * r
+            return f
+        end
+        """)
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.message == "`r` is captured and boxed"
+    end
+    let diagnostics = get_lowered_diagnostics("""
+        function abmult2(r::Int)
+            if r < 0
+                r = -r
+            end
+            f = let r = r
+                x -> x * r
+            end
+            return f
+        end
+        """)
+        @test isempty(diagnostics)
+    end
+    let diagnostics = get_lowered_diagnostics("""
+        function abmult3(r0::Int)
+            r::Int = r0
+            if r < 0
+                r = -r
+            end
+            f = x -> x * r
+            return f
+        end
+        """)
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.message == "`r` is captured and boxed"
+    end
+    let diagnostics = get_lowered_diagnostics("""
+        function abmult4(r0::Int)
+            r = Ref(r0)
+            if r0 < 0
+                r[] = -r0
+            end
+            f = x -> x * r[]
+            return f
+        end
+        """)
+        @test isempty(diagnostics)
+    end
+end
+
 @testset "unused_variable_code_actions" begin
     uri = URI("file:///test.jl")
 

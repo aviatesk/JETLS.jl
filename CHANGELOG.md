@@ -45,6 +45,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > Note that `analysis_overrides` is provided as a temporary workaround and may
 > be removed or changed at any time. A proper fix is being worked on.
 
+### Added
+
+- Added `lowering/captured-boxed-variable` diagnostic that reports variables
+  captured by closures requiring boxing. E.g.:
+  ```julia
+  function abmult1(r::Int)  # `r` is captured and boxed (JETLS lowering/captured-boxed-variable)
+      if r < 0
+          r = -r
+      end
+      f = x -> x * r        # RelatedInformation: Closure at L5:9 captures `r`
+      return f
+  end
+  ``` (https://github.com/aviatesk/JETLS.jl/pull/452)
+
 ### Changed
 
 - Keyword argument name completion items are now sorted according to their order

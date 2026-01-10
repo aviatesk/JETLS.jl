@@ -57,22 +57,23 @@ diagnostic, you'll find:
 
 Here is a summary table of the diagnostics explained in this section:
 
-| Code                                                                                         | Default Severity      | Description                                                    |
-| -------------------------------------------------------------------------------------------- | --------------------- | -------------------------------------------------------------- |
-| [`syntax/parse-error`](@ref diagnostic/reference/syntax/parse-error)                         | `Error`               | Syntax parsing errors detected by JuliaSyntax.jl               |
-| [`lowering/error`](@ref diagnostic/reference/lowering/error)                                 | `Error`               | General lowering errors                                        |
-| [`lowering/macro-expansion-error`](@ref diagnostic/reference/lowering/macro-expansion-error) | `Error`               | Errors during macro expansion                                  |
-| [`lowering/unused-argument`](@ref diagnostic/reference/lowering/unused-argument)             | `Information`         | Function arguments that are never used                         |
-| [`lowering/unused-local`](@ref diagnostic/reference/lowering/unused-local)                   | `Information`         | Local variables that are assigned but never read               |
-| [`lowering/undef-global-var`](@ref diagnostic/reference/lowering/undef-global-var)           | `Warning`             | References to undefined global variables (triggered on change) |
-| [`toplevel/error`](@ref diagnostic/reference/toplevel/error)                                 | `Error`               | Errors during code loading (missing deps, type failures, etc.) |
-| [`toplevel/method-overwrite`](@ref diagnostic/reference/toplevel/method-overwrite)           | `Warning`             | Method definitions that overwrite previously defined methods   |
-| [`toplevel/abstract-field`](@ref diagnostic/reference/toplevel/abstract-field)               | `Information`         | Struct fields with abstract types                              |
-| [`inference/undef-global-var`](@ref diagnostic/reference/inference/undef-global-var)         | `Warning`             | References to undefined global variables (triggered on save)   |
-| [`inference/undef-local-var`](@ref diagnostic/reference/inference/undef-local-var)           | `Information/Warning` | References to undefined local variables                        |
-| [`inference/field-error`](@ref diagnostic/reference/inference/field-error)                   | `Warning`             | Access to non-existent struct fields                           |
-| [`inference/bounds-error`](@ref diagnostic/reference/inference/bounds-error)                 | `Warning`             | Out-of-bounds field access by index                            |
-| [`testrunner/test-failure`](@ref diagnostic/reference/testrunner/test-failure)               | `Error`               | Test failures from TestRunner integration                      |
+| Code                                                                                             | Default Severity      | Description                                                    |
+| ------------------------------------------------------------------------------------------------ | --------------------- | -------------------------------------------------------------- |
+| [`syntax/parse-error`](@ref diagnostic/reference/syntax/parse-error)                             | `Error`               | Syntax parsing errors detected by JuliaSyntax.jl               |
+| [`lowering/error`](@ref diagnostic/reference/lowering/error)                                     | `Error`               | General lowering errors                                        |
+| [`lowering/macro-expansion-error`](@ref diagnostic/reference/lowering/macro-expansion-error)     | `Error`               | Errors during macro expansion                                  |
+| [`lowering/unused-argument`](@ref diagnostic/reference/lowering/unused-argument)                 | `Information`         | Function arguments that are never used                         |
+| [`lowering/unused-local`](@ref diagnostic/reference/lowering/unused-local)                       | `Information`         | Local variables that are assigned but never read               |
+| [`lowering/undef-global-var`](@ref diagnostic/reference/lowering/undef-global-var)               | `Warning`             | References to undefined global variables (triggered on change) |
+| [`lowering/captured-boxed-variable`](@ref diagnostic/reference/lowering/captured-boxed-variable) | `Information`         | Variables captured by closures that require boxing             |
+| [`toplevel/error`](@ref diagnostic/reference/toplevel/error)                                     | `Error`               | Errors during code loading (missing deps, type failures, etc.) |
+| [`toplevel/method-overwrite`](@ref diagnostic/reference/toplevel/method-overwrite)               | `Warning`             | Method definitions that overwrite previously defined methods   |
+| [`toplevel/abstract-field`](@ref diagnostic/reference/toplevel/abstract-field)                   | `Information`         | Struct fields with abstract types                              |
+| [`inference/undef-global-var`](@ref diagnostic/reference/inference/undef-global-var)             | `Warning`             | References to undefined global variables (triggered on save)   |
+| [`inference/undef-local-var`](@ref diagnostic/reference/inference/undef-local-var)               | `Information/Warning` | References to undefined local variables                        |
+| [`inference/field-error`](@ref diagnostic/reference/inference/field-error)                       | `Warning`             | Access to non-existent struct fields                           |
+| [`inference/bounds-error`](@ref diagnostic/reference/inference/bounds-error)                     | `Warning`             | Out-of-bounds field access by index                            |
+| [`testrunner/test-failure`](@ref diagnostic/reference/testrunner/test-failure)                   | `Error`               | Test failures from TestRunner integration                      |
 
 ### [Syntax diagnostic (`syntax/*`)](@id diagnostic/reference/syntax)
 
@@ -191,6 +192,89 @@ This diagnostic detects simple undefined global variable references. For more
 comprehensive detection (including qualified references like `Base.undefvar`),
 see [`inference/undef-global-var`](@ref diagnostic/reference/inference/undef-global-var),
 which runs on save.
+
+#### [Captured boxed variable (`lowering/captured-boxed-variable`)](@id diagnostic/reference/lowering/captured-boxed-variable)
+
+**Default severity:** `Information`
+
+Reported when a variable is captured by a closure and requires "boxing" due to
+being assigned multiple times. Captured boxed variables are stored in heap-allocated
+containers (a.k.a. `Core.Box`), which can cause type instability and hinder
+compiler optimizations.[^perftip]
+
+[^perftip]:
+    For detailed information about how captured variables affect performance,
+    see Julia's [Performance Tips on captured variables](https://docs.julialang.org/en/v1/manual/performance-tips/#man-performance-captured).
+
+Example:
+```julia
+function captured_variable()
+    x = 1           # `x` is captured and boxed (JETLS lowering/captured-boxed-variable)
+    f = () ->
+        println(x)  # RelatedInformation: Closure at L3:9 captures `x`
+    x = 2           # (`x` is reassigned after capture)
+    return f
+end
+```
+
+The diagnostic includes `relatedInformation` showing where the variable is
+captured:
+```julia
+function multi_capture()
+    x = 1               # `x` is captured and boxed (JETLS lowering/captured-boxed-variable)
+    f = () ->
+        println(x)      # RelatedInformation: Closure at L3:9 captures `x`
+    g = () ->
+        println(x + 1)  # RelatedInformation: Closure at L5:9 captures `x`
+    x = 2
+    return f, g
+end
+```
+
+Variables captured by closures but assigned only once before closure definition
+do not require boxing and are not reported:
+```julia
+function not_boxed()
+    x = 1
+    f = () -> x  # OK: `x` is only assigned once
+    return f
+end
+```
+
+!!! tip "Workaround"
+    When you need to capture a variable that changes, consider using a `let` block:
+    ```julia
+    function with_let()
+        x = 1
+        f = let x = x
+            () -> x  # Captures the value of `x` at this point
+        end
+        x = 2
+        return f()  # Returns 1, not 2
+    end
+    ```
+
+    or mutable container like `Ref` to avoid direct assignment to the captured
+    variable:
+    ```julia
+    function with_mut()
+        x = Ref(1)
+        f = () -> x[]
+        x[] = 2
+        return f()
+    end
+    ```
+
+!!! warning "Box optimization difference from the flisp lowerer"
+    The generation of captured boxes is an implementation detail of the code
+    lowerer ([JuliaLowering.jl](https://github.com/JuliaLang/julia/tree/master/JuliaLowering))
+    used internally by JETLS, and the conditions under which captured boxes are
+    created may change in the future. The control flow dominance analysis used
+    for captured variable detection in the current JuliaLowering.jl is quite
+    primitive, so captured boxes may occur even when programmers don't expect
+    them. Also note that the cases where the flisp lowerer (a.k.a. `code_lowered`)
+    generates `Core.Box` do not necessarily match the cases where JETLS reports
+    captured boxes.
 
 ### [Top-level diagnostic (`toplevel/*`)](@id diagnostic/reference/toplevel)
 

@@ -698,6 +698,68 @@ function compute_unused_variable_data(
     return UnusedVariableData(false, assignment_range, lhs_eq_range)
 end
 
+function analyze_captured_boxes!(
+        diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo,
+        ctx4::JL.ClosureConversionCtx, st3::JL.SyntaxTree,
+        reported::Set{LoweringDiagnosticKey}
+    )
+    for binfo in ctx4.bindings.info
+        JL.is_boxed(binfo) || continue
+        binfo.is_internal && continue
+        startswith(binfo.name, '#') && continue
+        bn = binfo.name
+        provs = JL.flattened_provenance(JL.binding_ex(ctx4, binfo.id))
+        range = jsobj_to_range(first(provs), fi)
+        key = LoweringDiagnosticKey(range, :boxed, bn)
+        key in reported ? continue : push!(reported, key)
+        code = LOWERING_CAPTURED_BOXED_VARIABLE_CODE
+        relatedInformation = find_capture_sites(st3, binfo, ctx4, uri, fi)
+        push!(diagnostics, Diagnostic(;
+            range,
+            severity = DiagnosticSeverity.Information,
+            message = "`$bn` is captured and boxed",
+            source = DIAGNOSTIC_SOURCE,
+            code,
+            codeDescription = diagnostic_code_description(code),
+            relatedInformation))
+    end
+end
+
+function find_capture_sites(
+        st3::JL.SyntaxTree, binfo::JL.BindingInfo, ctx4::JL.ClosureConversionCtx,
+        uri::URI, fi::FileInfo
+    )
+    relatedInformation = DiagnosticRelatedInformation[]
+    for (_, closure_bindings) in ctx4.closure_bindings
+        for lambda in closure_bindings.lambdas
+            haskey(lambda.locals_capt, binfo.id) || continue
+            lambda.locals_capt[binfo.id] || continue
+            # Find the lambda in st3 that has matching lambda_bindings.self
+            traverse(st3) do node::JL.SyntaxTree
+                JS.kind(node) === JS.K"lambda" || return nothing
+                hasproperty(node, :lambda_bindings) || return nothing
+                lambda_bindings = node.lambda_bindings::JL.LambdaBindings
+                lambda_bindings.self == lambda.self || return nothing
+                cls = JL.binding_ex(ctx4, lambda.self)
+                clsprov = first(JL.flattened_provenance(cls))
+                clspos = jsobj_to_range(clsprov, fi).start
+                clsloc = "L$(Int(clspos.line+1)):$(Int(clspos.character+1))"
+                # Find references to binfo.id inside this lambda
+                traverse(node) do inner::JL.SyntaxTree
+                    if JS.kind(inner) === JS.K"BindingId" && JL._binding_id(inner) == binfo.id
+                        varprov = first(JL.flattened_provenance(inner))
+                        push!(relatedInformation, DiagnosticRelatedInformation(;
+                            location = Location(; uri, range=jsobj_to_range(varprov, fi)),
+                            message = "Closure at $clsloc captures `$(binfo.name)`"))
+                    end
+                end
+                return TraversalNoRecurse()
+            end
+        end
+    end
+    return @somereal relatedInformation Some(nothing)
+end
+
 function analyze_lowered_code!(
         diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo, res::NamedTuple;
         skip_analysis_requiring_context::Bool = false,
@@ -705,7 +767,7 @@ function analyze_lowered_code!(
         analyzer::Union{Nothing,LSAnalyzer} = nothing,
         postprocessor::LSPostProcessor = LSPostProcessor()
     )
-    (; st0, ctx3, st3) = res
+    (; ctx3, ctx4, st0, st3) = res
     ismacro = Ref(false)
     binding_occurrences = compute_binding_occurrences(ctx3, st3; ismacro, include_global_bindings=true)
     reported = Set{LoweringDiagnosticKey}() # to prevent duplicate reports for unused default or keyword arguments
@@ -714,6 +776,8 @@ function analyze_lowered_code!(
 
     skip_analysis_requiring_context ||
         analyze_undefined_global_bindings!(diagnostics, fi, ctx3, binding_occurrences, reported; analyzer, postprocessor)
+
+    analyze_captured_boxes!(diagnostics, uri, fi, ctx4, st3, reported)
 
     return diagnostics
 end
@@ -725,7 +789,7 @@ function lowering_diagnostics!(
     @assert JS.kind(st0) ∉ JS.KSet"toplevel module"
 
     res = try
-        jl_lower_for_scope_resolution(mod, st0; recover_from_macro_errors=false)
+        jl_lower_for_scope_resolution(mod, st0; recover_from_macro_errors=false, convert_closures=true)
     catch err
         if err isa JL.LoweringError
             push!(diagnostics, Diagnostic(;
@@ -771,7 +835,7 @@ function lowering_diagnostics!(
         st0 = without_kinds(st0, JS.KSet"error macrocall")
         try
             ctx1, st1 = JL.expand_forms_1(mod, st0, true, Base.get_world_counter())
-            _jl_lower_for_scope_resolution(ctx1, st0, st1)
+            _jl_lower_for_scope_resolution(ctx1, st0, st1; convert_closures=true)
         catch
             # The same error has probably already been handled above
             return diagnostics
