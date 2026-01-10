@@ -21,7 +21,7 @@ function send(server::Server, @nospecialize msg)
     server.callback !== nothing && server.callback(:sent, msg)
     # Mark request as handled when sending a response
     if isdefined(msg, :id) && isdefined(msg, :result) && isdefined(msg, :error) # i.e. msg isa ResponseMessage
-        put!(server.state.message_queue, HandledToken(msg.id::MessageId))
+        put!(server.message_queue, HandledToken(msg.id::MessageId))
     end
     nothing
 end
