@@ -45,6 +45,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > Note that `analysis_overrides` is provided as a temporary workaround and may
 > be removed or changed at any time. A proper fix is being worked on.
 
+### Fixed
+
+- Fixed cancellation not working properly for formatting requests
+  (Fixed https://github.com/aviatesk/JETLS.jl/issues/465)
+
 ## 2026-01-10
 
 - Commit: [`8b3c9db`](https://github.com/aviatesk/JETLS.jl/commit/8b3c9db)
@@ -78,11 +83,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed `textDocument/diagnostic` for notebook cells.
 
 - Fixed `textDocument/formatting` and `textDocument/rangeFormatting` for
-  notebook cells (https://github.com/aviatesk/JETLS.jl/issues/442).
+  notebook cells (Fixed the first issue of https://github.com/aviatesk/JETLS.jl/issues/442).
 
 - Return empty results instead of errors for LSP requests on documents that
   haven't been synchronized via `textDocument/didOpen`
-  (Fixed https://github.com/aviatesk/JETLS.jl/issues/442).
+  (Fixed the second issue of https://github.com/aviatesk/JETLS.jl/issues/442).
 
 - Fixed `lowering/undef-global-var` diagnostic incorrectly reporting
   non-constant but defined symbols as undefined in the file-analysis mode.
