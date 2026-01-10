@@ -62,12 +62,10 @@ function handle_HoverRequest(
     pos = adjust_position(state, uri, msg.params.position)
 
     result = get_file_info(state, uri, cancel_flag)
-    if result isa ResponseError
-        return send(server,
-            HoverResponse(;
-                id = msg.id,
-                result = nothing,
-                error = result))
+    if isnothing(result)
+        return send(server, HoverResponse(; id = msg.id, result = null))
+    elseif result isa ResponseError
+        return send(server, HoverResponse(; id = msg.id, result = nothing, error = result))
     end
     fi = result
 

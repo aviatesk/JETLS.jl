@@ -33,12 +33,10 @@ function handle_ReferencesRequest(
     include_declaration = msg.params.context.includeDeclaration
 
     result = get_file_info(server.state, uri, cancel_flag)
-    if result isa ResponseError
-        return send(server,
-            ReferencesResponse(;
-                id = msg.id,
-                result = nothing,
-                error = result))
+    if isnothing(result)
+        return send(server, ReferencesResponse(; id = msg.id, result = null))
+    elseif result isa ResponseError
+        return send(server, ReferencesResponse(; id = msg.id, result = nothing, error = result))
     end
     fi = result
 
