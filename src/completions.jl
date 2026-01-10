@@ -617,7 +617,6 @@ function call_completions!(
     isempty(matches) && return nothing
 
     num_existing_args = ca.kw_i - 1
-    method_sig_sort_idx = 1
     has_equals = equals_pos === false
     local method_sig_comp_info, kwarg_comp_info
     if should_complete_method_sigs
@@ -637,6 +636,7 @@ function call_completions!(
             local_bindings = has_equals ? nothing : cursor_bindings(st0, b, mod))
     end
 
+    method_sig_sort_idx = 1
     for (i, match) in enumerate(matches)
         m = match.method
         startswith(String(m.name), '@') && continue
@@ -669,7 +669,8 @@ function call_completions!(
             mnode = JS.parsestmt(JS.SyntaxTree, msig; ignore_errors=true)
             mnode = unwrap_where(mnode)
             JS.kind(mnode) in CALL_KINDS || continue
-            params, kwp_i, _ = flatten_args(mnode)
+            params, kwp_i, has_semicolon = flatten_args(mnode)
+            kwname_sort_idx = 1
             for j in kwp_i:lastindex(params)
                 p = params[j]
                 JS.kind(p) === JS.K"..." && continue
@@ -692,12 +693,12 @@ function call_completions!(
                     label = kwarg_name,
                     labelDetails = CompletionItemLabelDetails(; description = "keyword argument"),
                     insertText = kwarg_name * suffix,
-                    sortText = max_sort_text1,
+                    sortText = has_semicolon ? get_sort_text(kwname_sort_idx) : max_sort_text1,
                 )
+                kwname_sort_idx += 1
             end
         else error("Unreachable") end
     end
-
     if should_complete_kwargs && ca.has_semicolon
         return #=isIncomplete=#false
     elseif should_complete_method_sigs && method_sig_sort_idx > 1
@@ -852,12 +853,10 @@ function handle_CompletionRequest(
     state = server.state
     uri = msg.params.textDocument.uri
     result = get_file_info(state, uri, cancel_flag)
-    if result isa ResponseError
-        return send(server,
-            CompletionResponse(;
-                id = msg.id,
-                result = nothing,
-                error = result))
+    if isnothing(result)
+        return send(server, CompletionResponse(; id = msg.id, result = null))
+    elseif result isa ResponseError
+        return send(server, CompletionResponse(; id = msg.id, result = nothing, error = result))
     end
     fi = result
     pos = adjust_position(state, uri, msg.params.position)

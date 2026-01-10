@@ -52,6 +52,7 @@ function jl_lower_for_scope_resolution(
         mod::Module, st0::JS.SyntaxTree;
         trim_error_nodes::Bool = true,
         recover_from_macro_errors::Bool = true,
+        convert_closures::Bool = false,
     )
     if trim_error_nodes
         st0 = without_kinds(st0, JS.KSet"error")
@@ -66,13 +67,15 @@ function jl_lower_for_scope_resolution(
         st0 = without_kinds(st0, JS.KSet"macrocall")
         JL.expand_forms_1(mod, st0, true, Base.get_world_counter())
     end
-    return _jl_lower_for_scope_resolution(ctx1, st0, st1)
+    return _jl_lower_for_scope_resolution(ctx1, st0, st1; convert_closures)
 end
 
-function _jl_lower_for_scope_resolution(ctx1, st0, st1)
+function _jl_lower_for_scope_resolution(ctx1, st0, st1; convert_closures::Bool = false)
     ctx2, st2 = JL.expand_forms_2(ctx1, st1)
     ctx3, st3 = JL.resolve_scopes(ctx2, st2)
-    return (; st0, st1, st2, st3, ctx3)
+    convert_closures || return (; st0, st1, st2, st3, ctx3)
+    ctx4, st4 = JL.convert_closures(ctx3, st3)
+    return (; st0, st1, st2, st3, st4, ctx3, ctx4)
 end
 
 """

@@ -27,12 +27,10 @@ function handle_CodeActionRequest(
         server::Server, msg::CodeActionRequest, cancel_flag::CancelFlag)
     uri = msg.params.textDocument.uri
     result = get_file_info(server.state, uri, cancel_flag)
-    if result isa ResponseError
-        return send(server,
-            CodeActionResponse(;
-                id = msg.id,
-                result = nothing,
-                error = result))
+    if isnothing(result)
+        return send(server, CodeActionResponse(; id = msg.id, result = null))
+    elseif result isa ResponseError
+        return send(server, CodeActionResponse(; id = msg.id, result = nothing, error = result))
     end
     fi = result
     code_actions = Union{CodeAction,Command}[]

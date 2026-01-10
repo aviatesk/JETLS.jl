@@ -25,6 +25,9 @@ end
 
 const EMPTY_TESTSETINFOS = TestsetInfo[]
 
+# Primary file cache for document synchronization.
+# Created on `textDocument/didOpen` and updated on `textDocument/didChange`.
+# Contains the current editor state, including unsaved edits.
 struct FileInfo
     version::Int
     parsed_stream::JS.ParseStream
@@ -57,6 +60,10 @@ function FileInfo( # Constructor for test code (with raw text input and filename
     return FileInfo(version, ParseStream!(s), args...)
 end
 
+# Secondary file cache representing on-disk state.
+# Created on `textDocument/didOpen` and updated on `textDocument/didSave`.
+# Used primarily for testrunner integration where consistency between on-disk state
+# and editor state needs to be verified.
 struct SavedFileInfo
     parsed_stream::JS.ParseStream
     syntax_node::JS.SyntaxNode
@@ -97,9 +104,24 @@ struct NotebookInfo
 end
 @define_override_constructor NotebookInfo
 
-mutable struct CancelFlag
+abstract type AbstractCancelFlag end
+function is_cancelled(::AbstractCancelFlag) end
+
+"""
+    CancelFlag
+
+A thread-safe cancellation flag used to signal that an operation should be cancelled.
+
+Cancellation can occur via two LSP mechanisms:
+1. `\$/cancelRequest` - Client cancels a request by its message ID
+2. `window/workDoneProgress/cancel` - Client cancels a server-initiated progress by its token
+
+When either notification arrives, the corresponding `CancelFlag` in `server.state.currently_handled`
+is looked up (by message ID or progress token) and `cancel!` is called on it.
+Long-running operations should periodically check `is_cancelled(cancel_flag)` and abort if true.
+"""
+mutable struct CancelFlag <: AbstractCancelFlag
     @atomic cancelled::Bool
-    # on_cancelled::LWContainer{IdSet{Any}, LWStats} for cancellation callback?
 end
 const DUMMY_CANCEL_FLAG = CancelFlag(false)
 
@@ -108,6 +130,25 @@ function cancel!(cancel_flag::CancelFlag)
 end
 
 is_cancelled(cancel_flag::CancelFlag) = @atomic :acquire cancel_flag.cancelled
+
+"""
+    CombinedCancelFlag
+
+Combines two `CancelFlag`s so that `is_cancelled` returns true if either flag is cancelled.
+
+This is used for server-initiated progress where cancellation can come from two sources:
+- `flag1`: The original request's cancel flag (cancelled via `\$/cancelRequest`)
+- `flag2`: The progress token's cancel flag (cancelled via `window/workDoneProgress/cancel`)
+
+When using server-initiated progress, the original request's `CancelFlag` is stored in the
+`RequestCaller` struct. When the progress response arrives, a `CombinedCancelFlag` is created
+to check both the original request cancellation and the progress UI cancellation.
+"""
+struct CombinedCancelFlag <: AbstractCancelFlag
+    flag1::CancelFlag
+    flag2::CancelFlag
+end
+is_cancelled(cf::CombinedCancelFlag) = is_cancelled(cf.flag1) || is_cancelled(cf.flag2)
 
 struct CancellableToken
     token::ProgressToken
@@ -335,6 +376,7 @@ const LOWERING_UNUSED_LOCAL_CODE = "lowering/unused-local"
 const LOWERING_ERROR_CODE = "lowering/error"
 const LOWERING_MACRO_EXPANSION_ERROR_CODE = "lowering/macro-expansion-error"
 const LOWERING_UNDEF_GLOBAL_VAR_CODE = "lowering/undef-global-var"
+const LOWERING_CAPTURED_BOXED_VARIABLE_CODE = "lowering/captured-boxed-variable"
 const TOPLEVEL_ERROR_CODE = "toplevel/error"
 const TOPLEVEL_METHOD_OVERWRITE_CODE = "toplevel/method-overwrite"
 const TOPLEVEL_ABSTRACT_FIELD_CODE = "toplevel/abstract-field"
@@ -352,6 +394,7 @@ const ALL_DIAGNOSTIC_CODES = Set{String}(String[
     LOWERING_ERROR_CODE,
     LOWERING_MACRO_EXPANSION_ERROR_CODE,
     LOWERING_UNDEF_GLOBAL_VAR_CODE,
+    LOWERING_CAPTURED_BOXED_VARIABLE_CODE,
     TOPLEVEL_ERROR_CODE,
     TOPLEVEL_METHOD_OVERWRITE_CODE,
     TOPLEVEL_ABSTRACT_FIELD_CODE,
@@ -532,6 +575,10 @@ const ConfigManager = LWContainer{ConfigManagerData, LWStats}
 
 const HandledHistory = FixedSizeFIFOQueue{MessageId}
 
+struct HandledToken
+    id::MessageId
+end
+
 mutable struct ServerState
     const file_cache::FileCache # syntactic analysis cache (synced with `textDocument/didChange`)
     const saved_file_cache::SavedFileCache # syntactic analysis cache (synced with `textDocument/didSave`)
@@ -541,6 +588,7 @@ mutable struct ServerState
     const extra_diagnostics::ExtraDiagnostics
     const currently_handled::CurrentlyHandled
     const handled_history::HandledHistory
+    const message_queue::Channel{Any}
     const currently_requested::CurrentlyRequested
     const currently_registered::CurrentlyRegistered
     const config_manager::ConfigManager
@@ -564,6 +612,7 @@ mutable struct ServerState
             #=extra_diagnostics=# ExtraDiagnostics(ExtraDiagnosticsData()),
             #=currently_handled=# CurrentlyHandled(),
             #=handled_history=# HandledHistory(128),
+            #=message_queue=# Channel{Any}(Inf),
             #=currently_requested=# CurrentlyRequested(Base.PersistentDict{String,RequestCaller}()),
             #=currently_registered=# CurrentlyRegistered(Set{Registered}()),
             #=config_manager=# ConfigManager(ConfigManagerData()),

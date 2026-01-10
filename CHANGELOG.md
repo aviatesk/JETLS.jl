@@ -19,19 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`368e0a1...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/368e0a1...HEAD)
-
-### Fixed
-
-- Fixed `lowering/undef-global-var` diagnostic incorrectly reporting imported
-  symbols from dependency packages as undefined. The issue occurred because
-  `isdefinedglobal` was not seeing the latest module bindings
-  when `!JETLS_DEV_MODE`. (https://github.com/aviatesk/JETLS.jl/issues/457)
-
-- Fixed false positive `lowering/undef-global-var` diagnostic for keyword slurp
-  arguments with dependent defaults (e.g., `f(; a=1, b=a, kws...)`). The slurp
-  parameter name was incorrectly resolved as a global binding.
-  (JuliaLang/julia#60600)
+- Diff: [`cbcdc3c...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/cbcdc3c...HEAD)
 
 ### Announcement
 
@@ -56,6 +44,68 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > might work, but most LSP features will be unfunctional.
 > Note that `analysis_overrides` is provided as a temporary workaround and may
 > be removed or changed at any time. A proper fix is being worked on.
+
+### Added
+
+- Added `lowering/captured-boxed-variable` diagnostic that reports variables
+  captured by closures requiring boxing. E.g.:
+  ```julia
+  function abmult1(r::Int)  # `r` is captured and boxed (JETLS lowering/captured-boxed-variable)
+      if r < 0
+          r = -r
+      end
+      f = x -> x * r        # RelatedInformation: Closure at L5:9 captures `r`
+      return f
+  end
+  ``` (https://github.com/aviatesk/JETLS.jl/pull/452)
+
+### Changed
+
+- Keyword argument name completion items are now sorted according to their order
+  in the method definition.
+
+### Fixed
+
+- Fixed `textDocument/diagnostic` for notebook cells.
+
+- Fixed `textDocument/formatting` and `textDocument/rangeFormatting` for
+  notebook cells (https://github.com/aviatesk/JETLS.jl/issues/442).
+
+- Return empty results instead of errors for LSP requests on documents that
+  haven't been synchronized via `textDocument/didOpen`
+  (Fixed https://github.com/aviatesk/JETLS.jl/issues/442).
+
+- Fixed `lowering/undef-global-var` diagnostic incorrectly reporting
+  non-constant but defined symbols as undefined in the file-analysis mode.
+
+- Fixed cancellation not working for requests that use server-initiated progress
+  (e.g., `textDocument/formatting`, `textDocument/rename`, `textDocument/references`).
+  Previously, these requests were marked as handled immediately when the handler
+  returned, causing `$/cancelRequest` to be ignored.
+
+- Fixed progress UI cancel button not being displayed for `textDocument/formatting`,
+  `textDocument/rangeFormatting`, `textDocument/references`, and
+  `textDocument/rename` requests. The server now properly handles both
+  `$/cancelRequest` and `window/workDoneProgress/cancel` to abort these requests.
+
+## 2026-01-09
+
+- Commit: [`cbcdc3c`](https://github.com/aviatesk/JETLS.jl/commit/cbcdc3c)
+- Diff: [`368e0a1...cbcdc3c`](https://github.com/aviatesk/JETLS.jl/compare/368e0a1...cbcdc3c)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-01-09")'
+  ```
+
+### Fixed
+
+- Fixed `lowering/undef-global-var` diagnostic incorrectly reporting imported
+  symbols from dependency packages as undefined.
+  when `!JETLS_DEV_MODE`. (https://github.com/aviatesk/JETLS.jl/issues/457)
+
+- Fixed false positive `lowering/undef-global-var` diagnostic for keyword slurp
+  arguments with dependent defaults (e.g., `f(; a=1, b=a, kws...)`).
+  (JuliaLang/julia#60600)
 
 ## 2026-01-08
 

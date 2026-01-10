@@ -294,15 +294,13 @@ end
     1   TestMod.Int
     2   (gotoifnot slot₂/x label₃)
     3   (= slot₃/tmp 0xff)
-    4   slot₃/tmp
-    5   (call core.isa %₄ %₁)
-    6   (gotoifnot %₅ label₈)
-    7   (goto label₁₁)
-    8   slot₃/tmp
-    9   (call top.convert %₁ %₈)
-    10  (= slot₃/tmp (call core.typeassert %₉ %₁))
-    11  slot₃/tmp
-    12  (return %₁₁)
+    4   (call core.isa slot₃/tmp %₁)
+    5   (gotoifnot %₄ label₇)
+    6   (goto label₉)
+    7   (call top.convert %₁ slot₃/tmp)
+    8   (= slot₃/tmp (call core.typeassert %₇ %₁))
+    9   slot₃/tmp
+    10  (return %₉)
 10  latestworld
 11  TestMod.f
 12  (return %₁₁)
@@ -910,15 +908,13 @@ end
     slots: [slot₁/#self#(called) slot₂/x(!read) slot₃/tmp(!read)]
     1   TestMod.T
     2   (= slot₃/tmp core.nothing)
-    3   slot₃/tmp
-    4   (call core.isa %₃ %₁)
-    5   (gotoifnot %₄ label₇)
-    6   (goto label₁₀)
-    7   slot₃/tmp
-    8   (call top.convert %₁ %₇)
-    9   (= slot₃/tmp (call core.typeassert %₈ %₁))
-    10  slot₃/tmp
-    11  (return %₁₀)
+    3   (call core.isa slot₃/tmp %₁)
+    4   (gotoifnot %₃ label₆)
+    5   (goto label₈)
+    6   (call top.convert %₁ slot₃/tmp)
+    7   (= slot₃/tmp (call core.typeassert %₆ %₁))
+    8   slot₃/tmp
+    9   (return %₈)
 18  latestworld
 19  TestMod.f
 20  (return %₁₉)
@@ -1429,10 +1425,8 @@ end
     20  (call top.structdiff slot₂/kws %₁₉)
     21  (call top.pairs %₂₀)
     22  TestMod.#f_kw_slurp_dep#0
-    23  slot₅/a
-    24  slot₆/b
-    25  (call %₂₂ %₂₃ %₂₄ %₂₁ slot₃/#self#)
-    26  (return %₂₅)
+    23  (call %₂₂ slot₅/a slot₆/b %₂₁ slot₃/#self#)
+    24  (return %₂₃)
 24  latestworld
 25  TestMod.f_kw_slurp_dep
 26  (call core.Typeof %₂₅)
@@ -1450,11 +1444,8 @@ end
     6   (call top.pairs %₅)
     7   (= slot₄/kws %₆)
     8   TestMod.#f_kw_slurp_dep#0
-    9   slot₂/a
-    10  slot₃/b
-    11  slot₄/kws
-    12  (call %₈ %₉ %₁₀ %₁₁ slot₁/#self#)
-    13  (return %₁₂)
+    9   (call %₈ slot₂/a slot₃/b slot₄/kws slot₁/#self#)
+    10  (return %₉)
 32  latestworld
 33  TestMod.f_kw_slurp_dep
 34  (return %₃₃)

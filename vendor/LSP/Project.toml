@@ -18,15 +18,15 @@ StructTypes = "1.11.0"
 
 [sources.PrecompileTools]
 subdir = "vendor/PrecompileTools"
-rev = "a111f19451b9c6943e9a34449e0f490459a7b0a2"
+rev = "be123ccccc57411a729c6b7a01327077927d465a"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.JSON3]
 subdir = "vendor/JSON3"
-rev = "a111f19451b9c6943e9a34449e0f490459a7b0a2"
+rev = "be123ccccc57411a729c6b7a01327077927d465a"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.StructTypes]
 subdir = "vendor/StructTypes"
-rev = "a111f19451b9c6943e9a34449e0f490459a7b0a2"
+rev = "be123ccccc57411a729c6b7a01327077927d465a"
 url = "https://github.com/aviatesk/JETLS.jl"

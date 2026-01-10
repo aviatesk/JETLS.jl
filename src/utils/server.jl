@@ -19,6 +19,10 @@ as well as for sending requests and notifications from the server to the client.
 function send(server::Server, @nospecialize msg)
     LSP.Communication.send(server.endpoint, msg)
     server.callback !== nothing && server.callback(:sent, msg)
+    # Mark request as handled when sending a response
+    if isdefined(msg, :id) && isdefined(msg, :result) && isdefined(msg, :error) # i.e. msg isa ResponseMessage
+        put!(server.state.message_queue, HandledToken(msg.id::MessageId))
+    end
     nothing
 end
 
@@ -167,8 +171,8 @@ get_file_info(s::ServerState, t::TextDocumentIdentifier) = get_file_info(s, t.ur
 """
     get_file_info(
         s::ServerState, uri::URI, cancel_flag::CancelFlag;
-        timeout = 30., cancelled_error_data = nothing, cache_error_data = nothing
-    ) -> Union{FileInfo,ResponseError}
+        timeout = 10., cancelled_error_data = nothing
+    ) -> Union{FileInfo,ResponseError,Nothing}
 
 Wait for cached `FileInfo` to become available, with cancellation and timeout support.
 This is the recommended version for request handlers.
@@ -177,13 +181,14 @@ Unlike the 2-argument version which returns `nothing` immediately if the cache i
 available, this version polls until the cache is populated. This is useful for request
 handlers where the file cache may not yet be ready (e.g., immediately after file open).
 
-Returns a `ResponseError` in two cases:
-- Request is cancelled: returns `request_cancelled_error(; data=cancelled_error_data)`
-- Timeout is reached: returns `file_cache_error(uri; data=cache_error_data)`
+Returns:
+- `FileInfo`: when cache is available
+- `ResponseError`: when request is cancelled (`request_cancelled_error(; data=cancelled_error_data)`)
+- `nothing`: when timeout is reached (file not synced via `textDocument/didOpen`)
 """
 function get_file_info(
         s::ServerState, uri::URI, cancel_flag::CancelFlag;
-        timeout::Float64 = 30., cancelled_error_data = nothing, cache_error_data = nothing
+        timeout::Float64 = 10., cancelled_error_data = nothing
     )
     start = time()
     request_id = objectid(cancel_flag) # Each request uses a unique `cancel_flag`, so this objectid can be used as a request-unique ID
@@ -198,13 +203,13 @@ function get_file_info(
             cache !== nothing && return cache
         end
         if time() - start > timeout
-            return file_cache_error(uri;
-                data = cache_error_data)
+            JETLS_TEST_MODE || @warn "File cache not found" uri _id=uri maxlog=1 # Some tests intentionally call this path, so this log is probably not necessary.
+            return nothing
         end
         JETLS_DEV_MODE && @info "Waiting for file cache" uri _id=request_id maxlog=1
         sleep(0.5)
     end
-    return
+    return nothing
 end
 get_file_info(s::ServerState, t::TextDocumentIdentifier, cancel_flag::CancelFlag; kwargs...) =
     get_file_info(s, t.uri, cancel_flag; kwargs...)
@@ -288,3 +293,13 @@ get_context_analyzer(analysis_result::AnalysisResult, ::URI) = analysis_result.a
 get_post_processor(::Nothing) = LSPostProcessor(JET.PostProcessor())
 get_post_processor(::OutOfScope) = LSPostProcessor(JET.PostProcessor())
 get_post_processor(analysis_result::AnalysisResult) = LSPostProcessor(JET.PostProcessor(analysis_result.actual2virtual))
+
+function has_analyzed_context(state::ServerState, uri::URI)
+    lookup_uri = @something get_notebook_uri_for_cell(state, uri) uri
+    analysis_info = get_analysis_info(state.analysis_manager, lookup_uri)
+    return _has_analyzed_context(analysis_info, lookup_uri)
+end
+_has_analyzed_context(::Nothing, ::URI) = false
+_has_analyzed_context(outofscope::OutOfScope, ::URI) = !isnothing(outofscope.module_context)
+_has_analyzed_context(analysis_result::AnalysisResult, uri::URI) =
+    analyzed_file_info(analysis_result, uri) !== nothing
