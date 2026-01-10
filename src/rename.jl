@@ -8,7 +8,9 @@ struct RenameProgressCaller <: RequestCaller
     newName::String
     msg_id::MessageId
     token::ProgressToken
+    cancel_flag::CancelFlag
 end
+cancellable_token(caller::RenameProgressCaller) = caller.token
 
 function rename_options(server::Server)
     return RenameOptions(;
@@ -39,12 +41,10 @@ function handle_PrepareRenameRequest(
     pos = adjust_position(state, uri, msg.params.position)
 
     result = get_file_info(state, uri, cancel_flag)
-    if result isa ResponseError
-        return send(server,
-            PrepareRenameResponse(;
-                id = msg.id,
-                result = nothing,
-                error = result))
+    if isnothing(result)
+        return send(server, PrepareRenameResponse(; id = msg.id, result = null))
+    elseif result isa ResponseError
+        return send(server, PrepareRenameResponse(; id = msg.id, result = nothing, error = result))
     end
     fi = result
 
@@ -122,61 +122,56 @@ function handle_RenameRequest(
     newName = msg.params.newName
 
     result = get_file_info(state, uri, cancel_flag)
-    if result isa ResponseError
-        return send(server,
-            RenameResponse(;
-                id = msg.id,
-                result = nothing,
-                error = result))
+    if isnothing(result)
+        return send(server, RenameResponse(; id = msg.id, result = null))
+    elseif result isa ResponseError
+        return send(server, RenameResponse(; id = msg.id, result = nothing, error = result))
     end
     fi = result
 
     workDoneToken = msg.params.workDoneToken
     if workDoneToken !== nothing
-        do_rename_with_progress(server, uri, fi, pos, newName, msg.id, workDoneToken)
+        do_rename(server, uri, fi, pos, newName, msg.id, cancel_flag; token = workDoneToken)
     elseif supports(server, :window, :workDoneProgress)
         id = String(gensym(:WorkDoneProgressCreateRequest_rename))
         token = String(gensym(:RenameProgress))
-        addrequest!(server, id => RenameProgressCaller(uri, fi, pos, newName, msg.id, token))
+        addrequest!(server, id => RenameProgressCaller(uri, fi, pos, newName, msg.id, token, cancel_flag))
         params = WorkDoneProgressCreateParams(; token)
         send(server, WorkDoneProgressCreateRequest(; id, params))
     else
-        do_rename(server, uri, fi, pos, newName, msg.id)
+        do_rename(server, uri, fi, pos, newName, msg.id, cancel_flag)
     end
 
     return nothing
 end
 
 function handle_rename_progress_response(
-        server::Server, msg::Dict{Symbol,Any}, request_caller::RenameProgressCaller)
+        server::Server, msg::Dict{Symbol,Any}, request_caller::RenameProgressCaller,
+        progress_cancel_flag::CancelFlag)
     if handle_response_error(server, msg, "create work done progress")
         return
     end
-    (; uri, fi, pos, newName, msg_id, token) = request_caller
-    do_rename_with_progress(server, uri, fi, pos, newName, msg_id, token)
-end
-
-function do_rename_with_progress(
-        server::Server, uri::URI, fi::FileInfo, pos::Position,
-        newName::String, msg_id::MessageId, token::ProgressToken)
-    (; result, error) = do_rename(server, uri, fi, pos, newName; token)
-    return send(server, RenameResponse(; id = msg_id, result, error))
+    (; uri, fi, pos, newName, msg_id, token, cancel_flag) = request_caller
+    combined_flag = CombinedCancelFlag(cancel_flag, progress_cancel_flag)
+    do_rename(server, uri, fi, pos, newName, msg_id, combined_flag; token)
 end
 
 function do_rename(
         server::Server, uri::URI, fi::FileInfo, pos::Position,
-        newName::String, msg_id::MessageId)
-    (; result, error) = do_rename(server, uri, fi, pos, newName)
-    return send(server, RenameResponse(; id = msg_id, result, error))
-end
-
-function do_rename(
-        server::Server, uri::URI, fi::FileInfo, pos::Position, newName::String;
+        newName::String, msg_id::MessageId, cancel_flag::AbstractCancelFlag;
         token::Union{Nothing,ProgressToken} = nothing)
+    (; result, error) = rename(server, uri, fi, pos, newName; token, cancel_flag)
+    return send(server, RenameResponse(; id = msg_id, result, error))
+end
+
+function rename(
+        server::Server, uri::URI, fi::FileInfo, pos::Position, newName::String;
+        token::Union{Nothing,ProgressToken} = nothing,
+        cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG)
     (; mod) = get_context_info(server.state, uri, pos)
     return @something(
         local_binding_rename(server, uri, fi, pos, mod, newName),
-        global_binding_rename(server, uri, fi, pos, mod, newName; token),
+        global_binding_rename(server, uri, fi, pos, mod, newName; token, cancel_flag),
         file_rename(server, uri, fi, pos, newName),
         (; result = null, error = nothing))
 end
@@ -232,9 +227,9 @@ end
 
 function global_binding_rename(
         server::Server, uri::URI, fi::FileInfo, pos::Position, mod::Module, newName::String;
-        token::Union{Nothing,ProgressToken} = nothing
+        token::Union{Nothing,ProgressToken} = nothing,
+        cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG
     )
-    state = server.state
     st0_top = build_syntax_tree(fi)
     offset = xy_to_offset(fi, pos)
 
@@ -258,29 +253,70 @@ function global_binding_rename(
     end
 
     uris_to_search = collect_search_uris(server, uri)
-
-    n_files = length(uris_to_search)
-    if token !== nothing && n_files > 1
+    if token !== nothing
         send_progress(server, token,
-            WorkDoneProgressBegin(; title="Renaming symbol", percentage=0))
+            WorkDoneProgressBegin(; title = "Renaming symbol", cancellable = true, percentage = 0))
     end
-
     if supports(server, :workspace, :workspaceEdit, :documentChanges)
         changes = TextDocumentEdit[]
     else
         changes = Dict{URI,Vector{TextEdit}}()
     end
-    seen_ranges = Set{Range}()
-    total_edits = 0
+    local completed = errored = false
+    try
+        completed = collect_global_rename_edits!(
+            changes, server, uri, fi, uris_to_search, binfo, newName, cancel_flag, token)
+    catch err
+        @error "Error in `global_binding_rename`"
+        Base.display_error(stderr, err, catch_backtrace())
+        errored = true
+    finally
+        if token !== nothing
+            send_progress(server, token,
+                WorkDoneProgressEnd(;
+                    message = errored ? "Failed renaming symbol" :
+                        !completed ? "Cancelled renaming symbol" :
+                        "Completed renaming symbol"))
+        end
+    end
+    if errored
+        return (; result = nothing, error = request_failed_error("global_binding_rename failed"))
+    elseif !completed
+        return (; result = nothing, error = request_cancelled_error("global_binding_rename cancelled"))
+    end
+    if changes isa Vector{TextDocumentEdit}
+        result = WorkspaceEdit(; documentChanges = changes)
+    else
+        result = WorkspaceEdit(; changes)
+    end
+    return (; result, error = nothing)
+end
 
+function collect_global_rename_edits!(
+        changes::Union{Vector{TextDocumentEdit},Dict{URI,Vector{TextEdit}}},
+        server::Server, uri::URI, fi::FileInfo, uris_to_search::Set{URI},
+        binfo::JL.BindingInfo, newName::String, cancel_flag::AbstractCancelFlag,
+        token::Union{Nothing,ProgressToken})
+    state = server.state
+    n_files = length(uris_to_search)
+    seen_ranges = Set{Range}()
     for (i, search_uri) in enumerate(uris_to_search)
-        empty!(seen_ranges)
+        if is_cancelled(cancel_flag)
+            return false
+        end
+
+        if token !== nothing
+            percentage = round(Int, 100 * (i - 1) / n_files)
+            message = "Searching $(basename(uri2filename(search_uri))) ($i/$n_files)"
+            send_progress(server, token,
+                WorkDoneProgressReport(; cancellable = true, message, percentage))
+        end
 
         if search_uri == uri
             search_fi = fi
             version = fi.version
         else
-            search_fi = get_file_info(server.state, search_uri)
+            search_fi = get_file_info(state, search_uri)
             if search_fi === nothing
                 search_fi = create_dummy_file_info(search_uri, fi)
                 version = nothing
@@ -288,43 +324,23 @@ function global_binding_rename(
                 version = search_fi.version
             end
         end
-
-        if token !== nothing && n_files > 1
-            percentage = round(Int, 100 * (i - 1) / n_files)
-            message = "Searching $(basename(uri2filename(search_uri))) ($i/$n_files)"
-            send_progress(server, token,
-                WorkDoneProgressReport(; message, percentage))
-        end
-
+        empty!(seen_ranges)
         search_st0_top = build_syntax_tree(search_fi)
         collect_global_rename_ranges_in_file!(
             seen_ranges, state, search_uri, search_fi, search_st0_top, binfo)
 
         if !isempty(seen_ranges)
-            edits = TextEdit[TextEdit(; range, newText=newName) for range in seen_ranges]
-            total_edits += length(edits)
+            edits = TextEdit[TextEdit(; range, newText = newName) for range in seen_ranges]
             if changes isa Vector{TextDocumentEdit}
                 textDocument = OptionalVersionedTextDocumentIdentifier(;
-                    uri=search_uri, version)
+                    uri = search_uri, version)
                 push!(changes, TextDocumentEdit(; textDocument, edits))
             else
                 changes[search_uri] = edits
             end
         end
     end
-
-    if token !== nothing && n_files > 1
-        send_progress(server, token,
-            WorkDoneProgressEnd(; message="Renamed $total_edits occurrences"))
-    end
-
-    if changes isa Vector{TextDocumentEdit}
-        result = WorkspaceEdit(; documentChanges = changes)
-    else
-        result = WorkspaceEdit(; changes)
-    end
-
-    return (; result, error = nothing)
+    return true
 end
 
 function collect_global_rename_ranges_in_file!(

@@ -28,12 +28,10 @@ function handle_InlayHintRequest(
     range = msg.params.range
 
     result = get_file_info(server.state, uri, cancel_flag)
-    if result isa ResponseError
-        return send(server,
-            InlayHintResponse(;
-                id = msg.id,
-                result = nothing,
-                error = result))
+    if isnothing(result)
+        return send(server, InlayHintResponse(; id = msg.id, result = null))
+    elseif result isa ResponseError
+        return send(server, InlayHintResponse(; id = msg.id, result = nothing, error = result))
     end
     fi = result
 

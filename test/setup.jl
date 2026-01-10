@@ -20,7 +20,8 @@ end
 function withserver(f;
                     capabilities::ClientCapabilities=ClientCapabilities(),
                     workspaceFolders::Union{Nothing,Vector{WorkspaceFolder}}=nothing,
-                    rootUri::Union{Nothing,URI}=nothing)
+                    rootUri::Union{Nothing,URI}=nothing,
+                    settings::Union{Nothing,AbstractDict}=nothing)
     in = Base.BufferStream()
     out = Base.BufferStream()
     received_queue = Channel{Any}(Inf)
@@ -182,6 +183,13 @@ function withserver(f;
         (; raw_msg, raw_res) = writereadmsg(InitializedNotification())
         @test raw_msg isa InitializedNotification
         @test raw_res isa RegisterCapabilityRequest && raw_res.id isa String
+
+        # apply initial settings if provided
+        # read=1: ShowMessageNotification for config change
+        if settings !== nothing
+            writereadmsg(DidChangeConfigurationNotification(;
+                params = DidChangeConfigurationParams(; settings)); read=1)
+        end
     end
 
     argnt = (; server, writemsg, readmsg, writereadmsg, id_counter)
