@@ -267,7 +267,7 @@ function start_sequential_message_worker(server::Server)
 end
 
 function start_concurrent_message_worker(server::Server)
-    queue = server.state.message_queue
+    queue = server.message_queue
     Threads.@spawn :default while true
         msg = take!(queue)
         @tryinvokelatest handler_concurrent_message(server, msg)
@@ -330,17 +330,19 @@ function handler_concurrent_message(server::Server, @nospecialize msg)
             # NOTE: The `get!` call to `server.state.currently_handled` MUST happen here
             # to avoid race conditions. Only after getting the flag can we spawn the actual dispatcher.
             token = cancellable_token(request_caller)
-            cancel_flag = isnothing(token) ? DUMMY_CANCEL_FLAG :
-                get!(()->CancelFlag(false), server.state.currently_handled, token)
-            Threads.@spawn :default @tryinvokelatest handle_response_message(server, msg, request_caller, cancel_flag)
+            let cancel_flag = isnothing(token) ? DUMMY_CANCEL_FLAG :
+                    get!(()->CancelFlag(false), server.state.currently_handled, token)
+                Threads.@spawn :default @tryinvokelatest handle_response_message(server, msg, request_caller, cancel_flag)
+            end
         elseif JETLS_DEV_MODE
             # Not a response to our request, or untyped message - log if in dev mode
             _id = get(()->get(msg, :id, nothing), msg, :method)
             @warn "[handler_concurrent_message] Unhandled message" msg _id=_id maxlog=1
         end
     elseif isdefined(msg, :id) && (id = msg.id; id isa String || id isa Int)
-        cancel_flag = get!(()->CancelFlag(false), server.state.currently_handled, id)
-        Threads.@spawn :default @tryinvokelatest handle_request_message(server, msg, cancel_flag)
+        let cancel_flag = get!(()->CancelFlag(false), server.state.currently_handled, id)
+            Threads.@spawn :default @tryinvokelatest handle_request_message(server, msg, cancel_flag)
+        end
     else
         Threads.@spawn :default @tryinvokelatest handle_notification_message(server, msg)
     end

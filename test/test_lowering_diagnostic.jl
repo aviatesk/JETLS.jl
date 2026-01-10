@@ -708,7 +708,7 @@ end
         @test diagnostic.range.var"end".line == 1
         @test length(diagnostic.relatedInformation) == 1
         ri = only(diagnostic.relatedInformation)
-        @test ri.message == "Closure at L3:9 captures `x`"
+        @test ri.message == "Captured by closure"
         @test ri.location.range.start.line == 2
         @test ri.location.range.start.character == length("    f = () -> ") # points to `x`, not `() -> x`
     end

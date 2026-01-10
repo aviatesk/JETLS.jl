@@ -21,7 +21,7 @@ function send(server::Server, @nospecialize msg)
     server.callback !== nothing && server.callback(:sent, msg)
     # Mark request as handled when sending a response
     if isdefined(msg, :id) && isdefined(msg, :result) && isdefined(msg, :error) # i.e. msg isa ResponseMessage
-        put!(server.state.message_queue, HandledToken(msg.id::MessageId))
+        put!(server.message_queue, HandledToken(msg.id::MessageId))
     end
     nothing
 end
@@ -170,7 +170,7 @@ get_file_info(s::ServerState, t::TextDocumentIdentifier) = get_file_info(s, t.ur
 
 """
     get_file_info(
-        s::ServerState, uri::URI, cancel_flag::CancelFlag;
+        s::ServerState, uri::URI, cancel_flag::AbstractCancelFlag;
         timeout = 10., cancelled_error_data = nothing
     ) -> Union{FileInfo,ResponseError,Nothing}
 
@@ -187,7 +187,7 @@ Returns:
 - `nothing`: when timeout is reached (file not synced via `textDocument/didOpen`)
 """
 function get_file_info(
-        s::ServerState, uri::URI, cancel_flag::CancelFlag;
+        s::ServerState, uri::URI, cancel_flag::AbstractCancelFlag;
         timeout::Float64 = 10., cancelled_error_data = nothing
     )
     start = time()
@@ -211,7 +211,7 @@ function get_file_info(
     end
     return nothing
 end
-get_file_info(s::ServerState, t::TextDocumentIdentifier, cancel_flag::CancelFlag; kwargs...) =
+get_file_info(s::ServerState, t::TextDocumentIdentifier, cancel_flag::AbstractCancelFlag; kwargs...) =
     get_file_info(s, t.uri, cancel_flag; kwargs...)
 
 # This `search_uri` may have been analyzed by full-analysis but not yet synced

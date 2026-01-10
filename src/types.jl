@@ -588,7 +588,6 @@ mutable struct ServerState
     const extra_diagnostics::ExtraDiagnostics
     const currently_handled::CurrentlyHandled
     const handled_history::HandledHistory
-    const message_queue::Channel{Any}
     const currently_requested::CurrentlyRequested
     const currently_registered::CurrentlyRegistered
     const config_manager::ConfigManager
@@ -612,7 +611,6 @@ mutable struct ServerState
             #=extra_diagnostics=# ExtraDiagnostics(ExtraDiagnosticsData()),
             #=currently_handled=# CurrentlyHandled(),
             #=handled_history=# HandledHistory(128),
-            #=message_queue=# Channel{Any}(Inf),
             #=currently_requested=# CurrentlyRequested(Base.PersistentDict{String,RequestCaller}()),
             #=currently_registered=# CurrentlyRegistered(Set{Registered}()),
             #=config_manager=# ConfigManager(ConfigManagerData()),
@@ -628,11 +626,13 @@ struct Server{Callback}
     endpoint::Endpoint
     callback::Callback
     state::ServerState
+    message_queue::Channel{Any}
     function Server(callback::Callback, endpoint::Endpoint; suppress_notifications::Bool=false) where Callback
         return new{Callback}(
             endpoint,
             callback,
-            ServerState(; suppress_notifications))
+            ServerState(; suppress_notifications),
+            Channel{Any}(Inf))
     end
 end
 Server(; suppress_notifications::Bool=true) = # used for tests
