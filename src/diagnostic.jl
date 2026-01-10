@@ -740,17 +740,13 @@ function find_capture_sites(
                 hasproperty(node, :lambda_bindings) || return nothing
                 lambda_bindings = node.lambda_bindings::JL.LambdaBindings
                 lambda_bindings.self == lambda.self || return nothing
-                cls = JL.binding_ex(ctx4, lambda.self)
-                clsprov = first(JL.flattened_provenance(cls))
-                clspos = jsobj_to_range(clsprov, fi).start
-                clsloc = "L$(Int(clspos.line+1)):$(Int(clspos.character+1))"
                 # Find references to binfo.id inside this lambda
                 traverse(node) do inner::JL.SyntaxTree
                     if JS.kind(inner) === JS.K"BindingId" && JL._binding_id(inner) == binfo.id
                         varprov = first(JL.flattened_provenance(inner))
                         push!(relatedInformation, DiagnosticRelatedInformation(;
-                            location = Location(; uri, range=jsobj_to_range(varprov, fi)),
-                            message = "Closure at $clsloc captures `$(binfo.name)`"))
+                            location = Location(; uri, range = jsobj_to_range(varprov, fi)),
+                            message = "Captured by closure"))
                     end
                 end
                 return TraversalNoRecurse()
