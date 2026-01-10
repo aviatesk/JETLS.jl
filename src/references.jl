@@ -31,6 +31,7 @@ function handle_ReferencesRequest(
     uri = msg.params.textDocument.uri
     pos = adjust_position(server.state, uri, msg.params.position)
     include_declaration = msg.params.context.includeDeclaration
+    token = msg.params.workDoneToken
 
     result = get_file_info(server.state, uri, cancel_flag)
     if isnothing(result)
@@ -40,9 +41,8 @@ function handle_ReferencesRequest(
     end
     fi = result
 
-    workDoneToken = msg.params.workDoneToken
-    if workDoneToken !== nothing
-        do_find_references(server, uri, fi, pos, include_declaration, msg.id, cancel_flag; token = workDoneToken)
+    if token !== nothing
+        do_find_references(server, uri, fi, pos, msg.id; include_declaration, token, cancel_flag)
     elseif supports(server, :window, :workDoneProgress)
         id = String(gensym(:WorkDoneProgressCreateRequest_references))
         token = String(gensym(:ReferencesProgress))
@@ -50,7 +50,7 @@ function handle_ReferencesRequest(
         params = WorkDoneProgressCreateParams(; token)
         send(server, WorkDoneProgressCreateRequest(; id, params))
     else
-        do_find_references(server, uri, fi, pos, include_declaration, msg.id, cancel_flag)
+        do_find_references(server, uri, fi, pos, msg.id; include_declaration, cancel_flag)
     end
 
     return nothing
@@ -64,14 +64,13 @@ function handle_references_progress_response(
     end
     (; uri, fi, pos, include_declaration, msg_id, token, cancel_flag) = request_caller
     combined_flag = CombinedCancelFlag(cancel_flag, progress_cancel_flag)
-    do_find_references(server, uri, fi, pos, include_declaration, msg_id, combined_flag; token)
+    do_find_references(server, uri, fi, pos, msg_id; include_declaration, token, cancel_flag=combined_flag)
 end
 
 function do_find_references(
-        server::Server, uri::URI, fi::FileInfo, pos::Position,
-        include_declaration::Bool, msg_id::MessageId, cancel_flag::AbstractCancelFlag;
-        token::Union{Nothing,ProgressToken} = nothing)
-    result = find_references(server, uri, fi, pos; token, include_declaration, cancel_flag)
+        server::Server, uri::URI, fi::FileInfo, pos::Position, msg_id::MessageId;
+        kwargs...)
+    result = find_references(server, uri, fi, pos; kwargs...)
     if result isa ResponseError
         return send(server, ReferencesResponse(; id = msg_id, result = nothing, error = result))
     else
@@ -81,9 +80,8 @@ end
 
 function find_references(
         server::Server, uri::URI, fi::FileInfo, pos::Position;
-        token::Union{Nothing,ProgressToken} = nothing,
-        include_declaration::Bool = true,
-        cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG)
+        include_declaration::Bool = true, kwargs...
+    )
     st0_top = build_syntax_tree(fi)
     offset = xy_to_offset(fi, pos)
     (; mod) = get_context_info(server.state, uri, pos)
@@ -95,8 +93,8 @@ function find_references(
 
     binfo = JL.get_binding(ctx3, binding)
     if binfo.kind === :global
-        error = find_global_references!(locations, server, uri, fi, st0_top, binfo, token;
-            include_declaration, cancel_flag)
+        error = find_global_references!(locations, server, uri, fi, st0_top, binfo;
+            include_declaration, kwargs...)
         error !== nothing && return error
     else
         find_local_references!(locations, server, uri, fi, ctx3, st3, binfo; include_declaration)
@@ -107,10 +105,9 @@ end
 
 function find_global_references!(
         locations::Vector{Location}, server::Server,
-        uri::URI, fi::FileInfo, st0_top::JS.SyntaxTree, binfo::JL.BindingInfo,
-        token::Union{Nothing,ProgressToken};
-        include_declaration::Bool = true,
-        cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG
+        uri::URI, fi::FileInfo, st0_top::JS.SyntaxTree, binfo::JL.BindingInfo;
+        token::Union{Nothing,ProgressToken} = nothing,
+        kwargs...
     )
     uris_to_search = collect_search_uris(server, uri)
     if token !== nothing
@@ -121,7 +118,7 @@ function find_global_references!(
     local completed = errored = false
     try
         completed = collect_global_references!(
-            seen_locations, server, uri, fi, uris_to_search, binfo, include_declaration, cancel_flag, token)
+            seen_locations, server, uri, fi, uris_to_search, binfo; token, kwargs...)
     catch err
         @error "Error in `find_global_references!`"
         Base.display_error(stderr, err, catch_backtrace())
@@ -148,9 +145,10 @@ end
 
 function collect_global_references!(
         seen_locations::Set{Tuple{URI,Range}}, server::Server,
-        uri::URI, fi::FileInfo, uris_to_search::Set{URI}, binfo::JL.BindingInfo,
-        include_declaration::Bool, cancel_flag::AbstractCancelFlag,
-        token::Union{Nothing,ProgressToken})
+        uri::URI, fi::FileInfo, uris_to_search::Set{URI}, binfo::JL.BindingInfo;
+        include_declaration::Bool = true,
+        token::Union{Nothing,ProgressToken} = nothing,
+        cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG)
     state = server.state
     n_files = length(uris_to_search)
     for (i, search_uri) in enumerate(uris_to_search)
@@ -185,7 +183,7 @@ end
 function global_find_references_in_file!(
         seen_locations::Set{Tuple{URI,Range}}, state::ServerState, uri::URI, fi::FileInfo,
         st0_top::JS.SyntaxTree, binfo::JL.BindingInfo;
-        include_declaration::Bool=true,
+        include_declaration::Bool = true,
     )
     for occurrence in find_global_binding_occurrences!(state, uri, fi, st0_top, binfo)
         is_def = occurrence.kind === :def
@@ -200,7 +198,7 @@ end
 function find_local_references!(
         locations::Vector{Location}, server::Server, uri::URI, fi::FileInfo,
         ctx3, st3, binfo::JL.BindingInfo;
-        include_declaration::Bool=true,
+        include_declaration::Bool = true,
     )
     ranges = Set{Range}()
     binding_occurrences = compute_binding_occurrences(ctx3, st3)
