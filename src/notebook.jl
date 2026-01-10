@@ -247,12 +247,52 @@ function map_notebook_diagnostics!(uri2diagnostics::URI2Diagnostics, state::Serv
     end
 end
 
-function localize_diagnostic(diag::Diagnostic, cell_range::CellRange)
+function localize_diagnostic(
+        diag::Diagnostic, cell_range::CellRange, concat::ConcatenatedNotebook
+    )
     local_start_line = diag.range.start.line - cell_range.line_offset
     local_end_line = diag.range.var"end".line - cell_range.line_offset
-    return Diagnostic(diag; range = Range(;
+    local_range = Range(;
         start = Position(; line = local_start_line, character = diag.range.start.character),
-        var"end" = Position(; line = local_end_line, character = diag.range.var"end".character)))
+        var"end" = Position(; line = local_end_line, character = diag.range.var"end".character))
+    local_related_information = related_information = diag.relatedInformation
+    if !isnothing(related_information)
+        local_related_information = localize_related_information(related_information, concat)
+    end
+    if !isnothing(local_related_information)
+        return Diagnostic(diag; range = local_range, relatedInformation = local_related_information)
+    else
+        return Diagnostic(diag; range = local_range)
+    end
+end
+
+function localize_related_information(
+        relatedInformation::Vector{DiagnosticRelatedInformation},
+        concat::ConcatenatedNotebook
+    )
+    isempty(relatedInformation) && return relatedInformation
+    result = nothing
+    for (i, info) in enumerate(relatedInformation)
+        info_cell_range = find_cell_range_by_uri(concat, info.location.uri)
+        if info_cell_range !== nothing
+            local_start_line = info.location.range.start.line - info_cell_range.line_offset
+            local_end_line = info.location.range.var"end".line - info_cell_range.line_offset
+            local_range = Range(;
+                start = Position(;
+                    line = local_start_line,
+                    character = info.location.range.start.character),
+                var"end" = Position(;
+                    line = local_end_line,
+                    character = info.location.range.var"end".character))
+            if isnothing(result)
+                result = copy(relatedInformation)
+            end
+            result[i] = DiagnosticRelatedInformation(;
+                location = Location(; uri = info.location.uri, range = local_range),
+                message = info.message)
+        end
+    end
+    return result
 end
 
 function map_notebook_diagnostics_for_uri(
@@ -261,9 +301,10 @@ function map_notebook_diagnostics_for_uri(
     cell_diagnostics = Dict{URI,Vector{Diagnostic}}()
     notebook_info = @something get_notebook_info(state, notebook_uri) return cell_diagnostics
     isempty(notebook_info.concat.cell_ranges) && return cell_diagnostics
+    concat = notebook_info.concat
     for diag in uri2diagnostics[notebook_uri]
-        cell_range = @something find_cell_for_line(notebook_info.concat, diag.range.start.line) continue
-        cell_diag = localize_diagnostic(diag, cell_range)
+        cell_range = @something find_cell_for_line(concat, diag.range.start.line) continue
+        cell_diag = localize_diagnostic(diag, cell_range, concat)
         push!(get!(Vector{Diagnostic}, cell_diagnostics, cell_range.cell_uri), cell_diag)
     end
     return cell_diagnostics
@@ -273,12 +314,13 @@ function map_cell_diagnostics(
         state::ServerState, notebook_uri::URI, cell_uri::URI, diagnostics::Vector{Diagnostic}
     )
     notebook_info = @something get_notebook_info(state, notebook_uri) return Diagnostic[]
-    cell_range = @something find_cell_range_by_uri(notebook_info.concat, cell_uri) return Diagnostic[]
+    concat = notebook_info.concat
+    cell_range = @something find_cell_range_by_uri(concat, cell_uri) return Diagnostic[]
     result = Diagnostic[]
     for diag in diagnostics
-        found_range = @something find_cell_for_line(notebook_info.concat, diag.range.start.line) continue
+        found_range = @something find_cell_for_line(concat, diag.range.start.line) continue
         found_range.cell_uri == cell_uri || continue
-        cell_diag = localize_diagnostic(diag, cell_range)
+        cell_diag = localize_diagnostic(diag, cell_range, concat)
         push!(result, cell_diag)
     end
     return result

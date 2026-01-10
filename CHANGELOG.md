@@ -50,6 +50,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed cancellation not working properly for formatting requests
   (Fixed https://github.com/aviatesk/JETLS.jl/issues/465)
 
+- Fixed diagnostic `relatedInformation` range not being localized for notebook cells
+
 ## 2026-01-10
 
 - Commit: [`8b3c9db`](https://github.com/aviatesk/JETLS.jl/commit/8b3c9db)
