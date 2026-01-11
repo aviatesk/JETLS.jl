@@ -20,7 +20,7 @@ state of client implementations
   <source src="https://github.com/user-attachments/assets/b5bb5201-d735-4a37-b430-932b519254ee" type="video/mp4">
 </video>
 <video class="display-dark-only" style="width:100%;height:min(500px,70vh);aspect-ratio:16/9" controls>
-  <source src="https://github.com/user-attachments/assets/f7476257-7a53-44a1-8c8-1ad57e136a63" type="video/mp4">
+  <source src="https://github.com/user-attachments/assets/f7476257-7a53-44a1-8c8c-1ad57e136a63" type="video/mp4">
 </video>
 </center>
 ```
