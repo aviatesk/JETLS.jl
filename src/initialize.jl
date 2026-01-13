@@ -205,6 +205,15 @@ function handle_InitializeRequest(
         end
     end
 
+    if supports(server, :workspace, :symbol, :dynamicRegistration)
+        workspaceSymbolProvider = nothing # will be registered dynamically
+    else
+        workspaceSymbolProvider = workspace_symbol_options(server)
+        if JETLS_DEV_MODE
+            @info "Registering 'workspace/symbol' with `InitializeResponse`"
+        end
+    end
+
     positionEncodings = getcapability(state, :general, :positionEncodings)
     if isnothing(positionEncodings) || isempty(positionEncodings)
         positionEncoding = PositionEncodingKind.UTF16
@@ -246,6 +255,7 @@ function handle_InitializeRequest(
             executeCommandProvider,
             inlayHintProvider,
             renameProvider,
+            workspaceSymbolProvider,
         ),
         serverInfo = (;
             name = "JETLS",
@@ -462,6 +472,13 @@ function handle_InitializedNotification(server::Server)
     #     if JETLS_DEV_MODE
     #         @info "Statically registering 'textDocument/inlayHint' upon `InitializedNotification`"
     #     end
+    end
+
+    if supports(server, :workspace, :symbol, :dynamicRegistration)
+        push!(registrations, workspace_symbol_registration(server))
+        if JETLS_DEV_MODE
+            @info "Dynamically registering 'workspace/symbol' upon `InitializedNotification`"
+        end
     end
 
     if supports(server, :workspace, :didChangeWatchedFiles, :dynamicRegistration)

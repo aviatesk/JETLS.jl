@@ -104,7 +104,7 @@ the list itself is subject to change.
   - [x] File rename support (Julia-side rename)
   - [ ] File rename support (external rename)
 - [x] Document symbol
-- [ ] Workspace symbol
+- [x] Workspace symbol
 - TestRunner.jl integration
   - [x] Code lens for running individual `@testset`s
   - [x] Code actions for running individual `@testset`s
