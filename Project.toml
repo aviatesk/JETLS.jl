@@ -25,8 +25,8 @@ TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 
 [sources]
 JET = {rev = "8fe5f1b", url = "https://github.com/aviatesk/JET.jl"}
-JuliaLowering = {rev = "avi/JETLS-JSJL-head-2026-01-12", subdir = "JuliaLowering", url = "https://github.com/JuliaLang/julia"}
-JuliaSyntax = {rev = "avi/JETLS-JSJL-head-2026-01-12", subdir = "JuliaSyntax", url = "https://github.com/JuliaLang/julia"}
+JuliaLowering = {rev = "avi/JETLS-JSJL-head-2026-01-13", subdir = "JuliaLowering", url = "https://github.com/JuliaLang/julia"}
+JuliaSyntax = {rev = "avi/JETLS-JSJL-head-2026-01-13", subdir = "JuliaSyntax", url = "https://github.com/JuliaLang/julia"}
 LSP = {path = "LSP"}
 
 [compat]
