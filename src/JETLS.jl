@@ -99,6 +99,8 @@ include("definition.jl")
 include("references.jl")
 include("hover.jl")
 include("document-highlight.jl")
+include("document-symbol.jl")
+include("workspace-symbol.jl")
 include("code-action.jl")
 include("code-lens.jl")
 include("formatting.jl")
@@ -382,6 +384,8 @@ function handle_response_message(
         handle_references_progress_response(server, msg, request_caller, cancel_flag)
     elseif request_caller isa RenameProgressCaller
         handle_rename_progress_response(server, msg, request_caller, cancel_flag)
+    elseif request_caller isa WorkspaceSymbolProgressCaller
+        handle_workspace_symbol_progress_response(server, msg, request_caller, cancel_flag)
     elseif request_caller isa ProfileProgressCaller
         handle_profile_progress_response(server, msg, request_caller)
     elseif request_caller isa WorkspaceConfigurationCaller
@@ -415,6 +419,10 @@ function handle_request_message(server::Server, @nospecialize(msg), cancel_flag:
         handle_HoverRequest(server, msg, cancel_flag)
     elseif msg isa DocumentHighlightRequest
         handle_DocumentHighlightRequest(server, msg, cancel_flag)
+    elseif msg isa DocumentSymbolRequest
+        handle_DocumentSymbolRequest(server, msg, cancel_flag)
+    elseif msg isa WorkspaceSymbolRequest
+        handle_WorkspaceSymbolRequest(server, msg, cancel_flag)
     elseif msg isa DocumentDiagnosticRequest
         handle_DocumentDiagnosticRequest(server, msg, cancel_flag)
     elseif msg isa WorkspaceDiagnosticRequest
@@ -423,8 +431,6 @@ function handle_request_message(server::Server, @nospecialize(msg), cancel_flag:
         handle_CodeLensRequest(server, msg, cancel_flag)
     elseif msg isa CodeActionRequest
         handle_CodeActionRequest(server, msg, cancel_flag)
-    elseif msg isa ExecuteCommandRequest
-        handle_ExecuteCommandRequest(server, msg)
     elseif msg isa InlayHintRequest
         handle_InlayHintRequest(server, msg, cancel_flag)
     elseif msg isa DocumentFormattingRequest
@@ -435,6 +441,8 @@ function handle_request_message(server::Server, @nospecialize(msg), cancel_flag:
         handle_RenameRequest(server, msg, cancel_flag)
     elseif msg isa PrepareRenameRequest
         handle_PrepareRenameRequest(server, msg, cancel_flag)
+    elseif msg isa ExecuteCommandRequest
+        handle_ExecuteCommandRequest(server, msg)
     elseif JETLS_DEV_MODE
         if isdefined(msg, :method)
             _id = getfield(msg, :method)

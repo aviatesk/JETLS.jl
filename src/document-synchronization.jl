@@ -30,6 +30,8 @@ function cache_file_info!(
         Base.PersistentDict(cache, uri => fi), nothing
     end
 
+    invalidate_document_symbol_cache!(state, uri)
+
     if !state.suppress_notifications && any_deleted
         notify_diagnostics!(server; ensure_cleared=uri)
     end

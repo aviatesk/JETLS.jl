@@ -28,6 +28,8 @@ end
     @testset "signature help" include("test_signature_help.jl")
     @testset "definition" include("test_definition.jl")
     @testset "document highlight" include("test_document_highlight.jl")
+    @testset "document symbol" include("test_document_symbol.jl")
+    @testset "workspace symbol" include("test_workspace_symbol.jl")
     @testset "references" include("test_references.jl")
     @testset "hover" include("test_hover.jl")
     @testset "inlay hint" include("test_inlay_hint.jl")
