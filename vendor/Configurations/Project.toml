@@ -15,11 +15,7 @@ OrderedCollections = "1.3"
 TOML = "1"
 
 [sources.ExproniconLite]
-subdir = "vendor/ExproniconLite"
-rev = "166d00e5db0a3dd00d471ed35702549eaac3e65c"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../ExproniconLite"
 
 [sources.OrderedCollections]
-subdir = "vendor/OrderedCollections"
-rev = "166d00e5db0a3dd00d471ed35702549eaac3e65c"
-url = "https://github.com/aviatesk/JETLS.jl"
+path = "../OrderedCollections"
