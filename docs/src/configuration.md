@@ -6,11 +6,11 @@ This documentation uses TOML format to describe the configuration schema.
 ## [Configuration schema](@id config/schema)
 
 ```toml
+formatter = "Runic"                # String preset: "Runic" (default) or "JuliaFormatter"
+
 [full_analysis]
 debounce = 1.0                     # number (seconds), default: 1.0
 auto_instantiate = true            # boolean, default: true
-
-formatter = "Runic"                # String preset: "Runic" (default) or "JuliaFormatter"
 
 [formatter.custom]                 # Or custom formatter configuration
 executable = ""                    # string (path), optional

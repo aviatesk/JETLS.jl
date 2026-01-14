@@ -563,6 +563,7 @@ const FileCache = SWContainer{Base.PersistentDict{URI,FileInfo}, SWStats}
 const SavedFileCache = SWContainer{Base.PersistentDict{URI,SavedFileInfo}, SWStats}
 const NotebookCache = SWContainer{Base.PersistentDict{URI,NotebookInfo}, SWStats}
 const CellToNotebookMap = SWContainer{Base.PersistentDict{URI,URI}, SWStats} # cell URI -> notebook URI
+const DocumentSymbolCache = SWContainer{Base.PersistentDict{URI,Vector{DocumentSymbol}}, SWStats}
 
 # Type aliases for concurrent updates using CASContainer (lightweight operations)
 const ExtraDiagnostics = CASContainer{ExtraDiagnosticsData, CASStats}
@@ -584,6 +585,7 @@ mutable struct ServerState
     const saved_file_cache::SavedFileCache # syntactic analysis cache (synced with `textDocument/didSave`)
     const notebook_cache::NotebookCache # notebook document cache (synced with `notebookDocument/did*`), mapping notebook URIs to their notebook info
     const cell_to_notebook::CellToNotebookMap # maps cell URIs to their notebook URI
+    const document_symbol_cache::DocumentSymbolCache # cached document symbols per URI
     const analysis_manager::AnalysisManager
     const extra_diagnostics::ExtraDiagnostics
     const currently_handled::CurrentlyHandled
@@ -607,6 +609,7 @@ mutable struct ServerState
             #=saved_file_cache=# SavedFileCache(Base.PersistentDict{URI,SavedFileInfo}()),
             #=notebook_cache=# NotebookCache(Base.PersistentDict{URI,NotebookInfo}()),
             #=cell_to_notebook=# CellToNotebookMap(Base.PersistentDict{URI,URI}()),
+            #=document_symbol_cache=# DocumentSymbolCache(Base.PersistentDict{URI,Vector{DocumentSymbol}}()),
             #=analysis_manager=# AnalysisManager(),
             #=extra_diagnostics=# ExtraDiagnostics(ExtraDiagnosticsData()),
             #=currently_handled=# CurrentlyHandled(),

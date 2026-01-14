@@ -19,7 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`8b3c9db...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/8b3c9db...HEAD)
+- Diff: [`54b3058...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/54b3058...HEAD)
 
 ### Announcement
 
@@ -44,6 +44,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > might work, but most LSP features will be unfunctional.
 > Note that `analysis_overrides` is provided as a temporary workaround and may
 > be removed or changed at any time. A proper fix is being worked on.
+
+### Added
+
+- Implemented `textDocument/documentSymbol` for structured outline view in editors.
+  Provides hierarchical symbol information including modules, functions, structs,
+  and local variables with rich detail context.
+
+  <img alt="textDocument/documentSymbol" src="https://github.com/user-attachments/assets/80b9d743-9a81-46e6-bb2b-692d8b6598b4" />
+
+- Implemented `workspace/symbol` for workspace-wide symbol search, allowing
+  quickly jumping to any function, type, or variable across the workspace.
+  Results include rich context like function signatures for easier identification.
+
+  <img alt="workspace/symbol" src="https://github.com/user-attachments/assets/7ed8b366-d72f-49ff-9dbd-5a18ef66c2b7" />
+
+### Changed
+
+- Updated JuliaSyntax.jl and JuliaLowering.jl dependency versions to latest.
+
+## 2026-01-11
+
+- Commit: [`54b3058`](https://github.com/aviatesk/JETLS.jl/commit/54b3058)
+- Diff: [`8b3c9db...54b3058`](https://github.com/aviatesk/JETLS.jl/compare/8b3c9db...54b3058)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-01-11")'
+  ```
 
 ### Fixed
 
