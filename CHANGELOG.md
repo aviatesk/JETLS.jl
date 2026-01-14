@@ -45,6 +45,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > Note that `analysis_overrides` is provided as a temporary workaround and may
 > be removed or changed at any time. A proper fix is being worked on.
 
+### Added
+
+- Implemented `textDocument/documentSymbol` for structured outline view in editors.
+  Provides hierarchical symbol information including modules, functions, structs,
+  and local variables with rich detail context.
+
+  <img alt="textDocument/documentSymbol" src="https://github.com/user-attachments/assets/80b9d743-9a81-46e6-bb2b-692d8b6598b4" />
+
 ### Changed
 
 - Updated JuliaSyntax.jl and JuliaLowering.jl dependency versions to latest.
