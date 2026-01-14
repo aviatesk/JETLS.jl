@@ -53,6 +53,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
   <img alt="textDocument/documentSymbol" src="https://github.com/user-attachments/assets/80b9d743-9a81-46e6-bb2b-692d8b6598b4" />
 
+- Implemented `workspace/symbol` for workspace-wide symbol search, allowing
+  quickly jumping to any function, type, or variable across the workspace.
+  Results include rich context like function signatures for easier identification.
+
+  <img alt="workspace/symbol" src="https://github.com/user-attachments/assets/7ed8b366-d72f-49ff-9dbd-5a18ef66c2b7" />
+
 ### Changed
 
 - Updated JuliaSyntax.jl and JuliaLowering.jl dependency versions to latest.
