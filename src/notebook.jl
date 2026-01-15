@@ -363,6 +363,14 @@ function global_to_cell_position(concat::ConcatenatedNotebook, notebook_pos::Pos
     return Position(; line, character), cell_range.cell_uri
 end
 
+function global_to_cell_range(concat::ConcatenatedNotebook, range::Range)
+    start_result = @something global_to_cell_position(concat, range.start) return nothing
+    start_pos, cell_uri = start_result
+    end_result = @something global_to_cell_position(concat, range.var"end") return nothing
+    end_pos, _ = end_result
+    return cell_uri, Range(; start = start_pos, var"end" = end_pos)
+end
+
 """
     adjust_position(state::ServerState, uri::URI, pos::Position)
 
