@@ -21,6 +21,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 - Diff: [`4cf9994...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/4cf9994...HEAD)
 
+### Changed
+
+- Improved `workspace/symbol` performance by enabling document symbol caching for
+  files not currently open in the editor. Previously, only synced files (opened
+  in editor) used the cache, causing repeated parsing for every workspace symbol
+  search. The cache is now invalidated via `workspace/didChangeWatchedFiles`
+  when unsynced files change on disk.
+
 ### Announcement
 
 > [!warning]
