@@ -127,7 +127,8 @@ vim.lsp.config("jetls", {
         "--threads=auto",
         "--",
     },
-    filetypes = {"julia"}
+    filetypes = {"julia"},
+    root_markers = { "Project.toml", ".git" },
 })
 vim.lsp.enable("jetls")
 ```
