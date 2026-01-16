@@ -164,7 +164,6 @@ function print_summary(summary::Dict{String,TypeSummary}; top_n::Int=50)
     end
 
     println("-" ^ wide)
-    println()
 end
 
 function find_nodes_by_type(snapshot::HeapSnapshot, typename::AbstractString)::Vector{Int}
