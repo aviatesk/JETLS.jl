@@ -590,7 +590,7 @@ function analyze_unused_bindings!(
     for (binfo, occurrences) in binding_occurrences
         bk = binfo.kind
         bk === :global && continue
-        if any(occurrence::BindingOccurence->occurrence.kind===:use, occurrences)
+        if any(occurrence::BindingOccurrence->occurrence.kind===:use, occurrences)
             continue
         end
         bn = binfo.name

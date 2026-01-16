@@ -132,9 +132,9 @@ end
 
 function collect_symbols_from_file!(
         symbols::Vector{WorkspaceSymbol}, state::ServerState, uri::URI)
-    fi = @something get_file_info(state, uri) create_dummy_file_info_for_workspace(state, uri) return
+    fi = @something get_file_info(state, uri) create_dummy_file_info(uri, state) return
     doc_symbols = get_document_symbols!(state, uri, fi)
-    flatten_document_symbols!(symbols, doc_symbols, uri)
+    flatten_document_symbols!(symbols, doc_symbols, state, uri)
 end
 
 function collect_workspace_uris(server::Server)
@@ -156,31 +156,36 @@ function collect_workspace_uris(server::Server)
     return uris
 end
 
-function create_dummy_file_info_for_workspace(state::ServerState, uri::URI)
-    filename = @something uri2filepath(uri) return nothing
-    isfile(filename) || return nothing
-    text = try
-        read(filename, String)
-    catch
-        return nothing
-    end
-    return FileInfo(0, text, filename, state.encoding)
+function flatten_document_symbols!(
+        workspace_symbols::Vector{WorkspaceSymbol}, doc_symbols::Vector{DocumentSymbol},
+        state::ServerState, uri::URI
+    )
+    notebook_info = get_notebook_info(state, uri)
+    flatten_document_symbols!(workspace_symbols, doc_symbols, uri, notebook_info)
 end
 
 function flatten_document_symbols!(
-        workspace_symbols::Vector{WorkspaceSymbol},
-        doc_symbols::Vector{DocumentSymbol},
-        uri::URI
+        workspace_symbols::Vector{WorkspaceSymbol}, doc_symbols::Vector{DocumentSymbol},
+        uri::URI, notebook_info::Union{Nothing,NotebookInfo}
     )
     for doc_sym in doc_symbols
+        location = if notebook_info !== nothing
+            result = global_to_cell_range(notebook_info.concat, doc_sym.range)
+            result === nothing ? nothing : Location(; uri = result[1], range = result[2])
+        else
+            nothing
+        end
+        if location === nothing
+            location = Location(; uri, range = doc_sym.range)
+        end
         push!(workspace_symbols, WorkspaceSymbol(;
             name = doc_sym.name,
             kind = doc_sym.kind,
-            location = Location(; uri, range = doc_sym.range),
+            location,
             containerName = doc_sym.detail))
         children = doc_sym.children
         if children !== nothing
-            flatten_document_symbols!(workspace_symbols, children, uri)
+            flatten_document_symbols!(workspace_symbols, children, uri, notebook_info)
         end
     end
 end

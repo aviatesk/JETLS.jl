@@ -153,8 +153,7 @@ function cursor_bindings(st0_top::JS.SyntaxTree, offset::Int, mod::Module)
 end
 
 function find_target_binding(ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTree, offset::Int)
-    target_binding = nothing
-    traverse(st3) do st::JS.SyntaxTree
+    return traverse(st3) do st::JS.SyntaxTree
         k = JS.kind(st)
         if k === JS.K"lambda" && is_kwcall_lambda(ctx3, st)
             # Don't select a binding with `kwcall` definition.
@@ -167,9 +166,8 @@ function find_target_binding(ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTre
         if binfo.is_internal || startswith(binfo.name, "#")
             return nothing
         end
-        target_binding = st
+        return TraversalReturn(st)
     end
-    return target_binding
 end
 
 __select_target_binding(ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTree, offset::Int) =
@@ -273,21 +271,16 @@ function _lookup_binding_definitions!(sl::JS.SyntaxList, st3::JS.SyntaxTree, bin
     return reverse!(deduplicate_syntaxlist(sl))
 end
 
-struct BindingOccurence{Tree3<:JS.SyntaxTree}
-    tree::Tree3
-    kind::Symbol
-end
-
 """
     compute_binding_occurrences(
             ctx3::JL.VariableAnalysisContext, st3::Tree3;
             ismacro::Union{Nothing,Base.RefValue{Bool}} = nothing
         ) where Tree3<:JS.SyntaxTree
-        -> binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurence{Tree3}}}
+        -> binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence{Tree3}}}
 
 Analyze a lowered syntax tree to find all occurrences of local and argument bindings.
 
-This function traverses the syntax tree `st3` and records `occurrence::BindingOccurence`s
+This function traverses the syntax tree `st3` and records `occurrence::BindingOccurrence`s
 for each local and argument binding within `st3`, where `occurrence` have the following
 information:
 - `occurrence.tree::JS.SyntaxTree`: Syntax tree for this occurrence of the binding
@@ -303,7 +296,7 @@ information:
 
 # Returns
 `binding_occurrences` is a dictionary mapping each non-internal local/argument binding to
-a set of `BindingOccurence` objects that record where and how the binding appears.
+a set of `BindingOccurrence` objects that record where and how the binding appears.
 
 !!! note "Comparison with `select_target_binding_definitions`"
     While [`select_target_binding_definitions`](@ref) traces definitions from a specific use
@@ -317,7 +310,7 @@ function compute_binding_occurrences(
         ismacro::Union{Nothing,Base.RefValue{Bool}} = nothing,
         include_global_bindings::Bool = false
     ) where Tree3<:JS.SyntaxTree
-    occurrences = Dict{JL.BindingInfo,Set{BindingOccurence{Tree3}}}()
+    occurrences = Dict{JL.BindingInfo,Set{BindingOccurrence{Tree3}}}()
 
     same_arg_bindings = Dict{Symbol,Vector{Int}}() # group together argument bindings with the same name
     same_location_bindings = Dict{Tuple{Symbol,Int,Int},Vector{Int}}() # group together local bindings with the same location and name
@@ -334,7 +327,7 @@ function compute_binding_occurrences(
         else
             error(lazy"Unknown binding kind: $(binfo.kind)")
         end
-        occurrences[binfo] = Set{BindingOccurence{Tree3}}()
+        occurrences[binfo] = Set{BindingOccurrence{Tree3}}()
     end
 
     isempty(occurrences) && return occurrences
@@ -378,7 +371,7 @@ function compute_binding_occurrences(
     return occurrences
 end
 
-function record_occurrence!(occurrences::Dict{JL.BindingInfo,Set{BindingOccurence{Tree3}}},
+function record_occurrence!(occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence{Tree3}}},
         kind::Symbol, st::Tree3, ctx3::JL.VariableAnalysisContext;
         skip_recording::Union{Nothing,Set{JL.BindingInfo}} = nothing
     ) where Tree3<:JS.SyntaxTree
@@ -389,12 +382,12 @@ function record_occurrence!(occurrences::Dict{JL.BindingInfo,Set{BindingOccurenc
     return occurrences
 end
 
-function record_occurrence!(occurrences::Dict{JL.BindingInfo,Set{BindingOccurence{Tree3}}},
+function record_occurrence!(occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence{Tree3}}},
         kind::Symbol, st::Tree3, binfo::JL.BindingInfo;
         skip_recording::Union{Nothing,Set{JL.BindingInfo}} = nothing
     ) where Tree3<:JS.SyntaxTree
     if haskey(occurrences, binfo) && (binfo ∉ @something skip_recording ())
-        push!(occurrences[binfo], BindingOccurence(st, kind))
+        push!(occurrences[binfo], BindingOccurrence(st, kind))
     end
     return occurrences
 end
@@ -423,7 +416,7 @@ is_selffunc(b::JL.BindingInfo) = b.name == "#self#"
 is_kwsorter_func(b::JL.BindingInfo) = startswith(b.name, '#') && endswith(b.name, r"#\d+$")
 
 function compute_binding_occurrences!(
-        occurrences::Dict{JL.BindingInfo,Set{BindingOccurence{Tree3}}},
+        occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence{Tree3}}},
         ctx3::JL.VariableAnalysisContext, st3::Tree3;
         ismacro::Union{Nothing,Base.RefValue{Bool}} = nothing,
         skip_recording_uses::Union{Nothing,Set{JL.BindingInfo}} = nothing
@@ -559,18 +552,11 @@ end
 function find_global_binding_occurrences!(
         state::ServerState, uri::URI, fi::FileInfo, st0_top::JS.SyntaxTree,
         binfo::JL.BindingInfo;
-        lookup_func = gen_lookup_out_of_scope!(state, uri)
+        kwargs...
     )
-    ret = Set{BindingOccurence}()
+    ret = Set{CachedBindingOccurrence}()
     iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
-        (; mod) = get_context_info(state, uri, offset_to_xy(fi, JS.first_byte(st0)); lookup_func)
-        (; ctx3, st3) = try
-            # Remove macros to preserve precise source locations
-            jl_lower_for_scope_resolution(mod, remove_macrocalls(st0))
-        catch
-            return
-        end
-        binding_occurrences = compute_binding_occurrences(ctx3, st3; include_global_bindings=true)
+        binding_occurrences = @something get_binding_occurrences!(state, uri, fi, st0; kwargs...) return
         for (binfo′, occurrences) in binding_occurrences
             if binfo′.mod === binfo.mod && binfo′.name == binfo.name
                 for occurrence in occurrences
@@ -580,4 +566,56 @@ function find_global_binding_occurrences!(
         end
     end
     return ret
+end
+
+function get_binding_occurrences!(
+        state::ServerState, uri::URI, fi::FileInfo, st0::JS.SyntaxTree; kwargs...
+    )
+    range_key = JS.byte_range(st0)
+    return store!(state.binding_occurrences_cache) do cache::BindingOccurrencesCacheData
+        file_cache = get(cache, uri, nothing)
+        if file_cache !== nothing && haskey(file_cache, range_key)
+            return cache, file_cache[range_key]
+        end
+        result = @something _compute_binding_occurrences(state, uri, fi, st0; kwargs...) begin
+            return cache, nothing
+        end
+        cache_result = BindingOccurrencesResult()
+        for (binfo, occurrences) in result
+            cache_result[BindingInfoKey(binfo)] = Set{CachedBindingOccurrence}(
+                CachedBindingOccurrence(occurrence) for occurrence in occurrences)
+        end
+        if file_cache === nothing
+            file_cache = BindingOccurrencesCacheEntry(range_key => cache_result)
+        else
+            file_cache = BindingOccurrencesCacheEntry(file_cache, range_key => cache_result)
+        end
+        return BindingOccurrencesCacheData(cache, uri => file_cache), cache_result
+    end
+end
+
+function _compute_binding_occurrences(
+        state::ServerState, uri::URI, fi::FileInfo, st0::JS.SyntaxTree;
+        lookup_func = gen_lookup_out_of_scope!(state, uri)
+    )
+    (; mod) = get_context_info(state, uri, offset_to_xy(fi, JS.first_byte(st0)); lookup_func)
+    (; ctx3, st3) = try
+        # Remove macros to preserve precise source locations.
+        # TODO: This won't be necessary once JuliaLowering can preserve precise
+        # source locations for old macro-expanded code.
+        jl_lower_for_scope_resolution(mod, remove_macrocalls(st0))
+    catch
+        return nothing
+    end
+    return compute_binding_occurrences(ctx3, st3; include_global_bindings=true)
+end
+
+function invalidate_binding_occurrences_cache!(state::ServerState, uri::URI)
+    store!(state.binding_occurrences_cache) do cache::BindingOccurrencesCacheData
+        if haskey(cache, uri)
+            Base.delete(cache, uri), nothing
+        else
+            cache, nothing
+        end
+    end
 end

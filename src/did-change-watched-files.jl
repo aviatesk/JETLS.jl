@@ -23,6 +23,11 @@ function did_change_watched_files_registration(server::Server)
                         baseUri = root_uri,
                         pattern = PROFILE_TRIGGER_FILE),
                     kind = WatchKind.Create),
+                FileSystemWatcher(;
+                    globPattern = RelativePattern(;
+                        baseUri = root_uri,
+                        pattern = "**/*.jl"),
+                    kind = WatchKind.Create | WatchKind.Change | WatchKind.Delete),
             ]))
 end
 
@@ -110,13 +115,28 @@ end
 
 is_profile_trigger_file(path::AbstractString) = endswith(path, PROFILE_TRIGGER_FILE)
 
+is_jl_file(path::AbstractString) = endswith(path, ".jl")
+
 function handle_DidChangeWatchedFilesNotification(server::Server, msg::DidChangeWatchedFilesNotification)
+    state = server.state
     for change in msg.params.changes
         changed_path = @something uri2filepath(change.uri) continue
         if is_config_file(changed_path)
             handle_config_file_change!(server, changed_path, change.type)
         elseif is_profile_trigger_file(changed_path) && change.type == FileChangeType.Created
             trigger_profile!(server, changed_path)
+        elseif is_jl_file(changed_path)
+            handle_jl_file_change!(state, change.uri)
         end
     end
+end
+
+function handle_jl_file_change!(state::ServerState, uri::URI)
+    if haskey(load(state.file_cache), uri)
+        # File is synced (opened in editor) - cache invalidation is handled by
+        # `textDocument/didChange`, so we don't need to do anything here
+        return
+    end
+    invalidate_document_symbol_cache!(state, uri)
+    invalidate_binding_occurrences_cache!(state, uri)
 end

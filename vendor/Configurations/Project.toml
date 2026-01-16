@@ -16,10 +16,10 @@ TOML = "1"
 
 [sources.ExproniconLite]
 subdir = "vendor/ExproniconLite"
-rev = "e6d2340490068212f06e9505f7f6b5eb923b4d85"
+rev = "4cd696e4bd748bdc9572ca7377b043418ce51ce8"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.OrderedCollections]
 subdir = "vendor/OrderedCollections"
-rev = "e6d2340490068212f06e9505f7f6b5eb923b4d85"
+rev = "4cd696e4bd748bdc9572ca7377b043418ce51ce8"
 url = "https://github.com/aviatesk/JETLS.jl"

@@ -11,7 +11,7 @@ function get_workspace_symbols(code::AbstractString)
     workspace_symbols = WorkspaceSymbol[]
     doc_symbols = JETLS.extract_document_symbols(st0, fi)
     uri = URI("file:///$(@__FILE__)")
-    JETLS.flatten_document_symbols!(workspace_symbols, doc_symbols, uri)
+    JETLS.flatten_document_symbols!(workspace_symbols, doc_symbols, uri, nothing)
     return workspace_symbols
 end
 

@@ -149,7 +149,6 @@ function print_summary(summary::Dict{String,TypeSummary}; top_n::Int=50)
     println("=" ^ wide)
     println("HEAP SNAPSHOT SUMMARY")
     println("=" ^ wide)
-    println()
     @printf("Total objects: %d\n", total_count)
     @printf("Total shallow size: %s\n", format_size(total_size))
     println()
@@ -165,7 +164,6 @@ function print_summary(summary::Dict{String,TypeSummary}; top_n::Int=50)
     end
 
     println("-" ^ wide)
-    println()
 end
 
 function find_nodes_by_type(snapshot::HeapSnapshot, typename::AbstractString)::Vector{Int}

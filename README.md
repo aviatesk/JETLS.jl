@@ -74,7 +74,7 @@ the list itself is subject to change.
   - [/] Argument type based matched method filtering
 - Definition
   - [x] Method defintion
-  - [ ] Global binding definition
+  - [x] Global binding definition
   - [x] Local binding definition
   - [ ] Type-aware method definition
 - Hover

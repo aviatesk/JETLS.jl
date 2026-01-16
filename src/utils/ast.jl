@@ -129,14 +129,23 @@ function traverse(@specialize(callback), st::JS.SyntaxTree)
     push!(stack, st)
     _traverse!(callback, stack)
 end
-traverse(@specialize(callback), sn::JS.SyntaxNode) = _traverse!(callback, JS.SyntaxNode[sn])
 
+struct TraversalReturn{T}
+    val::T
+    terminate::Bool
+    TraversalReturn(val::T; terminate::Bool=false) where T = new{T}(val, terminate)
+end
 struct TraversalTerminator end
 struct TraversalNoRecurse end
-function _traverse!(@specialize(callback), stack)
+function _traverse!(@specialize(callback), stack::JS.SyntaxList)
+    local retval = nothing
     while !isempty(stack)
         x = pop!(stack)
         ret = callback(x)
+        if ret isa TraversalReturn
+            retval = ret.val
+            ret.terminate ? break : continue
+        end
         ret === TraversalTerminator() && break
         ret === TraversalNoRecurse() && continue
         if JS.numchildren(x) === 0
@@ -146,6 +155,7 @@ function _traverse!(@specialize(callback), stack)
             push!(stack, x[i])
         end
     end
+    return retval
 end
 
 """
