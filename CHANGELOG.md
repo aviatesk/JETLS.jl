@@ -56,6 +56,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   the container name for arguments or fields respectively, making it clearer
   which function or struct they belong to during workspace symbol search.
 
+- `workspace/configuration` requests now expect all settings to be found under
+  the top-level `"jetls"` key, such that a request with `section = "jetls"`
+  produces the full configuration. This ensure compatibility with generic
+  clients such as neovim's, which may not conform to JETLS's previous
+  expectations about how requests with no `section` are handled.
+
 ## 2026-01-17
 
 - Commit: [`c8e2012`](https://github.com/aviatesk/JETLS.jl/commit/c8e2012)

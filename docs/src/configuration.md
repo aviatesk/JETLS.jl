@@ -529,6 +529,41 @@ section:
 }
 ```
 
+#### Generic clients (e.g., neovim)(@id config/lsp-config/generic-neovim)
+
+JETLS expects to find its settings under the `"jetls"` key, such that a request
+for the `"jetls"` section produces the full JETLS configuration. As an example,
+neovim's built-in LSP client may be configured as follows:
+
+```lua
+vim.lsp.config("jetls", {
+  settings = {
+    jetls = {
+      full_analysis = {
+        debounce = 2.0,
+      },
+      -- Use JuliaFormatter instead of Runic
+      formatter = "JuliaFormatter",
+      diagnostic = {
+        patterns = [
+          -- Suppress toplevel/inference warnings in test folder
+          {
+            pattern = "(toplevel|inference)/.*",
+            match_by = "code",
+            match_type = "regex",
+            severity = "off",
+            path = "test/**/*.jl",
+          },
+        ],
+      },
+      testrunner = {
+        executable = "/path/to/custom/testrunner"
+      },
+    },
+  },
+})
+```
+
 ## [Configuration priority](@id config/priority)
 
 When multiple configuration sources are present, they are merged in priority
