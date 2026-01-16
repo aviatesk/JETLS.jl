@@ -49,6 +49,7 @@ function do_profile(server::Server, trigger_path::String)
 
     assembled_path = output_path * ".heapsnapshot"
     try
+        GC.gc(); GC.gc();
         Profile.take_heap_snapshot(output_path; streaming=true)
         Profile.HeapSnapshot.assemble_snapshot(output_path, assembled_path)
         show_info_message(server, "Heap snapshot saved to: $assembled_path")
