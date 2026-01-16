@@ -153,8 +153,7 @@ function cursor_bindings(st0_top::JS.SyntaxTree, offset::Int, mod::Module)
 end
 
 function find_target_binding(ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTree, offset::Int)
-    target_binding = nothing
-    traverse(st3) do st::JS.SyntaxTree
+    return traverse(st3) do st::JS.SyntaxTree
         k = JS.kind(st)
         if k === JS.K"lambda" && is_kwcall_lambda(ctx3, st)
             # Don't select a binding with `kwcall` definition.
@@ -167,9 +166,8 @@ function find_target_binding(ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTre
         if binfo.is_internal || startswith(binfo.name, "#")
             return nothing
         end
-        target_binding = st
+        return TraversalReturn(st)
     end
-    return target_binding
 end
 
 __select_target_binding(ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTree, offset::Int) =
