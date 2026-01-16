@@ -21,6 +21,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 - Diff: [`4cf9994...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/4cf9994...HEAD)
 
+### Added
+
+- `textDocument/definition` now supports global bindings. Previously,
+  go-to-definition for global variables couldn't find their definition sites
+  since runtime reflection doesn't provide binding location information.
+  Now it uses binding occurrence analysis to find definition sites across
+  the package, benefiting from the binding occurrences cache.
+
 ### Changed
 
 - Improved `workspace/symbol` performance by enabling document symbol caching for

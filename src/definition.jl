@@ -81,22 +81,35 @@ function handle_DefinitionRequest(
 
     locationlink_support = supports(server, :textDocument, :definition, :linkSupport)
 
-    target_binding_definitions = select_target_binding_definitions(st0, offset, mod)
-    if !isnothing(target_binding_definitions)
-        target_binding, definitions = target_binding_definitions
-        local result = Location[]
-        for definition in definitions
-            range, def_uri = unadjust_range(state, uri, jsobj_to_range(definition, fi))
-            push!(result, Location(; uri = def_uri, range))
+    binding_result = _select_target_binding(st0, offset, mod; caller="handle_DefinitionRequest")
+    if !isnothing(binding_result)
+        (; ctx3, st3, binding) = binding_result
+        binfo = JL.get_binding(ctx3, binding)
+
+        if binfo.kind === :global
+            global_definitions = find_global_binding_definitions(server, uri, binfo)
+            if !isempty(global_definitions)
+                if locationlink_support
+                    originSelectionRange, _ = unadjust_range(state, uri, jsobj_to_range(binding, fi))
+                    global_definitions = LocationLink[LocationLink(loc, originSelectionRange) for loc in global_definitions]
+                end
+                return send(server, DefinitionResponse(; id = msg.id, result = global_definitions))
+            end
+        else
+            definitions = lookup_binding_definitions(st3, binfo)
+            if !isempty(definitions)
+                local result = Location[]
+                for definition in definitions
+                    range, def_uri = unadjust_range(state, uri, jsobj_to_range(definition, fi))
+                    push!(result, Location(; uri = def_uri, range))
+                end
+                if locationlink_support
+                    target_range, _ = unadjust_range(state, uri, jsobj_to_range(binding, fi))
+                    result = LocationLink[LocationLink(loc, target_range) for loc in result]
+                end
+                return send(server, DefinitionResponse(; id = msg.id, result))
+            end
         end
-        if locationlink_support
-            target_range, _ = unadjust_range(state, uri, jsobj_to_range(target_binding, fi))
-            result = LocationLink[LocationLink(loc, target_range) for loc in result]
-        end
-        return send(server,
-            DefinitionResponse(;
-                id = msg.id,
-                result))
     end
 
     node = @something select_target_identifier(st0, offset) begin
@@ -135,4 +148,31 @@ function handle_DefinitionRequest(
                     result))
         end
     end
+end
+
+function find_global_binding_definitions(
+        server::Server, uri::URI, binfo::JL.BindingInfo
+    )
+    locations = Location[]
+    state = server.state
+    uris_to_search = collect_search_uris(server, uri)
+    seen_locations = Set{Tuple{URI,Range}}()
+    for search_uri in uris_to_search
+        fi = @something begin
+            get_file_info(state, search_uri)
+        end begin
+            create_dummy_file_info(search_uri, state)
+        end continue
+        search_st0_top = build_syntax_tree(fi)
+        for occurrence in find_global_binding_occurrences!(state, search_uri, fi, search_st0_top, binfo)
+            if occurrence.kind === :def
+                range, _ = unadjust_range(state, search_uri, jsobj_to_range(occurrence.tree, fi))
+                push!(seen_locations, (search_uri, range))
+            end
+        end
+    end
+    for (loc_uri, range) in seen_locations
+        push!(locations, Location(; uri = loc_uri, range))
+    end
+    return locations
 end

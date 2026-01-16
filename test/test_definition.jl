@@ -169,7 +169,7 @@ end
         """) do i, result, uri
             @test length(result) == 1
             @test first(result).uri == uri
-            @test first(result).range.start.line == 2
+            @test first(result).range.start.line == 0  # struct definition, not inner constructor
             cnt += 1
         end
         @test cnt == 1
@@ -353,6 +353,36 @@ end
         end
         @test cnt == 1
     end
+end
+
+@testset "'Definition' for global bindings" begin
+    cnt = 0
+    with_definition_request("""
+        GLOBAL_VAR = 42
+        const CONST_VAR = 100
+        MUTABLE_VAR = 1
+        MUTABLE_VAR = 2
+        function use_globals()
+            GLOBAL_VA│R + CONST_VA│R + MUTABLE_VA│R
+        end
+    """) do i, results, uri
+        @test results isa Vector{Location}
+        if i == 1  # GLOBAL_VAR
+            @test length(results) == 1
+            @test first(results).uri == uri
+            @test first(results).range.start.line == 0
+        elseif i == 2  # CONST_VAR
+            @test length(results) == 1
+            @test first(results).uri == uri
+            @test first(results).range.start.line == 1
+        elseif i == 3  # MUTABLE_VAR (multiple assignments)
+            @test length(results) == 2
+            @test any(r -> r.range.start.line == 2, results)
+            @test any(r -> r.range.start.line == 3, results)
+        end
+        cnt += 1
+    end
+    @test cnt == 3
 end
 
 end # module test_definition
