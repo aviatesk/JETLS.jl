@@ -38,7 +38,7 @@ function handle_DocumentHighlightRequest(
     fi = result
 
     highlights = DocumentHighlight[]
-    document_highlights!(highlights, fi, pos, (state, uri))
+    document_highlights!(highlights, state, uri, fi, pos)
     return send(server, DocumentHighlightResponse(;
         id = msg.id,
         result = @somereal highlights null
@@ -46,18 +46,12 @@ function handle_DocumentHighlightRequest(
 end
 
 function document_highlights!(
-        highlights::Vector{DocumentHighlight}, fi::FileInfo, pos::Position,
-        module_info::Union{Tuple{ServerState,URI},Module},
+        highlights::Vector{DocumentHighlight}, state::ServerState, uri::URI,
+        fi::FileInfo, pos::Position,
     )
     st0_top = build_syntax_tree(fi)
     offset = xy_to_offset(fi, pos)
-    if module_info isa Module
-        mod = module_info
-        location_info = nothing
-    else
-        (; mod) = get_context_info(module_info..., pos)
-        location_info = module_info
-    end
+    (; mod) = get_context_info(state, uri, pos)
 
     (; ctx3, st3, binding) = @something begin
         _select_target_binding(st0_top, offset, mod; caller="document_highlights!")
@@ -67,9 +61,9 @@ function document_highlights!(
 
     highlights′ = Dict{Range,DocumentHighlightKind.Ty}()
     if binfo.kind === :global
-        global_document_highlights!(highlights′, fi, st0_top, binfo, module_info)
+        global_document_highlights!(highlights′, state, uri, fi, st0_top, binfo)
     else
-        local_document_highlights!(highlights′, fi, ctx3, st3, binfo, location_info)
+        local_document_highlights!(highlights′, state, uri, fi, ctx3, st3, binfo)
     end
 
     for (range, kind) in highlights′
@@ -80,67 +74,49 @@ end
 
 function add_highlight_for_occurrence!(
         highlights′::Dict{Range,DocumentHighlightKind.Ty},
-        fi::FileInfo, occurrence::BindingOccurence,
-        location_info::Union{Tuple{ServerState,URI},Nothing} = nothing
+        state::ServerState, uri::URI, fi::FileInfo, occurrence::AnyBindingOccurrence,
     )
     range = jsobj_to_range(occurrence.tree, fi)
-    if location_info !== nothing
-        range, _ = unadjust_range(location_info..., range)
-    end
+    range, _ = unadjust_range(state, uri, range)
     kind = document_highlight_kind(occurrence)
     highlights′[range] = max(kind, get(highlights′, range, DocumentHighlightKind.Text))
 end
 
-document_highlight_kind(occurrence::BindingOccurence) =
+document_highlight_kind(occurrence::AnyBindingOccurrence) =
     occurrence.kind === :def ? DocumentHighlightKind.Write :
     occurrence.kind === :use ? DocumentHighlightKind.Read :
     DocumentHighlightKind.Text
 
 function global_document_highlights!(
         highlights′::Dict{Range,DocumentHighlightKind.Ty},
-        fi::FileInfo, st0_top::JS.SyntaxTree, binfo::JL.BindingInfo,
-        module_info::Union{Tuple{ServerState,URI},Module},
+        state::ServerState, uri::URI, fi::FileInfo, st0_top::JS.SyntaxTree,
+        binfo::JL.BindingInfo,
     )
-    location_info = module_info isa Module ? nothing : module_info
-    iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
-        if module_info isa Module
-            mod = module_info
-        else
-            (; mod) = get_context_info(module_info..., offset_to_xy(fi, JS.first_byte(st0)))
-        end
-        (; ctx3, st3) = try
-            # Remove macros to preserve precise source locations
-            jl_lower_for_scope_resolution(mod, remove_macrocalls(st0))
-        catch
-            return
-        end
-        binding_occurrences = compute_binding_occurrences(ctx3, st3; include_global_bindings=true)
-        for (binfo′, occurrences) in binding_occurrences
-            if binfo′.mod === binfo.mod && binfo′.name == binfo.name
-                for occurrence in occurrences
-                    add_highlight_for_occurrence!(highlights′, fi, occurrence, location_info)
-                end
-            end
-        end
+    for occurrence in find_global_binding_occurrences!(state, uri, fi, st0_top, binfo)
+        add_highlight_for_occurrence!(highlights′, state, uri, fi, occurrence)
     end
     return highlights′
 end
 
 function local_document_highlights!(
         highlights′::Dict{Range,DocumentHighlightKind.Ty},
-        fi::FileInfo, ctx3, st3, binfo::JL.BindingInfo,
-        location_info::Union{Tuple{ServerState,URI},Nothing} = nothing
+        state::ServerState, uri::URI, fi::FileInfo, ctx3, st3, binfo::JL.BindingInfo,
     )
     binding_occurrences = compute_binding_occurrences(ctx3, st3)
     if haskey(binding_occurrences, binfo)
         for occurrence in binding_occurrences[binfo]
-            add_highlight_for_occurrence!(highlights′, fi, occurrence, location_info)
+            add_highlight_for_occurrence!(highlights′, state, uri, fi, occurrence)
         end
     end
     return highlights′
 end
 
 # used by tests
-document_highlights(fi::FileInfo, pos::Position, mod::Module) =
-    document_highlights!(DocumentHighlight[], fi, pos, mod)
-document_highlights(args...) = document_highlights(args..., Main)
+function document_highlights(fi::FileInfo, pos::Position, mod::Module=Main)
+    state = ServerState()
+    uri = filepath2uri(fi.filename)
+    store!(state.file_cache) do cache
+        Base.PersistentDict(cache, uri => fi), nothing
+    end
+    return document_highlights!(DocumentHighlight[], state, uri, fi, pos)
+end

@@ -19,7 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`54b3058...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/54b3058...HEAD)
+- Diff: [`4cf9994...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/4cf9994...HEAD)
 
 ### Announcement
 
@@ -44,6 +44,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > might work, but most LSP features will be unfunctional.
 > Note that `analysis_overrides` is provided as a temporary workaround and may
 > be removed or changed at any time. A proper fix is being worked on.
+
+### Added
+
+- `textDocument/definition` now supports global bindings. Previously,
+  go-to-definition for global variables couldn't find their definition sites
+  since runtime reflection doesn't provide binding location information.
+  Now it uses binding occurrence analysis to find definition sites across
+  the package, benefiting from the binding occurrences cache.
+
+### Changed
+
+- Improved `workspace/symbol` performance by enabling document symbol caching for
+  files not currently open in the editor. Previously, only synced files (opened
+  in editor) used the cache, causing repeated parsing for every workspace symbol
+  search. The cache is now invalidated via `workspace/didChangeWatchedFiles`
+  when unsynced files change on disk.
+
+- Improved `textDocument/references`, `textDocument/rename`, and
+  `textDocument/documentHighlight` performance for global bindings by caching
+  binding occurrence analysis results per top-level expression. The cache
+  persists across requests within the same package, so consecutive
+  find-references, rename, or document highlight operations avoid redundant
+  lowering.
+
+## 2026-01-15
+
+- Commit: [`4cf9994`](https://github.com/aviatesk/JETLS.jl/commit/4cf9994)
+- Diff: [`54b3058...4cf9994`](https://github.com/aviatesk/JETLS.jl/compare/54b3058...4cf9994)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-01-15")'
+  ```
 
 ### Added
 

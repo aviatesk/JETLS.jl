@@ -546,6 +546,58 @@ function ConfigManagerData(
     return ConfigManagerData(file_config, lsp_config, file_config_path, initialized)
 end
 
+struct BindingOccurrence{Tree3<:JS.SyntaxTree}
+    tree::Tree3
+    kind::Symbol
+end
+
+# Types for binding occurrences cache.
+# IMPORTANT: We must not cache full `JS.SyntaxTree` or `JL.BindingInfo` objects
+# as they hold references to large internal structures (syntax graphs, lowering
+# contexts). Instead, we extract only the essential information needed for
+# LSP features, i.e. mainly binding kind and location information.
+
+struct BindingInfoKey
+    mod::Union{Nothing,Module}
+    name::String
+    BindingInfoKey(binfo::JL.BindingInfo) = new(binfo.mod, binfo.name)
+end
+
+"""
+    CachedSyntaxTree
+
+A lightweight representation of syntax tree location information.
+This struct stores only the byte range and source location, implementing the
+minimum `JS.SyntaxTree` API (`first_byte`, `last_byte`, `source_location`)
+required by [`jsobj_to_range`](@ref) that convert syntax tree to LSP `Range` objects.
+"""
+struct CachedSyntaxTree
+    fb::Int
+    lb::Int
+    line::Int
+    column::Int
+    function CachedSyntaxTree(st::JS.SyntaxTree)
+        return new(JS.first_byte(st), JS.last_byte(st), JS.source_location(st)...)
+    end
+end
+JS.first_byte(cst::CachedSyntaxTree) = cst.fb
+JS.last_byte(cst::CachedSyntaxTree) = cst.lb
+JS.source_location(cst::CachedSyntaxTree) = (cst.line, cst.column)
+
+struct CachedBindingOccurrence
+    tree::CachedSyntaxTree
+    kind::Symbol
+    function CachedBindingOccurrence(occurrence::BindingOccurrence)
+        return new(CachedSyntaxTree(occurrence.tree), occurrence.kind)
+    end
+end
+
+const BindingOccurrencesRangeKey = UnitRange{Int}
+const BindingOccurrencesResult = Dict{BindingInfoKey,Set{CachedBindingOccurrence}}
+const BindingOccurrencesCacheEntry = Base.PersistentDict{BindingOccurrencesRangeKey,BindingOccurrencesResult}
+
+const AnyBindingOccurrence = Union{BindingOccurrence,CachedBindingOccurrence}
+
 struct GlobalCompletionResolverInfo
     id::String
     mod::Module
@@ -563,7 +615,6 @@ const FileCache = SWContainer{Base.PersistentDict{URI,FileInfo}, SWStats}
 const SavedFileCache = SWContainer{Base.PersistentDict{URI,SavedFileInfo}, SWStats}
 const NotebookCache = SWContainer{Base.PersistentDict{URI,NotebookInfo}, SWStats}
 const CellToNotebookMap = SWContainer{Base.PersistentDict{URI,URI}, SWStats} # cell URI -> notebook URI
-const DocumentSymbolCache = SWContainer{Base.PersistentDict{URI,Vector{DocumentSymbol}}, SWStats}
 
 # Type aliases for concurrent updates using CASContainer (lightweight operations)
 const ExtraDiagnostics = CASContainer{ExtraDiagnosticsData, CASStats}
@@ -571,7 +622,11 @@ const CurrentlyRequested = CASContainer{Base.PersistentDict{String,RequestCaller
 const CurrentlyRegistered = CASContainer{Set{Registered}, CASStats}
 const CompletionResolverInfo = CASContainer{Union{Nothing,GlobalCompletionResolverInfo,MethodSignatureCompletionResolverInfo}, CASStats}
 
-# Type aliases for concurrent updates using LWContainer (non-retriable operations)
+# Type aliases for concurrent updates using LWContainer
+const DocumentSymbolCacheData = Base.PersistentDict{URI,Vector{DocumentSymbol}}
+const DocumentSymbolCache = LWContainer{DocumentSymbolCacheData, LWStats}
+const BindingOccurrencesCacheData = Base.PersistentDict{URI,BindingOccurrencesCacheEntry}
+const BindingOccurrencesCache = LWContainer{BindingOccurrencesCacheData, LWStats}
 const ConfigManager = LWContainer{ConfigManagerData, LWStats}
 
 const HandledHistory = FixedSizeFIFOQueue{MessageId}
@@ -585,7 +640,18 @@ mutable struct ServerState
     const saved_file_cache::SavedFileCache # syntactic analysis cache (synced with `textDocument/didSave`)
     const notebook_cache::NotebookCache # notebook document cache (synced with `notebookDocument/did*`), mapping notebook URIs to their notebook info
     const cell_to_notebook::CellToNotebookMap # maps cell URIs to their notebook URI
-    const document_symbol_cache::DocumentSymbolCache # cached document symbols per URI
+    # Document symbol cache for both synced and unsynced files.
+    # Uses LWContainer for concurrent writes from:
+    # - `get_document_symbols!` (on cache miss)
+    # - `textDocument/didChange` (invalidates synced files)
+    # - `workspace/didChangeWatchedFiles` (invalidates unsynced files)
+    const document_symbol_cache::DocumentSymbolCache
+    # Binding occurrences cache for global binding analysis (references, rename).
+    # Same invalidation pattern as document_symbol_cache.
+    # TODO: This cache uses analysis context (module context from full-analysis).
+    # It should also be invalidated when full-analysis updates module context,
+    # but that is not yet implemented.
+    const binding_occurrences_cache::BindingOccurrencesCache
     const analysis_manager::AnalysisManager
     const extra_diagnostics::ExtraDiagnostics
     const currently_handled::CurrentlyHandled
@@ -609,7 +675,8 @@ mutable struct ServerState
             #=saved_file_cache=# SavedFileCache(Base.PersistentDict{URI,SavedFileInfo}()),
             #=notebook_cache=# NotebookCache(Base.PersistentDict{URI,NotebookInfo}()),
             #=cell_to_notebook=# CellToNotebookMap(Base.PersistentDict{URI,URI}()),
-            #=document_symbol_cache=# DocumentSymbolCache(Base.PersistentDict{URI,Vector{DocumentSymbol}}()),
+            #=document_symbol_cache=# DocumentSymbolCache(DocumentSymbolCacheData()),
+            #=binding_occurrences_cache=# BindingOccurrencesCache(BindingOccurrencesCacheData()),
             #=analysis_manager=# AnalysisManager(),
             #=extra_diagnostics=# ExtraDiagnostics(ExtraDiagnosticsData()),
             #=currently_handled=# CurrentlyHandled(),

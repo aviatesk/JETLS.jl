@@ -265,7 +265,7 @@ function global_binding_rename(
     local completed = errored = false
     try
         completed = collect_global_rename_edits!(
-            changes, server, uri, fi, uris_to_search, binfo, newName, cancel_flag, token)
+            changes, server, uris_to_search, binfo, newName, cancel_flag, token)
     catch err
         @error "Error in `global_binding_rename`"
         Base.display_error(stderr, err, catch_backtrace())
@@ -294,49 +294,43 @@ end
 
 function collect_global_rename_edits!(
         changes::Union{Vector{TextDocumentEdit},Dict{URI,Vector{TextEdit}}},
-        server::Server, uri::URI, fi::FileInfo, uris_to_search::Set{URI},
-        binfo::JL.BindingInfo, newName::String, cancel_flag::AbstractCancelFlag,
-        token::Union{Nothing,ProgressToken})
+        server::Server, uris_to_search::Set{URI}, binfo::JL.BindingInfo, newName::String,
+        cancel_flag::AbstractCancelFlag, token::Union{Nothing,ProgressToken}
+    )
     state = server.state
     n_files = length(uris_to_search)
     seen_ranges = Set{Range}()
-    for (i, search_uri) in enumerate(uris_to_search)
+    for (i, uri) in enumerate(uris_to_search)
         if is_cancelled(cancel_flag)
             return false
         end
 
         if token !== nothing
             percentage = round(Int, 100 * (i - 1) / n_files)
-            message = "Searching $(basename(uri2filename(search_uri))) ($i/$n_files)"
+            message = "Searching $(basename(uri2filename(uri))) ($i/$n_files)"
             send_progress(server, token,
                 WorkDoneProgressReport(; cancellable = true, message, percentage))
         end
 
-        if search_uri == uri
-            search_fi = fi
-            version = fi.version
-        else
-            search_fi = get_file_info(state, search_uri)
-            if search_fi === nothing
-                search_fi = create_dummy_file_info(search_uri, fi)
-                version = nothing
-            else
-                version = search_fi.version
-            end
-        end
+        fi = @something begin
+            get_file_info(state, uri)
+        end begin
+            create_dummy_file_info(uri, server.state)
+        end continue
+        version = fi.version
+        version == 0 && (version = nothing)
+        search_st0_top = build_syntax_tree(fi)
         empty!(seen_ranges)
-        search_st0_top = build_syntax_tree(search_fi)
         collect_global_rename_ranges_in_file!(
-            seen_ranges, state, search_uri, search_fi, search_st0_top, binfo)
+            seen_ranges, state, uri, fi, search_st0_top, binfo)
 
         if !isempty(seen_ranges)
             edits = TextEdit[TextEdit(; range, newText = newName) for range in seen_ranges]
             if changes isa Vector{TextDocumentEdit}
-                textDocument = OptionalVersionedTextDocumentIdentifier(;
-                    uri = search_uri, version)
+                textDocument = OptionalVersionedTextDocumentIdentifier(; uri, version)
                 push!(changes, TextDocumentEdit(; textDocument, edits))
             else
-                changes[search_uri] = edits
+                changes[uri] = edits
             end
         end
     end

@@ -118,7 +118,7 @@ function find_global_references!(
     local completed = errored = false
     try
         completed = collect_global_references!(
-            seen_locations, server, uri, fi, uris_to_search, binfo; token, kwargs...)
+            seen_locations, server, uris_to_search, binfo; token, kwargs...)
     catch err
         @error "Error in `find_global_references!`"
         Base.display_error(stderr, err, catch_backtrace())
@@ -145,36 +145,33 @@ end
 
 function collect_global_references!(
         seen_locations::Set{Tuple{URI,Range}}, server::Server,
-        uri::URI, fi::FileInfo, uris_to_search::Set{URI}, binfo::JL.BindingInfo;
+        uris_to_search::Set{URI}, binfo::JL.BindingInfo;
         include_declaration::Bool = true,
         token::Union{Nothing,ProgressToken} = nothing,
-        cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG)
+        cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG
+    )
     state = server.state
     n_files = length(uris_to_search)
-    for (i, search_uri) in enumerate(uris_to_search)
+    for (i, uri) in enumerate(uris_to_search)
         if is_cancelled(cancel_flag)
             return false
         end
 
         if token !== nothing
             percentage = round(Int, 100 * (i - 1) / n_files)
-            message = "Searching $(basename(uri2filename(search_uri))) ($i/$n_files)"
+            message = "Searching $(basename(uri2filename(uri))) ($i/$n_files)"
             send_progress(server, token,
                 WorkDoneProgressReport(; message, cancellable = true, percentage))
         end
 
-        if search_uri == uri
-            search_fi = fi
-        else
-            search_fi = get_file_info(state, search_uri)
-            if search_fi === nothing
-                search_fi = create_dummy_file_info(search_uri, fi)
-            end
-        end
-
-        search_st0_top = build_syntax_tree(search_fi)
+        fi = @something begin
+            get_file_info(state, uri)
+        end begin
+            create_dummy_file_info(uri, server.state)
+        end continue
+        search_st0_top = build_syntax_tree(fi)
         global_find_references_in_file!(
-            seen_locations, state, search_uri, search_fi, search_st0_top, binfo;
+            seen_locations, state, uri, fi, search_st0_top, binfo;
             include_declaration)
     end
     return true

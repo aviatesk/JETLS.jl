@@ -214,12 +214,13 @@ end
 get_file_info(s::ServerState, t::TextDocumentIdentifier, cancel_flag::AbstractCancelFlag; kwargs...) =
     get_file_info(s, t.uri, cancel_flag; kwargs...)
 
-# This `search_uri` may have been analyzed by full-analysis but not yet synced
-# by document-synchronization, or simply have been "out of analysis scope".
+# The given `uri` may have been analyzed by full-analysis but not yet synced
+# by document-synchronization, or simply be outside the active workspace scope.
 # Construct a `ParseStream` from the filename and create a dummy `FileInfo`
-# for the purpose of global binding analysis.
-function create_dummy_file_info(uri::URI, ref_fi::FileInfo)
+# for use in global binding analysis, workspace symbols, etc.
+function create_dummy_file_info(uri::URI, state::ServerState)
     filename = uri2filename(uri)
+    isfile(filename) || return nothing
     parsed_stream = try
         ParseStream!(read(filename))
     catch e
@@ -227,7 +228,7 @@ function create_dummy_file_info(uri::URI, ref_fi::FileInfo)
         JETLS_DEV_MODE && Base.showerror(stderr, e, catch_backtrace)
         return nothing
     end
-    return FileInfo(ref_fi; version=0, parsed_stream, filename)
+    return FileInfo(#=version=#0, parsed_stream, filename, state.encoding)
 end
 
 """
