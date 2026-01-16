@@ -138,4 +138,5 @@ function handle_jl_file_change!(state::ServerState, uri::URI)
         return
     end
     invalidate_document_symbol_cache!(state, uri)
+    invalidate_binding_occurrences_cache!(state, uri)
 end

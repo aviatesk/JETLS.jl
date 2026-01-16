@@ -29,6 +29,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   search. The cache is now invalidated via `workspace/didChangeWatchedFiles`
   when unsynced files change on disk.
 
+- Improved `textDocument/references` and `textDocument/rename` performance for
+  global bindings by caching binding occurrence analysis results per top-level
+  expression. The cache persists across requests within the same package, so
+  consecutive find-references or rename operations avoid redundant lowering.
+
 ### Announcement
 
 > [!warning]

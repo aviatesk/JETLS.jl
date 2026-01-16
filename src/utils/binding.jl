@@ -271,11 +271,6 @@ function _lookup_binding_definitions!(sl::JS.SyntaxList, st3::JS.SyntaxTree, bin
     return reverse!(deduplicate_syntaxlist(sl))
 end
 
-struct BindingOccurence{Tree3<:JS.SyntaxTree}
-    tree::Tree3
-    kind::Symbol
-end
-
 """
     compute_binding_occurrences(
             ctx3::JL.VariableAnalysisContext, st3::Tree3;
@@ -557,18 +552,11 @@ end
 function find_global_binding_occurrences!(
         state::ServerState, uri::URI, fi::FileInfo, st0_top::JS.SyntaxTree,
         binfo::JL.BindingInfo;
-        lookup_func = gen_lookup_out_of_scope!(state, uri)
+        kwargs...
     )
-    ret = Set{BindingOccurence}()
+    ret = Set{BindingOccurrence}()
     iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
-        (; mod) = get_context_info(state, uri, offset_to_xy(fi, JS.first_byte(st0)); lookup_func)
-        (; ctx3, st3) = try
-            # Remove macros to preserve precise source locations
-            jl_lower_for_scope_resolution(mod, remove_macrocalls(st0))
-        catch
-            return
-        end
-        binding_occurrences = compute_binding_occurrences(ctx3, st3; include_global_bindings=true)
+        binding_occurrences = @something get_binding_occurrences!(state, uri, fi, st0; kwargs...) return
         for (binfo′, occurrences) in binding_occurrences
             if binfo′.mod === binfo.mod && binfo′.name == binfo.name
                 for occurrence in occurrences
@@ -578,4 +566,51 @@ function find_global_binding_occurrences!(
         end
     end
     return ret
+end
+
+function get_binding_occurrences!(
+        state::ServerState, uri::URI, fi::FileInfo, st0::JS.SyntaxTree; kwargs...
+    )
+    range_key = JS.byte_range(st0)
+    return store!(state.binding_occurrences_cache) do cache::BindingOccurrencesCacheData
+        file_cache = get(cache, uri, nothing)
+        if file_cache !== nothing && haskey(file_cache, range_key)
+            return cache, file_cache[range_key]
+        end
+        result = @something compute_binding_occurrences_for_toplevel(state, uri, fi, st0; kwargs...) begin
+            return cache, nothing
+        end
+        if file_cache === nothing
+            file_cache = BindingOccurrencesCacheEntry(range_key => result)
+        else
+            file_cache = BindingOccurrencesCacheEntry(file_cache, range_key => result)
+        end
+        return BindingOccurrencesCacheData(cache, uri => file_cache), result
+    end
+end
+
+function compute_binding_occurrences_for_toplevel(
+        state::ServerState, uri::URI, fi::FileInfo, st0::JS.SyntaxTree;
+        lookup_func = gen_lookup_out_of_scope!(state, uri)
+    )
+    (; mod) = get_context_info(state, uri, offset_to_xy(fi, JS.first_byte(st0)); lookup_func)
+    (; ctx3, st3) = try
+        # Remove macros to preserve precise source locations.
+        # TODO: This won't be necessary once JuliaLowering can preserve precise
+        # source locations for old macro-expanded code.
+        jl_lower_for_scope_resolution(mod, remove_macrocalls(st0))
+    catch
+        return nothing
+    end
+    return compute_binding_occurrences(ctx3, st3; include_global_bindings=true)
+end
+
+function invalidate_binding_occurrences_cache!(state::ServerState, uri::URI)
+    store!(state.binding_occurrences_cache) do cache::BindingOccurrencesCacheData
+        if haskey(cache, uri)
+            Base.delete(cache, uri), nothing
+        else
+            cache, nothing
+        end
+    end
 end

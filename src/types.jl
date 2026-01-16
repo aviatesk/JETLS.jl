@@ -546,6 +546,14 @@ function ConfigManagerData(
     return ConfigManagerData(file_config, lsp_config, file_config_path, initialized)
 end
 
+struct BindingOccurrence{Tree3<:JS.SyntaxTree}
+    tree::Tree3
+    kind::Symbol
+end
+const BindingOccurrencesRangeKey = UnitRange{Int}
+const BindingOccurrencesResult = Dict{JL.BindingInfo,Set{BindingOccurrence}}
+const BindingOccurrencesCacheEntry = Base.PersistentDict{BindingOccurrencesRangeKey,BindingOccurrencesResult}
+
 struct GlobalCompletionResolverInfo
     id::String
     mod::Module
@@ -573,6 +581,8 @@ const CompletionResolverInfo = CASContainer{Union{Nothing,GlobalCompletionResolv
 # Type aliases for concurrent updates using LWContainer
 const DocumentSymbolCacheData = Base.PersistentDict{URI,Vector{DocumentSymbol}}
 const DocumentSymbolCache = LWContainer{DocumentSymbolCacheData, LWStats}
+const BindingOccurrencesCacheData = Base.PersistentDict{URI,BindingOccurrencesCacheEntry}
+const BindingOccurrencesCache = LWContainer{BindingOccurrencesCacheData, LWStats}
 const ConfigManager = LWContainer{ConfigManagerData, LWStats}
 
 const HandledHistory = FixedSizeFIFOQueue{MessageId}
@@ -592,6 +602,12 @@ mutable struct ServerState
     # - `textDocument/didChange` (invalidates synced files)
     # - `workspace/didChangeWatchedFiles` (invalidates unsynced files)
     const document_symbol_cache::DocumentSymbolCache
+    # Binding occurrences cache for global binding analysis (references, rename).
+    # Same invalidation pattern as document_symbol_cache.
+    # TODO: This cache uses analysis context (module context from full-analysis).
+    # It should also be invalidated when full-analysis updates module context,
+    # but that is not yet implemented.
+    const binding_occurrences_cache::BindingOccurrencesCache
     const analysis_manager::AnalysisManager
     const extra_diagnostics::ExtraDiagnostics
     const currently_handled::CurrentlyHandled
@@ -615,7 +631,8 @@ mutable struct ServerState
             #=saved_file_cache=# SavedFileCache(Base.PersistentDict{URI,SavedFileInfo}()),
             #=notebook_cache=# NotebookCache(Base.PersistentDict{URI,NotebookInfo}()),
             #=cell_to_notebook=# CellToNotebookMap(Base.PersistentDict{URI,URI}()),
-            #=document_symbol_cache=# DocumentSymbolCache(Base.PersistentDict{URI,Vector{DocumentSymbol}}()),
+            #=document_symbol_cache=# DocumentSymbolCache(DocumentSymbolCacheData()),
+            #=binding_occurrences_cache=# BindingOccurrencesCache(BindingOccurrencesCacheData()),
             #=analysis_manager=# AnalysisManager(),
             #=extra_diagnostics=# ExtraDiagnostics(ExtraDiagnosticsData()),
             #=currently_handled=# CurrentlyHandled(),
