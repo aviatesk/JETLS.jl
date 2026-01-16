@@ -31,6 +31,7 @@ function cache_file_info!(
     end
 
     invalidate_document_symbol_cache!(state, uri)
+    invalidate_binding_occurrences_cache!(state, uri)
 
     if !state.suppress_notifications && any_deleted
         notify_diagnostics!(server; ensure_cleared=uri)
