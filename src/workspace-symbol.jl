@@ -132,7 +132,7 @@ end
 
 function collect_symbols_from_file!(
         symbols::Vector{WorkspaceSymbol}, state::ServerState, uri::URI)
-    fi = @something get_file_info(state, uri) create_dummy_file_info_for_workspace(state, uri) return
+    fi = @something get_file_info(state, uri) create_dummy_file_info(state, uri) return
     doc_symbols = get_document_symbols!(state, uri, fi)
     flatten_document_symbols!(symbols, doc_symbols, state, uri)
 end
@@ -154,17 +154,6 @@ function collect_workspace_uris(server::Server)
         push!(uris, uri)
     end
     return uris
-end
-
-function create_dummy_file_info_for_workspace(state::ServerState, uri::URI)
-    filename = @something uri2filepath(uri) return nothing
-    isfile(filename) || return nothing
-    text = try
-        read(filename, String)
-    catch
-        return nothing
-    end
-    return FileInfo(0, text, filename, state.encoding)
 end
 
 function flatten_document_symbols!(

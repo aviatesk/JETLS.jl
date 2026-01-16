@@ -318,7 +318,7 @@ function collect_global_rename_edits!(
         else
             search_fi = get_file_info(state, search_uri)
             if search_fi === nothing
-                search_fi = create_dummy_file_info(search_uri, fi)
+                search_fi = create_dummy_file_info(search_uri, server.state)
                 version = nothing
             else
                 version = search_fi.version
