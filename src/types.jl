@@ -596,6 +596,8 @@ const BindingOccurrencesRangeKey = UnitRange{Int}
 const BindingOccurrencesResult = Dict{BindingInfoKey,Set{CachedBindingOccurrence}}
 const BindingOccurrencesCacheEntry = Base.PersistentDict{BindingOccurrencesRangeKey,BindingOccurrencesResult}
 
+const AnyBindingOccurrence = Union{BindingOccurrence,CachedBindingOccurrence}
+
 struct GlobalCompletionResolverInfo
     id::String
     mod::Module
