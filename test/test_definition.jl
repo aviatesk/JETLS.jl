@@ -49,68 +49,59 @@ function with_definition_request(tester, text::AbstractString; kwargs...)
     end
 end
 
-@testset "'Definition' for module, method request/responce" begin
+@testset "'Definition' for modules and methods" begin
     @testset "function definition" begin
         cnt = 0
         with_definition_request("""
             func(x) = 1
             fu│nc(1.0)
+            func(1.│0)
+            let; func│; end
         """) do i, result, uri
-            @test length(result) == 1
-            @test first(result).uri == uri
-            @test first(result).range.start.line == 0
+            if i == 1
+                @test length(result) == 1
+                @test first(result).uri == uri
+                @test first(result).range.start.line == 0
+            elseif i == 2  # cursor on argument position
+                @test result === null
+            elseif i == 3  # function in let block
+                @test length(result) == 1
+                @test first(result).uri == uri
+                @test first(result).range.start.line == 0
+            end
             cnt += 1
         end
-        @test cnt == 1
+        @test cnt == 3
     end
 
     @testset "Base functions" begin
-        cnt = 0
-        with_definition_request("""
-            Base.Compiler.tm│eet
-        """) do i, result, uri
-            @test length(result) >= 1
-            cnt += 1
-        end
-        @test cnt == 1
-
         sin_cand_file, sin_cand_line = functionloc(first(methods(sin, (Float64,))))
         sin_cand_file = JETLS.to_full_path(sin_cand_file)
 
         cnt = 0
         with_definition_request("""
+            Base.Compiler.tm│eet
             si│n(1.0)
+            1 +│ 2
+            cos(x) = 1
+            global x::Float64 = let x = 42
+                Base.co│s(x)
+            end
         """) do i, result, uri
             @test length(result) >= 1
-            @test any(result) do candidate
-                JETLS.uri2filepath(candidate.uri) == sin_cand_file &&
-                candidate.range.start.line == (sin_cand_line - 1)
+            if i == 2  # sin
+                @test any(result) do candidate
+                    JETLS.uri2filepath(candidate.uri) == sin_cand_file &&
+                    candidate.range.start.line == (sin_cand_line - 1)
+                end
+            elseif i == 4  # Base.cos (should point to Base, not local cos)
+                @test all(result) do candidate
+                    candidate.uri.path != uri
+                end
             end
             cnt += 1
         end
-        @test cnt == 1
-    end
-    @testset "Base function with invalid location" begin
-        cnt = 0
-        with_definition_request("""
-            1 +│ 2
-        """) do i, result, uri
-            @test length(result) >= 1
-            cnt += 1
-        end
-        @test cnt == 1
-    end
-
-    @testset "function argument position" begin
-        cnt = 0
-        with_definition_request("""
-            func(x) = 1
-            func(1.│0)
-        """) do i, result, uri
-            @test result === null
-            cnt += 1
-        end
-        @test cnt == 1
+        @test cnt == 4
     end
 
     @testset "function in module" begin
@@ -141,22 +132,7 @@ end
         @test cnt == 3
     end
 
-    @testset "Base override" begin
-        cnt = 0
-        with_definition_request("""
-            cos(x) = 1
-            Base.co│s(x) = 1
-        """) do i, result, uri
-            @test length(result) >= 1
-            @test all(result) do candidate
-                candidate.uri.path != uri # in `Base`, not `cos(x) = 1`
-            end
-            cnt += 1
-        end
-        @test cnt == 1
-    end
-
-    @testset "struct type in function signature" begin
+    @testset "struct type and function aggregation" begin
         cnt = 0
         with_definition_request("""
             struct Hello
@@ -166,51 +142,27 @@ end
             function say(h::Hel│lo)
                 println("Hello, \$(h.who)")
             end
-        """) do i, result, uri
-            @test length(result) == 1
-            @test first(result).uri == uri
-            @test first(result).range.start.line == 0  # struct definition, not inner constructor
-            cnt += 1
-        end
-        @test cnt == 1
-    end
-
-    @testset "function with default arguments (should be aggregated)" begin
-        cnt = 0
-        with_definition_request("""
-            struct Hello
-                who::String
-            end
             function say_defarg(h::Hello, s = "Hello")
                 println("\$s, \$(h.who)")
-            end
-            say_defar│g
-        """) do i, result, uri
-            @test length(result) == 1
-            @test first(result).uri == uri
-            @test first(result).range.start.line == 3
-            cnt += 1
-        end
-        @test cnt == 1
-    end
-
-    @testset "function with keyword arguments (should be aggregated)" begin
-        cnt = 0
-        with_definition_request("""
-            struct Hello
-                who::String
             end
             function say_kwarg(h::Hello; s = "Hello")
                 println("\$s, \$(h.who)")
             end
+            say_defar│g
             say_kwar│g
         """) do i, result, uri
             @test length(result) == 1
             @test first(result).uri == uri
-            @test first(result).range.start.line == 3
+            if i == 1  # struct type in function signature
+                @test first(result).range.start.line == 0
+            elseif i == 2  # function with default arguments (aggregated)
+                @test first(result).range.start.line == 7
+            elseif i == 3  # function with keyword arguments (aggregated)
+                @test first(result).range.start.line == 10
+            end
             cnt += 1
         end
-        @test cnt == 1
+        @test cnt == 3
     end
 
     @testset "target node selection" begin
@@ -220,63 +172,22 @@ end
             func│ # bare function
             func│(1.0) # right edge
             │func(1.0) # left edge
-        """) do i, result, uri
-            if i == 1
-                @test length(result) == 1
-                @test first(result).uri == uri
-                @test first(result).range.start.line == 0
-                cnt += 1
-            elseif i == 2
-                @test length(result) == 1
-                @test first(result).uri == uri
-                @test first(result).range.start.line == 0
-                cnt += 1
-            elseif i == 3
-                @test length(result) == 1
-                @test first(result).uri == uri
-                @test first(result).range.start.line == 0
-                cnt += 1
-            end
-        end
-        @test cnt == 3
-    end
-
-    @testset "target node selection (qualified function)" begin
-        cnt = 0
-        with_definition_request("""
             module M
                 m_func(x) = 1
             end
             M.m_func│(1.0)
             M.│m_func(1.0)
         """) do i, result, uri
-            if i == 1
-                @test length(result) == 1
-                @test first(result).uri == uri
-                @test first(result).range.start.line == 1
-                cnt += 1
-            elseif i == 2
-                @test length(result) == 1
-                @test first(result).uri == uri
-                @test first(result).range.start.line == 1
-                cnt += 1
-            end
-        end
-        @test cnt == 2
-    end
-
-    @testset "function in let block" begin
-        cnt = 0
-        with_definition_request("""
-            func(x) = 1
-            let; func│; end
-        """) do i, result, uri
             @test length(result) == 1
             @test first(result).uri == uri
-            @test first(result).range.start.line == 0
+            if i <= 3  # simple function
+                @test first(result).range.start.line == 0
+            else  # qualified function (i == 4 or 5)
+                @test first(result).range.start.line == 5
+            end
             cnt += 1
         end
-        @test cnt == 1
+        @test cnt == 5
     end
 
     @testset "module location" begin
@@ -286,24 +197,18 @@ end
                 m_func(x) = 1
             end
             M2│.m_func(1.0)
-        """) do i, result, uri
-            @test result isa Location
-            @test result.uri == uri
-            @test result.range.start.line == 0
-            cnt += 1
-        end
-        @test cnt == 1
-    end
-
-    @testset "invalid module location" begin
-        cnt = 0
-        with_definition_request("""
             Core│.isdefined
         """) do i, result, uri
-            @test result === null # `Base.moduleloc(Core)` doesn't return anything meaningful
+            if i == 1
+                @test result isa Location
+                @test result.uri == uri
+                @test result.range.start.line == 0
+            elseif i == 2  # Core doesn't return meaningful location
+                @test result === null
+            end
             cnt += 1
         end
-        @test cnt == 1
+        @test cnt == 2
     end
 
     @testset "local definition" begin
