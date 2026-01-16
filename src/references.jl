@@ -164,7 +164,11 @@ function collect_global_references!(
                 WorkDoneProgressReport(; message, cancellable = true, percentage))
         end
 
-        fi = @something get_file_info(state, uri) create_dummy_file_info(uri, server.state) continue
+        fi = @something begin
+            get_file_info(state, uri)
+        end begin
+            create_dummy_file_info(uri, server.state)
+        end continue
         search_st0_top = build_syntax_tree(fi)
         global_find_references_in_file!(
             seen_locations, state, uri, fi, search_st0_top, binfo;

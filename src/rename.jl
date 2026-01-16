@@ -312,7 +312,11 @@ function collect_global_rename_edits!(
                 WorkDoneProgressReport(; cancellable = true, message, percentage))
         end
 
-        fi = @something get_file_info(state, uri) create_dummy_file_info(uri, server.state) continue
+        fi = @something begin
+            get_file_info(state, uri)
+        end begin
+            create_dummy_file_info(uri, server.state)
+        end continue
         version = fi.version
         version == 0 && (version = nothing)
         search_st0_top = build_syntax_tree(fi)
