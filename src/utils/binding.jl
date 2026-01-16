@@ -281,11 +281,11 @@ end
             ctx3::JL.VariableAnalysisContext, st3::Tree3;
             ismacro::Union{Nothing,Base.RefValue{Bool}} = nothing
         ) where Tree3<:JS.SyntaxTree
-        -> binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurence{Tree3}}}
+        -> binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence{Tree3}}}
 
 Analyze a lowered syntax tree to find all occurrences of local and argument bindings.
 
-This function traverses the syntax tree `st3` and records `occurrence::BindingOccurence`s
+This function traverses the syntax tree `st3` and records `occurrence::BindingOccurrence`s
 for each local and argument binding within `st3`, where `occurrence` have the following
 information:
 - `occurrence.tree::JS.SyntaxTree`: Syntax tree for this occurrence of the binding
@@ -301,7 +301,7 @@ information:
 
 # Returns
 `binding_occurrences` is a dictionary mapping each non-internal local/argument binding to
-a set of `BindingOccurence` objects that record where and how the binding appears.
+a set of `BindingOccurrence` objects that record where and how the binding appears.
 
 !!! note "Comparison with `select_target_binding_definitions`"
     While [`select_target_binding_definitions`](@ref) traces definitions from a specific use
@@ -315,7 +315,7 @@ function compute_binding_occurrences(
         ismacro::Union{Nothing,Base.RefValue{Bool}} = nothing,
         include_global_bindings::Bool = false
     ) where Tree3<:JS.SyntaxTree
-    occurrences = Dict{JL.BindingInfo,Set{BindingOccurence{Tree3}}}()
+    occurrences = Dict{JL.BindingInfo,Set{BindingOccurrence{Tree3}}}()
 
     same_arg_bindings = Dict{Symbol,Vector{Int}}() # group together argument bindings with the same name
     same_location_bindings = Dict{Tuple{Symbol,Int,Int},Vector{Int}}() # group together local bindings with the same location and name
@@ -332,7 +332,7 @@ function compute_binding_occurrences(
         else
             error(lazy"Unknown binding kind: $(binfo.kind)")
         end
-        occurrences[binfo] = Set{BindingOccurence{Tree3}}()
+        occurrences[binfo] = Set{BindingOccurrence{Tree3}}()
     end
 
     isempty(occurrences) && return occurrences
@@ -376,7 +376,7 @@ function compute_binding_occurrences(
     return occurrences
 end
 
-function record_occurrence!(occurrences::Dict{JL.BindingInfo,Set{BindingOccurence{Tree3}}},
+function record_occurrence!(occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence{Tree3}}},
         kind::Symbol, st::Tree3, ctx3::JL.VariableAnalysisContext;
         skip_recording::Union{Nothing,Set{JL.BindingInfo}} = nothing
     ) where Tree3<:JS.SyntaxTree
@@ -387,12 +387,12 @@ function record_occurrence!(occurrences::Dict{JL.BindingInfo,Set{BindingOccurenc
     return occurrences
 end
 
-function record_occurrence!(occurrences::Dict{JL.BindingInfo,Set{BindingOccurence{Tree3}}},
+function record_occurrence!(occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence{Tree3}}},
         kind::Symbol, st::Tree3, binfo::JL.BindingInfo;
         skip_recording::Union{Nothing,Set{JL.BindingInfo}} = nothing
     ) where Tree3<:JS.SyntaxTree
     if haskey(occurrences, binfo) && (binfo ∉ @something skip_recording ())
-        push!(occurrences[binfo], BindingOccurence(st, kind))
+        push!(occurrences[binfo], BindingOccurrence(st, kind))
     end
     return occurrences
 end
@@ -421,7 +421,7 @@ is_selffunc(b::JL.BindingInfo) = b.name == "#self#"
 is_kwsorter_func(b::JL.BindingInfo) = startswith(b.name, '#') && endswith(b.name, r"#\d+$")
 
 function compute_binding_occurrences!(
-        occurrences::Dict{JL.BindingInfo,Set{BindingOccurence{Tree3}}},
+        occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence{Tree3}}},
         ctx3::JL.VariableAnalysisContext, st3::Tree3;
         ismacro::Union{Nothing,Base.RefValue{Bool}} = nothing,
         skip_recording_uses::Union{Nothing,Set{JL.BindingInfo}} = nothing

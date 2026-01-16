@@ -80,7 +80,7 @@ end
 
 function add_highlight_for_occurrence!(
         highlights′::Dict{Range,DocumentHighlightKind.Ty},
-        fi::FileInfo, occurrence::BindingOccurence,
+        fi::FileInfo, occurrence::BindingOccurrence,
         location_info::Union{Tuple{ServerState,URI},Nothing} = nothing
     )
     range = jsobj_to_range(occurrence.tree, fi)
@@ -91,7 +91,7 @@ function add_highlight_for_occurrence!(
     highlights′[range] = max(kind, get(highlights′, range, DocumentHighlightKind.Text))
 end
 
-document_highlight_kind(occurrence::BindingOccurence) =
+document_highlight_kind(occurrence::BindingOccurrence) =
     occurrence.kind === :def ? DocumentHighlightKind.Write :
     occurrence.kind === :use ? DocumentHighlightKind.Read :
     DocumentHighlightKind.Text
