@@ -550,8 +550,50 @@ struct BindingOccurrence{Tree3<:JS.SyntaxTree}
     tree::Tree3
     kind::Symbol
 end
+
+# Types for binding occurrences cache.
+# IMPORTANT: We must not cache full `JS.SyntaxTree` or `JL.BindingInfo` objects
+# as they hold references to large internal structures (syntax graphs, lowering
+# contexts). Instead, we extract only the essential information needed for
+# LSP features, i.e. mainly binding kind and location information.
+
+struct BindingInfoKey
+    mod::Union{Nothing,Module}
+    name::String
+    BindingInfoKey(binfo::JL.BindingInfo) = new(binfo.mod, binfo.name)
+end
+
+"""
+    CachedSyntaxTree
+
+A lightweight representation of syntax tree location information.
+This struct stores only the byte range and source location, implementing the
+minimum `JS.SyntaxTree` API (`first_byte`, `last_byte`, `source_location`)
+required by [`jsobj_to_range`](@ref) that convert syntax tree to LSP `Range` objects.
+"""
+struct CachedSyntaxTree
+    fb::Int
+    lb::Int
+    line::Int
+    column::Int
+    function CachedSyntaxTree(st::JS.SyntaxTree)
+        return new(JS.first_byte(st), JS.last_byte(st), JS.source_location(st)...)
+    end
+end
+JS.first_byte(cst::CachedSyntaxTree) = cst.fb
+JS.last_byte(cst::CachedSyntaxTree) = cst.lb
+JS.source_location(cst::CachedSyntaxTree) = (cst.line, cst.column)
+
+struct CachedBindingOccurrence
+    tree::CachedSyntaxTree
+    kind::Symbol
+    function CachedBindingOccurrence(occurrence::BindingOccurrence)
+        return new(CachedSyntaxTree(occurrence.tree), occurrence.kind)
+    end
+end
+
 const BindingOccurrencesRangeKey = UnitRange{Int}
-const BindingOccurrencesResult = Dict{JL.BindingInfo,Set{BindingOccurrence}}
+const BindingOccurrencesResult = Dict{BindingInfoKey,Set{CachedBindingOccurrence}}
 const BindingOccurrencesCacheEntry = Base.PersistentDict{BindingOccurrencesRangeKey,BindingOccurrencesResult}
 
 struct GlobalCompletionResolverInfo

@@ -554,7 +554,7 @@ function find_global_binding_occurrences!(
         binfo::JL.BindingInfo;
         kwargs...
     )
-    ret = Set{BindingOccurrence}()
+    ret = Set{CachedBindingOccurrence}()
     iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
         binding_occurrences = @something get_binding_occurrences!(state, uri, fi, st0; kwargs...) return
         for (binfo′, occurrences) in binding_occurrences
@@ -577,19 +577,24 @@ function get_binding_occurrences!(
         if file_cache !== nothing && haskey(file_cache, range_key)
             return cache, file_cache[range_key]
         end
-        result = @something compute_binding_occurrences_for_toplevel(state, uri, fi, st0; kwargs...) begin
+        result = @something _compute_binding_occurrences(state, uri, fi, st0; kwargs...) begin
             return cache, nothing
         end
-        if file_cache === nothing
-            file_cache = BindingOccurrencesCacheEntry(range_key => result)
-        else
-            file_cache = BindingOccurrencesCacheEntry(file_cache, range_key => result)
+        cache_result = BindingOccurrencesResult()
+        for (binfo, occurrences) in result
+            cache_result[BindingInfoKey(binfo)] = Set{CachedBindingOccurrence}(
+                CachedBindingOccurrence(occurrence) for occurrence in occurrences)
         end
-        return BindingOccurrencesCacheData(cache, uri => file_cache), result
+        if file_cache === nothing
+            file_cache = BindingOccurrencesCacheEntry(range_key => cache_result)
+        else
+            file_cache = BindingOccurrencesCacheEntry(file_cache, range_key => cache_result)
+        end
+        return BindingOccurrencesCacheData(cache, uri => file_cache), cache_result
     end
 end
 
-function compute_binding_occurrences_for_toplevel(
+function _compute_binding_occurrences(
         state::ServerState, uri::URI, fi::FileInfo, st0::JS.SyntaxTree;
         lookup_func = gen_lookup_out_of_scope!(state, uri)
     )
