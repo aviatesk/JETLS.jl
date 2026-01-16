@@ -54,30 +54,21 @@ function handle_DocumentSymbolRequest(
 end
 
 function get_document_symbols!(state::ServerState, uri::URI, fi::FileInfo)
-    # Only use cache for synced files (version > 0)
-    # Unsynced files (version == 0) are read from disk and we can't track changes
-    # (This case is used from workspace-symbol.jl)
-    is_synced = fi.version > 0
-    if is_synced
-        cached = get(load(state.document_symbol_cache), uri, nothing)
-        if cached !== nothing
-            return cached
+    return store!(state.document_symbol_cache) do cache::DocumentSymbolCacheData
+        if haskey(cache, uri)
+            symbols = cache[uri]
+            return cache, symbols
         end
+        st0 = build_syntax_tree(fi)
+        pos = Position(; line=0, character=0)
+        (; mod) = get_context_info(state, uri, pos)
+        symbols = extract_document_symbols(st0, fi, mod)
+        return DocumentSymbolCacheData(cache, uri => symbols), symbols
     end
-    st0 = build_syntax_tree(fi)
-    pos = Position(; line=0, character=0)
-    (; mod) = get_context_info(state, uri, pos)
-    symbols = extract_document_symbols(st0, fi, mod)
-    if is_synced
-        store!(state.document_symbol_cache) do cache
-            Base.PersistentDict(cache, uri => symbols), nothing
-        end
-    end
-    return symbols
 end
 
 function invalidate_document_symbol_cache!(state::ServerState, uri::URI)
-    store!(state.document_symbol_cache) do cache
+    store!(state.document_symbol_cache) do cache::DocumentSymbolCacheData
         if haskey(cache, uri)
             Base.delete(cache, uri), nothing
         else

@@ -563,7 +563,6 @@ const FileCache = SWContainer{Base.PersistentDict{URI,FileInfo}, SWStats}
 const SavedFileCache = SWContainer{Base.PersistentDict{URI,SavedFileInfo}, SWStats}
 const NotebookCache = SWContainer{Base.PersistentDict{URI,NotebookInfo}, SWStats}
 const CellToNotebookMap = SWContainer{Base.PersistentDict{URI,URI}, SWStats} # cell URI -> notebook URI
-const DocumentSymbolCache = SWContainer{Base.PersistentDict{URI,Vector{DocumentSymbol}}, SWStats}
 
 # Type aliases for concurrent updates using CASContainer (lightweight operations)
 const ExtraDiagnostics = CASContainer{ExtraDiagnosticsData, CASStats}
@@ -571,7 +570,9 @@ const CurrentlyRequested = CASContainer{Base.PersistentDict{String,RequestCaller
 const CurrentlyRegistered = CASContainer{Set{Registered}, CASStats}
 const CompletionResolverInfo = CASContainer{Union{Nothing,GlobalCompletionResolverInfo,MethodSignatureCompletionResolverInfo}, CASStats}
 
-# Type aliases for concurrent updates using LWContainer (non-retriable operations)
+# Type aliases for concurrent updates using LWContainer
+const DocumentSymbolCacheData = Base.PersistentDict{URI,Vector{DocumentSymbol}}
+const DocumentSymbolCache = LWContainer{DocumentSymbolCacheData, LWStats}
 const ConfigManager = LWContainer{ConfigManagerData, LWStats}
 
 const HandledHistory = FixedSizeFIFOQueue{MessageId}
@@ -585,7 +586,12 @@ mutable struct ServerState
     const saved_file_cache::SavedFileCache # syntactic analysis cache (synced with `textDocument/didSave`)
     const notebook_cache::NotebookCache # notebook document cache (synced with `notebookDocument/did*`), mapping notebook URIs to their notebook info
     const cell_to_notebook::CellToNotebookMap # maps cell URIs to their notebook URI
-    const document_symbol_cache::DocumentSymbolCache # cached document symbols per URI
+    # Document symbol cache for both synced and unsynced files.
+    # Uses LWContainer for concurrent writes from:
+    # - `get_document_symbols!` (on cache miss)
+    # - `textDocument/didChange` (invalidates synced files)
+    # - `workspace/didChangeWatchedFiles` (invalidates unsynced files)
+    const document_symbol_cache::DocumentSymbolCache
     const analysis_manager::AnalysisManager
     const extra_diagnostics::ExtraDiagnostics
     const currently_handled::CurrentlyHandled
