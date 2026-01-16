@@ -1,3 +1,5 @@
+const WORKSPACE_CONFIGURATION_NAMESPACE = "jetls"
+
 struct LoadLSPConfigHandler
     server::Server
     source::String
@@ -50,7 +52,7 @@ end
 
 function load_lsp_config!(server::Server, source::AbstractString; on_init::Bool=false)
     handler = LoadLSPConfigHandler(server, source, on_init)
-    request_workspace_configuration(handler, server, nothing)
+    request_workspace_configuration(handler, server, WORKSPACE_CONFIGURATION_NAMESPACE)
     nothing
 end
 
