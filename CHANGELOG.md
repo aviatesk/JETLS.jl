@@ -52,6 +52,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   arguments from local variables in the document outline. Since LSP does not
   provide a dedicated `SymbolKind.Argument`, `Object` is used as a workaround.
 
+- `workspace/symbol` now shows the parent function signature or struct name as
+  the container name for arguments or fields respectively, making it clearer
+  which function or struct they belong to during workspace symbol search.
+
 ## 2026-01-17
 
 - Commit: [`c8e2012`](https://github.com/aviatesk/JETLS.jl/commit/c8e2012)

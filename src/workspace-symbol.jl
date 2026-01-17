@@ -166,7 +166,8 @@ end
 
 function flatten_document_symbols!(
         workspace_symbols::Vector{WorkspaceSymbol}, doc_symbols::Vector{DocumentSymbol},
-        uri::URI, notebook_info::Union{Nothing,NotebookInfo}
+        uri::URI, notebook_info::Union{Nothing,NotebookInfo};
+        parent_detail::Union{Nothing,String} = nothing
     )
     for doc_sym in doc_symbols
         location = if notebook_info !== nothing
@@ -178,14 +179,24 @@ function flatten_document_symbols!(
         if location === nothing
             location = Location(; uri, range = doc_sym.range)
         end
-        push!(workspace_symbols, WorkspaceSymbol(;
-            name = doc_sym.name,
-            kind = doc_sym.kind,
-            location,
-            containerName = doc_sym.detail))
+        if (doc_sym.kind == SymbolKind.Object || # this means "argument" (see document-symbol.jl)
+            doc_sym.kind == SymbolKind.Field)
+            push!(workspace_symbols, WorkspaceSymbol(;
+                name = doc_sym.name,
+                kind = doc_sym.kind,
+                location,
+                containerName = parent_detail))
+        else
+            push!(workspace_symbols, WorkspaceSymbol(;
+                name = doc_sym.name,
+                kind = doc_sym.kind,
+                location,
+                containerName = doc_sym.detail))
+        end
         children = doc_sym.children
         if children !== nothing
-            flatten_document_symbols!(workspace_symbols, children, uri, notebook_info)
+            flatten_document_symbols!(workspace_symbols, children, uri, notebook_info;
+                parent_detail = doc_sym.detail)
         end
     end
 end
