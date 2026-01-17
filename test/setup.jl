@@ -167,6 +167,19 @@ function withserver(f;
         return (; raw_msg, json_msg)
     end
 
+    """
+        try_readmsg() -> (; raw_msg, json_msg)
+
+    Non-blocking variant of [`readmsg`](@ref). Returns `raw_msg === nothing` if no
+    message is available.
+    """
+    function try_readmsg()
+        isready(sent_queue) || return (; raw_msg=nothing, json_msg=nothing)
+        raw_msg = take!(sent_queue)
+        json_msg = LSP.readlsp(out)
+        return (; raw_msg, json_msg)
+    end
+
     # do the server initialization
     let id = id_counter[] += 1
         (; raw_msg, raw_res) = writereadmsg(
@@ -192,7 +205,7 @@ function withserver(f;
         end
     end
 
-    argnt = (; server, writemsg, readmsg, writereadmsg, id_counter)
+    argnt = (; server, writemsg, readmsg, try_readmsg, writereadmsg, id_counter)
     try
         # do the main callback
         return f(argnt)

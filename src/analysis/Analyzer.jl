@@ -118,6 +118,45 @@ CC.typeinf_lattice(::LSAnalyzer) =
 CC.ipo_lattice(::LSAnalyzer) =
     CC.InferenceLattice(CC.InterMustAliasesLattice(CC.IPOResultLattice.instance))
 
+# Collect `GeneratorErrorReport`s for LSAnalyzer
+# ---------------------------------------------
+#
+# JET's default `JETAnalyzer` reports generator errors by overloading
+# `Core.Compiler.InferenceState(..., ::JETAnalyzer)`. JETLS uses `LSAnalyzer` instead,
+# so we replicate the same behavior here so that generator errors are surfaced as
+# diagnostics in the language server.
+
+"""Internal utility to report generator errors as `JET.GeneratorErrorReport`s."""
+function report_generator_error!(analyzer::LSAnalyzer, result::CC.InferenceResult)
+    mi = result.linfo
+    m = mi.def::Method
+    isdefined(m, :generator) || return nothing
+    CC.may_invoke_generator(mi) || return nothing
+
+    world = CC.get_inference_world(analyzer)
+    try
+        @ccall jl_code_for_staged(mi::Any, world::UInt)::Any
+    catch err
+        report = add_new_report!(analyzer, result, JET.GeneratorErrorReport(mi, err))
+        JET.stash_report!(analyzer, report)
+    end
+    return nothing
+end
+
+function CC.InferenceState(
+        result::CC.InferenceResult,
+        cache_mode::UInt8,
+        analyzer::LSAnalyzer,
+    )
+    frame = @invoke CC.InferenceState(
+        result::CC.InferenceResult,
+        cache_mode::UInt8,
+        analyzer::ToplevelAbstractAnalyzer,
+    )
+    frame === nothing && report_generator_error!(analyzer, result)
+    return frame
+end
+
 # AbstractAnalyzer API
 # ====================
 
@@ -399,6 +438,16 @@ JETInterface.print_report_message(io::IO, r::BoundsErrorReport) =
     print(io, lazy"BoundsError: attempt to access $(r.a) at index [$(r.i)]")
 inference_error_report_stack_impl(r::BoundsErrorReport) = (length(r.vst)-r.vst_offset):-1:1
 inference_error_report_severity_impl(::BoundsErrorReport) = DiagnosticSeverity.Warning
+
+# Prefer a user-visible frame for generator errors.
+function inference_error_report_stack_impl(r::JET.GeneratorErrorReport)
+    for i in 1:length(r.vst)
+        r.vst[i].file === :none && continue
+        return i:-1:1
+    end
+    return length(r.vst):-1:1
+end
+inference_error_report_severity_impl(::JET.GeneratorErrorReport) = DiagnosticSeverity.Error
 
 function report_builtin_error!(
         analyzer::LSAnalyzer, sv::CC.InferenceState, @nospecialize(f), argtypes::Vector{Any},

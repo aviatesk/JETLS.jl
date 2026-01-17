@@ -562,15 +562,21 @@ function analyze_parsed_if_exist(
         activation_done::Union{Nothing,Base.Event} = nothing
     )
     uri = entryuri(request.entry)
-    jetconfigs = getjetconfigs(request.entry)
+    # Construct the interpreter first so we can apply user plugins to the analysis config.
+    interp = LSInterpreter(server, request; activation_done)
+
+    jetconfigs = copy(getjetconfigs(request.entry))
+    for plugin in interp.plugins
+        # Plugins may be loaded dynamically after the server has started and tasks have
+        # been spawned; use `invokelatest` to avoid world-age issues (Julia 1.12+).
+        Base.invokelatest(plugin_modify_jetconfigs!, plugin, request.entry, jetconfigs)
+    end
     fi = get_saved_file_info(server.state, uri)
     if !isnothing(fi)
         filename = uri2filename(uri)
-        interp = LSInterpreter(server, request; activation_done)
         return interp, JET.analyze_and_report_expr!(interp, fi.syntax_node, filename, args...; jetconfigs...)
     else
         filepath = @something uri2filepath(uri) error(lazy"Unsupported URI: $uri")
-        interp = LSInterpreter(server, request; activation_done)
         return interp, JET.analyze_and_report_file!(interp, filepath, args...; jetconfigs...)
     end
 end
@@ -591,7 +597,7 @@ function new_analysis_result(interp::LSInterpreter, request::AnalysisRequest, re
     uri2diagnostics = URI2Diagnostics(uri => Diagnostic[] for uri in keys(analyzed_file_infos))
     postprocessor = JET.PostProcessor(result.res.actual2virtual)
     toplevel_warning_reports_to_diagnostics!(uri2diagnostics, interp.warning_reports, interp.server, postprocessor)
-    jet_result_to_diagnostics!(uri2diagnostics, result, postprocessor)
+    jet_result_to_diagnostics!(uri2diagnostics, result, postprocessor, interp.plugins)
 
     (; entry, prev_analysis_result) = request
     if !(isempty(result.res.toplevel_error_reports) || isnothing(prev_analysis_result))
@@ -853,23 +859,47 @@ function analyze_package_with_revise(
     uri2diagnostics = URI2Diagnostics(uri => Diagnostic[] for uri in keys(analyzed_file_infos))
     postprocessor = JET.PostProcessor()
 
+    plugins = active_plugins(server, request.entry)
     toplevel_warning_reports_to_diagnostics!(uri2diagnostics, warning_reports, server, postprocessor)
-    inference_reports = collect_displayable_reports(progress.reports, keys(uri2diagnostics))
+    inference_reports = collect_displayable_reports(progress.reports, keys(uri2diagnostics), plugins)
     unique!(JET.aggregation_policy(analyzer), inference_reports)
-    jet_inference_error_reports_to_diagnostics!(uri2diagnostics, inference_reports, postprocessor)
+    jet_inference_error_reports_to_diagnostics!(uri2diagnostics, inference_reports, postprocessor, plugins)
     actual2virtual = pkgmod => pkgmod # No virtual module for Revise-based analysis
 
     return AnalysisResult(request.entry, uri2diagnostics, update_analyzer_world(analyzer), analyzed_file_infos, actual2virtual)
 end
 
 function collect_displayable_reports(
-        reports::Vector{JET.InferenceErrorReport}, target_uris
+        reports::Vector{JET.InferenceErrorReport},
+        target_uris,
+    )
+    return collect_displayable_reports(reports, target_uris, AbstractJETLSPlugin[])
+end
+
+function collect_displayable_reports(
+        reports::Vector{JET.InferenceErrorReport},
+        target_uris,
+        plugins::Vector{AbstractJETLSPlugin},
     )
     filter(reports) do report::JET.InferenceErrorReport
-        stk = inference_error_report_stack(report)
-        topframe = report.vst[first(stk)]
-        uri = @something jet_frame_to_uri(topframe) return false
-        return uri in target_uris
+        # 1) Any frame in the report's stack belongs to the current analysis unit.
+        for i in inference_error_report_stack(report)
+            frame = report.vst[i]
+            uri = jet_frame_to_uri(frame)
+            uri === nothing && continue
+            uri in target_uris && return true
+        end
+
+        # 2) Plugins can report additional URIs (e.g. errors that carry their own locations).
+        for plugin in plugins
+            # Plugins may be loaded dynamically after the server has started and tasks
+            # have been spawned; use `invokelatest` to avoid world-age issues (Julia 1.12+).
+            for uri in Base.invokelatest(plugin_additional_report_uris, plugin, report)
+                uri in target_uris && return true
+            end
+        end
+
+        return false
     end
 end
 

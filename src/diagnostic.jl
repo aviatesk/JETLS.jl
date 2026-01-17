@@ -322,7 +322,12 @@ end
 # JET diagnostics
 # ===============
 
-function jet_result_to_diagnostics!(uri2diagnostics::URI2Diagnostics, result::JET.JETToplevelResult, postprocessor::JET.PostProcessor)
+function jet_result_to_diagnostics!(
+        uri2diagnostics::URI2Diagnostics,
+        result::JET.JETToplevelResult,
+        postprocessor::JET.PostProcessor,
+        plugins::Vector{AbstractJETLSPlugin},
+    )
     for report in result.res.toplevel_error_reports
         if report isa JET.LoweringErrorReport || report isa JET.MacroExpansionErrorReport
             # the equivalent report should have been reported by `lowering_diagnostics!`
@@ -339,8 +344,8 @@ function jet_result_to_diagnostics!(uri2diagnostics::URI2Diagnostics, result::JE
         end
         push!(uri2diagnostics[uri], diagnostic)
     end
-    displayable_reports = collect_displayable_reports(result.res.inference_error_reports, keys(uri2diagnostics))
-    jet_inference_error_reports_to_diagnostics!(uri2diagnostics, displayable_reports, postprocessor)
+    displayable_reports = collect_displayable_reports(result.res.inference_error_reports, keys(uri2diagnostics), plugins)
+    jet_inference_error_reports_to_diagnostics!(uri2diagnostics, displayable_reports, postprocessor, plugins)
     return uri2diagnostics
 end
 
@@ -371,22 +376,59 @@ end
 # --------------------
 
 function jet_inference_error_reports_to_diagnostics!(
-        uri2diagnostics::URI2Diagnostics, reports::Vector{JET.InferenceErrorReport},
-        postprocessor::JET.PostProcessor
+        uri2diagnostics::URI2Diagnostics,
+        reports::Vector{JET.InferenceErrorReport},
+        postprocessor::JET.PostProcessor,
+        plugins::Vector{AbstractJETLSPlugin},
     )
     for report in reports
-        diagnostic = jet_inference_error_report_to_diagnostic(report, postprocessor)
-        topframeidx = first(inference_error_report_stack(report))
+        # Give plugins a chance to expand the report into (possibly multiple) diagnostics.
+        handled = false
+        for plugin in plugins
+            # Plugins may be loaded dynamically after the server has started and tasks
+            # have been spawned; use `invokelatest` to avoid world-age issues (Julia 1.12+).
+            handled = Base.invokelatest(
+                plugin_expand_inference_error_report!,
+                plugin,
+                uri2diagnostics,
+                report,
+                postprocessor,
+            )
+            handled && break
+        end
+        handled && continue
+
+        diagnostic = jet_inference_error_report_to_diagnostic(report, postprocessor, plugins)
+        rstack = inference_error_report_stack(report)
+        for plugin in plugins
+            # Plugins may be loaded dynamically after the server has started and tasks
+            # have been spawned; use `invokelatest` to avoid world-age issues (Julia 1.12+).
+            stack = Base.invokelatest(plugin_inference_error_report_stack, plugin, report)
+            stack === nothing || (rstack = stack; break)
+        end
+        topframeidx = first(rstack)
         topframe = report.vst[topframeidx]
         topframe.file === :none && continue # TODO Figure out why this is necessary
         uri = jet_frame_to_uri(topframe)
-        push!(uri2diagnostics[uri], diagnostic) # collect_displayable_reports asserts that this `uri` key exists for `uri2diagnostics`
+        push!(get!(uri2diagnostics, uri) do
+            Diagnostic[]
+        end, diagnostic)
     end
     return uri2diagnostics
 end
 
-function jet_inference_error_report_to_diagnostic(@nospecialize(report::JET.InferenceErrorReport), postprocessor::JET.PostProcessor)
+function jet_inference_error_report_to_diagnostic(
+        @nospecialize(report::JET.InferenceErrorReport),
+        postprocessor::JET.PostProcessor,
+        plugins::Vector{AbstractJETLSPlugin},
+    )
     rstack = inference_error_report_stack(report)
+    for plugin in plugins
+        # Plugins may be loaded dynamically after the server has started and tasks have
+        # been spawned; use `invokelatest` to avoid world-age issues (Julia 1.12+).
+        stack = Base.invokelatest(plugin_inference_error_report_stack, plugin, report)
+        stack === nothing || (rstack = stack; break)
+    end
     topframe = report.vst[first(rstack)]
     message = JET.with_bufferring(:limit=>true) do io
         JET.print_report_message(io, report)
@@ -398,10 +440,17 @@ function jet_inference_error_report_to_diagnostic(@nospecialize(report::JET.Infe
         local message = postprocessor(sprint(JET.print_frame_sig, frame, JET.PrintConfig()))
         push!(relatedInformation, DiagnosticRelatedInformation(; location, message))
     end
-    code = inference_error_report_code(report)
+    code = inference_error_report_code(report, plugins)
+    severity = inference_error_report_severity(report)
+    for plugin in plugins
+        # Plugins may be loaded dynamically after the server has started and tasks have
+        # been spawned; use `invokelatest` to avoid world-age issues (Julia 1.12+).
+        sev = Base.invokelatest(plugin_inference_error_report_severity, plugin, report)
+        sev === nothing || (severity = sev; break)
+    end
     return Diagnostic(;
         range = jet_frame_to_range(topframe),
-        severity = inference_error_report_severity(report),
+        severity,
         message,
         source = DIAGNOSTIC_SOURCE,
         code,
@@ -409,7 +458,16 @@ function jet_inference_error_report_to_diagnostic(@nospecialize(report::JET.Infe
         relatedInformation)
 end
 
-function inference_error_report_code(@nospecialize report::JET.InferenceErrorReport)
+function inference_error_report_code(
+        @nospecialize(report::JET.InferenceErrorReport),
+        plugins::Vector{AbstractJETLSPlugin},
+    )
+    for plugin in plugins
+        # Plugins may be loaded dynamically after the server has started and tasks have
+        # been spawned; use `invokelatest` to avoid world-age issues (Julia 1.12+).
+        code = Base.invokelatest(plugin_inference_error_report_code, plugin, report)
+        code === nothing || return code
+    end
     if report isa UndefVarErrorReport
         if report.var isa GlobalRef
             return INFERENCE_UNDEF_GLOBAL_VAR_CODE
@@ -422,8 +480,10 @@ function inference_error_report_code(@nospecialize report::JET.InferenceErrorRep
         return INFERENCE_FIELD_ERROR_CODE
     elseif report isa BoundsErrorReport
         return INFERENCE_BOUNDS_ERROR_CODE
+    elseif report isa JET.GeneratorErrorReport
+        return INFERENCE_GENERATOR_ERROR_CODE
     end
-    error(lazy"Diagnostic code is not defined for this report: $report")
+    return INFERENCE_ERROR_CODE
 end
 
 # toplevel warning diagnostic
