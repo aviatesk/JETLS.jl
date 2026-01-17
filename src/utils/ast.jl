@@ -40,6 +40,18 @@ function is_nospecialize_or_specialize_macrocall(st::JS.SyntaxTree)
     return macro_name.name_val == "@nospecialize" || macro_name.name_val == "@specialize"
 end
 
+function is_nospecialize_or_specialize_macrocall3(st3::JS.SyntaxTree)
+    JS.kind(st3) === JS.K"macrocall" || return false
+    JS.numchildren(st3) >= 1 || return false
+    macro_name = st3[1]
+    JS.kind(macro_name) === JS.K"macro_name" || return false
+    JS.numchildren(st3) >= 2 || return false
+    macro_name = macro_name[2]
+    JS.kind(macro_name) === JS.K"Identifier" || return false
+    hasproperty(macro_name, :name_val) || return false
+    return macro_name.name_val == "nospecialize" || macro_name.name_val == "specialize"
+end
+
 function _remove_macrocalls(st::JS.SyntaxTree)
     if JS.kind(st) === JS.K"macrocall"
         if is_nospecialize_or_specialize_macrocall(st)
