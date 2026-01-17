@@ -91,14 +91,15 @@ Minimal [Emacs](https://www.gnu.org/software/emacs/)
 ([eglot](https://github.com/joaotavora/eglot) client) setup:
 
 ```lisp
-(add-to-list 'eglot-server-programs
-              '(((julia-mode :language-id "julia")
-                (julia-ts-mode :language-id "julia"))
-                "jetls"
-                "--threads=auto"
-                "--"
-                "--socket"
-                :autoport))
+(with-eval-after-load 'eglot
+  (add-to-list 'eglot-server-programs
+               '(((julia-mode :language-id "julia")
+                  (julia-ts-mode :language-id "julia"))
+                 "jetls"
+                 "--threads=auto"
+                 "--"
+                 "--socket"
+                 :autoport)))
 ```
 
 ### Vim
