@@ -45,6 +45,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > Note that `analysis_overrides` is provided as a temporary workaround and may
 > be removed or changed at any time. A proper fix is being worked on.
 
+### Changed
+
+- `textDocument/documentSymbol` now uses `SymbolKind.Object` for function
+  arguments instead of `SymbolKind.Variable`. This visually distinguishes
+  arguments from local variables in the document outline. Since LSP does not
+  provide a dedicated `SymbolKind.Argument`, `Object` is used as a workaround.
+
 ## 2026-01-17
 
 - Commit: [`c8e2012`](https://github.com/aviatesk/JETLS.jl/commit/c8e2012)

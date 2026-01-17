@@ -739,15 +739,20 @@ function extract_local_scope_bindings!(symbols::Vector{DocumentSymbol},
                     detail = JS.sourcetext(parent)
                 end
             else
-                kind = SymbolKind.Variable
                 if binfo.kind === :argument
                     if JS.kind(source_node) === JS.K"macrocall"
                         detail = JS.sourcetext(source_node)
                     else
                         detail = extract_argument_detail(parent_map, fb, lb)
                     end
+                    # Why doesn't LSP provide `SymbolKind.Argument`?
+                    # It's absolutely necessary before `SymbolKind.Event`...
+                    # Anyway, here we use `SymbolKind.Object` to make it clear
+                    # that this is different from :local bindings
+                    kind = SymbolKind.Object
                 else
                     detail = extract_local_variable_detail(parent_map, fb, lb)
+                    kind = SymbolKind.Variable
                 end
             end
             children_symbols = nothing

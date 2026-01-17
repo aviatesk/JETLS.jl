@@ -779,7 +779,7 @@ end
             # inner's children should include y
             @test inner_sym.children !== nothing
             y_sym = only(filter(c -> c.name == "y", inner_sym.children))
-            @test y_sym.kind == SymbolKind.Variable
+            @test y_sym.kind == SymbolKind.Object
         end
     end
 
