@@ -258,6 +258,66 @@
                 }
               }
             },
+            "plugins": {
+              "type": "array",
+              "markdownDescription": "JETLS user plugin configuration. Each entry describes a package to load and activate as a JETLS plugin.\n\nFor example: `[{ \"name\": \"BorrowChecker\", \"uuid\": \"...\" }]`.",
+              "items": {
+                "type": "object",
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "markdownDescription": "Package name (e.g. `'BorrowChecker'`)."
+                  },
+                  "uuid": {
+                    "type": "string",
+                    "markdownDescription": "Optional package UUID to disambiguate."
+                  },
+                  "version": {
+                    "type": "string",
+                    "markdownDescription": "Optional version string passed to `Pkg.PackageSpec(version=...)`."
+                  },
+                  "url": {
+                    "type": "string",
+                    "markdownDescription": "Optional git URL passed to `Pkg.PackageSpec(url=...)`."
+                  },
+                  "path": {
+                    "type": "string",
+                    "markdownDescription": "Optional local path passed to `Pkg.PackageSpec(path=...)`. Relative paths are resolved against the workspace root."
+                  },
+                  "subdir": {
+                    "type": "string",
+                    "markdownDescription": "Optional subdirectory within `url`/`path`, passed to `Pkg.PackageSpec(subdir=...)`."
+                  },
+                  "rev": {
+                    "type": "string",
+                    "markdownDescription": "Optional git revision passed to `Pkg.PackageSpec(rev=...)`."
+                  },
+                  "entry": {
+                    "oneOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    ],
+                    "markdownDescription": "Optional entrypoint(s) within the package module. If set, JETLS will call these to obtain plugins."
+                  },
+                  "enabled": {
+                    "type": "boolean",
+                    "default": true,
+                    "markdownDescription": "Whether this plugin entry is enabled."
+                  }
+                }
+              },
+              "default": []
+            },
             "testrunner": {
               "type": "object",
               "markdownDescription": "TestRunner integration configuration. See [TestRunner integration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/testrunner).",

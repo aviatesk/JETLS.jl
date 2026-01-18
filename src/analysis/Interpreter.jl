@@ -5,7 +5,8 @@ export LSInterpreter
 using JuliaSyntax: JuliaSyntax as JS
 using JET: CC, JET, JuliaInterpreter
 using ..JETLS:
-    AnalysisRequest, AnalysisResult, SavedFileInfo, Server, JETLS, JETLS_DEV_MODE,
+    AbstractJETLSPlugin, AnalysisRequest, AnalysisResult, SavedFileInfo, Server, JETLS,
+    JETLS_DEV_MODE, active_plugins,
     is_cancelled, send_progress, yield_to_endpoint
 using ..JETLS.URIs2
 using ..JETLS.LSP
@@ -21,6 +22,7 @@ Base.getindex(counter::Counter) = counter.count
 struct LSInterpreter{S<:Server} <: JET.ConcreteInterpreter
     server::S
     request::AnalysisRequest
+    plugins::Vector{AbstractJETLSPlugin}
     analyzer::LSAnalyzer
     counter::Counter
     activation_done::Union{Nothing,Base.Event}
@@ -28,20 +30,22 @@ struct LSInterpreter{S<:Server} <: JET.ConcreteInterpreter
     current_node::Base.RefValue{JS.SyntaxNode}
     state::JET.InterpretationState
     function LSInterpreter(
-            server::S, request::AnalysisRequest, analyzer::LSAnalyzer, counter::Counter,
+            server::S, request::AnalysisRequest, plugins::Vector{AbstractJETLSPlugin},
+            analyzer::LSAnalyzer, counter::Counter,
             activation_done::Union{Nothing,Base.Event}
         ) where S<:Server
-        return new{S}(server, request, analyzer, counter, activation_done,
+        return new{S}(server, request, plugins, analyzer, counter, activation_done,
             JETLS.ToplevelWarningReport[], Base.RefValue{JS.SyntaxNode}())
     end
     function LSInterpreter(
-            server::S, request::AnalysisRequest, analyzer::LSAnalyzer, counter::Counter,
+            server::S, request::AnalysisRequest, plugins::Vector{AbstractJETLSPlugin},
+            analyzer::LSAnalyzer, counter::Counter,
             activation_done::Union{Nothing,Base.Event},
             warning_reports::Vector{JETLS.ToplevelWarningReport},
             current_node::Base.RefValue{JS.SyntaxNode},
             state::JET.InterpretationState,
         ) where S<:Server
-        return new{S}(server, request, analyzer, counter, activation_done,
+        return new{S}(server, request, plugins, analyzer, counter, activation_done,
             warning_reports, current_node, state)
     end
 end
@@ -51,14 +55,15 @@ function LSInterpreter(
         server::Server, request::AnalysisRequest;
         activation_done::Union{Nothing,Base.Event} = nothing
     )
-    return LSInterpreter(server, request, LSAnalyzer(request.entry), Counter(), activation_done)
+    plugins = active_plugins(server, request.entry)
+    return LSInterpreter(server, request, plugins, LSAnalyzer(request.entry), Counter(), activation_done)
 end
 
 # `JET.ConcreteInterpreter` interface
 JET.InterpretationState(interp::LSInterpreter) = interp.state
 function JET.ConcreteInterpreter(interp::LSInterpreter, state::JET.InterpretationState)
     return LSInterpreter(
-        interp.server, interp.request, interp.analyzer, interp.counter,
+        interp.server, interp.request, interp.plugins, interp.analyzer, interp.counter,
         interp.activation_done, interp.warning_reports, interp.current_node, state)
 end
 JET.ToplevelAbstractAnalyzer(interp::LSInterpreter) = interp.analyzer

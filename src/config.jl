@@ -27,18 +27,22 @@ function merge_and_track(
     K = fieldtype(T, key)
     old_by_key = Dict{K,T}(getfield(item, key) => item for item in old_config)
     new_by_key = Dict{K,T}(getfield(item, key) => item for item in new_config)
+
+    # Preserve the ordering of `new_config` (config overlay should control order).
     result = T[]
-    for (k, old_item) in old_by_key
-        if haskey(new_by_key, k)
-            push!(result, merge_and_track(on_difference, old_item, new_by_key[k], path))
+    for new_item in new_config
+        k = getfield(new_item, key)
+        if haskey(old_by_key, k)
+            push!(result, merge_and_track(on_difference, old_by_key[k], new_item, path))
         else
-            push!(result, merge_and_track(on_difference, old_item, nothing, path))
-        end
-    end
-    for (k, new_item) in new_by_key
-        if !haskey(old_by_key, k)
             push!(result, merge_and_track(on_difference, nothing, new_item, path))
         end
+    end
+    # Keep entries that exist only in `old_config` (append in their original order).
+    for old_item in old_config
+        k = getfield(old_item, key)
+        haskey(new_by_key, k) && continue
+        push!(result, merge_and_track(on_difference, old_item, nothing, path))
     end
     return result
 end
@@ -248,8 +252,9 @@ end
 mutable struct ConfigChangeTracker
     const changed_settings::Vector{ConfigChange}
     diagnostic_setting_changed::Bool
+    plugins_setting_changed::Bool
 end
-ConfigChangeTracker() = ConfigChangeTracker(ConfigChange[], false)
+ConfigChangeTracker() = ConfigChangeTracker(ConfigChange[], false, false)
 
 function (tracker::ConfigChangeTracker)(old_val, new_val, path::Tuple{Vararg{Symbol}})
     @nospecialize old_val new_val
@@ -258,6 +263,8 @@ function (tracker::ConfigChangeTracker)(old_val, new_val, path::Tuple{Vararg{Sym
         push!(tracker.changed_settings, ConfigChange(path_str, old_val, new_val))
         if !isempty(path) && first(path) === :diagnostic
             tracker.diagnostic_setting_changed = true
+        elseif !isempty(path) && first(path) === :plugins
+            tracker.plugins_setting_changed = true
         end
     end
 end

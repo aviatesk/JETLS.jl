@@ -383,8 +383,10 @@ const TOPLEVEL_ABSTRACT_FIELD_CODE = "toplevel/abstract-field"
 const INFERENCE_UNDEF_GLOBAL_VAR_CODE = "inference/undef-global-var"
 const INFERENCE_UNDEF_LOCAL_VAR_CODE = "inference/undef-local-var"
 const INFERENCE_UNDEF_STATIC_PARAM_CODE = "inference/undef-static-param" # currently not reported
+const INFERENCE_ERROR_CODE = "inference/error"
 const INFERENCE_FIELD_ERROR_CODE = "inference/field-error"
 const INFERENCE_BOUNDS_ERROR_CODE = "inference/bounds-error"
+const INFERENCE_GENERATOR_ERROR_CODE = "inference/generator-error"
 const TESTRUNNER_TEST_FAILURE_CODE = "testrunner/test-failure"
 
 const ALL_DIAGNOSTIC_CODES = Set{String}(String[
@@ -401,8 +403,10 @@ const ALL_DIAGNOSTIC_CODES = Set{String}(String[
     INFERENCE_UNDEF_GLOBAL_VAR_CODE,
     INFERENCE_UNDEF_LOCAL_VAR_CODE,
     INFERENCE_UNDEF_STATIC_PARAM_CODE,
+    INFERENCE_ERROR_CODE,
     INFERENCE_FIELD_ERROR_CODE,
     INFERENCE_BOUNDS_ERROR_CODE,
+    INFERENCE_GENERATOR_ERROR_CODE,
     TESTRUNNER_TEST_FAILURE_CODE,
 ])
 
@@ -470,12 +474,52 @@ end
     method_signature::Maybe{MethodSignatureConfig}
 end
 
+"""
+    PluginSpec <: ConfigSection
+
+Configuration entry for a user plugin.
+
+This is expected to be configured by the LSP client (e.g. VSCode's `settings.json`) under
+`jetls-client.settings.plugins`.
+
+Fields:
+- `name`: Package name to load.
+- `uuid`: Optional UUID string. Recommended when the package name is ambiguous.
+- `version`: Optional version constraint.
+- `url`: Optional git URL to `Pkg.add`.
+- `path`: Optional local path to `Pkg.develop`.
+- `subdir`: Optional subdirectory within `url`/`path`.
+- `rev`: Optional git revision.
+- `entry`: Optional list of entry points in the package module.
+  If empty, JETLS will use plugins registered via `JETLS.register_plugin!`.
+- `enabled`: Allows temporarily disabling a plugin without removing the entry.
+"""
+struct PluginSpec <: ConfigSection
+    name::String
+    uuid::Union{Nothing,Base.UUID}
+    version::Union{Nothing,VersionNumber}
+    url::Union{Nothing,String}
+    path::Union{Nothing,String}
+    subdir::Union{Nothing,String}
+    rev::Union{Nothing,String}
+    entry::Vector{String}
+    enabled::Bool
+end
+@define_eq_overloads PluginSpec
+
+# Overload to inject custom validations for parsing `PluginSpec` from config dictionaries.
+Base.convert(::Type{PluginSpec}, x::AbstractDict{String}) = parse_plugin_spec(x)
+
+# Merge `plugins` settings by package name.
+merge_key(::Type{PluginSpec}) = :name
+
 @option struct JETLSConfig <: ConfigSection
     diagnostic::Maybe{DiagnosticConfig}
     full_analysis::Maybe{FullAnalysisConfig}
     testrunner::Maybe{TestRunnerConfig}
     formatter::Maybe{FormatterConfig}
     completion::Maybe{CompletionConfig}
+    plugins::Maybe{Vector{PluginSpec}}
     # This initialization options are read once at the server initialization and held in
     # `server.state.init_options`, so it might seem strange to hold them here also,
     # but they need to be set here for cases where initialization options are set in
@@ -489,6 +533,7 @@ const DEFAULT_CONFIG = JETLSConfig(;
     testrunner = TestRunnerConfig(@static Sys.iswindows() ? "testrunner.bat" : "testrunner"),
     formatter = "Runic",
     completion = CompletionConfig(LaTeXEmojiConfig(missing), MethodSignatureConfig(missing)),
+    plugins = PluginSpec[],
     initialization_options = DEFAULT_INIT_OPTIONS)
 
 function get_default_config(path::Symbol...)

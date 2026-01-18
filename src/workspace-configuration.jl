@@ -111,6 +111,10 @@ function handle_lsp_config_change!(server::Server, tracker::ConfigChangeTracker,
         notify_diagnostics!(server)
         request_diagnostic_refresh!(server)
     end
+    if tracker.plugins_setting_changed
+        notify_diagnostics!(server)
+        request_diagnostic_refresh!(server)
+    end
 end
 
 function handle_DidChangeConfigurationNotification(server::Server, msg::DidChangeConfigurationNotification)
