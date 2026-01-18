@@ -211,6 +211,24 @@ using Test
         @test init_req.params.workspaceFolders isa Vector{WorkspaceFolder} && isempty(init_req.params.workspaceFolders)
     end
 
+    test_roundtrip("""
+        {
+            "jsonrpc": "2.0",
+            "id": 0,
+            "method": "workspace/configuration",
+            "params": {
+                "items": [{"section": ""}]
+            }
+        }
+        """) do request
+        @test request isa ConfigurationRequest
+        @test request.jsonrpc == "2.0"
+        @test request.id == 0
+        @test request.method == "workspace/configuration"
+        # The empty string is preserved
+        @test request.params.items == [ConfigurationItem(; section="")]
+    end
+
     # ResponseMessage should omit the `error` field on success, and omit `result` an error
     @testset "ResponseMessage result field" begin
         success_res = ResponseMessage(;

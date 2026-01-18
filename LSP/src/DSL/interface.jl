@@ -172,6 +172,8 @@ function process_interface_def!(toplevelblk::Expr, structbody::Expr,
             # (except in the tests)
             omitempties = ()
         end
+        # Empty strings are valid data and should not be omitted for being empty containers
+        push!(toplevelblk.args, :(StructTypes.isempty(::Type{$Name}, ::AbstractString) = false))
         push!(toplevelblk.args, :(StructTypes.omitempties(::Type{$Name}) = $omitempties))
     end
     if is_anon
