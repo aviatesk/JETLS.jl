@@ -1,6 +1,6 @@
 module JETLS
 
-export Server, Endpoint, runserver
+export Endpoint, Server, runserver
 
 const JETLS_VERSION = let
     version_file = joinpath(dirname(@__DIR__), "JETLS_VERSION")
