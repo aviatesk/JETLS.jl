@@ -501,6 +501,7 @@ function _testrunner_run_testset(
     cmd = testrunner_cmd(executable, filepath, tsn, tsl, test_env_path)
     testrunnerproc = open(cmd; read=true)
 
+    local result::Union{TestRunnerResult,String}
     try
         # Wait for the process with cancellation support
         while true
@@ -515,64 +516,66 @@ function _testrunner_run_testset(
             return "Test execution cancelled by user"
         end
 
-        result = try
-            LSP.JSON3.read(testrunnerproc, TestRunnerResult)
+        try
+            result = LSP.JSON3.read(testrunnerproc, TestRunnerResult)
         catch err
             @error "Error from testrunner process" err
             show_error_message(server, """
             An unexpected error occurred while executing TestRunner.jl:
             See the server log for details.
             """)
-            return "Test execution failed"
+            result = "Test execution failed"
         end
-        ret = summary_testrunner_result(result)
-
-        # Update testsetinfos with the new result atomically
-        key = TestsetDiagnosticsKey(uri, tsn, idx)
-        updated = store!(server.state.file_cache) do cache
-            current_fi = get(cache, uri, nothing)
-            if current_fi === nothing || !is_testsetinfo_valid(current_fi, idx)
-                return cache, false
-            end
-            new_infos = copy(current_fi.testsetinfos)
-            new_infos[idx] = TestsetInfo(new_infos[idx].st0, TestsetResult(result, key))
-            new_fi = FileInfo(current_fi; testsetinfos=new_infos)
-            Base.PersistentDict(cache, uri => new_fi), true
-        end
-        if !updated
-            # If the file state has changed during test execution, it's difficult to apply results to the file:
-            # Simply show only the option to open logs
-            show_testrunner_result_in_message(server, result, #=title=#tsn)
-            return ret
-        end
-
-        if !isempty(result.diagnostics)
-            val = testrunner_result_to_diagnostics(result)
-            store!(server.state.extra_diagnostics) do data
-                return ExtraDiagnosticsData(data, key=>val), nothing
-            end
-        else
-            store!(server.state.extra_diagnostics) do data
-                if haskey(data, key)
-                    new_data = copy(data)
-                    delete!(new_data, key)
-                    new_data, nothing
-                else
-                    data, nothing
-                end
-            end
-        end
-        notify_diagnostics!(server; ensure_cleared=uri)
-
-        if supports(server, :workspace, :codeLens, :refreshSupport)
-            request_codelens_refresh!(server)
-        end
-        show_testrunner_result_in_message(server, result, #=title=#tsn; next_info=(; uri, idx))
-
-        return ret
     finally
         close(testrunnerproc)
     end
+    result isa AbstractString && return result
+
+    ret = summary_testrunner_result(result)
+
+    # Update testsetinfos with the new result atomically
+    key = TestsetDiagnosticsKey(uri, tsn, idx)
+    updated = store!(server.state.file_cache) do cache
+        current_fi = get(cache, uri, nothing)
+        if current_fi === nothing || !is_testsetinfo_valid(current_fi, idx)
+            return cache, false
+        end
+        new_infos = copy(current_fi.testsetinfos)
+        new_infos[idx] = TestsetInfo(new_infos[idx].st0, TestsetResult(result, key))
+        new_fi = FileInfo(current_fi; testsetinfos=new_infos)
+        Base.PersistentDict(cache, uri => new_fi), true
+    end
+    if !updated
+        # If the file state has changed during test execution, it's difficult to apply results to the file:
+        # Simply show only the option to open logs
+        show_testrunner_result_in_message(server, result, #=title=#tsn)
+        return ret
+    end
+
+    if !isempty(result.diagnostics)
+        val = testrunner_result_to_diagnostics(result)
+        store!(server.state.extra_diagnostics) do data
+            return ExtraDiagnosticsData(data, key=>val), nothing
+        end
+    else
+        store!(server.state.extra_diagnostics) do data
+            if haskey(data, key)
+                new_data = copy(data)
+                delete!(new_data, key)
+                new_data, nothing
+            else
+                data, nothing
+            end
+        end
+    end
+    notify_diagnostics!(server; ensure_cleared=uri)
+
+    if supports(server, :workspace, :codeLens, :refreshSupport)
+        request_codelens_refresh!(server)
+    end
+    show_testrunner_result_in_message(server, result, #=title=#tsn; next_info=(; uri, idx))
+
+    return ret
 end
 
 function testrunner_run_testcase(
@@ -628,6 +631,7 @@ function _testrunner_run_testcase(
     cmd = testrunner_cmd(executable, filepath, tcl, test_env_path)
     testrunnerproc = open(cmd; read=true)
 
+    local result::Union{TestRunnerResult,String}
     try
         # Wait for the process with cancellation support
         while true
@@ -642,38 +646,39 @@ function _testrunner_run_testcase(
             return "Test execution cancelled by user"
         end
 
-        result = try
-            LSP.JSON3.read(testrunnerproc, TestRunnerResult)
+        try
+            result = LSP.JSON3.read(testrunnerproc, TestRunnerResult)
         catch err
             @error "Error from testrunner process" err
             show_error_message(server, """
             An unexpected error occurred while executing TestRunner.jl:
             See the server log for details.
             """)
-            return "Test execution failed"
+            result = "Test execution failed"
         end
-
-        # Show the results of this `@test` case temporarily as diagnostics:
-        # The `Server` (or `FileInfo`) doesn't track the state of each `@test`,
-        # so we can't map editor state to diagnostics.
-        # Show error information to the user as temporary diagnostics.
-        uri2diagnostics = testrunner_result_to_diagnostics(result)
-        notify_temporary_diagnostics!(server, uri2diagnostics)
-        Threads.@spawn begin
-            sleep(10)
-            notify_diagnostics!(server; ensure_cleared=uri) # refresh diagnostics after 5 sec
-        end
-
-        extra_message = isempty(uri2diagnostics) ? nothing : """\n
-        Test failures are shown as temporary diagnostics in the editor for 10 seconds.
-        Open logs to view detailed error messages that persist."""
-
-        show_testrunner_result_in_message(server, result, "$tct", #=request_key=#""; extra_message)
-
-        return summary_testrunner_result(result)
     finally
         close(testrunnerproc)
     end
+    result isa AbstractString && return result
+
+    # Show the results of this `@test` case temporarily as diagnostics:
+    # The `Server` (or `FileInfo`) doesn't track the state of each `@test`,
+    # so we can't map editor state to diagnostics.
+    # Show error information to the user as temporary diagnostics.
+    uri2diagnostics = testrunner_result_to_diagnostics(result)
+    notify_temporary_diagnostics!(server, uri2diagnostics)
+    Threads.@spawn begin
+        sleep(10)
+        notify_diagnostics!(server; ensure_cleared=uri) # refresh diagnostics after 5 sec
+    end
+
+    extra_message = isempty(uri2diagnostics) ? nothing : """\n
+    Test failures are shown as temporary diagnostics in the editor for 10 seconds.
+    Open logs to view detailed error messages that persist."""
+
+    show_testrunner_result_in_message(server, result, "$tct", #=request_key=#""; extra_message)
+
+    return summary_testrunner_result(result)
 end
 
 struct ShowDocumentRequestCaller <: RequestCaller
