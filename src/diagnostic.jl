@@ -809,6 +809,91 @@ function find_capture_sites(
     return @somereal relatedInformation Some(nothing)
 end
 
+function analyze_unsorted_imports!(
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::JS.SyntaxTree
+    )
+    traverse(st0) do st0′::JS.SyntaxTree
+        kind = JS.kind(st0′)
+        if kind ∉ JS.KSet"import using export public"
+            return nothing
+        end
+        names = collect_import_names(st0′)
+        if !is_sorted_imports(names)
+            range = jsobj_to_range(st0′, fi)
+            code = LOWERING_UNSORTED_IMPORT_NAMES_CODE
+            push!(diagnostics, Diagnostic(;
+                range,
+                severity = 0, # off by default; enable via `diagnostic.patterns`
+                message = "Names are not sorted alphabetically",
+                source = DIAGNOSTIC_SOURCE_LIVE,
+                code,
+                codeDescription = diagnostic_code_description(code)))
+        end
+        return TraversalNoRecurse()
+    end
+    return diagnostics
+end
+
+function collect_import_names(st0::JS.SyntaxTree)
+    kind = JS.kind(st0)
+    names = JS.SyntaxTree[]
+    if kind === JS.K"import" || kind === JS.K"using"
+        nchildren = JS.numchildren(st0)
+        if nchildren == 1
+            child = st0[1]
+            if JS.kind(child) === JS.K":"
+                for i = 2:JS.numchildren(child)
+                    push!(names, child[i])
+                end
+            end
+        elseif nchildren > 1
+            for i = 1:nchildren
+                push!(names, st0[i])
+            end
+        end
+    elseif kind === JS.K"export" || kind === JS.K"public"
+        for i = 1:JS.numchildren(st0)
+            push!(names, st0[i])
+        end
+    end
+    return names
+end
+
+function is_sorted_imports(names::Vector{JS.SyntaxTree})
+    length(names) < 2 && return true
+    for i = 1:length(names)-1
+        key1 = get_import_sort_key(names[i])
+        key2 = get_import_sort_key(names[i+1])
+        if key1 > key2
+            return false
+        end
+    end
+    return true
+end
+
+function get_import_sort_key(st0::JS.SyntaxTree)
+    kind = JS.kind(st0)
+    if kind === JS.K"as"
+        return get_import_sort_key(st0[1])
+    elseif kind === JS.K"importpath"
+        parts = String[]
+        for i = 1:JS.numchildren(st0)
+            child = st0[i]
+            ckind = JS.kind(child)
+            if ckind === JS.K"."
+                push!(parts, ".")
+            elseif ckind === JS.K"Identifier"
+                push!(parts, JS.sourcetext(child))
+            end
+        end
+        return join(parts)
+    elseif kind === JS.K"Identifier"
+        return JS.sourcetext(st0)
+    else
+        return JS.sourcetext(st0)
+    end
+end
+
 function analyze_lowered_code!(
         diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo, res::NamedTuple;
         skip_analysis_requiring_context::Bool = false,
@@ -840,6 +925,8 @@ function lowering_diagnostics!(
         skip_analysis_requiring_context::Bool = false, kwargs...
     )
     @assert JS.kind(st0) ∉ JS.KSet"toplevel module"
+
+    analyze_unsorted_imports!(diagnostics, fi, st0)
 
     world = Base.get_world_counter()
     res = try

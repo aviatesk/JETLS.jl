@@ -1148,4 +1148,214 @@ end
     end
 end
 
+is_unsorted_import_names_diagnostic(diagnostic) =
+    diagnostic.message == "Names are not sorted alphabetically" &&
+    diagnostic.code == JETLS.LOWERING_UNSORTED_IMPORT_NAMES_CODE &&
+    diagnostic.severity == 0  # off by default, enabled via diagnostic.patterns
+
+@testset "unsorted import names" begin
+    let diagnostics = get_lowered_diagnostics("""
+        import Foo: c, a, b
+        """)
+        @test length(diagnostics) == 1
+        @test is_unsorted_import_names_diagnostic(only(diagnostics))
+    end
+
+    let diagnostics = get_lowered_diagnostics("""
+        using Bar: x, y, z
+        """)
+        @test isempty(diagnostics)
+    end
+
+    let diagnostics = get_lowered_diagnostics("""
+        export c, a, b
+        """)
+        @test length(diagnostics) == 1
+        @test is_unsorted_import_names_diagnostic(only(diagnostics))
+    end
+
+    let diagnostics = get_lowered_diagnostics("""
+        public z, y
+        """)
+        @test length(diagnostics) == 1
+        @test is_unsorted_import_names_diagnostic(only(diagnostics))
+    end
+
+    let diagnostics = get_lowered_diagnostics("""
+        using Foo: bar as baz, alpha as a
+        """)
+        @test length(diagnostics) == 1
+        @test is_unsorted_import_names_diagnostic(only(diagnostics))
+    end
+
+    let diagnostics = get_lowered_diagnostics("""
+        using Foo: alpha as a, bar as baz
+        """)
+        @test isempty(diagnostics)
+    end
+
+    let diagnostics = get_lowered_diagnostics("""
+        using ..Parent: b, a
+        """)
+        @test length(diagnostics) == 1
+        @test is_unsorted_import_names_diagnostic(only(diagnostics))
+    end
+
+    let diagnostics = get_lowered_diagnostics("""
+        export foo, bar
+        """)
+        @test length(diagnostics) == 1
+        @test is_unsorted_import_names_diagnostic(only(diagnostics))
+    end
+
+    let diagnostics = get_lowered_diagnostics("""
+        import Core, ..Base, Base
+        """)
+        @test length(diagnostics) == 1
+        @test is_unsorted_import_names_diagnostic(only(diagnostics))
+    end
+
+    let diagnostics = get_lowered_diagnostics("""
+        using Core, Base
+        """)
+        @test length(diagnostics) == 1
+        @test is_unsorted_import_names_diagnostic(only(diagnostics))
+    end
+
+    let diagnostics = get_lowered_diagnostics("""
+        import Base, Core
+        """)
+        @test isempty(diagnostics)
+    end
+end
+
+@testset "sort imports code action" begin
+    let text = "import Foo: c, a, b"
+        fi = JETLS.FileInfo(#=version=#0, text, @__FILE__)
+        uri = JETLS.LSP.URIs2.filepath2uri(@__FILE__)
+        code_actions = Union{CodeAction,Command}[]
+        range = Range(; start=Position(; line=0, character=0), var"end"=Position(; line=0, character=0))
+        JETLS.sort_imports_code_actions!(code_actions, uri, fi, range, Diagnostic[])
+        @test length(code_actions) == 1
+        action = only(code_actions)
+        @test action.title == "Sort import names"
+        edit = action.edit.changes[uri][1]
+        @test edit.newText == "import Foo: a, b, c"
+    end
+
+    let text = "export z, y, x, w"
+        fi = JETLS.FileInfo(#=version=#0, text, @__FILE__)
+        uri = JETLS.LSP.URIs2.filepath2uri(@__FILE__)
+        code_actions = Union{CodeAction,Command}[]
+        range = Range(; start=Position(; line=0, character=0), var"end"=Position(; line=0, character=0))
+        JETLS.sort_imports_code_actions!(code_actions, uri, fi, range, Diagnostic[])
+        @test length(code_actions) == 1
+        edit = code_actions[1].edit.changes[uri][1]
+        @test edit.newText == "export w, x, y, z"
+    end
+
+    let text = "import Foo: a, b, c"
+        fi = JETLS.FileInfo(#=version=#0, text, @__FILE__)
+        uri = JETLS.LSP.URIs2.filepath2uri(@__FILE__)
+        code_actions = Union{CodeAction,Command}[]
+        range = Range(; start=Position(; line=0, character=0), var"end"=Position(; line=0, character=0))
+        JETLS.sort_imports_code_actions!(code_actions, uri, fi, range, Diagnostic[])
+        @test isempty(code_actions)
+    end
+
+    let text = "using Foo: bar as baz, alpha as a"
+        fi = JETLS.FileInfo(#=version=#0, text, @__FILE__)
+        uri = JETLS.LSP.URIs2.filepath2uri(@__FILE__)
+        code_actions = Union{CodeAction,Command}[]
+        range = Range(; start=Position(; line=0, character=0), var"end"=Position(; line=0, character=0))
+        JETLS.sort_imports_code_actions!(code_actions, uri, fi, range, Diagnostic[])
+        @test length(code_actions) == 1
+        edit = code_actions[1].edit.changes[uri][1]
+        @test edit.newText == "using Foo: alpha as a, bar as baz"
+    end
+
+    let text = "import Core, ..Base, Base"
+        fi = JETLS.FileInfo(#=version=#0, text, @__FILE__)
+        uri = JETLS.LSP.URIs2.filepath2uri(@__FILE__)
+        code_actions = Union{CodeAction,Command}[]
+        range = Range(; start=Position(; line=0, character=0), var"end"=Position(; line=0, character=0))
+        JETLS.sort_imports_code_actions!(code_actions, uri, fi, range, Diagnostic[])
+        @test length(code_actions) == 1
+        edit = code_actions[1].edit.changes[uri][1]
+        @test edit.newText == "import ..Base, Base, Core"
+    end
+
+    let text = "import LongModuleName: zzz, yyy, xxx, www, vvv, uuu, ttt, sss, rrr, qqq, ppp, ooo, nnn, mmm, lll, kkk, jjj, iii, hhh, ggg, fff, eee, ddd, ccc, bbb, aaa"
+        fi = JETLS.FileInfo(#=version=#0, text, @__FILE__)
+        uri = JETLS.LSP.URIs2.filepath2uri(@__FILE__)
+        code_actions = Union{CodeAction,Command}[]
+        range = Range(; start=Position(; line=0, character=0), var"end"=Position(; line=0, character=0))
+        JETLS.sort_imports_code_actions!(code_actions, uri, fi, range, Diagnostic[])
+        @test length(code_actions) == 1
+        edit = code_actions[1].edit.changes[uri][1]
+        expected = "import LongModuleName: aaa, bbb, ccc, ddd, eee, fff, ggg, hhh, iii, jjj, kkk, lll, mmm, nnn,\n    ooo, ppp, qqq, rrr, sss, ttt, uuu, vvv, www, xxx, yyy, zzz"
+        @test edit.newText == expected
+    end
+
+    # Indented export inside module with multiline result
+    let text = "module A\n    export zzz, yyy, xxx, www, vvv, uuu, ttt, sss, rrr, qqq, ppp, ooo, nnn, mmm, lll, kkk\nend"
+        fi = JETLS.FileInfo(#=version=#0, text, @__FILE__)
+        uri = JETLS.LSP.URIs2.filepath2uri(@__FILE__)
+        code_actions = Union{CodeAction,Command}[]
+        range = Range(; start=Position(; line=1, character=4), var"end"=Position(; line=1, character=4))
+        JETLS.sort_imports_code_actions!(code_actions, uri, fi, range, Diagnostic[])
+        @test length(code_actions) == 1
+        edit = code_actions[1].edit.changes[uri][1]
+        expected = "export kkk, lll, mmm, nnn, ooo, ppp, qqq, rrr, sss, ttt, uuu, vvv, www, xxx, yyy, zzz"
+        @test edit.newText == expected
+    end
+
+    # Indented export inside module with multiline result (longer)
+    let text = "module A\n    export zzz, yyy, xxx, www, vvv, uuu, ttt, sss, rrr, qqq, ppp, ooo, nnn, mmm, lll, kkk, jjj, iii, hhh, ggg\nend"
+        fi = JETLS.FileInfo(#=version=#0, text, @__FILE__)
+        uri = JETLS.LSP.URIs2.filepath2uri(@__FILE__)
+        code_actions = Union{CodeAction,Command}[]
+        range = Range(; start=Position(; line=1, character=4), var"end"=Position(; line=1, character=4))
+        JETLS.sort_imports_code_actions!(code_actions, uri, fi, range, Diagnostic[])
+        @test length(code_actions) == 1
+        edit = code_actions[1].edit.changes[uri][1]
+        expected = "export ggg, hhh, iii, jjj, kkk, lll, mmm, nnn, ooo, ppp, qqq, rrr, sss, ttt, uuu, vvv,\n        www, xxx, yyy, zzz"
+        @test edit.newText == expected
+    end
+
+    # Code action includes related diagnostics when passed
+    let text = "import Foo: c, a, b"
+        fi = JETLS.FileInfo(#=version=#0, text, @__FILE__)
+        uri = JETLS.LSP.URIs2.filepath2uri(@__FILE__)
+        code_actions = Union{CodeAction,Command}[]
+        range = Range(; start=Position(; line=0, character=0), var"end"=Position(; line=0, character=0))
+        import_range = Range(;
+            start = Position(; line=0, character=0),
+            var"end" = Position(; line=0, character=19))
+        related_diagnostic = Diagnostic(;
+            range = import_range,
+            severity = DiagnosticSeverity.Hint,
+            message = "Names are not sorted alphabetically",
+            code = JETLS.LOWERING_UNSORTED_IMPORT_NAMES_CODE)
+        unrelated_diagnostic1 = Diagnostic(;
+            range = import_range,
+            severity = DiagnosticSeverity.Warning,
+            message = "Some other warning",
+            code = "other/code")
+        unrelated_diagnostic2 = Diagnostic(;
+            range = Range(;
+                start = Position(; line=1, character=0),
+                var"end" = Position(; line=1, character=10)),
+            severity = DiagnosticSeverity.Hint,
+            message = "Names are not sorted alphabetically",
+            code = JETLS.LOWERING_UNSORTED_IMPORT_NAMES_CODE)
+        diagnostics = Diagnostic[related_diagnostic, unrelated_diagnostic1, unrelated_diagnostic2]
+        JETLS.sort_imports_code_actions!(code_actions, uri, fi, range, diagnostics)
+        @test length(code_actions) == 1
+        action = only(code_actions)
+        @test length(action.diagnostics) == 1
+        @test action.diagnostics[1] === related_diagnostic
+    end
+end
+
 end # module test_lowering_diagnostics

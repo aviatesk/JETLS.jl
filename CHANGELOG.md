@@ -45,6 +45,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > Note that `analysis_overrides` is provided as a temporary workaround and may
 > be removed or changed at any time. A proper fix is being worked on.
 
+### Added
+
+- Added `lowering/unsorted-import-names` diagnostic that reports when names in
+  `import`, `using`, `export`, or `public` statements are not sorted
+  alphabetically. This diagnostic is disabled by default and can be enabled via
+  the [`diagnostic.patterns`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic-patterns) configuration.
+  The "Sort import names" code action is always available regardless of
+  diagnostic settings. Names are sorted case-sensitively, with `as` expressions
+  sorted by original name and relative imports sorted including dots.
+
 ### Changed
 
 - Replaced `inference/undef-local-var` with new `lowering/undef-local-var`
