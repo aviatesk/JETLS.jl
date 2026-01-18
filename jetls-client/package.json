@@ -184,6 +184,11 @@
                   "default": true,
                   "markdownDescription": "Enable or disable all JETLS diagnostics. When set to `false`, no diagnostic messages will be shown."
                 },
+                "all_files": {
+                  "type": "boolean",
+                  "default": true,
+                  "markdownDescription": "Enable or disable diagnostics for unopened files. When enabled, JETLS reports diagnostics for all Julia files in the workspace. When disabled, diagnostics are only reported for files currently open in the editor."
+                },
                 "allow_unused_underscore": {
                   "type": "boolean",
                   "default": true,

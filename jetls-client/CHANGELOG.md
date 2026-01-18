@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 - Diff: [`6fb9403c...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/6fb9403c...HEAD)
 
+### Added
+
+- Added `all_files` configuration option (default: `true`). When enabled, JETLS
+  reports diagnostics for all Julia files in the workspace. When disabled,
+  diagnostics are only reported for files currently open in the editor.
+
 ## v0.3.2
 
 - Commit: [`6fb9403c`](https://github.com/aviatesk/JETLS.jl/commit/6fb9403c)
