@@ -501,8 +501,7 @@ function _testrunner_run_testset(
     cmd = testrunner_cmd(executable, filepath, tsn, tsl, test_env_path)
     testrunnerproc = open(cmd; read=true)
 
-    local result::Union{TestRunnerResult,String}
-    try
+    result = try
         # Wait for the process with cancellation support
         while true
             process_running(testrunnerproc) || break
@@ -517,14 +516,14 @@ function _testrunner_run_testset(
         end
 
         try
-            result = LSP.JSON3.read(testrunnerproc, TestRunnerResult)
+            LSP.JSON3.read(testrunnerproc, TestRunnerResult)
         catch err
             @error "Error from testrunner process" err
             show_error_message(server, """
             An unexpected error occurred while executing TestRunner.jl:
             See the server log for details.
             """)
-            result = "Test execution failed"
+            return "Test execution failed"
         end
     finally
         close(testrunnerproc)
@@ -631,8 +630,7 @@ function _testrunner_run_testcase(
     cmd = testrunner_cmd(executable, filepath, tcl, test_env_path)
     testrunnerproc = open(cmd; read=true)
 
-    local result::Union{TestRunnerResult,String}
-    try
+    result = try
         # Wait for the process with cancellation support
         while true
             process_running(testrunnerproc) || break
@@ -647,14 +645,14 @@ function _testrunner_run_testcase(
         end
 
         try
-            result = LSP.JSON3.read(testrunnerproc, TestRunnerResult)
+            LSP.JSON3.read(testrunnerproc, TestRunnerResult)
         catch err
             @error "Error from testrunner process" err
             show_error_message(server, """
             An unexpected error occurred while executing TestRunner.jl:
             See the server log for details.
             """)
-            result = "Test execution failed"
+            return "Test execution failed"
         end
     finally
         close(testrunnerproc)
@@ -673,8 +671,8 @@ function _testrunner_run_testcase(
     end
 
     extra_message = isempty(uri2diagnostics) ? nothing : """\n
-    Test failures are shown as temporary diagnostics in the editor for 10 seconds.
-    Open logs to view detailed error messages that persist."""
+        Test failures are shown as temporary diagnostics in the editor for 10 seconds.
+        Open logs to view detailed error messages that persist."""
 
     show_testrunner_result_in_message(server, result, "$tct", #=request_key=#""; extra_message)
 
