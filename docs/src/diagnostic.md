@@ -153,6 +153,10 @@ function unused_argument(x, y)  # Unused argument `y` (JETLS lowering/unused-arg
 end
 ```
 
+!!! tip "Code action available"
+    You can use the "Prefix with '_'" code action to quickly rename unused
+    arguments, indicating they are intentionally unused.
+
 #### [Unused local variable (`lowering/unused-local`)](@id diagnostic/reference/lowering/unused-local)
 
 **Default severity:** `Information`
@@ -170,6 +174,13 @@ function unused_local()
     return println(10)
 end
 ```
+
+!!! tip "Code action available"
+    Several code actions are available for this diagnostic:
+    - "Prefix with '_'" to indicate the variable is intentionally unused
+    - "Delete assignment" to remove only the left-hand side (keeping the
+      right-hand side expression)
+    - "Delete statement" to remove the entire assignment statement
 
 #### [Undefined global variable (`lowering/undef-global-var`)](@id diagnostic/reference/lowering/undef-global-var)
 
