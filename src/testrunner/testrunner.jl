@@ -318,7 +318,7 @@ function testrunner_result_to_diagnostics(result::TestRunnerResult)
             range = line_range(diag.line),
             severity = DiagnosticSeverity.Error,
             message = diag.message,
-            source = DIAGNOSTIC_SOURCE,
+            source = DIAGNOSTIC_SOURCE_EXTRA,
             code = TESTRUNNER_TEST_FAILURE_CODE,
             codeDescription = diagnostic_code_description(TESTRUNNER_TEST_FAILURE_CODE),
             relatedInformation)

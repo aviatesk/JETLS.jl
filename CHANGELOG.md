@@ -90,6 +90,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   the container name for arguments or fields respectively, making it clearer
   which function or struct they belong to during workspace symbol search.
 
+- Diagnostic `source` field now uses distinct values to indicate which channel
+  delivers the diagnostic: `JETLS/live` for on-change diagnostics, `JETLS/save`
+  for on-save full analysis, and `JETLS/extra` for external sources like the
+  TestRunner.jl integration. This helps users understand when diagnostics update
+  and enables filtering by source in editors that support it. See the
+  [Sources](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/source)
+  documentation for details.
+
 ## 2026-01-17
 
 - Commit: [`c8e2012`](https://github.com/aviatesk/JETLS.jl/commit/c8e2012)
