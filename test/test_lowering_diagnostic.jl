@@ -585,6 +585,17 @@ end
         @test diagnostic.range.var"end".character == sizeof("x = @notexisting")
     end
 
+    @testset "@. macro (aviatesk/JETLS.jl#409)" begin
+        diagnostics = get_lowered_diagnostics(@__MODULE__, """
+        function foo()
+            x = rand(10)
+            y = rand(10)
+            @views @. muladd(x[1:end], y[1], y[1:end])
+        end
+        """)
+        @test isempty(diagnostics)
+    end
+
     @testset "string macro not found error diagnostics" begin
         diagnostics = get_lowered_diagnostics(@__MODULE__, "x = notexisting\"string\"")
         @test length(diagnostics) == 1
