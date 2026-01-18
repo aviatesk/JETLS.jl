@@ -39,7 +39,7 @@ using JETLS.Glob
 
                 found_diagnostic = false
                 for diag in raw_res.result.items
-                    if diag.source == JETLS.DIAGNOSTIC_SOURCE
+                    if diag.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
                         found_diagnostic = true
                         break
                     end
@@ -69,7 +69,7 @@ end
 
             found_diagnostic = false
             for diag in raw_res.params.diagnostics
-                if (diag.source == JETLS.DIAGNOSTIC_SOURCE &&
+                if (diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE &&
                     diag.range.start.line == 0)
                     found_diagnostic = true
                     break
@@ -102,7 +102,7 @@ end
 
             found_diagnostic = false
             for diag in raw_res.params.diagnostics
-                if diag.source == JETLS.DIAGNOSTIC_SOURCE
+                if diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE
                     found_diagnostic = true
                     break
                 end
@@ -146,7 +146,7 @@ end
 
             found_diagnostic = false
             for diag in raw_res.params.diagnostics
-                if (diag.source == JETLS.DIAGNOSTIC_SOURCE &&
+                if (diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE &&
                     # this also tests that JETLS doesn't show the nonsensical `var"..."`
                     # string caused by JET's internal details
                     occursin("`TestPackageAnalysis.BadModule.y` is not defined", diag.message))
@@ -184,7 +184,7 @@ end
 
             found_diagnostic = false
             for diag in raw_res.params.diagnostics
-                if (diag.source == JETLS.DIAGNOSTIC_SOURCE &&
+                if (diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE &&
                     diag.code == JETLS.TOPLEVEL_METHOD_OVERWRITE_CODE &&
                     occursin("duplicate(::$Int)", diag.message) &&
                     occursin("overwritten", diag.message))
@@ -228,7 +228,7 @@ end
 
             found_diagnostic1 = false
             for diag in raw_res.params.diagnostics
-                if (diag.source == JETLS.DIAGNOSTIC_SOURCE &&
+                if (diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE &&
                     diag.code == JETLS.TOPLEVEL_ABSTRACT_FIELD_CODE &&
                     occursin("BadStruct1", diag.message) &&
                     occursin("xs::Vector{Integer}", diag.message))
@@ -240,7 +240,7 @@ end
 
             found_diagnostic2 = false
             for diag in raw_res.params.diagnostics
-                if (diag.source == JETLS.DIAGNOSTIC_SOURCE &&
+                if (diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE &&
                     diag.code == JETLS.TOPLEVEL_ABSTRACT_FIELD_CODE &&
                     occursin("BadStruct2", diag.message) &&
                     occursin("xs::Vector{<:Integer}", diag.message))
@@ -337,7 +337,7 @@ function make_test_diagnostic(;
             var"end" = Position(; line=0, character=10)),
         severity,
         message,
-        source = JETLS.DIAGNOSTIC_SOURCE,
+        source = JETLS.DIAGNOSTIC_SOURCE_LIVE,
         code,
         codeDescription = JETLS.diagnostic_code_description(code))
 end

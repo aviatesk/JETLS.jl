@@ -545,7 +545,7 @@ end
         diagnostics = get_lowered_diagnostics(@__MODULE__, "macro foo(x, y) \$(x) end")
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
-        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE
+        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
         @test diagnostic.message == "`\$` expression outside string or quote block"
     end
 
@@ -560,13 +560,13 @@ end
         diagnostics = JETLS.toplevel_lowering_diagnostics(server, uri, fi)
         @test length(diagnostics) == 2
         @test count(diagnostics) do diagnostic
-            diagnostic.source == JETLS.DIAGNOSTIC_SOURCE &&
+            diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE &&
             diagnostic.message == "`\$` expression outside string or quote block" &&
             diagnostic.range.start.line == 0 &&
             diagnostic.range.var"end".line == 0
         end == 1
         @test count(diagnostics) do diagnostic
-            diagnostic.source == JETLS.DIAGNOSTIC_SOURCE &&
+            diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE &&
             diagnostic.message == "`\$` expression outside string or quote block" &&
             diagnostic.range.start.line == 1 &&
             diagnostic.range.var"end".line == 1
@@ -577,7 +577,7 @@ end
         diagnostics = get_lowered_diagnostics(@__MODULE__, "x = @notexisting 42")
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
-        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE
+        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
         @test diagnostic.message == "Macro name `@notexisting` not found"
         @test diagnostic.range.start.line == 0
         @test diagnostic.range.start.character == sizeof("x = ")
@@ -600,7 +600,7 @@ end
         diagnostics = get_lowered_diagnostics(@__MODULE__, "x = notexisting\"string\"")
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
-        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE
+        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
         @test diagnostic.message == "Macro name `@notexisting_str` not found"
         @test diagnostic.range.start.line == 0
         @test diagnostic.range.start.character == sizeof("x = ")
@@ -612,7 +612,7 @@ end
         diagnostics = get_lowered_diagnostics(@__MODULE__, "x = @m_throw 42")
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
-        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE
+        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
         @test diagnostic.message == "Error expanding macro\n\"show this error message\""
         @test diagnostic.range.start.line == 0
         @test diagnostic.range.start.character == sizeof("x = ")
@@ -626,7 +626,7 @@ end
         end""")
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
-        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE
+        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
         @test diagnostic.message == "Error expanding macro\nError in foo"
         @test diagnostic.range.start.line == 1
         @test diagnostic.range.start.character == 4
@@ -640,7 +640,7 @@ end
         end""")
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
-        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE
+        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
         @test diagnostic.message == "Error expanding macro\nError in foo"
         @test diagnostic.range.start.line == 1
         @test diagnostic.range.start.character == 4
@@ -656,7 +656,7 @@ end
         """)
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
-        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE
+        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
         @test diagnostic.message == "`return` not allowed inside comprehension or generator"
         @test diagnostic.range.start.line == 2
         @test diagnostic.range.var"end".line == 2
@@ -675,7 +675,7 @@ end
         """)
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
-        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE
+        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
         @test diagnostic.code == JETLS.LOWERING_UNDEF_GLOBAL_VAR_CODE
         @test diagnostic.message == "`$(@__MODULE__).undeffunc` is not defined"
         @test diagnostic.range.start.line == 1
@@ -691,7 +691,7 @@ end
         """)
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
-        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE
+        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
         @test diagnostic.message == "`$(TestLoweringUndefGlobalBinding).undeffunc` is not defined"
         @test diagnostic.range.start.line == 1
         @test diagnostic.range.start.character == 4
@@ -1027,7 +1027,7 @@ end
                 var"end" = Position(; line=0, character=14)),
             severity = DiagnosticSeverity.Information,
             message = "Unused argument `y`",
-            source = JETLS.DIAGNOSTIC_SOURCE,
+            source = JETLS.DIAGNOSTIC_SOURCE_LIVE,
             code = JETLS.LOWERING_UNUSED_ARGUMENT_CODE)
         code_actions = Union{CodeAction,Command}[]
         JETLS.unused_variable_code_actions!(code_actions, uri, [diagnostic])
@@ -1052,7 +1052,7 @@ end
                 var"end" = Position(; line=1, character=11)),
             severity = DiagnosticSeverity.Information,
             message = "Unused local binding `x`",
-            source = JETLS.DIAGNOSTIC_SOURCE,
+            source = JETLS.DIAGNOSTIC_SOURCE_LIVE,
             code = JETLS.LOWERING_UNUSED_LOCAL_CODE)
         code_actions = Union{CodeAction,Command}[]
         JETLS.unused_variable_code_actions!(code_actions, uri, [diagnostic])
@@ -1069,7 +1069,7 @@ end
                 var"end" = Position(; line=0, character=14)),
             severity = DiagnosticSeverity.Information,
             message = "Unused argument `y`",
-            source = JETLS.DIAGNOSTIC_SOURCE,
+            source = JETLS.DIAGNOSTIC_SOURCE_LIVE,
             code = JETLS.LOWERING_UNUSED_ARGUMENT_CODE)
         code_actions = Union{CodeAction,Command}[]
         JETLS.unused_variable_code_actions!(code_actions, uri, [diagnostic]; allow_unused_underscore=false)
@@ -1091,7 +1091,7 @@ end
                 var"end" = Position(; line=0, character=10)),
             severity = DiagnosticSeverity.Error,
             message = "Some other error",
-            source = JETLS.DIAGNOSTIC_SOURCE,
+            source = JETLS.DIAGNOSTIC_SOURCE_LIVE,
             code = JETLS.LOWERING_ERROR_CODE)
         code_actions = Union{CodeAction,Command}[]
         JETLS.unused_variable_code_actions!(code_actions, uri, [diagnostic])
@@ -1112,7 +1112,7 @@ end
                 var"end" = Position(; line=1, character=5)),
             severity = DiagnosticSeverity.Information,
             message = "Unused local binding `y`",
-            source = JETLS.DIAGNOSTIC_SOURCE,
+            source = JETLS.DIAGNOSTIC_SOURCE_LIVE,
             code = JETLS.LOWERING_UNUSED_LOCAL_CODE,
             data)
         code_actions = Union{CodeAction,Command}[]
@@ -1138,7 +1138,7 @@ end
                 var"end" = Position(; line=1, character=8)),
             severity = DiagnosticSeverity.Information,
             message = "Unused local binding `y`",
-            source = JETLS.DIAGNOSTIC_SOURCE,
+            source = JETLS.DIAGNOSTIC_SOURCE_LIVE,
             code = JETLS.LOWERING_UNUSED_LOCAL_CODE,
             data)
         code_actions = Union{CodeAction,Command}[]

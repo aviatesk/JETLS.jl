@@ -360,7 +360,9 @@ function default_executable(formatter::String)
     end
 end
 
-const DIAGNOSTIC_SOURCE = "JETLS"
+const DIAGNOSTIC_SOURCE_LIVE = "JETLS/live"
+const DIAGNOSTIC_SOURCE_SAVE = "JETLS/save"
+const DIAGNOSTIC_SOURCE_EXTRA = "JETLS/extra"
 
 const VALID_DIAGNOSTIC_CATEGORIES = Set{String}((
     "syntax",

@@ -314,7 +314,7 @@ function jsdiag_to_lspdiag(diagnostic::JS.Diagnostic, fi::FileInfo)
             diagnostic.level === :note ? DiagnosticSeverity.Information :
             DiagnosticSeverity.Hint,
         message = diagnostic.message,
-        source = DIAGNOSTIC_SOURCE,
+        source = DIAGNOSTIC_SOURCE_LIVE,
         code = SYNTAX_DIAGNOSTIC_CODE,
         codeDescription = diagnostic_code_description(SYNTAX_DIAGNOSTIC_CODE))
 end
@@ -362,7 +362,7 @@ function jet_toplevel_error_report_to_diagnostic(
         range = line_range(report.line),
         severity = DiagnosticSeverity.Error,
         message,
-        source = DIAGNOSTIC_SOURCE,
+        source = DIAGNOSTIC_SOURCE_SAVE,
         code = TOPLEVEL_ERROR_CODE,
         codeDescription = diagnostic_code_description(TOPLEVEL_ERROR_CODE))
 end
@@ -403,7 +403,7 @@ function jet_inference_error_report_to_diagnostic(@nospecialize(report::JET.Infe
         range = jet_frame_to_range(topframe),
         severity = inference_error_report_severity(report),
         message,
-        source = DIAGNOSTIC_SOURCE,
+        source = DIAGNOSTIC_SOURCE_SAVE,
         code,
         codeDescription = diagnostic_code_description(code),
         relatedInformation)
@@ -482,7 +482,7 @@ function toplevel_warning_report_to_diagnostic_impl(report::MethodOverwriteRepor
         range = lines_range(report.lines),
         severity = DiagnosticSeverity.Warning,
         message,
-        source = DIAGNOSTIC_SOURCE,
+        source = DIAGNOSTIC_SOURCE_SAVE,
         code = TOPLEVEL_METHOD_OVERWRITE_CODE,
         codeDescription = diagnostic_code_description(TOPLEVEL_METHOD_OVERWRITE_CODE),
         relatedInformation)
@@ -511,7 +511,7 @@ function toplevel_warning_report_to_diagnostic_impl(report::AbstractFieldReport,
         range,
         severity = DiagnosticSeverity.Information,
         message,
-        source = DIAGNOSTIC_SOURCE,
+        source = DIAGNOSTIC_SOURCE_SAVE,
         code = TOPLEVEL_ABSTRACT_FIELD_CODE,
         codeDescription = diagnostic_code_description(TOPLEVEL_ABSTRACT_FIELD_CODE))
 end
@@ -616,7 +616,7 @@ function analyze_unused_bindings!(
             range,
             severity = DiagnosticSeverity.Information,
             message,
-            source = DIAGNOSTIC_SOURCE,
+            source = DIAGNOSTIC_SOURCE_LIVE,
             code,
             codeDescription = diagnostic_code_description(code),
             tags = DiagnosticTag.Ty[DiagnosticTag.Unnecessary],
@@ -662,7 +662,7 @@ function analyze_undefined_global_bindings!(
             range,
             severity = DiagnosticSeverity.Warning,
             message = postprocessor("`$(binfo.mod).$(binfo.name)` is not defined"),
-            source = DIAGNOSTIC_SOURCE,
+            source = DIAGNOSTIC_SOURCE_LIVE,
             code,
             codeDescription = diagnostic_code_description(code)))
     end
@@ -713,7 +713,7 @@ function analyze_undefined_local_bindings!(
             message = undef_status === true ?
                 "Variable `$(binfo.name)` is used before it is defined" :
                 "Variable `$(binfo.name)` may be used before it is defined",
-            source = DIAGNOSTIC_SOURCE,
+            source = DIAGNOSTIC_SOURCE_LIVE,
             code = LOWERING_UNDEF_LOCAL_VAR_CODE,
             codeDescription = diagnostic_code_description(LOWERING_UNDEF_LOCAL_VAR_CODE),
             relatedInformation = @somereal relatedInformation Some(nothing)))
@@ -768,7 +768,7 @@ function analyze_captured_boxes!(
             range,
             severity = DiagnosticSeverity.Information,
             message = "`$bn` is captured and boxed",
-            source = DIAGNOSTIC_SOURCE,
+            source = DIAGNOSTIC_SOURCE_LIVE,
             code,
             codeDescription = diagnostic_code_description(code),
             relatedInformation))
@@ -847,7 +847,7 @@ function lowering_diagnostics!(
                 range = jsobj_to_range(err.ex, fi),
                 severity = DiagnosticSeverity.Error,
                 message = err.msg,
-                source = DIAGNOSTIC_SOURCE,
+                source = DIAGNOSTIC_SOURCE_LIVE,
                 code = LOWERING_ERROR_CODE,
                 codeDescription = diagnostic_code_description(LOWERING_ERROR_CODE)))
         elseif err isa JL.MacroExpansionError
@@ -872,7 +872,7 @@ function lowering_diagnostics!(
                     range = jsobj_to_range(first(provs), fi),
                     severity = DiagnosticSeverity.Error,
                     message = msg,
-                    source = DIAGNOSTIC_SOURCE,
+                    source = DIAGNOSTIC_SOURCE_LIVE,
                     code = LOWERING_MACRO_EXPANSION_ERROR_CODE,
                     codeDescription = diagnostic_code_description(LOWERING_MACRO_EXPANSION_ERROR_CODE),
                     relatedInformation))
