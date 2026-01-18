@@ -65,12 +65,12 @@ Here is a summary table of the diagnostics explained in this section:
 | [`lowering/unused-argument`](@ref diagnostic/reference/lowering/unused-argument)                 | `Information`         | Function arguments that are never used                         |
 | [`lowering/unused-local`](@ref diagnostic/reference/lowering/unused-local)                       | `Information`         | Local variables that are assigned but never read               |
 | [`lowering/undef-global-var`](@ref diagnostic/reference/lowering/undef-global-var)               | `Warning`             | References to undefined global variables (triggered on change) |
+| [`lowering/undef-local-var`](@ref diagnostic/reference/lowering/undef-local-var)                 | `Warning/Information` | References to undefined local variables (triggered on change)  |
 | [`lowering/captured-boxed-variable`](@ref diagnostic/reference/lowering/captured-boxed-variable) | `Information`         | Variables captured by closures that require boxing             |
 | [`toplevel/error`](@ref diagnostic/reference/toplevel/error)                                     | `Error`               | Errors during code loading (missing deps, type failures, etc.) |
 | [`toplevel/method-overwrite`](@ref diagnostic/reference/toplevel/method-overwrite)               | `Warning`             | Method definitions that overwrite previously defined methods   |
 | [`toplevel/abstract-field`](@ref diagnostic/reference/toplevel/abstract-field)                   | `Information`         | Struct fields with abstract types                              |
 | [`inference/undef-global-var`](@ref diagnostic/reference/inference/undef-global-var)             | `Warning`             | References to undefined global variables (triggered on save)   |
-| [`inference/undef-local-var`](@ref diagnostic/reference/inference/undef-local-var)               | `Information/Warning` | References to undefined local variables                        |
 | [`inference/field-error`](@ref diagnostic/reference/inference/field-error)                       | `Warning`             | Access to non-existent struct fields                           |
 | [`inference/bounds-error`](@ref diagnostic/reference/inference/bounds-error)                     | `Warning`             | Out-of-bounds field access by index                            |
 | [`testrunner/test-failure`](@ref diagnostic/reference/testrunner/test-failure)                   | `Error`               | Test failures from TestRunner integration                      |
@@ -192,6 +192,78 @@ This diagnostic detects simple undefined global variable references. For more
 comprehensive detection (including qualified references like `Base.undefvar`),
 see [`inference/undef-global-var`](@ref diagnostic/reference/inference/undef-global-var),
 which runs on save.
+
+#### [Undefined local variable (`lowering/undef-local-var`)](@id diagnostic/reference/lowering/undef-local-var)
+
+**Default severity:** `Warning` or `Information`
+
+References to local variables that may be used before being defined. This
+diagnostic is reported on change (as you type), providing immediate feedback
+based on CFG-aware analysis on lowered code.
+
+The severity depends on the certainty of the undefined usage:
+- **`Warning`**: The variable is definitely used before any assignment (strict
+  undef - guaranteed `UndefVarError` at runtime)
+- **`Information`**: The variable may be undefined depending on control flow
+  (e.g., assigned only in one branch of an `if` statement)
+
+Examples:
+
+```julia
+function strict_undef()
+    println(x)  # Variable `x` is used before it is defined (JETLS lowering/undef-local-var)
+                # Severity: Warning (strict undef)
+    x = 1       # RelatedInformation: `x` is defined here
+    return x
+end
+
+function maybe_undef(cond)
+    if cond
+        y = 1   # RelatedInformation: `y` is defined here
+    end
+    return y  # Variable `y` may be used before it is defined (JETLS lowering/undef-local-var)
+              # Severity: Information (maybe undef)
+end
+```
+
+The diagnostic is reported at the first use location, with `relatedInformation`
+pointing to definition sites to help understand the control flow.
+
+!!! tip "Workaround: Using `@isdefined` guard"
+    When a variable is conditionally assigned, you can rewrite the program logic
+    using `@isdefined` so that the compiler can track the definedness:
+    ```julia
+    function guarded(cond)
+        if cond
+            y = 42
+        end
+        if @isdefined(y)
+            return sin(y)  # No diagnostic: compiler knows `y` is defined here
+        end
+    end
+    ```
+
+!!! tip "Workaround: Using `@assert @isdefined` as a hint"
+    There are cases where you know a variable is always defined at a certain point,
+    but the analysis cannot prove it. This includes correlated conditions, complex
+    control flow, or general runtime invariants that the compiler cannot figure out
+    statically. In such cases, you can use `@assert @isdefined(var) "..."` as a hint:
+    ```julia
+    function correlated(cond)
+        if cond
+            y = 42
+        end
+        if cond
+            # The analysis reports "may be undefined" because it doesn't track
+            # that `cond` is the same in both branches
+            @assert @isdefined(y) "Assertion to tell the compiler about the definedness of this variable"
+            return sin(y)  # No diagnostic after the assertion
+        end
+    end
+    ```
+    This hint allows the compiler to avoid generating unnecessary `UndefVarError`
+    handling code, and also serves as documentation that you've verified the
+    variable is defined at this point.
 
 #### [Captured boxed variable (`lowering/captured-boxed-variable`)](@id diagnostic/reference/lowering/captured-boxed-variable)
 
@@ -418,25 +490,6 @@ For faster feedback while editing, see
 [`lowering/undef-global-var`](@ref diagnostic/reference/lowering/undef-global-var),
 which reports a subset of undefined variable cases on change with accurate
 position information.
-
-#### [Undefined local variable (`inference/undef-local-var`)](@id diagnostic/reference/inference/undef-local-var)
-
-**Default severity:** `Information` or `Warning`
-
-References to undefined local variables. The severity depends on whether the
-variable is definitely undefined (`Warning`) or only possibly undefined
-(`Information`).
-
-Example:
-
-```julia
-function undef_local_var()
-    if rand() > 0.5
-        x = 1
-    end
-    return x  # local variable `x` may be undefined (JETLS inference/undef-local-var)
-end
-```
 
 #### [Field error (`inference/field-error`)](@id diagnostic/reference/inference/field-error)
 

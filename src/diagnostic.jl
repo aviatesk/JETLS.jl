@@ -413,10 +413,8 @@ function inference_error_report_code(@nospecialize report::JET.InferenceErrorRep
     if report isa UndefVarErrorReport
         if report.var isa GlobalRef
             return INFERENCE_UNDEF_GLOBAL_VAR_CODE
-        elseif report.var isa TypeVar
-            return INFERENCE_UNDEF_STATIC_PARAM_CODE
         else
-            return INFERENCE_UNDEF_LOCAL_VAR_CODE
+            return INFERENCE_UNDEF_STATIC_PARAM_CODE
         end
     elseif report isa FieldErrorReport
         return INFERENCE_FIELD_ERROR_CODE
@@ -670,6 +668,58 @@ function analyze_undefined_global_bindings!(
     end
 end
 
+# This analysis reports `lowering/undef-local-var` on a change basis, based on
+# `analyze_undef_all_lambdas`, which analyzes local binding definedness with the event
+# based binding assignment reachability analysis.
+# Severity levels:
+# - Warning: `undef===true` → strict undef (guaranteed UndefVarError on some path)
+# - Information: `undef===nothing` → maybe undef (possible UndefVarError)
+function analyze_undefined_local_bindings!(
+        diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo,
+        undef_info::Dict{JL.BindingInfo, UndefInfo},
+        reported::Set{LoweringDiagnosticKey}
+    )
+    for (binfo, uinfo) in undef_info
+        binfo.kind === :local || continue # defensive check (already filtered in analyze_undef)
+        binfo.is_read || continue # optimization: skip expensive checks below if not read
+        binfo.is_internal && continue
+        startswith(binfo.name, '#') && continue
+        undef_status = uinfo.undef
+        undef_status === false && continue
+        first_use_tree = first(uinfo.uses)
+        provs = JL.flattened_provenance(first_use_tree)
+        isempty(provs) && continue
+        if length(provs) > 1 # From macro expanded code, ignore it for now
+            continue
+        end
+        range = jsobj_to_range(first(provs), fi)
+        key = LoweringDiagnosticKey(range, binfo.kind, binfo.name)
+        key in reported ? continue : push!(reported, key)
+        relatedInformation = DiagnosticRelatedInformation[]
+        for def_tree in uinfo.defs
+            def_provs = JL.flattened_provenance(def_tree)
+            isempty(def_provs) && continue
+            innermost = last(def_provs)
+            uri2filename(uri) == JS.filename(innermost) || continue
+            def_range = jsobj_to_range(innermost, fi)
+            push!(relatedInformation, DiagnosticRelatedInformation(;
+                location = Location(uri, def_range),
+                message = "`$(binfo.name)` is defined here"))
+        end
+        push!(diagnostics, Diagnostic(;
+            range,
+            # Determine severity based on whether this is strict undef or maybe undef
+            severity = undef_status === true ? DiagnosticSeverity.Warning : DiagnosticSeverity.Information,
+            message = undef_status === true ?
+                "Variable `$(binfo.name)` is used before it is defined" :
+                "Variable `$(binfo.name)` may be used before it is defined",
+            source = DIAGNOSTIC_SOURCE,
+            code = LOWERING_UNDEF_LOCAL_VAR_CODE,
+            codeDescription = diagnostic_code_description(LOWERING_UNDEF_LOCAL_VAR_CODE),
+            relatedInformation = @somereal relatedInformation Some(nothing)))
+    end
+end
+
 function compute_unused_variable_data(
         st0::JS.SyntaxTree,
         prov::JS.SyntaxTree,
@@ -760,6 +810,7 @@ function analyze_lowered_code!(
         diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo, res::NamedTuple;
         skip_analysis_requiring_context::Bool = false,
         allow_unused_underscore::Bool = true,
+        allow_throw_optimization::Bool = false,
         analyzer::Union{Nothing,LSAnalyzer} = nothing,
         postprocessor::LSPostProcessor = LSPostProcessor()
     )
@@ -773,6 +824,9 @@ function analyze_lowered_code!(
     skip_analysis_requiring_context ||
         analyze_undefined_global_bindings!(diagnostics, fi, ctx3, binding_occurrences, reported; analyzer, postprocessor)
 
+    undef_info = analyze_undef_all_lambdas(ctx3, st3; allow_throw_optimization)
+    analyze_undefined_local_bindings!(diagnostics, uri, fi, undef_info, reported)
+
     analyze_captured_boxes!(diagnostics, uri, fi, ctx4, st3, reported)
 
     return diagnostics
@@ -784,8 +838,9 @@ function lowering_diagnostics!(
     )
     @assert JS.kind(st0) ∉ JS.KSet"toplevel module"
 
+    world = Base.get_world_counter()
     res = try
-        jl_lower_for_scope_resolution(mod, st0; recover_from_macro_errors=false, convert_closures=true)
+        jl_lower_for_scope_resolution(mod, st0, world; recover_from_macro_errors=false, convert_closures=true)
     catch err
         if err isa JL.LoweringError
             push!(diagnostics, Diagnostic(;
@@ -830,7 +885,7 @@ function lowering_diagnostics!(
 
         st0 = without_kinds(st0, JS.KSet"error macrocall")
         try
-            ctx1, st1 = JL.expand_forms_1(mod, st0, true, Base.get_world_counter())
+            ctx1, st1 = JL.expand_forms_1(mod, st0, true, world)
             _jl_lower_for_scope_resolution(ctx1, st0, st1; convert_closures=true)
         catch
             # The same error has probably already been handled above
@@ -838,7 +893,12 @@ function lowering_diagnostics!(
         end
     end
 
-    return analyze_lowered_code!(diagnostics, uri, fi, res; skip_analysis_requiring_context, kwargs...)
+    allow_throw_optimization =
+        Base.invoke_in_world(world, isdefinedglobal, mod, :throw)::Bool &&
+        Base.invoke_in_world(world, getglobal, mod, :throw) === Core.throw
+
+    return analyze_lowered_code!(diagnostics, uri, fi, res;
+        skip_analysis_requiring_context, allow_throw_optimization, kwargs...)
 end
 lowering_diagnostics(args...; kwargs...) = lowering_diagnostics!(Diagnostic[], args...; kwargs...) # used by tests
 

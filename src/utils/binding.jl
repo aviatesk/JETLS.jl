@@ -35,6 +35,7 @@ end
             mod::Module, st0::JS.SyntaxTree;
             trim_error_nodes::Bool = true,
             recover_from_macro_errors::Bool = true,
+            convert_closures::Bool = false,
         ) -> (; st0, st1, st2, st3, ctx3)
 
 Perform the first three passes of lowering.
@@ -49,7 +50,7 @@ Throw if lowering fails otherwise.
 Note that ctx objects share mutable information, so we only return `ctx3`
 """
 function jl_lower_for_scope_resolution(
-        mod::Module, st0::JS.SyntaxTree;
+        mod::Module, st0::JS.SyntaxTree, world::UInt = Base.get_world_counter();
         trim_error_nodes::Bool = true,
         recover_from_macro_errors::Bool = true,
         convert_closures::Bool = false,
@@ -58,14 +59,14 @@ function jl_lower_for_scope_resolution(
         st0 = without_kinds(st0, JS.KSet"error")
     end
     ctx1, st1 = try
-        JL.expand_forms_1(mod, st0, true, Base.get_world_counter())
+        JL.expand_forms_1(mod, st0, true, world)
     catch err
         recover_from_macro_errors || rethrow(err)
         JETLS_DEBUG_LOWERING && @warn "Error in macro expansion; trimming and retrying"
         JETLS_DEBUG_LOWERING && showerror(stderr, err)
         JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
         st0 = without_kinds(st0, JS.KSet"macrocall")
-        JL.expand_forms_1(mod, st0, true, Base.get_world_counter())
+        JL.expand_forms_1(mod, st0, true, world)
     end
     return _jl_lower_for_scope_resolution(ctx1, st0, st1; convert_closures)
 end
