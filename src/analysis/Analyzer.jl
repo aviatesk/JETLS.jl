@@ -284,15 +284,6 @@ function CC.abstract_eval_special_value(analyzer::LSAnalyzer, @nospecialize(e), 
     if e isa GlobalRef
         return CC.abstract_eval_globalref(analyzer, e, sstate.saw_latestworld, sv; allowed_offset=0)
     end
-    # inject report pass for undefined local variables
-    if should_analyze(analyzer, sv)
-        if e isa SlotNumber
-            vtypes = sstate.vtypes
-            if vtypes !== nothing
-                report_undefined_local_vars!(analyzer, sv, e, vtypes)
-            end
-        end
-    end
     return @invoke CC.abstract_eval_special_value(analyzer::ToplevelAbstractAnalyzer, e::Any, sstate::CC.StatementState, sv::CC.InferenceState)
 end
 
@@ -305,7 +296,7 @@ end
 Abstract type for error reports analyzed by [`LSAnalyzer`](@ref).
 
 Subtypes:
-- `UndefVarErrorReport`: Undefined variables (global, local, static parameters[^unimplemented])
+- `UndefVarErrorReport`: Undefined variables (global, static parameters[^unimplemented])
 - `FieldErrorReport`: Access to non-existent struct fields
 - `BoundsErrorReport`: Out-of-bounds field access by index
 - `MethodErrorReport`: Method dispatch errors[^unimplemented]
@@ -318,7 +309,7 @@ abstract type LSErrorReport <: InferenceErrorReport end
 # -------------------
 
 @jetreport struct UndefVarErrorReport <: LSErrorReport
-    var::Union{GlobalRef,TypeVar,Symbol}
+    var::Union{GlobalRef,TypeVar}
     maybeundef::Bool
     vst_offset::Int
 end
@@ -327,11 +318,7 @@ function JETInterface.print_report_message(io::IO, r::UndefVarErrorReport)
     if isa(var, TypeVar) # TODO show "maybe undefined" case nicely?
         print(io, "`", var.name, "` not defined in static parameter matching")
     else
-        if isa(var, GlobalRef)
-            print(io, "`", var.mod, '.', var.name, "`")
-        else
-            print(io, "local variable `", var, "`")
-        end
+        print(io, "`", var.mod, '.', var.name, "`")
         if r.maybeundef
             print(io, " may be undefined")
         else
@@ -479,37 +466,6 @@ function report_fieldaccess!(
     elseif namev isa Int
         add_new_report!(analyzer, sv.result, BoundsErrorReport(sv, objtyp, namev, offset))
     else error("invalid field analysis") end
-    return true
-end
-
-function report_undefined_local_vars!(analyzer::LSAnalyzer, sv::CC.InferenceState, var::SlotNumber, vtypes::CC.VarTable)
-    if JET.isconcretized(analyzer, sv)
-        return false # no need to be analyzed
-    end
-    vtype = vtypes[JET.slot_id(var)]
-    vtype.undef || return false
-    if !JET.is_constant_propagated(sv)
-        if isempty(sv.ssavalue_uses[sv.currpc])
-            # This case is when an undefined local variable is just declared,
-            # but such cases can become reachable when constant propagation
-            # for capturing closures doesn't occur.
-            # In the future, improvements to the compiler should make such cases
-            # unreachable in the first place, but for now we completely ignore
-            # such cases to suppress false positives.
-            return false
-        end
-    end
-    name = JET.get_slotname(sv, var)
-    if name === Symbol("")
-        # Such unnamed local variables are mainly introduced by `try/catch/finally` clauses.
-        # Due to insufficient liveness analysis of the current compiler for such code,
-        # the isdefined-ness of such variables may not be properly determined.
-        # For the time being, until the compiler implementation is improved,
-        # we ignore this case to suppress false positives.
-        return false
-    end
-    maybeundef = vtype.typ !== Union{}
-    add_new_report!(analyzer, sv.result, UndefVarErrorReport(sv, name, maybeundef, #=vst_offset=#0))
     return true
 end
 

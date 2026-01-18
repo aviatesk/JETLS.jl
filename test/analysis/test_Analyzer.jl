@@ -31,7 +31,7 @@ function issue392()
     return x
 end
 
-@testset "LSAnalyzer" begin
+@testset "UndefVarErrorReport" begin
     # global undef variables
     let result = analyze_call() do
             sin(undefvar)
@@ -56,36 +56,6 @@ end
         @test length(reports) == 1
         r = only(reports)
         @test r isa UndefVarErrorReport && r.var == GlobalRef(TestTargetModule, :unexisting)
-    end
-
-    # local undef variables
-    let result = analyze_call() do
-            local x
-            sin(x)
-        end
-        reports = get_reports(result)
-        @test length(reports) == 1
-        r = only(reports)
-        @test r isa UndefVarErrorReport && r.var === :x && !r.maybeundef
-    end
-    let result = analyze_call((Bool,Float64)) do c, x
-            if c
-                y = x
-            end
-            return sin(y)
-        end
-        reports = get_reports(result)
-        @test length(reports) == 1
-        r = only(reports)
-        @test r isa UndefVarErrorReport && r.var === :y && r.maybeundef
-    end
-    let result = analyze_call((Any,)) do x
-            local y = x
-            callfunc() do
-                identity(y)
-            end
-        end
-        @test isempty(get_reports(result))
     end
 end
 

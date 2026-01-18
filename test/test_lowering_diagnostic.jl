@@ -700,6 +700,169 @@ end
     end
 end
 
+@testset "Undefined local binding report" begin
+    @testset "sequential assignment then use - no diagnostic" begin
+        @test isempty(get_lowered_diagnostics("""
+            function f()
+                y = 1
+                println(y)
+            end
+            """))
+    end
+
+    @testset "use before assignment - strict undef (Warning)" begin
+        let diagnostics = get_lowered_diagnostics("""
+            function f()
+                println(y)
+                y = 1
+            end
+            """)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.code == JETLS.LOWERING_UNDEF_LOCAL_VAR_CODE
+            @test diagnostic.severity == DiagnosticSeverity.Warning
+            @test diagnostic.message == "Variable `y` is used before it is defined"
+            @test diagnostic.range.start.line == 1
+        end
+    end
+
+    @testset "if-else both branches assign - no diagnostic" begin
+        @test isempty(get_lowered_diagnostics("""
+            function f()
+                if rand() > 0.5
+                    y = 1
+                else
+                    y = 2
+                end
+                println(y)
+            end
+            """))
+    end
+
+    @testset "if-else one branch assigns - maybe undef (Information)" begin
+        let diagnostics = get_lowered_diagnostics("""
+            function f()
+                if rand() > 0.5
+                    y = 1
+                else
+                    nothing
+                end
+                println(y)
+            end
+            """)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.code == JETLS.LOWERING_UNDEF_LOCAL_VAR_CODE
+            @test diagnostic.severity == DiagnosticSeverity.Information
+            @test diagnostic.message == "Variable `y` may be used before it is defined"
+        end
+    end
+
+    @testset "while loop - maybe undef" begin
+        let diagnostics = get_lowered_diagnostics("""
+            function f()
+                local y
+                while rand() > 0.5
+                    y = 1
+                end
+                println(y)
+            end
+            """)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.code == JETLS.LOWERING_UNDEF_LOCAL_VAR_CODE
+            @test diagnostic.severity == DiagnosticSeverity.Information
+        end
+    end
+
+    @testset "@isdefined guard - no diagnostic" begin
+        @test isempty(get_lowered_diagnostics("""
+            function f(x)
+                if x > 0
+                    y = 42
+                end
+                if @isdefined(y)
+                    return sin(y)
+                end
+            end
+            """))
+    end
+
+    @testset "@assert @isdefined hint" begin
+        @test isempty(get_lowered_diagnostics("""
+            function f(x)
+                if x > 0
+                    y = x
+                end
+                if x > 0
+                    @assert @isdefined(y) "compiler hint to tell the definedness of this variable"
+                    return sin(y)
+                end
+            end
+            """))
+    end
+
+    @testset "closure assigns to captured variable - maybe undef" begin
+        # When a closure assigns to a captured variable, we don't know when/if
+        # the closure is called, so report "may be undefined" instead of
+        # "must be undefined"
+        let diagnostics = get_lowered_diagnostics("""
+            function func(a)
+                local x
+                function inner(y)
+                    x = y
+                end
+                f = inner
+                f(a)
+                return x
+            end
+            """)
+            undef_diags = filter(d -> d.code == JETLS.LOWERING_UNDEF_LOCAL_VAR_CODE, diagnostics)
+            @test length(undef_diags) == 1
+            diagnostic = only(undef_diags)
+            @test diagnostic.severity == DiagnosticSeverity.Information
+            @test diagnostic.message == "Variable `x` may be used before it is defined"
+        end
+    end
+
+    @testset "relatedInformation shows definition locations" begin
+        let diagnostics = get_lowered_diagnostics("""
+            function f()
+                if rand() > 0.5
+                    y = 1
+                end
+                println(y)
+            end
+            """)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.relatedInformation !== nothing
+            @test length(diagnostic.relatedInformation) == 1
+            ri = only(diagnostic.relatedInformation)
+            @test ri.message == "`y` is defined here"
+            @test ri.location.range.start.line == 2  # y = 1 is on line 2
+        end
+    end
+
+    @testset "multiple definitions show multiple relatedInformation" begin
+        let diagnostics = get_lowered_diagnostics("""
+            function f()
+                if rand() > 0.5
+                    y = 1
+                elseif rand() > 0.5
+                    y = 2
+                end
+                println(y)
+            end
+            """)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.relatedInformation !== nothing
+            @test length(diagnostic.relatedInformation) == 2
+        end
+    end
+end
+
 @testset "captured boxed variable detection" begin
     # Variable modified after capture -> boxed
     let diagnostics = get_lowered_diagnostics("""
