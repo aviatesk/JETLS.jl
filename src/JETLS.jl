@@ -82,6 +82,8 @@ include("init-options.jl")
 include("config.jl")
 include("workspace-configuration.jl")
 
+include("analysis/occurrence-analysis.jl")
+
 include("diagnostic.jl")
 
 include("analysis/Interpreter.jl")

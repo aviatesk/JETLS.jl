@@ -1,7 +1,10 @@
 module test_Analyzer
 
 using Test
-include("interactive-utils.jl")
+using JETLS
+
+include(normpath(pkgdir(JETLS), "test", "interactive-utils.jl"))
+
 using JETLS.JET: get_reports
 using JETLS.Analyzer
 
