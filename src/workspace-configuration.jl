@@ -58,14 +58,13 @@ unmatched_keys_in_lsp_config_msg(unmatched_keys) =
     unmatched_keys_msg("LSP configuration contains unknown keys:", unmatched_keys)
 
 function store_lsp_config!(tracker::ConfigChangeTracker, server::Server, @nospecialize(config_value), source::AbstractString)
-    if config_value isa AbstractDict{String}
-        config_dict = config_value
-    else
+    if !(config_value isa AbstractDict{String})
         if config_value !== nothing
             show_error_message(server, lazy"Unexpected config data of type $(typeof(config_value)) was passed from $source, deleting LSP configuration")
         end
         return delete_lsp_config!(tracker, server)
     end
+    config_dict = config_value
     store!(server.state.config_manager) do old_data::ConfigManagerData
         new_lsp_config = parse_config_dict(config_dict)
         if new_lsp_config isa AbstractString
