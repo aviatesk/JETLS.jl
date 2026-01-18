@@ -380,6 +380,7 @@ const LOWERING_MACRO_EXPANSION_ERROR_CODE = "lowering/macro-expansion-error"
 const LOWERING_UNDEF_GLOBAL_VAR_CODE = "lowering/undef-global-var"
 const LOWERING_UNDEF_LOCAL_VAR_CODE = "lowering/undef-local-var"
 const LOWERING_CAPTURED_BOXED_VARIABLE_CODE = "lowering/captured-boxed-variable"
+const LOWERING_UNSORTED_IMPORT_NAMES_CODE = "lowering/unsorted-import-names"
 const TOPLEVEL_ERROR_CODE = "toplevel/error"
 const TOPLEVEL_METHOD_OVERWRITE_CODE = "toplevel/method-overwrite"
 const TOPLEVEL_ABSTRACT_FIELD_CODE = "toplevel/abstract-field"
@@ -398,6 +399,7 @@ const ALL_DIAGNOSTIC_CODES = Set{String}(String[
     LOWERING_UNDEF_GLOBAL_VAR_CODE,
     LOWERING_UNDEF_LOCAL_VAR_CODE,
     LOWERING_CAPTURED_BOXED_VARIABLE_CODE,
+    LOWERING_UNSORTED_IMPORT_NAMES_CODE,
     TOPLEVEL_ERROR_CODE,
     TOPLEVEL_METHOD_OVERWRITE_CODE,
     TOPLEVEL_ABSTRACT_FIELD_CODE,

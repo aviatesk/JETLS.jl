@@ -821,6 +821,39 @@ end
                 @test isempty(diagnostics)
             end
         end
+
+        # diagnostics with severity=0 are filtered out when no pattern enables them
+        let diagnostics = [
+                make_test_diagnostic(;
+                    code = JETLS.LOWERING_UNSORTED_IMPORT_NAMES_CODE,
+                    severity = 0)
+            ]
+            manager = make_test_manager(Dict{String,Any}())
+            uri = filepath2uri("/tmp/test.jl")
+            JETLS.apply_diagnostic_config!(diagnostics, manager, uri, nothing)
+            @test isempty(diagnostics)
+        end
+
+        # diagnostics with severity=0 can be enabled via patterns
+        let diagnostics = [
+                make_test_diagnostic(;
+                    code = JETLS.LOWERING_UNSORTED_IMPORT_NAMES_CODE,
+                    severity = 0)
+            ]
+            manager = make_test_manager(Dict{String,Any}(
+                "diagnostic" => Dict{String,Any}(
+                    "patterns" => [
+                        Dict{String,Any}(
+                            "pattern" => "lowering/unsorted-import-names",
+                            "match_by" => "code",
+                            "match_type" => "literal",
+                            "severity" => "hint")
+                    ])))
+            uri = filepath2uri("/tmp/test.jl")
+            JETLS.apply_diagnostic_config!(diagnostics, manager, uri, nothing)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).severity == DiagnosticSeverity.Hint
+        end
     end
 end
 

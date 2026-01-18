@@ -191,7 +191,10 @@ function _apply_diagnostic_config(
     end
 
     patterns = get_config(manager, :diagnostic, :patterns)
-    isempty(patterns) && return diagnostic
+    if isempty(patterns)
+        # Diagnostics with severity=0 are off by default; filter them out
+        return diagnostic.severity == 0 ? missing : diagnostic
+    end
 
     filepath = uri2filename(uri)
     if root_path !== nothing && startswith(filepath, root_path)
@@ -218,7 +221,7 @@ function _apply_diagnostic_config(
     end
 
     if severity === nothing
-        return diagnostic
+        return diagnostic.severity == 0 ? missing : diagnostic
     elseif severity == 0
         return missing
     elseif severity == diagnostic.severity
