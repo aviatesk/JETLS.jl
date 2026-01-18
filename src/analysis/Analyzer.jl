@@ -1,13 +1,13 @@
 module Analyzer
 
-export LSAnalyzer, inference_error_report_stack, inference_error_report_severity, reset_report_target_modules!
-export UndefVarErrorReport, FieldErrorReport, BoundsErrorReport
+export LSAnalyzer, inference_error_report_severity, inference_error_report_stack, reset_report_target_modules!
+export BoundsErrorReport, FieldErrorReport, UndefVarErrorReport
 
 using Core.IR
 using JET.JETInterface
-using JET: JET, CC
+using JET: CC, JET
 
-using ..JETLS: JETLS, AnalysisEntry
+using ..JETLS: AnalysisEntry, JETLS
 using ..LSP
 
 # JETLS internal interface
