@@ -113,9 +113,6 @@ function handle_DidCloseTextDocumentNotification(server::Server, msg::DidCloseTe
     store!(server.state.saved_file_cache) do cache
         Base.delete(cache, uri), nothing
     end
-    if clear_extra_diagnostics!(server, uri)
-        notify_diagnostics!(server; ensure_cleared=uri)
-    end
-
-    nothing
+    clear_extra_diagnostics!(server, uri)
+    notify_diagnostics!(server; ensure_cleared=uri)
 end
