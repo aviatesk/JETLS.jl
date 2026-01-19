@@ -647,7 +647,7 @@ mutable struct ServerState
     const notebook_cache::NotebookCache # notebook document cache (synced with `notebookDocument/did*`), mapping notebook URIs to their notebook info
     const cell_to_notebook::CellToNotebookMap # maps cell URIs to their notebook URI
     # Cache for files not synced via document-synchronization (unsynced files).
-    # Populated on-demand by `get_unsynced_file_info`, invalidated by `workspace/didChangeWatchedFiles`.
+    # Populated on-demand by `get_unsynced_file_info!`, invalidated by `workspace/didChangeWatchedFiles`.
     const unsynced_file_cache::UnsyncedFileCache
     # Document symbol cache for both synced and unsynced files.
     # Uses LWContainer for concurrent writes from:

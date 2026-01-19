@@ -132,7 +132,7 @@ end
 
 function collect_symbols_from_file!(
         symbols::Vector{WorkspaceSymbol}, state::ServerState, uri::URI)
-    fi = @something get_file_info(state, uri) get_unsynced_file_info(state, uri) return
+    fi = @something get_file_info(state, uri) get_unsynced_file_info!(state, uri) return
     doc_symbols = get_document_symbols!(state, uri, fi)
     flatten_document_symbols!(symbols, doc_symbols, state, uri)
 end

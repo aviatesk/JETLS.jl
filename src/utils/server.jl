@@ -215,7 +215,26 @@ get_file_info(s::ServerState, t::TextDocumentIdentifier, cancel_flag::AbstractCa
     get_file_info(s, t.uri, cancel_flag; kwargs...)
 
 """
-    get_unsynced_file_info(state::ServerState, uri::URI) -> Union{Nothing,FileInfo}
+    get_saved_file_info(s::ServerState, uri::URI) -> fi::Union{Nothing,SavedFileInfo}
+    get_saved_file_info(s::ServerState, t::TextDocumentIdentifier) -> fi::Union{Nothing,SavedFileInfo}
+
+Fetch cached saved FileInfo given an LSclient-provided structure with a URI
+"""
+function get_saved_file_info(s::ServerState, uri::URI)
+    cache = get(load(s.saved_file_cache), uri, nothing)
+    if cache !== nothing
+        return cache
+    end
+    notebook_uri = get_notebook_uri_for_cell(s, uri)
+    if notebook_uri !== nothing
+        return get(load(s.saved_file_cache), notebook_uri, nothing)
+    end
+    return nothing
+end
+get_saved_file_info(s::ServerState, t::TextDocumentIdentifier) = get_saved_file_info(s, t.uri)
+
+"""
+    get_unsynced_file_info!(state::ServerState, uri::URI) -> Union{Nothing,FileInfo}
 
 Get `FileInfo` for a file not synced via document-synchronization.
 The file may have been analyzed by full-analysis but not yet opened in the editor,
@@ -223,15 +242,13 @@ or simply be outside the active workspace scope.
 Results are cached in `state.unsynced_file_cache` and invalidated via
 `workspace/didChangeWatchedFiles`.
 """
-function get_unsynced_file_info(state::ServerState, uri::URI)
+function get_unsynced_file_info!(state::ServerState, uri::URI)
     return store!(state.unsynced_file_cache) do cache::UnsyncedFileCacheData
         if haskey(cache, uri)
             return cache, cache[uri]
         end
         filename = uri2filename(uri)
-        if !isfile(filename)
-            return cache, nothing
-        end
+        isfile(filename) || return cache, nothing
         parsed_stream = try
             ParseStream!(read(filename))
         catch e
@@ -254,24 +271,7 @@ function invalidate_unsynced_file_cache!(state::ServerState, uri::URI)
     end
 end
 
-"""
-    get_saved_file_info(s::ServerState, uri::URI) -> fi::Union{Nothing,SavedFileInfo}
-    get_saved_file_info(s::ServerState, t::TextDocumentIdentifier) -> fi::Union{Nothing,SavedFileInfo}
-
-Fetch cached saved FileInfo given an LSclient-provided structure with a URI
-"""
-function get_saved_file_info(s::ServerState, uri::URI)
-    cache = get(load(s.saved_file_cache), uri, nothing)
-    if cache !== nothing
-        return cache
-    end
-    notebook_uri = get_notebook_uri_for_cell(s, uri)
-    if notebook_uri !== nothing
-        return get(load(s.saved_file_cache), notebook_uri, nothing)
-    end
-    return nothing
-end
-get_saved_file_info(s::ServerState, t::TextDocumentIdentifier) = get_saved_file_info(s, t.uri)
+is_synchronized(s::ServerState, uri::URI) = haskey(load(s.file_cache), uri)
 
 """
     get_context_info(state::ServerState, uri::URI, pos::Position) -> (; mod, analyzer, postprocessor)

@@ -167,7 +167,7 @@ function collect_global_references!(
         fi = @something begin
             get_file_info(state, uri)
         end begin
-            get_unsynced_file_info(server.state, uri)
+            get_unsynced_file_info!(server.state, uri)
         end continue
         search_st0_top = build_syntax_tree(fi)
         global_find_references_in_file!(

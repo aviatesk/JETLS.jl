@@ -315,7 +315,7 @@ function collect_global_rename_edits!(
         fi = @something begin
             get_file_info(state, uri)
         end begin
-            get_unsynced_file_info(server.state, uri)
+            get_unsynced_file_info!(server.state, uri)
         end continue
         version = fi.version
         version == 0 && (version = nothing)
