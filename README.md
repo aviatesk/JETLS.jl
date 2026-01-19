@@ -50,8 +50,11 @@ the list itself is subject to change.
   - [x] Syntax errors
   - [x] Lowering errors
   - [x] Macro expansion error
-  - [x] Unused bindings
+  - [x] Unused bindings (with code action)
   - [x] Captured boxed variables
+  - [x] Unsorted import names (with code action)
+  - [ ] Unused import names (with code action)
+  - [ ] Undefined import names
   - [x] Method overwrite
   - [x] Abstract struct field
   - [x] Undefined bindings
