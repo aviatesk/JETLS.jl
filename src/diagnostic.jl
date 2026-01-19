@@ -1038,7 +1038,7 @@ end
 # textDocument/publishDiagnostics
 # ===============================
 
-function get_full_diagnostics(server::Server; ensure_cleared::Union{Nothing,URI} = nothing)
+function get_full_diagnostics(server::Server; ensure_cleared::Union{Bool,URI} = false)
     state = server.state
     uri2diagnostics = URI2Diagnostics()
     for (uri, analysis_info) in load(state.analysis_manager.cache)
@@ -1053,7 +1053,7 @@ function get_full_diagnostics(server::Server; ensure_cleared::Union{Nothing,URI}
         end
     end
     merge_extra_diagnostics!(uri2diagnostics, server)
-    if ensure_cleared !== nothing && !haskey(uri2diagnostics, ensure_cleared)
+    if ensure_cleared isa URI && !haskey(uri2diagnostics, ensure_cleared)
         uri2diagnostics[ensure_cleared] = Diagnostic[]
     end
     map_notebook_diagnostics!(uri2diagnostics, state)
@@ -1085,14 +1085,25 @@ When `ensure_cleared` is specified, guarantees that a notification is sent for t
 even if it no longer has any diagnostics, ensuring the client clears any previously
 displayed diagnostics for that URI.
 """
-function notify_diagnostics!(server::Server; ensure_cleared::Union{Nothing,URI} = nothing)
-    notify_diagnostics!(server, get_full_diagnostics(server; ensure_cleared))
+function notify_diagnostics!(server::Server; ensure_cleared::Union{Bool,URI} = false)
+    notify_diagnostics!(server, get_full_diagnostics(server; ensure_cleared); ensure_cleared)
 end
 
-function notify_diagnostics!(server::Server, uri2diagnostics::URI2Diagnostics)
+function notify_diagnostics!(server::Server, uri2diagnostics::URI2Diagnostics; ensure_cleared::Union{Bool,URI} = false)
     state = server.state
+    all_files = get_config(state.config_manager, :diagnostic, :all_files)
     root_path = isdefined(state, :root_path) ? state.root_path : nothing
     for (uri, diagnostics) in uri2diagnostics
+        if !all_files && !is_synchronized(state, uri)
+            if ((ensure_cleared isa URI && uri == ensure_cleared) ||
+                ensure_cleared === true) && !isempty(diagnostics)
+                send(server, PublishDiagnosticsNotification(;
+                    params = PublishDiagnosticsParams(;
+                        uri,
+                        diagnostics = Diagnostic[])))
+            end
+            continue
+        end
         apply_diagnostic_config!(diagnostics, state.config_manager, uri, root_path)
         send(server, PublishDiagnosticsNotification(;
             params = PublishDiagnosticsParams(;

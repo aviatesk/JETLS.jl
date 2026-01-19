@@ -18,6 +18,7 @@ executable_range = ""              # string (path), optional
 
 [diagnostic]
 enabled = true                     # boolean, default: true
+all_files = true                   # boolean, default: true
 allow_unused_underscore = false    # boolean, default: false
 
 [[diagnostic.patterns]]
@@ -45,6 +46,7 @@ executable = "testrunner"          # string, default: "testrunner" (or "testrunn
 - [`formatter`](@ref config/formatter)
 - [`[diagnostic]`](@ref config/diagnostic)
     - [`[diagnostic] enabled`](@ref config/diagnostic-enabled)
+    - [`[diagnostic] all_files`](@ref config/diagnostic-all_files)
     - [`[diagnostic] allow_unused_underscore`](@ref config/diagnostic-allow_unused_underscore)
     - [`[[diagnostic.patterns]]`](@ref config/diagnostic-patterns)
 - [`[completion]`](@ref config/completion)
@@ -147,6 +149,28 @@ messages will be shown.
 ```toml
 [diagnostic]
 enabled = false  # Disable all diagnostics
+```
+
+#### [`[diagnostic] all_files`](@id config/diagnostic-all_files)
+
+- **Type**: boolean
+- **Default**: `true`
+
+Enable or disable diagnostics for unopened files. When enabled, JETLS reports
+diagnostics for all Julia files in the workspace. When disabled, diagnostics
+are only reported for files currently open in the editor.
+
+This setting primarily affects [`JETLS/save`](@ref diagnostic/source) diagnostics.
+[`JETLS/live`](@ref diagnostic/source) diagnostics are only available for open
+files, so they are not reported for unopened files regardless of this setting.
+Note that full-analysis (triggered by file save) still runs even when disabled;
+this setting only controls whether results are reported to the editor.
+Disabling this can be useful to reduce noise when there are many warnings
+across the workspace.
+
+```toml
+[diagnostic]
+all_files = false  # Disable diagnostics for unopened files
 ```
 
 #### [`[diagnostic] allow_unused_underscore`](@id config/diagnostic-allow_unused_underscore)
