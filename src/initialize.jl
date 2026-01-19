@@ -401,7 +401,7 @@ function handle_InitializedNotification(server::Server)
     if supports(server, :textDocument, :diagnostic, :dynamicRegistration)
         push!(registrations, diagnostic_registration())
         if JETLS_DEV_MODE
-            @info "Dynamically registering 'textDocument/diagnotic' upon `InitializedNotification`"
+            @info "Dynamically registering 'textDocument/diagnostic' upon `InitializedNotification`"
         end
     end
 

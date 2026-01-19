@@ -297,8 +297,8 @@ function lines_range((start_line, end_line)::Pair{Int,Int})
     return Range(; start, var"end")
 end
 
-# syntax diagnotics
-# =================
+# syntax diagnostics
+# ==================
 
 function parsed_stream_to_diagnostics(fi::FileInfo)
     diagnostics = Diagnostic[]
