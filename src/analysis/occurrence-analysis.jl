@@ -263,7 +263,8 @@ function find_global_binding_occurrences!(
     )
     ret = Set{CachedBindingOccurrence}()
     iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
-        binding_occurrences = @something get_binding_occurrences!(state, uri, fi, st0; kwargs...) return
+        binding_occurrences = @something get_binding_occurrences!(
+            state, uri, fi, st0; include_global_bindings = true, kwargs...) return
         for (binfo′, occurrences) in binding_occurrences
             if binfo′.mod === binfo.mod && binfo′.name == binfo.name
                 for occurrence in occurrences
@@ -303,7 +304,8 @@ end
 
 function _compute_binding_occurrences(
         state::ServerState, uri::URI, fi::FileInfo, st0::JS.SyntaxTree;
-        lookup_func = gen_lookup_out_of_scope!(state, uri)
+        lookup_func = gen_lookup_out_of_scope!(state, uri),
+        include_global_bindings::Bool = false
     )
     (; mod) = get_context_info(state, uri, offset_to_xy(fi, JS.first_byte(st0)); lookup_func)
     (; ctx3, st3) = try
@@ -314,7 +316,7 @@ function _compute_binding_occurrences(
     catch
         return nothing
     end
-    return compute_binding_occurrences(ctx3, st3; include_global_bindings=true)
+    return compute_binding_occurrences(ctx3, st3; include_global_bindings)
 end
 
 function invalidate_binding_occurrences_cache!(state::ServerState, uri::URI)
