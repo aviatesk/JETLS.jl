@@ -21,7 +21,15 @@ end
 #     method = DEFINITION_REGISTRATION_METHOD))
 # register(currently_running, definition_registration())
 
-is_location_unknown(m::Method) = Base.updated_methodloc(m)[2] ≤ 0
+function is_location_unknown(m::Method)
+    file, line = Base.updated_methodloc(m)
+    line ≤ 0 && return true
+    file, line = functionloc(m)
+    if isnothing(file)
+        return true
+    end
+    return false
+end
 function is_location_unknown(mod::Module)
     (; file, line) = Base.moduleloc(mod)
     return line ≤ 0 || file === Symbol("")
