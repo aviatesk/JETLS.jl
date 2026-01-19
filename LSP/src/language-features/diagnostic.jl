@@ -369,7 +369,7 @@ Parameters of the workspace diagnostic request.
     "The additional identifier provided during registration."
     identifier::Union{String, Nothing} = nothing
 
-    "The currently known diagnostic reports with their\nprevious result ids."
+    "The currently known diagnostic reports with their previous result ids."
     previousResultIds::Vector{PreviousResultId}
 end
 
