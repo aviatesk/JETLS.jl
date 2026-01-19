@@ -108,6 +108,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   [Sources](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/source)
   documentation for details.
 
+### Fixed
+
+- Fixed LSP features not working inside `@main` functions.
+
 ## 2026-01-17
 
 - Commit: [`c8e2012`](https://github.com/aviatesk/JETLS.jl/commit/c8e2012)

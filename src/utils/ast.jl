@@ -31,14 +31,19 @@ function without_kinds(st::JS.SyntaxTree, kinds::Tuple{Vararg{JS.Kind}})
         _without_kinds(st, kinds)[1])::JS.SyntaxTree
 end
 
-function is_nospecialize_or_specialize_macrocall(st::JS.SyntaxTree)
-    JS.kind(st) === JS.K"macrocall" || return false
-    JS.numchildren(st) >= 1 || return false
-    macro_name = st[1]
+function is_macrocall_st0(st0::JS.SyntaxTree, names::AbstractString...)
+    JS.kind(st0) === JS.K"macrocall" || return false
+    JS.numchildren(st0) >= 1 || return false
+    macro_name = st0[1]
     JS.kind(macro_name) === JS.K"Identifier" || return false
     hasproperty(macro_name, :name_val) || return false
-    return macro_name.name_val == "@nospecialize" || macro_name.name_val == "@specialize"
+    return macro_name.name_val in names
 end
+
+is_nospecialize_or_specialize_macrocall0(st0::JS.SyntaxTree) =
+    is_macrocall_st0(st0, "@nospecialize", "@specialize")
+
+is_mainfunc0(st0::JS.SyntaxTree) = is_macrocall_st0(st0, "@main")
 
 function is_nospecialize_or_specialize_macrocall3(st3::JS.SyntaxTree)
     JS.kind(st3) === JS.K"macrocall" || return false
@@ -54,7 +59,7 @@ end
 
 function _remove_macrocalls(st::JS.SyntaxTree)
     if JS.kind(st) === JS.K"macrocall"
-        if is_nospecialize_or_specialize_macrocall(st)
+        if is_nospecialize_or_specialize_macrocall0(st)
             # Special case `@nospecialize`/`@specialize`:
             # These macros are sometimes used in method definition argument lists, but
             # if we apply the `_remove_macrocalls` transformation directly, it would
@@ -62,6 +67,10 @@ function _remove_macrocalls(st::JS.SyntaxTree)
             # preventing generation of a correct lowered tree.
             # Furthermore, JuliaLowering.jl provides new macro style definitions for
             # these macros, so there's no need to remove them in the first place.
+            return st, false
+        elseif is_mainfunc0(st)
+            # `@main` functions are always lowered to `main` functions without issues,
+            # so there's no need to remove them
             return st, false
         end
         new_children = JS.SyntaxList(JS.syntax_graph(st))

@@ -12,8 +12,12 @@ global lowering_module::Module = Module()
 with_binding_occurrences(callback, code::AbstractString; kwargs...) =
     with_binding_occurrences(callback, lowering_module, code; kwargs...)
 function with_binding_occurrences(callback, mod::Module, code::AbstractString;
-                                  ismacro_callback = nothing)
+                                  ismacro_callback = nothing,
+                                  remove_macrocalls::Bool = false)
     st0 = jlparse(code; rule=:statement)
+    if remove_macrocalls
+        st0 = JETLS.remove_macrocalls(st0)
+    end
     (; ctx3, st3) = JETLS.jl_lower_for_scope_resolution(mod, st0)
     ismacro = isnothing(ismacro_callback) ? nothing : Ref(false)
     binding_occurrences = JETLS.compute_binding_occurrences(ctx3, st3; ismacro)
@@ -270,6 +274,28 @@ ismacro_callback(ismacro) = @test ismacro[]
             end
             @test !any(binding_occurrences) do (binding, occurrences)
                 binding.name == "kw" && binding.kind === :argument && any(o->o.kind===:use, occurrences)
+            end
+        end
+    end
+
+    @testset "remove_macrocalls" begin
+        with_binding_occurrences("func(@nospecialize args) = typeof(args)"; remove_macrocalls=true) do binding_occurrences
+            @test any(binding_occurrences) do (binding, occurrences)
+                binding.name == "args" && binding.kind === :argument && any(o->o.kind===:use, occurrences)
+            end
+        end
+        with_binding_occurrences("(@main)(args::Vector{String}) = println(args)"; remove_macrocalls=true) do binding_occurrences
+            @test any(binding_occurrences) do (binding, occurrences)
+                binding.name == "args" && binding.kind === :argument && any(o->o.kind===:use, occurrences)
+            end
+        end
+        with_binding_occurrences("""
+            function @main(args::Vector{String})
+                println(args)
+            end
+            """; remove_macrocalls=true) do binding_occurrences
+            @test any(binding_occurrences) do (binding, occurrences)
+                binding.name == "args" && binding.kind === :argument && any(o->o.kind===:use, occurrences)
             end
         end
     end
