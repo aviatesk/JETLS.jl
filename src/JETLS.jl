@@ -429,7 +429,7 @@ function handle_request_message(server::Server, @nospecialize(msg), cancel_flag:
     elseif msg isa DocumentDiagnosticRequest
         handle_DocumentDiagnosticRequest(server, msg, cancel_flag)
     elseif msg isa WorkspaceDiagnosticRequest
-        @assert false "workspace/diagnostic should not be enabled"
+        handle_WorkspaceDiagnosticRequest(server, msg, cancel_flag)
     elseif msg isa CodeLensRequest
         handle_CodeLensRequest(server, msg, cancel_flag)
     elseif msg isa CodeActionRequest

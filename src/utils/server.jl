@@ -243,10 +243,16 @@ Results are cached in `state.unsynced_file_cache` and invalidated via
 `workspace/didChangeWatchedFiles`.
 """
 function get_unsynced_file_info!(state::ServerState, uri::URI)
+    cache = load(state.unsynced_file_cache)
+    if haskey(cache, uri)
+        return cache[uri]
+    end
+    return store_unsynced_file_info!(state, uri)
+end
+
+function store_unsynced_file_info!(state::ServerState, uri::URI)
     return store!(state.unsynced_file_cache) do cache::UnsyncedFileCacheData
-        if haskey(cache, uri)
-            return cache, cache[uri]
-        end
+        version = time_ns() % Int
         filename = uri2filename(uri)
         isfile(filename) || return cache, nothing
         parsed_stream = try
@@ -256,7 +262,7 @@ function get_unsynced_file_info!(state::ServerState, uri::URI)
             JETLS_DEV_MODE && Base.showerror(stderr, e, catch_backtrace)
             return cache, nothing
         end
-        fi = FileInfo(#=version=#0, parsed_stream, filename, state.encoding)
+        fi = FileInfo(version, parsed_stream, filename, state.encoding)
         return UnsyncedFileCacheData(cache, uri => fi), fi
     end
 end

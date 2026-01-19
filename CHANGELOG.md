@@ -47,12 +47,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- Added [`workspace/diagnostic`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#workspace_diagnostic)
+  support to provide `JETLS/live` diagnostics (syntax errors and lowering-based
+  analysis) for unopened files in the workspace.
+
 - Added [`diagnostic.all_files`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic-all_files)
   configuration option to control whether diagnostics are reported for unopened
-  files. When disabled, diagnostics are only reported for files currently open
-  in the editor. This can be useful to reduce noise when there are many warnings
-  across the workspace. Note that analysis still runs; this setting only
-  controls whether results are reported.
+  files. Disabling this can be useful to reduce noise when there are many
+  warnings across the workspace.
 
 - Added `lowering/unsorted-import-names` diagnostic that reports when names in
   `import`, `using`, `export`, or `public` statements are not sorted

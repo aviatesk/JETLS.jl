@@ -160,13 +160,12 @@ Enable or disable diagnostics for unopened files. When enabled, JETLS reports
 diagnostics for all Julia files in the workspace. When disabled, diagnostics
 are only reported for files currently open in the editor.
 
-This setting primarily affects [`JETLS/save`](@ref diagnostic/source) diagnostics.
-[`JETLS/live`](@ref diagnostic/source) diagnostics are only available for open
-files, so they are not reported for unopened files regardless of this setting.
-Note that full-analysis (triggered by file save) still runs even when disabled;
-this setting only controls whether results are reported to the editor.
-Disabling this can be useful to reduce noise when there are many warnings
-across the workspace.
+This setting affects both [`JETLS/live` and `JETLS/save`](@ref diagnostic/source)
+diagnostics. For `JETLS/live`, lowering-based analysis for unopened files is
+skipped when disabled (though the performance impact is minimal since lowering
+analysis is usually pretty fast). For `JETLS/save`, full analysis still runs;
+only reporting is suppressed. Disabling this can be useful to reduce noise when
+there are many warnings across the workspace.
 
 ```toml
 [diagnostic]
