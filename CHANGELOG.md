@@ -52,44 +52,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   alphabetically. This diagnostic is disabled by default and can be enabled via
   the [`diagnostic.patterns`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic-patterns) configuration.
   The "Sort import names" code action is always available regardless of
-  diagnostic settings. Names are sorted case-sensitively, with `as` expressions
-  sorted by original name and relative imports sorted including dots.
+  diagnostic settings.
 
 ### Changed
 
 - Replaced `inference/undef-local-var` with new `lowering/undef-local-var`
-  diagnostic. The new diagnostic uses CFG-aware analysis on lowered code
-  instead of the previuos inference-based analysis. This provides faster
-  feedback via on-change `textDocument/diagnostic` requests without waiting for
-  full-analysis to be completed that is triggered on-save, and offers precise
-  source location information by leveraging JuliaLowering's provenance tracking.
-
-  The new diagnostic is reported as follows:
-  ```julia
-  function maybe_undef(cond::Bool)
-      if cond
-          var = 1  # RelatedInformation: `var` is defined here
-      end
-      return var  # Variable `var` may be used before it is defined (JETLS lowering/undef-local-var)
-                  # Severity: Information (maybe undef)
-  end
-  ```
-
-  In cases when the analysis cannot determine the definedness of a binding like
-  the following, you can use a pattern like
-  `@assert @isdefined(var) "Assertion to tell the compiler about the definedness of this variable"`
-  to prevent the diagnostic from being reported:
-  ```julia
-  function must_be_defined(cond::Bool)
-      if cond
-          var = 1
-      end
-      if cond
-          @assert @isdefined(var) "Assertion to tell the compiler about the definedness of this variable"
-          return var  # No diagnostic is reported here
-      end
-  end
-  ```
+  diagnostic. The new diagnostic uses CFG-aware analysis on lowered code,
+  providing faster feedback via `textDocument/diagnostic` without waiting for
+  full analysis, and offers precise source location information. See the
+  [diagnostic reference](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-local-var)
+  for details and workarounds.
 
 - `textDocument/documentSymbol` now uses `SymbolKind.Object` for function
   arguments instead of `SymbolKind.Variable`. This visually distinguishes
