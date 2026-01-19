@@ -327,3 +327,15 @@ _has_analyzed_context(::Nothing, ::URI) = false
 _has_analyzed_context(outofscope::OutOfScope, ::URI) = !isnothing(outofscope.module_context)
 _has_analyzed_context(analysis_result::AnalysisResult, uri::URI) =
     analyzed_file_info(analysis_result, uri) !== nothing
+
+function collect_workspace_uris(server::Server)
+    uris = Set{URI}()
+    for (_, info) in load(server.state.analysis_manager.cache)
+        if info isa AnalysisResult
+            for uri in analyzed_file_uris(info)
+                push!(uris, uri)
+            end
+        end
+    end
+    return uris
+end

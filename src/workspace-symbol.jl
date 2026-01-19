@@ -137,25 +137,6 @@ function collect_symbols_from_file!(
     flatten_document_symbols!(symbols, doc_symbols, state, uri)
 end
 
-function collect_workspace_uris(server::Server)
-    state = server.state
-    uris = Set{URI}()
-    # Collect from analysis cache
-    cache = load(state.analysis_manager.cache)
-    for (_, info) in cache
-        if info isa AnalysisResult
-            for analyzed_uri in analyzed_file_uris(info)
-                push!(uris, analyzed_uri)
-            end
-        end
-    end
-    # Collect from synced files
-    for (uri, _) in load(state.file_cache)
-        push!(uris, uri)
-    end
-    return uris
-end
-
 function flatten_document_symbols!(
         workspace_symbols::Vector{WorkspaceSymbol}, doc_symbols::Vector{DocumentSymbol},
         state::ServerState, uri::URI
