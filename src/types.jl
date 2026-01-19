@@ -632,6 +632,8 @@ const DocumentSymbolCache = LWContainer{DocumentSymbolCacheData, LWStats}
 const BindingOccurrencesCacheData = Base.PersistentDict{URI,BindingOccurrencesCacheEntry}
 const BindingOccurrencesCache = LWContainer{BindingOccurrencesCacheData, LWStats}
 const ConfigManager = LWContainer{ConfigManagerData, LWStats}
+const UnsyncedFileCacheData = Base.PersistentDict{URI,FileInfo}
+const UnsyncedFileCache = LWContainer{UnsyncedFileCacheData, LWStats}
 
 const HandledHistory = FixedSizeFIFOQueue{MessageId}
 
@@ -644,6 +646,9 @@ mutable struct ServerState
     const saved_file_cache::SavedFileCache # syntactic analysis cache (synced with `textDocument/didSave`)
     const notebook_cache::NotebookCache # notebook document cache (synced with `notebookDocument/did*`), mapping notebook URIs to their notebook info
     const cell_to_notebook::CellToNotebookMap # maps cell URIs to their notebook URI
+    # Cache for files not synced via document-synchronization (unsynced files).
+    # Populated on-demand by `get_unsynced_file_info`, invalidated by `workspace/didChangeWatchedFiles`.
+    const unsynced_file_cache::UnsyncedFileCache
     # Document symbol cache for both synced and unsynced files.
     # Uses LWContainer for concurrent writes from:
     # - `get_document_symbols!` (on cache miss)
@@ -679,6 +684,7 @@ mutable struct ServerState
             #=saved_file_cache=# SavedFileCache(Base.PersistentDict{URI,SavedFileInfo}()),
             #=notebook_cache=# NotebookCache(Base.PersistentDict{URI,NotebookInfo}()),
             #=cell_to_notebook=# CellToNotebookMap(Base.PersistentDict{URI,URI}()),
+            #=unsynced_file_cache=# UnsyncedFileCache(UnsyncedFileCacheData()),
             #=document_symbol_cache=# DocumentSymbolCache(DocumentSymbolCacheData()),
             #=binding_occurrences_cache=# BindingOccurrencesCache(BindingOccurrencesCacheData()),
             #=analysis_manager=# AnalysisManager(),

@@ -214,21 +214,44 @@ end
 get_file_info(s::ServerState, t::TextDocumentIdentifier, cancel_flag::AbstractCancelFlag; kwargs...) =
     get_file_info(s, t.uri, cancel_flag; kwargs...)
 
-# The given `uri` may have been analyzed by full-analysis but not yet synced
-# by document-synchronization, or simply be outside the active workspace scope.
-# Construct a `ParseStream` from the filename and create a dummy `FileInfo`
-# for use in global binding analysis, workspace symbols, etc.
-function create_dummy_file_info(uri::URI, state::ServerState)
-    filename = uri2filename(uri)
-    isfile(filename) || return nothing
-    parsed_stream = try
-        ParseStream!(read(filename))
-    catch e
-        JETLS_DEV_MODE && @error "Error parsing file $(filename)"
-        JETLS_DEV_MODE && Base.showerror(stderr, e, catch_backtrace)
-        return nothing
+"""
+    get_unsynced_file_info(state::ServerState, uri::URI) -> Union{Nothing,FileInfo}
+
+Get `FileInfo` for a file not synced via document-synchronization.
+The file may have been analyzed by full-analysis but not yet opened in the editor,
+or simply be outside the active workspace scope.
+Results are cached in `state.unsynced_file_cache` and invalidated via
+`workspace/didChangeWatchedFiles`.
+"""
+function get_unsynced_file_info(state::ServerState, uri::URI)
+    return store!(state.unsynced_file_cache) do cache::UnsyncedFileCacheData
+        if haskey(cache, uri)
+            return cache, cache[uri]
+        end
+        filename = uri2filename(uri)
+        if !isfile(filename)
+            return cache, nothing
+        end
+        parsed_stream = try
+            ParseStream!(read(filename))
+        catch e
+            JETLS_DEV_MODE && @error "Error parsing file $(filename)"
+            JETLS_DEV_MODE && Base.showerror(stderr, e, catch_backtrace)
+            return cache, nothing
+        end
+        fi = FileInfo(#=version=#0, parsed_stream, filename, state.encoding)
+        return UnsyncedFileCacheData(cache, uri => fi), fi
     end
-    return FileInfo(#=version=#0, parsed_stream, filename, state.encoding)
+end
+
+function invalidate_unsynced_file_cache!(state::ServerState, uri::URI)
+    store!(state.unsynced_file_cache) do cache::UnsyncedFileCacheData
+        if haskey(cache, uri)
+            return Base.delete(cache, uri), nothing
+        else
+            return cache, nothing
+        end
+    end
 end
 
 """

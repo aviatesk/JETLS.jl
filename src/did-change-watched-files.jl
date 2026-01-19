@@ -137,6 +137,7 @@ function handle_jl_file_change!(state::ServerState, uri::URI)
         # `textDocument/didChange`, so we don't need to do anything here
         return
     end
+    invalidate_unsynced_file_cache!(state, uri)
     invalidate_document_symbol_cache!(state, uri)
     invalidate_binding_occurrences_cache!(state, uri)
 end

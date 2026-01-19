@@ -108,6 +108,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   [Sources](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/source)
   documentation for details.
 
+- Yet more improved performance of `workspace/symbol`, `textDocument/references`,
+`textDocument/rename`, and `textDocument/definition` by avoiding re-parsing of
+  already analyzed files not opened in the editor.
+
 ### Fixed
 
 - Fixed LSP features not working inside `@main` functions.
