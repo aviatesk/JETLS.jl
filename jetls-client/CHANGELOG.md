@@ -8,7 +8,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`76146d0...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/76146d0...HEAD)
+- Diff: [`739ee43c...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/739ee43c...HEAD)
+
+### Added
+
+- Added file system watchers for `workspace/didChangeWatchedFiles`. While JETLS
+  registers file watchers on the server side, vscode-languageclient doesn't
+  automatically set up the actual file system watchers in response.
+  This change ensures file change notifications are properly sent to the server,
+  enabling features like automatic config reloading and diagnostics refresh
+  when files change outside the editor.
+
+## v0.3.1
+
+- Commit: [`739ee43c`](https://github.com/aviatesk/JETLS.jl/commit/739ee43c)
+- Diff: [`76146d0...739ee43c`](https://github.com/aviatesk/JETLS.jl/compare/76146d0...739ee43c)
+
+### Added
+
+- Added `allow_unused_underscore` configuration option (default: `true`). When
+  enabled, unused variable diagnostics (`lowering/unused-argument`,
+  `lowering/unused-local`) are suppressed for names starting with `_`
+  (underscore), following the common convention where `_`-prefixed names
+  indicate intentionally unused variables.
 
 ## v0.3.0
 
