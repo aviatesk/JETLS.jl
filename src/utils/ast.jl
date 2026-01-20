@@ -1,5 +1,5 @@
 function build_syntax_tree(fi::FileInfo)
-    return JS.build_tree(JS.SyntaxTree, fi.parsed_stream; filename = fi.filename)
+    return @something fi.syntax_tree0 JS.build_tree(JS.SyntaxTree, fi.parsed_stream; filename = fi.filename)
 end
 
 """

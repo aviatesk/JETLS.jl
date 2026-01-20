@@ -34,30 +34,38 @@ struct FileInfo
     filename::String
     encoding::LSP.PositionEncodingKind.Ty
     testsetinfos::Vector{TestsetInfo}
+    syntax_tree0::Union{Nothing,SyntaxTree0}
 
     function FileInfo(
             version::Int, parsed_stream::JS.ParseStream, filename::AbstractString,
             encoding::LSP.PositionEncodingKind.Ty = LSP.PositionEncodingKind.UTF16,
-            testsetinfos::Vector{TestsetInfo} = EMPTY_TESTSETINFOS
+            testsetinfos::Vector{TestsetInfo} = EMPTY_TESTSETINFOS;
+            cache_tree::Union{Nothing,Bool} = nothing
         )
-        new(version, parsed_stream, filename, encoding, testsetinfos)
+        if cache_tree isa Bool
+            syntax_tree0 = JS.build_tree(JS.SyntaxTree, parsed_stream; filename)
+            if cache_tree
+                syntax_tree0 = JS.prune(syntax_tree0)
+            end
+        else
+            syntax_tree0 = nothing
+        end
+        new(version, parsed_stream, filename, encoding, testsetinfos, syntax_tree0)
     end
 end
 @define_override_constructor FileInfo # For testsetinfos update
 
 function FileInfo( # Constructor for production code (with URI)
-        version::Int, parsed_stream::JS.ParseStream, uri::URI,
-        encoding::LSP.PositionEncodingKind.Ty = LSP.PositionEncodingKind.UTF16,
-        testsetinfos::Vector{TestsetInfo} = EMPTY_TESTSETINFOS
+        version::Int, parsed_stream::JS.ParseStream, uri::URI, args...; kwargs...
     )
     filename = uri2filename(uri)
-    return FileInfo(version, parsed_stream, filename, encoding, testsetinfos)
+    return FileInfo(version, parsed_stream, filename, args...; kwargs...)
 end
 
 function FileInfo( # Constructor for test code (with raw text input and filename)
-        version::Int, s::Union{Vector{UInt8},AbstractString}, args...
+        version::Int, s::Union{Vector{UInt8},AbstractString}, args...; kwargs...
     )
-    return FileInfo(version, ParseStream!(s), args...)
+    return FileInfo(version, ParseStream!(s), args...; kwargs...)
 end
 
 # Secondary file cache representing on-disk state.
