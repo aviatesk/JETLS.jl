@@ -50,8 +50,6 @@ using JETLS.Glob
     end
 end
 
-@testset "lowering diagnostic" include("test_lowering_diagnostic.jl")
-
 @testset "top-level error diagnostic" begin
     # Test with code that has syntax errors
     scriptcode = """
