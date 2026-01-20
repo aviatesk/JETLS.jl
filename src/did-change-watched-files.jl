@@ -118,7 +118,6 @@ is_profile_trigger_file(path::AbstractString) = endswith(path, PROFILE_TRIGGER_F
 is_jl_file(path::AbstractString) = endswith(path, ".jl")
 
 function handle_DidChangeWatchedFilesNotification(server::Server, msg::DidChangeWatchedFilesNotification)
-    state = server.state
     for change in msg.params.changes
         changed_path = @something uri2filepath(change.uri) continue
         if is_config_file(changed_path)
@@ -126,18 +125,31 @@ function handle_DidChangeWatchedFilesNotification(server::Server, msg::DidChange
         elseif is_profile_trigger_file(changed_path) && change.type == FileChangeType.Created
             trigger_profile!(server, changed_path)
         elseif is_jl_file(changed_path)
-            handle_jl_file_change!(state, change.uri)
+            handle_jl_file_change!(server, change)
         end
     end
 end
 
-function handle_jl_file_change!(state::ServerState, uri::URI)
-    if haskey(load(state.file_cache), uri)
-        # File is synced (opened in editor) - cache invalidation is handled by
-        # `textDocument/didChange`, so we don't need to do anything here
+function handle_jl_file_change!(server::Server, change::FileEvent)
+    state = server.state
+    uri = change.uri
+    if is_synchronized(state, uri)
+        # File is synced (opened in editor) - `unsynced_file_cache` should have been
+        # invalidated via `textDocument/didOpen`, and the other cache invalidations
+        # are handled by `textDocument/didChange`, so we don't need to do anything here
         return
     end
-    invalidate_unsynced_file_cache!(state, uri)
-    invalidate_document_symbol_cache!(state, uri)
-    invalidate_binding_occurrences_cache!(state, uri)
+    if change.type == FileChangeType.Created
+        store_unsynced_file_info!(state, uri)
+    else
+        if change.type == FileChangeType.Changed
+            store_unsynced_file_info!(state, uri)
+        else
+            @assert change.type == FileChangeType.Deleted
+            invalidate_unsynced_file_cache!(state, uri)
+        end
+        invalidate_document_symbol_cache!(state, uri)
+        invalidate_binding_occurrences_cache!(state, uri)
+    end
+    request_diagnostic_refresh!(server)
 end

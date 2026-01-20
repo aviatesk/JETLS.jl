@@ -437,6 +437,7 @@ A workspace diagnostic document report.
 """
 const WorkspaceDocumentDiagnosticReport =
     Union{WorkspaceFullDocumentDiagnosticReport, WorkspaceUnchangedDocumentDiagnosticReport}
+export WorkspaceDocumentDiagnosticReport
 
 @interface WorkspaceDiagnosticReport begin
     items::Vector{WorkspaceDocumentDiagnosticReport}

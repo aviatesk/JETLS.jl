@@ -62,11 +62,10 @@ function handle_DidOpenTextDocumentNotification(server::Server, msg::DidOpenText
     textDocument = msg.params.textDocument
     @assert textDocument.languageId == "julia"
     uri = textDocument.uri
-
     parsed_stream = ParseStream!(textDocument.text)
     cache_file_info!(server, uri, textDocument.version, parsed_stream)
     cache_saved_file_info!(server.state, uri, parsed_stream)
-
+    invalidate_unsynced_file_cache!(server.state, uri)
     request_analysis!(server, uri, #=onsave=#false)
 end
 
@@ -100,13 +99,11 @@ function handle_DidSaveTextDocumentNotification(server::Server, msg::DidSaveText
         return nothing
     end
     cache_saved_file_info!(server.state, uri, text)
-
     request_analysis!(server, uri, #=onsave=#true)
 end
 
 function handle_DidCloseTextDocumentNotification(server::Server, msg::DidCloseTextDocumentNotification)
     uri = msg.params.textDocument.uri
-
     store!(server.state.file_cache) do cache
         Base.delete(cache, uri), nothing
     end
@@ -115,4 +112,5 @@ function handle_DidCloseTextDocumentNotification(server::Server, msg::DidCloseTe
     end
     clear_extra_diagnostics!(server, uri)
     notify_diagnostics!(server; ensure_cleared=uri)
+    request_diagnostic_refresh!(server)
 end

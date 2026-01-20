@@ -1155,9 +1155,9 @@ const DIAGNOSTIC_REGISTRATION_METHOD = "textDocument/diagnostic"
 
 function diagnostic_options()
     return DiagnosticOptions(;
-        identifier = "JETLS/textDocument/diagnostic",
+        identifier = "JETLS/diagnostic",
         interFileDependencies = false,
-        workspaceDiagnostics = false)
+        workspaceDiagnostics = true)
 end
 
 function diagnostic_registration()
@@ -1229,6 +1229,142 @@ function handle_DocumentDiagnosticRequest(
             result = RelatedFullDocumentDiagnosticReport(;
                 resultId,
                 items = diagnostics)))
+end
+
+# workspace/diagnostic
+# ====================
+
+function handle_WorkspaceDiagnosticRequest(
+        server::Server, msg::WorkspaceDiagnosticRequest, cancel_flag::CancelFlag
+    )
+    uris_to_search = collect_workspace_uris(server)
+    if get_config(server.state.config_manager, :diagnostic, :all_files)
+        return send_workspace_diagnostics(server, msg, uris_to_search, cancel_flag)
+    else
+        return send_empty_workspace_diagnostics(server, msg, uris_to_search, cancel_flag)
+    end
+end
+
+function send_workspace_diagnostics(
+        server::Server, msg::WorkspaceDiagnosticRequest, uris_to_search::Set{URI},
+        cancel_flag::CancelFlag
+    )
+    state = server.state
+    previous_result_ids = Dict{URI,String}()
+    for prev in msg.params.previousResultIds
+        previous_result_ids[prev.uri] = prev.value
+    end
+    partial_token = msg.params.partialResultToken
+    items = WorkspaceDocumentDiagnosticReport[]
+    root_path = isdefined(state, :root_path) ? state.root_path : nothing
+    debuginfo = nothing
+    # debuginfo = (; synced = URI[], analyzed = URI[], skipped = URI[], failed = URI[])
+    for uri in uris_to_search
+        is_cancelled(cancel_flag) && return send(server,
+            WorkspaceDiagnosticResponse(;
+                id = msg.id,
+                result = nothing,
+                error = request_cancelled_error()))
+
+        if is_synchronized(state, uri)
+            isnothing(debuginfo) || push!(debuginfo.synced, uri)
+            continue # should now be reported via `textDocument/diagnostic`
+        end
+
+        fi = @something get_unsynced_file_info!(state, uri) begin
+            isnothing(debuginfo) || push!(debuginfo.failed, uri)
+            continue
+        end
+
+        version = fi.version
+        result_id = string(version)
+        prev_result_id = get(previous_result_ids, uri, nothing)
+        if prev_result_id !== nothing && prev_result_id == result_id
+            item = WorkspaceUnchangedDocumentDiagnosticReport(;
+                uri,
+                version = null,
+                resultId = result_id)
+            if partial_token !== nothing
+                send_partial_result(server, partial_token,
+                    WorkspaceDiagnosticReportPartialResult(; items = WorkspaceDocumentDiagnosticReport[item]))
+            else
+                push!(items, item)
+            end
+            isnothing(debuginfo) || push!(debuginfo.skipped, uri)
+            continue
+        end
+
+        if isempty(fi.parsed_stream.diagnostics)
+            diagnostics = toplevel_lowering_diagnostics(server, uri, fi)
+        else
+            diagnostics = parsed_stream_to_diagnostics(fi)
+        end
+        apply_diagnostic_config!(diagnostics, state.config_manager, uri, root_path)
+        notebook_uri = get_notebook_uri_for_cell(state, uri)
+        if notebook_uri !== nothing
+            diagnostics = map_cell_diagnostics(state, notebook_uri, uri, diagnostics)
+        end
+
+        item = WorkspaceFullDocumentDiagnosticReport(;
+            uri,
+            version = null,
+            resultId = result_id,
+            items = diagnostics)
+        if partial_token !== nothing
+            send_partial_result(server, partial_token,
+                WorkspaceDiagnosticReportPartialResult(; items = WorkspaceDocumentDiagnosticReport[item]))
+        else
+            push!(items, item)
+        end
+        isnothing(debuginfo) || push!(debuginfo.analyzed, uri)
+    end
+
+    partial_token === nothing ||
+        @assert isempty(items) "The final result should be empty when using partial token"
+    if !isnothing(debuginfo)
+        debugshow = (x) -> Text(sprint(show, MIME("text/plain"), x; context=:limit=>true))
+        @info "workspace/diagnostic" analyzed=debugshow(debuginfo.analyzed) synced=debugshow(debuginfo.synced) skipped=debugshow(debuginfo.skipped) failed=debugshow(debuginfo.failed)
+    end
+    return send(server,
+        WorkspaceDiagnosticResponse(;
+            id = msg.id,
+            result = WorkspaceDiagnosticReport(; items)))
+end
+
+const ALL_FILES_DISABLED_RESULT_ID = "workspace/diagnostic-disabled"
+const empty_diagnostics = Diagnostic[]
+
+function send_empty_workspace_diagnostics(
+        server::Server, msg::WorkspaceDiagnosticRequest, uris_to_search::Set{URI},
+        cancel_flag::CancelFlag
+    )
+    partial_token = msg.params.partialResultToken
+    items = WorkspaceDocumentDiagnosticReport[]
+    for uri in uris_to_search
+        is_cancelled(cancel_flag) && return send(server,
+            WorkspaceDiagnosticResponse(;
+                id = msg.id,
+                result = nothing,
+                error = request_cancelled_error()))
+        is_synchronized(server.state, uri) && continue
+        item = WorkspaceFullDocumentDiagnosticReport(;
+            uri,
+            version = null,
+            resultId = ALL_FILES_DISABLED_RESULT_ID,
+            items = empty_diagnostics)
+        if partial_token !== nothing
+            send_partial_result(server, partial_token,
+                WorkspaceDiagnosticReportPartialResult(; items = WorkspaceDocumentDiagnosticReport[item]))
+        else
+            push!(items, item)
+        end
+    end
+    partial_token === nothing ||
+        @assert isempty(items) "The final result should be empty when using partial token"
+    return send(server,
+        WorkspaceDiagnosticResponse(;
+            id = msg.id,
+            result = WorkspaceDiagnosticReport(; items)))
 end
 
 # workspace/diagnostic/refresh
