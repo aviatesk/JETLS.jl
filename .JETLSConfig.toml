@@ -1,4 +1,4 @@
-# TODO Need to properly set and parse line number information for `@namespace`
+# TODO [JETLS] Need to properly set and parse line number information for `@namespace`
 [[diagnostic.patterns]]
 pattern = "Macro name `@namespace` not found"
 match_by = "message"
@@ -6,11 +6,18 @@ match_type = "regex"
 severity = "off"
 path = "LSP/**/*.jl"
 
+# TODO [JuliaLowering] Temporarily downgrade some known JuliaLowering issues to information level
 [[diagnostic.patterns]]
 pattern = "^Lowering TODO:"
 match_by = "message"
 match_type = "regex"
 severity = "info"
+[[diagnostic.patterns]]
+pattern = "Invalid function name"
+match_by = "message"
+match_type = "literal"
+severity = "info"
+path = "src/analysis/Analyzer.jl"
 
 [[initialization_options.analysis_overrides]]
 module_name = "JETLS"

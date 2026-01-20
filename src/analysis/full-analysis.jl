@@ -842,12 +842,13 @@ function analyze_package_with_revise(
 
     analyzed_file_infos = Dict{URI,JET.AnalyzedFileInfo}()
     basedir = Revise.basedir(pkgdata)
-    for file in Revise.srcfiles(pkgdata)
+    for (i, file) in enumerate(Revise.srcfiles(pkgdata))
         filepath = joinpath(basedir, file)
         uri = filepath2uri(filepath)
         # Build module range info from Revise's tracked modules
-        # For simplicity, associate the entire file with the package module
-        module_range_infos = Pair{UnitRange{Int},Module}[(1:typemax(Int)) => pkgmod]
+        # TODO This is pretty incorrect module context mapping
+        filemod, _ = last(pkgdata.fileinfos[i].mod_exs_infos)
+        module_range_infos = Pair{UnitRange{Int},Module}[(1:typemax(Int)) => filemod]
         analyzed_file_infos[uri] = JET.AnalyzedFileInfo(module_range_infos)
     end
     uri2diagnostics = URI2Diagnostics(uri => Diagnostic[] for uri in keys(analyzed_file_infos))
