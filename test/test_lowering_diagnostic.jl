@@ -1158,4 +1158,101 @@ is_unsorted_import_names_diagnostic(diagnostic) =
     end
 end
 
+function get_unused_import_diagnostics(text::AbstractString)
+    server = JETLS.Server()
+    uri = URI("file:///test_unused_imports.jl")
+    fi = JETLS.cache_file_info!(server, uri, 1, text)
+    st0_top = JETLS.build_syntax_tree(fi)
+    return JETLS.analyze_unused_imports(server, uri, fi, st0_top; skip_context_check=true)
+end
+
+@testset "unused imports detection" begin
+    let diagnostics = get_unused_import_diagnostics("""
+        using Base: sin, cos
+        sin(1.0)
+        """)
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.message == "Unused import `cos`"
+        @test DiagnosticTag.Unnecessary in diagnostic.tags
+        @test diagnostic.range.start.line == 0
+        @test diagnostic.range.start.character == sizeof("using Base: sin, ")
+        @test diagnostic.range.var"end".line == 0
+        @test diagnostic.range.var"end".character == sizeof("using Base: sin, cos")
+    end
+
+    # Macro imports should not be reported as unused when the macro is used
+    # + Qualified macro calls (Module.@macro) should track module usage
+    let diagnostics = get_unused_import_diagnostics("""
+        using Base: @nospecialize
+        function f(@nospecialize x)
+            x
+        end
+
+        using Preferences: Preferences
+        const DEV_MODE = Preferences.@load_preference("DEV_MODE", false)
+        """)
+        @test isempty(diagnostics)
+    end
+
+    # `using M.Submodule` should not be tracked (imports all exports, not explicit)
+    let diagnostics = get_unused_import_diagnostics("""
+        using Core.IR
+        """)
+        @test isempty(diagnostics)
+    end
+
+    # Re-exported names should not be reported as unused
+    let diagnostics = get_unused_import_diagnostics("""
+        using Base: sin
+        export sin
+        """)
+        @test isempty(diagnostics)
+    end
+    # `public` statement also counts as usage
+    let diagnostics = get_unused_import_diagnostics("""
+        using Base: cos
+        public cos
+        """)
+        @test isempty(diagnostics)
+    end
+
+    # Import used in nested module should not suppress warning for top-level import
+    @testset "module context tracking" begin
+        script = """
+        module A
+        using Base: sin
+        func(x) = sin(x)
+        export func
+        end
+
+        using Base: sin
+        """
+        withscript(script) do script_path
+            uri = filepath2uri(script_path)
+            withserver() do (; writereadmsg, id_counter, server)
+                JETLS.cache_file_info!(server, uri, 1, script)
+                JETLS.cache_saved_file_info!(server.state, uri, script)
+                JETLS.request_analysis!(server, uri, #=onsave=#false; wait=true, notify_diagnostics=false)
+
+                id = id_counter[] += 1
+                (; raw_res) = writereadmsg(DocumentDiagnosticRequest(;
+                    id,
+                    params = DocumentDiagnosticParams(;
+                        textDocument = TextDocumentIdentifier(; uri)
+                    )))
+                @test raw_res isa DocumentDiagnosticResponse
+                @test raw_res.result isa RelatedFullDocumentDiagnosticReport
+                unused_import_diags = filter(raw_res.result.items) do d
+                    d.code == JETLS.LOWERING_UNUSED_IMPORT_CODE
+                end
+                @test length(unused_import_diags) == 1
+                diagnostic = only(unused_import_diags)
+                @test diagnostic.message == "Unused import `sin`"
+                @test diagnostic.range.start.line == 6
+            end
+        end
+    end
+end
+
 end # module test_lowering_diagnostics

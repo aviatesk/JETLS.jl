@@ -103,6 +103,7 @@ Here is a summary table of the diagnostics explained in this section:
 | [`lowering/undef-global-var`](@ref diagnostic/reference/lowering/undef-global-var)               | `Warning`             | `JETLS/live`  | References to undefined global variables           |
 | [`lowering/undef-local-var`](@ref diagnostic/reference/lowering/undef-local-var)                 | `Warning/Information` | `JETLS/live`  | References to undefined local variables            |
 | [`lowering/captured-boxed-variable`](@ref diagnostic/reference/lowering/captured-boxed-variable) | `Information`         | `JETLS/live`  | Variables captured by closures that require boxing |
+| [`lowering/unused-import`](@ref diagnostic/reference/lowering/unused-import)                     | `Information`         | `JETLS/live`  | Imported names that are never used                 |
 | [`lowering/unsorted-import-names`](@ref diagnostic/reference/lowering/unsorted-import-names)     | `Hint`                | `JETLS/live`  | Import/export names not sorted alphabetically      |
 | [`toplevel/error`](@ref diagnostic/reference/toplevel/error)                                     | `Error`               | `JETLS/save`  | Errors during code loading                         |
 | [`toplevel/method-overwrite`](@ref diagnostic/reference/toplevel/method-overwrite)               | `Warning`             | `JETLS/save`  | Method definitions that overwrite previous ones    |
@@ -394,6 +395,62 @@ end
     them. Also note that the cases where the flisp lowerer (a.k.a. `code_lowered`)
     generates `Core.Box` do not necessarily match the cases where JETLS reports
     captured boxes.
+
+#### [Unused import (`lowering/unused-import`)](@id diagnostic/reference/lowering/unused-import)
+
+**Default severity**: `Information`
+
+Reported when an explicitly imported name is never used within the same module
+space. This diagnostic helps identify unnecessary imports that can be removed
+to keep your code clean.
+
+Example:
+
+```julia
+using Base: sin, cos  # Unused import `cos` (JETLS lowering/unused-import)
+
+examplefunc() = sin(1.0)  # Only `sin` is used
+```
+
+The diagnostic is reported for explicit imports (`using M: name` or
+`import M: name`), not for bulk imports like `using M` which bring in all
+exported names.
+
+This diagnostic scans all files within the module space to detect usages, so an
+import is only reported as unused if the name is not used anywhere in your
+module.
+
+!!! tip "Code action available"
+    Use the "Remove unused import" code action to delete the unused name.
+    If it's the only name in the statement, the entire statement is removed.
+
+!!! warning "Limitation"
+    Usages introduced only through macro expansion cannot be detected. For
+    example, in the following code, `sin` appears unused even though it is
+    used inside the macro-generated code:
+    ```julia
+    using Base: sin  # Incorrectly reported as unused
+
+    macro gensincall(x)
+        :(sin($(esc(x))))
+    end
+    @gensincall 42
+    ```
+
+    Workarounds include using the binding directly in the macro body:
+    ```julia
+    macro gensincall(x)
+        f = sin  # `sin` is used here
+        :($f($(esc(x))))
+    end
+    ```
+    or passing the binding as part of the macro argument:
+    ```julia
+    macro gencall(ex)
+        :($(esc(ex)))
+    end
+    @gencall sin(42)  # `sin` is used here
+    ```
 
 #### [Unsorted import names (`lowering/unsorted-import-names`)](@id diagnostic/reference/lowering/unsorted-import-names)
 

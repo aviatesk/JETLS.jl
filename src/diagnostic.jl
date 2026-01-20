@@ -1058,6 +1058,194 @@ function lowering_diagnostics!(
 end
 lowering_diagnostics(args...; kwargs...) = lowering_diagnostics!(Diagnostic[], args...; kwargs...) # used by tests
 
+struct ImportInfo
+    uri::URI
+    name_range::Range
+    delete_range::Range
+end
+
+# Detects unused imports by scanning all workspace files for usages of imported names.
+# This analysis can be slow if implemented naively, but achieves practical performance through:
+# - Early return for files without import/using statements (~1ms depending on file size)
+# - Syntax tree caching for unsynced files (~150ms → ~25ms for ~50 files, see `FileInfo.syntax_tree0`)
+# - Binding occurrences caching (see `BindingOccurrencesCache`)
+# - Unchanged file skipping in workspace/diagnostic
+# With these optimizations, analyzing a workspace of ~50 files typically takes ~50-100ms.
+function analyze_unused_imports!(
+        diagnostics::Vector{Diagnostic}, server::Server, uri::URI,
+        fi::FileInfo, st0_top::JS.SyntaxTree;
+        skip_context_check::Bool = false
+    )
+    state = server.state
+    mod_imported_names = Dict{Module,Dict{String,Vector{ImportInfo}}}()
+    traverse(st0_top) do st0::JS.SyntaxTree
+        JS.kind(st0) ∈ JS.KSet"import using" || return nothing
+        mod = get_context_module(state, uri, offset_to_xy(fi, JS.first_byte(st0)))
+        for (name, name_range, delete_range) in collect_explicit_import_names(st0, fi)
+            imported_names = get!(Dict{String,Vector{ImportInfo}}, mod_imported_names, mod)
+            push!(get!(Vector{ImportInfo}, imported_names, name), ImportInfo(uri, name_range, delete_range))
+        end
+        return TraversalNoRecurse()
+    end
+    isempty(mod_imported_names) && return diagnostics
+
+    mod_used_names = Dict{Module,Set{String}}()
+    time_get_file_info = time_build_syntax_tree = time_binding_occurrences = time_ast_analysis = 0.0
+    search_uris = collect_search_uris(server, uri)
+    for search_uri in search_uris
+        skip_context_check || has_analyzed_context(state, search_uri) || continue
+        time_get_file_info += @elapsed search_fi = @something begin
+            get_file_info(state, search_uri)
+        end begin
+            get_unsynced_file_info!(state, search_uri)
+        end continue
+        time_build_syntax_tree += @elapsed st0_top = build_syntax_tree(search_fi)
+
+        time_binding_occurrences += @elapsed iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
+            binding_occurrences = @something get_binding_occurrences!(
+                state, search_uri, search_fi, st0; include_global_bindings = true) return
+            mod = get_context_module(state, uri, offset_to_xy(fi, JS.first_byte(st0)))
+            for (binfo_key, occurrences) in binding_occurrences
+                binfo_key.kind === :global || continue
+                if any(o -> o.kind === :use, occurrences)
+                    push!(get!(Set{String}, mod_used_names, mod), binfo_key.name)
+                end
+            end
+        end
+
+        # Collect exported names from source-level syntax tree, since they are not tracked
+        # by the binding occurrence analysis
+        time_ast_analysis += @elapsed traverse(st0_top) do st0::JS.SyntaxTree
+            kind = JS.kind(st0)
+            if kind === JS.K"export" || kind === JS.K"public"
+                # `using .Inner: foo; export foo` - foo is used via re-export
+                mod = get_context_module(state, uri, offset_to_xy(fi, JS.first_byte(st0)))
+                for i = 1:JS.numchildren(st0)
+                    child = st0[i]
+                    if JS.kind(child) === JS.K"Identifier"
+                        name = get(child, :name_val, nothing)
+                        if name isa String
+                            push!(get!(Set{String}, mod_used_names, mod), name)
+                        end
+                    end
+                end
+                return TraversalNoRecurse()
+            end
+            return nothing
+        end
+    end
+    # @info "analyze_unused_imports! timing" uri length(search_uris) time_get_file_info time_build_syntax_tree time_binding_occurrences time_ast_analysis
+
+    for (mod, imported_names) in mod_imported_names
+        used_names = get(mod_used_names, mod, nothing)
+        for (name, infos) in imported_names
+            used_names !== nothing && name in used_names && continue
+            for info in infos
+                push!(diagnostics, Diagnostic(;
+                    range = info.name_range,
+                    severity = DiagnosticSeverity.Information,
+                    message = "Unused import `$name`",
+                    source = DIAGNOSTIC_SOURCE_LIVE,
+                    code = LOWERING_UNUSED_IMPORT_CODE,
+                    codeDescription = diagnostic_code_description(LOWERING_UNUSED_IMPORT_CODE),
+                    tags = DiagnosticTag.Ty[DiagnosticTag.Unnecessary],
+                    data = UnusedImportData(info.delete_range)))
+            end
+        end
+    end
+
+    return diagnostics
+end
+
+analyze_unused_imports(args...; kwargs...) = # used by tests
+    analyze_unused_imports!(Diagnostic[], args...; kwargs...)
+
+# Returns tuples of (name, name_range, delete_range).
+# For single imports like `using M: x`, delete_range covers the entire import statement.
+# For multiple imports like `using M: x, y`, delete_range covers the name plus comma/whitespace.
+function collect_explicit_import_names(st0::JS.SyntaxTree, fi::FileInfo)
+    kind = JS.kind(st0)
+    names = Tuple{String,Range,Range}[]
+    kind ∈ JS.KSet"import using" || return names
+    nchildren = JS.numchildren(st0)
+    if nchildren == 1
+        child = st0[1]
+        ckind = JS.kind(child)
+        if ckind === JS.K":"
+            # `using M: a, b` or `import M: a, b`
+            nnames = JS.numchildren(child) - 1
+            for i = 2:JS.numchildren(child)
+                name_child = child[i]
+                id_st = @something get_local_import_identifier(name_child) continue
+                name = JS.sourcetext(id_st)
+                name_range = jsobj_to_range(id_st, fi)
+                if nnames == 1
+                    # Single import: delete entire statement
+                    delete_range = jsobj_to_range(st0, fi)
+                else
+                    # Multiple imports: delete name with comma
+                    idx = i - 1  # 1-based index among names
+                    if idx == nnames
+                        # Last name: delete ", name" (previous comma to end of name)
+                        prev_child = child[i - 1]
+                        delete_first = JS.last_byte(prev_child) + 1
+                        delete_last = JS.last_byte(name_child)
+                    else
+                        # Not last: delete "name, " (name to before next name)
+                        # Use identifier positions, not importpath, since importpath
+                        # includes leading whitespace
+                        next_child = child[i + 1]
+                        next_id = @something get_local_import_identifier(next_child) continue
+                        delete_first = JS.first_byte(id_st)
+                        delete_last = JS.first_byte(next_id) - 1
+                    end
+                    delete_range = Range(;
+                        start = offset_to_xy(fi, delete_first),
+                        var"end" = offset_to_xy(fi, delete_last + 1))
+                end
+                push!(names, (name, name_range, delete_range))
+            end
+        elseif ckind === JS.K"importpath" && kind === JS.K"import"
+            # `import M.a` or `import M.a.b` - last component is the imported name
+            # Note: `using M.a` brings all exports from module M.a, so it's not explicit
+            npath = JS.numchildren(child)
+            if npath >= 2
+                last_st = child[npath]
+                if JS.kind(last_st) === JS.K"Identifier"
+                    # Single import: delete entire statement
+                    name_range = jsobj_to_range(last_st, fi)
+                    delete_range = jsobj_to_range(st0, fi)
+                    push!(names, (JS.sourcetext(last_st), name_range, delete_range))
+                end
+            end
+            # `import M` (single identifier) - skip (no explicit names)
+        end
+    end
+    return names
+end
+
+function get_local_import_identifier(st0::JS.SyntaxTree)
+    kind = JS.kind(st0)
+    if kind === JS.K"as"
+        # `using M: a as b` -> identifier for "b"
+        return st0[2]
+    elseif kind === JS.K"Identifier"
+        return st0
+    elseif kind === JS.K"importpath"
+        # `import M.a` style within a colon list
+        npath = JS.numchildren(st0)
+        if npath >= 1
+            last_st = st0[npath]
+            if JS.kind(last_st) === JS.K"Identifier"
+                return last_st
+            end
+        end
+        return nothing
+    else
+        return nothing
+    end
+end
+
 function toplevel_lowering_diagnostics(
         server::Server, uri::URI, file_info::FileInfo, cancel_flag::CancelFlag=DUMMY_CANCEL_FLAG;
         lookup_func = nothing
@@ -1073,6 +1261,11 @@ function toplevel_lowering_diagnostics(
         lowering_diagnostics!(diagnostics, uri, file_info, mod, st0;
             skip_analysis_requiring_context, allow_unused_underscore, analyzer, postprocessor)
     end
+
+    if !skip_analysis_requiring_context
+        analyze_unused_imports!(diagnostics, server, uri, file_info, st0_top)
+    end
+
     return diagnostics
 end
 

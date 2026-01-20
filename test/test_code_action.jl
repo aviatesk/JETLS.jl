@@ -213,4 +213,79 @@ end
     end
 end
 
+function get_unused_import_diagnostics(text::AbstractString)
+    server = JETLS.Server()
+    uri = URI("file:///test_unused_imports.jl")
+    fi = JETLS.cache_file_info!(server, uri, 1, text)
+    st0_top = JETLS.build_syntax_tree(fi)
+    return JETLS.analyze_unused_imports(server, uri, fi, st0_top; skip_context_check=true)
+end
+
+@testset "unused import code actions" begin
+    uri = URI("file:///test.jl")
+
+    # Single import: delete entire statement
+    let text = "using Base: cos"
+        diagnostics = get_unused_import_diagnostics(text)
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.data isa UnusedImportData
+        @test diagnostic.data.delete_range.start.line == 0
+        @test diagnostic.data.delete_range.start.character == 0
+        @test diagnostic.data.delete_range.var"end".line == 0
+        @test diagnostic.data.delete_range.var"end".character == sizeof("using Base: cos")
+
+        code_actions = Union{CodeAction,Command}[]
+        JETLS.unused_import_code_actions!(code_actions, uri, [diagnostic])
+        @test length(code_actions) == 1
+        action = only(code_actions)
+        @test action.title == "Remove unused import"
+        @test action.isPreferred == true
+        edit = only(action.edit.changes[uri])
+        @test edit.range == diagnostic.data.delete_range
+        @test edit.newText == ""
+    end
+
+    # Multiple imports, remove last: delete ", cos"
+    let text = "using Base: sin, cos\nsin(1.0)"
+        diagnostics = get_unused_import_diagnostics(text)
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.data isa UnusedImportData
+        # Should delete ", cos" (from after "sin" to end of "cos")
+        @test diagnostic.data.delete_range.start.character == sizeof("using Base: sin")
+        @test diagnostic.data.delete_range.var"end".character == sizeof("using Base: sin, cos")
+
+        code_actions = Union{CodeAction,Command}[]
+        JETLS.unused_import_code_actions!(code_actions, uri, [diagnostic])
+        @test length(code_actions) == 1
+    end
+
+    # Multiple imports, remove first: delete "sin, "
+    let text = "using Base: sin, cos\ncos(1.0)"
+        diagnostics = get_unused_import_diagnostics(text)
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.data isa UnusedImportData
+        # Should delete "sin, " (from "sin" to before "cos")
+        @test diagnostic.data.delete_range.start.character == sizeof("using Base: ")
+        @test diagnostic.data.delete_range.var"end".character == sizeof("using Base: sin, ")
+
+        code_actions = Union{CodeAction,Command}[]
+        JETLS.unused_import_code_actions!(code_actions, uri, [diagnostic])
+        @test length(code_actions) == 1
+    end
+
+    # Three imports, remove middle
+    let text = "using Base: sin, cos, tan\nsin(1.0)\ntan(1.0)"
+        diagnostics = get_unused_import_diagnostics(text)
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.data isa UnusedImportData
+        # Should delete "cos, " (from "cos" to before "tan")
+        @test diagnostic.data.delete_range.start.character == sizeof("using Base: sin, ")
+        @test diagnostic.data.delete_range.var"end".character == sizeof("using Base: sin, cos, ")
+    end
+end
+
 end # module test_code_action

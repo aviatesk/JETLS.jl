@@ -315,6 +315,15 @@ function get_context_module(analysis_result::AnalysisResult, uri::URI, pos::Posi
     end
     return curmod
 end
+function get_context_module(state::ServerState, uri::URI, pos::Position; lookup_func=nothing)
+    lookup_uri = @something get_notebook_uri_for_cell(state, uri) uri
+    if lookup_func !== nothing
+        analysis_info = get_analysis_info(lookup_func, state.analysis_manager, lookup_uri)
+    else
+        analysis_info = get_analysis_info(state.analysis_manager, lookup_uri)
+    end
+    return get_context_module(analysis_info, lookup_uri, pos)
+end
 
 get_context_analyzer(::Nothing, uri::URI) = LSAnalyzer(uri)
 get_context_analyzer(::OutOfScope, uri::URI) = LSAnalyzer(uri)
