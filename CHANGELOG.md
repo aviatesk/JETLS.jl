@@ -56,12 +56,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   files. Disabling this can be useful to reduce noise when there are many
   warnings across the workspace.
 
-- Added `lowering/unsorted-import-names` diagnostic that reports when names in
-  `import`, `using`, `export`, or `public` statements are not sorted
-  alphabetically. This diagnostic is disabled by default and can be enabled via
-  the [`diagnostic.patterns`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic-patterns) configuration.
-  The "Sort import names" code action is always available regardless of
-  diagnostic settings.
+- Added [`lowering/unsorted-import-names`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unsorted-import-names)
+  diagnostic that reports when names in `import`, `using`, `export`, or `public`
+  statements are not sorted alphabetically. The "Sort import names" code action
+  is available to automatically fix the ordering.
 
 ### Changed
 

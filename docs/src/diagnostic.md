@@ -103,7 +103,7 @@ Here is a summary table of the diagnostics explained in this section:
 | [`lowering/undef-global-var`](@ref diagnostic/reference/lowering/undef-global-var)               | `Warning`             | `JETLS/live`  | References to undefined global variables           |
 | [`lowering/undef-local-var`](@ref diagnostic/reference/lowering/undef-local-var)                 | `Warning/Information` | `JETLS/live`  | References to undefined local variables            |
 | [`lowering/captured-boxed-variable`](@ref diagnostic/reference/lowering/captured-boxed-variable) | `Information`         | `JETLS/live`  | Variables captured by closures that require boxing |
-| [`lowering/unsorted-import-names`](@ref diagnostic/reference/lowering/unsorted-import-names)     | off                   | `JETLS/live`  | Import/export names not sorted alphabetically      |
+| [`lowering/unsorted-import-names`](@ref diagnostic/reference/lowering/unsorted-import-names)     | `Hint`                | `JETLS/live`  | Import/export names not sorted alphabetically      |
 | [`toplevel/error`](@ref diagnostic/reference/toplevel/error)                                     | `Error`               | `JETLS/save`  | Errors during code loading                         |
 | [`toplevel/method-overwrite`](@ref diagnostic/reference/toplevel/method-overwrite)               | `Warning`             | `JETLS/save`  | Method definitions that overwrite previous ones    |
 | [`toplevel/abstract-field`](@ref diagnostic/reference/toplevel/abstract-field)                   | `Information`         | `JETLS/save`  | Struct fields with abstract types                  |
@@ -397,7 +397,7 @@ end
 
 #### [Unsorted import names (`lowering/unsorted-import-names`)](@id diagnostic/reference/lowering/unsorted-import-names)
 
-**Default severity**: off (_disabled by default_)
+**Default severity**: `Hint`
 
 Reported when names in `import`, `using`, `export`, or `public` statements are
 not sorted alphabetically. This is a style diagnostic that helps maintain
@@ -418,21 +418,9 @@ import Foo: c, a, b  # Names are not sorted alphabetically (JETLS lowering/unsor
 export bar, @foo  # Names are not sorted alphabetically (JETLS lowering/unsorted-import-names)
 ```
 
-This diagnostic is disabled by default. To enable it, add a pattern to your
-configuration:
-
-```toml
-[[diagnostic.patterns]]
-pattern = "lowering/unsorted-import-names"
-match_by = "code"
-match_type = "literal"
-severity = "hint"
-```
-
 !!! tip "Code action available"
-    The "Sort import names" code action is always available regardless of
-    whether the diagnostic is enabled. When the sorted result exceeds 92
-    characters (
+    The "Sort import names" code action automatically fixes the ordering.
+    When the sorted result exceeds 92 characters (
     [Julia's conventional maximum line length](https://docs.julialang.org/en/v1.14-dev/devdocs/contributing/formatting/#General-Formatting-Guidelines-for-Julia-code-contributions)),
     the code action wraps to multiple lines with 4-space continuation indent.
 
