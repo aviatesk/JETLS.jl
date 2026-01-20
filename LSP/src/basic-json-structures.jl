@@ -511,6 +511,11 @@ struct UnusedVariableData
 end
 export UnusedVariableData
 
+struct UnsortedImportData
+    new_text::String
+end
+export UnsortedImportData
+
 """
 Represents a diagnostic, such as a compiler error or warning.
 Diagnostic objects are only valid in the scope of a resource.
@@ -568,7 +573,7 @@ Diagnostic objects are only valid in the scope of a resource.
     # Tags
     - since – 3.16.0
     """
-    data::Union{UnusedVariableData, Nothing} = nothing
+    data::Union{UnusedVariableData, UnsortedImportData, Nothing} = nothing
 end
 
 # Command

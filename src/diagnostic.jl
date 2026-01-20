@@ -809,6 +809,9 @@ function find_capture_sites(
     return @somereal relatedInformation Some(nothing)
 end
 
+const SORT_IMPORTS_MAX_LINE_LENGTH = 92
+const SORT_IMPORTS_INDENT = "    "
+
 function analyze_unsorted_imports!(
         diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::JS.SyntaxTree
     )
@@ -820,18 +823,66 @@ function analyze_unsorted_imports!(
         names = collect_import_names(st0′)
         if !is_sorted_imports(names)
             range = jsobj_to_range(st0′, fi)
-            code = LOWERING_UNSORTED_IMPORT_NAMES_CODE
+            sorted_names = sort!(names; by=get_import_sort_key)
+            base_indent = get_line_indent(fi, JS.first_byte(st0′))
+            new_text = generate_sorted_import_text(st0′, sorted_names, base_indent)
             push!(diagnostics, Diagnostic(;
                 range,
-                severity = 0, # off by default; enable via `diagnostic.patterns`
+                severity = DiagnosticSeverity.Hint,
                 message = "Names are not sorted alphabetically",
                 source = DIAGNOSTIC_SOURCE_LIVE,
-                code,
-                codeDescription = diagnostic_code_description(code)))
+                code = LOWERING_UNSORTED_IMPORT_NAMES_CODE,
+                codeDescription = diagnostic_code_description(LOWERING_UNSORTED_IMPORT_NAMES_CODE),
+                data = UnsortedImportData(new_text)))
         end
         return TraversalNoRecurse()
     end
     return diagnostics
+end
+
+function generate_sorted_import_text(
+        node::JS.SyntaxTree, sorted_names::Vector{JS.SyntaxTree},
+        base_indent::Union{String,Nothing}
+    )
+    kind = JS.kind(node)
+    keyword = kind === JS.K"import" ? "import" :
+              kind === JS.K"using" ? "using" :
+              kind === JS.K"export" ? "export" : "public"
+    if kind === JS.K"import" || kind === JS.K"using"
+        nchildren = JS.numchildren(node)
+        if nchildren == 1 && JS.kind(node[1]) === JS.K":"
+            module_path = lstrip(JS.sourcetext(node[1][1]))
+            prefix = "$keyword $module_path: "
+        else
+            prefix = "$keyword "
+        end
+    else
+        prefix = "$keyword "
+    end
+    name_texts = String[lstrip(JS.sourcetext(n)) for n in sorted_names]
+    single_line = prefix * join(name_texts, ", ")
+    if base_indent === nothing
+        return single_line
+    end
+    if length(base_indent) + length(single_line) <= SORT_IMPORTS_MAX_LINE_LENGTH
+        return single_line
+    end
+    continuation_indent = base_indent * SORT_IMPORTS_INDENT
+    lines = String[prefix * name_texts[1]]
+    current_line_idx = 1
+    for i = 2:length(name_texts)
+        name = name_texts[i]
+        current_indent = current_line_idx == 1 ? base_indent : continuation_indent
+        potential_line = lines[current_line_idx] * ", " * name
+        if length(current_indent) + length(potential_line) <= SORT_IMPORTS_MAX_LINE_LENGTH
+            lines[current_line_idx] = potential_line
+        else
+            lines[current_line_idx] *= ","
+            push!(lines, continuation_indent * name)
+            current_line_idx += 1
+        end
+    end
+    return join(lines, "\n")
 end
 
 function collect_import_names(st0::JS.SyntaxTree)
