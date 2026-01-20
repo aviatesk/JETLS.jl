@@ -241,8 +241,8 @@ function global_completions!(
         is_completed |= true
     end
     resolver_id = String(gensym("GlobalCompletionResolverInfo_resovler_id"))
-    store!(state.completion_resolver_info) do _
-        GlobalCompletionResolverInfo(resolver_id, completion_module, postprocessor), nothing
+    store!(state.completion_resolver_info, completion_module) do _, mod::Module
+        GlobalCompletionResolverInfo(resolver_id, mod, postprocessor), nothing
     end
 
     prioritized_names = let s = Set{Symbol}()

@@ -213,7 +213,7 @@ end
             fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
             @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
             for pos in positions
-                highlights = JETLS.document_highlights(fi, pos, @__MODULE__)
+                highlights = JETLS.document_highlights(fi, pos)
                 @test length(highlights) == 4
                 @test count(highlights) do highlight
                     highlight.range.start == positions[1] &&
@@ -252,7 +252,7 @@ end
             fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
             @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
             for pos in positions
-                highlights = JETLS.document_highlights(fi, pos, @__MODULE__)
+                highlights = JETLS.document_highlights(fi, pos)
                 @test length(highlights) == 3
                 @test count(highlights) do highlight
                     highlight.range.start == positions[1] &&
@@ -284,7 +284,7 @@ end
             fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
             @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
             for pos in positions
-                highlights = JETLS.document_highlights(fi, pos, @__MODULE__)
+                highlights = JETLS.document_highlights(fi, pos)
                 @test length(highlights) == 2
                 @test count(highlights) do highlight
                     highlight.range.start == positions[1] &&
@@ -313,7 +313,7 @@ end
             fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
             @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
             for pos in positions
-                highlights = JETLS.document_highlights(fi, pos, @__MODULE__)
+                highlights = JETLS.document_highlights(fi, pos)
                 @test length(highlights) == 2
                 @test count(highlights) do highlight
                     highlight.range.start == positions[1] &&
@@ -344,7 +344,7 @@ end
             fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
             @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
             for pos in positions
-                highlights = JETLS.document_highlights(fi, pos, @__MODULE__)
+                highlights = JETLS.document_highlights(fi, pos)
                 @test length(highlights) == 3
                 @test count(highlights) do highlight
                     highlight.range.start == positions[1] &&
