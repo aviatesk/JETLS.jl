@@ -56,7 +56,7 @@ function handle_config_file_change!(
         delete_file_config!(tracker, server.state.config_manager, changed_path)
         kind = "deleted"
         show_info_message(server, config_file_deleted_msg(changed_path))
-    else error("Unknown FileChangeType") end
+    else throw(ErrorException("Unknown FileChangeType")) end
 
     source = "[.JETLSConfig.toml] $(dirname(changed_path)) ($kind)"
     notify_config_changes(server, tracker, source)

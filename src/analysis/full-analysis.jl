@@ -505,28 +505,28 @@ function execute_analysis_request(server::Server, request::AnalysisRequest)
 
     if entry isa NewAnalysisEntry
         env_path = entry.env_path
-        if env_path === nothing
-            result = analyze_package_with_revise(server, request, entry.pkgid)
+        result = if env_path === nothing
+            analyze_package_with_revise(server, request, entry.pkgid)
         else
-            result = activate_with_early_release(env_path) do activation_done::Base.Event
+            activate_with_early_release(env_path) do activation_done::Base.Event
                 analyze_package_with_revise(server, request, entry.pkgid, activation_done)
             end
         end
         return result, false
     end
 
-    if entry isa ScriptAnalysisEntry
-        interp, result = analyze_parsed_if_exist(server, request)
+    interp, result = if entry isa ScriptAnalysisEntry
+        analyze_parsed_if_exist(server, request)
     elseif entry isa ScriptInEnvAnalysisEntry
-        interp, result = activate_with_early_release(entry.env_path) do activation_done::Base.Event
+        activate_with_early_release(entry.env_path) do activation_done::Base.Event
             analyze_parsed_if_exist(server, request; activation_done)
         end
     elseif entry isa PackageSourceAnalysisEntry
-        interp, result = activate_with_early_release(entry.env_path) do activation_done::Base.Event
+        activate_with_early_release(entry.env_path) do activation_done::Base.Event
             analyze_parsed_if_exist(server, request, entry.pkgid; activation_done)
         end
     elseif entry isa PackageTestAnalysisEntry
-        interp, result = activate_with_early_release(entry.env_path) do activation_done::Base.Event
+        activate_with_early_release(entry.env_path) do activation_done::Base.Event
             analyze_parsed_if_exist(server, request; activation_done)
         end
     else error("Unsupported analysis entry $entry") end
@@ -775,7 +775,7 @@ function analyze_package_with_revise(
         yield_to_endpoint()
     end
 
-    tasks = map(workitems) do workitem
+    tasks = let analyzer=analyzer, progress=progress; map(workitems) do workitem
         (; siginfos, index) = workitem
         siginfo = siginfos[index]::Revise.SigInfo
         Threads.@spawn :default try
@@ -834,7 +834,7 @@ function analyze_package_with_revise(
                 end
             end
         end
-    end
+    end; end
 
     waitall(tasks)
 
