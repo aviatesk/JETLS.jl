@@ -12,9 +12,10 @@ This module provides three container types with different concurrency guarantees
 # Interfaces
 All containers support:
 - `load(container)`: Lock-free read of current data
-- `store!(f, container)`: Update data using given callback `f(data) -> (new, ret)`
-  - `f` receives the current `data` and returns `new` data and `ret`
+- `store!(f, container, args...)`: Update data using given callback `f(data, args...) -> (new, ret)`
+  - `f` receives the current `data` and optional `args...`, returns `new` data and `ret`
   - The `container` stores `new` data and `store!` returns `ret` to the caller
+  - `args...` can be used to pass values directly to `f`, avoiding heap-allocated captured boxes
 
 # Example
 ```julia
@@ -34,7 +35,7 @@ export SWContainer, LWContainer, CASContainer, store!, load, getstats, resetstat
 
 abstract type AtomicContainer end
 function load(::AtomicContainer) end
-function store!(f, ::AtomicContainer) end
+function store!(f, ::AtomicContainer, args...) end
 function getstats(::AtomicContainer) end
 function resetstats!(::AtomicContainer) end
 
@@ -123,33 +124,34 @@ end
 load(c::SWContainer) = @atomic :acquire c.data
 
 """
-    store!(f, c::SWContainer{T}) -> ret
+    store!(f, c::SWContainer{T}, args...) -> ret
 
 Updates the data stored in an [`SWContainer`](@ref) with no concurrency protection.
 
-`f(old::T) -> (new::T, ret)` is executed exactly once.
+`f(old::T, args...) -> (new::T, ret)` is executed exactly once.
+`args...` can be used to pass values directly to `f`, avoiding heap-allocated captured boxes.
 
 !!! warning
     This provides NO protection against concurrent writes. If multiple threads
     call `store!` simultaneously, updates may be lost. Use [`CASContainer`](@ref) or
     [`LWContainer`](@ref) for concurrent write safety.
 """
-function store!(f, c::SWContainer) end
+function store!(f, c::SWContainer, args...) end
 
-@inline function store!(f, c::SWContainer{T,Nothing}) where T
+@inline function store!(f, c::SWContainer{T,Nothing}, args...) where T
     old = @atomic :acquire c.data
-    new, ret = @inline f(old)
+    new, ret = @inline f(old, args...)
     @atomic :release c.data = new::T
     return ret
 end
 
-@inline function store!(f, c::SWContainer{T,SWStats}) where T
+@inline function store!(f, c::SWContainer{T,SWStats}, args...) where T
     t0 = time_ns()
     stats = c.stats
     @atomic :monotonic stats.attempts += 1
     old = @atomic :acquire c.data
     t_f_start = time_ns()
-    new, ret = @inline f(old)
+    new, ret = @inline f(old, args...)
     t_f_end = time_ns()
     @atomic :release c.data = new::T
     @atomic :monotonic stats.f_ns += (t_f_end - t_f_start)
@@ -258,24 +260,25 @@ end
 load(c::LWContainer) = @atomic :acquire c.data
 
 """
-    store!(f, c::LWContainer{T}) -> ret
+    store!(f, c::LWContainer{T}, args...) -> ret
 
 Atomically update the data stored in an [`LWContainer`](@ref) using a lock for serialization.
 
-`f(old::T) -> (new::T, ret)` is executed exactly once (no retries).
+`f(old::T, args...) -> (new::T, ret)` is executed exactly once (no retries).
+`args...` can be used to pass values directly to `f`, avoiding heap-allocated captured boxes.
 """
-function store!(f, c::LWContainer) end
+function store!(f, c::LWContainer, args...) end
 
-function store!(f, c::LWContainer{T,Nothing}) where T
+function store!(f, c::LWContainer{T,Nothing}, args...) where T
     @lock c.update_lock begin
         old = @atomic :acquire c.data
-        new, ret = f(old)
+        new, ret = f(old, args...)
         @atomic :release c.data = new::T
         return ret
     end
 end
 
-function store!(f, c::LWContainer{T,LWStats}) where T
+function store!(f, c::LWContainer{T,LWStats}, args...) where T
     t0 = time_ns()
     stats = c.stats
     @atomic :monotonic stats.attempts += 1
@@ -287,7 +290,7 @@ function store!(f, c::LWContainer{T,LWStats}) where T
     end
     try
         old = @atomic :acquire c.data
-        new, ret = f(old)
+        new, ret = f(old, args...)
         @atomic :release c.data = new::T
         return ret
     finally
@@ -406,25 +409,26 @@ end
 load(c::CASContainer) = @atomic :acquire c.data
 
 """
-    store!(f, c::CASContainer{T}; backoff::Union{Nothing,Unsigned}=nothing) -> ret
+    store!(f, c::CASContainer{T}, args...; backoff::Union{Nothing,Unsigned}=nothing) -> ret
 
 Atomically update the data stored in a [`CASContainer`](@ref) using compare-and-swap.
 
-`f(old::T) -> (new::T, ret)` may be executed multiple times and thus **must be pure**
+`f(old::T, args...) -> (new::T, ret)` may be executed multiple times and thus **must be pure**
 (no side effects, safe to retry).
+`args...` can be used to pass values directly to `f`, avoiding heap-allocated captured boxes.
 
 `backoff::Union{Nothing,Unsigned}` controls the retry behavior:
 - `backoff == nothing` (default): Adaptive (yields after 16 retries)
 - `backoff == 0`: Immediate retry (fastest for low contention)
 - `backoff > 0`: Yield every N retries
 """
-function store!(f, c::CASContainer; backoff::Union{Nothing,Unsigned}) end
+function store!(f, c::CASContainer, args...; backoff::Union{Nothing,Unsigned}) end
 
-@inline function store!(f, c::CASContainer{T,Nothing}; backoff::Union{Nothing,Unsigned}=nothing) where T
+@inline function store!(f, c::CASContainer{T,Nothing}, args...; backoff::Union{Nothing,Unsigned}=nothing) where T
     local retries = 0
     old = @atomic :acquire c.data
     while true
-        new, ret = @inline f(old)
+        new, ret = @inline f(old, args...)
         old, success = @atomicreplace :acquire_release :monotonic c.data old => new::T
         if success
             return ret
@@ -446,7 +450,7 @@ function store!(f, c::CASContainer; backoff::Union{Nothing,Unsigned}) end
     end
 end
 
-@inline function store!(f, c::CASContainer{T,CASStats}; backoff::Union{Nothing,Unsigned}=nothing) where T
+@inline function store!(f, c::CASContainer{T,CASStats}, args...; backoff::Union{Nothing,Unsigned}=nothing) where T
     local retries = 0
     local f_time = zero(UInt64)
     local t_loop0 = time_ns()
@@ -455,7 +459,7 @@ end
     old = @atomic :acquire c.data
     while true
         t0 = time_ns()
-        new, ret = @inline f(old)
+        new, ret = @inline f(old, args...)
         f_time += time_ns() - t0
         old, success = @atomicreplace :acquire_release :monotonic c.data old => new::T
         if success

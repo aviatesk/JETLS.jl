@@ -236,4 +236,23 @@ end
     GC.gc()
 end
 
+@testset "store! with args..." begin
+    @testset for cnd in (true, false)
+        @testset "$Container" for Container in (SWContainer, LWContainer, CASContainer)
+            x = 0
+            c = Container(x)
+            if cnd
+                x = 1
+            else
+                x = 2
+            end
+            ret = store!(c, x) do cx::Int, x::Int
+                return cx + x, cx
+            end
+            @test ret == 0
+            @test load(c) == (cnd ? 1 : 2)
+        end
+    end
+end
+
 end # module test_AtomicContainers
