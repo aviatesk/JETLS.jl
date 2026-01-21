@@ -657,6 +657,53 @@ export function activate(context: ExtensionContext) {
       },
     ),
   );
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "jetls.showReferences",
+      async (uriString: string, line: number, character: number) => {
+        if (!languageClient) {
+          return;
+        }
+        const uri = vscode.Uri.parse(uriString);
+        const position = new vscode.Position(line, character);
+        interface LspLocation {
+          uri: string;
+          range: {
+            start: { line: number; character: number };
+            end: { line: number; character: number };
+          };
+        }
+        const locations = await languageClient.sendRequest<LspLocation[]>(
+          "textDocument/references",
+          {
+            textDocument: { uri: uriString },
+            position: { line, character },
+            context: { includeDeclaration: false },
+          },
+        );
+        if (locations && locations.length > 0) {
+          const vsLocations = locations.map(
+            (loc) =>
+              new vscode.Location(
+                vscode.Uri.parse(loc.uri),
+                new vscode.Range(
+                  loc.range.start.line,
+                  loc.range.start.character,
+                  loc.range.end.line,
+                  loc.range.end.character,
+                ),
+              ),
+          );
+          vscode.commands.executeCommand(
+            "editor.action.showReferences",
+            uri,
+            position,
+            vsLocations,
+          );
+        }
+      },
+    ),
+  );
 
   outputChannel = vscode.window.createOutputChannel("JETLS", { log: true });
 

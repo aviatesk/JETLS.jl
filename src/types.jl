@@ -484,6 +484,7 @@ end
 end
 
 @option struct CodeLensConfig <: ConfigSection
+    references::Maybe{Bool}
     testrunner::Maybe{Bool}
 end
 
@@ -507,7 +508,7 @@ const DEFAULT_CONFIG = JETLSConfig(;
     testrunner = TestRunnerConfig(@static Sys.iswindows() ? "testrunner.bat" : "testrunner"),
     formatter = "Runic",
     completion = CompletionConfig(LaTeXEmojiConfig(missing), MethodSignatureConfig(missing)),
-    code_lens = CodeLensConfig(true),
+    code_lens = CodeLensConfig(false, true),
     initialization_options = DEFAULT_INIT_OPTIONS)
 
 function get_default_config(path::Symbol...)

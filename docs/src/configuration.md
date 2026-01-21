@@ -35,6 +35,7 @@ strip_prefix = false               # boolean, default: (unset) auto-detect
 prepend_inference_result = false   # boolean, default: (unset) auto-detect
 
 [code_lens]
+references = false                 # boolean, default: false
 testrunner = true                  # boolean, default: true
 
 [testrunner]
@@ -56,6 +57,7 @@ executable = "testrunner"          # string, default: "testrunner" (or "testrunn
     - [`[completion.latex_emoji] strip_prefix`](@ref config/completion-latex_emoji-strip_prefix)
     - [`[completion.method_signature] prepend_inference_result`](@ref config/completion-method_signature-prepend_inference_result)
 - [`[code_lens]`](@ref config/code_lens)
+    - [`[code_lens] references`](@ref config/code_lens-references)
     - [`[code_lens] testrunner`](@ref config/code_lens-testrunner)
 - [`[testrunner]`](@ref config/testrunner)
     - [`[testrunner] executable`](@ref config/testrunner-executable)
@@ -429,6 +431,23 @@ prepend_inference_result = true  # Show return type in documentation
     consider submitting a PR to add your client to the [auto-detection](https://github.com/aviatesk/JETLS.jl/blob/14fdc847252579c27e41cd50820aee509f8fd7bd/src/completions.jl#L386) logic.
 
 ### [`[code_lens]`](@id config/code_lens)
+
+Configure code lens behavior.
+
+#### [`[code_lens] references`](@id config/code_lens-references)
+
+- **Type**: boolean
+- **Default**: `false`
+
+Show reference counts for top-level symbols (functions, structs, constants,
+abstract types, primitive types, modules). When enabled, JETLS displays a code
+lens above each symbol showing how many times it is referenced in the codebase.
+Clicking the code lens opens the references panel.
+
+```toml
+[code_lens]
+references = true  # Enable reference count code lenses
+```
 
 #### [`[code_lens] testrunner`](@id config/code_lens-testrunner)
 

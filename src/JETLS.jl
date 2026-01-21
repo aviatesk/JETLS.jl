@@ -432,6 +432,8 @@ function handle_request_message(server::Server, @nospecialize(msg), cancel_flag:
         handle_WorkspaceDiagnosticRequest(server, msg, cancel_flag)
     elseif msg isa CodeLensRequest
         handle_CodeLensRequest(server, msg, cancel_flag)
+    elseif msg isa CodeLensResolveRequest
+        handle_CodeLensResolveRequest(server, msg, cancel_flag)
     elseif msg isa CodeActionRequest
         handle_CodeActionRequest(server, msg, cancel_flag)
     elseif msg isa InlayHintRequest
