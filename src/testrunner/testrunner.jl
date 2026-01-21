@@ -528,7 +528,6 @@ function _testrunner_run_testset(
     finally
         close(testrunnerproc)
     end
-    result isa AbstractString && return result
 
     ret = summary_testrunner_result(result)
 
@@ -657,7 +656,6 @@ function _testrunner_run_testcase(
     finally
         close(testrunnerproc)
     end
-    result isa AbstractString && return result
 
     # Show the results of this `@test` case temporarily as diagnostics:
     # The `Server` (or `FileInfo`) doesn't track the state of each `@test`,
