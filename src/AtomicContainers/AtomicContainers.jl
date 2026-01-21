@@ -31,7 +31,7 @@ end
 """
 module AtomicContainers
 
-export SWContainer, LWContainer, CASContainer, store!, load, getstats, resetstats!
+export CASContainer, LWContainer, SWContainer, getstats, load, resetstats!, store!
 
 abstract type AtomicContainer end
 function load(::AtomicContainer) end
