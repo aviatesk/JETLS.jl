@@ -434,7 +434,7 @@ function testrunner_run_testset(
         cancellable_token::Union{Nothing,CancellableToken} = nothing
     )
     setting_path = (:testrunner, :executable)
-    executable = get_config(server.state.config_manager, setting_path...)
+    executable = get_config(server, setting_path...)
     if isnothing(Sys.which(executable))
         default_executable = get_default_config(setting_path...)
         additional_msg = if executable == default_executable
@@ -576,7 +576,7 @@ function testrunner_run_testcase(
         cancellable_token::Union{Nothing,CancellableToken} = nothing
     )
     setting_path = (:testrunner, :executable)
-    executable = get_config(server.state.config_manager, setting_path...)
+    executable = get_config(server, setting_path...)
     if isnothing(Sys.which(executable))
         default_executable = get_default_config(setting_path...)
         additional_msg = if executable == default_executable

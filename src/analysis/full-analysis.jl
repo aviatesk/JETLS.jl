@@ -291,7 +291,7 @@ function schedule_analysis!(
         entry, uri, generation, cancellable_token, notify_diagnostics,
         prev_analysis_result, completion)
 
-    debounce = get_config(server.state.config_manager, :full_analysis, :debounce)
+    debounce = get_config(server, :full_analysis, :debounce)
     if onsave && debounce > 0
         store!(manager.debounced) do debounced
             if haskey(debounced, request.entry)
@@ -1123,7 +1123,7 @@ function ensure_instantiated_if_requested!(server::Server, env_path::String)
 end
 
 function ensure_instantiated!(server::Server, env_path::String)
-    if get_config(server.state.config_manager, :full_analysis, :auto_instantiate)
+    if get_config(server, :full_analysis, :auto_instantiate)
         manifest_name = "Manifest-v$(VERSION.major).$(VERSION.minor).toml"
         manifest_path = joinpath(dirname(env_path), manifest_name)
         io = IOBuffer()

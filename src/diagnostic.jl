@@ -1049,7 +1049,7 @@ function toplevel_lowering_diagnostics(server::Server, uri::URI, file_info::File
     diagnostics = Diagnostic[]
     st0_top = build_syntax_tree(file_info)
     skip_analysis_requiring_context = !has_analyzed_context(server.state, uri)
-    allow_unused_underscore = get_config(server.state.config_manager, :diagnostic, :allow_unused_underscore)
+    allow_unused_underscore = get_config(server, :diagnostic, :allow_unused_underscore)
     iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
         pos = offset_to_xy(file_info, JS.first_byte(st0))
         (; mod, analyzer, postprocessor) = get_context_info(server.state, uri, pos)
@@ -1142,7 +1142,7 @@ end
 
 function notify_diagnostics!(server::Server, uri2diagnostics::URI2Diagnostics; ensure_cleared::Union{Bool,URI} = false)
     state = server.state
-    all_files = get_config(state.config_manager, :diagnostic, :all_files)
+    all_files = get_config(state, :diagnostic, :all_files)
     root_path = isdefined(state, :root_path) ? state.root_path : nothing
     for (uri, diagnostics) in uri2diagnostics
         if !all_files && !is_synchronized(state, uri)
@@ -1289,7 +1289,7 @@ function handle_WorkspaceDiagnosticRequest(
         server::Server, msg::WorkspaceDiagnosticRequest, cancel_flag::CancelFlag
     )
     uris_to_search = collect_workspace_uris(server)
-    if get_config(server.state.config_manager, :diagnostic, :all_files)
+    if get_config(server, :diagnostic, :all_files)
         return send_workspace_diagnostics(server, msg, uris_to_search, cancel_flag)
     else
         return send_empty_workspace_diagnostics(server, msg, uris_to_search, cancel_flag)
