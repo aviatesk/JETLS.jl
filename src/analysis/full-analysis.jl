@@ -402,9 +402,7 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
     # re-request diagnostics now that new module context is available, allowing
     # lowering/macro-expansion-error and lowering/undef-global-var diagnostics
     # to be properly reported.
-    if supports(server, :workspace, :diagnostics, :refreshSupport)
-        request_diagnostic_refresh!(server)
-    end
+    request_diagnostic_refresh!(server)
 
     @label next_request
 

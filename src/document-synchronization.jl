@@ -110,7 +110,11 @@ function handle_DidCloseTextDocumentNotification(server::Server, msg::DidCloseTe
     store!(server.state.saved_file_cache) do cache
         Base.delete(cache, uri), nothing
     end
+    # Extra diagnostics should only be published for open files
     clear_extra_diagnostics!(server, uri)
+    # Republish textDocument/publishDiagnostics for cases with `diagnostic.all_files === false`,
+    # where diagnostics for this file must be suppressed
     notify_diagnostics!(server; ensure_cleared=uri)
+    # Retrigger workspace/diagnostic to recalculate diagnostics for this closed file
     request_diagnostic_refresh!(server)
 end

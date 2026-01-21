@@ -1430,6 +1430,7 @@ struct DiagnosticRefreshRequestCaller <: RequestCaller end
 # receives `workspace/diagnostic/refresh`, but Zed handles this request without
 # refreshing `textDocument/diagnostic`.
 function request_diagnostic_refresh!(server::Server)
+    supports(server, :workspace, :diagnostics, :refreshSupport) || return nothing
     id = String(gensym(:WorkspaceDiagnosticRefreshRequest))
     addrequest!(server, id=>DiagnosticRefreshRequestCaller())
     return send(server, WorkspaceDiagnosticRefreshRequest(; id))
