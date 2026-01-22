@@ -5,6 +5,13 @@ match_by = "message"
 match_type = "regex"
 severity = "off"
 path = "LSP/**/*.jl"
+# TODO [JETLS] Need to properly set module context when a single file contains multiple modules (for the new incremental full analysis mode)
+[[diagnostic.patterns]]
+pattern = ".*"
+match_by = "code"
+match_type = "regex"
+severity = "off"
+path = "LSP/src/LSP.jl"
 
 # TODO [JuliaLowering] Temporarily downgrade some known JuliaLowering issues to information level
 [[diagnostic.patterns]]
