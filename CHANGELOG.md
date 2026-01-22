@@ -63,6 +63,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- Updated TestRunner.jl installation instructions to use the `#release` branch
+  for vendored dependencies. TestRunner.jl should now be installed via
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(url="https://github.com/aviatesk/TestRunner.jl#release")'
+  ```
+  (aviatesk/TestRunner.jl#14).
+
 - Replaced `inference/undef-local-var` with new `lowering/undef-local-var`
   diagnostic. The new diagnostic uses CFG-aware analysis on lowered code,
   providing faster feedback via `textDocument/diagnostic` without waiting for
