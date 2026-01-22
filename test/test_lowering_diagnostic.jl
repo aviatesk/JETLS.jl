@@ -1015,6 +1015,19 @@ end
         """)
         @test isempty(diagnostics)
     end
+
+    # https://github.com/aviatesk/JETLS.jl/issues/508
+    let diagnostics = get_lowered_diagnostics("""
+        struct Foo{T}
+            x::T
+            function Foo(x)
+                T = typeof(x)
+                return new{T}(x)
+            end
+        end
+        """)
+        @test isempty(diagnostics)
+    end
 end
 
 is_unsorted_import_names_diagnostic(diagnostic) =

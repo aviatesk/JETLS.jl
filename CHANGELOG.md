@@ -102,6 +102,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed LSP features not working inside `@main` functions.
 
+- Fixed false positive `lowering/captured-boxed-variable` diagnostic when a
+  struct's inner constructor defines a local variable with the same name as a
+  type parameter (e.g., `struct Foo{T}` with `T = typeof(x)` in the constructor).
+  (https://github.com/aviatesk/JETLS.jl/issues/508)
+
 ## 2026-01-17
 
 - Commit: [`c8e2012`](https://github.com/aviatesk/JETLS.jl/commit/c8e2012)

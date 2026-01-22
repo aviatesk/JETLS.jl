@@ -760,6 +760,7 @@ function analyze_captured_boxes!(
         JL.is_boxed(binfo) || continue
         binfo.is_internal && continue
         startswith(binfo.name, '#') && continue
+        is_captured_binding(binfo, ctx4) || continue
         bn = binfo.name
         provs = JL.flattened_provenance(JL.binding_ex(ctx4, binfo.id))
         range = jsobj_to_range(first(provs), fi)
@@ -776,6 +777,20 @@ function analyze_captured_boxes!(
             codeDescription = diagnostic_code_description(code),
             relatedInformation))
     end
+end
+
+# Normally JuliaLowering only applies binding analysis to variables that are actually captured,
+# but currently there are some edge cases where incorrect bindings are introduced, resulting
+# in false positive captured boxes being reported.
+# This check is basically a band-aid, and the fundamental issue should be resolved on the
+# JuliaLowering side.
+function is_captured_binding(binfo::JL.BindingInfo, ctx4::JL.ClosureConversionCtx)
+    for (_, closure_bindings) in ctx4.closure_bindings
+        for lambda in closure_bindings.lambdas
+            haskey(lambda.locals_capt, binfo.id) && return true
+        end
+    end
+    return false
 end
 
 function find_capture_sites(
