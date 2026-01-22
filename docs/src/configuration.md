@@ -18,6 +18,7 @@ executable_range = ""              # string (path), optional
 
 [diagnostic]
 enabled = true                     # boolean, default: true
+all_files = true                   # boolean, default: true
 allow_unused_underscore = false    # boolean, default: false
 
 [[diagnostic.patterns]]
@@ -45,6 +46,7 @@ executable = "testrunner"          # string, default: "testrunner" (or "testrunn
 - [`formatter`](@ref config/formatter)
 - [`[diagnostic]`](@ref config/diagnostic)
     - [`[diagnostic] enabled`](@ref config/diagnostic-enabled)
+    - [`[diagnostic] all_files`](@ref config/diagnostic-all_files)
     - [`[diagnostic] allow_unused_underscore`](@ref config/diagnostic-allow_unused_underscore)
     - [`[[diagnostic.patterns]]`](@ref config/diagnostic-patterns)
 - [`[completion]`](@ref config/completion)
@@ -147,6 +149,27 @@ messages will be shown.
 ```toml
 [diagnostic]
 enabled = false  # Disable all diagnostics
+```
+
+#### [`[diagnostic] all_files`](@id config/diagnostic-all_files)
+
+- **Type**: boolean
+- **Default**: `true`
+
+Enable or disable diagnostics for unopened files. When enabled, JETLS reports
+diagnostics for all Julia files in the workspace. When disabled, diagnostics
+are only reported for files currently open in the editor.
+
+This setting affects both [`JETLS/live` and `JETLS/save`](@ref diagnostic/source)
+diagnostics. For `JETLS/live`, lowering-based analysis for unopened files is
+skipped when disabled (though the performance impact is minimal since lowering
+analysis is usually pretty fast). For `JETLS/save`, full analysis still runs;
+only reporting is suppressed. Disabling this can be useful to reduce noise when
+there are many warnings across the workspace.
+
+```toml
+[diagnostic]
+all_files = false  # Disable diagnostics for unopened files
 ```
 
 #### [`[diagnostic] allow_unused_underscore`](@id config/diagnostic-allow_unused_underscore)
@@ -527,6 +550,42 @@ section:
     }
   }
 }
+```
+
+#### Server-agnostic clients (e.g., neovim, emacs lsp-mode, helix)(@id config/lsp-config/server-agnostic)
+
+Settings should be placed under the `"jetls"` key, such that a request for the
+`"jetls"` section produces an instance of the JETLS configuration
+[schema](@ref config/schema). For example, neovim's built-in LSP client may be
+configured as follows:
+
+```lua
+vim.lsp.config("jetls", {
+  settings = {
+    jetls = {
+      full_analysis = {
+        debounce = 2.0,
+      },
+      -- Use JuliaFormatter instead of Runic
+      formatter = "JuliaFormatter",
+      diagnostic = {
+        patterns = [
+          -- Suppress toplevel/inference warnings in test folder
+          {
+            pattern = "(toplevel|inference)/.*",
+            match_by = "code",
+            match_type = "regex",
+            severity = "off",
+            path = "test/**/*.jl",
+          },
+        ],
+      },
+      testrunner = {
+        executable = "/path/to/custom/testrunner"
+      },
+    },
+  },
+})
 ```
 
 ## [Configuration priority](@id config/priority)

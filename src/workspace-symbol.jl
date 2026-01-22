@@ -132,28 +132,9 @@ end
 
 function collect_symbols_from_file!(
         symbols::Vector{WorkspaceSymbol}, state::ServerState, uri::URI)
-    fi = @something get_file_info(state, uri) create_dummy_file_info(uri, state) return
+    fi = @something get_file_info(state, uri) get_unsynced_file_info!(state, uri) return
     doc_symbols = get_document_symbols!(state, uri, fi)
     flatten_document_symbols!(symbols, doc_symbols, state, uri)
-end
-
-function collect_workspace_uris(server::Server)
-    state = server.state
-    uris = Set{URI}()
-    # Collect from analysis cache
-    cache = load(state.analysis_manager.cache)
-    for (_, info) in cache
-        if info isa AnalysisResult
-            for analyzed_uri in analyzed_file_uris(info)
-                push!(uris, analyzed_uri)
-            end
-        end
-    end
-    # Collect from synced files
-    for (uri, _) in load(state.file_cache)
-        push!(uris, uri)
-    end
-    return uris
 end
 
 function flatten_document_symbols!(
@@ -166,7 +147,8 @@ end
 
 function flatten_document_symbols!(
         workspace_symbols::Vector{WorkspaceSymbol}, doc_symbols::Vector{DocumentSymbol},
-        uri::URI, notebook_info::Union{Nothing,NotebookInfo}
+        uri::URI, notebook_info::Union{Nothing,NotebookInfo};
+        parent_detail::Union{Nothing,String} = nothing
     )
     for doc_sym in doc_symbols
         location = if notebook_info !== nothing
@@ -178,14 +160,24 @@ function flatten_document_symbols!(
         if location === nothing
             location = Location(; uri, range = doc_sym.range)
         end
-        push!(workspace_symbols, WorkspaceSymbol(;
-            name = doc_sym.name,
-            kind = doc_sym.kind,
-            location,
-            containerName = doc_sym.detail))
+        if (doc_sym.kind == SymbolKind.Object || # this means "argument" (see document-symbol.jl)
+            doc_sym.kind == SymbolKind.Field)
+            push!(workspace_symbols, WorkspaceSymbol(;
+                name = doc_sym.name,
+                kind = doc_sym.kind,
+                location,
+                containerName = parent_detail))
+        else
+            push!(workspace_symbols, WorkspaceSymbol(;
+                name = doc_sym.name,
+                kind = doc_sym.kind,
+                location,
+                containerName = doc_sym.detail))
+        end
         children = doc_sym.children
         if children !== nothing
-            flatten_document_symbols!(workspace_symbols, children, uri, notebook_info)
+            flatten_document_symbols!(workspace_symbols, children, uri, notebook_info;
+                parent_detail = doc_sym.detail)
         end
     end
 end

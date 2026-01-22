@@ -205,7 +205,7 @@ function format_result(
     result isa ResponseError && return result
     fi = result
 
-    formatter = get_config(state.config_manager, :formatter)
+    formatter = get_config(state, :formatter)
     exe = get_formatter_executable(formatter, false)
     if exe isa ResponseError
         return exe
@@ -288,7 +288,7 @@ function range_format_result(
     result isa ResponseError && return result
     fi = result
 
-    formatter = get_config(state.config_manager, :formatter)
+    formatter = get_config(state, :formatter)
     exe = get_formatter_executable(formatter, true)
     if exe isa ResponseError
         return exe

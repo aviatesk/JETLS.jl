@@ -19,7 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`4cf9994...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/4cf9994...HEAD)
+- Diff: [`c8e2012...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/c8e2012...HEAD)
 
 ### Announcement
 
@@ -44,6 +44,92 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > might work, but most LSP features will be unfunctional.
 > Note that `analysis_overrides` is provided as a temporary workaround and may
 > be removed or changed at any time. A proper fix is being worked on.
+
+### Added
+
+- Added [`workspace/diagnostic`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#workspace_diagnostic)
+  support to provide `JETLS/live` diagnostics (syntax errors and lowering-based
+  analysis) for unopened files in the workspace.
+
+- Added [`diagnostic.all_files`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic-all_files)
+  configuration option to control whether diagnostics are reported for unopened
+  files. Disabling this can be useful to reduce noise when there are many
+  warnings across the workspace.
+
+- Added [`lowering/unsorted-import-names`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unsorted-import-names)
+  diagnostic that reports when names in `import`, `using`, `export`, or `public`
+  statements are not sorted alphabetically. The "Sort import names" code action
+  is available to automatically fix the ordering.
+
+- `textDocument/documentHighlight` now supports macro bindings. Highlighting a
+  macro name (either in the definition or at a call site) shows all occurrences
+  of that macro within the document.
+
+- `textDocument/references` now supports macro bindings. Finding references on
+  a macro name (either in the definition or at a call site) shows all
+  occurrences of that macro across the package.
+
+### Changed
+
+- Updated TestRunner.jl installation instructions to use the `#release` branch
+  for vendored dependencies. TestRunner.jl should now be installed via
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(url="https://github.com/aviatesk/TestRunner.jl#release")'
+  ```
+  (aviatesk/TestRunner.jl#14).
+
+- Replaced `inference/undef-local-var` with new `lowering/undef-local-var`
+  diagnostic. The new diagnostic uses CFG-aware analysis on lowered code,
+  providing faster feedback via `textDocument/diagnostic` without waiting for
+  full analysis, and offers precise source location information. See the
+  [diagnostic reference](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-local-var)
+  for details and workarounds.
+
+- `textDocument/documentSymbol` now uses `SymbolKind.Object` for function
+  arguments instead of `SymbolKind.Variable`. This visually distinguishes
+  arguments from local variables in the document outline. Since LSP does not
+  provide a dedicated `SymbolKind.Argument`, `Object` is used as a workaround.
+
+- `workspace/symbol` now shows the parent function signature or struct name as
+  the container name for arguments or fields respectively, making it clearer
+  which function or struct they belong to during workspace symbol search.
+
+- Diagnostic `source` field now uses distinct values to indicate which channel
+  delivers the diagnostic: `JETLS/live` for on-change diagnostics, `JETLS/save`
+  for on-save full analysis, and `JETLS/extra` for external sources like the
+  TestRunner.jl integration. This helps users understand when diagnostics update
+  and enables filtering by source in editors that support it. See the
+  [Sources](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/source)
+  documentation for details.
+
+- Yet more improved performance of `workspace/symbol`, `textDocument/references`,
+`textDocument/rename`, and `textDocument/definition` by avoiding re-parsing of
+  already analyzed files not opened in the editor.
+
+- `workspace/configuration` requests now expect settings to be found under the
+  top-level `"jetls"` key, such that a request with `section = "jetls"` produces
+  the full configuration. This is to ensure compatibility with generic clients,
+  e.g., the neovim client, which may not conform to JETLS's previous
+  expectations about how requests with no `section` are handled.
+  (https://github.com/aviatesk/JETLS.jl/pull/483; thanks [danielwe](https://github.com/danielwe))
+
+### Fixed
+
+- Fixed LSP features not working inside `@main` functions.
+
+- Fixed false positive `lowering/captured-boxed-variable` diagnostic when a
+  struct's inner constructor defines a local variable with the same name as a
+  type parameter (e.g., `struct Foo{T}` with `T = typeof(x)` in the constructor).
+  (https://github.com/aviatesk/JETLS.jl/issues/508)
+
+## 2026-01-17
+
+- Commit: [`c8e2012`](https://github.com/aviatesk/JETLS.jl/commit/c8e2012)
+- Diff: [`4cf9994...c8e2012`](https://github.com/aviatesk/JETLS.jl/compare/4cf9994...c8e2012)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-01-17")'
+  ```
 
 ### Added
 
