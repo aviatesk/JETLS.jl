@@ -91,6 +91,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 `textDocument/rename`, and `textDocument/definition` by avoiding re-parsing of
   already analyzed files not opened in the editor.
 
+- `workspace/configuration` requests now expect settings to be found under the
+  top-level `"jetls"` key, such that a request with `section = "jetls"` produces
+  the full configuration. This is to ensure compatibility with generic clients,
+  e.g., the neovim client, which may not conform to JETLS's previous
+  expectations about how requests with no `section` are handled.
+
 ### Fixed
 
 - Fixed LSP features not working inside `@main` functions.
