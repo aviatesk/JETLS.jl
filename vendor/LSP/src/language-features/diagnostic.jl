@@ -369,7 +369,7 @@ Parameters of the workspace diagnostic request.
     "The additional identifier provided during registration."
     identifier::Union{String, Nothing} = nothing
 
-    "The currently known diagnostic reports with their\nprevious result ids."
+    "The currently known diagnostic reports with their previous result ids."
     previousResultIds::Vector{PreviousResultId}
 end
 
@@ -409,7 +409,7 @@ A full document diagnostic report for a workspace diagnostic result.
     The version number for which the diagnostics are reported.
     If the document is not marked as open `null` can be provided.
     """
-    version::Union{Int, Nothing}
+    version::Union{Int, Null}
 end
 
 """
@@ -426,7 +426,7 @@ An unchanged document diagnostic report for a workspace diagnostic result.
     The version number for which the diagnostics are reported.
     If the document is not marked as open `null` can be provided.
     """
-    version::Union{Int, Nothing}
+    version::Union{Int, Null}
 end
 
 """
@@ -437,6 +437,7 @@ A workspace diagnostic document report.
 """
 const WorkspaceDocumentDiagnosticReport =
     Union{WorkspaceFullDocumentDiagnosticReport, WorkspaceUnchangedDocumentDiagnosticReport}
+export WorkspaceDocumentDiagnosticReport
 
 @interface WorkspaceDiagnosticReport begin
     items::Vector{WorkspaceDocumentDiagnosticReport}
