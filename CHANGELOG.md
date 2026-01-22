@@ -96,6 +96,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   the full configuration. This is to ensure compatibility with generic clients,
   e.g., the neovim client, which may not conform to JETLS's previous
   expectations about how requests with no `section` are handled.
+  (https://github.com/aviatesk/JETLS.jl/pull/483; thanks [danielwe](https://github.com/danielwe))
 
 ### Fixed
 
