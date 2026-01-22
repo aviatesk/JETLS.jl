@@ -705,6 +705,23 @@ end
         end
     end
 
+    @testset "argument with @nospecialize" begin
+        let code = """
+            function foo(@nospecialize arg)
+                return typeof(arg)
+            end
+            """
+            fi = make_file_info(code)
+            st0 = JETLS.build_syntax_tree(fi)
+            symbols = JETLS.extract_document_symbols(st0, fi)
+            @test length(symbols) == 1
+            children = symbols[1].children
+            @test children !== nothing
+            args_sym = only(filter(c -> c.name == "arg", children))
+            @test args_sym.detail == "@nospecialize arg"
+        end
+    end
+
     @testset "local variable with assignment" begin
         let code = """
             function foo()
@@ -762,7 +779,7 @@ end
             # inner's children should include y
             @test inner_sym.children !== nothing
             y_sym = only(filter(c -> c.name == "y", inner_sym.children))
-            @test y_sym.kind == SymbolKind.Variable
+            @test y_sym.kind == SymbolKind.Object
         end
     end
 

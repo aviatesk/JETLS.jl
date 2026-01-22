@@ -1,5 +1,5 @@
 function build_syntax_tree(fi::FileInfo)
-    return JS.build_tree(JS.SyntaxTree, fi.parsed_stream; filename = fi.filename)
+    return @something fi.syntax_tree0 JS.build_tree(JS.SyntaxTree, fi.parsed_stream; filename = fi.filename)
 end
 
 """
@@ -31,18 +31,35 @@ function without_kinds(st::JS.SyntaxTree, kinds::Tuple{Vararg{JS.Kind}})
         _without_kinds(st, kinds)[1])::JS.SyntaxTree
 end
 
-function is_nospecialize_or_specialize_macrocall(st::JS.SyntaxTree)
-    JS.kind(st) === JS.K"macrocall" || return false
-    JS.numchildren(st) >= 1 || return false
-    macro_name = st[1]
+function is_macrocall_st0(st0::JS.SyntaxTree, names::AbstractString...)
+    JS.kind(st0) === JS.K"macrocall" || return false
+    JS.numchildren(st0) >= 1 || return false
+    macro_name = st0[1]
     JS.kind(macro_name) === JS.K"Identifier" || return false
     hasproperty(macro_name, :name_val) || return false
-    return macro_name.name_val == "@nospecialize" || macro_name.name_val == "@specialize"
+    return macro_name.name_val in names
+end
+
+is_nospecialize_or_specialize_macrocall0(st0::JS.SyntaxTree) =
+    is_macrocall_st0(st0, "@nospecialize", "@specialize")
+
+is_mainfunc0(st0::JS.SyntaxTree) = is_macrocall_st0(st0, "@main")
+
+function is_nospecialize_or_specialize_macrocall3(st3::JS.SyntaxTree)
+    JS.kind(st3) === JS.K"macrocall" || return false
+    JS.numchildren(st3) >= 1 || return false
+    macro_name = st3[1]
+    JS.kind(macro_name) === JS.K"macro_name" || return false
+    JS.numchildren(st3) >= 2 || return false
+    macro_name = macro_name[2]
+    JS.kind(macro_name) === JS.K"Identifier" || return false
+    hasproperty(macro_name, :name_val) || return false
+    return macro_name.name_val == "nospecialize" || macro_name.name_val == "specialize"
 end
 
 function _remove_macrocalls(st::JS.SyntaxTree)
     if JS.kind(st) === JS.K"macrocall"
-        if is_nospecialize_or_specialize_macrocall(st)
+        if is_nospecialize_or_specialize_macrocall0(st)
             # Special case `@nospecialize`/`@specialize`:
             # These macros are sometimes used in method definition argument lists, but
             # if we apply the `_remove_macrocalls` transformation directly, it would
@@ -50,6 +67,10 @@ function _remove_macrocalls(st::JS.SyntaxTree)
             # preventing generation of a correct lowered tree.
             # Furthermore, JuliaLowering.jl provides new macro style definitions for
             # these macros, so there's no need to remove them in the first place.
+            return st, false
+        elseif is_mainfunc0(st)
+            # `@main` functions are always lowered to `main` functions without issues,
+            # so there's no need to remove them
             return st, false
         end
         new_children = JS.SyntaxList(JS.syntax_graph(st))
@@ -207,19 +228,19 @@ function greatest_local(st0::JS.SyntaxTree, offset::Int)
         return nothing
     end
 
-    i = first_global - 1
-    while JS.kind(bas[i]) === JS.K"block"
-        if any(j::Int -> JS.kind(bas[i][j]) === JS.K"local", 1:JS.numchildren(bas[i]))
+    idx = Ref(first_global - 1)
+    while JS.kind(bas[idx[]]) === JS.K"block"
+        if any(j::Int -> JS.kind(bas[idx[]][j]) === JS.K"local", 1:JS.numchildren(bas[idx[]]))
             # If this `block` contains `local`, it may introduce local bindings.
             # For correct scope analysis, we need to analyze this entire block
             break
         end
         # `bas[i]` is a block within a global scope, so can't introduce local bindings.
         # Shrink the tree (mostly for performance).
-        i -= 1
-        i < 1 && return nothing
+        idx[] -= 1
+        idx[] < 1 && return nothing
     end
-    return bas[i]
+    return bas[idx[]]
 end
 
 """
@@ -461,6 +482,35 @@ end
 function is_trivia(tc::TokenCursor, pass_newlines::Bool)
     k = kind(tc)
     JS.is_whitespace(k) && (pass_newlines || k !== JS.K"NewlineWs")
+end
+
+"""
+    get_line_indent(fi::FileInfo, byte_offset::Int) -> Union{String,Nothing}
+
+Get the leading whitespace (indentation) at `byte_offset`.
+
+Returns the indentation string when the position is at the start of a line
+(after a newline or at the start of the file). Returns `nothing` when the
+position is preceded by non-whitespace tokens on the same line, indicating
+that the position is not at the beginning of a line.
+
+# Examples
+- `"    export a, b"` at byte 5 (start of `export`) → `"    "`
+- `"begin\\n    export a, b"` at `export` → `"    "`
+- `"begin export a, b"` at `export` → `nothing`
+"""
+function get_line_indent(fi::FileInfo, byte_offset::Int)
+    prev_tc = prev_nontrivia(fi.parsed_stream, byte_offset; strict=true)
+    if prev_tc === nothing
+        return String(fi.parsed_stream.textbuf[1:byte_offset-1])
+    elseif JS.kind(prev_tc) === JS.K"NewlineWs"
+        # NewlineWs includes both newline and following whitespace (e.g., "\n    ")
+        tok_text = fi.parsed_stream.textbuf[JS.byte_range(prev_tc)]
+        newline_end = findlast(c::UInt8 -> c == UInt8('\n') || c == UInt8('\r'), tok_text)
+        return newline_end === nothing ? "" : String(tok_text[newline_end+1:end])
+    else
+        return nothing
+    end
 end
 
 # TODO: This is used so that `r"foo"|` or `r"foo" |` don't show signature help,

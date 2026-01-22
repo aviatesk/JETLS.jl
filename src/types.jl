@@ -34,30 +34,38 @@ struct FileInfo
     filename::String
     encoding::LSP.PositionEncodingKind.Ty
     testsetinfos::Vector{TestsetInfo}
+    syntax_tree0::Union{Nothing,SyntaxTree0}
 
     function FileInfo(
             version::Int, parsed_stream::JS.ParseStream, filename::AbstractString,
             encoding::LSP.PositionEncodingKind.Ty = LSP.PositionEncodingKind.UTF16,
-            testsetinfos::Vector{TestsetInfo} = EMPTY_TESTSETINFOS
+            testsetinfos::Vector{TestsetInfo} = EMPTY_TESTSETINFOS;
+            cache_tree::Union{Nothing,Bool} = nothing
         )
-        new(version, parsed_stream, filename, encoding, testsetinfos)
+        if cache_tree isa Bool
+            syntax_tree0 = JS.build_tree(JS.SyntaxTree, parsed_stream; filename)
+            if cache_tree
+                syntax_tree0 = JS.prune(syntax_tree0)
+            end
+        else
+            syntax_tree0 = nothing
+        end
+        new(version, parsed_stream, filename, encoding, testsetinfos, syntax_tree0)
     end
 end
 @define_override_constructor FileInfo # For testsetinfos update
 
 function FileInfo( # Constructor for production code (with URI)
-        version::Int, parsed_stream::JS.ParseStream, uri::URI,
-        encoding::LSP.PositionEncodingKind.Ty = LSP.PositionEncodingKind.UTF16,
-        testsetinfos::Vector{TestsetInfo} = EMPTY_TESTSETINFOS
+        version::Int, parsed_stream::JS.ParseStream, uri::URI, args...; kwargs...
     )
     filename = uri2filename(uri)
-    return FileInfo(version, parsed_stream, filename, encoding, testsetinfos)
+    return FileInfo(version, parsed_stream, filename, args...; kwargs...)
 end
 
 function FileInfo( # Constructor for test code (with raw text input and filename)
-        version::Int, s::Union{Vector{UInt8},AbstractString}, args...
+        version::Int, s::Union{Vector{UInt8},AbstractString}, args...; kwargs...
     )
-    return FileInfo(version, ParseStream!(s), args...)
+    return FileInfo(version, ParseStream!(s), args...; kwargs...)
 end
 
 # Secondary file cache representing on-disk state.
@@ -360,7 +368,9 @@ function default_executable(formatter::String)
     end
 end
 
-const DIAGNOSTIC_SOURCE = "JETLS"
+const DIAGNOSTIC_SOURCE_LIVE = "JETLS/live"
+const DIAGNOSTIC_SOURCE_SAVE = "JETLS/save"
+const DIAGNOSTIC_SOURCE_EXTRA = "JETLS/extra"
 
 const VALID_DIAGNOSTIC_CATEGORIES = Set{String}((
     "syntax",
@@ -376,12 +386,13 @@ const LOWERING_UNUSED_LOCAL_CODE = "lowering/unused-local"
 const LOWERING_ERROR_CODE = "lowering/error"
 const LOWERING_MACRO_EXPANSION_ERROR_CODE = "lowering/macro-expansion-error"
 const LOWERING_UNDEF_GLOBAL_VAR_CODE = "lowering/undef-global-var"
+const LOWERING_UNDEF_LOCAL_VAR_CODE = "lowering/undef-local-var"
 const LOWERING_CAPTURED_BOXED_VARIABLE_CODE = "lowering/captured-boxed-variable"
+const LOWERING_UNSORTED_IMPORT_NAMES_CODE = "lowering/unsorted-import-names"
 const TOPLEVEL_ERROR_CODE = "toplevel/error"
 const TOPLEVEL_METHOD_OVERWRITE_CODE = "toplevel/method-overwrite"
 const TOPLEVEL_ABSTRACT_FIELD_CODE = "toplevel/abstract-field"
 const INFERENCE_UNDEF_GLOBAL_VAR_CODE = "inference/undef-global-var"
-const INFERENCE_UNDEF_LOCAL_VAR_CODE = "inference/undef-local-var"
 const INFERENCE_UNDEF_STATIC_PARAM_CODE = "inference/undef-static-param" # currently not reported
 const INFERENCE_FIELD_ERROR_CODE = "inference/field-error"
 const INFERENCE_BOUNDS_ERROR_CODE = "inference/bounds-error"
@@ -394,12 +405,13 @@ const ALL_DIAGNOSTIC_CODES = Set{String}(String[
     LOWERING_ERROR_CODE,
     LOWERING_MACRO_EXPANSION_ERROR_CODE,
     LOWERING_UNDEF_GLOBAL_VAR_CODE,
+    LOWERING_UNDEF_LOCAL_VAR_CODE,
     LOWERING_CAPTURED_BOXED_VARIABLE_CODE,
+    LOWERING_UNSORTED_IMPORT_NAMES_CODE,
     TOPLEVEL_ERROR_CODE,
     TOPLEVEL_METHOD_OVERWRITE_CODE,
     TOPLEVEL_ABSTRACT_FIELD_CODE,
     INFERENCE_UNDEF_GLOBAL_VAR_CODE,
-    INFERENCE_UNDEF_LOCAL_VAR_CODE,
     INFERENCE_UNDEF_STATIC_PARAM_CODE,
     INFERENCE_FIELD_ERROR_CODE,
     INFERENCE_BOUNDS_ERROR_CODE,
@@ -428,8 +440,9 @@ merge_key(::Type{DiagnosticPattern}) = :__pattern_value__
 
 @option struct DiagnosticConfig <: ConfigSection
     enabled::Maybe{Bool}
-    patterns::Maybe{Vector{DiagnosticPattern}}
+    all_files::Maybe{Bool}
     allow_unused_underscore::Maybe{Bool}
+    patterns::Maybe{Vector{DiagnosticPattern}}
 end
 
 # Internal, undocumented configuration for full-analysis module overrides.
@@ -484,7 +497,7 @@ end
 end
 
 const DEFAULT_CONFIG = JETLSConfig(;
-    diagnostic = DiagnosticConfig(true, DiagnosticPattern[], true),
+    diagnostic = DiagnosticConfig(true, true, true, DiagnosticPattern[]),
     full_analysis = FullAnalysisConfig(1.0, true),
     testrunner = TestRunnerConfig(@static Sys.iswindows() ? "testrunner.bat" : "testrunner"),
     formatter = "Runic",
@@ -628,6 +641,8 @@ const DocumentSymbolCache = LWContainer{DocumentSymbolCacheData, LWStats}
 const BindingOccurrencesCacheData = Base.PersistentDict{URI,BindingOccurrencesCacheEntry}
 const BindingOccurrencesCache = LWContainer{BindingOccurrencesCacheData, LWStats}
 const ConfigManager = LWContainer{ConfigManagerData, LWStats}
+const UnsyncedFileCacheData = Base.PersistentDict{URI,FileInfo}
+const UnsyncedFileCache = LWContainer{UnsyncedFileCacheData, LWStats}
 
 const HandledHistory = FixedSizeFIFOQueue{MessageId}
 
@@ -640,6 +655,9 @@ mutable struct ServerState
     const saved_file_cache::SavedFileCache # syntactic analysis cache (synced with `textDocument/didSave`)
     const notebook_cache::NotebookCache # notebook document cache (synced with `notebookDocument/did*`), mapping notebook URIs to their notebook info
     const cell_to_notebook::CellToNotebookMap # maps cell URIs to their notebook URI
+    # Cache for files not synced via document-synchronization (unsynced files).
+    # Populated on-demand by `get_unsynced_file_info!`, invalidated by `workspace/didChangeWatchedFiles`.
+    const unsynced_file_cache::UnsyncedFileCache
     # Document symbol cache for both synced and unsynced files.
     # Uses LWContainer for concurrent writes from:
     # - `get_document_symbols!` (on cache miss)
@@ -675,6 +693,7 @@ mutable struct ServerState
             #=saved_file_cache=# SavedFileCache(Base.PersistentDict{URI,SavedFileInfo}()),
             #=notebook_cache=# NotebookCache(Base.PersistentDict{URI,NotebookInfo}()),
             #=cell_to_notebook=# CellToNotebookMap(Base.PersistentDict{URI,URI}()),
+            #=unsynced_file_cache=# UnsyncedFileCache(UnsyncedFileCacheData()),
             #=document_symbol_cache=# DocumentSymbolCache(DocumentSymbolCacheData()),
             #=binding_occurrences_cache=# BindingOccurrencesCache(BindingOccurrencesCacheData()),
             #=analysis_manager=# AnalysisManager(),

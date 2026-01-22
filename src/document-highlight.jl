@@ -112,7 +112,7 @@ function local_document_highlights!(
 end
 
 # used by tests
-function document_highlights(fi::FileInfo, pos::Position, mod::Module=Main)
+function document_highlights(fi::FileInfo, pos::Position)
     state = ServerState()
     uri = filepath2uri(fi.filename)
     store!(state.file_cache) do cache

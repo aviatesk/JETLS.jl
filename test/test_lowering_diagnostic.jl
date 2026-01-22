@@ -4,7 +4,6 @@ using Test
 using JETLS
 using JETLS: JL, JS
 using JETLS.LSP
-using JETLS.LSP: UnusedVariableData
 using JETLS.LSP.URIs2
 
 include(normpath(pkgdir(JETLS), "test", "setup.jl"))
@@ -15,7 +14,7 @@ module lowering_module end
 get_lowered_diagnostics(text::AbstractString; kwargs...) = get_lowered_diagnostics(lowering_module, text; kwargs...)
 function get_lowered_diagnostics(mod::Module, text::AbstractString; kwargs...)
     fi = JETLS.FileInfo(#=version=#0, text, @__FILE__)
-    uri = JETLS.LSP.URIs2.filepath2uri(@__FILE__)
+    uri = filepath2uri(@__FILE__)
     st0 = JETLS.build_syntax_tree(fi)
     @assert JS.kind(st0) === JS.K"toplevel"
     return JETLS.lowering_diagnostics(uri, fi, mod, st0[1]; kwargs...)
@@ -545,7 +544,7 @@ end
         diagnostics = get_lowered_diagnostics(@__MODULE__, "macro foo(x, y) \$(x) end")
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
-        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE
+        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
         @test diagnostic.message == "`\$` expression outside string or quote block"
     end
 
@@ -560,13 +559,13 @@ end
         diagnostics = JETLS.toplevel_lowering_diagnostics(server, uri, fi)
         @test length(diagnostics) == 2
         @test count(diagnostics) do diagnostic
-            diagnostic.source == JETLS.DIAGNOSTIC_SOURCE &&
+            diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE &&
             diagnostic.message == "`\$` expression outside string or quote block" &&
             diagnostic.range.start.line == 0 &&
             diagnostic.range.var"end".line == 0
         end == 1
         @test count(diagnostics) do diagnostic
-            diagnostic.source == JETLS.DIAGNOSTIC_SOURCE &&
+            diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE &&
             diagnostic.message == "`\$` expression outside string or quote block" &&
             diagnostic.range.start.line == 1 &&
             diagnostic.range.var"end".line == 1
@@ -577,7 +576,7 @@ end
         diagnostics = get_lowered_diagnostics(@__MODULE__, "x = @notexisting 42")
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
-        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE
+        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
         @test diagnostic.message == "Macro name `@notexisting` not found"
         @test diagnostic.range.start.line == 0
         @test diagnostic.range.start.character == sizeof("x = ")
@@ -585,11 +584,22 @@ end
         @test diagnostic.range.var"end".character == sizeof("x = @notexisting")
     end
 
+    @testset "@. macro (aviatesk/JETLS.jl#409)" begin
+        diagnostics = get_lowered_diagnostics(@__MODULE__, """
+        function foo()
+            x = rand(10)
+            y = rand(10)
+            @views @. muladd(x[1:end], y[1], y[1:end])
+        end
+        """)
+        @test isempty(diagnostics)
+    end
+
     @testset "string macro not found error diagnostics" begin
         diagnostics = get_lowered_diagnostics(@__MODULE__, "x = notexisting\"string\"")
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
-        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE
+        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
         @test diagnostic.message == "Macro name `@notexisting_str` not found"
         @test diagnostic.range.start.line == 0
         @test diagnostic.range.start.character == sizeof("x = ")
@@ -601,7 +611,7 @@ end
         diagnostics = get_lowered_diagnostics(@__MODULE__, "x = @m_throw 42")
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
-        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE
+        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
         @test diagnostic.message == "Error expanding macro\n\"show this error message\""
         @test diagnostic.range.start.line == 0
         @test diagnostic.range.start.character == sizeof("x = ")
@@ -615,7 +625,7 @@ end
         end""")
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
-        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE
+        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
         @test diagnostic.message == "Error expanding macro\nError in foo"
         @test diagnostic.range.start.line == 1
         @test diagnostic.range.start.character == 4
@@ -629,7 +639,7 @@ end
         end""")
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
-        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE
+        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
         @test diagnostic.message == "Error expanding macro\nError in foo"
         @test diagnostic.range.start.line == 1
         @test diagnostic.range.start.character == 4
@@ -645,7 +655,7 @@ end
         """)
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
-        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE
+        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
         @test diagnostic.message == "`return` not allowed inside comprehension or generator"
         @test diagnostic.range.start.line == 2
         @test diagnostic.range.var"end".line == 2
@@ -664,7 +674,7 @@ end
         """)
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
-        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE
+        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
         @test diagnostic.code == JETLS.LOWERING_UNDEF_GLOBAL_VAR_CODE
         @test diagnostic.message == "`$(@__MODULE__).undeffunc` is not defined"
         @test diagnostic.range.start.line == 1
@@ -680,12 +690,183 @@ end
         """)
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
-        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE
+        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
         @test diagnostic.message == "`$(TestLoweringUndefGlobalBinding).undeffunc` is not defined"
         @test diagnostic.range.start.line == 1
         @test diagnostic.range.start.character == 4
         @test diagnostic.range.var"end".line == 1
         @test diagnostic.range.var"end".character == 13
+    end
+
+    @test_broken isempty(get_lowered_diagnostics(@__MODULE__, """
+        struct Issue492
+            global function make_issue492()
+                new()
+            end
+        end
+    """))
+end
+
+@testset "Undefined local binding report" begin
+    @testset "sequential assignment then use - no diagnostic" begin
+        @test isempty(get_lowered_diagnostics("""
+            function f()
+                y = 1
+                println(y)
+            end
+            """))
+    end
+
+    @testset "use before assignment - strict undef (Warning)" begin
+        let diagnostics = get_lowered_diagnostics("""
+            function f()
+                println(y)
+                y = 1
+            end
+            """)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.code == JETLS.LOWERING_UNDEF_LOCAL_VAR_CODE
+            @test diagnostic.severity == DiagnosticSeverity.Warning
+            @test diagnostic.message == "Variable `y` is used before it is defined"
+            @test diagnostic.range.start.line == 1
+        end
+    end
+
+    @testset "if-else both branches assign - no diagnostic" begin
+        @test isempty(get_lowered_diagnostics("""
+            function f()
+                if rand() > 0.5
+                    y = 1
+                else
+                    y = 2
+                end
+                println(y)
+            end
+            """))
+    end
+
+    @testset "if-else one branch assigns - maybe undef (Information)" begin
+        let diagnostics = get_lowered_diagnostics("""
+            function f()
+                if rand() > 0.5
+                    y = 1
+                else
+                    nothing
+                end
+                println(y)
+            end
+            """)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.code == JETLS.LOWERING_UNDEF_LOCAL_VAR_CODE
+            @test diagnostic.severity == DiagnosticSeverity.Information
+            @test diagnostic.message == "Variable `y` may be used before it is defined"
+        end
+    end
+
+    @testset "while loop - maybe undef" begin
+        let diagnostics = get_lowered_diagnostics("""
+            function f()
+                local y
+                while rand() > 0.5
+                    y = 1
+                end
+                println(y)
+            end
+            """)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.code == JETLS.LOWERING_UNDEF_LOCAL_VAR_CODE
+            @test diagnostic.severity == DiagnosticSeverity.Information
+        end
+    end
+
+    @testset "@isdefined guard - no diagnostic" begin
+        @test isempty(get_lowered_diagnostics("""
+            function f(x)
+                if x > 0
+                    y = 42
+                end
+                if @isdefined(y)
+                    return sin(y)
+                end
+            end
+            """))
+    end
+
+    @testset "@assert @isdefined hint" begin
+        @test isempty(get_lowered_diagnostics("""
+            function f(x)
+                if x > 0
+                    y = x
+                end
+                if x > 0
+                    @assert @isdefined(y) "compiler hint to tell the definedness of this variable"
+                    return sin(y)
+                end
+            end
+            """))
+    end
+
+    @testset "closure assigns to captured variable - maybe undef" begin
+        # When a closure assigns to a captured variable, we don't know when/if
+        # the closure is called, so report "may be undefined" instead of
+        # "must be undefined"
+        let diagnostics = get_lowered_diagnostics("""
+            function func(a)
+                local x
+                function inner(y)
+                    x = y
+                end
+                f = inner
+                f(a)
+                return x
+            end
+            """)
+            undef_diags = filter(d -> d.code == JETLS.LOWERING_UNDEF_LOCAL_VAR_CODE, diagnostics)
+            @test length(undef_diags) == 1
+            diagnostic = only(undef_diags)
+            @test diagnostic.severity == DiagnosticSeverity.Information
+            @test diagnostic.message == "Variable `x` may be used before it is defined"
+        end
+    end
+
+    @testset "relatedInformation shows definition locations" begin
+        let diagnostics = get_lowered_diagnostics("""
+            function f()
+                if rand() > 0.5
+                    y = 1
+                end
+                println(y)
+            end
+            """)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.relatedInformation !== nothing
+            @test length(diagnostic.relatedInformation) == 1
+            ri = only(diagnostic.relatedInformation)
+            @test ri.message == "`y` is defined here"
+            @test ri.location.range.start.line == 2  # y = 1 is on line 2
+        end
+    end
+
+    @testset "multiple definitions show multiple relatedInformation" begin
+        let diagnostics = get_lowered_diagnostics("""
+            function f()
+                if rand() > 0.5
+                    y = 1
+                elseif rand() > 0.5
+                    y = 2
+                end
+                println(y)
+            end
+            """)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.relatedInformation !== nothing
+            @test length(diagnostic.relatedInformation) == 2
+        end
     end
 end
 
@@ -842,135 +1023,102 @@ end
         """)
         @test isempty(diagnostics)
     end
+
+    # https://github.com/aviatesk/JETLS.jl/issues/508
+    let diagnostics = get_lowered_diagnostics("""
+        struct Foo{T}
+            x::T
+            function Foo(x)
+                T = typeof(x)
+                return new{T}(x)
+            end
+        end
+        """)
+        @test isempty(diagnostics)
+    end
 end
 
-@testset "unused_variable_code_actions" begin
-    uri = URI("file:///test.jl")
+is_unsorted_import_names_diagnostic(diagnostic) =
+    diagnostic.message == "Names are not sorted alphabetically" &&
+    diagnostic.code == JETLS.LOWERING_UNSORTED_IMPORT_NAMES_CODE &&
+    diagnostic.severity == JETLS.DiagnosticSeverity.Hint &&
+    diagnostic.data isa UnsortedImportData
 
-    let diagnostic = Diagnostic(;
-            range = Range(;
-                start = Position(; line=0, character=13),
-                var"end" = Position(; line=0, character=14)),
-            severity = DiagnosticSeverity.Information,
-            message = "Unused argument `y`",
-            source = JETLS.DIAGNOSTIC_SOURCE,
-            code = JETLS.LOWERING_UNUSED_ARGUMENT_CODE)
-        code_actions = Union{CodeAction,Command}[]
-        JETLS.unused_variable_code_actions!(code_actions, uri, [diagnostic])
-        @test length(code_actions) == 1
-        action = only(code_actions)
-        @test action.title == "Prefix with '_' to indicate intentionally unused"
-        @test action.isPreferred == true
-        @test action.edit !== nothing
-        changes = action.edit.changes
-        @test haskey(changes, uri)
-        edits = changes[uri]
-        @test length(edits) == 1
-        edit = only(edits)
-        @test edit.range.start.line == 0
-        @test edit.range.start.character == 13
-        @test edit.newText == "_"
+@testset "unsorted import names" begin
+    let diagnostics = get_lowered_diagnostics("""
+        import Foo: c, a, b
+        """)
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test is_unsorted_import_names_diagnostic(diagnostic)
+        @test diagnostic.data.new_text == "import Foo: a, b, c"
     end
 
-    let diagnostic = Diagnostic(;
-            range = Range(;
-                start = Position(; line=1, character=10),
-                var"end" = Position(; line=1, character=11)),
-            severity = DiagnosticSeverity.Information,
-            message = "Unused local binding `x`",
-            source = JETLS.DIAGNOSTIC_SOURCE,
-            code = JETLS.LOWERING_UNUSED_LOCAL_CODE)
-        code_actions = Union{CodeAction,Command}[]
-        JETLS.unused_variable_code_actions!(code_actions, uri, [diagnostic])
-        @test length(code_actions) == 1
-        action = only(code_actions)
-        @test action.title == "Prefix with '_' to indicate intentionally unused"
-        @test action.disabled === nothing
-        @test action.isPreferred == true
+    let diagnostics = get_lowered_diagnostics("""
+        using Bar: x, y, z
+        """)
+        @test isempty(diagnostics)
     end
 
-    let diagnostic = Diagnostic(;
-            range = Range(;
-                start = Position(; line=0, character=13),
-                var"end" = Position(; line=0, character=14)),
-            severity = DiagnosticSeverity.Information,
-            message = "Unused argument `y`",
-            source = JETLS.DIAGNOSTIC_SOURCE,
-            code = JETLS.LOWERING_UNUSED_ARGUMENT_CODE)
-        code_actions = Union{CodeAction,Command}[]
-        JETLS.unused_variable_code_actions!(code_actions, uri, [diagnostic]; allow_unused_underscore=false)
-        @test length(code_actions) == 1
-        action = only(code_actions)
-        @test action.title == "Replace with '_' to indicate intentionally unused"
-        @test action.isPreferred == true
-        @test action.disabled === nothing
-        edits = action.edit.changes[uri]
-        edit = only(edits)
-        @test edit.range.start.character == 13
-        @test edit.range.var"end".character == 14
-        @test edit.newText == "_"
+    let diagnostics = get_lowered_diagnostics("""
+        export c, a, b
+        """)
+        @test length(diagnostics) == 1
+        @test is_unsorted_import_names_diagnostic(only(diagnostics))
     end
 
-    let diagnostic = Diagnostic(;
-            range = Range(;
-                start = Position(; line=0, character=0),
-                var"end" = Position(; line=0, character=10)),
-            severity = DiagnosticSeverity.Error,
-            message = "Some other error",
-            source = JETLS.DIAGNOSTIC_SOURCE,
-            code = JETLS.LOWERING_ERROR_CODE)
-        code_actions = Union{CodeAction,Command}[]
-        JETLS.unused_variable_code_actions!(code_actions, uri, [diagnostic])
-        @test isempty(code_actions)
+    let diagnostics = get_lowered_diagnostics("""
+        public z, y
+        """)
+        @test length(diagnostics) == 1
+        @test is_unsorted_import_names_diagnostic(only(diagnostics))
     end
 
-    # Test delete actions for unused local bindings with UnusedVariableData
-    let assignment_range = Range(;
-            start = Position(; line=1, character=4),
-            var"end" = Position(; line=1, character=18))
-        lhs_eq_range = Range(;
-            start = Position(; line=1, character=4),
-            var"end" = Position(; line=1, character=8))
-        data = UnusedVariableData(false, assignment_range, lhs_eq_range)
-        diagnostic = Diagnostic(;
-            range = Range(;
-                start = Position(; line=1, character=4),
-                var"end" = Position(; line=1, character=5)),
-            severity = DiagnosticSeverity.Information,
-            message = "Unused local binding `y`",
-            source = JETLS.DIAGNOSTIC_SOURCE,
-            code = JETLS.LOWERING_UNUSED_LOCAL_CODE,
-            data)
-        code_actions = Union{CodeAction,Command}[]
-        JETLS.unused_variable_code_actions!(code_actions, uri, [diagnostic])
-        @test length(code_actions) == 3  # _ prefix + delete assignment + delete statement
-        @test code_actions[1].title == "Prefix with '_' to indicate intentionally unused"
-        @test code_actions[1].isPreferred == true
-        @test code_actions[2].title == "Delete assignment"
-        @test code_actions[2].isPreferred === nothing
-        @test code_actions[2].edit.changes[uri][1].range == lhs_eq_range
-        @test code_actions[2].edit.changes[uri][1].newText == ""
-        @test code_actions[3].title == "Delete statement"
-        @test code_actions[3].isPreferred === nothing
-        @test code_actions[3].edit.changes[uri][1].range == assignment_range
-        @test code_actions[3].edit.changes[uri][1].newText == ""
+    let diagnostics = get_lowered_diagnostics("""
+        using Foo: bar as baz, alpha as a
+        """)
+        @test length(diagnostics) == 1
+        @test is_unsorted_import_names_diagnostic(only(diagnostics))
     end
 
-    # Test no delete actions for tuple unpacking
-    let data = UnusedVariableData(true, nothing, nothing)
-        diagnostic = Diagnostic(;
-            range = Range(;
-                start = Position(; line=1, character=7),
-                var"end" = Position(; line=1, character=8)),
-            severity = DiagnosticSeverity.Information,
-            message = "Unused local binding `y`",
-            source = JETLS.DIAGNOSTIC_SOURCE,
-            code = JETLS.LOWERING_UNUSED_LOCAL_CODE,
-            data)
-        code_actions = Union{CodeAction,Command}[]
-        JETLS.unused_variable_code_actions!(code_actions, uri, [diagnostic])
-        @test length(code_actions) == 1  # only _ prefix
-        @test code_actions[1].title == "Prefix with '_' to indicate intentionally unused"
+    let diagnostics = get_lowered_diagnostics("""
+        using Foo: alpha as a, bar as baz
+        """)
+        @test isempty(diagnostics)
+    end
+
+    let diagnostics = get_lowered_diagnostics("""
+        using ..Parent: b, a
+        """)
+        @test length(diagnostics) == 1
+        @test is_unsorted_import_names_diagnostic(only(diagnostics))
+    end
+
+    let diagnostics = get_lowered_diagnostics("""
+        export foo, bar
+        """)
+        @test length(diagnostics) == 1
+        @test is_unsorted_import_names_diagnostic(only(diagnostics))
+    end
+
+    let diagnostics = get_lowered_diagnostics("""
+        import Core, ..Base, Base
+        """)
+        @test length(diagnostics) == 1
+        @test is_unsorted_import_names_diagnostic(only(diagnostics))
+    end
+
+    let diagnostics = get_lowered_diagnostics("""
+        using Core, Base
+        """)
+        @test length(diagnostics) == 1
+        @test is_unsorted_import_names_diagnostic(only(diagnostics))
+    end
+
+    let diagnostics = get_lowered_diagnostics("""
+        import Base, Core
+        """)
+        @test isempty(diagnostics)
     end
 end
 

@@ -9,7 +9,7 @@ development environment.
 
 To use this feature, you need to install the `testrunner` executable:
 ```bash
-julia -e 'using Pkg; Pkg.Apps.add(url="https://github.com/aviatesk/TestRunner.jl")'
+julia -e 'using Pkg; Pkg.Apps.add(url="https://github.com/aviatesk/TestRunner.jl#release")'
 ```
 
 Note that you need to manually make `~/.julia/bin` available on the `PATH`

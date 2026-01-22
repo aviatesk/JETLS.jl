@@ -221,6 +221,8 @@ function collect_unmatched_keys!(
 end
 
 """
+    get_config(server::Server, key_path...) -> config
+    get_config(state::ServerState, key_path...) -> config
     get_config(manager::ConfigManager, key_path...) -> config
 
 Retrieves the current configuration value.
@@ -229,6 +231,8 @@ Among the registered configuration files, fetches the value in order of priority
 Even when the specified configuration is not explicitly set, a default value is returned,
 so `config` is guaranteed to not be `nothing`.
 """
+Base.@constprop :aggressive get_config(server::Server, key_path::Symbol...) = get_config(server.state, key_path...)
+Base.@constprop :aggressive get_config(state::ServerState, key_path::Symbol...) = get_config(state.config_manager, key_path...)
 Base.@constprop :aggressive get_config(manager::ConfigManager, key_path::Symbol...) =
     @something getobjpath(load(manager).filled_settings, key_path...) error(lazy"Invalid default configuration value found at $key_path")
 

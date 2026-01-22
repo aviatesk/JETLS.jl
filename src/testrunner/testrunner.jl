@@ -318,7 +318,7 @@ function testrunner_result_to_diagnostics(result::TestRunnerResult)
             range = line_range(diag.line),
             severity = DiagnosticSeverity.Error,
             message = diag.message,
-            source = DIAGNOSTIC_SOURCE,
+            source = DIAGNOSTIC_SOURCE_EXTRA,
             code = TESTRUNNER_TEST_FAILURE_CODE,
             codeDescription = diagnostic_code_description(TESTRUNNER_TEST_FAILURE_CODE),
             relatedInformation)
@@ -434,7 +434,7 @@ function testrunner_run_testset(
         cancellable_token::Union{Nothing,CancellableToken} = nothing
     )
     setting_path = (:testrunner, :executable)
-    executable = get_config(server.state.config_manager, setting_path...)
+    executable = get_config(server, setting_path...)
     if isnothing(Sys.which(executable))
         default_executable = get_default_config(setting_path...)
         additional_msg = if executable == default_executable
@@ -501,29 +501,34 @@ function _testrunner_run_testset(
     cmd = testrunner_cmd(executable, filepath, tsn, tsl, test_env_path)
     testrunnerproc = open(cmd; read=true)
 
-    # Wait for the process with cancellation support
-    while true
-        process_running(testrunnerproc) || break
+    result = try
+        # Wait for the process with cancellation support
+        while true
+            process_running(testrunnerproc) || break
+            if !isnothing(cancellable_token) && is_cancelled(cancellable_token.cancel_flag)
+                kill(testrunnerproc)
+                return "Test execution cancelled by user"
+            end
+            sleep(0.1)
+        end
         if !isnothing(cancellable_token) && is_cancelled(cancellable_token.cancel_flag)
-            kill(testrunnerproc)
             return "Test execution cancelled by user"
         end
-        sleep(0.1)
-    end
-    if !isnothing(cancellable_token) && is_cancelled(cancellable_token.cancel_flag)
-         return "Test execution cancelled by user"
-    end
 
-    result = try
-        LSP.JSON3.read(testrunnerproc, TestRunnerResult)
-    catch err
-        @error "Error from testrunner process" err
-        show_error_message(server, """
+        try
+            LSP.JSON3.read(testrunnerproc, TestRunnerResult)
+        catch err
+            @error "Error from testrunner process" err
+            show_error_message(server, """
             An unexpected error occurred while executing TestRunner.jl:
             See the server log for details.
             """)
-        return "Test execution failed"
+            return "Test execution failed"
+        end
+    finally
+        close(testrunnerproc)
     end
+
     ret = summary_testrunner_result(result)
 
     # Update testsetinfos with the new result atomically
@@ -576,7 +581,7 @@ function testrunner_run_testcase(
         cancellable_token::Union{Nothing,CancellableToken} = nothing
     )
     setting_path = (:testrunner, :executable)
-    executable = get_config(server.state.config_manager, setting_path...)
+    executable = get_config(server, setting_path...)
     if isnothing(Sys.which(executable))
         default_executable = get_default_config(setting_path...)
         additional_msg = if executable == default_executable
@@ -624,28 +629,32 @@ function _testrunner_run_testcase(
     cmd = testrunner_cmd(executable, filepath, tcl, test_env_path)
     testrunnerproc = open(cmd; read=true)
 
-    # Wait for the process with cancellation support
-    while true
-        process_running(testrunnerproc) || break
+    result = try
+        # Wait for the process with cancellation support
+        while true
+            process_running(testrunnerproc) || break
+            if !isnothing(cancellable_token) && is_cancelled(cancellable_token.cancel_flag)
+                kill(testrunnerproc)
+                return "Test execution cancelled by user"
+            end
+            sleep(0.1)
+        end
         if !isnothing(cancellable_token) && is_cancelled(cancellable_token.cancel_flag)
-            kill(testrunnerproc)
             return "Test execution cancelled by user"
         end
-        sleep(0.1)
-    end
-    if !isnothing(cancellable_token) && is_cancelled(cancellable_token.cancel_flag)
-         return "Test execution cancelled by user"
-    end
 
-    result = try
-        LSP.JSON3.read(testrunnerproc, TestRunnerResult)
-    catch err
-        @error "Error from testrunner process" err
-        show_error_message(server, """
+        try
+            LSP.JSON3.read(testrunnerproc, TestRunnerResult)
+        catch err
+            @error "Error from testrunner process" err
+            show_error_message(server, """
             An unexpected error occurred while executing TestRunner.jl:
             See the server log for details.
             """)
-        return "Test execution failed"
+            return "Test execution failed"
+        end
+    finally
+        close(testrunnerproc)
     end
 
     # Show the results of this `@test` case temporarily as diagnostics:

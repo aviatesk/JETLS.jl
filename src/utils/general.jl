@@ -202,7 +202,7 @@ macro define_eq_overloads(Tyname)
     h_init = UInt === UInt64 ? rand(UInt64) : rand(UInt32)
     hash_body = quote h = $h_init end
     for fld2typ in fld2typs
-        fld, typ = fld2typ
+        fld, _ = fld2typ
         push!(hash_body.args, :(h = Base.hash(x.$fld, h)::UInt))
     end
     push!(hash_body.args, :(return h))

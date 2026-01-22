@@ -39,7 +39,7 @@ using JETLS.Glob
 
                 found_diagnostic = false
                 for diag in raw_res.result.items
-                    if diag.source == JETLS.DIAGNOSTIC_SOURCE
+                    if diag.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
                         found_diagnostic = true
                         break
                     end
@@ -49,8 +49,6 @@ using JETLS.Glob
         end
     end
 end
-
-@testset "lowering diagnostic" include("test_lowering_diagnostic.jl")
 
 @testset "top-level error diagnostic" begin
     # Test with code that has syntax errors
@@ -69,7 +67,7 @@ end
 
             found_diagnostic = false
             for diag in raw_res.params.diagnostics
-                if (diag.source == JETLS.DIAGNOSTIC_SOURCE &&
+                if (diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE &&
                     diag.range.start.line == 0)
                     found_diagnostic = true
                     break
@@ -102,7 +100,7 @@ end
 
             found_diagnostic = false
             for diag in raw_res.params.diagnostics
-                if diag.source == JETLS.DIAGNOSTIC_SOURCE
+                if diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE
                     found_diagnostic = true
                     break
                 end
@@ -146,7 +144,7 @@ end
 
             found_diagnostic = false
             for diag in raw_res.params.diagnostics
-                if (diag.source == JETLS.DIAGNOSTIC_SOURCE &&
+                if (diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE &&
                     # this also tests that JETLS doesn't show the nonsensical `var"..."`
                     # string caused by JET's internal details
                     occursin("`TestPackageAnalysis.BadModule.y` is not defined", diag.message))
@@ -184,7 +182,7 @@ end
 
             found_diagnostic = false
             for diag in raw_res.params.diagnostics
-                if (diag.source == JETLS.DIAGNOSTIC_SOURCE &&
+                if (diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE &&
                     diag.code == JETLS.TOPLEVEL_METHOD_OVERWRITE_CODE &&
                     occursin("duplicate(::$Int)", diag.message) &&
                     occursin("overwritten", diag.message))
@@ -228,7 +226,7 @@ end
 
             found_diagnostic1 = false
             for diag in raw_res.params.diagnostics
-                if (diag.source == JETLS.DIAGNOSTIC_SOURCE &&
+                if (diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE &&
                     diag.code == JETLS.TOPLEVEL_ABSTRACT_FIELD_CODE &&
                     occursin("BadStruct1", diag.message) &&
                     occursin("xs::Vector{Integer}", diag.message))
@@ -240,7 +238,7 @@ end
 
             found_diagnostic2 = false
             for diag in raw_res.params.diagnostics
-                if (diag.source == JETLS.DIAGNOSTIC_SOURCE &&
+                if (diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE &&
                     diag.code == JETLS.TOPLEVEL_ABSTRACT_FIELD_CODE &&
                     occursin("BadStruct2", diag.message) &&
                     occursin("xs::Vector{<:Integer}", diag.message))
@@ -337,7 +335,7 @@ function make_test_diagnostic(;
             var"end" = Position(; line=0, character=10)),
         severity,
         message,
-        source = JETLS.DIAGNOSTIC_SOURCE,
+        source = JETLS.DIAGNOSTIC_SOURCE_LIVE,
         code,
         codeDescription = JETLS.diagnostic_code_description(code))
 end
@@ -820,6 +818,39 @@ end
                 JETLS.apply_diagnostic_config!(diagnostics, manager, uri, "/path/to")
                 @test isempty(diagnostics)
             end
+        end
+
+        # diagnostics with severity=0 are filtered out when no pattern enables them
+        let diagnostics = [
+                make_test_diagnostic(;
+                    code = JETLS.LOWERING_UNSORTED_IMPORT_NAMES_CODE,
+                    severity = 0)
+            ]
+            manager = make_test_manager(Dict{String,Any}())
+            uri = filepath2uri("/tmp/test.jl")
+            JETLS.apply_diagnostic_config!(diagnostics, manager, uri, nothing)
+            @test isempty(diagnostics)
+        end
+
+        # diagnostics with severity=0 can be enabled via patterns
+        let diagnostics = [
+                make_test_diagnostic(;
+                    code = JETLS.LOWERING_UNSORTED_IMPORT_NAMES_CODE,
+                    severity = 0)
+            ]
+            manager = make_test_manager(Dict{String,Any}(
+                "diagnostic" => Dict{String,Any}(
+                    "patterns" => [
+                        Dict{String,Any}(
+                            "pattern" => "lowering/unsorted-import-names",
+                            "match_by" => "code",
+                            "match_type" => "literal",
+                            "severity" => "hint")
+                    ])))
+            uri = filepath2uri("/tmp/test.jl")
+            JETLS.apply_diagnostic_config!(diagnostics, manager, uri, nothing)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).severity == DiagnosticSeverity.Hint
         end
     end
 end

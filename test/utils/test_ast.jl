@@ -357,6 +357,31 @@ end
     end
 end
 
+@testset "get_line_indent" begin
+    let code = "export a, b"
+        fi = JETLS.FileInfo(#=version=#0, code, @__FILE__)
+        @test JETLS.get_line_indent(fi, 1) == ""
+    end
+    let code = "    export a, b"
+        fi = JETLS.FileInfo(#=version=#0, code, @__FILE__)
+        @test JETLS.get_line_indent(fi, 5) == "    "
+    end
+    let code = "begin\n    export a, b\nend"
+        fi = JETLS.FileInfo(#=version=#0, code, @__FILE__)
+        export_offset = sizeof("begin\n    ") + 1
+        @test JETLS.get_line_indent(fi, export_offset) == "    "
+    end
+    let code = "\t\texport a, b"
+        fi = JETLS.FileInfo(#=version=#0, code, @__FILE__)
+        @test JETLS.get_line_indent(fi, 3) == "\t\t"
+    end
+    let code = "begin export a, b end"
+        fi = JETLS.FileInfo(#=version=#0, code, @__FILE__)
+        export_offset = sizeof("begin ") + 1
+        @test JETLS.get_line_indent(fi, export_offset) === nothing
+    end
+end
+
 @testset "noparen_macrocall" begin
     @test JETLS.noparen_macrocall(jlparse("@test true"; rule=:statement))
     @test JETLS.noparen_macrocall(jlparse("@interface AAA begin end"; rule=:statement))
