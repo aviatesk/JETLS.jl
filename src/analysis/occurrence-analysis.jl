@@ -285,13 +285,15 @@ function get_binding_occurrences!(
         if file_cache !== nothing && haskey(file_cache, range_key)
             return cache, file_cache[range_key]
         end
-        result = @something _compute_binding_occurrences(state, uri, fi, st0; kwargs...) begin
+        result = @something compute_binding_occurrences_st0(state, uri, fi, st0; kwargs...) begin
             return cache, nothing
         end
         cache_result = BindingOccurrencesResult()
         for (binfo, occurrences) in result
-            cache_result[BindingInfoKey(binfo)] = Set{CachedBindingOccurrence}(
-                CachedBindingOccurrence(occurrence) for occurrence in occurrences)
+            cached_set = get!(Set{CachedBindingOccurrence}, cache_result, BindingInfoKey(binfo))
+            for occurrence in occurrences
+                push!(cached_set, CachedBindingOccurrence(occurrence))
+            end
         end
         if file_cache === nothing
             file_cache = BindingOccurrencesCacheEntry(range_key => cache_result)
@@ -302,7 +304,7 @@ function get_binding_occurrences!(
     end
 end
 
-function _compute_binding_occurrences(
+function compute_binding_occurrences_st0(
         state::ServerState, uri::URI, fi::FileInfo, st0::JS.SyntaxTree;
         lookup_func = gen_lookup_out_of_scope!(state, uri),
         include_global_bindings::Bool = false
@@ -316,7 +318,37 @@ function _compute_binding_occurrences(
     catch
         return nothing
     end
-    return compute_binding_occurrences(ctx3, st3; include_global_bindings)
+    binding_occurrences = compute_binding_occurrences(ctx3, st3; include_global_bindings)
+
+    if include_global_bindings
+        collect_macrocall_occurrences!(binding_occurrences, mod, st0)
+    end
+
+    return binding_occurrences
+end
+
+function collect_macrocall_occurrences!(
+        occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence{Tree3}}},
+        mod::Module, st0::JS.SyntaxTree
+    ) where Tree3<:JS.SyntaxTree
+    traverse(st0) do st::JS.SyntaxTree
+        JS.kind(st) === JS.K"macrocall" || return nothing
+        JS.numchildren(st) ≥ 1 || return nothing
+        macrocall_name = st[1]
+        (; ctx3) = try
+            jl_lower_for_scope_resolution(mod, macrocall_name)
+        catch
+            return TraversalNoRecurse()
+        end
+        for binfo in ctx3.bindings.info
+            if binfo.kind === :global
+                target_set = get!(Set{BindingOccurrence{Tree3}}, occurrences, binfo)
+                push!(target_set, BindingOccurrence{Tree3}(JL.binding_ex(ctx3, binfo), :use))
+            end
+        end
+        return nothing # Don't TraversalNoRecurse since macro calls can be nested
+    end
+    return occurrences
 end
 
 function invalidate_binding_occurrences_cache!(state::ServerState, uri::URI)
