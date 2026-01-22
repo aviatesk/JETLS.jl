@@ -267,11 +267,12 @@ function _insert_convert_expr(@nospecialize(e), graph::SyntaxGraph, src::SourceA
             src = child_exprs[2]
         end
         deleteat!(child_exprs, 2)
-        if a1 isa Symbol && a1 === Symbol("@__dot__")
-            child_exprs[1] = Symbol("@.")
-        elseif a1 isa Expr && nargs === 2 && a1.args[2] === Symbol("@__dot__")
-            child_exprs[1] = Expr(a1.head, a1.args[1], Symbol("@."))
-        elseif a1 isa GlobalRef && a1.mod === Core
+        # [JETLS patch] https://github.com/aviatesk/JETLS.jl/issues/409
+        # if a1 isa Symbol && a1 === Symbol("@__dot__")
+        #     child_exprs[1] = Symbol("@.")
+        # elseif a1 isa Expr && nargs === 2 && a1.args[2] === Symbol("@__dot__")
+        #     child_exprs[1] = Expr(a1.head, a1.args[1], Symbol("@."))
+        if a1 isa GlobalRef && a1.mod === Core
             # Syntax-introduced macrocalls are listed here for reference.  We
             # probably don't need to convert these.
             if a1.name === Symbol("@cmd")
@@ -454,7 +455,7 @@ function _insert_convert_expr(@nospecialize(e), graph::SyntaxGraph, src::SourceA
     if e.head === Symbol("latestworld-if-toplevel")
         st_k = K"latestworld_if_toplevel"
     elseif e.head === Symbol("hygienic-scope")
-        st_k = K"hygienic_scope"
+        st_k = K"hygienic-scope"
     elseif e.head === :meta
         # Messy and undocumented.  Only sometimes we want a K"meta".
         if e.args[1] isa Expr && e.args[1].head === :purity
@@ -517,9 +518,6 @@ function _insert_convert_expr(@nospecialize(e), graph::SyntaxGraph, src::SourceA
         @assert e.args[1] isa Symbol
         st_attrs[:name_val] = string(e.args[1])
         child_exprs = nothing
-    elseif e.head === :islocal || e.head === :isglobal
-        st_k = K"extension"
-        child_exprs = [Expr(:quoted_symbol, e.head), e.args[1]]
     end
 
     #---------------------------------------------------------------------------

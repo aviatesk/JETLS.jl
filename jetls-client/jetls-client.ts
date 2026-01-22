@@ -447,7 +447,9 @@ async function startLanguageServer() {
     };
   }
 
-  const initializationOptions = vscode.workspace.getConfiguration("jetls-client").get("initializationOptions", {});
+  const initializationOptions = vscode.workspace
+    .getConfiguration("jetls-client")
+    .get("initializationOptions", {});
 
   const clientOptions: LanguageClientOptions = {
     documentSelector: [
@@ -464,6 +466,13 @@ async function startLanguageServer() {
         language: "julia",
       },
     ],
+    synchronize: {
+      fileEvents: [
+        vscode.workspace.createFileSystemWatcher("**/*.jl"),
+        vscode.workspace.createFileSystemWatcher("**/.JETLSConfig.toml"),
+        vscode.workspace.createFileSystemWatcher("**/.JETLSProfile"),
+      ],
+    },
     initializationOptions,
     outputChannel,
   };
@@ -649,7 +658,7 @@ export function activate(context: ExtensionContext) {
     ),
   );
 
-  outputChannel = vscode.window.createOutputChannel("JETLS Language Server", { log: true });
+  outputChannel = vscode.window.createOutputChannel("JETLS", { log: true });
 
   checkForUpdates(context);
 

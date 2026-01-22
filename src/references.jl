@@ -88,13 +88,12 @@ function find_references(
     locations = Location[]
 
     (; ctx3, st3, binding) = @something begin
-        _select_target_binding(st0_top, offset, mod; caller="find_references!")
+        _select_target_binding(st0_top, offset, mod; caller="find_references")
     end return locations
 
     binfo = JL.get_binding(ctx3, binding)
     if binfo.kind === :global
-        error = find_global_references!(locations, server, uri, fi, st0_top, binfo;
-            include_declaration, kwargs...)
+        error = find_global_references!(locations, server, uri, binfo; include_declaration, kwargs...)
         error !== nothing && return error
     else
         find_local_references!(locations, server, uri, fi, ctx3, st3, binfo; include_declaration)
@@ -104,8 +103,7 @@ function find_references(
 end
 
 function find_global_references!(
-        locations::Vector{Location}, server::Server,
-        uri::URI, fi::FileInfo, st0_top::JS.SyntaxTree, binfo::JL.BindingInfo;
+        locations::Vector{Location}, server::Server, uri::URI, binfo::JL.BindingInfo;
         token::Union{Nothing,ProgressToken} = nothing,
         kwargs...
     )
@@ -167,7 +165,7 @@ function collect_global_references!(
         fi = @something begin
             get_file_info(state, uri)
         end begin
-            create_dummy_file_info(uri, server.state)
+            get_unsynced_file_info!(server.state, uri)
         end continue
         search_st0_top = build_syntax_tree(fi)
         global_find_references_in_file!(

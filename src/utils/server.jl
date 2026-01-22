@@ -214,23 +214,6 @@ end
 get_file_info(s::ServerState, t::TextDocumentIdentifier, cancel_flag::AbstractCancelFlag; kwargs...) =
     get_file_info(s, t.uri, cancel_flag; kwargs...)
 
-# The given `uri` may have been analyzed by full-analysis but not yet synced
-# by document-synchronization, or simply be outside the active workspace scope.
-# Construct a `ParseStream` from the filename and create a dummy `FileInfo`
-# for use in global binding analysis, workspace symbols, etc.
-function create_dummy_file_info(uri::URI, state::ServerState)
-    filename = uri2filename(uri)
-    isfile(filename) || return nothing
-    parsed_stream = try
-        ParseStream!(read(filename))
-    catch e
-        JETLS_DEV_MODE && @error "Error parsing file $(filename)"
-        JETLS_DEV_MODE && Base.showerror(stderr, e, catch_backtrace)
-        return nothing
-    end
-    return FileInfo(#=version=#0, parsed_stream, filename, state.encoding)
-end
-
 """
     get_saved_file_info(s::ServerState, uri::URI) -> fi::Union{Nothing,SavedFileInfo}
     get_saved_file_info(s::ServerState, t::TextDocumentIdentifier) -> fi::Union{Nothing,SavedFileInfo}
@@ -249,6 +232,52 @@ function get_saved_file_info(s::ServerState, uri::URI)
     return nothing
 end
 get_saved_file_info(s::ServerState, t::TextDocumentIdentifier) = get_saved_file_info(s, t.uri)
+
+"""
+    get_unsynced_file_info!(state::ServerState, uri::URI) -> Union{Nothing,FileInfo}
+
+Get `FileInfo` for a file not synced via document-synchronization.
+The file may have been analyzed by full-analysis but not yet opened in the editor,
+or simply be outside the active workspace scope.
+Results are cached in `state.unsynced_file_cache` and invalidated via
+`workspace/didChangeWatchedFiles`.
+"""
+function get_unsynced_file_info!(state::ServerState, uri::URI)
+    cache = load(state.unsynced_file_cache)
+    if haskey(cache, uri)
+        return cache[uri]
+    end
+    return store_unsynced_file_info!(state, uri)
+end
+
+function store_unsynced_file_info!(state::ServerState, uri::URI)
+    return store!(state.unsynced_file_cache) do cache::UnsyncedFileCacheData
+        version = time_ns() % Int
+        filename = uri2filename(uri)
+        isfile(filename) || return cache, nothing
+        parsed_stream = try
+            ParseStream!(read(filename))
+        catch e
+            JETLS_DEV_MODE && @error "Error parsing file $(filename)"
+            JETLS_DEV_MODE && Base.showerror(stderr, e, catch_backtrace)
+            return cache, nothing
+        end
+        fi = FileInfo(version, parsed_stream, filename, state.encoding; cache_tree=true)
+        return UnsyncedFileCacheData(cache, uri => fi), fi
+    end
+end
+
+function invalidate_unsynced_file_cache!(state::ServerState, uri::URI)
+    store!(state.unsynced_file_cache) do cache::UnsyncedFileCacheData
+        if haskey(cache, uri)
+            return Base.delete(cache, uri), nothing
+        else
+            return cache, nothing
+        end
+    end
+end
+
+is_synchronized(s::ServerState, uri::URI) = haskey(load(s.file_cache), uri)
 
 """
     get_context_info(state::ServerState, uri::URI, pos::Position) -> (; mod, analyzer, postprocessor)
@@ -304,3 +333,15 @@ _has_analyzed_context(::Nothing, ::URI) = false
 _has_analyzed_context(outofscope::OutOfScope, ::URI) = !isnothing(outofscope.module_context)
 _has_analyzed_context(analysis_result::AnalysisResult, uri::URI) =
     analyzed_file_info(analysis_result, uri) !== nothing
+
+function collect_workspace_uris(server::Server)
+    uris = Set{URI}()
+    for (_, info) in load(server.state.analysis_manager.cache)
+        if info isa AnalysisResult
+            for uri in analyzed_file_uris(info)
+                push!(uris, uri)
+            end
+        end
+    end
+    return uris
+end

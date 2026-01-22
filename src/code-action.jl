@@ -37,8 +37,9 @@ function handle_CodeActionRequest(
     testsetinfos = fi.testsetinfos
     isempty(testsetinfos) ||
         testrunner_code_actions!(code_actions, uri, fi, testsetinfos, msg.params.range)
-    allow_unused_underscore = get_config(server.state.config_manager, :diagnostic, :allow_unused_underscore)
+    allow_unused_underscore = get_config(server, :diagnostic, :allow_unused_underscore)
     unused_variable_code_actions!(code_actions, uri, msg.params.context.diagnostics; allow_unused_underscore)
+    sort_imports_code_actions!(code_actions, uri, msg.params.context.diagnostics)
     return send(server,
         CodeActionResponse(;
             id = msg.id,
@@ -120,4 +121,24 @@ function add_delete_unused_var_code_actions!(
                             newText = "")]))))
         end
     end
+end
+
+function sort_imports_code_actions!(
+        code_actions::Vector{Union{CodeAction,Command}},
+        uri::URI, diagnostics::Vector{Diagnostic}
+    )
+    for diagnostic in diagnostics
+        diagnostic.code == LOWERING_UNSORTED_IMPORT_NAMES_CODE || continue
+        data = diagnostic.data
+        data isa UnsortedImportData || continue
+        push!(code_actions, CodeAction(;
+            title = "Sort import names",
+            kind = CodeActionKind.QuickFix,
+            diagnostics = Diagnostic[diagnostic],
+            isPreferred = true,
+            edit = WorkspaceEdit(;
+                changes = Dict{URI,Vector{TextEdit}}(
+                    uri => TextEdit[TextEdit(; range=diagnostic.range, newText=data.new_text)]))))
+    end
+    return code_actions
 end

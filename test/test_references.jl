@@ -72,6 +72,56 @@ end
             end
         end
     end
+
+    @testset "macro references" begin
+        # Test from macro definition name
+        let code = """
+            macro │mymacro│(ex)
+                esc(ex)
+            end
+
+            @mymacro println("hello")
+            @mymacro println("world")
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            # Only test start position; end position selects `__module__` (implicit macro arg)
+            refs = find_references(clean_code, positions[1])
+            @test length(refs) == 3
+        end
+
+        # Test from macrocall
+        let code = """
+            macro mymacro(ex)
+                esc(ex)
+            end
+
+            │@mymacro│ println("hello")
+            │@mymacro│ println("world")
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            for pos in positions
+                refs = find_references(clean_code, pos)
+                @test length(refs) == 3
+            end
+        end
+
+        # includeDeclaration=false from macrocall
+        # Note: macro definition also has :use occurrences (from JuliaLowering),
+        # so includeDeclaration=false still includes the definition location
+        let code = """
+            macro mymacro(ex)
+                esc(ex)
+            end
+
+            │@mymacro│ println("hello")
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            for pos in positions
+                refs = find_references(clean_code, pos; include_declaration=false)
+                @test length(refs) == 2
+            end
+        end
+    end
 end
 
 end # module test_references

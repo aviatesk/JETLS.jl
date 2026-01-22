@@ -7,7 +7,7 @@ that identifies its category and type.
 This document describes all available diagnostic codes, their meanings, default
 severity levels, and how to configure them to match your project's needs.
 
-## [Diagnostic codes](@id diagnostic/code)
+## [Codes](@id diagnostic/code)
 
 JETLS reports diagnostics using hierarchical codes in the format
 `"category/kind"`, following the [LSP specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#diagnostic).
@@ -22,7 +22,7 @@ Pages = ["diagnostic.md"]
 Depth = 3:4
 ```
 
-## [Diagnostic severity levels](@id diagnostic/severity)
+## [Severity levels](@id diagnostic/severity)
 
 Each diagnostic has a severity level that indicates how serious the issue is.
 JETLS supports four severity levels defined by the [LSP specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#diagnosticSeverity):
@@ -45,41 +45,78 @@ You can change the severity of any diagnostic by
 Additionally, JETLS supports disabling diagnostics entirely using the special
 severity value `"off"` (or `0`).
 
-## [Diagnostic reference](@id diagnostic/reference)
+## [Sources](@id diagnostic/source)
+
+JETLS uses different diagnostic channels to balance analysis accuracy with
+response latency. Lightweight checks run as you edit for immediate feedback,
+while deeper analysis runs on save to avoid excessive resource consumption.
+
+Each diagnostic has a `source` field that identifies which diagnostic channel
+it comes from. This section explains what each source means, helping you
+understand when diagnostics update.
+Additionally, some editors also allow filtering diagnostics by source.
+
+!!! info
+    This section contains references to LSP protocol details. You don't need
+    to understand these details to use JETLS effectively - the key takeaway
+    is simply that different diagnostics update at different times (as you
+    edit, when you save, or when you run tests via [TestRunner integration](@ref)).
+
+JETLS uses three diagnostic sources:
+
+- **`JETLS/live`**: Diagnostics available on demand via the pull model
+  diagnostic channels
+  [`textDocument/diagnostic`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_diagnostic)
+  (for open files) and
+  [`workspace/diagnostic`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#workspace_diagnostic)
+  (for unopened files when [`diagnostic.all_files`](@ref config/diagnostic-all_files) is enabled).
+  Most clients request these as you edit, providing real-time feedback without
+  requiring a file save. Includes syntax errors and lowering-based analysis
+  (`syntax/*`, `lowering/*`).
+- **`JETLS/save`**: Diagnostics published by JETLS after on-save full analysis
+  via the push model channel [`textDocument/publishDiagnostics`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_publishDiagnostics).
+  These run full analysis including type inference and require loading your
+  code. Includes top-level errors and inference-based analysis (`toplevel/*`,
+  `inference/*`).
+- **`JETLS/extra`**: Diagnostics from external sources like the TestRunner
+  integration (`testrunner/*`). Published via [`textDocument/publishDiagnostics`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_publishDiagnostics).
+
+## [Reference](@id diagnostic/reference)
 
 This section provides detailed explanations for each diagnostic code. For every
 diagnostic, you'll find:
 
 - A description of what the diagnostic detects
-- Its default severity level
+- Its default severity level and source
 - Code examples demonstrating when the diagnostic is reported
 - Example diagnostic messages (shown in code comments)
 
 Here is a summary table of the diagnostics explained in this section:
 
-| Code                                                                                             | Default Severity      | Description                                                    |
-| ------------------------------------------------------------------------------------------------ | --------------------- | -------------------------------------------------------------- |
-| [`syntax/parse-error`](@ref diagnostic/reference/syntax/parse-error)                             | `Error`               | Syntax parsing errors detected by JuliaSyntax.jl               |
-| [`lowering/error`](@ref diagnostic/reference/lowering/error)                                     | `Error`               | General lowering errors                                        |
-| [`lowering/macro-expansion-error`](@ref diagnostic/reference/lowering/macro-expansion-error)     | `Error`               | Errors during macro expansion                                  |
-| [`lowering/unused-argument`](@ref diagnostic/reference/lowering/unused-argument)                 | `Information`         | Function arguments that are never used                         |
-| [`lowering/unused-local`](@ref diagnostic/reference/lowering/unused-local)                       | `Information`         | Local variables that are assigned but never read               |
-| [`lowering/undef-global-var`](@ref diagnostic/reference/lowering/undef-global-var)               | `Warning`             | References to undefined global variables (triggered on change) |
-| [`lowering/captured-boxed-variable`](@ref diagnostic/reference/lowering/captured-boxed-variable) | `Information`         | Variables captured by closures that require boxing             |
-| [`toplevel/error`](@ref diagnostic/reference/toplevel/error)                                     | `Error`               | Errors during code loading (missing deps, type failures, etc.) |
-| [`toplevel/method-overwrite`](@ref diagnostic/reference/toplevel/method-overwrite)               | `Warning`             | Method definitions that overwrite previously defined methods   |
-| [`toplevel/abstract-field`](@ref diagnostic/reference/toplevel/abstract-field)                   | `Information`         | Struct fields with abstract types                              |
-| [`inference/undef-global-var`](@ref diagnostic/reference/inference/undef-global-var)             | `Warning`             | References to undefined global variables (triggered on save)   |
-| [`inference/undef-local-var`](@ref diagnostic/reference/inference/undef-local-var)               | `Information/Warning` | References to undefined local variables                        |
-| [`inference/field-error`](@ref diagnostic/reference/inference/field-error)                       | `Warning`             | Access to non-existent struct fields                           |
-| [`inference/bounds-error`](@ref diagnostic/reference/inference/bounds-error)                     | `Warning`             | Out-of-bounds field access by index                            |
-| [`testrunner/test-failure`](@ref diagnostic/reference/testrunner/test-failure)                   | `Error`               | Test failures from TestRunner integration                      |
+| Code                                                                                             | Default Severity      | Source        | Description                                        |
+| ------------------------------------------------------------------------------------------------ | --------------------- | ------------- | -------------------------------------------------- |
+| [`syntax/parse-error`](@ref diagnostic/reference/syntax/parse-error)                             | `Error`               | `JETLS/live`  | Syntax parsing errors detected by JuliaSyntax.jl   |
+| [`lowering/error`](@ref diagnostic/reference/lowering/error)                                     | `Error`               | `JETLS/live`  | General lowering errors                            |
+| [`lowering/macro-expansion-error`](@ref diagnostic/reference/lowering/macro-expansion-error)     | `Error`               | `JETLS/live`  | Errors during macro expansion                      |
+| [`lowering/unused-argument`](@ref diagnostic/reference/lowering/unused-argument)                 | `Information`         | `JETLS/live`  | Function arguments that are never used             |
+| [`lowering/unused-local`](@ref diagnostic/reference/lowering/unused-local)                       | `Information`         | `JETLS/live`  | Local variables that are assigned but never read   |
+| [`lowering/undef-global-var`](@ref diagnostic/reference/lowering/undef-global-var)               | `Warning`             | `JETLS/live`  | References to undefined global variables           |
+| [`lowering/undef-local-var`](@ref diagnostic/reference/lowering/undef-local-var)                 | `Warning/Information` | `JETLS/live`  | References to undefined local variables            |
+| [`lowering/captured-boxed-variable`](@ref diagnostic/reference/lowering/captured-boxed-variable) | `Information`         | `JETLS/live`  | Variables captured by closures that require boxing |
+| [`lowering/unsorted-import-names`](@ref diagnostic/reference/lowering/unsorted-import-names)     | `Hint`                | `JETLS/live`  | Import/export names not sorted alphabetically      |
+| [`toplevel/error`](@ref diagnostic/reference/toplevel/error)                                     | `Error`               | `JETLS/save`  | Errors during code loading                         |
+| [`toplevel/method-overwrite`](@ref diagnostic/reference/toplevel/method-overwrite)               | `Warning`             | `JETLS/save`  | Method definitions that overwrite previous ones    |
+| [`toplevel/abstract-field`](@ref diagnostic/reference/toplevel/abstract-field)                   | `Information`         | `JETLS/save`  | Struct fields with abstract types                  |
+| [`inference/undef-global-var`](@ref diagnostic/reference/inference/undef-global-var)             | `Warning`             | `JETLS/save`  | References to undefined global variables           |
+| [`inference/field-error`](@ref diagnostic/reference/inference/field-error)                       | `Warning`             | `JETLS/save`  | Access to non-existent struct fields               |
+| [`inference/bounds-error`](@ref diagnostic/reference/inference/bounds-error)                     | `Warning`             | `JETLS/save`  | Out-of-bounds field access by index                |
+| [`testrunner/test-failure`](@ref diagnostic/reference/testrunner/test-failure)                   | `Error`               | `JETLS/extra` | Test failures from TestRunner integration          |
 
 ### [Syntax diagnostic (`syntax/*`)](@id diagnostic/reference/syntax)
 
 #### [Syntax parse error (`syntax/parse-error`)](@id diagnostic/reference/syntax/parse-error)
 
-**Default severity:** `Error`
+**Default severity**: `Error`
 
 Syntax parsing errors detected by JuliaSyntax.jl. These indicate invalid Julia
 syntax that prevents the code from being parsed.
@@ -94,12 +131,12 @@ end
 
 ### [Lowering diagnostic (`lowering/*`)](@id diagnostic/reference/lowering)
 
-Lowering diagnostic is detected during Julia's lowering phase, which
+Lowering diagnostics are detected during Julia's lowering phase, which
 transforms parsed syntax into a simpler intermediate representation.
 
 #### [Lowering error (`lowering/error`)](@id diagnostic/reference/lowering/error)
 
-**Default severity:** `Error`
+**Default severity**: `Error`
 
 General lowering errors that don't fit into more specific categories.
 
@@ -113,7 +150,7 @@ end
 
 #### [Macro expansion error (`lowering/macro-expansion-error`)](@id diagnostic/reference/lowering/macro-expansion-error)
 
-**Default severity:** `Error`
+**Default severity**: `Error`
 
 Errors that occur when expanding macros during the lowering phase.
 
@@ -138,7 +175,7 @@ end
 
 #### [Unused argument (`lowering/unused-argument`)](@id diagnostic/reference/lowering/unused-argument)
 
-**Default severity:** `Information`
+**Default severity**: `Information`
 
 Function arguments that are declared but never used in the function body.
 
@@ -153,9 +190,13 @@ function unused_argument(x, y)  # Unused argument `y` (JETLS lowering/unused-arg
 end
 ```
 
+!!! tip "Code action available"
+    You can use the "Prefix with '_'" code action to quickly rename unused
+    arguments, indicating they are intentionally unused.
+
 #### [Unused local variable (`lowering/unused-local`)](@id diagnostic/reference/lowering/unused-local)
 
-**Default severity:** `Information`
+**Default severity**: `Information`
 
 Local variables that are assigned but never read.
 
@@ -171,13 +212,19 @@ function unused_local()
 end
 ```
 
+!!! tip "Code action available"
+    Several code actions are available for this diagnostic:
+    - "Prefix with '_'" to indicate the variable is intentionally unused
+    - "Delete assignment" to remove only the left-hand side (keeping the
+      right-hand side expression)
+    - "Delete statement" to remove the entire assignment statement
+
 #### [Undefined global variable (`lowering/undef-global-var`)](@id diagnostic/reference/lowering/undef-global-var)
 
-**Default severity:** `Warning`
+**Default severity**: `Warning`
 
 References to undefined global variables, detected during lowering analysis.
-This diagnostic is reported on change (as you type), providing immediate
-feedback.
+This diagnostic provides immediate feedback as you type.
 
 Example:
 
@@ -190,12 +237,84 @@ end
 
 This diagnostic detects simple undefined global variable references. For more
 comprehensive detection (including qualified references like `Base.undefvar`),
-see [`inference/undef-global-var`](@ref diagnostic/reference/inference/undef-global-var),
-which runs on save.
+see [`inference/undef-global-var`](@ref diagnostic/reference/inference/undef-global-var)
+(source: `JETLS/save`).
+
+#### [Undefined local variable (`lowering/undef-local-var`)](@id diagnostic/reference/lowering/undef-local-var)
+
+**Default severity**: `Warning` or `Information`
+
+References to local variables that may be used before being defined. This
+diagnostic provides immediate feedback based on CFG-aware analysis on lowered
+code.
+
+The severity depends on the certainty of the undefined usage:
+- **`Warning`**: The variable is definitely used before any assignment (strict
+  undef - guaranteed `UndefVarError` at runtime)
+- **`Information`**: The variable may be undefined depending on control flow
+  (e.g., assigned only in one branch of an `if` statement)
+
+Examples:
+
+```julia
+function strict_undef()
+    println(x)  # Variable `x` is used before it is defined (JETLS lowering/undef-local-var)
+                # Severity: Warning (strict undef)
+    x = 1       # RelatedInformation: `x` is defined here
+    return x
+end
+
+function maybe_undef(cond)
+    if cond
+        y = 1   # RelatedInformation: `y` is defined here
+    end
+    return y  # Variable `y` may be used before it is defined (JETLS lowering/undef-local-var)
+              # Severity: Information (maybe undef)
+end
+```
+
+The diagnostic is reported at the first use location, with `relatedInformation`
+pointing to definition sites to help understand the control flow.
+
+!!! tip "Workaround: Using `@isdefined` guard"
+    When a variable is conditionally assigned, you can rewrite the program logic
+    using `@isdefined` so that the compiler can track the definedness:
+    ```julia
+    function guarded(cond)
+        if cond
+            y = 42
+        end
+        if @isdefined(y)
+            return sin(y)  # No diagnostic: compiler knows `y` is defined here
+        end
+    end
+    ```
+
+!!! tip "Workaround: Using `@assert @isdefined` as a hint"
+    There are cases where you know a variable is always defined at a certain point,
+    but the analysis cannot prove it. This includes correlated conditions, complex
+    control flow, or general runtime invariants that the compiler cannot figure out
+    statically. In such cases, you can use `@assert @isdefined(var) "..."` as a hint:
+    ```julia
+    function correlated(cond)
+        if cond
+            y = 42
+        end
+        if cond
+            # The analysis reports "may be undefined" because it doesn't track
+            # that `cond` is the same in both branches
+            @assert @isdefined(y) "Assertion to tell the compiler about the definedness of this variable"
+            return sin(y)  # No diagnostic after the assertion
+        end
+    end
+    ```
+    This hint allows the compiler to avoid generating unnecessary `UndefVarError`
+    handling code, and also serves as documentation that you've verified the
+    variable is defined at this point.
 
 #### [Captured boxed variable (`lowering/captured-boxed-variable`)](@id diagnostic/reference/lowering/captured-boxed-variable)
 
-**Default severity:** `Information`
+**Default severity**: `Information`
 
 Reported when a variable is captured by a closure and requires "boxing" due to
 being assigned multiple times. Captured boxed variables are stored in heap-allocated
@@ -276,16 +395,46 @@ end
     generates `Core.Box` do not necessarily match the cases where JETLS reports
     captured boxes.
 
+#### [Unsorted import names (`lowering/unsorted-import-names`)](@id diagnostic/reference/lowering/unsorted-import-names)
+
+**Default severity**: `Hint`
+
+Reported when names in `import`, `using`, `export`, or `public` statements are
+not sorted alphabetically. This is a style diagnostic that helps maintain
+consistent ordering of imports and exports.
+
+Expected sort order:
+- Case-sensitive comparison (`A` < `Z` < `a` < `z`)
+- For `as` expressions like `using Foo: bar as baz`, sorted by original name
+  (`bar`), not the alias
+- Relative imports: dots are included in the sort key
+  (`..Base` < `Base` < `Core`)
+
+Example:
+
+```julia
+import Foo: c, a, b  # Names are not sorted alphabetically (JETLS lowering/unsorted-import-names)
+
+export bar, @foo  # Names are not sorted alphabetically (JETLS lowering/unsorted-import-names)
+```
+
+!!! tip "Code action available"
+    The "Sort import names" code action automatically fixes the ordering.
+    When the sorted result exceeds 92 characters (
+    [Julia's conventional maximum line length](https://docs.julialang.org/en/v1.14-dev/devdocs/contributing/formatting/#General-Formatting-Guidelines-for-Julia-code-contributions)),
+    the code action wraps to multiple lines with 4-space continuation indent.
+
 ### [Top-level diagnostic (`toplevel/*`)](@id diagnostic/reference/toplevel)
 
-Top-level diagnostic are reported by JETLS's full analysis feature, which runs
-when you save a file. To prevent excessive analysis on frequent saves, JETLS
-uses a debounce mechanism. See the [`[full_analysis] debounce`](@ref config/full_analysis-debounce)
-configuration documentation to adjust the debounce period.
+Top-level diagnostics are reported by JETLS's full analysis feature (source:
+`JETLS/save`), which runs when you save a file. To prevent excessive analysis
+on frequent saves, JETLS uses a debounce mechanism. See the
+[`[full_analysis] debounce`](@ref config/full_analysis-debounce) configuration
+documentation to adjust the debounce period.
 
 #### [Top-level error (`toplevel/error`)](@id diagnostic/reference/toplevel/error)
 
-**Default severity:** `Error`
+**Default severity**: `Error`
 
 Errors that occur when JETLS loads your code for analysis. This diagnostic is
 commonly reported in several scenarios:
@@ -320,7 +469,7 @@ directory, and verify that your package can be loaded successfully in a Julia RE
 
 #### [Method overwrite (`toplevel/method-overwrite`)](@id diagnostic/reference/toplevel/method-overwrite)
 
-**Default severity:** `Warning`
+**Default severity**: `Warning`
 
 Reported when a method with the same signature is defined multiple times within
 a package. This typically indicates an unintentional redefinition that
@@ -344,7 +493,7 @@ The diagnostic includes a link to the original definition location via
 
 #### [Abstract field type (`toplevel/abstract-field`)](@id diagnostic/reference/toplevel/abstract-field)
 
-**Default severity:** `Information`
+**Default severity**: `Information`
 
 Reported when a struct field has an abstract type, which can cause performance
 issues due to type instability. Storing values in abstractly-typed fields
@@ -392,19 +541,19 @@ end
 
 ### [Inference diagnostic (`inference/*`)](@id diagnostic/reference/inference)
 
-Inference diagnostic uses JET.jl to perform type-aware analysis and detect
-potential errors through static analysis. These diagnostics are reported by
-JETLS's full analysis feature, which runs when you save a file (similar to
+Inference diagnostics use [JET.jl](https://github.com/aviatesk/JET.jl) to
+perform type-aware analysis and detect potential errors through static analysis.
+These diagnostics are reported by JETLS's full analysis feature
+(source: `JETLS/save`), which runs when you save a file (similar to
 [Top-level diagnostic](@ref diagnostic/reference/toplevel)).
 
 #### [Undefined global variable (`inference/undef-global-var`)](@id diagnostic/reference/inference/undef-global-var)
 
-**Default severity:** `Warning`
+**Default severity**: `Warning`
 
 References to undefined global variables, detected through full analysis. This
-diagnostic runs on save and can detect comprehensive cases including qualified
-references (e.g., `Base.undefvar`). Position information is reported on a line
-basis.
+diagnostic can detect comprehensive cases including qualified references
+(e.g., `Base.undefvar`). Position information is reported on a line basis.
 
 Example:
 
@@ -415,32 +564,13 @@ end
 ```
 
 For faster feedback while editing, see
-[`lowering/undef-global-var`](@ref diagnostic/reference/lowering/undef-global-var),
-which reports a subset of undefined variable cases on change with accurate
-position information.
-
-#### [Undefined local variable (`inference/undef-local-var`)](@id diagnostic/reference/inference/undef-local-var)
-
-**Default severity:** `Information` or `Warning`
-
-References to undefined local variables. The severity depends on whether the
-variable is definitely undefined (`Warning`) or only possibly undefined
-(`Information`).
-
-Example:
-
-```julia
-function undef_local_var()
-    if rand() > 0.5
-        x = 1
-    end
-    return x  # local variable `x` may be undefined (JETLS inference/undef-local-var)
-end
-```
+[`lowering/undef-global-var`](@ref diagnostic/reference/lowering/undef-global-var)
+(source: `JETLS/live`), which reports a subset of undefined variable cases with
+accurate position information.
 
 #### [Field error (`inference/field-error`)](@id diagnostic/reference/inference/field-error)
 
-**Default severity:** `Warning`
+**Default severity**: `Warning`
 
 Access to non-existent struct fields. This diagnostic is reported when code
 attempts to access a field that doesn't exist on a struct type.
@@ -459,7 +589,7 @@ end
 
 #### [Bounds error (`inference/bounds-error`)](@id diagnostic/reference/inference/bounds-error)
 
-**Default severity:** `Warning`
+**Default severity**: `Warning`
 
 Out-of-bounds field access by index. This diagnostic is reported when code
 attempts to access a struct field using an integer index that is out of bounds,
@@ -479,14 +609,23 @@ end
 
 ### [TestRunner diagnostic (`testrunner/*`)](@id diagnostic/reference/testrunner)
 
+TestRunner diagnostics are reported when you manually run tests via code lens
+or code actions through the [TestRunner integration](@ref) (source: `JETLS/extra`).
+Unlike other diagnostics, these are not triggered automatically by editing or saving files.
+
 #### [Test failure (`testrunner/test-failure`)](@id diagnostic/reference/testrunner/test-failure)
 
-**Default severity:** `Error`
+**Default severity**: `Error`
 
 Test failures reported by [TestRunner integration](@ref) that happened during
 running individual `@testset` blocks or `@test` cases.
 
-## [Configuring diagnostic](@id diagnostic/configuring)
+!!! note
+    Diagnostics from `@test` cases automatically disappear after 10 seconds,
+    while `@testset` diagnostics persist until you run the testset again,
+    restructure testsets, or clear them manually.
+
+## [Configuration](@id diagnostic/configuring)
 
 You can configure which diagnostics are shown and at what [severity level](@ref diagnostic/severity)
 under the `[diagnostic]` section. This allows you to customize JETLS's

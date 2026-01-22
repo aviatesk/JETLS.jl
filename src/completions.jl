@@ -241,8 +241,8 @@ function global_completions!(
         is_completed |= true
     end
     resolver_id = String(gensym("GlobalCompletionResolverInfo_resovler_id"))
-    store!(state.completion_resolver_info) do _
-        GlobalCompletionResolverInfo(resolver_id, completion_module, postprocessor), nothing
+    store!(state.completion_resolver_info, completion_module) do _, mod::Module
+        GlobalCompletionResolverInfo(resolver_id, mod, postprocessor), nothing
     end
 
     prioritized_names = let s = Set{Symbol}()
@@ -381,7 +381,7 @@ function add_emoji_latex_completions!(
     # Other clients (e.g., VSCode) properly handles `\` character appearing in `sortText`,
     # so we keep `label` as-is.
     strip_prefix = @somereal(
-        get_config(state.config_manager, :completion, :latex_emoji, :strip_prefix),
+        get_config(state, :completion, :latex_emoji, :strip_prefix),
         # auto-detect based on client
         getobjpath(state, :init_params, :clientInfo, :name) ∈ ("Zed", "Zed Dev"))
 
@@ -788,7 +788,7 @@ function resolve_completion_item(state::ServerState, item::CompletionItem)
         typstr = completion_resolver_info.postprocessor(string(rettyp))
         detail = " ::" * typstr
         prepend_inference_result = @somereal(
-            get_config(state.config_manager, :completion, :method_signature, :prepend_inference_result),
+            get_config(state, :completion, :method_signature, :prepend_inference_result),
             # auto-detect based on client
             getobjpath(state, :init_params, :clientInfo, :name) ∈ ("Zed", "Zed Dev"))
         if prepend_inference_result

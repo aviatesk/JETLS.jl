@@ -5,7 +5,7 @@ export LSInterpreter
 using JuliaSyntax: JuliaSyntax as JS
 using JET: CC, JET, JuliaInterpreter
 using ..JETLS:
-    AnalysisRequest, AnalysisResult, SavedFileInfo, Server, JETLS, JETLS_DEV_MODE,
+    AnalysisRequest, AnalysisResult, JETLS, JETLS_DEV_MODE, SavedFileInfo, Server,
     is_cancelled, send_progress, yield_to_endpoint
 using ..JETLS.URIs2
 using ..JETLS.LSP

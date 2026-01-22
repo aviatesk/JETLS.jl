@@ -212,7 +212,7 @@ end
                 end
                 @test cell3_notification !== nothing
                 @test any(cell3_notification.params.diagnostics) do diag
-                    diag.source == JETLS.DIAGNOSTIC_SOURCE &&
+                    diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE &&
                     occursin("undefhello", diag.message)
                 end
             end

@@ -697,6 +697,7 @@ function extract_local_scope_bindings!(symbols::Vector{DocumentSymbol},
             binding_node = JL.binding_ex(ctx3, bid)
             prov = JS.flattened_provenance(binding_node)
             isempty(prov) && continue
+            source_node = first(prov)
             # TODO This is a variable introduced in macro expanded code
             # For now we completely ignore such cases, but in the future we might want to
             # include such variables as document-symbols too.
@@ -704,8 +705,11 @@ function extract_local_scope_bindings!(symbols::Vector{DocumentSymbol},
             # `@info "log" x = x` may not be useful in most cases, but in cases like
             # `func(x) = (@asis y = 42; x + y)` using `macro asis(x); :($(esc(x))); end`,
             # we might want `y` to appear in the outline.
-            length(prov) > 1 && continue
-            source_node = first(prov)
+            if length(prov) > 1
+                if !is_nospecialize_or_specialize_macrocall3(source_node)
+                    continue
+                end
+            end
             fb, lb = JS.first_byte(source_node), JS.last_byte(source_node)
             (iszero(fb) && iszero(lb)) && continue
             # Skip duplicates (e.g., from kwsorter scope merging)
@@ -735,11 +739,20 @@ function extract_local_scope_bindings!(symbols::Vector{DocumentSymbol},
                     detail = JS.sourcetext(parent)
                 end
             else
-                kind = SymbolKind.Variable
                 if binfo.kind === :argument
-                    detail = extract_argument_detail(parent_map, fb, lb)
+                    if JS.kind(source_node) === JS.K"macrocall"
+                        detail = JS.sourcetext(source_node)
+                    else
+                        detail = extract_argument_detail(parent_map, fb, lb)
+                    end
+                    # Why doesn't LSP provide `SymbolKind.Argument`?
+                    # It's absolutely necessary before `SymbolKind.Event`...
+                    # Anyway, here we use `SymbolKind.Object` to make it clear
+                    # that this is different from :local bindings
+                    kind = SymbolKind.Object
                 else
                     detail = extract_local_variable_detail(parent_map, fb, lb)
+                    kind = SymbolKind.Variable
                 end
             end
             children_symbols = nothing
@@ -765,12 +778,7 @@ function extract_argument_detail(
     )
     parent = get(parent_map, (fb, lb), nothing)
     detail = nothing
-    if !isnothing(parent) && JS.kind(parent) in JS.KSet":: ..."
-        detail = lstrip(JS.sourcetext(parent))
-        fb, lb = JS.first_byte(parent), JS.last_byte(parent)
-        parent = get(parent_map, (fb, lb), nothing)
-    end
-    if !isnothing(parent) && JS.kind(parent) === JS.K"kw"
+    if !isnothing(parent) && JS.kind(parent) in JS.KSet":: kw ..."
         detail = lstrip(JS.sourcetext(parent))
         fb, lb = JS.first_byte(parent), JS.last_byte(parent)
         parent = get(parent_map, (fb, lb), nothing)

@@ -1,6 +1,6 @@
 module JETLS
 
-export Server, Endpoint, runserver
+export Endpoint, Server, runserver
 
 const JETLS_VERSION = let
     version_file = joinpath(dirname(@__DIR__), "JETLS_VERSION")
@@ -81,6 +81,9 @@ include("utils/server.jl")
 include("init-options.jl")
 include("config.jl")
 include("workspace-configuration.jl")
+
+include("analysis/occurrence-analysis.jl")
+include("analysis/undef-analysis.jl")
 
 include("diagnostic.jl")
 
@@ -426,7 +429,7 @@ function handle_request_message(server::Server, @nospecialize(msg), cancel_flag:
     elseif msg isa DocumentDiagnosticRequest
         handle_DocumentDiagnosticRequest(server, msg, cancel_flag)
     elseif msg isa WorkspaceDiagnosticRequest
-        @assert false "workspace/diagnostic should not be enabled"
+        handle_WorkspaceDiagnosticRequest(server, msg, cancel_flag)
     elseif msg isa CodeLensRequest
         handle_CodeLensRequest(server, msg, cancel_flag)
     elseif msg isa CodeActionRequest

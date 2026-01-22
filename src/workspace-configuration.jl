@@ -1,3 +1,5 @@
+const WORKSPACE_CONFIGURATION_NAMESPACE = "jetls"
+
 struct LoadLSPConfigHandler
     server::Server
     source::String
@@ -50,7 +52,7 @@ end
 
 function load_lsp_config!(server::Server, source::AbstractString; on_init::Bool=false)
     handler = LoadLSPConfigHandler(server, source, on_init)
-    request_workspace_configuration(handler, server, nothing)
+    request_workspace_configuration(handler, server, WORKSPACE_CONFIGURATION_NAMESPACE)
     nothing
 end
 
@@ -58,14 +60,13 @@ unmatched_keys_in_lsp_config_msg(unmatched_keys) =
     unmatched_keys_msg("LSP configuration contains unknown keys:", unmatched_keys)
 
 function store_lsp_config!(tracker::ConfigChangeTracker, server::Server, @nospecialize(config_value), source::AbstractString)
-    if config_value isa AbstractDict{String}
-        config_dict = config_value
-    else
+    if !(config_value isa AbstractDict{String})
         if config_value !== nothing
             show_error_message(server, lazy"Unexpected config data of type $(typeof(config_value)) was passed from $source, deleting LSP configuration")
         end
         return delete_lsp_config!(tracker, server)
     end
+    config_dict = config_value
     store!(server.state.config_manager) do old_data::ConfigManagerData
         new_lsp_config = parse_config_dict(config_dict)
         if new_lsp_config isa AbstractString
@@ -109,7 +110,7 @@ function handle_lsp_config_change!(server::Server, tracker::ConfigChangeTracker,
         notify_config_changes(server, tracker, source)
     end
     if tracker.diagnostic_setting_changed
-        notify_diagnostics!(server)
+        notify_diagnostics!(server; ensure_cleared = true)
         request_diagnostic_refresh!(server)
     end
 end

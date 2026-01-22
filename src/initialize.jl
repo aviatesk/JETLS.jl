@@ -261,8 +261,9 @@ function handle_InitializeRequest(
             name = "JETLS",
             version = JETLS_VERSION))
 
-    process_id = init_params.processId
-    if !isnothing(process_id)
+    processId = init_params.processId
+    if !isnothing(processId)
+        process_id = processId # avoid captured box
         if client_process_id !== nothing
             if client_process_id != process_id
                 @warn "Different client process IDs given" client_process_id process_id
@@ -401,7 +402,7 @@ function handle_InitializedNotification(server::Server)
     if supports(server, :textDocument, :diagnostic, :dynamicRegistration)
         push!(registrations, diagnostic_registration())
         if JETLS_DEV_MODE
-            @info "Dynamically registering 'textDocument/diagnotic' upon `InitializedNotification`"
+            @info "Dynamically registering 'textDocument/diagnostic' upon `InitializedNotification`"
         end
     end
 

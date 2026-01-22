@@ -205,3 +205,7 @@ function send_progress(server::Server, token::ProgressToken, value::WorkDoneProg
         put!(server.message_queue, HandledToken(token))
     end
 end
+
+function send_partial_result(server::Server, token::ProgressToken, value)
+    send(server, ProgressNotification(; params = ProgressParams(; token, value)))
+end

@@ -511,6 +511,11 @@ struct UnusedVariableData
 end
 export UnusedVariableData
 
+struct UnsortedImportData
+    new_text::String
+end
+export UnsortedImportData
+
 """
 Represents a diagnostic, such as a compiler error or warning.
 Diagnostic objects are only valid in the scope of a resource.
@@ -568,7 +573,7 @@ Diagnostic objects are only valid in the scope of a resource.
     # Tags
     - since – 3.16.0
     """
-    data::Union{UnusedVariableData, Nothing} = nothing
+    data::Union{UnusedVariableData, UnsortedImportData, Nothing} = nothing
 end
 
 # Command
@@ -1107,7 +1112,7 @@ end
     token::ProgressToken
 
     "The progress data."
-    value::WorkDoneProgressValue
+    value::Union{WorkDoneProgressValue, Any} # Any for partial result
 end
 
 """
@@ -1146,20 +1151,20 @@ For example, a `textDocument/reference` request that supports both work done and
 partial result progress might look like this:
 ```json
 {
-	"textDocument": {
-		"uri": "file:///folder/file.ts"
-	},
-	"position": {
-		"line": 9,
-		"character": 5
-	},
-	"context": {
-		"includeDeclaration": true
-	},
-	// The token used to report work done progress.
-	"workDoneToken": "1d546990-40a3-4b77-b134-46622995f6ae",
-	// The token used to report partial result progress.
-	"partialResultToken": "5f6f349e-4f81-4a3b-afff-ee04bff96804"
+    "textDocument": {
+        "uri": "file:///folder/file.ts"
+    },
+    "position": {
+        "line": 9,
+        "character": 5
+    },
+    "context": {
+        "includeDeclaration": true
+    },
+    // The token used to report work done progress.
+    "workDoneToken": "1d546990-40a3-4b77-b134-46622995f6ae",
+    // The token used to report partial result progress.
+    "partialResultToken": "5f6f349e-4f81-4a3b-afff-ee04bff96804"
 }
 ```
 

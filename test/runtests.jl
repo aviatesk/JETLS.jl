@@ -19,6 +19,11 @@ end
         @testset "markdown" include("utils/test_markdown.jl")
         @testset "string" include("utils/test_string.jl")
     end
+    @testset "analysis" begin
+        @testset "occurrence" include("analysis/test_occurrence_analysis.jl")
+        @testset "undef" include("analysis/test_undef_analysis.jl")
+        @testset "LSAnalyzer" include("analysis/test_Analyzer.jl")
+    end
     @testset "types" include("test_types.jl")
     @testset "config" include("test_config.jl")
     @testset "URIs2" include("test_URIs2.jl")
@@ -33,7 +38,8 @@ end
     @testset "references" include("test_references.jl")
     @testset "hover" include("test_hover.jl")
     @testset "inlay hint" include("test_inlay_hint.jl")
-    @testset "LSAnalyzer" include("test_Analyzer.jl")
+    @testset "lowering diagnostic" include("test_lowering_diagnostic.jl")
+    @testset "code action" include("test_code_action.jl")
     @testset "diagnostics" include("test_diagnostic.jl")
     @testset "did-change-watched-files" include("test_did_change_watched_files.jl")
     @testset "rename" include("test_rename.jl")

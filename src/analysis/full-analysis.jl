@@ -291,7 +291,7 @@ function schedule_analysis!(
         entry, uri, generation, cancellable_token, notify_diagnostics,
         prev_analysis_result, completion)
 
-    debounce = get_config(server.state.config_manager, :full_analysis, :debounce)
+    debounce = get_config(server, :full_analysis, :debounce)
     if onsave && debounce > 0
         store!(manager.debounced) do debounced
             if haskey(debounced, request.entry)
@@ -402,9 +402,7 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
     # re-request diagnostics now that new module context is available, allowing
     # lowering/macro-expansion-error and lowering/undef-global-var diagnostics
     # to be properly reported.
-    if supports(server, :workspace, :diagnostics, :refreshSupport)
-        request_diagnostic_refresh!(server)
-    end
+    request_diagnostic_refresh!(server)
 
     @label next_request
 
@@ -505,28 +503,28 @@ function execute_analysis_request(server::Server, request::AnalysisRequest)
 
     if entry isa NewAnalysisEntry
         env_path = entry.env_path
-        if env_path === nothing
-            result = analyze_package_with_revise(server, request, entry.pkgid)
+        result = if env_path === nothing
+            analyze_package_with_revise(server, request, entry.pkgid)
         else
-            result = activate_with_early_release(env_path) do activation_done::Base.Event
+            activate_with_early_release(env_path) do activation_done::Base.Event
                 analyze_package_with_revise(server, request, entry.pkgid, activation_done)
             end
         end
         return result, false
     end
 
-    if entry isa ScriptAnalysisEntry
-        interp, result = analyze_parsed_if_exist(server, request)
+    interp, result = if entry isa ScriptAnalysisEntry
+        analyze_parsed_if_exist(server, request)
     elseif entry isa ScriptInEnvAnalysisEntry
-        interp, result = activate_with_early_release(entry.env_path) do activation_done::Base.Event
+        activate_with_early_release(entry.env_path) do activation_done::Base.Event
             analyze_parsed_if_exist(server, request; activation_done)
         end
     elseif entry isa PackageSourceAnalysisEntry
-        interp, result = activate_with_early_release(entry.env_path) do activation_done::Base.Event
+        activate_with_early_release(entry.env_path) do activation_done::Base.Event
             analyze_parsed_if_exist(server, request, entry.pkgid; activation_done)
         end
     elseif entry isa PackageTestAnalysisEntry
-        interp, result = activate_with_early_release(entry.env_path) do activation_done::Base.Event
+        activate_with_early_release(entry.env_path) do activation_done::Base.Event
             analyze_parsed_if_exist(server, request; activation_done)
         end
     else error("Unsupported analysis entry $entry") end
@@ -775,7 +773,7 @@ function analyze_package_with_revise(
         yield_to_endpoint()
     end
 
-    tasks = map(workitems) do workitem
+    tasks = let analyzer=analyzer, progress=progress; map(workitems) do workitem
         (; siginfos, index) = workitem
         siginfo = siginfos[index]::Revise.SigInfo
         Threads.@spawn :default try
@@ -834,7 +832,7 @@ function analyze_package_with_revise(
                 end
             end
         end
-    end
+    end; end
 
     waitall(tasks)
 
@@ -842,12 +840,13 @@ function analyze_package_with_revise(
 
     analyzed_file_infos = Dict{URI,JET.AnalyzedFileInfo}()
     basedir = Revise.basedir(pkgdata)
-    for file in Revise.srcfiles(pkgdata)
+    for (i, file) in enumerate(Revise.srcfiles(pkgdata))
         filepath = joinpath(basedir, file)
         uri = filepath2uri(filepath)
         # Build module range info from Revise's tracked modules
-        # For simplicity, associate the entire file with the package module
-        module_range_infos = Pair{UnitRange{Int},Module}[(1:typemax(Int)) => pkgmod]
+        # TODO This is pretty incorrect module context mapping
+        filemod, _ = last(pkgdata.fileinfos[i].mod_exs_infos)
+        module_range_infos = Pair{UnitRange{Int},Module}[(1:typemax(Int)) => filemod]
         analyzed_file_infos[uri] = JET.AnalyzedFileInfo(module_range_infos)
     end
     uri2diagnostics = URI2Diagnostics(uri => Diagnostic[] for uri in keys(analyzed_file_infos))
@@ -1122,7 +1121,7 @@ function ensure_instantiated_if_requested!(server::Server, env_path::String)
 end
 
 function ensure_instantiated!(server::Server, env_path::String)
-    if get_config(server.state.config_manager, :full_analysis, :auto_instantiate)
+    if get_config(server, :full_analysis, :auto_instantiate)
         manifest_name = "Manifest-v$(VERSION.major).$(VERSION.minor).toml"
         manifest_path = joinpath(dirname(env_path), manifest_name)
         io = IOBuffer()
