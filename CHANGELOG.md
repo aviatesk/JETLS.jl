@@ -113,6 +113,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   expectations about how requests with no `section` are handled.
   (https://github.com/aviatesk/JETLS.jl/pull/483; thanks [danielwe](https://github.com/danielwe))
 
+- Updated JuliaSyntax.jl and JuliaLowering.jl dependency versions to latest.
+
 ### Fixed
 
 - Fixed LSP features not working inside `@main` functions.
@@ -121,6 +123,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   struct's inner constructor defines a local variable with the same name as a
   type parameter (e.g., `struct Foo{T}` with `T = typeof(x)` in the constructor).
   (https://github.com/aviatesk/JETLS.jl/issues/508)
+
+- Fixed severe performance issue when analyzing test files containing many
+  `@test` and `@testset` macros. The underlying JuliaLowering issue caused
+  macro expansion to be 40-300x slower for test files compared to regular source
+  files. (JuliaLang/julia#60756)
 
 ## 2026-01-17
 

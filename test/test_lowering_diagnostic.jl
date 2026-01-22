@@ -697,6 +697,14 @@ end
         @test diagnostic.range.var"end".line == 1
         @test diagnostic.range.var"end".character == 13
     end
+
+    @test_broken isempty(get_lowered_diagnostics(@__MODULE__, """
+        struct Issue492
+            global function make_issue492()
+                new()
+            end
+        end
+    """))
 end
 
 @testset "Undefined local binding report" begin
