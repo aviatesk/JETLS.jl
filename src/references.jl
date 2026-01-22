@@ -88,7 +88,7 @@ function find_references(
     locations = Location[]
 
     (; ctx3, st3, binding) = @something begin
-        _select_target_binding(st0_top, offset, mod; caller="find_references!")
+        _select_target_binding(st0_top, offset, mod; caller="find_references")
     end return locations
 
     binfo = JL.get_binding(ctx3, binding)

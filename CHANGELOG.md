@@ -61,6 +61,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   statements are not sorted alphabetically. The "Sort import names" code action
   is available to automatically fix the ordering.
 
+- `textDocument/documentHighlight` now supports macro bindings. Highlighting a
+  macro name (either in the definition or at a call site) shows all occurrences
+  of that macro within the document.
+
+- `textDocument/references` now supports macro bindings. Finding references on
+  a macro name (either in the definition or at a call site) shows all
+  occurrences of that macro across the package.
+
 ### Changed
 
 - Updated TestRunner.jl installation instructions to use the `#release` branch

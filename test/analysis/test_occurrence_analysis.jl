@@ -301,6 +301,33 @@ ismacro_callback(ismacro) = @test ismacro[]
     end
 end
 
+function get_binding_occurrences_st0(text::AbstractString;
+        filename::String = joinpath(@__DIR__, "testfile.jl"), kwargs...)
+    fi = JETLS.FileInfo(#=version=#0, text, filename)
+    st0 = jlparse(text; rule=:statement)
+    uri = filename2uri(filename)
+    state = JETLS.ServerState()
+    return JETLS.compute_binding_occurrences_st0(state, uri, fi, st0;
+        lookup_func = Returns(JETLS.OutOfScope(lowering_module)), kwargs...)
+end
+
+@testset "compute_binding_occurrences_st0" begin
+    @testset "macro calls" begin
+        let boccs = get_binding_occurrences_st0("@nospecialize"; include_global_bindings=true)
+            @test length(boccs) == 1
+            binfo, occs = only(boccs)
+            @test binfo.name == "@nospecialize"
+            @test length(occs) == 1
+        end
+        let boccs = get_binding_occurrences_st0("Base.@nospecialize"; include_global_bindings=true)
+            @test length(boccs) == 1
+            binfo, occs = only(boccs)
+            @test binfo.name == "Base"
+            @test length(occs) == 1
+        end
+    end
+end
+
 function with_global_binding_occurrences(
         f, text::AbstractString, target_name::String;
         filename::String = joinpath(@__DIR__, "testfile.jl"))
@@ -406,6 +433,66 @@ macro noop(ex) esc(ex) end
             @test length(ranges) == 2
             @test Range(; start=positions[1], var"end"=positions[2]) in ranges
             @test Range(; start=positions[3], var"end"=positions[4]) in ranges
+        end
+    end
+
+    @testset "macro calls" begin
+        with_global_binding_occurrences("""
+            macro │mymacro│(ex)
+                esc(ex)
+            end
+            result = │@mymacro│ @noop 42
+            """, "@mymacro") do ranges, positions
+            @test length(positions) == 4
+            @test length(ranges) == 2
+            @test Range(; start=positions[1], var"end"=positions[2]) in ranges
+            @test Range(; start=positions[3], var"end"=positions[4]) in ranges
+        end
+        with_global_binding_occurrences("""
+            macro │mymacro│(ex)
+                esc(ex)
+            end
+            result = @noop │@mymacro│ 42
+            """, "@mymacro") do ranges, positions
+            @test length(positions) == 4
+            @test length(ranges) == 2
+            @test Range(; start=positions[1], var"end"=positions[2]) in ranges
+            @test Range(; start=positions[3], var"end"=positions[4]) in ranges
+        end
+        with_global_binding_occurrences("""
+            macro │mymacro│(ex)
+                esc(ex)
+            end
+            result = @noop @noop │@mymacro│ 42
+            """, "@mymacro") do ranges, positions
+            @test length(positions) == 4
+            @test length(ranges) == 2
+            @test Range(; start=positions[1], var"end"=positions[2]) in ranges
+            @test Range(; start=positions[3], var"end"=positions[4]) in ranges
+        end
+        with_global_binding_occurrences("""
+            macro │inner│(ex)
+                esc(ex)
+            end
+            result = @noop │@inner│ @noop 42
+            """, "@inner") do ranges, positions
+            @test length(positions) == 4
+            @test length(ranges) == 2
+            @test Range(; start=positions[1], var"end"=positions[2]) in ranges
+            @test Range(; start=positions[3], var"end"=positions[4]) in ranges
+        end
+
+        # Multiple macro calls at same level
+        with_global_binding_occurrences("""
+            macro │m│(ex)
+                esc(ex)
+            end
+            result1 = │@m│ 1
+            result2 = │@m│ 2
+            result3 = │@m│ @noop │@m│ 3
+            """, "@m") do ranges, positions
+            @test length(positions) == 10
+            @test length(ranges) == 5
         end
     end
 end

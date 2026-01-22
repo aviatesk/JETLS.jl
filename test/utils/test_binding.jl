@@ -108,6 +108,43 @@ end
         end
         @test cnt == 4
     end
+
+    # Macrocall name binding
+    let cnt = 0
+        _with_target_binding("""
+            │@info│ "hello"
+            """) do i, (; ctx3, binding)
+            binfo = JL.get_binding(ctx3, binding)
+            @test binfo.kind === :global
+            @test binfo.name == "@info"
+            cnt += 1
+        end
+        @test cnt == 2
+    end
+
+    # Qualified macrocall: cursor at module name returns module binding
+    let cnt = 0
+        _with_target_binding("""
+            │Bas│e.@info "hello"
+            """) do _, (; ctx3, binding)
+            binfo = JL.get_binding(ctx3, binding)
+            @test binfo.kind === :global
+            @test binfo.name == "Base"
+            cnt += 1
+        end
+        @test cnt == 2
+    end
+
+    # Qualified macrocall: cursor at end of macro name returns nothing
+    let cnt = 0
+        with_target_binding("""
+            Base.@info│ "hello"
+            """) do _, binding
+            @test binding === nothing
+            cnt += 1
+        end
+        @test cnt == 1
+    end
 end
 
 function with_target_binding_definitions(f, text::AbstractString; kwargs...)

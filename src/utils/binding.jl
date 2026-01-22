@@ -201,12 +201,8 @@ function _select_target_binding(st0_top::JS.SyntaxTree, offset::Int, mod::Module
                                 caller::AbstractString = "_select_target_binding")
     st0 = @something greatest_local(st0_top, offset) return nothing # nothing we can lower
 
-    bas = byte_ancestors(st0′::JS.SyntaxTree->JS.kind(st0′) in JS.KSet"macrocall", st0, offset)
-    if !isempty(bas) && offset in JS.byte_range(bas[1][1])
-        # In macrocall first arg.  Our definition can't be local, and lowering
-        # would destroy it anyway.  Defer to global logic.
-        return nothing
-    end
+    macrocall_result = select_macrocall_binding(st0, offset, mod, caller)
+    macrocall_result !== nothing && return macrocall_result
 
     (; ctx3, st3) = try
         # Remove macros to preserve precise source locations
@@ -218,6 +214,36 @@ function _select_target_binding(st0_top::JS.SyntaxTree, offset::Int, mod::Module
     end
     binding = @something __select_target_binding(ctx3, st3, offset) return nothing
     return (; ctx3, st3, binding)
+end
+
+function select_macrocall_binding(
+        st0::JS.SyntaxTree, offset::Int, mod::Module, caller::AbstractString
+    )
+    is_macrocall_name = (offset::Int) -> (st0′::JS.SyntaxTree) ->
+        JS.kind(st0′) === JS.K"macrocall" && JS.numchildren(st0′) ≥ 1 &&
+        offset in JS.byte_range(st0′[1])
+    bas = byte_ancestors(is_macrocall_name(offset), st0, offset)
+    if isempty(bas)
+        # Support cases like `@macro│` where cursor is at the end
+        offset -= 1
+        bas = byte_ancestors(is_macrocall_name(offset), st0, offset)
+    end
+    isempty(bas) && return nothing
+    macrocall_name = bas[1][1]
+    (; ctx3, st3) = try
+        jl_lower_for_scope_resolution(mod, macrocall_name)
+    catch err
+        JETLS_DEBUG_LOWERING && @warn "Error in lowering ($caller)" err
+        JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
+        return nothing
+    end
+    for binfo in ctx3.bindings.info
+        binding = JL.binding_ex(ctx3, binfo)
+        if offset in JS.byte_range(binding)
+            return (; ctx3, st3, binding)
+        end
+    end
+    return nothing
 end
 
 """

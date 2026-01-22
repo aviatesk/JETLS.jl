@@ -363,6 +363,42 @@ end
                 end == 1
             end
         end
+
+        @testset "macro binding highlights" begin
+            let code = """
+                macro │mymacr│o│(ex)
+                    esc(ex)
+                end
+
+                │@mymacro│ println("hello")
+                │@mymacro│ println("world")
+                """
+                clean_code, positions = JETLS.get_text_and_positions(code)
+                @test length(positions) == 7
+                fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
+                @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+                for (i, pos) in enumerate(positions)
+                    i == 3 && continue # Only test start position; end position selects `__module__` (implicit macro arg)
+                    highlights = JETLS.document_highlights(fi, pos)
+                    @test length(highlights) == 3
+                    @test count(highlights) do highlight
+                        highlight.range.start == positions[1] &&
+                        highlight.range.var"end" == positions[3] &&
+                        highlight.kind == DocumentHighlightKind.Write
+                    end == 1
+                    @test count(highlights) do highlight
+                        highlight.range.start == positions[4] &&
+                        highlight.range.var"end" == positions[5] &&
+                        highlight.kind == DocumentHighlightKind.Read
+                    end == 1
+                    @test count(highlights) do highlight
+                        highlight.range.start == positions[6] &&
+                        highlight.range.var"end" == positions[7] &&
+                        highlight.kind == DocumentHighlightKind.Read
+                    end == 1
+                end
+            end
+        end
     end
 end
 
