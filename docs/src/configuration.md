@@ -552,7 +552,7 @@ section:
 }
 ```
 
-#### Server-agnostic clients (e.g., neovim, emacs lsp-mode, helix)(@id config/lsp-config/server-agnostic)
+#### [Server-agnostic clients (e.g., neovim, emacs lsp-mode, helix)](@id config/lsp-config/server-agnostic)
 
 Settings should be placed under the `"jetls"` key, such that a request for the
 `"jetls"` section produces an instance of the JETLS configuration
