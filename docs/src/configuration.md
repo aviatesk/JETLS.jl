@@ -34,6 +34,9 @@ strip_prefix = false               # boolean, default: (unset) auto-detect
 [completion.method_signature]
 prepend_inference_result = false   # boolean, default: (unset) auto-detect
 
+[code_lens]
+testrunner = true                  # boolean, default: true
+
 [testrunner]
 executable = "testrunner"          # string, default: "testrunner" (or "testrunner.bat" on Windows)
 ```
@@ -52,6 +55,8 @@ executable = "testrunner"          # string, default: "testrunner" (or "testrunn
 - [`[completion]`](@ref config/completion)
     - [`[completion.latex_emoji] strip_prefix`](@ref config/completion-latex_emoji-strip_prefix)
     - [`[completion.method_signature] prepend_inference_result`](@ref config/completion-method_signature-prepend_inference_result)
+- [`[code_lens]`](@ref config/code_lens)
+    - [`[code_lens] testrunner`](@ref config/code_lens-testrunner)
 - [`[testrunner]`](@ref config/testrunner)
     - [`[testrunner] executable`](@ref config/testrunner-executable)
 
@@ -423,6 +428,28 @@ prepend_inference_result = true  # Show return type in documentation
     If explicitly setting this option clearly improves behavior for your client,
     consider submitting a PR to add your client to the [auto-detection](https://github.com/aviatesk/JETLS.jl/blob/14fdc847252579c27e41cd50820aee509f8fd7bd/src/completions.jl#L386) logic.
 
+### [`[code_lens]`](@id config/code_lens)
+
+#### [`[code_lens] testrunner`](@id config/code_lens-testrunner)
+
+- **Type**: boolean
+- **Default**: `true`
+
+Enable or disable [TestRunner code lenses](@ref testrunner/features/code-lens).
+When enabled, JETLS shows "Run" and "Debug" code lenses above `@testset` blocks
+for running individual tests.
+
+Some editors (e.g., Zed[^zed_code_lens_testrunner]) display code lenses as code actions, which can cause
+duplication when both code lenses and code actions are shown for the same
+functionality. In such cases, you may want to disable this setting.
+
+[^zed_code_lens_testrunner]: The [aviatesk/zed-julia](https://github.com/aviatesk/zed-julia) extension defaults this setting to `false` unless explicitly configured.
+
+```toml
+[code_lens]
+testrunner = false  # Disable TestRunner code lenses
+```
+
 ### [`[testrunner]`](@id config/testrunner)
 
 #### [`[testrunner] executable`](@id config/testrunner-executable)
@@ -438,7 +465,7 @@ executable for running individual `@testset` blocks and `@test` cases.
 executable = "/path/to/custom/testrunner"
 ```
 
-See [TestRunner integration](@ref) for setup instructions.
+See [TestRunner integration](@ref testrunner) for setup instructions.
 
 ## How to configure JETLS
 

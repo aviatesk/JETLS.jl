@@ -32,8 +32,9 @@ function handle_CodeLensRequest(server::Server, msg::CodeLensRequest, cancel_fla
     fi = result
     code_lenses = CodeLens[]
     testsetinfos = fi.testsetinfos
-    isempty(testsetinfos) ||
+    if !isempty(testsetinfos) && get_config(server, :code_lens, :testrunner)
         testrunner_code_lenses!(code_lenses, uri, fi, testsetinfos)
+    end
     return send(server,
         CodeLensResponse(;
             id = msg.id,

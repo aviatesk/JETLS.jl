@@ -60,7 +60,7 @@ Additionally, some editors also allow filtering diagnostics by source.
     This section contains references to LSP protocol details. You don't need
     to understand these details to use JETLS effectively - the key takeaway
     is simply that different diagnostics update at different times (as you
-    edit, when you save, or when you run tests via [TestRunner integration](@ref)).
+    edit, when you save, or when you run tests via [TestRunner integration](@ref testrunner)).
 
 JETLS uses three diagnostic sources:
 
@@ -610,14 +610,14 @@ end
 ### [TestRunner diagnostic (`testrunner/*`)](@id diagnostic/reference/testrunner)
 
 TestRunner diagnostics are reported when you manually run tests via code lens
-or code actions through the [TestRunner integration](@ref) (source: `JETLS/extra`).
+or code actions through the [TestRunner integration](@ref testrunner) (source: `JETLS/extra`).
 Unlike other diagnostics, these are not triggered automatically by editing or saving files.
 
 #### [Test failure (`testrunner/test-failure`)](@id diagnostic/reference/testrunner/test-failure)
 
 **Default severity**: `Error`
 
-Test failures reported by [TestRunner integration](@ref) that happened during
+Test failures reported by [TestRunner integration](@ref testrunner) that happened during
 running individual `@testset` blocks or `@test` cases.
 
 !!! note

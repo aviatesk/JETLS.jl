@@ -483,12 +483,17 @@ end
     method_signature::Maybe{MethodSignatureConfig}
 end
 
+@option struct CodeLensConfig <: ConfigSection
+    testrunner::Maybe{Bool}
+end
+
 @option struct JETLSConfig <: ConfigSection
     diagnostic::Maybe{DiagnosticConfig}
     full_analysis::Maybe{FullAnalysisConfig}
     testrunner::Maybe{TestRunnerConfig}
     formatter::Maybe{FormatterConfig}
     completion::Maybe{CompletionConfig}
+    code_lens::Maybe{CodeLensConfig}
     # This initialization options are read once at the server initialization and held in
     # `server.state.init_options`, so it might seem strange to hold them here also,
     # but they need to be set here for cases where initialization options are set in
@@ -502,6 +507,7 @@ const DEFAULT_CONFIG = JETLSConfig(;
     testrunner = TestRunnerConfig(@static Sys.iswindows() ? "testrunner.bat" : "testrunner"),
     formatter = "Runic",
     completion = CompletionConfig(LaTeXEmojiConfig(missing), MethodSignatureConfig(missing)),
+    code_lens = CodeLensConfig(true),
     initialization_options = DEFAULT_INIT_OPTIONS)
 
 function get_default_config(path::Symbol...)
