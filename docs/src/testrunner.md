@@ -1,11 +1,11 @@
-# TestRunner integration
+# [TestRunner integration](@id testrunner)
 
 JETLS integrates with [TestRunner.jl](https://github.com/aviatesk/TestRunner.jl)
 to provide an enhanced testing experience directly within your editor. This
 feature allows you to run individual `@testset` blocks directly from your
 development environment.
 
-## Prerequisites
+## [Prerequisites](@id testrunner/prerequisites)
 
 To use this feature, you need to install the `testrunner` executable:
 ```bash
@@ -16,9 +16,9 @@ Note that you need to manually make `~/.julia/bin` available on the `PATH`
 environment for the `testrunner` executable to be accessible.
 See <https://pkgdocs.julialang.org/dev/apps/> for the details.
 
-## Features
+## [Features](@id testrunner/features)
 
-### Code lens
+### [Code lens](@id testrunner/features/code-lens)
 
 When you open a Julia file containing `@testset` blocks, JETLS displays
 interactive code lenses above each `@testset`:
@@ -38,7 +38,7 @@ After running tests, the code lens is refreshed as follows:
 > <img class="display-dark-only" src="../assets/testrunner-code-lens-refreshed-dark.png" alt="TestRunner Code Lens with Results"/>
 > ```
 
-### Code actions
+### [Code actions](@id testrunner/features/code-actions)
 
 You can trigger test runs via "code actions" that are explicitly requested by the user:
 
@@ -58,7 +58,7 @@ Note that when running individual `@test` cases, the error results are displayed
 as temporary diagnostics for 10 seconds. Click `☰ Open logs` button in the
 pop up message to view detailed error messages that persist.
 
-### Test diagnostics
+### [Test diagnostics](@id testrunner/features/test-diagnostics)
 
 Failed tests are displayed as diagnostics (red squiggly lines) at the exact
 lines where the failures occurred, making it easy to identify and fix issues:
@@ -67,12 +67,12 @@ lines where the failures occurred, making it easy to identify and fix issues:
 > <img class="display-dark-only" src="../assets/testrunner-diagnostics-dark.png" alt="TestRunner Diagnostics"/>
 > ```
 
-### Progress notifications
+### [Progress notifications](@id testrunner/features/progress-notifications)
 
 For clients that support work done progress, JETLS shows progress notifications
 while tests are running, keeping you informed about long-running test suites.
 
-## Supported patterns
+## [Supported patterns](@id testrunner/supported-patterns)
 
 The TestRunner integration supports:
 
@@ -135,7 +135,7 @@ The TestRunner integration supports:
 
 See the [TestRunner.jl README](https://github.com/aviatesk/TestRunner.jl) for more details.
 
-## Troubleshooting
+## [Troubleshooting](@id testrunner/troubleshooting)
 
 If you see an error about `testrunner` not being found:
 
