@@ -86,100 +86,149 @@ function extract_document_symbols(st0_top::JS.SyntaxTree, fi::FileInfo, mod::Mod
 end
 
 function extract_toplevel_symbols!(
-        symbols::Vector{DocumentSymbol}, st::JS.SyntaxTree, fi::FileInfo, mod::Module
+        symbols::Vector{DocumentSymbol}, st0::JS.SyntaxTree, fi::FileInfo, mod::Module
     )
-    for i = 1:JS.numchildren(st)
-        extract_toplevel_symbol!(symbols, st[i], fi, mod)
+    for i = 1:JS.numchildren(st0)
+        extract_toplevel_symbol!(symbols, st0[i], fi, mod)
     end
 end
 
-function extract_toplevel_symbol!(symbols::Vector{DocumentSymbol}, st::JS.SyntaxTree, fi::FileInfo, mod::Module)
-    k = JS.kind(st)
+function extract_toplevel_symbol!(symbols::Vector{DocumentSymbol}, st0::JS.SyntaxTree, fi::FileInfo, mod::Module)
+    k = JS.kind(st0)
     if k === JS.K"module" || k === JS.K"baremodule"
-        extract_module_symbol!(symbols, st, fi, mod)
+        extract_module_symbol!(symbols, st0, fi, mod)
     elseif k === JS.K"function"
-        extract_function_symbol!(symbols, st, fi, mod)
+        extract_function_symbol!(symbols, st0, fi, mod)
     elseif k === JS.K"macro"
-        extract_macro_symbol!(symbols, st, fi, mod)
+        extract_macro_symbol!(symbols, st0, fi, mod)
     elseif k === JS.K"struct"
-        extract_struct_symbol!(symbols, st, fi, mod)
+        extract_struct_symbol!(symbols, st0, fi, mod)
     elseif k === JS.K"abstract"
-        extract_abstract_type_symbol!(symbols, st, fi)
+        extract_abstract_type_symbol!(symbols, st0, fi)
     elseif k === JS.K"primitive"
-        extract_primitive_type_symbol!(symbols, st, fi)
+        extract_primitive_type_symbol!(symbols, st0, fi)
     elseif k === JS.K"const"
-        extract_const_symbols!(symbols, st, fi, mod)
+        extract_const_symbols!(symbols, st0, fi, mod)
     elseif k === JS.K"global"
-        extract_global_symbols!(symbols, st, fi, mod)
+        extract_global_symbols!(symbols, st0, fi, mod)
     elseif k === JS.K"="
-        extract_toplevel_assignment_symbols!(symbols, st, fi, mod)
+        extract_toplevel_assignment_symbols!(symbols, st0, fi, mod)
     elseif k === JS.K"let"
-        extract_let_symbol!(symbols, st, fi, mod)
+        extract_let_symbol!(symbols, st0, fi, mod)
     elseif k === JS.K"while"
-        extract_while_symbol!(symbols, st, fi, mod)
+        extract_while_symbol!(symbols, st0, fi, mod)
     elseif k === JS.K"for"
-        extract_for_symbol!(symbols, st, fi, mod)
+        extract_for_symbol!(symbols, st0, fi, mod)
     elseif k === JS.K"toplevel" || k === JS.K"block"
-        extract_toplevel_symbols!(symbols, st, fi, mod)
+        extract_toplevel_symbols!(symbols, st0, fi, mod)
     elseif k === JS.K"macrocall"
-        extract_macrocall_symbol!(symbols, st, fi, mod)
+        extract_macrocall_symbol!(symbols, st0, fi, mod)
     elseif k === JS.K"doc"
-        extract_doc_symbol!(symbols, st, fi, mod)
+        extract_doc_symbol!(symbols, st0, fi, mod)
     end
     return nothing
 end
 
 function extract_module_symbol!(
-        symbols::Vector{DocumentSymbol}, st::JS.SyntaxTree, fi::FileInfo, parent_mod::Module
+        symbols::Vector{DocumentSymbol}, st0::JS.SyntaxTree, fi::FileInfo, parent_mod::Module
     )
-    JS.numchildren(st) ≥ 2 || return nothing
-    name_node = st[1]
+    JS.numchildren(st0) ≥ 2 || return nothing
+    name_node = st0[1]
     name = @something extract_name_val(name_node) return nothing
     mod = parent_mod
     if invokelatest(isdefinedglobal, parent_mod, Symbol(name))
         mod = invokelatest(getglobal, parent_mod, Symbol(name))::Module
     end
     children = DocumentSymbol[]
-    body = st[end]
+    body = st0[end]
     if JS.kind(body) === JS.K"block"
         extract_toplevel_symbols!(children, body, fi, mod)
     end
-    is_baremodule = JS.has_flags(JS.flags(st), JS.BARE_MODULE_FLAG)
+    is_baremodule = JS.has_flags(JS.flags(st0), JS.BARE_MODULE_FLAG)
     detail = (is_baremodule ? "baremodule " : "module ") * name
     push!(symbols, DocumentSymbol(;
         name,
         detail,
         kind = SymbolKind.Module,
-        range = jsobj_to_range(st, fi),
+        range = jsobj_to_range(st0, fi),
         selectionRange = jsobj_to_range(name_node, fi),
         children = @somereal children Some(nothing)))
     return nothing
 end
 
 function extract_function_symbol!(
-        symbols::Vector{DocumentSymbol}, st::JS.SyntaxTree, fi::FileInfo, mod::Module
+        symbols::Vector{DocumentSymbol}, st0::JS.SyntaxTree, fi::FileInfo, mod::Module
     )
-    JS.numchildren(st) ≥ 1 || return nothing
-    sig = st[1]
+    JS.numchildren(st0) ≥ 1 || return nothing
+    sig = st0[1]
     name, name_node = @something extract_function_name(sig) return nothing
-    children = @somereal extract_scoped_children(st, fi, mod) Some(nothing)
-    is_short_form = JS.has_flags(JS.flags(st), JS.SHORT_FORM_FUNCTION_FLAG)
+    children = @somereal extract_scoped_children(st0, fi, mod) Some(nothing)
+    is_short_form = JS.has_flags(JS.flags(st0), JS.SHORT_FORM_FUNCTION_FLAG)
     detail = is_short_form ? JS.sourcetext(sig) * " =" : "function " * JS.sourcetext(sig)
     push!(symbols, DocumentSymbol(;
         name,
         detail,
         kind = SymbolKind.Function,
-        range = jsobj_to_range(st, fi),
+        range = jsobj_to_range(st0, fi),
         selectionRange = jsobj_to_range(name_node, fi),
         children))
     return nothing
 end
 
+function extract_function_name(sig::JS.SyntaxTree)
+    sig = unwrap_where(sig)
+    k = JS.kind(sig)
+    if k === JS.K"::"
+        JS.numchildren(sig) ≥ 1 || return nothing
+        return extract_function_name(sig[1])::Union{Nothing,Tuple{String,JS.SyntaxTree}}
+    end
+    if k === JS.K"call" || k === JS.K"dotcall"
+        JS.numchildren(sig) ≥ 1 || return nothing
+        callee = sig[1]
+        if JS.kind(callee) === JS.K"::"
+            JS.numchildren(callee) ≥ 1 || return nothing
+            callee = callee[1]
+        end
+        name = @something extract_dotted_name(callee) return nothing
+        return (name, callee)
+    elseif k === JS.K"tuple"
+        return nothing
+    elseif JS.is_identifier(k)
+        name = @something extract_name_val(sig) return nothing
+        return (name, sig)
+    elseif k === JS.K"."
+        name = @something extract_dotted_name(sig) return nothing
+        return (name, sig)
+    end
+    return nothing
+end
+
+function extract_dotted_name(node::JS.SyntaxTree)
+    k = JS.kind(node)
+    if JS.is_identifier(k)
+        return extract_name_val(node)
+    elseif k === JS.K"."
+        JS.numchildren(node) ≥ 2 || return nothing
+        lhs = @something extract_dotted_name(node[1]) return nothing
+        rhs_node = node[2]
+        rhs = @something if JS.kind(rhs_node) === JS.K"quote" && JS.numchildren(rhs_node) ≥ 1
+            extract_name_val(rhs_node[1])
+        else
+            extract_name_val(rhs_node)
+        end return nothing
+        return lhs * "." * rhs
+    elseif k === JS.K"curly"
+        JS.numchildren(node) ≥ 1 || return nothing
+        return extract_dotted_name(node[1])
+    end
+    return nothing
+end
+
 function extract_macro_symbol!(
-        symbols::Vector{DocumentSymbol}, st::JS.SyntaxTree, fi::FileInfo, mod::Module
+        symbols::Vector{DocumentSymbol}, st0::JS.SyntaxTree, fi::FileInfo, mod::Module
     )
-    JS.numchildren(st) ≥ 1 || return nothing
-    sig_orig = st[1]
+    JS.numchildren(st0) ≥ 1 || return nothing
+    sig_orig = st0[1]
     sig = unwrap_where(sig_orig)
     if JS.kind(sig) === JS.K"call"
         JS.numchildren(sig) ≥ 1 || return nothing
@@ -194,22 +243,22 @@ function extract_macro_symbol!(
     end
     name = "@" * name
     detail = "macro " * JS.sourcetext(sig_orig)
-    children = @somereal extract_scoped_children(st, fi, mod) Some(nothing)
+    children = @somereal extract_scoped_children(st0, fi, mod) Some(nothing)
     push!(symbols, DocumentSymbol(;
         name,
         detail,
         kind = SymbolKind.Function,
-        range = jsobj_to_range(st, fi),
+        range = jsobj_to_range(st0, fi),
         selectionRange = jsobj_to_range(name_node, fi),
         children))
     return nothing
 end
 
 function extract_struct_symbol!(
-        symbols::Vector{DocumentSymbol}, st::JS.SyntaxTree, fi::FileInfo, mod::Module
+        symbols::Vector{DocumentSymbol}, st0::JS.SyntaxTree, fi::FileInfo, mod::Module
     )
-    JS.numchildren(st) ≥ 1 || return nothing
-    sig_node = st[1]
+    JS.numchildren(st0) ≥ 1 || return nothing
+    sig_node = st0[1]
     name_node = sig_node
     if JS.kind(name_node) === JS.K"<:"
         JS.numchildren(name_node) ≥ 1 || return nothing
@@ -220,11 +269,11 @@ function extract_struct_symbol!(
         name_node = name_node[1]
     end
     name = @something extract_name_val(name_node) return nothing
-    is_mutable = JS.has_flags(JS.flags(st), JS.MUTABLE_FLAG)
+    is_mutable = JS.has_flags(JS.flags(st0), JS.MUTABLE_FLAG)
     detail = (is_mutable ? "mutable struct " : "struct ") * lstrip(JS.sourcetext(sig_node))
     children = DocumentSymbol[]
-    if JS.numchildren(st) ≥ 2
-        body = st[2]
+    if JS.numchildren(st0) ≥ 2
+        body = st0[2]
         for i = 1:JS.numchildren(body)
             child = body[i]
             child_k = JS.kind(child)
@@ -241,19 +290,19 @@ function extract_struct_symbol!(
         name,
         detail,
         kind = SymbolKind.Struct,
-        range = jsobj_to_range(st, fi),
+        range = jsobj_to_range(st0, fi),
         selectionRange = jsobj_to_range(name_node, fi),
         children = @somereal children Some(nothing)))
     return nothing
 end
 
 function extract_struct_field!(
-        symbols::Vector{DocumentSymbol}, st::JS.SyntaxTree, fi::FileInfo
+        symbols::Vector{DocumentSymbol}, st0::JS.SyntaxTree, fi::FileInfo
     )
-    field_node = st
-    k = JS.kind(st)
-    if k === JS.K"const" && JS.numchildren(st) ≥ 1
-        field_node = st[1]
+    field_node = st0
+    k = JS.kind(st0)
+    if k === JS.K"const" && JS.numchildren(st0) ≥ 1
+        field_node = st0[1]
         k = JS.kind(field_node)
     end
     name_node = field_node
@@ -261,21 +310,21 @@ function extract_struct_field!(
         name_node = field_node[1]
     end
     name = @something extract_name_val(name_node) return nothing
-    detail = lstrip(JS.sourcetext(st))
+    detail = lstrip(JS.sourcetext(st0))
     push!(symbols, DocumentSymbol(;
         name,
         detail,
         kind = SymbolKind.Field,
-        range = jsobj_to_range(st, fi),
+        range = jsobj_to_range(st0, fi),
         selectionRange = jsobj_to_range(name_node, fi)))
     return nothing
 end
 
 function extract_abstract_type_symbol!(
-        symbols::Vector{DocumentSymbol}, st::JS.SyntaxTree, fi::FileInfo
+        symbols::Vector{DocumentSymbol}, st0::JS.SyntaxTree, fi::FileInfo
     )
-    JS.numchildren(st) ≥ 1 || return nothing
-    name_node = def_node = st[1]
+    JS.numchildren(st0) ≥ 1 || return nothing
+    name_node = def_node = st0[1]
     if JS.kind(name_node) === JS.K"<:"
         JS.numchildren(name_node) ≥ 1 || return nothing
         name_node = name_node[1]
@@ -290,17 +339,17 @@ function extract_abstract_type_symbol!(
         name,
         detail,
         kind = SymbolKind.Interface,
-        range = jsobj_to_range(st, fi),
+        range = jsobj_to_range(st0, fi),
         selectionRange = jsobj_to_range(name_node, fi)))
     return nothing
 end
 
 function extract_primitive_type_symbol!(
-        symbols::Vector{DocumentSymbol}, st::JS.SyntaxTree, fi::FileInfo
+        symbols::Vector{DocumentSymbol}, st0::JS.SyntaxTree, fi::FileInfo
     )
-    JS.numchildren(st) ≥ 2 || return nothing
-    def_node = st[1]
-    bits_node = st[2]
+    JS.numchildren(st0) ≥ 2 || return nothing
+    def_node = st0[1]
+    bits_node = st0[2]
     name_node = def_node
     if JS.kind(name_node) === JS.K"<:"
         JS.numchildren(name_node) ≥ 1 || return nothing
@@ -312,33 +361,33 @@ function extract_primitive_type_symbol!(
         name,
         detail,
         kind = SymbolKind.Class,
-        range = jsobj_to_range(st, fi),
+        range = jsobj_to_range(st0, fi),
         selectionRange = jsobj_to_range(name_node, fi)))
     return nothing
 end
 
 function extract_const_symbols!(
-        symbols::Vector{DocumentSymbol}, st::JS.SyntaxTree, fi::FileInfo, mod::Module
+        symbols::Vector{DocumentSymbol}, st0::JS.SyntaxTree, fi::FileInfo, mod::Module
     )
-    JS.numchildren(st) ≥ 1 || return nothing
-    assign = st[1]
+    JS.numchildren(st0) ≥ 1 || return nothing
+    assign = st0[1]
     JS.kind(assign) === JS.K"=" || return nothing
     JS.numchildren(assign) ≥ 2 || return nothing
     lhs = assign[1]
     rhs = assign[2]
-    range = jsobj_to_range(st, fi)
-    detail = lstrip(JS.sourcetext(st))
+    range = jsobj_to_range(st0, fi)
+    detail = lstrip(JS.sourcetext(st0))
     extract_assignment_symbols!(symbols, lhs, rhs, range, SymbolKind.Constant, detail, fi, mod)
     return nothing
 end
 
 function extract_global_symbols!(
-        symbols::Vector{DocumentSymbol}, st::JS.SyntaxTree, fi::FileInfo, mod::Module
+        symbols::Vector{DocumentSymbol}, st0::JS.SyntaxTree, fi::FileInfo, mod::Module
     )
-    JS.numchildren(st) ≥ 1 || return nothing
-    inner = st[1]
-    range = jsobj_to_range(st, fi)
-    detail = lstrip(JS.sourcetext(st))
+    JS.numchildren(st0) ≥ 1 || return nothing
+    inner = st0[1]
+    range = jsobj_to_range(st0, fi)
+    detail = lstrip(JS.sourcetext(st0))
     if JS.kind(inner) === JS.K"="
         JS.numchildren(inner) ≥ 2 || return nothing
         lhs = inner[1]
@@ -417,64 +466,15 @@ function extract_assignment_symbols!(
 end
 
 function extract_toplevel_assignment_symbols!(
-        symbols::Vector{DocumentSymbol}, st::JS.SyntaxTree, fi::FileInfo, mod::Module
+        symbols::Vector{DocumentSymbol}, st0::JS.SyntaxTree, fi::FileInfo, mod::Module
     )
-    JS.numchildren(st) ≥ 2 || return nothing
-    lhs = st[1]
+    JS.numchildren(st0) ≥ 2 || return nothing
+    lhs = st0[1]
     JS.kind(lhs) in JS.KSet". ref" && return nothing # Skip property assignment like obj.field = value
-    rhs = st[2]
-    range = jsobj_to_range(st, fi)
-    detail = lstrip(JS.sourcetext(st))
+    rhs = st0[2]
+    range = jsobj_to_range(st0, fi)
+    detail = lstrip(JS.sourcetext(st0))
     extract_assignment_symbols!(symbols, lhs, rhs, range, SymbolKind.Variable, detail, fi, mod)
-    return nothing
-end
-
-function extract_function_name(sig::JS.SyntaxTree)
-    sig = unwrap_where(sig)
-    k = JS.kind(sig)
-    if k === JS.K"::"
-        JS.numchildren(sig) ≥ 1 || return nothing
-        return extract_function_name(sig[1])::Union{Nothing,Tuple{String,JS.SyntaxTree}}
-    end
-    if k === JS.K"call" || k === JS.K"dotcall"
-        JS.numchildren(sig) ≥ 1 || return nothing
-        callee = sig[1]
-        if JS.kind(callee) === JS.K"::"
-            JS.numchildren(callee) ≥ 1 || return nothing
-            callee = callee[1]
-        end
-        name = @something extract_dotted_name(callee) return nothing
-        return (name, callee)
-    elseif k === JS.K"tuple"
-        return nothing
-    elseif JS.is_identifier(k)
-        name = @something extract_name_val(sig) return nothing
-        return (name, sig)
-    elseif k === JS.K"."
-        name = @something extract_dotted_name(sig) return nothing
-        return (name, sig)
-    end
-    return nothing
-end
-
-function extract_dotted_name(node::JS.SyntaxTree)
-    k = JS.kind(node)
-    if JS.is_identifier(k)
-        return extract_name_val(node)
-    elseif k === JS.K"."
-        JS.numchildren(node) ≥ 2 || return nothing
-        lhs = @something extract_dotted_name(node[1]) return nothing
-        rhs_node = node[2]
-        rhs = @something if JS.kind(rhs_node) === JS.K"quote" && JS.numchildren(rhs_node) ≥ 1
-            extract_name_val(rhs_node[1])
-        else
-            extract_name_val(rhs_node)
-        end return nothing
-        return lhs * "." * rhs
-    elseif k === JS.K"curly"
-        JS.numchildren(node) ≥ 1 || return nothing
-        return extract_dotted_name(node[1])
-    end
     return nothing
 end
 
@@ -485,53 +485,53 @@ extract_while_symbol!(args...) = extract_namespace_symbol!(args..., "while ")
 extract_for_symbol!(args...) = extract_namespace_symbol!(args..., "for ")
 
 function extract_namespace_symbol!(
-        symbols::Vector{DocumentSymbol}, st::JS.SyntaxTree, fi::FileInfo, mod::Module,
+        symbols::Vector{DocumentSymbol}, st0::JS.SyntaxTree, fi::FileInfo, mod::Module,
         prefix::AbstractString
     )
-    JS.numchildren(st) ≥ 2 || return nothing
-    children = @somereal extract_scoped_children(st, fi, mod) return nothing
-    detail = rstrip(prefix * lstrip(JS.sourcetext(st[1])))
+    JS.numchildren(st0) ≥ 2 || return nothing
+    children = @somereal extract_scoped_children(st0, fi, mod) return nothing
+    detail = rstrip(prefix * lstrip(JS.sourcetext(st0[1])))
     push!(symbols, DocumentSymbol(;
         name = " ",
         detail,
         kind = SymbolKind.Namespace,
-        range = jsobj_to_range(st, fi),
-        selectionRange = jsobj_to_range(st[1], fi),
+        range = jsobj_to_range(st0, fi),
+        selectionRange = jsobj_to_range(st0[1], fi),
         children))
     return nothing
 end
 
 function extract_macrocall_symbol!(
-        symbols::Vector{DocumentSymbol}, st::JS.SyntaxTree, fi::FileInfo, mod::Module
+        symbols::Vector{DocumentSymbol}, st0::JS.SyntaxTree, fi::FileInfo, mod::Module
     )
-    if is_enum_macrocall(st)
-        extract_enum_symbol!(symbols, st, fi)
+    macro_name = get_macrocall_name(st0)
+    if macro_name == "@enum"
+        extract_enum_symbol!(symbols, st0, fi)
     else
-        extract_toplevel_symbols!(symbols, st, fi, mod)
+        extract_toplevel_symbols!(symbols, st0, fi, mod)
     end
     return nothing
 end
 
-function is_enum_macrocall(st::JS.SyntaxTree)
-    JS.numchildren(st) ≥ 2 || return false
-    macro_node = st[1]
-    macro_name = if JS.kind(macro_node) === JS.K"."
-        JS.numchildren(macro_node) ≥ 2 || return false
+function get_macrocall_name(st0::JS.SyntaxTree)
+    JS.numchildren(st0) ≥ 1 || return nothing
+    macro_node = st0[1]
+    if JS.kind(macro_node) === JS.K"."
+        JS.numchildren(macro_node) ≥ 2 || return nothing
         rhs = macro_node[2]
         if JS.kind(rhs) === JS.K"quote" && JS.numchildren(rhs) ≥ 1
-            extract_name_val(rhs[1])
+            return extract_name_val(rhs[1])
         else
-            extract_name_val(rhs)
+            return extract_name_val(rhs)
         end
     else
-        extract_name_val(macro_node)
+        return extract_name_val(macro_node)
     end
-    return macro_name == "@enum"
 end
 
-function extract_enum_symbol!(symbols::Vector{DocumentSymbol}, st::JS.SyntaxTree, fi::FileInfo)
-    JS.numchildren(st) ≥ 2 || return nothing
-    type_node = st[2]
+function extract_enum_symbol!(symbols::Vector{DocumentSymbol}, st0::JS.SyntaxTree, fi::FileInfo)
+    JS.numchildren(st0) ≥ 2 || return nothing
+    type_node = st0[2]
     name_node = type_node
     if JS.kind(type_node) === JS.K"::"
         JS.numchildren(type_node) ≥ 1 || return nothing
@@ -539,52 +539,52 @@ function extract_enum_symbol!(symbols::Vector{DocumentSymbol}, st::JS.SyntaxTree
     end
     name = @something extract_name_val(name_node) return nothing
     children = DocumentSymbol[]
-    for i = 3:JS.numchildren(st)
-        extract_enum_value!(children, st[i], name, fi)
+    for i = 3:JS.numchildren(st0)
+        extract_enum_value!(children, st0[i], name, fi)
     end
     push!(symbols, DocumentSymbol(;
         name,
         detail = "@enum " * lstrip(JS.sourcetext(type_node)),
         kind = SymbolKind.Enum,
-        range = jsobj_to_range(st, fi),
+        range = jsobj_to_range(st0, fi),
         selectionRange = jsobj_to_range(name_node, fi),
         children = @somereal children Some(nothing)))
     return nothing
 end
 
 function extract_enum_value!(
-        symbols::Vector{DocumentSymbol}, st::JS.SyntaxTree, enum_name::String, fi::FileInfo
+        symbols::Vector{DocumentSymbol}, st0::JS.SyntaxTree, enum_name::String, fi::FileInfo
     )
-    if JS.kind(st) === JS.K"block"
-        for i = 1:JS.numchildren(st)
-            extract_enum_value!(symbols, st[i], enum_name, fi)
+    if JS.kind(st0) === JS.K"block"
+        for i = 1:JS.numchildren(st0)
+            extract_enum_value!(symbols, st0[i], enum_name, fi)
         end
         return nothing
     end
-    name_node = st
-    if JS.kind(st) === JS.K"="
-        JS.numchildren(st) ≥ 1 || return nothing
-        name_node = st[1]
+    name_node = st0
+    if JS.kind(st0) === JS.K"="
+        JS.numchildren(st0) ≥ 1 || return nothing
+        name_node = st0[1]
     end
     name = @something extract_name_val(name_node) return nothing
     push!(symbols, DocumentSymbol(;
         name,
         detail = name * "::" * enum_name,
         kind = SymbolKind.EnumMember,
-        range = jsobj_to_range(st, fi),
+        range = jsobj_to_range(st0, fi),
         selectionRange = jsobj_to_range(name_node, fi)))
     return nothing
 end
 
 function extract_doc_symbol!(
-        symbols::Vector{DocumentSymbol}, st::JS.SyntaxTree, fi::FileInfo, mod::Module
+        symbols::Vector{DocumentSymbol}, st0::JS.SyntaxTree, fi::FileInfo, mod::Module
     )
-    JS.numchildren(st) ≥ 2 || return nothing
-    definition = st[2]
+    JS.numchildren(st0) ≥ 2 || return nothing
+    definition = st0[2]
     temp_symbols = DocumentSymbol[]
     extract_toplevel_symbol!(temp_symbols, definition, fi, mod)
     isempty(temp_symbols) && return nothing
-    range = jsobj_to_range(st, fi)
+    range = jsobj_to_range(st0, fi)
     for sym in temp_symbols
         push!(symbols, DocumentSymbol(sym; range))
     end
