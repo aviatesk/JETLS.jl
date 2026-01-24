@@ -48,4 +48,16 @@ end
     @test baz_sym.kind == SymbolKind.Constant
 end
 
+@testset "namespace symbols excluded" begin
+    code = """
+    if cond
+        foo() = 1
+    end
+    """
+    workspace_symbols = get_workspace_symbols(code)
+    @test length(workspace_symbols) == 1
+    @test workspace_symbols[1].name == "foo"
+    @test !any(s -> s.kind == SymbolKind.Namespace, workspace_symbols)
+end
+
 end # module test_workspace_symbol

@@ -167,6 +167,10 @@ function flatten_document_symbols!(
                 kind = doc_sym.kind,
                 location,
                 containerName = parent_detail))
+        elseif doc_sym.kind == SymbolKind.Namespace
+            # Namespace symbols (if/let/for/while/@static if blocks) are introduced for
+            # hierarchical structure in document outline, not representing actual definitions.
+            # Exclude them from workspace symbols to reduce noise.
         else
             push!(workspace_symbols, WorkspaceSymbol(;
                 name = doc_sym.name,

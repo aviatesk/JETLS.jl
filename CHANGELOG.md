@@ -62,7 +62,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Added document symbol support for `if` and `@static if` blocks. These blocks
   now appear in the document outline as `SymbolKind.Namespace` symbols, with
-  all definitions from if/elseif/else branches flattened as children.
+  all definitions from `if`/`elseif`/`else` branches flattened as children.
+
+### Changed
+
+- Namespace symbols (`if`/`let`/`for`/`while`/`@static if` blocks) are now
+  excluded from workspace symbol search. These symbols exist only to provide
+  hierarchical structure in the document outline, not to represent actual
+  definitions.
 
 ## 2026-01-23
 
