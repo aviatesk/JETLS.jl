@@ -1,7 +1,7 @@
 module test_document_symbol
 
 using Test
-using JETLS: JETLS, JS, JL
+using JETLS: JETLS, JL, JS
 using JETLS.LSP
 
 function make_file_info(code::AbstractString)
@@ -624,6 +624,63 @@ end
         names = Set(c.name for c in symbols[1].children)
         @test "i" in names
         @test "x" in names
+    end
+end
+
+@testset "if block" begin
+    let code = """
+        if cond
+            x = 1
+        end
+        """
+        fi = make_file_info(code)
+        st0 = JETLS.build_syntax_tree(fi)
+        symbols = JETLS.extract_document_symbols(st0, fi)
+        @test length(symbols) == 1
+        @test symbols[1].detail == "if cond"
+        @test symbols[1].kind == SymbolKind.Namespace
+        @test symbols[1].children !== nothing
+        @test length(symbols[1].children) == 1
+        @test symbols[1].children[1].name == "x"
+    end
+
+    let code = """
+        if cond1
+            a = nothing
+        elseif cond2
+            b = :mysymbol
+        else
+            c = missing
+        end
+        """
+        fi = make_file_info(code)
+        st0 = JETLS.build_syntax_tree(fi)
+        symbols = JETLS.extract_document_symbols(st0, fi)
+        @test length(symbols) == 1
+        @test symbols[1].detail == "if cond1"
+        @test symbols[1].kind == SymbolKind.Namespace
+        @test symbols[1].children !== nothing
+        @test length(symbols[1].children) == 3
+        names = [c.name for c in symbols[1].children]
+        @test names == ["a", "b", "c"]
+    end
+
+    let code = """
+        @static if VERSION >= v"1.10"
+            foo() = 1
+        else
+            foo() = 2
+        end
+        """
+        fi = make_file_info(code)
+        st0 = JETLS.build_syntax_tree(fi)
+        symbols = JETLS.extract_document_symbols(st0, fi)
+        @test length(symbols) == 1
+        @test symbols[1].detail == "@static if VERSION >= v\"1.10\""
+        @test symbols[1].kind == SymbolKind.Namespace
+        @test symbols[1].children !== nothing
+        @test length(symbols[1].children) == 2
+        @test all(c.name == "foo" for c in symbols[1].children)
     end
 end
 
