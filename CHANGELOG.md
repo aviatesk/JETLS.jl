@@ -81,6 +81,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   blocks appear in the document outline with the test name, and `@test`
   expressions appear as children showing the test expression.
 
+- Added inlay hints for block `end` keywords. For long blocks (`module`,
+  `function`, `macro`, `struct`, `if`/`@static if`, `let`, `for`, `while`,
+  `@testset`), an inlay hint is displayed at the `end` keyword showing what
+  construct is ending, such as `module Foo` or `function bar`. The minimum
+  block length can be configured via
+  [`inlay_hint.block_end_min_lines`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint-block_end_min_lines)
+  (default: 25 lines).
+
 ### Deprecated
 
 - Running `jetls` without a subcommand (e.g., `jetls --stdio`) is deprecated.

@@ -38,6 +38,9 @@ prepend_inference_result = false   # boolean, default: (unset) auto-detect
 references = false                 # boolean, default: false
 testrunner = true                  # boolean, default: true
 
+[inlay_hint]
+block_end_min_lines = 25           # integer, default: 25
+
 [testrunner]
 executable = "testrunner"          # string, default: "testrunner" (or "testrunner.bat" on Windows)
 ```
@@ -59,6 +62,8 @@ executable = "testrunner"          # string, default: "testrunner" (or "testrunn
 - [`[code_lens]`](@ref config/code_lens)
     - [`[code_lens] references`](@ref config/code_lens-references)
     - [`[code_lens] testrunner`](@ref config/code_lens-testrunner)
+- [`[inlay_hint]`](@ref config/inlay_hint)
+    - [`[inlay_hint] block_end_min_lines`](@ref config/inlay_hint-block_end_min_lines)
 - [`[testrunner]`](@ref config/testrunner)
     - [`[testrunner] executable`](@ref config/testrunner-executable)
 
@@ -467,6 +472,27 @@ functionality. In such cases, you may want to disable this setting.
 ```toml
 [code_lens]
 testrunner = false  # Disable TestRunner code lenses
+```
+
+### [`[inlay_hint]`](@id config/inlay_hint)
+
+Configure inlay hint behavior.
+
+#### [`[inlay_hint] block_end_min_lines`](@id config/inlay_hint-block_end_min_lines)
+
+- **Type**: integer
+- **Default**: `25`
+
+Minimum number of lines a block must span before JETLS displays an inlay hint
+at its `end` keyword. Inlay hints show what construct is ending, such as
+`module Foo`, `function foo` or `@testset "foo"`, helping navigate long blocks.
+
+Supported block types include `module`, `function`, `macro`, `struct`,
+`if`/`@static if`, `let`, `for`, `while`, and `@testset`.
+
+```toml
+[inlay_hint]
+block_end_min_lines = 10  # Show hints for blocks with 10+ lines
 ```
 
 ### [`[testrunner]`](@id config/testrunner)

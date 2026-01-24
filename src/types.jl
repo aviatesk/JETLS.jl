@@ -493,6 +493,10 @@ end
     testrunner::Maybe{Bool}
 end
 
+@option struct InlayHintConfig <: ConfigSection
+    block_end_min_lines::Maybe{Int}
+end
+
 @option struct JETLSConfig <: ConfigSection
     diagnostic::Maybe{DiagnosticConfig}
     full_analysis::Maybe{FullAnalysisConfig}
@@ -500,6 +504,7 @@ end
     formatter::Maybe{FormatterConfig}
     completion::Maybe{CompletionConfig}
     code_lens::Maybe{CodeLensConfig}
+    inlay_hint::Maybe{InlayHintConfig}
     # This initialization options are read once at the server initialization and held in
     # `server.state.init_options`, so it might seem strange to hold them here also,
     # but they need to be set here for cases where initialization options are set in
@@ -514,6 +519,7 @@ const DEFAULT_CONFIG = JETLSConfig(;
     formatter = "Runic",
     completion = CompletionConfig(LaTeXEmojiConfig(missing), MethodSignatureConfig(missing)),
     code_lens = CodeLensConfig(false, true),
+    inlay_hint = InlayHintConfig(25),
     initialization_options = DEFAULT_INIT_OPTIONS)
 
 function get_default_config(path::Symbol...)
