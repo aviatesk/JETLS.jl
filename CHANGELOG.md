@@ -60,6 +60,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   The [aviatesk/zed-julia](https://github.com/aviatesk/zed-julia) extension
   automatically defaults this to `false`.
 
+- Added document symbol support for `if` and `@static if` blocks. These blocks
+  now appear in the document outline as `SymbolKind.Namespace` symbols, with
+  all definitions from if/elseif/else branches flattened as children.
+
 ## 2026-01-23
 
 - Commit: [`9c00dfe`](https://github.com/aviatesk/JETLS.jl/commit/9c00dfe)

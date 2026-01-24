@@ -119,6 +119,8 @@ function extract_toplevel_symbol!(symbols::Vector{DocumentSymbol}, st0::JS.Synta
         extract_while_symbol!(symbols, st0, fi, mod)
     elseif k === JS.K"for"
         extract_for_symbol!(symbols, st0, fi, mod)
+    elseif k === JS.K"if"
+        extract_if_symbol!(symbols, st0, fi, mod)
     elseif k === JS.K"toplevel" || k === JS.K"block"
         extract_toplevel_symbols!(symbols, st0, fi, mod)
     elseif k === JS.K"macrocall"
@@ -490,14 +492,47 @@ function extract_namespace_symbol!(
     )
     JS.numchildren(st0) ≥ 2 || return nothing
     children = @somereal extract_scoped_children(st0, fi, mod) return nothing
-    detail = rstrip(prefix * lstrip(JS.sourcetext(st0[1])))
     push!(symbols, DocumentSymbol(;
         name = " ",
-        detail,
+        detail = rstrip(prefix * lstrip(JS.sourcetext(st0[1]))),
         kind = SymbolKind.Namespace,
         range = jsobj_to_range(st0, fi),
         selectionRange = jsobj_to_range(st0[1], fi),
         children))
+    return nothing
+end
+
+function extract_if_symbol!(
+        symbols::Vector{DocumentSymbol}, st0::JS.SyntaxTree, fi::FileInfo, mod::Module;
+        prefix::AbstractString="if ",
+        range_node::JS.SyntaxTree=st0
+    )
+    JS.numchildren(st0) ≥ 2 || return nothing
+    children = DocumentSymbol[]
+    extract_if_children!(children, st0, fi, mod)
+    isempty(children) && return nothing
+    push!(symbols, DocumentSymbol(;
+        name = " ",
+        detail = rstrip(prefix * lstrip(JS.sourcetext(st0[1]))),
+        kind = SymbolKind.Namespace,
+        range = jsobj_to_range(range_node, fi),
+        selectionRange = jsobj_to_range(st0[1], fi),
+        children))
+    return nothing
+end
+
+function extract_if_children!(
+        children::Vector{DocumentSymbol}, st0::JS.SyntaxTree, fi::FileInfo, mod::Module
+    )
+    for i in 2:JS.numchildren(st0)
+        child = st0[i]
+        k = JS.kind(child)
+        if k === JS.K"block"
+            extract_toplevel_symbols!(children, child, fi, mod)
+        elseif k === JS.K"elseif" || k === JS.K"if"
+            extract_if_children!(children, child, fi, mod)
+        end
+    end
     return nothing
 end
 
@@ -507,9 +542,21 @@ function extract_macrocall_symbol!(
     macro_name = get_macrocall_name(st0)
     if macro_name == "@enum"
         extract_enum_symbol!(symbols, st0, fi)
+    elseif macro_name == "@static"
+        extract_static_if_symbol!(symbols, st0, fi, mod)
     else
         extract_toplevel_symbols!(symbols, st0, fi, mod)
     end
+    return nothing
+end
+
+function extract_static_if_symbol!(
+        symbols::Vector{DocumentSymbol}, st0::JS.SyntaxTree, fi::FileInfo, mod::Module
+    )
+    JS.numchildren(st0) ≥ 2 || return nothing
+    if_node = st0[2]
+    JS.kind(if_node) === JS.K"if" || return nothing
+    extract_if_symbol!(symbols, if_node, fi, mod; prefix="@static if ", range_node=st0)
     return nothing
 end
 
