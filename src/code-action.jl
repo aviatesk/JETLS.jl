@@ -32,14 +32,13 @@ function handle_CodeActionRequest(
     elseif result isa ResponseError
         return send(server, CodeActionResponse(; id = msg.id, result = nothing, error = result))
     end
-    fi = result
+    file_info = result
     code_actions = Union{CodeAction,Command}[]
-    testsetinfos = fi.testsetinfos
-    isempty(testsetinfos) ||
-        testrunner_code_actions!(code_actions, uri, fi, testsetinfos, msg.params.range)
-    allow_unused_underscore = get_config(server, :diagnostic, :allow_unused_underscore)
-    unused_variable_code_actions!(code_actions, uri, msg.params.context.diagnostics; allow_unused_underscore)
-    sort_imports_code_actions!(code_actions, uri, msg.params.context.diagnostics)
+    testrunner_code_actions!(code_actions, uri, file_info, msg.params.range)
+    diagnostics = msg.params.context.diagnostics
+    unused_variable_code_actions!(code_actions, uri, diagnostics;
+        allow_unused_underscore = get_config(server, :diagnostic, :allow_unused_underscore))
+    sort_imports_code_actions!(code_actions, uri, diagnostics)
     return send(server,
         CodeActionResponse(;
             id = msg.id,

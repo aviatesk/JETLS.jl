@@ -118,9 +118,9 @@ function find_executable_testsets(st0_top::SyntaxTree0)
 end
 
 function testrunner_code_lenses!(
-        code_lenses::Vector{CodeLens}, uri::URI, fi::FileInfo, testsetinfos::Vector{TestsetInfo}
+        code_lenses::Vector{CodeLens}, uri::URI, fi::FileInfo
     )
-    for (idx, testsetinfo) in enumerate(testsetinfos)
+    for (idx, testsetinfo) in enumerate(fi.testsetinfos)
         testrunner_code_lenses!(code_lenses, uri, fi, idx, testsetinfo)
     end
     return code_lenses
@@ -176,10 +176,9 @@ testrunner_code_lenses(args...) = # used by tests
     testrunner_code_lenses!(CodeLens[], args...)
 
 function testrunner_code_actions!(
-        code_actions::Vector{Union{CodeAction,Command}}, uri::URI, fi::FileInfo,
-        testsetinfos::Vector{TestsetInfo}, action_range::Range
+        code_actions::Vector{Union{CodeAction,Command}}, uri::URI, fi::FileInfo, action_range::Range
     )
-    testrunner_testset_code_actions!(code_actions, uri, fi, testsetinfos, action_range)
+    testrunner_testset_code_actions!(code_actions, uri, fi, action_range)
     testrunner_testcase_code_actions!(code_actions, uri, fi, action_range)
     return code_actions
 end
@@ -189,9 +188,9 @@ testrunner_code_actions(args...) = # used by tests
 
 function testrunner_testset_code_actions!(
         code_actions::Vector{Union{CodeAction,Command}}, uri::URI, fi::FileInfo,
-        testsetinfos::Vector{TestsetInfo}, action_range::Range
+        action_range::Range
     )
-    for (idx, testsetinfo) in enumerate(testsetinfos)
+    for (idx, testsetinfo) in enumerate(fi.testsetinfos)
         testrunner_testset_code_actions!(code_actions, uri, fi, idx, testsetinfo, action_range)
     end
     return code_actions

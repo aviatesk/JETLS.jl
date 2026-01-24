@@ -30,14 +30,13 @@ function handle_CodeLensRequest(server::Server, msg::CodeLensRequest, cancel_fla
     elseif result isa ResponseError
         return send(server, CodeLensResponse(; id = msg.id, result = nothing, error = result))
     end
-    fi = result
+    file_info = result
     code_lenses = CodeLens[]
-    testsetinfos = fi.testsetinfos
-    if !isempty(testsetinfos) && get_config(server, :code_lens, :testrunner)
-        testrunner_code_lenses!(code_lenses, uri, fi, testsetinfos)
+    if get_config(server, :code_lens, :testrunner)
+        testrunner_code_lenses!(code_lenses, uri, file_info)
     end
     if get_config(server, :code_lens, :references)
-        references_code_lenses!(code_lenses, server.state, uri, fi)
+        references_code_lenses!(code_lenses, server.state, uri, file_info)
     end
     return send(server,
         CodeLensResponse(;
