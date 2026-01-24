@@ -43,6 +43,10 @@
       {
         "command": "jetls-client.restartLanguageServer",
         "title": "JETLS Client: Restart JETLS Language Server"
+      },
+      {
+        "command": "jetls.showReferences",
+        "title": "JETLS: Show References"
       }
     ],
     "configuration": {
@@ -271,6 +275,17 @@
                   "type": "string",
                   "default": "testrunner",
                   "markdownDescription": "Path to the TestRunner.jl executable. If not set, uses `'testrunner'` from `PATH`."
+                }
+              }
+            },
+            "code_lens": {
+              "type": "object",
+              "markdownDescription": "Code lens configuration.",
+              "properties": {
+                "references": {
+                  "type": "boolean",
+                  "default": false,
+                  "markdownDescription": "Show reference counts for top-level symbols (functions, structs, constants, etc.)."
                 }
               }
             }

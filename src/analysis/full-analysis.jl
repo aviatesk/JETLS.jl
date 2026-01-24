@@ -403,6 +403,8 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
     # lowering/macro-expansion-error and lowering/undef-global-var diagnostics
     # to be properly reported.
     request_diagnostic_refresh!(server)
+    # Also request code lens for references recalculation
+    request_codelens_refresh!(server)
 
     @label next_request
 

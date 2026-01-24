@@ -21,14 +21,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 - Diff: [`9c00dfe...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/9c00dfe...HEAD)
 
-### Added
-
-- Added [`code_lens.testrunner`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/code_lens-testrunner)
-  configuration option to enable or disable TestRunner code lenses. Some editors
-  (e.g., Zed) display code lenses as code actions, causing duplication.
-  The [aviatesk/zed-julia](https://github.com/aviatesk/zed-julia) extension
-  automatically defaults this to `false`.
-
 ### Announcement
 
 > [!warning]
@@ -52,6 +44,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > might work, but most LSP features will be unfunctional.
 > Note that `analysis_overrides` is provided as a temporary workaround and may
 > be removed or changed at any time. A proper fix is being worked on.
+
+### Added
+
+- Added reference count code lens for top-level symbols (functions, structs,
+  constants, abstract types, primitive types, modules). When enabled, a code
+  lens showing "N references" appears above each symbol definition. Clicking it
+  opens the references panel. This feature is opt-in and can be enabled via
+  [`code_lens.references`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/code_lens-references)
+  configuration.
+
+- Added [`code_lens.testrunner`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/code_lens-testrunner)
+  configuration option to enable or disable TestRunner code lenses. Some editors
+  (e.g., Zed) display code lenses as code actions, causing duplication.
+  The [aviatesk/zed-julia](https://github.com/aviatesk/zed-julia) extension
+  automatically defaults this to `false`.
 
 ## 2026-01-23
 
