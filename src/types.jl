@@ -158,8 +158,8 @@ struct CombinedCancelFlag <: AbstractCancelFlag
 end
 is_cancelled(cf::CombinedCancelFlag) = is_cancelled(cf.flag1) || is_cancelled(cf.flag2)
 
-struct CancellableToken
-    token::ProgressToken
+struct CancellableToken{T}
+    token::T
     cancel_flag::CancelFlag
 end
 

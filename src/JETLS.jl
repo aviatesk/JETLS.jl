@@ -243,12 +243,9 @@ function runserver(server::Server; client_process_id::Union{Nothing,Int}=nothing
         @error "Message handling loop failed"
         Base.display_error(stderr, err, catch_backtrace())
     finally
-        for _ = 1:length(server.state.analysis_manager.worker_tasks)
-            put!(server.state.analysis_manager.queue, nothing)
-        end
+        stop_analysis_workers(server)
         put!(seq_queue, nothing); put!(con_queue, nothing);
         close(seq_queue); close(con_queue);
-        waitall(server.state.analysis_manager.worker_tasks)
         waitall((seq_task, con_task))
         close(server.endpoint)
     end
@@ -484,6 +481,7 @@ function handle_notification_message(server::Server, @nospecialize msg)
     nothing
 end
 
+include("cli-check.jl")
 include("app.jl")
 
 include("precompile.jl")

@@ -1,31 +1,32 @@
 # Launching JETLS
 
-This guide explains how to launch the JETLS language server using the `jetls`
-executable and describes the available communication channels.
+This guide explains how to launch the JETLS language server using
+`jetls serve` and describes the available communication channels.
 
-## Using the `jetls` executable
+## The `jetls` executable
 
-The JETLS server is launched using the `jetls` executable, which is the main
-entry point of launching JETLS that can be installed as an
+The `jetls` executable is the main entry point for JETLS, providing two commands:
+
+- `jetls serve` - Start the language server for editor integration (this page)
+- [`jetls check`](@ref cli-check) - Run diagnostics from the command line
+
+The executable can be installed as an
 [executable app](https://pkgdocs.julialang.org/dev/apps/) via Pkg.jl:
 ```bash
 julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="release")'
 ```
 
-You can run `jetls` with various options to configure how the server communicates
-with clients.
-
-> `jetls --help`
+> `jetls serve --help`
 ```@eval
 using JETLS
 using Markdown
-Markdown.parse('`'^3 * '\n' * JETLS.help_message * '\n' * '`'^3)
+Markdown.parse('`'^3 * '\n' * JETLS.serve_help_message * '\n' * '`'^3)
 ```
 
 ## Communication channels
 
-The `jetls` executable supports multiple communication channels between the
-client and server. Choose based on your environment and requirements:
+`jetls serve` supports multiple communication channels between the client and
+server. Choose based on your environment and requirements:
 
 ### `pipe-connect` / `pipe-listen` (Unix domain socket / named pipe)
 
@@ -35,7 +36,7 @@ client and server. Choose based on your environment and requirements:
 - **Limitations**: Not suitable for cross-container communication
 - **Note**: Client is responsible for socket file cleanup in both modes
 
-The `jetls` executable provides two pipe modes:
+`jetls serve` provides two pipe modes:
 
 #### `pipe-connect`
 
@@ -49,7 +50,7 @@ Server connects to a client-created socket. This is the mode used by the
 
 Example:
 ```bash
-jetls --pipe-connect=/tmp/jetls.sock
+jetls serve --pipe-connect=/tmp/jetls.sock
 ```
 
 #### `pipe-listen`
@@ -64,7 +65,7 @@ This is the traditional LSP server mode:
 
 Example:
 ```bash
-jetls --pipe-listen=/tmp/jetls.sock
+jetls serve --pipe-listen=/tmp/jetls.sock
 ```
 
 ### `socket` (TCP)
@@ -78,7 +79,7 @@ jetls --pipe-listen=/tmp/jetls.sock
 
 Example:
 ```bash
-jetls --socket=7777
+jetls serve --socket=7777
 ```
 
 The server will print `<JETLS-PORT>7777</JETLS-PORT>` to stdout once it starts
@@ -86,7 +87,7 @@ listening. This is especially useful when using `--socket=0` for automatic port
 assignment, as the actual port number will be announced:
 
 ```bash
-jetls --socket=0
+jetls serve --socket=0
 # Output: <JETLS-PORT>54321</JETLS-PORT>  (actual port assigned by OS)
 ```
 
@@ -105,9 +106,9 @@ ssh -L 8080:localhost:8080 user@remote
 
 Example:
 ```bash
-jetls --stdio
+jetls serve --stdio
 # or simply
-jetls
+jetls serve
 ```
 
 !!! warning

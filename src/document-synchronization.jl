@@ -5,14 +5,14 @@ function ParseStream!(s::Union{AbstractString,Vector{UInt8}})
 end
 
 """
-    cache_file_info!(server::Server, uri::URI, version::Int, text::String)
+    cache_file_info!(server::Server, uri::URI, version::Int, text::Union{AbstractString,Vector{UInt8}})
     cache_file_info!(server::Server, uri::URI, version::Int, parsed_stream::JS.ParseStream)
 
 Cache or update file information in the server state's file cache.
 Computes testsetinfos atomically as part of the caching operation,
 preserving test results from previous testsetinfos where possible.
 """
-cache_file_info!(server::Server, uri::URI, version::Int, text::String) =
+cache_file_info!(server::Server, uri::URI, version::Int, text::Union{AbstractString,Vector{UInt8}}) =
     cache_file_info!(server, uri, version, ParseStream!(text))
 function cache_file_info!(
         server::Server, uri::URI, version::Int, parsed_stream::JS.ParseStream

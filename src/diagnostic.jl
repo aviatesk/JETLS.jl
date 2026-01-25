@@ -1059,17 +1059,19 @@ end
 lowering_diagnostics(args...; kwargs...) = lowering_diagnostics!(Diagnostic[], args...; kwargs...) # used by tests
 
 function toplevel_lowering_diagnostics(
-        server::Server, uri::URI, file_info::FileInfo, cancel_flag::CancelFlag=DUMMY_CANCEL_FLAG
+        server::Server, uri::URI, file_info::FileInfo, cancel_flag::CancelFlag=DUMMY_CANCEL_FLAG;
+        lookup_func = nothing
     )
     diagnostics = Diagnostic[]
     st0_top = build_syntax_tree(file_info)
-    skip_analysis_requiring_context = !has_analyzed_context(server.state, uri)
+    skip_analysis_requiring_context = !has_analyzed_context(server.state, uri; lookup_func)
     allow_unused_underscore = get_config(server, :diagnostic, :allow_unused_underscore)
     iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
         is_cancelled(cancel_flag) && return traversal_terminator
         pos = offset_to_xy(file_info, JS.first_byte(st0))
-        (; mod, analyzer, postprocessor) = get_context_info(server.state, uri, pos)
-        lowering_diagnostics!(diagnostics, uri, file_info, mod, st0; skip_analysis_requiring_context, allow_unused_underscore, analyzer, postprocessor)
+        (; mod, analyzer, postprocessor) = get_context_info(server.state, uri, pos; lookup_func)
+        lowering_diagnostics!(diagnostics, uri, file_info, mod, st0;
+            skip_analysis_requiring_context, allow_unused_underscore, analyzer, postprocessor)
     end
     return diagnostics
 end

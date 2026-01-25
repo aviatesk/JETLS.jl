@@ -1,19 +1,22 @@
-# TODO [JETLS] Need to properly set and parse line number information for `@namespace`
+# TODO [JETLS]
+# Need to properly set and parse line number information for `@namespace`
 [[diagnostic.patterns]]
 pattern = "Macro name `@namespace` not found"
 match_by = "message"
 match_type = "regex"
 severity = "off"
 path = "LSP/**/*.jl"
-# TODO [JETLS] Need to properly set module context when a single file contains multiple modules (for the new incremental full analysis mode)
+# TODO [JETLS]
+# Need to properly set module context when a single file contains multiple modules (for the new incremental full analysis mode)
 [[diagnostic.patterns]]
 pattern = ".*"
-match_by = "code"
+match_by = "message"
 match_type = "regex"
 severity = "off"
 path = "LSP/src/LSP.jl"
 
-# TODO [JuliaLowering] Temporarily downgrade some known JuliaLowering issues to information level
+# TODO [JuliaLowering]
+# Temporarily downgrade some known JuliaLowering issues to information level
 [[diagnostic.patterns]]
 pattern = "^Lowering TODO:"
 match_by = "message"
@@ -25,19 +28,36 @@ match_by = "message"
 match_type = "literal"
 severity = "info"
 path = "src/analysis/Analyzer.jl"
+[[diagnostic.patterns]] # https://github.com/aviatesk/JETLS.jl/issues/480
+pattern = "lowering/unused-argument"
+match_by = "code"
+match_type = "literal"
+severity = "info"
+path = "src/config.jl"
+
+# Treat all other diagnostics as warnings (for early detection via jetls check)
+[[diagnostic.patterns]]
+pattern = ".*"
+match_by = "code"
+match_type = "regex"
+severity = "warn"
+path = "src/**/*.jl"
+[[diagnostic.patterns]]
+pattern = ".*"
+match_by = "code"
+match_type = "regex"
+severity = "warn"
+path = "LSP/src/**/*.jl"
 
 [[initialization_options.analysis_overrides]]
 module_name = "JETLS"
 path = "src/**/*.jl"
-
 [[initialization_options.analysis_overrides]]
 module_name = "LSP"
 path = "LSP/**/*.jl"
 
 # Just disable analysis for test files for now
-
 [[initialization_options.analysis_overrides]]
 path = "test/**/*.jl"
-
 [[initialization_options.analysis_overrides]]
 path = "LSP/test/**/*.jl"

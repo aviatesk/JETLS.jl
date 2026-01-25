@@ -324,9 +324,13 @@ get_post_processor(::Nothing) = LSPostProcessor(JET.PostProcessor())
 get_post_processor(::OutOfScope) = LSPostProcessor(JET.PostProcessor())
 get_post_processor(analysis_result::AnalysisResult) = LSPostProcessor(JET.PostProcessor(analysis_result.actual2virtual))
 
-function has_analyzed_context(state::ServerState, uri::URI)
+function has_analyzed_context(state::ServerState, uri::URI; lookup_func=nothing)
     lookup_uri = @something get_notebook_uri_for_cell(state, uri) uri
-    analysis_info = get_analysis_info(state.analysis_manager, lookup_uri)
+    if lookup_func !== nothing
+        analysis_info = get_analysis_info(lookup_func, state.analysis_manager, lookup_uri)
+    else
+        analysis_info = get_analysis_info(state.analysis_manager, lookup_uri)
+    end
     return _has_analyzed_context(analysis_info, lookup_uri)
 end
 _has_analyzed_context(::Nothing, ::URI) = false

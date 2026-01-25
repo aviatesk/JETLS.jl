@@ -200,7 +200,7 @@ async function startLanguageServer() {
     const defaultExecutable = "jetls";
     baseCommand = serverConfig.executable.path || defaultExecutable;
     const threads = serverConfig.executable.threads || "auto";
-    baseArgs = [`--threads=${threads}`, "--"];
+    baseArgs = ["serve", `--threads=${threads}`, "--"];
   }
 
   let commChannel = serverConfig.communicationChannel;

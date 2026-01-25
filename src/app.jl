@@ -1,33 +1,94 @@
 using Sockets: Sockets
 
+const serve_help_message = """
+    jetls serve - Start language server for editor integration
+
+    Starts JETLS as an LSP server for use with LSP client editors.
+    By default, communicates via stdin/stdout.
+
+    Usage: jetls serve [OPTIONS]
+
+    Options:
+      --stdio                     Use standard input/output (default)
+      --pipe-connect=<path>       Connect to client's Unix domain socket/named pipe
+      --pipe-listen=<path>        Listen on Unix domain socket/named pipe
+      --socket=<port>             Listen on TCP socket
+      --clientProcessId=<pid>     Monitor client process (enables crash detection)
+      --help, -h                  Show this help message
+
+    Examples:
+      jetls serve
+      jetls serve --pipe-listen=/tmp/jetls.sock
+      jetls serve --socket=8080
+    """
+
 const help_message = """
     JETLS - A Julia language server with runtime-aware static analysis,
     powered by JET.jl, JuliaSyntax.jl, and JuliaLowering.jl
 
     VERSION: $JETLS_VERSION
 
-    Usage: jetls [OPTIONS]
+    Usage: jetls [COMMAND] [OPTIONS]
 
-    Communication channel options (choose one, default: --stdio):
-      --stdio                     Use standard input/output (not recommended)
+    Commands:
+      check <file|dir>...         Run diagnostics on Julia files
+      serve                       Start language server (default)
+      version                     Show version information
+
+    Check options (for 'check' command):
+      --root=<path>               Set the root path for configuration (default: pwd)
+      --context-lines=<n>         Number of context lines to show (default: 2)
+      --exit-severity=<level>     Minimum severity for error exit (default: warn)
+      --show-severity=<level>     Minimum severity to display (default: hint)
+
+    Server options (for 'serve' command):
+      --stdio                     Use standard input/output (default)
       --pipe-connect=<path>       Connect to client's Unix domain socket/named pipe
       --pipe-listen=<path>        Listen on Unix domain socket/named pipe
       --socket=<port>             Listen on TCP socket
-
-    Options:
       --clientProcessId=<pid>     Monitor client process (enables crash detection)
+
+    Common options:
       --version, -v               Show version information
       --help, -h                  Show this help message
 
     Examples:
-      jetls --pipe-listen=/tmp/jetls.sock
-      jetls --pipe-connect=/tmp/jetls.sock --clientProcessId=12345
+      jetls serve --pipe-listen=/tmp/jetls.sock
       jetls --socket=8080
-      jetls --threads=auto -- --clientProcessId=12345
+      jetls check src/main.jl
+      jetls check --root=/path/to/project src/
     """
 
 @doc help_message
 function (@main)(args::Vector{String})::Cint
+    if any(arg -> arg in ("-v", "--version", "version"), args)
+        println(stdout, "JETLS version $JETLS_VERSION")
+        return Cint(0)
+    end
+
+    if !isempty(args)
+        first_arg = args[1]
+        if first_arg == "check"
+            if length(args) >= 2 && args[2] in ("-h", "--help", "help")
+                print(stdout, check_help_message)
+                return Cint(0)
+            end
+            return run_check(args[2:end])
+        elseif first_arg == "serve"
+            if length(args) >= 2 && args[2] in ("-h", "--help", "help")
+                print(stdout, serve_help_message)
+                return Cint(0)
+            end
+            args = args[2:end]
+        elseif first_arg in ("-h", "--help", "help", "-v", "--version", "version")
+            # Don't warn for help/version flags
+        else
+            @warn "Running `jetls` without a subcommand is deprecated and may be removed in a future release. Use `jetls serve` instead."
+        end
+    else
+        @warn "Running `jetls` without a subcommand is deprecated and may be removed in a future release. Use `jetls serve` instead."
+    end
+
     pipe_connect_path = pipe_listen_path = socket_port = client_process_id = nothing
 
     i = 1
@@ -35,9 +96,6 @@ function (@main)(args::Vector{String})::Cint
         arg = args[i]
         if occursin(r"^(?:-h|--help|help)$", arg)
             print(stdout, help_message)
-            return Cint(0)
-        elseif occursin(r"^(?:-v|--version)$", arg)
-            println(stdout, "JETLS version $JETLS_VERSION")
             return Cint(0)
         elseif occursin(r"^(?:--)?stdio$", arg)
         elseif occursin(r"^(?:--)?pipe-connect$", arg)
