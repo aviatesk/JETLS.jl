@@ -170,14 +170,18 @@ end
 function start_analysis_workers!(server::Server)
     n_workers = get_init_option(server.state.init_options, :n_analysis_workers)
     JETLS_DEV_MODE && @info "Starting $n_workers analysis workers"
-    for _ = 1:n_workers
-        Threads.@spawn :default try
+    worker_tasks = server.state.analysis_manager.worker_tasks
+    isempty(worker_tasks) || error("The server has already started analysis workers")
+    resize!(worker_tasks, n_workers)
+    for i = 1:n_workers
+        worker_tasks[i] = Threads.@spawn :default try
             analysis_worker(server)
         catch err
             @error "Critical error happened in analysis worker"
             Base.display_error(stderr, err, catch_backtrace())
         end
     end
+    return worker_tasks
 end
 
 # Analysis queue processing implementation (analysis serialized per AnalysisEntry)
@@ -186,6 +190,7 @@ function analysis_worker(server::Server)
     # When multiple workers exist, the per-entry serialization ensures correctness.
     while true
         request = take!(server.state.analysis_manager.queue)
+        request === nothing && break
         @tryinvokelatest resolve_analysis_request(server, request)
         GC.safepoint()
     end

@@ -49,20 +49,19 @@ mutable struct Endpoint
         local endpoint::Endpoint
 
         read_task = Threads.@spawn :interactive while true
-            if @isdefined(endpoint) && !isopen(endpoint)
-                break
-            end
             msg = @something try
                 readlsp(in)
             catch err
                 err_handler(#=isread=#true, err, catch_backtrace())
                 continue
-            end break
+            end break # terminate this task loop when the stream is closed
+            (!@isdefined(endpoint) || isopen(endpoint)) || break
             put!(in_msg_queue, msg)
             GC.safepoint()
         end
 
         write_task = Threads.@spawn :interactive for msg in out_msg_queue
+            msg === nothing && break # terminate this task loop when taking this special token
             if isopen(out)
                 try
                     writelsp(out, msg)
@@ -71,7 +70,7 @@ mutable struct Endpoint
                     continue
                 end
             else
-                @error "Output channel has been closed before message serialization:" msg
+                @error "Output channel has been closed before message serialization" msg
                 break
             end
             GC.safepoint()
@@ -104,7 +103,7 @@ function read_transport_layer(io::IO)
         end
         line = chomp(readline(io))
     end
-    @isdefined(var"Content-Length") || error("Got header without Content-Length")
+    @isdefined(var"Content-Length") || throw(ErrorException("Got header without Content-Length"))
     message_length = parse(Int, var"Content-Length")
     return String(read(io, message_length))
 end
@@ -139,14 +138,14 @@ to_lsp_json(@nospecialize msg) = JSON3.write(msg)
 
 function Base.close(endpoint::Endpoint)
     flush(endpoint)
-    close(endpoint.in_msg_queue)
+    put!(endpoint.out_msg_queue, nothing) # send a special token to terminate the write task
     close(endpoint.out_msg_queue)
-    # TODO we would also like to close the read Task
-    # But unclear how to do that without also closing
-    # the socket, which we don't want to do
-    # fetch(endpoint.read_task)
-    fetch(endpoint.write_task)
+    wait(endpoint.write_task)
     @atomic :release endpoint.isopen = false
+    close(endpoint.in_msg_queue)
+    # TODO we would also like to fetch the read task here, but it may be blocked on
+    # `readlsp(in)`. Unclear how to unblock it without closing the socket.
+    # wait(endpoint.read_task)
     return endpoint
 end
 
