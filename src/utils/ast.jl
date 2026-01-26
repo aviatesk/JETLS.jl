@@ -1,5 +1,25 @@
+# Lightweight copy function for SyntaxTree
+# This copies the SyntaxGraph's mutable structures (edge_ranges, edges, attributes)
+# but shares the immutable data within attribute dictionaries
+function copy_syntax_tree(st::JS.SyntaxTree)
+    g = JS.syntax_graph(st)
+    new_attrs = Dict{Symbol,Any}()
+    for (k, v) in pairs(g.attributes)
+        new_attrs[k] = copy(v)
+    end
+    new_graph = JS.SyntaxGraph(copy(g.edge_ranges), copy(g.edges), new_attrs)
+    return JS.SyntaxTree(new_graph, st._id)
+end
+
 function build_syntax_tree(fi::FileInfo)
-    return @something fi.syntax_tree0 JS.build_tree(JS.SyntaxTree, fi.parsed_stream; filename = fi.filename)
+    cached = fi.syntax_tree0
+    if isnothing(cached)
+        return JS.build_tree(JS.SyntaxTree, fi.parsed_stream; filename = fi.filename)
+    else
+        # The lowering pipeline modifies the internal state of `st0`,
+        # so we need to create a copy for each read to avoid race conditions
+        return copy_syntax_tree(cached)
+    end
 end
 
 """
