@@ -159,7 +159,7 @@ function find_target_binding(ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTre
         if k === JS.K"lambda" && is_kwcall_lambda(ctx3, st)
             # Don't select a binding with `kwcall` definition.
             # What usually interesting to us is information about the main method.
-            return TraversalNoRecurse()
+            return traversal_no_recurse
         end
         offset in JS.byte_range(st) || return nothing
         k === JS.K"BindingId" || return nothing

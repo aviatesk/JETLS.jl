@@ -103,7 +103,7 @@ function find_executable_testsets(st0_top::SyntaxTree0)
     traverse(st0_top) do st0::SyntaxTree0
         if JS.kind(st0) in JS.KSet"function macro"
             # avoid visit inside function scope
-            return TraversalNoRecurse()
+            return traversal_no_recurse
         elseif JS.kind(st0) === JS.K"macrocall" && JS.numchildren(st0) ≥ 2
             macroname = st0[1]
             if hasproperty(macroname, :name_val) && macroname.name_val == "@testset"
@@ -252,7 +252,7 @@ function testrunner_testcase_code_actions!(
     traverse(st0_top) do st0::SyntaxTree0
         if JS.kind(st0) in JS.KSet"function macro"
             # avoid visit inside function scope
-            return TraversalNoRecurse()
+            return traversal_no_recurse
         elseif JS.kind(st0) === JS.K"macrocall" && JS.numchildren(st0) ≥ 1
             macroname = st0[1]
             if hasproperty(macroname, :name_val) && macroname.name_val in TEST_MACROS
