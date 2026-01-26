@@ -219,20 +219,22 @@ const InstantiatedEnvs = LWContainer{Dict{String,Union{Nothing,Tuple{Base.PkgId,
 struct AnalysisManager
     cache::AnalysisCache
     pending_analyses::PendingAnalyses
-    queue::Channel{AnalysisRequest}
+    queue::Channel{Union{Nothing,AnalysisRequest}}
     current_generations::CurrentGenerations
     analyzed_generations::AnalyzedGenerations
     debounced::DebouncedRequests
     instantiated_envs::InstantiatedEnvs
+    worker_tasks::Vector{Task}
     function AnalysisManager()
         return new(
             AnalysisCache(Dict{URI,AnalysisInfo}()),
             PendingAnalyses(Dict{AnalysisEntry,Union{Nothing,AnalysisRequest}}()),
-            Channel{AnalysisRequest}(Inf),
+            Channel{Union{Nothing,AnalysisRequest}}(Inf),
             CurrentGenerations(Dict{AnalysisEntry,Int}()),
             AnalyzedGenerations(Dict{AnalysisEntry,Int}()),
             DebouncedRequests(Dict{AnalysisEntry,Timer}()),
-            InstantiatedEnvs(Dict{String,Union{Nothing,Tuple{Base.PkgId,URI}}}())
+            InstantiatedEnvs(Dict{String,Union{Nothing,Tuple{Base.PkgId,URI}}}()),
+            Task[], # initialized by start_analysis_workers!
         )
     end
 end
