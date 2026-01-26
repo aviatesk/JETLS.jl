@@ -24,7 +24,7 @@ function inference_error_report_stack(@nospecialize report::JET.InferenceErrorRe
     end
     return ret
 end
-inference_error_report_severity_impl(@nospecialize report::JET.InferenceErrorReport) =
+inference_error_report_severity_impl(@nospecialize _report::JET.InferenceErrorReport) =
     DiagnosticSeverity.Warning
 inference_error_report_severity(@nospecialize report::JET.InferenceErrorReport) =
     inference_error_report_severity_impl(report)::DiagnosticSeverity.Ty

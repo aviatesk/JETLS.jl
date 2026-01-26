@@ -34,14 +34,14 @@ module AtomicContainers
 export CASContainer, LWContainer, SWContainer, getstats, load, resetstats!, store!
 
 abstract type AtomicContainer end
-function load(::AtomicContainer) end
-function store!(f, ::AtomicContainer, args...) end
-function getstats(::AtomicContainer) end
-function resetstats!(::AtomicContainer) end
+function load end
+function store! end
+function getstats end
+function resetstats! end
 
 abstract type AtomicStats end
-function getstats(::AtomicStats) end
-function resetstats!(::AtomicStats) end
+function getstats end
+function resetstats! end
 
 # SWContainer
 # ===========
@@ -136,8 +136,6 @@ Updates the data stored in an [`SWContainer`](@ref) with no concurrency protecti
     call `store!` simultaneously, updates may be lost. Use [`CASContainer`](@ref) or
     [`LWContainer`](@ref) for concurrent write safety.
 """
-function store!(f, c::SWContainer, args...) end
-
 @inline function store!(f, c::SWContainer{T,Nothing}, args...) where T
     old = @atomic :acquire c.data
     new, ret = @inline f(old, args...)
@@ -267,8 +265,6 @@ Atomically update the data stored in an [`LWContainer`](@ref) using a lock for s
 `f(old::T, args...) -> (new::T, ret)` is executed exactly once (no retries).
 `args...` can be used to pass values directly to `f`, avoiding heap-allocated captured boxes.
 """
-function store!(f, c::LWContainer, args...) end
-
 function store!(f, c::LWContainer{T,Nothing}, args...) where T
     @lock c.update_lock begin
         old = @atomic :acquire c.data
@@ -422,8 +418,6 @@ Atomically update the data stored in a [`CASContainer`](@ref) using compare-and-
 - `backoff == 0`: Immediate retry (fastest for low contention)
 - `backoff > 0`: Yield every N retries
 """
-function store!(f, c::CASContainer, args...; backoff::Union{Nothing,Unsigned}) end
-
 @inline function store!(f, c::CASContainer{T,Nothing}, args...; backoff::Union{Nothing,Unsigned}=nothing) where T
     local retries = 0
     old = @atomic :acquire c.data
