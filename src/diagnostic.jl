@@ -817,7 +817,7 @@ function find_capture_sites(
                             message = "Captured by closure"))
                     end
                 end
-                return TraversalNoRecurse()
+                return traversal_no_recurse
             end
         end
     end
@@ -850,7 +850,7 @@ function analyze_unsorted_imports!(
                 codeDescription = diagnostic_code_description(LOWERING_UNSORTED_IMPORT_NAMES_CODE),
                 data = UnsortedImportData(new_text)))
         end
-        return TraversalNoRecurse()
+        return traversal_no_recurse
     end
     return diagnostics
 end
@@ -1058,47 +1058,20 @@ function lowering_diagnostics!(
 end
 lowering_diagnostics(args...; kwargs...) = lowering_diagnostics!(Diagnostic[], args...; kwargs...) # used by tests
 
-# TODO use something like `JuliaInterpreter.ExprSplitter`
-
-function toplevel_lowering_diagnostics(server::Server, uri::URI, file_info::FileInfo)
+function toplevel_lowering_diagnostics(
+        server::Server, uri::URI, file_info::FileInfo, cancel_flag::CancelFlag=DUMMY_CANCEL_FLAG
+    )
     diagnostics = Diagnostic[]
     st0_top = build_syntax_tree(file_info)
     skip_analysis_requiring_context = !has_analyzed_context(server.state, uri)
     allow_unused_underscore = get_config(server, :diagnostic, :allow_unused_underscore)
     iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
+        is_cancelled(cancel_flag) && return traversal_terminator
         pos = offset_to_xy(file_info, JS.first_byte(st0))
         (; mod, analyzer, postprocessor) = get_context_info(server.state, uri, pos)
         lowering_diagnostics!(diagnostics, uri, file_info, mod, st0; skip_analysis_requiring_context, allow_unused_underscore, analyzer, postprocessor)
     end
     return diagnostics
-end
-
-function iterate_toplevel_tree(callback, st0_top::JS.SyntaxTree)
-    sl = JS.SyntaxList(st0_top)
-    push!(sl, st0_top)
-    while !isempty(sl)
-        st0 = pop!(sl)
-        if JS.kind(st0) === JS.K"toplevel"
-            for i = JS.numchildren(st0):-1:1 # reversed since we use `pop!`
-                push!(sl, st0[i])
-            end
-        elseif JS.kind(st0) === JS.K"module"
-            stblk = st0[end]
-            JS.kind(stblk) === JS.K"block" || continue
-            for i = JS.numchildren(stblk):-1:1 # reversed since we use `pop!`
-                push!(sl, stblk[i])
-            end
-        elseif JS.kind(st0) === JS.K"doc"
-            # skip docstring expressions for now
-            for i = JS.numchildren(st0):-1:1 # reversed since we use `pop!`
-                if JS.kind(st0[i]) !== JS.K"string"
-                    push!(sl, st0[i])
-                end
-            end
-        else # st0 is lowerable tree
-            callback(st0)
-        end
-    end
 end
 
 # textDocument/publishDiagnostics
@@ -1276,12 +1249,14 @@ function handle_DocumentDiagnosticRequest(
         return send(server, DocumentDiagnosticResponse(; id = msg.id, result = nothing, error = result))
     end
     file_info = result
-
     parsed_stream = file_info.parsed_stream
     if isempty(parsed_stream.diagnostics)
-        diagnostics = toplevel_lowering_diagnostics(server, uri, file_info)
+        diagnostics = toplevel_lowering_diagnostics(server, uri, file_info, cancel_flag)
     else
         diagnostics = parsed_stream_to_diagnostics(file_info)
+    end
+    if is_cancelled(cancel_flag)
+        return send(server, DocumentDiagnosticResponse(; id = msg.id, result = nothing, error = request_cancelled_error()))
     end
     root_path = isdefined(server.state, :root_path) ? server.state.root_path : nothing
     apply_diagnostic_config!(diagnostics, server.state.config_manager, uri, root_path)

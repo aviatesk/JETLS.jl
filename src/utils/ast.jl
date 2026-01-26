@@ -158,6 +158,8 @@ struct TraversalReturn{T}
 end
 struct TraversalTerminator end
 struct TraversalNoRecurse end
+const traversal_terminator = TraversalTerminator()
+const traversal_no_recurse = TraversalNoRecurse()
 function _traverse!(@specialize(callback), stack::JS.SyntaxList)
     local retval = nothing
     while !isempty(stack)
@@ -167,8 +169,8 @@ function _traverse!(@specialize(callback), stack::JS.SyntaxList)
             retval = ret.val
             ret.terminate ? break : continue
         end
-        ret === TraversalTerminator() && break
-        ret === TraversalNoRecurse() && continue
+        ret === traversal_terminator && break
+        ret === traversal_no_recurse && continue
         if JS.numchildren(x) === 0
             continue
         end
@@ -177,6 +179,37 @@ function _traverse!(@specialize(callback), stack::JS.SyntaxList)
         end
     end
     return retval
+end
+
+# TODO use something like `JuliaInterpreter.ExprSplitter`
+
+function iterate_toplevel_tree(callback, st0_top::JS.SyntaxTree)
+    sl = JS.SyntaxList(st0_top)
+    push!(sl, st0_top)
+    while !isempty(sl)
+        st0 = pop!(sl)
+        if JS.kind(st0) === JS.K"toplevel"
+            for i = JS.numchildren(st0):-1:1 # reversed since we use `pop!`
+                push!(sl, st0[i])
+            end
+        elseif JS.kind(st0) === JS.K"module"
+            stblk = st0[end]
+            JS.kind(stblk) === JS.K"block" || continue
+            for i = JS.numchildren(stblk):-1:1 # reversed since we use `pop!`
+                push!(sl, stblk[i])
+            end
+        elseif JS.kind(st0) === JS.K"doc"
+            # skip docstring expressions for now
+            for i = JS.numchildren(st0):-1:1 # reversed since we use `pop!`
+                if JS.kind(st0[i]) !== JS.K"string"
+                    push!(sl, st0[i])
+                end
+            end
+        else # st0 is lowerable tree
+            ret = callback(st0)
+            ret === traversal_terminator && break
+        end
+    end
 end
 
 """
