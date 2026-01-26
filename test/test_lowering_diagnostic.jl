@@ -20,6 +20,13 @@ function get_lowered_diagnostics(mod::Module, text::AbstractString; kwargs...)
     return JETLS.lowering_diagnostics(uri, fi, mod, st0[1]; kwargs...)
 end
 
+macro gen_unused(x)
+    quote
+        unused = nothing
+        $(esc(x))
+    end
+end
+
 macro just_return(x)
     :($(esc(x)))
 end
@@ -413,6 +420,15 @@ length_utf16(s::AbstractString) = sum(c::Char -> codepoint(c) < 0x10000 ? 1 : 2,
         @test isempty(diagnostics)
     end
 
+    @testset "Unused bindings within macro code" begin
+        diagnostics = get_lowered_diagnostics(@__MODULE__, """
+        function func(x)
+            return @gen_unused x
+        end
+        """)
+        @test isempty(diagnostics)
+    end
+
     @testset "@nospecialize macro" begin
         diagnostics = get_lowered_diagnostics("""
         function kwargs_dict(@nospecialize configs)
@@ -426,17 +442,22 @@ length_utf16(s::AbstractString) = sum(c::Char -> codepoint(c) < 0x10000 ? 1 : 2,
         @test diagnostic.range.var"end".line == 0
     end
 
+    # # This should be reported ideally, but currently JuliaLowering cannot track
+    # # precise provenance for code expanded from old macros, so it gets caught by the check in analyze_unused_bindings!
     @testset "argument decl with macro" begin
         diagnostics = get_lowered_diagnostics(@__MODULE__, """
         func(@just_return x) = nothing
         """)
-        @test length(diagnostics) == 1
-        diagnostic = only(diagnostics)
-        @test diagnostic.message == "Unused argument `x`"
-        @test diagnostic.range.start.line == 0
-        @test diagnostic.range.start.character == length("func(")
-        @test diagnostic.range.var"end".line == 0
-        @test diagnostic.range.var"end".character == length("func(@just_return x")
+        res = length(diagnostics) == 1
+        @test_broken res
+        if res
+            diagnostic = only(diagnostics)
+            @test diagnostic.message == "Unused argument `x`"
+            @test diagnostic.range.start.line == 0
+            @test diagnostic.range.start.character == length("func(")
+            @test diagnostic.range.var"end".line == 0
+            @test diagnostic.range.var"end".character == length("func(@just_return x")
+        end
     end
 
     @testset "Handle position encoding" begin

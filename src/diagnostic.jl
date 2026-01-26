@@ -602,7 +602,8 @@ function analyze_unused_bindings!(
             continue
         end
         provs = JS.flattened_provenance(JL.binding_ex(ctx3, binfo.id))
-        prov = first(provs)
+        is_from_user_ast(provs) || continue
+        prov = last(provs)
         range = jsobj_to_range(prov, fi)
         key = LoweringDiagnosticKey(range, bk, bn)
         key in reported ? continue : push!(reported, key)
@@ -657,7 +658,8 @@ function analyze_undefined_global_bindings!(
         end
         bn = binfo.name
         provs = JS.flattened_provenance(JL.binding_ex(ctx3, binfo.id))
-        range = jsobj_to_range(first(provs), fi)
+        is_from_user_ast(provs) || continue
+        range = jsobj_to_range(last(provs), fi)
         key = LoweringDiagnosticKey(range, bk, bn)
         key in reported ? continue : push!(reported, key)
         code = LOWERING_UNDEF_GLOBAL_VAR_CODE
@@ -691,11 +693,8 @@ function analyze_undefined_local_bindings!(
         undef_status === false && continue
         first_use_tree = first(uinfo.uses)
         provs = JL.flattened_provenance(first_use_tree)
-        isempty(provs) && continue
-        if length(provs) > 1 # From macro expanded code, ignore it for now
-            continue
-        end
-        range = jsobj_to_range(first(provs), fi)
+        is_from_user_ast(provs) || continue
+        range = jsobj_to_range(last(provs), fi)
         key = LoweringDiagnosticKey(range, binfo.kind, binfo.name)
         key in reported ? continue : push!(reported, key)
         relatedInformation = DiagnosticRelatedInformation[]
@@ -763,7 +762,8 @@ function analyze_captured_boxes!(
         is_captured_binding(binfo, ctx4) || continue
         bn = binfo.name
         provs = JL.flattened_provenance(JL.binding_ex(ctx4, binfo.id))
-        range = jsobj_to_range(first(provs), fi)
+        is_from_user_ast(provs) || continue
+        range = jsobj_to_range(last(provs), fi)
         key = LoweringDiagnosticKey(range, :boxed, bn)
         key in reported ? continue : push!(reported, key)
         code = LOWERING_CAPTURED_BOXED_VARIABLE_CODE
