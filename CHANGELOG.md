@@ -71,6 +71,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   hierarchical structure in the document outline, not to represent actual
   definitions.
 
+- `textDocument/diagnostic` now supports cancellation, avoiding to compute
+  staled diagnostics (https://github.com/aviatesk/JETLS.jl/pull/524)
+
+### Fixed
+
+- Fixed potential segfault on server exit by implementing graceful shutdown of
+  worker tasks. All `Threads.@spawn`ed tasks are now properly terminated before
+  the server exits. (xref: https://github.com/JuliaLang/julia/issues/32983, https://github.com/aviatesk/JETLS.jl/pull/523)
+
+- Fixed thread-safety issue with cached syntax trees. Multiple threads accessing
+  the same cached tree during lowering could cause data races and segfaults.
+  Cached trees are now copied before use. (https://github.com/aviatesk/JETLS.jl/pull/525)
+
 ## 2026-01-23
 
 - Commit: [`9c00dfe`](https://github.com/aviatesk/JETLS.jl/commit/9c00dfe)
