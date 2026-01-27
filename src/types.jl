@@ -335,14 +335,14 @@ Note that `TypeX` should not be defined to include the possibility of being `not
 In such cases, a further inner configuration level should be used.
 
 For `ConfigSection` subtypes that appear in `Vector` fields, you must implement
-`merge_key(::Type{NewConfig}) -> Symbol`, which returns a field name to use as key when
+`merge_key_value(::NewConfig) -> key_value`, which returns an object to use as key when
 merging vectors. Elements with matching keys are merged together; others are preserved or added.
 
 Finally, add the new config section to `JETLSConfig` struct below.
 """
 abstract type ConfigSection end
 
-function merge_key end
+function merge_key_value end
 
 @option struct FullAnalysisConfig <: ConfigSection
     debounce::Maybe{Float64}
@@ -435,7 +435,8 @@ end
 Base.convert(::Type{DiagnosticPattern}, x::AbstractDict{String}) =
     parse_diagnostic_pattern(x)
 
-merge_key(::Type{DiagnosticPattern}) = :__pattern_value__
+merge_key_value(pattern::DiagnosticPattern) =
+    (pattern.match_by, pattern.match_type, pattern.path, pattern.__pattern_value__)
 
 # N.B. `@option` automatically adds `Base.:(==)` overloads for annotated types,
 # whose behavior is similar to those added by`@define_eq_overloads`
@@ -454,7 +455,7 @@ struct AnalysisOverride <: ConfigSection
 end
 @define_eq_overloads AnalysisOverride
 Base.convert(::Type{AnalysisOverride}, x::AbstractDict{String}) = parse_analysis_override(x)
-merge_key(::Type{AnalysisOverride}) = :path
+merge_key_value(analysis_override::AnalysisOverride) = analysis_override.path
 
 # Static initialization options from `InitializeParams.initializationOptions`.
 # These are set once during the initialize request and remain constant.

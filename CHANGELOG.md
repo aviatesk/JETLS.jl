@@ -85,6 +85,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   diagnostics that could appear before full-analysis completes when macros
   cannot be expanded. Fixed https://github.com/aviatesk/JETLS.jl/issues/522.
 
+- Fixed diagnostic configuration pattern merging to use composite keys.
+  Previously, patterns with the same `pattern` value but different `path` would
+  overwrite each other.
+  Now patterns are identified by `(match_by, match_type, path, pattern)`,
+  allowing multiple rules for the same pattern with different paths.
+
 - Fixed potential segfault on server exit by implementing graceful shutdown of
   worker tasks. All `Threads.@spawn`ed tasks are now properly terminated before
   the server exits. (xref: https://github.com/JuliaLang/julia/issues/32983, https://github.com/aviatesk/JETLS.jl/pull/523)
