@@ -549,7 +549,21 @@ length_utf16(s::AbstractString) = sum(c::Char -> codepoint(c) < 0x10000 ? 1 : 2,
     end
 end
 
-macro m_throw(x)
+module EmptyModule end
+@testset "unused binding detection (before full-analysis, without macro expansion)" begin
+    # `@sprintf` is not available yet for EmptyModule (simulating the lowering analysis behavior before full-analysis complete)
+    # https://github.com/aviatesk/JETLS.jl/issues/522
+    diagnostics = get_lowered_diagnostics(EmptyModule, """
+        let
+            OLR = SW_in = 0.0
+            @info @sprintf("OLR: %.1f W/m², SW_in: %.1f W/m², net: %.1f W/m²",
+                            OLR, SW_in, SW_in - OLR)
+        end
+        """; skip_analysis_requiring_context=true)
+    @test isempty(diagnostics)
+end
+
+macro m_throw(_)
     throw("show this error message")
 end
 macro m_gen_invalid(n)
