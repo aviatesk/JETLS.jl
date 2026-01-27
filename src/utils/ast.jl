@@ -753,3 +753,27 @@ function try_extract_field_line(node::JS.SyntaxNode, structname::Symbol, fname::
         return nothing
     end
 end
+
+"""
+    is_from_user_ast(provs::JS.SyntaxList) -> Bool
+
+Determine whether a binding with the given provenances originates from user-written code.
+
+When a binding has multiple provenances (e.g., due to macro expansion), this function
+checks if the final provenance location falls within the byte range of the first provenance.
+If so, the binding likely corresponds to an identifier the user actually wrote, even though
+it was processed by a macro.
+
+This allows diagnostics to report on user-written identifiers like `x` in
+`func(@nospecialize x) = ()`, while filtering out purely macro-generated bindings
+like internal variables from `@ast`.
+
+!!! note
+    This currently does not support old-style macros due to JuliaLowering limitations.
+"""
+function is_from_user_ast(provs::JS.SyntaxList)
+    length(provs) == 1 && return true
+    fprov, lprov = first(provs), last(provs)
+    JS.sourcefile(lprov) == JS.sourcefile(fprov) || return false
+    return JS.byte_range(lprov) ⊆ JS.byte_range(fprov)
+end
