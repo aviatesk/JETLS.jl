@@ -79,7 +79,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Lowering diagnostics no longer report issues in macro-generated code that
   users cannot control. User-written identifiers processed by new-style macros
   are still reported, but old-style macros are not yet supported due to
-  JuliaLowering limitations. (https://github.com/aviatesk/JETLS.jl/issues/522)
+  JuliaLowering limitations.
+
+- Fixed false positive `lowering/unused-argument` and `lowering/unused-local`
+  diagnostics that could appear before full-analysis completes when macros
+  cannot be expanded. Fixed https://github.com/aviatesk/JETLS.jl/issues/522.
 
 - Fixed potential segfault on server exit by implementing graceful shutdown of
   worker tasks. All `Threads.@spawn`ed tasks are now properly terminated before

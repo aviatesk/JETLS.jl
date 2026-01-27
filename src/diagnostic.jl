@@ -1039,7 +1039,7 @@ function lowering_diagnostics!(
             JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
         end
 
-        st0 = without_kinds(st0, JS.KSet"error macrocall")
+        st0 = remove_macrocalls(without_kinds(st0, JS.KSet"error"))
         try
             ctx1, st1 = JL.expand_forms_1(mod, st0, true, world)
             _jl_lower_for_scope_resolution(ctx1, st0, st1; convert_closures=true)

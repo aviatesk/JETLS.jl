@@ -6,7 +6,6 @@ function binding_scope_layer(ctx3, binding::JL.BindingInfo)
         JS.hasattr(st3, :scope_layer) && return st3.scope_layer
         st3 = JS.SyntaxTree(JS.syntax_graph(st3), st3.source)
     end
-    # JETLS_DEBUG_LOWERING && @warn "No scope layer found for binding" binding
     return 1
 end
 
@@ -65,7 +64,7 @@ function jl_lower_for_scope_resolution(
         JETLS_DEBUG_LOWERING && @warn "Error in macro expansion; trimming and retrying"
         JETLS_DEBUG_LOWERING && showerror(stderr, err)
         JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
-        st0 = without_kinds(st0, JS.KSet"macrocall")
+        st0 = remove_macrocalls(st0)
         JL.expand_forms_1(mod, st0, true, world)
     end
     return _jl_lower_for_scope_resolution(ctx1, st0, st1; convert_closures)
