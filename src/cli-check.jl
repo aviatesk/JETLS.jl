@@ -54,7 +54,7 @@ function render_spinner(p::SpinnerProgress)
             return
         end
         frame = SPINNER_FRAMES[p.spinner_idx]
-        prefix = "$(frame) $(p.current_file)"
+        prefix::String = "$(frame) $(p.current_file)"
         term_width = displaysize(p.io)[2]
         if isempty(p.current_message)
             if length(prefix) > term_width - 1
@@ -64,7 +64,7 @@ function render_spinner(p::SpinnerProgress)
             p.last_line_length = length(prefix)
         else
             separator = ": "
-            message = p.current_message
+            message::String = p.current_message
             total_len = length(prefix) + length(separator) + length(message)
             if total_len > term_width - 1
                 available = term_width - 1 - length(prefix) - length(separator) - 1
@@ -98,8 +98,9 @@ end
 
 function stop_spinner!(p::SpinnerProgress)
     p.active = false
-    if p.spinner_task !== nothing
-        wait(p.spinner_task)
+    spinner_task = p.spinner_task
+    if spinner_task !== nothing
+        wait(spinner_task)
         p.spinner_task = nothing
     end
     @lock p.lock clear_line(p)

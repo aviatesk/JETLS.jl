@@ -39,7 +39,7 @@ function collect_search_uris(server::Server, uri::URI)
     elseif analysis_info isa OutOfScope && @isdefined(Revise)
         # TODO: This implementation should be revisited when Revise is integrated into full-analysis
         out_of_scope = analysis_info
-        pkgid = Base.PkgId(something(out_of_scope.module_context, Main))
+        pkgid = Base.PkgId(@something(out_of_scope.module_context, Main))
         if haskey(Revise.pkgdatas, pkgid)
             pkgdata = Revise.pkgdatas[pkgid]
             for file in Revise.srcfiles(pkgdata)
@@ -702,7 +702,7 @@ function analyze_package_with_revise(
             show_error_message(server, "Failed to load package $(pkgid.name): $(sprint(Base.showerror, e))")
             error(lazy"Package $(pkgid.name) is not loadable") # TODO
         finally
-            notify(activation_done)
+            isnothing(activation_done) || notify(activation_done)
         end
     end
 
