@@ -46,7 +46,7 @@ mutable struct Endpoint
         in_msg_queue = Channel{Any}(Inf)
         out_msg_queue = Channel{Any}(Inf)
 
-        local endpoint::Endpoint
+        local endpoint_ref = Ref{Endpoint}()
 
         read_task = Threads.@spawn :interactive while true
             msg = @something try
@@ -55,7 +55,7 @@ mutable struct Endpoint
                 err_handler(#=isread=#true, err, catch_backtrace())
                 continue
             end break # terminate this task loop when the stream is closed
-            (!@isdefined(endpoint) || isopen(endpoint)) || break
+            (!isassigned(endpoint_ref) || isopen(endpoint_ref[])) || break
             put!(in_msg_queue, msg)
             GC.safepoint()
         end
@@ -76,7 +76,7 @@ mutable struct Endpoint
             GC.safepoint()
         end
 
-        return endpoint = new(in_msg_queue, out_msg_queue, read_task, write_task, true)
+        return endpoint_ref[] = new(in_msg_queue, out_msg_queue, read_task, write_task, true)
     end
 end
 

@@ -67,6 +67,7 @@ const pages = Any[
     "Notebook support" => "notebook.md",
     "Configuration" => "configuration.md",
     "Launching" => "launching.md",
+    "Diagnostic CLI" => "cli-check.md",
     "CHANGELOG" => "CHANGELOG.md"]
 const quick_links_pages = let pages = last.(pages)
     pop!(pages)      # exclude CHANGELOG.md

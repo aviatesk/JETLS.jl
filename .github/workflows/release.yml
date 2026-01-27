@@ -29,8 +29,8 @@ jobs:
       - uses: julia-actions/julia-buildpkg@latest
       - uses: julia-actions/julia-runtest@latest
 
-  test_jetls:
-    name: Test jetls executable with release environment
+  test_jetls_serve:
+    name: Test jetls serve with release environment
     if: github.event_name == 'pull_request' && github.event.action != 'closed'
     runs-on: ubuntu-latest
     steps:
@@ -42,7 +42,22 @@ jobs:
       - uses: julia-actions/julia-buildpkg@latest
       - name: run test
         run: |
-          julia --startup-file=no --project=./test ./test/test_jetls.jl
+          julia --startup-file=no --project=./test ./test/app/test_jetls_serve.jl
+
+  test_jetls_check:
+    name: Test jetls check with release environment
+    if: github.event_name == 'pull_request' && github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v1
+        with:
+          version: "1.12"
+          arch: x64
+      - uses: julia-actions/julia-buildpkg@latest
+      - name: run test
+        run: |
+          julia --startup-file=no --project=./test ./test/app/test_jetls_check.jl
 
   docs:
     name: Documentation

@@ -47,6 +47,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- Added [`jetls check`](https://aviatesk.github.io/JETLS.jl/release/cli-check/) command
+  for running JETLS diagnostics from the command line. This enables CI integration
+  and command-line workflows without requiring an editor. Features include
+  `--exit-severity` for controlling exit codes, `--show-severity` for filtering
+  output, `--context-lines` for output formatting, and `--root` for configuration
+  lookup. The CLI now uses a subcommand structure: `jetls serve` starts the
+  language server (default), while `jetls check` runs diagnostics.
+
 - Added reference count code lens for top-level symbols (functions, structs,
   constants, abstract types, primitive types, modules). When enabled, a code
   lens showing "N references" appears above each symbol definition. Clicking it
@@ -63,6 +71,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Added document symbol support for `if` and `@static if` blocks. These blocks
   now appear in the document outline as `SymbolKind.Namespace` symbols, with
   all definitions from `if`/`elseif`/`else` branches flattened as children.
+
+### Deprecated
+
+- Running `jetls` without a subcommand (e.g., `jetls --stdio`) is deprecated.
+  Use `jetls serve` instead. This may be removed in a future release.
 
 ### Changed
 

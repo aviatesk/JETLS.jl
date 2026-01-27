@@ -1,7 +1,8 @@
 find_env_path(path::AbstractString) = search_up_file(path, "Project.toml")
 
 function search_up_file(path::AbstractString, basename::AbstractString)
-    traverse_dir(dirname(path)) do dir
+    startpath = isdir(path) ? path : dirname(path)
+    traverse_dir(startpath) do dir
         project_file = joinpath(dir, basename)
         if isfile(project_file)
             return project_file

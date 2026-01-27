@@ -196,6 +196,13 @@ function analysis_worker(server::Server)
     end
 end
 
+function stop_analysis_workers(server::Server)
+    for _ = 1:length(server.state.analysis_manager.worker_tasks)
+        put!(server.state.analysis_manager.queue, nothing)
+    end
+    waitall(server.state.analysis_manager.worker_tasks)
+end
+
 # Analysis worker pipeline
 # ========================
 
@@ -222,7 +229,9 @@ analysis completes (used by tests to suppress notifications).
 function request_analysis!(
         server::Server, uri::URI, onsave::Bool;
         wait::Bool = false,
-        notify_diagnostics::Bool = true
+        notify_diagnostics::Bool = true,
+        cancellable_token::Union{Nothing,CancellableToken} = nothing,
+        debounce::Float64 = get_config(server, :full_analysis, :debounce),
     )
     manager = server.state.analysis_manager
     prev_analysis_result = get_analysis_info(manager, uri)
@@ -257,7 +266,8 @@ function request_analysis!(
         request_analysis_progress!(server, uri, onsave, entry, prev_analysis_result, notify_diagnostics)
     else
         completion = Base.Event()
-        schedule_analysis!(server, uri, entry, prev_analysis_result, onsave; completion, notify_diagnostics)
+        schedule_analysis!(server, uri, entry, prev_analysis_result, onsave;
+            completion, cancellable_token, notify_diagnostics, debounce)
         wait && Base.wait(completion)
     end
 end
@@ -287,6 +297,7 @@ function schedule_analysis!(
         completion::Base.Event = Base.Event(),
         cancellable_token::Union{Nothing,CancellableToken} = nothing,
         notify_diagnostics::Bool = true,
+        debounce::Float64 = get_config(server, :full_analysis, :debounce),
     )
     manager = server.state.analysis_manager
 
@@ -296,7 +307,6 @@ function schedule_analysis!(
         entry, uri, generation, cancellable_token, notify_diagnostics,
         prev_analysis_result, completion)
 
-    debounce = get_config(server, :full_analysis, :debounce)
     if onsave && debounce > 0
         store!(manager.debounced) do debounced
             if haskey(debounced, request.entry)
@@ -840,7 +850,6 @@ function analyze_package_with_revise(
             end
         end
     end; end
-
     waitall(tasks)
 
     @label completed
@@ -900,7 +909,7 @@ end
 ScriptAnalysisEntry(uri::URI) = ScriptAnalysisEntry(uri, false)
 entryuri_impl(entry::ScriptAnalysisEntry) = entry.uri
 function progress_title_impl(entry::ScriptAnalysisEntry)
-    suffix = entry.notebook ? " [notebook, no env]" : " [no env]"
+    suffix = entry.notebook ? " [notebook (no env)]" : " [script (no env)]"
     return basename(uri2filename(entry.uri)) * suffix
 end
 
@@ -912,7 +921,7 @@ end
 ScriptInEnvAnalysisEntry(env_path::String, uri::URI) = ScriptInEnvAnalysisEntry(env_path, uri, false)
 entryuri_impl(entry::ScriptInEnvAnalysisEntry) = entry.uri
 function progress_title_impl(entry::ScriptInEnvAnalysisEntry)
-    suffix = entry.notebook ? " [notebook, in env]" : " [in env]"
+    suffix = entry.notebook ? " [notebook (in env)]" : " [script (in env)]"
     return basename(uri2filename(entry.uri)) * suffix
 end
 
@@ -936,7 +945,7 @@ struct PackageTestAnalysisEntry <: AnalysisEntry
     pkgid::Base.PkgId
 end
 entryuri_impl(entry::PackageTestAnalysisEntry) = entry.runtestsuri
-progress_title_impl(entry::PackageTestAnalysisEntry) = entry.pkgid.name * ".jl [package test]"
+progress_title_impl(entry::PackageTestAnalysisEntry) = entry.pkgid.name * ".jl [package (test)]"
 
 struct NewAnalysisEntry <: AnalysisEntry
     pkgid::Base.PkgId
@@ -945,7 +954,7 @@ struct NewAnalysisEntry <: AnalysisEntry
     NewAnalysisEntry(pkgid::Base.PkgId) = new(pkgid, nothing)
 end
 entryuri_impl(::NewAnalysisEntry) = error("")
-progress_title_impl(entry::NewAnalysisEntry) = entry.pkgid.name * ".jl [incremental]"
+progress_title_impl(entry::NewAnalysisEntry) = entry.pkgid.name * ".jl [package (incremental)]"
 
 struct UserModule
     env_path::String

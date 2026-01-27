@@ -96,6 +96,14 @@ Running `Pkg.test()` takes about 8 minutes (as of December 2025), so avoid it un
 - The user explicitly requests the full test suite
 - You're unsure which tests are relevant
 
+# **Running `jetls check` for self diagnostics**
+**Please make sure to run `jetls check` after writing or modifying code**:
+```bash
+./scripts/selfcheck.sh
+```
+
+This is run in CI and will cause failures if new warnings are introduced.
+
 # Test code structure
 Testing language server functionality is challenging.
 To fully test such functionality, you need to start a server loop,
