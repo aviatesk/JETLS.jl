@@ -221,9 +221,13 @@ function iterate_toplevel_tree(callback, st0_top::JS.SyntaxTree)
         elseif JS.kind(st0) === JS.K"doc"
             # skip docstring expressions for now
             for i = JS.numchildren(st0):-1:1 # reversed since we use `pop!`
-                if JS.kind(st0[i]) !== JS.K"string"
-                    push!(sl, st0[i])
-                end
+                push!(sl, st0[i])
+            end
+        elseif JS.kind(st0) === JS.K"macrocall" && is_macrocall_st0(st0, "@doc")
+            # We probably can remove this after https://github.com/JuliaLang/julia/pull/60733
+            # MRE: Comment out and open app.jl and it will yield: `JETLS.check_socket_port` is not defined
+            for i = JS.numchildren(st0):-1:1 # reversed since we use `pop!`
+                push!(sl, st0[i])
             end
         else # st0 is lowerable tree
             ret = callback(st0)

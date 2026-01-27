@@ -367,7 +367,7 @@ inserts followed by a single remove or replace edit. If multiple inserts have th
 position, the order in the array defines the order in which the inserted strings
 appear in the resulting text.
 """
-var"TextEdit[]"
+# var"TextEdit[]"
 
 """
 New in version 3.16: support for [`AnnotatedTextEdit`](@ref). The support
