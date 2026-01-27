@@ -55,6 +55,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   lookup. The CLI now uses a subcommand structure: `jetls serve` starts the
   language server (default), while `jetls check` runs diagnostics.
 
+- Added [`lowering/unused-import`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unused-import)
+  diagnostic that reports explicitly imported names that are never used within
+  the same module space. The "Remove unused import" code action removes the
+  unused name from the import statement.
+
 - Added reference count code lens for top-level symbols (functions, structs,
   constants, abstract types, primitive types, modules). When enabled, a code
   lens showing "N references" appears above each symbol definition. Clicking it

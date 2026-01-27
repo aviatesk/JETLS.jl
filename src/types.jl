@@ -391,6 +391,7 @@ const LOWERING_UNDEF_GLOBAL_VAR_CODE = "lowering/undef-global-var"
 const LOWERING_UNDEF_LOCAL_VAR_CODE = "lowering/undef-local-var"
 const LOWERING_CAPTURED_BOXED_VARIABLE_CODE = "lowering/captured-boxed-variable"
 const LOWERING_UNSORTED_IMPORT_NAMES_CODE = "lowering/unsorted-import-names"
+const LOWERING_UNUSED_IMPORT_CODE = "lowering/unused-import"
 const TOPLEVEL_ERROR_CODE = "toplevel/error"
 const TOPLEVEL_METHOD_OVERWRITE_CODE = "toplevel/method-overwrite"
 const TOPLEVEL_ABSTRACT_FIELD_CODE = "toplevel/abstract-field"
@@ -410,6 +411,7 @@ const ALL_DIAGNOSTIC_CODES = Set{String}(String[
     LOWERING_UNDEF_LOCAL_VAR_CODE,
     LOWERING_CAPTURED_BOXED_VARIABLE_CODE,
     LOWERING_UNSORTED_IMPORT_NAMES_CODE,
+    LOWERING_UNUSED_IMPORT_CODE,
     TOPLEVEL_ERROR_CODE,
     TOPLEVEL_METHOD_OVERWRITE_CODE,
     TOPLEVEL_ABSTRACT_FIELD_CODE,
@@ -583,7 +585,8 @@ end
 struct BindingInfoKey
     mod::Union{Nothing,Module}
     name::String
-    BindingInfoKey(binfo::JL.BindingInfo) = new(binfo.mod, binfo.name)
+    kind::Symbol
+    BindingInfoKey(binfo::JL.BindingInfo) = new(binfo.mod, binfo.name, binfo.kind)
 end
 
 """
@@ -615,9 +618,8 @@ struct CachedBindingOccurrence
     end
 end
 
-const BindingOccurrencesRangeKey = UnitRange{Int}
 const BindingOccurrencesResult = Dict{BindingInfoKey,Set{CachedBindingOccurrence}}
-const BindingOccurrencesCacheEntry = Base.PersistentDict{BindingOccurrencesRangeKey,BindingOccurrencesResult}
+const BindingOccurrencesCacheEntry = Base.PersistentDict{UnitRange{Int},BindingOccurrencesResult}
 
 const AnyBindingOccurrence = Union{BindingOccurrence,CachedBindingOccurrence}
 

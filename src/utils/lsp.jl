@@ -1,4 +1,4 @@
-import Base: isless, ∈
+import Base: ∈
 
 Base.isless(pos1::Position, pos2::Position) =
     pos1.line < pos2.line || (pos1.line == pos2.line && pos1.character < pos2.character)
