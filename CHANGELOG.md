@@ -60,6 +60,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   the same module space. The "Remove unused import" code action removes the
   unused name from the import statement.
 
+- Added [`lowering/undefined-export`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undefined-export)
+  diagnostic that reports when an `export` statement references an undefined
+  name. This helps catch typos like `export undefvar` where the exported name
+  doesn't actually exist.
+
 - Added reference count code lens for top-level symbols (functions, structs,
   constants, abstract types, primitive types, modules). When enabled, a code
   lens showing "N references" appears above each symbol definition. Clicking it

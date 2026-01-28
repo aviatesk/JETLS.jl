@@ -104,6 +104,7 @@ Here is a summary table of the diagnostics explained in this section:
 | [`lowering/undef-local-var`](@ref diagnostic/reference/lowering/undef-local-var)                 | `Warning/Information` | `JETLS/live`  | References to undefined local variables            |
 | [`lowering/captured-boxed-variable`](@ref diagnostic/reference/lowering/captured-boxed-variable) | `Information`         | `JETLS/live`  | Variables captured by closures that require boxing |
 | [`lowering/unused-import`](@ref diagnostic/reference/lowering/unused-import)                     | `Information`         | `JETLS/live`  | Imported names that are never used                 |
+| [`lowering/undefined-export`](@ref diagnostic/reference/lowering/undefined-export)               | `Warning`             | `JETLS/live`  | Exporting names that are not defined               |
 | [`lowering/unsorted-import-names`](@ref diagnostic/reference/lowering/unsorted-import-names)     | `Hint`                | `JETLS/live`  | Import/export names not sorted alphabetically      |
 | [`toplevel/error`](@ref diagnostic/reference/toplevel/error)                                     | `Error`               | `JETLS/save`  | Errors during code loading                         |
 | [`toplevel/method-overwrite`](@ref diagnostic/reference/toplevel/method-overwrite)               | `Warning`             | `JETLS/save`  | Method definitions that overwrite previous ones    |
@@ -451,6 +452,20 @@ module.
     end
     @gencall sin(42)  # `sin` is used here
     ```
+
+#### [Undefined export (`lowering/undefined-export`)](@id diagnostic/reference/lowering/undefined-export)
+
+**Default severity**: `Warning`
+
+Reported when an `export` statement references a name that is not defined in
+the current module. This helps catch typos or missing definitions early.
+
+Example:
+
+```julia
+export undefined_name  # Exported name `undefined_name` is not defined in `MyModule`
+                       # (JETLS lowering/undefined-export)
+```
 
 #### [Unsorted import names (`lowering/unsorted-import-names`)](@id diagnostic/reference/lowering/unsorted-import-names)
 

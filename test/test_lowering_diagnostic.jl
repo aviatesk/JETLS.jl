@@ -1099,8 +1099,8 @@ is_unsorted_import_names_diagnostic(diagnostic) =
     let diagnostics = get_lowered_diagnostics("""
         export c, a, b
         """)
-        @test length(diagnostics) == 1
-        @test is_unsorted_import_names_diagnostic(only(diagnostics))
+        unsorted_diags = filter(is_unsorted_import_names_diagnostic, diagnostics)
+        @test length(unsorted_diags) == 1
     end
 
     let diagnostics = get_lowered_diagnostics("""
@@ -1133,8 +1133,8 @@ is_unsorted_import_names_diagnostic(diagnostic) =
     let diagnostics = get_lowered_diagnostics("""
         export foo, bar
         """)
-        @test length(diagnostics) == 1
-        @test is_unsorted_import_names_diagnostic(only(diagnostics))
+        unsorted_diags = filter(is_unsorted_import_names_diagnostic, diagnostics)
+        @test length(unsorted_diags) == 1
     end
 
     let diagnostics = get_lowered_diagnostics("""
@@ -1252,6 +1252,51 @@ end
                 @test diagnostic.range.start.line == 6
             end
         end
+    end
+end
+
+module ExportDefinedModule
+    global foo::Int = 42
+    macro foo(ex)
+        :($(esc(ex)))
+    end
+end
+
+@testset "undefined export detection" begin
+    let diagnostics = get_lowered_diagnostics("""
+        export undefined_name
+        """)
+        @test length(diagnostics) >= 1
+        export_diags = filter(d -> d.code == JETLS.LOWERING_UNDEFINED_EXPORT_CODE, diagnostics)
+        @test length(export_diags) == 1
+        diagnostic = only(export_diags)
+        @test diagnostic.severity == DiagnosticSeverity.Warning
+        @test occursin("undefined_name", diagnostic.message)
+        @test occursin("not defined", diagnostic.message)
+        @test diagnostic.range.start.line == 0
+        @test diagnostic.range.start.character == sizeof("export ")
+    end
+
+    let diagnostics = get_lowered_diagnostics(ExportDefinedModule, "export foo, @foo")
+        export_diags = filter(d -> d.code == JETLS.LOWERING_UNDEFINED_EXPORT_CODE, diagnostics)
+        @test isempty(export_diags)
+    end
+
+    let diagnostics = get_lowered_diagnostics(ExportDefinedModule, """
+        export bar, foo, baz
+        """)
+        export_diags = filter(d -> d.code == JETLS.LOWERING_UNDEFINED_EXPORT_CODE, diagnostics)
+        @test length(export_diags) == 2
+        names = Set(match(r"`(\w+)`", d.message).captures[1] for d in export_diags)
+        @test names == Set(["bar", "baz"])
+    end
+
+    let diagnostics = get_lowered_diagnostics(ExportDefinedModule, """
+        export @undefined_macro, @foo
+        """)
+        export_diags = filter(d -> d.code == JETLS.LOWERING_UNDEFINED_EXPORT_CODE, diagnostics)
+        @test length(export_diags) == 1
+        @test occursin("@undefined_macro", only(export_diags).message)
     end
 end
 

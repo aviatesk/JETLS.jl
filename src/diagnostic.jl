@@ -640,11 +640,10 @@ end
 #   full-analysis reports.
 function analyze_undefined_global_bindings!(
         diagnostics::Vector{Diagnostic}, fi::FileInfo, ctx3::JL.VariableAnalysisContext,
-        binding_occurrences, reported::Set{LoweringDiagnosticKey};
+        binding_occurrences, world::UInt, reported::Set{LoweringDiagnosticKey};
         analyzer::Union{Nothing,LSAnalyzer} = nothing,
         postprocessor::LSPostProcessor = LSPostProcessor()
     )
-    world = Base.get_world_counter()
     for (binfo, occurrences) in binding_occurrences
         bk = binfo.kind
         bk === :global || continue
@@ -855,6 +854,41 @@ function analyze_unsorted_imports!(
     return diagnostics
 end
 
+function analyze_exported_undefined!(
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, mod::Module, st0::JS.SyntaxTree,
+        world::UInt
+    )
+    traverse(st0) do st0′::JS.SyntaxTree
+        kind = JS.kind(st0′)
+        if kind !== JS.K"export"
+            return nothing
+        end
+        names = collect_import_names(st0′)
+        for name_node in names
+            name_kind = JS.kind(name_node)
+            name_sym = if name_kind === JS.K"Identifier"
+                Symbol(JS.sourcetext(name_node))
+            elseif name_kind === JS.K"macro_name"
+                Symbol(JS.sourcetext(name_node))
+            else
+                continue
+            end
+            if !Base.invoke_in_world(world, isdefinedglobal, mod, name_sym)::Bool
+                range = jsobj_to_range(name_node, fi)
+                push!(diagnostics, Diagnostic(;
+                    range,
+                    severity = DiagnosticSeverity.Warning,
+                    message = "Exported name `$(name_sym)` is not defined in `$(nameof(mod))`",
+                    source = DIAGNOSTIC_SOURCE_LIVE,
+                    code = LOWERING_UNDEFINED_EXPORT_CODE,
+                    codeDescription = diagnostic_code_description(LOWERING_UNDEFINED_EXPORT_CODE)))
+            end
+        end
+        return traversal_no_recurse
+    end
+    return diagnostics
+end
+
 function generate_sorted_import_text(
         node::JS.SyntaxTree, sorted_names::Vector{JS.SyntaxTree},
         base_indent::Union{String,Nothing}
@@ -961,7 +995,7 @@ function get_import_sort_key(st0::JS.SyntaxTree)
 end
 
 function analyze_lowered_code!(
-        diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo, res::NamedTuple;
+        diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo, res::NamedTuple, world::UInt;
         skip_analysis_requiring_context::Bool = false,
         allow_unused_underscore::Bool = true,
         allow_throw_optimization::Bool = false,
@@ -976,7 +1010,7 @@ function analyze_lowered_code!(
     analyze_unused_bindings!(diagnostics, fi, st0, ctx3, binding_occurrences, ismacro, reported; allow_unused_underscore)
 
     skip_analysis_requiring_context ||
-        analyze_undefined_global_bindings!(diagnostics, fi, ctx3, binding_occurrences, reported; analyzer, postprocessor)
+        analyze_undefined_global_bindings!(diagnostics, fi, ctx3, binding_occurrences, world, reported; analyzer, postprocessor)
 
     undef_info = analyze_undef_all_lambdas(ctx3, st3; allow_throw_optimization)
     analyze_undefined_local_bindings!(diagnostics, uri, fi, undef_info, reported)
@@ -992,9 +1026,12 @@ function lowering_diagnostics!(
     )
     @assert JS.kind(st0) ∉ JS.KSet"toplevel module"
 
-    analyze_unsorted_imports!(diagnostics, fi, st0)
-
     world = Base.get_world_counter()
+
+    analyze_unsorted_imports!(diagnostics, fi, st0)
+    skip_analysis_requiring_context ||
+        analyze_exported_undefined!(diagnostics, fi, mod, st0, world)
+
     res = try
         jl_lower_for_scope_resolution(mod, st0, world; recover_from_macro_errors=false, convert_closures=true)
     catch err
@@ -1053,7 +1090,7 @@ function lowering_diagnostics!(
         Base.invoke_in_world(world, isdefinedglobal, mod, :throw)::Bool &&
         Base.invoke_in_world(world, getglobal, mod, :throw) === Core.throw
 
-    return analyze_lowered_code!(diagnostics, uri, fi, res;
+    return analyze_lowered_code!(diagnostics, uri, fi, res, world;
         skip_analysis_requiring_context, allow_throw_optimization, kwargs...)
 end
 lowering_diagnostics(args...; kwargs...) = lowering_diagnostics!(Diagnostic[], args...; kwargs...) # used by tests
