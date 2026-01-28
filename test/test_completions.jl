@@ -1186,4 +1186,89 @@ end
     @test test_cursor_equals_position("func(; a=1, │") === nothing  # incomplete
 end
 
+# using/import completion
+# =======================
+
+@testset "select_import_colon_module" begin
+    function test_select_import_colon_module(code::String)
+        text, positions = JETLS.get_text_and_positions(code)
+        @assert length(positions) == 1
+        fi = JETLS.FileInfo(0, text, "test.jl")
+        st = JETLS.build_syntax_tree(fi)
+        offset = JETLS.xy_to_offset(fi, positions[1])
+        return JETLS.select_import_colon_module(st, offset)
+    end
+
+    @test test_select_import_colon_module("using Base: │") == :Base
+    @test test_select_import_colon_module("using Base: si│") == :Base
+    @test test_select_import_colon_module("using Base: sin, │") == :Base
+    @test test_select_import_colon_module("import Base: │") == :Base
+    @test test_select_import_colon_module("import Base: si│") == :Base
+    @test test_select_import_colon_module("using Base.Iterators: │") == :(Base.Iterators)
+    let expected = Expr(:., :., Expr(:., :., :Foo))
+        @test test_select_import_colon_module("using ..Foo: │") == expected
+    end
+
+    @test test_select_import_colon_module("using Base│") === nothing
+    @test test_select_import_colon_module("using Base, │") === nothing
+    @test test_select_import_colon_module("Base.│") === nothing
+    @test test_select_import_colon_module("f(x: │)") === nothing
+end
+
+@testset "using/import colon completion" begin
+    let text = """
+        using Base: │
+        """
+        context = CompletionContext(; triggerKind = CompletionTriggerKind.Invoked)
+        cnt = 0
+        with_completion_request(text; context) do _, result, _
+            items = result.items
+            @test any(items) do item
+                item.label == "sin"
+            end
+            @test any(items) do item
+                item.label == "cos"
+            end
+            @test !any(items) do item
+                item.label == "function"
+            end
+            cnt += 1
+        end
+        @test cnt == 1
+    end
+
+    let text = """
+        import Base.Iterators: │
+        """
+        context = CompletionContext(; triggerKind = CompletionTriggerKind.Invoked)
+        cnt = 0
+        with_completion_request(text; context) do _, result, _
+            items = result.items
+            @test any(items) do item
+                item.label == "filter"
+            end
+            @test any(items) do item
+                item.label == "map"
+            end
+            cnt += 1
+        end
+        @test cnt == 1
+    end
+
+    let text = """
+        using Base: si│
+        """
+        context = CompletionContext(; triggerKind = CompletionTriggerKind.Invoked)
+        cnt = 0
+        with_completion_request(text; context) do _, result, _
+            items = result.items
+            @test any(items) do item
+                item.label == "sin"
+            end
+            cnt += 1
+        end
+        @test cnt == 1
+    end
+end
+
 end # module test_completions
