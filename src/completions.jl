@@ -2,15 +2,18 @@
 # ==============
 
 const NUMERIC_CHARACTERS = tuple(string.('0':'9')...)
-const METHOD_COMPLETION_TRIGGER_CHARACTERS = ("(", ",", " ")
 const COMPLETION_TRIGGER_CHARACTERS = [
     "@",  # macro completion
     "\\", # LaTeX completion
     ":",  # emoji completion
     ";",  # keyword argument completion
-    METHOD_COMPLETION_TRIGGER_CHARACTERS...,
+    " ",  # import path completion & method completion
+    "(",  # method completion
+    ",",   # method completion
     NUMERIC_CHARACTERS..., # allow these characters to be recognized by `CompletionContext.triggerCharacter`
 ]
+
+const METHOD_COMPLETION_TRIGGER_CHARACTERS = (" ", "(", ",")
 
 completion_options() = CompletionOptions(;
     triggerCharacters = COMPLETION_TRIGGER_CHARACTERS,
@@ -141,9 +144,14 @@ function to_completion(
         sortText = get_sort_text(sort_offset))
 end
 
-should_invoke_auto_completion(::Nothing, ::Bool=false) = true
-function should_invoke_auto_completion(context::CompletionContext, allow_macro::Bool=false)
-    if !allow_macro || context.triggerCharacter != "@"
+should_invoke_auto_completion(::Nothing; _...) = true
+function should_invoke_auto_completion(
+        context::CompletionContext;
+        allow_atmark::Bool = false,
+        allow_whitespace::Bool = false,
+    )
+    if !((allow_atmark && context.triggerCharacter == "@") ||
+         (allow_whitespace && context.triggerCharacter == " "))
         # Don't trigger completion just by typing a numeric character, etc.
         if context.triggerKind != CompletionTriggerKind.Invoked
             return false
@@ -179,11 +187,86 @@ end
 # global completions
 # ==================
 
+"""
+    select_import_colon_module(st::JS.SyntaxTree, offset::Int) -> modexpr::Union{Expr,Symbol,Nothing}
+
+If the code at `offset` position is within a colon-style `using`/`import` statement
+(e.g., `using Base: |`), return an expression representing the module path.
+Returns `nothing` if not in such a context.
+
+The returned expression can be passed to `resolve_type` to get the module value.
+"""
+function select_import_colon_module(st::JS.SyntaxTree, offset::Int)
+    bas = byte_ancestors(st, offset-1)
+    for i = 1:length(bas)
+        basᵢ = bas[i]
+        k = JS.kind(basᵢ)
+        if k === JS.K":"
+            parent_idx = i + 1
+            if parent_idx ≤ length(bas)
+                parent = bas[parent_idx]
+                if JS.kind(parent) in JS.KSet"using import"
+                    JS.numchildren(basᵢ) ≥ 1 || return nothing
+                    importpath = basᵢ[1]
+                    return importpath_to_expr(importpath)
+                end
+            end
+        end
+    end
+    return nothing
+end
+
+function importpath_to_expr(importpath::JS.SyntaxTree)
+    JS.kind(importpath) === JS.K"importpath" || return nothing
+    nchildren = JS.numchildren(importpath)
+    nchildren ≥ 1 || return nothing
+
+    parts = Symbol[]
+    for i = 1:nchildren
+        child = importpath[i]
+        k = JS.kind(child)
+        if k === JS.K"Identifier"
+            push!(parts, Symbol(JS.sourcetext(child)))
+        elseif k === JS.K"."
+            push!(parts, :.)
+        end
+    end
+
+    isempty(parts) && return nothing
+
+    # Handle relative imports like `..Foo`
+    ndots = 0
+    start_idx = 1
+    while start_idx ≤ length(parts) && parts[start_idx] === :.
+        ndots += 1
+        start_idx += 1
+    end
+
+    # Build the module expression
+    if start_idx > length(parts)
+        return nothing
+    end
+
+    ex = parts[start_idx]
+    for j = (start_idx + 1):length(parts)
+        parts[j] === :. && continue
+        ex = Expr(:., ex, QuoteNode(parts[j]))
+    end
+
+    # Prepend dots for relative imports
+    for _ = 1:ndots
+        ex = Expr(:., :., ex)
+    end
+
+    return ex
+end
+
 function global_completions!(
         items::Dict{String,CompletionItem},
         state::ServerState, uri::URI, fi::FileInfo, pos::Position, context::Union{Nothing,CompletionContext},
     )
-    should_invoke_auto_completion(context, #=allow_macro=#true) || return nothing
+    should_invoke_auto_completion(context;
+        allow_atmark=true, allow_whitespace=true) || return nothing
 
     (; mod, analyzer, postprocessor) = get_context_info(state, uri, pos)
     completion_module = mod
@@ -192,13 +275,14 @@ function global_completions!(
     prev_kind = isnothing(prev_token) ? nothing : JS.kind(prev_token)
 
     # Case: `@│`
+    is_macro_invoke = false
+    edit_start_pos = nothing
     if prev_kind === JS.K"@"
         edit_start_pos = offset_to_xy(fi, JS.first_byte(prev_token))
         is_macro_invoke = true
     # Case `│` (empty program)
     elseif isnothing(prev_token)
         edit_start_pos = Position(; line=0, character=0)
-        is_macro_invoke = false
     elseif JS.is_identifier(prev_kind)
         pprev_token = prev_tok(prev_token)
         if !isnothing(pprev_token) && JS.kind(pprev_token) === JS.K"@"
@@ -207,14 +291,11 @@ function global_completions!(
             is_macro_invoke = true
         else
             edit_start_pos = offset_to_xy(fi, JS.first_byte(prev_token))
-            is_macro_invoke = false
         end
     else
         # When completion is triggered within unknown scope (e.g., comment),
         # it's difficult to properly specify `edit_start_pos`.
         # Simply specify only the `label` and let the client handle it appropriately.
-        edit_start_pos = nothing
-        is_macro_invoke = false
     end
 
     # if we are in macro name context, then we don't need the local completions
@@ -223,6 +304,27 @@ function global_completions!(
 
     st = build_syntax_tree(fi)
     offset = xy_to_offset(fi, pos)
+
+    # Case: `using Module: |` or `import Module: |`
+    exclude_imported_names = false
+    import_modpath = select_import_colon_module(st, offset)
+    if !isnothing(import_modpath)
+        prefixtyp = resolve_type(analyzer, completion_module, import_modpath)
+        module_resolved = false
+        if prefixtyp isa Core.Const
+            prefixval = prefixtyp.val
+            if prefixval isa Module
+                completion_module = prefixval
+                module_resolved = exclude_imported_names = is_completed = true
+            end
+        end
+        module_resolved || return nothing
+    else
+        if context isa CompletionContext && context.triggerCharacter == " "
+            return nothing
+        end
+    end
+
     dotprefix = select_dotprefix_identifier(st, offset)
     if !isnothing(dotprefix)
         prefixtyp = resolve_type(analyzer, completion_module, dotprefix)
@@ -238,8 +340,9 @@ function global_completions!(
         end
         enable_completions || return #=isIncomplete=#false
         # disable local completions for dot-prefixed code for now
-        is_completed |= true
+        is_completed = true
     end
+
     resolver_id = String(gensym("GlobalCompletionResolverInfo_resovler_id"))
     store!(state.completion_resolver_info, completion_module) do _, mod::Module
         GlobalCompletionResolverInfo(resolver_id, mod, postprocessor), nothing
@@ -255,7 +358,9 @@ function global_completions!(
         s
     end
 
-    for name in @invokelatest(names(completion_module; all=true, imported=true, usings=true))::Vector{Symbol}
+    allnames = (exclude_imported_names ? prioritized_names :
+        @invokelatest(names(completion_module; all=true, imported=true, usings=true))::Vector{Symbol})
+    for name in allnames
         s = String(name)
         startswith(s, "#") && continue
 
@@ -301,7 +406,8 @@ function global_completions!(
             TextEdit(; range, newText)
         end
 
-        labelDetails = CompletionItemLabelDetails(; description = "global")
+        labelDetails = CompletionItemLabelDetails(;
+            description = !isnothing(import_modpath) ? "import" : "global")
 
         # N.B. Don't set `kind` here to prevent Zed from applying highlights to the `label` at this stage.
         # The determination of `kind` involves reflection such as `getglobal`, so it is lazily resolved (see `resolve_completion_item`)
@@ -732,6 +838,9 @@ function resolve_completion_item(state::ServerState, item::CompletionItem)
         name = Symbol(data.name)
         binding = Base.Docs.Binding(mod, name)
         docs = postprocessor(Base.Docs.doc(binding))
+        documentation = MarkupContent(;
+                kind = MarkupKind.Markdown,
+                value = docs)
         (; labelDetails, detail) = item
         # This `kind` doesn't have much meaning in itself, but at least by setting `kind`,
         # we enable tree-sitter-based highlighting of the `label` in zed-julia
@@ -768,13 +877,11 @@ function resolve_completion_item(state::ServerState, item::CompletionItem)
             end
         end
         if !isnothing(detail)
-            labelDetails = CompletionItemLabelDetails(; description = "global " * detail)
+            labelDetails = CompletionItemLabelDetails(;
+                description = labelDetails.description * " " * detail)
         end
         return CompletionItem(item;
-            labelDetails, kind, detail,
-            documentation = MarkupContent(;
-                kind = MarkupKind.Markdown,
-                value = docs))
+            labelDetails, kind, detail, documentation)
     elseif (data isa MethodSignatureCompletionData &&
             completion_resolver_info isa MethodSignatureCompletionResolverInfo &&
             data.resolver_id == completion_resolver_info.id)
