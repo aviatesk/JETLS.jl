@@ -126,7 +126,7 @@ end
             symbols = JETLS.extract_document_symbols(st0, fi)
             @test length(symbols) == 1
             @test symbols[1].name == "MyInt"
-            @test symbols[1].kind == SymbolKind.Class
+            @test symbols[1].kind == SymbolKind.Number
             @test symbols[1].detail == "primitive type MyInt 32"
         end
 
@@ -136,7 +136,7 @@ end
             symbols = JETLS.extract_document_symbols(st0, fi)
             @test length(symbols) == 1
             @test symbols[1].name == "MyFloat"
-            @test symbols[1].kind == SymbolKind.Class
+            @test symbols[1].kind == SymbolKind.Number
             @test symbols[1].detail == "primitive type MyFloat <: AbstractFloat 64"
         end
     end
