@@ -45,13 +45,13 @@ function handle_CodeLensRequest(server::Server, msg::CodeLensRequest, cancel_fla
 end
 
 const REFERENCES_CODE_LENS_SYMBOL_KINDS = (
-    SymbolKind.Function,
-    SymbolKind.Struct,
-    SymbolKind.Constant,
-    SymbolKind.Interface,
-    SymbolKind.Class,
-    SymbolKind.Module,
-    SymbolKind.Enum,
+    SymbolKind.Function,  # function, macro
+    SymbolKind.Struct,    # struct, mutable struct
+    SymbolKind.Constant,  # const
+    SymbolKind.Interface, # abstract type
+    SymbolKind.Number,    # primitive type
+    SymbolKind.Module,    # module
+    SymbolKind.Enum,      # @enum
 )
 
 function references_code_lenses!(

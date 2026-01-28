@@ -362,7 +362,7 @@ function extract_primitive_type_symbol!(
     push!(symbols, DocumentSymbol(;
         name,
         detail,
-        kind = SymbolKind.Class,
+        kind = SymbolKind.Number,
         range = jsobj_to_range(st0, fi),
         selectionRange = jsobj_to_range(name_node, fi)))
     return nothing
