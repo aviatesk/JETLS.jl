@@ -115,6 +115,8 @@ Here is a summary table of the diagnostics explained in this section:
 | [`lowering/unused-local`](@ref diagnostic/reference/lowering/unused-local)                                     | `Information`         | `JETLS/live`  | Local variables that are never used                    |
 | [`lowering/unused-assignment`](@ref diagnostic/reference/lowering/unused-assignment)                           | `Information`         | `JETLS/live`  | Assignments whose values are never read                |
 | [`lowering/unused-import`](@ref diagnostic/reference/lowering/unused-import)                                   | `Information`         | `JETLS/live`  | Imported names that are never used                     |
+| [`lowering/unused-label`](@ref diagnostic/reference/lowering/unused-label)                                     | `Information`         | `JETLS/live`  | Labels that are never referenced by `@goto`            |
+| [`lowering/undefined-export`](@ref diagnostic/reference/lowering/undefined-export)                             | `Warning`             | `JETLS/live`  | Exported names that are not defined                    |
 | [`lowering/unreachable-code`](@ref diagnostic/reference/lowering/unreachable-code)                             | `Information`         | `JETLS/live`  | Code after a block terminator that is never reached    |
 | [`lowering/inactive-code`](@ref diagnostic/reference/lowering/inactive-code)                                   | `Hint`                | `JETLS/live`  | Code excluded by `@static` in the current environment  |
 | [`lowering/unsorted-import-names`](@ref diagnostic/reference/lowering/unsorted-import-names)                   | `Hint`                | `JETLS/live`  | Import/export names not sorted alphabetically          |
@@ -764,6 +766,22 @@ end
 
 !!! tip "Code action available"
     Use the "Remove unused label" code action to delete the `@label` statement.
+
+#### [Undefined export (`lowering/undefined-export`)](@id diagnostic/reference/lowering/undefined-export)
+
+**Default severity**: `Warning`
+
+Reported when an `export` statement references a name that is not defined in
+the current module. This helps catch typos or missing definitions early.
+
+Example:
+
+```julia
+module MyModule
+    export undefined_name  # Exported name `undefined_name` is not defined in `MyModule`
+                           # (JETLS lowering/undefined-export)
+end
+```
 
 #### [Unreachable code (`lowering/unreachable-code`)](@id diagnostic/reference/lowering/unreachable-code)
 

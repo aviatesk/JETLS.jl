@@ -1255,6 +1255,40 @@ function analyze_unsorted_imports!(
     return diagnostics
 end
 
+function analyze_exported_undefined!(
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, mod::Module, st0::JS.SyntaxTree,
+        world::UInt
+    )
+    traverse(st0) do st0′::JS.SyntaxTree
+        kind = JS.kind(st0′)
+        if kind !== JS.K"export"
+            return nothing
+        end
+        for (name_node, _) in collect_import_names(st0′)
+            name_kind = JS.kind(name_node)
+            name_sym = if name_kind === JS.K"Identifier"
+                Symbol(JS.sourcetext(name_node))
+            elseif name_kind === JS.K"macro_name"
+                Symbol(JS.sourcetext(name_node))
+            else
+                continue
+            end
+            if !Base.invoke_in_world(world, isdefinedglobal, mod, name_sym)::Bool
+                range = jsobj_to_range(name_node, fi)
+                push!(diagnostics, Diagnostic(;
+                    range,
+                    severity = DiagnosticSeverity.Warning,
+                    message = "Exported name `$(name_sym)` is not defined in `$(nameof(mod))`",
+                    source = DIAGNOSTIC_SOURCE_LIVE,
+                    code = LOWERING_UNDEFINED_EXPORT_CODE,
+                    codeDescription = diagnostic_code_description(LOWERING_UNDEFINED_EXPORT_CODE)))
+            end
+        end
+        return traversal_no_recurse
+    end
+    return diagnostics
+end
+
 function generate_sorted_import_text(
         node::SyntaxTreeC, sorted_name_keys::Vector{Pair{SyntaxTreeC,String}},
         base_indent::String
@@ -1522,6 +1556,9 @@ function per_stmt_diagnostics!(
     @assert JS.kind(st0) ∉ JS.KSet"toplevel module"
 
     analyze_unsorted_imports!(diagnostics, fi, st0)
+    if !skip_analysis_requiring_context
+        analyze_exported_undefined!(diagnostics, fi, context_module, st0, world)
+    end
 
     (st0, _) = desugar_main_macrocall(st0)
     macro_diags = MacroDiagnostic[]

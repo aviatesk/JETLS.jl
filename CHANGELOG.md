@@ -65,6 +65,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Added support for the LSP 3.18 `textDocument/rangesFormatting` request so clients that advertise `textDocument.rangeFormatting.rangesSupport` can format multiple ranges in a single request.
 
+- Added [`lowering/undefined-export`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undefined-export)
+  diagnostic that reports when an `export` statement references an undefined
+  name. This helps catch typos like `export undefvar` where the exported name
+  doesn't actually exist.
+
 ### Changed
 
 - JETLS now performs correct scope resolution on identifiers used inside `@static` macrocalls, which previously could yield incorrect results in edge cases.
