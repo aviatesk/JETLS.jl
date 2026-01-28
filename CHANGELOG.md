@@ -77,6 +77,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   now appear in the document outline as `SymbolKind.Namespace` symbols, with
   all definitions from `if`/`elseif`/`else` branches flattened as children.
 
+- Added document symbol support for `@testset` and `@test` macros. `@testset`
+  blocks appear in the document outline with the test name, and `@test`
+  expressions appear as children showing the test expression.
+
 ### Deprecated
 
 - Running `jetls` without a subcommand (e.g., `jetls --stdio`) is deprecated.

@@ -492,6 +492,10 @@ function extract_namespace_symbol!(
     )
     JS.numchildren(st0) ≥ 2 || return nothing
     children = @somereal extract_scoped_children(st0, fi, mod) return nothing
+    body = st0[end]
+    if JS.kind(body) === JS.K"block"
+        extract_macrocalls_from_block!(children, body, fi, mod)
+    end
     push!(symbols, DocumentSymbol(;
         name = " ",
         detail = rstrip(prefix * lstrip(JS.sourcetext(st0[1]))),
@@ -536,6 +540,18 @@ function extract_if_children!(
     return nothing
 end
 
+function extract_macrocalls_from_block!(
+        symbols::Vector{DocumentSymbol}, st::JS.SyntaxTree, fi::FileInfo, mod::Module
+    )
+    for i = 1:JS.numchildren(st)
+        child = st[i]
+        if JS.kind(child) === JS.K"macrocall"
+            extract_macrocall_symbol!(symbols, child, fi, mod)
+        end
+    end
+    return nothing
+end
+
 function extract_macrocall_symbol!(
         symbols::Vector{DocumentSymbol}, st0::JS.SyntaxTree, fi::FileInfo, mod::Module
     )
@@ -544,6 +560,10 @@ function extract_macrocall_symbol!(
         extract_enum_symbol!(symbols, st0, fi)
     elseif macro_name == "@static"
         extract_static_if_symbol!(symbols, st0, fi, mod)
+    elseif macro_name == "@testset"
+        extract_testset_symbol!(symbols, st0, fi, mod)
+    elseif macro_name == "@test"
+        extract_test_symbol!(symbols, st0, fi)
     else
         extract_toplevel_symbols!(symbols, st0, fi, mod)
     end
@@ -574,6 +594,81 @@ function get_macrocall_name(st0::JS.SyntaxTree)
     else
         return extract_name_val(macro_node)
     end
+end
+
+function extract_testset_symbol!(
+        symbols::Vector{DocumentSymbol}, st0::JS.SyntaxTree, fi::FileInfo, mod::Module
+    )
+    JS.numchildren(st0) ≥ 2 || return nothing
+
+    # Find the description string node (may not be at position 2 if CustomTestSet or options are present)
+    description_node = nothing
+    for i = 2:JS.numchildren(st0)-1
+        child = st0[i]
+        if JS.kind(child) === JS.K"string"
+            description_node = child
+            break
+        end
+    end
+    description = isnothing(description_node) ? "" : @something extract_string_content(description_node) ""
+
+    body = st0[end]
+    body_kind = JS.kind(body)
+    children = DocumentSymbol[]
+    if body_kind === JS.K"block"
+        extract_toplevel_symbols!(children, body, fi, mod)
+    elseif body_kind === JS.K"for" || body_kind === JS.K"let"
+        JS.numchildren(body) ≥ 2 || return nothing
+        body_block = body[end]
+        if JS.kind(body_block) === JS.K"block"
+            extract_toplevel_symbols!(children, body_block, fi, mod)
+        end
+    elseif body_kind === JS.K"call"
+        # Function call: @testset "desc" test_func()
+        # No children to extract, the test function itself is the body
+    else
+        extract_toplevel_symbol!(children, body, fi, mod)
+    end
+
+    # For @testset let, use bindings node as selection range since there's no description
+    selection_node = !isnothing(description_node) ? description_node :
+        body_kind === JS.K"let" ? body[1] : body
+
+    push!(symbols, DocumentSymbol(;
+        name = isempty(description) ? " " : description,
+        detail = first(split(JS.sourcetext(st0), '\n')),
+        kind = SymbolKind.Event,
+        range = jsobj_to_range(st0, fi),
+        selectionRange = jsobj_to_range(selection_node, fi),
+        children = @somereal children Some(nothing)))
+    return nothing
+end
+
+function extract_string_content(st0::JS.SyntaxTree)
+    JS.kind(st0) === JS.K"string" || return nothing
+    JS.numchildren(st0) ≥ 1 || return nothing
+    first_child = st0[1]
+    if JS.numchildren(st0) == 1 && JS.kind(first_child) === JS.K"String"
+        # Simple string without interpolation
+        return JS.hasattr(first_child, :value) ? first_child.value : nothing
+    else
+        # Interpolated string - extract content from source text
+        src = JS.sourcetext(st0)
+        return startswith(src, '"') && endswith(src, '"') ? strip(src, '"') : src
+    end
+end
+
+function extract_test_symbol!(symbols::Vector{DocumentSymbol}, st0::JS.SyntaxTree, fi::FileInfo)
+    JS.numchildren(st0) ≥ 2 || return nothing
+    expr_node = st0[2]
+    expr_text = lstrip(JS.sourcetext(expr_node))
+    push!(symbols, DocumentSymbol(;
+        name = expr_text,
+        detail = "@test " * expr_text,
+        kind = SymbolKind.Boolean,
+        range = jsobj_to_range(st0, fi),
+        selectionRange = jsobj_to_range(expr_node, fi)))
+    return nothing
 end
 
 function extract_enum_symbol!(symbols::Vector{DocumentSymbol}, st0::JS.SyntaxTree, fi::FileInfo)
