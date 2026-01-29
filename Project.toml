@@ -24,7 +24,7 @@ Sockets = "6462fe0b-24de-5631-8697-dd941f90decc"
 TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 
 [sources]
-JET = {rev = "8fe5f1b", url = "https://github.com/aviatesk/JET.jl"}
+JET = {rev = "dde2e70", url = "https://github.com/aviatesk/JET.jl"}
 JuliaLowering = {rev = "avi/JETLS-JSJL-head-2026-01-29", subdir = "JuliaLowering", url = "https://github.com/JuliaLang/julia"}
 JuliaSyntax = {rev = "avi/JETLS-JSJL-head-2026-01-29", subdir = "JuliaSyntax", url = "https://github.com/JuliaLang/julia"}
 LSP = {path = "LSP"}
