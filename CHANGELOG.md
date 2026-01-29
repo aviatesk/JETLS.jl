@@ -133,6 +133,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   the same cached tree during lowering could cause data races and segfaults.
   Cached trees are now copied before use. (https://github.com/aviatesk/JETLS.jl/pull/525)
 
+- Fixed cache not being generated in some cases in the experimental incremental
+  analysis mode. The cache is now always created when `CodeInstance` is
+  available, ensuring cache reuse works reliably.
+
 ## 2026-01-23
 
 - Commit: [`9c00dfe`](https://github.com/aviatesk/JETLS.jl/commit/9c00dfe)

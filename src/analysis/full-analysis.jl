@@ -824,6 +824,8 @@ function analyze_package_with_revise(
                 # Cache the result if CodeInstance is available
                 if isdefined(result, :ci)
                     siginfos[index] = Revise.replace_extended_data(siginfo, :JETLS, SigAnalysisResult(reports, result.ci))
+                else
+                    JETLS_DEV_MODE && @warn "Missing CodeInstance for method analysis instance for" siginfo.sig
                 end
             else
                 JETLS_DEV_MODE && @warn "Couldn't find a single matching method for the signature" siginfo.sig
