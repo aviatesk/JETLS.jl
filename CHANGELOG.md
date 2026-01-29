@@ -104,6 +104,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `textDocument/diagnostic` now supports cancellation, avoiding to compute
   staled diagnostics (https://github.com/aviatesk/JETLS.jl/pull/524)
 
+- Updated JuliaSyntax.jl and JuliaLowering.jl dependency versions to latest,
+  fixing the root causes of https://github.com/aviatesk/JETLS.jl/issues/492,
+  and https://github.com/aviatesk/JETLS.jl/issues/508.
+
 ### Fixed
 
 - Lowering diagnostics no longer report issues in macro-generated code that
