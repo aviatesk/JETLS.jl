@@ -211,10 +211,10 @@ end
 
 const AnalysisCache = LWContainer{Dict{URI,AnalysisInfo}, LWStats}
 const PendingAnalyses = CASContainer{Dict{AnalysisEntry,Union{Nothing,AnalysisRequest}}, CASStats}
-const CurrentGenerations = CASContainer{Dict{AnalysisEntry,Int}}
-const AnalyzedGenerations = CASContainer{Dict{AnalysisEntry,Int}}
+const CurrentGenerations = CASContainer{Dict{AnalysisEntry,Int}, CASStats}
+const AnalyzedGenerations = CASContainer{Dict{AnalysisEntry,Int}, CASStats}
 const DebouncedRequests = LWContainer{Dict{AnalysisEntry,Tuple{Timer,Base.Event}}, LWStats}
-const InstantiatedEnvs = LWContainer{Dict{String,Union{Nothing,Tuple{Base.PkgId,String}}}}
+const InstantiatedEnvs = LWContainer{Dict{String,Union{Nothing,Tuple{Base.PkgId,String}}}, LWStats}
 
 struct AnalysisManager
     cache::AnalysisCache
