@@ -310,7 +310,7 @@ function run_check(args::Vector{String})::Cint
     quiet && Base.CoreLogging.disable_logging(Base.CoreLogging.Warn)
 
     root_path = root_path_opt !== nothing ? abspath(root_path_opt) : pwd()
-    server = cli_server(root_path)
+    server = start_cli_server(root_path)
     skip_analysis || start_analysis_workers!(server)
     progress_ctx = ProgressContext(progress_mode, stderr)
 
@@ -358,7 +358,7 @@ function run_check(args::Vector{String})::Cint
     return has_errors
 end
 
-function cli_server(root_path::AbstractString)
+function start_cli_server(root_path::AbstractString)
     server = Server(; suppress_notifications=true)
 
     server.state.root_path = root_path
