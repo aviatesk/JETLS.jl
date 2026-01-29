@@ -49,9 +49,12 @@ abstract type AnalysisEntry end # used by `Analyzer.LSAnalyzer`
 
 include("AtomicContainers/AtomicContainers.jl")
 using .AtomicContainers
-const SWStats  = JETLS_DEV_MODE ? AtomicContainers.SWStats : Nothing
-const LWStats  = JETLS_DEV_MODE ? AtomicContainers.LWStats : Nothing
-const CASStats = JETLS_DEV_MODE ? AtomicContainers.CASStats : Nothing
+# const SWStats  = JETLS_DEV_MODE ? AtomicContainers.SWStats  : Nothing
+# const LWStats  = JETLS_DEV_MODE ? AtomicContainers.LWStats  : Nothing
+# const CASStats = JETLS_DEV_MODE ? AtomicContainers.CASStats : Nothing
+const SWStats  = Nothing
+const LWStats  = Nothing
+const CASStats = Nothing
 
 include("analysis/Analyzer.jl")
 using .Analyzer
