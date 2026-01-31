@@ -39,7 +39,9 @@ function collect_search_uris(server::Server, uri::URI)
     elseif analysis_info isa OutOfScope && @isdefined(Revise)
         # TODO: This implementation should be revisited when Revise is integrated into full-analysis
         out_of_scope = analysis_info
-        pkgid = Base.PkgId(something(out_of_scope.module_context, Main))
+        # Use `@something` instead of `something` due to https://github.com/JuliaLang/julia/pull/60857
+        # `something` can be used after 1.12.5
+        pkgid = Base.PkgId(@something(out_of_scope.module_context, Main))
         if haskey(Revise.pkgdatas, pkgid)
             pkgdata = Revise.pkgdatas[pkgid]
             for file in Revise.srcfiles(pkgdata)
@@ -702,7 +704,7 @@ function analyze_package_with_revise(
             show_error_message(server, "Failed to load package $(pkgid.name): $(sprint(Base.showerror, e))")
             error(lazy"Package $(pkgid.name) is not loadable") # TODO
         finally
-            notify(activation_done)
+            isnothing(activation_done) || notify(activation_done)
         end
     end
 
@@ -735,8 +737,22 @@ function analyze_package_with_revise(
         Revise.maybe_extract_sigs!(fi)
     end
 
+    analyzed_file_infos = Dict{URI,JET.AnalyzedFileInfo}()
+    basedir = Revise.basedir(pkgdata)
+    report_target_modules = Set{Module}()
+    for (i, file) in enumerate(Revise.srcfiles(pkgdata))
+        filepath = joinpath(basedir, file)
+        uri = filepath2uri(filepath)
+        # Build module range info from Revise's tracked modules
+        # TODO This is pretty incorrect module context mapping
+        filemod, _ = last(pkgdata.fileinfos[i].mod_exs_infos)
+        module_range_infos = Pair{UnitRange{Int},Module}[(1:typemax(Int)) => filemod]
+        analyzed_file_infos[uri] = JET.AnalyzedFileInfo(module_range_infos)
+        push!(report_target_modules, filemod)
+    end
+
     analyzer = let analyzer # avoid captured boxes
-        analyzer = LSAnalyzer(request.entry; report_target_modules=(pkgmod,)) # TODO Revisit (submodules)
+        analyzer = LSAnalyzer(request.entry; report_target_modules) # TODO Revisit (submodules)
         # Revise's signature population may execute code, which can increment the world age,
         # so we update to the latest world age here
         newstate = JET.AnalyzerState(JET.AnalyzerState(analyzer); world = Base.get_world_counter())
@@ -856,17 +872,6 @@ function analyze_package_with_revise(
 
     @label completed
 
-    analyzed_file_infos = Dict{URI,JET.AnalyzedFileInfo}()
-    basedir = Revise.basedir(pkgdata)
-    for (i, file) in enumerate(Revise.srcfiles(pkgdata))
-        filepath = joinpath(basedir, file)
-        uri = filepath2uri(filepath)
-        # Build module range info from Revise's tracked modules
-        # TODO This is pretty incorrect module context mapping
-        filemod, _ = last(pkgdata.fileinfos[i].mod_exs_infos)
-        module_range_infos = Pair{UnitRange{Int},Module}[(1:typemax(Int)) => filemod]
-        analyzed_file_infos[uri] = JET.AnalyzedFileInfo(module_range_infos)
-    end
     uri2diagnostics = URI2Diagnostics(uri => Diagnostic[] for uri in keys(analyzed_file_infos))
     postprocessor = JET.PostProcessor()
 

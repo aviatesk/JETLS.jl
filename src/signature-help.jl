@@ -395,7 +395,7 @@ end
 function is_crossline_noparen_macrocall(call::JS.SyntaxTree, cursor_byte::Int)
     return noparen_macrocall(call) && let source_file = JS.sourcefile(call)
         # Check if cursor is on a different line from the @ symbol
-        JS.numchildren(call) ≥ 1 &&
+        source_file isa JS.SourceFile && JS.numchildren(call) ≥ 1 &&
             JS.source_line(source_file, JS.first_byte(call[1])) ≠ JS.source_line(source_file, cursor_byte)
     end
 end

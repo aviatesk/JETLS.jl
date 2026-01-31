@@ -62,7 +62,7 @@ function run_serve(args::Vector{String})::Cint
                 return Cint(1)
             end
         elseif (m = match(r"^--socket=(\d+)$", arg); !isnothing(m))
-            socket_port = tryparse(Int, m.captures[1])
+            socket_port = tryparse(Int, m.captures[1]::AbstractString)
             @label check_socket_port
             if isnothing(socket_port)
                 @error "Invalid port number for --socket (must be a valid integer)"
@@ -78,7 +78,7 @@ function run_serve(args::Vector{String})::Cint
                 return Cint(1)
             end
         elseif (m = match(r"^--clientProcessId=(\d+)$", arg); !isnothing(m))
-            client_process_id = tryparse(Int, m.captures[1])
+            client_process_id = tryparse(Int, m.captures[1]::AbstractString)
             @label check_client_process_id
             if isnothing(client_process_id)
                 @error "Invalid process ID for --clientProcessId (must be a valid integer)"
