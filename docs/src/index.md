@@ -96,9 +96,9 @@ Minimal [Emacs](https://www.gnu.org/software/emacs/)
                '(((julia-mode :language-id "julia")
                   (julia-ts-mode :language-id "julia"))
                  "jetls"
-                 "serve"
                  "--threads=auto"
                  "--"
+                 "serve"
                  "--socket"
                  :autoport)))
 ```
@@ -112,9 +112,9 @@ call LspAddServer([#{name: 'JETLS.jl',
                  \   filetype: 'julia',
                  \   path: 'jetls',
                  \   args: [
-                 \       'serve',
                  \       '--threads=auto',
                  \       '--'
+                 \       'serve',
                  \   ]
                  \ }])
 ```
@@ -127,9 +127,9 @@ Minimal [Neovim](https://neovim.io/) setup (requires Neovim v0.11):
 vim.lsp.config("jetls", {
     cmd = {
         "jetls",
-        "serve",
         "--threads=auto",
         "--",
+        "serve",
     },
     filetypes = { "julia" },
     root_markers = { "Project.toml" }
@@ -148,7 +148,7 @@ Minimal [Sublime](https://www.sublimetext.com/) setup using the
   "clients": {
     "jetls": {
       "enabled": true,
-      "command": ["jetls", "serve", "--threads=auto", "--", "--socket=${port}"],
+      "command": ["jetls", "--threads=auto", "--", "serve", "--socket=${port}"],
       "selector": "source.julia",
       "tcp_port": 0
     }
@@ -173,7 +173,7 @@ name = "julia"
 language-servers = [ "jetls" ]
 
 [language-server]
-jetls = { command = "jetls", args = ["serve", "--threads=auto", "--"] }
+jetls = { command = "jetls", args = ["--threads=auto", "--", "serve"] }
 ```
 
 ### Advanced: using local JETLS checkout
