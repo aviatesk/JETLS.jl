@@ -3,10 +3,15 @@ diagnostic = "Diagnostic configuration. See [Diagnostic configuration](https://a
 full_analysis = "Configuration for full JET analysis. See [Full analysis configuration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/full_analysis)."
 testrunner = "TestRunner integration configuration. See [TestRunner integration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/testrunner)."
 formatter = "Formatter configuration. Can be a preset name ('Runic' or 'JuliaFormatter') or a custom formatter object. See [Formatting configuration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/formatter)."
+completion = "Completion configuration. Controls behavior of code completion features."
+code_lens = "Code lens configuration. Controls which code lenses are displayed in the editor."
+inlay_hint = "Inlay hint configuration. Controls display of inline hints in the editor."
 initialization_options = "Static initialization options sent to JETLS during startup. These settings require a server restart to take effect."
 
 [DiagnosticConfig]
 enabled = "Enable or disable all JETLS diagnostics. When set to false, no diagnostic messages will be shown."
+all_files = "When enabled, diagnostics are reported for all files in the workspace, including unopened files. When disabled, diagnostics are only reported for files currently open in the editor. Disabling this can reduce noise when there are many warnings across the workspace."
+allow_unused_underscore = "When enabled, unused variable diagnostics (lowering/unused-argument and lowering/unused-local) are suppressed for names starting with underscore (_). This follows the Julia convention of using underscore prefix for intentionally unused variables."
 patterns = "Fine-grained control over diagnostics through pattern matching. See [Pattern-based diagnostic configuration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic/patterns)."
 
 [DiagnosticPattern]
@@ -29,3 +34,20 @@ executable_range = "Path to custom formatter executable for range formatting."
 
 [InitOptions]
 n_analysis_workers = "Number of analysis worker tasks. Default is 1. See [documentation](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options/n_analysis_workers) for details and current limitations."
+
+[CompletionConfig]
+latex_emoji = "LaTeX and emoji completion configuration."
+method_signature = "Method signature completion configuration."
+
+[LaTeXEmojiConfig]
+strip_prefix = "Controls prefix stripping in LaTeX/emoji completions. Some editors (e.g., Zed) don't handle backslash characters in the LSP sortText field correctly, causing incorrect completion order. Set to true to strip prefixes, false to keep them. If not set, JETLS auto-detects based on client. The auto-detection covers only a limited set of known clients, so users experiencing sorting issues should explicitly set this option."
+
+[MethodSignatureConfig]
+prepend_inference_result = "Controls whether to prepend inferred return type information to the documentation of method signature completion items. In some editors (e.g., Zed), additional information like inferred return type displayed when an item is selected may be cut off in the UI when method signature text is long. Set to true to show return type in documentation. If not set, JETLS auto-detects based on client. The auto-detection covers only a limited set of known clients, so users experiencing visibility issues should explicitly set this option."
+
+[CodeLensConfig]
+references = "Enable or disable reference count code lenses for top-level symbols (functions, structs, constants, abstract types, primitive types, modules). When enabled, a code lens showing 'N references' appears above each symbol definition. Clicking it opens the references panel."
+testrunner = "Enable or disable TestRunner code lenses. Some editors (e.g., Zed) display code lenses as code actions, causing duplication. The aviatesk/zed-julia extension automatically defaults this to false."
+
+[InlayHintConfig]
+block_end_min_lines = "Minimum number of lines for a block to show an inlay hint at the end keyword. For long blocks (module, function, macro, struct, if/@static if, let, for, while, @testset), an inlay hint is displayed at the end keyword showing what construct is ending, such as 'module Foo' or 'function bar'. Default is 25 lines."
