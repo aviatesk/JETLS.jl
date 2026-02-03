@@ -36,11 +36,23 @@ rename_description_to_markdown!(expanded_schema.doc)
 delete!(expanded_schema.doc["properties"], "initialization_options")
 
 
-package_json_path = joinpath(@__DIR__, "..", "..", "jetls-client", "package.json")
+package_json_path = joinpath(
+    @__DIR__, "..", "..", "jetls-client", "package.json"
+)
 package_json = JSON.parsefile(package_json_path)
+expected_props = expanded_schema.doc["properties"]
+settings = package_json["contributes"][
+    "configuration"]["properties"]["jetls-client.settings"]
 
-package_json["contributes"]["configuration"]["properties"]["jetls-client.settings"]["properties"] = expanded_schema.doc["properties"]
-
-open(package_json_path, "w") do io
-    write(io, JSON.json(package_json, 2))
+if "--check" in ARGS
+    if settings["properties"] != expected_props
+        @warn "The properties in package.json do not match the expected schema. Please run this script without --check to update it."
+        exit(1)
+    end
+else
+    settings["properties"] = expected_props
+    open(package_json_path, "w") do io
+        write(io, JSON.json(package_json, 2))
+    end
+    @info "Updated package.json with the new schema."
 end
