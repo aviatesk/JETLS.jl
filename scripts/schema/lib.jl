@@ -5,7 +5,7 @@ using JSON
 using Glob
 
 
-function attach_description(ctx::SchemaContext, desc_path)
+function attach_description!(ctx::SchemaContext, desc_path)
     desc = TOML.parsefile(joinpath(@__DIR__, desc_path))
 
     for (struct_name, fields) in desc
@@ -27,11 +27,12 @@ function attach_description(ctx::SchemaContext, desc_path)
             describe!(ctx, struct_type, field_sym, field_desc)
         end
     end
+    return desc
 end
 
 function setup_ctx!(ctx::SchemaContext)
     auto_optional_nothing!(ctx)
-    attach_description(ctx, "description.toml")
+    desc = attach_description!(ctx, "description.toml")
     defaultvalue!(ctx, JETLS.DEFAULT_CONFIG)
 
     # `__pattern_value__` is an internal field and not appeared in the config file
@@ -82,11 +83,11 @@ function setup_ctx!(ctx::SchemaContext)
                             "properties" => Dict(
                                 "executable" => Dict(
                                     "type" => "string",
-                                    "description" => "Path to custom formatter executable for document formatting."
+                                    "description" => desc["CustomFormatterConfig"]["executable"]
                                 ),
                                 "executable_range" => Dict(
                                     "type" => "string",
-                                    "description" => "Path to custom formatter executable for range formatting."
+                                    "description" => desc["CustomFormatterConfig"]["executable_range"]
                                 )
                             ),
                             "required" => ["executable"],
