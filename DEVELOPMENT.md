@@ -481,6 +481,18 @@ To use a local JETLS.jl checkout with the development extension (see
 }
 ```
 
+### Configuration schema
+
+The configuration properties in `jetls-client/package.json`
+are generated from the config structs in `src/types.jl`.
+When you modify those structs, regenerate them by running:
+```bash
+julia --startup-file=no --project=scripts/schema scripts/schema/update-pkg-json.jl
+```
+
+CI runs this script with `--check` to verify `package.json`
+is up to date, so any omission will be caught automatically.
+
 ### Publishing
 
 To publish the extension to the marketplace:
