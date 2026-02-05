@@ -1140,14 +1140,8 @@ end
 
 function ensure_instantiated!(server::Server, env_path::String)
     if get_config(server, :full_analysis, :auto_instantiate)
-        manifest_name = "Manifest-v$(VERSION.major).$(VERSION.minor).toml"
-        manifest_path = joinpath(dirname(env_path), manifest_name)
         io = IOBuffer()
         try
-            if !isfile(manifest_path)
-                JETLS_DEV_MODE && @info "Touching versioned manifest file" env_path
-                touch(manifest_path)
-            end
             JETLS_DEV_MODE && @info "Resolving package environment" env_path
             Pkg.resolve(; io)
             JETLS_DEV_MODE && @info "Instantiating package environment" env_path
