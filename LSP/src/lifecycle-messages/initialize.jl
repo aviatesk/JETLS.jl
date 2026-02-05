@@ -57,13 +57,13 @@
     """
     definitionProvider::Union{Nothing, Bool, DefinitionOptions} = nothing
 
-    # """
-    # The server provides goto type definition support.
+    """
+    The server provides goto type definition support.
 
-    # # Tags
-    # - since - 3.6.0
-    # """
-    # typeDefinitionProvider::Union{Nothing, Bool, TypeDefinitionOptions, TypeDefinitionRegistrationOptions} = nothing
+    # Tags
+    - since - 3.6.0
+    """
+    typeDefinitionProvider::Union{Nothing, Bool, TypeDefinitionOptions, TypeDefinitionRegistrationOptions} = nothing
 
     # """
     # The server provides goto implementation support.
@@ -350,13 +350,13 @@ end
     """
     definition::Union{DefinitionClientCapabilities, Nothing} = nothing
 
-    # """
-    # Capabilities specific to the `textDocument/typeDefinition` request.
+    """
+    Capabilities specific to the `textDocument/typeDefinition` request.
 
-    # # Tags
-    # - since – 3.6.0
-    # """
-    # typeDefinition::Union{TypeDefinitionClientCapabilities, Nothing} = nothing
+    # Tags
+    - since - 3.6.0
+    """
+    typeDefinition::Union{TypeDefinitionClientCapabilities, Nothing} = nothing
 
     # """
     # Capabilities specific to the `textDocument/implementation` request.
