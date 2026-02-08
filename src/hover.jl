@@ -55,8 +55,26 @@ function local_binding_hover_info(fi::FileInfo, uri::URI, definitions::JS.Syntax
     return String(take!(io))
 end
 
+function type_hover_for_binding(
+        fi::FileInfo, mod::Module, postprocessor::LSPostProcessor,
+        ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTree, binding::JS.SyntaxTree
+    )
+    range = jsobj_to_range(binding, fi)
+    fallback_hover = Hover(;
+        contents = MarkupContent(; kind = MarkupKind.Markdown, value = "`[Unknown type]`"),
+        range)
+    inferred_tree = @something infer_toplevel_tree(ctx3, st3, mod) return fallback_hover
+    typ = @something get_type_for_range(inferred_tree, JS.byte_range(binding)) return fallback_hover
+    typstr = postprocessor(string(typ))
+    contents = MarkupContent(;
+        kind = MarkupKind.Markdown,
+        value = "`$typstr`")
+    return Hover(; contents, range)
+end
+
 function handle_HoverRequest(
-        server::Server, msg::HoverRequest, cancel_flag::CancelFlag)
+        server::Server, msg::HoverRequest, cancel_flag::CancelFlag
+    )
     state = server.state
     uri = msg.params.textDocument.uri
     pos = adjust_position(state, uri, msg.params.position)
@@ -73,10 +91,15 @@ function handle_HoverRequest(
     offset = xy_to_offset(fi, pos)
     (; mod, analyzer, postprocessor) = get_context_info(state, uri, pos)
 
-    local_hover = local_binding_hover(state, fi, uri, st0_top, offset, mod)
-    isnothing(local_hover) || return send(server, HoverResponse(;
-        id = msg.id,
-        result = local_hover))
+    target_binding = _select_target_binding(st0_top, offset, mod)
+    if !isnothing(target_binding)
+        (; ctx3, st3, binding) = target_binding
+        binfo = JL.get_binding(ctx3, binding)
+        if binfo.kind === :local
+            return send(server, HoverResponse(;
+                id = msg.id, result = type_hover_for_binding(fi, mod, postprocessor, ctx3, st3, binding)))
+        end
+    end
 
     node = @something select_target_identifier(st0_top, offset) begin
         tok = @something token_at_offset(fi, pos) begin
