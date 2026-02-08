@@ -1,16 +1,14 @@
 function get_type_for_range(inferred_tree::JL.SyntaxTree, rng::UnitRange{<:Integer})
     typ = Ref{Any}(nothing)
-    traverse(inferred_tree) do st::JL.SyntaxTree
-        if JS.byte_range(st) == rng
-            if hasproperty(st, :type)
-                ntyp = st.type
+    traverse(inferred_tree) do st5::JL.SyntaxTree
+        if is_from_user_ast(JS.flattened_provenance(st5)) && JS.byte_range(st5) == rng
+            if hasproperty(st5, :type)
+                ntyp = st5.type
                 if typ[] === nothing
                     typ[] = ntyp
                 else
                     typ[] = CC.tmerge(ntyp, typ[])
                 end
-            else
-                return nothing
             end
         end
     end

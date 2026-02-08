@@ -55,15 +55,35 @@ function local_binding_hover_info(fi::FileInfo, uri::URI, definitions::JS.Syntax
     return String(take!(io))
 end
 
+function type_hover_for_binding(
+        fi::FileInfo, mod::Module, postprocessor::LSPostProcessor,
+        ctx3::JL.VariableAnalysisContext, inferrable_tree::JS.SyntaxTree,
+        inferrable_binding::JS.SyntaxTree
+    )
+    range = jsobj_to_range(inferrable_binding, fi)
+    fallback_hover = Hover(;
+        contents = MarkupContent(; kind = MarkupKind.Markdown, value = "`[Unknown type]`"),
+        range)
+    inferred_tree = @something infer_toplevel_tree(ctx3, inferrable_tree, mod) return fallback_hover
+    typ = @something get_type_for_range(inferred_tree, JS.byte_range(inferrable_binding)) return fallback_hover
+    typstr = postprocessor(string(typ)::String)
+    contents = MarkupContent(;
+        kind = MarkupKind.Markdown,
+        value = "```julia\n$typstr\n```")
+    return Hover(; contents, range)
+end
+
 function handle_HoverRequest(
-        server::Server, msg::HoverRequest, cancel_flag::CancelFlag)
+        server::Server, msg::HoverRequest, cancel_flag::CancelFlag
+    )
     state = server.state
     uri = msg.params.textDocument.uri
     pos = adjust_position(state, uri, msg.params.position)
 
+    fallback_response = HoverResponse(; id = msg.id, result = null)
     result = get_file_info(state, uri, cancel_flag)
     if isnothing(result)
-        return send(server, HoverResponse(; id = msg.id, result = null))
+        return send(server, fallback_response)
     elseif result isa ResponseError
         return send(server, HoverResponse(; id = msg.id, result = nothing, error = result))
     end
@@ -73,15 +93,20 @@ function handle_HoverRequest(
     offset = xy_to_offset(fi, pos)
     (; mod, analyzer, postprocessor) = get_context_info(state, uri, pos)
 
-    local_hover = local_binding_hover(state, fi, uri, st0_top, offset, mod)
-    isnothing(local_hover) || return send(server, HoverResponse(;
-        id = msg.id,
-        result = local_hover))
+    inferrable_binding = select_inferrable_binding(st0_top, offset, mod)
+    if !isnothing(inferrable_binding)
+        (; ctx3, st3, binding) = inferrable_binding
+        if is_from_user_ast(binding)
+            binfo = JL.get_binding(ctx3, binding)::JL.BindingInfo
+            if binfo.kind === :local || binfo.kind === :argument
+                result = type_hover_for_binding(fi, mod, postprocessor, ctx3, st3, binding)
+                return send(server, HoverResponse(; id = msg.id, result))
+            end
+        end
+    end
 
     node = @something select_target_identifier(st0_top, offset) begin
-        tok = @something token_at_offset(fi, pos) begin
-            return send(server, HoverResponse(; id = msg.id, result = null))
-        end
+        tok = @something token_at_offset(fi, pos) return send(server, fallback_response)
         byterng = JS.byte_range(tok)
         tokstr = String(fi.parsed_stream.textbuf[byterng])
         if haskey(KEYWORD_DOCS, tokstr)
@@ -90,45 +115,35 @@ function handle_HoverRequest(
                 start = offset_to_xy(fi, first(byterng)),
                 var"end" = offset_to_xy(fi, last(byterng)+1))
             range, _ = unadjust_range(state, uri, range)
-            return send(server, HoverResponse(;
-                id = msg.id,
-                result = Hover(; contents, range)))
+            result = Hover(; contents, range)
+            return send(server, HoverResponse(; id = msg.id, result))
         end
-        return send(server, HoverResponse(; id = msg.id, result = null))
+        return send(server, fallback_response)
     end
 
-    parentmod = mod
-    identifier_node = node
-
     # TODO replace this AST hack with a proper abstract interpretation to resolve binding information
-    if JS.kind(node) === JS.K"." && JS.numchildren(node) ≥ 2
-        dotprefix = node[1]
+    identifier_node = node
+    if JS.kind(identifier_node) === JS.K"." && JS.numchildren(identifier_node) ≥ 2
+        dotprefix = identifier_node[1]
         dotprefixtyp = resolve_type(analyzer, mod, dotprefix)
         if dotprefixtyp isa Core.Const
             dotprefixval = dotprefixtyp.val
             if dotprefixval isa Module
-                parentmod = dotprefixval
-                identifier_node = node[2]
+                mod = dotprefixval
+                identifier_node = identifier_node[2]
             end
         end
     end
-    if !JS.is_identifier(identifier_node)
-        return send(server, HoverResponse(; id = msg.id, result = null))
-    end
-    identifier = Expr(identifier_node)
-    if !(identifier isa Symbol)
-        return send(server, HoverResponse(; id = msg.id, result = null))
-    end
-    documentation = Base.Docs.doc(DocsBinding(parentmod, identifier))
-    value = postprocessor(documentation)
 
-    contents = MarkupContent(;
-        kind = MarkupKind.Markdown,
-        value)
+    JS.is_identifier(identifier_node) || return send(server, fallback_response)
+    identifier = Expr(identifier_node)
+    identifier isa Symbol || return send(server, fallback_response)
+
+    documentation = Base.Docs.doc(DocsBinding(mod, identifier))
+    value = postprocessor(documentation)
+    contents = MarkupContent(; kind = MarkupKind.Markdown, value)
     range, _ = unadjust_range(state, uri, jsobj_to_range(node, fi))
-    return send(server, HoverResponse(;
-        id = msg.id,
-        result = Hover(; contents, range)))
+    return send(server, HoverResponse(; id = msg.id, result = Hover(; contents, range)))
 end
 
 @eval function DocsBinding(parentmod::Module, identifier::Symbol)
