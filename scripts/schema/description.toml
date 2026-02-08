@@ -1,0 +1,53 @@
+[JETLSConfig]
+diagnostic = "Diagnostic configuration. See [Diagnostic configuration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic)."
+full_analysis = "Configuration for full JET analysis. See [Full analysis configuration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/full_analysis)."
+testrunner = "TestRunner integration configuration. See [TestRunner integration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/testrunner)."
+formatter = "Formatter configuration. Can be a preset name (`Runic` or `JuliaFormatter`) or a custom formatter object. See [Formatter configuration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/formatter)."
+completion = "Completion configuration. See [Completion configuration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/completion)."
+code_lens = "Code lens configuration. See [Code lens configuration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/code_lens)."
+inlay_hint = "Inlay hint configuration. See [Inlay hint configuration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint)."
+initialization_options = "Static initialization options that are set once at server startup and require a server restart to take effect. See [Initialization options](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options)."
+
+[DiagnosticConfig]
+enabled = "Enable or disable all JETLS diagnostics. When set to false, no diagnostic messages will be shown."
+all_files = "Report diagnostics for all workspace files (true) or only open files (false). Disable to reduce noise from many warnings."
+allow_unused_underscore = "Suppress unused variable diagnostics for `_`-prefixed names, following the common convention for intentionally unused variables."
+patterns = "Fine-grained control over diagnostics through pattern matching. See [Pattern-based diagnostic configuration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic-patterns)."
+
+[DiagnosticPattern]
+pattern = "The pattern to match. For code matching, use diagnostic codes like `lowering/unused-argument`. For message matching, use text patterns like `Macro name .* not found`. This value is also used as the key when merging configurations from different sources."
+match_by = "What to match against: `code` matches against diagnostic codes (e.g., `lowering/unused-argument`), `message` matches against diagnostic message text."
+match_type = "How to interpret the pattern: `literal` for exact string match, `regex` for regular expression match."
+severity = "Severity level to apply. String values are case-insensitive: `error`/1 for critical issues, `warning`/`warn`/2 for potential problems, `information`/`info`/3 for informational messages, `hint`/4 for suggestions, `off`/0 to disable the diagnostic."
+path = "Optional glob pattern to restrict this configuration to specific files (e.g., `test/**/*.jl`). Patterns are matched against file paths relative to the workspace root. Supports globstar (`**`) for matching directories recursively. If omitted, the pattern applies to all files."
+
+[FullAnalysisConfig]
+debounce = "Debounce time in seconds before triggering full analysis after a file save. Higher values reduce analysis frequency but may delay diagnostic updates."
+auto_instantiate = "Automatically run `Pkg.resolve()` and `Pkg.instantiate()` for uninstantiated packages (e.g., freshly cloned repos). Creates versioned manifest if needed."
+
+[TestRunnerConfig]
+executable = "Path to the TestRunner.jl executable. Defaults to `testrunner` (or `testrunner.bat` on Windows)."
+
+[CustomFormatterConfig]
+executable = "Path to custom formatter executable for document formatting. The formatter should read Julia code from stdin and output formatted code to stdout."
+executable_range = "Path to custom formatter executable for range formatting. Should accept a `--lines=START:END` argument to format only the specified line range."
+
+[InitOptions]
+n_analysis_workers = "Number of concurrent analysis worker tasks for running full analysis (experimental). Default is 1. See [documentation](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options/n_analysis_workers) for details and current limitations."
+
+[CompletionConfig]
+latex_emoji = "LaTeX and emoji completion configuration. See [documentation](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/completion-latex_emoji-strip_prefix)."
+method_signature = "Method signature completion configuration. See [documentation](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/completion-method_signature-prepend_inference_result)."
+
+[LaTeXEmojiConfig]
+strip_prefix = "Controls whether to strip `\\` or `:` prefix from LaTeX/emoji completion labels. Some editors (e.g., Zed) have sorting issues with backslash in `sortText`. Auto-detected by default; set explicitly if completions appear in wrong order."
+
+[MethodSignatureConfig]
+prepend_inference_result = "When true, prepends inferred return type to completion documentation, ensuring visibility in editors where `CompletionItem.detail` may be cut off (e.g., Zed). Auto-detected by default based on client name; set explicitly if return types are not visible."
+
+[CodeLensConfig]
+references = "Show reference counts above top-level symbols (functions, structs, constants, etc.). Click to open references panel."
+testrunner = "Show `Run`/`Debug` code lenses above `@testset` blocks. Some editors (e.g., Zed) show these as code actions, causing duplication; zed-julia defaults to false."
+
+[InlayHintConfig]
+block_end_min_lines = "Minimum lines for a block to display an inlay hint at `end` (e.g., `end # module Foo`). Supports: `module`, `function`, `macro`, `struct`, `if`, `let`, `for`, `while`, `@testset`."

@@ -3,6 +3,9 @@
 JETLS supports various configuration options.
 This documentation uses TOML format to describe the configuration schema.
 
+A [JSON Schema](https://json-schema.org/) for `.JETLSConfig.toml` is available:
+[jetls-config.schema.json](https://github.com/aviatesk/JETLS.jl/releases/latest/download/jetls-config.schema.json)
+
 ## [Configuration schema](@id config/schema)
 
 ```toml

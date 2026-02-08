@@ -129,79 +129,22 @@
           "default": {},
           "markdownDescription": "JETLS server configuration settings. See [Configuration documentation](https://aviatesk.github.io/JETLS.jl/release/configuration/) for detailed information.",
           "properties": {
-            "full_analysis": {
-              "type": "object",
-              "markdownDescription": "Configuration for full JET analysis. See [Full analysis configuration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/full_analysis).",
-              "properties": {
-                "debounce": {
-                  "type": "number",
-                  "default": 1,
-                  "minimum": 0,
-                  "markdownDescription": "Debounce time in seconds before triggering full analysis after a document change."
-                },
-                "auto_instantiate": {
-                  "type": "boolean",
-                  "default": true,
-                  "markdownDescription": "When enabled, JETLS automatically runs `Pkg.instantiate()` for packages that have not been instantiated yet (e.g., freshly cloned repositories). This allows full analysis to work immediately upon opening such packages. Note that this will automatically create a `Manifest.toml` file when the package has not been instantiated yet."
-                }
-              }
-            },
-            "formatter": {
-              "oneOf": [
-                {
-                  "type": "string",
-                  "enum": [
-                    "Runic",
-                    "JuliaFormatter"
-                  ],
-                  "default": "Runic",
-                  "markdownDescription": "Preset formatter to use: `'Runic'` (default) or `'JuliaFormatter'`."
-                },
-                {
-                  "type": "object",
-                  "properties": {
-                    "custom": {
-                      "type": "object",
-                      "properties": {
-                        "executable": {
-                          "type": "string",
-                          "markdownDescription": "Path to custom formatter executable for document formatting."
-                        },
-                        "executable_range": {
-                          "type": "string",
-                          "markdownDescription": "Path to custom formatter executable for range formatting."
-                        }
-                      }
-                    }
-                  }
-                }
-              ],
-              "default": "Runic",
-              "markdownDescription": "Formatter configuration. Can be a preset name (`'Runic'` or `'JuliaFormatter'`) or a custom formatter object. See [Formatting configuration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/formatter)."
-            },
             "diagnostic": {
               "type": "object",
-              "markdownDescription": "Diagnostic configuration. See [Diagnostic configuration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic).",
+              "required": [],
               "properties": {
-                "enabled": {
-                  "type": "boolean",
-                  "default": true,
-                  "markdownDescription": "Enable or disable all JETLS diagnostics. When set to `false`, no diagnostic messages will be shown."
-                },
                 "all_files": {
                   "type": "boolean",
                   "default": true,
-                  "markdownDescription": "Enable or disable diagnostics for unopened files. When enabled, JETLS reports diagnostics for all Julia files in the workspace. When disabled, diagnostics are only reported for files currently open in the editor."
+                  "markdownDescription": "Report diagnostics for all workspace files (true) or only open files (false). Disable to reduce noise from many warnings."
                 },
                 "allow_unused_underscore": {
                   "type": "boolean",
                   "default": true,
-                  "markdownDescription": "When enabled, unused variable diagnostics (`lowering/unused-argument`, `lowering/unused-local`) are suppressed for names starting with `_` (underscore). This follows the common convention where `_`-prefixed names indicate intentionally unused variables."
+                  "markdownDescription": "Suppress unused variable diagnostics for `_`-prefixed names, following the common convention for intentionally unused variables."
                 },
                 "patterns": {
                   "type": "array",
-                  "default": [],
-                  "markdownDescription": "Fine-grained control over diagnostics through pattern matching. See [Pattern-based diagnostic configuration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic/patterns).",
                   "items": {
                     "type": "object",
                     "required": [
@@ -211,17 +154,31 @@
                       "severity"
                     ],
                     "properties": {
-                      "pattern": {
+                      "path": {
                         "type": "string",
-                        "markdownDescription": "The pattern to match (e.g., `'lowering/unused-argument'` for code matching, or `'Macro name .*'` for message matching)."
+                        "markdownDescription": "Optional glob pattern to restrict this configuration to specific files (e.g., `test/**/*.jl`). Patterns are matched against file paths relative to the workspace root. Supports globstar (`**`) for matching directories recursively. If omitted, the pattern applies to all files."
                       },
-                      "match_by": {
-                        "type": "string",
-                        "enum": [
-                          "code",
-                          "message"
+                      "severity": {
+                        "oneOf": [
+                          {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 4
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "off",
+                              "error",
+                              "warning",
+                              "warn",
+                              "information",
+                              "info",
+                              "hint"
+                            ]
+                          }
                         ],
-                        "markdownDescription": "What to match against:\n- `'code'`: Match against diagnostic codes (e.g., `'lowering/unused-argument'`)\n- `'message'`: Match against diagnostic message text"
+                        "markdownDescription": "Severity level to apply. String values are case-insensitive: `error`/1 for critical issues, `warning`/`warn`/2 for potential problems, `information`/`info`/3 for informational messages, `hint`/4 for suggestions, `off`/0 to disable the diagnostic."
                       },
                       "match_type": {
                         "type": "string",
@@ -229,65 +186,177 @@
                           "literal",
                           "regex"
                         ],
-                        "markdownDescription": "How to interpret the pattern:\n- `'literal'`: Exact string match\n- `'regex'`: Regular expression match"
+                        "markdownDescription": "How to interpret the pattern: `literal` for exact string match, `regex` for regular expression match."
                       },
-                      "severity": {
-                        "oneOf": [
+                      "match_by": {
+                        "type": "string",
+                        "enum": [
+                          "code",
+                          "message"
+                        ],
+                        "markdownDescription": "What to match against: `code` matches against diagnostic codes (e.g., `lowering/unused-argument`), `message` matches against diagnostic message text."
+                      },
+                      "pattern": {
+                        "anyOf": [
                           {
                             "type": "string",
-                            "enum": [
-                              "error",
-                              "warning",
-                              "warn",
-                              "information",
-                              "info",
-                              "hint",
-                              "off"
-                            ]
+                            "format": "regex"
                           },
                           {
-                            "type": "number",
-                            "enum": [
-                              0,
-                              1,
-                              2,
-                              3,
-                              4
-                            ]
+                            "type": "string"
                           }
                         ],
-                        "markdownDescription": "Severity level:\n- `'error'`/`1`: Critical issues\n- `'warning'`/`'warn'`/`2`: Potential problems\n- `'information'`/`'info'`/`3`: Informational messages\n- `'hint'`/`4`: Suggestions\n- `'off'`/`0`: Disable"
-                      },
-                      "path": {
-                        "type": "string",
-                        "markdownDescription": "Optional glob pattern to restrict this configuration to specific files (e.g., `'test/**/*.jl'`). Patterns are matched against file paths relative to the workspace root. Supports globstar (`**`) for matching directories recursively."
+                        "markdownDescription": "The pattern to match. For code matching, use diagnostic codes like `lowering/unused-argument`. For message matching, use text patterns like `Macro name .* not found`. This value is also used as the key when merging configurations from different sources."
                       }
-                    }
-                  }
+                    },
+                    "additionalProperties": false
+                  },
+                  "default": [],
+                  "markdownDescription": "Fine-grained control over diagnostics through pattern matching. See [Pattern-based diagnostic configuration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic-patterns)."
+                },
+                "enabled": {
+                  "type": "boolean",
+                  "default": true,
+                  "markdownDescription": "Enable or disable all JETLS diagnostics. When set to false, no diagnostic messages will be shown."
                 }
-              }
+              },
+              "markdownDescription": "Diagnostic configuration. See [Diagnostic configuration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic).",
+              "additionalProperties": false
+            },
+            "inlay_hint": {
+              "type": "object",
+              "required": [],
+              "properties": {
+                "block_end_min_lines": {
+                  "type": "integer",
+                  "minimum": -9223372036854775808,
+                  "default": 25,
+                  "maximum": 9223372036854775807,
+                  "markdownDescription": "Minimum lines for a block to display an inlay hint at `end` (e.g., `end # module Foo`). Supports: `module`, `function`, `macro`, `struct`, `if`, `let`, `for`, `while`, `@testset`."
+                }
+              },
+              "markdownDescription": "Inlay hint configuration. See [Inlay hint configuration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint).",
+              "additionalProperties": false
+            },
+            "formatter": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "Runic",
+                    "JuliaFormatter"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "custom"
+                  ],
+                  "properties": {
+                    "custom": {
+                      "type": "object",
+                      "required": [
+                        "executable"
+                      ],
+                      "properties": {
+                        "executable": {
+                          "type": "string",
+                          "markdownDescription": "Path to custom formatter executable for document formatting. The formatter should read Julia code from stdin and output formatted code to stdout."
+                        },
+                        "executable_range": {
+                          "type": "string",
+                          "markdownDescription": "Path to custom formatter executable for range formatting. Should accept a `--lines=START:END` argument to format only the specified line range."
+                        }
+                      },
+                      "additionalProperties": false
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              ],
+              "default": "Runic",
+              "markdownDescription": "Formatter configuration. Can be a preset name (`Runic` or `JuliaFormatter`) or a custom formatter object. See [Formatter configuration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/formatter)."
+            },
+            "full_analysis": {
+              "type": "object",
+              "required": [],
+              "properties": {
+                "auto_instantiate": {
+                  "type": "boolean",
+                  "default": true,
+                  "markdownDescription": "Automatically run `Pkg.resolve()` and `Pkg.instantiate()` for uninstantiated packages (e.g., freshly cloned repos). Creates versioned manifest if needed."
+                },
+                "debounce": {
+                  "type": "number",
+                  "default": 1.0,
+                  "markdownDescription": "Debounce time in seconds before triggering full analysis after a file save. Higher values reduce analysis frequency but may delay diagnostic updates."
+                }
+              },
+              "markdownDescription": "Configuration for full JET analysis. See [Full analysis configuration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/full_analysis).",
+              "additionalProperties": false
+            },
+            "completion": {
+              "type": "object",
+              "required": [],
+              "properties": {
+                "method_signature": {
+                  "type": "object",
+                  "required": [],
+                  "properties": {
+                    "prepend_inference_result": {
+                      "type": "boolean",
+                      "markdownDescription": "When true, prepends inferred return type to completion documentation, ensuring visibility in editors where `CompletionItem.detail` may be cut off (e.g., Zed). Auto-detected by default based on client name; set explicitly if return types are not visible."
+                    }
+                  },
+                  "markdownDescription": "Method signature completion configuration. See [documentation](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/completion-method_signature-prepend_inference_result).",
+                  "additionalProperties": false
+                },
+                "latex_emoji": {
+                  "type": "object",
+                  "required": [],
+                  "properties": {
+                    "strip_prefix": {
+                      "type": "boolean",
+                      "markdownDescription": "Controls whether to strip `\\` or `:` prefix from LaTeX/emoji completion labels. Some editors (e.g., Zed) have sorting issues with backslash in `sortText`. Auto-detected by default; set explicitly if completions appear in wrong order."
+                    }
+                  },
+                  "markdownDescription": "LaTeX and emoji completion configuration. See [documentation](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/completion-latex_emoji-strip_prefix).",
+                  "additionalProperties": false
+                }
+              },
+              "markdownDescription": "Completion configuration. See [Completion configuration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/completion).",
+              "additionalProperties": false
             },
             "testrunner": {
               "type": "object",
-              "markdownDescription": "TestRunner integration configuration. See [TestRunner integration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/testrunner).",
+              "required": [],
               "properties": {
                 "executable": {
                   "type": "string",
                   "default": "testrunner",
-                  "markdownDescription": "Path to the TestRunner.jl executable. If not set, uses `'testrunner'` from `PATH`."
+                  "markdownDescription": "Path to the TestRunner.jl executable. Defaults to `testrunner` (or `testrunner.bat` on Windows)."
                 }
-              }
+              },
+              "markdownDescription": "TestRunner integration configuration. See [TestRunner integration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/testrunner).",
+              "additionalProperties": false
             },
             "code_lens": {
               "type": "object",
-              "markdownDescription": "Code lens configuration.",
+              "required": [],
               "properties": {
                 "references": {
                   "type": "boolean",
                   "default": false,
-                  "markdownDescription": "Show reference counts for top-level symbols (functions, structs, constants, etc.)."
+                  "markdownDescription": "Show reference counts above top-level symbols (functions, structs, constants, etc.). Click to open references panel."
+                },
+                "testrunner": {
+                  "type": "boolean",
+                  "default": true,
+                  "markdownDescription": "Show `Run`/`Debug` code lenses above `@testset` blocks. Some editors (e.g., Zed) show these as code actions, causing duplication; zed-julia defaults to false."
                 }
-              }
+              },
+              "markdownDescription": "Code lens configuration. See [Code lens configuration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/code_lens).",
+              "additionalProperties": false
             }
           },
           "order": 0
