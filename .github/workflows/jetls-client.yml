@@ -41,6 +41,9 @@ jobs:
       - uses: julia-actions/cache@v2
       - name: Instantiate schema project
         run: julia --startup-file=no --project=scripts/schema -e 'using Pkg; Pkg.instantiate()'
+      - name: Check jetls-config.schema.json is up to date
+        run: |
+          julia --startup-file=no --project=scripts/schema scripts/schema/generate.jl --check
       - name: Check package.json is up to date
         run: |
           julia --startup-file=no --project=scripts/schema scripts/schema/update-pkg-json.jl --check
