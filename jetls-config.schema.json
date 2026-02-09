@@ -218,14 +218,17 @@
           "properties": {
             "analysis_overrides": {
               "default": [],
+              "description": "Override full analysis behavior for specific file patterns. Primarily used as a temporary workaround to disable analysis for files affected by memory leak issues. Each override specifies a glob pattern and optionally a module name. Note: This is an experimental feature that may be removed or changed in future versions.",
               "items": {
                 "additionalProperties": false,
                 "properties": {
                   "module_name": {
-                    "$ref": "#/$defs/String__ab1d9960b6094ec7"
+                    "$ref": "#/$defs/String__ab1d9960b6094ec7",
+                    "description": "Optional module name to associate with the matched files. When specified, analysis is performed within the context of this module."
                   },
                   "path": {
-                    "$ref": "#/$defs/Glob.FilenameMatch{String}__9cefaeb31fbb5cb2"
+                    "$ref": "#/$defs/Glob.FilenameMatch{String}__9cefaeb31fbb5cb2",
+                    "description": "Glob pattern to match files for which analysis should be overridden (e.g., `src/**/*.jl`, `test/**/*.jl`). Patterns are matched against file paths relative to the workspace root. Supports globstar (`**`) for matching directories recursively."
                   }
                 },
                 "required": [

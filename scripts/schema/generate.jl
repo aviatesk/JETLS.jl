@@ -1,22 +1,71 @@
 include("setup-schema-context.jl")
+include("utils.jl")
 
-gen_ctx = SchemaContext()
-setup_ctx!(gen_ctx)
+const HELP_MSG = """
+Usage: julia generate.jl TARGET FILE [--check]
+Generates JSON Schema for JETLS configuration.
 
-schema = generate_schema(JETLS.JETLSConfig; ctx = gen_ctx)
+Arguments:
+  TARGET            What schema to generate:
+                      --config-toml     Complete schema for .JETLSConfig.toml
+                      --settings        Settings schema
+                      --init-options    Initialization options schema
+  FILE              Path to output file (for generation) or file to check against (for --check)
 
-schemafile_path = joinpath(@__DIR__, "..", "..", "jetls-config.schema.json")
-expected = JSON.json(sort_keys(schema.doc), 2)
+Options:
+  --check           Check if FILE matches the generated schema instead of writing to it
+  --help            Show this help message
+"""
 
-if "--check" in ARGS
-    if read(schemafile_path, String) != expected
-        @warn "jetls-config.schema.json does not match the expected schema. Please run this script without --check to update it."
+const TARGETS = Dict(
+    "--config-toml" => JETLS.JETLSConfig,
+    "--settings" => JETLS.JETLSConfig,
+    "--init-options" => JETLS.InitOptions
+)
+
+function parse_arguments(args::Vector{String})
+    if "--help" in args
+        println(HELP_MSG)
+        exit(0)
+    end
+
+    check_mode, args_filtered = parse_check_flag(args)
+
+    if length(args_filtered) != 2
+        println("Error: TARGET and FILE are required", stderr)
+        println(HELP_MSG, stderr)
         exit(1)
     end
-else
-    open(schemafile_path, "w") do io
-        write(io, expected)
+
+    target_arg, file_path = args_filtered
+    if !haskey(TARGETS, target_arg)
+        println("Error: Unknown target: $(target_arg)", stderr)
+        println(HELP_MSG, stderr)
+        exit(1)
     end
-    @info "Updated jetls-config.schema.json with the new schema."
+
+    return (target_arg, file_path, check_mode)
 end
 
+function generate_schema_dict(target_arg::String, ctx::SchemaContext)
+    target = TARGETS[target_arg]
+    if target_arg == "--settings"
+        skip!(ctx, JETLS.JETLSConfig, :initialization_options)
+    end
+    schema = generate_schema(target; ctx = ctx)
+    return sort_keys(schema.doc)
+end
+
+function @main(args)
+    target_arg, file_path, check_mode = parse_arguments(args)
+    gen_ctx = SchemaContext()
+    setup_ctx!(gen_ctx)
+    schema_dict = generate_schema_dict(target_arg, gen_ctx)
+
+    if check_mode
+        update_cmd = "julia --startup-file=no --project=scripts/schema scripts/schema/generate.jl $(target_arg) $(file_path)"
+        check_json_file(file_path, schema_dict, update_cmd)
+    else
+        write_json_file(file_path, schema_dict, "Generated schema written to $file_path")
+    end
+end

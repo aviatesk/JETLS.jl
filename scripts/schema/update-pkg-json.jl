@@ -1,17 +1,41 @@
 include("setup-schema-context.jl")
+include("utils.jl")
 
-gen_ctx = SchemaContext()
-setup_ctx!(gen_ctx)
+const HELP_MSG = """
+Usage: julia update-pkg-json.jl FILE [--check]
+Generates VSCode configuration schema and updates package.json.
 
-# To satisfy additional constraints imposed by VSCode configuration entries, we proceed as follows:
-# 1. The use of `defs` is not permitted, so we generate fully expanded definitions.
-# 2. The `description` field must be renamed to `markdownDescription`.
-# 3. `initialization_options` is unnecessary for configuration entries in `package.json` and is therefore removed.
+Arguments:
+  FILE              Path to package.json file to update (or check against with --check)
 
-# 1
-expanded_schema = generate_schema(JETLS.JETLSConfig; ctx = gen_ctx, inline_all_defs = true)
+Options:
+  --check           Check if FILE matches the generated content instead of writing to it
+  --help            Show this help message
+"""
 
-# 2
+function parse_arguments(args::Vector{String})
+    if "--help" in args
+        println(HELP_MSG)
+        exit(0)
+    end
+
+    check_mode, args_filtered = parse_check_flag(args)
+
+    if length(args_filtered) != 1
+        println("Error: FILE is required", stderr)
+        println(HELP_MSG, stderr)
+        exit(1)
+    end
+
+    file_path = args_filtered[1]
+    if !check_mode && !isfile(file_path)
+        println("Error: file not found at $file_path", stderr)
+        exit(1)
+    end
+
+    return (file_path, check_mode)
+end
+
 function rename_description_to_markdown!(schema_dict::Dict)
     if haskey(schema_dict, "description")
         schema_dict["markdownDescription"] = schema_dict["description"]
@@ -30,35 +54,49 @@ function rename_description_to_markdown!(schema_dict::Dict)
     end
 end
 
-rename_description_to_markdown!(expanded_schema.doc)
+function generate_vscode_schemas(ctx::SchemaContext)
+    expanded_schema = generate_schema(JETLS.JETLSConfig; ctx = ctx, inline_all_defs = true)
+    rename_description_to_markdown!(expanded_schema.doc)
 
-# 3
-delete!(expanded_schema.doc["properties"], "initialization_options")
+    init_options_schema = sort_keys(
+        deepcopy(expanded_schema.doc["properties"]["initialization_options"])
+    )
+    delete!(expanded_schema.doc["properties"], "initialization_options")
+    setting_schema = sort_keys(expanded_schema.doc["properties"])
 
+    return (setting_schema, init_options_schema)
+end
 
-package_json_path = joinpath(
-    @__DIR__, "..", "..", "jetls-client", "package.json"
+function update_package_json(
+    package_json::AbstractDict,
+    setting_schema::AbstractDict,
+    init_options_schema::AbstractDict
 )
-package_json = JSON.parsefile(package_json_path)
+    result = deepcopy(package_json)
+    result["contributes"]["configuration"]["properties"]["jetls-client.settings"]["properties"] =
+        setting_schema
+    result["contributes"]["configuration"]["properties"]["jetls-client.initializationOptions"]["properties"] =
+        init_options_schema
+    return result
+end
 
-# Sort to ensure stable output (avoid depending on internal hash algorithm)
-expected_props = sort_keys(expanded_schema.doc["properties"])
-settings = package_json["contributes"][
-    "configuration"]["properties"]["jetls-client.settings"]
+function @main(args)
+    file_path, check_mode = parse_arguments(args)
+    gen_ctx = SchemaContext()
+    setup_ctx!(gen_ctx)
 
-if "--check" in ARGS
-    if sort_keys(settings["properties"]) != expected_props
-        @warn "The properties in package.json do not match the expected schema. Please run this script without --check to update it."
-        exit(1)
+    setting_schema, init_options_schema = generate_vscode_schemas(gen_ctx)
+    original_package_json = JSON.parsefile(file_path)
+    updated_package_json = update_package_json(
+        original_package_json,
+        setting_schema,
+        init_options_schema
+    )
+
+    if check_mode
+        update_cmd = "julia --startup-file=no --project=scripts/schema scripts/schema/update-pkg-json.jl $(file_path)"
+        check_json_file(file_path, updated_package_json, update_cmd)
+    else
+        write_json_file(file_path, updated_package_json, "Updated $file_path")
     end
-else
-    # Only the `properties` field needs to be sorted, not the entire `package_json`.
-    # If everything is sorted, fields such as `activationEvents` end up at the top of `package.json`,
-    # which hurts readability.
-    # It is sufficient for determinism that only the parts modified via the schema are ordered.
-    settings["properties"] = expected_props
-    open(package_json_path, "w") do io
-        write(io, JSON.json(package_json, 2))
-    end
-    @info "Updated package.json with the new schema."
 end

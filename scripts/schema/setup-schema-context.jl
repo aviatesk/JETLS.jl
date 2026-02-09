@@ -6,7 +6,7 @@ using Glob
 using OrderedCollections
 
 function sort_keys(d::AbstractDict)
-    OrderedDict{String, Any}(
+    return OrderedDict{String, Any}(
         k => sort_keys(d[k]) for k in sort(collect(keys(d)))
     )
 end
@@ -30,7 +30,7 @@ function attach_description!(ctx::SchemaContext, desc_path)
             if field_sym ∉ struct_fieldnames
                 error(
                     "Field '$field_name' not found in struct '$struct_name' " *
-                    "(from description.toml). Available fields: $(struct_fieldnames)"
+                        "(from description.toml). Available fields: $(struct_fieldnames)"
                 )
             end
             describe!(ctx, struct_type, field_sym, field_desc)
