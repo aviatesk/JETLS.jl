@@ -1,4 +1,4 @@
-include("lib.jl")
+include("setup-schema-context.jl")
 
 gen_ctx = SchemaContext()
 setup_ctx!(gen_ctx)
