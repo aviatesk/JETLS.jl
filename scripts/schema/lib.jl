@@ -3,6 +3,15 @@ using JETLS
 using Struct2JSONSchema
 using JSON
 using Glob
+using OrderedCollections
+
+function sort_keys(d::AbstractDict)
+    OrderedDict{String, Any}(
+        k => sort_keys(d[k]) for k in sort(collect(keys(d)))
+    )
+end
+sort_keys(v::Vector) = map(sort_keys, v)
+sort_keys(x) = x
 
 
 function attach_description!(ctx::SchemaContext, desc_path)

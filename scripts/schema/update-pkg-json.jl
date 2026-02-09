@@ -40,16 +40,22 @@ package_json_path = joinpath(
     @__DIR__, "..", "..", "jetls-client", "package.json"
 )
 package_json = JSON.parsefile(package_json_path)
-expected_props = expanded_schema.doc["properties"]
+
+# Sort to ensure stable output (avoid depending on internal hash algorithm)
+expected_props = sort_keys(expanded_schema.doc["properties"])
 settings = package_json["contributes"][
     "configuration"]["properties"]["jetls-client.settings"]
 
 if "--check" in ARGS
-    if settings["properties"] != expected_props
+    if sort_keys(settings["properties"]) != expected_props
         @warn "The properties in package.json do not match the expected schema. Please run this script without --check to update it."
         exit(1)
     end
 else
+    # Only the `properties` field needs to be sorted, not the entire `package_json`.
+    # If everything is sorted, fields such as `activationEvents` end up at the top of `package.json`,
+    # which hurts readability.
+    # It is sufficient for determinism that only the parts modified via the schema are ordered.
     settings["properties"] = expected_props
     open(package_json_path, "w") do io
         write(io, JSON.json(package_json, 2))
