@@ -483,15 +483,25 @@ To use a local JETLS.jl checkout with the development extension (see
 
 ### Configuration schema
 
-The configuration properties in `jetls-client/package.json`
-are generated from the config structs in `src/types.jl`.
-When you modify those structs, regenerate them by running:
+The configuration schema is generated from the config structs
+in `src/types.jl` by two scripts under `scripts/schema/`:
+
+- `generate.jl` generates the standalone schema file
+  `jetls-config.schema.json`.
+- `update-pkg-json.jl` generates the VSCode configuration
+  properties inside `jetls-client/package.json` (with
+  `$defs` inlined and `description` renamed to
+  `markdownDescription`).
+
+When you modify the config structs, regenerate both by running:
 ```bash
+julia --startup-file=no --project=scripts/schema scripts/schema/generate.jl
 julia --startup-file=no --project=scripts/schema scripts/schema/update-pkg-json.jl
 ```
 
-CI runs this script with `--check` to verify `package.json`
-is up to date, so any omission will be caught automatically.
+Both scripts support a `--check` flag that exits with an error
+if the output is out of date. CI runs them in this mode to
+ensure the generated files are kept in sync.
 
 ### Publishing
 

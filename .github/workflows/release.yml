@@ -154,17 +154,6 @@ jobs:
             echo 'EOF'
           } >> $GITHUB_OUTPUT
 
-      - uses: julia-actions/setup-julia@v2
-        with:
-          version: "1.12"
-          arch: x64
-      - uses: julia-actions/cache@v2
-      - name: Instantiate schema project
-        run: julia --startup-file=no --project=scripts/schema -e 'using Pkg; Pkg.instantiate()'
-      - name: Generate JSON Schema
-        run: |
-          julia --startup-file=no --project=scripts/schema scripts/schema/generate.jl
-
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
