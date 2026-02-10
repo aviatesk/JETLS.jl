@@ -87,7 +87,7 @@ Configure the JETLS executable through the `jetls-client.executable` setting:
 - **Object form** `{"path": string, "threads": string}`: Customize the executable path or thread
   setting (default: `{"path": "jetls", "threads": "auto"}`)
 - **Array form** `string[]`: Use a local JETLS checkout for development, e.g,
-  (`["julia", "--startup-file=no", "--history-file=no", "--project=/path/to/JETLS", "-m", "JETLS"]`)
+  (`["julia", "--startup-file=no", "--history-file=no", "--project=/path/to/JETLS", "-m", "JETLS", "serve"]`)
 
 ### Communication channel
 
