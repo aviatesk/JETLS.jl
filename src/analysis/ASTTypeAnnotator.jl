@@ -237,6 +237,7 @@ function annotate_types!(citree::JL.SyntaxTree, frame::CC.InferenceState)
                 stmt = stmt.args[2]
                 stmt isa Expr || continue
                 treeref = treeref[2]
+                JS.setattr!(treeref, :type, stmttype)
             end
             for i = 1:length(stmt.args)
                 arg = stmt.args[i]

@@ -147,6 +147,7 @@ offset_to_xy( # used by tests
 ) = offset_to_xy(FileInfo(#=version=#0, s, filename, encoding), byte)
 
 function _offset_to_xy(textbuf::Vector{UInt8}, byte::Integer, encoding::PositionEncodingKind.Ty)
+    byte = Int(byte)
     if byte < 1
         throw(ArgumentError(lazy"Byte offset must be >= 1, got $byte"))
     elseif byte > lastindex(textbuf) + 1
