@@ -101,6 +101,7 @@ xy_to_offset( # used by tests
     encoding::PositionEncodingKind.Ty = PositionEncodingKind.UTF16
 ) = xy_to_offset(FileInfo(#=version=#0, s, filename, encoding), pos)
 
+# JETLS: TYPE_INLAY_HINT_ENABLED
 function _xy_to_offset(textbuf::Vector{UInt8}, pos::Position, encoding::PositionEncodingKind.Ty)
     b = 0
     for _ in 1:pos.line
@@ -146,7 +147,9 @@ offset_to_xy( # used by tests
     encoding::PositionEncodingKind.Ty = PositionEncodingKind.UTF16
 ) = offset_to_xy(FileInfo(#=version=#0, s, filename, encoding), byte)
 
+# JETLS: TYPE_INLAY_HINT_ENABLED
 function _offset_to_xy(textbuf::Vector{UInt8}, byte::Integer, encoding::PositionEncodingKind.Ty)
+    byte = Int(byte)
     if byte < 1
         throw(ArgumentError(lazy"Byte offset must be >= 1, got $byte"))
     elseif byte > lastindex(textbuf) + 1

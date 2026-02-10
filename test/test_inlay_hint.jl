@@ -362,4 +362,182 @@ include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
     end
 end
 
+function get_type_inlay_hints(code::AbstractString, mod::Module=Main)
+    fi = JETLS.FileInfo(1, code, @__FILE__)
+    st0_top = JETLS.build_syntax_tree(fi)
+    hints = InlayHint[]
+    JETLS.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
+        fb = Int(JS.first_byte(st0))
+        JETLS.has_type_inlay_hint_marker(
+            fi.parsed_stream, fb) || return
+        result = JETLS.get_inferrable_tree(st0, mod)
+        result === nothing && return
+        (; ctx3, st3) = result
+        inferred_tree = @something(
+            JETLS.infer_toplevel_tree(ctx3, st3, mod),
+            return)
+        callee_ranges = Set{UnitRange{UInt32}}()
+        paren_wrap_ranges = Set{UnitRange{UInt32}}()
+        noparen_mc_ends = Set{UInt32}()
+        range = Range(;
+            start = Position(; line=0, character=0),
+            var"end" = Position(; line=10000, character=0))
+        JETLS.traverse(st0) do node::JS.SyntaxTree
+            if JS.kind(node) === JS.K"." &&
+               JS.numchildren(node) >= 2
+                push!(paren_wrap_ranges,
+                    JS.byte_range(node[1]))
+                push!(callee_ranges,
+                    JS.byte_range(node[2]))
+            end
+            if JS.kind(node) === JS.K"ref" &&
+               JS.numchildren(node) >= 1
+                push!(paren_wrap_ranges,
+                    JS.byte_range(node[1]))
+            end
+            if JETLS.noparen_macrocall(node)
+                push!(noparen_mc_ends,
+                    JS.last_byte(node))
+            end
+            if JS.kind(node) in JS.KSet"call dotcall" &&
+               JS.numchildren(node) >= 1
+                ci = JETLS._callee_child_index(node)
+                push!(callee_ranges,
+                    JS.byte_range(node[ci]))
+            end
+        end
+        JETLS.traverse(st0; postorder=true) do node::JS.SyntaxTree
+            byterng = JS.byte_range(node)
+            k = JS.kind(node)
+            if k in JS.KSet"call dotcall"
+                JS.numchildren(node) >= 1 || return
+                ci = JETLS._callee_child_index(node)
+                callee_rng = JS.byte_range(node[ci])
+                typ = JETLS.get_type_for_range(
+                    inferred_tree, byterng)
+                if typ === nothing
+                    typ = JETLS._get_call_return_type(
+                        inferred_tree, callee_rng)
+                end
+                if typ !== nothing &&
+                   JETLS.should_annotate_type(typ)
+                    is_infix =
+                        JS.is_infix_op_call(node) ||
+                        JS.is_postfix_op_call(node)
+                    is_dp = byterng in paren_wrap_ranges
+                    is_mc = !is_dp && !is_infix &&
+                        JS.last_byte(node) in
+                            noparen_mc_ends
+                    JETLS._emit_type_hint!(
+                        hints, node, typ,
+                        fi, range,
+                        JETLS.LSPostProcessor();
+                        open_paren =
+                            is_infix || is_dp || is_mc,
+                        close_paren_before_type =
+                            is_infix || is_mc,
+                        close_paren_after_type = is_dp)
+                end
+            elseif k in JS.KSet"="
+                return nothing
+            elseif byterng ∉ callee_ranges
+                typ = JETLS.get_type_for_range(
+                    inferred_tree, byterng)
+                typ === nothing && return
+                JETLS.should_annotate_type(typ) || return
+                is_dp = byterng in paren_wrap_ranges
+                is_mc = !is_dp &&
+                    JS.last_byte(node) in
+                        noparen_mc_ends
+                JETLS._emit_type_hint!(
+                    hints, node, typ,
+                    fi, range, JETLS.LSPostProcessor();
+                    open_paren = is_dp || is_mc,
+                    close_paren_before_type = is_mc,
+                    close_paren_after_type = is_dp)
+            end
+        end
+    end
+    return hints
+end
+
+@testset "type inlay hints" begin
+    @testset "simple assignment" begin
+        let code = "$(JETLS.TYPE_INLAY_HINT_MARKER)\nlet x = [1, 2, 3]\n    x\nend\n"
+            hints = get_type_inlay_hints(code)
+            type_labels = [h.label for h in hints]
+            @test any(l -> occursin("Vector{Int64}", l),
+                      type_labels)
+            @test all(h -> h.kind === InlayHintKind.Type, hints)
+            @test all(h -> h.paddingLeft === false, hints)
+        end
+    end
+
+    @testset "function call return type" begin
+        let code = "$(JETLS.TYPE_INLAY_HINT_MARKER)\nlet v = [1.0, 2.0]\n    sum(v)\nend\n"
+            hints = get_type_inlay_hints(code)
+            fi = JETLS.FileInfo(1, code, @__FILE__)
+            call_end = JETLS.offset_to_xy(fi, 1 + ncodeunits(
+                "$(JETLS.TYPE_INLAY_HINT_MARKER)\nlet v = [1.0, 2.0]\n    sum(v)"))
+            @test any(h -> h.position == call_end &&
+                          h.label == "::Float64", hints)
+        end
+    end
+
+    @testset "infix operator call" begin
+        let code = "$(JETLS.TYPE_INLAY_HINT_MARKER)\nlet v = [1.0, 2.0]\n    v[1] + v[2]\nend\n"
+            hints = get_type_inlay_hints(code)
+            fi = JETLS.FileInfo(1, code, @__FILE__)
+            prefix = "$(JETLS.TYPE_INLAY_HINT_MARKER)\nlet v = [1.0, 2.0]\n    "
+            # `(` before infix expression `v[1] + v[2]`
+            expr_start = JETLS.offset_to_xy(
+                fi, ncodeunits(prefix) + 1)
+            @test any(h -> h.position == expr_start &&
+                          h.label == "(" ||
+                          h.label == "((", hints)
+            # `)::Float64` after the expression
+            expr_end = JETLS.offset_to_xy(
+                fi, 1 + ncodeunits(
+                    prefix * "v[1] + v[2]"))
+            @test any(h -> h.position == expr_end &&
+                          h.label == ")::Float64", hints)
+        end
+    end
+
+    @testset "no marker" begin
+        let code = "let x = [1]\n    x\nend\n"
+            hints = get_type_inlay_hints(code)
+            @test isempty(hints)
+        end
+    end
+
+    @testset "global constant filtering" begin
+        let code = "$(JETLS.TYPE_INLAY_HINT_MARKER)\nlet x = println\n    x\nend\n"
+            hints = get_type_inlay_hints(code)
+            type_labels = [h.label for h in hints]
+            @test !any(l -> occursin("typeof(println)", l),
+                       type_labels)
+        end
+    end
+
+    @testset "indexing wraps object with parens" begin
+        let code = "$(JETLS.TYPE_INLAY_HINT_MARKER)\nlet x = [1,2,3]\n    x[1]\nend\n"
+            hints = get_type_inlay_hints(code)
+            fi = JETLS.FileInfo(1, code, @__FILE__)
+            prefix = "$(JETLS.TYPE_INLAY_HINT_MARKER)\nlet x = [1,2,3]\n    "
+            # `(` before `x` in `x[1]`
+            x_start = JETLS.offset_to_xy(
+                fi, ncodeunits(prefix) + 1)
+            @test any(h -> h.position == x_start &&
+                          h.label == "(", hints)
+            # `::Vector{Int64})` after `x` in `x[1]`
+            x_end = JETLS.offset_to_xy(
+                fi, 1 + ncodeunits(prefix * "x"))
+            @test any(h -> h.position == x_end &&
+                          occursin("Vector{Int64})", h.label),
+                      hints)
+        end
+    end
+end
+
 end # module test_inlay_hint
