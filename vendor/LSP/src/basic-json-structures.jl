@@ -367,7 +367,7 @@ inserts followed by a single remove or replace edit. If multiple inserts have th
 position, the order in the array defines the order in which the inserted strings
 appear in the resulting text.
 """
-var"TextEdit[]"
+# var"TextEdit[]"
 
 """
 New in version 3.16: support for [`AnnotatedTextEdit`](@ref). The support
@@ -511,6 +511,11 @@ struct UnusedVariableData
 end
 export UnusedVariableData
 
+struct UnusedImportData
+    delete_range::Range
+end
+export UnusedImportData
+
 struct UnsortedImportData
     new_text::String
 end
@@ -573,7 +578,7 @@ Diagnostic objects are only valid in the scope of a resource.
     # Tags
     - since – 3.16.0
     """
-    data::Union{UnusedVariableData, UnsortedImportData, Nothing} = nothing
+    data::Union{UnusedVariableData, UnusedImportData, UnsortedImportData, Nothing} = nothing
 end
 
 # Command

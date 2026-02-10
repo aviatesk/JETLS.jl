@@ -57,13 +57,13 @@
     """
     definitionProvider::Union{Nothing, Bool, DefinitionOptions} = nothing
 
-    # """
-    # The server provides goto type definition support.
+    """
+    The server provides goto type definition support.
 
-    # # Tags
-    # - since - 3.6.0
-    # """
-    # typeDefinitionProvider::Union{Nothing, Bool, TypeDefinitionOptions, TypeDefinitionRegistrationOptions} = nothing
+    # Tags
+    - since - 3.6.0
+    """
+    typeDefinitionProvider::Union{Nothing, Bool, TypeDefinitionOptions, TypeDefinitionRegistrationOptions} = nothing
 
     # """
     # The server provides goto implementation support.
@@ -172,13 +172,13 @@
     # """
     # callHierarchyProvider::Union{Nothing, Bool, CallHierarchyOptions, CallHierarchyRegistrationOptions} = nothing
 
-    # """
-    # The server provides semantic tokens support.
+    """
+    The server provides semantic tokens support.
 
-    # # Tags
-    # - since - 3.16.0
-    # """
-    # semanticTokensProvider::Union{Nothing, SemanticTokensOptions, SemanticTokensRegistrationOptions} = nothing
+    # Tags
+    - since - 3.16.0
+    """
+    semanticTokensProvider::Union{Nothing, SemanticTokensOptions, SemanticTokensRegistrationOptions} = nothing
 
     # """
     # Whether server provides moniker support.
@@ -350,13 +350,13 @@ end
     """
     definition::Union{DefinitionClientCapabilities, Nothing} = nothing
 
-    # """
-    # Capabilities specific to the `textDocument/typeDefinition` request.
+    """
+    Capabilities specific to the `textDocument/typeDefinition` request.
 
-    # # Tags
-    # - since – 3.6.0
-    # """
-    # typeDefinition::Union{TypeDefinitionClientCapabilities, Nothing} = nothing
+    # Tags
+    - since - 3.6.0
+    """
+    typeDefinition::Union{TypeDefinitionClientCapabilities, Nothing} = nothing
 
     # """
     # Capabilities specific to the `textDocument/implementation` request.
@@ -462,13 +462,13 @@ end
     # """
     # callHierarchy::Union{CallHierarchyClientCapabilities, Nothing} = nothing
 
-    # """
-    # Capabilities specific to the various semantic token requests.
+    """
+    Capabilities specific to the various semantic token requests.
 
-    # # Tags
-    # - since – 3.16.0
-    # """
-    # semanticTokens::Union{SemanticTokensClientCapabilities, Nothing} = nothing
+    # Tags
+    - since – 3.16.0
+    """
+    semanticTokens::Union{SemanticTokensClientCapabilities, Nothing} = nothing
 
     # """
     # Capabilities specific to the `textDocument/moniker` request.
@@ -581,14 +581,14 @@ provides text document synchronization (e.g. open, changed and close notificatio
         """
         configuration::Union{Bool, Nothing} = nothing
 
-        # """
-        # Capabilities specific to the semantic token requests scoped to the
-        # workspace.
+        """
+        Capabilities specific to the semantic token requests scoped to the
+        workspace.
 
-        # # Tags
-        # - since – 3.16.0
-        # """
-        # semanticTokens::Union{SemanticTokensWorkspaceClientCapabilities, Nothing} = nothing
+        # Tags
+        - since – 3.16.0
+        """
+        semanticTokens::Union{SemanticTokensWorkspaceClientCapabilities, Nothing} = nothing
 
         """
         Capabilities specific to the code lens requests scoped to the
