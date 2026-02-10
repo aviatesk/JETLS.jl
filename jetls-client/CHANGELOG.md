@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 - Diff: [`8c5ee9cc...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/8c5ee9cc...HEAD)
 
+### Added
+
+- Added `code_lens.references` configuration option (default: `false`).
+  When enabled, shows reference counts for top-level symbols such as
+  functions, structs, constants, abstract types, primitive types, and
+  modules.
+- Added `jetls.showReferences` command that opens the references panel
+  when clicking a reference count code lens. (aviatesk/JETLS.jl#513)
+
+### Changed
+
+- Updated server launch to use the `jetls serve` subcommand explicitly.
+  (aviatesk/JETLS.jl#528, aviatesk/JETLS.jl#533)
+
 ## v0.3.3
 
 - Commit: [`8c5ee9cc`](https://github.com/aviatesk/JETLS.jl/commit/8c5ee9cc)
