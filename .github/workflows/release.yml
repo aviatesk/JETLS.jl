@@ -163,7 +163,8 @@ jobs:
           gh release create "$VERSION" \
             --target release \
             --title "$VERSION" \
-            --notes "$RELEASE_NOTES"
+            --notes "$RELEASE_NOTES" \
+            jetls-config.schema.json
 
       - name: Strip Announcement from previous release
         env:

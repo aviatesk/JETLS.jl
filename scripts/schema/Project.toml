@@ -1,0 +1,10 @@
+[deps]
+Glob = "c27321d9-0574-5035-807b-f59d2c89b15c"
+JETLS = "a3b70258-0602-4ee2-b5a6-54c2470400db"
+JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
+OrderedCollections = "bac558e1-5e72-5ebc-8fee-abe8a469f55d"
+Struct2JSONSchema = "6b9a66ba-ce23-4e49-9189-ad500babf267"
+TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
+
+[sources]
+JETLS = {path = "../.."}

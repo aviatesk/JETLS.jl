@@ -6,12 +6,16 @@ on:
       - master
     paths:
       - "jetls-client/**"
+      - "src/**"
+      - "scripts/schema/**"
       - ".github/workflows/jetls-client.yml"
   pull_request:
     branches-ignore:
       - release
     paths:
       - "jetls-client/**"
+      - "src/**"
+      - "scripts/schema/**"
       - ".github/workflows/jetls-client.yml"
 
 jobs:
@@ -29,3 +33,17 @@ jobs:
       - name: Run checks
         working-directory: jetls-client
         run: npm run check
+
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: "1.12"
+          arch: x64
+      - uses: julia-actions/cache@v2
+      - name: Instantiate schema project
+        run: julia --startup-file=no --project=scripts/schema -e 'using Pkg; Pkg.instantiate()'
+      - name: Check jetls-config.schema.json is up to date
+        run: |
+          julia --startup-file=no --project=scripts/schema scripts/schema/generate.jl --check
+      - name: Check package.json is up to date
+        run: |
+          julia --startup-file=no --project=scripts/schema scripts/schema/update-pkg-json.jl --check
