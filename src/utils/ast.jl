@@ -165,10 +165,31 @@ function deduplicate_syntaxlist(sl::JS.SyntaxList)
     return sl2
 end
 
-function traverse(@specialize(callback), st::JS.SyntaxTree)
+"""
+    traverse(callback, st::JS.SyntaxTree, postorder::Bool=false)
+
+Traverse a `SyntaxTree`, calling `callback(node)` on each node.
+By default traverses in pre-order (parent before children).
+Pass `postorder=true` to visit children before their parent.
+
+The `callback` can control traversal by returning one of:
+- `traversal_terminator`: stop traversal immediately.
+- `traversal_no_recurse`: skip children of the current node (pre-order only).
+- `TraversalReturn(val)`: store `val` as the return value and continue.
+- `TraversalReturn(val; terminate=true)`: store `val` and stop immediately.
+- anything else: continue normally.
+
+The stored value from the last `TraversalReturn` is returned from `traverse`
+(or `nothing` if no `TraversalReturn` was used).
+"""
+function traverse(@specialize(callback), st::JS.SyntaxTree, postorder::Bool=false)
     stack = JS.SyntaxList(st)
     push!(stack, st)
-    _traverse!(callback, stack)
+    if postorder
+        _traverse_postorder(callback, stack)
+    else
+        _traverse_preorder(callback, stack)
+    end
 end
 
 struct TraversalReturn{T}
@@ -180,7 +201,8 @@ struct TraversalTerminator end
 struct TraversalNoRecurse end
 const traversal_terminator = TraversalTerminator()
 const traversal_no_recurse = TraversalNoRecurse()
-function _traverse!(@specialize(callback), stack::JS.SyntaxList)
+
+function _traverse_preorder(@specialize(callback), stack::JS.SyntaxList)
     local retval = nothing
     while !isempty(stack)
         x = pop!(stack)
@@ -197,6 +219,28 @@ function _traverse!(@specialize(callback), stack::JS.SyntaxList)
         for i = JS.numchildren(x):-1:1
             push!(stack, x[i])
         end
+    end
+    return retval
+end
+
+function _traverse_postorder(@specialize(callback), stack::JS.SyntaxList)
+    local retval = nothing
+    output = JS.SyntaxList(stack.graph)
+    while !isempty(stack)
+        x = pop!(stack)
+        push!(output, x)
+        for i = 1:JS.numchildren(x)
+            push!(stack, x[i])
+        end
+    end
+    while !isempty(output)
+        x = pop!(output)
+        ret = callback(x)
+        if ret isa TraversalReturn
+            retval = ret.val
+            ret.terminate ? break : continue
+        end
+        ret === traversal_terminator && break
     end
     return retval
 end
