@@ -242,16 +242,16 @@ or simply be outside the active workspace scope.
 Results are cached in `state.unsynced_file_cache` and invalidated via
 `workspace/didChangeWatchedFiles`.
 """
-function get_unsynced_file_info!(state::ServerState, uri::URI)
-    cache = load(state.unsynced_file_cache)
-    if haskey(cache, uri)
-        return cache[uri]
-    end
-    return store_unsynced_file_info!(state, uri)
-end
+get_unsynced_file_info!(state::ServerState, uri::URI) =
+    _store_unsynced_file_info!(state, uri)
 
-function store_unsynced_file_info!(state::ServerState, uri::URI)
+store_unsynced_file_info!(state::ServerState, uri::URI) =
+    _store_unsynced_file_info!(state, uri; force=true)
+function _store_unsynced_file_info!(state::ServerState, uri::URI; force::Bool=false)
     return store!(state.unsynced_file_cache) do cache::UnsyncedFileCacheData
+        if !force && haskey(cache, uri)
+            return cache, cache[uri]
+        end
         version = time_ns() % Int
         filename = uri2filename(uri)
         isfile(filename) || return cache, nothing
@@ -315,6 +315,15 @@ function get_context_module(analysis_result::AnalysisResult, uri::URI, pos::Posi
     end
     return curmod
 end
+function get_context_module(state::ServerState, uri::URI, pos::Position; lookup_func=nothing)
+    lookup_uri = @something get_notebook_uri_for_cell(state, uri) uri
+    if lookup_func !== nothing
+        analysis_info = get_analysis_info(lookup_func, state.analysis_manager, lookup_uri)
+    else
+        analysis_info = get_analysis_info(state.analysis_manager, lookup_uri)
+    end
+    return get_context_module(analysis_info, lookup_uri, pos)
+end
 
 get_context_analyzer(::Nothing, uri::URI) = LSAnalyzer(uri)
 get_context_analyzer(::OutOfScope, uri::URI) = LSAnalyzer(uri)
@@ -324,9 +333,13 @@ get_post_processor(::Nothing) = LSPostProcessor(JET.PostProcessor())
 get_post_processor(::OutOfScope) = LSPostProcessor(JET.PostProcessor())
 get_post_processor(analysis_result::AnalysisResult) = LSPostProcessor(JET.PostProcessor(analysis_result.actual2virtual))
 
-function has_analyzed_context(state::ServerState, uri::URI)
+function has_analyzed_context(state::ServerState, uri::URI; lookup_func=nothing)
     lookup_uri = @something get_notebook_uri_for_cell(state, uri) uri
-    analysis_info = get_analysis_info(state.analysis_manager, lookup_uri)
+    if lookup_func !== nothing
+        analysis_info = get_analysis_info(lookup_func, state.analysis_manager, lookup_uri)
+    else
+        analysis_info = get_analysis_info(state.analysis_manager, lookup_uri)
+    end
     return _has_analyzed_context(analysis_info, lookup_uri)
 end
 _has_analyzed_context(::Nothing, ::URI) = false

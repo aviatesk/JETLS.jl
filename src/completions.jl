@@ -385,7 +385,7 @@ function add_emoji_latex_completions!(
         # auto-detect based on client
         getobjpath(state, :init_params, :clientInfo, :name) ∈ ("Zed", "Zed Dev"))
 
-    function create_ci(key, val, is_emoji::Bool)
+    create_ci = function (key, val, is_emoji::Bool)
         description = is_emoji ? "emoji" : "latex-symbol"
         helpText = strip_prefix ? rstrip(lstrip(lstrip(key, '\\'), ':'), ':') : key
         return CompletionItem(;

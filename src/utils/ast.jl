@@ -1,5 +1,25 @@
+# Lightweight copy function for SyntaxTree
+# This copies the SyntaxGraph's mutable structures (edge_ranges, edges, attributes)
+# but shares the immutable data within attribute dictionaries
+function copy_syntax_tree(st::JS.SyntaxTree)
+    g = JS.syntax_graph(st)
+    new_attrs = Dict{Symbol,Any}()
+    for (k, v) in pairs(g.attributes)
+        new_attrs[k] = copy(v)
+    end
+    new_graph = JS.SyntaxGraph(copy(g.edge_ranges), copy(g.edges), new_attrs)
+    return JS.SyntaxTree(new_graph, st._id)
+end
+
 function build_syntax_tree(fi::FileInfo)
-    return @something fi.syntax_tree0 JS.build_tree(JS.SyntaxTree, fi.parsed_stream; filename = fi.filename)
+    cached = fi.syntax_tree0
+    if isnothing(cached)
+        return JS.build_tree(JS.SyntaxTree, fi.parsed_stream; filename = fi.filename)
+    else
+        # The lowering pipeline modifies the internal state of `st0`,
+        # so we need to create a copy for each read to avoid race conditions
+        return copy_syntax_tree(cached)
+    end
 end
 
 """
@@ -158,6 +178,8 @@ struct TraversalReturn{T}
 end
 struct TraversalTerminator end
 struct TraversalNoRecurse end
+const traversal_terminator = TraversalTerminator()
+const traversal_no_recurse = TraversalNoRecurse()
 function _traverse!(@specialize(callback), stack::JS.SyntaxList)
     local retval = nothing
     while !isempty(stack)
@@ -167,8 +189,8 @@ function _traverse!(@specialize(callback), stack::JS.SyntaxList)
             retval = ret.val
             ret.terminate ? break : continue
         end
-        ret === TraversalTerminator() && break
-        ret === TraversalNoRecurse() && continue
+        ret === traversal_terminator && break
+        ret === traversal_no_recurse && continue
         if JS.numchildren(x) === 0
             continue
         end
@@ -177,6 +199,41 @@ function _traverse!(@specialize(callback), stack::JS.SyntaxList)
         end
     end
     return retval
+end
+
+# TODO use something like `JuliaInterpreter.ExprSplitter`
+
+function iterate_toplevel_tree(callback, st0_top::JS.SyntaxTree)
+    sl = JS.SyntaxList(st0_top)
+    push!(sl, st0_top)
+    while !isempty(sl)
+        st0 = pop!(sl)
+        if JS.kind(st0) === JS.K"toplevel"
+            for i = JS.numchildren(st0):-1:1 # reversed since we use `pop!`
+                push!(sl, st0[i])
+            end
+        elseif JS.kind(st0) === JS.K"module"
+            stblk = st0[end]
+            JS.kind(stblk) === JS.K"block" || continue
+            for i = JS.numchildren(stblk):-1:1 # reversed since we use `pop!`
+                push!(sl, stblk[i])
+            end
+        elseif JS.kind(st0) === JS.K"doc"
+            # skip docstring expressions for now
+            for i = JS.numchildren(st0):-1:1 # reversed since we use `pop!`
+                push!(sl, st0[i])
+            end
+        elseif JS.kind(st0) === JS.K"macrocall" && is_macrocall_st0(st0, "@doc")
+            # We probably can remove this after https://github.com/JuliaLang/julia/pull/60733
+            # MRE: Comment out and open app.jl and it will yield: `JETLS.check_socket_port` is not defined
+            for i = JS.numchildren(st0):-1:1 # reversed since we use `pop!`
+                push!(sl, st0[i])
+            end
+        else # st0 is lowerable tree
+            ret = callback(st0)
+            ret === traversal_terminator && break
+        end
+    end
 end
 
 """
@@ -699,4 +756,28 @@ function try_extract_field_line(node::JS.SyntaxNode, structname::Symbol, fname::
         end
         return nothing
     end
+end
+
+"""
+    is_from_user_ast(provs::JS.SyntaxList) -> Bool
+
+Determine whether a binding with the given provenances originates from user-written code.
+
+When a binding has multiple provenances (e.g., due to macro expansion), this function
+checks if the final provenance location falls within the byte range of the first provenance.
+If so, the binding likely corresponds to an identifier the user actually wrote, even though
+it was processed by a macro.
+
+This allows diagnostics to report on user-written identifiers like `x` in
+`func(@nospecialize x) = ()`, while filtering out purely macro-generated bindings
+like internal variables from `@ast`.
+
+!!! note
+    This currently does not support old-style macros due to JuliaLowering limitations.
+"""
+function is_from_user_ast(provs::JS.SyntaxList)
+    length(provs) == 1 && return true
+    fprov, lprov = first(provs), last(provs)
+    JS.sourcefile(lprov) == JS.sourcefile(fprov) || return false
+    return JS.byte_range(lprov) ⊆ JS.byte_range(fprov)
 end

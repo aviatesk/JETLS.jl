@@ -34,6 +34,13 @@ strip_prefix = false               # boolean, default: (unset) auto-detect
 [completion.method_signature]
 prepend_inference_result = false   # boolean, default: (unset) auto-detect
 
+[code_lens]
+references = false                 # boolean, default: false
+testrunner = true                  # boolean, default: true
+
+[inlay_hint]
+block_end_min_lines = 25           # integer, default: 25
+
 [testrunner]
 executable = "testrunner"          # string, default: "testrunner" (or "testrunner.bat" on Windows)
 ```
@@ -52,6 +59,11 @@ executable = "testrunner"          # string, default: "testrunner" (or "testrunn
 - [`[completion]`](@ref config/completion)
     - [`[completion.latex_emoji] strip_prefix`](@ref config/completion-latex_emoji-strip_prefix)
     - [`[completion.method_signature] prepend_inference_result`](@ref config/completion-method_signature-prepend_inference_result)
+- [`[code_lens]`](@ref config/code_lens)
+    - [`[code_lens] references`](@ref config/code_lens-references)
+    - [`[code_lens] testrunner`](@ref config/code_lens-testrunner)
+- [`[inlay_hint]`](@ref config/inlay_hint)
+    - [`[inlay_hint] block_end_min_lines`](@ref config/inlay_hint-block_end_min_lines)
 - [`[testrunner]`](@ref config/testrunner)
     - [`[testrunner] executable`](@ref config/testrunner-executable)
 
@@ -423,6 +435,66 @@ prepend_inference_result = true  # Show return type in documentation
     If explicitly setting this option clearly improves behavior for your client,
     consider submitting a PR to add your client to the [auto-detection](https://github.com/aviatesk/JETLS.jl/blob/14fdc847252579c27e41cd50820aee509f8fd7bd/src/completions.jl#L386) logic.
 
+### [`[code_lens]`](@id config/code_lens)
+
+Configure code lens behavior.
+
+#### [`[code_lens] references`](@id config/code_lens-references)
+
+- **Type**: boolean
+- **Default**: `false`
+
+Show reference counts for top-level symbols (functions, structs, constants,
+abstract types, primitive types, modules). When enabled, JETLS displays a code
+lens above each symbol showing how many times it is referenced in the codebase.
+Clicking the code lens opens the references panel.
+
+```toml
+[code_lens]
+references = true  # Enable reference count code lenses
+```
+
+#### [`[code_lens] testrunner`](@id config/code_lens-testrunner)
+
+- **Type**: boolean
+- **Default**: `true`
+
+Enable or disable [TestRunner code lenses](@ref testrunner/features/code-lens).
+When enabled, JETLS shows "Run" and "Debug" code lenses above `@testset` blocks
+for running individual tests.
+
+Some editors (e.g., Zed[^zed_code_lens_testrunner]) display code lenses as code actions, which can cause
+duplication when both code lenses and code actions are shown for the same
+functionality. In such cases, you may want to disable this setting.
+
+[^zed_code_lens_testrunner]: The [aviatesk/zed-julia](https://github.com/aviatesk/zed-julia) extension defaults this setting to `false` unless explicitly configured.
+
+```toml
+[code_lens]
+testrunner = false  # Disable TestRunner code lenses
+```
+
+### [`[inlay_hint]`](@id config/inlay_hint)
+
+Configure inlay hint behavior.
+
+#### [`[inlay_hint] block_end_min_lines`](@id config/inlay_hint-block_end_min_lines)
+
+- **Type**: integer
+- **Default**: `25`
+
+Minimum number of lines a block must span before JETLS displays an inlay hint
+at its `end` keyword. Inlay hints show what construct is ending, such as
+`module Foo`, `function foo` or `@testset "foo"`, helping navigate long blocks.
+
+Supported block types include `module`, `function`, `macro`, `struct`,
+`if`/`@static if`, `let`, `for`, `while`, and `@testset`.
+
+```toml
+[inlay_hint]
+block_end_min_lines = 10  # Show hints for blocks with 10+ lines
+```
+
 ### [`[testrunner]`](@id config/testrunner)
 
 #### [`[testrunner] executable`](@id config/testrunner-executable)
@@ -438,7 +510,7 @@ executable for running individual `@testset` blocks and `@test` cases.
 executable = "/path/to/custom/testrunner"
 ```
 
-See [TestRunner integration](@ref) for setup instructions.
+See [TestRunner integration](@ref testrunner) for setup instructions.
 
 ## How to configure JETLS
 
@@ -552,7 +624,7 @@ section:
 }
 ```
 
-#### Server-agnostic clients (e.g., neovim, emacs lsp-mode, helix)(@id config/lsp-config/server-agnostic)
+#### [Server-agnostic clients (e.g., neovim, emacs lsp-mode, helix)](@id config/lsp-config/server-agnostic)
 
 Settings should be placed under the `"jetls"` key, such that a request for the
 `"jetls"` section produces an instance of the JETLS configuration

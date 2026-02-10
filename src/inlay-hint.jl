@@ -35,57 +35,100 @@ function handle_InlayHintRequest(
     end
     fi = result
 
+    min_lines = get_config(server, :inlay_hint, :block_end_min_lines)
     inlay_hints = InlayHint[]
-    syntactic_inlay_hints!(inlay_hints, fi, range)
+    symbols = get_document_symbols!(server.state, uri, fi)
+    syntactic_inlay_hints!(inlay_hints, symbols, fi, range; min_lines)
 
     return send(server, InlayHintResponse(;
         id = msg.id,
         result = @somereal inlay_hints null))
 end
 
-function syntactic_inlay_hints!(inlay_hints::Vector{InlayHint}, fi::FileInfo, range::Range)
-    traverse(build_syntax_tree(fi)) do st::SyntaxTree0
-        if JS.kind(st) === JS.K"module" && JS.numchildren(st) ≥ 2
-            modrange = jsobj_to_range(st, fi)
-            endpos = modrange.var"end"
-            if endpos ∉ range
-                return # this inlay hint isn't visible
-            elseif modrange.start.line == endpos.line
-                return # don't add module inlay hint when module is defined as one linear
-            else
-                # If there's already a comment like `end # module ModName`, don't display the inlay hint
-                modname = JS.sourcetext(st[1])
-                bstart = xy_to_offset(fi, endpos) + 1
-                nexttc = next_nontrivia(fi.parsed_stream, bstart)
-                if isnothing(nexttc) # no non-trivial token left - include everything left
-                    commentrange = bstart:length(fi.parsed_stream.textbuf)
-                elseif JS.kind(nexttc) === JS.K"NewlineWs"
-                    commentrange = bstart:length(fi.parsed_stream.textbuf)
-                else
-                    commentrange = bstart:JS.first_byte(nexttc)-1
-                end
-                commentstr = String(fi.parsed_stream.textbuf[commentrange])
-                if occursin(modname, commentstr)
-                    return
-                elseif startswith(lstrip(commentstr), "# module")
-                    return
-                elseif startswith(lstrip(commentstr), "#= module")
-                    return
-                end
-                label = " #= module $modname =#"
-                offset = sizeof(label)
-                textEdits = TextEdit[TextEdit(;
-                    range = Range(;
-                        start = Position(endpos; character = endpos.character+1),
-                        var"end" = Position(endpos; character = endpos.character+1+offset)),
-                    newText = label)]
-                push!(inlay_hints, InlayHint(;
-                    position = endpos,
-                    textEdits,
-                    label))
-            end
+const INLAY_HINT_MIN_LINES = 25
+
+function syntactic_inlay_hints!(
+        inlay_hints::Vector{InlayHint}, symbols::Vector{DocumentSymbol}, fi::FileInfo, range::Range;
+        min_lines::Int = INLAY_HINT_MIN_LINES
+    )
+    for sym in symbols
+        add_block_end_inlay_hint!(inlay_hints, sym, fi, range; min_lines)
+        if sym.children !== nothing
+            syntactic_inlay_hints!(inlay_hints, sym.children, fi, range; min_lines)
         end
     end
     return inlay_hints
 end
-syntactic_inlay_hints(args...) = syntactic_inlay_hints!(InlayHint[], args...) # used by tests
+
+function add_block_end_inlay_hint!(
+        inlay_hints::Vector{InlayHint}, sym::DocumentSymbol, fi::FileInfo, range::Range;
+        min_lines::Int = INLAY_HINT_MIN_LINES
+    )
+    keyword, label = @something get_block_keyword_label(sym) return
+    endpos = sym.range.var"end"
+    endpos ∉ range && return # this inlay hint isn't visible
+    block_lines = endpos.line - sym.range.start.line
+    if block_lines == 0
+        return # don't add inlay hint when block is defined as one liner
+    elseif block_lines < min_lines
+        return # block is too short to need an inlay hint
+    end
+    # If there's already a comment like `end # keyword name`, don't display the inlay hint
+    name = sym.name
+    bstart = xy_to_offset(fi, endpos) + 1
+    nexttc = next_nontrivia(fi.parsed_stream, bstart)
+    if !isnothing(nexttc)
+        commentrange = bstart:JS.first_byte(nexttc)-1
+        commentstr = String(fi.parsed_stream.textbuf[commentrange])
+        if (occursin(name, commentstr) ||
+            startswith(lstrip(commentstr), "# $keyword") ||
+            startswith(lstrip(commentstr), "#= $keyword"))
+            return
+        end
+    end
+    newText = " #= "* label * " =#"
+    offset = encoded_length(newText, fi.encoding)
+    textEdits = TextEdit[TextEdit(;
+        range = Range(;
+            start = Position(endpos; character = endpos.character+1),
+            var"end" = Position(endpos; character = endpos.character+1+offset)),
+        newText)]
+    push!(inlay_hints, InlayHint(;
+        position = endpos,
+        textEdits,
+        label = String(label),
+        paddingLeft = true))
+    nothing
+end
+
+function get_block_keyword_label(sym::DocumentSymbol)
+    detail = @something sym.detail return nothing
+    if sym.kind === SymbolKind.Module
+        startswith(detail, "baremodule ") && return "baremodule", "baremodule " * sym.name
+        startswith(detail, "module ") && return "module", "module " * sym.name
+    elseif sym.kind === SymbolKind.Function
+        startswith(detail, "function ") && return "function", "function " * sym.name
+        startswith(detail, "macro ") && return "macro", "macro " * sym.name
+        endswith(detail, " =") && return nothing, sym.name * "(...) =" # short form
+    elseif sym.kind === SymbolKind.Struct
+        startswith(detail, "mutable struct ") && return "mutable struct", "mutable struct " * sym.name
+        startswith(detail, "struct ") && return "struct", "struct " * sym.name
+    elseif sym.kind === SymbolKind.Namespace
+        startswith(detail, "if") && return "if", first(split(detail, '\n'))
+        startswith(detail, "@static if") && return "@static if", first(split(detail, '\n'))
+        startswith(detail, "let") && return "let", first(split(detail, '\n'))
+        startswith(detail, "for") && return "for", first(split(detail, '\n'))
+        startswith(detail, "while") && return "while", first(split(detail, '\n'))
+    elseif sym.kind === SymbolKind.Event # `@testset`
+        startswith(detail, "@testset") && return "@testset", detail
+    end
+    return nothing
+end
+
+function syntactic_inlay_hints(fi::FileInfo, range::Range; kwargs...)
+    st0 = build_syntax_tree(fi)
+    symbols = extract_document_symbols(st0, fi)
+    inlay_hints = InlayHint[]
+    syntactic_inlay_hints!(inlay_hints, symbols, fi, range; kwargs...)
+    return inlay_hints
+end

@@ -54,3 +54,8 @@ function load_file_init_options(server::Server, filepath::AbstractString)
         return nothing
     end
 end
+
+function load_file_init_options!(server::Server, filepath::AbstractString)
+    server.state.init_options = merge_init_options(server.state.init_options,
+        @something load_file_init_options(server, filepath) return nothing)
+end

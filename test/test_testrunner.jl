@@ -107,7 +107,7 @@ end
         testsetinfos = fi.testsetinfos
         @test length(testsetinfos) == 1
 
-        code_lenses = JETLS.testrunner_code_lenses(uri, fi, testsetinfos)
+        code_lenses = JETLS.testrunner_code_lenses(uri, fi)
 
         @test length(code_lenses) == 1
         first_lens = code_lenses[1]
@@ -137,7 +137,7 @@ end
         key = JETLS.TestsetDiagnosticsKey(uri, "\"my_tests\"", 1)
         testsetinfos[1] = JETLS.TestsetInfo(testsetinfos[1].st0, JETLS.TestsetResult(result, key))
 
-        code_lenses = JETLS.testrunner_code_lenses(uri, fi, testsetinfos)
+        code_lenses = JETLS.testrunner_code_lenses(uri, fi)
 
         @test length(code_lenses) == 4
 
@@ -192,7 +192,7 @@ end
             start = positions[1],
             var"end" = positions[1])
 
-        code_actions = JETLS.testrunner_code_actions(uri, fi, testsetinfos, first_testset_range)
+        code_actions = JETLS.testrunner_code_actions(uri, fi, first_testset_range)
         @test length(code_actions) == 2  # Now includes both @testset and @test actions
         tsn1 = JETLS.testset_name(testsetinfos[1])
         @test code_actions[1].title == "$(JETLS.TESTRUNNER_RUN_TITLE) $tsn1"
@@ -208,7 +208,7 @@ end
             start = positions[2],
             var"end" = positions[2])
 
-        code_actions = JETLS.testrunner_code_actions(uri, fi, testsetinfos, second_testset_range)
+        code_actions = JETLS.testrunner_code_actions(uri, fi, second_testset_range)
         @test length(code_actions) == 1
         tsn2 = JETLS.testset_name(testsetinfos[2])
         @test code_actions[1].title == "$(JETLS.TESTRUNNER_RUN_TITLE) $tsn2"
@@ -220,7 +220,7 @@ end
             start = positions[1],
             var"end" = positions[2])
 
-        code_actions = JETLS.testrunner_code_actions(uri, fi, testsetinfos, multi_range)
+        code_actions = JETLS.testrunner_code_actions(uri, fi, multi_range)
         @test length(code_actions) == 3  # Two @testset actions and one @test action (true)
         tsn1 = JETLS.testset_name(testsetinfos[1])
         tsn2 = JETLS.testset_name(testsetinfos[2])
@@ -239,7 +239,7 @@ end
             start = positions[3],
             var"end" = positions[3])
 
-        code_actions = JETLS.testrunner_code_actions(uri, fi, testsetinfos, after_end_range)
+        code_actions = JETLS.testrunner_code_actions(uri, fi, after_end_range)
         @test length(code_actions) == 1
         tsn2 = JETLS.testset_name(testsetinfos[2])
         @test code_actions[1].title == "$(JETLS.TESTRUNNER_RUN_TITLE) $tsn2"
@@ -251,7 +251,7 @@ end
             start = positions[4],
             var"end" = positions[4])
 
-        code_actions = JETLS.testrunner_code_actions(uri, fi, testsetinfos, no_overlap_range)
+        code_actions = JETLS.testrunner_code_actions(uri, fi, no_overlap_range)
         @test isempty(code_actions)
     end
 
@@ -277,7 +277,7 @@ end
             start = positions[1],
             var"end" = positions[1])
 
-        code_actions = JETLS.testrunner_code_actions(uri, fi, testsetinfos, testset_range)
+        code_actions = JETLS.testrunner_code_actions(uri, fi, testset_range)
         @test length(code_actions) == 3
 
         tsn = JETLS.testset_name(testsetinfos[1])
@@ -324,7 +324,7 @@ end
         standalone_range = LSP.Range(;
             start = positions[1],
             var"end" = positions[1])
-        code_actions = JETLS.testrunner_code_actions(uri, fi, testsetinfos, standalone_range)
+        code_actions = JETLS.testrunner_code_actions(uri, fi, standalone_range)
         @test length(code_actions) == 1
         @test code_actions[1].title == "$(JETLS.TESTRUNNER_RUN_TITLE) `@test 1 == 1`"
         @test code_actions[1].command.command == JETLS.COMMAND_TESTRUNNER_RUN_TESTCASE
@@ -335,7 +335,7 @@ end
         first_test_range = LSP.Range(;
             start = positions[2],
             var"end" = positions[2])
-        code_actions = JETLS.testrunner_code_actions(uri, fi, testsetinfos, first_test_range)
+        code_actions = JETLS.testrunner_code_actions(uri, fi, first_test_range)
         @test length(code_actions) == 2  # Both testset and test actions
         # First should be testset action
         @test occursin("tests with multiple @test macros", code_actions[1].title)
@@ -349,7 +349,7 @@ end
         multiline_range = LSP.Range(;
             start = positions[3],
             var"end" = positions[3])
-        code_actions = JETLS.testrunner_code_actions(uri, fi, testsetinfos, multiline_range)
+        code_actions = JETLS.testrunner_code_actions(uri, fi, multiline_range)
         @test length(code_actions) == 1
         @test occursin("@test_throws DomainError sin(Inf)", code_actions[1].title)
         @test code_actions[1].command.command == JETLS.COMMAND_TESTRUNNER_RUN_TESTCASE
@@ -358,7 +358,7 @@ end
         multiline_range = LSP.Range(;
             start = positions[4],
             var"end" = positions[4])
-        code_actions = JETLS.testrunner_code_actions(uri, fi, testsetinfos, multiline_range)
+        code_actions = JETLS.testrunner_code_actions(uri, fi, multiline_range)
         @test length(code_actions) == 1
         @test occursin("@test begin", code_actions[1].title)
         @test code_actions[1].command.command == JETLS.COMMAND_TESTRUNNER_RUN_TESTCASE

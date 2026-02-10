@@ -338,7 +338,7 @@ function collect_macrocall_occurrences!(
         (; ctx3) = try
             jl_lower_for_scope_resolution(mod, macrocall_name)
         catch
-            return TraversalNoRecurse()
+            return traversal_no_recurse
         end
         for binfo in ctx3.bindings.info
             if binfo.kind === :global

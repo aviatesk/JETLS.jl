@@ -28,6 +28,14 @@ end
     refreshSupport::Union{Nothing, Bool} = nothing
 end
 
+# JETLS specific data structures for `data` field of `CodeLens`
+struct ReferencesCodeLensData
+    uri::URI
+    line::Int
+    character::Int
+end
+export ReferencesCodeLensData
+
 """
 A code lens represents a command that should be shown along with
 source text, like the number of references, a way to run tests, etc.
@@ -52,7 +60,7 @@ in two stages.
     A data entry field that is preserved on a code lens item between
     a code lens and a code lens resolve request.
     """
-    data::Union{Nothing, LSPAny} = nothing
+    data::Union{Nothing, ReferencesCodeLensData} = nothing
 end
 
 @interface CodeLensParams @extends WorkDoneProgressParams, PartialResultParams begin

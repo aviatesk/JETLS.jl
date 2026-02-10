@@ -25,15 +25,15 @@ test = ["InteractiveUtils", "Parameters", "Pkg", "Test"]
 
 [sources.Compiler]
 subdir = "vendor/Compiler"
-rev = "8e1849849ebbd0cf3b5ab65cefac10ef95bcd655"
+rev = "95826370cca26dfec9652607d10972a08f74901d"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.JuliaInterpreter]
 subdir = "vendor/JuliaInterpreter"
-rev = "8e1849849ebbd0cf3b5ab65cefac10ef95bcd655"
+rev = "95826370cca26dfec9652607d10972a08f74901d"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.CodeTracking]
 subdir = "vendor/CodeTracking"
-rev = "8e1849849ebbd0cf3b5ab65cefac10ef95bcd655"
+rev = "95826370cca26dfec9652607d10972a08f74901d"
 url = "https://github.com/aviatesk/JETLS.jl"

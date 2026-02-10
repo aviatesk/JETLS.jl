@@ -28,6 +28,20 @@ macro time(msg, ex)
 end
 
 """
+    @elapsed ex
+
+Internal `@elapsed` definition for JETLS that is only active in `JETLS_DEV_MODE`.
+When `JETLS_DEV_MODE` is `false`, this macro simply evaluates the expression without timing.
+"""
+macro elapsed(ex)
+    if JETLS_DEV_MODE
+        :(Base.@elapsed $(esc(ex)))
+    else
+        :(begin $(esc(ex)); 0.0; end)
+    end
+end
+
+"""
     @somereal(x...)
 
 Short-circuiting version of [`somereal`](@ref).

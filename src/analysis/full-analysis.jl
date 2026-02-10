@@ -170,14 +170,18 @@ end
 function start_analysis_workers!(server::Server)
     n_workers = get_init_option(server.state.init_options, :n_analysis_workers)
     JETLS_DEV_MODE && @info "Starting $n_workers analysis workers"
-    for _ = 1:n_workers
-        Threads.@spawn :default try
+    worker_tasks = server.state.analysis_manager.worker_tasks
+    isempty(worker_tasks) || error("The server has already started analysis workers")
+    resize!(worker_tasks, n_workers)
+    for i = 1:n_workers
+        worker_tasks[i] = Threads.@spawn :default try
             analysis_worker(server)
         catch err
             @error "Critical error happened in analysis worker"
             Base.display_error(stderr, err, catch_backtrace())
         end
     end
+    return worker_tasks
 end
 
 # Analysis queue processing implementation (analysis serialized per AnalysisEntry)
@@ -186,9 +190,17 @@ function analysis_worker(server::Server)
     # When multiple workers exist, the per-entry serialization ensures correctness.
     while true
         request = take!(server.state.analysis_manager.queue)
+        request === nothing && break
         @tryinvokelatest resolve_analysis_request(server, request)
         GC.safepoint()
     end
+end
+
+function stop_analysis_workers(server::Server)
+    for _ = 1:length(server.state.analysis_manager.worker_tasks)
+        put!(server.state.analysis_manager.queue, nothing)
+    end
+    waitall(server.state.analysis_manager.worker_tasks)
 end
 
 # Analysis worker pipeline
@@ -217,7 +229,9 @@ analysis completes (used by tests to suppress notifications).
 function request_analysis!(
         server::Server, uri::URI, onsave::Bool;
         wait::Bool = false,
-        notify_diagnostics::Bool = true
+        notify_diagnostics::Bool = true,
+        cancellable_token::Union{Nothing,CancellableToken} = nothing,
+        debounce::Float64 = get_config(server, :full_analysis, :debounce),
     )
     manager = server.state.analysis_manager
     prev_analysis_result = get_analysis_info(manager, uri)
@@ -252,7 +266,8 @@ function request_analysis!(
         request_analysis_progress!(server, uri, onsave, entry, prev_analysis_result, notify_diagnostics)
     else
         completion = Base.Event()
-        schedule_analysis!(server, uri, entry, prev_analysis_result, onsave; completion, notify_diagnostics)
+        schedule_analysis!(server, uri, entry, prev_analysis_result, onsave;
+            completion, cancellable_token, notify_diagnostics, debounce)
         wait && Base.wait(completion)
     end
 end
@@ -282,6 +297,7 @@ function schedule_analysis!(
         completion::Base.Event = Base.Event(),
         cancellable_token::Union{Nothing,CancellableToken} = nothing,
         notify_diagnostics::Bool = true,
+        debounce::Float64 = get_config(server, :full_analysis, :debounce),
     )
     manager = server.state.analysis_manager
 
@@ -291,7 +307,6 @@ function schedule_analysis!(
         entry, uri, generation, cancellable_token, notify_diagnostics,
         prev_analysis_result, completion)
 
-    debounce = get_config(server, :full_analysis, :debounce)
     if onsave && debounce > 0
         store!(manager.debounced) do debounced
             if haskey(debounced, request.entry)
@@ -403,6 +418,8 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
     # lowering/macro-expansion-error and lowering/undef-global-var diagnostics
     # to be properly reported.
     request_diagnostic_refresh!(server)
+    # Also request code lens for references recalculation
+    request_codelens_refresh!(server)
 
     @label next_request
 
@@ -807,6 +824,8 @@ function analyze_package_with_revise(
                 # Cache the result if CodeInstance is available
                 if isdefined(result, :ci)
                     siginfos[index] = Revise.replace_extended_data(siginfo, :JETLS, SigAnalysisResult(reports, result.ci))
+                else
+                    JETLS_DEV_MODE && @warn "Missing CodeInstance for method analysis instance for" siginfo.sig
                 end
             else
                 JETLS_DEV_MODE && @warn "Couldn't find a single matching method for the signature" siginfo.sig
@@ -833,7 +852,6 @@ function analyze_package_with_revise(
             end
         end
     end; end
-
     waitall(tasks)
 
     @label completed
@@ -893,7 +911,7 @@ end
 ScriptAnalysisEntry(uri::URI) = ScriptAnalysisEntry(uri, false)
 entryuri_impl(entry::ScriptAnalysisEntry) = entry.uri
 function progress_title_impl(entry::ScriptAnalysisEntry)
-    suffix = entry.notebook ? " [notebook, no env]" : " [no env]"
+    suffix = entry.notebook ? " [notebook (no env)]" : " [script (no env)]"
     return basename(uri2filename(entry.uri)) * suffix
 end
 
@@ -905,7 +923,7 @@ end
 ScriptInEnvAnalysisEntry(env_path::String, uri::URI) = ScriptInEnvAnalysisEntry(env_path, uri, false)
 entryuri_impl(entry::ScriptInEnvAnalysisEntry) = entry.uri
 function progress_title_impl(entry::ScriptInEnvAnalysisEntry)
-    suffix = entry.notebook ? " [notebook, in env]" : " [in env]"
+    suffix = entry.notebook ? " [notebook (in env)]" : " [script (in env)]"
     return basename(uri2filename(entry.uri)) * suffix
 end
 
@@ -929,7 +947,7 @@ struct PackageTestAnalysisEntry <: AnalysisEntry
     pkgid::Base.PkgId
 end
 entryuri_impl(entry::PackageTestAnalysisEntry) = entry.runtestsuri
-progress_title_impl(entry::PackageTestAnalysisEntry) = entry.pkgid.name * ".jl [package test]"
+progress_title_impl(entry::PackageTestAnalysisEntry) = entry.pkgid.name * ".jl [package (test)]"
 
 struct NewAnalysisEntry <: AnalysisEntry
     pkgid::Base.PkgId
@@ -938,7 +956,7 @@ struct NewAnalysisEntry <: AnalysisEntry
     NewAnalysisEntry(pkgid::Base.PkgId) = new(pkgid, nothing)
 end
 entryuri_impl(::NewAnalysisEntry) = error("")
-progress_title_impl(entry::NewAnalysisEntry) = entry.pkgid.name * ".jl [incremental]"
+progress_title_impl(entry::NewAnalysisEntry) = entry.pkgid.name * ".jl [package (incremental)]"
 
 struct UserModule
     env_path::String
@@ -1122,14 +1140,8 @@ end
 
 function ensure_instantiated!(server::Server, env_path::String)
     if get_config(server, :full_analysis, :auto_instantiate)
-        manifest_name = "Manifest-v$(VERSION.major).$(VERSION.minor).toml"
-        manifest_path = joinpath(dirname(env_path), manifest_name)
         io = IOBuffer()
         try
-            if !isfile(manifest_path)
-                JETLS_DEV_MODE && @info "Touching versioned manifest file" env_path
-                touch(manifest_path)
-            end
             JETLS_DEV_MODE && @info "Resolving package environment" env_path
             Pkg.resolve(; io)
             JETLS_DEV_MODE && @info "Instantiating package environment" env_path

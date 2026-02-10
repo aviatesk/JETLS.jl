@@ -23,10 +23,8 @@ function merge_and_track(
         new_config::Vector{T},
         path::Tuple{Vararg{Symbol}}
     ) where {T<:ConfigSection}
-    key = merge_key(T)
-    K = fieldtype(T, key)
-    old_by_key = Dict{K,T}(getfield(item, key) => item for item in old_config)
-    new_by_key = Dict{K,T}(getfield(item, key) => item for item in new_config)
+    old_by_key = Dict(merge_key_value(item) => item for item in old_config)
+    new_by_key = Dict(merge_key_value(item) => item for item in new_config)
     result = T[]
     for (k, old_item) in old_by_key
         if haskey(new_by_key, k)
@@ -97,7 +95,14 @@ end
 end
 
 function merge_and_track(on_difference, old_val, new_val, path::Tuple{Vararg{Symbol}})
-    old_val !== new_val && on_difference(old_val, new_val, path)
+    if old_val === missing
+        changed = new_val !== missing
+    elseif new_val === missing
+        changed = true
+    else
+        changed = old_val != new_val
+    end
+    changed && on_difference(old_val, new_val, path)
     return new_val === nothing ? old_val : new_val
 end
 

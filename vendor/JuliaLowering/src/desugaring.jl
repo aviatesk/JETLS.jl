@@ -3936,20 +3936,28 @@ function rewrite_new_calls(ctx, ex, struct_name, global_struct_name,
     else
         docs = nothing
     end
-    if kind(ex) != K"function"
+
+    if kind(ex) in KSet"global local"
+        stmts = SyntaxList(ctx)
+        make_lhs_decls(ctx, stmts, kind(ex), get(ex, :meta, nothing),
+                       ex[1][1], false)
+        @ast ctx ex [K"block"
+            stmts...
+            rewrite_new_calls(
+                ctx, ex[1], struct_name, global_struct_name, typevar_names,
+                field_names, field_types)
+        ]
+    elseif kind(ex) === K"function" && numchildren(ex) === 2
+        ctor_self = Ref{Union{Nothing,SyntaxTree}}(nothing)
+        expand_function_def(
+            ctx, ex, docs,
+            callex->_rewrite_ctor_sig(ctx, callex, struct_name, global_struct_name,
+                                      typevar_names, ctor_self),
+            body->_rewrite_ctor_new_calls(ctx, body, struct_name, global_struct_name,
+                                          ctor_self[], typevar_names, field_types))
+    else
         return ex
     end
-    if !(numchildren(ex) == 2 && is_eventually_call(ex[1]))
-        throw(LoweringError(ex, "Expected constructor or named inner function"))
-    end
-
-    ctor_self = Ref{Union{Nothing,SyntaxTree}}(nothing)
-    expand_function_def(ctx, ex, docs,
-        callex->_rewrite_ctor_sig(ctx, callex, struct_name,
-                                  global_struct_name, typevar_names, ctor_self),
-        body->_rewrite_ctor_new_calls(ctx, body, struct_name, global_struct_name,
-                                      ctor_self[], typevar_names, field_types)
-    )
 end
 
 function _constructor_min_initialized(ex::SyntaxTree)
@@ -4067,6 +4075,16 @@ function expand_struct_def(ctx, ex, docs)
         end
     end
 
+    # User-defined inner constructors need to be rewritten to use proper type references.
+    # global_struct_name is used because it will be resolved via the top scope where
+    # the global declaration stores the binding.
+    if !isempty(inner_defs)
+        map!(inner_defs, inner_defs) do def
+            rewrite_new_calls(ctx, def, struct_name, global_struct_name,
+                              typevar_names, field_names, field_types)
+        end
+    end
+
     # The following lowering covers several subtle issues in the ordering of
     # typevars when "redefining" structs.
     # See https://github.com/JuliaLang/julia/pull/36121
@@ -4126,23 +4144,24 @@ function expand_struct_def(ctx, ex, docs)
                     global_struct_name
                     newdef
                  ]
-                # Default constructors
-                if isempty(inner_defs)
-                    default_inner_constructors(ctx, ex, global_struct_name,
-                                               typevar_names, typevar_stmts, field_names_2, field_types)
-                else
-                    map!(inner_defs, inner_defs) do def
-                        rewrite_new_calls(ctx, def, struct_name, global_struct_name,
-                                          typevar_names, field_names, field_types)
-                    end
-                    [K"block" inner_defs...]
-                end
-                if need_outer_constructor
-                    default_outer_constructor(ctx, ex, global_struct_name,
-                                              typevar_names, typevar_stmts, field_names_2, field_types)
-                end
             ]
         ]
+
+        if isempty(inner_defs)
+            # Default constructors are generated at runtime by Core._defaultctors.
+            [K"call"
+                "_defaultctors"::K"core"
+                global_struct_name
+                ::K"SourceLocation"(ex)
+            ]
+        else
+            # User-defined inner constructors are placed in a separate scope_block
+            # so that helper functions defined in the struct body don't leak to
+            # the module's global scope.
+            [K"scope_block"(scope_type=:hard)
+                [K"block" inner_defs...]
+            ]
+        end
 
         # Documentation
         if !isnothing(docs) || !isempty(field_docs)
@@ -4449,10 +4468,40 @@ function expand_forms_2(ctx::DesugaringContext, ex::SyntaxTree, docs=nothing)
     elseif k == K"="
         expand_assignment(ctx, ex)
     elseif k == K"break"
-        numchildren(ex) > 0 ? ex :
+        nc = numchildren(ex)
+        if nc == 0
             @ast ctx ex [K"break" "loop_exit"::K"symbolic_label"]
+        else
+            @chk nc <= 2 (ex, "Too many arguments to break")
+            label = ex[1]
+            label_kind = kind(label)
+            # Convert Symbol (from Expr conversion) to symbolic_label
+            if label_kind == K"Symbol"
+                label = @ast ctx label label.name_val::K"symbolic_label"
+            elseif !(label_kind == K"Identifier" || label_kind == K"Placeholder" ||
+                     label_kind == K"symbolic_label" || is_contextual_keyword(label_kind))
+                throw(LoweringError(label, "Invalid break label: expected identifier"))
+            end
+            if nc == 2
+                @ast ctx ex [K"break" label expand_forms_2(ctx, ex[2])]
+            else
+                @ast ctx ex [K"break" label]
+            end
+        end
     elseif k == K"continue"
-        @ast ctx ex [K"break" "loop_cont"::K"symbolic_label"]
+        nc = numchildren(ex)
+        if nc == 0
+            @ast ctx ex [K"break" "loop_cont"::K"symbolic_label"]
+        else
+            @chk nc == 1 (ex, "Too many arguments to continue")
+            label = ex[1]
+            label_kind = kind(label)
+            if !(label_kind == K"Identifier" || label_kind == K"Placeholder" ||
+                 label_kind == K"Symbol" || is_contextual_keyword(label_kind))
+                throw(LoweringError(label, "Invalid continue label: expected identifier"))
+            end
+            @ast ctx ex [K"break" string(label.name_val, "#cont")::K"symbolic_label"]
+        end
     elseif k == K"comparison"
         expand_forms_2(ctx, expand_compare_chain(ctx, ex))
     elseif k == K"doc"
@@ -4613,6 +4662,11 @@ function expand_forms_2(ctx::DesugaringContext, ex::SyntaxTree, docs=nothing)
         ]
     elseif k == K"inert" || k == K"inert_syntaxtree"
         ex
+    elseif k == K"symbolic_block"
+        # @label name body -> (symbolic_block name expanded_body)
+        # The @label macro inserts the continue block for loops, so we just expand the body
+        @chk numchildren(ex) == 2
+        @ast ctx ex [K"symbolic_block" ex[1] expand_forms_2(ctx, ex[2])]
     elseif k == K"gc_preserve"
         s = ssavar(ctx, ex)
         r = ssavar(ctx, ex)
