@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Updated server launch to use the `jetls serve` subcommand explicitly.
   (aviatesk/JETLS.jl#528, aviatesk/JETLS.jl#533)
+- Updated dependency versions to fix audit issues.
 
 ## v0.3.3
 
