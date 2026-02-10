@@ -137,6 +137,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   analysis mode. The cache is now always created when `CodeInstance` is
   available, ensuring cache reuse works reliably.
 
+- Fixed auto-instantiate creating unwanted versioned manifest files (e.g.,
+  `Manifest-v1.12.toml`) via `touch`. A manifest is now only created when
+  `Pkg.instantiate()` needs one.
+  (https://github.com/aviatesk/JETLS.jl/issues/511,
+   https://github.com/aviatesk/JETLS.jl/pull/536;
+   thanks [visr](https://github.com/visr))
+
 ## 2026-01-23
 
 - Commit: [`9c00dfe`](https://github.com/aviatesk/JETLS.jl/commit/9c00dfe)
