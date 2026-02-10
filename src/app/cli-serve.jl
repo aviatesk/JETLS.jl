@@ -1,43 +1,35 @@
 using Sockets: Sockets
 
-const help_message = """
-    JETLS - A Julia language server with runtime-aware static analysis,
-    powered by JET.jl, JuliaSyntax.jl, and JuliaLowering.jl
+const serve_help_message = """
+    jetls serve - Start language server for editor integration
 
-    VERSION: $JETLS_VERSION
+    Starts JETLS as an LSP server for use with LSP client editors.
+    By default, communicates via stdin/stdout.
 
-    Usage: jetls [OPTIONS]
+    Usage: jetls serve [OPTIONS]
 
-    Communication channel options (choose one, default: --stdio):
-      --stdio                     Use standard input/output (not recommended)
+    Options:
+      --stdio                     Use standard input/output (default)
       --pipe-connect=<path>       Connect to client's Unix domain socket/named pipe
       --pipe-listen=<path>        Listen on Unix domain socket/named pipe
       --socket=<port>             Listen on TCP socket
-
-    Options:
       --clientProcessId=<pid>     Monitor client process (enables crash detection)
-      --version, -v               Show version information
       --help, -h                  Show this help message
 
     Examples:
-      jetls --pipe-listen=/tmp/jetls.sock
-      jetls --pipe-connect=/tmp/jetls.sock --clientProcessId=12345
-      jetls --socket=8080
-      jetls --threads=auto -- --clientProcessId=12345
+      jetls serve
+      jetls serve --pipe-listen=/tmp/jetls.sock
+      jetls serve --socket=8080
     """
 
-@doc help_message
-function (@main)(args::Vector{String})::Cint
+function run_serve(args::Vector{String})::Cint
     pipe_connect_path = pipe_listen_path = socket_port = client_process_id = nothing
 
     i = 1
     while i <= length(args)
         arg = args[i]
         if occursin(r"^(?:-h|--help|help)$", arg)
-            print(stdout, help_message)
-            return Cint(0)
-        elseif occursin(r"^(?:-v|--version)$", arg)
-            println(stdout, "JETLS version $JETLS_VERSION")
+            print(stdout, serve_help_message)
             return Cint(0)
         elseif occursin(r"^(?:--)?stdio$", arg)
         elseif occursin(r"^(?:--)?pipe-connect$", arg)
@@ -168,9 +160,13 @@ function (@main)(args::Vector{String})::Cint
                     end
                 end
             end
-            runserver_task = Threads.@spawn :interactive runserver(server; client_process_id)
+            runserver_task = let client_process_id=client_process_id
+                Threads.@spawn :interactive runserver(server; client_process_id)
+            end
         else
-            runserver_task = Threads.@spawn :interactive runserver(endpoint; client_process_id)
+            runserver_task = let endpoint=endpoint, client_process_id=client_process_id
+                Threads.@spawn :interactive runserver(endpoint; client_process_id)
+            end
         end
         exit_code = fetch(runserver_task)
         @info "JETLS server stopped" exit_code

@@ -52,9 +52,10 @@ the list itself is subject to change.
   - [x] Macro expansion error
   - [x] Unused bindings (with code action)
   - [x] Captured boxed variables
-  - [x] Unsorted import names (with code action)
-  - [ ] Unused import names (with code action)
-  - [ ] Undefined import names
+  - [x] Unsorted import statements (with code action)
+  - [x] Unused imported names (with code action)
+  - [ ] Undefined imported names
+  - [ ] Undefined exported names
   - [x] Method overwrite
   - [x] Abstract struct field
   - [x] Undefined bindings
@@ -62,6 +63,7 @@ the list itself is subject to change.
   - [x] Out-of-bounds field access by index
   - [ ] Potential `MethodError`
   - [x] Configuration support
+  - [x] [CLI interface](https://aviatesk.github.io/JETLS.jl/release/cli-check)
 - Completion
   - [x] Global symbol completion
   - [x] Local binding completion

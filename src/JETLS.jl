@@ -49,9 +49,12 @@ abstract type AnalysisEntry end # used by `Analyzer.LSAnalyzer`
 
 include("AtomicContainers/AtomicContainers.jl")
 using .AtomicContainers
-const SWStats  = JETLS_DEV_MODE ? AtomicContainers.SWStats : Nothing
-const LWStats  = JETLS_DEV_MODE ? AtomicContainers.LWStats : Nothing
-const CASStats = JETLS_DEV_MODE ? AtomicContainers.CASStats : Nothing
+# const SWStats  = JETLS_DEV_MODE ? AtomicContainers.SWStats  : Nothing
+# const LWStats  = JETLS_DEV_MODE ? AtomicContainers.LWStats  : Nothing
+# const CASStats = JETLS_DEV_MODE ? AtomicContainers.CASStats : Nothing
+const SWStats  = Nothing
+const LWStats  = Nothing
+const CASStats = Nothing
 
 include("analysis/Analyzer.jl")
 using .Analyzer
@@ -175,8 +178,8 @@ function runserver(server::Server; client_process_id::Union{Nothing,Int}=nothing
     initialize_requested = shutdown_requested = false
     local exit_code::Int = 1
     JETLS_DEV_MODE && @info "Running JETLS server loop"
-    seq_queue = start_sequential_message_worker(server)
-    con_queue = start_concurrent_message_worker(server)
+    seq_queue, seq_task = start_sequential_message_worker(server)
+    con_queue, con_task = start_concurrent_message_worker(server)
     if !isnothing(client_process_id)
         JETLS_DEV_MODE && @info "Monitoring client process ID" client_process_id
         Threads.@spawn while true
@@ -243,7 +246,11 @@ function runserver(server::Server; client_process_id::Union{Nothing,Int}=nothing
         @error "Message handling loop failed"
         Base.display_error(stderr, err, catch_backtrace())
     finally
-        close(seq_queue); close(con_queue); close(server.endpoint)
+        stop_analysis_workers(server)
+        put!(seq_queue, nothing); put!(con_queue, nothing);
+        close(seq_queue); close(con_queue);
+        waitall((seq_task, con_task))
+        close(server.endpoint)
     end
     JETLS_DEV_MODE && @info "Exited JETLS server loop"
     return exit_code
@@ -262,24 +269,26 @@ end
 
 function start_sequential_message_worker(server::Server)
     queue = Channel{Any}(Inf)
-    Threads.@spawn :default while true
+    task = Threads.@spawn :default while true
         msg = take!(queue)
+        msg === nothing && break
         @tryinvokelatest handle_sequential_message(server, msg)
         GC.safepoint()
         isopen(queue) || break
     end
-    return queue
+    return queue, task
 end
 
 function start_concurrent_message_worker(server::Server)
     queue = server.message_queue
-    Threads.@spawn :default while true
+    task = Threads.@spawn :default while true
         msg = take!(queue)
+        msg === nothing && break
         @tryinvokelatest handler_concurrent_message(server, msg)
         GC.safepoint()
         isopen(queue) || break
     end
-    return queue
+    return queue, task
 end
 
 function handle_sequential_message(server::Server, @nospecialize msg)
@@ -432,6 +441,8 @@ function handle_request_message(server::Server, @nospecialize(msg), cancel_flag:
         handle_WorkspaceDiagnosticRequest(server, msg, cancel_flag)
     elseif msg isa CodeLensRequest
         handle_CodeLensRequest(server, msg, cancel_flag)
+    elseif msg isa CodeLensResolveRequest
+        handle_CodeLensResolveRequest(server, msg, cancel_flag)
     elseif msg isa CodeActionRequest
         handle_CodeActionRequest(server, msg, cancel_flag)
     elseif msg isa InlayHintRequest
@@ -473,7 +484,9 @@ function handle_notification_message(server::Server, @nospecialize msg)
     nothing
 end
 
-include("app.jl")
+include("app/cli-check.jl")
+include("app/cli-serve.jl")
+include("app/app.jl")
 
 include("precompile.jl")
 

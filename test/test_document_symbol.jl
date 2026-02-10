@@ -1,7 +1,7 @@
 module test_document_symbol
 
 using Test
-using JETLS: JETLS, JS, JL
+using JETLS: JETLS, JL, JS
 using JETLS.LSP
 
 function make_file_info(code::AbstractString)
@@ -126,7 +126,7 @@ end
             symbols = JETLS.extract_document_symbols(st0, fi)
             @test length(symbols) == 1
             @test symbols[1].name == "MyInt"
-            @test symbols[1].kind == SymbolKind.Class
+            @test symbols[1].kind == SymbolKind.Number
             @test symbols[1].detail == "primitive type MyInt 32"
         end
 
@@ -136,7 +136,7 @@ end
             symbols = JETLS.extract_document_symbols(st0, fi)
             @test length(symbols) == 1
             @test symbols[1].name == "MyFloat"
-            @test symbols[1].kind == SymbolKind.Class
+            @test symbols[1].kind == SymbolKind.Number
             @test symbols[1].detail == "primitive type MyFloat <: AbstractFloat 64"
         end
     end
@@ -627,6 +627,63 @@ end
     end
 end
 
+@testset "if block" begin
+    let code = """
+        if cond
+            x = 1
+        end
+        """
+        fi = make_file_info(code)
+        st0 = JETLS.build_syntax_tree(fi)
+        symbols = JETLS.extract_document_symbols(st0, fi)
+        @test length(symbols) == 1
+        @test symbols[1].detail == "if cond"
+        @test symbols[1].kind == SymbolKind.Namespace
+        @test symbols[1].children !== nothing
+        @test length(symbols[1].children) == 1
+        @test symbols[1].children[1].name == "x"
+    end
+
+    let code = """
+        if cond1
+            a = nothing
+        elseif cond2
+            b = :mysymbol
+        else
+            c = missing
+        end
+        """
+        fi = make_file_info(code)
+        st0 = JETLS.build_syntax_tree(fi)
+        symbols = JETLS.extract_document_symbols(st0, fi)
+        @test length(symbols) == 1
+        @test symbols[1].detail == "if cond1"
+        @test symbols[1].kind == SymbolKind.Namespace
+        @test symbols[1].children !== nothing
+        @test length(symbols[1].children) == 3
+        names = [c.name for c in symbols[1].children]
+        @test names == ["a", "b", "c"]
+    end
+
+    let code = """
+        @static if VERSION >= v"1.10"
+            foo() = 1
+        else
+            foo() = 2
+        end
+        """
+        fi = make_file_info(code)
+        st0 = JETLS.build_syntax_tree(fi)
+        symbols = JETLS.extract_document_symbols(st0, fi)
+        @test length(symbols) == 1
+        @test symbols[1].detail == "@static if VERSION >= v\"1.10\""
+        @test symbols[1].kind == SymbolKind.Namespace
+        @test symbols[1].children !== nothing
+        @test length(symbols[1].children) == 2
+        @test all(c.name == "foo" for c in symbols[1].children)
+    end
+end
+
 @testset "const tuple destructuring" begin
     let code = "const x, y = 1, 2"
         fi = make_file_info(code)
@@ -976,6 +1033,242 @@ end
         @test children !== nothing
         x_syms = filter(c -> c.name == "x", children)
         @test length(x_syms) == 1  # x should appear only once, not duplicated
+    end
+end
+
+@testset "@testset and @test" begin
+    @testset "@testset" begin
+        let code = """
+            @testset "my tests" begin
+                @test 1 == 1
+            end
+            """
+            fi = make_file_info(code)
+            st0 = JETLS.build_syntax_tree(fi)
+            symbols = JETLS.extract_document_symbols(st0, fi)
+            @test length(symbols) == 1
+            @test symbols[1].name == "my tests"
+            @test symbols[1].kind == SymbolKind.Event
+            @test symbols[1].detail == "@testset \"my tests\" begin"
+            @test symbols[1].children !== nothing
+            @test length(symbols[1].children) == 1
+            @test symbols[1].children[1].kind == SymbolKind.Boolean
+        end
+    end
+
+    @testset "@testset without description" begin
+        let code = """
+            @testset begin
+                @test true
+            end
+            """
+            fi = make_file_info(code)
+            st0 = JETLS.build_syntax_tree(fi)
+            symbols = JETLS.extract_document_symbols(st0, fi)
+            @test length(symbols) == 1
+            @test symbols[1].name == " "
+            @test symbols[1].kind == SymbolKind.Event
+            @test symbols[1].detail == "@testset begin"
+            @test symbols[1].children !== nothing
+            @test length(symbols[1].children) == 1
+            @test symbols[1].children[1].kind == SymbolKind.Boolean
+        end
+    end
+
+    @testset "module-qualified @testset" begin
+        let code = """
+            Test.@testset "qualified" begin
+                @test true
+            end
+            """
+            fi = make_file_info(code)
+            st0 = JETLS.build_syntax_tree(fi)
+            symbols = JETLS.extract_document_symbols(st0, fi)
+            @test length(symbols) == 1
+            @test symbols[1].name == "qualified"
+            @test symbols[1].kind == SymbolKind.Event
+        end
+    end
+
+    @testset "nested @testset" begin
+        let code = """
+            @testset "outer" begin
+                @testset "inner" begin
+                    @test true
+                end
+            end
+            """
+            fi = make_file_info(code)
+            st0 = JETLS.build_syntax_tree(fi)
+            symbols = JETLS.extract_document_symbols(st0, fi)
+            @test length(symbols) == 1
+            @test symbols[1].name == "outer"
+            @test symbols[1].children !== nothing
+            @test length(symbols[1].children) == 1
+            @test symbols[1].children[1].name == "inner"
+            @test symbols[1].children[1].children !== nothing
+            @test length(symbols[1].children[1].children) == 1
+        end
+    end
+
+    @testset "@test" begin
+        let code = """
+            @testset "tests" begin
+                @test x == 1
+                @test length(arr) > 0
+            end
+            """
+            fi = make_file_info(code)
+            st0 = JETLS.build_syntax_tree(fi)
+            symbols = JETLS.extract_document_symbols(st0, fi)
+            @test length(symbols) == 1
+            children = symbols[1].children
+            @test children !== nothing
+            @test length(children) == 2
+            @test children[1].name == "x == 1"
+            @test children[1].detail == "@test x == 1"
+            @test children[1].kind == SymbolKind.Boolean
+            @test children[2].name == "length(arr) > 0"
+            @test children[2].detail == "@test length(arr) > 0"
+        end
+    end
+
+    @testset "@test inside let block" begin
+        let code = """
+            @testset "tests" begin
+                let x = 1
+                    @test x == 1
+                end
+                for i in 1:3
+                    @test i > 0
+                end
+            end
+            """
+            fi = make_file_info(code)
+            st0 = JETLS.build_syntax_tree(fi)
+            symbols = JETLS.extract_document_symbols(st0, fi)
+            @test length(symbols) == 1
+            children = symbols[1].children
+            @test children !== nothing
+            @test length(children) == 2
+            # let block with its children
+            let_sym = children[1]
+            @test let_sym.kind == SymbolKind.Namespace
+            @test let_sym.children !== nothing
+            let_children = let_sym.children
+            x_sym = only(filter(c -> c.name == "x", let_children))
+            @test x_sym.kind == SymbolKind.Variable
+            test_sym = only(filter(c -> c.name == "x == 1", let_children))
+            @test test_sym.kind == SymbolKind.Boolean
+            # for block with its children
+            for_sym = children[2]
+            @test for_sym.kind == SymbolKind.Namespace
+            @test for_sym.children !== nothing
+            for_children = for_sym.children
+            i_sym = only(filter(c -> c.name == "i", for_children))
+            @test i_sym.kind == SymbolKind.Variable
+            test_sym2 = only(filter(c -> c.name == "i > 0", for_children))
+            @test test_sym2.kind == SymbolKind.Boolean
+        end
+    end
+
+    @testset "@testset for loop" begin
+        let code = raw"""
+            @testset "test $v" for v in 1:3
+                @test v > 0
+            end
+            """
+            fi = make_file_info(code)
+            st0 = JETLS.build_syntax_tree(fi)
+            symbols = JETLS.extract_document_symbols(st0, fi)
+            @test length(symbols) == 1
+            @test symbols[1].name == "test \$v"
+            @test symbols[1].kind == SymbolKind.Event
+            @test symbols[1].detail == "@testset \"test \$v\" for v in 1:3"
+            @test symbols[1].children !== nothing
+            @test length(symbols[1].children) == 1
+            @test symbols[1].children[1].kind == SymbolKind.Boolean
+        end
+    end
+
+    @testset "@testset nested for loop" begin
+        let code = raw"""
+            @testset "test $v, $w" for v in 1:2, w in 1:3
+                @test v + w > 0
+            end
+            """
+            fi = make_file_info(code)
+            st0 = JETLS.build_syntax_tree(fi)
+            symbols = JETLS.extract_document_symbols(st0, fi)
+            @test length(symbols) == 1
+            @test symbols[1].name == "test \$v, \$w"
+            @test symbols[1].kind == SymbolKind.Event
+        end
+    end
+
+    @testset "@testset function call" begin
+        let code = """
+            @testset "test" test_func()
+            """
+            fi = make_file_info(code)
+            st0 = JETLS.build_syntax_tree(fi)
+            symbols = JETLS.extract_document_symbols(st0, fi)
+            @test length(symbols) == 1
+            @test symbols[1].name == "test"
+            @test symbols[1].kind == SymbolKind.Event
+            @test symbols[1].detail == "@testset \"test\" test_func()"
+            # Function call variant has no children
+            @test symbols[1].children === nothing || isempty(symbols[1].children)
+        end
+    end
+
+    @testset "@testset let" begin
+        let code = """
+            @testset let v = 1, w = 2
+                @test v + w == 3
+            end
+            """
+            fi = make_file_info(code)
+            st0 = JETLS.build_syntax_tree(fi)
+            symbols = JETLS.extract_document_symbols(st0, fi)
+            @test length(symbols) == 1
+            @test symbols[1].name == " "
+            @test symbols[1].kind == SymbolKind.Event
+            @test symbols[1].detail == "@testset let v = 1, w = 2"
+            @test symbols[1].children !== nothing
+            @test length(symbols[1].children) == 1
+            @test symbols[1].children[1].kind == SymbolKind.Boolean
+        end
+    end
+
+    @testset "@testset with CustomTestSet" begin
+        let code = """
+            @testset CustomTestSet "my test" begin
+                @test true
+            end
+            """
+            fi = make_file_info(code)
+            st0 = JETLS.build_syntax_tree(fi)
+            symbols = JETLS.extract_document_symbols(st0, fi)
+            @test length(symbols) == 1
+            @test symbols[1].name == "my test"
+            @test symbols[1].kind == SymbolKind.Event
+        end
+    end
+
+    @testset "@testset with options" begin
+        let code = """
+            @testset verbose=true "with options" begin
+                @test true
+            end
+            """
+            fi = make_file_info(code)
+            st0 = JETLS.build_syntax_tree(fi)
+            symbols = JETLS.extract_document_symbols(st0, fi)
+            @test length(symbols) == 1
+            @test symbols[1].name == "with options"
+            @test symbols[1].kind == SymbolKind.Event
+        end
     end
 end
 

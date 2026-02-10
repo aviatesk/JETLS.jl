@@ -19,7 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`c8e2012...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/c8e2012...HEAD)
+- Diff: [`9c00dfe...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/9c00dfe...HEAD)
 
 ### Announcement
 
@@ -44,6 +44,114 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > might work, but most LSP features will be unfunctional.
 > Note that `analysis_overrides` is provided as a temporary workaround and may
 > be removed or changed at any time. A proper fix is being worked on.
+
+### Added
+
+- Added [`jetls check`](https://aviatesk.github.io/JETLS.jl/release/cli-check/) command
+  for running JETLS diagnostics from the command line. This enables CI integration
+  and command-line workflows without requiring an editor. Features include
+  `--exit-severity` for controlling exit codes, `--show-severity` for filtering
+  output, `--context-lines` for output formatting, and `--root` for configuration
+  lookup. The CLI now uses a subcommand structure: `jetls serve` starts the
+  language server (default), while `jetls check` runs diagnostics.
+
+- Added [`lowering/unused-import`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unused-import)
+  diagnostic that reports explicitly imported names that are never used within
+  the same module space. The "Remove unused import" code action removes the
+  unused name from the import statement.
+
+- Added reference count code lens for top-level symbols (functions, structs,
+  constants, abstract types, primitive types, modules). When enabled, a code
+  lens showing "N references" appears above each symbol definition. Clicking it
+  opens the references panel. This feature is opt-in and can be enabled via
+  [`code_lens.references`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/code_lens-references)
+  configuration.
+
+- Added [`code_lens.testrunner`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/code_lens-testrunner)
+  configuration option to enable or disable TestRunner code lenses. Some editors
+  (e.g., Zed) display code lenses as code actions, causing duplication.
+  The [aviatesk/zed-julia](https://github.com/aviatesk/zed-julia) extension
+  automatically defaults this to `false`.
+
+- Added document symbol support for `if` and `@static if` blocks. These blocks
+  now appear in the document outline as `SymbolKind.Namespace` symbols, with
+  all definitions from `if`/`elseif`/`else` branches flattened as children.
+
+- Added document symbol support for `@testset` and `@test` macros. `@testset`
+  blocks appear in the document outline with the test name, and `@test`
+  expressions appear as children showing the test expression.
+
+- Added inlay hints for block `end` keywords. For long blocks (`module`,
+  `function`, `macro`, `struct`, `if`/`@static if`, `let`, `for`, `while`,
+  `@testset`), an inlay hint is displayed at the `end` keyword showing what
+  construct is ending, such as `module Foo` or `function bar`. The minimum
+  block length can be configured via
+  [`inlay_hint.block_end_min_lines`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint-block_end_min_lines)
+  (default: 25 lines).
+
+### Deprecated
+
+- Running `jetls` without a subcommand (e.g., `jetls --stdio`) is deprecated.
+  Use `jetls serve` instead. This may be removed in a future release.
+
+### Changed
+
+- Namespace symbols (`if`/`let`/`for`/`while`/`@static if` blocks) are now
+  excluded from workspace symbol search. These symbols exist only to provide
+  hierarchical structure in the document outline, not to represent actual
+  definitions.
+
+- `textDocument/diagnostic` now supports cancellation, avoiding to compute
+  staled diagnostics (https://github.com/aviatesk/JETLS.jl/pull/524)
+
+- Updated JuliaSyntax.jl and JuliaLowering.jl dependency versions to latest,
+  fixing the root causes of https://github.com/aviatesk/JETLS.jl/issues/492,
+  and https://github.com/aviatesk/JETLS.jl/issues/508.
+
+### Fixed
+
+- Lowering diagnostics no longer report issues in macro-generated code that
+  users cannot control. User-written identifiers processed by new-style macros
+  are still reported, but old-style macros are not yet supported due to
+  JuliaLowering limitations.
+
+- Fixed false positive `lowering/unused-argument` and `lowering/unused-local`
+  diagnostics that could appear before full-analysis completes when macros
+  cannot be expanded. Fixed https://github.com/aviatesk/JETLS.jl/issues/522.
+
+- Fixed diagnostic configuration pattern merging to use composite keys.
+  Previously, patterns with the same `pattern` value but different `path` would
+  overwrite each other.
+  Now patterns are identified by `(match_by, match_type, path, pattern)`,
+  allowing multiple rules for the same pattern with different paths.
+
+- Fixed potential segfault on server exit by implementing graceful shutdown of
+  worker tasks. All `Threads.@spawn`ed tasks are now properly terminated before
+  the server exits. (xref: https://github.com/JuliaLang/julia/issues/32983, https://github.com/aviatesk/JETLS.jl/pull/523)
+
+- Fixed thread-safety issue with cached syntax trees. Multiple threads accessing
+  the same cached tree during lowering could cause data races and segfaults.
+  Cached trees are now copied before use. (https://github.com/aviatesk/JETLS.jl/pull/525)
+
+- Fixed cache not being generated in some cases in the experimental incremental
+  analysis mode. The cache is now always created when `CodeInstance` is
+  available, ensuring cache reuse works reliably.
+
+- Fixed auto-instantiate creating unwanted versioned manifest files (e.g.,
+  `Manifest-v1.12.toml`) via `touch`. A manifest is now only created when
+  `Pkg.instantiate()` needs one.
+  (https://github.com/aviatesk/JETLS.jl/issues/511,
+   https://github.com/aviatesk/JETLS.jl/pull/536;
+   thanks [visr](https://github.com/visr))
+
+## 2026-01-23
+
+- Commit: [`9c00dfe`](https://github.com/aviatesk/JETLS.jl/commit/9c00dfe)
+- Diff: [`c8e2012...9c00dfe`](https://github.com/aviatesk/JETLS.jl/compare/c8e2012...9c00dfe)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-01-23")'
+  ```
 
 ### Added
 

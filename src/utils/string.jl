@@ -301,3 +301,28 @@ function get_text_and_positions(
 
     return join(lines, '\n'), positions
 end
+
+"""
+    encoded_length(s::AbstractString, encoding::PositionEncodingKind.Ty) -> Int
+
+Calculate the length of a string in the specified encoding units.
+
+# Returns
+- UTF-8: byte count (same as `sizeof(s)`)
+- UTF-16: UTF-16 code unit count (BMP chars = 1, non-BMP = 2)
+- UTF-32: character count (same as `length(s)`)
+"""
+function encoded_length(s::AbstractString, encoding::PositionEncodingKind.Ty)
+    if encoding == PositionEncodingKind.UTF8
+        return sizeof(s)
+    elseif encoding == PositionEncodingKind.UTF32
+        return length(s)
+    else # UTF-16
+        count = 0
+        for c in s
+            cp = codepoint(c)
+            count += cp < 0x10000 ? 1 : 2
+        end
+        return count
+    end
+end

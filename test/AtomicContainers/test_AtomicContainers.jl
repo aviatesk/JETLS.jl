@@ -2,6 +2,7 @@ module test_AtomicContainers
 
 using Test
 using JETLS.AtomicContainers
+using JETLS.AtomicContainers: CASStats, LWStats, SWStats
 
 struct PairSnap
     a::Int
@@ -9,11 +10,11 @@ struct PairSnap
 end
 
 function stress_test_swmr1(ContainerType;
-        withstats::Bool = false,
+        StatsType::Type = Nothing,
         n_tasks::Int = Threads.nthreads() * 4,
         ops_per_task::Int = 50_000,
     )
-    box = ContainerType(PairSnap(0, 0); withstats)
+    box = ContainerType{StatsType}(PairSnap(0, 0))
     tasks = Vector{Task}(undef, n_tasks)
     as = [fill(0, ops_per_task) for _ in 1:n_tasks-1]
     bs = [fill(0, ops_per_task) for _ in 1:n_tasks-1]
@@ -52,18 +53,18 @@ function stress_test_swmr1(ContainerType;
         @test issorted(b)
     end
     stats = getstats(box)
-    if withstats
+    if StatsType !== Nothing
         @test stats isa NamedTuple
     end
     resetstats!(box)
 end
 
 function stress_test_swmr2(ContainerType;
-        withstats::Bool = false,
+        StatsType::Type = Nothing,
         n_tasks::Int = Threads.nthreads() * 4,
         ops_per_task::Int = 1_000,
     )
-    box = ContainerType(Int[]; withstats)
+    box = ContainerType{StatsType}(Int[])
     tasks = Vector{Task}(undef, n_tasks)
     lens = [fill(0, ops_per_task) for _ in 1:n_tasks-1]
     for t in 1:n_tasks-1
@@ -98,19 +99,19 @@ function stress_test_swmr2(ContainerType;
         @test issorted(len)
     end
     stats = getstats(box)
-    if withstats
+    if StatsType !== Nothing
         @test stats isa NamedTuple
     end
     resetstats!(box)
 end
 
 function stress_test_mwmr1(ContainerType;
-        withstats::Bool = false,
+        StatsType::Type = Nothing,
         n_write_tasks::Int = Threads.nthreads(),
         n_read_tasks::Int = Threads.nthreads() * 4,
         ops_per_task::Int = 50_000,
     )
-    box = ContainerType(PairSnap(0, 0); withstats)
+    box = ContainerType{StatsType}(PairSnap(0, 0))
     tasks = Vector{Task}(undef, n_write_tasks + n_read_tasks)
     as = [fill(0, ops_per_task) for _ in 1:n_read_tasks]
     bs = [fill(0, ops_per_task) for _ in 1:n_read_tasks]
@@ -151,19 +152,19 @@ function stress_test_mwmr1(ContainerType;
         @test issorted(b)
     end
     stats = getstats(box)
-    if withstats
+    if StatsType !== Nothing
         @test stats isa NamedTuple
     end
     resetstats!(box)
 end
 
 function stress_test_mwmr2(ContainerType;
-        withstats::Bool = false,
+        StatsType::Type = Nothing,
         n_write_tasks::Int = Threads.nthreads(),
         n_read_tasks::Int = Threads.nthreads() * 4,
         ops_per_task::Int = 1_000,
     )
-    box = ContainerType(Int[]; withstats)
+    box = ContainerType{StatsType}(Int[])
     tasks = Vector{Task}(undef, n_write_tasks+n_read_tasks)
     lens = [fill(0, ops_per_task) for _ in 1:n_read_tasks]
     for t in 1:n_read_tasks
@@ -200,7 +201,7 @@ function stress_test_mwmr2(ContainerType;
         @test issorted(len)
     end
     stats = getstats(box)
-    if withstats
+    if StatsType !== Nothing
         @test stats isa NamedTuple
     end
     resetstats!(box)
@@ -208,31 +209,31 @@ end
 
 @testset "Atomic container stress test" begin
     @testset "SWMR1 SWContainer"               stress_test_swmr1(SWContainer)
-    @testset "SWMR1 SWContainer (with stats)"  stress_test_swmr1(SWContainer; withstats=true)
+    @testset "SWMR1 SWContainer (with stats)"  stress_test_swmr1(SWContainer; StatsType=SWStats)
     @testset "SWMR1 LWContainer"               stress_test_swmr1(LWContainer)
-    @testset "SWMR1 LWContainer (with stats)"  stress_test_swmr1(LWContainer; withstats=true)
+    @testset "SWMR1 LWContainer (with stats)"  stress_test_swmr1(LWContainer; StatsType=LWStats)
     @testset "SWMR1 CASContainer"              stress_test_swmr1(CASContainer)
-    @testset "SWMR1 CASContainer (with stats)" stress_test_swmr1(CASContainer; withstats=true)
+    @testset "SWMR1 CASContainer (with stats)" stress_test_swmr1(CASContainer; StatsType=CASStats)
     @testset "SWMR2 SWContainer"               stress_test_swmr2(SWContainer)
-    @testset "SWMR2 SWContainer (with stats)"  stress_test_swmr2(SWContainer; withstats=true)
+    @testset "SWMR2 SWContainer (with stats)"  stress_test_swmr2(SWContainer; StatsType=SWStats)
     @testset "SWMR2 LWContainer"               stress_test_swmr2(LWContainer)
-    @testset "SWMR2 LWContainer (with stats)"  stress_test_swmr2(LWContainer; withstats=true)
+    @testset "SWMR2 LWContainer (with stats)"  stress_test_swmr2(LWContainer; StatsType=LWStats)
     @testset "SWMR2 CASContainer"              stress_test_swmr2(CASContainer)
-    @testset "SWMR2 CASContainer (with stats)" stress_test_swmr2(CASContainer; withstats=true)
+    @testset "SWMR2 CASContainer (with stats)" stress_test_swmr2(CASContainer; StatsType=CASStats)
     GC.gc()
 
     # @testset "MWMR1 SWContainer"               stress_test_mwmr1(SWContainer)
-    # @testset "MWMR1 SWContainer (with stats)"  stress_test_mwmr1(SWContainer; withstats=true)
+    # @testset "MWMR1 SWContainer (with stats)"  stress_test_mwmr1(SWContainer; StatsType=SWStats)
     @testset "MWMR1 LWContainer"               stress_test_mwmr1(LWContainer)
-    @testset "MWMR1 LWContainer (with stats)"  stress_test_mwmr1(LWContainer; withstats=true)
+    @testset "MWMR1 LWContainer (with stats)"  stress_test_mwmr1(LWContainer; StatsType=LWStats)
     @testset "MWMR1 CASContainer"              stress_test_mwmr1(CASContainer)
-    @testset "MWMR1 CASContainer (with stats)" stress_test_mwmr1(CASContainer; withstats=true)
+    @testset "MWMR1 CASContainer (with stats)" stress_test_mwmr1(CASContainer; StatsType=CASStats)
     # @testset "MWMR2 SWContainer"               stress_test_mwmr2(SWContainer)
-    # @testset "MWMR2 SWContainer (with stats)"  stress_test_mwmr2(SWContainer; withstats=true)
+    # @testset "MWMR2 SWContainer (with stats)"  stress_test_mwmr2(SWContainer; StatsType=SWStats)
     @testset "MWMR2 LWContainer"               stress_test_mwmr2(LWContainer)
-    @testset "MWMR2 LWContainer (with stats)"  stress_test_mwmr2(LWContainer; withstats=true)
+    @testset "MWMR2 LWContainer (with stats)"  stress_test_mwmr2(LWContainer; StatsType=LWStats)
     @testset "MWMR2 CASContainer"              stress_test_mwmr2(CASContainer)
-    @testset "MWMR2 CASContainer (with stats)" stress_test_mwmr2(CASContainer; withstats=true)
+    @testset "MWMR2 CASContainer (with stats)" stress_test_mwmr2(CASContainer; StatsType=CASStats)
     GC.gc()
 end
 

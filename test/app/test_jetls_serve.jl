@@ -1,4 +1,4 @@
-module test_jetls
+module test_jetls_serve
 
 """
 Test file for exercising the `jetls` executable app with raw JSON communication.
@@ -10,7 +10,7 @@ with them via stdin/stdout using raw JSON-RPC messages, testing:
 2. Process management and graceful termination
 
 To run this test independently:
-    julia --startup-file=no -e 'using Test; @testset "jetls" include("test/test_jetls.jl")'
+    julia --startup-file=no -e 'using Test; @testset "jetls serve" include("test/app/test_jetls_serve.jl")'
 """
 
 using Test
@@ -21,7 +21,7 @@ const JULIA_CMD = normpath(Sys.BINDIR, "julia")
 const JETLS_DIR = pkgdir(JETLS)
 
 function withserverprocess(f)
-    cmd = `$JULIA_CMD --project=$JETLS_DIR -m JETLS`
+    cmd = `$JULIA_CMD --project=$JETLS_DIR -m JETLS serve`
     proc = open(cmd; write=true, read=true)
     try
         return f(proc)
@@ -166,4 +166,4 @@ withserverprocess() do proc
     @test process_exited(proc) && proc.exitcode == 1
 end
 
-end # module test_jetls
+end # module test_jetls_serve

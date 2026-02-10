@@ -158,8 +158,8 @@ struct CombinedCancelFlag <: AbstractCancelFlag
 end
 is_cancelled(cf::CombinedCancelFlag) = is_cancelled(cf.flag1) || is_cancelled(cf.flag2)
 
-struct CancellableToken
-    token::ProgressToken
+struct CancellableToken{T}
+    token::T
     cancel_flag::CancelFlag
 end
 
@@ -211,28 +211,30 @@ end
 
 const AnalysisCache = LWContainer{Dict{URI,AnalysisInfo}, LWStats}
 const PendingAnalyses = CASContainer{Dict{AnalysisEntry,Union{Nothing,AnalysisRequest}}, CASStats}
-const CurrentGenerations = CASContainer{Dict{AnalysisEntry,Int}}
-const AnalyzedGenerations = CASContainer{Dict{AnalysisEntry,Int}}
+const CurrentGenerations = CASContainer{Dict{AnalysisEntry,Int}, CASStats}
+const AnalyzedGenerations = CASContainer{Dict{AnalysisEntry,Int}, CASStats}
 const DebouncedRequests = LWContainer{Dict{AnalysisEntry,Tuple{Timer,Base.Event}}, LWStats}
-const InstantiatedEnvs = LWContainer{Dict{String,Union{Nothing,Tuple{Base.PkgId,String}}}}
+const InstantiatedEnvs = LWContainer{Dict{String,Union{Nothing,Tuple{Base.PkgId,String}}}, LWStats}
 
 struct AnalysisManager
     cache::AnalysisCache
     pending_analyses::PendingAnalyses
-    queue::Channel{AnalysisRequest}
+    queue::Channel{Union{Nothing,AnalysisRequest}}
     current_generations::CurrentGenerations
     analyzed_generations::AnalyzedGenerations
     debounced::DebouncedRequests
     instantiated_envs::InstantiatedEnvs
+    worker_tasks::Vector{Task}
     function AnalysisManager()
         return new(
             AnalysisCache(Dict{URI,AnalysisInfo}()),
             PendingAnalyses(Dict{AnalysisEntry,Union{Nothing,AnalysisRequest}}()),
-            Channel{AnalysisRequest}(Inf),
+            Channel{Union{Nothing,AnalysisRequest}}(Inf),
             CurrentGenerations(Dict{AnalysisEntry,Int}()),
             AnalyzedGenerations(Dict{AnalysisEntry,Int}()),
             DebouncedRequests(Dict{AnalysisEntry,Timer}()),
-            InstantiatedEnvs(Dict{String,Union{Nothing,Tuple{Base.PkgId,URI}}}())
+            InstantiatedEnvs(Dict{String,Union{Nothing,Tuple{Base.PkgId,URI}}}()),
+            Task[], # initialized by start_analysis_workers!
         )
     end
 end
@@ -333,14 +335,14 @@ Note that `TypeX` should not be defined to include the possibility of being `not
 In such cases, a further inner configuration level should be used.
 
 For `ConfigSection` subtypes that appear in `Vector` fields, you must implement
-`merge_key(::Type{NewConfig}) -> Symbol`, which returns a field name to use as key when
+`merge_key_value(::NewConfig) -> key_value`, which returns an object to use as key when
 merging vectors. Elements with matching keys are merged together; others are preserved or added.
 
 Finally, add the new config section to `JETLSConfig` struct below.
 """
 abstract type ConfigSection end
 
-function merge_key end
+function merge_key_value end
 
 @option struct FullAnalysisConfig <: ConfigSection
     debounce::Maybe{Float64}
@@ -389,6 +391,7 @@ const LOWERING_UNDEF_GLOBAL_VAR_CODE = "lowering/undef-global-var"
 const LOWERING_UNDEF_LOCAL_VAR_CODE = "lowering/undef-local-var"
 const LOWERING_CAPTURED_BOXED_VARIABLE_CODE = "lowering/captured-boxed-variable"
 const LOWERING_UNSORTED_IMPORT_NAMES_CODE = "lowering/unsorted-import-names"
+const LOWERING_UNUSED_IMPORT_CODE = "lowering/unused-import"
 const TOPLEVEL_ERROR_CODE = "toplevel/error"
 const TOPLEVEL_METHOD_OVERWRITE_CODE = "toplevel/method-overwrite"
 const TOPLEVEL_ABSTRACT_FIELD_CODE = "toplevel/abstract-field"
@@ -408,6 +411,7 @@ const ALL_DIAGNOSTIC_CODES = Set{String}(String[
     LOWERING_UNDEF_LOCAL_VAR_CODE,
     LOWERING_CAPTURED_BOXED_VARIABLE_CODE,
     LOWERING_UNSORTED_IMPORT_NAMES_CODE,
+    LOWERING_UNUSED_IMPORT_CODE,
     TOPLEVEL_ERROR_CODE,
     TOPLEVEL_METHOD_OVERWRITE_CODE,
     TOPLEVEL_ABSTRACT_FIELD_CODE,
@@ -433,7 +437,8 @@ end
 Base.convert(::Type{DiagnosticPattern}, x::AbstractDict{String}) =
     parse_diagnostic_pattern(x)
 
-merge_key(::Type{DiagnosticPattern}) = :__pattern_value__
+merge_key_value(pattern::DiagnosticPattern) =
+    (pattern.match_by, pattern.match_type, pattern.path, pattern.__pattern_value__)
 
 # N.B. `@option` automatically adds `Base.:(==)` overloads for annotated types,
 # whose behavior is similar to those added by`@define_eq_overloads`
@@ -452,7 +457,7 @@ struct AnalysisOverride <: ConfigSection
 end
 @define_eq_overloads AnalysisOverride
 Base.convert(::Type{AnalysisOverride}, x::AbstractDict{String}) = parse_analysis_override(x)
-merge_key(::Type{AnalysisOverride}) = :path
+merge_key_value(analysis_override::AnalysisOverride) = analysis_override.path
 
 # Static initialization options from `InitializeParams.initializationOptions`.
 # These are set once during the initialize request and remain constant.
@@ -483,12 +488,23 @@ end
     method_signature::Maybe{MethodSignatureConfig}
 end
 
+@option struct CodeLensConfig <: ConfigSection
+    references::Maybe{Bool}
+    testrunner::Maybe{Bool}
+end
+
+@option struct InlayHintConfig <: ConfigSection
+    block_end_min_lines::Maybe{Int}
+end
+
 @option struct JETLSConfig <: ConfigSection
     diagnostic::Maybe{DiagnosticConfig}
     full_analysis::Maybe{FullAnalysisConfig}
     testrunner::Maybe{TestRunnerConfig}
     formatter::Maybe{FormatterConfig}
     completion::Maybe{CompletionConfig}
+    code_lens::Maybe{CodeLensConfig}
+    inlay_hint::Maybe{InlayHintConfig}
     # This initialization options are read once at the server initialization and held in
     # `server.state.init_options`, so it might seem strange to hold them here also,
     # but they need to be set here for cases where initialization options are set in
@@ -502,6 +518,8 @@ const DEFAULT_CONFIG = JETLSConfig(;
     testrunner = TestRunnerConfig(@static Sys.iswindows() ? "testrunner.bat" : "testrunner"),
     formatter = "Runic",
     completion = CompletionConfig(LaTeXEmojiConfig(missing), MethodSignatureConfig(missing)),
+    code_lens = CodeLensConfig(false, true),
+    inlay_hint = InlayHintConfig(25),
     initialization_options = DEFAULT_INIT_OPTIONS)
 
 function get_default_config(path::Symbol...)
@@ -573,7 +591,8 @@ end
 struct BindingInfoKey
     mod::Union{Nothing,Module}
     name::String
-    BindingInfoKey(binfo::JL.BindingInfo) = new(binfo.mod, binfo.name)
+    kind::Symbol
+    BindingInfoKey(binfo::JL.BindingInfo) = new(binfo.mod, binfo.name, binfo.kind)
 end
 
 """
@@ -605,9 +624,8 @@ struct CachedBindingOccurrence
     end
 end
 
-const BindingOccurrencesRangeKey = UnitRange{Int}
 const BindingOccurrencesResult = Dict{BindingInfoKey,Set{CachedBindingOccurrence}}
-const BindingOccurrencesCacheEntry = Base.PersistentDict{BindingOccurrencesRangeKey,BindingOccurrencesResult}
+const BindingOccurrencesCacheEntry = Base.PersistentDict{UnitRange{Int},BindingOccurrencesResult}
 
 const AnyBindingOccurrence = Union{BindingOccurrence,CachedBindingOccurrence}
 

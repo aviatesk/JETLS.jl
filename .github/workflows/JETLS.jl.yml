@@ -141,8 +141,8 @@ jobs:
         env:
           JULIA_NUM_THREADS: "4,2"
 
-  test_jetls:
-    name: Test jetls executable
+  test_jetls_serve:
+    name: Test jetls serve
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -150,7 +150,47 @@ jobs:
         with:
           version: "1.12" # most stable version
           arch: x64
+      - uses: julia-actions/cache@v2
       - uses: julia-actions/julia-buildpkg@latest
       - name: run test
         run: |
-          julia --startup-file=no --project=./test ./test/test_jetls.jl
+          julia --startup-file=no --project=./test ./test/app/test_jetls_serve.jl
+
+  test_jetls_check:
+    name: Test jetls check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v1
+        with:
+          version: "1.12" # most stable version
+          arch: x64
+      - uses: julia-actions/cache@v2
+      - uses: julia-actions/julia-buildpkg@latest
+      - name: run test
+        run: |
+          julia --startup-file=no --project=./test ./test/app/test_jetls_check.jl
+
+  jetls_self_check:
+    name: Self diagnostics
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v1
+        with:
+          version: "1.12" # most stable version
+          arch: x64
+      - uses: julia-actions/cache@v2
+      - name: set LocalPreferences.toml
+        working-directory: .
+        run: |
+          echo '
+          [JETLS]
+          JETLS_DEV_MODE = true
+
+          [JET]
+          JET_DEV_MODE = true # allow JET to be loaded on nightly
+          ' > LocalPreferences.toml
+      - uses: julia-actions/julia-buildpkg@latest
+      - name: run jetls check
+        run: ./scripts/selfcheck.sh
