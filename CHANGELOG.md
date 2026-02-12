@@ -21,19 +21,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 - Diff: [`150f880...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/150f880...HEAD)
 
-### Added
-
-- Added [`inference/method-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/inference/method-error)
-  diagnostic that detects function calls where no matching method exists for
-  the inferred argument types. This catches potential `MethodError`s that would
-  occur at runtime. For union-split calls, the diagnostic reports only the
-  failing branches with their count (e.g., "1/2 union split").
-
-### Fixed
-
-- Fixed various type instabilities across the codebase caught by the new
-  `inference/method-error` diagnostic running on JETLS itself.
-
 ### Announcement
 
 > [!warning]
@@ -57,6 +44,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > might work, but most LSP features will be unfunctional.
 > Note that `analysis_overrides` is provided as a temporary workaround and may
 > be removed or changed at any time. A proper fix is being worked on.
+
+### Added
+
+- Added [`inference/method-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/inference/method-error)
+  diagnostic that detects function calls where no matching method exists for
+  the inferred argument types. This catches potential `MethodError`s that would
+  occur at runtime. For union-split calls, the diagnostic reports only the
+  failing branches with their count (e.g., "1/2 union split").
+
+### Fixed
+
+- Fixed various type instabilities across the codebase caught by the new
+  `inference/method-error` diagnostic running on JETLS itself.
 
 ## 2026-02-11
 
