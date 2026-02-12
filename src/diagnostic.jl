@@ -423,6 +423,8 @@ function inference_error_report_code(@nospecialize report::JET.InferenceErrorRep
         return INFERENCE_FIELD_ERROR_CODE
     elseif report isa BoundsErrorReport
         return INFERENCE_BOUNDS_ERROR_CODE
+    elseif report isa MethodErrorReport
+        return INFERENCE_METHOD_ERROR_CODE
     end
     error(lazy"Diagnostic code is not defined for this report: $report")
 end
@@ -651,9 +653,11 @@ function analyze_undefined_global_bindings!(
         binfo.is_internal && continue
         startswith(binfo.name, '#') && continue
         any(o->o.kind===:def, occurrences) && continue
-        Base.invoke_in_world(world, isdefinedglobal, binfo.mod, Symbol(binfo.name))::Bool && continue
+        mod = binfo.mod
+        isnothing(mod) && continue
+        Base.invoke_in_world(world, isdefinedglobal, mod, Symbol(binfo.name))::Bool && continue
         if !isnothing(analyzer)
-            bp = Base.lookup_binding_partition(world, GlobalRef(binfo.mod, Symbol(binfo.name)))
+            bp = Base.lookup_binding_partition(world, GlobalRef(mod, Symbol(binfo.name)))
             haskey(JET.AnalyzerState(analyzer).binding_states, bp) && continue
         end
         bn = binfo.name
@@ -666,7 +670,7 @@ function analyze_undefined_global_bindings!(
         push!(diagnostics, Diagnostic(;
             range,
             severity = DiagnosticSeverity.Warning,
-            message = postprocessor("`$(binfo.mod).$(binfo.name)` is not defined"),
+            message = postprocessor("`$(mod).$(binfo.name)` is not defined"),
             source = DIAGNOSTIC_SOURCE_LIVE,
             code,
             codeDescription = diagnostic_code_description(code)))

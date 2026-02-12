@@ -292,6 +292,7 @@ function JuliaInterpreter.step_expr!(
                     if JETLS.is_abstract_fieldtype(ft)
                         filename = JET.InterpretationState(interp).filename
                         fieldline = extract_field_line(interp, frame, nameof(structtyp), fname)
+                        isnothing(fieldline) && continue
                         push!(interp.warning_reports, JETLS.AbstractFieldReport(filename, fieldline, structtyp, fname, ft))
                     end
                 end
@@ -309,7 +310,7 @@ function extract_field_line(interp::LSInterpreter, frame::JuliaInterpreter.Frame
     isassigned(interp.current_node) || return JuliaInterpreter.linenumber(frame)
     return @something(
         JETLS.try_extract_field_line(interp.current_node[], structname, fname),
-        JuliaInterpreter.linenumber(frame)
+        return JuliaInterpreter.linenumber(frame)
     )
 end
 

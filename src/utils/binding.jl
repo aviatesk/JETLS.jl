@@ -70,7 +70,10 @@ function jl_lower_for_scope_resolution(
     return _jl_lower_for_scope_resolution(ctx1, st0, st1; convert_closures)
 end
 
-function _jl_lower_for_scope_resolution(ctx1, st0, st1; convert_closures::Bool = false)
+function _jl_lower_for_scope_resolution(
+        ctx1::JL.MacroExpansionContext, st0::JS.SyntaxTree, st1::JS.SyntaxTree;
+        convert_closures::Bool = false
+    )
     ctx2, st2 = JL.expand_forms_2(ctx1, st1)
     ctx3, st3 = JL.resolve_scopes(ctx2, st2)
     convert_closures || return (; st0, st1, st2, st3, ctx3)
