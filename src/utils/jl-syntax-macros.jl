@@ -4,36 +4,40 @@
 
 # TODO: @inline, @noinline, @inbounds, @simd, @ccall, @isdefined, @assume_effects
 
-# @nospecialize on >=2 args
-function Base.var"@nospecialize"(__context__::JL.MacroContext, ex1, ex2, exs...)
-    to_nospecialize = JS.SyntaxTree[ex1, ex2, exs...]
-    JL.@ast(__context__,
-            __context__.macrocall::JS.SyntaxTree,
-            [JS.K"block" map(st->JL._apply_nospecialize(__context__, st), to_nospecialize)...])
-end
-
 function Base.var"@nospecialize"(__context__::JL.MacroContext)
     JL.@ast(__context__,
             __context__.macrocall::JS.SyntaxTree,
             [JS.K"meta" "nospecialize"::JS.K"Symbol"])
 end
 
-# This is a mock definition to enable the minimum code lowering necessary
-# for LSP features such as rename/document highlight.
-# TODO Provide proper defintions of `@specialize`
+# `@nospecialize` with 1-arg is defined in JuliaLowering.jl.
 
-function Base.var"@specialize"(__context__::JL.MacroContext, exs...)
-    JL.@ast(__context__, __context__.macrocall::JS.SyntaxTree, [JS.K"block" exs...])
-end
-
-function Base.var"@specialize"(__context__::JL.MacroContext, ex)
-    JL.@ast(__context__, __context__.macrocall::JS.SyntaxTree, ex)
+function Base.var"@nospecialize"(
+        __context__::JL.MacroContext,
+        ex1::JS.SyntaxTree, ex2::JS.SyntaxTree, exs::JS.SyntaxTree...
+    )
+    to_nospecialize = JS.SyntaxTree[ex1, ex2, exs...]
+    JL.@ast(__context__,
+            __context__.macrocall::JS.SyntaxTree,
+            [JS.K"block" map(st->JL._apply_nospecialize(__context__, st), to_nospecialize)...])
 end
 
 function Base.var"@specialize"(__context__::JL.MacroContext)
     JL.@ast(__context__,
             __context__.macrocall::JS.SyntaxTree,
             [JS.K"meta" "specialize"::JS.K"Symbol"])
+end
+
+function Base.var"@specialize"(__context__::JL.MacroContext, ex::JS.SyntaxTree)
+    JL.@ast(__context__, __context__.macrocall::JS.SyntaxTree, ex)
+end
+
+function Base.var"@specialize"(
+        __context__::JL.MacroContext,
+        ex1::JS.SyntaxTree, ex2::JS.SyntaxTree, exs::JS.SyntaxTree...
+    )
+    JL.@ast(__context__, __context__.macrocall::JS.SyntaxTree,
+            [JS.K"block" ex1 ex2 exs...])
 end
 
 # New-style `@kwdef` macro that preserves provenance information.
