@@ -11,26 +11,39 @@ body:
           required: true
 
   - type: textarea
-    id: environment
+    id: client
     attributes:
-      label: Environment
+      label: Client
       description: |
-        Please provide the following information about your environment.
-        - **Client**: The editor and LSP client you are using (e.g., VSCode with jetls-client, Neovim, Zed, etc.).
-          If a link to the client implementation is available, please include it
-          (e.g., https://github.com/aviatesk/JETLS.jl/tree/master/jetls-client#jetls-client).
-        - **Julia `versioninfo()`**: Output of `InteractiveUtils.versioninfo()` for the Julia executable used to run JETLS.
-        - **JETLS version**: Output of `jetls --version`.
-          If using a local JETLS checkout, provide the commit hash (`git rev-parse HEAD`).
+        The editor and LSP client you are using (e.g., VSCode with jetls-client, Neovim, Zed, etc.).
+        If a link to the client implementation is available, please include it
+        (e.g., `https://github.com/aviatesk/JETLS.jl/tree/master/jetls-client#jetls-client`).
+      placeholder: "VSCode with jetls-client v0.x.x"
+    validations:
+      required: true
+
+  - type: textarea
+    id: julia-versioninfo
+    attributes:
+      label: Julia `versioninfo()`
+      description: Output of `InteractiveUtils.versioninfo()` for the Julia executable used to run JETLS.
       placeholder: |
-        - Client: VSCode with jetls-client v0.x.x
-        - Julia `versioninfo()`:
-          ```
-          Julia Version 1.12.x
+        Julia Version 1.12.x
+        Commit xxxxxxxxxx (YYYY-MM-DD HH:MM UTC)
+        Build Info:
           ...
-          ...
-          ```
-        - JETLS version: `YYYY-MM-DD` (or commit hash for local checkout)
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: jetls-version
+    attributes:
+      label: JETLS version
+      description: |
+        Output of `jetls --version`.
+        If using a local JETLS checkout, provide the commit hash (`git rev-parse HEAD`).
+      placeholder: "YYYY-MM-DD (or commit hash for local checkout)"
     validations:
       required: true
 
