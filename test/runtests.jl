@@ -18,6 +18,7 @@ end
         @testset "path" include("utils/test_path.jl")
         @testset "markdown" include("utils/test_markdown.jl")
         @testset "string" include("utils/test_string.jl")
+        @testset "jl-syntax-macros" include("utils/test_jl_syntax_macros.jl")
     end
     @testset "analysis" begin
         @testset "occurrence" include("analysis/test_occurrence_analysis.jl")
