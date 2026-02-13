@@ -65,6 +65,8 @@ is_nospecialize_or_specialize_macrocall0(st0::JS.SyntaxTree) =
 
 is_mainfunc0(st0::JS.SyntaxTree) = is_macrocall_st0(st0, "@main")
 
+is_kwdef0(st0::JS.SyntaxTree) = is_macrocall_st0(st0, "@kwdef")
+
 function is_nospecialize_or_specialize_macrocall3(st3::JS.SyntaxTree)
     JS.kind(st3) === JS.K"macrocall" || return false
     JS.numchildren(st3) >= 1 || return false
@@ -91,6 +93,10 @@ function _remove_macrocalls(st::JS.SyntaxTree)
         elseif is_mainfunc0(st)
             # `@main` functions are always lowered to `main` functions without issues,
             # so there's no need to remove them
+            return st, false
+        elseif is_kwdef0(st)
+            # `@kwdef` has a new-style macro definition (in jl-syntax-macros.jl) that
+            # preserves provenance, so there's no need to remove it here.
             return st, false
         end
         new_children = JS.SyntaxList(JS.syntax_graph(st))
