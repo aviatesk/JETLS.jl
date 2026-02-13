@@ -164,7 +164,7 @@ function extract_function_symbol!(
     JS.numchildren(st0) ≥ 1 || return nothing
     sig = st0[1]
     name, name_node = @something extract_function_name(sig) return nothing
-    children = @somereal extract_scoped_children(st0, fi, mod) Some(nothing)
+    children = @something extract_scoped_children(st0, fi, mod) Some(nothing)
     is_short_form = JS.has_flags(JS.flags(st0), JS.SHORT_FORM_FUNCTION_FLAG)
     detail = is_short_form ? JS.sourcetext(sig) * " =" : "function " * JS.sourcetext(sig)
     push!(symbols, DocumentSymbol(;
@@ -245,7 +245,7 @@ function extract_macro_symbol!(
     end
     name = "@" * name
     detail = "macro " * JS.sourcetext(sig_orig)
-    children = @somereal extract_scoped_children(st0, fi, mod) Some(nothing)
+    children = @something extract_scoped_children(st0, fi, mod) Some(nothing)
     push!(symbols, DocumentSymbol(;
         name,
         detail,
@@ -491,7 +491,7 @@ function extract_namespace_symbol!(
         prefix::AbstractString
     )
     JS.numchildren(st0) ≥ 2 || return nothing
-    children = @somereal extract_scoped_children(st0, fi, mod) return nothing
+    children = @something extract_scoped_children(st0, fi, mod) return nothing
     body = st0[end]
     if JS.kind(body) === JS.K"block"
         extract_macrocalls_from_block!(children, body, fi, mod)
@@ -761,12 +761,7 @@ function build_parent_map!(
     return map
 end
 
-function extract_local_symbols_from_scopes(
-        ctx3::JL.VariableAnalysisContext, parent_map::Dict{Tuple{Int,Int},JS.SyntaxTree},
-        fi::FileInfo
-    )
-    scopes = ctx3.scopes
-    isempty(scopes) && return DocumentSymbol[]
+function build_func_to_scopes(ctx3::JL.VariableAnalysisContext)
     func_to_scopes = Dict{Int,Vector{Int}}()
     kwsorter_to_func = Dict{Int,Int}()  # kwsorter bid → main func bid
     for (func_bid, cb) in ctx3.closure_bindings
@@ -794,6 +789,16 @@ function extract_local_symbols_from_scopes(
             append!(func_to_scopes[main_func_bid], func_to_scopes[kwsorter_bid])
         end
     end
+    return func_to_scopes
+end
+
+function extract_local_symbols_from_scopes(
+        ctx3::JL.VariableAnalysisContext, parent_map::Dict{Tuple{Int,Int},JS.SyntaxTree},
+        fi::FileInfo
+    )
+    scopes = ctx3.scopes
+    isempty(scopes) && return nothing
+    func_to_scopes = build_func_to_scopes(ctx3)
     # Nested function scopes (their symbols will be extracted as children of the function binding)
     nested_func_scope_ids = Set{Int}()
     for scope_ids in values(func_to_scopes)
