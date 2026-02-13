@@ -45,10 +45,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > Note that `analysis_overrides` is provided as a temporary workaround and may
 > be removed or changed at any time. A proper fix is being worked on.
 
-### Other
-
-- Added GitHub issue templates for bug reports and feature requests.
-
 ### Added
 
 - Added [`inference/method-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/inference/method-error)
@@ -63,6 +59,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   default values (Fixed https://github.com/aviatesk/JETLS.jl/issues/540).
 - Fixed various type instabilities across the codebase caught by the new
   `inference/method-error` diagnostic running on JETLS itself.
+
+### Other
+
+- Added GitHub issue templates for bug reports and feature requests.
 
 ## 2026-02-11
 
