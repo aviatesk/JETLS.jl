@@ -332,7 +332,7 @@ function jet_result_to_diagnostics!(uri2diagnostics::URI2Diagnostics, result::JE
             # with more precise location information
             continue
         end
-        diagnostic = jet_toplevel_error_report_to_diagnostic(report, postprocessor)
+        diagnostic = @something jet_toplevel_error_report_to_diagnostic(report, postprocessor) continue
         filename = report.file
         filename === :none && continue
         if startswith(filename, "Untitled")
@@ -353,11 +353,7 @@ end
 function jet_toplevel_error_report_to_diagnostic(
         @nospecialize(report::JET.ToplevelErrorReport), postprocessor::JET.PostProcessor
     )
-    if report isa JET.ParseErrorReport
-        # TODO: Pass correct encoding here
-        fi = FileInfo(#=version=#0, report.source.code, JS.filename(report.source), PositionEncodingKind.UTF16)
-        return jsdiag_to_lspdiag(report.diagnostic, fi)
-    end
+    report isa JET.ParseErrorReport && return nothing # Syntax errors should be reported via `textDocument/diagnostic` or `workspace/diangostic`
     message = JET.with_bufferring(:limit=>true) do io
         JET.print_report(io, report)
     end |> postprocessor
