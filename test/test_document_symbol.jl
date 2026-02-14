@@ -185,7 +185,7 @@ end
         symbols = JETLS.extract_document_symbols(st0, fi)
         @test length(symbols) == 1
         @test symbols[1].name == "f"
-        @test symbols[1].kind == SymbolKind.Variable
+        @test symbols[1].kind == SymbolKind.Function
     end
 
     @testset "assignment with block RHS" begin
@@ -837,6 +837,88 @@ end
             @test inner_sym.children !== nothing
             y_sym = only(filter(c -> c.name == "y", inner_sym.children))
             @test y_sym.kind == SymbolKind.Object
+        end
+    end
+
+    @testset "arrow function assignment" begin
+        # arrow function within local scope
+        let code = """
+            function func(x)
+                f = (a, b) -> a + b + x
+                return f(1, 2)
+            end
+            """
+            fi = make_file_info(code)
+            st0 = JETLS.build_syntax_tree(fi)
+            symbols = JETLS.extract_document_symbols(st0, fi)
+            children = symbols[1].children
+            f_sym = only(filter(c -> c.name == "f", children))
+            @test f_sym.kind == SymbolKind.Function
+            @test f_sym.children !== nothing
+            @test any(c -> c.name == "a" && c.kind == SymbolKind.Object, f_sym.children)
+            @test any(c -> c.name == "b" && c.kind == SymbolKind.Object, f_sym.children)
+        end
+
+        # zero arguments
+        let code = """
+            function func(x)
+                f = () -> x + 1
+                return f()
+            end
+            """
+            fi = make_file_info(code)
+            st0 = JETLS.build_syntax_tree(fi)
+            symbols = JETLS.extract_document_symbols(st0, fi)
+            children = symbols[1].children
+            f_sym = only(filter(c -> c.name == "f", children))
+            @test f_sym.kind == SymbolKind.Function
+        end
+
+        # multiple arrow functions in the same scope
+        let code = """
+            function func(x)
+                f = y -> x + y
+                g = z -> x * z
+                return f(1) + g(2)
+            end
+            """
+            fi = make_file_info(code)
+            st0 = JETLS.build_syntax_tree(fi)
+            symbols = JETLS.extract_document_symbols(st0, fi)
+            children = symbols[1].children
+            f_sym = only(filter(c -> c.name == "f", children))
+            g_sym = only(filter(c -> c.name == "g", children))
+            @test f_sym.kind == SymbolKind.Function
+            @test g_sym.kind == SymbolKind.Function
+            @test any(c -> c.name == "y", f_sym.children)
+            @test any(c -> c.name == "z", g_sym.children)
+        end
+    end
+
+    @testset "anonymous function assignment" begin
+        let code = """
+            function func(x)
+                clos = function (y::Integer)
+                    z = y + 1
+                    return z
+                end
+                return clos(x)
+            end
+            """
+            fi = make_file_info(code)
+            st0 = JETLS.build_syntax_tree(fi)
+            symbols = JETLS.extract_document_symbols(st0, fi)
+            @test length(symbols) == 1
+            children = symbols[1].children
+            @test children !== nothing
+            clos_sym = only(filter(c -> c.name == "clos", children))
+            @test clos_sym.kind == SymbolKind.Function
+            @test clos_sym.children !== nothing
+            y_sym = only(filter(c -> c.name == "y", clos_sym.children))
+            @test y_sym.kind == SymbolKind.Object
+            @test y_sym.detail == "y::Integer"
+            z_sym = only(filter(c -> c.name == "z", clos_sym.children))
+            @test z_sym.kind == SymbolKind.Variable
         end
     end
 
