@@ -742,7 +742,10 @@ function extract_scoped_children(st0::JS.SyntaxTree, fi::FileInfo, mod::Module)
         return nothing
     end
     parent_map = build_parent_map(st0)
-    return @somereal extract_local_symbols_from_scopes(ctx3, parent_map, fi) Some(nothing)
+    # Pass the root construct's range so that scope analysis doesn't create
+    # duplicate Namespace symbols for the root construct itself
+    root_range = (JS.first_byte(st0), JS.last_byte(st0))
+    return @somereal extract_local_symbols_from_scopes(ctx3, parent_map, fi, root_range) Some(nothing)
 end
 
 build_parent_map(st0::JS.SyntaxTree) =
@@ -795,7 +798,7 @@ end
 
 function extract_local_symbols_from_scopes(
         ctx3::JL.VariableAnalysisContext, parent_map::Dict{Tuple{Int,Int},JS.SyntaxTree},
-        fi::FileInfo
+        fi::FileInfo, root_range::Tuple{Int,Int}=(0,0)
     )
     scopes = ctx3.scopes
     isempty(scopes) && return nothing
@@ -805,10 +808,27 @@ function extract_local_symbols_from_scopes(
     for scope_ids in values(func_to_scopes)
         union!(func_scope_ids, scope_ids)
     end
-    top_scope_ids = Int[scope.id for scope in scopes
-        if (scope.id ∉ func_scope_ids &&
-            any(((_, bid),) -> is_any_local_binding(JL.get_binding(ctx3, bid)), scope.vars))]
-    return extract_local_scope_bindings(ctx3, parent_map, top_scope_ids, func_to_scopes, fi)
+    # Build scope tree from parent_id relationships
+    scope_children = Dict{Int,Vector{Int}}()
+    for scope in scopes
+        scope.parent_id == 0 && continue
+        1 ≤ scope.parent_id ≤ length(scopes) || continue
+        push!(get!(Vector{Int}, scope_children, scope.parent_id), scope.id)
+    end
+    # Root scopes: not nested function scopes, and parent is outside our scope set
+    # (i.e. parent_id is 0, out of range, or a nested function scope)
+    root_scope_ids = Int[]
+    for scope in scopes
+        scope.id in func_scope_ids && continue
+        is_root = (scope.parent_id == 0 ||
+                   !(1 ≤ scope.parent_id ≤ length(scopes)) ||
+                   scope.parent_id in func_scope_ids)
+        is_root || continue
+        push!(root_scope_ids, scope.id)
+    end
+    return extract_local_scope_bindings(
+        ctx3, parent_map, root_scope_ids, scope_children, func_scope_ids,
+        func_to_scopes, fi, Set{Tuple{Int,Int}}(), root_range)
 end
 
 is_any_local_binding(binfo::JL.BindingInfo) =
@@ -819,20 +839,21 @@ function extract_local_scope_bindings(args...)
     extract_local_scope_bindings!(symbols, args...)
     return symbols
 end
-function extract_local_scope_bindings!(symbols::Vector{DocumentSymbol},
+function extract_local_scope_bindings!(
+        symbols::Vector{DocumentSymbol},
         ctx3::JL.VariableAnalysisContext, parent_map::Dict{Tuple{Int,Int},JS.SyntaxTree},
-        scope_ids::Vector{Int}, func_to_scopes::Dict{Int,Vector{Int}}, fi::FileInfo
+        scope_ids::Vector{Int}, scope_children::Dict{Int,Vector{Int}},
+        func_scope_ids::Set{Int}, func_to_scopes::Dict{Int,Vector{Int}}, fi::FileInfo,
+        seen::Set{Tuple{Int,Int}} = Set{Tuple{Int,Int}}(),
+        root_range::Tuple{Int,Int} = (0,0)
     )
-    # Collect static parameter names to avoid showing duplicate local variable references
+    # Collect static parameter names from these scopes and all descendants
+    # to avoid showing duplicate local variable references.
+    # This is needed because `where` clauses create intermediate scope_blocks
+    # with the type parameter as `:local`, while the function lambda scope
+    # has the same name as `:static_parameter`.
     static_param_names = Set{String}()
-    for scope_id in scope_ids
-        1 ≤ scope_id ≤ length(ctx3.scopes) || continue
-        for (_, bid) in ctx3.scopes[scope_id].vars
-            binfo = JL.get_binding(ctx3, bid)
-            binfo.kind === :static_parameter && push!(static_param_names, binfo.name)
-        end
-    end
-    seen = Set{Tuple{Int,Int}}()
+    collect_static_param_names!(static_param_names, ctx3, scope_ids, scope_children)
     for scope_id in scope_ids
         1 ≤ scope_id ≤ length(ctx3.scopes) || continue
         scope = ctx3.scopes[scope_id]
@@ -917,10 +938,12 @@ function extract_local_scope_bindings!(symbols::Vector{DocumentSymbol},
             children_symbols = nothing
             if is_func
                 children_symbols = extract_local_scope_bindings(
-                    ctx3, parent_map, func_to_scopes[bid], func_to_scopes, fi)
+                    ctx3, parent_map, func_to_scopes[bid],
+                    scope_children, func_scope_ids, func_to_scopes, fi)
             elseif anon_scope_ids !== nothing
                 children_symbols = extract_local_scope_bindings(
-                    ctx3, parent_map, anon_scope_ids, func_to_scopes, fi)
+                    ctx3, parent_map, anon_scope_ids,
+                    scope_children, func_scope_ids, func_to_scopes, fi)
             end
             push!(symbols, DocumentSymbol(;
                 name = binfo.name,
@@ -930,8 +953,124 @@ function extract_local_scope_bindings!(symbols::Vector{DocumentSymbol},
                 selectionRange,
                 children = @somereal children_symbols Some(nothing)))
         end
+        # Process child scopes to create hierarchical scope symbols
+        extract_child_scope_symbols!(symbols, ctx3, parent_map, scope_id,
+            scope_children, func_scope_ids, func_to_scopes, fi, seen,
+            root_range)
     end
     return symbols
+end
+
+function collect_static_param_names!(
+        names::Set{String}, ctx3::JL.VariableAnalysisContext,
+        scope_ids::Vector{Int}, scope_children::Dict{Int,Vector{Int}}
+    )
+    for scope_id in scope_ids
+        1 ≤ scope_id ≤ length(ctx3.scopes) || continue
+        for (_, bid) in ctx3.scopes[scope_id].vars
+            binfo = JL.get_binding(ctx3, bid)
+            binfo.kind === :static_parameter &&
+                push!(names, binfo.name)
+        end
+        child_ids = get(scope_children, scope_id, nothing)
+        isnothing(child_ids) && continue
+        collect_static_param_names!(names, ctx3, child_ids, scope_children)
+    end
+    return names
+end
+
+function extract_child_scope_symbols!(
+        symbols::Vector{DocumentSymbol}, ctx3::JL.VariableAnalysisContext,
+        parent_map::Dict{Tuple{Int,Int},JS.SyntaxTree}, scope_id::Int,
+        scope_children::Dict{Int,Vector{Int}}, func_scope_ids::Set{Int},
+        func_to_scopes::Dict{Int,Vector{Int}}, fi::FileInfo, seen::Set{Tuple{Int,Int}},
+        root_range::Tuple{Int,Int}
+    )
+    child_ids = @something get(scope_children, scope_id, nothing) return nothing
+    # Map each child scope to its st0 scope construct (for/let/while/try),
+    # or `nothing` for transparent scopes (no construct, or already seen).
+    # Multiple lowered scope_blocks may map to the same source construct
+    # (e.g. a for loop creates scope_blocks for both iteration vars and body).
+    scope_constructs = Pair{Int,Union{Nothing,JS.SyntaxTree}}[]
+    for child_id in child_ids
+        child_id in func_scope_ids && continue
+        1 ≤ child_id ≤ length(ctx3.scopes) || continue
+        construct = find_scope_construct(ctx3, ctx3.scopes[child_id], parent_map)
+        if construct !== nothing
+            key = (JS.first_byte(construct), JS.last_byte(construct))
+            if key == root_range || key in seen
+                construct = nothing
+            end
+        end
+        push!(scope_constructs, child_id => construct)
+    end
+    for (_, construct) in scope_constructs
+        construct === nothing && continue
+        key = (JS.first_byte(construct), JS.last_byte(construct))
+        key in seen && continue
+        push!(seen, key)
+        group_ids = Int[id for (id, c) in scope_constructs
+            if c !== nothing && (JS.first_byte(c), JS.last_byte(c)) == key]
+        child_symbols = @somereal extract_local_scope_bindings(
+            ctx3, parent_map, group_ids, scope_children,
+            func_scope_ids, func_to_scopes, fi, seen, root_range) continue
+        push_namespace_symbol!(symbols, construct, child_symbols, fi)
+    end
+    transparent_ids = Int[id for (id, c) in scope_constructs if c === nothing]
+    if !isempty(transparent_ids)
+        extract_local_scope_bindings!(symbols, ctx3, parent_map,
+            transparent_ids, scope_children, func_scope_ids,
+            func_to_scopes, fi, seen, root_range)
+    end
+    return nothing
+end
+
+function push_namespace_symbol!(
+        symbols::Vector{DocumentSymbol}, construct::JS.SyntaxTree,
+        children::Vector{DocumentSymbol}, fi::FileInfo
+    )
+    k = JS.kind(construct)
+    prefix = k === JS.K"for" ? "for " :
+             k === JS.K"while" ? "while " :
+             k === JS.K"let" ? "let " :
+             k === JS.K"try" ? "try " : ""
+    detail = rstrip(prefix * lstrip(JS.sourcetext(construct[1])))
+    push!(symbols, DocumentSymbol(;
+        name = " ",
+        detail,
+        kind = SymbolKind.Namespace,
+        range = jsobj_to_range(construct, fi),
+        selectionRange = jsobj_to_range(construct[1], fi),
+        children))
+    return nothing
+end
+
+function find_scope_construct(
+        ctx3::JL.VariableAnalysisContext, scope::JL.ScopeInfo,
+        parent_map::Dict{Tuple{Int,Int},JS.SyntaxTree}
+    )
+    # Trace the scope-introducing node's provenance back to st0
+    # to find the original scope construct (for/let/while/try).
+    # The scope's node_id points to the lowered graph (scope_block/lambda),
+    # so we must follow provenance to get the original st0 kind.
+    scope_st = JS.SyntaxTree(JS.syntax_graph(ctx3), scope.node_id)
+    prov = JS.flattened_provenance(scope_st)
+    isempty(prov) && return nothing
+    source_node = first(prov)
+    k = JS.kind(source_node)
+    k in JS.KSet"for while let try" || return nothing
+    fb, lb = JS.first_byte(source_node), JS.last_byte(source_node)
+    (iszero(fb) && iszero(lb)) && return nothing
+    # Look up the actual st0 node via parent_map, since the provenance
+    # node lives in the lowered graph and has different children.
+    parent = @something get(parent_map, (fb, lb), nothing) return nothing
+    for i in 1:JS.numchildren(parent)
+        child = parent[i]
+        if JS.first_byte(child) == fb && JS.last_byte(child) == lb
+            return child
+        end
+    end
+    return nothing
 end
 
 function extract_argument_detail(

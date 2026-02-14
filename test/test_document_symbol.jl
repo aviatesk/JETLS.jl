@@ -980,6 +980,57 @@ end
             x_sym = only(filter(c -> c.name == "x", children))
             @test x_sym.detail == "x = i"
         end
+
+        # for loop inside function creates a Namespace child
+        let code = """
+            function foo()
+                for i in 1:10
+                    x = i * 2
+                end
+            end
+            """
+            fi = make_file_info(code)
+            st0 = JETLS.build_syntax_tree(fi)
+            symbols = JETLS.extract_document_symbols(st0, fi)
+            @test length(symbols) == 1
+            children = symbols[1].children
+            @test children !== nothing
+            for_sym = only(filter(
+                c -> c.kind == SymbolKind.Namespace, children))
+            @test for_sym.detail == "for i in 1:10"
+            @test for_sym.children !== nothing
+            i_sym = only(filter(c -> c.name == "i", for_sym.children))
+            @test i_sym.kind == SymbolKind.Variable
+            x_sym = only(filter(c -> c.name == "x", for_sym.children))
+            @test x_sym.detail == "x = i * 2"
+        end
+
+        # nested for loops
+        let code = """
+            function foo()
+                for i in 1:10
+                    for j in 1:5
+                        x = i * j
+                    end
+                end
+            end
+            """
+            fi = make_file_info(code)
+            st0 = JETLS.build_syntax_tree(fi)
+            symbols = JETLS.extract_document_symbols(st0, fi)
+            @test length(symbols) == 1
+            children = symbols[1].children
+            @test children !== nothing
+            outer_for = only(filter(
+                c -> c.kind == SymbolKind.Namespace, children))
+            @test outer_for.detail == "for i in 1:10"
+            @test outer_for.children !== nothing
+            inner_for = only(filter(
+                c -> c.kind == SymbolKind.Namespace, outer_for.children))
+            @test inner_for.detail == "for j in 1:5"
+            @test inner_for.children !== nothing
+            @test any(c -> c.name == "x", inner_for.children)
+        end
     end
 
     @testset "tuple destructuring" begin
@@ -1016,6 +1067,30 @@ end
             @test children !== nothing
             x_sym = only(filter(c -> c.name == "x", children))
             @test x_sym.detail == "x = 42"
+        end
+
+        # let block inside function creates a Namespace child
+        let code = """
+            function foo()
+                let a = 1
+                    b = a + 1
+                end
+            end
+            """
+            fi = make_file_info(code)
+            st0 = JETLS.build_syntax_tree(fi)
+            symbols = JETLS.extract_document_symbols(st0, fi)
+            @test length(symbols) == 1
+            children = symbols[1].children
+            @test children !== nothing
+            let_sym = only(filter(
+                c -> c.kind == SymbolKind.Namespace, children))
+            @test let_sym.detail == "let a = 1"
+            @test let_sym.children !== nothing
+            a_sym = only(filter(c -> c.name == "a", let_sym.children))
+            @test a_sym.detail == "a = 1"
+            b_sym = only(filter(c -> c.name == "b", let_sym.children))
+            @test b_sym.detail == "b = a + 1"
         end
     end
 
