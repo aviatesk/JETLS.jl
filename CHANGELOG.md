@@ -53,6 +53,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   occur at runtime. For union-split calls, the diagnostic reports only the
   failing branches with their count (e.g., "1/2 union split").
 
+- Anonymous function assignments (`f = (x) -> x + 1` and
+  `clos = function (y) ... end`) are now analyzed as `Function` symbols
+  for `textDocument/documentSymbol`, with their arguments as children.
+
 ### Fixed
 
 - Fixed rename/document-highlight/references failing for `@kwdef` structs with
