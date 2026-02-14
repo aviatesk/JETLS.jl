@@ -581,9 +581,62 @@ struct LoweringDiagnosticKey
     name::String
 end
 
+# Compute a mapping from source locations to the set of identifier names found in keyword
+# argument type annotations.
+function compute_kwarg_type_annotation_names(st0::JS.SyntaxTree)
+    result = Dict{Tuple{Int,Int},Set{String}}()
+    traverse(st0) do node
+        JS.kind(node) === JS.K"kw" || return
+        JS.numchildren(node) >= 1 || return traversal_no_recurse
+        child = node[1]
+        if JS.kind(child) === JS.K"::" && JS.numchildren(child) >= 2
+            names = Set{String}()
+            collect_identifier_names!(names, child[2])
+            if !isempty(names)
+                result[JS.source_location(child)] = names
+            end
+        end
+        return traversal_no_recurse
+    end
+    return result
+end
+
+function collect_identifier_names!(names::Set{String}, st::JS.SyntaxTree)
+    if JS.kind(st) === JS.K"Identifier"
+        name = get(st, :name_val, nothing)
+        if name !== nothing
+            push!(names, name::String)
+        end
+        return
+    end
+    for i = 1:JS.numchildren(st)
+        collect_identifier_names!(names, st[i])
+    end
+end
+
+# Check if a keyword argument's type annotation constrains a `where`-clause static parameter
+# that is actually used in the function body.
+# For example, in `f(; dtype::Type{T}=Float32) where {T} = T.(xs)`, `dtype` is not directly
+# used in the body but it constrains `T` which is used, so `dtype` should not be reported.
+# NOTE: This exception is only for keyword arguments. Positional arguments can be replaced with
+# `_::Type{T}` or `::Type{T}` to suppress the unused warning.
+function is_kwarg_constraining_used_sparam(
+        kwarg_type_names::Dict{Tuple{Int,Int},Set{String}},
+        prov_loc::Tuple{Int,Int},
+        ctx3::JL.VariableAnalysisContext
+    )
+    names = @something get(kwarg_type_names, prov_loc, nothing) return false
+    for binfo in ctx3.bindings.info
+        binfo.kind === :static_parameter || continue
+        binfo.is_read || continue
+        binfo.name in names && return true
+    end
+    return false
+end
+
 function analyze_unused_bindings!(
         diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::JS.SyntaxTree, ctx3::JL.VariableAnalysisContext,
-        binding_occurrences, ismacro, reported::Set{LoweringDiagnosticKey};
+        binding_occurrences, ismacro, reported, kwarg_type_names;
         allow_unused_underscore::Bool
     )
     for (binfo, occurrences) in binding_occurrences
@@ -602,6 +655,12 @@ function analyze_unused_bindings!(
         provs = JS.flattened_provenance(JL.binding_ex(ctx3, binfo.id))
         is_from_user_ast(provs) || continue
         prov = last(provs)
+        if bk === :argument && kwarg_type_names !== nothing
+            prov_loc = JS.source_location(prov)
+            if is_kwarg_constraining_used_sparam(kwarg_type_names, prov_loc, ctx3)
+                continue
+            end
+        end
         range = jsobj_to_range(prov, fi)
         key = LoweringDiagnosticKey(range, bk, bn)
         key in reported ? continue : push!(reported, key)
@@ -972,8 +1031,11 @@ function analyze_lowered_code!(
     ismacro = Ref(false)
     binding_occurrences = compute_binding_occurrences(ctx3, st3; ismacro, include_global_bindings=true)
     reported = Set{LoweringDiagnosticKey}() # to prevent duplicate reports for unused default or keyword arguments
+    kwarg_type_names = compute_kwarg_type_annotation_names(st0)
 
-    analyze_unused_bindings!(diagnostics, fi, st0, ctx3, binding_occurrences, ismacro, reported; allow_unused_underscore)
+    analyze_unused_bindings!(
+        diagnostics, fi, st0, ctx3, binding_occurrences, ismacro, reported, kwarg_type_names;
+        allow_unused_underscore)
 
     skip_analysis_requiring_context ||
         analyze_undefined_global_bindings!(diagnostics, fi, ctx3, binding_occurrences, reported; analyzer, postprocessor)
