@@ -79,13 +79,13 @@ end
 end
 
 @testset "inference diagnostic (script analysis)" begin
-    # Test with code that has syntax errors
     scriptcode = """
-    struct Hello
-        who::String
+    struct MyStruct
+        property::Int
     end
-    function hello(x::Hello)
-        return "Hello, \$(x.who)!"
+    function field_error()
+        x = MyStruct(42)
+        return x.propert  # FieldError: type MyStruct has no field `propert`, available fields: `property` (JETLS inference/field-error)
     end
     """
 
@@ -100,13 +100,14 @@ end
 
             found_diagnostic = false
             for diag in raw_res.params.diagnostics
-                if diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE
+                if (diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE &&
+                    diag.code == JETLS.INFERENCE_FIELD_ERROR_CODE &&
+                    occursin("type MyStruct has no field `propert`, available fields: `property`", diag.message))
                     found_diagnostic = true
                     break
                 end
             end
-            # NOTE Currently the script analysis doesn't set `analyze_from_definitions=true`
-            @test_broken found_diagnostic
+            @test found_diagnostic
         end
     end
 end
