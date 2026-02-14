@@ -655,7 +655,7 @@ function analyze_unused_bindings!(
         provs = JS.flattened_provenance(JL.binding_ex(ctx3, binfo.id))
         is_from_user_ast(provs) || continue
         prov = last(provs)
-        if bk === :argument && kwarg_type_names !== nothing
+        if bk === :argument
             prov_loc = JS.source_location(prov)
             if is_kwarg_constraining_used_sparam(kwarg_type_names, prov_loc, ctx3)
                 continue
