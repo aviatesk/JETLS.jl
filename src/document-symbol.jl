@@ -801,12 +801,12 @@ function extract_local_symbols_from_scopes(
     isempty(scopes) && return nothing
     func_to_scopes = build_func_to_scopes(ctx3)
     # Nested function scopes (their symbols will be extracted as children of the function binding)
-    nested_func_scope_ids = Set{Int}()
+    func_scope_ids = Set{Int}()
     for scope_ids in values(func_to_scopes)
-        union!(nested_func_scope_ids, scope_ids)
+        union!(func_scope_ids, scope_ids)
     end
     top_scope_ids = Int[scope.id for scope in scopes
-        if (scope.id ∉ nested_func_scope_ids &&
+        if (scope.id ∉ func_scope_ids &&
             any(((_, bid),) -> is_any_local_binding(JL.get_binding(ctx3, bid)), scope.vars))]
     return extract_local_scope_bindings(ctx3, parent_map, top_scope_ids, func_to_scopes, fi)
 end
