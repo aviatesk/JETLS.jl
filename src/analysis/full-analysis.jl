@@ -902,6 +902,7 @@ getjetconfigs(entry::AnalysisEntry) = getjetconfigs_impl(entry)::Dict{Symbol,Any
 
 let default_jetconfigs = Dict{Symbol,Any}(
         :toplevel_logger => nothing,
+        :analyze_from_definitions => true,
         # force concretization of documentation
         :concretization_patterns => [:($(Base.Docs.doc!)(xs__))])
     global getjetconfigs_impl(::AnalysisEntry) = default_jetconfigs

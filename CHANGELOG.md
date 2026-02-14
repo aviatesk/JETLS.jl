@@ -57,6 +57,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `clos = function (y) ... end`) are now analyzed as `Function` symbols
   for `textDocument/documentSymbol`, with their arguments as children.
 
+### Changed
+
+- Enabled signature analysis for all analysis modes. Previously, signature
+  analysis was only active in the package source analysis, meaning some
+  potential errors within standalone scripts can be missed.
+  This change ensures that diagnostics like `inference/field-error`
+  can be detected from methods within standalone scripts.
+  (Fixed https://github.com/aviatesk/JETLS.jl/issues/479).
+
 ### Fixed
 
 - Fixed rename/document-highlight/references failing for `@kwdef` structs with
