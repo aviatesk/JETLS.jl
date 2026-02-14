@@ -857,7 +857,9 @@ end
             children = symbols[1].children
             inner_sym = only(filter(c -> c.name == "inner", children))
             @test any(c -> c.name == "y", inner_sym.children)
-            @test any(c -> c.name == "z", inner_sym.children)
+            # z is nested under the let Namespace child
+            let_sym = only(filter(c -> c.kind == SymbolKind.Namespace, inner_sym.children))
+            @test any(c -> c.name == "z", let_sym.children)
             # z should NOT appear as a child of outer
             @test !any(c -> c.name == "z", children)
         end
@@ -877,8 +879,10 @@ end
             symbols = JETLS.extract_document_symbols(st0, fi)
             children = symbols[1].children
             inner_sym = only(filter(c -> c.name == "inner", children))
-            @test any(c -> c.name == "x", inner_sym.children)
-            @test any(c -> c.name == "y", inner_sym.children)
+            # x and y are nested under the for Namespace child
+            for_sym = only(filter(c -> c.kind == SymbolKind.Namespace, inner_sym.children))
+            @test any(c -> c.name == "x", for_sym.children)
+            @test any(c -> c.name == "y", for_sym.children)
         end
 
         # let block inside arrow function
@@ -898,7 +902,9 @@ end
             f_sym = only(filter(c -> c.name == "f", children))
             @test f_sym.kind == SymbolKind.Function
             @test any(c -> c.name == "y", f_sym.children)
-            @test any(c -> c.name == "z", f_sym.children)
+            # z is nested under the let Namespace child
+            let_sym = only(filter(c -> c.kind == SymbolKind.Namespace, f_sym.children))
+            @test any(c -> c.name == "z", let_sym.children)
             @test !any(c -> c.name == "z", children)
         end
     end
@@ -1043,6 +1049,81 @@ end
             x_sym = only(filter(c -> c.name == "x", children))
             @test x_sym.detail == "x = i"
         end
+
+        # for loop inside function creates a Namespace child
+        let code = """
+            function foo()
+                for i in 1:10
+                    x = i * 2
+                end
+            end
+            """
+            fi = make_file_info(code)
+            st0 = JETLS.build_syntax_tree(fi)
+            symbols = JETLS.extract_document_symbols(st0, fi)
+            @test length(symbols) == 1
+            children = symbols[1].children
+            @test children !== nothing
+            for_sym = only(filter(
+                c -> c.kind == SymbolKind.Namespace, children))
+            @test for_sym.detail == "for i in 1:10"
+            @test for_sym.children !== nothing
+            i_sym = only(filter(c -> c.name == "i", for_sym.children))
+            @test i_sym.kind == SymbolKind.Variable
+            x_sym = only(filter(c -> c.name == "x", for_sym.children))
+            @test x_sym.detail == "x = i * 2"
+        end
+
+        # nested for loops
+        let code = """
+            function foo()
+                for i in 1:10
+                    for j in 1:5
+                        x = i * j
+                    end
+                end
+            end
+            """
+            fi = make_file_info(code)
+            st0 = JETLS.build_syntax_tree(fi)
+            symbols = JETLS.extract_document_symbols(st0, fi)
+            @test length(symbols) == 1
+            children = symbols[1].children
+            @test children !== nothing
+            outer_for = only(filter(
+                c -> c.kind == SymbolKind.Namespace, children))
+            @test outer_for.detail == "for i in 1:10"
+            @test outer_for.children !== nothing
+            inner_for = only(filter(
+                c -> c.kind == SymbolKind.Namespace, outer_for.children))
+            @test inner_for.detail == "for j in 1:5"
+            @test inner_for.children !== nothing
+            @test any(c -> c.name == "x", inner_for.children)
+        end
+
+        # while loop inside function creates a Namespace child
+        let code = """
+            function foo()
+                i = 0
+                while i < 10
+                    x = i * 2
+                    i += 1
+                end
+            end
+            """
+            fi = make_file_info(code)
+            st0 = JETLS.build_syntax_tree(fi)
+            symbols = JETLS.extract_document_symbols(st0, fi)
+            @test length(symbols) == 1
+            children = symbols[1].children
+            @test children !== nothing
+            while_sym = only(filter(
+                c -> c.kind == SymbolKind.Namespace, children))
+            @test while_sym.detail == "while i < 10"
+            @test while_sym.children !== nothing
+            x_sym = only(filter(c -> c.name == "x", while_sym.children))
+            @test x_sym.detail == "x = i * 2"
+        end
     end
 
     @testset "tuple destructuring" begin
@@ -1079,6 +1160,99 @@ end
             @test children !== nothing
             x_sym = only(filter(c -> c.name == "x", children))
             @test x_sym.detail == "x = 42"
+        end
+
+        # let block inside function creates a Namespace child
+        let code = """
+            function foo()
+                let a = 1
+                    b = a + 1
+                end
+            end
+            """
+            fi = make_file_info(code)
+            st0 = JETLS.build_syntax_tree(fi)
+            symbols = JETLS.extract_document_symbols(st0, fi)
+            @test length(symbols) == 1
+            children = symbols[1].children
+            @test children !== nothing
+            let_sym = only(filter(
+                c -> c.kind == SymbolKind.Namespace, children))
+            @test let_sym.detail == "let a = 1"
+            @test let_sym.children !== nothing
+            a_sym = only(filter(c -> c.name == "a", let_sym.children))
+            @test a_sym.detail == "a = 1"
+            b_sym = only(filter(c -> c.name == "b", let_sym.children))
+            @test b_sym.detail == "b = a + 1"
+        end
+    end
+
+    @testset "try/catch/else/finally hierarchy" begin
+        let code = """
+            function func(x::Real)
+                y = try
+                    r = sin(x)
+                    r + 1.0
+                catch err
+                    e = err
+                    e
+                else
+                    isdef1 = @isdefined r
+                    @assert isdef1
+                finally
+                    isdef2 = @isdefined r
+                    println(isdef2)
+                end
+                return y
+            end
+            """
+            fi = make_file_info(code)
+            st0 = JETLS.build_syntax_tree(fi)
+            symbols = JETLS.extract_document_symbols(st0, fi)
+            @test length(symbols) == 1
+            func_sym = symbols[1]
+            @test func_sym.name == "func"
+            children = func_sym.children
+            @test children !== nothing
+            # function-level bindings: x, y
+            x_sym = only(filter(c -> c.name == "x", children))
+            @test x_sym.kind == SymbolKind.Object  # argument
+            y_sym = only(filter(c -> c.name == "y", children))
+            @test y_sym.kind == SymbolKind.Variable
+            # Parent try Namespace
+            try_sym = only(filter(
+                c -> c.kind == SymbolKind.Namespace, children))
+            @test try_sym.detail == "try ... catch ... else ... finally"
+            @test try_sym.children !== nothing
+            clauses = try_sym.children
+            # Each clause gets its own sub-Namespace
+            clause_details = [c.detail for c in clauses]
+            @test "try" in clause_details
+            @test "catch" in clause_details
+            @test "else" in clause_details
+            @test "finally" in clause_details
+            clause_map = Dict(c.detail => c for c in clauses)
+            # try body: r
+            try_clause = clause_map["try"]
+            @test try_clause.children !== nothing
+            try_names = Set(c.name for c in try_clause.children)
+            @test "r" in try_names
+            # catch: err, e
+            catch_clause = clause_map["catch"]
+            @test catch_clause.children !== nothing
+            catch_names = Set(c.name for c in catch_clause.children)
+            @test "err" in catch_names
+            @test "e" in catch_names
+            # else: isdef1
+            else_clause = clause_map["else"]
+            @test else_clause.children !== nothing
+            else_names = Set(c.name for c in else_clause.children)
+            @test "isdef1" in else_names
+            # finally: isdef2
+            finally_clause = clause_map["finally"]
+            @test finally_clause.children !== nothing
+            finally_names = Set(c.name for c in finally_clause.children)
+            @test "isdef2" in finally_names
         end
     end
 
