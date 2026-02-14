@@ -366,6 +366,54 @@ length_utf16(s::AbstractString) = sum(c::Char -> codepoint(c) < 0x10000 ? 1 : 2,
         end
     end
 
+    # https://github.com/aviatesk/JETLS.jl/issues/481
+    @testset "keyword argument constraining used static parameter" begin
+        # keyword arg constraining a used static parameter should not be reported
+        let diagnostics = get_lowered_diagnostics("""
+            f(; dtype::Type{T}=Float32) where {T} = T
+            """)
+            @test isempty(diagnostics)
+        end
+        # keyword arg constraining an unused static parameter should still be reported
+        let diagnostics = get_lowered_diagnostics("""
+            f(; dtype::Type{T}=Float32) where {T} = 1
+            """)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).message == "Unused argument `dtype`"
+        end
+        # positional arg constraining a used static parameter should still be reported
+        let diagnostics = get_lowered_diagnostics("""
+            f(x::Type{T}) where {T} = T
+            """)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).message == "Unused argument `x`"
+        end
+        # keyword arg with multiple type parameters, at least one used
+        let diagnostics = get_lowered_diagnostics("""
+            f(; x::Pair{S,T}=1=>2) where {S,T} = S
+            """)
+            @test isempty(diagnostics)
+        end
+        # full example from the issue
+        let diagnostics = get_lowered_diagnostics("""
+            function compute_rotary_embedding_params(
+                head_dim::Integer,
+                max_sequence_length::Integer;
+                base::Number,
+                dtype::Type{T}=Float32,
+                low_memory_variant::Bool=true,
+            ) where {T}
+                θ = inv.(T.(base .^ (range(0, head_dim - 1; step=2)[1:(head_dim ÷ 2)] ./ head_dim)))
+                seq_idx = collect(T, 0:(max_sequence_length - 1))
+                angles = reshape(θ, :, 1) .* reshape(seq_idx, 1, :)
+                low_memory_variant || (angles = vcat(angles, angles))
+                return (; cos_cache=cos.(angles), sin_cache=sin.(angles))
+            end
+            """)
+            @test isempty(diagnostics)
+        end
+    end
+
     @testset "module splitter" begin
         script = """
         module TestModuleSplit

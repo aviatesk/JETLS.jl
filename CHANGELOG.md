@@ -74,6 +74,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   full-analysis, since syntax errors are already reported via
   `textDocument/diagnostic` or `workspace/diagnostic`
   (Fixed https://github.com/aviatesk/JETLS.jl/issues/535).
+- Fixed false positive unused argument diagnostic for keyword arguments whose
+  type annotation constrains a `where`-clause static parameter that is used in
+  the function body (e.g., `f(; dtype::Type{T}=Float32) where {T} = T.(xs)`)
+  (Fixed https://github.com/aviatesk/JETLS.jl/issues/481).
 - Fixed various type instabilities across the codebase caught by the new
   `inference/method-error` diagnostic running on JETLS itself.
 
