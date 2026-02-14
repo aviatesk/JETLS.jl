@@ -55,6 +55,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- `textDocument/documentSymbol` now shows `for`, `let`, `while`, and
+  `try`/`catch`/`else`/`finally` blocks inside functions as hierarchical
+  `Namespace` symbols. Previously, all local bindings within a function were
+  shown as flat children; now, bindings inside scope constructs are nested
+  under the scope construct, matching the existing behavior for top-level
+  scope constructs.
+
 - `textDocument/documentSymbol` now strips redundant name prefixes from
   symbol details. (e.g., a symbol named `foo` with detail `foo = func(args...)`
   now shows ` = func(args...)` as the detail.
