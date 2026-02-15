@@ -636,9 +636,11 @@ end
 
 function analyze_unused_bindings!(
         diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::JS.SyntaxTree, ctx3::JL.VariableAnalysisContext,
-        binding_occurrences, ismacro, reported, kwarg_type_names;
+        binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence{Tree3}}},
+        ismacro::Base.RefValue{Bool}, reported::Set{LoweringDiagnosticKey},
+        kwarg_type_names::Dict{Tuple{Int,Int},Set{String}};
         allow_unused_underscore::Bool
-    )
+    ) where Tree3<:JS.SyntaxTree
     for (binfo, occurrences) in binding_occurrences
         bk = binfo.kind
         bk === :global && continue
@@ -697,10 +699,11 @@ end
 #   full-analysis reports.
 function analyze_undefined_global_bindings!(
         diagnostics::Vector{Diagnostic}, fi::FileInfo, ctx3::JL.VariableAnalysisContext,
-        binding_occurrences, reported::Set{LoweringDiagnosticKey};
+        binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence{Tree3}}},
+        reported::Set{LoweringDiagnosticKey};
         analyzer::Union{Nothing,LSAnalyzer} = nothing,
         postprocessor::LSPostProcessor = LSPostProcessor()
-    )
+    ) where Tree3<:JS.SyntaxTree
     world = Base.get_world_counter()
     for (binfo, occurrences) in binding_occurrences
         bk = binfo.kind
