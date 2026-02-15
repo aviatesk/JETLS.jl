@@ -68,6 +68,11 @@ end
         result = run_jetls_check([filepath]; root=dir)
         @test occursin("lowering/unused-local", result.stdout)
         @test occursin("test.jl", result.stdout)
+
+        # Relative path should be resolved relative to --root
+        result = run_jetls_check(["test.jl"]; root=dir)
+        @test occursin("lowering/unused-local", result.stdout)
+        @test occursin("test.jl", result.stdout)
     end
 end
 

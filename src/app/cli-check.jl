@@ -311,6 +311,9 @@ function run_check(args::Vector{String})::Cint
     quiet && Base.CoreLogging.disable_logging(Base.CoreLogging.Warn)
 
     root_path = root_path_opt !== nothing ? abspath(root_path_opt) : pwd()
+
+    paths = String[isabspath(p) ? p : joinpath(root_path, p) for p in paths]
+
     server = start_cli_server(root_path)
     skip_analysis || start_analysis_workers!(server)
     progress_ctx = ProgressContext(progress_mode, stderr)
