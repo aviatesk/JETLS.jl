@@ -53,6 +53,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   occur at runtime. For union-split calls, the diagnostic reports only the
   failing branches with their count (e.g., "1/2 union split").
 
+### Changed
+
+- `textDocument/documentSymbol` now strips redundant name prefixes from
+  symbol details. (e.g., a symbol named `foo` with detail `foo = func(args...)`
+  now shows ` = func(args...)` as the detail.
+
 ## 2026-02-16
 
 - Commit: [`e141508`](https://github.com/aviatesk/JETLS.jl/commit/e141508)
