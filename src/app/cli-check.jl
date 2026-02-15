@@ -55,7 +55,7 @@ function render_spinner(p::SpinnerProgress)
         end
         frame = SPINNER_FRAMES[p.spinner_idx]
         prefix = "$(frame) $(p.current_file)"
-        term_width = displaysize(p.io)[2]
+        term_width = displaysize(p.io)[2]::Int
         if isempty(p.current_message)
             if length(prefix) > term_width - 1
                 prefix = prefix[1:term_width-2] * "…"
@@ -98,8 +98,9 @@ end
 
 function stop_spinner!(p::SpinnerProgress)
     p.active = false
-    if p.spinner_task !== nothing
-        wait(p.spinner_task)
+    spinner_task = p.spinner_task
+    if spinner_task !== nothing
+        wait(spinner_task)
         p.spinner_task = nothing
     end
     @lock p.lock clear_line(p)
@@ -310,6 +311,9 @@ function run_check(args::Vector{String})::Cint
     quiet && Base.CoreLogging.disable_logging(Base.CoreLogging.Warn)
 
     root_path = root_path_opt !== nothing ? abspath(root_path_opt) : pwd()
+
+    paths = String[isabspath(p) ? p : joinpath(root_path, p) for p in paths]
+
     server = start_cli_server(root_path)
     skip_analysis || start_analysis_workers!(server)
     progress_ctx = ProgressContext(progress_mode, stderr)
@@ -330,7 +334,7 @@ function run_check(args::Vector{String})::Cint
         lookup_func = Returns(OutOfScope(Main))
     else
         # Full analysis phase (textDocument/publishDiagnostics equivalent)
-        run_full_analysis(server, root_path, paths, progress_ctx)
+        @with_cli_LOAD_PATH run_full_analysis(server, root_path, paths, progress_ctx)
         analysis_uris = collect_workspace_uris(server)
         if isempty(analysis_uris)
             @error "Full analysis failed: could not find any files to analyze"

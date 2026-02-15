@@ -1,0 +1,26 @@
+name: Feature request
+description: Suggest a new feature or improvement
+labels: ["enhancement"]
+
+body:
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Pre-submission checklist
+      options:
+        - label: I have searched [existing issues](https://github.com/aviatesk/JETLS.jl/issues) and confirmed this is not a duplicate.
+          required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Describe the feature or improvement you'd like to see, and why you need it.
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context (optional)
+      description: Any other information, references, or screenshots that might be helpful.

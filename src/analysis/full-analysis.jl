@@ -702,7 +702,7 @@ function analyze_package_with_revise(
             show_error_message(server, "Failed to load package $(pkgid.name): $(sprint(Base.showerror, e))")
             error(lazy"Package $(pkgid.name) is not loadable") # TODO
         finally
-            notify(activation_done)
+            isnothing(activation_done) || notify(activation_done)
         end
     end
 
@@ -735,8 +735,22 @@ function analyze_package_with_revise(
         Revise.maybe_extract_sigs!(fi)
     end
 
+    analyzed_file_infos = Dict{URI,JET.AnalyzedFileInfo}()
+    basedir = Revise.basedir(pkgdata)
+    report_target_modules = Set{Module}()
+    for (i, file) in enumerate(Revise.srcfiles(pkgdata))
+        filepath = joinpath(basedir, file)
+        uri = filepath2uri(filepath)
+        # Build module range info from Revise's tracked modules
+        # TODO This is pretty incorrect module context mapping
+        filemod, _ = last(pkgdata.fileinfos[i].mod_exs_infos)
+        module_range_infos = Pair{UnitRange{Int},Module}[(1:typemax(Int)) => filemod]
+        analyzed_file_infos[uri] = JET.AnalyzedFileInfo(module_range_infos)
+        push!(report_target_modules, filemod)
+    end
+
     analyzer = let analyzer # avoid captured boxes
-        analyzer = LSAnalyzer(request.entry; report_target_modules=(pkgmod,)) # TODO Revisit (submodules)
+        analyzer = LSAnalyzer(request.entry; report_target_modules) # TODO Revisit (submodules)
         # Revise's signature population may execute code, which can increment the world age,
         # so we update to the latest world age here
         newstate = JET.AnalyzerState(JET.AnalyzerState(analyzer); world = Base.get_world_counter())
@@ -856,17 +870,6 @@ function analyze_package_with_revise(
 
     @label completed
 
-    analyzed_file_infos = Dict{URI,JET.AnalyzedFileInfo}()
-    basedir = Revise.basedir(pkgdata)
-    for (i, file) in enumerate(Revise.srcfiles(pkgdata))
-        filepath = joinpath(basedir, file)
-        uri = filepath2uri(filepath)
-        # Build module range info from Revise's tracked modules
-        # TODO This is pretty incorrect module context mapping
-        filemod, _ = last(pkgdata.fileinfos[i].mod_exs_infos)
-        module_range_infos = Pair{UnitRange{Int},Module}[(1:typemax(Int)) => filemod]
-        analyzed_file_infos[uri] = JET.AnalyzedFileInfo(module_range_infos)
-    end
     uri2diagnostics = URI2Diagnostics(uri => Diagnostic[] for uri in keys(analyzed_file_infos))
     postprocessor = JET.PostProcessor()
 
@@ -899,6 +902,7 @@ getjetconfigs(entry::AnalysisEntry) = getjetconfigs_impl(entry)::Dict{Symbol,Any
 
 let default_jetconfigs = Dict{Symbol,Any}(
         :toplevel_logger => nothing,
+        :analyze_from_definitions => true,
         # force concretization of documentation
         :concretization_patterns => [:($(Base.Docs.doc!)(xs__))])
     global getjetconfigs_impl(::AnalysisEntry) = default_jetconfigs
