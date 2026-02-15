@@ -99,47 +99,6 @@ end
     end
 end
 
-only_int(x::Int) = 2x
-
-@testset "MethodErrorReport" begin
-    # no report when method exists
-    let result = analyze_call((Int,)) do x
-            sin(x)
-        end
-        @test isempty(get_reports(result))
-    end
-
-    # basic method error
-    let result = analyze_call() do
-            sin(1, 2)
-        end
-        reports = get_reports(result)
-        @test length(reports) == 1
-        r = only(reports)
-        @test r isa MethodErrorReport && r.union_split == 0
-    end
-
-    # union split case: only one branch fails
-    let result = analyze_call((Union{Int,String},)) do x
-            only_int(x)
-        end
-        reports = get_reports(result)
-        @test length(reports) == 1
-        r = only(reports)
-        @test r isa MethodErrorReport && r.union_split == 2 && length(r.t) == 1
-    end
-
-    # union split case: all branches fail
-    let result = analyze_call((Union{String,Symbol},)) do x
-            only_int(x)
-        end
-        reports = get_reports(result)
-        @test length(reports) == 1
-        r = only(reports)
-        @test r isa MethodErrorReport && r.union_split == 2 && length(r.t) == 2
-    end
-end
-
 @testset "BoundsError analysis" begin
     # `getindex(::Tuple, ::Int)`
     let result = analyze_call((Tuple{Int},)) do tpl1
@@ -298,21 +257,6 @@ end
     end
     let result = analyze_call((Pair{Any,Any},); report_target_modules=(ExternalModule,)) do pair
             a, b, c = pair
-        end
-        @test isempty(get_reports(result))
-    end
-
-    # MethodErrorReport
-    let result = analyze_call(; report_target_modules=(@__MODULE__,)) do
-            sin(1, 2)
-        end
-        reports = get_reports(result)
-        @test length(reports) == 1
-        r = only(reports)
-        @test r isa MethodErrorReport
-    end
-    let result = analyze_call(; report_target_modules=(ExternalModule,)) do
-            sin(1, 2)
         end
         @test isempty(get_reports(result))
     end

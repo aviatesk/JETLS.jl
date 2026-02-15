@@ -47,12 +47,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
-- Added [`inference/method-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/inference/method-error)
-  diagnostic that detects function calls where no matching method exists for
-  the inferred argument types. This catches potential `MethodError`s that would
-  occur at runtime. For union-split calls, the diagnostic reports only the
-  failing branches with their count (e.g., "1/2 union split").
-
 - Anonymous function assignments (`f = (x) -> x + 1` and
   `clos = function (y) ... end`) are now analyzed as `Function` symbols
   for `textDocument/documentSymbol`, with their arguments as children.

@@ -111,7 +111,6 @@ Here is a summary table of the diagnostics explained in this section:
 | [`inference/undef-global-var`](@ref diagnostic/reference/inference/undef-global-var)             | `Warning`             | `JETLS/save`  | References to undefined global variables           |
 | [`inference/field-error`](@ref diagnostic/reference/inference/field-error)                       | `Warning`             | `JETLS/save`  | Access to non-existent struct fields               |
 | [`inference/bounds-error`](@ref diagnostic/reference/inference/bounds-error)                     | `Warning`             | `JETLS/save`  | Out-of-bounds field access by index                |
-| [`inference/method-error`](@ref diagnostic/inference/method-error)                               | `Warning`             | No matching method found for function calls                       |
 | [`testrunner/test-failure`](@ref diagnostic/reference/testrunner/test-failure)                   | `Error`               | `JETLS/extra` | Test failures from TestRunner integration          |
 
 ### [Syntax diagnostic (`syntax/*`)](@id diagnostic/reference/syntax)
@@ -662,34 +661,6 @@ Example:
 ```julia
 function bounds_error(tpl::Tuple{Int})
     return tpl[2]  # BoundsError: attempt to access Tuple{Int64} at index [2] (JETLS inference/bounds-error)
-end
-```
-
-#### [Method error (`inference/method-error`)](@id diagnostic/inference/method-error)
-
-**Default severity:** `Warning`
-
-Function calls where no matching method can be found for the inferred argument
-types. This diagnostic detects potential `MethodError`s that would occur at
-runtime.
-
-Examples:
-
-```julia
-function method_error_example()
-    return sin(1, 2)  # no matching method found `sin(::Int64, ::Int64)` (JETLS inference/method-error)
-end
-```
-
-When multiple union-split signatures fail to find matches, the diagnostic will
-report all failed signatures:
-
-```julia
-only_int(x::Int) = 2x
-
-function union_split_method_error(x::Union{Int,String})
-    return only_int(x)  # no matching method found `only_int(::String)` (1/2 union split)
-                        # (JETLS inference/method-error)
 end
 ```
 

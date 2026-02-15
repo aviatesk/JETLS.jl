@@ -15,23 +15,6 @@ match_type = "regex"
 severity = "off"
 path = "LSP/src/LSP.jl"
 
-# TODO [JETLS]
-# `@interface` type instability for anonymous interface definitions
-[[diagnostic.patterns]]
-pattern = "no matching method found `.*var\"AnonymousInterface.*`"
-match_by = "message"
-match_type = "regex"
-severity = "off"
-path = "LSP/src/**/*.jl"
-
-# This is type instability within JSON3.jl
-[[diagnostic.patterns]]
-pattern = "no matching method found `convert(.+)`"
-match_by = "message"
-match_type = "regex"
-severity = "off"
-path = "src/testrunner/testrunner-types.jl"
-
 # TODO [JuliaLowering]
 # Temporarily downgrade some known JuliaLowering issues to information level
 [[diagnostic.patterns]]

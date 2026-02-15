@@ -1,7 +1,7 @@
 module Analyzer
 
 export LSAnalyzer, inference_error_report_severity, inference_error_report_stack, reset_report_target_modules!
-export BoundsErrorReport, FieldErrorReport, MethodErrorReport, UndefVarErrorReport
+export BoundsErrorReport, FieldErrorReport, UndefVarErrorReport
 
 using Core.IR
 using JET.JETInterface
@@ -244,47 +244,6 @@ end # @static if VERSION ≥ v"1.12.2"
 # Analysis injections
 # ===================
 
-# function is_from_kwcall(analyzer, sv)
-#     report_target_modules = @something analyzer.report_target_modules return false
-#     checkbounds(Bool, sv.callstack, sv.parentid) || return false
-#     sv = sv.callstack[sv.parentid]
-#     checkbounds(Bool, sv.callstack, sv.parentid) || return false
-#     sv = sv.callstack[sv.parentid]
-#     mi = CC.frame_instance(sv)
-#     def = mi.def
-#     def isa Method || return false
-#     sig = Base.unwrap_unionall(def.sig)
-#     sig isa DataType || return false
-#     length(sig.parameters) >= 1 || return false
-#     sig.parameters[1] === typeof(Core.kwcall) || return false
-#     checkbounds(Bool, sv.callstack, sv.parentid) || return false
-#     sv = sv.callstack[sv.parentid]
-#     return CC.frame_module(sv) ∈ report_target_modules
-# end
-
-function CC.abstract_call_gf_by_type(
-        analyzer::LSAnalyzer, @nospecialize(func), arginfo::CC.ArgInfo, si::CC.StmtInfo,
-        @nospecialize(atype), sv::CC.InferenceState, max_methods::Int
-    )
-    ret = @invoke CC.abstract_call_gf_by_type(analyzer::ToplevelAbstractAnalyzer,
-        func::Any, arginfo::CC.ArgInfo, si::CC.StmtInfo, atype::Any, sv::CC.InferenceState, max_methods::Int)
-    if !should_analyze(analyzer, sv)
-        return ret
-    end
-    atype′ = Ref{Any}(atype)
-    function after_abstract_call_gf_by_type(analyzer′::LSAnalyzer, sv′::CC.InferenceState)
-        ret′ = ret[]
-        report_method_error!(analyzer′, sv′, ret′, arginfo, atype′[])
-        return true
-    end
-    if isready(ret)
-        after_abstract_call_gf_by_type(analyzer, sv)
-    else
-        push!(sv.tasks, after_abstract_call_gf_by_type)
-    end
-    return ret
-end
-
 # TODO Better to factor out and share it with `JET.JETAnalyzer`
 function CC.abstract_eval_globalref(
         analyzer::LSAnalyzer, g::GlobalRef, saw_latestworld::Bool, sv::CC.InferenceState;
@@ -518,84 +477,6 @@ function report_fieldaccess!(
         add_new_report!(analyzer, sv.result, BoundsErrorReport(sv, objtyp, namev, offset))
     else error("invalid field analysis") end
     return true
-end
-
-# MethodErrorReport
-# -----------------
-
-@jetreport struct MethodErrorReport <: LSErrorReport
-    @nospecialize t # ::Union{Type, Vector{Type}}
-    union_split::Int
-end
-function JETInterface.print_report_message(io::IO, report::MethodErrorReport)
-    print(io, "no matching method found ")
-    if report.union_split == 0
-        print_callsig(io, report.t)
-    else
-        ts = report.t::Vector{Any}
-        nts = length(ts)
-        for i = 1:nts
-            print_callsig(io, ts[i])
-            i == nts || print(io, ", ")
-        end
-        print(io, " (", nts, '/', report.union_split, " union split)")
-    end
-end
-function print_callsig(io, @nospecialize(t))
-    print(io, '`')
-    Base.show_tuple_as_call(io, Symbol(""), t)
-    print(io, '`')
-end
-inference_error_report_stack_impl(r::MethodErrorReport) = length(r.vst):-1:1
-inference_error_report_severity_impl(::MethodErrorReport) = DiagnosticSeverity.Warning
-
-function report_method_error!(
-        analyzer::LSAnalyzer, sv::CC.InferenceState, call::CC.CallMeta,
-        arginfo::CC.ArgInfo, @nospecialize(atype)
-    )
-    info = call.info
-    if isa(info, CC.ConstCallInfo)
-        info = info.call
-    end
-    if isa(info, CC.MethodMatchInfo)
-        report_method_error!(analyzer, sv, info, atype)
-    elseif isa(info, CC.UnionSplitInfo)
-        report_method_error_for_union_split!(analyzer, sv, info, arginfo)
-    end
-end
-
-function report_method_error!(
-        analyzer::LSAnalyzer, sv::CC.InferenceState, info::CC.MethodMatchInfo,
-        @nospecialize(atype)
-    )
-    if CC.isempty(info.results)
-        report = MethodErrorReport(sv, atype, 0)
-        add_new_report!(analyzer, sv.result, report)
-    end
-end
-
-function report_method_error_for_union_split!(
-        analyzer::LSAnalyzer, sv::CC.InferenceState, info::CC.UnionSplitInfo,
-        arginfo::CC.ArgInfo
-    )
-    # check each match for union-split signature
-    split_argtypes = empty_matches = nothing
-    for (i, matchinfo) in enumerate(info.split)
-        if CC.isempty(matchinfo.results)
-            if isnothing(split_argtypes)
-                split_argtypes = CC.switchtupleunion(CC.typeinf_lattice(analyzer), arginfo.argtypes)
-            end
-            argtypes′ = split_argtypes[i]::Vector{Any}
-            if empty_matches === nothing
-                empty_matches = (Any[], length(info.split))
-            end
-            sig_n = CC.argtypes_to_type(argtypes′)
-            push!(empty_matches[1], sig_n)
-        end
-    end
-    if empty_matches !== nothing
-        add_new_report!(analyzer, sv.result, MethodErrorReport(sv, empty_matches...))
-    end
 end
 
 # Constructor
