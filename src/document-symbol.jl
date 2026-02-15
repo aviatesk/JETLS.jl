@@ -636,7 +636,7 @@ function extract_testset_symbol!(
         body_kind === JS.K"let" ? body[1] : body
 
     push!(symbols, DocumentSymbol(;
-        name = isempty(description) ? " " : description,
+        name = isempty(description) ? "@testset" : ("@testset \"$(description)\""),
         detail = first(split(JS.sourcetext(st0), '\n')),
         kind = SymbolKind.Event,
         range = jsobj_to_range(st0, fi),

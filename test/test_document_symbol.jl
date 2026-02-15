@@ -1129,7 +1129,7 @@ end
             st0 = JETLS.build_syntax_tree(fi)
             symbols = JETLS.extract_document_symbols(st0, fi)
             @test length(symbols) == 1
-            @test symbols[1].name == "my tests"
+            @test symbols[1].name == "@testset \"my tests\""
             @test symbols[1].kind == SymbolKind.Event
             @test symbols[1].detail == "@testset \"my tests\" begin"
             @test symbols[1].children !== nothing
@@ -1148,7 +1148,7 @@ end
             st0 = JETLS.build_syntax_tree(fi)
             symbols = JETLS.extract_document_symbols(st0, fi)
             @test length(symbols) == 1
-            @test symbols[1].name == " "
+            @test symbols[1].name == "@testset"
             @test symbols[1].kind == SymbolKind.Event
             @test symbols[1].detail == "@testset begin"
             @test symbols[1].children !== nothing
@@ -1167,7 +1167,7 @@ end
             st0 = JETLS.build_syntax_tree(fi)
             symbols = JETLS.extract_document_symbols(st0, fi)
             @test length(symbols) == 1
-            @test symbols[1].name == "qualified"
+            @test symbols[1].name == "@testset \"qualified\""
             @test symbols[1].kind == SymbolKind.Event
         end
     end
@@ -1184,10 +1184,10 @@ end
             st0 = JETLS.build_syntax_tree(fi)
             symbols = JETLS.extract_document_symbols(st0, fi)
             @test length(symbols) == 1
-            @test symbols[1].name == "outer"
+            @test symbols[1].name == "@testset \"outer\""
             @test symbols[1].children !== nothing
             @test length(symbols[1].children) == 1
-            @test symbols[1].children[1].name == "inner"
+            @test symbols[1].children[1].name == "@testset \"inner\""
             @test symbols[1].children[1].children !== nothing
             @test length(symbols[1].children[1].children) == 1
         end
@@ -1264,7 +1264,7 @@ end
             st0 = JETLS.build_syntax_tree(fi)
             symbols = JETLS.extract_document_symbols(st0, fi)
             @test length(symbols) == 1
-            @test symbols[1].name == "test \$v"
+            @test symbols[1].name == "@testset \"test \$v\""
             @test symbols[1].kind == SymbolKind.Event
             @test symbols[1].detail == "@testset \"test \$v\" for v in 1:3"
             @test symbols[1].children !== nothing
@@ -1283,7 +1283,7 @@ end
             st0 = JETLS.build_syntax_tree(fi)
             symbols = JETLS.extract_document_symbols(st0, fi)
             @test length(symbols) == 1
-            @test symbols[1].name == "test \$v, \$w"
+            @test symbols[1].name == "@testset \"test \$v, \$w\""
             @test symbols[1].kind == SymbolKind.Event
         end
     end
@@ -1296,7 +1296,7 @@ end
             st0 = JETLS.build_syntax_tree(fi)
             symbols = JETLS.extract_document_symbols(st0, fi)
             @test length(symbols) == 1
-            @test symbols[1].name == "test"
+            @test symbols[1].name == "@testset \"test\""
             @test symbols[1].kind == SymbolKind.Event
             @test symbols[1].detail == "@testset \"test\" test_func()"
             # Function call variant has no children
@@ -1314,7 +1314,7 @@ end
             st0 = JETLS.build_syntax_tree(fi)
             symbols = JETLS.extract_document_symbols(st0, fi)
             @test length(symbols) == 1
-            @test symbols[1].name == " "
+            @test symbols[1].name == "@testset"
             @test symbols[1].kind == SymbolKind.Event
             @test symbols[1].detail == "@testset let v = 1, w = 2"
             @test symbols[1].children !== nothing
@@ -1333,7 +1333,7 @@ end
             st0 = JETLS.build_syntax_tree(fi)
             symbols = JETLS.extract_document_symbols(st0, fi)
             @test length(symbols) == 1
-            @test symbols[1].name == "my test"
+            @test symbols[1].name == "@testset \"my test\""
             @test symbols[1].kind == SymbolKind.Event
         end
     end
@@ -1348,7 +1348,7 @@ end
             st0 = JETLS.build_syntax_tree(fi)
             symbols = JETLS.extract_document_symbols(st0, fi)
             @test length(symbols) == 1
-            @test symbols[1].name == "with options"
+            @test symbols[1].name == "@testset \"with options\""
             @test symbols[1].kind == SymbolKind.Event
         end
     end
