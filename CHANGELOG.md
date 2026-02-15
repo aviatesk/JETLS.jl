@@ -68,6 +68,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- Fixed `jetls check` failing to correctly activate user package environments
+  during full analysis.
+
 - Fixed rename/document-highlight/references failing for `@kwdef` structs with
   default values (Fixed https://github.com/aviatesk/JETLS.jl/issues/540).
 
