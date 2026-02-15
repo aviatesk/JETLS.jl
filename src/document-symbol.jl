@@ -975,7 +975,7 @@ function extract_local_variable_detail(
     end
     # Handle assignment: `x = value`
     if !isnothing(parent) && JS.kind(parent) === JS.K"="
-        detail = lstrip(JS.sourcetext(parent))
+        detail = strip(first(split(JS.sourcetext(parent), '\n')))
         fb, lb = JS.first_byte(parent), JS.last_byte(parent)
         parent = get(parent_map, (fb, lb), nothing)
     end
