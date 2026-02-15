@@ -141,14 +141,7 @@ function run_serve(args::Vector{String})::Cint
 
     show_setup_info("Running JETLS with the following setup:")
 
-    old_LOAD_PATH = copy(LOAD_PATH)
-    try
-        # HACK: Set `LOAD_PATH` to the same state as during normal Julia script execution.
-        # JETLS internally uses `Pkg.activate` on user package environments and may actually load them,
-        # so this replacement is necessary.
-        empty!(LOAD_PATH)
-        push!(LOAD_PATH, "@", "@v$(VERSION.major).$(VERSION.minor)", "@stdlib")
-
+    @with_cli_LOAD_PATH begin
         if JETLS_DEV_MODE
             global currently_running
             currently_running = server = Server(endpoint) do s::Symbol, x
@@ -171,7 +164,5 @@ function run_serve(args::Vector{String})::Cint
         exit_code = fetch(runserver_task)
         @info "JETLS server stopped" exit_code
         return exit_code
-    finally
-        append!(LOAD_PATH, old_LOAD_PATH)
     end
 end

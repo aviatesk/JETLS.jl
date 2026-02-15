@@ -331,7 +331,7 @@ function run_check(args::Vector{String})::Cint
         lookup_func = Returns(OutOfScope(Main))
     else
         # Full analysis phase (textDocument/publishDiagnostics equivalent)
-        run_full_analysis(server, root_path, paths, progress_ctx)
+        @with_cli_LOAD_PATH run_full_analysis(server, root_path, paths, progress_ctx)
         analysis_uris = collect_workspace_uris(server)
         if isempty(analysis_uris)
             @error "Full analysis failed: could not find any files to analyze"

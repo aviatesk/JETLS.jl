@@ -484,9 +484,9 @@ function handle_notification_message(server::Server, @nospecialize msg)
     nothing
 end
 
+include("app/app.jl")
 include("app/cli-check.jl")
 include("app/cli-serve.jl")
-include("app/app.jl")
 
 include("precompile.jl")
 
