@@ -1169,7 +1169,7 @@ function analyze_unused_imports!(
         time_binding_occurrences += @elapsed iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
             binding_occurrences = @something get_binding_occurrences!(
                 state, search_uri, search_fi, st0; include_global_bindings = true) return
-            mod = get_context_module(state, uri, offset_to_xy(fi, JS.first_byte(st0)))
+            mod = get_context_module(state, search_uri, offset_to_xy(search_fi, JS.first_byte(st0)))
             for (binfo_key, occurrences) in binding_occurrences
                 binfo_key.kind === :global || continue
                 if any(o -> o.kind === :use, occurrences)
@@ -1184,7 +1184,7 @@ function analyze_unused_imports!(
             kind = JS.kind(st0)
             if kind === JS.K"export" || kind === JS.K"public"
                 # `using .Inner: foo; export foo` - foo is used via re-export
-                mod = get_context_module(state, uri, offset_to_xy(fi, JS.first_byte(st0)))
+                mod = get_context_module(state, search_uri, offset_to_xy(search_fi, JS.first_byte(st0)))
                 for i = 1:JS.numchildren(st0)
                     child = st0[i]
                     if JS.kind(child) === JS.K"Identifier"

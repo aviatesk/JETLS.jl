@@ -7,7 +7,7 @@ using Core.IR
 using JET.JETInterface
 using JET: CC, JET
 
-using ..JETLS: AnalysisEntry, JETLS
+using ..JETLS: AnalysisEntry
 using ..LSP
 
 # JETLS internal interface

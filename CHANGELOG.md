@@ -76,6 +76,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   For example, `jetls check --root=/path/to/Pkg src/Pkg.jl` now correctly
   resolves to `/path/to/Pkg/src/Pkg.jl`.
 
+- Fixed false positive `lowering/unused-import` diagnostics for symbols
+  in a package file but used in `include`d files
+  (Fixed https://github.com/aviatesk/JETLS.jl/issues/547).
+
 - Fixed rename/document-highlight/references failing for `@kwdef` structs with
   default values (Fixed https://github.com/aviatesk/JETLS.jl/issues/540).
 
