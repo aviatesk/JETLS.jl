@@ -1354,4 +1354,62 @@ end
     end
 end
 
+@testset "JETLS.strip_name_from_detail" begin
+    let sym = DocumentSymbol(;
+            name="foo", detail="foo(x, y) =",
+            kind=SymbolKind.Function,
+            range=Range(Position(0,0), Position(0,0)),
+            selectionRange=Range(Position(0,0), Position(0,0)))
+        result = JETLS.strip_name_from_detail(sym)
+        @test result.detail == "(x, y) ="
+    end
+
+    # detail that does not start with name should be unchanged
+    let sym = DocumentSymbol(;
+            name="foo", detail="function foo(x)",
+            kind=SymbolKind.Function,
+            range=Range(Position(0,0), Position(0,0)),
+            selectionRange=Range(Position(0,0), Position(0,0)))
+        result = JETLS.strip_name_from_detail(sym)
+        @test result.detail == "function foo(x)"
+    end
+
+    # detail that equals name exactly should become nothing
+    let sym = DocumentSymbol(;
+            name="x", detail="x",
+            kind=SymbolKind.Variable,
+            range=Range(Position(0,0), Position(0,0)),
+            selectionRange=Range(Position(0,0), Position(0,0)))
+        result = JETLS.strip_name_from_detail(sym)
+        @test result.detail === nothing
+    end
+
+    # nothing detail should stay nothing
+    let sym = DocumentSymbol(;
+            name="foo", detail=nothing,
+            kind=SymbolKind.Function,
+            range=Range(Position(0,0), Position(0,0)),
+            selectionRange=Range(Position(0,0), Position(0,0)))
+        result = JETLS.strip_name_from_detail(sym)
+        @test result.detail === nothing
+    end
+
+    # children should be recursively processed
+    let child = DocumentSymbol(;
+            name="x", detail="x::Int",
+            kind=SymbolKind.Field,
+            range=Range(Position(0,0), Position(0,0)),
+            selectionRange=Range(Position(0,0), Position(0,0)))
+        sym = DocumentSymbol(;
+            name="Foo", detail="struct Foo",
+            kind=SymbolKind.Struct,
+            range=Range(Position(0,0), Position(0,0)),
+            selectionRange=Range(Position(0,0), Position(0,0)),
+            children=[child])
+        result = JETLS.strip_name_from_detail(sym)
+        @test result.detail == "struct Foo"
+        @test result.children[1].detail == "::Int"
+    end
+end
+
 end # module test_document_symbol
