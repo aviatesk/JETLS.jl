@@ -61,7 +61,7 @@ the list itself is subject to change.
   - [x] Undefined bindings
   - [x] Non-existent struct fields
   - [x] Out-of-bounds field access by index
-  - [ ] Potential `MethodError`
+  - [x] `MethodError`
   - [x] Configuration support
   - [x] [CLI interface](https://aviatesk.github.io/JETLS.jl/release/cli-check)
 - Completion
