@@ -244,24 +244,6 @@ end # @static if VERSION ≥ v"1.12.2"
 # Analysis injections
 # ===================
 
-# function is_from_kwcall(analyzer, sv)
-#     report_target_modules = @something analyzer.report_target_modules return false
-#     checkbounds(Bool, sv.callstack, sv.parentid) || return false
-#     sv = sv.callstack[sv.parentid]
-#     checkbounds(Bool, sv.callstack, sv.parentid) || return false
-#     sv = sv.callstack[sv.parentid]
-#     mi = CC.frame_instance(sv)
-#     def = mi.def
-#     def isa Method || return false
-#     sig = Base.unwrap_unionall(def.sig)
-#     sig isa DataType || return false
-#     length(sig.parameters) >= 1 || return false
-#     sig.parameters[1] === typeof(Core.kwcall) || return false
-#     checkbounds(Bool, sv.callstack, sv.parentid) || return false
-#     sv = sv.callstack[sv.parentid]
-#     return CC.frame_module(sv) ∈ report_target_modules
-# end
-
 function CC.abstract_call_gf_by_type(
         analyzer::LSAnalyzer, @nospecialize(func), arginfo::CC.ArgInfo, si::CC.StmtInfo,
         @nospecialize(atype), sv::CC.InferenceState, max_methods::Int
