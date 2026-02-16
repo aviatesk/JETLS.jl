@@ -59,6 +59,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   symbol details. (e.g., a symbol named `foo` with detail `foo = func(args...)`
   now shows ` = func(args...)` as the detail.
 
+### Fixed
+
+- Fixed bindings in `let`/`for`/`while` blocks inside nested functions
+  not appearing as children of those functions in the document outline.
+
 ## 2026-02-16
 
 - Commit: [`e141508`](https://github.com/aviatesk/JETLS.jl/commit/e141508)
