@@ -125,7 +125,8 @@ PR_BODY="This PR releases version \`$JETLS_VERSION\`.
 
 ## Checklist
 - [ ] \`release / Test JETLS.jl with release environment\`
-- [ ] \`release / Test jetls executable with release environment\`
+- [ ] \`release / Test jetls serve with release environment\`
+- [ ] \`release / Test jetls check with release environment\`
 
 ## Post-merge
 - The \`releases/$JETLS_VERSION\` branch can be deleted after merging

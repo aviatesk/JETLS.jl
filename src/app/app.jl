@@ -68,3 +68,19 @@ function (@main)(args::Vector{String})::Cint
 
     return run_serve(args)
 end
+
+# HACK: Set `LOAD_PATH` to the same state as during normal Julia script execution.
+# JETLS internally uses `Pkg.activate` on user package environments and may actually load them,
+# so this replacement is necessary.
+macro with_cli_LOAD_PATH(ex)
+    :(let old_LOAD_PATH = copy(LOAD_PATH)
+        try
+            empty!(LOAD_PATH)
+            push!(LOAD_PATH, "@", "@v$(VERSION.major).$(VERSION.minor)", "@stdlib")
+            $(esc(ex))
+        finally
+            empty!(LOAD_PATH)
+            append!(LOAD_PATH, old_LOAD_PATH)
+        end
+    end)
+end

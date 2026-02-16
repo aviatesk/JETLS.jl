@@ -575,18 +575,19 @@ function should_insert_spaces_around_equal(fi::FileInfo, ca::CallArgs)
         JS.kind(kwnode) === JS.K"kw" || continue
         has_equals += 1
         pos = offset_to_xy(fi, JS.first_byte(kwnode))
-        tok = token_at_offset(fi, pos)
+        tok = @something token_at_offset(fi, pos) continue
         while JS.is_whitespace(this(tok))
-            tok = next_tok(tok)
+            tok = @something next_tok(tok) @goto next
         end
         JS.kind(this(tok)) === JS.K"Identifier" || continue
-        tok = next_tok(tok)
+        tok = @something next_tok(tok) continue
         JS.is_whitespace(this(tok)) || continue
-        tok = next_tok(tok)
+        tok = @something next_tok(tok) continue
         JS.is_plain_equals(this(tok)) || continue
-        tok = next_tok(tok)
+        tok = @something next_tok(tok) continue
         JS.is_whitespace(this(tok)) || continue
         has_whitespaces += 1
+        @label next
     end
     return has_whitespaces ≥ has_equals - has_whitespaces
 end

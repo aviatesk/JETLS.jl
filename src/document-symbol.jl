@@ -164,7 +164,7 @@ function extract_function_symbol!(
     JS.numchildren(st0) ≥ 1 || return nothing
     sig = st0[1]
     name, name_node = @something extract_function_name(sig) return nothing
-    children = @somereal extract_scoped_children(st0, fi, mod) Some(nothing)
+    children = @something extract_scoped_children(st0, fi, mod) Some(nothing)
     is_short_form = JS.has_flags(JS.flags(st0), JS.SHORT_FORM_FUNCTION_FLAG)
     detail = is_short_form ? JS.sourcetext(sig) * " =" : "function " * JS.sourcetext(sig)
     push!(symbols, DocumentSymbol(;
@@ -245,7 +245,7 @@ function extract_macro_symbol!(
     end
     name = "@" * name
     detail = "macro " * JS.sourcetext(sig_orig)
-    children = @somereal extract_scoped_children(st0, fi, mod) Some(nothing)
+    children = @something extract_scoped_children(st0, fi, mod) Some(nothing)
     push!(symbols, DocumentSymbol(;
         name,
         detail,
@@ -476,7 +476,8 @@ function extract_toplevel_assignment_symbols!(
     rhs = st0[2]
     range = jsobj_to_range(st0, fi)
     detail = lstrip(JS.sourcetext(st0))
-    extract_assignment_symbols!(symbols, lhs, rhs, range, SymbolKind.Variable, detail, fi, mod)
+    kind = is_anonymous_function_rhs(rhs) ? SymbolKind.Function : SymbolKind.Variable
+    extract_assignment_symbols!(symbols, lhs, rhs, range, kind, detail, fi, mod)
     return nothing
 end
 
@@ -491,7 +492,7 @@ function extract_namespace_symbol!(
         prefix::AbstractString
     )
     JS.numchildren(st0) ≥ 2 || return nothing
-    children = @somereal extract_scoped_children(st0, fi, mod) return nothing
+    children = @something extract_scoped_children(st0, fi, mod) return nothing
     body = st0[end]
     if JS.kind(body) === JS.K"block"
         extract_macrocalls_from_block!(children, body, fi, mod)
@@ -635,7 +636,7 @@ function extract_testset_symbol!(
         body_kind === JS.K"let" ? body[1] : body
 
     push!(symbols, DocumentSymbol(;
-        name = isempty(description) ? " " : description,
+        name = isempty(description) ? "@testset" : ("@testset \"$(description)\""),
         detail = first(split(JS.sourcetext(st0), '\n')),
         kind = SymbolKind.Event,
         range = jsobj_to_range(st0, fi),
@@ -761,12 +762,7 @@ function build_parent_map!(
     return map
 end
 
-function extract_local_symbols_from_scopes(
-        ctx3::JL.VariableAnalysisContext, parent_map::Dict{Tuple{Int,Int},JS.SyntaxTree},
-        fi::FileInfo
-    )
-    scopes = ctx3.scopes
-    isempty(scopes) && return DocumentSymbol[]
+function build_func_to_scopes(ctx3::JL.VariableAnalysisContext)
     func_to_scopes = Dict{Int,Vector{Int}}()
     kwsorter_to_func = Dict{Int,Int}()  # kwsorter bid → main func bid
     for (func_bid, cb) in ctx3.closure_bindings
@@ -794,22 +790,35 @@ function extract_local_symbols_from_scopes(
             append!(func_to_scopes[main_func_bid], func_to_scopes[kwsorter_bid])
         end
     end
+    return func_to_scopes
+end
+
+function extract_local_symbols_from_scopes(
+        ctx3::JL.VariableAnalysisContext, parent_map::Dict{Tuple{Int,Int},JS.SyntaxTree},
+        fi::FileInfo
+    )
+    scopes = ctx3.scopes
+    isempty(scopes) && return nothing
+    func_to_scopes = build_func_to_scopes(ctx3)
     # Nested function scopes (their symbols will be extracted as children of the function binding)
-    nested_func_scope_ids = Set{Int}()
+    func_scope_ids = Set{Int}()
     for scope_ids in values(func_to_scopes)
-        union!(nested_func_scope_ids, scope_ids)
+        union!(func_scope_ids, scope_ids)
     end
-    symbols = DocumentSymbol[]
     top_scope_ids = Int[scope.id for scope in scopes
-        if (scope.id ∉ nested_func_scope_ids &&
+        if (scope.id ∉ func_scope_ids &&
             any(((_, bid),) -> is_any_local_binding(JL.get_binding(ctx3, bid)), scope.vars))]
-    extract_local_scope_bindings!(symbols, ctx3, parent_map, top_scope_ids, func_to_scopes, fi)
-    return symbols
+    return extract_local_scope_bindings(ctx3, parent_map, top_scope_ids, func_to_scopes, fi)
 end
 
 is_any_local_binding(binfo::JL.BindingInfo) =
     binfo.kind === :local || binfo.kind === :argument || binfo.kind === :static_parameter
 
+function extract_local_scope_bindings(args...)
+    symbols = DocumentSymbol[]
+    extract_local_scope_bindings!(symbols, args...)
+    return symbols
+end
 function extract_local_scope_bindings!(symbols::Vector{DocumentSymbol},
         ctx3::JL.VariableAnalysisContext, parent_map::Dict{Tuple{Int,Int},JS.SyntaxTree},
         scope_ids::Vector{Int}, func_to_scopes::Dict{Int,Vector{Int}}, fi::FileInfo
@@ -860,6 +869,7 @@ function extract_local_scope_bindings!(symbols::Vector{DocumentSymbol},
             range = jsobj_to_range(source_node, fi)
             selectionRange = range
             detail = nothing
+            anon_scope_ids = nothing
             is_func = haskey(func_to_scopes, bid)
             if is_func
                 kind = SymbolKind.Function
@@ -893,15 +903,24 @@ function extract_local_scope_bindings!(symbols::Vector{DocumentSymbol},
                     # that this is different from :local bindings
                     kind = SymbolKind.Object
                 else
-                    detail = extract_local_variable_detail(parent_map, fb, lb)
-                    kind = SymbolKind.Variable
+                    anon_scope_ids = find_anon_func_scope_ids(parent_map, fb, lb, func_to_scopes, ctx3)
+                    if anon_scope_ids !== nothing
+                        kind = SymbolKind.Function
+                        parent = get(parent_map, (fb, lb), nothing)
+                        detail = !isnothing(parent) ? lstrip(JS.sourcetext(parent)) : nothing
+                    else
+                        kind = SymbolKind.Variable
+                        detail = extract_local_variable_detail(parent_map, fb, lb)
+                    end
                 end
             end
             children_symbols = nothing
             if is_func
-                children_symbols = DocumentSymbol[]
-                extract_local_scope_bindings!(children_symbols, ctx3, parent_map,
-                    func_to_scopes[bid], func_to_scopes, fi)
+                children_symbols = extract_local_scope_bindings(
+                    ctx3, parent_map, func_to_scopes[bid], func_to_scopes, fi)
+            elseif anon_scope_ids !== nothing
+                children_symbols = extract_local_scope_bindings(
+                    ctx3, parent_map, anon_scope_ids, func_to_scopes, fi)
             end
             push!(symbols, DocumentSymbol(;
                 name = binfo.name,
@@ -956,7 +975,7 @@ function extract_local_variable_detail(
     end
     # Handle assignment: `x = value`
     if !isnothing(parent) && JS.kind(parent) === JS.K"="
-        detail = lstrip(JS.sourcetext(parent))
+        detail = strip(first(split(JS.sourcetext(parent), '\n')))
         fb, lb = JS.first_byte(parent), JS.last_byte(parent)
         parent = get(parent_map, (fb, lb), nothing)
     end
@@ -971,4 +990,33 @@ function extract_local_variable_detail(
         detail = lstrip(JS.sourcetext(parent))
     end
     return detail
+end
+
+is_anonymous_function_rhs(st::JS.SyntaxTree) = JS.kind(st) === JS.K"->" ||
+    (JS.kind(st) === JS.K"function" && JS.numchildren(st) ≥ 1 && JS.kind(st[1]) !== JS.K"call")
+
+function find_anon_func_scope_ids(
+        parent_map::Dict{Tuple{Int,Int},JS.SyntaxTree}, fb::Int, lb::Int,
+        func_to_scopes::Dict{Int,Vector{Int}}, ctx3::JL.VariableAnalysisContext
+    )
+    parent = @something get(parent_map, (fb, lb), nothing) return nothing
+    JS.kind(parent) === JS.K"=" || return nothing
+    JS.numchildren(parent) ≥ 2 || return nothing
+    rhs = parent[2]
+    is_anonymous_function_rhs(rhs) || return nothing
+    anon_body = rhs[JS.numchildren(rhs)]
+    anon_fb, anon_lb = JS.first_byte(anon_body), JS.last_byte(anon_body)
+    graph = JS.syntax_graph(ctx3)
+    for (func_bid, scope_ids) in func_to_scopes
+        binfo = JL.get_binding(ctx3, func_bid)
+        binfo.is_internal || continue
+        for scope_id in scope_ids
+            1 ≤ scope_id ≤ length(ctx3.scopes) || continue
+            scope_node = JS.SyntaxTree(graph, ctx3.scopes[scope_id].node_id)
+            if JS.first_byte(scope_node) == anon_fb && JS.last_byte(scope_node) == anon_lb
+                return scope_ids
+            end
+        end
+    end
+    return nothing
 end

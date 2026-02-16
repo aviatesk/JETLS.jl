@@ -1,0 +1,102 @@
+name: Bug report
+description: Report a bug in JETLS
+labels: ["bug"]
+body:
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Pre-submission checklist
+      options:
+        - label: I have searched [existing issues](https://github.com/aviatesk/JETLS.jl/issues) and confirmed this is not a duplicate.
+          required: true
+
+  - type: textarea
+    id: client
+    attributes:
+      label: Client
+      description: |
+        The editor and LSP client you are using (e.g., VSCode with jetls-client, Neovim, Zed, etc.).
+        If a link to the client implementation is available, please include it
+        (e.g., `https://github.com/aviatesk/JETLS.jl/tree/master/jetls-client#jetls-client`).
+      placeholder: "VSCode with jetls-client v0.x.x"
+    validations:
+      required: true
+
+  - type: textarea
+    id: julia-versioninfo
+    attributes:
+      label: Julia `versioninfo()`
+      description: Output of `InteractiveUtils.versioninfo()` for the Julia executable used to run JETLS.
+      placeholder: |
+        Julia Version 1.12.x
+        Commit xxxxxxxxxx (YYYY-MM-DD HH:MM UTC)
+        Build Info:
+          ...
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: jetls-version
+    attributes:
+      label: JETLS version
+      description: |
+        Output of `jetls --version`.
+        If using a local JETLS checkout, provide the commit hash (`git rev-parse HEAD`).
+      placeholder: "YYYY-MM-DD (or commit hash for local checkout)"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: vscode-reproduction
+    attributes:
+      label: Reproduction with the VSCode reference client
+      description: |
+        To help distinguish between client-side and server-side issues, please check whether the problem
+        also occurs with the [VSCode reference client](https://github.com/aviatesk/JETLS.jl/tree/master/jetls-client#jetls-client)
+        (see [installation instructions](https://github.com/aviatesk/JETLS.jl/tree/master/jetls-client#installation)).
+      options:
+        - label: I have confirmed this issue also reproduces with the VSCode reference client.
+        - label: This issue does NOT reproduce with the VSCode reference client, but I believe JETLS-side changes are needed.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Describe the bug. What happened, and what did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: |
+        Please provide the minimal Julia code and steps to reproduce the issue.
+        Include which LSP feature is involved (e.g., completions, hover, diagnostics, formatting).
+      placeholder: |
+        1. Open the following Julia file:
+        ```julia
+        # minimal code here
+        ```
+        2. Trigger [LSP feature] by ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: configuration
+    attributes:
+      label: JETLS configuration (if applicable)
+      description: |
+        If you have custom JETLS settings, please paste them here.
+        This may be from LSP client settings or a `.JETLSConfig.toml` file.
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context (optional)
+      description: |
+        Any other information that might help diagnose the issue.
+        For example, server logs can be very helpful. You can enable verbose logging via
+        [`JETLS_DEV_MODE`](https://github.com/aviatesk/JETLS.jl/blob/master/DEVELOPMENT.md#jetls_dev_mode).

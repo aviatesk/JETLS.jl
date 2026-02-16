@@ -19,7 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`9c00dfe...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/9c00dfe...HEAD)
+- Diff: [`150f880...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/150f880...HEAD)
 
 ### Announcement
 
@@ -44,6 +44,64 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > might work, but most LSP features will be unfunctional.
 > Note that `analysis_overrides` is provided as a temporary workaround and may
 > be removed or changed at any time. A proper fix is being worked on.
+
+### Added
+
+- Anonymous function assignments (`f = (x) -> x + 1` and
+  `clos = function (y) ... end`) are now analyzed as `Function` symbols
+  for `textDocument/documentSymbol`, with their arguments as children.
+
+### Changed
+
+- Enabled signature analysis for all analysis modes. Previously, signature
+  analysis was only active in the package source analysis, meaning some
+  potential errors within standalone scripts can be missed.
+  This change ensures that diagnostics like `inference/field-error`
+  can be detected from methods within standalone scripts.
+  (Fixed https://github.com/aviatesk/JETLS.jl/issues/479).
+
+### Fixed
+
+- Fixed `jetls check` failing to correctly activate user package environments
+  during full analysis.
+
+- Fixed `jetls check` resolving file path arguments relative to the current
+  working directory instead of the `--root` directory when `--root` is specified.
+  For example, `jetls check --root=/path/to/Pkg src/Pkg.jl` now correctly
+  resolves to `/path/to/Pkg/src/Pkg.jl`.
+
+- Fixed false positive `lowering/unused-import` diagnostics for symbols
+  in a package file but used in `include`d files
+  (Fixed https://github.com/aviatesk/JETLS.jl/issues/547).
+
+- Fixed rename/document-highlight/references failing for `@kwdef` structs with
+  default values (Fixed https://github.com/aviatesk/JETLS.jl/issues/540).
+
+- Fixed duplicate syntax error diagnostics by skipping `ParseErrorReport` from
+  full-analysis, since syntax errors are already reported via
+  `textDocument/diagnostic` or `workspace/diagnostic`
+  (Fixed https://github.com/aviatesk/JETLS.jl/issues/535).
+
+- Fixed false positive unused argument diagnostic for keyword arguments whose
+  type annotation constrains a `where`-clause static parameter that is used in
+  the function body (e.g., `f(; dtype::Type{T}=Float32) where {T} = T.(xs)`)
+  (Fixed https://github.com/aviatesk/JETLS.jl/issues/481).
+
+- Fixed various type instabilities across the codebase caught by the new
+  `inference/method-error` diagnostic running on JETLS itself.
+
+### Other
+
+- Added GitHub issue templates for bug reports and feature requests.
+
+## 2026-02-11
+
+- Commit: [`150f880`](https://github.com/aviatesk/JETLS.jl/commit/150f880)
+- Diff: [`9c00dfe...150f880`](https://github.com/aviatesk/JETLS.jl/compare/9c00dfe...150f880)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-02-11")'
+  ```
 
 ### Added
 

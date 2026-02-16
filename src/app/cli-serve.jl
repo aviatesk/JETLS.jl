@@ -62,7 +62,7 @@ function run_serve(args::Vector{String})::Cint
                 return Cint(1)
             end
         elseif (m = match(r"^--socket=(\d+)$", arg); !isnothing(m))
-            socket_port = tryparse(Int, m.captures[1])
+            socket_port = tryparse(Int, m.captures[1]::AbstractString)
             @label check_socket_port
             if isnothing(socket_port)
                 @error "Invalid port number for --socket (must be a valid integer)"
@@ -78,7 +78,7 @@ function run_serve(args::Vector{String})::Cint
                 return Cint(1)
             end
         elseif (m = match(r"^--clientProcessId=(\d+)$", arg); !isnothing(m))
-            client_process_id = tryparse(Int, m.captures[1])
+            client_process_id = tryparse(Int, m.captures[1]::AbstractString)
             @label check_client_process_id
             if isnothing(client_process_id)
                 @error "Invalid process ID for --clientProcessId (must be a valid integer)"
@@ -141,14 +141,7 @@ function run_serve(args::Vector{String})::Cint
 
     show_setup_info("Running JETLS with the following setup:")
 
-    old_LOAD_PATH = copy(LOAD_PATH)
-    try
-        # HACK: Set `LOAD_PATH` to the same state as during normal Julia script execution.
-        # JETLS internally uses `Pkg.activate` on user package environments and may actually load them,
-        # so this replacement is necessary.
-        empty!(LOAD_PATH)
-        push!(LOAD_PATH, "@", "@v$(VERSION.major).$(VERSION.minor)", "@stdlib")
-
+    @with_cli_LOAD_PATH begin
         if JETLS_DEV_MODE
             global currently_running
             currently_running = server = Server(endpoint) do s::Symbol, x
@@ -171,7 +164,5 @@ function run_serve(args::Vector{String})::Cint
         exit_code = fetch(runserver_task)
         @info "JETLS server stopped" exit_code
         return exit_code
-    finally
-        append!(LOAD_PATH, old_LOAD_PATH)
     end
 end

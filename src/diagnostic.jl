@@ -332,7 +332,7 @@ function jet_result_to_diagnostics!(uri2diagnostics::URI2Diagnostics, result::JE
             # with more precise location information
             continue
         end
-        diagnostic = jet_toplevel_error_report_to_diagnostic(report, postprocessor)
+        diagnostic = @something jet_toplevel_error_report_to_diagnostic(report, postprocessor) continue
         filename = report.file
         filename === :none && continue
         if startswith(filename, "Untitled")
@@ -353,11 +353,7 @@ end
 function jet_toplevel_error_report_to_diagnostic(
         @nospecialize(report::JET.ToplevelErrorReport), postprocessor::JET.PostProcessor
     )
-    if report isa JET.ParseErrorReport
-        # TODO: Pass correct encoding here
-        fi = FileInfo(#=version=#0, report.source.code, JS.filename(report.source), PositionEncodingKind.UTF16)
-        return jsdiag_to_lspdiag(report.diagnostic, fi)
-    end
+    report isa JET.ParseErrorReport && return nothing # Syntax errors should be reported via `textDocument/diagnostic` or `workspace/diangostic`
     message = JET.with_bufferring(:limit=>true) do io
         JET.print_report(io, report)
     end |> postprocessor
@@ -583,11 +579,66 @@ struct LoweringDiagnosticKey
     name::String
 end
 
+# Compute a mapping from source locations to the set of identifier names found in keyword
+# argument type annotations.
+function compute_kwarg_type_annotation_names(st0::JS.SyntaxTree)
+    result = Dict{Tuple{Int,Int},Set{String}}()
+    traverse(st0) do node
+        JS.kind(node) === JS.K"kw" || return
+        JS.numchildren(node) >= 1 || return traversal_no_recurse
+        child = node[1]
+        if JS.kind(child) === JS.K"::" && JS.numchildren(child) >= 2
+            names = Set{String}()
+            collect_identifier_names!(names, child[2])
+            if !isempty(names)
+                result[JS.source_location(child)] = names
+            end
+        end
+        return traversal_no_recurse
+    end
+    return result
+end
+
+function collect_identifier_names!(names::Set{String}, st::JS.SyntaxTree)
+    if JS.kind(st) === JS.K"Identifier"
+        name = get(st, :name_val, nothing)
+        if name !== nothing
+            push!(names, name::String)
+        end
+        return
+    end
+    for i = 1:JS.numchildren(st)
+        collect_identifier_names!(names, st[i])
+    end
+end
+
+# Check if a keyword argument's type annotation constrains a `where`-clause static parameter
+# that is actually used in the function body.
+# For example, in `f(; dtype::Type{T}=Float32) where {T} = T.(xs)`, `dtype` is not directly
+# used in the body but it constrains `T` which is used, so `dtype` should not be reported.
+# NOTE: This exception is only for keyword arguments. Positional arguments can be replaced with
+# `_::Type{T}` or `::Type{T}` to suppress the unused warning.
+function is_kwarg_constraining_used_sparam(
+        kwarg_type_names::Dict{Tuple{Int,Int},Set{String}},
+        prov_loc::Tuple{Int,Int},
+        ctx3::JL.VariableAnalysisContext
+    )
+    names = @something get(kwarg_type_names, prov_loc, nothing) return false
+    for binfo in ctx3.bindings.info
+        binfo.kind === :static_parameter || continue
+        binfo.is_read || continue
+        binfo.name in names && return true
+    end
+    return false
+end
+
 function analyze_unused_bindings!(
         diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::JS.SyntaxTree, ctx3::JL.VariableAnalysisContext,
-        binding_occurrences, ismacro, reported::Set{LoweringDiagnosticKey};
+        binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence{Tree3}}},
+        ismacro::Base.RefValue{Bool}, reported::Set{LoweringDiagnosticKey},
+        kwarg_type_names::Dict{Tuple{Int,Int},Set{String}};
         allow_unused_underscore::Bool
-    )
+    ) where Tree3<:JS.SyntaxTree
     for (binfo, occurrences) in binding_occurrences
         bk = binfo.kind
         bk === :global && continue
@@ -604,6 +655,12 @@ function analyze_unused_bindings!(
         provs = JS.flattened_provenance(JL.binding_ex(ctx3, binfo.id))
         is_from_user_ast(provs) || continue
         prov = last(provs)
+        if bk === :argument
+            prov_loc = JS.source_location(prov)
+            if is_kwarg_constraining_used_sparam(kwarg_type_names, prov_loc, ctx3)
+                continue
+            end
+        end
         range = jsobj_to_range(prov, fi)
         key = LoweringDiagnosticKey(range, bk, bn)
         key in reported ? continue : push!(reported, key)
@@ -640,10 +697,11 @@ end
 #   full-analysis reports.
 function analyze_undefined_global_bindings!(
         diagnostics::Vector{Diagnostic}, fi::FileInfo, ctx3::JL.VariableAnalysisContext,
-        binding_occurrences, reported::Set{LoweringDiagnosticKey};
+        binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence{Tree3}}},
+        reported::Set{LoweringDiagnosticKey};
         analyzer::Union{Nothing,LSAnalyzer} = nothing,
         postprocessor::LSPostProcessor = LSPostProcessor()
-    )
+    ) where Tree3<:JS.SyntaxTree
     world = Base.get_world_counter()
     for (binfo, occurrences) in binding_occurrences
         bk = binfo.kind
@@ -651,9 +709,11 @@ function analyze_undefined_global_bindings!(
         binfo.is_internal && continue
         startswith(binfo.name, '#') && continue
         any(o->o.kind===:def, occurrences) && continue
-        Base.invoke_in_world(world, isdefinedglobal, binfo.mod, Symbol(binfo.name))::Bool && continue
+        mod = binfo.mod
+        isnothing(mod) && continue
+        Base.invoke_in_world(world, isdefinedglobal, mod, Symbol(binfo.name))::Bool && continue
         if !isnothing(analyzer)
-            bp = Base.lookup_binding_partition(world, GlobalRef(binfo.mod, Symbol(binfo.name)))
+            bp = Base.lookup_binding_partition(world, GlobalRef(mod, Symbol(binfo.name)))
             haskey(JET.AnalyzerState(analyzer).binding_states, bp) && continue
         end
         bn = binfo.name
@@ -666,7 +726,7 @@ function analyze_undefined_global_bindings!(
         push!(diagnostics, Diagnostic(;
             range,
             severity = DiagnosticSeverity.Warning,
-            message = postprocessor("`$(binfo.mod).$(binfo.name)` is not defined"),
+            message = postprocessor("`$(mod).$(binfo.name)` is not defined"),
             source = DIAGNOSTIC_SOURCE_LIVE,
             code,
             codeDescription = diagnostic_code_description(code)))
@@ -972,8 +1032,11 @@ function analyze_lowered_code!(
     ismacro = Ref(false)
     binding_occurrences = compute_binding_occurrences(ctx3, st3; ismacro, include_global_bindings=true)
     reported = Set{LoweringDiagnosticKey}() # to prevent duplicate reports for unused default or keyword arguments
+    kwarg_type_names = compute_kwarg_type_annotation_names(st0)
 
-    analyze_unused_bindings!(diagnostics, fi, st0, ctx3, binding_occurrences, ismacro, reported; allow_unused_underscore)
+    analyze_unused_bindings!(
+        diagnostics, fi, st0, ctx3, binding_occurrences, ismacro, reported, kwarg_type_names;
+        allow_unused_underscore)
 
     skip_analysis_requiring_context ||
         analyze_undefined_global_bindings!(diagnostics, fi, ctx3, binding_occurrences, reported; analyzer, postprocessor)
@@ -1104,7 +1167,7 @@ function analyze_unused_imports!(
         time_binding_occurrences += @elapsed iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
             binding_occurrences = @something get_binding_occurrences!(
                 state, search_uri, search_fi, st0; include_global_bindings = true) return
-            mod = get_context_module(state, uri, offset_to_xy(fi, JS.first_byte(st0)))
+            mod = get_context_module(state, search_uri, offset_to_xy(search_fi, JS.first_byte(st0)))
             for (binfo_key, occurrences) in binding_occurrences
                 binfo_key.kind === :global || continue
                 if any(o -> o.kind === :use, occurrences)
@@ -1119,7 +1182,7 @@ function analyze_unused_imports!(
             kind = JS.kind(st0)
             if kind === JS.K"export" || kind === JS.K"public"
                 # `using .Inner: foo; export foo` - foo is used via re-export
-                mod = get_context_module(state, uri, offset_to_xy(fi, JS.first_byte(st0)))
+                mod = get_context_module(state, search_uri, offset_to_xy(search_fi, JS.first_byte(st0)))
                 for i = 1:JS.numchildren(st0)
                     child = st0[i]
                     if JS.kind(child) === JS.K"Identifier"

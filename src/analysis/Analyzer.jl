@@ -7,7 +7,7 @@ using Core.IR
 using JET.JETInterface
 using JET: CC, JET
 
-using ..JETLS: AnalysisEntry, JETLS
+using ..JETLS: AnalysisEntry
 using ..LSP
 
 # JETLS internal interface
@@ -70,6 +70,10 @@ struct LSAnalyzer <: ToplevelAbstractAnalyzer
     end
 end
 
+const incremental_initial_hash = rand(UInt)
+const global_mode_hash = rand(UInt)
+const lagacy_mode_hash = rand(UInt)
+
 """
     LSAnalyzer(entry::AnalysisEntry, state::AnalyzerState; report_target_modules=missing)
         -> analyzer::LSAnalyzer
@@ -89,20 +93,26 @@ function LSAnalyzer(
         report_target_modules = missing
     )
     # N.B. Separate the cache by the identity of `report_target_modules`.
-    # The case `report_target_modules === missing` is a special case.
-    # In this case, `report_target_modules` is tracked incrementally using `reset_report_target_modules!`,
-    # but this is only used by the legacy analysis mode, and in that mode,
-    # analysis is performed by creating anonymous modules that essentially represent the same module,
-    # so there is no need to separate the cache by the identity of those anonymous modules
-    report_target_modules_hash = objectid(report_target_modules)
+    if report_target_modules === missing
+        report_target_modules = Set{Module}()
+        # The case `report_target_modules === missing` is a special case.
+        # In this case, `report_target_modules` is tracked incrementally using `reset_report_target_modules!`,
+        # but this is only used by the legacy analysis mode, and in that mode,
+        # analysis is performed by creating anonymous modules that essentially represent the same module,
+        # so there is no need to separate the cache by the identity of those anonymous modules
+        report_target_modules_hash = lagacy_mode_hash
+    elseif report_target_modules === nothing
+        report_target_modules_hash = global_mode_hash
+    else
+        report_target_modules = Set{Module}(report_target_modules)
+        report_target_modules_hash = incremental_initial_hash
+        for mod in sort(collect(report_target_modules); by=objectid)
+            report_target_modules_hash = hash(mod, report_target_modules_hash)
+        end
+    end
     invariable_analysis_hash = JET.compute_hash(entry, report_target_modules_hash)
     analysis_cache_key = JET.compute_hash(state.inf_params, invariable_analysis_hash)
     analysis_token = @lock LS_ANALYZER_CACHE_LOCK get!(AnalysisToken, LS_ANALYZER_CACHE, analysis_cache_key)
-    if report_target_modules === missing
-        report_target_modules = Set{Module}()
-    elseif report_target_modules !== nothing
-        report_target_modules = Set{Module}(report_target_modules)
-    end
     return LSAnalyzer(state, analysis_token, report_target_modules, invariable_analysis_hash)
 end
 

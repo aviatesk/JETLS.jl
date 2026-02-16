@@ -304,6 +304,8 @@ function get_context_info(state::ServerState, uri::URI, pos::Position; lookup_fu
 end
 
 get_context_module(::Nothing, ::URI, ::Position) = Main
+# Use `@something` instead of `something` due to https://github.com/JuliaLang/julia/pull/60857
+# `something` can be used after 1.12.5
 get_context_module(oos::OutOfScope, ::URI, ::Position) = something(oos.module_context, Main)
 function get_context_module(analysis_result::AnalysisResult, uri::URI, pos::Position)
     safi = @something analyzed_file_info(analysis_result, uri) return Main
