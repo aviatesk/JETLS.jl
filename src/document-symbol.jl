@@ -47,10 +47,21 @@ function handle_DocumentSymbolRequest(
     end
     fi = result
     symbols = get_document_symbols!(state, uri, fi)
-    return send(server,
-        DocumentSymbolResponse(;
-            id = msg.id,
-            result = @somereal symbols null))
+    result = isempty(symbols) ? null : map(strip_name_from_detail, symbols)
+    return send(server, DocumentSymbolResponse(; id = msg.id, result))
+end
+
+function strip_name_from_detail(sym::DocumentSymbol)
+    detail = sym.detail
+    if detail !== nothing && startswith(detail, sym.name)
+        rest = lstrip(detail[ncodeunits(sym.name)+1:end])
+        detail = isempty(rest) ? nothing : String(rest)
+    end
+    children = sym.children
+    if children !== nothing
+        children = map(strip_name_from_detail, children)
+    end
+    return DocumentSymbol(sym; detail, children)
 end
 
 function get_document_symbols!(state::ServerState, uri::URI, fi::FileInfo)
