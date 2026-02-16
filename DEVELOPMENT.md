@@ -11,7 +11,7 @@ which has been organized to be easily recognized by AI agents.
 During development, you can run JETLS directly from your local checkout using
 Julia's `-m` (module run) flag:
 ```bash
-julia --startup-file=no --project=/path/to/JETLS -m JETLS
+julia --startup-file=no --project=/path/to/JETLS -m JETLS serve
 ```
 
 This is useful for testing changes without installing the `jetls` executable.
@@ -476,7 +476,8 @@ To use a local JETLS.jl checkout with the development extension (see
     "--history-file=no",
     "--project=/path/to/JETLS",
     "-m",
-    "JETLS"
+    "JETLS",
+    "serve"
   ]
 }
 ```
