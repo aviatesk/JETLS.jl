@@ -8,7 +8,7 @@ const JETLS_VERSION = let
 end
 
 const __init__hooks__ = Any[]
-push_init_hooks!(hook) = push!(__init__hooks__, hook)
+push_init_hook!(hook) = push!(__init__hooks__, hook)
 function __init__()
     foreach(hook->hook(), __init__hooks__)
 end

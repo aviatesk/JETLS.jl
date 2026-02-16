@@ -826,7 +826,7 @@ function infer_frame!(interp::CC.NativeInterpreter, frame::CC.InferenceState)
 end
 
 const RT_INF_WORLD = Ref{UInt}(typemax(UInt))
-push_init_hooks!() do
+push_init_hook!() do
     RT_INF_WORLD[] = Base.get_world_counter()
 end
 
