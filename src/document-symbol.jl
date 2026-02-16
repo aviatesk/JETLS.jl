@@ -811,15 +811,49 @@ function extract_local_symbols_from_scopes(
     scopes = ctx3.scopes
     isempty(scopes) && return nothing
     func_to_scopes = build_func_to_scopes(ctx3)
-    # Nested function scopes (their symbols will be extracted as children of the function binding)
+    # Collect all scopes belonging to nested functions, including their
+    # descendant non-function scopes (e.g., `let`/`for` blocks inside them)
+    func_scope_ids = get_func_scope_ids(func_to_scopes)
+    excluded_scope_ids = collect_descendant_scope_ids!(
+        copy(func_scope_ids), scopes, func_scope_ids)
+    top_scope_ids = Int[scope.id for scope in scopes
+        if (scope.id ∉ excluded_scope_ids &&
+            any(((_, bid),) -> is_any_local_binding(JL.get_binding(ctx3, bid)), scope.vars))]
+    return extract_local_scope_bindings(
+        ctx3, parent_map, top_scope_ids, func_to_scopes, func_scope_ids, fi)
+end
+
+function get_func_scope_ids(func_to_scopes::Dict{Int,Vector{Int}})
     func_scope_ids = Set{Int}()
     for scope_ids in values(func_to_scopes)
         union!(func_scope_ids, scope_ids)
     end
-    top_scope_ids = Int[scope.id for scope in scopes
-        if (scope.id ∉ func_scope_ids &&
-            any(((_, bid),) -> is_any_local_binding(JL.get_binding(ctx3, bid)), scope.vars))]
-    return extract_local_scope_bindings(ctx3, parent_map, top_scope_ids, func_to_scopes, fi)
+    return func_scope_ids
+end
+
+# Collect descendant scope IDs of `seed_ids` by walking `parent_id` chains.
+# `func_scope_ids` acts as a barrier: the walk stops at function scope
+# boundaries so that descendants of other functions are not included.
+function collect_descendant_scope_ids!(
+        seed_ids::Union{Set{Int},Vector{Int}}, scopes::Vector{JL.ScopeInfo},
+        func_scope_ids::Set{Int}
+    )
+    for scope in scopes
+        scope.id in seed_ids && continue
+        scope.id in func_scope_ids && continue
+        # Walk parent chain to check if this scope is a descendant
+        pid = scope.parent_id
+        while pid != 0
+            if pid in seed_ids
+                push!(seed_ids, scope.id)
+                break
+            end
+            pid in func_scope_ids && break
+            1 ≤ pid ≤ length(scopes) || break
+            pid = scopes[pid].parent_id
+        end
+    end
+    return seed_ids
 end
 
 is_any_local_binding(binfo::JL.BindingInfo) =
@@ -832,7 +866,8 @@ function extract_local_scope_bindings(args...)
 end
 function extract_local_scope_bindings!(symbols::Vector{DocumentSymbol},
         ctx3::JL.VariableAnalysisContext, parent_map::Dict{Tuple{Int,Int},JS.SyntaxTree},
-        scope_ids::Vector{Int}, func_to_scopes::Dict{Int,Vector{Int}}, fi::FileInfo
+        scope_ids::Vector{Int}, func_to_scopes::Dict{Int,Vector{Int}},
+        func_scope_ids::Set{Int}, fi::FileInfo
     )
     # Collect static parameter names to avoid showing duplicate local variable references
     static_param_names = Set{String}()
@@ -927,11 +962,17 @@ function extract_local_scope_bindings!(symbols::Vector{DocumentSymbol},
             end
             children_symbols = nothing
             if is_func
+                child_scope_ids = collect_descendant_scope_ids!(
+                    copy(func_to_scopes[bid]), ctx3.scopes, func_scope_ids)
                 children_symbols = extract_local_scope_bindings(
-                    ctx3, parent_map, func_to_scopes[bid], func_to_scopes, fi)
+                    ctx3, parent_map, child_scope_ids, func_to_scopes,
+                    func_scope_ids, fi)
             elseif anon_scope_ids !== nothing
+                child_scope_ids = collect_descendant_scope_ids!(
+                    copy(anon_scope_ids), ctx3.scopes, func_scope_ids)
                 children_symbols = extract_local_scope_bindings(
-                    ctx3, parent_map, anon_scope_ids, func_to_scopes, fi)
+                    ctx3, parent_map, child_scope_ids, func_to_scopes,
+                    func_scope_ids, fi)
             end
             push!(symbols, DocumentSymbol(;
                 name = binfo.name,

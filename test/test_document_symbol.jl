@@ -840,6 +840,69 @@ end
         end
     end
 
+    @testset "descendant scopes within nested function" begin
+        # let block inside named function
+        let code = """
+            function outer(x)
+                function inner(y)
+                    let
+                        z = y + 1
+                    end
+                end
+            end
+            """
+            fi = make_file_info(code)
+            st0 = JETLS.build_syntax_tree(fi)
+            symbols = JETLS.extract_document_symbols(st0, fi)
+            children = symbols[1].children
+            inner_sym = only(filter(c -> c.name == "inner", children))
+            @test any(c -> c.name == "y", inner_sym.children)
+            @test any(c -> c.name == "z", inner_sym.children)
+            # z should NOT appear as a child of outer
+            @test !any(c -> c.name == "z", children)
+        end
+
+        # for loop inside named function
+        let code = """
+            function outer()
+                function inner(xs)
+                    for x in xs
+                        y = x + 1
+                    end
+                end
+            end
+            """
+            fi = make_file_info(code)
+            st0 = JETLS.build_syntax_tree(fi)
+            symbols = JETLS.extract_document_symbols(st0, fi)
+            children = symbols[1].children
+            inner_sym = only(filter(c -> c.name == "inner", children))
+            @test any(c -> c.name == "x", inner_sym.children)
+            @test any(c -> c.name == "y", inner_sym.children)
+        end
+
+        # let block inside arrow function
+        let code = """
+            function outer(x)
+                f = (y) -> let
+                    z = y + 1
+                    z
+                end
+                return f(x)
+            end
+            """
+            fi = make_file_info(code)
+            st0 = JETLS.build_syntax_tree(fi)
+            symbols = JETLS.extract_document_symbols(st0, fi)
+            children = symbols[1].children
+            f_sym = only(filter(c -> c.name == "f", children))
+            @test f_sym.kind == SymbolKind.Function
+            @test any(c -> c.name == "y", f_sym.children)
+            @test any(c -> c.name == "z", f_sym.children)
+            @test !any(c -> c.name == "z", children)
+        end
+    end
+
     @testset "arrow function assignment" begin
         # arrow function within local scope
         let code = """
