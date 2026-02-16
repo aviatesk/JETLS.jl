@@ -45,6 +45,12 @@ match_by = "message"
 match_type = "literal"
 severity = "info"
 path = "src/analysis/Analyzer.jl"
+[[diagnostic.patterns]]
+pattern = "Invalid function name"
+match_by = "message"
+match_type = "literal"
+severity = "info"
+path = "LSP/src/URIs2/URIs2.jl"
 [[diagnostic.patterns]] # https://github.com/aviatesk/JETLS.jl/issues/480
 pattern = "lowering/unused-argument"
 match_by = "code"

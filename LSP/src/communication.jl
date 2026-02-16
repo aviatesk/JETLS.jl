@@ -1,5 +1,3 @@
-using JSON3: JSON3
-
 """
     Endpoint
 
@@ -108,19 +106,17 @@ function read_transport_layer(io::IO)
     return String(read(io, message_length))
 end
 
-const Parsed = @NamedTuple{method::Union{Nothing,String}}
-
 function to_lsp_object(msg_str::AbstractString)
-    parsed = JSON3.read(msg_str, Parsed)
-    parsed_method = parsed.method
-    if parsed_method !== nothing
-        if haskey(method_dispatcher, parsed_method)
-            return JSON3.read(msg_str, method_dispatcher[parsed_method])
+    lazyjson = JSON.lazy(msg_str)
+    if hasproperty(lazyjson, :method)
+        method = lazyjson.method[]
+        if method isa String && haskey(method_dispatcher, method)
+            return JSON.parse(lazyjson, method_dispatcher[method])
         end
-        return JSON3.read(msg_str, Dict{Symbol,Any})
+        return JSON.parse(lazyjson, Dict{Symbol,Any})
     end
     # TODO Parse response message?
-    return JSON3.read(msg_str, Dict{Symbol,Any})
+    return JSON.parse(lazyjson, Dict{Symbol,Any})
 end
 
 writelsp(io::IO, @nospecialize msg) = write_transport_layer(io, to_lsp_json(msg))
@@ -134,7 +130,7 @@ function write_transport_layer(io::IO, response::String)
     return n
 end
 
-to_lsp_json(@nospecialize msg) = JSON3.write(msg)
+to_lsp_json(@nospecialize msg) = JSON.json(msg; omit_null=true)
 
 function Base.close(endpoint::Endpoint)
     flush(endpoint)
