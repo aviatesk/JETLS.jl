@@ -1,11 +1,11 @@
-# Formatting
+# [Formatter integration](@id formatting)
 
 JETLS provides document formatting support through integration with external
 formatting tools. By default, [Runic.jl](https://github.com/fredrikekre/Runic.jl)
 is used, but you can configure alternative formatters or use custom formatting
 executables.
 
-## Features
+## [Features](@id formatting/features)
 
 - **Document formatting**: Format entire Julia files
 - **Range formatting**: Format selected code regions (Runic and custom
@@ -13,7 +13,7 @@ executables.
 - **Progress notifications**: Visual feedback during formatting operations
   for clients that support work done progress
 
-## Prerequisites
+## [Prerequisites](@id formatting/prerequisites)
 
 JETLS supports preset formatters as well as custom formatting executables.
 For preset formatters, install your preferred formatter and ensure it's
@@ -36,15 +36,15 @@ See <https://pkgdocs.julialang.org/dev/apps/> for the details.
 
 For custom formatters, no installation is required—simply configure the path
 to your executable in `.JETLSConfig.toml` (see the
-[custom formatter](#custom-formatter) section below).
+[custom formatter](#formatting/configuration/custom) section below).
 
-## Formatter configuration
+## [Formatter configuration](@id formatting/configuration)
 
 Configure the formatter using either a `.JETLSConfig.toml` file in your project
 root or via LSP configuration (see [How to configure JETLS](@ref) for details).
 The configuration supports three options:
 
-### Preset `"Runic"` (default)
+### [Preset `"Runic"` (default)](@id formatting/configuration/runic)
 
 ```toml
 formatter = "Runic"
@@ -56,7 +56,7 @@ formatting.
 This is the default setting and doesn't require explicit configuration.
 Runic supports both document and range formatting.
 
-### Preset `"JuliaFormatter"`
+### [Preset `"JuliaFormatter"`](@id formatting/configuration/juliaformatter)
 
 ```toml
 formatter = "JuliaFormatter"
@@ -74,7 +74,7 @@ editor client (such as tab size) when available.
     Note that JuliaFormatter currently, as of v2.2.0, only supports full
     document formatting, not range formatting.
 
-### Custom formatter
+### [Custom formatter](@id formatting/configuration/custom)
 
 ```toml
 [formatter.custom]
@@ -94,7 +94,7 @@ code to stdout, following the same interface as `runic`:
   _entire document code_ to stdout with only the specified region formatted.
   The rest of the document must remain unchanged.
 
-## Troubleshooting
+## [Troubleshooting](@id formatting/troubleshooting)
 
 If you see an error about the formatter not being found:
 

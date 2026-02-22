@@ -1,4 +1,4 @@
-# JETLS configuration
+# [JETLS configuration](@id config)
 
 JETLS supports various configuration options.
 This documentation uses TOML format to describe the configuration schema.
@@ -137,7 +137,7 @@ executable = "/path/to/custom-formatter"
 executable_range = "/path/to/custom-range-formatter"
 ```
 
-See [Formatting](@ref) for detailed configuration instructions and setup requirements.
+See [the formatter integration section](@ref formatting) for detailed configuration instructions and setup requirements.
 
 ### [`[diagnostic]`](@id config/diagnostic)
 

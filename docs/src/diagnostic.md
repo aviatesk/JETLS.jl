@@ -776,4 +776,4 @@ severity = "hint"
 
 For complete configuration options, severity values, pattern matching syntax,
 and more examples, see the [`[diagnostic]` configuration](@ref config/diagnostic)
-section in the [JETLS configuration](@ref) page.
+section in the [JETLS configuration](@ref config) page.
