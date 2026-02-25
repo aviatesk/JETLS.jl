@@ -76,6 +76,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- Fixed `textDocument/rename` for macro bindings.
+
 - Fixed bindings in `let`/`for`/`while` blocks inside nested functions
   not appearing as children of those functions in the document outline.
 
