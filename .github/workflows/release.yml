@@ -33,21 +33,6 @@ jobs:
     if: github.event_name == 'pull_request' && github.event.action != 'closed'
     uses: ./.github/workflows/test-app.yml
 
-  test_jetls_schema:
-    name: Test jetls schema with release environment
-    if: github.event_name == 'pull_request' && github.event.action != 'closed'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: julia-actions/setup-julia@v1
-        with:
-          version: "1.12"
-          arch: x64
-      - uses: julia-actions/julia-buildpkg@latest
-      - name: run test
-        run: |
-          julia --startup-file=no --project=./test ./test/app/test_jetls_schema.jl
-
   check_schemas:
     if: github.event_name == 'pull_request' && github.event.action != 'closed'
     uses: ./.github/workflows/check-schemas.yml
