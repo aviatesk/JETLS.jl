@@ -8,4 +8,6 @@ TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 
 [sources]
 JETLS = {path = "../.."}
-Struct2JSONSchema = {rev = "fix-hash", url = "https://github.com/aviatesk/Struct2JSONSchema.jl"}
+
+[compat]
+Struct2JSONSchema = "0.5"
