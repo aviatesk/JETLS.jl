@@ -8,7 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`e45fc979...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/e45fc979...HEAD)
+- Diff: [`169faf25...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/169faf25...HEAD)
+
+## v0.3.5
+
+- Commit: [`169faf25`](https://github.com/aviatesk/JETLS.jl/commit/169faf25)
+- Diff: [`e45fc979...169faf25`](https://github.com/aviatesk/JETLS.jl/compare/e45fc979...169faf25)
+
+### Changed
+
+- The `jetls-client.settings` and `jetls-client.initializationOptions`
+  schemas in `package.json` are now auto-generated from the Julia
+  configuration types, ensuring they stay in sync with the server.
+  CI checks have also been added to verify the schema remains
+  up to date. (aviatesk/JETLS.jl#413)
+
+- Removed unused test dependencies (`mocha`, `@types/mocha`,
+  `@vscode/test-electron`), reducing the dependency footprint
+  and eliminating associated security vulnerabilities.
 
 ## v0.3.4
 
