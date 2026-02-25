@@ -177,7 +177,7 @@ This information usually flows from the server to the client.
     The version number of a document will increase after each change, including undo/redo.
     The number doesn't need to be consecutive.
     """
-    version::Union{Int, Nothing} = nothing
+    version::Union{Int, Null}
 end
 
 """

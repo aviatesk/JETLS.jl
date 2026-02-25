@@ -283,6 +283,47 @@ end
             state, furi, fi, only(positions), @__MODULE__)
         @test isnothing(rename_prep)
     end
+
+    @testset "macro rename prepare" begin
+        # From definition site
+        let code = """
+            macro │mymacro│(ex)
+                esc(ex)
+            end
+            @mymacro println("hello")
+            """
+            filename = joinpath(@__DIR__, "testfile.jl")
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 2
+            fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
+            furi = filename2uri(filename)
+            # Only test start position (end position selects implicit macro arg)
+            rename_prep = JETLS.global_binding_rename_preparation(
+                state, furi, fi, positions[1], @__MODULE__)
+            @test !isnothing(rename_prep)
+            @test rename_prep.placeholder == "mymacro"
+        end
+
+        # From macrocall site
+        let code = """
+            macro mymacro(ex)
+                esc(ex)
+            end
+            │@my│macro println("hello")
+            """
+            filename = joinpath(@__DIR__, "testfile.jl")
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 2
+            fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
+            furi = filename2uri(filename)
+            for pos in positions
+                rename_prep = JETLS.global_binding_rename_preparation(
+                    state, furi, fi, pos, @__MODULE__)
+                @test !isnothing(rename_prep)
+                @test rename_prep.placeholder == "mymacro"
+            end
+        end
+    end
 end
 
 @testset "global_binding_rename" begin
@@ -305,6 +346,73 @@ end
                 @test furi == uri
                 @test length(edits) == 3
                 @test all(edit -> edit.newText == "qux", edits)
+            end
+        end
+    end
+
+    @testset "macro rename" begin
+        # All occurrences should be renamed to the identifier without `@`,
+        # and `@` at call sites should be preserved.
+        let code = """
+            macro │mymacro(ex)
+                esc(ex)
+            end
+            │@│mymacro println("hello")
+            │@│mymacro println("world")
+            """
+            filename = joinpath(@__DIR__, "testfile.jl")
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 5
+            fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
+            @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+            furi = filename2uri("Untitled" * filename)
+            # Test from definition position
+            let pos = positions[1]
+                (; result, error) = JETLS.global_binding_rename(
+                    server, furi, fi, pos, @__MODULE__, "newmacro")
+                @test result isa WorkspaceEdit && isnothing(error)
+                for (uri, edits) in result.changes
+                    @test furi == uri
+                    @test length(edits) == 3
+                    @test all(edit -> edit.newText == "newmacro", edits)
+                    # Call site ranges should skip `@`
+                    for edit in edits
+                        if edit.range.start.line != positions[1].line
+                            @test edit.range.start.character == positions[2].character + 1
+                        end
+                    end
+                end
+            end
+            # Test from macrocall positions
+            for pos in positions[2:5]
+                (; result, error) = JETLS.global_binding_rename(
+                    server, furi, fi, pos, @__MODULE__, "newmacro")
+                @test result isa WorkspaceEdit && isnothing(error)
+                for (uri, edits) in result.changes
+                    @test length(edits) == 3
+                    @test all(edit -> edit.newText == "newmacro", edits)
+                end
+            end
+        end
+
+        # newName with `@` prefix should also work
+        let code = """
+            macro │mymacro(ex)
+                esc(ex)
+            end
+            │@│mymacro println("hello")
+            """
+            filename = joinpath(@__DIR__, "testfile.jl")
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
+            furi = filename2uri("Untitled" * filename)
+            for pos in positions
+                (; result, error) = JETLS.global_binding_rename(
+                    server, furi, fi, pos, @__MODULE__, "@newmacro")
+                @test result isa WorkspaceEdit && isnothing(error)
+                for (_, edits) in result.changes
+                    @test all(edit -> edit.newText == "newmacro", edits)
+                end
             end
         end
     end

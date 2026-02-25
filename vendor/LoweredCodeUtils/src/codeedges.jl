@@ -793,10 +793,10 @@ end
 #
 # [Wei84]: M. Weiser, "Program Slicing," IEEE Transactions on Software Engineering, 10, pages 352-357, July 1984.
 function add_control_flow!(isrequired, src::CodeInfo, cfg::CFG, postdomtree)
-    local changed::Bool = false
+    changed = Ref(false)
     function mark_isrequired!(idx::Int)
         if !isrequired[idx]
-            changed |= isrequired[idx] = true
+            changed[] |= isrequired[idx] = true
             return true
         end
         return false
@@ -818,7 +818,7 @@ function add_control_flow!(isrequired, src::CodeInfo, cfg::CFG, postdomtree)
             end
         end
     end
-    return changed
+    return changed[]
 end
 
 is_conditional_terminator(@nospecialize stmt) = stmt isa GotoIfNot ||

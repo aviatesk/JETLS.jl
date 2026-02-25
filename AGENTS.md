@@ -63,6 +63,9 @@
   behavior. However, even in these cases, if the function name and behavior are
   self-explanatory, no special docstring is needed.
 
+- When modifying config structs in `src/types.jl`, follow the schema
+  regeneration procedure in [DEVELOPMENT.md](./DEVELOPMENT.md#configuration-schema).
+
 - Avoid unnecessary logs:
   Don't clutter the language server log with excessive information.
   If you must use print debugging, generally use `@info`/`@warn` behind the
@@ -185,7 +188,6 @@ end # module test_completions
 ```
 
 ## Using TestRunner.jl
-
 Additionally, by using `@testset` as shown above, not only are tests hierarchized,
 but through integration with [TestRunner.jl](https://github.com/aviatesk/TestRunner.jl),
 you can also selectively execute specific `@testset`s, without executing the

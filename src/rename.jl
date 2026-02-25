@@ -1,6 +1,11 @@
 const RENAME_REGISTRATION_ID = "jetls-rename"
 const RENAME_REGISTRATION_METHOD = "textDocument/rename"
 
+function is_macrocall_use_site(fi::FileInfo, tree)
+    fb = JS.first_byte(tree)
+    return !iszero(fb) && fi.parsed_stream.textbuf[fb] == UInt8('@')
+end
+
 struct RenameProgressCaller <: RequestCaller
     uri::URI
     fi::FileInfo
@@ -90,8 +95,12 @@ function global_binding_rename_preparation(
 
     binfo = JL.get_binding(ctx3, binding)
     if binfo.kind === :global
-        range, _ = unadjust_range(state, uri, jsobj_to_range(binding, fi))
-        return (; range, placeholder = binfo.name)
+        ismacro = startswith(binfo.name, '@')
+        is_macro_use = ismacro && is_macrocall_use_site(fi, binding)
+        adjust_first = is_macro_use ? 1 : 0
+        range, _ = unadjust_range(state, uri, jsobj_to_range(binding, fi; adjust_first))
+        placeholder = ismacro ? String(lstrip(binfo.name, '@')) : binfo.name
+        return (; range, placeholder)
     else
         return nothing
     end
@@ -239,6 +248,11 @@ function global_binding_rename(
 
     binfo = JL.get_binding(ctx3, binding)
     binfo.kind === :global || return nothing
+
+    if startswith(binfo.name, '@') && startswith(newName, '@')
+        newName = String(lstrip(newName, '@'))
+    end
+
     if !Base.isidentifier(newName)
         error = ResponseError(;
             code = ErrorCodes.RequestFailed,
@@ -312,13 +326,14 @@ function collect_global_rename_edits!(
                 WorkDoneProgressReport(; cancellable = true, message, percentage))
         end
 
-        fi = @something begin
-            get_file_info(state, uri)
-        end begin
-            get_unsynced_file_info!(server.state, uri)
-        end continue
-        version = fi.version
-        version == 0 && (version = nothing)
+        fi = get_file_info(state, uri)
+        if fi === nothing
+            fi = get_unsynced_file_info!(server.state, uri)
+            fi === nothing && continue
+            version = null
+        else
+            version = fi.version
+        end
         search_st0_top = build_syntax_tree(fi)
         empty!(seen_ranges)
         collect_global_rename_ranges_in_file!(
@@ -341,8 +356,10 @@ function collect_global_rename_ranges_in_file!(
         seen_ranges::Set{Range}, state::ServerState, uri::URI, fi::FileInfo,
         st0_top::JS.SyntaxTree, binfo::JL.BindingInfo
     )
+    ismacro = startswith(binfo.name, '@')
     for occurrence in find_global_binding_occurrences!(state, uri, fi, st0_top, binfo)
-        range, _ = unadjust_range(state, uri, jsobj_to_range(occurrence.tree, fi))
+        adjust_first = ismacro && is_macrocall_use_site(fi, occurrence.tree) ? 1 : 0
+        range, _ = unadjust_range(state, uri, jsobj_to_range(occurrence.tree, fi; adjust_first))
         push!(seen_ranges, range)
     end
     return seen_ranges

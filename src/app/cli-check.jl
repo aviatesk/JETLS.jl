@@ -234,7 +234,7 @@ const check_help_message = """
       jetls check --progress=none src/SomePkg.jl
     """
 
-function run_check(args::Vector{String})::Cint
+function run_check(args::Vector{String})
     root_path_opt = nothing
     context_lines = 2
     exit_severity = DiagnosticSeverity.Warning

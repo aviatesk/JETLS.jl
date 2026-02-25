@@ -1,0 +1,20 @@
+name: Check schemas
+
+on:
+  workflow_call:
+
+jobs:
+  check_schemas:
+    name: Check schemas are up to date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v1
+        with:
+          version: "1.12"
+          arch: x64
+      - uses: julia-actions/cache@v2
+      - name: Instantiate schema project
+        run: julia --startup-file=no --project=scripts/schema -e 'using Pkg; Pkg.instantiate()'
+      - name: Check schemas
+        run: ./scripts/schema/regenerate.sh --check

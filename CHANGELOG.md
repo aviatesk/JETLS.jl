@@ -19,7 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`150f880...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/150f880...HEAD)
+- Diff: [`e141508...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/e141508...HEAD)
 
 ### Announcement
 
@@ -44,6 +44,51 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > might work, but most LSP features will be unfunctional.
 > Note that `analysis_overrides` is provided as a temporary workaround and may
 > be removed or changed at any time. A proper fix is being worked on.
+
+### Added
+
+- Added `jetls schema` CLI command that prints the JSON Schema for JETLS
+  configuration. Supports `--settings`, `--init-options`, and
+  `--config-toml` options.
+- Added schema generation infrastructure under `scripts/schema/` and
+  committed generated schema files under `schemas/`. CI now checks that
+  the schema files and `jetls-client/package.json` stay in sync with
+  `src/types.jl`.
+
+- Added [`inference/method-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/inference/method-error)
+  diagnostic that detects function calls where no matching method exists for
+  the inferred argument types. This catches potential `MethodError`s that would
+  occur at runtime. For union-split calls, the diagnostic reports only the
+  failing branches with their count (e.g., "1/2 union split").
+
+### Changed
+
+- `textDocument/documentSymbol` now shows `for`, `let`, `while`, and
+  `try`/`catch`/`else`/`finally` blocks inside functions as hierarchical
+  `Namespace` symbols. Previously, all local bindings within a function were
+  shown as flat children; now, bindings inside scope constructs are nested
+  under the scope construct, matching the existing behavior for top-level
+  scope constructs.
+
+- `textDocument/documentSymbol` now strips redundant name prefixes from
+  symbol details. (e.g., a symbol named `foo` with detail `foo = func(args...)`
+  now shows ` = func(args...)` as the detail.
+
+### Fixed
+
+- Fixed `textDocument/rename` for macro bindings.
+
+- Fixed bindings in `let`/`for`/`while` blocks inside nested functions
+  not appearing as children of those functions in the document outline.
+
+## 2026-02-16
+
+- Commit: [`e141508`](https://github.com/aviatesk/JETLS.jl/commit/e141508)
+- Diff: [`150f880...e141508`](https://github.com/aviatesk/JETLS.jl/compare/150f880...e141508)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-02-16")'
+  ```
 
 ### Added
 

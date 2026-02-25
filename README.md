@@ -61,7 +61,7 @@ the list itself is subject to change.
   - [x] Undefined bindings
   - [x] Non-existent struct fields
   - [x] Out-of-bounds field access by index
-  - [ ] Potential `MethodError`
+  - [x] `MethodError`
   - [x] Configuration support
   - [x] [CLI interface](https://aviatesk.github.io/JETLS.jl/release/cli-check)
 - Completion
@@ -119,7 +119,7 @@ the list itself is subject to change.
   - [x] Type stable config object implementation
   - [x] Support LSP configurations
   - [x] Documentation
-  - [ ] Schema support
+  - [x] Schema support
 - [x] Parallel/concurrent message handling
 - [x] Work done progress support
 - [x] Message cancellation support

@@ -611,6 +611,6 @@ function vendor_loaded_packages(use_local_path::Bool, rev::Union{String, Nothing
     @info "Vendored packages are in: $VENDOR_DIR"
 end
 
-function @main(args::Vector{String})
+function (@main)(args::Vector{String})
     vendor_dependencies_from_branch(parse_args(args))
 end
