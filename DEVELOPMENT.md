@@ -314,6 +314,30 @@ Use `--top=N` to control how many entries to show (default: 50).
 - The snapshot process itself requires additional memory, so for very large
   processes, ensure sufficient memory is available
 
+## Configuration schema
+
+The configuration schema is generated from the config structs
+in `src/types.jl` by two scripts under `scripts/schema/`:
+
+- `generate.jl` generates standalone schema files under `schemas/`:
+  - `config-toml.schema.json` (complete schema for `.JETLSConfig.toml`)
+  - `settings.schema.json` (settings only)
+  - `init-options.schema.json` (initialization options only)
+- `update-pkg-json.jl` updates VSCode configuration properties inside
+  `jetls-client/package.json` (with `$defs` inlined and `description`
+  renamed to `markdownDescription`).
+
+When you modify the config structs, update `schemas/description.toml`
+with descriptions for any new or changed fields, then regenerate all
+schemas by running:
+```bash
+./scripts/schema/regenerate.sh
+```
+
+Both scripts support a `--check` flag that exits with an error
+if the output is out of date. CI runs them in this mode to
+ensure the generated files are kept in sync.
+
 ## Release process
 
 JETLS avoids dependency conflicts with packages being analyzed by rewriting the
@@ -481,31 +505,6 @@ To use a local JETLS.jl checkout with the development extension (see
   ]
 }
 ```
-
-### Configuration schema
-
-The configuration schema is generated from the config structs
-in `src/types.jl` by two scripts under `scripts/schema/`:
-
-- `generate.jl` generates standalone schema files under `schemas/`:
-  - `config-toml.schema.json` (complete schema for `.JETLSConfig.toml`)
-  - `settings.schema.json` (settings only)
-  - `init-options.schema.json` (initialization options only)
-- `update-pkg-json.jl` updates VSCode configuration properties inside
-  `jetls-client/package.json` (with `$defs` inlined and `description`
-  renamed to `markdownDescription`).
-
-When you modify the config structs, regenerate all schemas by running:
-```bash
-julia --startup-file=no --project=scripts/schema scripts/schema/generate.jl --config-toml schemas/config-toml.schema.json
-julia --startup-file=no --project=scripts/schema scripts/schema/generate.jl --settings schemas/settings.schema.json
-julia --startup-file=no --project=scripts/schema scripts/schema/generate.jl --init-options schemas/init-options.schema.json
-julia --startup-file=no --project=scripts/schema scripts/schema/update-pkg-json.jl jetls-client/package.json
-```
-
-Both scripts support a `--check` flag that exits with an error
-if the output is out of date. CI runs them in this mode to
-ensure the generated files are kept in sync.
 
 ### Publishing
 
