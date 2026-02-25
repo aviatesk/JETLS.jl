@@ -21,6 +21,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 - Diff: [`ebcbd60...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/ebcbd60...HEAD)
 
+### Changes
+
+- The previously deprecated behavior of running `jetls` without a subcommand
+  to start the language server has been removed. Running `jetls` without a
+  subcommand or with unrecognized arguments now shows the help message and
+  exits. Use `jetls serve` instead
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/565).
+
 ### Announcement
 
 > [!warning]
@@ -204,7 +212,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Deprecated
 
 - Running `jetls` without a subcommand (e.g., `jetls --stdio`) is deprecated.
-  Use `jetls serve` instead. This may be removed in a future release.
+  Use `jetls serve` instead. The support for `jetls` without a subcommand will
+  be removed in a future release.
 
 ### Changed
 
