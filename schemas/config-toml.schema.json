@@ -1,20 +1,23 @@
 {
   "$defs": {
-    "Bool__5d3b799b1e2eefc8": {
+    "Core.Bool": {
       "type": "boolean"
     },
-    "Float64__a337296f6e2b85bb": {
+    "Core.Float64": {
       "type": "number"
     },
-    "Glob.FilenameMatch{String}__3953c79614573f76": {
-      "type": "string"
-    },
-    "Int64__de86221664f86785": {
+    "Core.Int64": {
       "maximum": 9223372036854775807,
       "minimum": -9223372036854775808,
       "type": "integer"
     },
-    "JETLS.JETLSConfig__baf8edc5f44f85f8": {
+    "Core.String": {
+      "type": "string"
+    },
+    "Glob.FilenameMatch{Core.String}": {
+      "type": "string"
+    },
+    "JETLS.JETLSConfig": {
       "additionalProperties": false,
       "properties": {
         "code_lens": {
@@ -22,12 +25,12 @@
           "description": "Code lens configuration. See [Code lens configuration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/code_lens).",
           "properties": {
             "references": {
-              "$ref": "#/$defs/Bool__5d3b799b1e2eefc8",
+              "$ref": "#/$defs/Core.Bool",
               "default": false,
               "description": "Show reference counts above top-level symbols (functions, structs, constants, etc.). Click to open references panel."
             },
             "testrunner": {
-              "$ref": "#/$defs/Bool__5d3b799b1e2eefc8",
+              "$ref": "#/$defs/Core.Bool",
               "default": true,
               "description": "Show `Run`/`Debug` code lenses above `@testset` blocks. Some editors (e.g., Zed) show these as code actions, causing duplication; zed-julia defaults to false."
             }
@@ -43,7 +46,7 @@
               "description": "LaTeX and emoji completion configuration. See [documentation](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/completion-latex_emoji-strip_prefix).",
               "properties": {
                 "strip_prefix": {
-                  "$ref": "#/$defs/Bool__5d3b799b1e2eefc8",
+                  "$ref": "#/$defs/Core.Bool",
                   "description": "Controls whether to strip `\\` or `:` prefix from LaTeX/emoji completion labels. Some editors (e.g., Zed) have sorting issues with backslash in `sortText`. Auto-detected by default; set explicitly if completions appear in wrong order."
                 }
               },
@@ -54,7 +57,7 @@
               "description": "Method signature completion configuration. See [documentation](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/completion-method_signature-prepend_inference_result).",
               "properties": {
                 "prepend_inference_result": {
-                  "$ref": "#/$defs/Bool__5d3b799b1e2eefc8",
+                  "$ref": "#/$defs/Core.Bool",
                   "description": "When true, prepends inferred return type to completion documentation, ensuring visibility in editors where `CompletionItem.detail` may be cut off (e.g., Zed). Auto-detected by default based on client name; set explicitly if return types are not visible."
                 }
               },
@@ -68,17 +71,17 @@
           "description": "Diagnostic configuration. See [Diagnostic configuration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic).",
           "properties": {
             "all_files": {
-              "$ref": "#/$defs/Bool__5d3b799b1e2eefc8",
+              "$ref": "#/$defs/Core.Bool",
               "default": true,
               "description": "Report diagnostics for all workspace files (true) or only open files (false). Disable to reduce noise from many warnings."
             },
             "allow_unused_underscore": {
-              "$ref": "#/$defs/Bool__5d3b799b1e2eefc8",
+              "$ref": "#/$defs/Core.Bool",
               "default": true,
               "description": "Suppress unused variable diagnostics for `_`-prefixed names, following the common convention for intentionally unused variables."
             },
             "enabled": {
-              "$ref": "#/$defs/Bool__5d3b799b1e2eefc8",
+              "$ref": "#/$defs/Core.Bool",
               "default": true,
               "description": "Enable or disable all JETLS diagnostics. When set to false, no diagnostic messages will be shown."
             },
@@ -105,7 +108,7 @@
                     "type": "string"
                   },
                   "path": {
-                    "$ref": "#/$defs/Glob.FilenameMatch{String}__3953c79614573f76",
+                    "$ref": "#/$defs/Glob.FilenameMatch{Core.String}",
                     "description": "Optional glob pattern to restrict this configuration to specific files (e.g., `test/**/*.jl`). Patterns are matched against file paths relative to the workspace root. Supports globstar (`**`) for matching directories recursively. If omitted, the pattern applies to all files."
                   },
                   "pattern": {
@@ -115,7 +118,7 @@
                         "type": "string"
                       },
                       {
-                        "$ref": "#/$defs/String__f000e81cec2244bc"
+                        "$ref": "#/$defs/Core.String"
                       }
                     ],
                     "description": "The pattern to match. For code matching, use diagnostic codes like `lowering/unused-argument`. For message matching, use text patterns like `Macro name .* not found`. This value is also used as the key when merging configurations from different sources."
@@ -200,12 +203,12 @@
           "description": "Configuration for full JET analysis. See [Full analysis configuration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/full_analysis).",
           "properties": {
             "auto_instantiate": {
-              "$ref": "#/$defs/Bool__5d3b799b1e2eefc8",
+              "$ref": "#/$defs/Core.Bool",
               "default": true,
               "description": "Automatically run `Pkg.resolve()` and `Pkg.instantiate()` for uninstantiated packages (e.g., freshly cloned repos). Creates versioned manifest if needed."
             },
             "debounce": {
-              "$ref": "#/$defs/Float64__a337296f6e2b85bb",
+              "$ref": "#/$defs/Core.Float64",
               "default": 1.0,
               "description": "Debounce time in seconds before triggering full analysis after a file save. Higher values reduce analysis frequency but may delay diagnostic updates."
             }
@@ -223,11 +226,11 @@
                 "additionalProperties": false,
                 "properties": {
                   "module_name": {
-                    "$ref": "#/$defs/String__f000e81cec2244bc",
+                    "$ref": "#/$defs/Core.String",
                     "description": "Optional module name to associate with the matched files. When specified, analysis is performed within the context of this module."
                   },
                   "path": {
-                    "$ref": "#/$defs/Glob.FilenameMatch{String}__3953c79614573f76",
+                    "$ref": "#/$defs/Glob.FilenameMatch{Core.String}",
                     "description": "Glob pattern to match files for which analysis should be overridden (e.g., `src/**/*.jl`, `test/**/*.jl`). Patterns are matched against file paths relative to the workspace root. Supports globstar (`**`) for matching directories recursively."
                   }
                 },
@@ -239,7 +242,7 @@
               "type": "array"
             },
             "n_analysis_workers": {
-              "$ref": "#/$defs/Int64__de86221664f86785",
+              "$ref": "#/$defs/Core.Int64",
               "default": 1,
               "description": "Number of concurrent analysis worker tasks for running full analysis (experimental). Default is 1. See [documentation](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options/n_analysis_workers) for details and current limitations."
             }
@@ -251,7 +254,7 @@
           "description": "Inlay hint configuration. See [Inlay hint configuration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint).",
           "properties": {
             "block_end_min_lines": {
-              "$ref": "#/$defs/Int64__de86221664f86785",
+              "$ref": "#/$defs/Core.Int64",
               "default": 25,
               "description": "Minimum lines for a block to display an inlay hint at `end` (e.g., `end # module Foo`). Supports: `module`, `function`, `macro`, `struct`, `if`, `let`, `for`, `while`, `@testset`."
             }
@@ -263,7 +266,7 @@
           "description": "TestRunner integration configuration. See [TestRunner integration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/testrunner).",
           "properties": {
             "executable": {
-              "$ref": "#/$defs/String__f000e81cec2244bc",
+              "$ref": "#/$defs/Core.String",
               "default": "testrunner",
               "description": "Path to the TestRunner.jl executable. Defaults to `testrunner` (or `testrunner.bat` on Windows)."
             }
@@ -272,11 +275,8 @@
         }
       },
       "type": "object"
-    },
-    "String__f000e81cec2244bc": {
-      "type": "string"
     }
   },
-  "$ref": "#/$defs/JETLS.JETLSConfig__baf8edc5f44f85f8",
+  "$ref": "#/$defs/JETLS.JETLSConfig",
   "$schema": "https://json-schema.org/draft/2020-12/schema"
 }

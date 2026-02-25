@@ -1,9 +1,12 @@
 {
   "$defs": {
-    "Glob.FilenameMatch{String}__3953c79614573f76": {
+    "Core.String": {
       "type": "string"
     },
-    "JETLS.InitOptions__0b25d704b44c3782": {
+    "Glob.FilenameMatch{Core.String}": {
+      "type": "string"
+    },
+    "JETLS.InitOptions": {
       "additionalProperties": false,
       "properties": {
         "analysis_overrides": {
@@ -13,11 +16,11 @@
             "additionalProperties": false,
             "properties": {
               "module_name": {
-                "$ref": "#/$defs/String__f000e81cec2244bc",
+                "$ref": "#/$defs/Core.String",
                 "description": "Optional module name to associate with the matched files. When specified, analysis is performed within the context of this module."
               },
               "path": {
-                "$ref": "#/$defs/Glob.FilenameMatch{String}__3953c79614573f76",
+                "$ref": "#/$defs/Glob.FilenameMatch{Core.String}",
                 "description": "Glob pattern to match files for which analysis should be overridden (e.g., `src/**/*.jl`, `test/**/*.jl`). Patterns are matched against file paths relative to the workspace root. Supports globstar (`**`) for matching directories recursively."
               }
             },
@@ -37,11 +40,8 @@
         }
       },
       "type": "object"
-    },
-    "String__f000e81cec2244bc": {
-      "type": "string"
     }
   },
-  "$ref": "#/$defs/JETLS.InitOptions__0b25d704b44c3782",
+  "$ref": "#/$defs/JETLS.InitOptions",
   "$schema": "https://json-schema.org/draft/2020-12/schema"
 }
