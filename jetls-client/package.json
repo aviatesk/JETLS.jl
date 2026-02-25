@@ -409,14 +409,11 @@
   "devDependencies": {
     "@eslint/js": "^9.13.0",
     "@stylistic/eslint-plugin": "^2.9.0",
-    "@types/mocha": "^10.0.6",
     "@types/node": "^20",
     "@types/vscode": "^1.75.1",
-    "@vscode/test-electron": "^2.3.9",
     "esbuild": "^0.25.10",
     "eslint": "^9.13.0",
     "fs": "^0.0.1-security",
-    "mocha": "^10.3.0",
     "typescript": "^5.7.3",
     "typescript-eslint": "^8.16.0"
   },
