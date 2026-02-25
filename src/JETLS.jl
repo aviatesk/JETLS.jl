@@ -8,7 +8,7 @@ const JETLS_VERSION = let
 end
 
 const __init__hooks__ = Any[]
-push_init_hooks!(hook) = push!(__init__hooks__, hook)
+push_init_hook!(hook) = push!(__init__hooks__, hook)
 function __init__()
     foreach(hook->hook(), __init__hooks__)
 end
@@ -118,12 +118,9 @@ include("did-change-watched-files.jl")
 include("initialize.jl")
 
 """
-    runserver([callback,] in::IO, out::IO; client_process_id=nothing)
-        -> (; exit_code::Int, endpoint::Endpoint)
-    runserver([callback,] endpoint::Endpoint; client_process_id=nothing)
-        -> (; exit_code::Int, endpoint::Endpoint)
-    runserver([callback,] server::Server; client_process_id=nothing)
-        -> (; exit_code::Int, endpoint::Endpoint)
+    runserver([callback,] in::IO, out::IO; client_process_id=nothing) -> exit_code::Int
+    runserver([callback,] endpoint::Endpoint; client_process_id=nothing) -> exit_code::Int
+    runserver([callback,] server::Server; client_process_id=nothing) -> exit_code::Int
 
 Run the JETLS language server with the specified input/output streams or endpoint.
 
@@ -486,6 +483,7 @@ end
 
 include("app/app.jl")
 include("app/cli-check.jl")
+include("app/cli-schema.jl")
 include("app/cli-serve.jl")
 
 include("precompile.jl")

@@ -29,35 +29,13 @@ jobs:
       - uses: julia-actions/julia-buildpkg@latest
       - uses: julia-actions/julia-runtest@latest
 
-  test_jetls_serve:
-    name: Test jetls serve with release environment
+  test_app:
     if: github.event_name == 'pull_request' && github.event.action != 'closed'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: julia-actions/setup-julia@v1
-        with:
-          version: "1.12"
-          arch: x64
-      - uses: julia-actions/julia-buildpkg@latest
-      - name: run test
-        run: |
-          julia --startup-file=no --project=./test ./test/app/test_jetls_serve.jl
+    uses: ./.github/workflows/test-app.yml
 
-  test_jetls_check:
-    name: Test jetls check with release environment
+  check_schemas:
     if: github.event_name == 'pull_request' && github.event.action != 'closed'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: julia-actions/setup-julia@v1
-        with:
-          version: "1.12"
-          arch: x64
-      - uses: julia-actions/julia-buildpkg@latest
-      - name: run test
-        run: |
-          julia --startup-file=no --project=./test ./test/app/test_jetls_check.jl
+    uses: ./.github/workflows/check-schemas.yml
 
   docs:
     name: Documentation
@@ -163,7 +141,10 @@ jobs:
           gh release create "$VERSION" \
             --target release \
             --title "$VERSION" \
-            --notes "$RELEASE_NOTES"
+            --notes "$RELEASE_NOTES" \
+            schemas/config-toml.schema.json \
+            schemas/settings.schema.json \
+            schemas/init-options.schema.json
 
       - name: Strip Announcement from previous release
         env:

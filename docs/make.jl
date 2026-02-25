@@ -60,15 +60,16 @@ let CHANGELOG_md = joinpath(@__DIR__, "..", "CHANGELOG.md")
 end
 
 const pages = Any[
-    "Index" => "index.md",
-    "Diagnostic" => "diagnostic.md",
-    "Formatter integration" => "formatting.md",
-    "TestRunner integration" => "testrunner.md",
-    "Notebook support" => "notebook.md",
-    "Configuration" => "configuration.md",
-    "Launching" => "launching.md",
-    "Diagnostic CLI" => "cli-check.md",
-    "CHANGELOG" => "CHANGELOG.md"]
+        "Index"                  => "index.md",
+        "Diagnostic"             => "diagnostic.md",
+        "Formatter integration"  => "formatting.md",
+        "TestRunner integration" => "testrunner.md",
+        "Notebook support"       => "notebook.md",
+        "JETLS configuration"    => "configuration.md",
+        "Launching JETLS"        => "launching.md",
+        "Diagnostic CLI"         => "cli-check.md",
+        "CHANGELOG"              => "CHANGELOG.md",
+    ]
 const quick_links_pages = let pages = last.(pages)
     pop!(pages)      # exclude CHANGELOG.md
     popfirst!(pages) # exclude index.md itself

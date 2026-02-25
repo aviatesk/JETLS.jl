@@ -22,7 +22,7 @@ const serve_help_message = """
       jetls serve --socket=8080
     """
 
-function run_serve(args::Vector{String})::Cint
+function run_serve(args::Vector{String})
     pipe_connect_path = pipe_listen_path = socket_port = client_process_id = nothing
 
     i = 1
@@ -30,7 +30,7 @@ function run_serve(args::Vector{String})::Cint
         arg = args[i]
         if occursin(r"^(?:-h|--help|help)$", arg)
             print(stdout, serve_help_message)
-            return Cint(0)
+            return 0
         elseif occursin(r"^(?:--)?stdio$", arg)
         elseif occursin(r"^(?:--)?pipe-connect$", arg)
             if i < length(args)
@@ -38,7 +38,7 @@ function run_serve(args::Vector{String})::Cint
                 i += 1
             else
                 @error "--pipe-connect requires a path argument: use --pipe-connect=<path> or --pipe-connect <path>"
-                return Cint(1)
+                return 1
             end
         elseif (m = match(r"^--pipe-connect=(.+)$", arg); !isnothing(m))
             pipe_connect_path = m.captures[1]
@@ -48,7 +48,7 @@ function run_serve(args::Vector{String})::Cint
                 i += 1
             else
                 @error "--pipe-listen requires a path argument: use --pipe-listen=<path> or --pipe-listen <path>"
-                return Cint(1)
+                return 1
             end
         elseif (m = match(r"^--pipe-listen=(.+)$", arg); !isnothing(m))
             pipe_listen_path = m.captures[1]
@@ -59,14 +59,14 @@ function run_serve(args::Vector{String})::Cint
                 @goto check_socket_port
             else
                 @error "--socket requires a port argument: use --socket=<port> or --socket <port>"
-                return Cint(1)
+                return 1
             end
         elseif (m = match(r"^--socket=(\d+)$", arg); !isnothing(m))
             socket_port = tryparse(Int, m.captures[1]::AbstractString)
             @label check_socket_port
             if isnothing(socket_port)
                 @error "Invalid port number for --socket (must be a valid integer)"
-                return Cint(1)
+                return 1
             end
         elseif occursin(r"^--clientProcessId$", arg)
             if i < length(args)
@@ -75,18 +75,18 @@ function run_serve(args::Vector{String})::Cint
                 @goto check_client_process_id
             else
                 @error "--clientProcessId requires a process ID argument: use --clientProcessId=<pid> or --clientProcessId <pid>"
-                return Cint(1)
+                return 1
             end
         elseif (m = match(r"^--clientProcessId=(\d+)$", arg); !isnothing(m))
             client_process_id = tryparse(Int, m.captures[1]::AbstractString)
             @label check_client_process_id
             if isnothing(client_process_id)
                 @error "Invalid process ID for --clientProcessId (must be a valid integer)"
-                return Cint(1)
+                return 1
             end
         else
             @error "Unknown CLI argument" arg
-            return Cint(1)
+            return 1
         end
         i += 1
     end
@@ -104,7 +104,7 @@ function run_serve(args::Vector{String})::Cint
         catch e
             @error "Failed to connect to pipe" pipe_connect_path
             Base.display_error(stderr, e, catch_backtrace())
-            return Cint(1)
+            return 1
         end
     elseif !isnothing(pipe_listen_path)
         try
@@ -118,7 +118,7 @@ function run_serve(args::Vector{String})::Cint
         catch e
             @error "Failed to listen on pipe" pipe_listen_path
             Base.display_error(stderr, e, catch_backtrace())
-            return Cint(1)
+            return 1
         end
     elseif !isnothing(socket_port)
         try
@@ -132,7 +132,7 @@ function run_serve(args::Vector{String})::Cint
         catch e
             @error "Failed to create socket connection" socket_port
             Base.display_error(stderr, e, catch_backtrace())
-            return Cint(1)
+            return 1
         end
     else # use stdio as the communication channel
         endpoint = Endpoint(stdin, stdout)
@@ -161,7 +161,7 @@ function run_serve(args::Vector{String})::Cint
                 Threads.@spawn :interactive runserver(endpoint; client_process_id)
             end
         end
-        exit_code = fetch(runserver_task)
+        exit_code = fetch(runserver_task)::Int
         @info "JETLS server stopped" exit_code
         return exit_code
     end

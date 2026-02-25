@@ -7,8 +7,9 @@ const help_message = """
     Usage: jetls [COMMAND] [OPTIONS]
 
     Commands:
-      check <file>...             Run diagnostics on Julia files
       serve                       Start language server (default)
+      check <file>...             Run diagnostics on Julia files
+      schema                      Print JSON schema for configuration
       version                     Show version information
 
     Check options (for 'check' command):
@@ -33,13 +34,14 @@ const help_message = """
       jetls --socket=8080
       jetls check src/SomePkg.jl
       jetls check --root=/path/to/project src/
+      jetls schema --settings
     """
 
 @doc help_message
 function (@main)(args::Vector{String})::Cint
     if any(arg -> arg in ("-v", "--version", "version"), args)
         println(stdout, "JETLS version $JETLS_VERSION")
-        return Cint(0)
+        return 0
     end
 
     if !isempty(args)
@@ -47,18 +49,20 @@ function (@main)(args::Vector{String})::Cint
         if first_arg == "check"
             if length(args) >= 2 && args[2] in ("-h", "--help", "help")
                 print(stdout, check_help_message)
-                return Cint(0)
+                return 0
             end
             return run_check(args[2:end])
+        elseif first_arg == "schema"
+            return run_schema(args[2:end])
         elseif first_arg == "serve"
             if length(args) >= 2 && args[2] in ("-h", "--help", "help")
                 print(stdout, serve_help_message)
-                return Cint(0)
+                return 0
             end
             return run_serve(args[2:end])
         elseif first_arg in ("-h", "--help", "help")
             print(stdout, help_message)
-            return Cint(0)
+            return 0
         else
             @warn "Running `jetls` without a subcommand is deprecated and may be removed in a future release. Use `jetls serve` instead."
         end

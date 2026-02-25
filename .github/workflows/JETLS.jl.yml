@@ -8,8 +8,11 @@ on:
       - "src/**"
       - "test/**"
       - "LSP/**"
+      - "schemas/**"
+      - "scripts/schema/**"
       - "Project.toml"
       - ".github/workflows/JETLS.jl.yml"
+      - ".github/workflows/test-app.yml"
   pull_request:
     branches-ignore:
       - release
@@ -17,8 +20,11 @@ on:
       - "src/**"
       - "test/**"
       - "LSP/**"
+      - "schemas/**"
+      - "scripts/schema/**"
       - "Project.toml"
       - ".github/workflows/JETLS.jl.yml"
+      - ".github/workflows/test-app.yml"
 
 jobs:
   test:
@@ -141,35 +147,11 @@ jobs:
         env:
           JULIA_NUM_THREADS: "4,2"
 
-  test_jetls_serve:
-    name: Test jetls serve
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: julia-actions/setup-julia@v1
-        with:
-          version: "1.12" # most stable version
-          arch: x64
-      - uses: julia-actions/cache@v2
-      - uses: julia-actions/julia-buildpkg@latest
-      - name: run test
-        run: |
-          julia --startup-file=no --project=./test ./test/app/test_jetls_serve.jl
+  test_app:
+    uses: ./.github/workflows/test-app.yml
 
-  test_jetls_check:
-    name: Test jetls check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: julia-actions/setup-julia@v1
-        with:
-          version: "1.12" # most stable version
-          arch: x64
-      - uses: julia-actions/cache@v2
-      - uses: julia-actions/julia-buildpkg@latest
-      - name: run test
-        run: |
-          julia --startup-file=no --project=./test ./test/app/test_jetls_check.jl
+  check_schemas:
+    uses: ./.github/workflows/check-schemas.yml
 
   jetls_self_check:
     name: Self diagnostics
