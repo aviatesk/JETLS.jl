@@ -77,6 +77,18 @@ end
 const DEFAULT_TIMEOUT = 10
 const STARTUP_TIMEOUT = 60
 
+@testset "jetls without subcommand shows help" begin
+    for args in (``, `--stdio`, `--socket=8080`)
+        cmd = `$JULIA_CMD --project=$JETLS_DIR -m JETLS $args`
+        out = IOBuffer()
+        proc = run(pipeline(cmd; stdout=out, stderr=devnull); wait=true)
+        @test proc.exitcode == 0
+        output = String(take!(out))
+        @test occursin("Usage: jetls <COMMAND>", output)
+        @test occursin("jetls serve", output)
+    end
+end
+
 # test a very simple, normal server lifecycle
 withserverprocess() do proc
     # Send initialization request
