@@ -1,0 +1,35 @@
+name: Test app commands
+
+on:
+  workflow_call:
+
+jobs:
+  test_jetls_serve:
+    name: Test jetls serve
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v1
+        with:
+          version: "1.12" # most stable version
+          arch: x64
+      - uses: julia-actions/cache@v2
+      - uses: julia-actions/julia-buildpkg@latest
+      - name: run test
+        run: |
+          julia --startup-file=no --project=./test ./test/app/test_jetls_serve.jl
+
+  test_jetls_check:
+    name: Test jetls check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v1
+        with:
+          version: "1.12" # most stable version
+          arch: x64
+      - uses: julia-actions/cache@v2
+      - uses: julia-actions/julia-buildpkg@latest
+      - name: run test
+        run: |
+          julia --startup-file=no --project=./test ./test/app/test_jetls_check.jl
