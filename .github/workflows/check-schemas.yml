@@ -1,0 +1,23 @@
+name: Check schemas
+
+on:
+  workflow_call:
+
+jobs:
+  check_schemas:
+    name: Check schemas are up to date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v1
+        with:
+          version: "1.12"
+          arch: x64
+      - uses: julia-actions/cache@v2
+      - name: Instantiate schema project
+        run: julia --startup-file=no --project=scripts/schema -e 'using Pkg; Pkg.instantiate()'
+      - name: Check schemas
+        run: |
+          julia --startup-file=no --project=scripts/schema scripts/schema/generate.jl --settings schemas/settings.schema.json --check
+          julia --startup-file=no --project=scripts/schema scripts/schema/generate.jl --init-options schemas/init-options.schema.json --check
+          julia --startup-file=no --project=scripts/schema scripts/schema/generate.jl --config-toml schemas/config-toml.schema.json --check

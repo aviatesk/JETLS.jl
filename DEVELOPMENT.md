@@ -488,18 +488,18 @@ The configuration schema is generated from the config structs
 in `src/types.jl` by two scripts under `scripts/schema/`:
 
 - `generate.jl` generates standalone schema files under `schemas/`:
-  - `jetls-config-toml.schema.json` (complete schema for `.JETLSConfig.toml`)
-  - `jetls-settings.schema.json` (settings only)
-  - `jetls-init-options.schema.json` (initialization options only)
+  - `config-toml.schema.json` (complete schema for `.JETLSConfig.toml`)
+  - `settings.schema.json` (settings only)
+  - `init-options.schema.json` (initialization options only)
 - `update-pkg-json.jl` updates VSCode configuration properties inside
   `jetls-client/package.json` (with `$defs` inlined and `description`
   renamed to `markdownDescription`).
 
 When you modify the config structs, regenerate all schemas by running:
 ```bash
-julia --startup-file=no --project=scripts/schema scripts/schema/generate.jl --config-toml schemas/jetls-config-toml.schema.json
-julia --startup-file=no --project=scripts/schema scripts/schema/generate.jl --settings schemas/jetls-settings.schema.json
-julia --startup-file=no --project=scripts/schema scripts/schema/generate.jl --init-options schemas/jetls-init-options.schema.json
+julia --startup-file=no --project=scripts/schema scripts/schema/generate.jl --config-toml schemas/config-toml.schema.json
+julia --startup-file=no --project=scripts/schema scripts/schema/generate.jl --settings schemas/settings.schema.json
+julia --startup-file=no --project=scripts/schema scripts/schema/generate.jl --init-options schemas/init-options.schema.json
 julia --startup-file=no --project=scripts/schema scripts/schema/update-pkg-json.jl jetls-client/package.json
 ```
 

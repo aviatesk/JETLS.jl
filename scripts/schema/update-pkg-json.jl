@@ -80,7 +80,7 @@ function update_package_json(
     return result
 end
 
-function @main(args)
+function (@main)(args::Vector{String})
     file_path, check_mode = parse_arguments(args)
     gen_ctx = SchemaContext()
     setup_ctx!(gen_ctx)

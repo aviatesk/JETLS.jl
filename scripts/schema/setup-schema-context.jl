@@ -13,7 +13,6 @@ end
 sort_keys(v::Vector) = map(sort_keys, v)
 sort_keys(x) = x
 
-
 function attach_description!(ctx::SchemaContext, desc_path)
     desc = TOML.parsefile(joinpath(@__DIR__, desc_path))
 
@@ -39,9 +38,11 @@ function attach_description!(ctx::SchemaContext, desc_path)
     return desc
 end
 
+const description_toml = joinpath(dirname(dirname(@__DIR__)), "schemas", "description.toml")
+
 function setup_ctx!(ctx::SchemaContext)
     auto_optional_nothing!(ctx)
-    desc = attach_description!(ctx, "description.toml")
+    desc = attach_description!(ctx, description_toml)
     defaultvalue!(ctx, JETLS.DEFAULT_CONFIG)
 
     # `__pattern_value__` is an internal field and not appeared in the config file
