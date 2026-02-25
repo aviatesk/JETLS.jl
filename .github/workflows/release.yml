@@ -141,7 +141,10 @@ jobs:
           gh release create "$VERSION" \
             --target release \
             --title "$VERSION" \
-            --notes "$RELEASE_NOTES"
+            --notes "$RELEASE_NOTES" \
+            schemas/config-toml.schema.json \
+            schemas/settings.schema.json \
+            schemas/init-options.schema.json
 
       - name: Strip Announcement from previous release
         env:
