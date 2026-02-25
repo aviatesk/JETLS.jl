@@ -1,8 +1,7 @@
 using TOML
-using JETLS
+using JETLS, JETLS.Glob
 using Struct2JSONSchema
 using JSON
-using Glob
 using OrderedCollections
 
 function sort_keys(d::AbstractDict)

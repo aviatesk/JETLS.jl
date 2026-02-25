@@ -17,7 +17,4 @@ jobs:
       - name: Instantiate schema project
         run: julia --startup-file=no --project=scripts/schema -e 'using Pkg; Pkg.instantiate()'
       - name: Check schemas
-        run: |
-          julia --startup-file=no --project=scripts/schema scripts/schema/generate.jl --settings schemas/settings.schema.json --check
-          julia --startup-file=no --project=scripts/schema scripts/schema/generate.jl --init-options schemas/init-options.schema.json --check
-          julia --startup-file=no --project=scripts/schema scripts/schema/generate.jl --config-toml schemas/config-toml.schema.json --check
+        run: ./scripts/schema/regenerate.sh --check
