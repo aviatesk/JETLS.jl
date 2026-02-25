@@ -52,7 +52,10 @@ function generate_schema_dict(target_arg::String, ctx::SchemaContext)
     if target_arg == "--settings"
         skip!(ctx, JETLS.JETLSConfig, :initialization_options)
     end
-    schema = generate_schema(target; ctx = ctx)
+    # Inline all $defs/$ref for config-toml schema so that TOML language servers
+    # (e.g. Tombi) that don't support $ref resolution can still use it
+    inline_all_defs = target_arg == "--config-toml"
+    schema = generate_schema(target; ctx, inline_all_defs)
     return sort_keys(schema.doc)
 end
 
