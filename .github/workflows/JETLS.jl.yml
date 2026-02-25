@@ -8,6 +8,8 @@ on:
       - "src/**"
       - "test/**"
       - "LSP/**"
+      - "schemas/**"
+      - "scripts/schema/**"
       - "Project.toml"
       - ".github/workflows/JETLS.jl.yml"
       - ".github/workflows/test-app.yml"
@@ -18,6 +20,8 @@ on:
       - "src/**"
       - "test/**"
       - "LSP/**"
+      - "schemas/**"
+      - "scripts/schema/**"
       - "Project.toml"
       - ".github/workflows/JETLS.jl.yml"
       - ".github/workflows/test-app.yml"
@@ -145,6 +149,9 @@ jobs:
 
   test_app:
     uses: ./.github/workflows/test-app.yml
+
+  check_schemas:
+    uses: ./.github/workflows/check-schemas.yml
 
   jetls_self_check:
     name: Self diagnostics

@@ -5,10 +5,11 @@ This guide explains how to launch the JETLS language server using
 
 ## The `jetls` executable
 
-The `jetls` executable is the main entry point for JETLS, providing two commands:
+The `jetls` executable is the main entry point for JETLS, providing three commands:
 
 - `jetls serve` - Start the language server for editor integration (this page)
 - [`jetls check`](@ref cli-check) - Run diagnostics from the command line
+- [`jetls schema`](@ref config/schema-cli) - Print JSON Schema for JETLS configuration
 
 The executable can be installed as an
 [executable app](https://pkgdocs.julialang.org/dev/apps/) via Pkg.jl:
@@ -137,6 +138,9 @@ and require a server restart to take effect. Unlike
 these options configure fundamental server behavior.
 
 ### [Schema](@id init-options/schema)
+
+A [JSON Schema](https://json-schema.org/) for initialization options is available.
+See the [JSON Schema](@ref config/schema-cli) section for download links.
 
 ```json
 {

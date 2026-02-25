@@ -3,6 +3,8 @@
 JETLS supports various configuration options.
 This documentation uses TOML format to describe the configuration schema.
 
+JSON Schema files for all configuration surfaces are [also available](@ref config/schema-cli).
+
 ## [Configuration schema](@id config/schema)
 
 ```toml
@@ -48,24 +50,24 @@ executable = "testrunner"          # string, default: "testrunner" (or "testrunn
 ## [Configuration reference](@id config/reference)
 
 - [`[full_analysis]`](@ref config/full_analysis)
-    - [`[full_analysis] debounce`](@ref config/full_analysis-debounce)
-    - [`[full_analysis] auto_instantiate`](@ref config/full_analysis-auto_instantiate)
+  - [`[full_analysis] debounce`](@ref config/full_analysis-debounce)
+  - [`[full_analysis] auto_instantiate`](@ref config/full_analysis-auto_instantiate)
 - [`formatter`](@ref config/formatter)
 - [`[diagnostic]`](@ref config/diagnostic)
-    - [`[diagnostic] enabled`](@ref config/diagnostic-enabled)
-    - [`[diagnostic] all_files`](@ref config/diagnostic-all_files)
-    - [`[diagnostic] allow_unused_underscore`](@ref config/diagnostic-allow_unused_underscore)
-    - [`[[diagnostic.patterns]]`](@ref config/diagnostic-patterns)
+  - [`[diagnostic] enabled`](@ref config/diagnostic-enabled)
+  - [`[diagnostic] all_files`](@ref config/diagnostic-all_files)
+  - [`[diagnostic] allow_unused_underscore`](@ref config/diagnostic-allow_unused_underscore)
+  - [`[[diagnostic.patterns]]`](@ref config/diagnostic-patterns)
 - [`[completion]`](@ref config/completion)
-    - [`[completion.latex_emoji] strip_prefix`](@ref config/completion-latex_emoji-strip_prefix)
-    - [`[completion.method_signature] prepend_inference_result`](@ref config/completion-method_signature-prepend_inference_result)
+  - [`[completion.latex_emoji] strip_prefix`](@ref config/completion-latex_emoji-strip_prefix)
+  - [`[completion.method_signature] prepend_inference_result`](@ref config/completion-method_signature-prepend_inference_result)
 - [`[code_lens]`](@ref config/code_lens)
-    - [`[code_lens] references`](@ref config/code_lens-references)
-    - [`[code_lens] testrunner`](@ref config/code_lens-testrunner)
+  - [`[code_lens] references`](@ref config/code_lens-references)
+  - [`[code_lens] testrunner`](@ref config/code_lens-testrunner)
 - [`[inlay_hint]`](@ref config/inlay_hint)
-    - [`[inlay_hint] block_end_min_lines`](@ref config/inlay_hint-block_end_min_lines)
+  - [`[inlay_hint] block_end_min_lines`](@ref config/inlay_hint-block_end_min_lines)
 - [`[testrunner]`](@ref config/testrunner)
-    - [`[testrunner] executable`](@ref config/testrunner-executable)
+  - [`[testrunner] executable`](@ref config/testrunner-executable)
 
 ### [`[full_analysis]`](@id config/full_analysis)
 
@@ -679,3 +681,23 @@ For array-type configuration fields (such as [`diagnostic.patterns`](@ref config
 entries from both LSP config and file config are merged rather than one
 completely overriding the other. Entries with same keys are merged with file
 config taking precedence, while entries unique to either source are preserved.
+
+## [JSON Schema](@id config/schema-cli)
+
+JETLS ships pre-generated [JSON Schema](https://json-schema.org/) files for
+all configuration surfaces. These can be used to enable IDE validation and
+auto-completion when editing configuration files or editor settings.
+
+| Schema                                                                                                               | Description                                        |
+| -------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| [`config-toml.schema.json`](https://github.com/aviatesk/JETLS.jl/releases/latest/download/config-toml.schema.json)   | Complete schema for `.JETLSConfig.toml`            |
+| [`settings.schema.json`](https://github.com/aviatesk/JETLS.jl/releases/latest/download/settings.schema.json)         | Settings schema (LSP `workspace/configuration`)    |
+| [`init-options.schema.json`](https://github.com/aviatesk/JETLS.jl/releases/latest/download/init-options.schema.json) | [Initialization options](@ref init-options) schema |
+
+You can also print any schema to stdout using the `jetls schema` CLI command:
+
+```bash
+jetls schema --config-toml    # .JETLSConfig.toml schema
+jetls schema --settings       # settings schema
+jetls schema --init-options   # initialization options schema
+```

@@ -33,6 +33,10 @@ jobs:
     if: github.event_name == 'pull_request' && github.event.action != 'closed'
     uses: ./.github/workflows/test-app.yml
 
+  check_schemas:
+    if: github.event_name == 'pull_request' && github.event.action != 'closed'
+    uses: ./.github/workflows/check-schemas.yml
+
   docs:
     name: Documentation
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'repository_dispatch'
@@ -137,7 +141,10 @@ jobs:
           gh release create "$VERSION" \
             --target release \
             --title "$VERSION" \
-            --notes "$RELEASE_NOTES"
+            --notes "$RELEASE_NOTES" \
+            schemas/config-toml.schema.json \
+            schemas/settings.schema.json \
+            schemas/init-options.schema.json
 
       - name: Strip Announcement from previous release
         env:
