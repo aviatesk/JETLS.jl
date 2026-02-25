@@ -446,8 +446,9 @@ function get_running_name(interp::Interpreter, frame::Frame, pc::Int, name::Glob
         pctop -= 1
         stmt = pc_expr(frame, pctop)
     end   # end fix
-    (mt, sigtparent), lastpcparent = signature(interp, frame, pctop)
-    sigtparent === nothing && return name, pc, lastpcparent
+    methinfo, lastpcparent = signature(interp, frame, pctop)
+    methinfo === nothing && return name, pc, lastpcparent
+    mt, sigtparent = methinfo
     methparent = whichtt(sigtparent, mt)
     methparent === nothing && return name, pc, lastpcparent  # caller isn't defined, no correction is needed
     if isgen
@@ -598,7 +599,7 @@ function methoddef!(interp::Interpreter, signatures::Vector{MethodInfoKey}, fram
     end
     found || return nothing
     while true  # methods containing inner methods may need multiple trips through this loop
-        (mt, sigt), pc = signature(interp, frame, stmt, pc)
+        methinfo, pc = signature(interp, frame, stmt, pc)
         stmt = pc_expr(frame, pc)
         while !isexpr(stmt, :method, 3)
             pc = next_or_nothing(interp, frame, pc)  # this should not check define, we've probably already done this once
@@ -608,7 +609,8 @@ function methoddef!(interp::Interpreter, signatures::Vector{MethodInfoKey}, fram
         pc3 = pc
         stmt = stmt::Expr
         name3 = normalize_defsig(stmt.args[1], frame)
-        sigt === nothing && (error("expected a signature"); return next_or_nothing(interp, frame, pc)), pc3
+        methinfo === nothing && (error("expected a signature"); return next_or_nothing(interp, frame, pc)), pc3
+        mt, sigt = methinfo
         # Methods like f(x::Ref{<:Real}) that use gensymmed typevars will not have the *exact*
         # signature of the active method. So let's get the active signature.
         frame.pc = pc

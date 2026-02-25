@@ -18,6 +18,9 @@ end
 
 const backend = @load_preference("backend", "OpenCL")
 
+# A compile-time preference that does NOT trigger recompilation when changed
+const backend_noncached = load_preference(@__MODULE__, "backend_noncached", "OpenCL"; disable_invalidation=true)
+
 # An example that helps us to prove that things are happening at compile-time
 function do_computation()
     @static if backend == "OpenCL"
@@ -32,7 +35,7 @@ function do_computation()
 end
 
 
-# A non-compiletime preference
+# A preference that does not trigger invalidation
 function set_username(username::String)
     @set_preferences!("username" => username)
 end

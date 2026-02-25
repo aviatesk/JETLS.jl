@@ -152,6 +152,28 @@ function istypedef(stmt)
     return false
 end
 
+# Check if stmt is a Core.declare_global(...) call
+function is_declare_global(@nospecialize(stmt))
+    isexpr(stmt, :call) || return false
+    f = stmt.args[1]
+    @static if isdefined(Core, :declare_global)
+        is_global_ref(f, Core, :declare_global) && return true
+        is_quotenode_egal(f, Core.declare_global) && return true
+    end
+    return false
+end
+
+# Check if stmt is a Core.declare_const(...) call
+function is_declare_const(@nospecialize(stmt))
+    isexpr(stmt, :call) || return false
+    f = stmt.args[1]
+    @static if isdefined(Core, :declare_const)
+        is_global_ref(f, Core, :declare_const) && return true
+        is_quotenode_egal(f, Core.declare_const) && return true
+    end
+    return false
+end
+
 # Given a typedef at `src.code[idx]`, return the range of statement indices that encompass the typedef.
 # The range does not include any constructor methods.
 function typedef_range(src::CodeInfo, idx)
@@ -159,14 +181,15 @@ function typedef_range(src::CodeInfo, idx)
     istypedef(stmt) || error(stmt, " is not a typedef")
     stmt = stmt::Expr
     isanonymous_typedef(stmt) && return idx:idx
-    # Search backwards to the previous :global
+    # Search backwards to the previous :global or Core.declare_global
     istart = idx
     while istart >= 1
-        isexpr(src.code[istart], :global) && break
-        isexpr(src.code[istart], :latestworld) && break
+        s = src.code[istart]
+        isexpr(s, :global) && break
+        is_declare_global(s) && break
         istart -= 1
     end
-    istart >= 1 || error("no initial :global found")
+    istart >= 1 || error("no initial :global or declare_global found")
     iend, n = idx, length(src.code)
     have_typebody = have_equivtypedef = false
     while iend <= n
@@ -174,15 +197,20 @@ function typedef_range(src::CodeInfo, idx)
         if isa(stmt, Expr)
             stmt.head === :global && break
             stmt.head === :latestworld && break
-            if stmt.head === :call
-                if (is_global_ref(stmt.args[1], Core, :_typebody!) || is_quotenode_egal(stmt.args[1], Core._typebody!))
+            # New lowering uses Core.declare_const for the final binding
+            is_declare_const(stmt) && break
+            # Unwrap assignments (e.g. `_1 = Core._typebody!(...)`) to find the call
+            callstmt = stmt.head === :(=) ? getrhs(stmt) : stmt
+            if isa(callstmt, Expr) && callstmt.head === :call
+                if (is_global_ref(callstmt.args[1], Core, :_typebody!) || is_quotenode_egal(callstmt.args[1], Core._typebody!))
                     have_typebody = true
-                elseif (is_global_ref(stmt.args[1], Core, :_equiv_typedef) || is_quotenode_egal(stmt.args[1], Core._equiv_typedef))
+                elseif (is_global_ref(callstmt.args[1], Core, :_equiv_typedef) || is_quotenode_egal(callstmt.args[1], Core._equiv_typedef))
                     have_equivtypedef = true
-                    # Advance to the type-assignment
+                    # Advance to the type-assignment (or declare_const call)
                     while iend <= n
                         stmt = src.code[iend]
                         get_lhs_rhs(stmt) !== nothing && break
+                        is_declare_const(stmt) && break
                         iend += 1
                     end
                 end
@@ -195,7 +223,7 @@ function typedef_range(src::CodeInfo, idx)
         is_return(stmt) && break
         iend += 1
     end
-    iend <= n || (@show src; error("no final :global found"))
+    iend <= n || (@show src; error("no final :global or declare_const found"))
     return istart:iend-1
 end
 
