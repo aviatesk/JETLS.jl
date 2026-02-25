@@ -118,12 +118,9 @@ include("did-change-watched-files.jl")
 include("initialize.jl")
 
 """
-    runserver([callback,] in::IO, out::IO; client_process_id=nothing)
-        -> (; exit_code::Int, endpoint::Endpoint)
-    runserver([callback,] endpoint::Endpoint; client_process_id=nothing)
-        -> (; exit_code::Int, endpoint::Endpoint)
-    runserver([callback,] server::Server; client_process_id=nothing)
-        -> (; exit_code::Int, endpoint::Endpoint)
+    runserver([callback,] in::IO, out::IO; client_process_id=nothing) -> exit_code::Int
+    runserver([callback,] endpoint::Endpoint; client_process_id=nothing) -> exit_code::Int
+    runserver([callback,] server::Server; client_process_id=nothing) -> exit_code::Int
 
 Run the JETLS language server with the specified input/output streams or endpoint.
 

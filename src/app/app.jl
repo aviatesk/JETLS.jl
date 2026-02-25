@@ -39,7 +39,7 @@ const help_message = """
 function (@main)(args::Vector{String})::Cint
     if any(arg -> arg in ("-v", "--version", "version"), args)
         println(stdout, "JETLS version $JETLS_VERSION")
-        return Cint(0)
+        return 0
     end
 
     if !isempty(args)
@@ -47,18 +47,18 @@ function (@main)(args::Vector{String})::Cint
         if first_arg == "check"
             if length(args) >= 2 && args[2] in ("-h", "--help", "help")
                 print(stdout, check_help_message)
-                return Cint(0)
+                return 0
             end
             return run_check(args[2:end])
         elseif first_arg == "serve"
             if length(args) >= 2 && args[2] in ("-h", "--help", "help")
                 print(stdout, serve_help_message)
-                return Cint(0)
+                return 0
             end
             return run_serve(args[2:end])
         elseif first_arg in ("-h", "--help", "help")
             print(stdout, help_message)
-            return Cint(0)
+            return 0
         else
             @warn "Running `jetls` without a subcommand is deprecated and may be removed in a future release. Use `jetls serve` instead."
         end
