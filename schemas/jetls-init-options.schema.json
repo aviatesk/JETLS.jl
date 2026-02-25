@@ -1,48 +1,47 @@
 {
-    "$defs": {
-        "Glob.FilenameMatch{String}__9cefaeb31fbb5cb2": {
-            "type": "string"
-        },
-        "JETLS.InitOptions__d5c19ad595497997": {
+  "$defs": {
+    "Glob.FilenameMatch{String}__3953c79614573f76": {
+      "type": "string"
+    },
+    "JETLS.InitOptions__0b25d704b44c3782": {
+      "additionalProperties": false,
+      "properties": {
+        "analysis_overrides": {
+          "default": [],
+          "description": "Override full analysis behavior for specific file patterns. Primarily used as a temporary workaround to disable analysis for files affected by memory leak issues. Each override specifies a glob pattern and optionally a module name. Note: This is an experimental feature that may be removed or changed in future versions.",
+          "items": {
             "additionalProperties": false,
             "properties": {
-                "analysis_overrides": {
-                    "default": [
-                    ],
-                    "description": "Override full analysis behavior for specific file patterns. Primarily used as a temporary workaround to disable analysis for files affected by memory leak issues. Each override specifies a glob pattern and optionally a module name. Note: This is an experimental feature that may be removed or changed in future versions.",
-                    "items": {
-                        "additionalProperties": false,
-                        "properties": {
-                            "module_name": {
-                                "$ref": "#/$defs/String__ab1d9960b6094ec7",
-                                "description": "Optional module name to associate with the matched files. When specified, analysis is performed within the context of this module."
-                            },
-                            "path": {
-                                "$ref": "#/$defs/Glob.FilenameMatch{String}__9cefaeb31fbb5cb2",
-                                "description": "Glob pattern to match files for which analysis should be overridden (e.g., `src/**/*.jl`, `test/**/*.jl`). Patterns are matched against file paths relative to the workspace root. Supports globstar (`**`) for matching directories recursively."
-                            }
-                        },
-                        "required": [
-                            "path"
-                        ],
-                        "type": "object"
-                    },
-                    "type": "array"
-                },
-                "n_analysis_workers": {
-                    "default": 1,
-                    "description": "Number of concurrent analysis worker tasks for running full analysis (experimental). Default is 1. See [documentation](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options/n_analysis_workers) for details and current limitations.",
-                    "maximum": 9223372036854775807,
-                    "minimum": -9223372036854775808,
-                    "type": "integer"
-                }
+              "module_name": {
+                "$ref": "#/$defs/String__f000e81cec2244bc",
+                "description": "Optional module name to associate with the matched files. When specified, analysis is performed within the context of this module."
+              },
+              "path": {
+                "$ref": "#/$defs/Glob.FilenameMatch{String}__3953c79614573f76",
+                "description": "Glob pattern to match files for which analysis should be overridden (e.g., `src/**/*.jl`, `test/**/*.jl`). Patterns are matched against file paths relative to the workspace root. Supports globstar (`**`) for matching directories recursively."
+              }
             },
+            "required": [
+              "path"
+            ],
             "type": "object"
+          },
+          "type": "array"
         },
-        "String__ab1d9960b6094ec7": {
-            "type": "string"
+        "n_analysis_workers": {
+          "default": 1,
+          "description": "Number of concurrent analysis worker tasks for running full analysis (experimental). Default is 1. See [documentation](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options/n_analysis_workers) for details and current limitations.",
+          "maximum": 9223372036854775807,
+          "minimum": -9223372036854775808,
+          "type": "integer"
         }
+      },
+      "type": "object"
     },
-    "$ref": "#/$defs/JETLS.InitOptions__d5c19ad595497997",
-    "$schema": "https://json-schema.org/draft/2020-12/schema"
+    "String__f000e81cec2244bc": {
+      "type": "string"
+    }
+  },
+  "$ref": "#/$defs/JETLS.InitOptions__0b25d704b44c3782",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
 }

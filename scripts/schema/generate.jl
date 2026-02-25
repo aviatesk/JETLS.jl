@@ -56,7 +56,7 @@ function generate_schema_dict(target_arg::String, ctx::SchemaContext)
     return sort_keys(schema.doc)
 end
 
-function @main(args)
+function (@main)(args::Vector{String})
     target_arg, file_path, check_mode = parse_arguments(args)
     gen_ctx = SchemaContext()
     setup_ctx!(gen_ctx)
