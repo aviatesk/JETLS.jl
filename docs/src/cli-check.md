@@ -23,6 +23,7 @@ jetls --threads=4,2 -- check src/SomePkg.jl test/runtests.jl
 ## [Command reference](@id cli-check/reference)
 
 > `jetls check --help`
+
 ```@eval
 using JETLS
 using Markdown
@@ -64,6 +65,7 @@ Sets the root path for configuration file lookup and relative path display.
 By default, the current working directory is used.
 
 When specified, JETLS will:
+
 - Look for `.JETLSConfig.toml` in the specified root directory
 - Display file paths relative to this root in diagnostic output
 
@@ -94,6 +96,7 @@ Sets the minimum severity level that causes a non-zero exit code. This is useful
 for CI pipelines where you want to fail only on certain severity levels.
 
 Available levels (from most to least severe):
+
 - `error` - Only errors cause exit code 1
 - `warn` (default) - Warnings and errors cause exit code 1
 - `info` - Information, warnings, and errors cause exit code 1
@@ -114,6 +117,7 @@ level are hidden from the output but may still affect the exit code (depending
 on `--exit-severity`).
 
 Available levels (from most to least severe):
+
 - `error` - Only show errors
 - `warn` - Show warnings and errors
 - `info` - Show information, warnings, and errors
@@ -132,6 +136,7 @@ jetls check --show-severity=hint --exit-severity=error src/SomePkg.jl
 Controls how progress is displayed during analysis.
 
 Available modes:
+
 - `auto` (default) - Uses spinner for interactive terminals, simple output
   otherwise
 - `full` - Always show animated spinner with detailed progress
@@ -185,3 +190,49 @@ path = "test/**/*.jl"
 ```
 
 For complete configuration options, see the [JETLS configuration](@ref config/schema) page.
+
+## [GitHub Actions](@id cli-check/github-actions)
+
+A composite action is available for running `jetls check` in CI pipelines.
+This handles Julia setup, caching, and JETLS installation automatically.
+
+### Basic usage
+
+```yaml
+steps:
+  - uses: actions/checkout@v6
+  - uses: aviatesk/JETLS.jl/.github/actions/check@release
+    with:
+      files: src/SomePkg.jl
+```
+
+### With options
+
+```yaml
+steps:
+  - uses: actions/checkout@v6
+  - uses: aviatesk/JETLS.jl/.github/actions/check@release
+    with:
+      files: src/SomePkg.jl test/runtests.jl
+      exit-severity: error
+      show-severity: warn
+```
+
+### Action inputs
+
+All `jetls check` command-line options are available as action inputs:
+
+| Input              | Default   | Description                                         |
+| :----------------- | :-------- | :-------------------------------------------------- |
+| `files` (required) |           | Space-separated list of files to check              |
+| `version`          | `release` | JETLS revision to install                           |
+| `julia-version`    | `1.12`    | Julia version to use                                |
+| `quiet`            | `true`    | Suppress info and warning log messages              |
+| `root`             | `.`       | Root directory for configuration and relative paths |
+| `context-lines`    | `2`       | Number of source context lines                      |
+| `exit-severity`    | `warn`    | Minimum severity to trigger non-zero exit           |
+| `show-severity`    | `hint`    | Minimum severity to display                         |
+| `progress`         | `none`    | Progress display mode                               |
+
+See [`.github/actions/check/action.yml`](https://github.com/aviatesk/JETLS.jl/blob/release/.github/actions/check/action.yml)
+for the full action definition.

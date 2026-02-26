@@ -6,8 +6,13 @@ const schema_help_message = """
     Options:
       --settings        Print the workspace settings schema
       --init-options    Print the initialization options schema
-      --config-toml     Print the .jetls.toml configuration schema
+      --config-toml     Print the .JETLSConfig.toml configuration schema
       --help, -h        Show this help message
+
+    Examples:
+      jetls schema --config-toml    # .JETLSConfig.toml schema
+      jetls schema --settings       # settings schema
+      jetls schema --init-options   # initialization options schema
     """
 
 function run_schema(args::Vector{String}, out::IO=stdout)

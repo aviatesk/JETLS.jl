@@ -19,7 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`e141508...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/e141508...HEAD)
+- Diff: [`ebcbd60...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/ebcbd60...HEAD)
 
 ### Announcement
 
@@ -47,6 +47,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- Added a GitHub composite action (`.github/actions/check/`) for running
+  `jetls check` in CI pipelines. External packages can use it as:
+  ```yaml
+  - uses: aviatesk/JETLS.jl/.github/actions/check@release
+    with:
+      files: src/SomePkg.jl
+  ```
+  All `jetls check` command-line options are available as action inputs.
+
+### Changes
+
+- The previously deprecated behavior of running `jetls` without a subcommand
+  to start the language server has been removed. Running `jetls` without a
+  subcommand or with unrecognized arguments now shows the help message and
+  exits. Use `jetls serve` instead
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/565).
+
+## 2026-02-26
+
+- Commit: [`ebcbd60`](https://github.com/aviatesk/JETLS.jl/commit/ebcbd60)
+- Diff: [`e141508...ebcbd60`](https://github.com/aviatesk/JETLS.jl/compare/e141508...ebcbd60)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-02-26")'
+  ```
+
+### Added
+
+- Added [`inference/method-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/inference/method-error)
+  diagnostic that detects function calls where no matching method exists for
+  the inferred argument types. This catches potential `MethodError`s that would
+  occur at runtime. For union-split calls, the diagnostic reports only the
+  failing branches with their count (e.g., "1/2 union split").
+
 - Added `jetls schema` CLI command that prints the JSON Schema for JETLS
   configuration. Supports `--settings`, `--init-options`, and
   `--config-toml` options.
@@ -54,12 +88,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   committed generated schema files under `schemas/`. CI now checks that
   the schema files and `jetls-client/package.json` stay in sync with
   `src/types.jl`.
-
-- Added [`inference/method-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/inference/method-error)
-  diagnostic that detects function calls where no matching method exists for
-  the inferred argument types. This catches potential `MethodError`s that would
-  occur at runtime. For union-split calls, the diagnostic reports only the
-  failing branches with their count (e.g., "1/2 union split").
 
 ### Changed
 
@@ -195,7 +223,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Deprecated
 
 - Running `jetls` without a subcommand (e.g., `jetls --stdio`) is deprecated.
-  Use `jetls serve` instead. This may be removed in a future release.
+  Use `jetls serve` instead. The support for `jetls` without a subcommand will
+  be removed in a future release.
 
 ### Changed
 
