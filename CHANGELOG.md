@@ -21,14 +21,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 - Diff: [`ebcbd60...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/ebcbd60...HEAD)
 
-### Changes
-
-- The previously deprecated behavior of running `jetls` without a subcommand
-  to start the language server has been removed. Running `jetls` without a
-  subcommand or with unrecognized arguments now shows the help message and
-  exits. Use `jetls serve` instead
-  (Closed https://github.com/aviatesk/JETLS.jl/issues/565).
-
 ### Announcement
 
 > [!warning]
@@ -53,6 +45,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > Note that `analysis_overrides` is provided as a temporary workaround and may
 > be removed or changed at any time. A proper fix is being worked on.
 
+### Changes
+
+- The previously deprecated behavior of running `jetls` without a subcommand
+  to start the language server has been removed. Running `jetls` without a
+  subcommand or with unrecognized arguments now shows the help message and
+  exits. Use `jetls serve` instead
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/565).
+
 ## 2026-02-26
 
 - Commit: [`ebcbd60`](https://github.com/aviatesk/JETLS.jl/commit/ebcbd60)
@@ -64,6 +64,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- Added [`inference/method-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/inference/method-error)
+  diagnostic that detects function calls where no matching method exists for
+  the inferred argument types. This catches potential `MethodError`s that would
+  occur at runtime. For union-split calls, the diagnostic reports only the
+  failing branches with their count (e.g., "1/2 union split").
+
 - Added `jetls schema` CLI command that prints the JSON Schema for JETLS
   configuration. Supports `--settings`, `--init-options`, and
   `--config-toml` options.
@@ -71,12 +77,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   committed generated schema files under `schemas/`. CI now checks that
   the schema files and `jetls-client/package.json` stay in sync with
   `src/types.jl`.
-
-- Added [`inference/method-error`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/inference/method-error)
-  diagnostic that detects function calls where no matching method exists for
-  the inferred argument types. This catches potential `MethodError`s that would
-  occur at runtime. For union-split calls, the diagnostic reports only the
-  failing branches with their count (e.g., "1/2 union split").
 
 ### Changed
 
