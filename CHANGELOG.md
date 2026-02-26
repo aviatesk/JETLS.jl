@@ -45,6 +45,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > Note that `analysis_overrides` is provided as a temporary workaround and may
 > be removed or changed at any time. A proper fix is being worked on.
 
+### Added
+
+- Added a GitHub composite action (`.github/actions/check/`) for running
+  `jetls check` in CI pipelines. External packages can use it as:
+  ```yaml
+  - uses: aviatesk/JETLS.jl/.github/actions/check@release
+    with:
+      files: src/SomePkg.jl
+  ```
+  All `jetls check` command-line options are available as action inputs.
+
 ### Changes
 
 - The previously deprecated behavior of running `jetls` without a subcommand

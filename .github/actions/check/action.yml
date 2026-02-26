@@ -1,0 +1,73 @@
+name: "JETLS Check"
+description: "Run JETLS diagnostics on Julia source files"
+
+inputs:
+  files:
+    description: "Space-separated list of Julia files to check"
+    required: true
+  version:
+    description: "JETLS revision to install (branch, tag, or commit SHA)"
+    required: false
+    default: "release"
+  julia-version:
+    description: "Julia version to use"
+    required: false
+    default: "1.12"
+  quiet:
+    description: "Suppress info and warning log messages"
+    required: false
+    default: "true"
+  root:
+    description: "Root directory for configuration and relative paths"
+    required: false
+    default: "."
+  context-lines:
+    description: "Number of source context lines to show around diagnostics"
+    required: false
+    default: ""
+  exit-severity:
+    description: "Minimum severity to trigger non-zero exit (error, warn, info, hint)"
+    required: false
+    default: "warn"
+  show-severity:
+    description: "Minimum severity to display in output (error, warn, info, hint)"
+    required: false
+    default: ""
+  progress:
+    description: "Progress display mode (auto, full, simple, none)"
+    required: false
+    default: "none"
+
+runs:
+  using: "composite"
+  steps:
+    - uses: julia-actions/setup-julia@v2
+      with:
+        version: ${{ inputs.julia-version }}
+    - uses: julia-actions/cache@v2
+    - name: Install jetls
+      shell: bash
+      run: |
+        julia --startup-file=no -e '
+          using Pkg
+          Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl",
+                         rev="${{ inputs.version }}")'
+        echo "$HOME/.julia/bin" >> "$GITHUB_PATH"
+    - name: Run jetls check
+      shell: bash
+      run: |
+        args=()
+        if [[ "${{ inputs.quiet }}" == "true" ]]; then
+          args+=(--quiet)
+        fi
+        args+=(--root="${{ inputs.root }}")
+        if [[ -n "${{ inputs.context-lines }}" ]]; then
+          args+=(--context-lines="${{ inputs.context-lines }}")
+        fi
+        args+=(--exit-severity="${{ inputs.exit-severity }}")
+        if [[ -n "${{ inputs.show-severity }}" ]]; then
+          args+=(--show-severity="${{ inputs.show-severity }}")
+        fi
+        args+=(--progress="${{ inputs.progress }}")
+        args+=(${{ inputs.files }})
+        jetls check "${args[@]}"
