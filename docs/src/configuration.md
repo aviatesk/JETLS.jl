@@ -696,8 +696,11 @@ auto-completion when editing configuration files or editor settings.
 
 You can also print any schema to stdout using the `jetls schema` CLI command:
 
-```bash
-jetls schema --config-toml    # .JETLSConfig.toml schema
-jetls schema --settings       # settings schema
-jetls schema --init-options   # initialization options schema
+### Command reference
+
+> `jetls schema --help`
+```@eval
+using JETLS
+using Markdown
+Markdown.parse('`'^3 * '\n' * JETLS.schema_help_message * '\n' * '`'^3)
 ```

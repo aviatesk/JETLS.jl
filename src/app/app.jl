@@ -4,7 +4,7 @@ const help_message = """
 
     VERSION: $JETLS_VERSION
 
-    Usage: jetls [COMMAND] [OPTIONS]
+    Usage: jetls <COMMAND> [OPTIONS]
 
     Commands:
       serve                       Start language server (default)
@@ -31,7 +31,7 @@ const help_message = """
 
     Examples:
       jetls serve --pipe-listen=/tmp/jetls.sock
-      jetls --socket=8080
+      jetls serve --socket=8080
       jetls check src/SomePkg.jl
       jetls check --root=/path/to/project src/
       jetls schema --settings
@@ -60,17 +60,10 @@ function (@main)(args::Vector{String})::Cint
                 return 0
             end
             return run_serve(args[2:end])
-        elseif first_arg in ("-h", "--help", "help")
-            print(stdout, help_message)
-            return 0
-        else
-            @warn "Running `jetls` without a subcommand is deprecated and may be removed in a future release. Use `jetls serve` instead."
         end
-    else
-        @warn "Running `jetls` without a subcommand is deprecated and may be removed in a future release. Use `jetls serve` instead."
     end
-
-    return run_serve(args)
+    print(stdout, help_message)
+    return 0
 end
 
 # HACK: Set `LOAD_PATH` to the same state as during normal Julia script execution.
