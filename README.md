@@ -42,7 +42,7 @@ the list itself is subject to change.
 
 - Analysis
   - [x] Document synchronization
-  - [/] Incremental analysis
+  - [ ] (WIP) Incremental analysis
   - [ ] JuliaLowering integration
   - [ ] Recursive analysis for dependencies
   - [ ] Cross-server-process cache system
@@ -69,14 +69,14 @@ the list itself is subject to change.
   - [x] Local binding completion
   - [x] LaTeX/Emoji completion
   - [x] Method signature completion
-  - [/] Argument type based matched method filtering
+  - [ ] (WIP) Argument type based matched method filtering
   - [x] [Juno](https://junolab.org/)-like return type annotation for method completions
   - [x] Keyword argument name completion
   - [ ] Property completion
 - Signature help
   - [x] Basic implementation
   - [x] Macro support
-  - [/] Argument type based matched method filtering
+  - [ ] (WIP) Argument type based matched method filtering
 - Definition
   - [x] Method defintion
   - [x] Global binding definition
