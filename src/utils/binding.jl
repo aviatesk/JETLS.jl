@@ -319,3 +319,19 @@ function _lookup_binding_definitions!(sl::JS.SyntaxList, st3::JS.SyntaxTree, bin
     end
     return reverse!(deduplicate_syntaxlist(sl))
 end
+
+function select_inferrable_binding(
+        st0_top::JS.SyntaxTree, offset::Int, mod::Module;
+        caller::AbstractString = "select_inferrable_target"
+    )
+    st0 = @something greatest_local(st0_top, offset) return nothing # nothing we can lower
+    (; ctx3, st3) = try
+        jl_lower_for_scope_resolution(mod, st0; trim_error_nodes=false, recover_from_macro_errors=false)
+    catch err
+        JETLS_DEBUG_LOWERING && @warn "Error in lowering ($caller)" err
+        JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
+        return nothing
+    end
+    binding = @something __select_target_binding(ctx3, st3, offset) return nothing
+    return (; ctx3, st3, binding)
+end

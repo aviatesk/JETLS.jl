@@ -810,6 +810,7 @@ end
 
 """
     is_from_user_ast(provs::JS.SyntaxList) -> Bool
+    is_from_user_ast(st3::JS.SyntaxTree) -> Bool
 
 Determine whether a binding with the given provenances originates from user-written code.
 
@@ -831,3 +832,4 @@ function is_from_user_ast(provs::JS.SyntaxList)
     JS.sourcefile(lprov) == JS.sourcefile(fprov) || return false
     return JS.byte_range(lprov) ⊆ JS.byte_range(fprov)
 end
+is_from_user_ast(st3::JS.SyntaxTree) = is_from_user_ast(JS.flattened_provenance(st3))
