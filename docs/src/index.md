@@ -96,9 +96,7 @@ Minimal [Emacs](https://www.gnu.org/software/emacs/)
                '(((julia-mode :language-id "julia")
                   (julia-ts-mode :language-id "julia"))
                  "jetls"
-                 "serve"
-                 "--socket"
-                 :autoport)))
+                 "serve")))
 ```
 
 ### Vim
