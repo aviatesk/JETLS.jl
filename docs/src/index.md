@@ -96,8 +96,25 @@ Minimal [Emacs](https://www.gnu.org/software/emacs/)
                '(((julia-mode :language-id "julia")
                   (julia-ts-mode :language-id "julia"))
                  "jetls"
-                 "serve")))
+                 "serve"
+                 "--socket"
+                 :autoport)))
 ```
+
+This configuration will not work when editing files over TRAMP.
+To fix this, use the `--stdio` method instead of TCP sockets.
+
+```lisp
+(with-eval-after-load 'eglot
+  (add-to-list 'eglot-server-programs
+               '(((julia-mode :language-id "julia")
+                  (julia-ts-mode :language-id "julia"))
+                 "jetls"
+                 "serve"
+                 "--stdio")))
+```
+
+As the `--stdio` connection can become corrupted if another code writes to the `stdin`/`stdout`, it is considered less stable.
 
 ### Vim
 Minimal [Vim](https://www.vim.org) setup using the
