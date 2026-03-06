@@ -18,9 +18,11 @@
   Also, ensure that the maximum line length never exceeds 72 characters.
   When referencing external GitHub PRs or issues, use proper GitHub interlinking
   format (e.g., "owner/repo#123" for PRs/issues).
-  Finally, if you write code yourself, include a "Written by Claude" footer at
-  the end of the commit message (no emoji nonsense). However, when simply asked
-  to write a commit message, there's no need to add that footer.
+  Finally, if you write code yourself, include a co-author trailer at the end
+  of the commit message, e.g.:
+  `Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>`
+  (adjust the model name as appropriate). However, when simply asked to write
+  a commit message, there's no need to add that trailer.
 - For file names, use `-` (hyphen) as the word separator by default.
   However, if the file name corresponds directly to Julia code (e.g., a module
   name), use `_` (underscore) instead, since Julia identifiers cannot contain
