@@ -78,7 +78,9 @@ The extension will automatically use the `jetls` executable from your `PATH`.
 ## Launching configuration (advanced)
 
 Most users do not need any further configuration beyond the installation steps
-above. The following settings are available for advanced use cases.
+above. The following settings are available for advanced use cases. For example, if you are
+using plotting libraries like GLMakie or PyPlot, you have to run JETLS single-threaded
+using the configuration shown below.
 
 ### Executable configuration
 
@@ -88,6 +90,17 @@ Configure the JETLS executable through the `jetls-client.executable` setting:
   setting (default: `{"path": "jetls", "threads": "auto"}`)
 - **Array form** `string[]`: Use a local JETLS checkout for development, e.g,
   (`["julia", "--startup-file=no", "--history-file=no", "--project=/path/to/JETLS", "-m", "JETLS", "serve"]`)
+
+Example for launching JetLS single-threaded:
+```json
+{
+  "jetls-client.executable": {
+      "path": "jetls",
+      "threads": "1,0"
+  }
+}
+```
+Save this in the `settings.json` file in the `.vscode` folder of your project.
 
 ### Communication channel
 
