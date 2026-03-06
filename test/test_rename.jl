@@ -238,8 +238,7 @@ end
             fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
             @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
             furi = filename2uri("Untitled" * filename)
-            for (i, pos) in enumerate(positions)
-                i == 2 && continue # end position selects `__context__` (implicit @generated arg)
+            for pos in positions
                 (; result, error) = JETLS.local_binding_rename(
                     server, furi, fi, pos, @__MODULE__, "y")
                 @test result isa WorkspaceEdit && isnothing(error)
@@ -263,8 +262,7 @@ end
             fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
             @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
             furi = filename2uri("Untitled" * filename)
-            for (i, pos) in enumerate(positions)
-                i == 2 && continue # end position selects `__context__` (implicit @generated arg)
+            for pos in positions
                 (; result, error) = JETLS.local_binding_rename(
                     server, furi, fi, pos, @__MODULE__, "S")
                 @test result isa WorkspaceEdit && isnothing(error)

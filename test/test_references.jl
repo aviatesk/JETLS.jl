@@ -81,8 +81,7 @@ end
             """
             clean_code, positions = JETLS.get_text_and_positions(code)
             @test length(positions) == 9
-            for (i, pos) in enumerate(positions)
-                i == 3 && continue # end position selects `__context__` (implicit @generated arg)
+            for pos in positions
                 refs = find_references(clean_code, pos)
                 @test length(refs) == 3
             end
@@ -96,8 +95,7 @@ end
             """
             clean_code, positions = JETLS.get_text_and_positions(code)
             @test length(positions) == 6
-            for (i, pos) in enumerate(positions)
-                i == 2 && continue # end position selects `__context__` (implicit @generated arg)
+            for pos in positions
                 refs = find_references(clean_code, pos)
                 @test length(refs) == 3
             end
@@ -115,9 +113,10 @@ end
             @mymacro println("world")
             """
             clean_code, positions = JETLS.get_text_and_positions(code)
-            # Only test start position; end position selects `__module__` (implicit macro arg)
-            refs = find_references(clean_code, positions[1])
-            @test length(refs) == 3
+            for pos in positions
+                refs = find_references(clean_code, pos)
+                @test length(refs) == 3
+            end
         end
 
         # Test from macrocall

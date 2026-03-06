@@ -637,7 +637,7 @@ end
 function analyze_unused_bindings!(
         diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::JS.SyntaxTree, ctx3::JL.VariableAnalysisContext,
         binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence{Tree3}}},
-        ismacro::Base.RefValue{Bool}, reported::Set{LoweringDiagnosticKey},
+        has_implicit_args::Bool, reported::Set{LoweringDiagnosticKey},
         kwarg_type_names::Dict{Tuple{Int,Int},Set{String}};
         allow_unused_underscore::Bool
     ) where Tree3<:JS.SyntaxTree
@@ -648,7 +648,7 @@ function analyze_unused_bindings!(
             continue
         end
         bn = binfo.name
-        if ismacro[] && (bn == "__module__" || bn == "__source__")
+        if has_implicit_args && bn in _IMPLICIT_BINDING_NAMES
             continue
         end
         if allow_unused_underscore && startswith(bn, '_')
@@ -1037,8 +1037,10 @@ function analyze_lowered_code!(
     reported = Set{LoweringDiagnosticKey}() # to prevent duplicate reports for unused default or keyword arguments
     kwarg_type_names = compute_kwarg_type_annotation_names(st0)
 
+    has_implicit_args = ismacro[] || is_generated0(st0)
+
     analyze_unused_bindings!(
-        diagnostics, fi, st0, ctx3, binding_occurrences, ismacro, reported, kwarg_type_names;
+        diagnostics, fi, st0, ctx3, binding_occurrences, has_implicit_args, reported, kwarg_type_names;
         allow_unused_underscore)
 
     skip_analysis_requiring_context ||

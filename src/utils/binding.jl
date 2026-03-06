@@ -155,6 +155,11 @@ function cursor_bindings(st0_top::JS.SyntaxTree, offset::Int, mod::Module)
     end
 end
 
+# Implicit binding names introduced by JuliaLowering for macros (`__module__`,
+# `__source__`) and `@generated` functions (`__context__`).
+# These span the full signature byte range and should not be selected by cursor.
+const _IMPLICIT_BINDING_NAMES = ("__context__", "__module__", "__source__")
+
 function find_target_binding(ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTree, offset::Int)
     return traverse(st3) do st::JS.SyntaxTree
         k = JS.kind(st)
@@ -166,7 +171,7 @@ function find_target_binding(ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTre
         offset in JS.byte_range(st) || return nothing
         k === JS.K"BindingId" || return nothing
         binfo = JL.get_binding(ctx3, st)
-        if binfo.is_internal || startswith(binfo.name, "#")
+        if binfo.is_internal || startswith(binfo.name, "#") || binfo.name in _IMPLICIT_BINDING_NAMES
             return nothing
         end
         return TraversalReturn(st)
