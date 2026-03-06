@@ -560,7 +560,7 @@ function print_diagnostics(
             printstyled(stdout, "# @ $rel_path:$line,$character\n"; color=:light_black)
             output = let note=note, notecolor=color, context_lines=context_lines
                 sprint(; context=IOContext(stdout)) do io
-                    JS.highlight(io, src, start_byte:end_byte;
+                    JS.highlight(io, src, start_byte:end_byte-1;
                         note, notecolor=notecolor,
                         context_lines_before=context_lines, context_lines_after=context_lines)
                 end
