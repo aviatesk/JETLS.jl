@@ -10,7 +10,7 @@ signature_help_options() = SignatureHelpOptions(;
 
 const SIGNATURE_HELP_REGISTRATION_ID = "jetls-signature-help"
 const SIGNATURE_HELP_REGISTRATION_METHOD = "textDocument/signatureHelp"
-const CALL_KINDS = JS.KSet"call macrocall dotcall"
+const CALL_KINDS = JS.KSet"call macrocall ."
 
 function signature_help_registration()
     (; triggerCharacters, retriggerCharacters) = signature_help_options()
@@ -48,23 +48,31 @@ function flatten_args(call::JS.SyntaxTree)
         println(stderr, JL.sourcetext(call))
         error(lazy"Unexpected call kind: $(kind(call))")
     end
-    usable = (arg::JS.SyntaxTree) -> kind(arg) != K"error"
-    orig = filter(usable, JS.children(call)[2:end])
+    usable = (arg::JS.SyntaxTree) -> kind(arg) ∉ JS.KSet"error Value"
+    # In new EST, dotcall `f.(args)` is represented as `K"."` with children
+    # `[func, tuple(args...)]`, so we unwrap the tuple to get the actual args.
+    if kind(call) === K"." && JS.numchildren(call) ≥ 2 && kind(call[2]) === K"tuple"
+        orig = filter(usable, JS.children(call[2]))
+    else
+        orig = filter(usable, JS.children(call)[2:end])
+    end
 
     args = JS.SyntaxList(orig.graph)
-    kw_i = 1
+    kw_children = JS.SyntaxList(orig.graph)
     has_semicolon = false
     for i in eachindex(orig)
-        iskw = kind(orig[i]) === K"parameters"
-        if !iskw
-            push!(args, orig[i])
-            kw_i += 1
-        elseif i == lastindex(orig) && iskw
+        if kind(orig[i]) === K"parameters"
             has_semicolon = true
             for p in filter(usable, JS.children(orig[i]))
-                push!(args, p)
+                push!(kw_children, p)
             end
+        else
+            push!(args, orig[i])
         end
+    end
+    kw_i = length(args) + 1
+    for p in kw_children
+        push!(args, p)
     end
     return args, kw_i, has_semicolon
 end
@@ -373,7 +381,10 @@ const empty_siginfos = SignatureInformation[]
 function is_relevant_call(call::JS.SyntaxTree)
     kind(call) in CALL_KINDS &&
         # don't show help for a+b, M', etc., where call[1] isn't the function
-        !(JS.is_infix_op_call(call) || JS.is_postfix_op_call(call))
+        !(JS.is_infix_op_call(call) || JS.is_postfix_op_call(call)) &&
+        # K"." is also used for member access (Base.sin) — only treat it as a
+        # call when the second child is K"tuple" (i.e. broadcasting f.(args))
+        !(kind(call) === K"." && (JS.numchildren(call) < 2 || kind(call[2]) !== K"tuple"))
 end
 
 # If parents of our call are like (macro/function (where (where... (call |) ...))),
@@ -385,9 +396,9 @@ function call_is_decl(_bas::JS.SyntaxList, i::Int, _basᵢ::JS.SyntaxTree = _bas
         j += 1
     end
     return j <= lastindex(_bas) &&
-        kind(_bas[j]) in JS.KSet"macro function" &&
-        # in `f(x) = g(x)`, return true in `f`, false in `g`
-        _bas[j - 1]._id == _bas[j][1]._id
+        # `=` covers short-form function definitions like `f(x) = 1`
+        kind(_bas[j]) in JS.KSet"macro function =" &&
+        _bas[j-1]._id == _bas[j][1]._id
 end
 
 # Find cases where a macro call is not surrounded by parentheses
@@ -427,8 +438,8 @@ function cursor_call(ps::JS.ParseStream, st0::JS.SyntaxTree, b::Int)
                 #     ... | ...
                 # end
                 return nothing
-            elseif any(j::Int->JS.kind(bas[j])===JS.K"do", 1:i)
-                # bail out if this is actually within a `do` block
+            elseif any(j::Int->JS.kind(bas[j]) in JS.KSet"do ->", 1:i)
+                # bail out if this is actually within a `do` block body
                 return nothing
             end
             return basᵢ
@@ -486,7 +497,12 @@ function collect_call_argtypes(analyzer::LSAnalyzer, mod::Module, ca::CallArgs)
             # This implementation that imperfectly mimics the infernece behavior should be
             # discarded, and instead the type of this splat argument should be extracted
             # as a query to the Typed-AST.
-            arg = Expr(:tuple, Expr(arg))
+            arg_expr = try
+                JL.est_to_expr(arg)
+            catch
+                @goto bailout
+            end
+            arg = Expr(:tuple, arg_expr)
             argtype = CC.widenconst(@something resolve_type(analyzer, mod, arg) @goto bailout)
             argtype isa DataType || @goto bailout
             argtype.name === Tuple.name || @goto bailout

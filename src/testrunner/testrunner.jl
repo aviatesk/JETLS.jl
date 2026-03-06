@@ -30,9 +30,33 @@ function summary_testrunner_result(result::TestRunnerResult)
 end
 
 testset_name(testsetinfo::TestsetInfo) = testset_name(testsetinfo.st0)
-testset_name(testset::JS.SyntaxTree) = JS.sourcetext(testset[2])
+function testset_name(testset::JS.SyntaxTree)
+    desc = testset_description_node(testset)
+    isnothing(desc) && return ""
+    if JS.kind(desc) === JS.K"String"
+        return string('"', JS.sourcetext(desc), '"')
+    else
+        return JS.sourcetext(desc)
+    end
+end
 testset_line(testsetinfo::TestsetInfo) = testset_line(testsetinfo.st0)
-testset_line(testset::JS.SyntaxTree) = JS.source_line(testset[2])
+function testset_line(testset::JS.SyntaxTree)
+    desc = testset_description_node(testset)
+    return isnothing(desc) ? JS.source_line(testset) : JS.source_line(desc)
+end
+
+# Find the description string node of a `@testset` macrocall.
+# Returns `K"String"` for simple literals (sourcetext has no quotes)
+# or `K"string"` for interpolated strings (sourcetext includes quotes).
+function testset_description_node(testset::JS.SyntaxTree)
+    for i = 2:JS.numchildren(testset)
+        child = testset[i]
+        if JS.kind(child) in JS.KSet"string String"
+            return child
+        end
+    end
+    return nothing
+end
 
 """
     compute_testsetinfos!(server::Server, st0::SyntaxTree0, prev_testsetinfos::Vector{TestsetInfo})
@@ -99,7 +123,7 @@ function compute_testsetinfos!(
 end
 
 function find_executable_testsets(st0_top::SyntaxTree0)
-    testsets = JS.SyntaxList(st0_top)
+    testsets = JS.SyntaxList(JS.syntax_graph(st0_top))
     traverse(st0_top) do st0::SyntaxTree0
         if JS.kind(st0) in JS.KSet"function macro"
             # avoid visit inside function scope
@@ -107,8 +131,7 @@ function find_executable_testsets(st0_top::SyntaxTree0)
         elseif JS.kind(st0) === JS.K"macrocall" && JS.numchildren(st0) ≥ 2
             macroname = st0[1]
             if hasproperty(macroname, :name_val) && macroname.name_val == "@testset"
-                testsetname = st0[2]
-                if JS.kind(testsetname) === JS.K"string"
+                if testset_description_node(st0) !== nothing
                     push!(testsets, st0)
                 end
             end
