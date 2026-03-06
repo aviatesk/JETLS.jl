@@ -374,8 +374,7 @@ end
                 @test length(positions) == 6
                 fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
                 @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
-                for (i, pos) in enumerate(positions)
-                    i == 2 && continue # end position selects `__context__` (implicit @generated arg)
+                for pos in positions
                     highlights = JETLS.document_highlights(fi, pos)
                     @test length(highlights) == 3
                     @test count(highlights) do highlight
@@ -404,8 +403,7 @@ end
                 @test length(positions) == 6
                 fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
                 @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
-                for (i, pos) in enumerate(positions)
-                    i == 2 && continue # end position selects `__context__` (implicit @generated arg)
+                for pos in positions
                     highlights = JETLS.document_highlights(fi, pos)
                     @test length(highlights) == 3
                 end
@@ -425,8 +423,7 @@ end
                 @test length(positions) == 7
                 fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
                 @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
-                for (i, pos) in enumerate(positions)
-                    i == 3 && continue # Only test start position; end position selects `__module__` (implicit macro arg)
+                for pos in positions
                     highlights = JETLS.document_highlights(fi, pos)
                     @test length(highlights) == 3
                     @test count(highlights) do highlight
