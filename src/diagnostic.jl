@@ -1032,7 +1032,8 @@ function analyze_lowered_code!(
     )
     (; ctx3, ctx4, st0, st3) = res
     ismacro = Ref(false)
-    binding_occurrences = compute_binding_occurrences(ctx3, st3; ismacro, include_global_bindings=true)
+    binding_occurrences = compute_binding_occurrences(ctx3, st3, is_generated0(st0);
+        ismacro, include_global_bindings=true)
     reported = Set{LoweringDiagnosticKey}() # to prevent duplicate reports for unused default or keyword arguments
     kwarg_type_names = compute_kwarg_type_annotation_names(st0)
 

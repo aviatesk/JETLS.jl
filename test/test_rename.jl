@@ -225,6 +225,57 @@ end
             end
         end
     end
+
+    @testset "@generated function rename" begin
+        let code = """
+            @generated function foo(│x│)
+                return :(copy(│x│) + │x│)
+            end
+            """
+            filename = joinpath(@__DIR__, "testfile.jl")
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 6
+            fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
+            @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+            furi = filename2uri("Untitled" * filename)
+            for (i, pos) in enumerate(positions)
+                i == 2 && continue # end position selects `__context__` (implicit @generated arg)
+                (; result, error) = JETLS.local_binding_rename(
+                    server, furi, fi, pos, @__MODULE__, "y")
+                @test result isa WorkspaceEdit && isnothing(error)
+                for (uri, edits) in result.changes
+                    @test furi == uri
+                    @test length(edits) == 3
+                    @test all(edit -> edit.newText == "y", edits)
+                end
+            end
+        end
+
+        # Static parameter merging
+        let code = """
+            @generated function foo(x::│T│) where {│T│}
+                return :(zero(│T│))
+            end
+            """
+            filename = joinpath(@__DIR__, "testfile.jl")
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 6
+            fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
+            @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+            furi = filename2uri("Untitled" * filename)
+            for (i, pos) in enumerate(positions)
+                i == 2 && continue # end position selects `__context__` (implicit @generated arg)
+                (; result, error) = JETLS.local_binding_rename(
+                    server, furi, fi, pos, @__MODULE__, "S")
+                @test result isa WorkspaceEdit && isnothing(error)
+                for (uri, edits) in result.changes
+                    @test furi == uri
+                    @test length(edits) == 3
+                    @test all(edit -> edit.newText == "S", edits)
+                end
+            end
+        end
+    end
 end
 
 @testset "global_binding_rename_preparation" begin

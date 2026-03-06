@@ -57,7 +57,9 @@ function is_macrocall_st0(st0::JS.SyntaxTree, names::AbstractString...)
     macro_name = st0[1]
     JS.kind(macro_name) === JS.K"Identifier" || return false
     hasproperty(macro_name, :name_val) || return false
-    return macro_name.name_val in names
+    name_val = macro_name.name_val
+    name_val isa String || return false
+    return name_val in names
 end
 
 is_nospecialize_or_specialize_macrocall0(st0::JS.SyntaxTree) =
@@ -66,6 +68,51 @@ is_nospecialize_or_specialize_macrocall0(st0::JS.SyntaxTree) =
 is_mainfunc0(st0::JS.SyntaxTree) = is_macrocall_st0(st0, "@main")
 
 is_kwdef0(st0::JS.SyntaxTree) = is_macrocall_st0(st0, "@kwdef")
+
+is_generated0(st0::JS.SyntaxTree) = is_macrocall_st0(st0, "@generated")
+
+"""
+    foreach_inert_identifier(f, st::JS.SyntaxTree)
+
+Traverse `st` looking for `K"inert"` nodes, and call `f(id_node)` for each
+`K"Identifier"` found inside them. `f` should return `true` to continue
+traversal or `false` to stop early.
+"""
+function foreach_inert_identifier(f, st::JS.SyntaxTree)
+    _foreach_inert_identifier(f, st)
+    return nothing
+end
+function _foreach_inert_identifier(f, node::JS.SyntaxTree)
+    if JS.kind(node) === JS.K"inert"
+        _foreach_identifier_in_inert(f, node) || return false
+    else
+        for child in JS.children(node)
+            _foreach_inert_identifier(f, child) || return false
+        end
+    end
+    return true
+end
+function _foreach_identifier_in_inert(f, node::JS.SyntaxTree)
+    if JS.kind(node) === JS.K"Identifier"
+        f(node) || return false
+    end
+    for child in JS.children(node)
+        _foreach_identifier_in_inert(f, child) || return false
+    end
+    return true
+end
+
+function find_inert_identifier_name(st::JS.SyntaxTree, offset::Int)
+    name = Ref{Union{Nothing,String}}(nothing)
+    foreach_inert_identifier(st) do id_node::JS.SyntaxTree
+        if offset in JS.byte_range(id_node)
+            name[] = JS.sourcetext(id_node)
+            return false
+        end
+        return true
+    end
+    return name[]
+end
 
 function is_nospecialize_or_specialize_macrocall3(st3::JS.SyntaxTree)
     JS.kind(st3) === JS.K"macrocall" || return false
@@ -97,6 +144,11 @@ function _remove_macrocalls(st::JS.SyntaxTree)
         elseif is_kwdef0(st)
             # `@kwdef` has a new-style macro definition (in jl-syntax-macros.jl) that
             # preserves provenance, so there's no need to remove it here.
+            return st, false
+        elseif is_generated0(st)
+            # `@generated` functions need to be preserved so that
+            # `is_generated` can track argument usage within
+            # returned quoted expressions.
             return st, false
         end
         new_children = JS.SyntaxList(JS.syntax_graph(st))

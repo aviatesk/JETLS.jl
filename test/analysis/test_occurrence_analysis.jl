@@ -13,14 +13,15 @@ with_binding_occurrences(callback, code::AbstractString; kwargs...) =
     with_binding_occurrences(callback, lowering_module, code; kwargs...)
 function with_binding_occurrences(callback, mod::Module, code::AbstractString;
                                   ismacro_callback = nothing,
-                                  remove_macrocalls::Bool = false)
+                                  remove_macrocalls::Bool = false,
+                                  is_generated::Bool = false)
     st0 = jlparse(code; rule=:statement)
     if remove_macrocalls
         st0 = JETLS.remove_macrocalls(st0)
     end
     (; ctx3, st3) = JETLS.jl_lower_for_scope_resolution(mod, st0)
     ismacro = isnothing(ismacro_callback) ? nothing : Ref(false)
-    binding_occurrences = JETLS.compute_binding_occurrences(ctx3, st3; ismacro)
+    binding_occurrences = JETLS.compute_binding_occurrences(ctx3, st3, is_generated; ismacro)
     if !isnothing(ismacro_callback)
         ismacro_callback(ismacro)
     end
@@ -296,6 +297,38 @@ ismacro_callback(ismacro) = @test ismacro[]
             """; remove_macrocalls=true) do binding_occurrences
             @test any(binding_occurrences) do (binding, occurrences)
                 binding.name == "args" && binding.kind === :argument && any(o->o.kind===:use, occurrences)
+            end
+        end
+    end
+
+    # aviatesk/JETLS.jl#480
+    @testset "is_generated" begin
+        with_binding_occurrences("""
+            @generated function replicate(rng::T) where {T}
+                hasmethod(copy, (T,)) && return :(copy(rng))
+                return :(deepcopy(rng))
+            end
+            """; is_generated=true) do binding_occurrences
+            @test any(binding_occurrences) do (binding, occurrences)
+                binding.name == "rng" && binding.kind === :argument &&
+                any(occurrences) do o
+                    o.kind === :use && JS.sourcetext(o.tree) == "rng"
+                end
+            end
+        end
+
+        with_binding_occurrences("""
+            @generated function foo(x, unused)
+                return :(x + 1)
+            end
+            """; is_generated=true) do binding_occurrences
+            @test any(binding_occurrences) do (binding, occurrences)
+                binding.name == "x" && binding.kind === :argument &&
+                any(o -> o.kind === :use, occurrences)
+            end
+            @test !any(binding_occurrences) do (binding, occurrences)
+                binding.name == "unused" && binding.kind === :argument &&
+                any(o -> o.kind === :use, occurrences)
             end
         end
     end

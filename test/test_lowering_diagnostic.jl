@@ -595,6 +595,27 @@ length_utf16(s::AbstractString) = sum(c::Char -> codepoint(c) < 0x10000 ? 1 : 2,
             @test diagnostic.message == "Unused local binding `_x`"
         end
     end
+
+    # aviatesk/JETLS.jl#480
+    @testset "@generated function" begin
+        let diagnostics = get_lowered_diagnostics("""
+            @generated function replicate(rng::T) where {T}
+                hasmethod(copy, (T,)) && return :(copy(rng))
+                return :(deepcopy(rng))
+            end
+            """)
+            @test isempty(diagnostics)
+        end
+
+        let diagnostics = get_lowered_diagnostics("""
+            @generated function foo(x, unused)
+                return :(x + 1)
+            end
+            """)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).message == "Unused argument `unused`"
+        end
+    end
 end
 
 module EmptyModule end

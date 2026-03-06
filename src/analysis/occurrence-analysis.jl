@@ -1,3 +1,12 @@
+function collect_inert_identifiers(st3::JS.SyntaxTree)
+    result = Dict{String,Vector{JS.SyntaxTree}}()
+    foreach_inert_identifier(st3) do id_node::JS.SyntaxTree
+        push!(get!(Vector{JS.SyntaxTree}, result, JS.sourcetext(id_node)), id_node)
+        return true
+    end
+    return result
+end
+
 """
     compute_binding_occurrences(
             ctx3::JL.VariableAnalysisContext, st3::Tree3;
@@ -33,7 +42,7 @@ a set of `BindingOccurrence` objects that record where and how the binding appea
     variable diagnostics or comprehensive binding analysis.
 """
 function compute_binding_occurrences(
-        ctx3::JL.VariableAnalysisContext, st3::Tree3;
+        ctx3::JL.VariableAnalysisContext, st3::Tree3, is_generated::Bool;
         ismacro::Union{Nothing,Base.RefValue{Bool}} = nothing,
         include_global_bindings::Bool = false
     ) where Tree3<:JS.SyntaxTree
@@ -46,6 +55,13 @@ function compute_binding_occurrences(
         binfo.is_internal && continue
         if binfo.kind === :argument
             push!(get!(Vector{Int}, same_arg_bindings, Symbol(binfo.name)), i)
+            if is_generated
+                # In `@generated` functions, type parameters become actual
+                # arguments. Include them in location-based merging so they
+                # get unified with their `:static_parameter` counterparts.
+                lockey = (Symbol(binfo.name), JS.source_location(JL.binding_ex(ctx3, binfo.id))...)
+                push!(get!(Vector{Int}, same_location_bindings, lockey), i)
+            end
         elseif binfo.kind === :static_parameter || binfo.kind === :local
             lockey = (Symbol(binfo.name), JS.source_location(JL.binding_ex(ctx3, binfo.id))...)
             push!(get!(Vector{Int}, same_location_bindings, lockey), i)
@@ -60,6 +76,24 @@ function compute_binding_occurrences(
     isempty(occurrences) && return occurrences
 
     compute_binding_occurrences!(occurrences, ctx3, st3; ismacro)
+
+    # In `@generated` functions, arguments are typically used only inside returned
+    # quoted expressions (`:(...)`) which appear as `inert` nodes after lowering.
+    # Scope resolution doesn't look inside `inert` nodes, so these arguments appear
+    # unused. We scan `inert` nodes for identifiers matching argument names and
+    # record them as `:use` occurrences.
+    if is_generated
+        inert_ids = collect_inert_identifiers(st3)
+        for (binfo, _) in occurrences
+            binfo.kind === :argument || continue
+            id_nodes = get(inert_ids, binfo.name, nothing)
+            if id_nodes !== nothing
+                for id_node in id_nodes
+                    push!(occurrences[binfo], BindingOccurrence(id_node, :use))
+                end
+            end
+        end
+    end
 
     # Aggregate occurrences for bindings that have the same name and location.
     # JL sometimes represents bindings that are considered "identical" at the source level
@@ -318,7 +352,8 @@ function compute_binding_occurrences_st0(
     catch
         return nothing
     end
-    binding_occurrences = compute_binding_occurrences(ctx3, st3; include_global_bindings)
+    binding_occurrences = compute_binding_occurrences(ctx3, st3, is_generated0(st0);
+        include_global_bindings)
 
     if include_global_bindings
         collect_macrocall_occurrences!(binding_occurrences, mod, st0)
