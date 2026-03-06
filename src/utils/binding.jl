@@ -193,11 +193,16 @@ function is_kwcall_lambda(ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTree)
         end
 end
 
-__select_target_binding(ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTree, offset::Int) =
-    @something(
+function __select_target_binding(
+        ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTree, offset::Int;
+        is_generated::Bool = false)
+    return @something(
         find_target_binding(ctx3, st3, offset),
         find_target_binding(ctx3, st3, offset-1), # Support cases like `var│`, `func│(5)`
+        is_generated ? find_inert_target_binding(ctx3, st3, offset) : nothing,
+        is_generated ? find_inert_target_binding(ctx3, st3, offset-1) : nothing,
         return nothing)
+end
 
 function _select_target_binding(st0_top::JS.SyntaxTree, offset::Int, mod::Module;
                                 caller::AbstractString = "_select_target_binding")
@@ -214,8 +219,21 @@ function _select_target_binding(st0_top::JS.SyntaxTree, offset::Int, mod::Module
         JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
         return nothing
     end
-    binding = @something __select_target_binding(ctx3, st3, offset) return nothing
-    return (; ctx3, st3, binding)
+    binding = @something(
+        __select_target_binding(ctx3, st3, offset; is_generated=is_generated0(st0)),
+        return nothing)
+    return (; ctx3, st3, st0, binding)
+end
+
+function find_inert_target_binding(
+        ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTree, offset::Int)
+    name = @something find_inert_identifier_name(st3, offset) return nothing
+    for binfo in ctx3.bindings.info
+        binfo.kind === :argument || continue
+        binfo.name == name || continue
+        return JL.binding_ex(ctx3, binfo.id)
+    end
+    return nothing
 end
 
 function select_macrocall_binding(
@@ -242,7 +260,7 @@ function select_macrocall_binding(
     for binfo in ctx3.bindings.info
         binding = JL.binding_ex(ctx3, binfo)
         if offset in JS.byte_range(binding)
-            return (; ctx3, st3, binding)
+            return (; ctx3, st3, st0=macrocall_name, binding)
         end
     end
     return nothing

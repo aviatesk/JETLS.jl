@@ -45,6 +45,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > Note that `analysis_overrides` is provided as a temporary workaround and may
 > be removed or changed at any time. A proper fix is being worked on.
 
+### Fixed
+
+- Fixed false "unused argument" warnings for `@generated` functions.
+  Arguments used inside quoted expressions (`:(...)`) are now correctly
+  recognized. Document highlight, find references, and rename also work
+  for these arguments
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/480).
+
 ## 2026-02-27
 
 - Commit: [`5e1f0bb`](https://github.com/aviatesk/JETLS.jl/commit/5e1f0bb)

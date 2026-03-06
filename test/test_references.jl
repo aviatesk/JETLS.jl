@@ -73,6 +73,37 @@ end
         end
     end
 
+    @testset "@generated function references" begin
+        let code = """
+            @generated function foo(│xx│x│)
+                return :(copy(│xx│x│) + │xx│x│)
+            end
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 9
+            for (i, pos) in enumerate(positions)
+                i == 3 && continue # end position selects `__context__` (implicit @generated arg)
+                refs = find_references(clean_code, pos)
+                @test length(refs) == 3
+            end
+        end
+
+        # Static parameter merging
+        let code = """
+            @generated function foo(x::│T│) where {│T│}
+                return :(zero(│T│))
+            end
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 6
+            for (i, pos) in enumerate(positions)
+                i == 2 && continue # end position selects `__context__` (implicit @generated arg)
+                refs = find_references(clean_code, pos)
+                @test length(refs) == 3
+            end
+        end
+    end
+
     @testset "macro references" begin
         # Test from macro definition name
         let code = """
