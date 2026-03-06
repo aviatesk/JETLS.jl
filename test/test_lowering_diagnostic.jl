@@ -1286,6 +1286,17 @@ end
         @test isempty(diagnostics)
     end
 
+    # Imports used only in @generated function body should not be reported as unused
+    let diagnostics = get_unused_import_diagnostics("""
+        using Base.Iterators: flatten
+
+        @generated function foo(x)
+            return :(flatten(x))
+        end
+        """)
+        @test isempty(diagnostics)
+    end
+
     # Import used in nested module should not suppress warning for top-level import
     @testset "module context tracking" begin
         script = """

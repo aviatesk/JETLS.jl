@@ -1,3 +1,44 @@
+"""
+Collect global bindings used inside `K"inert"` nodes by running independent
+scope resolution on the inert content, and record them as `:use` occurrences.
+Argument names are excluded since they are already handled by name-based
+matching in `compute_binding_occurrences`.
+"""
+function collect_inert_global_occurrences!(
+        occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence{Tree3}}},
+        ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTree, mod::Module
+    ) where Tree3<:JS.SyntaxTree
+    arg_names = Set{String}()
+    for binfo in ctx3.bindings.info
+        if binfo.kind === :argument && !binfo.is_internal
+            push!(arg_names, binfo.name)
+        end
+    end
+    st3_range = JS.byte_range(st3)
+    traverse(st3) do st::JS.SyntaxTree
+        JS.kind(st) === JS.K"inert" || return nothing
+        JS.numchildren(st) >= 1 || return nothing
+        # Skip the outer inert that wraps the entire generator template
+        JS.byte_range(st) == st3_range && return nothing
+        ires = try
+            jl_lower_for_scope_resolution(mod, st[1])
+        catch
+            return nothing
+        end
+        for binfo in ires.ctx3.bindings.info
+            if binfo.kind === :global && !binfo.is_internal && !(binfo.name in arg_names)
+                # Use the inert ctx's BindingInfo as key; when cached via
+                # BindingInfoKey(mod, name, :global) it matches the import.
+                occ_set = get!(Set{BindingOccurrence{Tree3}}, occurrences, binfo)
+                push!(occ_set, BindingOccurrence(
+                    JL.binding_ex(ires.ctx3, binfo.id), :use))
+            end
+        end
+        return nothing
+    end
+    return occurrences
+end
+
 function collect_inert_identifiers(st3::JS.SyntaxTree)
     result = Dict{String,Vector{JS.SyntaxTree}}()
     foreach_inert_identifier(st3) do id_node::JS.SyntaxTree
@@ -352,11 +393,18 @@ function compute_binding_occurrences_st0(
     catch
         return nothing
     end
-    binding_occurrences = compute_binding_occurrences(ctx3, st3, is_generated0(st0);
+    is_generated = is_generated0(st0)
+    binding_occurrences = compute_binding_occurrences(ctx3, st3, is_generated;
         include_global_bindings)
 
     if include_global_bindings
         collect_macrocall_occurrences!(binding_occurrences, mod, st0)
+        # In `@generated` functions, global bindings used inside inert nodes
+        # (quoted expressions) are not resolved by scope analysis. Run
+        # independent scope resolution on inert content to collect them.
+        if is_generated
+            collect_inert_global_occurrences!(binding_occurrences, ctx3, st3, mod)
+        end
     end
 
     return binding_occurrences
