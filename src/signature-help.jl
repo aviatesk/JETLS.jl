@@ -349,9 +349,15 @@ function make_siginfo(
             # splat after semicolon
             maybe_var_kwp
         elseif kind(ca.args[active_arg]) in JS.KSet"= kw" || active_arg >= ca.kw_i
-            n = extract_kwarg_name(ca.args[active_arg]).name_val # we don't have a backwards mapping
-            out = get(kwp_map, n, nothing)
-            isnothing(out) ? maybe_var_kwp : out
+            kwname = extract_kwarg_name(ca.args[active_arg])
+            # `extract_kwarg_name` returns `nothing` for unrecognized forms like `a.b=`
+            if isnothing(kwname)
+                maybe_var_kwp
+            else
+                # we don't have a backwards mapping
+                out = get(kwp_map, kwname.name_val, nothing)
+                isnothing(out) ? maybe_var_kwp : out
+            end
         else
             JETLS_DEBUG_LOWERING && @info "No active arg" active_arg ca.args[active_arg]
             nothing
