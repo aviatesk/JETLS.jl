@@ -174,6 +174,8 @@ runserver(callback, endpoint::Endpoint; kwargs...) = runserver(Server(callback, 
 function runserver(server::Server; client_process_id::Union{Nothing,Int}=nothing)
     initialize_requested = shutdown_requested = false
     local exit_code::Int = 1
+    println(stderr, "[DEBUG] Starting JETLS server loop")
+    flush(stderr)
     JETLS_DEV_MODE && @info "Running JETLS server loop"
     seq_queue, seq_task = start_sequential_message_worker(server)
     con_queue, con_task = start_concurrent_message_worker(server)

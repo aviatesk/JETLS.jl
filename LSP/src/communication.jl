@@ -48,16 +48,25 @@ mutable struct Endpoint
 
         local endpoint_ref = Ref{Endpoint}()
 
-        read_task = Threads.@spawn :interactive while true
-            msg = @something try
-                readlsp(in)
-            catch err
-                err_handler(#=isread=#true, err, catch_backtrace())
-                continue
-            end break # terminate this task loop when the stream is closed
-            (!isassigned(endpoint_ref) || isopen(endpoint_ref[])) || break
-            put!(in_msg_queue, msg)
-            GC.safepoint()
+        read_task = Threads.@spawn :interactive begin
+            while true
+                msg = @something try
+                    readlsp(in)
+                catch err
+                    err_handler(#=isread=#true, err, catch_backtrace())
+                    continue
+                end begin
+                    println(stderr, "[DEBUG] read_task: readlsp returned nothing (stdin closed)")
+                    flush(stderr)
+                    break # terminate this task loop when the stream is closed
+                end
+                (!isassigned(endpoint_ref) || isopen(endpoint_ref[])) || break
+                put!(in_msg_queue, msg)
+                GC.safepoint()
+            end
+            println(stderr, "[DEBUG] read_task: exited while loop, in_msg_queue still open: ", isopen(in_msg_queue))
+            flush(stderr)
+            close(in_msg_queue)
         end
 
         write_task = Threads.@spawn :interactive for msg in out_msg_queue
@@ -162,7 +171,14 @@ end
 
 function Base.iterate(endpoint::Endpoint, _=nothing)
     isopen(endpoint) || return nothing
-    return take!(endpoint.in_msg_queue), nothing
+    println(stderr, "[DEBUG] iterate: about to take! from in_msg_queue (open: ", isopen(endpoint.in_msg_queue), ")")
+    flush(stderr)
+    try
+        return take!(endpoint.in_msg_queue), nothing
+    catch e
+        e isa InvalidStateException || rethrow()
+        return nothing
+    end
 end
 
 """
