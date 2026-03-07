@@ -1,7 +1,10 @@
 #!/bin/bash
 # Run JETLS self-diagnostics
 #
-# Usage: selfcheck.sh [OPTIONS]
+# Usage: [JULIA=/path/to/julia] selfcheck.sh [OPTIONS]
+#
+# Environment variables:
+#   JULIA=<path>          Julia executable (default: julia)
 #
 # Options are passed through to `jetls check`. Useful options include:
 #   --skip-full-analysis  Skip the full analysis phase (faster, lowering-only)
@@ -16,6 +19,9 @@
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
+# Julia executable (override with JULIA environment variable)
+JULIA="${JULIA:-julia}"
+
 # Defaults
 THREADS="auto"
 ROOT="$PROJECT_ROOT"
@@ -26,6 +32,10 @@ EXTRA_ARGS=()
 
 for arg in "$@"; do
     case "$arg" in
+        --help|-h)
+            sed -n '2,/^[^#]/{ /^#/{ s/^# \{0,1\}//; p; }; }' "$0"
+            exit 0
+            ;;
         --threads=*)
             THREADS="${arg#--threads=}"
             ;;
@@ -50,7 +60,7 @@ for arg in "$@"; do
     esac
 done
 
-exec julia --startup-file=no --project="$PROJECT_ROOT" --threads="$THREADS" \
+exec "$JULIA" --startup-file=no --project="$PROJECT_ROOT" --threads="$THREADS" \
     -m JETLS check \
     --root="$ROOT" \
     $QUIET \
