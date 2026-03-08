@@ -48,16 +48,19 @@ mutable struct Endpoint
 
         local endpoint_ref = Ref{Endpoint}()
 
-        read_task = Threads.@spawn :interactive while true
-            msg = @something try
-                readlsp(in)
-            catch err
-                err_handler(#=isread=#true, err, catch_backtrace())
-                continue
-            end break # terminate this task loop when the stream is closed
-            (!isassigned(endpoint_ref) || isopen(endpoint_ref[])) || break
-            put!(in_msg_queue, msg)
-            GC.safepoint()
+        read_task = Threads.@spawn :interactive begin
+            while true
+                msg = @something try
+                    readlsp(in)
+                catch err
+                    err_handler(#=isread=#true, err, catch_backtrace())
+                    continue
+                end break # terminate this task loop when the stream is closed
+                (!isassigned(endpoint_ref) || isopen(endpoint_ref[])) || break
+                put!(in_msg_queue, msg)
+                GC.safepoint()
+            end
+            put!(in_msg_queue, nothing)
         end
 
         write_task = Threads.@spawn :interactive for msg in out_msg_queue
@@ -162,7 +165,9 @@ end
 
 function Base.iterate(endpoint::Endpoint, _=nothing)
     isopen(endpoint) || return nothing
-    return take!(endpoint.in_msg_queue), nothing
+    msg = take!(endpoint.in_msg_queue)
+    msg === nothing && return nothing
+    return msg, nothing
 end
 
 """
