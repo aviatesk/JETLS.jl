@@ -159,6 +159,7 @@ check_dead_endpoint!(endpoint::Endpoint) = isopen(endpoint) || error("Endpoint i
 function Base.flush(endpoint::Endpoint)
     check_dead_endpoint!(endpoint)
     while isready(endpoint.out_msg_queue)
+        istaskdone(endpoint.write_task) && break
         yield()
     end
 end
