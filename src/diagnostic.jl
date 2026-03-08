@@ -1003,18 +1003,16 @@ function get_import_sort_key(st0::JS.SyntaxTree)
     kind = JS.kind(st0)
     if kind === JS.K"as"
         return get_import_sort_key(st0[1])
-    elseif kind === JS.K"importpath"
+    elseif kind === JS.K"."
         parts = String[]
         for i = 1:JS.numchildren(st0)
             child = st0[i]
             ckind = JS.kind(child)
-            if ckind === JS.K"."
-                push!(parts, ".")
-            elseif ckind === JS.K"Identifier"
+            if ckind === JS.K"Identifier"
                 push!(parts, JS.sourcetext(child))
             end
         end
-        return join(parts)
+        return join(parts, ".")
     elseif kind === JS.K"Identifier"
         return JS.sourcetext(st0)
     else
@@ -1067,13 +1065,17 @@ function lowering_diagnostics!(
         jl_lower_for_scope_resolution(mod, st0, world; recover_from_macro_errors=false, convert_closures=true)
     catch err
         if err isa JL.LoweringError
-            push!(diagnostics, Diagnostic(;
-                range = jsobj_to_range(err.ex, fi),
-                severity = DiagnosticSeverity.Error,
-                message = err.msg,
-                source = DIAGNOSTIC_SOURCE_LIVE,
-                code = LOWERING_ERROR_CODE,
-                codeDescription = diagnostic_code_description(LOWERING_ERROR_CODE)))
+            if !err.internal
+                for (st, msg) in zip(err.sts, err.msgs)
+                    push!(diagnostics, Diagnostic(;
+                        range = jsobj_to_range(st, fi),
+                        severity = DiagnosticSeverity.Error,
+                        message = msg,
+                        source = DIAGNOSTIC_SOURCE_LIVE,
+                        code = LOWERING_ERROR_CODE,
+                        codeDescription = diagnostic_code_description(LOWERING_ERROR_CODE)))
+                end
+            end
         elseif err isa JL.MacroExpansionError
             if !skip_analysis_requiring_context
                 st = scrub_expand_macro_stacktrace(stacktrace(catch_backtrace()))
@@ -1273,7 +1275,7 @@ function collect_explicit_import_names(st0::JS.SyntaxTree, fi::FileInfo)
                 end
                 push!(names, (name, name_range, delete_range))
             end
-        elseif ckind === JS.K"importpath" && kind === JS.K"import"
+        elseif ckind === JS.K"." && kind === JS.K"import"
             # `import M.a` or `import M.a.b` - last component is the imported name
             # Note: `using M.a` brings all exports from module M.a, so it's not explicit
             npath = JS.numchildren(child)
@@ -1299,7 +1301,7 @@ function get_local_import_identifier(st0::JS.SyntaxTree)
         return st0[2]
     elseif kind === JS.K"Identifier"
         return st0
-    elseif kind === JS.K"importpath"
+    elseif kind === JS.K"."
         # `import M.a` style within a colon list
         npath = JS.numchildren(st0)
         if npath >= 1

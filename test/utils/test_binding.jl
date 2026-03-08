@@ -7,7 +7,7 @@ using JETLS.LSP.URIs2
 
 include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
 
-global lowering_module::Module = Module()
+module lowering_module end
 
 function with_target_binding(f, text::AbstractString; kwargs...)
     clean_code, positions = JETLS.get_text_and_positions(text; kwargs...)

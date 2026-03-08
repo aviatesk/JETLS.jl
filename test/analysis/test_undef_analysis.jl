@@ -230,17 +230,32 @@ end
 
 @testset "if @isdefined(y) - use inside true branch" begin
     # Variable is guarded by @isdefined in condition
-    status = get_undef_status("""
-    function f(x)
-        if x > 0
-            y = 42
+    let status = get_undef_status("""
+        function f(x)
+            if x > 0
+                y = 42
+            end
+            if @isdefined(y)
+                return sin(y)
+            end
         end
-        if @isdefined(y)
-            return sin(y)
-        end
+        """)
+        @test status["y"] === false
     end
-    """)
-    @test status["y"] === false
+    let status = get_undef_status("""
+        function f(x)
+            if x > 0
+                y = 42
+            end
+            if x == 0
+                return 0.0
+            elseif @isdefined(y)
+                return sin(y)
+            end
+        end
+        """)
+        @test status["y"] === false
+    end
 end
 
 @testset "nested closures" begin

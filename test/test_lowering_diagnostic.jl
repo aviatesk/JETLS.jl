@@ -650,7 +650,7 @@ end
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
         @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
-        @test diagnostic.message == "`\$` expression outside string or quote block"
+        @test diagnostic.message == "`\$` expression outside string or quote"
     end
 
     @testset "toplevel lowering error diagnostics" begin
@@ -665,13 +665,13 @@ end
         @test length(diagnostics) == 2
         @test count(diagnostics) do diagnostic
             diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE &&
-            diagnostic.message == "`\$` expression outside string or quote block" &&
+            diagnostic.message == "`\$` expression outside string or quote" &&
             diagnostic.range.start.line == 0 &&
             diagnostic.range.var"end".line == 0
         end == 1
         @test count(diagnostics) do diagnostic
             diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE &&
-            diagnostic.message == "`\$` expression outside string or quote block" &&
+            diagnostic.message == "`\$` expression outside string or quote" &&
             diagnostic.range.start.line == 1 &&
             diagnostic.range.var"end".line == 1
         end == 1

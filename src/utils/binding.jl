@@ -227,6 +227,7 @@ function _select_target_binding(st0_top::JS.SyntaxTree, offset::Int, mod::Module
     binding = @something(
         __select_target_binding(ctx3, st3, offset; is_generated=is_generated0(st0)),
         return nothing)
+    binding = normalize_local_alias_to_global(ctx3, binding)
     return (; ctx3, st3, st0, binding)
 end
 
@@ -239,6 +240,24 @@ function find_inert_target_binding(
         return JL.binding_ex(ctx3, binfo.id)
     end
     return nothing
+end
+
+# Struct/type definitions generate a local binding with `mod=nothing` for
+# the type name, alongside an internal global binding with the same name.
+# Normalize to the global binding so callers don't need to handle both cases.
+# XXX: The returned binding may have `is_internal=true` — callers that inspect
+# this flag should be aware of this.
+function normalize_local_alias_to_global(
+        ctx3::JL.VariableAnalysisContext, binding::JS.SyntaxTree,
+    )
+    binfo = JL.get_binding(ctx3, binding)
+    binfo.kind === :local && isnothing(binfo.mod) || return binding
+    for other::JL.BindingInfo in ctx3.bindings.info
+        if other.kind === :global && other.name == binfo.name
+            return JL.binding_ex(ctx3, other.id)
+        end
+    end
+    return binding
 end
 
 function select_macrocall_binding(
@@ -321,7 +340,7 @@ function lookup_binding_definitions(st3::JS.SyntaxTree, binfo::JL.BindingInfo)
     if binfo.kind === :argument || binfo.kind === :static_parameter
         sl = JS.SyntaxList(JS.syntax_graph(st3), [binfo.node_id])
     else
-        sl = JS.SyntaxList(st3)
+        sl = JS.SyntaxList(JS.syntax_graph(st3))
     end
     return _lookup_binding_definitions!(sl, st3, binfo.id)
 end

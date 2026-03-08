@@ -7,7 +7,7 @@ using JETLS.LSP.URIs2
 
 include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
 
-global lowering_module::Module = Module()
+module lowering_module end
 
 with_binding_occurrences(callback, code::AbstractString; kwargs...) =
     with_binding_occurrences(callback, lowering_module, code; kwargs...)

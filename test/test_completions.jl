@@ -9,7 +9,8 @@ using JETLS.URIs2
 include("setup.jl")
 include("jsjl-utils.jl")
 
-global lowering_module::Module = Module()
+module lowering_module end
+
 function get_cursor_bindings(fi::JETLS.FileInfo, b::Int)
     st0 = JETLS.build_syntax_tree(fi)
     cb = JETLS.cursor_bindings(st0, b, lowering_module)

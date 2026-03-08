@@ -109,16 +109,17 @@ function handle_HoverRequest(
             if dotprefixval isa Module
                 parentmod = dotprefixval
                 identifier_node = node[2]
+                # EST wraps the RHS of dot expressions in `K"inert"`
+                if JS.kind(identifier_node) === JS.K"inert" && JS.numchildren(identifier_node) ≥ 1
+                    identifier_node = identifier_node[1]
+                end
             end
         end
     end
     if !JS.is_identifier(identifier_node)
         return send(server, HoverResponse(; id = msg.id, result = null))
     end
-    identifier = Expr(identifier_node)
-    if !(identifier isa Symbol)
-        return send(server, HoverResponse(; id = msg.id, result = null))
-    end
+    identifier = Symbol(identifier_node.name_val)
     documentation = Base.Docs.doc(DocsBinding(parentmod, identifier))
     value = postprocessor(documentation)
 
