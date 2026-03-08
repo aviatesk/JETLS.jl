@@ -204,7 +204,6 @@ function compute_binding_occurrences!(
         skip_recording_uses::Union{Nothing,Set{JL.BindingInfo}} = nothing
     ) where Tree3<:JS.SyntaxTree
     stack = JS.SyntaxList(st3)
-    push!(stack, st3)
     infunc = false
     while !isempty(stack)
         st = pop!(stack)
@@ -331,6 +330,22 @@ function compute_binding_occurrences!(
     return occurrences, ismacro
 end
 
+# Match global bindings across independently-lowered top-level statements.
+# Each top-level statement is lowered independently, so the same name may
+# appear with different `mod` values. Type definitions (struct, abstract type,
+# primitive type) produce a `:local` binding with `mod=nothing` alongside a
+# hidden `is_internal=true` global binding. At usage sites in other top-level
+# statements, the same name appears as `:global` with `mod=<module>`.
+# We match when `mod` is `nothing` on either side to bridge this gap.
+function is_matching_global_binding(
+        a::Union{BindingInfoKey,JL.BindingInfo},
+        b::Union{BindingInfoKey,JL.BindingInfo},
+    )
+    a.name == b.name || return false
+    a.mod === b.mod && return true
+    return isnothing(a.mod) || isnothing(b.mod)
+end
+
 function find_global_binding_occurrences!(
         state::ServerState, uri::URI, fi::FileInfo, st0_top::JS.SyntaxTree,
         binfo::JL.BindingInfo;
@@ -341,7 +356,7 @@ function find_global_binding_occurrences!(
         binding_occurrences = @something get_binding_occurrences!(
             state, uri, fi, st0; include_global_bindings = true, kwargs...) return
         for (binfo′, occurrences) in binding_occurrences
-            if binfo′.mod === binfo.mod && binfo′.name == binfo.name
+            if is_matching_global_binding(binfo′, binfo)
                 for occurrence in occurrences
                     push!(ret, occurrence)
                 end

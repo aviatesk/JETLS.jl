@@ -192,8 +192,13 @@ function linearize_for_undef!(
         undef_emit_gotoifnot!(lin, else_label)
 
         # Special case: if @isdefined(var), the var is definitely defined in the true branch
-        if JS.kind(cond) == JS.K"isdefined" && JS.numchildren(cond) >= 1
-            isdefined_arg = cond[1]
+        # In EST, elseif conditions are wrapped in K"block", so unwrap first.
+        isdefined_cond = cond
+        if JS.kind(isdefined_cond) == JS.K"block" && JS.numchildren(isdefined_cond) == 1
+            isdefined_cond = isdefined_cond[1]
+        end
+        if JS.kind(isdefined_cond) == JS.K"isdefined" && JS.numchildren(isdefined_cond) >= 1
+            isdefined_arg = isdefined_cond[1]
             if JS.kind(isdefined_arg) == JS.K"BindingId"
                 var_id = isdefined_arg.var_id
                 if var_id in candidates

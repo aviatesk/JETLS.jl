@@ -5,7 +5,7 @@ using JETLS: JETLS, JL, JS
 
 include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
 
-global lowering_module::Module = Module()
+module lowering_module end
 
 function kwdef_expand(code::AbstractString)
     st0 = jlparse(code; rule=:statement)
@@ -33,7 +33,7 @@ children_kinds(st::JS.SyntaxTree) = JS.Kind[JS.kind(c) for c in JS.children(st)]
 
             # struct fields should have defaults stripped
             st_struct = st1[findfirst(==(JS.K"struct"), ks)]
-            body = st_struct[2]
+            body = st_struct[3]
             for field in JS.children(body)
                 @test JS.kind(field) !== JS.K"="
             end
@@ -77,7 +77,7 @@ children_kinds(st::JS.SyntaxTree) = JS.Kind[JS.kind(c) for c in JS.children(st)]
             @test count(==(JS.K"function"), ks) == 2
 
             st_struct = st1[findfirst(==(JS.K"struct"), ks)]
-            body = st_struct[2]
+            body = st_struct[3]
             # `const a::T` should remain, but no `=`
             has_const = false
             for field in JS.children(body)

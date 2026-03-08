@@ -22,6 +22,17 @@ function build_syntax_tree(fi::FileInfo)
     end
 end
 
+@static if JL.DEBUG
+    function ensure_jl_source_attr!(graph::JS.SyntaxGraph)
+        attrs = getfield(graph, :attributes)
+        if !haskey(attrs, :jl_source)
+            attrs[:jl_source] = Dict{Int,LineNumberNode}()
+        end
+    end
+else
+    ensure_jl_source_attr!(::JS.SyntaxGraph) = nothing
+end
+
 """
 Return a tree where all nodes of `kinds` are removed.  Should not modify any
 nodes, and should not create new nodes unnecessarily.
@@ -46,6 +57,7 @@ function _without_kinds(st::JS.SyntaxTree, kinds::Tuple{Vararg{JS.Kind}})
 end
 
 function without_kinds(st::JS.SyntaxTree, kinds::Tuple{Vararg{JS.Kind}})
+    ensure_jl_source_attr!(JS.syntax_graph(st))
     return (JS.kind(st) in kinds ?
         JL.@ast(JS.syntax_graph(st), st, [JS.K"TOMBSTONE"]) :
         _without_kinds(st, kinds)[1])::JS.SyntaxTree
@@ -195,7 +207,10 @@ preferable to having incorrect source ranges. This is especially true for LSP fe
 like document-highlight and find-references where source-level information is critical,
 as information inside macros is often not needed for these features.
 """
-remove_macrocalls(st0::JS.SyntaxTree) = first(_remove_macrocalls(st0))
+function remove_macrocalls(st0::JS.SyntaxTree)
+    ensure_jl_source_attr!(JS.syntax_graph(st0))
+    return first(_remove_macrocalls(st0))
+end
 
 function unwrap_where(node::JS.SyntaxTree)
     while JS.kind(node) === JS.K"where" && JS.numchildren(node) ≥ 1
@@ -242,7 +257,6 @@ The stored value from the last `TraversalReturn` is returned from `traverse`
 """
 function traverse(@specialize(callback), st::JS.SyntaxTree, postorder::Bool=false)
     stack = JS.SyntaxList(st)
-    push!(stack, st)
     if postorder
         _traverse_postorder(callback, stack)
     else
@@ -307,7 +321,6 @@ end
 
 function iterate_toplevel_tree(callback, st0_top::JS.SyntaxTree)
     sl = JS.SyntaxList(st0_top)
-    push!(sl, st0_top)
     while !isempty(sl)
         st0 = pop!(sl)
         if JS.kind(st0) === JS.K"toplevel"
@@ -355,14 +368,15 @@ that satisfy the predicate.
 byte_ancestors(args...) = byte_ancestors(Returns(true), args...)
 
 function byte_ancestors(flt, st::JS.SyntaxTree, rng::UnitRange{<:Integer})
-    sl = JS.SyntaxList(st)
+    sl = JS.SyntaxList(JS.syntax_graph(st))
     if rng ⊆ JS.byte_range(st) && flt(st)
         push!(sl, st)
-    else
-        # Children of a lowered SyntaxTree don't necessarily fall within their parent's range,
-        # so we continue traversing
     end
     traverse(st) do st′
+        # EST `K"Value"` nodes can share the same byte range as their parent
+        # (e.g. module's baremodule flag, struct's mutability flag).
+        # Skip them to avoid polluting the ancestor chain.
+        JS.kind(st′) === JS.K"Value" && return nothing
         if rng ⊆ JS.byte_range(st′) && flt(st′)
             push!(sl, st′)
         end
@@ -709,9 +723,11 @@ function select_target_identifier(st0::JS.SyntaxTree, offset::Int)
         target = first(bas)
         for i = 2:length(bas)
             basᵢ = bas[i]
+            # EST wraps the RHS identifier of dot expressions in `K"inert"`
+            JS.kind(basᵢ) === JS.K"inert" && continue
             if (JS.kind(basᵢ) === JS.K"." &&
                 basᵢ[1] !== target) # e.g. don't allow jumps to `tmeet` from `Base.Compi│ler.tmeet`
-            target = basᵢ
+                target = basᵢ
             else
                 return target
             end
