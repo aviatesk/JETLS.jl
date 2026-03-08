@@ -364,6 +364,52 @@ end
             end
         end
 
+        @testset "@generated function highlights" begin
+            let code = """
+                @generated function foo(│x│)
+                    return :(copy(│x│) + │x│)
+                end
+                """
+                clean_code, positions = JETLS.get_text_and_positions(code)
+                @test length(positions) == 6
+                fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
+                @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+                for pos in positions
+                    highlights = JETLS.document_highlights(fi, pos)
+                    @test length(highlights) == 3
+                    @test count(highlights) do highlight
+                        highlight.range.start == positions[1] &&
+                        highlight.range.var"end" == positions[2]
+                    end == 1
+                    @test count(highlights) do highlight
+                        highlight.range.start == positions[3] &&
+                        highlight.range.var"end" == positions[4]
+                    end == 1
+                    @test count(highlights) do highlight
+                        highlight.range.start == positions[5] &&
+                        highlight.range.var"end" == positions[6]
+                    end == 1
+                end
+            end
+
+            # Static parameter merging: `T` in argument annotation, `where` clause,
+            # and body should all be unified.
+            let code = """
+                @generated function foo(x::│T│) where {│T│}
+                    return :(zero(│T│))
+                end
+                """
+                clean_code, positions = JETLS.get_text_and_positions(code)
+                @test length(positions) == 6
+                fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
+                @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+                for pos in positions
+                    highlights = JETLS.document_highlights(fi, pos)
+                    @test length(highlights) == 3
+                end
+            end
+        end
+
         @testset "macro binding highlights" begin
             let code = """
                 macro │mymacr│o│(ex)
@@ -377,8 +423,7 @@ end
                 @test length(positions) == 7
                 fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
                 @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
-                for (i, pos) in enumerate(positions)
-                    i == 3 && continue # Only test start position; end position selects `__module__` (implicit macro arg)
+                for pos in positions
                     highlights = JETLS.document_highlights(fi, pos)
                     @test length(highlights) == 3
                     @test count(highlights) do highlight

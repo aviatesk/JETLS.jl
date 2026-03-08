@@ -595,6 +595,27 @@ length_utf16(s::AbstractString) = sum(c::Char -> codepoint(c) < 0x10000 ? 1 : 2,
             @test diagnostic.message == "Unused local binding `_x`"
         end
     end
+
+    # aviatesk/JETLS.jl#480
+    @testset "@generated function" begin
+        let diagnostics = get_lowered_diagnostics("""
+            @generated function replicate(rng::T) where {T}
+                hasmethod(copy, (T,)) && return :(copy(rng))
+                return :(deepcopy(rng))
+            end
+            """)
+            @test isempty(diagnostics)
+        end
+
+        let diagnostics = get_lowered_diagnostics("""
+            @generated function foo(x, unused)
+                return :(x + 1)
+            end
+            """)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).message == "Unused argument `unused`"
+        end
+    end
 end
 
 module EmptyModule end
@@ -629,7 +650,7 @@ end
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
         @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
-        @test diagnostic.message == "`\$` expression outside string or quote block"
+        @test diagnostic.message == "`\$` expression outside string or quote"
     end
 
     @testset "toplevel lowering error diagnostics" begin
@@ -644,13 +665,13 @@ end
         @test length(diagnostics) == 2
         @test count(diagnostics) do diagnostic
             diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE &&
-            diagnostic.message == "`\$` expression outside string or quote block" &&
+            diagnostic.message == "`\$` expression outside string or quote" &&
             diagnostic.range.start.line == 0 &&
             diagnostic.range.var"end".line == 0
         end == 1
         @test count(diagnostics) do diagnostic
             diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE &&
-            diagnostic.message == "`\$` expression outside string or quote block" &&
+            diagnostic.message == "`\$` expression outside string or quote" &&
             diagnostic.range.start.line == 1 &&
             diagnostic.range.var"end".line == 1
         end == 1
@@ -1261,6 +1282,17 @@ end
     let diagnostics = get_unused_import_diagnostics("""
         using Base: cos
         public cos
+        """)
+        @test isempty(diagnostics)
+    end
+
+    # Imports used only in @generated function body should not be reported as unused
+    let diagnostics = get_unused_import_diagnostics("""
+        using Base.Iterators: flatten
+
+        @generated function foo(x)
+            return :(flatten(x))
+        end
         """)
         @test isempty(diagnostics)
     end

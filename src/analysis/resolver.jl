@@ -24,8 +24,22 @@ and `resolve_type` will be implemented as a query against these type inference r
 However, this implementation requires JL to be able to lower arbitrary user code,
 which first requires integration of JL into Base.
 """
-resolve_type(analyzer::LSAnalyzer, context_module::Module, s0::Union{JS.SyntaxNode,JS.SyntaxTree}) =
-    resolve_type(analyzer, context_module, Expr(s0))
+function resolve_type(analyzer::LSAnalyzer, context_module::Module, node::JS.SyntaxNode)
+    ex = try
+        Expr(node)
+    catch
+        return nothing
+    end
+    return resolve_type(analyzer, context_module, ex)
+end
+function resolve_type(analyzer::LSAnalyzer, context_module::Module, st::JS.SyntaxTree)
+    ex = try
+        JL.est_to_expr(st)
+    catch
+        return nothing
+    end
+    return resolve_type(analyzer, context_module, ex)
+end
 function resolve_type(analyzer::LSAnalyzer, context_module::Module, @nospecialize ex)
     # TODO use JL once it supports general macro expansion
     if Meta.isexpr(ex, :toplevel)

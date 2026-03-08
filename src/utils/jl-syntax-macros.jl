@@ -47,8 +47,9 @@ function Base.var"@kwdef"(__context__::JL.MacroContext, ex::JS.SyntaxTree)
     JS.kind(ex) === JS.K"struct" ||
         throw(JL.MacroExpansionError(ex, "Invalid usage of @kwdef"))
 
-    type_sig = ex[1]
-    type_body = ex[2]
+    # EST struct children: [Value(is_mutable), type_sig, body]
+    type_sig = ex[2]
+    type_body = ex[3]
 
     field_names = JS.SyntaxTree[]
     field_defaults = Union{Nothing,JS.SyntaxTree}[]
@@ -57,7 +58,7 @@ function Base.var"@kwdef"(__context__::JL.MacroContext, ex::JS.SyntaxTree)
 
     stripped_body = JL.@ast(__context__, type_body::JS.SyntaxTree,
                            [JS.K"block" stripped...])
-    new_struct = JS.mapchildren(_ -> stripped_body, __context__, ex, [2])
+    new_struct = JS.mapchildren(_ -> stripped_body, __context__, ex, Int[3])
 
     if isempty(field_names)
         return new_struct
@@ -75,8 +76,9 @@ function _kwdef_collect_fields!(
         field_names::Vector{JS.SyntaxTree},
         field_defaults::Vector{Union{Nothing,JS.SyntaxTree}},
         stripped::Vector{JS.SyntaxTree})
-    for field::JS.SyntaxTree in JS.children(body)
+    for field in JS.children(body)
         k = JS.kind(field)
+        k === JS.K"Value" && continue
         if k === JS.K"="
             _kwdef_push_field!(field[1], field[2], field_names, field_defaults)
             push!(stripped, field[1])
@@ -162,8 +164,7 @@ function _kwdef_make_constructors(
 
         # def2: S{T}(; a=default, b) where {T<:Real} = S{T}(a, b)
         sig2_call = JL.@ast(ctx, mc, [JS.K"call" SQ parameters])
-        braces = JL.@ast(ctx, mc, [JS.K"braces" P...])
-        sig2 = JL.@ast(ctx, mc, [JS.K"where" sig2_call braces])
+        sig2 = JL.@ast(ctx, mc, [JS.K"where" sig2_call P...])
         body2 = JL.@ast(ctx, mc, [JS.K"block"
             [JS.K"call" SQ field_names...]
         ])

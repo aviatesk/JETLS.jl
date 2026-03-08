@@ -637,7 +637,7 @@ end
 function analyze_unused_bindings!(
         diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::JS.SyntaxTree, ctx3::JL.VariableAnalysisContext,
         binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence{Tree3}}},
-        ismacro::Base.RefValue{Bool}, reported::Set{LoweringDiagnosticKey},
+        has_implicit_args::Bool, reported::Set{LoweringDiagnosticKey},
         kwarg_type_names::Dict{Tuple{Int,Int},Set{String}};
         allow_unused_underscore::Bool
     ) where Tree3<:JS.SyntaxTree
@@ -648,7 +648,7 @@ function analyze_unused_bindings!(
             continue
         end
         bn = binfo.name
-        if ismacro[] && (bn == "__module__" || bn == "__source__")
+        if has_implicit_args && bn in _IMPLICIT_BINDING_NAMES
             continue
         end
         if allow_unused_underscore && startswith(bn, '_')
@@ -1003,18 +1003,16 @@ function get_import_sort_key(st0::JS.SyntaxTree)
     kind = JS.kind(st0)
     if kind === JS.K"as"
         return get_import_sort_key(st0[1])
-    elseif kind === JS.K"importpath"
+    elseif kind === JS.K"."
         parts = String[]
         for i = 1:JS.numchildren(st0)
             child = st0[i]
             ckind = JS.kind(child)
-            if ckind === JS.K"."
-                push!(parts, ".")
-            elseif ckind === JS.K"Identifier"
+            if ckind === JS.K"Identifier"
                 push!(parts, JS.sourcetext(child))
             end
         end
-        return join(parts)
+        return join(parts, ".")
     elseif kind === JS.K"Identifier"
         return JS.sourcetext(st0)
     else
@@ -1032,12 +1030,15 @@ function analyze_lowered_code!(
     )
     (; ctx3, ctx4, st0, st3) = res
     ismacro = Ref(false)
-    binding_occurrences = compute_binding_occurrences(ctx3, st3; ismacro, include_global_bindings=true)
+    binding_occurrences = compute_binding_occurrences(ctx3, st3, is_generated0(st0);
+        ismacro, include_global_bindings=true)
     reported = Set{LoweringDiagnosticKey}() # to prevent duplicate reports for unused default or keyword arguments
     kwarg_type_names = compute_kwarg_type_annotation_names(st0)
 
+    has_implicit_args = ismacro[] || is_generated0(st0)
+
     analyze_unused_bindings!(
-        diagnostics, fi, st0, ctx3, binding_occurrences, ismacro, reported, kwarg_type_names;
+        diagnostics, fi, st0, ctx3, binding_occurrences, has_implicit_args, reported, kwarg_type_names;
         allow_unused_underscore)
 
     skip_analysis_requiring_context ||
@@ -1064,13 +1065,17 @@ function lowering_diagnostics!(
         jl_lower_for_scope_resolution(mod, st0, world; recover_from_macro_errors=false, convert_closures=true)
     catch err
         if err isa JL.LoweringError
-            push!(diagnostics, Diagnostic(;
-                range = jsobj_to_range(err.ex, fi),
-                severity = DiagnosticSeverity.Error,
-                message = err.msg,
-                source = DIAGNOSTIC_SOURCE_LIVE,
-                code = LOWERING_ERROR_CODE,
-                codeDescription = diagnostic_code_description(LOWERING_ERROR_CODE)))
+            if !err.internal
+                for (st, msg) in zip(err.sts, err.msgs)
+                    push!(diagnostics, Diagnostic(;
+                        range = jsobj_to_range(st, fi),
+                        severity = DiagnosticSeverity.Error,
+                        message = msg,
+                        source = DIAGNOSTIC_SOURCE_LIVE,
+                        code = LOWERING_ERROR_CODE,
+                        codeDescription = diagnostic_code_description(LOWERING_ERROR_CODE)))
+                end
+            end
         elseif err isa JL.MacroExpansionError
             if !skip_analysis_requiring_context
                 st = scrub_expand_macro_stacktrace(stacktrace(catch_backtrace()))
@@ -1270,7 +1275,7 @@ function collect_explicit_import_names(st0::JS.SyntaxTree, fi::FileInfo)
                 end
                 push!(names, (name, name_range, delete_range))
             end
-        elseif ckind === JS.K"importpath" && kind === JS.K"import"
+        elseif ckind === JS.K"." && kind === JS.K"import"
             # `import M.a` or `import M.a.b` - last component is the imported name
             # Note: `using M.a` brings all exports from module M.a, so it's not explicit
             npath = JS.numchildren(child)
@@ -1296,7 +1301,7 @@ function get_local_import_identifier(st0::JS.SyntaxTree)
         return st0[2]
     elseif kind === JS.K"Identifier"
         return st0
-    elseif kind === JS.K"importpath"
+    elseif kind === JS.K"."
         # `import M.a` style within a colon list
         npath = JS.numchildren(st0)
         if npath >= 1

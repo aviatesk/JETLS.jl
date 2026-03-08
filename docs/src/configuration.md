@@ -21,7 +21,7 @@ executable_range = ""              # string (path), optional
 [diagnostic]
 enabled = true                     # boolean, default: true
 all_files = true                   # boolean, default: true
-allow_unused_underscore = false    # boolean, default: false
+allow_unused_underscore = true     # boolean, default: true
 
 [[diagnostic.patterns]]
 pattern = ""                       # string, required
