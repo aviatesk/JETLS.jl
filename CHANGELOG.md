@@ -63,7 +63,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Updated JuliaSyntax and JuliaLowering to their latest versions, fixing
   several errors caused by JuliaLowering
   (Fixed https://github.com/aviatesk/JETLS.jl/issues/495,
-  https://github.com/aviatesk/JETLS.jl/issues/518).
+  https://github.com/aviatesk/JETLS.jl/issues/518,
+  https://github.com/aviatesk/JETLS.jl/issues/538).
 
 ### Fixed
 
