@@ -15,24 +15,20 @@ import REPL
 using .JuliaSyntax: SourceAttrType, sourcetext, set_numeric_flags
 
 using .JuliaLowering:
-    SyntaxGraph, new_id!, ensure_attributes!,
+    SyntaxGraph, new_id!,
     Kind, SourceRef, SyntaxTree, NodeId,
     setattr!, is_leaf, numchildren, children,
     @ast, flattened_provenance, showprov, LoweringError, MacroExpansionError,
     syntax_graph, Bindings, ScopeLayer, mapchildren
 
 function _ast_test_graph()
-    graph = SyntaxGraph()
-    ensure_attributes!(graph,
-                       kind=Kind, syntax_flags=UInt16,
-                       source=SourceAttrType,
-                       var_id=Int, value=Any, name_val=String, is_toplevel_thunk=Bool,
-                       toplevel_pure=Bool)
+    graph = JuliaLowering.ensure_desugaring_attributes!(
+        JuliaLowering.ensure_macro_attributes!(SyntaxGraph()))
 end
 
 function _source_node(graph, src)
     id = new_id!(graph)
-    setattr!(graph, id, :kind, K"None")
+    setattr!(graph, id, :kind, K"TOMBSTONE")
     setattr!(graph, id, :source, src)
     SyntaxTree(graph, id)
 end
@@ -154,7 +150,7 @@ function format_ir_for_test(mod, case)
             ex[1].name_val == "@ast_")
             # Total hack, until @ast_ can be implemented in terms of new-style
             # macros.
-            ex = Base.eval(mod, Expr(ex))
+            ex = Base.eval(mod, JuliaLowering.est_to_expr(ex))
         end
         x = JuliaLowering.lower(mod, ex)
         if case.expect_error
@@ -373,4 +369,12 @@ function reduce_any_failing_toplevel(mod::Module, filename::AbstractString; do_e
         end
     end
     nothing
+end
+
+function reference_lower(mod::Module, x)
+    Base.fl_lower(x, mod, @__FILE__, @__LINE__, Base.get_world_counter())[1]
+end
+
+function reference_eval(mod::Module, x)
+    Core.eval(mod, reference_lower(mod, x))
 end

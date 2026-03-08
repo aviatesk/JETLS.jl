@@ -305,6 +305,7 @@ function replace_coretypes_list!(list::AbstractVector; rev::Bool=false)
         else
             isa(x, Core.SSAValue) && return SSAValue(x.id)
             isa(x, Core.SlotNumber) && return SlotNumber(x.id)
+            isa(x, Core.Compiler.Argument) && return SlotNumber(x.n)
             @static if VERSION < v"1.11.0-DEV.337"
             isa(x, Core.Compiler.TypedSlot) && return SlotNumber(x.id)
             end

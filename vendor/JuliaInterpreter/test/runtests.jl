@@ -4,6 +4,10 @@ using Logging
 
 @test isempty(detect_ambiguities(JuliaInterpreter, Base, Core))
 
+if isdefined(Test, :detect_closure_boxes)
+    @test isempty(Test.detect_closure_boxes(JuliaInterpreter))
+end
+
 if !JuliaInterpreter.isdefinedglobal(@__MODULE__, :read_and_parse)
     include("utils.jl")
 end
