@@ -19,7 +19,6 @@ function is_jll_package(name::AbstractString)
     return endswith(name, "_jll")
 end
 
-# COMBAK: In the future, it might be better to vendor Compiler as well?
 function should_vendor(uuid::UUID, name::AbstractString)
     Pkg.Types.is_stdlib(uuid) && return false
     is_jll_package(name) && return false

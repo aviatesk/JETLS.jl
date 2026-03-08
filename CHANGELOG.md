@@ -24,6 +24,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Announcement
 
 > [!warning]
+> JETLS is currently only compatible with Julia 1.12 (1.12.2+ recommended).
+> Currently it does not support Julia 1.11 or earlier, nor Julia 1.13+/nightly.
+
+> [!warning]
 > JETLS currently has a known memory leak issue where memory usage grows with
 > each re-analysis (https://github.com/aviatesk/JETLS.jl/issues/357).
 > As a temporary workaround, you can disable full-analysis for specific files
