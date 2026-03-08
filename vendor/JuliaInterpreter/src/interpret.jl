@@ -8,6 +8,11 @@ function lookup_var(frame::Frame, slot::SlotNumber)
     val !== nothing && return val.value
     throw(UndefVarError(frame.framecode.src.slotnames[slot.id]))
 end
+function lookup_var(frame::Frame, arg::Core.Compiler.Argument)
+    val = frame.framedata.locals[arg.n]
+    val !== nothing && return val.value
+    throw(UndefVarError(frame.framecode.src.slotnames[arg.n]))
+end
 
 """
     lookup([interp::Interpreter=RecursiveInterpreter()], frame::Frame, node)
@@ -24,6 +29,8 @@ function lookup(interp::Interpreter, frame::Frame, @nospecialize(node))
     if isa(node, SSAValue)
         return lookup_var(frame, node)
     elseif isa(node, SlotNumber)
+        return lookup_var(frame, node)
+    elseif isa(node, Core.Compiler.Argument)
         return lookup_var(frame, node)
     elseif isa(node, GlobalRef)
         return lookup_var(frame, node)

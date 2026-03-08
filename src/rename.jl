@@ -192,7 +192,7 @@ function local_binding_rename(
     st0_top = build_syntax_tree(fi)
     offset = xy_to_offset(fi, pos)
 
-    (; ctx3, st3, binding) = @something begin
+    (; ctx3, st3, st0, binding) = @something begin
         _select_target_binding(st0_top, offset, mod; caller="local_binding_rename")
     end return nothing
 
@@ -211,7 +211,7 @@ function local_binding_rename(
         end
     end
 
-    binding_occurrences = compute_binding_occurrences(ctx3, st3)
+    binding_occurrences = compute_binding_occurrences(ctx3, st3, is_generated0(st0))
     haskey(binding_occurrences, binfo) ||
         return (; result = nothing,
             error = ResponseError(;

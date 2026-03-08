@@ -50,25 +50,25 @@ test = ["CatIndices", "Distributed", "EndpointRanges", "EponymTuples", "Example"
 
 [sources.OrderedCollections]
 subdir = "vendor/OrderedCollections"
-rev = "f9ccc05f314c3100d9e4379145f33a319224c6c7"
+rev = "472a8b5dd66765ee63bf2be86d7d4fe5ceb5c034"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.LoweredCodeUtils]
 subdir = "vendor/LoweredCodeUtils"
-rev = "f9ccc05f314c3100d9e4379145f33a319224c6c7"
+rev = "472a8b5dd66765ee63bf2be86d7d4fe5ceb5c034"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.JuliaInterpreter]
 subdir = "vendor/JuliaInterpreter"
-rev = "f9ccc05f314c3100d9e4379145f33a319224c6c7"
+rev = "472a8b5dd66765ee63bf2be86d7d4fe5ceb5c034"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.Preferences]
 subdir = "vendor/Preferences"
-rev = "f9ccc05f314c3100d9e4379145f33a319224c6c7"
+rev = "472a8b5dd66765ee63bf2be86d7d4fe5ceb5c034"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.CodeTracking]
 subdir = "vendor/CodeTracking"
-rev = "f9ccc05f314c3100d9e4379145f33a319224c6c7"
+rev = "472a8b5dd66765ee63bf2be86d7d4fe5ceb5c034"
 url = "https://github.com/aviatesk/JETLS.jl"

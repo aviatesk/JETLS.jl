@@ -144,6 +144,25 @@ end
             lines = split(result.stdout, '\n')
             diagnostic_lines = filter(l -> occursin("x = 1", l), lines)
             @test !isempty(diagnostic_lines)
+            @test occursin("    x = 1\n#   ╙", result.stdout)
+            @test !occursin("    x = 1\n#   └┘", result.stdout)
+        end
+    end
+
+    mktempdir() do dir
+        filepath = write_test_file(dir, "test.jl", """
+            module TestModule
+            function foo()
+                xyz = 1
+                return nothing
+            end
+            end
+            """)
+
+        let result = run_jetls_check(["--context-lines=0", filepath]; root=dir)
+            @test occursin("lowering/unused-local", result.stdout)
+            @test occursin("    xyz = 1\n#   └─┘", result.stdout)
+            @test !occursin("    xyz = 1\n#   └──┘", result.stdout)
         end
     end
 end

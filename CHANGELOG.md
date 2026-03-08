@@ -19,9 +19,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`ebcbd60...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/ebcbd60...HEAD)
+- Diff: [`5e1f0bb...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/5e1f0bb...HEAD)
 
 ### Announcement
+
+> [!warning]
+> JETLS is currently only compatible with Julia 1.12 (1.12.2+ recommended).
+> Currently it does not support Julia 1.11 or earlier, nor Julia 1.13+/nightly.
 
 > [!warning]
 > JETLS currently has a known memory leak issue where memory usage grows with
@@ -44,6 +48,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > might work, but most LSP features will be unfunctional.
 > Note that `analysis_overrides` is provided as a temporary workaround and may
 > be removed or changed at any time. A proper fix is being worked on.
+
+### Changed
+
+- Updated JuliaSyntax and JuliaLowering to their latest versions, fixing
+  several errors caused by JuliaLowering
+  (Fixed https://github.com/aviatesk/JETLS.jl/issues/495,
+  https://github.com/aviatesk/JETLS.jl/issues/518).
+
+### Fixed
+
+- Fixed highlight range in `jetls check` (https://github.com/aviatesk/JETLS.jl/pull/574).
+- Fixed false "unused argument" warnings for `@generated` functions.
+  Arguments used inside quoted expressions (`:(...)`) are now correctly
+  recognized. Document highlight, find references, and rename also work
+  for these arguments
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/480).
+
+## 2026-02-27
+
+- Commit: [`5e1f0bb`](https://github.com/aviatesk/JETLS.jl/commit/5e1f0bb)
+- Diff: [`ebcbd60...5e1f0bb`](https://github.com/aviatesk/JETLS.jl/compare/ebcbd60...5e1f0bb)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-02-27")'
+  ```
 
 ### Added
 

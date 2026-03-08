@@ -47,7 +47,7 @@ include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
 
         let st = jlparse(clean_code),
             ancestors = JETLS.byte_ancestors(st, hello_start:hello_end)
-            @test any(node -> JS.kind(node) === JS.K"string" && JS.sourcetext(node) == "\"hello\"", ancestors)
+            @test any(node -> JS.kind(node) === JS.K"String" && JS.sourcetext(node) == "hello", ancestors)
             @test any(node -> JS.kind(node) === JS.K"call", ancestors)
             @test any(node -> JS.kind(node) === JS.K"function", ancestors)
             @test any(node -> JS.kind(node) === JS.K"module", ancestors)

@@ -27,5 +27,5 @@ test = ["Aqua", "Serialization", "Test"]
 
 [sources.PrecompileTools]
 subdir = "vendor/PrecompileTools"
-rev = "f9ccc05f314c3100d9e4379145f33a319224c6c7"
+rev = "472a8b5dd66765ee63bf2be86d7d4fe5ceb5c034"
 url = "https://github.com/aviatesk/JETLS.jl"

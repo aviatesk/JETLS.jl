@@ -106,7 +106,7 @@ end
 
 function extract_toplevel_symbol!(symbols::Vector{DocumentSymbol}, st0::JS.SyntaxTree, fi::FileInfo, mod::Module)
     k = JS.kind(st0)
-    if k === JS.K"module" || k === JS.K"baremodule"
+    if k === JS.K"module"
         extract_module_symbol!(symbols, st0, fi, mod)
     elseif k === JS.K"function"
         extract_function_symbol!(symbols, st0, fi, mod)
@@ -145,8 +145,8 @@ end
 function extract_module_symbol!(
         symbols::Vector{DocumentSymbol}, st0::JS.SyntaxTree, fi::FileInfo, parent_mod::Module
     )
-    JS.numchildren(st0) ≥ 2 || return nothing
-    name_node = st0[1]
+    JS.numchildren(st0) ≥ 3 || return nothing
+    name_node = st0[2]
     name = @something extract_name_val(name_node) return nothing
     mod = parent_mod
     if invokelatest(isdefinedglobal, parent_mod, Symbol(name))
@@ -195,7 +195,7 @@ function extract_function_name(sig::JS.SyntaxTree)
         JS.numchildren(sig) ≥ 1 || return nothing
         return extract_function_name(sig[1])::Union{Nothing,Tuple{String,JS.SyntaxTree}}
     end
-    if k === JS.K"call" || k === JS.K"dotcall"
+    if k === JS.K"call"
         JS.numchildren(sig) ≥ 1 || return nothing
         callee = sig[1]
         if JS.kind(callee) === JS.K"::"
@@ -224,7 +224,7 @@ function extract_dotted_name(node::JS.SyntaxTree)
         JS.numchildren(node) ≥ 2 || return nothing
         lhs = @something extract_dotted_name(node[1]) return nothing
         rhs_node = node[2]
-        rhs = @something if JS.kind(rhs_node) === JS.K"quote" && JS.numchildren(rhs_node) ≥ 1
+        rhs = @something if JS.kind(rhs_node) in JS.KSet"quote inert" && JS.numchildren(rhs_node) ≥ 1
             extract_name_val(rhs_node[1])
         else
             extract_name_val(rhs_node)
@@ -270,8 +270,8 @@ end
 function extract_struct_symbol!(
         symbols::Vector{DocumentSymbol}, st0::JS.SyntaxTree, fi::FileInfo, mod::Module
     )
-    JS.numchildren(st0) ≥ 1 || return nothing
-    sig_node = st0[1]
+    JS.numchildren(st0) ≥ 2 || return nothing
+    sig_node = st0[2]
     name_node = sig_node
     if JS.kind(name_node) === JS.K"<:"
         JS.numchildren(name_node) ≥ 1 || return nothing
@@ -285,8 +285,8 @@ function extract_struct_symbol!(
     is_mutable = JS.has_flags(JS.flags(st0), JS.MUTABLE_FLAG)
     detail = (is_mutable ? "mutable struct " : "struct ") * lstrip(JS.sourcetext(sig_node))
     children = DocumentSymbol[]
-    if JS.numchildren(st0) ≥ 2
-        body = st0[2]
+    if JS.numchildren(st0) ≥ 3
+        body = st0[3]
         for i = 1:JS.numchildren(body)
             child = body[i]
             child_k = JS.kind(child)
@@ -484,11 +484,39 @@ function extract_toplevel_assignment_symbols!(
     JS.numchildren(st0) ≥ 2 || return nothing
     lhs = st0[1]
     JS.kind(lhs) in JS.KSet". ref" && return nothing # Skip property assignment like obj.field = value
+    lhs_unwrapped = unwrap_where(lhs)
+    if JS.kind(lhs_unwrapped) === JS.K"::"
+        JS.numchildren(lhs_unwrapped) ≥ 1 || return nothing
+        lhs_unwrapped = lhs_unwrapped[1]
+    end
+    if JS.kind(lhs_unwrapped) === JS.K"call"
+        extract_short_function_symbol!(symbols, st0, fi, mod)
+        return nothing
+    end
     rhs = st0[2]
     range = jsobj_to_range(st0, fi)
     detail = lstrip(JS.sourcetext(st0))
     kind = is_anonymous_function_rhs(rhs) ? SymbolKind.Function : SymbolKind.Variable
     extract_assignment_symbols!(symbols, lhs, rhs, range, kind, detail, fi, mod)
+    return nothing
+end
+
+# Short-form function definition: `f(x) = x` or `f(x) where T = x`
+function extract_short_function_symbol!(
+        symbols::Vector{DocumentSymbol}, st0::JS.SyntaxTree, fi::FileInfo, mod::Module
+    )
+    JS.numchildren(st0) ≥ 2 || return nothing
+    sig = st0[1]
+    name, name_node = @something extract_function_name(sig) return nothing
+    children = @something extract_scoped_children(st0, fi, mod) Some(nothing)
+    detail = JS.sourcetext(sig) * " ="
+    push!(symbols, DocumentSymbol(;
+        name,
+        detail,
+        kind = SymbolKind.Function,
+        range = jsobj_to_range(st0, fi),
+        selectionRange = jsobj_to_range(name_node, fi),
+        children))
     return nothing
 end
 
@@ -585,8 +613,8 @@ end
 function extract_static_if_symbol!(
         symbols::Vector{DocumentSymbol}, st0::JS.SyntaxTree, fi::FileInfo, mod::Module
     )
-    JS.numchildren(st0) ≥ 2 || return nothing
-    if_node = st0[2]
+    JS.numchildren(st0) ≥ 3 || return nothing
+    if_node = st0[3]
     JS.kind(if_node) === JS.K"if" || return nothing
     extract_if_symbol!(symbols, if_node, fi, mod; prefix="@static if ", range_node=st0)
     return nothing
@@ -598,7 +626,7 @@ function get_macrocall_name(st0::JS.SyntaxTree)
     if JS.kind(macro_node) === JS.K"."
         JS.numchildren(macro_node) ≥ 2 || return nothing
         rhs = macro_node[2]
-        if JS.kind(rhs) === JS.K"quote" && JS.numchildren(rhs) ≥ 1
+        if JS.kind(rhs) in JS.KSet"quote inert" && JS.numchildren(rhs) ≥ 1
             return extract_name_val(rhs[1])
         else
             return extract_name_val(rhs)
@@ -611,18 +639,25 @@ end
 function extract_testset_symbol!(
         symbols::Vector{DocumentSymbol}, st0::JS.SyntaxTree, fi::FileInfo, mod::Module
     )
-    JS.numchildren(st0) ≥ 2 || return nothing
+    JS.numchildren(st0) ≥ 3 || return nothing
 
-    # Find the description string node (may not be at position 2 if CustomTestSet or options are present)
+    # Find the description string node (may not be at a fixed position if
+    # CustomTestSet or options are present before the description)
     description_node = nothing
-    for i = 2:JS.numchildren(st0)-1
+    for i = 3:JS.numchildren(st0)-1
         child = st0[i]
-        if JS.kind(child) === JS.K"string"
+        if JS.kind(child) in JS.KSet"string String"
             description_node = child
             break
         end
     end
-    description = isnothing(description_node) ? "" : @something extract_string_content(description_node) ""
+    description = if isnothing(description_node)
+        ""
+    elseif JS.kind(description_node) === JS.K"String"
+        JS.hasattr(description_node, :value) ? description_node.value::String : ""
+    else
+        @something extract_string_content(description_node) ""
+    end
 
     body = st0[end]
     body_kind = JS.kind(body)
@@ -671,8 +706,8 @@ function extract_string_content(st0::JS.SyntaxTree)
 end
 
 function extract_test_symbol!(symbols::Vector{DocumentSymbol}, st0::JS.SyntaxTree, fi::FileInfo)
-    JS.numchildren(st0) ≥ 2 || return nothing
-    expr_node = st0[2]
+    JS.numchildren(st0) ≥ 3 || return nothing
+    expr_node = st0[3]
     expr_text = lstrip(JS.sourcetext(expr_node))
     push!(symbols, DocumentSymbol(;
         name = expr_text,
@@ -684,8 +719,8 @@ function extract_test_symbol!(symbols::Vector{DocumentSymbol}, st0::JS.SyntaxTre
 end
 
 function extract_enum_symbol!(symbols::Vector{DocumentSymbol}, st0::JS.SyntaxTree, fi::FileInfo)
-    JS.numchildren(st0) ≥ 2 || return nothing
-    type_node = st0[2]
+    JS.numchildren(st0) ≥ 3 || return nothing
+    type_node = st0[3]
     name_node = type_node
     if JS.kind(type_node) === JS.K"::"
         JS.numchildren(type_node) ≥ 1 || return nothing
@@ -693,7 +728,7 @@ function extract_enum_symbol!(symbols::Vector{DocumentSymbol}, st0::JS.SyntaxTre
     end
     name = @something extract_name_val(name_node) return nothing
     children = DocumentSymbol[]
-    for i = 3:JS.numchildren(st0)
+    for i = 4:JS.numchildren(st0)
         extract_enum_value!(children, st0[i], name, fi)
     end
     push!(symbols, DocumentSymbol(;
@@ -939,9 +974,7 @@ function extract_local_scope_bindings!(
                 if !isnothing(parent) && JS.kind(parent) === JS.K"call"
                     call_fb, call_lb = JS.first_byte(parent), JS.last_byte(parent)
                     grandparent = get(parent_map, (call_fb, call_lb), nothing)
-                    is_short_form = !isnothing(grandparent) &&
-                        JS.kind(grandparent) === JS.K"function" &&
-                        JS.has_flags(JS.flags(grandparent), JS.SHORT_FORM_FUNCTION_FLAG)
+                    is_short_form = !isnothing(grandparent) && JS.kind(grandparent) === JS.K"="
                     detail = is_short_form ?
                         JS.sourcetext(parent) * " =" :
                         "function " * JS.sourcetext(parent)
@@ -1089,26 +1122,29 @@ function push_namespace_symbol!(
     return nothing
 end
 
+# EST try node children are positional:
+#   [try_body, catch_var, catch_body, finally_body, else_body]
+# Missing parts use K"Value" placeholders.
+const TRY_CLAUSE_POSITIONS =
+    (("try", 1), ("catch", 3), ("else", 5), ("finally", 4))
+
 function push_try_namespace_symbol!(
         symbols::Vector{DocumentSymbol}, try_node::JS.SyntaxTree,
         lctx::LocalScopeContext, group_ids::Vector{Int}
     )
-    (; ctx3, parent_map, fi) = lctx
+    (; ctx3, fi) = lctx
+    nc = JS.numchildren(try_node)
     classified = Dict{String,Vector{Int}}()
     for id in group_ids
-        clause_kind = _classify_try_clause(ctx3, id, parent_map)
+        clause_kind = _classify_try_clause(ctx3, id, try_node)
         push!(get!(Vector{Int}, classified, clause_kind), id)
     end
     clause_children = DocumentSymbol[]
     parts = String[]
-    for i in 1:JS.numchildren(try_node)
-        child = try_node[i]
-        ck = JS.kind(child)
-        clause_kind = ck === JS.K"block" ? "try" :
-            ck === JS.K"catch" ? "catch" :
-            ck === JS.K"else" ? "else" :
-            ck === JS.K"finally" ? "finally" :
-            continue
+    for (clause_kind, child_idx) in TRY_CLAUSE_POSITIONS
+        child_idx ≤ nc || continue
+        child = try_node[child_idx]
+        JS.kind(child) === JS.K"Value" && continue
         push!(parts, clause_kind)
         clause_ids = @something get(classified, clause_kind, nothing) continue
         clause_symbols = @somereal extract_local_scope_bindings(lctx, clause_ids) continue
@@ -1133,7 +1169,7 @@ end
 
 function _classify_try_clause(
         ctx3::JL.VariableAnalysisContext, scope_id::Int,
-        parent_map::Dict{Tuple{Int,Int},JS.SyntaxTree}
+        try_node::JS.SyntaxTree
     )
     1 ≤ scope_id ≤ length(ctx3.scopes) || return "try"
     scope = ctx3.scopes[scope_id]
@@ -1141,21 +1177,14 @@ function _classify_try_clause(
     prov = JS.flattened_provenance(scope_st)
     isempty(prov) && return "try"
     source_node = first(prov)
-    k = JS.kind(source_node)
-    k === JS.K"catch" && return "catch"
-    k === JS.K"else" && return "else"
-    k === JS.K"finally" && return "finally"
-    # else/finally body scope_blocks may have `block` provenance
-    # (pointing to the block inside the clause, not the clause itself).
-    # Check parent_map to distinguish from the try body.
-    if k === JS.K"block"
-        fb = JS.first_byte(source_node)
-        lb = JS.last_byte(source_node)
-        parent = get(parent_map, (fb, lb), nothing)
-        if parent !== nothing
-            pk = JS.kind(parent)
-            pk === JS.K"else" && return "else"
-            pk === JS.K"finally" && return "finally"
+    fb = JS.first_byte(source_node)
+    lb = JS.last_byte(source_node)
+    nc = JS.numchildren(try_node)
+    for (clause_kind, child_idx) in TRY_CLAUSE_POSITIONS
+        child_idx ≤ nc || continue
+        child = try_node[child_idx]
+        if JS.first_byte(child) == fb && JS.last_byte(child) == lb
+            return clause_kind
         end
     end
     return "try"
@@ -1177,17 +1206,13 @@ function find_scope_construct(
         # Look up the actual st0 node via node_map, since the provenance node
         # lives in the lowered graph and has different children.
         return get(node_map, (fb, lb), nothing)
-    elseif k in JS.KSet"block catch else finally"
-        # try expansion creates scope_blocks whose provenance points to
-        # the try body (block), catch/else/finally clause, or the block
-        # inside else/finally — not the try node itself.
+    elseif k === JS.K"block"
+        # In the new EST, try clause scopes have `block` provenance
+        # pointing to the block child of the try node.
         # Walk up parent_map to find the enclosing try node.
         node = get(parent_map, (fb, lb), nothing)
-        while node !== nothing
-            JS.kind(node) === JS.K"try" && return node
-            JS.kind(node) in JS.KSet"catch else finally" || break
-            nfb, nlb = JS.first_byte(node), JS.last_byte(node)
-            node = get(parent_map, (nfb, nlb), nothing)
+        if node !== nothing && JS.kind(node) === JS.K"try"
+            return node
         end
     end
     return nothing
@@ -1232,17 +1257,16 @@ function extract_local_variable_detail(
         fb, lb = JS.first_byte(parent), JS.last_byte(parent)
         parent = get(parent_map, (fb, lb), nothing)
     end
-    # Handle assignment: `x = value`
+    # Handle assignment: `x = value` or for-loop iteration: `for x in xs`
     if !isnothing(parent) && JS.kind(parent) === JS.K"="
-        detail = strip(first(split(JS.sourcetext(parent), '\n')))
         fb, lb = JS.first_byte(parent), JS.last_byte(parent)
-        parent = get(parent_map, (fb, lb), nothing)
-    end
-    # Handle for loop iterator: `for i in collection`
-    if !isnothing(parent) && JS.kind(parent) === JS.K"in"
-        detail = "for " * lstrip(JS.sourcetext(parent))
-        fb, lb = JS.first_byte(parent), JS.last_byte(parent)
-        parent = get(parent_map, (fb, lb), nothing)
+        grandparent = get(parent_map, (fb, lb), nothing)
+        if !isnothing(grandparent) && JS.kind(grandparent) === JS.K"for"
+            detail = "for " * lstrip(JS.sourcetext(parent))
+        else
+            detail = strip(first(split(JS.sourcetext(parent), '\n')))
+        end
+        parent = grandparent
     end
     # Handle local declaration: `local x` or `local x, y`
     if !isnothing(parent) && JS.kind(parent) === JS.K"local"

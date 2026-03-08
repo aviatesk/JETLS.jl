@@ -22,3 +22,5 @@ OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 end of terms and conditions
+
+Please see [THIRDPARTY.md](../THIRDPARTY.md) for license information for other software used in this project.

@@ -171,6 +171,21 @@ else
     is_breakpoint_marker(stmt) = stmt === __BREAK_POINT_MARKER__
 end
 
+@static if VERSION ≥ v"1.12.0-DEV.173"
+function pushuniquefiles!(unique_files::Set{Symbol}, lt)
+    for edge in lt.edges
+        pushuniquefiles!(unique_files, edge)
+    end
+    linetable = lt.linetable
+    if linetable === nothing
+        push!(unique_files, Base.IRShow.debuginfo_file1(lt))
+    else
+        pushuniquefiles!(unique_files, linetable)
+    end
+    return unique_files
+end
+end
+
 function FrameCode(scope, src::CodeInfo; generator=false, optimize=true)
     if optimize
         src, methodtables = optimize!(copy(src), scope)
@@ -196,17 +211,6 @@ function FrameCode(scope, src::CodeInfo; generator=false, optimize=true)
     lt = linetable(src)
     unique_files = Set{Symbol}()
     @static if VERSION ≥ v"1.12.0-DEV.173"
-    function pushuniquefiles!(unique_files::Set{Symbol}, lt)
-        for edge in lt.edges
-            pushuniquefiles!(unique_files, edge)
-        end
-        linetable = lt.linetable
-        if linetable === nothing
-            push!(unique_files, Base.IRShow.debuginfo_file1(lt))
-        else
-            pushuniquefiles!(unique_files, linetable)
-        end
-    end
     pushuniquefiles!(unique_files, lt)
     else # VERSION < v"1.12.0-DEV.173"
     for entry in lt

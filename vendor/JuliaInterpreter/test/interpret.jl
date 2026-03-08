@@ -305,6 +305,28 @@ let x = Core.SlotNumber(1)
     @test isa(@interpret(f(x)), UInt)
 end
 
+# Support Core.Argument in lowered code (needed for Julia PR #61036 _defaultctors)
+@testset "Core.Argument support" begin
+    # replace_coretypes_list! converts Core.Argument to SlotNumber
+    code_list = Any[Core.Compiler.Argument(1), Core.Compiler.Argument(3)]
+    JuliaInterpreter.replace_coretypes_list!(code_list)
+    @test code_list[1] == JuliaInterpreter.SlotNumber(1)
+    @test code_list[2] == JuliaInterpreter.SlotNumber(3)
+
+    # Core.Argument nested inside Expr is also converted
+    code_list2 = Any[Expr(:new, Core.Compiler.Argument(1), Core.Compiler.Argument(2))]
+    JuliaInterpreter.replace_coretypes_list!(code_list2)
+    @test code_list2[1].args[1] == JuliaInterpreter.SlotNumber(1)
+    @test code_list2[1].args[2] == JuliaInterpreter.SlotNumber(2)
+
+    # lookup_var with Core.Compiler.Argument works on a real frame
+    f_arg(x, y) = x + y
+    frame = JuliaInterpreter.enter_call(f_arg, 10, 20)
+    @test JuliaInterpreter.lookup_var(frame, Core.Compiler.Argument(1)) == f_arg
+    @test JuliaInterpreter.lookup_var(frame, Core.Compiler.Argument(2)) == 10
+    @test JuliaInterpreter.lookup_var(frame, Core.Compiler.Argument(3)) == 20
+end
+
 # issue #98
 x98 = 5
 function f98()

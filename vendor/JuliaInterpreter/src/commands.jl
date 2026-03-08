@@ -204,8 +204,9 @@ function until_line!(interp::Interpreter, frame::Frame, line::Union{Nothing, Int
     pc = frame.pc
     initialline, initialfile = linenumber(frame, pc), getfile(frame, pc)
     line === nothing && (line = initialline + 1)
+    line_final = line
     pc = next_until!(interp, frame, istoplevel) do frame::Frame
-        return is_return(pc_expr(frame)) || (linenumber(frame) >= line && getfile(frame) == initialfile)
+        return is_return(pc_expr(frame)) || (linenumber(frame) >= line_final && getfile(frame) == initialfile)
     end
     (pc === nothing || isa(pc, BreakpointRef)) && return pc
     maybe_step_through_kwprep!(interp, frame, istoplevel)

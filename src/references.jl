@@ -87,7 +87,7 @@ function find_references(
     (; mod) = get_context_info(server.state, uri, pos)
     locations = Location[]
 
-    (; ctx3, st3, binding) = @something begin
+    (; ctx3, st3, st0, binding) = @something begin
         _select_target_binding(st0_top, offset, mod; caller="find_references")
     end return locations
 
@@ -96,7 +96,8 @@ function find_references(
         error = find_global_references!(locations, server, uri, binfo; include_declaration, kwargs...)
         error !== nothing && return error
     else
-        find_local_references!(locations, server, uri, fi, ctx3, st3, binfo; include_declaration)
+        find_local_references!(locations, server, uri, fi, ctx3, st3, binfo;
+            include_declaration, is_generated=is_generated0(st0))
     end
 
     return locations
@@ -194,9 +195,10 @@ function find_local_references!(
         locations::Vector{Location}, server::Server, uri::URI, fi::FileInfo,
         ctx3, st3, binfo::JL.BindingInfo;
         include_declaration::Bool = true,
+        is_generated::Bool = false,
     )
     ranges = Set{Range}()
-    binding_occurrences = compute_binding_occurrences(ctx3, st3)
+    binding_occurrences = compute_binding_occurrences(ctx3, st3, is_generated)
     if haskey(binding_occurrences, binfo)
         for occurrence in binding_occurrences[binfo]
             is_def = occurrence.kind === :def
