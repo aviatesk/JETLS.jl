@@ -1,19 +1,5 @@
 using JSON3: JSON3
 
-const _TRACE_LOG = "/tmp/jetls-shutdown-debug.log"
-const _TRACE_T0 = Ref(0.0)
-
-function _trace(msg::String)
-    t = time()
-    if _TRACE_T0[] == 0.0
-        _TRACE_T0[] = t
-    end
-    elapsed = t - _TRACE_T0[]
-    open(_TRACE_LOG, "a") do f
-        println(f, "[", round(elapsed; digits=3), "s] ", msg)
-    end
-end
-
 """
     Endpoint
 
@@ -63,55 +49,42 @@ mutable struct Endpoint
         local endpoint_ref = Ref{Endpoint}()
 
         read_task = Threads.@spawn :interactive begin
-            _trace("read_task: started")
             while true
                 msg = @something try
                     readlsp(in)
                 catch err
-                    _trace("read_task: readlsp threw $(typeof(err)): $err")
                     err_handler(#=isread=#true, err, catch_backtrace())
                     continue
                 end begin
-                    _trace("read_task: readlsp returned nothing (stdin closed)")
                     break # terminate this task loop when the stream is closed
                 end
                 if !(!isassigned(endpoint_ref) || isopen(endpoint_ref[]))
-                    _trace("read_task: endpoint closed, breaking")
                     break
                 end
                 put!(in_msg_queue, msg)
                 GC.safepoint()
             end
-            _trace("read_task: exited loop, closing in_msg_queue")
             close(in_msg_queue)
         end
 
         write_task = Threads.@spawn :interactive begin
-            _trace("write_task: started")
             for msg in out_msg_queue
                 if msg === nothing
-                    _trace("write_task: received nothing token, breaking")
                     break
                 end
-                _trace("write_task: got msg $(typeof(msg)), out open=$(isopen(out))")
                 if isopen(out)
                     try
                         writelsp(out, msg)
-                        _trace("write_task: writelsp succeeded")
                     catch err
-                        _trace("write_task: writelsp threw $(typeof(err)): $err")
                         err_handler(#=isread=#false, err, catch_backtrace())
-                        _trace("write_task: after err_handler, continuing")
                         continue
                     end
                 else
-                    _trace("write_task: output closed, breaking")
                     @error "Output channel has been closed before message serialization" msg
                     break
                 end
                 GC.safepoint()
             end
-            _trace("write_task: exited loop")
         end
 
         return endpoint_ref[] = new(in_msg_queue, out_msg_queue, read_task, write_task, true)
@@ -175,22 +148,12 @@ end
 to_lsp_json(@nospecialize msg) = JSON3.write(msg)
 
 function Base.close(endpoint::Endpoint)
-    _trace("close(endpoint): start")
-    _trace("close(endpoint): flush (out_msg_queue ready=$(isready(endpoint.out_msg_queue)), write_task done=$(istaskdone(endpoint.write_task)))")
     flush(endpoint)
-    _trace("close(endpoint): flush done")
-    _trace("close(endpoint): put!(out_msg_queue, nothing)")
     put!(endpoint.out_msg_queue, nothing) # send a special token to terminate the write task
-    _trace("close(endpoint): close(out_msg_queue)")
     close(endpoint.out_msg_queue)
-    _trace("close(endpoint): wait(write_task) [istaskdone=$(istaskdone(endpoint.write_task))]")
     wait(endpoint.write_task)
-    _trace("close(endpoint): write_task done")
-    _trace("close(endpoint): @atomic isopen = false")
     @atomic :release endpoint.isopen = false
-    _trace("close(endpoint): close(in_msg_queue)")
     close(endpoint.in_msg_queue)
-    _trace("close(endpoint): done")
     # TODO we would also like to fetch the read task here, but it may be blocked on
     # `readlsp(in)`. Unclear how to unblock it without closing the socket.
     # wait(endpoint.read_task)
@@ -202,30 +165,23 @@ Base.isopen(endpoint::Endpoint) = @atomic :acquire endpoint.isopen
 check_dead_endpoint!(endpoint::Endpoint) = isopen(endpoint) || error("Endpoint is closed")
 
 function Base.flush(endpoint::Endpoint)
-    _trace("flush: check_dead_endpoint! (isopen=$(isopen(endpoint)))")
     check_dead_endpoint!(endpoint)
-    _trace("flush: entering while loop (out_msg_queue ready=$(isready(endpoint.out_msg_queue)), write_task done=$(istaskdone(endpoint.write_task)))")
     while isready(endpoint.out_msg_queue)
         if istaskdone(endpoint.write_task)
-            _trace("flush: write_task is dead, breaking")
             break
         end
         yield()
     end
-    _trace("flush: done")
 end
 
 function Base.iterate(endpoint::Endpoint, _=nothing)
     if !isopen(endpoint)
-        _trace("iterate: endpoint closed, returning nothing")
         return nothing
     end
-    _trace("iterate: about to take! (in_msg_queue open=$(isopen(endpoint.in_msg_queue)))")
     try
         return take!(endpoint.in_msg_queue), nothing
     catch e
         e isa InvalidStateException || rethrow()
-        _trace("iterate: InvalidStateException, returning nothing")
         return nothing
     end
 end

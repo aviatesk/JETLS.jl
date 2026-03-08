@@ -270,20 +270,14 @@ function handle_InitializeRequest(
         end
         JETLS_DEV_MODE && @info "Monitoring parent process ID" process_id
         Threads.@spawn begin
-            LSP._trace("processId monitor (init): started (pid=$process_id)")
             while true
                 sleep(60)
-                LSP._trace("processId monitor (init): woke up, checking pid=$process_id")
                 isopen(server.endpoint) || begin
-                    LSP._trace("processId monitor (init): endpoint closed, breaking")
                     break
                 end
                 if !iszero(@ccall uv_kill(process_id::Cint, 0::Cint)::Cint)
-                    LSP._trace("processId monitor (init): pid=$process_id is dead, sending self_shutdown_token")
                     put!(server.endpoint.in_msg_queue, self_shutdown_token)
                     break
-                else
-                    LSP._trace("processId monitor (init): pid=$process_id is alive")
                 end
             end
         end
