@@ -45,9 +45,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > Note that `analysis_overrides` is provided as a temporary workaround and may
 > be removed or changed at any time. A proper fix is being worked on.
 
+### Changed
+
+- Updated JuliaSyntax and JuliaLowering to their latest versions, fixing
+  several errors caused by JuliaLowering
+  (Fixed https://github.com/aviatesk/JETLS.jl/issues/495,
+  https://github.com/aviatesk/JETLS.jl/issues/518).
+
 ### Fixed
 
-- Fixed highlight range in `jetls check` (#574).
+- Fixed highlight range in `jetls check` (https://github.com/aviatesk/JETLS.jl/pull/574).
 - Fixed false "unused argument" warnings for `@generated` functions.
   Arguments used inside quoted expressions (`:(...)`) are now correctly
   recognized. Document highlight, find references, and rename also work
