@@ -80,6 +80,32 @@ function copy_package_source(mod::Module, pkg_name::AbstractString)
     return dest_dir
 end
 
+function uuid_to_jl_hex_tuple(uuid::UUID)
+    s = string(uuid)
+    parts = split(s, '-')
+    hi = "0x$(parts[1])_$(parts[2])_$(parts[3])"
+    lo = "0x$(parts[4])_$(parts[5])"
+    return "($hi, $lo)"
+end
+
+function rewrite_compiler_module_uuid!(
+        vendor_pkg_dir::AbstractString,
+        original_uuid::UUID,
+        new_uuid::UUID
+    )
+    src_file = joinpath(vendor_pkg_dir, "src", "Compiler.jl")
+    isfile(src_file) || return
+
+    content = read(src_file, String)
+    old_hex = uuid_to_jl_hex_tuple(original_uuid)
+    new_hex = uuid_to_jl_hex_tuple(new_uuid)
+    contains(content, old_hex) || return
+
+    new_content = replace(content, old_hex => new_hex)
+    write(src_file, new_content)
+    @info "Rewrote jl_set_module_uuid in $src_file: $old_hex => $new_hex"
+end
+
 function rewrite_package_uuid(vendor_pkg_dir::AbstractString, new_uuid::UUID)
     project_path = joinpath(vendor_pkg_dir, "Project.toml")
     isfile(project_path) || error("Project.toml not found in $vendor_pkg_dir")
@@ -583,6 +609,9 @@ function vendor_loaded_packages(use_local_path::Bool, rev::Union{String, Nothing
 
         vendor_pkg_dir = copy_package_source(mod, pkg_name)
         rewrite_package_uuid(vendor_pkg_dir, new_uuid)
+        if pkg_name == "Compiler"
+            rewrite_compiler_module_uuid!(vendor_pkg_dir, original_uuid, new_uuid)
+        end
     end
 
     @info "Step 2: Removing unused weakdeps and extensions..."
