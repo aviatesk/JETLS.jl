@@ -269,16 +269,22 @@ function handle_InitializeRequest(
             end
         end
         JETLS_DEV_MODE && @info "Monitoring parent process ID" process_id
-        Threads.@spawn while true
-            # To handle cases where the client crashes and cannot execute the normal
-            # server shutdown process, check every 60 seconds whether the `processId`
-            # is alive, and if not, put a special message token `SelfShutdownNotification`
-            # into the `endpoint` queue. See `runserver(server::Server)`.
-            sleep(60)
-            isopen(server.endpoint) || break
-            if !iszero(@ccall uv_kill(process_id::Cint, 0::Cint)::Cint)
-                put!(server.endpoint.in_msg_queue, self_shutdown_token)
-                break
+        Threads.@spawn begin
+            LSP._trace("processId monitor (init): started (pid=$process_id)")
+            while true
+                sleep(60)
+                LSP._trace("processId monitor (init): woke up, checking pid=$process_id")
+                isopen(server.endpoint) || begin
+                    LSP._trace("processId monitor (init): endpoint closed, breaking")
+                    break
+                end
+                if !iszero(@ccall uv_kill(process_id::Cint, 0::Cint)::Cint)
+                    LSP._trace("processId monitor (init): pid=$process_id is dead, sending self_shutdown_token")
+                    put!(server.endpoint.in_msg_queue, self_shutdown_token)
+                    break
+                else
+                    LSP._trace("processId monitor (init): pid=$process_id is alive")
+                end
             end
         end
     elseif client_process_id === nothing

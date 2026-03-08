@@ -179,21 +179,28 @@ function runserver(server::Server; client_process_id::Union{Nothing,Int}=nothing
     con_queue, con_task = start_concurrent_message_worker(server)
     if !isnothing(client_process_id)
         JETLS_DEV_MODE && @info "Monitoring client process ID" client_process_id
-        Threads.@spawn while true
-            # To handle cases where the client crashes and cannot execute the normal
-            # server shutdown process, check every 60 seconds whether the `processId`
-            # is alive, and if not, put a special message token `SelfShutdownNotification`
-            # into the `endpoint` queue. See `runserver(server::Server)`.
-            sleep(60)
-            isopen(server.endpoint) || break
-            if !iszero(@ccall uv_kill(client_process_id::Cint, 0::Cint)::Cint)
-                put!(server.endpoint.in_msg_queue, self_shutdown_token)
-                break
+        Threads.@spawn begin
+            LSP._trace("processId monitor: started (pid=$client_process_id)")
+            while true
+                sleep(60)
+                LSP._trace("processId monitor: woke up, checking pid=$client_process_id")
+                isopen(server.endpoint) || begin
+                    LSP._trace("processId monitor: endpoint closed, breaking")
+                    break
+                end
+                if !iszero(@ccall uv_kill(client_process_id::Cint, 0::Cint)::Cint)
+                    LSP._trace("processId monitor: pid=$client_process_id is dead, sending self_shutdown_token")
+                    put!(server.endpoint.in_msg_queue, self_shutdown_token)
+                    break
+                else
+                    LSP._trace("processId monitor: pid=$client_process_id is alive")
+                end
             end
         end
     end
     try
         for msg in server.endpoint
+            LSP._trace("server loop: received $(typeof(msg))")
             server.callback !== nothing && server.callback(:received, msg)
             # Handle lifecycle-related messages
             if msg isa InitializeRequest
@@ -202,12 +209,16 @@ function runserver(server::Server; client_process_id::Union{Nothing,Int}=nothing
             elseif msg isa InitializedNotification
                 handle_InitializedNotification(server)
             elseif msg isa ShutdownRequest
+                LSP._trace("server loop: ShutdownRequest (id=$(msg.id)), sending response")
                 shutdown_requested = true
                 send(server, ShutdownResponse(; id = msg.id, result = null))
+                LSP._trace("server loop: ShutdownResponse sent")
             elseif msg isa ExitNotification
+                LSP._trace("EXIT: ExitNotification (shutdown_requested=$shutdown_requested)")
                 exit_code = !shutdown_requested
                 break
             elseif msg === self_shutdown_token
+                LSP._trace("EXIT: self_shutdown_token")
                 exit_code = 1
                 break
             # Handle messages received before initialization (LSP 3.17 spec):
@@ -239,15 +250,22 @@ function runserver(server::Server; client_process_id::Union{Nothing,Int}=nothing
             end
             GC.safepoint()
         end
+        LSP._trace("EXIT: for loop ended normally (iterate returned nothing)")
     catch err
+        LSP._trace("EXIT: catch — $(typeof(err)): $err")
         @error "Message handling loop failed"
         Base.display_error(stderr, err, catch_backtrace())
     finally
+        LSP._trace("finally: stop_analysis_workers")
         stop_analysis_workers(server)
+        LSP._trace("finally: put!/close worker queues")
         put!(seq_queue, nothing); put!(con_queue, nothing);
         close(seq_queue); close(con_queue);
+        LSP._trace("finally: waitall worker tasks")
         waitall((seq_task, con_task))
+        LSP._trace("finally: close(server.endpoint)")
         close(server.endpoint)
+        LSP._trace("finally: done")
     end
     JETLS_DEV_MODE && @info "Exited JETLS server loop"
     return exit_code
