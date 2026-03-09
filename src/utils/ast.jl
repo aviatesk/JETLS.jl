@@ -84,32 +84,28 @@ is_kwdef0(st0::JS.SyntaxTree) = is_macrocall_st0(st0, "@kwdef")
 is_generated0(st0::JS.SyntaxTree) = is_macrocall_st0(st0, "@generated")
 
 """
-    foreach_inert_identifier(f, st::JS.SyntaxTree)
+    foreach_inert_identifier(callback, st::JS.SyntaxTree)
 
 Traverse `st` looking for `K"inert"` nodes, and call `f(id_node)` for each
-`K"Identifier"` found inside them. `f` should return `true` to continue
+`K"Identifier"` found inside them. `callback` should return `true` to continue
 traversal or `false` to stop early.
 """
-function foreach_inert_identifier(f, st::JS.SyntaxTree)
-    _foreach_inert_identifier(f, st)
-    return nothing
-end
-function _foreach_inert_identifier(f, node::JS.SyntaxTree)
+function foreach_inert_identifier(callback, node::JS.SyntaxTree)
     if JS.kind(node) === JS.K"inert"
-        _foreach_identifier_in_inert(f, node) || return false
+        foreach_identifier_in_inert(callback, node) || return false
     else
         for child in JS.children(node)
-            _foreach_inert_identifier(f, child) || return false
+            foreach_inert_identifier(callback, child) || return false
         end
     end
     return true
 end
-function _foreach_identifier_in_inert(f, node::JS.SyntaxTree)
+function foreach_identifier_in_inert(callback, node::JS.SyntaxTree)
     if JS.kind(node) === JS.K"Identifier"
-        f(node) || return false
+        callback(node) || return false
     end
     for child in JS.children(node)
-        _foreach_identifier_in_inert(f, child) || return false
+        foreach_identifier_in_inert(callback, child) || return false
     end
     return true
 end
@@ -118,7 +114,10 @@ function find_inert_identifier_name(st::JS.SyntaxTree, offset::Int)
     name = Ref{Union{Nothing,String}}(nothing)
     foreach_inert_identifier(st) do id_node::JS.SyntaxTree
         if offset in JS.byte_range(id_node)
-            name[] = JS.sourcetext(id_node)
+            JS.hasattr(id_node, :name_val) || return true
+            name_val = id_node.name_val
+            name_val isa AbstractString || return true
+            name[] = name_val
             return false
         end
         return true

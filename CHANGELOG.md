@@ -21,6 +21,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 - Diff: [`d32f1cf...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/d32f1cf...HEAD)
 
+### Fixed
+
+- Fixed crash in diagnostics when `@generated` functions use old-style macros
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/583).
+
 ### Announcement
 
 > [!warning]
