@@ -58,6 +58,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   with subtype declarations (e.g. `@kwdef struct A <: B`)
   (Closed https://github.com/aviatesk/JETLS.jl/issues/587).
 
+- Fixed false `unused-import` warnings for modules with docstrings
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/586).
+
 ## 2026-03-08
 
 - Commit: [`d32f1cf`](https://github.com/aviatesk/JETLS.jl/commit/d32f1cf)

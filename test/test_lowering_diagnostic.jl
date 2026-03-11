@@ -1297,6 +1297,19 @@ end
         @test isempty(diagnostics)
     end
 
+    let diagnostics = get_unused_import_diagnostics("""
+        \"\"\"
+        Docstring for `module Issue586`
+        \"\"\"
+        module Issue586
+        using Base: sin
+        export sin
+        issue586(x) = sin(x)
+        end
+        """)
+        @test isempty(diagnostics)
+    end
+
     # Import used in nested module should not suppress warning for top-level import
     @testset "module context tracking" begin
         script = """

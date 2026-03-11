@@ -83,6 +83,15 @@ is_kwdef0(st0::JS.SyntaxTree) = is_macrocall_st0(st0, "@kwdef")
 
 is_generated0(st0::JS.SyntaxTree) = is_macrocall_st0(st0, "@generated")
 
+function is_doc0(st0::JS.SyntaxTree)
+    JS.kind(st0) === JS.K"macrocall" || return false
+    JS.numchildren(st0) >= 1 || return false
+    macro_name = st0[1]
+    JS.kind(macro_name) === JS.K"Value" || return false
+    hasproperty(macro_name, :value) || return false
+    return macro_name.value == GlobalRef(Core, Symbol("@doc"))
+end
+
 """
     foreach_inert_identifier(callback, st::JS.SyntaxTree)
 
@@ -332,17 +341,9 @@ function iterate_toplevel_tree(callback, st0_top::JS.SyntaxTree)
             for i = JS.numchildren(stblk):-1:1 # reversed since we use `pop!`
                 push!(sl, stblk[i])
             end
-        elseif JS.kind(st0) === JS.K"doc"
-            # skip docstring expressions for now
-            for i = JS.numchildren(st0):-1:1 # reversed since we use `pop!`
-                push!(sl, st0[i])
-            end
-        elseif JS.kind(st0) === JS.K"macrocall" && is_macrocall_st0(st0, "@doc")
-            # We probably can remove this after https://github.com/JuliaLang/julia/pull/60733
-            # MRE: Comment out and open app.jl and it will yield: `JETLS.check_socket_port` is not defined
-            for i = JS.numchildren(st0):-1:1 # reversed since we use `pop!`
-                push!(sl, st0[i])
-            end
+        elseif is_doc0(st0)
+            # Analyze only the code to which docstrings are attached
+            push!(sl, st0[end])
         else # st0 is lowerable tree
             ret = callback(st0)
             ret === traversal_terminator && break
