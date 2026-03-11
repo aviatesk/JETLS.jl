@@ -132,6 +132,10 @@ function _kwdef_make_constructors(
         field_defaults::Vector{Union{Nothing,JS.SyntaxTree}})
     mc = __source__ = ctx.macrocall::JS.SyntaxTree
 
+    if JS.kind(type_sig) === JS.K"<:"
+        type_sig = type_sig[1]
+    end
+
     params = JS.SyntaxTree[]
     for (name::JS.SyntaxTree, default) in zip(field_names, field_defaults)
         if default !== nothing
@@ -172,7 +176,6 @@ function _kwdef_make_constructors(
 
         return JS.SyntaxTree[def1, def2]
     else
-        throw(JL.MacroExpansionError(
-            type_sig, "Invalid type signature for @kwdef"))
+        throw(JL.MacroExpansionError(type_sig, "Invalid type signature for @kwdef"))
     end
 end
