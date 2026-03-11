@@ -117,17 +117,8 @@ const PKG_ACTIVATION_LOCK = ReentrantLock()
 Temporarily activate the environment at `env_path`, execute `func`, and restore the
 previous environment. Uses a global lock to prevent concurrent environment switching.
 """
-function activate_do(func, env_path::String)
-    lock(PKG_ACTIVATION_LOCK)
-    old_env = Pkg.project().path
-    try
-        Pkg.activate(env_path; io=devnull)
-        return func()
-    finally
-        Pkg.activate(old_env; io=devnull)
-        unlock(PKG_ACTIVATION_LOCK)
-    end
-end
+activate_do(func, env_path::String) =
+    @lock PKG_ACTIVATION_LOCK Pkg.activate(func, env_path)
 
 """
     activate_with_early_release(func, env_path::String)
@@ -141,17 +132,15 @@ the event is automatically notified in the `finally` block.
 """
 function activate_with_early_release(func, env_path::String)
     activation_done = Base.Event()
-    lock(PKG_ACTIVATION_LOCK)
-    old_env = Pkg.project().path
-    Pkg.activate(env_path; io=devnull)
-    t = Threads.@spawn try
-        func(activation_done)
-    finally
-        notify(activation_done)
+    t = @lock PKG_ACTIVATION_LOCK Pkg.activate(env_path) do
+        local t = Threads.@spawn try
+            func(activation_done)
+        finally
+            notify(activation_done)
+        end
+        wait(activation_done)
+        return t
     end
-    wait(activation_done)
-    Pkg.activate(old_env; io=devnull)
-    unlock(PKG_ACTIVATION_LOCK)
     return fetch(t)
 end
 
