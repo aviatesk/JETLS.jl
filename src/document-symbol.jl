@@ -136,8 +136,6 @@ function extract_toplevel_symbol!(symbols::Vector{DocumentSymbol}, st0::JS.Synta
         extract_toplevel_symbols!(symbols, st0, fi, mod)
     elseif k === JS.K"macrocall"
         extract_macrocall_symbol!(symbols, st0, fi, mod)
-    elseif k === JS.K"doc"
-        extract_doc_symbol!(symbols, st0, fi, mod)
     end
     return nothing
 end
@@ -762,21 +760,6 @@ function extract_enum_value!(
         kind = SymbolKind.EnumMember,
         range = jsobj_to_range(st0, fi),
         selectionRange = jsobj_to_range(name_node, fi)))
-    return nothing
-end
-
-function extract_doc_symbol!(
-        symbols::Vector{DocumentSymbol}, st0::JS.SyntaxTree, fi::FileInfo, mod::Module
-    )
-    JS.numchildren(st0) ≥ 2 || return nothing
-    definition = st0[2]
-    temp_symbols = DocumentSymbol[]
-    extract_toplevel_symbol!(temp_symbols, definition, fi, mod)
-    isempty(temp_symbols) && return nothing
-    range = jsobj_to_range(st0, fi)
-    for sym in temp_symbols
-        push!(symbols, DocumentSymbol(sym; range))
-    end
     return nothing
 end
 

@@ -53,7 +53,7 @@ end
 
 """
     compute_binding_occurrences(
-            ctx3::JL.VariableAnalysisContext, st3::Tree3;
+            ctx3::JL.VariableAnalysisContext, st3::Tree3, is_generated::Bool;
             ismacro::Union{Nothing,Base.RefValue{Bool}} = nothing
         ) where Tree3<:JS.SyntaxTree
         -> binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence{Tree3}}}
