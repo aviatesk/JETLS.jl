@@ -49,6 +49,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > Note that `analysis_overrides` is provided as a temporary workaround and may
 > be removed or changed at any time. A proper fix is being worked on.
 
+### Changed
+
+- Updated JuliaSyntax.jl and JuliaLowering.jl dependency versions to latest
+
 ### Fixed
 
 - Fixed crash in diagnostics when `@generated` functions use old-style macros
