@@ -60,7 +60,11 @@ mutable struct Endpoint
                 put!(in_msg_queue, msg)
                 GC.safepoint()
             end
-            put!(in_msg_queue, nothing)
+            # Send a sentinel to unblock `take!` in `iterate` — without this,
+            # the server loop hangs forever when the input stream closes.
+            # Guard with `isopen` since `close(endpoint)` may have already
+            # closed the channel during normal shutdown.
+            isopen(in_msg_queue) && put!(in_msg_queue, nothing)
         end
 
         write_task = Threads.@spawn :interactive for msg in out_msg_queue
@@ -167,6 +171,9 @@ end
 function Base.iterate(endpoint::Endpoint, _=nothing)
     isopen(endpoint) || return nothing
     msg = take!(endpoint.in_msg_queue)
+    # `nothing` is a sentinel from `read_task` signaling that the input
+    # stream has closed (e.g. client process died). End iteration so the
+    # server loop can proceed to its `finally` cleanup as usual.
     msg === nothing && return nothing
     return msg, nothing
 end
