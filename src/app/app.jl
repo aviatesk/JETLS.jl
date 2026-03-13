@@ -12,28 +12,15 @@ const help_message = """
       schema                      Print JSON schema for configuration
       version                     Show version information
 
-    Check options (for 'check' command):
-      --root=<path>               Set the root path for configuration (default: pwd)
-      --context-lines=<n>         Number of context lines to show (default: 2)
-      --exit-severity=<level>     Minimum severity for error exit (default: warn)
-      --show-severity=<level>     Minimum severity to display (default: hint)
-
-    Server options (for 'serve' command):
-      --stdio                     Use standard input/output (default)
-      --pipe-connect=<path>       Connect to client's Unix domain socket/named pipe
-      --pipe-listen=<path>        Listen on Unix domain socket/named pipe
-      --socket=<port>             Listen on TCP socket
-      --clientProcessId=<pid>     Monitor client process (enables crash detection)
-
     Common options:
       --version, -v               Show version information
       --help, -h                  Show this help message
 
+    Run 'jetls <command> --help' for command-specific options.
+
     Examples:
-      jetls serve --pipe-listen=/tmp/jetls.sock
-      jetls serve --socket=8080
       jetls check src/SomePkg.jl
-      jetls check --root=/path/to/project src/
+      jetls serve --pipe-listen=/tmp/jetls.sock
       jetls schema --settings
     """
 
