@@ -665,7 +665,7 @@ function bounds_error(tpl::Tuple{Int})
 end
 ```
 
-#### [Method error (`inference/method-error`)](@id diagnostic/inference/method-error)
+#### [Method error (`inference/method-error`)](@id diagnostic/reference/inference/method-error)
 
 **Default severity:** `Warning`
 
