@@ -36,10 +36,10 @@ close(endpoint)
 ```
 """
 mutable struct Endpoint
-    in_msg_queue::Channel{Any}
-    out_msg_queue::Channel{Any}
-    read_task::Task
-    write_task::Task
+    const in_msg_queue::Channel{Any}
+    const out_msg_queue::Channel{Any}
+    const read_task::Task
+    const write_task::Task
     @atomic isopen::Bool
 
     function Endpoint(err_handler, in::IO, out::IO)
