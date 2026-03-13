@@ -144,7 +144,6 @@ end
 to_lsp_json(@nospecialize msg) = JSON3.write(msg)
 
 function Base.close(endpoint::Endpoint)
-    flush(endpoint)
     put!(endpoint.out_msg_queue, nothing) # send a special token to terminate the write task
     close(endpoint.out_msg_queue)
     wait(endpoint.write_task)
@@ -157,16 +156,6 @@ function Base.close(endpoint::Endpoint)
 end
 
 Base.isopen(endpoint::Endpoint) = @atomic :acquire endpoint.isopen
-
-check_dead_endpoint!(endpoint::Endpoint) = isopen(endpoint) || error("Endpoint is closed")
-
-function Base.flush(endpoint::Endpoint)
-    check_dead_endpoint!(endpoint)
-    while isready(endpoint.out_msg_queue)
-        istaskdone(endpoint.write_task) && break
-        yield()
-    end
-end
 
 function Base.iterate(endpoint::Endpoint, _=nothing)
     isopen(endpoint) || return nothing
@@ -194,7 +183,6 @@ This function is non-blocking and returns immediately after queueing the message
 - `ErrorException`: If the endpoint is closed
 """
 function send(endpoint::Endpoint, @nospecialize(msg::Any))
-    check_dead_endpoint!(endpoint)
     put!(endpoint.out_msg_queue, msg)
     nothing
 end
