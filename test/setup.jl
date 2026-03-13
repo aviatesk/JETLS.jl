@@ -225,12 +225,10 @@ function withpackage(test_func, pkgname::AbstractString,
                          Pkg.precompile(; io=devnull)
                      end,
                      env_setup=function () end)
-    old = Pkg.project().path
     mktempdir() do tempdir
-        try
-            pkgpath = normpath(tempdir, pkgname)
+        pkgpath = normpath(tempdir, pkgname)
+        Pkg.activate(pkgpath) do
             Pkg.generate(pkgpath; io=devnull)
-            Pkg.activate(pkgpath; io=devnull)
             pkgfile = normpath(pkgpath, "src", "$pkgname.jl")
             write(pkgfile, string(pkgcode))
             pkg_setup()
@@ -239,23 +237,18 @@ function withpackage(test_func, pkgname::AbstractString,
             env_setup()
 
             return test_func(pkgpath)
-        finally
-            Pkg.activate(old; io=devnull)
         end
     end
 end
 
 function withscript(test_func, scriptcode::AbstractString;
                     env_setup=function () end)
-    old = Pkg.project().path
-    mktemp() do scriptpath, io
-        try
+    mktemp() do scriptpath, _
+        Pkg.activate(dirname(scriptpath)) do
             write(scriptpath, scriptcode)
             Pkg.activate(; temp=true, io=devnull)
             env_setup()
             return test_func(scriptpath)
-        finally
-            Pkg.activate(old; io=devnull)
         end
     end
 end

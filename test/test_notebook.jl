@@ -68,9 +68,7 @@ function make_DocumentFormattingRequest(id::Int, uri::URI)
 end
 
 @testset "notebook end to end" begin
-    old_env = Pkg.project().path
-    mktempdir() do tempdir; try
-        Pkg.activate(tempdir; io=devnull)
+    mktempdir() do tempdir; Pkg.activate(tempdir) do
         Pkg.add("Example"; io=devnull)
 
         notebook_uri = filepath2uri(normpath(tempdir, "test.ipynb"))
@@ -235,9 +233,7 @@ end
                 @test notebook_info.concat.cell_ranges[3].line_offset == 2
             end
         end
-    finally
-        Pkg.activate(old_env; io=devnull)
-    end; end
+    end; end # mktempdir() do tempdir; Pkg.activate(tempdir) do
 end
 
 @testset "notebook formatting" begin

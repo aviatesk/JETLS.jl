@@ -36,10 +36,10 @@ close(endpoint)
 ```
 """
 mutable struct Endpoint
-    in_msg_queue::Channel{Any}
-    out_msg_queue::Channel{Any}
-    read_task::Task
-    write_task::Task
+    const in_msg_queue::Channel{Any}
+    const out_msg_queue::Channel{Any}
+    const read_task::Task
+    const write_task::Task
     @atomic isopen::Bool
 
     function Endpoint(err_handler, in::IO, out::IO)
@@ -48,16 +48,23 @@ mutable struct Endpoint
 
         local endpoint_ref = Ref{Endpoint}()
 
-        read_task = Threads.@spawn :interactive while true
-            msg = @something try
-                readlsp(in)
-            catch err
-                err_handler(#=isread=#true, err, catch_backtrace())
-                continue
-            end break # terminate this task loop when the stream is closed
-            (!isassigned(endpoint_ref) || isopen(endpoint_ref[])) || break
-            put!(in_msg_queue, msg)
-            GC.safepoint()
+        read_task = Threads.@spawn :interactive begin
+            while true
+                msg = @something try
+                    readlsp(in)
+                catch err
+                    err_handler(#=isread=#true, err, catch_backtrace())
+                    continue
+                end break # terminate this task loop when the stream is closed
+                (!isassigned(endpoint_ref) || isopen(endpoint_ref[])) || break
+                put!(in_msg_queue, msg)
+                GC.safepoint()
+            end
+            # Send a sentinel to unblock `take!` in `iterate` — without this,
+            # the server loop hangs forever when the input stream closes.
+            # Guard with `isopen` since `close(endpoint)` may have already
+            # closed the channel during normal shutdown.
+            isopen(in_msg_queue) && put!(in_msg_queue, nothing)
         end
 
         write_task = Threads.@spawn :interactive for msg in out_msg_queue
@@ -137,7 +144,6 @@ end
 to_lsp_json(@nospecialize msg) = JSON3.write(msg)
 
 function Base.close(endpoint::Endpoint)
-    flush(endpoint)
     put!(endpoint.out_msg_queue, nothing) # send a special token to terminate the write task
     close(endpoint.out_msg_queue)
     wait(endpoint.write_task)
@@ -151,18 +157,14 @@ end
 
 Base.isopen(endpoint::Endpoint) = @atomic :acquire endpoint.isopen
 
-check_dead_endpoint!(endpoint::Endpoint) = isopen(endpoint) || error("Endpoint is closed")
-
-function Base.flush(endpoint::Endpoint)
-    check_dead_endpoint!(endpoint)
-    while isready(endpoint.out_msg_queue)
-        yield()
-    end
-end
-
 function Base.iterate(endpoint::Endpoint, _=nothing)
     isopen(endpoint) || return nothing
-    return take!(endpoint.in_msg_queue), nothing
+    msg = take!(endpoint.in_msg_queue)
+    # `nothing` is a sentinel from `read_task` signaling that the input
+    # stream has closed (e.g. client process died). End iteration so the
+    # server loop can proceed to its `finally` cleanup as usual.
+    msg === nothing && return nothing
+    return msg, nothing
 end
 
 """
@@ -181,7 +183,6 @@ This function is non-blocking and returns immediately after queueing the message
 - `ErrorException`: If the endpoint is closed
 """
 function send(endpoint::Endpoint, @nospecialize(msg::Any))
-    check_dead_endpoint!(endpoint)
     put!(endpoint.out_msg_queue, msg)
     nothing
 end

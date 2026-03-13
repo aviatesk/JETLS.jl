@@ -64,6 +64,30 @@ children_kinds(st::JS.SyntaxTree) = JS.Kind[JS.kind(c) for c in JS.children(st)]
             @test count(==(JS.K"function"), ks) == 1
         end
 
+        # non-parametric with subtype declaration
+        let st1 = kwdef_expand("""
+                @kwdef mutable struct A <: Base.AbstractLock
+                    a::Int = 10
+                end
+                """)
+            @test JS.kind(st1) === JS.K"block"
+            ks = children_kinds(st1)
+            @test count(==(JS.K"struct"), ks) == 1
+            @test count(==(JS.K"function"), ks) == 1
+        end
+
+        # parametric with subtype declaration
+        let st1 = kwdef_expand("""
+                @kwdef struct A{T <: Real} <: Number
+                    a::T = 1.0
+                end
+                """)
+            @test JS.kind(st1) === JS.K"block"
+            ks = children_kinds(st1)
+            @test count(==(JS.K"struct"), ks) == 1
+            @test count(==(JS.K"function"), ks) == 2
+        end
+
         # mutable struct with const field default
         let st1 = kwdef_expand("""
                 @kwdef mutable struct A{T <: Real}
@@ -96,6 +120,8 @@ children_kinds(st::JS.SyntaxTree) = JS.Kind[JS.kind(c) for c in JS.children(st)]
             "@kwdef struct A\n    a::Float64 = 1.0\nend\n",
             "@kwdef mutable struct A{T}\n    const a::T = 1.0\n    b::Int\nend\n",
             "@kwdef struct A\n    a::Int\nend\n",
+            "@kwdef mutable struct A <: Base.AbstractLock\n    a::Int = 10\nend\n",
+            "@kwdef struct A{T <: Real} <: Number\n    a::T = 1.0\nend\n",
         ]
             st0 = jlparse(code)
             world = Base.get_world_counter()
@@ -111,6 +137,8 @@ children_kinds(st::JS.SyntaxTree) = JS.Kind[JS.kind(c) for c in JS.children(st)]
             "@kwdef struct MyStruct\n    a::Float64 = 1.0\nend\n",
             "@kwdef mutable struct MyStruct{T}\n    const a::T = 1.0\n    b::Int\nend\n",
             "@kwdef struct MyStruct\n    a::Int\nend\n",
+            "@kwdef mutable struct MyStruct <: Base.AbstractLock\n    a::Int = 10\nend\n",
+            "@kwdef struct MyStruct{T <: Real} <: Number\n    a::T = 1.0\nend\n",
         ]
             st0 = jlparse(code)
             offset = findfirst("MyStruct", code).start

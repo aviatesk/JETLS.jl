@@ -267,6 +267,9 @@ end
     @test 6 == active_parameter(M_highlight, "f(kwfake=1│, 0, 1, 2, 3)")
     # # splat after semicolon
     @test 6 == active_parameter(M_highlight, "f(0, 1, 2, 3; kwfake...│)")
+
+    # unrecognized kwarg forms should not crash and return something
+    @test siginfos(M_highlight, "f(0, 1, 2; a.b=1│)") isa Vector
 end
 
 module M_nested
