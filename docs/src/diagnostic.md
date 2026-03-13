@@ -111,7 +111,7 @@ Here is a summary table of the diagnostics explained in this section:
 | [`inference/undef-global-var`](@ref diagnostic/reference/inference/undef-global-var)             | `Warning`             | `JETLS/save`  | References to undefined global variables           |
 | [`inference/field-error`](@ref diagnostic/reference/inference/field-error)                       | `Warning`             | `JETLS/save`  | Access to non-existent struct fields               |
 | [`inference/bounds-error`](@ref diagnostic/reference/inference/bounds-error)                     | `Warning`             | `JETLS/save`  | Out-of-bounds field access by index                |
-| [`inference/method-error`](@ref diagnostic/inference/method-error)                               | `Warning`             | No matching method found for function calls                       |
+| [`inference/method-error`](@ref diagnostic/reference/inference/method-error)                     | `Warning`             | `JETLS/save`  | No matching method found for function calls        |
 | [`testrunner/test-failure`](@ref diagnostic/reference/testrunner/test-failure)                   | `Error`               | `JETLS/extra` | Test failures from TestRunner integration          |
 
 ### [Syntax diagnostic (`syntax/*`)](@id diagnostic/reference/syntax)
