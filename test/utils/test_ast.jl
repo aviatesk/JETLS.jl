@@ -641,4 +641,52 @@ end
     end
 end
 
+@testset "iterate_toplevel_tree" begin
+    let cnt = 0,
+        func1 = struct1 = false
+        JETLS.iterate_toplevel_tree(jlparse("""
+            module Module1
+            func1(x) = x
+            struct Struct1 end
+            end
+            """)) do st0
+            cnt += 1
+            s = JS.sourcetext(st0)
+            if s == "func1(x) = x"
+                func1 = true
+            elseif s == "struct Struct1 end"
+                struct1 = true
+            end
+        end
+        @test cnt == 2
+        @test func1 && struct1
+    end
+
+    let cnt = 0,
+        func1 = struct1 = false
+        JETLS.iterate_toplevel_tree(jlparse("""
+            \"\"\"
+            Docstring for `module Module1`
+            \"\"\"
+            module Module1
+            \"\"\"
+            Docstring for `func1`
+            \"\"\"
+            func1(x) = x
+            struct Struct1 end
+            end
+            """)) do st0
+            cnt += 1
+            s = JS.sourcetext(st0)
+            if s == "func1(x) = x"
+                func1 = true
+            elseif s == "struct Struct1 end"
+                struct1 = true
+            end
+        end
+        @test cnt == 2
+        @test func1 && struct1
+    end
+end
+
 end # module test_ast

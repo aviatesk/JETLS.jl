@@ -42,7 +42,10 @@ end
 function collect_inert_identifiers(st3::JS.SyntaxTree)
     result = Dict{String,Vector{JS.SyntaxTree}}()
     foreach_inert_identifier(st3) do id_node::JS.SyntaxTree
-        push!(get!(Vector{JS.SyntaxTree}, result, JS.sourcetext(id_node)), id_node)
+        JS.hasattr(id_node, :name_val) || return true
+        name_val = id_node.name_val
+        name_val isa AbstractString || return true
+        push!(get!(Vector{JS.SyntaxTree}, result, name_val), id_node)
         return true
     end
     return result
@@ -50,7 +53,7 @@ end
 
 """
     compute_binding_occurrences(
-            ctx3::JL.VariableAnalysisContext, st3::Tree3;
+            ctx3::JL.VariableAnalysisContext, st3::Tree3, is_generated::Bool;
             ismacro::Union{Nothing,Base.RefValue{Bool}} = nothing
         ) where Tree3<:JS.SyntaxTree
         -> binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence{Tree3}}}

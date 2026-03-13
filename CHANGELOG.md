@@ -19,13 +19,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`5e1f0bb...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/5e1f0bb...HEAD)
+- Diff: [`d32f1cf...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/d32f1cf...HEAD)
 
 ### Announcement
 
 > [!warning]
-> JETLS is currently only compatible with Julia 1.12 (1.12.2+ recommended).
-> Currently it does not support Julia 1.11 or earlier, nor Julia 1.13+/nightly.
+> JETLS requires Julia 1.12.2 or later.
+> It does not support Julia 1.12.1 or earlier, nor Julia 1.13+/nightly.
 
 > [!warning]
 > JETLS currently has a known memory leak issue where memory usage grows with
@@ -51,10 +51,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- Updated JuliaSyntax.jl and JuliaLowering.jl dependency versions to latest
+
+### Fixed
+
+- Fixed crash in diagnostics when `@generated` functions use old-style macros
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/583).
+
+- Fixed false `"Invalid type signature for @kwdef"` error when using `@kwdef`
+  with subtype declarations (e.g. `@kwdef struct A <: B`)
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/587).
+
+- Fixed false `unused-import` warnings for modules with docstrings
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/586).
+
+- Fixed server hang when the client terminates abnormaly without sending an
+  `exit` notification (e.g. Neovim)
+  (Fixed https://github.com/aviatesk/JETLS.jl/pull/580).
+
+## 2026-03-08
+
+- Commit: [`d32f1cf`](https://github.com/aviatesk/JETLS.jl/commit/d32f1cf)
+- Diff: [`5e1f0bb...d32f1cf`](https://github.com/aviatesk/JETLS.jl/compare/5e1f0bb...d32f1cf)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-03-08")'
+  ```
+
+### Changed
+
 - Updated JuliaSyntax and JuliaLowering to their latest versions, fixing
   several errors caused by JuliaLowering
   (Fixed https://github.com/aviatesk/JETLS.jl/issues/495,
-  https://github.com/aviatesk/JETLS.jl/issues/518).
+  https://github.com/aviatesk/JETLS.jl/issues/518,
+  https://github.com/aviatesk/JETLS.jl/issues/538).
 
 ### Fixed
 

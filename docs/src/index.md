@@ -23,16 +23,15 @@ You need to install the `jetls` executable separately before using any editor in
 
 ### Prerequisites
 
-JETLS is currently only compatible with [Julia `v"1.12"`](https://julialang.org/downloads)
-(1.12.2+ recommended).
-It does not support Julia 1.11 or earlier, nor Julia 1.13+/nightly.
+JETLS requires [Julia v1.12.2](https://julialang.org/downloads) or later.
+It does not support Julia 1.12.1 or earlier, nor Julia 1.13+/nightly.
 
 ### Installing the `jetls` executable
 
 All editor integrations require the [`jetls` executable app](https://pkgdocs.julialang.org/dev/apps/),
 which is the main entry point for running JETLS.
 
-Install it with (make sure your `julia` command runs v1.12):
+Install it with (make sure your `julia` command runs v1.12.2+):
 ```bash
 julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="release")'
 ```
