@@ -65,6 +65,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed false `unused-import` warnings for modules with docstrings
   (Closed https://github.com/aviatesk/JETLS.jl/issues/586).
 
+- Fixed server hang when the client terminates without sending an
+  `exit` notification (e.g. Neovim)
+  (https://github.com/aviatesk/JETLS.jl/pull/580).
+
 ## 2026-03-08
 
 - Commit: [`d32f1cf`](https://github.com/aviatesk/JETLS.jl/commit/d32f1cf)
