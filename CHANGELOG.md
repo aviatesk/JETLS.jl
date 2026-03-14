@@ -49,6 +49,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > Note that `analysis_overrides` is provided as a temporary workaround and may
 > be removed or changed at any time. A proper fix is being worked on.
 
+### Fixed
+
+- Fixed false positive `unused-binding` warning for keyword arguments
+  that are only used in computing other keyword arguments' default
+  values (Closed https://github.com/aviatesk/JETLS.jl/issues/592).
+
 ## 2026-03-13
 
 - Commit: [`4280097`](https://github.com/aviatesk/JETLS.jl/commit/4280097)
