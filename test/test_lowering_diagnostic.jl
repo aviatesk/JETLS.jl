@@ -412,6 +412,25 @@ length_utf16(s::AbstractString) = sum(c::Char -> codepoint(c) < 0x10000 ? 1 : 2,
             """)
             @test isempty(diagnostics)
         end
+
+        # aviatesk/JETLS.jl#592
+        let diagnostics = get_lowered_diagnostics("""
+            function group(
+                by,
+                f,
+                itr;
+                T::Type = eltype(itr),
+                By::Type = only(Base.return_types(by, (T,))),
+                F::Type = only(Base.return_types(f, (T,))),
+            )::Dict{By, Vector{F}}
+                return foldl(itr; init = Dict{By, Vector{F}}()) do acc, x
+                    push!(get!(acc, by(x), F[]), f(x))
+                    return acc
+                end
+            end
+            """)
+            @test isempty(diagnostics)
+        end
     end
 
     @testset "module splitter" begin

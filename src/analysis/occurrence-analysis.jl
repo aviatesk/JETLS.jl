@@ -97,22 +97,21 @@ function compute_binding_occurrences(
 
     for (i, binfo) = enumerate(ctx3.bindings.info)
         binfo.is_internal && continue
-        if binfo.kind === :argument
-            push!(get!(Vector{Int}, same_arg_bindings, Symbol(binfo.name)), i)
-            if is_generated
-                # In `@generated` functions, type parameters become actual
-                # arguments. Include them in location-based merging so they
-                # get unified with their `:static_parameter` counterparts.
-                lockey = (Symbol(binfo.name), JS.source_location(JL.binding_ex(ctx3, binfo.id))...)
-                push!(get!(Vector{Int}, same_location_bindings, lockey), i)
-            end
-        elseif binfo.kind === :static_parameter || binfo.kind === :local
-            lockey = (Symbol(binfo.name), JS.source_location(JL.binding_ex(ctx3, binfo.id))...)
-            push!(get!(Vector{Int}, same_location_bindings, lockey), i)
-        elseif binfo.kind === :global
+        if binfo.kind === :global
             include_global_bindings || continue
         else
-            error(lazy"Unknown binding kind: $(binfo.kind)")
+            if binfo.kind === :argument
+                push!(get!(Vector{Int}, same_arg_bindings, Symbol(binfo.name)), i)
+            end
+            # Include arguments in location-based merging to unify them with
+            # `:local` bindings at the same location. This is needed for:
+            # - `@generated` functions: type parameters become actual arguments
+            #   that must be unified with their `:static_parameter` counterparts.
+            # - Keyword arguments with dependent defaults: JuliaLowering's
+            #   `scope_nest` creates `:local` bindings in `let` blocks that
+            #   must be unified with the `:argument` binding in the body method.
+            lockey = (Symbol(binfo.name), JS.source_location(JL.binding_ex(ctx3, binfo.id))...)
+            push!(get!(Vector{Int}, same_location_bindings, lockey), i)
         end
         occurrences[binfo] = Set{BindingOccurrence{Tree3}}()
     end
@@ -157,14 +156,11 @@ function compute_binding_occurrences(
     # ```julia
     # hasmatch(x::RegexMatch, y::Bool=isempty(x.matches)) = y
     # ```
-    # N.B. This needs to be done separately from `same_location_bindings`.
-    # This is because if argument lists were also aggregated by "name & location" key,
-    # then even when `x` is truly unused, the usage in methods that fill default parameters
-    # and call the full-argument list method would be aggregated, causing us to miss reports
-    # in such cases, e.g.
-    # ```julia
-    # hasmatch(x::RegexMatch, y::Bool=false) = nothing
-    # ```
+    # Note: argument bindings are included in `same_location_bindings` above to bridge
+    # `:argument` and `:local` bindings for keyword arguments with dependent defaults.
+    # This is safe because `compute_binding_occurrences!` skips both `:argument` and
+    # `:local` bindings in self/kwsorter calls, preventing internal call machinery from
+    # being counted as usage.
     for (_, idxs) in same_arg_bindings
         length(idxs) == 1 && continue
         newoccurrences = union!((occurrences[ctx3.bindings.info[idx]] for idx in idxs)...)
@@ -316,8 +312,14 @@ function compute_binding_occurrences!(
             if skip_arguments
                 for i = nc:-1:2 # reversed since we use `pop!`
                     argⱼ = st[i]
-                    if JS.kind(argⱼ) === JS.K"BindingId" && JL.get_binding(ctx3, argⱼ).kind === :argument
-                        continue # skip this argument
+                    if JS.kind(argⱼ) === JS.K"BindingId"
+                        bkind = JL.get_binding(ctx3, argⱼ).kind
+                        # Skip both `:argument` and `:local` bindings.
+                        # `:local` bindings appear in kwsorter calls when
+                        # `scope_nest` is used for dependent keyword defaults.
+                        if bkind === :argument || bkind === :local
+                            continue
+                        end
                     end
                     push!(stack, st[i])
                 end

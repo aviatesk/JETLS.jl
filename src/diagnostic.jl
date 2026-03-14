@@ -634,6 +634,21 @@ function is_kwarg_constraining_used_sparam(
     return false
 end
 
+function has_matching_argument_binding(
+        binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence{Tree3}}},
+        name::String, range::Range,
+        fi::FileInfo, ctx3::JL.VariableAnalysisContext
+    ) where Tree3<:JS.SyntaxTree
+    for (binfo2, _) in binding_occurrences
+        binfo2.kind === :argument || continue
+        binfo2.name == name || continue
+        provs2 = JS.flattened_provenance(JL.binding_ex(ctx3, binfo2.id))
+        is_from_user_ast(provs2) || continue
+        jsobj_to_range(last(provs2), fi) == range && return true
+    end
+    return false
+end
+
 function analyze_unused_bindings!(
         diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::JS.SyntaxTree, ctx3::JL.VariableAnalysisContext,
         binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence{Tree3}}},
@@ -666,6 +681,12 @@ function analyze_unused_bindings!(
         range = jsobj_to_range(prov, fi)
         key = LoweringDiagnosticKey(range, bk, bn)
         key in reported ? continue : push!(reported, key)
+        if bk === :local && has_matching_argument_binding(binding_occurrences, bn, range, fi, ctx3)
+            # When `:argument` and `:local` bindings are merged at the same
+            # location (keyword dependent defaults), only the `:argument`
+            # diagnostic should be reported.
+            continue
+        end
         if bk === :argument
             message = "Unused argument `$bn`"
             code = LOWERING_UNUSED_ARGUMENT_CODE
