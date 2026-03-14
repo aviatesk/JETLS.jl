@@ -1308,10 +1308,24 @@ end
     # Imports used only in @generated function body should not be reported as unused
     let diagnostics = get_unused_import_diagnostics("""
         using Base.Iterators: flatten
+        @generated foo(x) = :(flatten(x))
+        """)
+        @test isempty(diagnostics)
+    end
 
-        @generated function foo(x)
-            return :(flatten(x))
-        end
+    # Imports used inside macro body quoted expressions should not be reported as unused
+    let diagnostics = get_unused_import_diagnostics("""
+        using Base.Iterators: flatten
+        macro myflatten(xs) :(flatten(\$(esc(xs)))) end
+        """)
+        @test isempty(diagnostics)
+    end
+
+    # Imports used in quoted expressions inside helper functions for macros
+    let diagnostics = get_unused_import_diagnostics("""
+        using Base.Iterators: flatten
+        genfunc(xs) = :(flatten(\$(esc(xs))))
+        macro myflatten(xs) genfunc(xs) end
         """)
         @test isempty(diagnostics)
     end

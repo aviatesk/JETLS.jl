@@ -51,9 +51,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
-- Fixed false positive `unused-binding` warning for keyword arguments
+- Fixed false positive `lowering/unused-binding` warning for keyword arguments
   that are only used in computing other keyword arguments' default
   values (Closed https://github.com/aviatesk/JETLS.jl/issues/592).
+- Fixed false positive `lowering/unused-import` warning for imports used inside
+  quoted expressions in macro bodies or helper functions
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/594).
 
 ## 2026-03-13
 

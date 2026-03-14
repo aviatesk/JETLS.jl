@@ -21,7 +21,10 @@ function collect_inert_global_occurrences!(
         # Skip the outer inert that wraps the entire generator template
         JS.byte_range(st) == st3_range && return nothing
         ires = try
-            jl_lower_for_scope_resolution(mod, st[1])
+            # Inert nodes with `$` (interpolation) fail to lower directly.
+            # Strip `$` nodes and retry so that non-interpolated identifiers
+            # (like `length` in `:(length(($x,)))`) are still resolved.
+            jl_lower_for_scope_resolution(mod, without_kinds(st[1], JS.KSet"$"))
         catch
             return nothing
         end
@@ -419,12 +422,11 @@ function compute_binding_occurrences_st0(
 
     if include_global_bindings
         collect_macrocall_occurrences!(binding_occurrences, mod, st0)
-        # In `@generated` functions, global bindings used inside inert nodes
-        # (quoted expressions) are not resolved by scope analysis. Run
-        # independent scope resolution on inert content to collect them.
-        if is_generated
-            collect_inert_global_occurrences!(binding_occurrences, ctx3, st3, mod)
-        end
+        # Global bindings used inside inert nodes (quoted expressions) are not
+        # resolved by scope analysis. This applies to `@generated` functions,
+        # macro definitions, and any function that constructs quoted expressions.
+        # Run independent scope resolution on inert content to collect them.
+        collect_inert_global_occurrences!(binding_occurrences, ctx3, st3, mod)
     end
 
     return binding_occurrences
