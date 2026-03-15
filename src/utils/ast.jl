@@ -63,6 +63,38 @@ function without_kinds(st::JS.SyntaxTree, kinds::Tuple{Vararg{JS.Kind}})
         _without_kinds(st, kinds)[1])::JS.SyntaxTree
 end
 
+"""
+Return a tree where `K"\$"` interpolation nodes are replaced by their content.
+Unlike `without_kinds` which removes nodes entirely, this preserves the child
+so that parent nodes (e.g. dot expressions like `x.\$name`) remain well-formed.
+"""
+function _unwrap_interpolations(st::JS.SyntaxTree)
+    if JS.kind(st) === JS.K"$"
+        if JS.numchildren(st) >= 1
+            nc, _ = _unwrap_interpolations(st[1])
+            return (nc, true)
+        end
+        return (st, false)
+    elseif JS.is_leaf(st)
+        return (st, false)
+    end
+    new_children = JS.SyntaxList(JS.syntax_graph(st))
+    changed = false
+    for c in JS.children(st)
+        nc, cc = _unwrap_interpolations(c)
+        changed |= cc
+        push!(new_children, nc)
+    end
+    k = JS.kind(st)
+    new_node = changed ? JL.@ast(JS.syntax_graph(st), st, [k new_children...]) : st
+    return (new_node, changed)
+end
+
+function unwrap_interpolations(st::JS.SyntaxTree)
+    ensure_jl_source_attr!(JS.syntax_graph(st))
+    return _unwrap_interpolations(st)[1]
+end
+
 function is_macrocall_st0(st0::JS.SyntaxTree, names::AbstractString...)
     JS.kind(st0) === JS.K"macrocall" || return false
     JS.numchildren(st0) >= 1 || return false

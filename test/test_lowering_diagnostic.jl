@@ -1330,6 +1330,17 @@ end
         @test isempty(diagnostics)
     end
 
+    # Imports used in @generated function with interpolation in dot expression
+    let diagnostics = get_unused_import_diagnostics("""
+        using Base.Iterators: flatten
+        @generated function issue594(x)
+            name = Symbol("field_name")
+            return :(flatten(x.\$name))
+        end
+        """)
+        @test isempty(diagnostics)
+    end
+
     let diagnostics = get_unused_import_diagnostics("""
         \"\"\"
         Docstring for `module Issue586`

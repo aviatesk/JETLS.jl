@@ -22,9 +22,10 @@ function collect_inert_global_occurrences!(
         JS.byte_range(st) == st3_range && return nothing
         ires = try
             # Inert nodes with `$` (interpolation) fail to lower directly.
-            # Strip `$` nodes and retry so that non-interpolated identifiers
-            # (like `length` in `:(length(($x,)))`) are still resolved.
-            jl_lower_for_scope_resolution(mod, without_kinds(st[1], JS.KSet"$"))
+            # Unwrap `$` nodes (replace with their content) instead of removing
+            # them, so that parent nodes like dot expressions (`x.$name`)
+            # remain well-formed and non-interpolated identifiers are resolved.
+            jl_lower_for_scope_resolution(mod, unwrap_interpolations(st[1]))
         catch
             return nothing
         end
