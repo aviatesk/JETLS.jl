@@ -205,6 +205,9 @@ function extract_function_name(sig::JS.SyntaxTree)
         end
         name = @something extract_dotted_name(callee) return nothing
         return (name, callee)
+    elseif is_mainfunc0(sig)
+        # No-parens form: @main(args...) — entire signature is a macrocall
+        return ("@main", sig)
     elseif k === JS.K"tuple"
         return nothing
     elseif JS.is_identifier(k)
@@ -490,7 +493,7 @@ function extract_toplevel_assignment_symbols!(
         JS.numchildren(lhs_unwrapped) ≥ 1 || return nothing
         lhs_unwrapped = lhs_unwrapped[1]
     end
-    if JS.kind(lhs_unwrapped) === JS.K"call"
+    if JS.kind(lhs_unwrapped) === JS.K"call" || is_mainfunc0(lhs_unwrapped)
         extract_short_function_symbol!(symbols, st0, fi, mod)
         return nothing
     end
