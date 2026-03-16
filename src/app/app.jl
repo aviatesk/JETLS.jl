@@ -30,22 +30,13 @@ function (@main)(args::Vector{String})::Cint
         println(stdout, "JETLS version $JETLS_VERSION")
         return 0
     end
-
     if !isempty(args)
         first_arg = args[1]
         if first_arg == "check"
-            if length(args) >= 2 && args[2] in ("-h", "--help", "help")
-                print(stdout, check_help_message)
-                return 0
-            end
             return run_check(args[2:end])
         elseif first_arg == "schema"
             return run_schema(args[2:end])
         elseif first_arg == "serve"
-            if length(args) >= 2 && args[2] in ("-h", "--help", "help")
-                print(stdout, serve_help_message)
-                return 0
-            end
             return run_serve(args[2:end])
         end
     end
