@@ -200,6 +200,9 @@ function extract_function_name(sig::JS.SyntaxTree)
             JS.numchildren(callee) ≥ 1 || return nothing
             callee = callee[1]
         end
+        if is_mainfunc0(callee)
+            return ("@main", callee)
+        end
         name = @something extract_dotted_name(callee) return nothing
         return (name, callee)
     elseif k === JS.K"tuple"
