@@ -18,19 +18,17 @@ Information about a local variable's definition/use sites and undef status.
 
 Fields:
 - `defs::Vector{JS.SyntaxTree}`: Definition sites (assignments, function declarations)
-- `uses::Vector{JS.SyntaxTree}`: Use sites (reads of the variable)
-- `undef::Union{Nothing,Bool}`: Undef status
-  - `false`: Variable is definitely defined at all uses
-  - `true`: Variable is definitely undefined at some use
-  - `nothing`: Variable may or may not be defined (conservative)
+- `undef_uses::Vector{Pair{Bool,JS.SyntaxTree}}`: Use sites on undef paths.
+  Each entry is `is_strict => use_tree`:
+  - `true => tree`: Variable is definitely undefined at `tree`
+  - `false => tree`: Variable may be undefined at `tree`
 """
 struct UndefInfo
     defs::Vector{JS.SyntaxTree}
-    uses::Vector{JS.SyntaxTree}
-    undef::Union{Nothing,Bool}
+    undef_uses::Vector{Pair{Bool,JS.SyntaxTree}}
 end
 
-UndefInfo(; undef::Union{Nothing,Bool}=nothing) = UndefInfo(JS.SyntaxTree[], JS.SyntaxTree[], undef)
+UndefInfo() = UndefInfo(JS.SyntaxTree[], Pair{Bool,JS.SyntaxTree}[])
 
 mutable struct EventBlock
     const id::Int
@@ -329,6 +327,33 @@ function undef_can_reach_avoiding(blocks::Vector{EventBlock}, start::Int, target
     return false
 end
 
+# Find all use blocks reachable from `start` avoiding `avoid`, sorted by block ID.
+function undef_reachable_uses(
+        blocks::Vector{EventBlock}, start::Int, targets::Set{Int}, avoid::Set{Int}
+    )
+    visited = Set{Int}()
+    worklist = Int[start]
+    reached = Int[]
+    while !isempty(worklist)
+        block_id = pop!(worklist)
+        block_id in visited && continue
+        push!(visited, block_id)
+        if block_id in targets
+            push!(reached, block_id)
+        end
+        if block_id in avoid
+            continue
+        end
+        for succ in blocks[block_id].succs
+            if !(succ in visited)
+                push!(worklist, succ)
+            end
+        end
+    end
+    sort!(reached)
+    return reached
+end
+
 # Check if a block is "must-execute" (all paths from entry pass through it)
 # This is equivalent to: entry cannot reach exit without going through the block
 function undef_is_must_execute(blocks::Vector{EventBlock}, block_id::Int)
@@ -406,9 +431,9 @@ function analyze_undef(ctx3::JL.VariableAnalysisContext, ex::JS.SyntaxTree;
 
         # Collect all defs and uses for this variable
         defs = JS.SyntaxTree[]
-        uses = JS.SyntaxTree[]
         assign_blocks = Set{Int}()
         use_blocks = Set{Int}()
+        use_block_trees = Dict{Int,JS.SyntaxTree}()
         for block in lin.blocks
             (event_kind, id, st) = @something block.event continue
             id == var_id || continue
@@ -419,63 +444,42 @@ function analyze_undef(ctx3::JL.VariableAnalysisContext, ex::JS.SyntaxTree;
                 # :isdefined hints affect CFG analysis but shouldn't appear in defs list
                 push!(assign_blocks, block.id)
             else # :use
-                push!(uses, st)
                 push!(use_blocks, block.id)
+                use_block_trees[block.id] = st
             end
         end
 
         # No uses means "definitely defined at all uses" (vacuously true)
         if isempty(use_blocks)
-            result[binfo] = UndefInfo(defs, uses, false)
+            result[binfo] = UndefInfo(defs, Pair{Bool,JS.SyntaxTree}[])
             continue
         end
 
-        # No assignments means all uses are before any definition
+        # No assignments means all uses are before any definition (strict undef)
         if isempty(assign_blocks)
-            result[binfo] = UndefInfo(defs, uses, true)
+            undef_uses = Pair{Bool,JS.SyntaxTree}[true => use_block_trees[ub] for ub in use_blocks]
+            result[binfo] = UndefInfo(defs, undef_uses)
             continue
         end
 
-        # Check if entry can reach any use while avoiding all assignment blocks
-        # If yes, there's a CFG path where the variable is used without being assigned
-        has_undef_path = undef_can_reach_avoiding(lin.blocks, 1, use_blocks, assign_blocks)
+        # Find all uses reachable from entry while avoiding all assignment blocks.
+        reached = undef_reachable_uses(lin.blocks, 1, use_blocks, assign_blocks)
 
-        if has_undef_path
-            # CFG path exists. Check if the use is "must-execute" (on all paths).
-            # If use is must-execute and precedes all assignments, it's definitely undef.
-            # Otherwise, we can't prove it's definitely executed (e.g., correlated branches).
-
-            # Find the earliest must-execute use block
-            min_must_execute_use_id = typemax(Int)
-            for ub in use_blocks
-                if undef_is_must_execute(lin.blocks, ub)
-                    min_must_execute_use_id = min(min_must_execute_use_id, ub)
-                end
+        if !isempty(reached)
+            # For each reachable use, determine strict vs maybe undef.
+            # A use is strict undef if it's must-execute and all assignments
+            # come after it (i.e., it precedes all assignments in CFG order).
+            min_assign_block = minimum(assign_blocks)
+            undef_uses = Pair{Bool,JS.SyntaxTree}[]
+            for ub in reached
+                is_strict = ub < min_assign_block &&
+                            undef_is_must_execute(lin.blocks, ub)
+                push!(undef_uses, is_strict => use_block_trees[ub])
             end
-
-            if min_must_execute_use_id != typemax(Int)
-                # Check if all assignments come after the must-execute use
-                all_assigns_after = true
-                for assign in assign_blocks
-                    if assign < min_must_execute_use_id
-                        all_assigns_after = false
-                        break
-                    end
-                end
-                if all_assigns_after
-                    # Use is must-execute and all assignments come after → definitely undef
-                    result[binfo] = UndefInfo(defs, uses, true)
-                else
-                    # Some assignment might come before the use on some paths
-                    result[binfo] = UndefInfo(defs, uses, nothing)
-                end
-            else
-                # Use is not must-execute (conditional), can't prove definitely undef
-                result[binfo] = UndefInfo(defs, uses, nothing)
-            end
+            result[binfo] = UndefInfo(defs, undef_uses)
         else
             # All CFG paths to any use go through an assignment
-            result[binfo] = UndefInfo(defs, uses, false)
+            result[binfo] = UndefInfo(defs, Pair{Bool,JS.SyntaxTree}[])
         end
     end
 

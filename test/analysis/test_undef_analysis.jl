@@ -17,7 +17,9 @@ function get_undef_status(text::AbstractString; mod::Module=lowering_module, all
     for (binfo, info) in undef_info
         if !binfo.is_internal && binfo.kind == :local
             if !haskey(result, binfo.name)
-                result[binfo.name] = info.undef
+                undef_uses = info.undef_uses
+                result[binfo.name] =
+                    isempty(undef_uses) ? false : any(first, undef_uses) ? true : nothing
             end
         end
     end

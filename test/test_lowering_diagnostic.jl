@@ -975,6 +975,45 @@ end
         end
     end
 
+    @testset "diagnostic points to the use on undef path, not the defined use" begin
+        let diagnostics = get_lowered_diagnostics("""
+            function f(x::Bool)
+                if x
+                    z = "Hi"
+                    println(z)
+                end
+                if x
+                    println(z)
+                end
+            end
+            """)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.code == JETLS.LOWERING_UNDEF_LOCAL_VAR_CODE
+            @test diagnostic.severity == DiagnosticSeverity.Information
+            @test diagnostic.range.start.line == 6  # println(z) in the second if block
+        end
+    end
+
+    @testset "multiple undef uses each get their own diagnostic" begin
+        let diagnostics = get_lowered_diagnostics("""
+            function f(x::Bool)
+                if x
+                    z = 1
+                end
+                println(z)
+                println(z)
+            end
+            """)
+            undef_diags = filter(
+                d -> d.code == JETLS.LOWERING_UNDEF_LOCAL_VAR_CODE, diagnostics)
+            @test length(undef_diags) == 2
+            @test undef_diags[1].range.start.line == 4
+            @test undef_diags[2].range.start.line == 5
+            @test all(d -> d.severity == DiagnosticSeverity.Information, undef_diags)
+        end
+    end
+
     @testset "multiple definitions show multiple relatedInformation" begin
         let diagnostics = get_lowered_diagnostics("""
             function f()
