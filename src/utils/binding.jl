@@ -91,6 +91,7 @@ and filtering out any that aren't declared in a scope containing the cursor.
 """
 function cursor_bindings(st0_top::JS.SyntaxTree, offset::Int, mod::Module)
     st0 = @something greatest_local(st0_top, offset) return nothing # nothing we can lower
+    (st0, _) = desugar_main_macrocall(st0)
     (; ctx3, st2) = try
         jl_lower_for_scope_resolution(mod, st0)
     catch err
