@@ -463,7 +463,7 @@ function report_fieldaccess!(
     if CC.isType(s)
         if f === fieldtype
             # XXX this is a hack to share more code between `getfield`/`setfield!`/`fieldtype`
-            s00 = s = s.parameters[1]
+            s = s.parameters[1]
         elseif CC.isconstType(s)
             s = (s00::DataType).parameters[1]
         else

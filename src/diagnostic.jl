@@ -156,7 +156,7 @@ function calculate_match_specificity(
         target::String,
         is_message_match::Bool
     )
-    local specificity::UInt8 = 0
+    local specificity::UInt8
     if pattern isa String
         specificity = pattern == target ? 2 : 0
     else
@@ -708,6 +708,41 @@ function analyze_unused_bindings!(
     end
 end
 
+function analyze_unused_assignments!(
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::JS.SyntaxTree,
+        dead_store_info::Dict{JL.BindingInfo, DeadStoreInfo},
+        reported::Set{LoweringDiagnosticKey};
+        allow_unused_underscore::Bool
+    )
+    for (binfo, dsinfo) in dead_store_info
+        binfo.kind === :local || continue
+        binfo.is_internal && continue
+        startswith(binfo.name, '#') && continue
+        bn = binfo.name
+        if allow_unused_underscore && startswith(bn, '_')
+            continue
+        end
+        for dead_def_tree in dsinfo.dead_defs
+            provs = JL.flattened_provenance(dead_def_tree)
+            is_from_user_ast(provs) || continue
+            prov = last(provs)
+            range = jsobj_to_range(prov, fi)
+            key = LoweringDiagnosticKey(range, binfo.kind, bn)
+            key in reported ? continue : push!(reported, key)
+            push!(diagnostics, Diagnostic(;
+                range,
+                severity = DiagnosticSeverity.Information,
+                message = "Value assigned to `$bn` is never used",
+                source = DIAGNOSTIC_SOURCE_LIVE,
+                code = LOWERING_UNUSED_ASSIGNMENT_CODE,
+                codeDescription = diagnostic_code_description(
+                    LOWERING_UNUSED_ASSIGNMENT_CODE),
+                tags = DiagnosticTag.Ty[DiagnosticTag.Unnecessary],
+                data = compute_unused_variable_data(st0, prov, fi)))
+        end
+    end
+end
+
 # This analysis reports `lowering/undef-global-var` on a change basis, utilizing an already
 # analyzed analysis context. Full-analysis also reports similar diagnostics as
 # `inference/undef-global-var`. These two diagnostics have the following differences:
@@ -757,7 +792,7 @@ function analyze_undefined_global_bindings!(
 end
 
 # This analysis reports `lowering/undef-local-var` on a change basis, based on
-# `analyze_undef_all_lambdas`, which analyzes local binding definedness with the event
+# `analyze_def_use_all_lambdas`, which analyzes local binding definedness with the event
 # based binding assignment reachability analysis.
 # Severity levels (encoded in each entry of `UndefInfo.undef_uses`):
 # - Warning: `true => tree` → strict undef (guaranteed UndefVarError on some path)
@@ -1069,8 +1104,10 @@ function analyze_lowered_code!(
     skip_analysis_requiring_context ||
         analyze_undefined_global_bindings!(diagnostics, fi, ctx3, binding_occurrences, reported; analyzer, postprocessor)
 
-    undef_info = analyze_undef_all_lambdas(ctx3, st3; allow_throw_optimization)
+    (undef_info, dead_store_info) = analyze_def_use_all_lambdas(ctx3, st3;
+        allow_throw_optimization)
     analyze_undefined_local_bindings!(diagnostics, uri, fi, undef_info, reported)
+    analyze_unused_assignments!(diagnostics, fi, st0, dead_store_info, reported; allow_unused_underscore)
 
     analyze_captured_boxes!(diagnostics, uri, fi, ctx4, st3, reported)
 

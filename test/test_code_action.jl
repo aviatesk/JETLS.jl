@@ -139,6 +139,38 @@ include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
     end
 end
 
+@testset "unused assignment code actions" begin
+    uri = filepath2uri(@__FILE__)
+
+    # unused-assignment gets delete actions but NOT rename action
+    let assignment_range = Range(;
+            start = Position(; line=2, character=8),
+            var"end" = Position(; line=2, character=13))
+        lhs_eq_range = Range(;
+            start = Position(; line=2, character=8),
+            var"end" = Position(; line=2, character=12))
+        data = UnusedVariableData(false, assignment_range, lhs_eq_range)
+        diagnostic = Diagnostic(;
+            range = Range(;
+                start = Position(; line=2, character=8),
+                var"end" = Position(; line=2, character=9)),
+            severity = DiagnosticSeverity.Information,
+            message = "Value assigned to `z` is never used",
+            source = JETLS.DIAGNOSTIC_SOURCE_LIVE,
+            code = JETLS.LOWERING_UNUSED_ASSIGNMENT_CODE,
+            data)
+        code_actions = Union{CodeAction,Command}[]
+        JETLS.unused_variable_code_actions!(code_actions, uri, [diagnostic])
+        @test length(code_actions) == 2  # delete assignment + delete statement (no _ prefix)
+        @test code_actions[1].title == "Delete assignment"
+        @test code_actions[1].edit.changes[uri][1].range == lhs_eq_range
+        @test code_actions[1].edit.changes[uri][1].newText == ""
+        @test code_actions[2].title == "Delete statement"
+        @test code_actions[2].edit.changes[uri][1].range == assignment_range
+        @test code_actions[2].edit.changes[uri][1].newText == ""
+    end
+end
+
 function get_sort_imports_code_actions(text::AbstractString)
     fi = JETLS.FileInfo(#=version=#0, text, @__FILE__)
     uri = filepath2uri(@__FILE__)

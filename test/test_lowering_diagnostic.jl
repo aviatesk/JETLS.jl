@@ -848,12 +848,19 @@ end
                 y = 1
             end
             """)
-            @test length(diagnostics) == 1
-            diagnostic = only(diagnostics)
-            @test diagnostic.code == JETLS.LOWERING_UNDEF_LOCAL_VAR_CODE
-            @test diagnostic.severity == DiagnosticSeverity.Warning
-            @test diagnostic.message == "Variable `y` is used before it is defined"
-            @test diagnostic.range.start.line == 1
+            @test length(diagnostics) == 2
+            undef_diag = diagnostics[findfirst(
+                d -> d.code == JETLS.LOWERING_UNDEF_LOCAL_VAR_CODE,
+                diagnostics)]
+            @test undef_diag.severity == DiagnosticSeverity.Warning
+            @test undef_diag.message == "Variable `y` is used before it is defined"
+            @test undef_diag.range.start.line == 1
+            dead_store_diag = diagnostics[findfirst(
+                d -> d.code == JETLS.LOWERING_UNUSED_ASSIGNMENT_CODE,
+                diagnostics)]
+            @test dead_store_diag.severity == DiagnosticSeverity.Information
+            @test dead_store_diag.message == "Value assigned to `y` is never used"
+            @test dead_store_diag.range.start.line == 2
         end
     end
 
@@ -1042,6 +1049,117 @@ end
             diagnostic = only(diagnostics)
             @test diagnostic.relatedInformation !== nothing
             @test length(diagnostic.relatedInformation) == 2
+        end
+    end
+end
+
+@testset "dead store detection" begin
+    @testset "assignment at end of function is dead" begin
+        let diagnostics = get_lowered_diagnostics("""
+            function foo(x::Bool)
+                if x
+                    z = "Hi"
+                    println(z)
+                end
+                if x
+                    z = "Hey"
+                end
+            end
+            """)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.code == JETLS.LOWERING_UNUSED_ASSIGNMENT_CODE
+            @test diagnostic.severity == DiagnosticSeverity.Information
+            @test diagnostic.message == "Value assigned to `z` is never used"
+            @test diagnostic.range.start.line == 6
+        end
+    end
+
+    @testset "unconditional overwrite" begin
+        let diagnostics = get_lowered_diagnostics("""
+            function f()
+                z = "initial"
+                z = "overwrite"
+                println(z)
+            end
+            """)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.code == JETLS.LOWERING_UNUSED_ASSIGNMENT_CODE
+            @test diagnostic.message == "Value assigned to `z` is never used"
+            @test diagnostic.range.start.line == 1
+            data = diagnostic.data
+            @test data isa JETLS.UnusedVariableData
+            @test !data.is_tuple_unpacking
+            @test data.assignment_range !== nothing
+            @test data.lhs_eq_range !== nothing
+        end
+    end
+
+    @testset "conditional overwrite - no dead store" begin
+        @test isempty(get_lowered_diagnostics("""
+            function f(x::Bool)
+                z = "initial"
+                if x
+                    z = "updated"
+                end
+                println(z)
+            end
+            """))
+    end
+
+    @testset "multiple dead stores" begin
+        let diagnostics = get_lowered_diagnostics("""
+            function f()
+                z = 1
+                z = 2
+                z = 3
+                println(z)
+            end
+            """)
+            dead_stores = filter(d -> d.message == "Value assigned to `z` is never used", diagnostics)
+            @test length(dead_stores) == 2
+        end
+    end
+
+    @testset "dead store after last use" begin
+        let diagnostics = get_lowered_diagnostics("""
+            function f()
+                z = 1
+                println(z)
+                z = 2
+                return
+            end
+            """)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.message == "Value assigned to `z` is never used"
+            @test diagnostic.range.start.line == 3
+        end
+    end
+
+    @testset "underscore prefix suppresses dead store" begin
+        @test isempty(get_lowered_diagnostics("""
+            function f()
+                _z = 1
+                _z = 2
+                println(_z)
+            end
+            """))
+    end
+
+    @testset "closure capture - no dead store" begin
+        let diagnostics = get_lowered_diagnostics("""
+            function f()
+                x = 1
+                f = () -> x
+                x = 2
+                return f
+            end
+            """)
+            # x is captured by a closure, so dead store analysis skips it.
+            # The only diagnostic should be the captured-boxed-variable one.
+            @test all(d -> d.code != JETLS.LOWERING_UNUSED_ASSIGNMENT_CODE, diagnostics)
         end
     end
 end

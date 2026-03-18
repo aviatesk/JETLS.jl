@@ -385,6 +385,7 @@ const VALID_DIAGNOSTIC_CATEGORIES = Set{String}((
 const SYNTAX_DIAGNOSTIC_CODE = "syntax/parse-error"
 const LOWERING_UNUSED_ARGUMENT_CODE = "lowering/unused-argument"
 const LOWERING_UNUSED_LOCAL_CODE = "lowering/unused-local"
+const LOWERING_UNUSED_ASSIGNMENT_CODE = "lowering/unused-assignment"
 const LOWERING_ERROR_CODE = "lowering/error"
 const LOWERING_MACRO_EXPANSION_ERROR_CODE = "lowering/macro-expansion-error"
 const LOWERING_UNDEF_GLOBAL_VAR_CODE = "lowering/undef-global-var"
@@ -406,6 +407,7 @@ const ALL_DIAGNOSTIC_CODES = Set{String}(String[
     SYNTAX_DIAGNOSTIC_CODE,
     LOWERING_UNUSED_ARGUMENT_CODE,
     LOWERING_UNUSED_LOCAL_CODE,
+    LOWERING_UNUSED_ASSIGNMENT_CODE,
     LOWERING_ERROR_CODE,
     LOWERING_MACRO_EXPANSION_ERROR_CODE,
     LOWERING_UNDEF_GLOBAL_VAR_CODE,
