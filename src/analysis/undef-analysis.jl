@@ -113,6 +113,32 @@ function undef_finalize_cfg!(lin::EventLinearizer)
     end
 end
 
+# Extract `@isdefined(var)` hints from a condition expression.
+# Handles direct `@isdefined(var)`, `&&` chains (all operands must be true
+# in the true branch), and EST `K"block"` wrappers for elseif conditions.
+function undef_emit_isdefined_hints!(
+        lin::EventLinearizer, cond::JS.SyntaxTree, candidates::Set{JL.IdTag}
+    )
+    # In EST, elseif conditions are wrapped in K"block", so unwrap first.
+    if JS.kind(cond) == JS.K"block" && JS.numchildren(cond) == 1
+        cond = cond[1]
+    end
+    k = JS.kind(cond)
+    if k == JS.K"isdefined" && JS.numchildren(cond) >= 1
+        isdefined_arg = cond[1]
+        if JS.kind(isdefined_arg) == JS.K"BindingId"
+            var_id = isdefined_arg.var_id
+            if var_id in candidates
+                undef_emit_event!(lin, :isdefined, var_id, isdefined_arg)
+            end
+        end
+    elseif k == JS.K"&&"
+        for child in JS.children(cond)
+            undef_emit_isdefined_hints!(lin, child, candidates)
+        end
+    end
+end
+
 function linearize_for_undef!(
         lin::EventLinearizer, ctx3::JL.VariableAnalysisContext, ex::JS.SyntaxTree,
         candidates::Set{JL.IdTag}, allow_throw_optimization::Bool
@@ -189,22 +215,11 @@ function linearize_for_undef!(
 
         undef_emit_gotoifnot!(lin, else_label)
 
-        # Special case: if @isdefined(var), the var is definitely defined in the true branch
-        # In EST, elseif conditions are wrapped in K"block", so unwrap first.
-        isdefined_cond = cond
-        if JS.kind(isdefined_cond) == JS.K"block" && JS.numchildren(isdefined_cond) == 1
-            isdefined_cond = isdefined_cond[1]
-        end
-        if JS.kind(isdefined_cond) == JS.K"isdefined" && JS.numchildren(isdefined_cond) >= 1
-            isdefined_arg = isdefined_cond[1]
-            if JS.kind(isdefined_arg) == JS.K"BindingId"
-                var_id = isdefined_arg.var_id
-                if var_id in candidates
-                    # Emit :isdefined hint - affects CFG analysis but not a real def
-                    undef_emit_event!(lin, :isdefined, var_id, isdefined_arg)
-                end
-            end
-        end
+        # Special case: if the condition contains @isdefined(var), the var is
+        # definitely defined in the true branch. This handles both direct
+        # `if @isdefined(var)` and `if ... && @isdefined(var)` patterns,
+        # since `&&` short-circuits: all operands must be true in the true branch.
+        undef_emit_isdefined_hints!(lin, cond, candidates)
 
         linearize_for_undef!(lin, ctx3, ex[2], candidates, allow_throw_optimization)
         undef_emit_goto!(lin, end_label)

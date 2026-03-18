@@ -919,6 +919,19 @@ end
             """))
     end
 
+    @testset "@isdefined in && chain - no diagnostic" begin
+        @test isempty(get_lowered_diagnostics("""
+            function f(x)
+                if x > 0
+                    y = 42
+                end
+                if x > 0 && @isdefined(y)
+                    return sin(y)
+                end
+            end
+            """))
+    end
+
     @testset "@assert @isdefined hint" begin
         @test isempty(get_lowered_diagnostics("""
             function f(x)
