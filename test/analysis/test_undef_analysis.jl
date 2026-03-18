@@ -260,6 +260,34 @@ end
     end
 end
 
+@testset "if cond && @isdefined(y) - use inside true branch" begin
+    let status = get_undef_status("""
+        function f(x)
+            if x > 0
+                y = 42
+            end
+            if x > 0 && @isdefined(y)
+                return sin(y)
+            end
+        end
+        """)
+        @test status["y"] === false
+    end
+    # Nested && chain
+    let status = get_undef_status("""
+        function f(x, z)
+            if x > 0
+                y = 42
+            end
+            if x > 0 && z && @isdefined(y)
+                return sin(y)
+            end
+        end
+        """)
+        @test status["y"] === false
+    end
+end
+
 @testset "nested closures" begin
     # Variable assigned before outer closure, captured by inner closure
     status = get_undef_status("""
