@@ -28,15 +28,15 @@ test = ["Arrow", "Test"]
 
 [sources.PrecompileTools]
 subdir = "vendor/PrecompileTools"
-rev = "ecd578719c592a62ecbd25de73594f9e59fff3ea"
+rev = "28eb6e7d2337d29700706260bc45f924813d0a51"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.Parsers]
 subdir = "vendor/Parsers"
-rev = "ecd578719c592a62ecbd25de73594f9e59fff3ea"
+rev = "28eb6e7d2337d29700706260bc45f924813d0a51"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.StructTypes]
 subdir = "vendor/StructTypes"
-rev = "ecd578719c592a62ecbd25de73594f9e59fff3ea"
+rev = "28eb6e7d2337d29700706260bc45f924813d0a51"
 url = "https://github.com/aviatesk/JETLS.jl"

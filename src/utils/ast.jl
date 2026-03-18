@@ -63,6 +63,38 @@ function without_kinds(st::JS.SyntaxTree, kinds::Tuple{Vararg{JS.Kind}})
         _without_kinds(st, kinds)[1])::JS.SyntaxTree
 end
 
+"""
+Return a tree where `K"\$"` interpolation nodes are replaced by their content.
+Unlike `without_kinds` which removes nodes entirely, this preserves the child
+so that parent nodes (e.g. dot expressions like `x.\$name`) remain well-formed.
+"""
+function _unwrap_interpolations(st::JS.SyntaxTree)
+    if JS.kind(st) === JS.K"$"
+        if JS.numchildren(st) >= 1
+            nc, _ = _unwrap_interpolations(st[1])
+            return (nc, true)
+        end
+        return (st, false)
+    elseif JS.is_leaf(st)
+        return (st, false)
+    end
+    new_children = JS.SyntaxList(JS.syntax_graph(st))
+    changed = false
+    for c in JS.children(st)
+        nc, cc = _unwrap_interpolations(c)
+        changed |= cc
+        push!(new_children, nc)
+    end
+    k = JS.kind(st)
+    new_node = changed ? JL.@ast(JS.syntax_graph(st), st, [k new_children...]) : st
+    return (new_node, changed)
+end
+
+function unwrap_interpolations(st::JS.SyntaxTree)
+    ensure_jl_source_attr!(JS.syntax_graph(st))
+    return _unwrap_interpolations(st)[1]
+end
+
 function is_macrocall_st0(st0::JS.SyntaxTree, names::AbstractString...)
     JS.kind(st0) === JS.K"macrocall" || return false
     JS.numchildren(st0) >= 1 || return false
@@ -158,8 +190,8 @@ function _remove_macrocalls(st::JS.SyntaxTree)
             # these macros, so there's no need to remove them in the first place.
             return st, false
         elseif is_mainfunc0(st)
-            # `@main` functions are always lowered to `main` functions without issues,
-            # so there's no need to remove them
+            # `@main` functions are desugared by `desugar_main_macrocall` below,
+            # so there's no need to remove them here
             return st, false
         elseif is_kwdef0(st)
             # `@kwdef` has a new-style macro definition (in jl-syntax-macros.jl) that
@@ -179,8 +211,8 @@ function _remove_macrocalls(st::JS.SyntaxTree)
     elseif JS.is_leaf(st)
         return st, false
     end
+    (st, changed) = desugar_main_macrocall(st)
     new_children = JS.SyntaxList(JS.syntax_graph(st))
-    changed = false
     for c in JS.children(st)
         nc, cc = _remove_macrocalls(c)
         changed |= cc
@@ -190,6 +222,64 @@ function _remove_macrocalls(st::JS.SyntaxTree)
     new_node = changed ?
         JL.@ast(JS.syntax_graph(st), st, [k new_children...]) : st
     return (new_node, changed)
+end
+
+"""
+    desugar_main_macrocall(st0::JS.SyntaxTree) -> Tuple{JS.SyntaxTree, Bool}
+
+If `st0` is a `function (@main)(args...) ... end`, `(@main)(args...) = ...`,
+`function @main(args...) ... end`, or `@main(args...) = ...` definition, replace
+the `@main` macrocall with a plain `main` identifier and return the rewritten
+tree with `true`. Otherwise return `(st0, false)`.
+This avoids macro expansion failure when multiple standalone files defining
+`@main` are analyzed in the same session — the second file's sandbox module
+already has `main` imported from the first, causing `@main` expansion to error.
+"""
+function desugar_main_macrocall(st0::JS.SyntaxTree)
+    k = JS.kind(st0)
+    if k === JS.K"function"
+        JS.numchildren(st0) >= 1 || return (st0, false)
+        call_node = st0[1]
+    elseif k === JS.K"="
+        JS.numchildren(st0) >= 2 || return (st0, false)
+        call_node = st0[1]
+    else
+        return (st0, false)
+    end
+    if JS.kind(call_node) === JS.K"call"
+        # Parenthesized form: (@main)(args...) — macrocall is the callee
+        JS.numchildren(call_node) >= 1 || return (st0, false)
+        is_mainfunc0(call_node[1]) || return (st0, false)
+        g = JS.syntax_graph(st0)
+        main_id = JS.setattr!(
+            JS.newleaf(g, call_node[1], JS.K"Identifier"), :name_val, "main")
+        new_call_children = JS.SyntaxList(g)
+        push!(new_call_children, main_id)
+        for i in 2:JS.numchildren(call_node)
+            push!(new_call_children, call_node[i])
+        end
+        new_call = JS.newnode(g, call_node, JS.K"call", new_call_children)
+    elseif is_mainfunc0(call_node)
+        # No-parens form: @main(args...) — entire signature is a macrocall
+        g = JS.syntax_graph(st0)
+        main_id = JS.setattr!(
+            JS.newleaf(g, call_node[1], JS.K"Identifier"), :name_val, "main")
+        new_call_children = JS.SyntaxList(g)
+        push!(new_call_children, main_id)
+        for i in 2:JS.numchildren(call_node)
+            JS.kind(call_node[i]) === JS.K"Value" && continue
+            push!(new_call_children, call_node[i])
+        end
+        new_call = JS.newnode(g, call_node, JS.K"call", new_call_children)
+    else
+        return (st0, false)
+    end
+    new_children = JS.SyntaxList(g)
+    push!(new_children, new_call)
+    for i in 2:JS.numchildren(st0)
+        push!(new_children, st0[i])
+    end
+    return (JS.newnode(g, st0, k, new_children), true)
 end
 
 """

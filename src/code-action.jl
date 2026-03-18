@@ -59,6 +59,8 @@ function unused_variable_code_actions!(
             if code == LOWERING_UNUSED_LOCAL_CODE
                 add_delete_unused_var_code_actions!(code_actions, uri, diagnostic)
             end
+        elseif code == LOWERING_UNUSED_ASSIGNMENT_CODE
+            add_delete_unused_var_code_actions!(code_actions, uri, diagnostic)
         end
     end
     return code_actions

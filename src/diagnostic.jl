@@ -156,7 +156,7 @@ function calculate_match_specificity(
         target::String,
         is_message_match::Bool
     )
-    local specificity::UInt8 = 0
+    local specificity::UInt8
     if pattern isa String
         specificity = pattern == target ? 2 : 0
     else
@@ -634,6 +634,21 @@ function is_kwarg_constraining_used_sparam(
     return false
 end
 
+function has_matching_argument_binding(
+        binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence{Tree3}}},
+        name::String, range::Range,
+        fi::FileInfo, ctx3::JL.VariableAnalysisContext
+    ) where Tree3<:JS.SyntaxTree
+    for (binfo2, _) in binding_occurrences
+        binfo2.kind === :argument || continue
+        binfo2.name == name || continue
+        provs2 = JS.flattened_provenance(JL.binding_ex(ctx3, binfo2.id))
+        is_from_user_ast(provs2) || continue
+        jsobj_to_range(last(provs2), fi) == range && return true
+    end
+    return false
+end
+
 function analyze_unused_bindings!(
         diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::JS.SyntaxTree, ctx3::JL.VariableAnalysisContext,
         binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence{Tree3}}},
@@ -666,6 +681,12 @@ function analyze_unused_bindings!(
         range = jsobj_to_range(prov, fi)
         key = LoweringDiagnosticKey(range, bk, bn)
         key in reported ? continue : push!(reported, key)
+        if bk === :local && has_matching_argument_binding(binding_occurrences, bn, range, fi, ctx3)
+            # When `:argument` and `:local` bindings are merged at the same
+            # location (keyword dependent defaults), only the `:argument`
+            # diagnostic should be reported.
+            continue
+        end
         if bk === :argument
             message = "Unused argument `$bn`"
             code = LOWERING_UNUSED_ARGUMENT_CODE
@@ -684,6 +705,41 @@ function analyze_unused_bindings!(
             codeDescription = diagnostic_code_description(code),
             tags = DiagnosticTag.Ty[DiagnosticTag.Unnecessary],
             data))
+    end
+end
+
+function analyze_unused_assignments!(
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::JS.SyntaxTree,
+        dead_store_info::Dict{JL.BindingInfo, DeadStoreInfo},
+        reported::Set{LoweringDiagnosticKey};
+        allow_unused_underscore::Bool
+    )
+    for (binfo, dsinfo) in dead_store_info
+        binfo.kind === :local || continue
+        binfo.is_internal && continue
+        startswith(binfo.name, '#') && continue
+        bn = binfo.name
+        if allow_unused_underscore && startswith(bn, '_')
+            continue
+        end
+        for dead_def_tree in dsinfo.dead_defs
+            provs = JL.flattened_provenance(dead_def_tree)
+            is_from_user_ast(provs) || continue
+            prov = last(provs)
+            range = jsobj_to_range(prov, fi)
+            key = LoweringDiagnosticKey(range, binfo.kind, bn)
+            key in reported ? continue : push!(reported, key)
+            push!(diagnostics, Diagnostic(;
+                range,
+                severity = DiagnosticSeverity.Information,
+                message = "Value assigned to `$bn` is never used",
+                source = DIAGNOSTIC_SOURCE_LIVE,
+                code = LOWERING_UNUSED_ASSIGNMENT_CODE,
+                codeDescription = diagnostic_code_description(
+                    LOWERING_UNUSED_ASSIGNMENT_CODE),
+                tags = DiagnosticTag.Ty[DiagnosticTag.Unnecessary],
+                data = compute_unused_variable_data(st0, prov, fi)))
+        end
     end
 end
 
@@ -736,11 +792,11 @@ function analyze_undefined_global_bindings!(
 end
 
 # This analysis reports `lowering/undef-local-var` on a change basis, based on
-# `analyze_undef_all_lambdas`, which analyzes local binding definedness with the event
+# `analyze_def_use_all_lambdas`, which analyzes local binding definedness with the event
 # based binding assignment reachability analysis.
-# Severity levels:
-# - Warning: `undef===true` → strict undef (guaranteed UndefVarError on some path)
-# - Information: `undef===nothing` → maybe undef (possible UndefVarError)
+# Severity levels (encoded in each entry of `UndefInfo.undef_uses`):
+# - Warning: `true => tree` → strict undef (guaranteed UndefVarError on some path)
+# - Information: `false => tree` → maybe undef (possible UndefVarError)
 function analyze_undefined_local_bindings!(
         diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo,
         undef_info::Dict{JL.BindingInfo, UndefInfo},
@@ -751,14 +807,8 @@ function analyze_undefined_local_bindings!(
         binfo.is_read || continue # optimization: skip expensive checks below if not read
         binfo.is_internal && continue
         startswith(binfo.name, '#') && continue
-        undef_status = uinfo.undef
-        undef_status === false && continue
-        first_use_tree = first(uinfo.uses)
-        provs = JL.flattened_provenance(first_use_tree)
-        is_from_user_ast(provs) || continue
-        range = jsobj_to_range(last(provs), fi)
-        key = LoweringDiagnosticKey(range, binfo.kind, binfo.name)
-        key in reported ? continue : push!(reported, key)
+        isempty(uinfo.undef_uses) && continue
+        # Compute relatedInformation once per variable (shared across all undef uses)
         relatedInformation = DiagnosticRelatedInformation[]
         for def_tree in uinfo.defs
             def_provs = JL.flattened_provenance(def_tree)
@@ -770,17 +820,27 @@ function analyze_undefined_local_bindings!(
                 location = Location(uri, def_range),
                 message = "`$(binfo.name)` is defined here"))
         end
-        push!(diagnostics, Diagnostic(;
-            range,
-            # Determine severity based on whether this is strict undef or maybe undef
-            severity = undef_status === true ? DiagnosticSeverity.Warning : DiagnosticSeverity.Information,
-            message = undef_status === true ?
-                "Variable `$(binfo.name)` is used before it is defined" :
-                "Variable `$(binfo.name)` may be used before it is defined",
-            source = DIAGNOSTIC_SOURCE_LIVE,
-            code = LOWERING_UNDEF_LOCAL_VAR_CODE,
-            codeDescription = diagnostic_code_description(LOWERING_UNDEF_LOCAL_VAR_CODE),
-            relatedInformation = @somereal relatedInformation Some(nothing)))
+        related = @somereal relatedInformation Some(nothing)
+        for (is_strict_undef, undef_use_tree) in uinfo.undef_uses
+            provs = JL.flattened_provenance(undef_use_tree)
+            is_from_user_ast(provs) || continue
+            range = jsobj_to_range(last(provs), fi)
+            key = LoweringDiagnosticKey(range, binfo.kind, binfo.name)
+            key in reported ? continue : push!(reported, key)
+            push!(diagnostics, Diagnostic(;
+                range,
+                severity = is_strict_undef ?
+                    DiagnosticSeverity.Warning :
+                    DiagnosticSeverity.Information,
+                message = is_strict_undef ?
+                    "Variable `$(binfo.name)` is used before it is defined" :
+                    "Variable `$(binfo.name)` may be used before it is defined",
+                source = DIAGNOSTIC_SOURCE_LIVE,
+                code = LOWERING_UNDEF_LOCAL_VAR_CODE,
+                codeDescription = diagnostic_code_description(
+                    LOWERING_UNDEF_LOCAL_VAR_CODE),
+                relatedInformation = related))
+        end
     end
 end
 
@@ -796,7 +856,7 @@ function compute_unused_variable_data(
     assignment = first(ancestors)
     JS.numchildren(assignment) ≥ 2 || return nothing
 
-    lhs, rhs = assignment[1], assignment[2]
+    lhs = assignment[1]
 
     # Check for destructuring patterns (tuple unpacking)
     is_tuple = JS.kind(lhs) === JS.K"tuple"
@@ -804,10 +864,20 @@ function compute_unused_variable_data(
         return UnusedVariableData(true, nothing, nothing)
     end
 
-    # lhs_eq_range: from LHS start to RHS start (exclusive)
+    # lhs_eq_range: from LHS start to actual RHS start in source (exclusive).
+    # We scan forward from after the LHS to find the `=` sign and any
+    # following whitespace.  This is needed because some node kinds (e.g.
+    # K"String") have a byte range that excludes delimiters, so
+    # `first_byte(rhs)` may point past the opening delimiter.
     assignment_range = jsobj_to_range(assignment, fi)
     lhs_start = offset_to_xy(fi, JS.first_byte(lhs))
-    rhs_start = offset_to_xy(fi, JS.first_byte(rhs))
+    textbuf = fi.parsed_stream.textbuf
+    eq_byte = @something findnext(==(UInt8('=')), textbuf, JS.last_byte(lhs) + 1) return nothing
+    rhs_byte = eq_byte + 1
+    while rhs_byte ≤ length(textbuf) && textbuf[rhs_byte] in (UInt8(' '), UInt8('\t'))
+        rhs_byte += 1
+    end
+    rhs_start = offset_to_xy(fi, rhs_byte)
     lhs_eq_range = Range(; start=lhs_start, var"end"=rhs_start)
     return UnusedVariableData(false, assignment_range, lhs_eq_range)
 end
@@ -1044,8 +1114,10 @@ function analyze_lowered_code!(
     skip_analysis_requiring_context ||
         analyze_undefined_global_bindings!(diagnostics, fi, ctx3, binding_occurrences, reported; analyzer, postprocessor)
 
-    undef_info = analyze_undef_all_lambdas(ctx3, st3; allow_throw_optimization)
+    (undef_info, dead_store_info) = analyze_def_use_all_lambdas(ctx3, st3;
+        allow_throw_optimization)
     analyze_undefined_local_bindings!(diagnostics, uri, fi, undef_info, reported)
+    analyze_unused_assignments!(diagnostics, fi, st0, dead_store_info, reported; allow_unused_underscore)
 
     analyze_captured_boxes!(diagnostics, uri, fi, ctx4, st3, reported)
 
@@ -1060,6 +1132,7 @@ function lowering_diagnostics!(
 
     analyze_unsorted_imports!(diagnostics, fi, st0)
 
+    (st0, _) = desugar_main_macrocall(st0)
     world = Base.get_world_counter()
     res = try
         jl_lower_for_scope_resolution(mod, st0, world; recover_from_macro_errors=false, convert_closures=true)

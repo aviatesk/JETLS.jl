@@ -22,9 +22,9 @@ end
 # register(currently_running, definition_registration())
 
 function is_location_unknown(m::Method)
-    file, line = Base.updated_methodloc(m)
+    _, line = Base.updated_methodloc(m)
     line ≤ 0 && return true
-    file, line = functionloc(m)
+    file, _ = functionloc(m)
     if isnothing(file)
         return true
     end

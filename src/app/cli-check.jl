@@ -244,7 +244,10 @@ function run_check(args::Vector{String})
     quiet = false
     paths = String[]
     for arg in args
-        if arg in ("--quiet", "-q")
+        if arg in ("-h", "--help", "help")
+            print(stdout, check_help_message)
+            return 0
+        elseif arg in ("--quiet", "-q")
             quiet = true
         elseif startswith(arg, "--root=")
             root_path_opt = arg[8:end]

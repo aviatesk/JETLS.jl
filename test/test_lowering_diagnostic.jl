@@ -412,6 +412,25 @@ length_utf16(s::AbstractString) = sum(c::Char -> codepoint(c) < 0x10000 ? 1 : 2,
             """)
             @test isempty(diagnostics)
         end
+
+        # aviatesk/JETLS.jl#592
+        let diagnostics = get_lowered_diagnostics("""
+            function group(
+                by,
+                f,
+                itr;
+                T::Type = eltype(itr),
+                By::Type = only(Base.return_types(by, (T,))),
+                F::Type = only(Base.return_types(f, (T,))),
+            )::Dict{By, Vector{F}}
+                return foldl(itr; init = Dict{By, Vector{F}}()) do acc, x
+                    push!(get!(acc, by(x), F[]), f(x))
+                    return acc
+                end
+            end
+            """)
+            @test isempty(diagnostics)
+        end
     end
 
     @testset "module splitter" begin
@@ -829,12 +848,19 @@ end
                 y = 1
             end
             """)
-            @test length(diagnostics) == 1
-            diagnostic = only(diagnostics)
-            @test diagnostic.code == JETLS.LOWERING_UNDEF_LOCAL_VAR_CODE
-            @test diagnostic.severity == DiagnosticSeverity.Warning
-            @test diagnostic.message == "Variable `y` is used before it is defined"
-            @test diagnostic.range.start.line == 1
+            @test length(diagnostics) == 2
+            undef_diag = diagnostics[findfirst(
+                d -> d.code == JETLS.LOWERING_UNDEF_LOCAL_VAR_CODE,
+                diagnostics)]
+            @test undef_diag.severity == DiagnosticSeverity.Warning
+            @test undef_diag.message == "Variable `y` is used before it is defined"
+            @test undef_diag.range.start.line == 1
+            dead_store_diag = diagnostics[findfirst(
+                d -> d.code == JETLS.LOWERING_UNUSED_ASSIGNMENT_CODE,
+                diagnostics)]
+            @test dead_store_diag.severity == DiagnosticSeverity.Information
+            @test dead_store_diag.message == "Value assigned to `y` is never used"
+            @test dead_store_diag.range.start.line == 2
         end
     end
 
@@ -900,6 +926,19 @@ end
             """))
     end
 
+    @testset "@isdefined in && chain - no diagnostic" begin
+        @test isempty(get_lowered_diagnostics("""
+            function f(x)
+                if x > 0
+                    y = 42
+                end
+                if x > 0 && @isdefined(y)
+                    return sin(y)
+                end
+            end
+            """))
+    end
+
     @testset "@assert @isdefined hint" begin
         @test isempty(get_lowered_diagnostics("""
             function f(x)
@@ -956,6 +995,45 @@ end
         end
     end
 
+    @testset "diagnostic points to the use on undef path, not the defined use" begin
+        let diagnostics = get_lowered_diagnostics("""
+            function f(x::Bool)
+                if x
+                    z = "Hi"
+                    println(z)
+                end
+                if x
+                    println(z)
+                end
+            end
+            """)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.code == JETLS.LOWERING_UNDEF_LOCAL_VAR_CODE
+            @test diagnostic.severity == DiagnosticSeverity.Information
+            @test diagnostic.range.start.line == 6  # println(z) in the second if block
+        end
+    end
+
+    @testset "multiple undef uses each get their own diagnostic" begin
+        let diagnostics = get_lowered_diagnostics("""
+            function f(x::Bool)
+                if x
+                    z = 1
+                end
+                println(z)
+                println(z)
+            end
+            """)
+            undef_diags = filter(
+                d -> d.code == JETLS.LOWERING_UNDEF_LOCAL_VAR_CODE, diagnostics)
+            @test length(undef_diags) == 2
+            @test undef_diags[1].range.start.line == 4
+            @test undef_diags[2].range.start.line == 5
+            @test all(d -> d.severity == DiagnosticSeverity.Information, undef_diags)
+        end
+    end
+
     @testset "multiple definitions show multiple relatedInformation" begin
         let diagnostics = get_lowered_diagnostics("""
             function f()
@@ -971,6 +1049,137 @@ end
             diagnostic = only(diagnostics)
             @test diagnostic.relatedInformation !== nothing
             @test length(diagnostic.relatedInformation) == 2
+        end
+    end
+end
+
+@testset "dead store detection" begin
+    @testset "assignment at end of function is dead" begin
+        let diagnostics = get_lowered_diagnostics("""
+            function foo(x::Bool)
+                if x
+                    z = "Hi"
+                    println(z)
+                end
+                if x
+                    z = "Hey"
+                end
+            end
+            """)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.code == JETLS.LOWERING_UNUSED_ASSIGNMENT_CODE
+            @test diagnostic.severity == DiagnosticSeverity.Information
+            @test diagnostic.message == "Value assigned to `z` is never used"
+            @test diagnostic.range.start.line == 6
+        end
+    end
+
+    @testset "unconditional overwrite" begin
+        let diagnostics = get_lowered_diagnostics("""
+            function f()
+                z = "initial"
+                z = "overwrite"
+                println(z)
+            end
+            """)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.code == JETLS.LOWERING_UNUSED_ASSIGNMENT_CODE
+            @test diagnostic.message == "Value assigned to `z` is never used"
+            @test diagnostic.range.start.line == 1
+            data = diagnostic.data
+            @test data isa JETLS.UnusedVariableData
+            @test !data.is_tuple_unpacking
+            @test data.assignment_range !== nothing
+            @test data.lhs_eq_range !== nothing
+        end
+    end
+
+    @testset "conditional overwrite - no dead store" begin
+        @test isempty(get_lowered_diagnostics("""
+            function f(x::Bool)
+                z = "initial"
+                if x
+                    z = "updated"
+                end
+                println(z)
+            end
+            """))
+    end
+
+    @testset "multiple dead stores" begin
+        let diagnostics = get_lowered_diagnostics("""
+            function f()
+                z = 1
+                z = 2
+                z = 3
+                println(z)
+            end
+            """)
+            dead_stores = filter(d -> d.message == "Value assigned to `z` is never used", diagnostics)
+            @test length(dead_stores) == 2
+        end
+    end
+
+    @testset "dead store after last use" begin
+        let diagnostics = get_lowered_diagnostics("""
+            function f()
+                z = 1
+                println(z)
+                z = 2
+                return
+            end
+            """)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.message == "Value assigned to `z` is never used"
+            @test diagnostic.range.start.line == 3
+        end
+    end
+
+    @testset "lhs_eq_range for string RHS includes delimiter" begin
+        let diagnostics = get_lowered_diagnostics("""
+            function f()
+                z = "initial"
+                z = "overwrite"
+                println(z)
+            end
+            """)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            data = diagnostic.data
+            @test data isa JETLS.UnusedVariableData
+            # "Delete assignment" should remove `z = ` and keep `"initial"`
+            # lhs_eq_range end character should point to `"`, not past it
+            lhs_eq = data.lhs_eq_range
+            @test lhs_eq.start.character == 4  # start of `z`
+            @test lhs_eq.var"end".character == 8  # start of `"` in `"initial"`
+        end
+    end
+
+    @testset "underscore prefix suppresses dead store" begin
+        @test isempty(get_lowered_diagnostics("""
+            function f()
+                _z = 1
+                _z = 2
+                println(_z)
+            end
+            """))
+    end
+
+    @testset "closure capture - no dead store" begin
+        let diagnostics = get_lowered_diagnostics("""
+            function f()
+                x = 1
+                f = () -> x
+                x = 2
+                return f
+            end
+            """)
+            # x is captured by a closure, so dead store analysis skips it.
+            # The only diagnostic should be the captured-boxed-variable one.
+            @test all(d -> d.code != JETLS.LOWERING_UNUSED_ASSIGNMENT_CODE, diagnostics)
         end
     end
 end
@@ -1289,9 +1498,34 @@ end
     # Imports used only in @generated function body should not be reported as unused
     let diagnostics = get_unused_import_diagnostics("""
         using Base.Iterators: flatten
+        @generated foo(x) = :(flatten(x))
+        """)
+        @test isempty(diagnostics)
+    end
 
-        @generated function foo(x)
-            return :(flatten(x))
+    # Imports used inside macro body quoted expressions should not be reported as unused
+    let diagnostics = get_unused_import_diagnostics("""
+        using Base.Iterators: flatten
+        macro myflatten(xs) :(flatten(\$(esc(xs)))) end
+        """)
+        @test isempty(diagnostics)
+    end
+
+    # Imports used in quoted expressions inside helper functions for macros
+    let diagnostics = get_unused_import_diagnostics("""
+        using Base.Iterators: flatten
+        genfunc(xs) = :(flatten(\$(esc(xs))))
+        macro myflatten(xs) genfunc(xs) end
+        """)
+        @test isempty(diagnostics)
+    end
+
+    # Imports used in @generated function with interpolation in dot expression
+    let diagnostics = get_unused_import_diagnostics("""
+        using Base.Iterators: flatten
+        @generated function issue594(x)
+            name = Symbol("field_name")
+            return :(flatten(x.\$name))
         end
         """)
         @test isempty(diagnostics)

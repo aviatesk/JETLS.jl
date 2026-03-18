@@ -99,7 +99,8 @@ Here is a summary table of the diagnostics explained in this section:
 | [`lowering/error`](@ref diagnostic/reference/lowering/error)                                     | `Error`               | `JETLS/live`  | General lowering errors                            |
 | [`lowering/macro-expansion-error`](@ref diagnostic/reference/lowering/macro-expansion-error)     | `Error`               | `JETLS/live`  | Errors during macro expansion                      |
 | [`lowering/unused-argument`](@ref diagnostic/reference/lowering/unused-argument)                 | `Information`         | `JETLS/live`  | Function arguments that are never used             |
-| [`lowering/unused-local`](@ref diagnostic/reference/lowering/unused-local)                       | `Information`         | `JETLS/live`  | Local variables that are assigned but never read   |
+| [`lowering/unused-local`](@ref diagnostic/reference/lowering/unused-local)                       | `Information`         | `JETLS/live`  | Local variables that are never used                |
+| [`lowering/unused-assignment`](@ref diagnostic/reference/lowering/unused-assignment)             | `Information`         | `JETLS/live`  | Assignments whose values are never read            |
 | [`lowering/undef-global-var`](@ref diagnostic/reference/lowering/undef-global-var)               | `Warning`             | `JETLS/live`  | References to undefined global variables           |
 | [`lowering/undef-local-var`](@ref diagnostic/reference/lowering/undef-local-var)                 | `Warning/Information` | `JETLS/live`  | References to undefined local variables            |
 | [`lowering/captured-boxed-variable`](@ref diagnostic/reference/lowering/captured-boxed-variable) | `Information`         | `JETLS/live`  | Variables captured by closures that require boxing |
@@ -111,7 +112,7 @@ Here is a summary table of the diagnostics explained in this section:
 | [`inference/undef-global-var`](@ref diagnostic/reference/inference/undef-global-var)             | `Warning`             | `JETLS/save`  | References to undefined global variables           |
 | [`inference/field-error`](@ref diagnostic/reference/inference/field-error)                       | `Warning`             | `JETLS/save`  | Access to non-existent struct fields               |
 | [`inference/bounds-error`](@ref diagnostic/reference/inference/bounds-error)                     | `Warning`             | `JETLS/save`  | Out-of-bounds field access by index                |
-| [`inference/method-error`](@ref diagnostic/inference/method-error)                               | `Warning`             | No matching method found for function calls                       |
+| [`inference/method-error`](@ref diagnostic/reference/inference/method-error)                     | `Warning`             | `JETLS/save`  | No matching method found for function calls        |
 | [`testrunner/test-failure`](@ref diagnostic/reference/testrunner/test-failure)                   | `Error`               | `JETLS/extra` | Test failures from TestRunner integration          |
 
 ### [Syntax diagnostic (`syntax/*`)](@id diagnostic/reference/syntax)
@@ -200,7 +201,7 @@ end
 
 **Default severity**: `Information`
 
-Local variables that are assigned but never read.
+Local variables that are never used anywhere in their scope.
 
 By default, variables with names starting with `_` are not reported; see
 [`allow_unused_underscore`](@ref config/diagnostic-allow_unused_underscore).
@@ -220,6 +221,51 @@ end
     - "Delete assignment" to remove only the left-hand side (keeping the
       right-hand side expression)
     - "Delete statement" to remove the entire assignment statement
+
+#### [Unused assignment (`lowering/unused-assignment`)](@id diagnostic/reference/lowering/unused-assignment)
+
+**Default severity**: `Information`
+
+Assignments to local variables whose values are never read. This
+diagnostic targets individual assignments where the value is overwritten
+or the function exits before the value is read.
+
+This diagnostic does not overlap with
+[`lowering/unused-local`](@ref diagnostic/reference/lowering/unused-local):
+`unused-local` reports variables that are never used anywhere, while
+`unused-assignment` reports specific assignments to variables that *are*
+used elsewhere. For example:
+
+```julia
+function f(x::Bool)
+    if x
+        z = "Hi"
+        println(z)  # z is used here, so `lowering/unused-local` is NOT reported
+    end
+    if x
+        z = "Hey"   # but this assignment's value is never read → `lowering/lunused-assignment`
+    end
+end
+```
+
+Compare with a fully unused variable, which only triggers `unused-local`:
+
+```julia
+function g()
+    y = 42  # y is never used anywhere → `lowering/unused-local`
+end
+```
+
+!!! tip "Code action available"
+    Two code actions are available for this diagnostic:
+    - "Delete assignment" to remove only the left-hand side (keeping the
+      right-hand side expression)
+    - "Delete statement" to remove the entire assignment statement
+
+!!! note "Closure-captured variables"
+    Variables captured by closures are excluded from this analysis to
+    avoid false positives, since the CFG cannot precisely model when
+    closures are called.
 
 #### [Undefined global variable (`lowering/undef-global-var`)](@id diagnostic/reference/lowering/undef-global-var)
 
@@ -665,7 +711,7 @@ function bounds_error(tpl::Tuple{Int})
 end
 ```
 
-#### [Method error (`inference/method-error`)](@id diagnostic/inference/method-error)
+#### [Method error (`inference/method-error`)](@id diagnostic/reference/inference/method-error)
 
 **Default severity:** `Warning`
 
@@ -758,7 +804,7 @@ Disable unused variable warnings during prototyping:
 
 ```toml
 [[diagnostic.patterns]]
-pattern = "lowering/(unused-argument|unused-local)"
+pattern = "lowering/(unused-argument|unused-local|unused-assignment)"
 match_by = "code"
 match_type = "regex"
 severity = "off"

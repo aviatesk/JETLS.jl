@@ -126,7 +126,7 @@ end
 
 ## WatchList utilities
 function updatetime!(wl::WatchList)
-    wl.timestamp = time()
+    return @atomicswap :not_atomic wl.timestamp = time()
 end
 Base.push!(wl::WatchList, filenameid::Pair{<:AbstractString,PkgId}) =
     push!(wl.trackedfiles, filenameid)

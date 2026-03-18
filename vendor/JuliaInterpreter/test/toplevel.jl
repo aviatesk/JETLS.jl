@@ -650,7 +650,6 @@ let ex = quote import Test end
     @test @invokelatest JuliaInterpreter.isdefinedglobal(ImportTest, :Test)
 end
 
-module BareModuleTest end
 function toplevel_eval(m, x)
     modexs = ExprSplitter(m, x)
     for (mod, ex) in modexs
@@ -660,13 +659,32 @@ function toplevel_eval(m, x)
         end
     end
 end
-let ex = :(baremodule BareModule
-        using Base
-        function foo(x::Cint)
-            @ccall jl_(x::Cint)::Cvoid
+
+module BareModuleTest end
+module ModuleFormsTest end
+
+@testset "Module forms" begin
+    let ex = :(baremodule BareModule
+            using Base
+            function foo(x::Cint)
+                @ccall jl_(x::Cint)::Cvoid
+            end
+        end)
+        toplevel_eval(BareModuleTest, ex)
+        @test @invokelatest(isdefinedglobal(BareModuleTest, :BareModule))
+        @test @invokelatest(isdefinedglobal(@invokelatest(BareModuleTest.BareModule), :foo))
+    end
+    let body = Expr(:block, LineNumberNode(1, :none), :(f() = 42))
+        # 3-arg form: Expr(:module, std_imports::Bool, name::Symbol, body::Expr)
+        toplevel_eval(ModuleFormsTest, Expr(:toplevel, Expr(:module, true, :ThreeArgModule, body)))
+        @test @invokelatest(isdefinedglobal(ModuleFormsTest, :ThreeArgModule))
+        @test @invokelatest(@invokelatest(ModuleFormsTest.ThreeArgModule).f()) == 42
+
+        if VERSION ≥ v"1.14-DEV.1836"
+            # 4-arg form: Expr(:module, syntax_ver::VersionNumber, std_imports::Bool, name::Symbol, body::Expr)
+            toplevel_eval(ModuleFormsTest, Expr(:toplevel, Expr(:module, v"1.14", true, :FourArgModule, body)))
+            @test @invokelatest(isdefinedglobal(ModuleFormsTest, :FourArgModule))
+            @test @invokelatest(@invokelatest(ModuleFormsTest.FourArgModule).f()) == 42
         end
-    end)
-    toplevel_eval(BareModuleTest, ex)
-    @test @invokelatest(JuliaInterpreter.isdefinedglobal(BareModuleTest, :BareModule)) &&
-        @invokelatest(JuliaInterpreter.isdefinedglobal(@invokelatest(BareModuleTest.BareModule), :foo))
+    end
 end
