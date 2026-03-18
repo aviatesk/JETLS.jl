@@ -43,6 +43,57 @@ end
         @test symbols[1].detail == "function foo(x)"
     end
 
+    @testset "@main function" begin
+        let code = """
+            function (@main)(args::Vector{String})
+                println("Hello world")
+            end
+            """
+            fi = make_file_info(code)
+            st0 = JETLS.build_syntax_tree(fi)
+            symbols = JETLS.extract_document_symbols(st0, fi)
+            @test length(symbols) == 1
+            @test symbols[1].name == "@main"
+            @test symbols[1].kind == SymbolKind.Function
+        end
+
+        let code = """
+            (@main)(args::Vector{String}) = println("Hello world")
+            """
+            fi = make_file_info(code)
+            st0 = JETLS.build_syntax_tree(fi)
+            symbols = JETLS.extract_document_symbols(st0, fi)
+            @test length(symbols) == 1
+            @test symbols[1].name == "@main"
+            @test symbols[1].kind == SymbolKind.Function
+        end
+
+        # No-parens forms
+        let code = """
+            function @main(args::Vector{String})
+                println("Hello world")
+            end
+            """
+            fi = make_file_info(code)
+            st0 = JETLS.build_syntax_tree(fi)
+            symbols = JETLS.extract_document_symbols(st0, fi)
+            @test length(symbols) == 1
+            @test symbols[1].name == "@main"
+            @test symbols[1].kind == SymbolKind.Function
+        end
+
+        let code = """
+            @main(args::Vector{String}) = println("Hello world")
+            """
+            fi = make_file_info(code)
+            st0 = JETLS.build_syntax_tree(fi)
+            symbols = JETLS.extract_document_symbols(st0, fi)
+            @test length(symbols) == 1
+            @test symbols[1].name == "@main"
+            @test symbols[1].kind == SymbolKind.Function
+        end
+    end
+
     @testset "short function" begin
         code = "f(x) = x + 1"
         fi = make_file_info(code)

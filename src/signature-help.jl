@@ -33,7 +33,7 @@ end
 # =====
 
 """
-    flatten_args(call::JS.SyntaxTree) -> (args::JS.SyntaxList, first_kwarg_i::Int, has_semicolon::Bool)
+    flatten_args(call::JS.SyntaxTree) -> (args::JS.SyntaxList, first_kwarg_i::Int, has_semicolon::Bool) or nothing
 
 Return `(args::JS.SyntaxList, first_kwarg_i::Int, has_semicolon::Bool)`,
 one `SyntaxTree` per argument to call.
@@ -41,12 +41,13 @@ Ignore function name and `K"error"` (e.g. missing closing paren).
 `has_semicolon` is true if the call contains a `K"parameters"` node (explicit semicolon).
 """
 function flatten_args(call::JS.SyntaxTree)
-    if kind(call) === K"where"
-        return flatten_args(call[1])
+    while kind(call) === K"where"
+        call = call[1]
     end
     if !(kind(call) in CALL_KINDS)
-        println(stderr, JL.sourcetext(call))
-        error(lazy"Unexpected call kind: $(kind(call))")
+        # Operator-like methods (e.g. `<:`, `>:`) parse as their own kind rather
+        # than `K"call"`, skip them for now
+        return nothing
     end
     usable = (arg::JS.SyntaxTree) -> kind(arg) ∉ JS.KSet"error Value"
     # In new EST, dotcall `f.(args)` is represented as `K"."` with children
@@ -167,7 +168,10 @@ struct CallArgs
     kind::JS.Kind
     function CallArgs(st0::JS.SyntaxTree, cursor::Int=-1)
         @assert -1 ∉ JS.byte_range(st0)
-        args, kw_i, has_semicolon = flatten_args(st0)
+        args, kw_i, has_semicolon = @something flatten_args(st0) begin
+            println(stderr, JS.sourcetext(st0))
+            error("CallArgs: Expected mnode that can be flattened")
+        end
         pos_map = Dict{Int, Tuple{Int, Union{Int, Nothing}}}()
         lb = 0; ub = 0
         for i in eachindex(args[1:kw_i-1])
@@ -201,7 +205,7 @@ function compatible_method(m::Method, ca::CallArgs)
     msig = @something get_sig_str(m, ca) return false
     mnode = JS.parsestmt(JS.SyntaxTree, msig; ignore_errors=true)
 
-    params, kwp_i, _ = flatten_args(mnode)
+    params, kwp_i, _ = @something flatten_args(mnode) return false
     has_var_params = kwp_i > 1 && kind(params[kwp_i - 1]) === K"..."
     has_var_kwp = kwp_i <= length(params) && kind(params[end]) === K"..."
 
@@ -312,7 +316,10 @@ function make_siginfo(
     #     kind = MarkupKind.Markdown,
     #     value = string(Base.Docs.doc(Base.Docs.Binding(m.var"module", m.name))))
 
-    params, kwp_i, _ = flatten_args(mnode)
+    params, kwp_i, _ = @something flatten_args(mnode) begin
+        println(stderr, JS.sourcetext(mnode))
+        error("make_siginfo: Expected mnode that can be flattened")
+    end
     maybe_var_params = kwp_i > 1 && kind(params[kwp_i - 1]) === K"..." ?
         kwp_i - 1 : nothing
     maybe_var_kwp = kwp_i <= length(params) && kind(params[end]) === K"..." ?
@@ -527,12 +534,10 @@ function collect_call_argtypes(analyzer::LSAnalyzer, mod::Module, ca::CallArgs)
     return argtypes
 end
 
-function fixup_argtypes!(argtypes::Vector{Any}, @nospecialize(fntyp))
-    if fntyp isa Core.Const
-        fn = fntyp.val
-        if fn isa Function && startswith(String(nameof(fn)), '@')
-            pushfirst!(argtypes, LineNumberNode, Module) # TODO The new style macro?
-        end
+function fixup_argtypes!(argtypes::Vector{Any}, fntyp::Core.Const)
+    fn = fntyp.val
+    if fn isa Function && startswith(String(nameof(fn)), '@')
+        pushfirst!(argtypes, LineNumberNode, Module) # TODO The new style macro?
     end
     pushfirst!(argtypes, CC.widenconst(fntyp))
     return argtypes
@@ -561,6 +566,8 @@ function cursor_siginfos(mod::Module, fi::FileInfo, b::Int, analyzer::LSAnalyzer
     # ignoring it is misleading.  We need to either know about local variables
     # in this scope (maybe by caching completion info) or duplicate some work.
     fntyp = @something resolve_type(analyzer, mod, call[1]) return empty_siginfos
+
+    fntyp isa Core.Const || return empty_siginfos
 
     ca = CallArgs(call, b)
 

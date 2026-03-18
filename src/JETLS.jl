@@ -86,7 +86,7 @@ include("config.jl")
 include("workspace-configuration.jl")
 
 include("analysis/occurrence-analysis.jl")
-include("analysis/undef-analysis.jl")
+include("analysis/def-use-analysis.jl")
 
 include("diagnostic.jl")
 

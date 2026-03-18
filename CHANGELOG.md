@@ -19,7 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`d32f1cf...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/d32f1cf...HEAD)
+- Diff: [`4280097...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/4280097...HEAD)
 
 ### Announcement
 
@@ -28,11 +28,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > It does not support Julia 1.12.1 or earlier, nor Julia 1.13+/nightly.
 
 > [!warning]
-> JETLS currently has a known memory leak issue where memory usage grows with
-> each re-analysis (https://github.com/aviatesk/JETLS.jl/issues/357).
-> As a temporary workaround, you can disable full-analysis for specific files
-> using the `analysis_overrides`
-> [initialization option](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options):
+> JETLS currently has a known memory leak issue where memory usage grows with each re-analysis (https://github.com/aviatesk/JETLS.jl/issues/357).
+> As a temporary workaround, you can disable full-analysis for specific files using the `analysis_overrides` [initialization option](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options):
 > ```jsonc
 > // VSCode settings.json example
 > {
@@ -44,10 +41,51 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 >   }
 > }
 > ```
-> This disables analysis for matched files. Basic features like completion still
-> might work, but most LSP features will be unfunctional.
-> Note that `analysis_overrides` is provided as a temporary workaround and may
-> be removed or changed at any time. A proper fix is being worked on.
+> This disables analysis for matched files. Basic features like completion still might work, but most LSP features will be unfunctional.
+> Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
+
+### Added
+
+- Added `@main` function support across LSP features (document-symbol, document-highlight, references, rename, completions, diagnostic).
+
+- Added `lowering/unused-assignment` diagnostic that detects assignments whose values are never read (dead stores).
+  This complements the existing `lowering/unused-local` diagnostic: `lowering/unused-local` reports variables that are never used at all, while `lowering/unused-assignment` reports specific assignments to variables that *are* used elsewhere.
+  For example:
+  ```julia
+  function f(x::Bool)
+      if x
+          z = "Hi"
+          println(z)  # z is used, so no `unused-local`
+      end
+      if x
+          z = "Hey"   # but this value is never read → `unused-assignment`
+      end
+  end
+  ```
+
+### Changed
+
+- `lowering/undef-local-var` now reports a diagnostic for each use site on an undef path individually, rather than only reporting the first one.
+- `lowering/undef-local-var` `@isdefined` propagation now recognizes `@isdefined(var)` within `&&` chains (e.g., `if cond && @isdefined(y)`), suppressing false positive diagnostics in the guarded branch.
+- Updated JuliaSyntax.jl and JuliaLowering.jl dependency versions to latest
+
+### Fixed
+
+- Fixed false positive `lowering/unused-binding` warning for keyword arguments that are only used in computing other keyword arguments' default values (Closed https://github.com/aviatesk/JETLS.jl/issues/592).
+- Fixed false positive `lowering/unused-import` warning for imports used inside quoted expressions in macro bodies or helper functions (Closed https://github.com/aviatesk/JETLS.jl/issues/594).
+- Fixed `lowering/undef-local-var` diagnostic being reported at the wrong location:
+  when a variable had both defined and potentially-undefined uses, the diagnostic pointed to the first use in source order rather than the use that is actually on the undef path.
+- Fixed signature-help error when displaying signatures for operator-like methods (e.g. `Base.:(==)`).
+- Fixed "Delete assignment" code action removing the opening delimiter of string literals (e.g., `z = "Hey"` became `Hey"` instead of `"Hey"`).
+
+## 2026-03-13
+
+- Commit: [`4280097`](https://github.com/aviatesk/JETLS.jl/commit/4280097)
+- Diff: [`d32f1cf...4280097`](https://github.com/aviatesk/JETLS.jl/compare/d32f1cf...4280097)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-03-13")'
+  ```
 
 ### Changed
 

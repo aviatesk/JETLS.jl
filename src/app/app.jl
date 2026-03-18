@@ -12,28 +12,15 @@ const help_message = """
       schema                      Print JSON schema for configuration
       version                     Show version information
 
-    Check options (for 'check' command):
-      --root=<path>               Set the root path for configuration (default: pwd)
-      --context-lines=<n>         Number of context lines to show (default: 2)
-      --exit-severity=<level>     Minimum severity for error exit (default: warn)
-      --show-severity=<level>     Minimum severity to display (default: hint)
-
-    Server options (for 'serve' command):
-      --stdio                     Use standard input/output (default)
-      --pipe-connect=<path>       Connect to client's Unix domain socket/named pipe
-      --pipe-listen=<path>        Listen on Unix domain socket/named pipe
-      --socket=<port>             Listen on TCP socket
-      --clientProcessId=<pid>     Monitor client process (enables crash detection)
-
     Common options:
       --version, -v               Show version information
       --help, -h                  Show this help message
 
+    Run 'jetls <command> --help' for command-specific options.
+
     Examples:
-      jetls serve --pipe-listen=/tmp/jetls.sock
-      jetls serve --socket=8080
       jetls check src/SomePkg.jl
-      jetls check --root=/path/to/project src/
+      jetls serve --pipe-listen=/tmp/jetls.sock
       jetls schema --settings
     """
 
@@ -43,22 +30,13 @@ function (@main)(args::Vector{String})::Cint
         println(stdout, "JETLS version $JETLS_VERSION")
         return 0
     end
-
     if !isempty(args)
         first_arg = args[1]
         if first_arg == "check"
-            if length(args) >= 2 && args[2] in ("-h", "--help", "help")
-                print(stdout, check_help_message)
-                return 0
-            end
             return run_check(args[2:end])
         elseif first_arg == "schema"
             return run_schema(args[2:end])
         elseif first_arg == "serve"
-            if length(args) >= 2 && args[2] in ("-h", "--help", "help")
-                print(stdout, serve_help_message)
-                return 0
-            end
             return run_serve(args[2:end])
         end
     end

@@ -50,6 +50,7 @@ the list itself is subject to change.
   - [ ] JuliaLowering integration
   - [ ] Recursive analysis for dependencies
   - [ ] Cross-server-process cache system
+  - [ ] Support package extensions
 - Diagnostic
   - [x] Syntax errors
   - [x] Lowering errors

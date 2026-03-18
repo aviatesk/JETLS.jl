@@ -99,7 +99,7 @@ function to_completion(
         uri::URI, fi::FileInfo
     )
     label_kind = CompletionItemKind.Variable
-    label_detail = label_desc = documentation = nothing
+    label_detail = label_desc = nothing
 
     if binding.is_const
         label_kind = CompletionItemKind.Constant
