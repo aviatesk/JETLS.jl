@@ -54,6 +54,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Added `@main` function support across LSP features (document-symbol,
   document-highlight, references, rename, completions, diagnostic).
 
+- Added `lowering/unused-assignment` diagnostic that detects assignments
+  whose values are never read (dead stores). This complements the
+  existing `lowering/unused-local` diagnostic: `lowering/unused-local` reports
+  variables that are never used at all, while `lowering/unused-assignment`
+  reports specific assignments to variables that *are* used elsewhere.
+  For example:
+  ```julia
+  function f(x::Bool)
+      if x
+          z = "Hi"
+          println(z)  # z is used, so no `unused-local`
+      end
+      if x
+          z = "Hey"   # but this value is never read → `unused-assignment`
+      end
+  end
+  ```
+
 ### Changed
 
 - `lowering/undef-local-var` now reports a diagnostic for each use site on

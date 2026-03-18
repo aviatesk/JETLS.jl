@@ -1,15 +1,22 @@
-# CFG-based undef analysis for scope-resolved syntax tree `st3`.
+# CFG-based def-use analysis for scope-resolved syntax tree `st3`.
 #
-# This analysis determines whether local variables may be used before being
-# assigned, using CFG path analysis. The result is a three-valued status:
-# - `false`: Variable is definitely defined at all uses (all CFG paths to uses go through assignments)
-# - `true`: Variable is definitely undefined at some use (use precedes assignment in straight-line code)
-# - `nothing`: Variable may or may not be defined (conservative - undef CFG path exists but use may not execute)
+# This file implements two complementary analyses using a shared event-based CFG:
+#
+# 1. **Undef analysis**: determines whether local variables may be used before
+#    being assigned.  The result is a three-valued status:
+#    - `false`: definitely defined at all uses
+#    - `true`: definitely undefined at some use
+#    - `nothing`: may or may not be defined (conservative)
+#
+# 2. **Dead store (unused assignment) analysis**: determines whether specific
+#    assignments to local variables are never read.  This is the dual of undef:
+#    - undef:      entry ──(no def)──▶ use?      → undef
+#    - dead store: def_i ──(no other def)──▶ use? → unreachable ⟹ dead store
 #
 # The key technique is placing each assignment/use event in its own "event block"
 # (not traditional basic blocks - each block contains at most one event).
-# Event ordering is thus represented by CFG edges, allowing us to check:
-# "Can entry reach a use without going through any assignment?" as a graph reachability problem.
+# Event ordering is thus represented by CFG edges, allowing us to check
+# reachability as a graph problem.
 
 """
     UndefInfo
@@ -29,6 +36,19 @@ struct UndefInfo
 end
 
 UndefInfo() = UndefInfo(JS.SyntaxTree[], Pair{Bool,JS.SyntaxTree}[])
+
+"""
+    DeadStoreInfo
+
+Information about dead store assignments for a local variable.
+
+Fields:
+- `dead_defs::Vector{JS.SyntaxTree}`: Assignment sites whose values are
+  never read on any CFG path (dead stores).
+"""
+struct DeadStoreInfo
+    dead_defs::Vector{JS.SyntaxTree}
+end
 
 mutable struct EventBlock
     const id::Int
@@ -139,7 +159,7 @@ function undef_emit_isdefined_hints!(
     end
 end
 
-function linearize_for_undef!(
+function linearize_def_use_events!(
         lin::EventLinearizer, ctx3::JL.VariableAnalysisContext, ex::JS.SyntaxTree,
         candidates::Set{JL.IdTag}, allow_throw_optimization::Bool
     )
@@ -156,7 +176,7 @@ function linearize_for_undef!(
 
     elseif k == JS.K"="
         # Process RHS first
-        linearize_for_undef!(lin, ctx3, ex[2], candidates, allow_throw_optimization)
+        linearize_def_use_events!(lin, ctx3, ex[2], candidates, allow_throw_optimization)
         # Then record assignment
         lhs = ex[1]
         if JS.kind(lhs) == JS.K"BindingId"
@@ -169,7 +189,7 @@ function linearize_for_undef!(
     elseif k == JS.K"function_decl"
         # Process the RHS first (method_defs)
         for i in 2:JS.numchildren(ex)
-            linearize_for_undef!(lin, ctx3, ex[i], candidates, allow_throw_optimization)
+            linearize_def_use_events!(lin, ctx3, ex[i], candidates, allow_throw_optimization)
         end
         # Then emit the assign event for the function name
         lhs = ex[1]
@@ -192,7 +212,7 @@ function linearize_for_undef!(
         if has_outer_capture && JS.numchildren(ex) >= 3
             skip_label = undef_make_label!(lin)
             undef_emit_gotoifnot!(lin, skip_label)
-            linearize_for_undef!(lin, ctx3, ex[3], candidates, allow_throw_optimization)
+            linearize_def_use_events!(lin, ctx3, ex[3], candidates, allow_throw_optimization)
             undef_emit_label!(lin, skip_label)
         end
 
@@ -202,13 +222,13 @@ function linearize_for_undef!(
     elseif k == JS.K"decl"
         # decl nodes: the BindingId is declaration, not use; only visit type expression
         if JS.numchildren(ex) >= 2
-            linearize_for_undef!(lin, ctx3, ex[2], candidates, allow_throw_optimization)
+            linearize_def_use_events!(lin, ctx3, ex[2], candidates, allow_throw_optimization)
         end
 
     elseif k == JS.K"if" || k == JS.K"elseif"
         # if cond then_branch [else_branch]
         cond = ex[1]
-        linearize_for_undef!(lin, ctx3, cond, candidates, allow_throw_optimization)
+        linearize_def_use_events!(lin, ctx3, cond, candidates, allow_throw_optimization)
 
         end_label = undef_make_label!(lin)
         else_label = undef_make_label!(lin)
@@ -221,12 +241,12 @@ function linearize_for_undef!(
         # since `&&` short-circuits: all operands must be true in the true branch.
         undef_emit_isdefined_hints!(lin, cond, candidates)
 
-        linearize_for_undef!(lin, ctx3, ex[2], candidates, allow_throw_optimization)
+        linearize_def_use_events!(lin, ctx3, ex[2], candidates, allow_throw_optimization)
         undef_emit_goto!(lin, end_label)
 
         undef_emit_label!(lin, else_label)
         if JS.numchildren(ex) >= 3
-            linearize_for_undef!(lin, ctx3, ex[3], candidates, allow_throw_optimization)
+            linearize_def_use_events!(lin, ctx3, ex[3], candidates, allow_throw_optimization)
         end
 
         undef_emit_label!(lin, end_label)
@@ -236,9 +256,9 @@ function linearize_for_undef!(
         end_label = undef_make_label!(lin)
 
         undef_emit_label!(lin, top_label)
-        linearize_for_undef!(lin, ctx3, ex[1], candidates, allow_throw_optimization)
+        linearize_def_use_events!(lin, ctx3, ex[1], candidates, allow_throw_optimization)
         undef_emit_gotoifnot!(lin, end_label)
-        linearize_for_undef!(lin, ctx3, ex[2], candidates, allow_throw_optimization)
+        linearize_def_use_events!(lin, ctx3, ex[2], candidates, allow_throw_optimization)
         undef_emit_goto!(lin, top_label)
         undef_emit_label!(lin, end_label)
 
@@ -247,8 +267,8 @@ function linearize_for_undef!(
         end_label = undef_make_label!(lin)
 
         undef_emit_label!(lin, top_label)
-        linearize_for_undef!(lin, ctx3, ex[1], candidates, allow_throw_optimization)
-        linearize_for_undef!(lin, ctx3, ex[2], candidates, allow_throw_optimization)
+        linearize_def_use_events!(lin, ctx3, ex[1], candidates, allow_throw_optimization)
+        linearize_def_use_events!(lin, ctx3, ex[2], candidates, allow_throw_optimization)
         undef_emit_gotoifnot!(lin, end_label)
         undef_emit_goto!(lin, top_label)
         undef_emit_label!(lin, end_label)
@@ -259,13 +279,13 @@ function linearize_for_undef!(
 
         # Try block can throw at any point
         undef_emit_gotoifnot!(lin, catch_label)
-        linearize_for_undef!(lin, ctx3, ex[1], candidates, allow_throw_optimization)
+        linearize_def_use_events!(lin, ctx3, ex[1], candidates, allow_throw_optimization)
         undef_emit_goto!(lin, end_label)
 
         undef_emit_label!(lin, catch_label)
-        linearize_for_undef!(lin, ctx3, ex[2], candidates, allow_throw_optimization)
+        linearize_def_use_events!(lin, ctx3, ex[2], candidates, allow_throw_optimization)
         if JS.numchildren(ex) >= 3
-            linearize_for_undef!(lin, ctx3, ex[3], candidates, allow_throw_optimization)
+            linearize_def_use_events!(lin, ctx3, ex[3], candidates, allow_throw_optimization)
         end
 
         undef_emit_label!(lin, end_label)
@@ -275,16 +295,16 @@ function linearize_for_undef!(
         end_label = undef_make_label!(lin)
 
         undef_emit_gotoifnot!(lin, finally_label)
-        linearize_for_undef!(lin, ctx3, ex[1], candidates, allow_throw_optimization)
+        linearize_def_use_events!(lin, ctx3, ex[1], candidates, allow_throw_optimization)
 
         undef_emit_label!(lin, finally_label)
-        linearize_for_undef!(lin, ctx3, ex[2], candidates, allow_throw_optimization)
+        linearize_def_use_events!(lin, ctx3, ex[2], candidates, allow_throw_optimization)
 
         undef_emit_label!(lin, end_label)
 
     elseif k == JS.K"return"
         if JS.numchildren(ex) >= 1
-            linearize_for_undef!(lin, ctx3, ex[1], candidates, allow_throw_optimization)
+            linearize_def_use_events!(lin, ctx3, ex[1], candidates, allow_throw_optimization)
         end
         unreachable = undef_new_block!(lin)
         undef_switch_to_block!(lin, unreachable)
@@ -296,7 +316,7 @@ function linearize_for_undef!(
     elseif allow_throw_optimization && k == JS.K"call"
         # Process all children (function and arguments)
         for child in JS.children(ex)
-            linearize_for_undef!(lin, ctx3, child, candidates, allow_throw_optimization)
+            linearize_def_use_events!(lin, ctx3, child, candidates, allow_throw_optimization)
         end
         # Check if this is a call to global `throw` - treat as noreturn
         # Required to support the `@assert @isdefined(var) "compiler hint to tell the definedness of `var`"` pattern
@@ -314,7 +334,7 @@ function linearize_for_undef!(
     else
         # Default: process all children
         for child in JS.children(ex)
-            linearize_for_undef!(lin, ctx3, child, candidates, allow_throw_optimization)
+            linearize_def_use_events!(lin, ctx3, child, candidates, allow_throw_optimization)
         end
     end
 end
@@ -390,37 +410,48 @@ function undef_is_must_execute(blocks::Vector{EventBlock}, block_id::Int)
     return !can_bypass
 end
 
+# Collect candidate variables captured by any nested closure.  The CFG
+# places closure uses/assigns at the closure *definition* site (inside an
+# uncertain branch), not at the call site.  This means a use inside a
+# closure does not correctly block assignments that come after the closure
+# definition, leading to false-positive dead store reports.  Variables
+# identified here are excluded from dead store analysis.
+function collect_closure_captured_vars(body::JS.SyntaxTree, candidates::Set{JL.IdTag})
+    result = Set{JL.IdTag}()
+    traverse(body) do st::JS.SyntaxTree
+        JS.kind(st) == JS.K"lambda" || return nothing
+        nested_lb = st.lambda_bindings
+        for (id, is_capt) in nested_lb.locals_capt
+            if is_capt && id in candidates
+                push!(result, id)
+            end
+        end
+        return nothing
+    end
+    return result
+end
+
 """
-    analyze_undef(ctx3::JL.VariableAnalysisContext, ex::JS.SyntaxTree;
-                  allow_throw_optimization::Bool=false) -> Dict{JL.BindingInfo, UndefInfo}
+    analyze_def_use(ctx3, ex; allow_throw_optimization)
+        -> (undef_info, dead_store_info)
 
-CFG-aware undef analysis local bindings.
+Combined CFG-aware analysis for local bindings in a single lambda.
+Builds the event-based CFG once and runs both undef analysis and dead
+store analysis on it.
 
-For each local variable in the lambda `ex`, determines:
-- Definition and use sites (as `SyntaxTree` nodes)
-- Undef status:
-  - `false`: Variable is definitely defined at all uses
-  - `true`: Variable is definitely undefined at some use
-  - `nothing`: Variable may or may not be defined (conservative)
-
-Each assign/use event is placed in its own event block, so event ordering
-is represented by CFG edges. This enables checking reachability to determine
-if a use can be reached from entry without going through any assignment.
-
-When `allow_throw_optimization=true`, calls to global `throw` are treated as
-noreturn (like `return`), allowing patterns like `@assert @isdefined(y)` to work
-as definedness hints.
-
-Returns a dictionary mapping `BindingInfo` to `UndefInfo` for all
-analyzed local variables.
+Returns a tuple of:
+- `undef_info::Dict{JL.BindingInfo, UndefInfo}`: undef status per variable
+- `dead_store_info::Dict{JL.BindingInfo, DeadStoreInfo}`: dead stores per variable
 """
-function analyze_undef(ctx3::JL.VariableAnalysisContext, ex::JS.SyntaxTree;
-                       allow_throw_optimization::Bool=false)
-    result = Dict{JL.BindingInfo, UndefInfo}()
+function analyze_def_use(
+        ctx3::JL.VariableAnalysisContext, ex::JS.SyntaxTree;
+        allow_throw_optimization::Bool=false
+    )
+    undef_result = Dict{JL.BindingInfo, UndefInfo}()
+    dead_store_result = Dict{JL.BindingInfo, DeadStoreInfo}()
 
-    JS.kind(ex) == JS.K"lambda" || return result
+    JS.kind(ex) == JS.K"lambda" || return (undef_result, dead_store_result)
 
-    # Collect candidate variables: all local variables in this lambda
     lambda_bindings = ex.lambda_bindings
     candidates = Set{JL.IdTag}()
     for (id, from_outer_lambda) in lambda_bindings.locals_capt
@@ -431,105 +462,109 @@ function analyze_undef(ctx3::JL.VariableAnalysisContext, ex::JS.SyntaxTree;
         end
     end
 
-    isempty(candidates) && return result
+    isempty(candidates) && return (undef_result, dead_store_result)
+
+    # Variables captured by closures are excluded from dead store analysis
+    closure_captured = if JS.numchildren(ex) >= 3
+        collect_closure_captured_vars(ex[3], candidates)
+    else
+        Set{JL.IdTag}()
+    end
 
     lin = EventLinearizer()
     if JS.numchildren(ex) >= 3
         body = ex[3]
-        linearize_for_undef!(lin, ctx3, body, candidates, allow_throw_optimization)
+        linearize_def_use_events!(lin, ctx3, body, candidates, allow_throw_optimization)
     end
     undef_finalize_cfg!(lin)
 
-    # For each candidate, collect defs/uses and check if all uses are dominated by assignments
     for var_id in candidates
         binfo = JL.get_binding(ctx3, var_id)
 
-        # Collect all defs and uses for this variable
         defs = JS.SyntaxTree[]
-        assign_blocks = Set{Int}()
+        assign_blocks = Set{Int}()       # for undef (includes :isdefined)
+        real_assign_blocks = Set{Int}()  # for dead store (only :assign)
         use_blocks = Set{Int}()
-        use_block_trees = Dict{Int,JS.SyntaxTree}()
+        event_trees = Dict{Int,JS.SyntaxTree}()
         for block in lin.blocks
             (event_kind, id, st) = @something block.event continue
             id == var_id || continue
+            event_trees[block.id] = st
             if event_kind === :assign
                 push!(defs, st)
                 push!(assign_blocks, block.id)
+                push!(real_assign_blocks, block.id)
             elseif event_kind === :isdefined
-                # :isdefined hints affect CFG analysis but shouldn't appear in defs list
                 push!(assign_blocks, block.id)
             else # :use
                 push!(use_blocks, block.id)
-                use_block_trees[block.id] = st
             end
         end
 
-        # No uses means "definitely defined at all uses" (vacuously true)
+        # --- Undef analysis ---
         if isempty(use_blocks)
-            result[binfo] = UndefInfo(defs, Pair{Bool,JS.SyntaxTree}[])
-            continue
-        end
-
-        # No assignments means all uses are before any definition (strict undef)
-        if isempty(assign_blocks)
-            undef_uses = Pair{Bool,JS.SyntaxTree}[true => use_block_trees[ub] for ub in use_blocks]
-            result[binfo] = UndefInfo(defs, undef_uses)
-            continue
-        end
-
-        # Find all uses reachable from entry while avoiding all assignment blocks.
-        reached = undef_reachable_uses(lin.blocks, 1, use_blocks, assign_blocks)
-
-        if !isempty(reached)
-            # For each reachable use, determine strict vs maybe undef.
-            # A use is strict undef if it's must-execute and all assignments
-            # come after it (i.e., it precedes all assignments in CFG order).
-            min_assign_block = minimum(assign_blocks)
-            undef_uses = Pair{Bool,JS.SyntaxTree}[]
-            for ub in reached
-                is_strict = ub < min_assign_block &&
-                            undef_is_must_execute(lin.blocks, ub)
-                push!(undef_uses, is_strict => use_block_trees[ub])
-            end
-            result[binfo] = UndefInfo(defs, undef_uses)
+            undef_result[binfo] = UndefInfo(defs, Pair{Bool,JS.SyntaxTree}[])
+        elseif isempty(assign_blocks)
+            undef_uses = Pair{Bool,JS.SyntaxTree}[
+                true => event_trees[ub] for ub in use_blocks]
+            undef_result[binfo] = UndefInfo(defs, undef_uses)
         else
-            # All CFG paths to any use go through an assignment
-            result[binfo] = UndefInfo(defs, Pair{Bool,JS.SyntaxTree}[])
+            reached = undef_reachable_uses(lin.blocks, 1, use_blocks, assign_blocks)
+            if !isempty(reached)
+                min_assign_block = minimum(assign_blocks)
+                undef_uses = Pair{Bool,JS.SyntaxTree}[]
+                for ub in reached
+                    is_strict = ub < min_assign_block &&
+                                undef_is_must_execute(lin.blocks, ub)
+                    push!(undef_uses, is_strict => event_trees[ub])
+                end
+                undef_result[binfo] = UndefInfo(defs, undef_uses)
+            else
+                undef_result[binfo] = UndefInfo(defs, Pair{Bool,JS.SyntaxTree}[])
+            end
+        end
+
+        # --- Dead store analysis ---
+        if var_id in closure_captured || isempty(use_blocks) || isempty(real_assign_blocks)
+            continue
+        end
+        dead_defs = JS.SyntaxTree[]
+        for def_block_id in real_assign_blocks
+            other_assigns = Set{Int}(ab for ab in real_assign_blocks if ab != def_block_id)
+            can_reach_use = undef_can_reach_avoiding(lin.blocks, def_block_id, use_blocks, other_assigns)
+            if !can_reach_use
+                push!(dead_defs, event_trees[def_block_id])
+            end
+        end
+        if !isempty(dead_defs)
+            dead_store_result[binfo] = DeadStoreInfo(dead_defs)
         end
     end
 
-    return result
+    return (undef_result, dead_store_result)
 end
 
 """
-    analyze_undef_all_lambdas(
-        ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTree;
-        allow_throw_optimization::Bool = false
-        ) -> Dict{JL.BindingInfo, UndefInfo}
+    analyze_def_use_all_lambdas(ctx3, st3; allow_throw_optimization)
+        -> (undef_info, dead_store_info)
 
-Analyze undef status for all lambdas in the syntax tree.
-
-This traverses the syntax tree and calls `analyze_undef` on each lambda,
-merging the results into a single dictionary. Each lambda must be analyzed
-separately because `analyze_undef` only analyzes that lambda's own local
-variables (not captured from outer scope). The recursion into nested lambdas
-within `linearize_for_undef!` handles uses/assigns of captured variables,
-but doesn't analyze the nested lambda's own locals.
-
-When `allow_throw_optimization=true`, calls to global `throw` are treated as
-noreturn. The caller should verify that `throw === Core.throw` in the current
-module context before enabling this optimization.
+Analyze undef status and dead stores for all lambdas in the syntax tree.
+Builds the CFG once per lambda and runs both analyses on it.
 """
-function analyze_undef_all_lambdas(
+function analyze_def_use_all_lambdas(
         ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTree;
         allow_throw_optimization::Bool = false
     )
-    result = Dict{JL.BindingInfo, UndefInfo}()
+    undef_result = Dict{JL.BindingInfo, UndefInfo}()
+    dead_store_result = Dict{JL.BindingInfo, DeadStoreInfo}()
     traverse(st3) do st3′::JS.SyntaxTree
         if JS.kind(st3′) == JS.K"lambda"
-            merge!(result, analyze_undef(ctx3, st3′; allow_throw_optimization))
+            undef_info, dead_store_info = analyze_def_use(
+                ctx3, st3′; allow_throw_optimization)
+            merge!(undef_result, undef_info)
+            merge!(dead_store_result, dead_store_info)
         end
         return nothing
     end
-    return result
+    return (undef_result, dead_store_result)
 end

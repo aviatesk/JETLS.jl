@@ -1,4 +1,4 @@
-module test_undef_analysis
+module test_def_use_analysis
 
 using Test
 using JETLS
@@ -12,7 +12,7 @@ module lowering_module end
 function get_undef_status(text::AbstractString; mod::Module=lowering_module, allow_throw_optimization::Bool=false)
     st0 = jlparse(text; rule=:statement, filename=@__FILE__)
     (; ctx3, st3) = JETLS.jl_lower_for_scope_resolution(mod, st0; trim_error_nodes=false, recover_from_macro_errors=false)
-    undef_info = JETLS.analyze_undef_all_lambdas(ctx3, st3; allow_throw_optimization)
+    (undef_info, _) = JETLS.analyze_def_use_all_lambdas(ctx3, st3; allow_throw_optimization)
     result = Dict{String, Union{Nothing,Bool}}()
     for (binfo, info) in undef_info
         if !binfo.is_internal && binfo.kind == :local
@@ -451,4 +451,227 @@ end
     @test status["x"] === true
 end
 
-end # module test_undef_analysis
+# --- Dead store (unused assignment) analysis ---
+
+function get_dead_stores(text::AbstractString;
+        mod::Module=lowering_module,
+        allow_throw_optimization::Bool=false)
+    st0 = jlparse(text; rule=:statement, filename=@__FILE__)
+    (; ctx3, st3) = JETLS.jl_lower_for_scope_resolution(mod, st0;
+        trim_error_nodes=false, recover_from_macro_errors=false)
+    (_, dead_store_info) = JETLS.analyze_def_use_all_lambdas(ctx3, st3;
+        allow_throw_optimization)
+    result = Dict{String,Int}()
+    for (binfo, dsinfo) in dead_store_info
+        if !binfo.is_internal && binfo.kind == :local
+            result[binfo.name] = length(dsinfo.dead_defs)
+        end
+    end
+    return result
+end
+
+@testset "dead store - simple use, no dead stores" begin
+    ds = get_dead_stores("""
+    function f()
+        y = 1
+        println(y)
+    end
+    """)
+    @test !haskey(ds, "y")
+end
+
+@testset "dead store - assignment at end of function" begin
+    ds = get_dead_stores("""
+    function foo(x::Bool)
+        if x
+            z = "Hi"
+            println(z)
+        end
+        if x
+            z = "Hey"
+        end
+    end
+    """)
+    @test ds["z"] == 1
+end
+
+@testset "dead store - unconditional overwrite" begin
+    ds = get_dead_stores("""
+    function f()
+        z = "initial"
+        z = "overwrite"
+        println(z)
+    end
+    """)
+    @test ds["z"] == 1
+end
+
+@testset "dead store - conditional overwrite, both live" begin
+    ds = get_dead_stores("""
+    function f(x::Bool)
+        z = "initial"
+        if x
+            z = "updated"
+        end
+        println(z)
+    end
+    """)
+    @test !haskey(ds, "z")
+end
+
+@testset "dead store - if-else both assign then use" begin
+    ds = get_dead_stores("""
+    function f(x::Bool)
+        if x
+            z = 1
+        else
+            z = 2
+        end
+        println(z)
+    end
+    """)
+    @test !haskey(ds, "z")
+end
+
+@testset "dead store - multiple dead stores" begin
+    ds = get_dead_stores("""
+    function f()
+        z = 1
+        z = 2
+        z = 3
+        println(z)
+    end
+    """)
+    @test ds["z"] == 2
+end
+
+@testset "dead store - no uses, skip (unused-binding handles this)" begin
+    ds = get_dead_stores("""
+    function f()
+        z = 1
+    end
+    """)
+    @test !haskey(ds, "z")
+end
+
+@testset "dead store - loop assignment is live" begin
+    ds = get_dead_stores("""
+    function f()
+        local z
+        for i in 1:10
+            z = i
+        end
+        println(z)
+    end
+    """)
+    @test !haskey(ds, "z")
+end
+
+@testset "dead store - assignment before loop, loop may not execute" begin
+    ds = get_dead_stores("""
+    function f()
+        z = 0
+        for i in 1:10
+            z = i
+        end
+        println(z)
+    end
+    """)
+    @test !haskey(ds, "z")
+end
+
+@testset "dead store - closure read only, dead store still detected" begin
+    ds = get_dead_stores("""
+    function f()
+        x = 1
+        x = 2
+        map([1,2,3]) do i
+            x + i
+        end
+    end
+    """)
+    @test !haskey(ds, "x")  # x is captured → skipped
+end
+
+@testset "dead store - closure write, skip variable" begin
+    ds = get_dead_stores("""
+    function f()
+        local z
+        g = () -> (z = 1)
+        z = 2
+        g()
+        println(z)
+    end
+    """)
+    @test !haskey(ds, "z")
+end
+
+@testset "dead store - dead store after last use" begin
+    ds = get_dead_stores("""
+    function f()
+        z = 1
+        println(z)
+        z = 2
+        return
+    end
+    """)
+    @test ds["z"] == 1
+end
+
+@testset "dead store - return in branch, both assignments live" begin
+    ds = get_dead_stores("""
+    function f(x::Bool)
+        z = 1
+        if x
+            return z
+        end
+        z = 2
+        return z
+    end
+    """)
+    @test !haskey(ds, "z")
+end
+
+@testset "dead store - try-catch both assign then use" begin
+    ds = get_dead_stores("""
+    function f()
+        local z
+        try
+            z = 1
+        catch
+            z = 2
+        end
+        println(z)
+    end
+    """)
+    @test !haskey(ds, "z")
+end
+
+@testset "dead store - multiple variables, mixed" begin
+    ds = get_dead_stores("""
+    function f(x::Bool)
+        a = 1
+        a = 2
+        println(a)
+        b = 3
+        if x
+            b = 4
+        end
+        println(b)
+    end
+    """)
+    @test ds["a"] == 1
+    @test !haskey(ds, "b")
+end
+
+@testset "dead store - use before assignment is also dead" begin
+    ds = get_dead_stores("""
+    function f()
+        println(y)
+        y = 1
+    end
+    """)
+    @test ds["y"] == 1
+end
+
+end # module test_def_use_analysis
