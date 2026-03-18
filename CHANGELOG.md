@@ -49,6 +49,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > Note that `analysis_overrides` is provided as a temporary workaround and may
 > be removed or changed at any time. A proper fix is being worked on.
 
+### Added
+
+- Added `@main` function support across LSP features (document-symbol,
+  document-highlight, references, rename, completions, diagnostic).
+
 ### Fixed
 
 - Fixed false positive `lowering/unused-binding` warning for keyword arguments

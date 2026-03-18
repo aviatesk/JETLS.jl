@@ -1081,6 +1081,7 @@ function lowering_diagnostics!(
 
     analyze_unsorted_imports!(diagnostics, fi, st0)
 
+    (st0, _) = desugar_main_macrocall(st0)
     world = Base.get_world_counter()
     res = try
         jl_lower_for_scope_resolution(mod, st0, world; recover_from_macro_errors=false, convert_closures=true)
