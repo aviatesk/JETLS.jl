@@ -61,6 +61,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `lowering/undef-local-var` `@isdefined` propagation now recognizes
   `@isdefined(var)` within `&&` chains (e.g., `if cond && @isdefined(y)`),
   suppressing false positive diagnostics in the guarded branch.
+- Updated JuliaSyntax.jl and JuliaLowering.jl dependency versions to latest
 
 ### Fixed
 
