@@ -759,9 +759,9 @@ end
 # This analysis reports `lowering/undef-local-var` on a change basis, based on
 # `analyze_undef_all_lambdas`, which analyzes local binding definedness with the event
 # based binding assignment reachability analysis.
-# Severity levels:
-# - Warning: `undef===true` → strict undef (guaranteed UndefVarError on some path)
-# - Information: `undef===nothing` → maybe undef (possible UndefVarError)
+# Severity levels (encoded in each entry of `UndefInfo.undef_uses`):
+# - Warning: `true => tree` → strict undef (guaranteed UndefVarError on some path)
+# - Information: `false => tree` → maybe undef (possible UndefVarError)
 function analyze_undefined_local_bindings!(
         diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo,
         undef_info::Dict{JL.BindingInfo, UndefInfo},
@@ -772,14 +772,8 @@ function analyze_undefined_local_bindings!(
         binfo.is_read || continue # optimization: skip expensive checks below if not read
         binfo.is_internal && continue
         startswith(binfo.name, '#') && continue
-        undef_status = uinfo.undef
-        undef_status === false && continue
-        first_use_tree = first(uinfo.uses)
-        provs = JL.flattened_provenance(first_use_tree)
-        is_from_user_ast(provs) || continue
-        range = jsobj_to_range(last(provs), fi)
-        key = LoweringDiagnosticKey(range, binfo.kind, binfo.name)
-        key in reported ? continue : push!(reported, key)
+        isempty(uinfo.undef_uses) && continue
+        # Compute relatedInformation once per variable (shared across all undef uses)
         relatedInformation = DiagnosticRelatedInformation[]
         for def_tree in uinfo.defs
             def_provs = JL.flattened_provenance(def_tree)
@@ -791,17 +785,27 @@ function analyze_undefined_local_bindings!(
                 location = Location(uri, def_range),
                 message = "`$(binfo.name)` is defined here"))
         end
-        push!(diagnostics, Diagnostic(;
-            range,
-            # Determine severity based on whether this is strict undef or maybe undef
-            severity = undef_status === true ? DiagnosticSeverity.Warning : DiagnosticSeverity.Information,
-            message = undef_status === true ?
-                "Variable `$(binfo.name)` is used before it is defined" :
-                "Variable `$(binfo.name)` may be used before it is defined",
-            source = DIAGNOSTIC_SOURCE_LIVE,
-            code = LOWERING_UNDEF_LOCAL_VAR_CODE,
-            codeDescription = diagnostic_code_description(LOWERING_UNDEF_LOCAL_VAR_CODE),
-            relatedInformation = @somereal relatedInformation Some(nothing)))
+        related = @somereal relatedInformation Some(nothing)
+        for (is_strict_undef, undef_use_tree) in uinfo.undef_uses
+            provs = JL.flattened_provenance(undef_use_tree)
+            is_from_user_ast(provs) || continue
+            range = jsobj_to_range(last(provs), fi)
+            key = LoweringDiagnosticKey(range, binfo.kind, binfo.name)
+            key in reported ? continue : push!(reported, key)
+            push!(diagnostics, Diagnostic(;
+                range,
+                severity = is_strict_undef ?
+                    DiagnosticSeverity.Warning :
+                    DiagnosticSeverity.Information,
+                message = is_strict_undef ?
+                    "Variable `$(binfo.name)` is used before it is defined" :
+                    "Variable `$(binfo.name)` may be used before it is defined",
+                source = DIAGNOSTIC_SOURCE_LIVE,
+                code = LOWERING_UNDEF_LOCAL_VAR_CODE,
+                codeDescription = diagnostic_code_description(
+                    LOWERING_UNDEF_LOCAL_VAR_CODE),
+                relatedInformation = related))
+        end
     end
 end
 

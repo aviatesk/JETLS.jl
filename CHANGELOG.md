@@ -54,6 +54,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Added `@main` function support across LSP features (document-symbol,
   document-highlight, references, rename, completions, diagnostic).
 
+### Changed
+
+- `lowering/undef-local-var` now reports a diagnostic for each use site on
+  an undef path individually, rather than only reporting the first one.
+
 ### Fixed
 
 - Fixed false positive `lowering/unused-binding` warning for keyword arguments
@@ -62,6 +67,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed false positive `lowering/unused-import` warning for imports used inside
   quoted expressions in macro bodies or helper functions
   (Closed https://github.com/aviatesk/JETLS.jl/issues/594).
+- Fixed `lowering/undef-local-var` diagnostic being reported at the wrong
+  location: when a variable had both defined and potentially-undefined uses,
+  the diagnostic pointed to the first use in source order rather than the
+  use that is actually on the undef path.
 
 ## 2026-03-13
 
