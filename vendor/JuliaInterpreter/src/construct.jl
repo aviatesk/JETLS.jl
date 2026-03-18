@@ -485,8 +485,12 @@ function queuenext!(iter::ExprSplitter)
     mod, ex = iter.stack[end]
     head = ex.head
     if head === :module
-        # Find or create the module
-        newname = ex.args[2]::Symbol
+        if length(ex.args) == 3
+            (std_imports, newname::Symbol, modbody) = ex.args[1:3]
+            syntax_version = nothing
+        elseif length(ex.args) == 4
+            (syntax_version, std_imports, newname, modbody) = ex.args[1:4]
+        else @assert false "unexpected :module form" end
         if invokelatest(isdefinedglobal, mod, newname)
             newmod = invokelatest(getglobal, mod, newname)
             newmod isa Module || throw(ErrorException("invalid redefinition of constant $(newname)"))
@@ -508,12 +512,16 @@ function queuenext!(iter::ExprSplitter)
                 mod = Base.root_module(id)::Module
             else
                 loc = firstline(ex)
-                mod = Core.eval(mod, Expr(:module, ex.args[1], newname, Expr(:block, loc)))::Module
+                module_ex = Expr(:module, std_imports, newname, Expr(:block, loc))
+                if syntax_version !== nothing
+                    pushfirst!(module_ex.args, syntax_version)
+                end
+                mod = Core.eval(mod, module_ex)::Module
             end
         end
         # We've handled the module declaration, remove it and queue the body
         pop!(iter.stack)
-        ex = ex.args[3]::Expr
+        ex = modbody::Expr
         push_modex!(iter, mod, ex)
         return queuenext!(iter)
     elseif head === :macrocall
