@@ -29,13 +29,15 @@ Ensure the maximum line length never exceeds 72 characters.
 When referencing external GitHub PRs or issues, use proper GitHub interlinking
 format: "owner/repo#123"
 
-## Footer
+## Co-author trailer
 
-If you wrote code yourself, include a "Written by Claude" footer at the end of
-the commit message. No emoji.
+If you wrote code yourself, include a co-author trailer at the end of
+the commit message, e.g.:
+`Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>`
+(adjust the model name as appropriate).
 
-However, when simply asked to write a commit message (without having written
-the code), there's no need to add that footer.
+However, when simply asked to write a commit message (without having
+written the code), there's no need to add that trailer.
 
 ## Example
 
