@@ -856,7 +856,7 @@ function compute_unused_variable_data(
     assignment = first(ancestors)
     JS.numchildren(assignment) ≥ 2 || return nothing
 
-    lhs, rhs = assignment[1], assignment[2]
+    lhs = assignment[1]
 
     # Check for destructuring patterns (tuple unpacking)
     is_tuple = JS.kind(lhs) === JS.K"tuple"
@@ -864,10 +864,20 @@ function compute_unused_variable_data(
         return UnusedVariableData(true, nothing, nothing)
     end
 
-    # lhs_eq_range: from LHS start to RHS start (exclusive)
+    # lhs_eq_range: from LHS start to actual RHS start in source (exclusive).
+    # We scan forward from after the LHS to find the `=` sign and any
+    # following whitespace.  This is needed because some node kinds (e.g.
+    # K"String") have a byte range that excludes delimiters, so
+    # `first_byte(rhs)` may point past the opening delimiter.
     assignment_range = jsobj_to_range(assignment, fi)
     lhs_start = offset_to_xy(fi, JS.first_byte(lhs))
-    rhs_start = offset_to_xy(fi, JS.first_byte(rhs))
+    textbuf = fi.parsed_stream.textbuf
+    eq_byte = @something findnext(==(UInt8('=')), textbuf, JS.last_byte(lhs) + 1) return nothing
+    rhs_byte = eq_byte + 1
+    while rhs_byte ≤ length(textbuf) && textbuf[rhs_byte] in (UInt8(' '), UInt8('\t'))
+        rhs_byte += 1
+    end
+    rhs_start = offset_to_xy(fi, rhs_byte)
     lhs_eq_range = Range(; start=lhs_start, var"end"=rhs_start)
     return UnusedVariableData(false, assignment_range, lhs_eq_range)
 end

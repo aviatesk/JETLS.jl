@@ -1138,6 +1138,26 @@ end
         end
     end
 
+    @testset "lhs_eq_range for string RHS includes delimiter" begin
+        let diagnostics = get_lowered_diagnostics("""
+            function f()
+                z = "initial"
+                z = "overwrite"
+                println(z)
+            end
+            """)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            data = diagnostic.data
+            @test data isa JETLS.UnusedVariableData
+            # "Delete assignment" should remove `z = ` and keep `"initial"`
+            # lhs_eq_range end character should point to `"`, not past it
+            lhs_eq = data.lhs_eq_range
+            @test lhs_eq.start.character == 4  # start of `z`
+            @test lhs_eq.var"end".character == 8  # start of `"` in `"initial"`
+        end
+    end
+
     @testset "underscore prefix suppresses dead store" begin
         @test isempty(get_lowered_diagnostics("""
             function f()

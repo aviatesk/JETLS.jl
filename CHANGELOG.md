@@ -76,6 +76,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed `lowering/undef-local-var` diagnostic being reported at the wrong location:
   when a variable had both defined and potentially-undefined uses, the diagnostic pointed to the first use in source order rather than the use that is actually on the undef path.
 - Fixed signature-help error when displaying signatures for operator-like methods (e.g. `Base.:(==)`).
+- Fixed "Delete assignment" code action removing the opening delimiter of string literals (e.g., `z = "Hey"` became `z = Hey"` instead of `"Hey"`).
 
 ## 2026-03-13
 
