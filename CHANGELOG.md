@@ -44,6 +44,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > This disables analysis for matched files. Basic features like completion still might work, but most LSP features will be unfunctional.
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
 
+### Added
+
+- Added process title setting so that `jetls serve` processes are distinguishable in `ps`/`htop` when multiple projects are open.
+  The title includes JETLS version, workspace path, transport mode, and client process ID.
+
 ## 2026-03-19
 
 - Commit: [`ea73622`](https://github.com/aviatesk/JETLS.jl/commit/ea73622)
