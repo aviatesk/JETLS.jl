@@ -49,6 +49,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Added process title setting so that `jetls serve` processes are distinguishable in `ps`/`htop` when multiple projects are open.
   The title includes JETLS version, workspace path, transport mode, and client process ID.
 
+### Fixed
+
+- Fixed false positive `lowering/unused-assignment` diagnostic for variables reassigned inside `while` loops with `break`/`continue`.
+
 ## 2026-03-19
 
 - Commit: [`ea73622`](https://github.com/aviatesk/JETLS.jl/commit/ea73622)

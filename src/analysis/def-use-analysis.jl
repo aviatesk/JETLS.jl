@@ -66,9 +66,12 @@ mutable struct EventLinearizer
     const label_to_block::Dict{Int,Int}
     const pending_gotos::Vector{Tuple{Int,Int}}  # (from_block, label_id)
     next_label::Int
+    # Maps symbolic label names (e.g. "loop-exit", "loop-cont") to CFG label IDs
+    # for handling `K"symbolicblock"` / `K"break"` pairs from lowered loops.
+    const break_targets::Dict{String,Int}
     function EventLinearizer()
         blocks = EventBlock[EventBlock(1)]
-        new(blocks, 1, Dict{Int,Int}(), Tuple{Int,Int}[], 0)
+        new(blocks, 1, Dict{Int,Int}(), Tuple{Int,Int}[], 0, Dict{String,Int}())
     end
 end
 
@@ -170,6 +173,40 @@ function linearize_def_use_events!(
         if var_id in candidates
             undef_emit_event!(lin, :use, var_id, ex)
         end
+
+    elseif k == JS.K"symbolicblock"
+        label_node = ex[1]
+        label_name = label_node.name_val::String
+        exit_label = undef_make_label!(lin)
+        # Save and set the break target for this label (handles nesting)
+        outer_target = get(lin.break_targets, label_name, nothing)
+        lin.break_targets[label_name] = exit_label
+        if JS.numchildren(ex) >= 2
+            linearize_def_use_events!(lin, ctx3, ex[2], candidates, allow_throw_optimization)
+        end
+        if isnothing(outer_target)
+            delete!(lin.break_targets, label_name)
+        else
+            lin.break_targets[label_name] = outer_target
+        end
+        undef_emit_label!(lin, exit_label)
+
+    elseif k == JS.K"break"
+        # Process value child if present (break label value)
+        if JS.numchildren(ex) >= 2
+            linearize_def_use_events!(lin, ctx3, ex[2], candidates, allow_throw_optimization)
+        end
+        # Emit goto to matching symbolicblock exit if label is known
+        if JS.numchildren(ex) >= 1 && JS.kind(ex[1]) == JS.K"symboliclabel"
+            label_name = ex[1].name_val::String
+            target_label = get(lin.break_targets, label_name, nothing)
+            if !isnothing(target_label)
+                undef_emit_goto!(lin, target_label)
+                return
+            end
+        end
+        unreachable = undef_new_block!(lin)
+        undef_switch_to_block!(lin, unreachable)
 
     elseif JS.is_leaf(ex) || JL.is_quoted(ex)
         # Nothing to do
@@ -306,10 +343,6 @@ function linearize_def_use_events!(
         if JS.numchildren(ex) >= 1
             linearize_def_use_events!(lin, ctx3, ex[1], candidates, allow_throw_optimization)
         end
-        unreachable = undef_new_block!(lin)
-        undef_switch_to_block!(lin, unreachable)
-
-    elseif k == JS.K"break"
         unreachable = undef_new_block!(lin)
         undef_switch_to_block!(lin, unreachable)
 
