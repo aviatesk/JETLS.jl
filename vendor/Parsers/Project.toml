@@ -26,4 +26,6 @@ UUIDs = "1.6"
 test = ["Aqua", "Serialization", "Test"]
 
 [sources.PrecompileTools]
-path = "../PrecompileTools"
+subdir = "vendor/PrecompileTools"
+rev = "64acdf6644ee743c4c603e1461c34f75097ef31e"
+url = "https://github.com/aviatesk/JETLS.jl"
