@@ -24,8 +24,9 @@ if DEBUG
           end)
     end
 else
+    # allow @jl_assert false in value position to not change rettype
     macro jl_assert(cond, args...)
-        nothing
+        cond === false ? :(throw("@jl_assert false")) : nothing
     end
 end
 
