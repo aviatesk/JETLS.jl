@@ -95,11 +95,13 @@ function run_serve(args::Vector{String})
         @info "Client process ID provided via command line" client_process_id
 
     local endpoint::Endpoint
+    local transport::String
     if !isnothing(pipe_connect_path)
         try
             pipe_type = Sys.iswindows() ? "Windows named pipe" : "Unix domain socket"
             conn = Sockets.connect(pipe_connect_path)
             endpoint = Endpoint(conn, conn)
+            transport = "pipe-connect=$pipe_connect_path"
             @info "Connected to $pipe_type" pipe_connect_path
         catch e
             @error "Failed to connect to pipe" pipe_connect_path
@@ -114,6 +116,7 @@ function run_serve(args::Vector{String})
             @info "Waiting for connection on $pipe_type" pipe_listen_path
             conn = Sockets.accept(server_socket)
             endpoint = Endpoint(conn, conn)
+            transport = "pipe-listen=$pipe_listen_path"
             @info "Accepted connection on $pipe_type"
         catch e
             @error "Failed to listen on pipe" pipe_listen_path
@@ -128,6 +131,7 @@ function run_serve(args::Vector{String})
             @info "Waiting for connection on port" actual_port
             conn = Sockets.accept(server_socket)
             endpoint = Endpoint(conn, conn)
+            transport = "socket=$actual_port"
             @info "Connected via TCP socket" actual_port
         catch e
             @error "Failed to create socket connection" socket_port
@@ -136,6 +140,7 @@ function run_serve(args::Vector{String})
         end
     else # use stdio as the communication channel
         endpoint = Endpoint(stdin, stdout)
+        transport = "stdio"
         @info "Using stdio for communication"
     end
 
@@ -153,12 +158,12 @@ function run_serve(args::Vector{String})
                     end
                 end
             end
-            runserver_task = let client_process_id=client_process_id
-                Threads.@spawn :interactive runserver(server; client_process_id)
+            runserver_task = let client_process_id=client_process_id, transport=transport
+                Threads.@spawn :interactive runserver(server; client_process_id, transport)
             end
         else
-            runserver_task = let endpoint=endpoint, client_process_id=client_process_id
-                Threads.@spawn :interactive runserver(endpoint; client_process_id)
+            runserver_task = let endpoint=endpoint, client_process_id=client_process_id, transport=transport
+                Threads.@spawn :interactive runserver(endpoint; client_process_id, transport)
             end
         end
         exit_code = fetch(runserver_task)::Int

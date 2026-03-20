@@ -12,7 +12,8 @@ dynamic registration.
 """
 function handle_InitializeRequest(
         server::Server, msg::InitializeRequest;
-        client_process_id::Union{Int,Nothing} = nothing
+        client_process_id::Union{Int,Nothing} = nothing,
+        transport::String = "stdio"
     )
     state = server.state
     init_params = state.init_params = msg.params
@@ -49,6 +50,18 @@ function handle_InitializeRequest(
         @warn "Multiple workspaceFolders are not supported - using limited functionality" state.workspaceFolders
         # leave Refs undefined
     end
+
+    client_pid = something(init_params.processId, client_process_id, Some(nothing))
+    version = JETLS_VERSION
+    if version == "dev"
+        version *= " ($(pkgdir(JETLS)))"
+    end
+    workspace = isdefined(state, :root_path) ? state.root_path :
+        isempty(state.workspaceFolders) ? "(no workspace)" : "(multi-root)"
+    title = "jetls serve --$transport" *
+            (client_pid !== nothing ? " --clientProcessId=$client_pid" : "") *
+            " [version: $version, workspace: $workspace]"
+    @ccall uv_set_process_title(title::Cstring)::Cint
 
     # NOTE: Static server settings that require a server restart to take effect should be
     # accessed during server initialization via `state.init_params.initializationOptions`.
@@ -288,10 +301,7 @@ function handle_InitializeRequest(
         @label skip_monitoring
     end
 
-    return send(server,
-        InitializeResponse(;
-            id = msg.id,
-            result))
+    return send(server, InitializeResponse(; id = msg.id, result))
 end
 
 """
