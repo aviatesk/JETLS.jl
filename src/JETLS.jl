@@ -171,7 +171,11 @@ const self_shutdown_token = SelfShutdownNotification()
 runserver(args...; kwargs...) = runserver(Returns(nothing), args...; kwargs...) # no callback specified
 runserver(callback, in::IO, out::IO; kwargs...) = runserver(callback, Endpoint(in, out); kwargs...)
 runserver(callback, endpoint::Endpoint; kwargs...) = runserver(Server(callback, endpoint); kwargs...)
-function runserver(server::Server; client_process_id::Union{Nothing,Int}=nothing)
+function runserver(
+        server::Server;
+        client_process_id::Union{Nothing,Int} = nothing,
+        transport::String = "stdio"
+    )
     initialize_requested = shutdown_requested = false
     local exit_code::Int = 1
     JETLS_DEV_MODE && @info "Running JETLS server loop"
@@ -198,7 +202,7 @@ function runserver(server::Server; client_process_id::Union{Nothing,Int}=nothing
             # Handle lifecycle-related messages
             if msg isa InitializeRequest
                 initialize_requested = true
-                handle_InitializeRequest(server, msg; client_process_id)
+                handle_InitializeRequest(server, msg; client_process_id, transport)
             elseif msg isa InitializedNotification
                 handle_InitializedNotification(server)
             elseif msg isa ShutdownRequest

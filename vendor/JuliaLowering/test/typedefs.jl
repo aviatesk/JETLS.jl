@@ -172,6 +172,102 @@ let v = Base.Vector{test_mod.S5}(test_mod.S5(1,1))
     @test v[1] === test_mod.S5(1,1)
 end
 
+# Likely not set in stone (the behaviour is odd here), but test to detect changes
+@testset "when default inner ctors are generated" begin
+    local function test_has_inner_ctor(t)
+        @test t(0) isa t
+        @test t(0).field == 0
+        @test_throws MethodError t(nothing)
+    end
+
+    local function test_no_inner_ctor(t)
+        @test_throws MethodError t(0)
+    end
+
+    @test JL.include_string(test_mod, raw"""
+        struct DefaultInnerCtors1
+        field::Int
+        end
+    """) === nothing
+    test_has_inner_ctor(test_mod.DefaultInnerCtors1)
+
+    @test JL.include_string(test_mod, raw"""
+        struct DefaultInnerCtors2
+        "docs"
+        field::Int
+        end
+    """) === nothing
+    test_has_inner_ctor(test_mod.DefaultInnerCtors2)
+
+    @test JL.include_string(test_mod, raw"""
+        struct DefaultInnerCtors3
+        "docs with interpolation $(999)"
+        field::Int
+        end
+    """) === nothing
+    test_has_inner_ctor(test_mod.DefaultInnerCtors3)
+
+    @test JL.include_string(test_mod, raw"""
+        struct DefaultInnerCtors4
+        "docs with interpolation $(999)"
+        "docs with interpolation $(999)"
+        field::Int
+        "docs with interpolation $(999)"
+        "docs with interpolation $(999)"
+        end
+    """) === nothing
+    test_has_inner_ctor(test_mod.DefaultInnerCtors4)
+
+    @test JL.include_string(test_mod, raw"""
+        struct DefaultInnerCtors5
+        field::Int
+        0
+        end
+    """) === nothing
+    test_has_inner_ctor(test_mod.DefaultInnerCtors5)
+
+    @test JL.include_string(test_mod, raw"""
+        struct DefaultInnerCtors6
+        field::Int
+        :inert_sym
+        end
+    """) === nothing
+    test_has_inner_ctor(test_mod.DefaultInnerCtors6)
+
+    @test JL.include_string(test_mod, raw"""
+        struct NoDefaultInnerCtors1
+        field::Int
+        identity(1)
+        end
+    """) === nothing
+    test_no_inner_ctor(test_mod.NoDefaultInnerCtors1)
+
+    @test JL.include_string(test_mod, raw"""
+        struct NoDefaultInnerCtors2
+        field::Int
+        ()->()
+        end
+    """) === nothing
+    test_no_inner_ctor(test_mod.NoDefaultInnerCtors2)
+
+    @test JL.include_string(test_mod, raw"""
+        struct NoDefaultInnerCtors3
+        field::Int
+        NoDefaultInnerCtors3(not,default,too,many,args) = new(1)
+        end
+    """) === nothing
+    test_no_inner_ctor(test_mod.NoDefaultInnerCtors3)
+    @test length(methods(test_mod.NoDefaultInnerCtors3)) == 1
+
+    @test JL.include_string(test_mod, raw"""
+        struct NoDefaultInnerCtors4
+        field::Int
+        :(inert + code)
+        end
+    """) === nothing
+    test_no_inner_ctor(test_mod.NoDefaultInnerCtors4)
+end
+
 # User defined inner constructors and helper functions for structs without type params
 @test JuliaLowering.include_string(test_mod, """
 "struct docs"

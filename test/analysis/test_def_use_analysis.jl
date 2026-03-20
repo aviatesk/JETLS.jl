@@ -26,6 +26,8 @@ function get_undef_status(text::AbstractString; mod::Module=lowering_module, all
     return result
 end
 
+@testset "undef analysis" begin
+
 @testset "sequential assignment then use" begin
     # Variable is assigned before use - definitely defined
     status = get_undef_status("""
@@ -451,6 +453,8 @@ end
     @test status["x"] === true
 end
 
+end # @testset "undef analysis" begin
+
 # --- Dead store (unused assignment) analysis ---
 
 function get_dead_stores(text::AbstractString;
@@ -470,7 +474,9 @@ function get_dead_stores(text::AbstractString;
     return result
 end
 
-@testset "dead store - simple use, no dead stores" begin
+@testset "dead store analysis" begin
+
+@testset "simple use, no dead stores" begin
     ds = get_dead_stores("""
     function f()
         y = 1
@@ -480,7 +486,7 @@ end
     @test !haskey(ds, "y")
 end
 
-@testset "dead store - assignment at end of function" begin
+@testset "assignment at end of function" begin
     ds = get_dead_stores("""
     function foo(x::Bool)
         if x
@@ -495,7 +501,7 @@ end
     @test ds["z"] == 1
 end
 
-@testset "dead store - unconditional overwrite" begin
+@testset "unconditional overwrite" begin
     ds = get_dead_stores("""
     function f()
         z = "initial"
@@ -506,7 +512,7 @@ end
     @test ds["z"] == 1
 end
 
-@testset "dead store - conditional overwrite, both live" begin
+@testset "conditional overwrite, both live" begin
     ds = get_dead_stores("""
     function f(x::Bool)
         z = "initial"
@@ -519,7 +525,7 @@ end
     @test !haskey(ds, "z")
 end
 
-@testset "dead store - if-else both assign then use" begin
+@testset "if-else both assign then use" begin
     ds = get_dead_stores("""
     function f(x::Bool)
         if x
@@ -533,7 +539,7 @@ end
     @test !haskey(ds, "z")
 end
 
-@testset "dead store - multiple dead stores" begin
+@testset "multiple dead stores" begin
     ds = get_dead_stores("""
     function f()
         z = 1
@@ -545,7 +551,7 @@ end
     @test ds["z"] == 2
 end
 
-@testset "dead store - no uses, skip (unused-binding handles this)" begin
+@testset "no uses, skip (unused-binding handles this)" begin
     ds = get_dead_stores("""
     function f()
         z = 1
@@ -554,7 +560,7 @@ end
     @test !haskey(ds, "z")
 end
 
-@testset "dead store - loop assignment is live" begin
+@testset "loop assignment is live" begin
     ds = get_dead_stores("""
     function f()
         local z
@@ -567,7 +573,7 @@ end
     @test !haskey(ds, "z")
 end
 
-@testset "dead store - assignment before loop, loop may not execute" begin
+@testset "assignment before loop, loop may not execute" begin
     ds = get_dead_stores("""
     function f()
         z = 0
@@ -580,7 +586,7 @@ end
     @test !haskey(ds, "z")
 end
 
-@testset "dead store - closure read only, dead store still detected" begin
+@testset "closure read only, dead store still detected" begin
     ds = get_dead_stores("""
     function f()
         x = 1
@@ -593,7 +599,7 @@ end
     @test !haskey(ds, "x")  # x is captured → skipped
 end
 
-@testset "dead store - closure write, skip variable" begin
+@testset "closure write, skip variable" begin
     ds = get_dead_stores("""
     function f()
         local z
@@ -606,7 +612,7 @@ end
     @test !haskey(ds, "z")
 end
 
-@testset "dead store - dead store after last use" begin
+@testset "dead store after last use" begin
     ds = get_dead_stores("""
     function f()
         z = 1
@@ -618,7 +624,7 @@ end
     @test ds["z"] == 1
 end
 
-@testset "dead store - return in branch, both assignments live" begin
+@testset "return in branch, both assignments live" begin
     ds = get_dead_stores("""
     function f(x::Bool)
         z = 1
@@ -632,7 +638,7 @@ end
     @test !haskey(ds, "z")
 end
 
-@testset "dead store - try-catch both assign then use" begin
+@testset "try-catch both assign then use" begin
     ds = get_dead_stores("""
     function f()
         local z
@@ -647,7 +653,7 @@ end
     @test !haskey(ds, "z")
 end
 
-@testset "dead store - multiple variables, mixed" begin
+@testset "multiple variables, mixed" begin
     ds = get_dead_stores("""
     function f(x::Bool)
         a = 1
@@ -664,7 +670,7 @@ end
     @test !haskey(ds, "b")
 end
 
-@testset "dead store - use before assignment is also dead" begin
+@testset "use before assignment is also dead" begin
     ds = get_dead_stores("""
     function f()
         println(y)
@@ -673,5 +679,66 @@ end
     """)
     @test ds["y"] == 1
 end
+
+@testset "while loop with continue (iterate pattern)" begin
+    # `r = iterate(itr, state)` is used by the `while r !== nothing` condition
+    # on the next iteration via `continue` back-edge
+    ds = get_dead_stores("""
+    function issue(itr)
+        r = iterate(itr)
+        local child
+        while r !== nothing
+            (child, state) = r
+            r = iterate(itr, state)
+            child isa Bool || continue
+            child && break
+            return true
+        end
+    end
+    """)
+    @test !haskey(ds, "r")
+end
+
+@testset "while loop with continue (simple)" begin
+    # `r = xs[i]` is used by `r == 0` in the same iteration, so NOT dead.
+    # `r = 0` before the loop is dead (always overwritten before any use).
+    ds = get_dead_stores("""
+    function f(xs)
+        r = 0
+        i = 1
+        while i <= length(xs)
+            r = xs[i]
+            i += 1
+            r == 0 && continue
+            println(r)
+        end
+    end
+    """)
+    @test ds["r"] == 1
+end
+
+@testset "nested while loops with break/continue" begin
+    ds = get_dead_stores("""
+    function f(matrix)
+        local result
+        i = 1
+        while i <= length(matrix)
+            j = 1
+            row = matrix[i]
+            while j <= length(row)
+                result = row[j]
+                j += 1
+                result === nothing && continue
+                result == 0 && break
+            end
+            i += 1
+        end
+        return result
+    end
+    """)
+    @test !haskey(ds, "result")
+end
+
+end # @testset "dead store analysis" begin
 
 end # module test_def_use_analysis

@@ -7,7 +7,7 @@ const help_message = """
     Usage: jetls <COMMAND> [OPTIONS]
 
     Commands:
-      serve                       Start language server (default)
+      serve                       Start language server
       check <file>...             Run diagnostics on Julia files
       schema                      Print JSON schema for configuration
       version                     Show version information

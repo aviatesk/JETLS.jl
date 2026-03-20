@@ -2268,7 +2268,10 @@ end
 
 function expand_const_decl(ctx, ex)
     k = kind(ex[1])
-    if k == K"global"
+    if numchildren(ex) == 2
+        # pre-desugared const
+        @ast ctx ex [K"constdecl" ex[1] ex[2]]
+    elseif k == K"global"
         asgn = ex[1][1]
         @jl_assert (kind(asgn) == K"=" || kind(asgn) == K"function") (ex, "expected assignment after `const`")
         globals = SyntaxList(ctx)
@@ -2281,8 +2284,6 @@ function expand_const_decl(ctx, ex)
         ]
     elseif k == K"=" || k == K"function"
         expand_assignment(ctx, ex[1], true)
-    elseif k == K"local"
-        throw(LoweringError(ex, "unsupported `const local` declaration"))
     elseif k == K"Identifier" || k == K"Value"
         # Expr(:const, v) where v is a Symbol or a GlobalRef is an unfortunate
         # remnant from the days when const-ness was a flag that could be set on
@@ -2291,7 +2292,7 @@ function expand_const_decl(ctx, ex)
         @jl_assert numchildren(ex) == 1 ex
         @ast ctx ex [K"constdecl" ex[1]]
     else
-        throw(LoweringError(ex, "expected assignment after `const`"))
+        @jl_assert false ex
     end
 end
 
@@ -3585,6 +3586,9 @@ function _collect_struct_fields(ctx, field_names, field_types, field_attrs, fiel
                     push!(field_docs, @ast ctx e n::K"Integer")
                     push!(field_docs, @ast ctx e m.docs)
                 end
+            elseif kind(e) == K"string" || is_effect_free(e)
+                # effect-free code and docstrings should not add to `defs`, since
+                # that would prevent inner ctors from being generated
             else
                 # Inner constructors and inner functions
                 # TODO: Disallow arbitrary expressions inside `struct`?
@@ -4709,7 +4713,7 @@ function expand_forms_2(ctx::DesugaringContext, ex::SyntaxTree, docs=nothing)
             [K"continue" [K"Placeholder"]] ->
                 @ast ctx ex [K"break" "loop-cont"::K"symboliclabel"]
             [K"continue" [K"Identifier"]] ->
-                @ast ctx ex [K"break" string(label.name_val, "#cont")::K"symboliclabel"]
+                @ast ctx ex [K"break" string(ex[1].name_val, "#cont")::K"symboliclabel"]
         end
     elseif k == K"comparison"
         expand_forms_2(ctx, expand_compare_chain(ctx, ex))
@@ -4764,12 +4768,7 @@ function expand_forms_2(ctx::DesugaringContext, ex::SyntaxTree, docs=nothing)
     elseif k == K"const"
         expand_const_decl(ctx, ex)
     elseif k == K"local" || k == K"global"
-        if k == K"global" && kind(ex[1]) == K"const"
-            # Normalize `global const` to `const global`
-            expand_const_decl(ctx, @ast ctx ex [K"const" [K"global" ex[1][1]]])
-        else
-            expand_decls(ctx, ex)
-        end
+        expand_decls(ctx, ex)
     elseif k == K"where"
         expand_forms_2(ctx, expand_wheres(ctx, ex))
     elseif k == K"braces" || k == K"bracescat"

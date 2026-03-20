@@ -375,8 +375,8 @@ end
     # pre-desugared const
     @gensym sym
     ex = Expr(:const, sym, 1)
-    @test_broken jl_eval(test_mod, ex)
-    @test_broken binding_kind(test_mod, sym) == Base.PARTITION_KIND_CONST
+    @test jl_eval(test_mod, ex) == 1
+    @test Base.binding_kind(test_mod, sym) == Base.PARTITION_KIND_CONST
 
     # chained, const first
     @gensym sym1 sym2 sym3
