@@ -997,12 +997,12 @@ end
 
     @testset "diagnostic points to the use on undef path, not the defined use" begin
         let diagnostics = get_lowered_diagnostics("""
-            function f(x::Bool)
+            function f(x::Bool, y::Bool)
                 if x
                     z = "Hi"
                     println(z)
                 end
-                if x
+                if y
                     println(z)
                 end
             end

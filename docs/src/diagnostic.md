@@ -338,27 +338,47 @@ pointing to definition sites to help understand the control flow.
     end
     ```
 
-!!! tip "Workaround: Using `@assert @isdefined` as a hint"
-    There are cases where you know a variable is always defined at a certain point,
-    but the analysis cannot prove it. This includes correlated conditions, complex
-    control flow, or general runtime invariants that the compiler cannot figure out
-    statically. In such cases, you can use `@assert @isdefined(var) "..."` as a hint:
+!!! note "Correlated condition analysis"
+    The analysis recognizes correlated conditions: if a variable is assigned
+    under a condition and later used under the same condition, no diagnostic
+    is emitted. This works with simple variables, `&&` chains, and nested
+    `if` blocks:
     ```julia
     function correlated(cond)
         if cond
             y = 42
         end
         if cond
-            # The analysis reports "may be undefined" because it doesn't track
-            # that `cond` is the same in both branches
-            @assert @isdefined(y) "Assertion to tell the compiler about the definedness of this variable"
-            return sin(y)  # No diagnostic after the assertion
+            return sin(y)  # No diagnostic: analysis tracks that `cond`
+                           # is the same in both branches
         end
     end
     ```
-    This hint allows the compiler to avoid generating unnecessary `UndefVarError`
-    handling code, and also serves as documentation that you've verified the
-    variable is defined at this point.
+    This is limited to conditions that are simple local variables or `&&`
+    chains of local variables (e.g. `if x && z`). Compound expressions
+    like `if x > 0` are not tracked as correlated conditions.
+
+!!! tip "Workaround: Using `@assert @isdefined` as a hint"
+    There are cases where you know a variable is always defined at a
+    certain point, but the analysis cannot prove it. This includes
+    compound conditions (e.g. `if !isnothing(x)`), complex control flow, or
+    general runtime invariants that the compiler cannot figure out
+    statically. In such cases, you can use
+    `@assert @isdefined(var) "..."` as a hint:
+    ```julia
+    function compound_condition(x)
+        if !isnothing(x)
+            y = sin(x)
+        end
+        if !isnothing(x)
+            @assert @isdefined(y) "compiler hint"
+            return cos(y)  # No diagnostic after the assertion
+        end
+    end
+    ```
+    This hint allows the compiler to avoid generating unnecessary
+    `UndefVarError` handling code, and also serves as documentation
+    that you've verified the variable is defined at this point.
 
 #### [Captured boxed variable (`lowering/captured-boxed-variable`)](@id diagnostic/reference/lowering/captured-boxed-variable)
 

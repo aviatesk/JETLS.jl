@@ -69,9 +69,19 @@ mutable struct EventLinearizer
     # Maps symbolic label names (e.g. "loop-exit", "loop-cont") to CFG label IDs
     # for handling `K"symbolicblock"` / `K"break"` pairs from lowered loops.
     const break_targets::Dict{String,Int}
+    # Correlated condition analysis.  Maps a set of condition BindingId
+    # var_ids to the set of variables definitely assigned in the true
+    # branch.  Scoped via save/restore; invalidated on reassignment.
+    # E.g. `if x` records Set([x]) → {y}, `if x && z` records Set([x,z]) → {y}.
+    const cond_implies_defined::Dict{Set{JL.IdTag},Set{JL.IdTag}}
+    # Stack of BindingId var_id sets for conditions whose true branch we are
+    # currently inside.  Used by `undef_emit_cond_implied_hints!` so that
+    # nested `if a; if b; ...` lookups see the combined condition Set([a,b]).
+    const active_cond_vars::Vector{Set{JL.IdTag}}
     function EventLinearizer()
         blocks = EventBlock[EventBlock(1)]
-        new(blocks, 1, Dict{Int,Int}(), Tuple{Int,Int}[], 0, Dict{String,Int}())
+        new(blocks, 1, Dict{Int,Int}(), Tuple{Int,Int}[], 0, Dict{String,Int}(),
+            Dict{Set{JL.IdTag},Set{JL.IdTag}}(), Set{JL.IdTag}[])
     end
 end
 
@@ -136,30 +146,185 @@ function undef_finalize_cfg!(lin::EventLinearizer)
     end
 end
 
-# Extract `@isdefined(var)` hints from a condition expression.
-# Handles direct `@isdefined(var)`, `&&` chains (all operands must be true
-# in the true branch), and EST `K"block"` wrappers for elseif conditions.
+# Save/restore for correlated condition implications.  Used to scope
+# implications to the branch where they are recorded: implications
+# created inside a conditional branch are discarded on exit, while
+# invalidations (deletions due to condition-variable reassignment)
+# are preserved across scopes.
+function undef_save_cond_implied(lin::EventLinearizer)
+    return copy(lin.cond_implies_defined)
+end
+
+function undef_restore_cond_implied!(
+        lin::EventLinearizer, saved::Dict{Set{JL.IdTag},Set{JL.IdTag}};
+        lift_with::Union{Nothing, Set{JL.IdTag}}=nothing
+    )
+    # Lift implications by combining with the outer condition.  Handles both
+    # new keys (added during scope) and extended values (delta of existing keys).
+    # E.g. if inside `if a`'s true branch we recorded Set([b]) → {y},
+    # lift it to Set([a,b]) → {y} in the outer scope.
+    lifted = Pair{Set{JL.IdTag}, Set{JL.IdTag}}[]
+    if !isnothing(lift_with)
+        for (key, implied) in lin.cond_implies_defined
+            if !haskey(saved, key)
+                push!(lifted, union(key, lift_with) => implied)
+            else
+                delta = setdiff(implied, saved[key])
+                if !isempty(delta)
+                    push!(lifted, union(key, lift_with) => delta)
+                end
+            end
+        end
+    end
+    # Propagate invalidations: keys present in `saved` but deleted during
+    # the scope must stay deleted after restore.
+    for key in collect(keys(saved))
+        haskey(lin.cond_implies_defined, key) || delete!(saved, key)
+    end
+    empty!(lin.cond_implies_defined)
+    merge!(lin.cond_implies_defined, saved)
+    for (lifted_key, implied) in lifted
+        existing = get(lin.cond_implies_defined, lifted_key, nothing)
+        lin.cond_implies_defined[lifted_key] =
+            isnothing(existing) ? implied : union(existing, implied)
+    end
+end
+
+# Walk the top-level operands of a condition expression, unwrapping
+# EST `K"block"` wrappers and recursing through `&&` chains (all
+# operands must be true in the true branch).
+function for_each_cond_operand(callback, cond::JS.SyntaxTree)
+    k = JS.kind(cond)
+    if k == JS.K"block" && JS.numchildren(cond) == 1
+        return for_each_cond_operand(callback, cond[1])
+    elseif k == JS.K"&&"
+        for child in JS.children(cond)
+            for_each_cond_operand(callback, child)
+        end
+    else
+        callback(cond)
+    end
+    return
+end
+
+# Emit `:isdefined` hints for `@isdefined(var)` in condition expressions.
 function undef_emit_isdefined_hints!(
         lin::EventLinearizer, cond::JS.SyntaxTree, candidates::Set{JL.IdTag}
     )
-    # In EST, elseif conditions are wrapped in K"block", so unwrap first.
-    if JS.kind(cond) == JS.K"block" && JS.numchildren(cond) == 1
-        cond = cond[1]
+    for_each_cond_operand(cond) do operand::JS.SyntaxTree
+        JS.kind(operand) == JS.K"isdefined" || return
+        JS.numchildren(operand) >= 1 || return
+        arg = operand[1]
+        if JS.kind(arg) == JS.K"BindingId" && arg.var_id in candidates
+            undef_emit_event!(lin, :isdefined, arg.var_id, arg)
+        end
     end
-    k = JS.kind(cond)
-    if k == JS.K"isdefined" && JS.numchildren(cond) >= 1
-        isdefined_arg = cond[1]
-        if JS.kind(isdefined_arg) == JS.K"BindingId"
-            var_id = isdefined_arg.var_id
+end
+
+# Collect all BindingId var_ids asserted true by a condition.
+# Returns `true` if every operand is a BindingId (for recording),
+# `false` otherwise (lookup still uses the collected ids).
+function undef_cond_binding_ids!(result::Vector{JL.IdTag}, cond::JS.SyntaxTree)
+    all_bindings = Ref(true)
+    for_each_cond_operand(cond) do operand::JS.SyntaxTree
+        if JS.kind(operand) == JS.K"BindingId"
+            push!(result, operand.var_id)
+        else
+            all_bindings[] = false
+        end
+    end
+    return all_bindings[]
+end
+
+# Extract the variable id from a direct definition node (`=` or `function_decl`).
+# Returns `nothing` when the node is not a definition or the LHS is not a BindingId.
+# This is the single source of truth for "what counts as a local variable definition"
+# used by both event linearization and correlated condition recording.
+function undef_direct_assign_var_id(node::JS.SyntaxTree)
+    k = JS.kind(node)
+    if (k == JS.K"=" || k == JS.K"function_decl") && JS.numchildren(node) >= 1
+        lhs = node[1]
+        if JS.kind(lhs) == JS.K"BindingId"
+            return lhs.var_id
+        end
+    end
+    return nothing
+end
+
+# Collect variables that are definitely assigned (direct top-level assignments)
+# in a branch. Only considers assignments at the top level of `K"block"` nodes,
+# not those nested inside conditionals/loops.
+function undef_collect_branch_direct_assigns(
+        branch::JS.SyntaxTree, candidates::Set{JL.IdTag}
+    )
+    result = Set{JL.IdTag}()
+    undef_scan_direct_assigns!(result, branch, candidates)
+    return result
+end
+
+function undef_scan_direct_assigns!(
+        result::Set{JL.IdTag}, node::JS.SyntaxTree, candidates::Set{JL.IdTag}
+    )
+    var_id = undef_direct_assign_var_id(node)
+    if !isnothing(var_id)
+        if var_id in candidates
+            push!(result, var_id)
+        end
+    elseif JS.kind(node) == JS.K"block"
+        for child in JS.children(node)
+            undef_scan_direct_assigns!(result, child, candidates)
+        end
+    end
+    nothing
+end
+
+# Invalidate all condition implications that depend on a reassigned variable.
+function undef_invalidate_cond_implies!(lin::EventLinearizer, var_id::JL.IdTag)
+    isempty(lin.cond_implies_defined) && return
+    for key in collect(keys(lin.cond_implies_defined))
+        if var_id in key
+            delete!(lin.cond_implies_defined, key)
+        end
+    end
+end
+
+# Emit `:isdefined` hints for variables implied by correlated conditions.
+# Extracts all BindingId operands asserted true by the condition and checks
+# if any recorded implication key is a subset.
+function undef_emit_cond_implied_hints!(
+        lin::EventLinearizer, cond::JS.SyntaxTree, candidates::Set{JL.IdTag}
+    )
+    isempty(lin.cond_implies_defined) && return
+    cond_vars = JL.IdTag[]
+    undef_cond_binding_ids!(cond_vars, cond)
+    # Include enclosing conditions from the active stack so that
+    # nested `if a; if b; ...` sees the combined Set([a,b]).
+    for active_key in lin.active_cond_vars
+        union!(cond_vars, active_key)
+    end
+    isempty(cond_vars) && return
+    cond_key = Set{JL.IdTag}(cond_vars)
+    for (key, implied) in lin.cond_implies_defined
+        key ⊆ cond_key || continue
+        for var_id in implied
             if var_id in candidates
-                undef_emit_event!(lin, :isdefined, var_id, isdefined_arg)
+                undef_emit_event!(lin, :isdefined, var_id, cond)
             end
         end
-    elseif k == JS.K"&&"
-        for child in JS.children(cond)
-            undef_emit_isdefined_hints!(lin, child, candidates)
-        end
     end
+end
+
+# Record which variables are definitely assigned in the true branch of a condition.
+# Both `if x` (key = Set([x])) and `if x && z` (key = Set([x,z])) are handled uniformly.
+function undef_record_cond_implies!(
+        lin::EventLinearizer, cond_key::Union{Nothing, Set{JL.IdTag}},
+        direct_assigns::Set{JL.IdTag}
+    )
+    isnothing(cond_key) && return
+    isempty(direct_assigns) && return
+    existing = get(lin.cond_implies_defined, cond_key, nothing)
+    lin.cond_implies_defined[cond_key] =
+        isnothing(existing) ? direct_assigns : union(existing, direct_assigns)
 end
 
 function linearize_def_use_events!(
@@ -221,6 +386,7 @@ function linearize_def_use_events!(
             if var_id in candidates
                 undef_emit_event!(lin, :assign, var_id, lhs)
             end
+            undef_invalidate_cond_implies!(lin, var_id)
         end
 
     elseif k == JS.K"function_decl"
@@ -235,6 +401,7 @@ function linearize_def_use_events!(
             if var_id in candidates
                 undef_emit_event!(lin, :assign, var_id, lhs)
             end
+            undef_invalidate_cond_implies!(lin, var_id)
         end
 
     elseif k == JS.K"isdefined"
@@ -249,7 +416,10 @@ function linearize_def_use_events!(
         if has_outer_capture && JS.numchildren(ex3) >= 3
             skip_label = undef_make_label!(lin)
             undef_emit_gotoifnot!(lin, skip_label)
-            linearize_def_use_events!(lin, ctx3, ex3[3], candidates, allow_throw_optimization)
+            let saved = undef_save_cond_implied(lin)
+                linearize_def_use_events!(lin, ctx3, ex3[3], candidates, allow_throw_optimization)
+                undef_restore_cond_implied!(lin, saved)
+            end
             undef_emit_label!(lin, skip_label)
         end
 
@@ -278,12 +448,30 @@ function linearize_def_use_events!(
         # since `&&` short-circuits: all operands must be true in the true branch.
         undef_emit_isdefined_hints!(lin, cond, candidates)
 
-        linearize_def_use_events!(lin, ctx3, ex3[2], candidates, allow_throw_optimization)
+        undef_emit_cond_implied_hints!(lin, cond, candidates)
+
+        cond_vars = JL.IdTag[]
+        all_bindings = undef_cond_binding_ids!(cond_vars, cond)
+        cond_key = (all_bindings && !isempty(cond_vars)) ? Set{JL.IdTag}(cond_vars) : nothing
+
+        isnothing(cond_key) || push!(lin.active_cond_vars, cond_key)
+        let saved = undef_save_cond_implied(lin)
+            linearize_def_use_events!(lin, ctx3, ex3[2], candidates, allow_throw_optimization)
+            undef_restore_cond_implied!(lin, saved; lift_with=cond_key)
+        end
+        isnothing(cond_key) || pop!(lin.active_cond_vars)
+
+        # Record implications AFTER restore so they live in the outer scope.
+        undef_record_cond_implies!(lin, cond_key, undef_collect_branch_direct_assigns(ex3[2], candidates))
+
         undef_emit_goto!(lin, end_label)
 
         undef_emit_label!(lin, else_label)
-        if JS.numchildren(ex3) >= 3
-            linearize_def_use_events!(lin, ctx3, ex3[3], candidates, allow_throw_optimization)
+        let saved = undef_save_cond_implied(lin)
+            if JS.numchildren(ex3) >= 3
+                linearize_def_use_events!(lin, ctx3, ex3[3], candidates, allow_throw_optimization)
+            end
+            undef_restore_cond_implied!(lin, saved)
         end
 
         undef_emit_label!(lin, end_label)
@@ -295,7 +483,10 @@ function linearize_def_use_events!(
         undef_emit_label!(lin, top_label)
         linearize_def_use_events!(lin, ctx3, ex3[1], candidates, allow_throw_optimization)
         undef_emit_gotoifnot!(lin, end_label)
-        linearize_def_use_events!(lin, ctx3, ex3[2], candidates, allow_throw_optimization)
+        let saved = undef_save_cond_implied(lin)
+            linearize_def_use_events!(lin, ctx3, ex3[2], candidates, allow_throw_optimization)
+            undef_restore_cond_implied!(lin, saved)
+        end
         undef_emit_goto!(lin, top_label)
         undef_emit_label!(lin, end_label)
 
@@ -304,8 +495,11 @@ function linearize_def_use_events!(
         end_label = undef_make_label!(lin)
 
         undef_emit_label!(lin, top_label)
-        linearize_def_use_events!(lin, ctx3, ex3[1], candidates, allow_throw_optimization)
-        linearize_def_use_events!(lin, ctx3, ex3[2], candidates, allow_throw_optimization)
+        let saved = undef_save_cond_implied(lin)
+            linearize_def_use_events!(lin, ctx3, ex3[1], candidates, allow_throw_optimization)
+            linearize_def_use_events!(lin, ctx3, ex3[2], candidates, allow_throw_optimization)
+            undef_restore_cond_implied!(lin, saved)
+        end
         undef_emit_gotoifnot!(lin, end_label)
         undef_emit_goto!(lin, top_label)
         undef_emit_label!(lin, end_label)
@@ -316,13 +510,19 @@ function linearize_def_use_events!(
 
         # Try block can throw at any point
         undef_emit_gotoifnot!(lin, catch_label)
-        linearize_def_use_events!(lin, ctx3, ex3[1], candidates, allow_throw_optimization)
+        let saved = undef_save_cond_implied(lin)
+            linearize_def_use_events!(lin, ctx3, ex3[1], candidates, allow_throw_optimization)
+            undef_restore_cond_implied!(lin, saved)
+        end
         undef_emit_goto!(lin, end_label)
 
         undef_emit_label!(lin, catch_label)
-        linearize_def_use_events!(lin, ctx3, ex3[2], candidates, allow_throw_optimization)
-        if JS.numchildren(ex3) >= 3
-            linearize_def_use_events!(lin, ctx3, ex3[3], candidates, allow_throw_optimization)
+        let saved = undef_save_cond_implied(lin)
+            linearize_def_use_events!(lin, ctx3, ex3[2], candidates, allow_throw_optimization)
+            if JS.numchildren(ex3) >= 3
+                linearize_def_use_events!(lin, ctx3, ex3[3], candidates, allow_throw_optimization)
+            end
+            undef_restore_cond_implied!(lin, saved)
         end
 
         undef_emit_label!(lin, end_label)
@@ -332,7 +532,10 @@ function linearize_def_use_events!(
         end_label = undef_make_label!(lin)
 
         undef_emit_gotoifnot!(lin, finally_label)
-        linearize_def_use_events!(lin, ctx3, ex3[1], candidates, allow_throw_optimization)
+        let saved = undef_save_cond_implied(lin)
+            linearize_def_use_events!(lin, ctx3, ex3[1], candidates, allow_throw_optimization)
+            undef_restore_cond_implied!(lin, saved)
+        end
 
         undef_emit_label!(lin, finally_label)
         linearize_def_use_events!(lin, ctx3, ex3[2], candidates, allow_throw_optimization)
