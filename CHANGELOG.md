@@ -44,6 +44,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > This disables analysis for matched files. Basic features like completion still might work, but most LSP features will be unfunctional.
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
 
+### Changed
+
+- `lowering/undef-local-var` now recognizes correlated conditions to reduce false positives.
+  When a variable is assigned under a condition (e.g. `if x; y = 42; end`) and later used under the same condition (`if x; println(y); end`), the diagnostic is no longer emitted.
+  This also works with `&&` chains (`if x && z`), nested `if` blocks that are equivalent to `&&`, and combinations of both.
+
 ## 2026-03-20
 
 - Commit: [`d14efce`](https://github.com/aviatesk/JETLS.jl/commit/d14efce)
