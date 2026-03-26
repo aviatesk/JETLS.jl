@@ -813,8 +813,8 @@ function build_func_to_scopes(ctx3::JL.VariableAnalysisContext)
             func_to_scopes[func_bid] = Int[lb.scope_id for lb in cb.lambdas]
         end
         binfo = JL.get_binding(ctx3, func_bid)
-        # Detect kwsorter pattern: #funcname#N
-        m = match(r"^#(.+)#\d+$", binfo.name)
+        # Detect kw body/sorter pattern: #funcname#N or #kw_body#funcname#N
+        m = match(r"^#(?:kw_body#)?(.+)#\d+$", binfo.name)
         if m !== nothing
             main_func_name = m.captures[1]
             # Find the main function binding with this name

@@ -50,6 +50,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   When a variable is assigned under a condition (e.g. `if x; y = 42; end`) and later used under the same condition (`if x; println(y); end`), the diagnostic is no longer emitted.
   This also works with `&&` chains (`if x && z`), nested `if` blocks that are equivalent to `&&`, and combinations of both.
 
+- Updated JuliaSyntax.jl and JuliaLowering.jl dependency versions to latest
+
 ## 2026-03-20
 
 - Commit: [`d14efce`](https://github.com/aviatesk/JETLS.jl/commit/d14efce)
