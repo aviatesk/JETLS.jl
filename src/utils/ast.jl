@@ -119,9 +119,11 @@ function is_doc0(st0::JS.SyntaxTree)
     JS.kind(st0) === JS.K"macrocall" || return false
     JS.numchildren(st0) >= 1 || return false
     macro_name = st0[1]
-    JS.kind(macro_name) === JS.K"Value" || return false
-    hasproperty(macro_name, :value) || return false
-    return macro_name.value == GlobalRef(Core, Symbol("@doc"))
+    return JS.kind(macro_name) === JS.K"Identifier" &&
+           JS.hasattr(macro_name, :name_val) &&
+           macro_name.name_val == "@doc" &&
+           JS.hasattr(macro_name, :mod) &&
+           macro_name.mod === Core
 end
 
 """
