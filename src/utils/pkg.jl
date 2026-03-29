@@ -66,7 +66,7 @@ function find_analysis_env_path(state::ServerState, uri::URI)
             end
         end
         return find_env_path(filepath)
-    elseif uri.scheme == "untitled"
+    elseif isunsaveduri(uri)
         # try to analyze untitled editors using the root environment
         return isdefined(state, :root_env_path) ? state.root_env_path : nothing
     end
@@ -77,7 +77,7 @@ function find_uri_env_path(state::ServerState, uri::URI)
     if uri.scheme == "file"
         filepath = uri2filepath(uri)::String
         return find_env_path(filepath)
-    elseif uri.scheme == "untitled"
+    elseif isunsaveduri(uri)
         # try to analyze untitled editors using the root environment
         return isdefined(state, :root_env_path) ? state.root_env_path : nothing
     end

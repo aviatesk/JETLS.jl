@@ -86,23 +86,23 @@ struct InstantiationRequest
     filekind::Symbol                 # :script, :src, :test
     filedir::String                  # used for :test to construct runtestsuri
     root_path::Union{String,Nothing} # used for progress
-    notebook::Bool
+    isnotebook::Bool
 end
 function InstantiationRequest(
-        env_path::String, root_path::Union{String,Nothing}, notebook::Bool=false
+        env_path::String, root_path::Union{String,Nothing}, isnotebook::Bool=false
     )
-    return InstantiationRequest(env_path, nothing, :script, "", root_path, notebook)
+    return InstantiationRequest(env_path, nothing, :script, "", root_path, isnotebook)
 end
 function InstantiationRequest(
         env_path::String, pkgname::Union{Nothing,String}, filekind::Symbol,
         filedir::String, root_path::Union{String,Nothing}
     )
-    return InstantiationRequest(env_path, pkgname, filekind, filedir, root_path, #=notebook=#false)
+    return InstantiationRequest(env_path, pkgname, filekind, filedir, root_path, #=isnotebook=#false)
 end
 function InstantiationRequest(
         env_path::String, pkgid::Base.PkgId, root_path::Union{String,Nothing}
     )
-    return InstantiationRequest(env_path, pkgid, :src, "", root_path, #=notebook=#false)
+    return InstantiationRequest(env_path, pkgid, :src, "", root_path, #=isnotebook=#false)
 end
 
 struct InstantiationProgressCaller <: RequestCaller
@@ -910,24 +910,24 @@ end
 
 struct ScriptAnalysisEntry <: AnalysisEntry
     uri::URI
-    notebook::Bool
+    isnotebook::Bool
 end
 ScriptAnalysisEntry(uri::URI) = ScriptAnalysisEntry(uri, false)
 entryuri_impl(entry::ScriptAnalysisEntry) = entry.uri
 function progress_title_impl(entry::ScriptAnalysisEntry)
-    suffix = entry.notebook ? " [notebook (no env)]" : " [script (no env)]"
+    suffix = entry.isnotebook ? " [notebook (no env)]" : " [script (no env)]"
     return basename(uri2filename(entry.uri)) * suffix
 end
 
 struct ScriptInEnvAnalysisEntry <: AnalysisEntry
     env_path::String
     uri::URI
-    notebook::Bool
+    isnotebook::Bool
 end
 ScriptInEnvAnalysisEntry(env_path::String, uri::URI) = ScriptInEnvAnalysisEntry(env_path, uri, false)
 entryuri_impl(entry::ScriptInEnvAnalysisEntry) = entry.uri
 function progress_title_impl(entry::ScriptInEnvAnalysisEntry)
-    suffix = entry.notebook ? " [notebook (in env)]" : " [script (in env)]"
+    suffix = entry.isnotebook ? " [notebook (in env)]" : " [script (in env)]"
     return basename(uri2filename(entry.uri)) * suffix
 end
 
@@ -998,15 +998,15 @@ function lookup_analysis_entry(server::Server, uri::URI)
         end
     end
 
-    notebook = is_notebook_uri(state, uri)
+    isnotebook = is_notebook_uri(state, uri)
     env_path = result
     if isnothing(env_path)
-        return ScriptAnalysisEntry(uri, notebook)
-    elseif uri.scheme == "untitled" || notebook
+        return ScriptAnalysisEntry(uri, isnotebook)
+    elseif isunsaveduri(uri) || isnotebook
         if is_env_cached(server, env_path)
-            return ScriptInEnvAnalysisEntry(env_path, uri, notebook)
+            return ScriptInEnvAnalysisEntry(env_path, uri, isnotebook)
         else
-            return InstantiationRequest(env_path, root_path, notebook)
+            return InstantiationRequest(env_path, root_path, isnotebook)
         end
     end
 
@@ -1065,10 +1065,10 @@ end
 # =========================
 
 function do_instantiation(server::Server, uri::URI, ins_request::InstantiationRequest)
-    (; env_path, pkgname, filekind, filedir, notebook) = ins_request
+    (; env_path, pkgname, filekind, filedir, isnotebook) = ins_request
     if pkgname === nothing
         ensure_instantiated_if_requested!(server, env_path)
-        return ScriptInEnvAnalysisEntry(env_path, uri, notebook)
+        return ScriptInEnvAnalysisEntry(env_path, uri, isnotebook)
     elseif pkgname isa Base.PkgId
         pkgid = pkgname
         instantiate_package_environment!(server, env_path, pkgid.name)
@@ -1076,7 +1076,7 @@ function do_instantiation(server::Server, uri::URI, ins_request::InstantiationRe
     else
         pkgid, pkgfile = @something(
             instantiate_package_environment!(server, env_path, pkgname),
-            return ScriptInEnvAnalysisEntry(env_path, uri, notebook))
+            return ScriptInEnvAnalysisEntry(env_path, uri, isnotebook))
         if filekind === :src
             return PackageSourceAnalysisEntry(env_path, filepath2uri(pkgfile), pkgid)
         else # :test

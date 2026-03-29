@@ -5,7 +5,7 @@
 # TODO Move this under LSP.jl?
 module URIs2
 
-export @uri_str, URI, filename2uri, filepath2uri, uri2filename, uri2filepath
+export @uri_str, URI, filename2uri, filepath2uri, isunsavedfile, isunsaveduri, uri2filename, uri2filepath
 
 using StructTypes: StructTypes
 

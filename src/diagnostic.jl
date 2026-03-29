@@ -270,7 +270,7 @@ function jet_frame_to_uri(frame)
     frame.file === :none && return nothing
     filename = String(frame.file)
     # TODO Clean this up and make we can always use `filename2uri` here.
-    if startswith(filename, "Untitled")
+    if isunsavedfile(filename)
         return filename2uri(filename)
     else
         return filepath2uri(to_full_path(filename))
@@ -335,7 +335,7 @@ function jet_result_to_diagnostics!(uri2diagnostics::URI2Diagnostics, result::JE
         diagnostic = @something jet_toplevel_error_report_to_diagnostic(report, postprocessor) continue
         filename = report.file
         filename === :none && continue
-        if startswith(filename, "Untitled")
+        if isunsavedfile(filename)
             uri = filename2uri(filename)
         else
             uri = filepath2uri(to_full_path(filename))
