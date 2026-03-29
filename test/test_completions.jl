@@ -994,6 +994,19 @@ end
         end
         @test cnt == 1
     end
+
+    let text = """
+        console.log(│
+        """
+        context = CompletionContext(;
+            triggerKind = CompletionTriggerKind.TriggerCharacter,
+            triggerCharacter = "(")
+        cnt = Ref(0)
+        with_completion_request(text; context) do _, result, _
+            cnt[] = 1
+        end
+        @test cnt[] == 1
+    end
 end
 
 # keyword argument completion

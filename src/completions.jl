@@ -612,6 +612,8 @@ function call_completions!(
     (; mod, analyzer, postprocessor) = get_context_info(state, uri, pos)
     fntyp = @something resolve_type(analyzer, mod, call[1]) return nothing
 
+    fntyp isa Core.Const || return nothing
+
     argtypes = collect_call_argtypes(analyzer, mod, ca)
     fixup_argtypes!(argtypes, fntyp)
     matches = find_all_matches(argtypes)
