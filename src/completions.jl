@@ -114,7 +114,7 @@ function to_completion(
     end
 
     if !isnothing(binding.type)
-        label_detail = "::" * JL.sourcetext(binding.type)
+        label_detail = "::" * JS.sourcetext(binding.type)
     end
 
     io = IOBuffer()
