@@ -26,6 +26,7 @@ function is_location_unknown(m::Method)
     line ≤ 0 && return true
     file, _ = functionloc(m)
     if isnothing(file)
+        isunsavedfile(String(m.file)) && return false
         return true
     end
     return false
@@ -43,8 +44,12 @@ For now, it just returns the first line of the method
 """
 function LSP.Location(m::Method)
     file, line = functionloc(m)
-    file = file::String
-    file = to_full_path(file)
+    if file === nothing
+        file = String(m.file) # method defined in unsaved buffer
+    else
+        file = file::String
+        file = to_full_path(file)
+    end
     return Location(;
         uri = filename2uri(file),
         range = Range(;
