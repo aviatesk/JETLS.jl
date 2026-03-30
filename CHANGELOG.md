@@ -52,6 +52,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Updated JuliaSyntax.jl and JuliaLowering.jl dependency versions to latest
 
+### Fixed
+
+- Fixed full analysis not working on unsaved (`untitled:`) buffers.
+  Unlike saved files where analysis runs on save, unsaved buffers trigger
+  analysis on each content change with a fixed 3-second debounce.
+
 ## 2026-03-20
 
 - Commit: [`d14efce`](https://github.com/aviatesk/JETLS.jl/commit/d14efce)

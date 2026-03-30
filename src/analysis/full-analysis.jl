@@ -582,14 +582,24 @@ function analyze_parsed_if_exist(
     uri = entryuri(request.entry)
     jetconfigs = getjetconfigs(request.entry)
     fi = get_saved_file_info(server.state, uri)
-    if !isnothing(fi)
-        filename = uri2filename(uri)
-        interp = LSInterpreter(server, request; activation_done)
-        return interp, JET.analyze_and_report_expr!(interp, fi.syntax_node, filename, args...; jetconfigs...)
-    else
+    if isnothing(fi)
         filepath = @something uri2filepath(uri) error(lazy"Unsupported URI: $uri")
         interp = LSInterpreter(server, request; activation_done)
         return interp, JET.analyze_and_report_file!(interp, filepath, args...; jetconfigs...)
+    elseif isunsaveduri(uri)
+        interp = LSInterpreter(server, request; activation_done)
+        filename = uri2filename(uri)
+        fi = get_file_info(server.state, uri)
+        if isnothing(fi)
+            return interp, JET.analyze_and_report_text!(interp, "", filename, args...; jetconfigs...)
+        else
+            syntax_node = JS.build_tree(JS.SyntaxNode, fi.parsed_stream; filename)
+            return interp, JET.analyze_and_report_expr!(interp, syntax_node, filename, args...; jetconfigs...)
+        end
+    else
+        interp = LSInterpreter(server, request; activation_done)
+        filename = uri2filename(uri)
+        return interp, JET.analyze_and_report_expr!(interp, fi.syntax_node, filename, args...; jetconfigs...)
     end
 end
 

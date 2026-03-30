@@ -77,6 +77,9 @@ function handle_DidChangeTextDocumentNotification(server::Server, msg::DidChange
     end
     text = last(contentChanges).text
     cache_file_info!(server, uri, textDocument.version, text)
+    # Unsaved buffers (untitled: scheme) never receive didSave, so trigger analysis
+    # on every content change with a longer debounce to avoid excessive re-analysis.
+    isunsaveduri(uri) && request_analysis!(server, uri, #=invalidate=#true; debounce=3.0)
 end
 
 function handle_DidSaveTextDocumentNotification(server::Server, msg::DidSaveTextDocumentNotification)
