@@ -66,7 +66,7 @@ function handle_DidOpenTextDocumentNotification(server::Server, msg::DidOpenText
     cache_file_info!(server, uri, textDocument.version, parsed_stream)
     cache_saved_file_info!(server.state, uri, parsed_stream)
     invalidate_unsynced_file_cache!(server.state, uri)
-    request_analysis!(server, uri, #=onsave=#false)
+    request_analysis!(server, uri, #=invalidate=#false)
 end
 
 function handle_DidChangeTextDocumentNotification(server::Server, msg::DidChangeTextDocumentNotification)
@@ -99,7 +99,7 @@ function handle_DidSaveTextDocumentNotification(server::Server, msg::DidSaveText
         return nothing
     end
     cache_saved_file_info!(server.state, uri, text)
-    request_analysis!(server, uri, #=onsave=#true)
+    request_analysis!(server, uri, #=invalidate=#true)
 end
 
 function handle_DidCloseTextDocumentNotification(server::Server, msg::DidCloseTextDocumentNotification)

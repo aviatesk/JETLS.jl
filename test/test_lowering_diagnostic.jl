@@ -446,7 +446,7 @@ length_utf16(s::AbstractString) = sum(c::Char -> codepoint(c) < 0x10000 ? 1 : 2,
             withserver() do (; writereadmsg, id_counter, server)
                 JETLS.cache_file_info!(server, uri, 1, script)
                 JETLS.cache_saved_file_info!(server.state, uri, script)
-                JETLS.request_analysis!(server, uri, #=onsave=#false; wait=true, notify_diagnostics=false)
+                JETLS.request_analysis!(server, uri, #=invalidate=#false; wait=true, notify_diagnostics=false)
 
                 id = id_counter[] += 1
                 (; raw_res) = writereadmsg(DocumentDiagnosticRequest(;
@@ -1560,7 +1560,7 @@ end
             withserver() do (; writereadmsg, id_counter, server)
                 JETLS.cache_file_info!(server, uri, 1, script)
                 JETLS.cache_saved_file_info!(server.state, uri, script)
-                JETLS.request_analysis!(server, uri, #=onsave=#false; wait=true, notify_diagnostics=false)
+                JETLS.request_analysis!(server, uri, #=invalidate=#false; wait=true, notify_diagnostics=false)
 
                 id = id_counter[] += 1
                 (; raw_res) = writereadmsg(DocumentDiagnosticRequest(;

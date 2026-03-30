@@ -130,7 +130,7 @@ function handle_DidOpenNotebookDocumentNotification(
     end
     cache_notebook_file_info!(server, notebook_uri, notebook_info)
     cache_notebook_saved_file_info!(server, notebook_uri, notebook_info)
-    request_analysis!(server, notebook_uri, #=onsave=#false)
+    request_analysis!(server, notebook_uri, #=invalidate=#false)
     nothing
 end
 
@@ -195,7 +195,7 @@ function handle_DidSaveNotebookDocumentNotification(
         return nothing
     end
     cache_notebook_saved_file_info!(server, notebook_uri, notebook_info)
-    request_analysis!(server, notebook_uri, #=onsave=#true)
+    request_analysis!(server, notebook_uri, #=invalidate=#true)
     nothing
 end
 

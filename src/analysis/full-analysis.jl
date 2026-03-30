@@ -108,14 +108,14 @@ end
 struct InstantiationProgressCaller <: RequestCaller
     uri::URI
     ins_request::InstantiationRequest
-    onsave::Bool
+    invalidate::Bool
     notify_diagnostics::Bool
     token::ProgressToken
 end
 
 struct AnalysisProgressCaller <: RequestCaller
     uri::URI
-    onsave::Bool
+    invalidate::Bool
     entry::AnalysisEntry
     prev_analysis_result::Union{Nothing,AnalysisResult}
     notify_diagnostics::Bool
@@ -125,31 +125,31 @@ cancellable_token(rc::AnalysisProgressCaller) = rc.token
 
 function request_instantiation_progress!(
         server::Server, uri::URI, ins_request::InstantiationRequest,
-        onsave::Bool, notify_diagnostics::Bool
+        invalidate::Bool, notify_diagnostics::Bool
     )
     id = String(gensym(:WorkDoneProgressCreateRequest_instantiation))
     token = String(gensym(:InstantiationProgress))
-    addrequest!(server, id => InstantiationProgressCaller(uri, ins_request, onsave, notify_diagnostics, token))
+    addrequest!(server, id => InstantiationProgressCaller(uri, ins_request, invalidate, notify_diagnostics, token))
     params = WorkDoneProgressCreateParams(; token)
     send(server, WorkDoneProgressCreateRequest(; id, params))
 end
 
 function handle_instantiation_progress_response(server::Server, caller::InstantiationProgressCaller)
-    (; uri, ins_request, onsave, notify_diagnostics, token) = caller
+    (; uri, ins_request, invalidate, notify_diagnostics, token) = caller
     entry = do_instantiation_with_progress(server, uri, ins_request, token)
     # Now request a new progress token for the analysis phase
-    request_analysis_progress!(server, uri, onsave, entry, #=prev_analysis_result=#nothing, notify_diagnostics)
+    request_analysis_progress!(server, uri, invalidate, entry, #=prev_analysis_result=#nothing, notify_diagnostics)
 end
 
 function request_analysis_progress!(
-        server::Server, uri::URI, onsave::Bool, @nospecialize(entry::AnalysisEntry),
+        server::Server, uri::URI, invalidate::Bool, @nospecialize(entry::AnalysisEntry),
         prev_analysis_result::Union{Nothing,AnalysisResult},
         notify_diagnostics::Bool
     )
     id = String(gensym(:WorkDoneProgressCreateRequest_analysis))
     token = String(gensym(:AnalysisProgress))
     addrequest!(server, id => AnalysisProgressCaller(
-        uri, onsave, entry, prev_analysis_result, notify_diagnostics, token))
+        uri, invalidate, entry, prev_analysis_result, notify_diagnostics, token))
     params = WorkDoneProgressCreateParams(; token)
     send(server, WorkDoneProgressCreateRequest(; id, params))
 end
@@ -157,10 +157,10 @@ end
 function handle_analysis_progress_response(
         server::Server, caller::AnalysisProgressCaller, cancel_flag::CancelFlag
     )
-    (; uri, onsave, entry, prev_analysis_result, notify_diagnostics, token) = caller
+    (; uri, invalidate, entry, prev_analysis_result, notify_diagnostics, token) = caller
     cancellable_token = CancellableToken(token, cancel_flag)
     schedule_analysis!(
-        server, uri, entry, prev_analysis_result, onsave;
+        server, uri, entry, prev_analysis_result, invalidate;
         cancellable_token, notify_diagnostics)
 end
 
@@ -207,7 +207,7 @@ end
 # ========================
 
 """
-    request_analysis!(server, uri, onsave; wait=false, notify_diagnostics=true)
+    request_analysis!(server::Server, uri::URI, invalidate::Bool; wait::Bool=false, notify_diagnostics::Bool=true)
 
 Driver function that requests full-analysis for a file.
 
@@ -219,7 +219,7 @@ asynchronously when the client confirms each progress token.
 When `wait=true` or progress is not supported, the function performs the work synchronously
 and blocks until analysis completes.
 
-The `onsave` parameter affects generation management: when `true`, the generation counter
+The `invalidate` parameter affects generation management: when `true`, the generation counter
 is incremented to ensure analysis runs even if the file content hasn't changed since the
 last analysis (useful for save-triggered re-analysis).
 
@@ -227,7 +227,7 @@ The `notify_diagnostics` parameter controls whether to send diagnostic notificat
 analysis completes (used by tests to suppress notifications).
 """
 function request_analysis!(
-        server::Server, uri::URI, onsave::Bool;
+        server::Server, uri::URI, invalidate::Bool;
         wait::Bool = false,
         notify_diagnostics::Bool = true,
         cancellable_token::Union{Nothing,CancellableToken} = nothing,
@@ -252,7 +252,7 @@ function request_analysis!(
             return nothing
         elseif phase1_result isa InstantiationRequest
             if !wait && supports(server, :window, :workDoneProgress)
-                request_instantiation_progress!(server, uri, phase1_result, onsave, notify_diagnostics)
+                request_instantiation_progress!(server, uri, phase1_result, invalidate, notify_diagnostics)
                 return nothing
             else
                 entry = do_instantiation(server, uri, phase1_result)
@@ -263,17 +263,20 @@ function request_analysis!(
     end
 
     if !wait && supports(server, :window, :workDoneProgress)
-        request_analysis_progress!(server, uri, onsave, entry, prev_analysis_result, notify_diagnostics)
+        request_analysis_progress!(server, uri, invalidate, entry, prev_analysis_result, notify_diagnostics)
     else
         completion = Base.Event()
-        schedule_analysis!(server, uri, entry, prev_analysis_result, onsave;
+        schedule_analysis!(server, uri, entry, prev_analysis_result, invalidate;
             completion, cancellable_token, notify_diagnostics, debounce)
         wait && Base.wait(completion)
     end
 end
 
 """
-    schedule_analysis!(server, uri, entry, prev_analysis_result, onsave; ...)
+    schedule_analysis!(
+        server::Server, uri::URI, entry::AnalysisEntry,
+        prev_analysis_result::Union{Nothing,AnalysisResult}, invalidate::Bool;
+        ...)
 
 Schedule analysis for a confirmed entry. This is called after entry lookup is complete.
 Handles generation management, debouncing, and queueing.
@@ -293,7 +296,7 @@ for the details of this concurrent analysis management.
 """
 function schedule_analysis!(
         server::Server, uri::URI, @nospecialize(entry::AnalysisEntry),
-        prev_analysis_result::Union{Nothing,AnalysisResult}, onsave::Bool;
+        prev_analysis_result::Union{Nothing,AnalysisResult}, invalidate::Bool;
         completion::Base.Event = Base.Event(),
         cancellable_token::Union{Nothing,CancellableToken} = nothing,
         notify_diagnostics::Bool = true,
@@ -301,13 +304,13 @@ function schedule_analysis!(
     )
     manager = server.state.analysis_manager
 
-    generation = onsave ? increment_generation!(manager, entry) : get_generation(manager, entry)
+    generation = invalidate ? increment_generation!(manager, entry) : get_generation(manager, entry)
 
     request = AnalysisRequest(
         entry, uri, generation, cancellable_token, notify_diagnostics,
         prev_analysis_result, completion)
 
-    if onsave && debounce > 0
+    if invalidate && debounce > 0
         store!(manager.debounced) do debounced
             if haskey(debounced, request.entry)
                 # Cancel existing timer if any
