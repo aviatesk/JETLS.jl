@@ -636,16 +636,14 @@ end
 
 # Check if a block is "must-execute" (all paths from entry pass through it).
 # This is equivalent to: entry cannot reach exit without going through the block.
-function undef_is_must_execute(blocks::Vector{EventBlock}, block_id::Int)
-    exit_blocks = BitSet()
-    for b in blocks
-        if isempty(b.succs)
-            push!(exit_blocks, b.id)
-        end
-    end
+# When `exit_blocks` / `visited` are supplied by the caller they are reused
+# across repeated calls for the same CFG, avoiding redundant allocation.
+function undef_is_must_execute(
+        blocks::Vector{EventBlock}, block_id::Int, exit_blocks::BitSet, visited::BitSet
+    )
     isempty(exit_blocks) && return true
     avoid = BitSet([block_id])
-    can_bypass = undef_can_reach_avoiding(blocks, 1, exit_blocks, avoid, BitSet())
+    can_bypass = undef_can_reach_avoiding(blocks, 1, exit_blocks, avoid, visited)
     return !can_bypass
 end
 
@@ -727,6 +725,14 @@ function analyze_def_use(
         push!(evts, (event_kind, block.id, st))
     end
 
+    # Pre-compute exit blocks (blocks with no successors) for must-execute checks
+    exit_blocks = BitSet()
+    for b in lin.blocks
+        if isempty(b.succs)
+            push!(exit_blocks, b.id)
+        end
+    end
+
     visited = BitSet()
     for var_id in candidates
         binfo = JL.get_binding(ctx3, var_id)
@@ -768,7 +774,7 @@ function analyze_def_use(
                 undef_uses = Pair{Bool,JS.SyntaxTree}[]
                 for ub in reached
                     is_strict = ub < min_assign_block &&
-                                undef_is_must_execute(lin.blocks, ub)
+                                undef_is_must_execute(lin.blocks, ub, exit_blocks, visited)
                     push!(undef_uses, is_strict => event_trees[ub])
                 end
                 undef_result[binfo] = UndefInfo(defs, undef_uses)
