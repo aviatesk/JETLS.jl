@@ -265,7 +265,7 @@ function select_macrocall_binding(
         st0::JS.SyntaxTree, offset::Int, mod::Module, caller::AbstractString
     )
     is_macrocall_name = (offset::Int) -> (st0′::JS.SyntaxTree) ->
-        JS.kind(st0′) === JS.K"macrocall" && JS.numchildren(st0′) ≥ 1 &&
+        JS.kind(st0′) === JS.K"macrocall" && JS.numchildren(st0′) ≥ 1 && !is_doc0(st0′) &&
         offset in JS.byte_range(st0′[1])
     bas = byte_ancestors(is_macrocall_name(offset), st0, offset)
     if isempty(bas)

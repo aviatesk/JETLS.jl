@@ -62,6 +62,27 @@ include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
         end
     end
 
+    @testset "rename prepare with docstring" begin
+        let code = """
+            \"\"\"Docstring\"\"\"
+            function func(│xxx│, yyy)
+                println(│xxx│, yyy)
+            end
+            """
+            filename = joinpath(@__DIR__, "testfile.jl")
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 4
+            fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
+            furi = filename2uri(filename)
+            @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+            for pos in positions
+                rename_prep = JETLS.local_binding_rename_preparation(state, furi, fi, pos, @__MODULE__)
+                @test !isnothing(rename_prep)
+                @test rename_prep.placeholder == "xxx"
+            end
+        end
+    end
+
     @testset "rename prepare with macrocall" begin
         let code = """
             func(│xxx│) = @something rand((│xxx│, nothing)) return nothing
@@ -191,6 +212,38 @@ end
                     @test count(edits) do edit
                         edit.newText == "SSS" &&
                         edit.range == Range(; start=positions[5], var"end"=positions[6])
+                    end == 1
+                end
+            end
+        end
+    end
+
+    @testset "rename with docstring" begin
+        let code = """
+            \"\"\"Docstring\"\"\"
+            function func(│xxx│, yyy)
+                println(│xxx│, yyy)
+            end
+            """
+            filename = joinpath(@__DIR__, "testfile.jl")
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 4
+            fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
+            @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+            furi = filename2uri("Untitled-" * filename)
+            for pos in positions
+                (; result, error) = JETLS.local_binding_rename(server, furi, fi, pos, @__MODULE__, "zzz")
+                @test result isa WorkspaceEdit && isnothing(error)
+                for (uri, edits) in result.changes
+                    @test furi == uri
+                    @test length(edits) == 2
+                    @test count(edits) do edit
+                        edit.newText == "zzz" &&
+                        edit.range == Range(; start=positions[1], var"end"=positions[2])
+                    end == 1
+                    @test count(edits) do edit
+                        edit.newText == "zzz" &&
+                        edit.range == Range(; start=positions[3], var"end"=positions[4])
                     end == 1
                 end
             end
