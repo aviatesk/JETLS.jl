@@ -61,7 +61,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   When a variable is assigned under a condition (e.g. `if x; y = 42; end`) and later used under the same condition (`if x; println(y); end`), the diagnostic is no longer emitted.
   This also works with `&&` chains (`if x && z`), nested `if` blocks that are equivalent to `&&`, and combinations of both.
 
-- Updated JuliaSyntax.jl and JuliaLowering.jl dependency versions to latest
+- Updated JuliaSyntax.jl and JuliaLowering.jl dependency versions to latest.
+  The updated JuliaLowering pipeline is faster overall (https://github.com/JuliaLang/julia/pull/61425), improving performance of LSP features that rely on lowering such as diagnostics and document highlight.
+
+- The JETLS's own def-use analysis (`analyze_def_use_all_lambdas`) is now ~5x faster (684ms → 127ms).
+  Combined with the JuliaSyntax/JuliaLowering pipeline improvements above, the overall analysis pipeline time is reduced by ~2x (3649ms → 1772ms) on a large file ([`test/test_lowering_diagnostic.jl`](https://github.com/aviatesk/JETLS.jl/blob/f893ccfe/test/test_lowering_diagnostic.jl), ~1600 lines) (https://github.com/aviatesk/JETLS.jl/pull/612).
 
 - The "Prefix with `_`" code action is no longer offered for unused keyword arguments, since renaming a keyword argument changes the function's calling convention.
 
