@@ -215,8 +215,11 @@ function undef_emit_isdefined_hints!(
         JS.kind(operand) == JS.K"isdefined" || return
         JS.numchildren(operand) >= 1 || return
         arg = operand[1]
-        if JS.kind(arg) == JS.K"BindingId" && arg.var_id in candidates
-            undef_emit_event!(lin, :isdefined, arg.var_id, arg)
+        if JS.kind(arg) == JS.K"BindingId"
+            var_id = arg.var_id::JL.IdTag
+            if var_id in candidates
+                undef_emit_event!(lin, :isdefined, var_id, arg)
+            end
         end
     end
 end
@@ -228,7 +231,7 @@ function undef_cond_binding_ids!(result::Vector{JL.IdTag}, cond::JS.SyntaxTree)
     all_bindings = Ref(true)
     for_each_cond_operand(cond) do operand::JS.SyntaxTree
         if JS.kind(operand) == JS.K"BindingId"
-            push!(result, operand.var_id)
+            push!(result, operand.var_id::JL.IdTag)
         else
             all_bindings[] = false
         end
@@ -245,7 +248,7 @@ function undef_direct_assign_var_id(node::JS.SyntaxTree)
     if (k == JS.K"=" || k == JS.K"function_decl") && JS.numchildren(node) >= 1
         lhs = node[1]
         if JS.kind(lhs) == JS.K"BindingId"
-            return lhs.var_id
+            return lhs.var_id::JL.IdTag
         end
     end
     return nothing
@@ -334,7 +337,7 @@ function linearize_def_use_events!(
     k = JS.kind(ex3)
 
     if k == JS.K"BindingId"
-        var_id = ex3.var_id
+        var_id = ex3.var_id::JL.IdTag
         if var_id in candidates
             undef_emit_event!(lin, :use, var_id, ex3)
         end
@@ -382,7 +385,7 @@ function linearize_def_use_events!(
         # Then record assignment
         lhs = ex3[1]
         if JS.kind(lhs) == JS.K"BindingId"
-            var_id = lhs.var_id
+            var_id = lhs.var_id::JL.IdTag
             if var_id in candidates
                 undef_emit_event!(lin, :assign, var_id, lhs)
             end
@@ -397,7 +400,7 @@ function linearize_def_use_events!(
         # Then emit the assign event for the function name
         lhs = ex3[1]
         if JS.kind(lhs) == JS.K"BindingId"
-            var_id = lhs.var_id
+            var_id = lhs.var_id::JL.IdTag
             if var_id in candidates
                 undef_emit_event!(lin, :assign, var_id, lhs)
             end
@@ -411,7 +414,7 @@ function linearize_def_use_events!(
     elseif k == JS.K"lambda"
         # Handle captured variables from outer scope by recursing into lambda body
         # We don't know when/if the closure is called, so wrap in an uncertain branch
-        nested_lb = ex3.lambda_bindings
+        nested_lb = ex3.lambda_bindings::JL.LambdaBindings
         has_outer_capture = any(is_capt && id in candidates for (id, is_capt) in nested_lb.locals_capt)
         if has_outer_capture && JS.numchildren(ex3) >= 3
             skip_label = undef_make_label!(lin)
@@ -559,7 +562,7 @@ function linearize_def_use_events!(
         if JS.numchildren(ex3) >= 1
             callee = ex3[1]
             if JS.kind(callee) == JS.K"BindingId"
-                binfo = JL.get_binding(ctx3, callee.var_id)
+                binfo = JL.get_binding(ctx3, callee.var_id::JL.IdTag)
                 if binfo.kind === :global && binfo.name == "throw"
                     unreachable = undef_new_block!(lin)
                     undef_switch_to_block!(lin, unreachable)
@@ -656,7 +659,7 @@ function collect_closure_captured_vars(body::JS.SyntaxTree, candidates::Set{JL.I
     result = Set{JL.IdTag}()
     traverse(body) do st::JS.SyntaxTree
         JS.kind(st) == JS.K"lambda" || return nothing
-        nested_lb = st.lambda_bindings
+        nested_lb = st.lambda_bindings::JL.LambdaBindings
         for (id, is_capt) in nested_lb.locals_capt
             if is_capt && id in candidates
                 push!(result, id)
@@ -668,8 +671,7 @@ function collect_closure_captured_vars(body::JS.SyntaxTree, candidates::Set{JL.I
 end
 
 """
-    analyze_def_use(ctx3, ex3; allow_throw_optimization)
-        -> (undef_info, dead_store_info)
+    analyze_def_use(ctx3, ex3; allow_throw_optimization) -> (undef_info, dead_store_info)
 
 Combined CFG-aware analysis for local bindings in a single lambda.
 Builds the event-based CFG once and runs both undef analysis and dead
@@ -688,7 +690,7 @@ function analyze_def_use(
 
     JS.kind(st3) == JS.K"lambda" || return (undef_result, dead_store_result)
 
-    lambda_bindings = st3.lambda_bindings
+    lambda_bindings = st3.lambda_bindings::JL.LambdaBindings
     candidates = Set{JL.IdTag}()
     for (id, from_outer_lambda) in lambda_bindings.locals_capt
         from_outer_lambda && continue
@@ -740,8 +742,7 @@ function analyze_def_use(
         if isempty(use_blocks)
             undef_result[binfo] = UndefInfo(defs, Pair{Bool,JS.SyntaxTree}[])
         elseif isempty(assign_blocks)
-            undef_uses = Pair{Bool,JS.SyntaxTree}[
-                true => event_trees[ub] for ub in use_blocks]
+            undef_uses = Pair{Bool,JS.SyntaxTree}[true => event_trees[ub] for ub in use_blocks]
             undef_result[binfo] = UndefInfo(defs, undef_uses)
         else
             reached = undef_reachable_uses(lin.blocks, 1, use_blocks, assign_blocks)
