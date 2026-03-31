@@ -1199,7 +1199,6 @@ function lowering_diagnostics!(
     return analyze_lowered_code!(diagnostics, uri, fi, res;
         skip_analysis_requiring_context, allow_throw_optimization, kwargs...)
 end
-lowering_diagnostics(args...; kwargs...) = lowering_diagnostics!(Diagnostic[], args...; kwargs...) # used by tests
 
 struct ImportInfo
     uri::URI

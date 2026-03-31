@@ -16,9 +16,13 @@ function get_lowered_diagnostics(mod::Module, text::AbstractString; kwargs...)
     filename = abspath(pkgdir(JETLS), "test", "test_lowering_diagnostic.jl")
     fi = JETLS.FileInfo(#=version=#0, text, filename)
     uri = filepath2uri(filename)
-    st0 = JETLS.build_syntax_tree(fi)
-    @assert JS.kind(st0) === JS.K"toplevel"
-    return JETLS.lowering_diagnostics(uri, fi, mod, st0[1]; kwargs...)
+    st0_top = JETLS.build_syntax_tree(fi)
+    @assert JS.kind(st0_top) === JS.K"toplevel"
+    diagnostics = LSP.Diagnostic[]
+    JETLS.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
+        JETLS.lowering_diagnostics!(diagnostics, uri, fi, mod, st0; kwargs...)
+    end
+    return diagnostics
 end
 
 macro gen_unused(x)
@@ -84,6 +88,17 @@ length_utf16(s::AbstractString) = sum(c::Char -> codepoint(c) < 0x10000 ? 1 : 2,
         @test diagnostic.message == "Unused argument `y`"
         @test diagnostic.range.start.line == 0
         @test diagnostic.range.var"end".line == 0
+    end
+
+    let diagnostics = get_lowered_diagnostics("""
+        \"\"\"Docstring\"\"\"
+        function foo(x, y)
+            return x
+        end
+        """)
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.message == "Unused argument `y`"
     end
 
     let diagnostics = get_lowered_diagnostics("""
@@ -673,27 +688,24 @@ end
     end
 
     @testset "toplevel lowering error diagnostics" begin
-        server = JETLS.Server()
-        uri = URI("file://$(@__FILE__)")
-        text = """
-        macro foo(x, y) \$(x) end
-        macro bar(x, y) \$(x) end
-        """
-        fi = JETLS.cache_file_info!(server, uri, #=version=#0, text)
-        diagnostics = JETLS.toplevel_lowering_diagnostics(server, uri, fi)
-        @test length(diagnostics) == 2
-        @test count(diagnostics) do diagnostic
-            diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE &&
-            diagnostic.message == "`\$` expression outside string or quote" &&
-            diagnostic.range.start.line == 0 &&
-            diagnostic.range.var"end".line == 0
-        end == 1
-        @test count(diagnostics) do diagnostic
-            diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE &&
-            diagnostic.message == "`\$` expression outside string or quote" &&
-            diagnostic.range.start.line == 1 &&
-            diagnostic.range.var"end".line == 1
-        end == 1
+        let diagnostics = get_lowered_diagnostics("""
+            macro foo(x, y) \$(x) end
+            macro bar(x, y) \$(x) end
+            """)
+            @test length(diagnostics) == 2
+            @test count(diagnostics) do diagnostic
+                diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE &&
+                diagnostic.message == "`\$` expression outside string or quote" &&
+                diagnostic.range.start.line == 0 &&
+                diagnostic.range.var"end".line == 0
+            end == 1
+            @test count(diagnostics) do diagnostic
+                diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE &&
+                diagnostic.message == "`\$` expression outside string or quote" &&
+                diagnostic.range.start.line == 1 &&
+                diagnostic.range.var"end".line == 1
+            end == 1
+        end
     end
 
     @testset "macro not found error diagnostics" begin
