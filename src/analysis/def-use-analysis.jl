@@ -578,9 +578,13 @@ function linearize_def_use_events!(
     end
 end
 
-# Check if `start` can reach any block in `targets` WITHOUT going through any block in `avoid`
-function undef_can_reach_avoiding(blocks::Vector{EventBlock}, start::Int, targets::Set{Int}, avoid::Set{Int})
-    visited = Set{Int}()
+# Check if `start` can reach any block in `targets` WITHOUT going through any block in `avoid`.
+# `visited` is a caller-provided scratch `BitSet` that is cleared on entry.
+function undef_can_reach_avoiding(
+        blocks::Vector{EventBlock}, start::Int, targets::BitSet, avoid::BitSet,
+        visited::BitSet
+    )
+    empty!(visited)
     worklist = Int[start]
     while !isempty(worklist)
         block_id = pop!(worklist)
@@ -602,10 +606,12 @@ function undef_can_reach_avoiding(blocks::Vector{EventBlock}, start::Int, target
 end
 
 # Find all use blocks reachable from `start` avoiding `avoid`, sorted by block ID.
+# `visited` is a caller-provided scratch `BitSet` that is cleared on entry.
 function undef_reachable_uses(
-        blocks::Vector{EventBlock}, start::Int, targets::Set{Int}, avoid::Set{Int}
+        blocks::Vector{EventBlock}, start::Int, targets::BitSet, avoid::BitSet,
+        visited::BitSet
     )
-    visited = Set{Int}()
+    empty!(visited)
     worklist = Int[start]
     reached = Int[]
     while !isempty(worklist)
@@ -628,24 +634,18 @@ function undef_reachable_uses(
     return reached
 end
 
-# Check if a block is "must-execute" (all paths from entry pass through it)
-# This is equivalent to: entry cannot reach exit without going through the block
+# Check if a block is "must-execute" (all paths from entry pass through it).
+# This is equivalent to: entry cannot reach exit without going through the block.
 function undef_is_must_execute(blocks::Vector{EventBlock}, block_id::Int)
-    # Find exit blocks (blocks with no successors)
-    exit_blocks = Set{Int}()
+    exit_blocks = BitSet()
     for b in blocks
         if isempty(b.succs)
             push!(exit_blocks, b.id)
         end
     end
-
-    # If no exit blocks, consider block as must-execute (edge case)
     isempty(exit_blocks) && return true
-
-    # Check if entry (block 1) can reach any exit without going through block_id
-    can_bypass = undef_can_reach_avoiding(blocks, 1, exit_blocks, Set{Int}([block_id]))
-
-    # If entry cannot reach exit without going through this block, it's must-execute
+    avoid = BitSet([block_id])
+    can_bypass = undef_can_reach_avoiding(blocks, 1, exit_blocks, avoid, BitSet())
     return !can_bypass
 end
 
@@ -715,13 +715,14 @@ function analyze_def_use(
     end
     undef_finalize_cfg!(lin)
 
+    visited = BitSet()
     for var_id in candidates
         binfo = JL.get_binding(ctx3, var_id)
 
         defs = JS.SyntaxTree[]
-        assign_blocks = Set{Int}()       # for undef (includes :isdefined)
-        real_assign_blocks = Set{Int}()  # for dead store (only :assign)
-        use_blocks = Set{Int}()
+        assign_blocks = BitSet()       # for undef (includes :isdefined)
+        real_assign_blocks = BitSet()  # for dead store (only :assign)
+        use_blocks = BitSet()
         event_trees = Dict{Int,JS.SyntaxTree}()
         for block in lin.blocks
             (event_kind, id, st) = @something block.event continue
@@ -745,7 +746,7 @@ function analyze_def_use(
             undef_uses = Pair{Bool,JS.SyntaxTree}[true => event_trees[ub] for ub in use_blocks]
             undef_result[binfo] = UndefInfo(defs, undef_uses)
         else
-            reached = undef_reachable_uses(lin.blocks, 1, use_blocks, assign_blocks)
+            reached = undef_reachable_uses(lin.blocks, 1, use_blocks, assign_blocks, visited)
             if !isempty(reached)
                 min_assign_block = minimum(assign_blocks)
                 undef_uses = Pair{Bool,JS.SyntaxTree}[]
@@ -761,13 +762,19 @@ function analyze_def_use(
         end
 
         # --- Dead store analysis ---
-        if var_id in closure_captured || isempty(use_blocks) || isempty(real_assign_blocks)
+        if var_id in closure_captured ||
+           isempty(use_blocks) || isempty(real_assign_blocks)
             continue
         end
         dead_defs = JS.SyntaxTree[]
+        other_assigns = BitSet()
         for def_block_id in real_assign_blocks
-            other_assigns = Set{Int}(ab for ab in real_assign_blocks if ab != def_block_id)
-            can_reach_use = undef_can_reach_avoiding(lin.blocks, def_block_id, use_blocks, other_assigns)
+            empty!(other_assigns)
+            for ab in real_assign_blocks
+                ab != def_block_id && push!(other_assigns, ab)
+            end
+            can_reach_use = undef_can_reach_avoiding(
+                lin.blocks, def_block_id, use_blocks, other_assigns, visited)
             if !can_reach_use
                 push!(dead_defs, event_trees[def_block_id])
             end
