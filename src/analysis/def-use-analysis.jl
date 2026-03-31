@@ -715,27 +715,43 @@ function analyze_def_use(
     end
     undef_finalize_cfg!(lin)
 
+    # Pre-build var_id → event list index to avoid
+    # O(blocks × candidates) scanning in the per-variable loop
+    var_events = Dict{JL.IdTag,Vector{Tuple{Symbol,Int,JS.SyntaxTree}}}()
+    for block in lin.blocks
+        evt = block.event
+        isnothing(evt) && continue
+        (event_kind, id, st) = evt
+        id in candidates || continue
+        evts = get!(Vector{Tuple{Symbol,Int,JS.SyntaxTree}}, var_events, id)
+        push!(evts, (event_kind, block.id, st))
+    end
+
     visited = BitSet()
     for var_id in candidates
         binfo = JL.get_binding(ctx3, var_id)
+
+        evts = get(var_events, var_id, nothing)
+        if isnothing(evts)
+            undef_result[binfo] = UndefInfo()
+            continue
+        end
 
         defs = JS.SyntaxTree[]
         assign_blocks = BitSet()       # for undef (includes :isdefined)
         real_assign_blocks = BitSet()  # for dead store (only :assign)
         use_blocks = BitSet()
         event_trees = Dict{Int,JS.SyntaxTree}()
-        for block in lin.blocks
-            (event_kind, id, st) = @something block.event continue
-            id == var_id || continue
-            event_trees[block.id] = st
+        for (event_kind, block_id, st) in evts
+            event_trees[block_id] = st
             if event_kind === :assign
                 push!(defs, st)
-                push!(assign_blocks, block.id)
-                push!(real_assign_blocks, block.id)
+                push!(assign_blocks, block_id)
+                push!(real_assign_blocks, block_id)
             elseif event_kind === :isdefined
-                push!(assign_blocks, block.id)
+                push!(assign_blocks, block_id)
             else # :use
-                push!(use_blocks, block.id)
+                push!(use_blocks, block_id)
             end
         end
 
