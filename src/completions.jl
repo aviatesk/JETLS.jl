@@ -786,7 +786,8 @@ function resolve_completion_item(state::ServerState, item::CompletionItem)
         doc = @something lookup_method_documentation(match) return item
         documentation = completion_resolver_info.postprocessor(string(doc))
         _, result = infer_match!(CC.NativeInterpreter(Base.get_world_counter()), match)
-        rettyp = CC.widenconst(result.result)
+        resulttyp = @something result.result return item
+        rettyp = CC.widenconst(resulttyp)
         # TODO Show effects and exception type?
         typstr = completion_resolver_info.postprocessor(string(rettyp))
         detail = " ::" * typstr
