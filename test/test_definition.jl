@@ -239,6 +239,28 @@ end
     end
 end
 
+@testset "'Definition' for local bindings with docstring" begin
+    @testset "local definition with docstring" begin
+        cnt = 0
+        with_definition_request("""
+            \"\"\"Docstring\"\"\"
+            function func(xxx, yyy)
+                value = xxx│ + yyy
+                return value
+            end
+        """) do _, results, uri
+            @test results isa Vector{Location}
+            @test length(results) == 1
+            @test any(results) do result
+                result.uri == uri &&
+                result.range.start.line == 1
+            end
+            cnt += 1
+        end
+        @test cnt == 1
+    end
+end
+
 @testset "'Definition' for local bindings" begin
     @testset "local definition with macrocall" begin
         cnt = 0

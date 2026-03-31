@@ -275,4 +275,21 @@ end
     end
 end
 
+@testset "'hover' for local bindings with docstring" begin
+    clean_text, positions = JETLS.get_text_and_positions("""
+        \"\"\"Docstring\"\"\"
+        function func(xxx, yyy)
+            value = │xx│x│ + yyy
+            return value
+        end
+    """)
+    @test length(positions) == 3
+    for pos in positions
+        result = get_local_hover(clean_text, pos)
+        @test result isa Hover
+        @test result.range.start == positions[1]
+        @test result.range.var"end" == positions[3]
+    end
+end
+
 end # module test_hover

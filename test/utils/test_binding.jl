@@ -135,6 +135,22 @@ end
         @test cnt == 2
     end
 
+    # Docstring function: cursor on argument should select the argument binding
+    let cnt = 0
+        _with_target_binding("""
+            \"\"\"Docstring\"\"\"
+            function func(│xxx│, yyy)
+                println(│xxx│, yyy)
+            end
+            """) do i, (; ctx3, binding)
+            @test JS.sourcetext(binding) == "xxx"
+            binfo = JL.get_binding(ctx3, binding)
+            @test binfo.kind === :argument
+            cnt += 1
+        end
+        @test cnt == 4
+    end
+
     # Qualified macrocall: cursor at end of macro name returns nothing
     let cnt = 0
         with_target_binding("""

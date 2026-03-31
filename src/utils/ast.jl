@@ -204,6 +204,8 @@ function _remove_macrocalls(st::JS.SyntaxTree)
             # `is_generated` can track argument usage within
             # returned quoted expressions.
             return st, false
+        elseif is_doc0(st)
+            return _remove_macrocalls(st[end])[1], true
         end
         new_children = JS.SyntaxList(JS.syntax_graph(st))
         for i = 2:JS.numchildren(st)
@@ -221,8 +223,7 @@ function _remove_macrocalls(st::JS.SyntaxTree)
         push!(new_children, nc)
     end
     k = JS.kind(st)
-    new_node = changed ?
-        JL.@ast(JS.syntax_graph(st), st, [k new_children...]) : st
+    new_node = changed ? JL.@ast(JS.syntax_graph(st), st, [k new_children...]) : st
     return (new_node, changed)
 end
 
