@@ -199,7 +199,7 @@ function is_kwcall_lambda(ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTree)
         end
 end
 
-function __select_target_binding(
+function _select_target_binding(
         ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTree, offset::Int;
         is_generated::Bool = false)
     return @something(
@@ -210,8 +210,16 @@ function __select_target_binding(
         return nothing)
 end
 
-function _select_target_binding(st0_top::JS.SyntaxTree, offset::Int, mod::Module;
-                                caller::AbstractString = "_select_target_binding")
+"""
+    select_target_binding(st0_top, offset, mod) -> Union{Nothing, NamedTuple}
+
+Return the binding closest to the cursor at `offset` within `st0_top`,
+or `nothing` if no binding is found. On success the returned named tuple
+contains `(; ctx3, st3, st0, binding)` where `binding` satisfies
+`JS.kind(binding) === JS.K"BindingId"`.
+"""
+function select_target_binding(st0_top::JS.SyntaxTree, offset::Int, mod::Module;
+                                caller::AbstractString = "select_target_binding")
     st0 = @something greatest_local(st0_top, offset) return nothing # nothing we can lower
 
     macrocall_result = select_macrocall_binding(st0, offset, mod, caller)
@@ -226,7 +234,7 @@ function _select_target_binding(st0_top::JS.SyntaxTree, offset::Int, mod::Module
         return nothing
     end
     binding = @something(
-        __select_target_binding(ctx3, st3, offset; is_generated=is_generated0(st0)),
+        _select_target_binding(ctx3, st3, offset; is_generated=is_generated0(st0)),
         return nothing)
     binding = normalize_local_alias_to_global(ctx3, binding)
     return (; ctx3, st3, st0, binding)
@@ -292,18 +300,6 @@ function select_macrocall_binding(
 end
 
 """
-    select_target_binding(st0_top::JS.SyntaxTree, offset::Int, mod::Module) -> target_binding::Union{Nothing,JS.SyntaxTree}
-
-For the same purpose as [`select_target_identifier`](@ref), returns the `target_binding::JS.SyntaxTree`
-closest to the cursor at the `offset` position.
-It is guaranteed that `target_binding` satisfies `JS.kind(target_binding) === JS.K"BindingId"`.
-"""
-function select_target_binding(st0_top::JS.SyntaxTree, offset::Int, mod::Module)
-    (; binding) = @something _select_target_binding(st0_top, offset, mod) return nothing
-    return binding
-end
-
-"""
     select_target_binding_definitions(st0_top::JS.SyntaxTree, offset::Int, mod::Module) ->
         nothing or (binding::JS.SyntaxTree, definitions::JS.SyntaxList)
 
@@ -315,7 +311,7 @@ has no definitions. Otherwise returns a tuple of `(binding, definitions)` where:
 - `definitions` is a `JS.SyntaxList` containing all definition sites for that binding
 """
 function select_target_binding_definitions(st0_top::JS.SyntaxTree, offset::Int, mod::Module)
-    (; ctx3, st3, binding) = @something _select_target_binding(st0_top, offset, mod) return nothing
+    (; ctx3, st3, binding) = @something select_target_binding(st0_top, offset, mod) return nothing
     binfo = JL.get_binding(ctx3, binding)
     definitions = @somereal lookup_binding_definitions(st3, binfo) return nothing
     return binding, definitions

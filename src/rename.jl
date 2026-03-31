@@ -71,7 +71,7 @@ function local_binding_rename_preparation(
     offset = xy_to_offset(fi, pos)
 
     (; ctx3, binding) = @something begin
-        _select_target_binding(st0_top, offset, mod; caller="local_binding_rename_preparation")
+        select_target_binding(st0_top, offset, mod; caller="local_binding_rename_preparation")
     end return nothing
 
     binfo = JL.get_binding(ctx3, binding)
@@ -90,7 +90,7 @@ function global_binding_rename_preparation(
     offset = xy_to_offset(fi, pos)
 
     (; ctx3, binding) = @something begin
-        _select_target_binding(st0_top, offset, mod; caller="global_binding_rename_preparation")
+        select_target_binding(st0_top, offset, mod; caller="global_binding_rename_preparation")
     end return nothing
 
     binfo = JL.get_binding(ctx3, binding)
@@ -193,7 +193,7 @@ function local_binding_rename(
     offset = xy_to_offset(fi, pos)
 
     (; ctx3, st3, st0, binding) = @something begin
-        _select_target_binding(st0_top, offset, mod; caller="local_binding_rename")
+        select_target_binding(st0_top, offset, mod; caller="local_binding_rename")
     end return nothing
 
     binfo = JL.get_binding(ctx3, binding)
@@ -243,7 +243,7 @@ function global_binding_rename(
     offset = xy_to_offset(fi, pos)
 
     (; ctx3, binding) = @something begin
-        _select_target_binding(st0_top, offset, mod; caller="global_binding_rename")
+        select_target_binding(st0_top, offset, mod; caller="global_binding_rename")
     end return nothing
 
     binfo = JL.get_binding(ctx3, binding)

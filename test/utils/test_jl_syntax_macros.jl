@@ -142,8 +142,7 @@ children_kinds(st::JS.SyntaxTree) = JS.Kind[JS.kind(c) for c in JS.children(st)]
         ]
             st0 = jlparse(code)
             offset = findfirst("MyStruct", code).start
-            result = JETLS._select_target_binding(
-                st0, offset, lowering_module)
+            result = JETLS.select_target_binding(st0, offset, lowering_module)
             @test result !== nothing
             binfo = JL.get_binding(result.ctx3, result.binding)
             @test binfo.name == "MyStruct"

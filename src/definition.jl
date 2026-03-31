@@ -94,7 +94,7 @@ function handle_DefinitionRequest(
 
     locationlink_support = supports(server, :textDocument, :definition, :linkSupport)
 
-    binding_result = _select_target_binding(st0, offset, mod; caller="handle_DefinitionRequest")
+    binding_result = select_target_binding(st0, offset, mod; caller="handle_DefinitionRequest")
     if !isnothing(binding_result)
         (; ctx3, st3, binding) = binding_result
         binfo = JL.get_binding(ctx3, binding)

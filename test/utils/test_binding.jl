@@ -18,15 +18,6 @@ function with_target_binding(f, text::AbstractString; kwargs...)
     end
 end
 
-function _with_target_binding(f, text::AbstractString; kwargs...)
-    clean_code, positions = JETLS.get_text_and_positions(text; kwargs...)
-    st0_top = jlparse(clean_code)
-    for (i, pos) in enumerate(positions)
-        offset = JETLS.xy_to_offset(clean_code, pos, @__FILE__)
-        f(i, JETLS._select_target_binding(st0_top, offset, lowering_module))
-    end
-end
-
 @testset "select_target_binding" begin
     let cnt = 0
         with_target_binding("""
@@ -34,7 +25,7 @@ end
                 │x│xx│ = 42
                 println(│x│xx│)
             end
-            """) do i, binding
+            """) do i, (; binding)
             @test JS.sourcetext(binding) == "xxx"
             if i in (1,2,3)
                 @test JS.source_line(binding) == 1
@@ -50,13 +41,13 @@ end
 
     # Don't select the internal bindings introduced with kwfunc definitions, where
     # the binding representing the kwfunc has a range that spans the entire `func(args...; kwargs...)`.
-    # See `!startswith(binfo.name, "#")` within `__select_target_binding`
+    # See `!startswith(binfo.name, "#")` within `find_target_binding`
     let cnt = 0
         with_target_binding("""
             function func(x; │kw│=nothing)
                 println(kw)
             end
-            """) do i, binding
+            """) do i, (; binding)
             @test JS.sourcetext(binding) == "kw"
             @test JS.source_line(binding) == 1
             cnt += 1
@@ -67,7 +58,7 @@ end
     # Don't select a binding for keyword argument within `kwcall`
     let cnt = 0
         local binfo = nothing
-        _with_target_binding("""
+        with_target_binding("""
             function func(x; │kw│=nothing)
                 println(│kw│)
             end
@@ -89,7 +80,7 @@ end
     # Perform analysis on a `block` unit containing `local`
     let cnt = 0
         local binfo = nothing
-        _with_target_binding("""
+        with_target_binding("""
             begin
                 local │xxx│ = 42
                 getxxx() = │xxx│
@@ -111,7 +102,7 @@ end
 
     # Macrocall name binding
     let cnt = 0
-        _with_target_binding("""
+        with_target_binding("""
             │@info│ "hello"
             """) do i, (; ctx3, binding)
             binfo = JL.get_binding(ctx3, binding)
@@ -124,7 +115,7 @@ end
 
     # Qualified macrocall: cursor at module name returns module binding
     let cnt = 0
-        _with_target_binding("""
+        with_target_binding("""
             │Bas│e.@info "hello"
             """) do _, (; ctx3, binding)
             binfo = JL.get_binding(ctx3, binding)
@@ -137,7 +128,7 @@ end
 
     # Docstring function: cursor on argument should select the argument binding
     let cnt = 0
-        _with_target_binding("""
+        with_target_binding("""
             \"\"\"Docstring\"\"\"
             function func(│xxx│, yyy)
                 println(│xxx│, yyy)
@@ -155,8 +146,8 @@ end
     let cnt = 0
         with_target_binding("""
             Base.@info│ "hello"
-            """) do _, binding
-            @test binding === nothing
+            """) do _, result
+            @test result === nothing
             cnt += 1
         end
         @test cnt == 1
