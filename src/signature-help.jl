@@ -241,11 +241,11 @@ end
 # do in make_siginfo.
 function get_sig_str(m::Method, ca::CallArgs)
     @static if VERSION ≥ v"1.13.0-DEV.710"
-        msig = sprint(show, m; context=(:compact=>true, :print_method_signature_only=>true))
+        msig = @invokelatest sprint(show, m; context=(:compact=>true, :print_method_signature_only=>true))
     else
         # methodshow prints "f(x::T) [unparseable stuff]"
         # parse the first part and put the remainder in documentation
-        mstr = sprint(show, m; context=(:compact=>true))
+        mstr = @invokelatest sprint(show, m; context=(:compact=>true))
         msig_locinfo = split(mstr, " @ ")
         length(msig_locinfo) == 2 || return nothing
         msig = strip(msig_locinfo[1])
