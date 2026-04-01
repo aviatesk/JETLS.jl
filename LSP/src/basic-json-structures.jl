@@ -504,6 +504,11 @@ Structure to capture a description for an error code.
 end
 
 # JETLS specific data structures for `data` field of `Diagnostic`
+struct UnusedArgumentData
+    is_kwarg::Bool
+end
+export UnusedArgumentData
+
 struct UnusedVariableData
     is_tuple_unpacking::Bool
     assignment_range::Union{Nothing,Range}
@@ -578,7 +583,7 @@ Diagnostic objects are only valid in the scope of a resource.
     # Tags
     - since – 3.16.0
     """
-    data::Union{UnusedVariableData, UnusedImportData, UnsortedImportData, Nothing} = nothing
+    data::Union{UnusedArgumentData, UnusedVariableData, UnusedImportData, UnsortedImportData, Nothing} = nothing
 end
 
 # Command

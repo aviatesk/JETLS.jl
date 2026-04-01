@@ -137,6 +137,39 @@ include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
         @test length(code_actions) == 1  # only _ prefix
         @test code_actions[1].title == "Prefix with '_' to indicate intentionally unused"
     end
+
+    # No rename action for unused keyword arguments (renaming changes the API)
+    let data = UnusedArgumentData(#=is_kwarg=#true)
+        diagnostic = Diagnostic(;
+            range = Range(;
+                start = Position(; line=0, character=15),
+                var"end" = Position(; line=0, character=20)),
+            severity = DiagnosticSeverity.Information,
+            message = "Unused argument `kwarg`",
+            source = JETLS.DIAGNOSTIC_SOURCE_LIVE,
+            code = JETLS.LOWERING_UNUSED_ARGUMENT_CODE,
+            data)
+        code_actions = Union{CodeAction,Command}[]
+        JETLS.unused_variable_code_actions!(code_actions, uri, [diagnostic])
+        @test isempty(code_actions)
+    end
+
+    # Positional argument with UnusedArgumentData still gets rename action
+    let data = UnusedArgumentData(#=is_kwarg=#false)
+        diagnostic = Diagnostic(;
+            range = Range(;
+                start = Position(; line=0, character=4),
+                var"end" = Position(; line=0, character=5)),
+            severity = DiagnosticSeverity.Information,
+            message = "Unused argument `x`",
+            source = JETLS.DIAGNOSTIC_SOURCE_LIVE,
+            code = JETLS.LOWERING_UNUSED_ARGUMENT_CODE,
+            data)
+        code_actions = Union{CodeAction,Command}[]
+        JETLS.unused_variable_code_actions!(code_actions, uri, [diagnostic])
+        @test length(code_actions) == 1
+        @test code_actions[1].title == "Prefix with '_' to indicate intentionally unused"
+    end
 end
 
 @testset "unused assignment code actions" begin

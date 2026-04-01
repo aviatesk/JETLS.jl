@@ -584,21 +584,23 @@ end
 # Compute a mapping from source locations to the set of identifier names found in keyword
 # argument type annotations.
 function compute_kwarg_type_annotation_names(st0::JS.SyntaxTree)
-    result = Dict{Tuple{Int,Int},Set{String}}()
+    type_names = Dict{Tuple{Int,Int},Set{String}}()
+    locations = Set{Tuple{Int,Int}}()
     traverse(st0) do node
         JS.kind(node) === JS.K"kw" || return
         JS.numchildren(node) >= 1 || return traversal_no_recurse
         child = node[1]
+        push!(locations, JS.source_location(child))
         if JS.kind(child) === JS.K"::" && JS.numchildren(child) >= 2
             names = Set{String}()
             collect_identifier_names!(names, child[2])
             if !isempty(names)
-                result[JS.source_location(child)] = names
+                type_names[JS.source_location(child)] = names
             end
         end
         return traversal_no_recurse
     end
-    return result
+    return type_names, locations
 end
 
 function collect_identifier_names!(names::Set{String}, st::JS.SyntaxTree)
@@ -653,7 +655,8 @@ function analyze_unused_bindings!(
         diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::JS.SyntaxTree, ctx3::JL.VariableAnalysisContext,
         binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence{Tree3}}},
         has_implicit_args::Bool, reported::Set{LoweringDiagnosticKey},
-        kwarg_type_names::Dict{Tuple{Int,Int},Set{String}};
+        kwarg_type_names::Dict{Tuple{Int,Int},Set{String}},
+        kwarg_locations::Set{Tuple{Int,Int}};
         allow_unused_underscore::Bool
     ) where Tree3<:JS.SyntaxTree
     for (binfo, occurrences) in binding_occurrences
@@ -672,7 +675,8 @@ function analyze_unused_bindings!(
         provs = JS.flattened_provenance(JL.binding_ex(ctx3, binfo.id))
         is_from_user_ast(provs) || continue
         prov = last(provs)
-        if bk === :argument
+        is_argument = bk === :argument
+        if is_argument
             prov_loc = JS.source_location(prov)
             if is_kwarg_constraining_used_sparam(kwarg_type_names, prov_loc, ctx3)
                 continue
@@ -687,10 +691,10 @@ function analyze_unused_bindings!(
             # diagnostic should be reported.
             continue
         end
-        if bk === :argument
+        if is_argument
             message = "Unused argument `$bn`"
             code = LOWERING_UNUSED_ARGUMENT_CODE
-            data = nothing
+            data = UnusedArgumentData(prov_loc in kwarg_locations)
         else
             message = "Unused local binding `$bn`"
             code = LOWERING_UNUSED_LOCAL_CODE
@@ -1103,12 +1107,13 @@ function analyze_lowered_code!(
     binding_occurrences = compute_binding_occurrences(ctx3, st3, is_generated0(st0);
         ismacro, include_global_bindings=true)
     reported = Set{LoweringDiagnosticKey}() # to prevent duplicate reports for unused default or keyword arguments
-    kwarg_type_names = compute_kwarg_type_annotation_names(st0)
+    (kwarg_type_names, kwarg_locations) = compute_kwarg_type_annotation_names(st0)
 
     has_implicit_args = ismacro[] || is_generated0(st0)
 
     analyze_unused_bindings!(
-        diagnostics, fi, st0, ctx3, binding_occurrences, has_implicit_args, reported, kwarg_type_names;
+        diagnostics, fi, st0, ctx3, binding_occurrences, has_implicit_args, reported,
+        kwarg_type_names, kwarg_locations;
         allow_unused_underscore)
 
     skip_analysis_requiring_context ||

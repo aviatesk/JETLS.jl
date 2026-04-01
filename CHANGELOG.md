@@ -52,6 +52,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Updated JuliaSyntax.jl and JuliaLowering.jl dependency versions to latest
 
+- The "Prefix with `_`" code action is no longer offered for unused keyword arguments, since renaming a keyword argument changes the function's calling convention.
+
 ### Fixed
 
 - Fixed world age warnings (`WARNING: Detected access to binding 'xxx' in a world prior to its definition world. ...`) that could occur when the language server interacts with user-defined methods or types at a newer world age.

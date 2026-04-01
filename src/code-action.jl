@@ -55,7 +55,13 @@ function unused_variable_code_actions!(
     for diagnostic in diagnostics
         code = diagnostic.code
         if code == LOWERING_UNUSED_ARGUMENT_CODE || code == LOWERING_UNUSED_LOCAL_CODE
-            add_rename_unused_var_code_actions!(code_actions, uri, diagnostic; allow_unused_underscore)
+            is_kwarg = let data = diagnostic.data
+                data isa UnusedArgumentData && data.is_kwarg
+            end
+            if !is_kwarg
+                add_rename_unused_var_code_actions!(code_actions, uri, diagnostic;
+                    allow_unused_underscore)
+            end
             if code == LOWERING_UNUSED_LOCAL_CODE
                 add_delete_unused_var_code_actions!(code_actions, uri, diagnostic)
             end
