@@ -467,13 +467,9 @@ end
 function has_any_parse_errors(server::Server, request::AnalysisRequest)
     prev_analysis_result = @something request.prev_analysis_result return false # fresh analysis, no knowledge about the sources
     return any(analyzed_file_uris(prev_analysis_result)) do uri::URI
-        if isunsaveduri(uri)
-            fi = @something get_file_info(server.state, uri) return false
-            parsed_stream = fi.parsed_stream
-        else
-            saved_fi = @something get_saved_file_info(server.state, uri) return false
-            parsed_stream = saved_fi.parsed_stream
-        end
+        (; parsed_stream) = @something (isunsaveduri(uri) ?
+            get_file_info(server.state, uri) :
+            get_saved_file_info(server.state, uri)) return false
         return !isempty(parsed_stream.diagnostics)
     end
 end
