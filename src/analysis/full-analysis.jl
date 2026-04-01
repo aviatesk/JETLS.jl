@@ -549,11 +549,11 @@ function execute_analysis_request(server::Server, request::AnalysisRequest)
         end
     else error("Unsupported analysis entry $entry") end
 
-    ret = new_analysis_result(interp, request, result)
+    ret, analysis_result_replaced = new_analysis_result(interp, request, result)
 
     # TODO Request fallback analysis in cases this script was not analyzed by the analysis entry
     # request.uri ∉ analyzed_file_uris(ret)
-    return ret, true
+    return ret, analysis_result_replaced
 end
 
 function begin_full_analysis_progress(
@@ -622,14 +622,17 @@ function new_analysis_result(interp::LSInterpreter, request::AnalysisRequest, re
     jet_result_to_diagnostics!(uri2diagnostics, result, postprocessor)
 
     (; entry, prev_analysis_result) = request
-    if !(isempty(result.res.toplevel_error_reports) || isnothing(prev_analysis_result))
+    replace_analysis_result = isempty(result.res.toplevel_error_reports) || isnothing(prev_analysis_result)
+    if !replace_analysis_result
         (; actual2virtual, analyzer, analyzed_file_infos) = prev_analysis_result
     else
         actual2virtual = result.res.actual2virtual::JET.Actual2Virtual
         analyzer = update_analyzer_world(result.analyzer)
     end
 
-    return AnalysisResult(entry, uri2diagnostics, analyzer, analyzed_file_infos, actual2virtual)
+    analysis_result = AnalysisResult(entry, uri2diagnostics, analyzer,
+        analyzed_file_infos, actual2virtual)
+    return analysis_result, replace_analysis_result
 end
 
 # Revise-based package analysis

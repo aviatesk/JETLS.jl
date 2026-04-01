@@ -103,7 +103,7 @@ end
 
 function cache_intermediate_analysis_result!(interp::LSInterpreter)
     result = JET.JETToplevelResult(interp.analyzer, interp.state.res, "LSInterpreter (intermediate result)", ())
-    intermediate_result = JETLS.new_analysis_result(interp, interp.request, result)
+    intermediate_result, _ = JETLS.new_analysis_result(interp, interp.request, result)
     JETLS.update_analysis_cache!(interp.server.state.analysis_manager, intermediate_result)
 end
 
