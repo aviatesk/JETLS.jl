@@ -174,6 +174,44 @@ function local_completions!(
     return nothing
 end
 
+# field completions
+# =================
+
+function field_completions!(
+        items::Dict{String,CompletionItem},
+        mod::Module,
+        st0_top::JS.SyntaxTree, dotprefix::JS.SyntaxTree, offset::Int
+    )
+    st0 = @something greatest_local(st0_top, offset) return #=isIncomplete=#false
+    (; ctx3, st3) = try
+        jl_lower_for_scope_resolution(mod, st0)
+    catch
+        return #=isIncomplete=#false
+    end
+    inferred_tree = @something(
+        infer_toplevel_tree(ctx3, st3, mod),
+        return #=isIncomplete=#false)
+    prefixtyp = @something(
+        get_type_for_range(inferred_tree, JS.byte_range(dotprefix)),
+        return #=isIncomplete=#false)
+    T = CC.widenconst(prefixtyp)
+    T isa DataType || return #=isIncomplete=#false
+    isabstracttype(T) && return #=isIncomplete=#false
+    fnames = @invokelatest fieldnames(T)
+    for (i, fname) in enumerate(fnames)
+        s = String(fname::Symbol)
+        ftyp = @invokelatest fieldtype(T, i)
+        items[s] = CompletionItem(;
+            label = s,
+            labelDetails = CompletionItemLabelDetails(;
+                detail = "::" * string(ftyp),
+                description = "field"),
+            kind = CompletionItemKind.Field,
+            sortText = get_sort_text(i))
+    end
+    return #=isIncomplete=#false
+end
+
 # global completions
 # ==================
 
@@ -224,18 +262,12 @@ function global_completions!(
     dotprefix = select_dotprefix_identifier(st, offset)
     if !isnothing(dotprefix)
         prefixtyp = resolve_type(analyzer, completion_module, dotprefix)
-        # If dotprefix is not a module, cancel completion entirely.
-        # TODO In the future, let's add property completions and such.
-        enable_completions = false
-        if prefixtyp isa Core.Const
-            prefixval = prefixtyp.val
-            if prefixval isa Module
-                completion_module = prefixval
-                enable_completions = true
-            end
+        if prefixtyp isa Core.Const && prefixtyp.val isa Module
+            completion_module = prefixtyp.val
+        else
+            return field_completions!(items, mod, st, dotprefix, offset)
         end
-        enable_completions || return #=isIncomplete=#false
-        # disable local completions for dot-prefixed code for now
+        # disable local completions for dot-prefixed code
         is_completed |= true
     end
     resolver_id = String(gensym("GlobalCompletionResolverInfo_resovler_id"))
