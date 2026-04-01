@@ -713,12 +713,12 @@ end
 
 function lookup_method_documentation(match::Core.MethodMatch)
     m = match.method
-    isdefinedglobal(m.module, m.name) || return nothing
-    mfunc = getglobal(m.module, m.name)
+    invokelatest(isdefinedglobal, m.module, m.name) || return nothing
+    mfunc = invokelatest(getglobal, m.module, m.name)
     tt = Base.unwrap_unionall(m.sig)
     tt isa DataType || return nothing
     sig = Tuple{tt.parameters[2:end]...}
-    return Base.Docs.doc(mfunc, sig)::Markdown.MD
+    return @invokelatest(Base.Docs.doc(mfunc, sig))::Markdown.MD
 end
 
 const builtin_functions = Core.Builtin[getglobal(Core, n) for n in names(Core) if getglobal(Core, n) isa Core.Builtin]
@@ -731,15 +731,14 @@ function resolve_completion_item(state::ServerState, item::CompletionItem)
         data.resolver_id == completion_resolver_info.id)
         (; mod, postprocessor) = completion_resolver_info
         name = Symbol(data.name)
-        binding = Base.Docs.Binding(mod, name)
-        docs = postprocessor(Base.Docs.doc(binding))
+        docs = postprocessor(@invokelatest(Base.Docs.doc(Base.Docs.Binding(mod, name)))::Markdown.MD)
         (; labelDetails, detail) = item
         # This `kind` doesn't have much meaning in itself, but at least by setting `kind`,
         # we enable tree-sitter-based highlighting of the `label` in zed-julia
         kind = CompletionItemKind.Snippet
         if isnothing(detail) || isnothing(kind)
-            if isdefinedglobal(mod, name)
-                obj = getglobal(mod, name)
+            if invokelatest(isdefinedglobal, mod, name)::Bool
+                obj = invokelatest(getglobal, mod, name)
                 if obj isa Type
                     if obj in builtin_types
                         detail = "[builtin type]"

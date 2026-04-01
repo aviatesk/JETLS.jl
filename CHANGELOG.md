@@ -54,6 +54,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- Fixed world age warnings (`WARNING: Detected access to binding 'xxx' in a world prior to its definition world. ...`) that could occur when the language server interacts with user-defined methods or types at a newer world age.
+  This affected diagnostic printing, documentation lookup (hover, completions), and signature help display.
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/485)
+
 - Fixed full analysis not working on unsaved (`untitled:`) buffers.
   Unlike saved files where analysis runs on save, unsaved buffers trigger
   analysis on each content change with a fixed 3-second debounce.
