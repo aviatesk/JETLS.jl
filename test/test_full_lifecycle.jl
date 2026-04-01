@@ -45,7 +45,7 @@ let (pkgcode, positions) = JETLS.get_text_and_positions("""
                             position = pos1)))
                 @test raw_res isa CompletionResponse
                 @test raw_res.id == id
-                result = raw_res.result
+                raw_res.result
             end
             @test result isa CompletionList
             idx = findfirst(x -> x.label == "hello", result.items)

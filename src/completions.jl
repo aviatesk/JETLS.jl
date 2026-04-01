@@ -127,9 +127,7 @@ function to_completion(
     showtext = "`@ " * simple_loc_text(uri; line) * "`"
     println(io, create_source_location_link(uri, showtext; line, character))
     value = String(take!(io))
-    documentation = MarkupContent(;
-        kind = MarkupKind.Markdown,
-        value)
+    documentation = MarkupContent(; kind = MarkupKind.Markdown, value)
 
     CompletionItem(;
         label = binding.name,
