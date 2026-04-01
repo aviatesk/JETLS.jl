@@ -469,7 +469,7 @@ end
 toplevel_warning_report_to_uri_impl(report::MethodOverwriteReport) = filepath2uri(report.filepath)
 
 function toplevel_warning_report_to_diagnostic_impl(report::MethodOverwriteReport, ::SavedFileInfo, postprocessor::JET.PostProcessor)
-    sig_str = postprocessor(sprint(Base.show_tuple_as_call, Symbol(""), report.sig))
+    sig_str = postprocessor(@invokelatest sprint(Base.show_tuple_as_call, Symbol(""), report.sig))
     mod_str = postprocessor(sprint(show, report.mod))
     message = "Method definition $sig_str in module $mod_str overwritten"
     relatedInformation = DiagnosticRelatedInformation[
