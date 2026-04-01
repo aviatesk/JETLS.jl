@@ -365,9 +365,9 @@ end
             @test isnothing(findfirst(item->item.label=="xarg", items)) # local completion should be disabled
             cnt += 1
         elseif i == 4
-            # `dot_completion_test`: dot-prefixed global completion
-            # https://github.com/aviatesk/JETLS.jl/issues/389
-            @test isempty(items) # completions should be disabled if the prefix type/value is unknown
+            # `dot_completion_test`: dot-prefixed completion for untyped argument
+            # ASTTypeAnnotator cannot infer a concrete type for untyped `xarg`
+            @test isempty(items)
             cnt += 1
         elseif i == 5
             # `str_macro_test`: string macro case
@@ -379,6 +379,32 @@ end
         end
     end
     @test cnt == 5
+end
+
+@testset "field completions" begin
+    let text = """
+        struct MyStruct
+            a::Int
+            b::String
+        end
+        function test(s::MyStruct)
+            s.│
+        end
+        """
+        cnt = 0
+        with_completion_request(text) do _, result, _
+            items = result.items
+            @test length(items) == 2
+            aidx = findfirst(item->item.label=="a", items)
+            @test !isnothing(aidx)
+            @test items[aidx].kind == CompletionItemKind.Field
+            bidx = findfirst(item->item.label=="b", items)
+            @test !isnothing(bidx)
+            @test items[bidx].kind == CompletionItemKind.Field
+            cnt += 1
+        end
+        @test cnt == 1
+    end
 end
 
 @testset "local completion for methods with `@nospecialize`" begin
