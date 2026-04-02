@@ -552,14 +552,14 @@ function linearize_def_use_events!(
         unreachable = undef_new_block!(lin)
         undef_switch_to_block!(lin, unreachable)
 
-    elseif allow_throw_optimization && k == JS.K"call"
-        # Process all children (function and arguments)
+    else # Default: process all children
         for child in JS.children(ex3)
             linearize_def_use_events!(lin, ctx3, child, candidates, allow_throw_optimization)
         end
-        # Check if this is a call to global `throw` - treat as noreturn
-        # Required to support the `@assert @isdefined(var) "compiler hint to tell the definedness of `var`"` pattern
-        if JS.numchildren(ex3) >= 1
+
+        if allow_throw_optimization && k == JS.K"call" && JS.numchildren(ex3) >= 1
+            # Check if this is a call to global `throw` - treat as noreturn
+            # Required to support the `@assert @isdefined(var) "compiler hint to tell the definedness of `var`"` pattern
             callee = ex3[1]
             if JS.kind(callee) == JS.K"BindingId"
                 binfo = JL.get_binding(ctx3, callee.var_id::JL.IdTag)
@@ -568,12 +568,6 @@ function linearize_def_use_events!(
                     undef_switch_to_block!(lin, unreachable)
                 end
             end
-        end
-
-    else
-        # Default: process all children
-        for child in JS.children(ex3)
-            linearize_def_use_events!(lin, ctx3, child, candidates, allow_throw_optimization)
         end
     end
 end
