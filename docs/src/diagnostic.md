@@ -113,6 +113,7 @@ Here is a summary table of the diagnostics explained in this section:
 | [`lowering/undef-local-var`](@ref diagnostic/reference/lowering/undef-local-var)                 | `Warning/Information` | `JETLS/live`  | References to undefined local variables            |
 | [`lowering/captured-boxed-variable`](@ref diagnostic/reference/lowering/captured-boxed-variable) | `Information`         | `JETLS/live`  | Variables captured by closures that require boxing |
 | [`lowering/unused-import`](@ref diagnostic/reference/lowering/unused-import)                     | `Information`         | `JETLS/live`  | Imported names that are never used                 |
+| [`lowering/unreachable-code`](@ref diagnostic/reference/lowering/unreachable-code)               | `Information`         | `JETLS/live`  | Code after a block terminator that is never reached  |
 | [`lowering/unsorted-import-names`](@ref diagnostic/reference/lowering/unsorted-import-names)     | `Hint`                | `JETLS/live`  | Import/export names not sorted alphabetically      |
 | [`toplevel/error`](@ref diagnostic/reference/toplevel/error)                                     | `Error`               | `JETLS/save`  | Errors during code loading                         |
 | [`toplevel/method-overwrite`](@ref diagnostic/reference/toplevel/method-overwrite)               | `Warning`             | `JETLS/save`  | Method definitions that overwrite previous ones    |
@@ -526,6 +527,51 @@ module.
     end
     @gencall sin(42)  # `sin` is used here
     ```
+
+#### [Unreachable code (`lowering/unreachable-code`)](@id diagnostic/reference/lowering/unreachable-code)
+
+**Default severity**: `Information`
+
+Reported when code appears after a statement that always exits the
+current block, making subsequent code unreachable. The unreachable
+code is rendered with the `Unnecessary` tag, which causes editors to
+display it as faded/grayed out.
+
+Example:
+
+```julia
+function after_return()
+    return 1
+    x = 2  # Unreachable code (JETLS lowering/unreachable-code)
+    y = 3  # Also unreachable
+end
+
+function after_throw()
+    throw(ErrorException("error"))
+    cleanup()  # Unreachable code (JETLS lowering/unreachable-code)
+end
+
+function all_branches_return(x)
+    if x > 0
+        return 1
+    else
+        return -1
+    end
+    println("unreachable")  # (JETLS lowering/unreachable-code)
+end
+
+function after_continue()
+    for i = 1:10
+        continue
+        println(i)  # Unreachable code (JETLS lowering/unreachable-code)
+    end
+end
+```
+
+!!! tip "Code action available"
+    A "Delete unreachable code" quick fix is available that removes
+    the unreachable region along with surrounding whitespace, from
+    the end of the terminating statement to the end of the dead code.
 
 #### [Unsorted import names (`lowering/unsorted-import-names`)](@id diagnostic/reference/lowering/unsorted-import-names)
 

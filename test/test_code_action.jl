@@ -353,4 +353,72 @@ end
     end
 end
 
+module unreachable_module end
+
+function get_unreachable_diagnostics(text::AbstractString)
+    filename = abspath(pkgdir(JETLS), "test", "test_code_action.jl")
+    fi = JETLS.FileInfo(#=version=#0, text, filename)
+    uri = filepath2uri(filename)
+    st0_top = JETLS.build_syntax_tree(fi)
+    diagnostics = LSP.Diagnostic[]
+    JETLS.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
+        JETLS.lowering_diagnostics!(diagnostics, uri, fi, unreachable_module, st0)
+    end
+    return filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics), uri
+end
+
+@testset "unreachable code actions" begin
+    # Basic: delete range starts at end of `return` statement
+    let (diagnostics, uri) = get_unreachable_diagnostics("""
+        function foo()
+            return 1
+            x = 2
+        end
+        """)
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.data isa UnreachableCodeData
+        code_actions = Union{CodeAction,Command}[]
+        JETLS.unreachable_code_actions!(code_actions, uri, [diagnostic])
+        @test length(code_actions) == 1
+        action = only(code_actions)
+        @test action.title == "Delete unreachable code"
+        @test action.isPreferred == true
+        edit = only(action.edit.changes[uri])
+        @test edit.range == diagnostic.data.delete_range
+        @test edit.newText == ""
+        # delete_range starts at the end of `return 1`, not at `x = 2`
+        @test edit.range.start.line == diagnostic.range.start.line - 1 ||
+              edit.range.start.line == diagnostic.range.start.line
+    end
+
+    # Multiple unreachable statements: single delete action
+    let (diagnostics, uri) = get_unreachable_diagnostics("""
+        function foo()
+            return 1
+            x = 2
+            y = 3
+        end
+        """)
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        code_actions = Union{CodeAction,Command}[]
+        JETLS.unreachable_code_actions!(code_actions, uri, [diagnostic])
+        @test length(code_actions) == 1
+        edit = only(code_actions[1].edit.changes[uri])
+        # delete range covers from after `return 1` to end of `y = 3`
+        @test edit.range.var"end" == diagnostic.range.var"end"
+    end
+
+    # No code action when there's no unreachable code
+    let (diagnostics, _) = get_unreachable_diagnostics("""
+        function foo()
+            x = 2
+            return x
+        end
+        """)
+        @test isempty(diagnostics)
+    end
+end
+
 end # module test_code_action

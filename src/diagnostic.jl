@@ -1094,6 +1094,94 @@ function get_import_sort_key(st0::JS.SyntaxTree)
     end
 end
 
+# Checks whether a statement is a block terminator — i.e. subsequent
+# statements in the same block are unreachable. This includes `return`,
+# `throw`, `break`, `continue`, and branching constructs (`if`/`try`)
+# where all branches contain a block terminator.
+function is_block_terminator(
+        ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTree,
+        allow_throw_optimization::Bool
+    )
+    k = JS.kind(st3)
+    k === JS.K"return" && return true
+    k === JS.K"break" && return true
+    allow_throw_optimization && is_throw_call(ctx3, st3) && return true
+    if (k === JS.K"if" || k === JS.K"elseif") && JS.numchildren(st3) >= 3
+        return (_is_block_terminator(ctx3, st3[2], allow_throw_optimization) &&
+                _is_block_terminator(ctx3, st3[3], allow_throw_optimization))
+    end
+    if k === JS.K"trycatchelse" && JS.numchildren(st3) >= 2
+        return (_is_block_terminator(ctx3, st3[1], allow_throw_optimization) &&
+                _is_block_terminator(ctx3, st3[2], allow_throw_optimization))
+    end
+    if k === JS.K"tryfinally" && JS.numchildren(st3) >= 1
+        return _is_block_terminator(ctx3, st3[1], allow_throw_optimization)
+    end
+    return false
+end
+
+function _is_block_terminator(
+        ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTree,
+        allow_throw_optimization::Bool
+    )
+    k = JS.kind(st3)
+    if k === JS.K"block"
+        for child in JS.children(st3)
+            _is_block_terminator(ctx3, child, allow_throw_optimization) && return true
+        end
+        return false
+    end
+    return is_block_terminator(ctx3, st3, allow_throw_optimization)
+end
+
+function analyze_unreachable_code!(
+        diagnostics::Vector{Diagnostic}, fi::FileInfo,
+        ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTree,
+        allow_throw_optimization::Bool
+    )
+    traverse(st3) do st3′::JS.SyntaxTree
+        JS.kind(st3′) === JS.K"block" || return nothing
+        nchildren = JS.numchildren(st3′)
+        for i in 1:nchildren
+            child = st3′[i]
+            is_block_terminator(ctx3, child, allow_throw_optimization) || continue
+            # All subsequent children in this block are unreachable
+            first_range = last_range = nothing
+            for j in (i+1):nchildren
+                unreachable_st = st3′[j]
+                provs = JL.flattened_provenance(unreachable_st)
+                is_from_user_ast(provs) || continue
+                range = jsobj_to_range(last(provs), fi)
+                if isnothing(first_range)
+                    first_range = range
+                end
+                last_range = range
+            end
+            if !isnothing(first_range) && !isnothing(last_range)
+                merged_range = Range(;
+                    start = first_range.start,
+                    var"end" = last_range.var"end")
+                # Compute delete range: from end of the terminator to end of the unreachable region
+                terminator_range = jsobj_to_range(child, fi)
+                delete_range = Range(;
+                    start = terminator_range.var"end",
+                    var"end" = last_range.var"end")
+                push!(diagnostics, Diagnostic(;
+                    range = merged_range,
+                    severity = DiagnosticSeverity.Information,
+                    message = "Unreachable code",
+                    source = DIAGNOSTIC_SOURCE_LIVE,
+                    code = LOWERING_UNREACHABLE_CODE,
+                    codeDescription = diagnostic_code_description(LOWERING_UNREACHABLE_CODE),
+                    tags = DiagnosticTag.Ty[DiagnosticTag.Unnecessary],
+                    data = UnreachableCodeData(delete_range)))
+            end
+            break
+        end
+        return nothing
+    end
+end
+
 function analyze_lowered_code!(
         diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo, res::NamedTuple;
         skip_analysis_requiring_context::Bool = false,
@@ -1125,6 +1213,8 @@ function analyze_lowered_code!(
     analyze_unused_assignments!(diagnostics, fi, st0, dead_store_info, reported; allow_unused_underscore)
 
     analyze_captured_boxes!(diagnostics, uri, fi, ctx4, st3, reported)
+
+    analyze_unreachable_code!(diagnostics, fi, ctx3, st3, allow_throw_optimization)
 
     return diagnostics
 end

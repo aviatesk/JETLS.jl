@@ -557,17 +557,9 @@ function linearize_def_use_events!(
             linearize_def_use_events!(lin, ctx3, child, candidates, allow_throw_optimization)
         end
 
-        if allow_throw_optimization && k == JS.K"call" && JS.numchildren(ex3) >= 1
-            # Check if this is a call to global `throw` - treat as noreturn
-            # Required to support the `@assert @isdefined(var) "compiler hint to tell the definedness of `var`"` pattern
-            callee = ex3[1]
-            if JS.kind(callee) == JS.K"BindingId"
-                binfo = JL.get_binding(ctx3, callee.var_id::JL.IdTag)
-                if binfo.kind === :global && binfo.name == "throw"
-                    unreachable = undef_new_block!(lin)
-                    undef_switch_to_block!(lin, unreachable)
-                end
-            end
+        if allow_throw_optimization && is_throw_call(ctx3, ex3)
+            unreachable = undef_new_block!(lin)
+            undef_switch_to_block!(lin, unreachable)
         end
     end
 end
