@@ -42,9 +42,9 @@ each severity level, so the actual display varies by editor. In
 practice, most editors display `Error`, `Warning`, and `Information`
 with color-coded underlines (red, yellow, blue) and gutter markers,
 while `Hint` is typically rendered with a more subtle indicator such as faded
-text or an ellipsis (`...`).[^vscodeseverity]
+text or an ellipsis (`...`).[^vscode_severity]
 
-[^vscodeseverity]: VS Code, which serves as the de facto reference for LSP
+[^vscode_severity]: VS Code, which serves as the de facto reference for LSP
     client behavior, follows these conventions.
     In VS Code, `Hint` diagnostics are not listed in the Problems Panel.
 
@@ -395,9 +395,9 @@ pointing to definition sites to help understand the control flow.
 Reported when a variable is captured by a closure and requires "boxing" due to
 being assigned multiple times. Captured boxed variables are stored in heap-allocated
 containers (a.k.a. `Core.Box`), which can cause type instability and hinder
-compiler optimizations.[^perftip]
+compiler optimizations.[^performance_tip]
 
-[^perftip]:
+[^performance_tip]:
     For detailed information about how captured variables affect performance,
     see Julia's [Performance Tips on captured variables](https://docs.julialang.org/en/v1/manual/performance-tips/#man-performance-captured).
 
@@ -659,7 +659,7 @@ end
 
 !!! tip
     If you intentionally use abstract field types (e.g., in cases where data
-    types are inherently only known at compile time[^nospecializetip]),
+    types are inherently only known at compile time[^nospecialize_tip]),
     you can suppress this diagnostic using [pattern-based configuration](@ref config/diagnostic-patterns):
     ```toml
     [[diagnostic.patterns]]
@@ -669,7 +669,7 @@ end
     severity = "off"
     ```
 
-[^nospecializetip]: For such cases, you can add `@nospecialize` to the use-site methods to allow them to handle abstract data types while avoiding excessive compilation.
+[^nospecialize_tip]: For such cases, you can add `@nospecialize` to the use-site methods to allow them to handle abstract data types while avoiding excessive compilation.
 
 ### [Inference diagnostic (`inference/*`)](@id diagnostic/reference/inference)
 
