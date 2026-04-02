@@ -27,8 +27,8 @@ TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 [sources]
 Compiler = {rev = "avi/julia-JETLS-Compiler-head-2026-03-15", subdir = "Compiler", url = "https://github.com/JuliaLang/julia"}
 JET = {rev = "476bd141", url = "https://github.com/aviatesk/JET.jl"}
-JuliaLowering = {rev = "avi/julia-JETLS-JSJL-head-2026-03-28", subdir = "JuliaLowering", url = "https://github.com/JuliaLang/julia"}
-JuliaSyntax = {rev = "avi/julia-JETLS-JSJL-head-2026-03-28", subdir = "JuliaSyntax", url = "https://github.com/JuliaLang/julia"}
+JuliaLowering = {rev = "avi/JL-soft-scope-world", subdir = "JuliaLowering", url = "https://github.com/JuliaLang/julia"}
+JuliaSyntax = {rev = "avi/JL-soft-scope-world", subdir = "JuliaSyntax", url = "https://github.com/JuliaLang/julia"}
 LSP = {path = "LSP"}
 
 [compat]

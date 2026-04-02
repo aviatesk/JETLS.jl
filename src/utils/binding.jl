@@ -29,14 +29,6 @@ function is_relevant(ctx3::JL.AbstractLoweringContext,
          || cursor > start)
 end
 
-function insert_softscope_marker(st1::JS.SyntaxTree)
-    g = JS.syntax_graph(st1)
-    marker = JS.newleaf(g, st1, JS.K"softscope")
-    children = JS.SyntaxList(g)
-    push!(children, marker, st1)
-    return JS.newnode(g, st1, JS.K"block", children)
-end
-
 """
     jl_lower_for_scope_resolution(
             mod::Module, st0::JS.SyntaxTree;
@@ -91,10 +83,7 @@ function _jl_lower_for_scope_resolution(
         soft_scope::Bool = false,
     )
     ctx2, st2 = JL.expand_forms_2(ctx1, st1)
-    if soft_scope
-        st2 = insert_softscope_marker(st2)
-    end
-    ctx3, st3 = JL.resolve_scopes(ctx2, st2)
+    ctx3, st3 = JL.resolve_scopes(ctx2, st2; soft_scope)
     convert_closures || return (; st0, st1, st2, st3, ctx3)
     ctx4, st4 = JL.convert_closures(ctx3, st3)
     return (; st0, st1, st2, st3, st4, ctx3, ctx4)
