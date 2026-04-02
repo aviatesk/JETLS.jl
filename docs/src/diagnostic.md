@@ -557,7 +557,7 @@ function all_branches_return(x)
     else
         return -1
     end
-    println("unreachable")  # (JETLS lowering/unreachable-code)
+    println("unreachable")  # Unreachable code (JETLS lowering/unreachable-code)
 end
 
 function after_continue()
