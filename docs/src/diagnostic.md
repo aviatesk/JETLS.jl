@@ -27,18 +27,26 @@ Depth = 3:4
 Each diagnostic has a severity level that indicates how serious the issue is.
 JETLS supports four severity levels defined by the [LSP specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#diagnosticSeverity):
 
-- **`Error`** (`1`): Critical issues that prevent code from working correctly.
-  Most LSP clients display these with red underlines and error markers.
-- **`Warning`** (`2`): Potential problems that should be reviewed. Typically
-  shown with yellow/orange underlines and warning markers.
-- **`Information`** (`3`): Informational messages about code that may benefit
-  from attention. Often displayed with blue underlines or subtle markers.
-- **`Hint`** (`4`): Suggestions for improvements or best practices. Usually
-  shown with the least intrusive visual indicators.
+- **`Error`** (`1`): invalid code that cannot be compiled or loaded
+  (e.g. syntax errors, lowering errors)
+- **`Warning`** (`2`): code that is likely a bug
+  (e.g. undefined variables, type mismatches)
+- **`Information`** (`3`): valid code that is probably unintentional
+  (e.g. unused bindings, unreachable code)
+- **`Hint`** (`4`): stylistic suggestions where the code works as
+  intended but could be written more cleanly
+  (e.g. unsorted import names)
 
-How diagnostics are displayed depends on your LSP client (VS Code, Neovim,
-etc.), but most clients use color-coded underlines and gutter markers that
-correspond to these severity levels.
+The LSP specification does not prescribe how clients should render
+each severity level, so the actual display varies by editor. In
+practice, most editors display `Error`, `Warning`, and `Information`
+with color-coded underlines (red, yellow, blue) and gutter markers,
+while `Hint` is typically rendered with a more subtle indicator such as faded
+text or an ellipsis (`...`).[^vscode-severity]
+
+[^vscode-severity]: VS Code, which serves as the de facto reference for LSP
+    client behavior, follows these conventions.
+    In VS Code, `Hint` diagnostics are not listed in the Problems Panel.
 
 You can change the severity of any diagnostic by
 [configuring `diagnostic` section](@ref diagnostic/configuring).
