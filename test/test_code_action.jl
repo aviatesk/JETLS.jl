@@ -9,207 +9,133 @@ using JETLS.LSP.URIs2
 include(normpath(pkgdir(JETLS), "test", "setup.jl"))
 include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
 
-@testset "unused_variable_code_actions" begin
-    uri = URI("file:///test.jl")
+module lowering_module end
 
-    let diagnostic = Diagnostic(;
-            range = Range(;
-                start = Position(; line=0, character=13),
-                var"end" = Position(; line=0, character=14)),
-            severity = DiagnosticSeverity.Information,
-            message = "Unused argument `y`",
-            source = JETLS.DIAGNOSTIC_SOURCE_LIVE,
-            code = JETLS.LOWERING_UNUSED_ARGUMENT_CODE)
-        code_actions = Union{CodeAction,Command}[]
-        JETLS.unused_variable_code_actions!(code_actions, uri, [diagnostic])
+function get_lowering_diagnostics(
+        text::AbstractString, code::Union{AbstractString,Nothing} = nothing;
+        mod::Module = lowering_module, kwargs...
+    )
+    filename = abspath(pkgdir(JETLS), "test", "test_code_action.jl")
+    fi = JETLS.FileInfo(#=version=#0, text, filename)
+    uri = filepath2uri(filename)
+    st0_top = JETLS.build_syntax_tree(fi)
+    diagnostics = LSP.Diagnostic[]
+    JETLS.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
+        JETLS.lowering_diagnostics!(diagnostics, uri, fi, mod, st0; kwargs...)
+    end
+    if code !== nothing
+        filter!(d -> d.code == code, diagnostics)
+    end
+    return diagnostics, uri
+end
+
+function get_unused_var_code_actions(marked_text::AbstractString; kwargs...)
+    text, positions = JETLS.get_text_and_positions(marked_text)
+    diagnostics, uri = get_lowering_diagnostics(text; kwargs...)
+    code_actions = Union{CodeAction,Command}[]
+    JETLS.unused_variable_code_actions!(code_actions, uri, diagnostics; kwargs...)
+    return code_actions, uri, positions
+end
+
+@testset "unused variable code actions" begin
+    # Unused positional argument: rename action
+    let (code_actions, uri, _) = get_unused_var_code_actions("""
+        function f(x, y)
+            return x
+        end
+        """)
         @test length(code_actions) == 1
         action = only(code_actions)
         @test action.title == "Prefix with '_' to indicate intentionally unused"
         @test action.isPreferred == true
-        @test action.edit !== nothing
-        changes = action.edit.changes
-        @test haskey(changes, uri)
-        edits = changes[uri]
-        @test length(edits) == 1
-        edit = only(edits)
-        @test edit.range.start.line == 0
-        @test edit.range.start.character == 13
+        edit = only(action.edit.changes[uri])
         @test edit.newText == "_"
     end
 
-    let diagnostic = Diagnostic(;
-            range = Range(;
-                start = Position(; line=1, character=10),
-                var"end" = Position(; line=1, character=11)),
-            severity = DiagnosticSeverity.Information,
-            message = "Unused local binding `x`",
-            source = JETLS.DIAGNOSTIC_SOURCE_LIVE,
-            code = JETLS.LOWERING_UNUSED_LOCAL_CODE)
-        code_actions = Union{CodeAction,Command}[]
-        JETLS.unused_variable_code_actions!(code_actions, uri, [diagnostic])
-        @test length(code_actions) == 1
-        action = only(code_actions)
-        @test action.title == "Prefix with '_' to indicate intentionally unused"
-        @test action.disabled === nothing
-        @test action.isPreferred == true
-    end
-
-    let diagnostic = Diagnostic(;
-            range = Range(;
-                start = Position(; line=0, character=13),
-                var"end" = Position(; line=0, character=14)),
-            severity = DiagnosticSeverity.Information,
-            message = "Unused argument `y`",
-            source = JETLS.DIAGNOSTIC_SOURCE_LIVE,
-            code = JETLS.LOWERING_UNUSED_ARGUMENT_CODE)
-        code_actions = Union{CodeAction,Command}[]
-        JETLS.unused_variable_code_actions!(code_actions, uri, [diagnostic]; allow_unused_underscore=false)
+    # allow_unused_underscore=false: replace instead of prefix
+    let (code_actions, uri, _) = get_unused_var_code_actions("""
+        function f(x, y)
+            return x
+        end
+        """; allow_unused_underscore=false)
         @test length(code_actions) == 1
         action = only(code_actions)
         @test action.title == "Replace with '_' to indicate intentionally unused"
-        @test action.isPreferred == true
-        @test action.disabled === nothing
-        edits = action.edit.changes[uri]
-        edit = only(edits)
-        @test edit.range.start.character == 13
-        @test edit.range.var"end".character == 14
+        edit = only(action.edit.changes[uri])
         @test edit.newText == "_"
     end
 
-    let diagnostic = Diagnostic(;
-            range = Range(;
-                start = Position(; line=0, character=0),
-                var"end" = Position(; line=0, character=10)),
-            severity = DiagnosticSeverity.Error,
-            message = "Some other error",
-            source = JETLS.DIAGNOSTIC_SOURCE_LIVE,
-            code = JETLS.LOWERING_ERROR_CODE)
-        code_actions = Union{CodeAction,Command}[]
-        JETLS.unused_variable_code_actions!(code_actions, uri, [diagnostic])
-        @test isempty(code_actions)
-    end
-
-    # Test delete actions for unused local bindings with UnusedVariableData
-    let assignment_range = Range(;
-            start = Position(; line=1, character=4),
-            var"end" = Position(; line=1, character=18))
-        lhs_eq_range = Range(;
-            start = Position(; line=1, character=4),
-            var"end" = Position(; line=1, character=8))
-        data = UnusedVariableData(false, assignment_range, lhs_eq_range)
-        diagnostic = Diagnostic(;
-            range = Range(;
-                start = Position(; line=1, character=4),
-                var"end" = Position(; line=1, character=5)),
-            severity = DiagnosticSeverity.Information,
-            message = "Unused local binding `y`",
-            source = JETLS.DIAGNOSTIC_SOURCE_LIVE,
-            code = JETLS.LOWERING_UNUSED_LOCAL_CODE,
-            data)
-        code_actions = Union{CodeAction,Command}[]
-        JETLS.unused_variable_code_actions!(code_actions, uri, [diagnostic])
-        @test length(code_actions) == 3  # _ prefix + delete assignment + delete statement
+    # Unused local with assignment: rename + delete assignment + delete statement
+    let (code_actions, uri, positions) = get_unused_var_code_actions("""
+        function f()
+            │y = │rand()│
+            return nothing
+        end
+        """)
+        @test length(code_actions) == 3
         @test code_actions[1].title == "Prefix with '_' to indicate intentionally unused"
         @test code_actions[1].isPreferred == true
         @test code_actions[2].title == "Delete assignment"
-        @test code_actions[2].isPreferred === nothing
-        @test code_actions[2].edit.changes[uri][1].range == lhs_eq_range
         @test code_actions[2].edit.changes[uri][1].newText == ""
+        @test code_actions[2].edit.changes[uri][1].range.start == positions[1]
+        @test code_actions[2].edit.changes[uri][1].range.var"end" == positions[2]
         @test code_actions[3].title == "Delete statement"
-        @test code_actions[3].isPreferred === nothing
-        @test code_actions[3].edit.changes[uri][1].range == assignment_range
         @test code_actions[3].edit.changes[uri][1].newText == ""
+        @test code_actions[3].edit.changes[uri][1].range.start == positions[1]
+        @test code_actions[3].edit.changes[uri][1].range.var"end" == positions[3]
     end
 
-    # Test no delete actions for tuple unpacking
-    let data = UnusedVariableData(true, nothing, nothing)
-        diagnostic = Diagnostic(;
-            range = Range(;
-                start = Position(; line=1, character=7),
-                var"end" = Position(; line=1, character=8)),
-            severity = DiagnosticSeverity.Information,
-            message = "Unused local binding `y`",
-            source = JETLS.DIAGNOSTIC_SOURCE_LIVE,
-            code = JETLS.LOWERING_UNUSED_LOCAL_CODE,
-            data)
-        code_actions = Union{CodeAction,Command}[]
-        JETLS.unused_variable_code_actions!(code_actions, uri, [diagnostic])
-        @test length(code_actions) == 1  # only _ prefix
-        @test code_actions[1].title == "Prefix with '_' to indicate intentionally unused"
+    # Tuple unpacking: only rename, no delete
+    let (code_actions, _, _) = get_unused_var_code_actions("""
+        function f()
+            (x, y) = (1, 2)
+            return x
+        end
+        """)
+        unused_y = filter(a -> contains(a.title, "Prefix"), code_actions)
+        @test length(unused_y) == 1
+        delete_actions = filter(a -> contains(a.title, "Delete"), code_actions)
+        @test isempty(delete_actions)
     end
 
-    # No rename action for unused keyword arguments (renaming changes the API)
-    let data = UnusedArgumentData(#=is_kwarg=#true)
-        diagnostic = Diagnostic(;
-            range = Range(;
-                start = Position(; line=0, character=15),
-                var"end" = Position(; line=0, character=20)),
-            severity = DiagnosticSeverity.Information,
-            message = "Unused argument `kwarg`",
-            source = JETLS.DIAGNOSTIC_SOURCE_LIVE,
-            code = JETLS.LOWERING_UNUSED_ARGUMENT_CODE,
-            data)
-        code_actions = Union{CodeAction,Command}[]
-        JETLS.unused_variable_code_actions!(code_actions, uri, [diagnostic])
+    # Unused keyword argument: no rename action
+    let (code_actions, _, _) = get_unused_var_code_actions("""
+        function f(; kwarg=1)
+            return nothing
+        end
+        """)
         @test isempty(code_actions)
-    end
-
-    # Positional argument with UnusedArgumentData still gets rename action
-    let data = UnusedArgumentData(#=is_kwarg=#false)
-        diagnostic = Diagnostic(;
-            range = Range(;
-                start = Position(; line=0, character=4),
-                var"end" = Position(; line=0, character=5)),
-            severity = DiagnosticSeverity.Information,
-            message = "Unused argument `x`",
-            source = JETLS.DIAGNOSTIC_SOURCE_LIVE,
-            code = JETLS.LOWERING_UNUSED_ARGUMENT_CODE,
-            data)
-        code_actions = Union{CodeAction,Command}[]
-        JETLS.unused_variable_code_actions!(code_actions, uri, [diagnostic])
-        @test length(code_actions) == 1
-        @test code_actions[1].title == "Prefix with '_' to indicate intentionally unused"
     end
 end
 
 @testset "unused assignment code actions" begin
-    uri = filepath2uri(@__FILE__)
-
     # unused-assignment gets delete actions but NOT rename action
-    let assignment_range = Range(;
-            start = Position(; line=2, character=8),
-            var"end" = Position(; line=2, character=13))
-        lhs_eq_range = Range(;
-            start = Position(; line=2, character=8),
-            var"end" = Position(; line=2, character=12))
-        data = UnusedVariableData(false, assignment_range, lhs_eq_range)
-        diagnostic = Diagnostic(;
-            range = Range(;
-                start = Position(; line=2, character=8),
-                var"end" = Position(; line=2, character=9)),
-            severity = DiagnosticSeverity.Information,
-            message = "Value assigned to `z` is never used",
-            source = JETLS.DIAGNOSTIC_SOURCE_LIVE,
-            code = JETLS.LOWERING_UNUSED_ASSIGNMENT_CODE,
-            data)
-        code_actions = Union{CodeAction,Command}[]
-        JETLS.unused_variable_code_actions!(code_actions, uri, [diagnostic])
-        @test length(code_actions) == 2  # delete assignment + delete statement (no _ prefix)
-        @test code_actions[1].title == "Delete assignment"
-        @test code_actions[1].edit.changes[uri][1].range == lhs_eq_range
-        @test code_actions[1].edit.changes[uri][1].newText == ""
-        @test code_actions[2].title == "Delete statement"
-        @test code_actions[2].edit.changes[uri][1].range == assignment_range
-        @test code_actions[2].edit.changes[uri][1].newText == ""
+    let (code_actions, uri, positions) = get_unused_var_code_actions("""
+        function f()
+            │x = │1│
+            x = 2
+            return x
+        end
+        """)
+        # The first `x = 1` is a dead store
+        delete_actions = filter(a -> contains(a.title, "Delete"), code_actions)
+        @test length(delete_actions) == 2
+        @test delete_actions[1].title == "Delete assignment"
+        @test delete_actions[1].edit.changes[uri][1].newText == ""
+        @test delete_actions[1].edit.changes[uri][1].range.start == positions[1]
+        @test delete_actions[1].edit.changes[uri][1].range.var"end" == positions[2]
+        @test delete_actions[2].title == "Delete statement"
+        @test delete_actions[2].edit.changes[uri][1].newText == ""
+        @test delete_actions[2].edit.changes[uri][1].range.start == positions[1]
+        @test delete_actions[2].edit.changes[uri][1].range.var"end" == positions[3]
+        # No rename action for unused assignments
+        rename_actions = filter(a -> contains(a.title, "Prefix") || contains(a.title, "Replace"), code_actions)
+        @test isempty(rename_actions)
     end
 end
 
 function get_sort_imports_code_actions(text::AbstractString)
-    fi = JETLS.FileInfo(#=version=#0, text, @__FILE__)
-    uri = filepath2uri(@__FILE__)
-    st0 = JETLS.build_syntax_tree(fi)
-    diagnostics = Diagnostic[]
-    JETLS.analyze_unsorted_imports!(diagnostics, fi, st0)
+    diagnostics, uri = get_lowering_diagnostics(text, JETLS.LOWERING_UNSORTED_IMPORT_NAMES_CODE)
     code_actions = Union{CodeAction,Command}[]
     JETLS.sort_imports_code_actions!(code_actions, uri, diagnostics)
     return code_actions, uri
@@ -278,146 +204,113 @@ end
     end
 end
 
-function get_unused_import_diagnostics(text::AbstractString)
+function get_unused_import_code_actions(marked_text::AbstractString)
+    text, positions = JETLS.get_text_and_positions(marked_text)
     server = JETLS.Server()
     uri = URI("file:///test_unused_imports.jl")
     fi = JETLS.cache_file_info!(server, uri, 1, text)
     st0_top = JETLS.build_syntax_tree(fi)
-    return JETLS.analyze_unused_imports(server, uri, fi, st0_top; skip_context_check=true)
+    diagnostics = JETLS.analyze_unused_imports(server, uri, fi, st0_top;
+        skip_context_check=true)
+    code_actions = Union{CodeAction,Command}[]
+    JETLS.unused_import_code_actions!(code_actions, uri, diagnostics)
+    return code_actions, uri, positions
 end
 
 @testset "unused import code actions" begin
-    uri = URI("file:///test.jl")
-
     # Single import: delete entire statement
-    let text = "using Base: cos"
-        diagnostics = get_unused_import_diagnostics(text)
-        @test length(diagnostics) == 1
-        diagnostic = only(diagnostics)
-        @test diagnostic.data isa UnusedImportData
-        @test diagnostic.data.delete_range.start.line == 0
-        @test diagnostic.data.delete_range.start.character == 0
-        @test diagnostic.data.delete_range.var"end".line == 0
-        @test diagnostic.data.delete_range.var"end".character == sizeof("using Base: cos")
-
-        code_actions = Union{CodeAction,Command}[]
-        JETLS.unused_import_code_actions!(code_actions, uri, [diagnostic])
+    let (code_actions, uri, positions) = get_unused_import_code_actions(
+            "│using Base: cos│")
         @test length(code_actions) == 1
         action = only(code_actions)
         @test action.title == "Remove unused import"
         @test action.isPreferred == true
         edit = only(action.edit.changes[uri])
-        @test edit.range == diagnostic.data.delete_range
         @test edit.newText == ""
+        @test edit.range.start == positions[1]
+        @test edit.range.var"end" == positions[2]
     end
 
     # Multiple imports, remove last: delete ", cos"
-    let text = "using Base: sin, cos\nsin(1.0)"
-        diagnostics = get_unused_import_diagnostics(text)
-        @test length(diagnostics) == 1
-        diagnostic = only(diagnostics)
-        @test diagnostic.data isa UnusedImportData
-        # Should delete ", cos" (from after "sin" to end of "cos")
-        @test diagnostic.data.delete_range.start.character == sizeof("using Base: sin")
-        @test diagnostic.data.delete_range.var"end".character == sizeof("using Base: sin, cos")
-
-        code_actions = Union{CodeAction,Command}[]
-        JETLS.unused_import_code_actions!(code_actions, uri, [diagnostic])
+    let (code_actions, uri, positions) = get_unused_import_code_actions(
+            "using Base: sin│, cos│\nsin(1.0)")
         @test length(code_actions) == 1
+        edit = only(code_actions[1].edit.changes[uri])
+        @test edit.newText == ""
+        @test edit.range.start == positions[1]
+        @test edit.range.var"end" == positions[2]
     end
 
     # Multiple imports, remove first: delete "sin, "
-    let text = "using Base: sin, cos\ncos(1.0)"
-        diagnostics = get_unused_import_diagnostics(text)
-        @test length(diagnostics) == 1
-        diagnostic = only(diagnostics)
-        @test diagnostic.data isa UnusedImportData
-        # Should delete "sin, " (from "sin" to before "cos")
-        @test diagnostic.data.delete_range.start.character == sizeof("using Base: ")
-        @test diagnostic.data.delete_range.var"end".character == sizeof("using Base: sin, ")
-
-        code_actions = Union{CodeAction,Command}[]
-        JETLS.unused_import_code_actions!(code_actions, uri, [diagnostic])
+    let (code_actions, uri, positions) = get_unused_import_code_actions(
+            "using Base: │sin, │cos\ncos(1.0)")
         @test length(code_actions) == 1
+        edit = only(code_actions[1].edit.changes[uri])
+        @test edit.newText == ""
+        @test edit.range.start == positions[1]
+        @test edit.range.var"end" == positions[2]
     end
 
-    # Three imports, remove middle
-    let text = "using Base: sin, cos, tan\nsin(1.0)\ntan(1.0)"
-        diagnostics = get_unused_import_diagnostics(text)
-        @test length(diagnostics) == 1
-        diagnostic = only(diagnostics)
-        @test diagnostic.data isa UnusedImportData
-        # Should delete "cos, " (from "cos" to before "tan")
-        @test diagnostic.data.delete_range.start.character == sizeof("using Base: sin, ")
-        @test diagnostic.data.delete_range.var"end".character == sizeof("using Base: sin, cos, ")
+    # Three imports, remove middle: delete "cos, "
+    let (code_actions, uri, positions) = get_unused_import_code_actions(
+            "using Base: sin, │cos, │tan\nsin(1.0)\ntan(1.0)")
+        @test length(code_actions) == 1
+        edit = only(code_actions[1].edit.changes[uri])
+        @test edit.newText == ""
+        @test edit.range.start == positions[1]
+        @test edit.range.var"end" == positions[2]
     end
 end
 
-module unreachable_module end
-
-function get_unreachable_diagnostics(text::AbstractString)
-    filename = abspath(pkgdir(JETLS), "test", "test_code_action.jl")
-    fi = JETLS.FileInfo(#=version=#0, text, filename)
-    uri = filepath2uri(filename)
-    st0_top = JETLS.build_syntax_tree(fi)
-    diagnostics = LSP.Diagnostic[]
-    JETLS.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
-        JETLS.lowering_diagnostics!(diagnostics, uri, fi, unreachable_module, st0)
-    end
-    return filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics), uri
+function get_unreachable_code_actions(marked_text::AbstractString)
+    text, positions = JETLS.get_text_and_positions(marked_text)
+    diagnostics, uri = get_lowering_diagnostics(text, JETLS.LOWERING_UNREACHABLE_CODE)
+    code_actions = Union{CodeAction,Command}[]
+    JETLS.unreachable_code_actions!(code_actions, uri, diagnostics)
+    return code_actions, uri, positions
 end
 
 @testset "unreachable code actions" begin
-    # Basic: delete range starts at end of `return` statement
-    let (diagnostics, uri) = get_unreachable_diagnostics("""
+    # Delete range covers from end of `return 1` to end of `x = 2`
+    let (code_actions, uri, positions) = get_unreachable_code_actions("""
         function foo()
-            return 1
-            x = 2
+            return 1│
+            x = 2│
         end
         """)
-        @test length(diagnostics) == 1
-        diagnostic = only(diagnostics)
-        @test diagnostic.data isa UnreachableCodeData
-        code_actions = Union{CodeAction,Command}[]
-        JETLS.unreachable_code_actions!(code_actions, uri, [diagnostic])
         @test length(code_actions) == 1
         action = only(code_actions)
         @test action.title == "Delete unreachable code"
         @test action.isPreferred == true
         edit = only(action.edit.changes[uri])
-        @test edit.range == diagnostic.data.delete_range
         @test edit.newText == ""
-        # delete_range starts at the end of `return 1`, not at `x = 2`
-        @test edit.range.start.line == diagnostic.range.start.line - 1 ||
-              edit.range.start.line == diagnostic.range.start.line
+        @test edit.range.start == positions[1]
+        @test edit.range.var"end" == positions[2]
     end
 
-    # Multiple unreachable statements: single delete action
-    let (diagnostics, uri) = get_unreachable_diagnostics("""
+    # Multiple unreachable statements: single delete covering all of them
+    let (code_actions, uri, positions) = get_unreachable_code_actions("""
         function foo()
-            return 1
+            return 1│
             x = 2
-            y = 3
+            y = 3│
         end
         """)
-        @test length(diagnostics) == 1
-        diagnostic = only(diagnostics)
-        code_actions = Union{CodeAction,Command}[]
-        JETLS.unreachable_code_actions!(code_actions, uri, [diagnostic])
         @test length(code_actions) == 1
         edit = only(code_actions[1].edit.changes[uri])
-        # delete range covers from after `return 1` to end of `y = 3`
-        @test edit.range.var"end" == diagnostic.range.var"end"
+        @test edit.newText == ""
+        @test edit.range.start == positions[1]
+        @test edit.range.var"end" == positions[2]
     end
 
     # No code action when there's no unreachable code
-    let (diagnostics, _) = get_unreachable_diagnostics("""
+    let (code_actions, _, _) = get_unreachable_code_actions("""
         function foo()
             x = 2
             return x
         end
         """)
-        @test isempty(diagnostics)
+        @test isempty(code_actions)
     end
 end
 
