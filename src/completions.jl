@@ -113,8 +113,9 @@ function to_completion(
         label_desc = "sparam"
     end
 
-    if !isnothing(binding.type)
-        label_detail = "::" * JS.sourcetext(binding.type)
+    typeid = binding.type
+    if !isnothing(typeid)
+        label_detail = "::" * JS.sourcetext(JS.SyntaxTree(JS.syntax_graph(st), typeid))
     end
 
     io = IOBuffer()

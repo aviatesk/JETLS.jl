@@ -32,10 +32,19 @@ end
 function cv_has(cs::Vector{CompletionItem}, expected; kind=nothing)
     cdict = Dict(zip(map(c -> c.label, cs), cs))
     for e in expected
-        c = get(cdict, e, nothing)
+        if e isa String
+            name = e
+            f = nothing
+        else
+            f, name = e
+        end
+        c = get(cdict, name, nothing)
         @test !isnothing(c)
-        if !isnothing(kind) && !isnothing(c)
-            @test JETLS.completion_is(c, kind)
+        if !isnothing(c)
+            if !isnothing(kind)
+                @test JETLS.completion_is(c, kind)
+            end
+            isnothing(f) || f(c)
         end
     end
 end
@@ -107,22 +116,22 @@ module M
     end
 end
 """
-    cnt = 0
+    cnt = Ref(0)
     with_completion(code) do i, cv
         if i == 1
             cv_nhas(cv, ["a", "b", "c", "x", "y", "z"])
-            cnt += 1
+            cnt[] += 1
         elseif i == 2
             cv_has(cv, ["x", "y", "z"], kind=:local)
             cv_nhas(cv, ["a", "b", "c"])
-            cnt += 1
+            cnt[] += 1
         elseif i == 3
             cv_has(cv, ["a", "b", "c"], kind=:local)
             cv_nhas(cv, ["x", "y", "z"])
-            cnt += 1
+            cnt[] += 1
         end
     end
-    @test cnt == 3
+    @test cnt[] == 3
 end
 
 @testset "nested and adjacent scopes" begin
@@ -135,7 +144,6 @@ end
 end
 
 @testset "globals in local scope, shadowing" begin
-
     # global decl should be contained
     code = "function f(g); │ let;   global g;   end;   end"; test_single_cv(code, ["g"], kind=:argument)
     code = "function f(g);   let;   global g; │ end;   end"; test_single_cv(code, ["g"], kind=:global)
@@ -157,23 +165,23 @@ function f()
 end
 """
 
-    cnt = 0
+    cnt = Ref(0)
     with_completion(code) do i, cv
         if i == 1
             cv_has(cv, ["g"], kind=:global)
-            cnt += 1
+            cnt[] += 1
         elseif i == 2
             cv_has(cv, ["g"], kind=:global)
-            cnt += 1
+            cnt[] += 1
         elseif i == 3
             cv_has(cv, ["g"], kind=:local)
-            cnt += 1
+            cnt[] += 1
         elseif i == 4
             cv_has(cv, ["g"], kind=:local)
-            cnt += 1
+            cnt[] += 1
         end
     end
-    @test cnt == 4
+    @test cnt[] == 4
 
     # global/local decl below cursor
     code = """
@@ -191,18 +199,18 @@ function f(x)
     end
 end
 """
-    cnt = 0
+    cnt = Ref(0)
     with_completion(code) do i, cv
         if i == 1
             cv_has(cv, ["x"], kind=:global)
-            cnt += 1
+            cnt[] += 1
         elseif i == 2
             # broken. JuliaLowering bug?
             # cv_has(cv, ["x"], kind=:local)
-            cnt += 1
+            cnt[] += 1
         end
     end
-    @test cnt == 2
+    @test cnt[] == 2
 end
 
 @testset "cursor in new symbol" begin
@@ -223,6 +231,25 @@ let code = """
     end
     """
     test_single_cv(code, ["x"])
+end
+
+# completion for type declared locals
+@testset "completion for type declared locals" begin
+    code = """
+    function foo(x::T) where T
+        local y::T = x
+        │
+    end
+    """
+    cnt = Ref(0)
+    with_completion(code) do i, cv
+        if i == 1
+            check(c) = @test c.labelDetails.detail == "::T"
+            cv_has(cv, [(check, "y")], kind=:local)
+            cnt[] += 1
+        end
+    end
+    @test cnt[] == 1
 end
 
 # local completion for incomplete code shouldn't crash
@@ -315,7 +342,7 @@ end
     end # module Foo
     """
 
-    cnt = 0
+    cnt = Ref(0)
     with_completion_request(program) do i, result, _
         items = result.items
         if i == 1
@@ -331,7 +358,7 @@ end
             @test any(items) do item
                 item.label == "sin"
             end
-            cnt += 1
+            cnt[] += 1
         elseif i == 2
             @test any(items) do item
                 item.label == "foo"
@@ -352,7 +379,7 @@ end
                 contains(item.label, "internal_to_macro") ||
                     contains(item.label, "#")
             end
-            cnt += 1
+            cnt[] += 1
         elseif i == 3
             # `dot_completion_test`: dot-prefixed global completion
             xxxidx = findfirst(item->item.label=="xxx", items)
@@ -363,22 +390,22 @@ end
             @test isnothing(findfirst(item->item.label=="getx", items))
             @test isnothing(findfirst(item->item.label=="foo", items))
             @test isnothing(findfirst(item->item.label=="xarg", items)) # local completion should be disabled
-            cnt += 1
+            cnt[] += 1
         elseif i == 4
             # `dot_completion_test`: dot-prefixed global completion
             # https://github.com/aviatesk/JETLS.jl/issues/389
             @test isempty(items) # completions should be disabled if the prefix type/value is unknown
-            cnt += 1
+            cnt[] += 1
         elseif i == 5
             # `str_macro_test`: string macro case
             @test any(items) do item
                 item.label == "text\"\"" &&
                 item.data isa GlobalCompletionData && item.data.name == "@text_str"
             end
-            cnt += 1
+            cnt[] += 1
         end
     end
-    @test cnt == 5
+    @test cnt[] == 5
 end
 
 @testset "local completion for methods with `@nospecialize`" begin
@@ -389,39 +416,39 @@ end
     """
 
     context = CompletionContext(; triggerKind = CompletionTriggerKind.Invoked)
-    cnt = 0
+    cnt = Ref(0)
     with_completion_request(text; context) do _, result, _
         items = result.items
         @test any(items) do item
             item.label == "yyy"
         end
-        cnt += 1
+        cnt[] += 1
     end
-    @test cnt == 1
+    @test cnt[] == 1
 end
 
 # completion for empty program should not crash
 @testset "empty completion" begin
     let text = "│"
-        cnt = 0
+        cnt = Ref(0)
         with_completion_request(text) do _, result, _
             items = result.items
             # should not crash and return something
             @test length(items) > 0
-            cnt += 1
+            cnt[] += 1
         end
-        @test cnt == 1
+        @test cnt[] == 1
     end
 
     let text = "\n\n\n│"
-        cnt = 0
+        cnt = Ref(0)
         with_completion_request(text) do _, result, _
             items = result.items
             # should not crash and return something
             @test length(items) > 0
-            cnt += 1
+            cnt[] += 1
         end
-        @test cnt == 1
+        @test cnt[] == 1
     end
 end
 
@@ -435,7 +462,7 @@ end
         context = CompletionContext(;
             triggerKind = CompletionTriggerKind.TriggerCharacter,
             triggerCharacter = "@")
-        cnt = 0
+        cnt = Ref(0)
         with_completion_request(text; context) do _, result, _
             items = result.items
             @test any(items) do item
@@ -449,9 +476,9 @@ end
             @test !any(items) do item
                 item.label == "function"
             end
-            cnt += 1
+            cnt[] += 1
         end
-        @test cnt == 1
+        @test cnt[] == 1
     end
 
     # completion for macro names
@@ -461,7 +488,7 @@ end
         end
         """
         context = CompletionContext(; triggerKind = CompletionTriggerKind.Invoked)
-        cnt = 0
+        cnt = Ref(0)
         with_completion_request(text; context) do _, result, _
             items = result.items
             @test any(items) do item
@@ -471,9 +498,9 @@ end
             @test !any(items) do item
                 item.label == "foo" || item.label == "xxx" || item.label == "yyy"
             end
-            cnt += 1
+            cnt[] += 1
         end
-        @test cnt == 1
+        @test cnt[] == 1
     end
 
     # completion within macro call context
@@ -483,15 +510,15 @@ end
         end
         """
         context = CompletionContext(; triggerKind = CompletionTriggerKind.Invoked)
-        cnt = 0
+        cnt = Ref(0)
         with_completion_request(text; context) do _, result, _
             items = result.items
             @test any(items) do item
                 item.label == "yyy"
             end
-            cnt += 1
+            cnt[] += 1
         end
-        @test cnt == 1
+        @test cnt[] == 1
     end
 
     # allow `nospecia│` complete to `@nospecialize`
@@ -501,16 +528,16 @@ end
         end
         """
         context = CompletionContext(; triggerKind = CompletionTriggerKind.Invoked)
-        cnt = 0
+        cnt = Ref(0)
         with_completion_request(text; context) do _, result, _
             items = result.items
             @test any(items) do item
                 item.label == "@nospecialize" &&
                 item.textEdit.newText == "@nospecialize"
             end
-            cnt += 1
+            cnt[] += 1
         end
-        @test cnt == 1
+        @test cnt[] == 1
     end
 end
 
@@ -718,7 +745,7 @@ end
         context = CompletionContext(;
             triggerKind = CompletionTriggerKind.TriggerCharacter,
             triggerCharacter = "\\")
-        cnt = 0
+        cnt = Ref(0)
         with_completion_request(text; context) do _, result, _
             items = result.items
             @test any(items) do item
@@ -732,9 +759,9 @@ end
             @test !any(items) do item
                 item.label == "function"
             end
-            cnt += 1
+            cnt[] += 1
         end
-        @test cnt == 1
+        @test cnt[] == 1
     end
 
     let text = """
@@ -745,7 +772,7 @@ end
         context = CompletionContext(;
             triggerKind = CompletionTriggerKind.TriggerCharacter,
             triggerCharacter = ":")
-        cnt = 0
+        cnt = Ref(0)
         with_completion_request(text; context) do _, result, _
             items = result.items
             @test any(items) do item
@@ -757,9 +784,9 @@ end
                 item.label == "β"   || # should not include local completions
                 item.label == "alpha" # should not even include LaTeX completions
             end
-            cnt += 1
+            cnt[] += 1
         end
-        @test cnt == 1
+        @test cnt[] == 1
     end
 end
 
@@ -853,7 +880,7 @@ end
         context = CompletionContext(;
             triggerKind = CompletionTriggerKind.TriggerCharacter,
             triggerCharacter = "(")
-        cnt = 0
+        cnt = Ref(0)
         with_completion_request(text; context) do _, result, _
             items = result.items
             @test count(items) do item
@@ -862,9 +889,9 @@ end
                     !isnothing(get_newText(item)) &&
                     occursin("sin", item.label)
             end == length(methods(sin))
-            cnt += 1
+            cnt[] += 1
         end
-        @test cnt == 1
+        @test cnt[] == 1
     end
 
     # Type-based filtering
@@ -874,7 +901,7 @@ end
         context = CompletionContext(;
             triggerKind = CompletionTriggerKind.TriggerCharacter,
             triggerCharacter = ",")
-        cnt = 0
+        cnt = Ref(0)
         with_completion_request(text; context) do _, result, _
             items = result.items
             @test count(items) do item
@@ -883,9 +910,9 @@ end
                     !isnothing(get_newText(item)) &&
                     occursin("sin", item.label)
             end == 1
-            cnt += 1
+            cnt[] += 1
         end
-        @test cnt == 1
+        @test cnt[] == 1
     end
 
     let text = """let x = 42
@@ -894,7 +921,7 @@ end
         context = CompletionContext(;
             triggerKind = CompletionTriggerKind.TriggerCharacter,
             triggerCharacter = ",")
-        cnt = 0
+        cnt = Ref(0)
         with_completion_request(text; context) do _, result, _
             items = result.items
             @test_broken count(items) do item
@@ -903,9 +930,9 @@ end
                     !isnothing(get_newText(item)) &&
                     occursin("sin", item.label)
             end == 1
-            cnt += 1
+            cnt[] += 1
         end
-        @test cnt == 1
+        @test cnt[] == 1
     end
 
     let text = """
@@ -914,7 +941,7 @@ end
         context = CompletionContext(;
             triggerKind = CompletionTriggerKind.TriggerCharacter,
             triggerCharacter = ",")
-        cnt = 0
+        cnt = Ref(0)
         with_completion_request(text; context) do _, result, _
             items = result.items
             @test all(items) do item
@@ -924,9 +951,9 @@ end
                     !isnothing(newText) &&
                     (newText == "" || startswith(newText, " ")) # Allow `newText == ""` for `filter(f)` case
             end
-            cnt += 1
+            cnt[] += 1
         end
-        @test cnt == 1
+        @test cnt[] == 1
     end
 
     let text = """
@@ -935,7 +962,7 @@ end
         context = CompletionContext(;
             triggerKind = CompletionTriggerKind.TriggerCharacter,
             triggerCharacter = " ")
-        cnt = 0
+        cnt = Ref(0)
         with_completion_request(text; context) do _, result, _
             items = result.items
             @test all(items) do item
@@ -945,9 +972,9 @@ end
                     !isnothing(newText) &&
                     (newText == "" || !startswith(newText, " ")) # Allow `newText == ""` for `filter(f)` case
             end
-            cnt += 1
+            cnt[] += 1
         end
-        @test cnt == 1
+        @test cnt[] == 1
     end
 
 
@@ -958,7 +985,7 @@ end
         context = CompletionContext(;
             triggerKind = CompletionTriggerKind.TriggerCharacter,
             triggerCharacter = " ")
-        cnt = 0
+        cnt = Ref(0)
         with_completion_request(text; context) do _, result, _
             items = result.items
             method_items = filter(items) do item
@@ -969,9 +996,9 @@ end
             @test any(item -> get_newText(item) == "", method_items)
             # Should also include methods with remaining args
             @test any(item -> !isempty(something(get_newText(item), "")), method_items)
-            cnt += 1
+            cnt[] += 1
         end
-        @test cnt == 1
+        @test cnt[] == 1
     end
 
     # Test case where all args are filled - newText should be empty
@@ -981,7 +1008,7 @@ end
         context = CompletionContext(;
             triggerKind = CompletionTriggerKind.TriggerCharacter,
             triggerCharacter = ",")
-        cnt = 0
+        cnt = Ref(0)
         with_completion_request(text; context) do _, result, _
             items = result.items
             @test all(items) do item
@@ -990,9 +1017,9 @@ end
                     item.labelDetails.description == "method" &&
                     newText == ""
             end
-            cnt += 1
+            cnt[] += 1
         end
-        @test cnt == 1
+        @test cnt[] == 1
     end
 
     let text = """
@@ -1019,7 +1046,7 @@ end
         context = CompletionContext(;
             triggerKind = CompletionTriggerKind.TriggerCharacter,
             triggerCharacter = ";")
-        cnt = 0
+        cnt = Ref(0)
         with_completion_request(text; context) do _, result, _
             items = result.items
             keyword_items = filter(items) do item
@@ -1032,9 +1059,9 @@ end
             @test all(keyword_items) do item
                 item.insertText !== nothing && endswith(item.insertText, " = ")
             end
-            cnt += 1
+            cnt[] += 1
         end
-        @test cnt == 1
+        @test cnt[] == 1
     end
 
     # Test keyword name completion excludes already-specified keywords
@@ -1044,7 +1071,7 @@ end
         context = CompletionContext(;
             triggerKind = CompletionTriggerKind.TriggerCharacter,
             triggerCharacter = " ")
-        cnt = 0
+        cnt = Ref(0)
         with_completion_request(text; context) do _, result, _
             items = result.items
             keyword_items = filter(items) do item
@@ -1054,9 +1081,9 @@ end
             @test !isempty(keyword_items)
             @test !any(item -> item.label == "bold", keyword_items)
             @test any(item -> item.label == "color", keyword_items)
-            cnt += 1
+            cnt[] += 1
         end
-        @test cnt == 1
+        @test cnt[] == 1
     end
 
     # Test no keyword completion after `=`
@@ -1066,7 +1093,7 @@ end
         context = CompletionContext(;
             triggerKind = CompletionTriggerKind.TriggerCharacter,
             triggerCharacter = "=")
-        cnt = 0
+        cnt = Ref(0)
         with_completion_request(text; context) do _, result, _
             items = result.items
             keyword_items = filter(items) do item
@@ -1074,9 +1101,9 @@ end
                     item.labelDetails.description == "keyword argument"
             end
             @test isempty(keyword_items)
-            cnt += 1
+            cnt[] += 1
         end
-        @test cnt == 1
+        @test cnt[] == 1
     end
 
     # Don't insert `=` if the same local variable exists in the scope
@@ -1088,7 +1115,7 @@ end
         context = CompletionContext(;
             triggerKind = CompletionTriggerKind.TriggerCharacter,
             triggerCharacter = " ")
-        cnt = 0
+        cnt = Ref(0)
         with_completion_request(text; context) do _, result, _
             items = result.items
             keyword_items = filter(items) do item
@@ -1098,9 +1125,9 @@ end
             @test !isempty(keyword_items)
             @test any(item -> item.label == "bold" && item.insertText == "bold", keyword_items)
             @test any(item -> item.label == "color" && item.insertText == "color = ", keyword_items)
-            cnt += 1
+            cnt[] += 1
         end
-        @test cnt == 1
+        @test cnt[] == 1
     end
 
     # Test no `=` insertion when cursor is before existing `=`
@@ -1108,7 +1135,7 @@ end
         printstyled(; bol│=true)
         """
         context = CompletionContext(; triggerKind = CompletionTriggerKind.Invoked)
-        cnt = 0
+        cnt = Ref(0)
         with_completion_request(text; context) do _, result, _
             items = result.items
             keyword_items = filter(items) do item
@@ -1118,9 +1145,9 @@ end
             @test all(keyword_items) do item
                 !occursin("=", something(item.insertText, ""))
             end
-            cnt += 1
+            cnt[] += 1
         end
-        @test cnt == 1
+        @test cnt[] == 1
     end
 end
 
