@@ -46,13 +46,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
-- Added `lowering/unreachable-code` diagnostic that detects code after block terminators (`return`, `throw`, `break`, `continue`), including cases where all branches of `if`/`elseif`/`else` or `try`/`catch` contain a terminator.
+- Added [`lowering/unreachable-code`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unreachable-code) diagnostic that detects code after block terminators (`return`, `throw`, `break`, `continue`), including cases where all branches of `if`/`elseif`/`else` or `try`/`catch` contain a terminator.
   Unreachable code is displayed as faded/grayed out with the `Unnecessary` tag.
   A "Delete unreachable code" quick fix code action is also available.
 
 ### Changed
 
-- `lowering/undef-local-var` now recognizes correlated conditions to reduce false positives.
+- [`lowering/undef-local-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-local-var) now recognizes correlated conditions to reduce false positives.
   When a variable is assigned under a condition (e.g. `if x; y = 42; end`) and later used under the same condition (`if x; println(y); end`), the diagnostic is no longer emitted.
   This also works with `&&` chains (`if x && z`), nested `if` blocks that are equivalent to `&&`, and combinations of both.
 
