@@ -42,9 +42,9 @@ each severity level, so the actual display varies by editor. In
 practice, most editors display `Error`, `Warning`, and `Information`
 with color-coded underlines (red, yellow, blue) and gutter markers,
 while `Hint` is typically rendered with a more subtle indicator such as faded
-text or an ellipsis (`...`).[^vscode-severity]
+text or an ellipsis (`...`).[^vscodeseverity]
 
-[^vscode-severity]: VS Code, which serves as the de facto reference for LSP
+[^vscodeseverity]: VS Code, which serves as the de facto reference for LSP
     client behavior, follows these conventions.
     In VS Code, `Hint` diagnostics are not listed in the Problems Panel.
 
