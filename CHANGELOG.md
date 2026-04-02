@@ -44,6 +44,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > This disables analysis for matched files. Basic features like completion still might work, but most LSP features will be unfunctional.
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
 
+### Added
+
+- Added `lowering/unreachable-code` diagnostic that detects code after block terminators (`return`, `throw`, `break`, `continue`), including cases where all branches of `if`/`elseif`/`else` or `try`/`catch` contain a terminator.
+  Unreachable code is displayed as faded/grayed out with the `Unnecessary` tag.
+  A "Delete unreachable code" quick fix code action is also available.
+
 ### Changed
 
 - `lowering/undef-local-var` now recognizes correlated conditions to reduce false positives.

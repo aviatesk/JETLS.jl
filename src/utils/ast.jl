@@ -992,3 +992,12 @@ function is_from_user_ast(provs::JS.SyntaxList)
     JS.sourcefile(lprov) == JS.sourcefile(fprov) || return false
     return JS.byte_range(lprov) ⊆ JS.byte_range(fprov)
 end
+
+function is_throw_call(ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTree)
+    JS.kind(st3) === JS.K"call" || return false
+    JS.numchildren(st3) >= 1 || return false
+    func = st3[1]
+    JS.kind(func) === JS.K"BindingId" || return false
+    binfo = JL.get_binding(ctx3, func.var_id::JL.IdTag)
+    return binfo.kind === :global && binfo.name == "throw"
+end

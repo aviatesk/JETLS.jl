@@ -521,6 +521,11 @@ struct UnusedImportData
 end
 export UnusedImportData
 
+struct UnreachableCodeData
+    delete_range::Range
+end
+export UnreachableCodeData
+
 struct UnsortedImportData
     new_text::String
 end
@@ -583,7 +588,7 @@ Diagnostic objects are only valid in the scope of a resource.
     # Tags
     - since – 3.16.0
     """
-    data::Union{UnusedArgumentData, UnusedVariableData, UnusedImportData, UnsortedImportData, Nothing} = nothing
+    data::Union{UnusedArgumentData, UnusedVariableData, UnusedImportData, UnreachableCodeData, UnsortedImportData, Nothing} = nothing
 end
 
 # Command

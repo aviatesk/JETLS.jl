@@ -39,6 +39,7 @@ function handle_CodeActionRequest(
     unused_variable_code_actions!(code_actions, uri, diagnostics;
         allow_unused_underscore = get_config(server, :diagnostic, :allow_unused_underscore))
     unused_import_code_actions!(code_actions, uri, diagnostics)
+    unreachable_code_actions!(code_actions, uri, diagnostics)
     sort_imports_code_actions!(code_actions, uri, diagnostics)
     return send(server,
         CodeActionResponse(;
@@ -152,6 +153,28 @@ function add_delete_unused_var_code_actions!(
                             newText = "")]))))
         end
     end
+end
+
+function unreachable_code_actions!(
+        code_actions::Vector{Union{CodeAction,Command}},
+        uri::URI, diagnostics::Vector{Diagnostic}
+    )
+    for diagnostic in diagnostics
+        diagnostic.code == LOWERING_UNREACHABLE_CODE || continue
+        data = diagnostic.data
+        data isa UnreachableCodeData || continue
+        push!(code_actions, CodeAction(;
+            title = "Delete unreachable code",
+            kind = CodeActionKind.QuickFix,
+            diagnostics = Diagnostic[diagnostic],
+            isPreferred = true,
+            edit = WorkspaceEdit(;
+                changes = Dict{URI,Vector{TextEdit}}(
+                    uri => TextEdit[TextEdit(;
+                        range = data.delete_range,
+                        newText = "")]))))
+    end
+    return code_actions
 end
 
 function sort_imports_code_actions!(
