@@ -314,4 +314,62 @@ end
     end
 end
 
+module soft_scope_module
+    global x = 1
+end
+
+function get_ambiguous_soft_scope_code_actions(marked_text::AbstractString)
+    text, positions = JETLS.get_text_and_positions(marked_text)
+    diagnostics, uri = get_lowering_diagnostics(
+        text, JETLS.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE; mod = soft_scope_module)
+    code_actions = Union{CodeAction,Command}[]
+    JETLS.ambiguous_soft_scope_code_actions!(code_actions, uri, diagnostics)
+    return code_actions, uri, positions
+end
+
+@testset "ambiguous soft scope code actions" begin
+    # Basic case: for loop with indentation
+    let (code_actions, uri, positions) = get_ambiguous_soft_scope_code_actions("""
+        for _ = 1:10
+        │    x = 2
+        end
+        """)
+        @test length(code_actions) == 2
+        @test code_actions[1].title == "Insert `global x` declaration"
+        @test code_actions[1].isPreferred == true
+        edit = only(code_actions[1].edit.changes[uri])
+        @test edit.newText == "    global x\n"
+        @test edit.range.start == positions[1]
+        @test edit.range.var"end" == positions[1]
+        @test code_actions[2].title == "Insert `local x` declaration"
+        @test code_actions[2].isPreferred === nothing
+        edit = only(code_actions[2].edit.changes[uri])
+        @test edit.newText == "    local x\n"
+        @test edit.range.start == positions[1]
+    end
+
+    # No code action when no global exists
+    let (code_actions, _, _) = get_ambiguous_soft_scope_code_actions("""
+        for _ = 1:10
+            y = 2
+        end
+        """)
+        @test isempty(code_actions)
+    end
+
+    # Tuple unpacking: indent matches the line, not the variable position
+    let (code_actions, uri, positions) = get_ambiguous_soft_scope_code_actions("""
+        for _ = 1:10
+        │    y, x = 1, 2
+        end
+        """)
+        global_actions = filter(a -> contains(a.title, "global"), code_actions)
+        @test length(global_actions) == 1
+        edit = only(global_actions[1].edit.changes[uri])
+        @test edit.newText == "    global x\n"
+        @test edit.range.start == positions[1]
+        @test edit.range.var"end" == positions[1]
+    end
+end
+
 end # module test_code_action

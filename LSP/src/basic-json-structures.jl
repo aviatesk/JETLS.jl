@@ -504,22 +504,11 @@ Structure to capture a description for an error code.
 end
 
 # JETLS specific data structures for `data` field of `Diagnostic`
-struct UnusedArgumentData
-    is_kwarg::Bool
+struct AmbiguousSoftScopeData
+    name::String
+    indent::String
 end
-export UnusedArgumentData
-
-struct UnusedVariableData
-    is_tuple_unpacking::Bool
-    assignment_range::Union{Nothing,Range}
-    lhs_eq_range::Union{Nothing,Range}
-end
-export UnusedVariableData
-
-struct UnusedImportData
-    delete_range::Range
-end
-export UnusedImportData
+export AmbiguousSoftScopeData
 
 struct UnreachableCodeData
     delete_range::Range
@@ -530,6 +519,23 @@ struct UnsortedImportData
     new_text::String
 end
 export UnsortedImportData
+
+struct UnusedArgumentData
+    is_kwarg::Bool
+end
+export UnusedArgumentData
+
+struct UnusedImportData
+    delete_range::Range
+end
+export UnusedImportData
+
+struct UnusedVariableData
+    is_tuple_unpacking::Bool
+    assignment_range::Union{Nothing,Range}
+    lhs_eq_range::Union{Nothing,Range}
+end
+export UnusedVariableData
 
 """
 Represents a diagnostic, such as a compiler error or warning.
@@ -588,7 +594,7 @@ Diagnostic objects are only valid in the scope of a resource.
     # Tags
     - since – 3.16.0
     """
-    data::Union{UnusedArgumentData, UnusedVariableData, UnusedImportData, UnreachableCodeData, UnsortedImportData, Nothing} = nothing
+    data::Union{AmbiguousSoftScopeData, UnsortedImportData, UnreachableCodeData, UnusedArgumentData, UnusedImportData, UnusedVariableData, Nothing} = nothing
 end
 
 # Command

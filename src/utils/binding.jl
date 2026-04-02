@@ -29,12 +29,21 @@ function is_relevant(ctx3::JL.AbstractLoweringContext,
          || cursor > start)
 end
 
+function insert_softscope_marker(st1::JS.SyntaxTree)
+    g = JS.syntax_graph(st1)
+    marker = JS.newleaf(g, st1, JS.K"softscope")
+    children = JS.SyntaxList(g)
+    push!(children, marker, st1)
+    return JS.newnode(g, st1, JS.K"block", children)
+end
+
 """
     jl_lower_for_scope_resolution(
             mod::Module, st0::JS.SyntaxTree;
             trim_error_nodes::Bool = true,
             recover_from_macro_errors::Bool = true,
             convert_closures::Bool = false,
+            soft_scope::Bool = false,
         ) -> (; st0, st1, st2, st3, ctx3)
 
 Perform the first three passes of lowering.
@@ -43,6 +52,11 @@ Depending on keyword arguments, also attempt to handle junk input in the ways a 
 - `recover_from_macro_errors`: If errors occur during macro expansion, trim macrocalls and retry.
   This may happen for several reasons; the analyzer may not have picked up the
   macro definition yet, or the user could be working on the macrocall.
+- `convert_closures`: Also run the closure conversion pass (pass 4),
+  returning `ctx4` and `st4` in addition to the scope resolution results.
+- `soft_scope`: Enable soft scope semantics (REPL/notebook behavior)
+  where assignments in `for`/`while`/`try` blocks at the top level assign to
+  existing globals instead of creating new locals.
 
 Throw if lowering fails otherwise.
 
@@ -53,6 +67,7 @@ function jl_lower_for_scope_resolution(
         trim_error_nodes::Bool = true,
         recover_from_macro_errors::Bool = true,
         convert_closures::Bool = false,
+        soft_scope::Bool = false,
     )
     if trim_error_nodes
         st0 = without_kinds(st0, JS.KSet"error")
@@ -67,14 +82,18 @@ function jl_lower_for_scope_resolution(
         st0 = remove_macrocalls(st0)
         JL.expand_forms_1(mod, st0, true, world)
     end
-    return _jl_lower_for_scope_resolution(ctx1, st0, st1; convert_closures)
+    return _jl_lower_for_scope_resolution(ctx1, st0, st1; convert_closures, soft_scope)
 end
 
 function _jl_lower_for_scope_resolution(
         ctx1::JL.MacroExpansionContext, st0::JS.SyntaxTree, st1::JS.SyntaxTree;
-        convert_closures::Bool = false
+        convert_closures::Bool = false,
+        soft_scope::Bool = false,
     )
     ctx2, st2 = JL.expand_forms_2(ctx1, st1)
+    if soft_scope
+        st2 = insert_softscope_marker(st2)
+    end
     ctx3, st3 = JL.resolve_scopes(ctx2, st2)
     convert_closures || return (; st0, st1, st2, st3, ctx3)
     ctx4, st4 = JL.convert_closures(ctx3, st3)

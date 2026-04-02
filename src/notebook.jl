@@ -227,6 +227,8 @@ end
 
 is_notebook_uri(state::ServerState, uri::URI) = haskey(load(state.notebook_cache), uri)
 
+is_notebook_cell_uri(state::ServerState, uri::URI) = haskey(load(state.cell_to_notebook), uri)
+
 function map_notebook_diagnostics!(uri2diagnostics::URI2Diagnostics, state::ServerState)
     notebook_uris_to_delete = URI[]
     for uri in keys(uri2diagnostics)
