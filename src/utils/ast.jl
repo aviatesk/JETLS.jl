@@ -751,32 +751,26 @@ function is_trivia(tc::TokenCursor, pass_newlines::Bool)
 end
 
 """
-    get_line_indent(fi::FileInfo, byte_offset::Int) -> Union{String,Nothing}
+    get_line_indent(fi::FileInfo, line::Integer) -> String
 
-Get the leading whitespace (indentation) at `byte_offset`.
-
-Returns the indentation string when the position is at the start of a line
-(after a newline or at the start of the file). Returns `nothing` when the
-position is preceded by non-whitespace tokens on the same line, indicating
-that the position is not at the beginning of a line.
+Get the leading whitespace (indentation) of the given 0-indexed line.
 
 # Examples
-- `"    export a, b"` at byte 5 (start of `export`) → `"    "`
-- `"begin\\n    export a, b"` at `export` → `"    "`
-- `"begin export a, b"` at `export` → `nothing`
+- `"    export a, b"` line 0 → `"    "`
+- `"begin\\n    export a, b"` line 1 → `"    "`
+- `"begin\\n    export a, b"` line 0 → `""`
 """
-function get_line_indent(fi::FileInfo, byte_offset::Int)
-    prev_tc = prev_nontrivia(fi.parsed_stream, byte_offset; strict=true)
-    if prev_tc === nothing
-        return String(fi.parsed_stream.textbuf[1:byte_offset-1])
-    elseif JS.kind(prev_tc) === JS.K"NewlineWs"
-        # NewlineWs includes both newline and following whitespace (e.g., "\n    ")
-        tok_text = fi.parsed_stream.textbuf[JS.byte_range(prev_tc)]
-        newline_end = findlast(c::UInt8 -> c == UInt8('\n') || c == UInt8('\r'), tok_text)
-        return newline_end === nothing ? "" : String(tok_text[newline_end+1:end])
-    else
-        return nothing
+function get_line_indent(fi::FileInfo, line::Integer)
+    textbuf = fi.parsed_stream.textbuf
+    byte = xy_to_offset(fi, Position(; line, character = 0))
+    n = length(textbuf)
+    i = byte
+    while i <= n
+        b = textbuf[i]
+        b == UInt8(' ') || b == UInt8('\t') || break
+        i += 1
     end
+    return String(textbuf[byte:i-1])
 end
 
 # TODO: This is used so that `r"foo"|` or `r"foo" |` don't show signature help,
