@@ -1847,6 +1847,10 @@ function send_empty_workspace_diagnostics(
         server::Server, msg::WorkspaceDiagnosticRequest, uris_to_search::Set{URI},
         cancel_flag::CancelFlag
     )
+    previous_result_ids = Dict{URI,String}()
+    for prev in msg.params.previousResultIds
+        previous_result_ids[prev.uri] = prev.value
+    end
     partial_token = msg.params.partialResultToken
     items = WorkspaceDocumentDiagnosticReport[]
     for uri in uris_to_search
@@ -1856,11 +1860,18 @@ function send_empty_workspace_diagnostics(
                 result = nothing,
                 error = request_cancelled_error()))
         is_synchronized(server.state, uri) && continue
-        item = WorkspaceFullDocumentDiagnosticReport(;
-            uri,
-            version = null,
-            resultId = ALL_FILES_DISABLED_RESULT_ID,
-            items = empty_diagnostics)
+        if get(previous_result_ids, uri, nothing) == ALL_FILES_DISABLED_RESULT_ID
+            item = WorkspaceUnchangedDocumentDiagnosticReport(;
+                uri,
+                version = null,
+                resultId = ALL_FILES_DISABLED_RESULT_ID)
+        else
+            item = WorkspaceFullDocumentDiagnosticReport(;
+                uri,
+                version = null,
+                resultId = ALL_FILES_DISABLED_RESULT_ID,
+                items = empty_diagnostics)
+        end
         if partial_token !== nothing
             send_partial_result(server, partial_token,
                 WorkspaceDiagnosticReportPartialResult(; items = WorkspaceDocumentDiagnosticReport[item]))
