@@ -115,6 +115,7 @@ Here is a summary table of the diagnostics explained in this section:
 | [`lowering/unused-import`](@ref diagnostic/reference/lowering/unused-import)                     | `Information`         | `JETLS/live`  | Imported names that are never used                 |
 | [`lowering/unreachable-code`](@ref diagnostic/reference/lowering/unreachable-code)               | `Information`         | `JETLS/live`  | Code after a block terminator that is never reached  |
 | [`lowering/unsorted-import-names`](@ref diagnostic/reference/lowering/unsorted-import-names)     | `Hint`                | `JETLS/live`  | Import/export names not sorted alphabetically      |
+| [`lowering/ambiguous-soft-scope`](@ref diagnostic/reference/lowering/ambiguous-soft-scope)       | `Warning`             | `JETLS/live`  | Assignment in soft scope shadows a global variable |
 | [`toplevel/error`](@ref diagnostic/reference/toplevel/error)                                     | `Error`               | `JETLS/save`  | Errors during code loading                         |
 | [`toplevel/method-overwrite`](@ref diagnostic/reference/toplevel/method-overwrite)               | `Warning`             | `JETLS/save`  | Method definitions that overwrite previous ones    |
 | [`toplevel/abstract-field`](@ref diagnostic/reference/toplevel/abstract-field)                   | `Information`         | `JETLS/save`  | Struct fields with abstract types                  |
@@ -601,6 +602,86 @@ export bar, @foo  # Names are not sorted alphabetically (JETLS lowering/unsorted
     When the sorted result exceeds 92 characters (
     [Julia's conventional maximum line length](https://docs.julialang.org/en/v1.14-dev/devdocs/contributing/formatting/#General-Formatting-Guidelines-for-Julia-code-contributions)),
     the code action wraps to multiple lines with 4-space continuation indent.
+
+#### [Ambiguous soft scope (`lowering/ambiguous-soft-scope`)](@id diagnostic/reference/lowering/ambiguous-soft-scope)
+
+**Default severity**: `Warning`
+
+Reported when a variable is assigned inside a `for`, `while`, or
+`try`/`catch` block at the top level of a file, and a global variable
+with the same name already exists[^on_soft_scope]. This assignment is
+ambiguous because it behaves differently depending on where the code
+runs:
+- In the REPL or notebooks: assigns to the existing global
+- In a file: creates a new local variable, leaving the global
+  unchanged
+
+[^on_soft_scope]: See
+    [On Soft Scope](https://docs.julialang.org/en/v1/manual/variables-and-scoping/#on-soft-scope)
+    in the Julia manual.
+
+Example ([A Common Confusion](https://docs.julialang.org/en/v1/manual/variables-and-scoping/#A-Common-Confusion-2479cb3548c466db) adapted from the Julia manual):
+
+```@eval
+using Markdown
+
+mktemp() do file, io
+    code = """
+    # Print the numbers 1 through 5
+    global i = 0
+    while i < 5
+        i += 1  # Assignment to `i` in soft scope is ambiguous (JETLS lowering/ambiguous-soft-scope)
+                # Variable `i` may be used before it is defined (JETLS lowering/undef-local-var)
+        println(i)
+    end
+    """
+    write(io, code)
+    close(io)
+    err = IOBuffer()
+    try
+        run(pipeline(`$(Base.julia_cmd()) --startup-file=no $file`; stderr=err))
+    catch
+    end
+    output = String(take!(err))
+    lines = split(output, '\n')
+    idx = findfirst(l -> startswith(l, "Stacktrace:"), lines)
+    if idx !== nothing
+        lines = lines[1:idx]
+    end
+    push!(lines, "...")
+    output = join(lines, '\n')
+    output = replace(output, file=>"ambiguous-scope.jl")
+
+    Markdown.parse("""
+    > `ambiguous-scope.jl`
+    ``````julia
+    $(code)
+    ``````
+
+    This diagnostic matches the warning that Julia itself emits at runtime.
+    Running the example above as a file produces:
+    > `julia ambiguous-scope.jl`
+    ``````
+    $(output)
+    ``````
+    """)
+end
+```
+
+!!! note "Why is `lowering/undef-local-var` also reported?"
+    Since `i += 1` desugars to `i = i + 1`, the new local `i` is read
+    before being assigned, which also triggers
+    [`lowering/undef-local-var`](@ref diagnostic/reference/lowering/undef-local-var)
+    and causes the `UndefVarError` shown above at runtime.
+
+!!! tip "Code actions available"
+    Two quick fixes are offered: "Insert `global i` declaration" (preferred)
+    to assign to the existing global, and "Insert `local i` declaration" to
+    explicitly mark the variable as local and suppress the warning.
+
+!!! note "Notebook mode"
+    This diagnostic is suppressed for [notebooks](@ref notebook), where soft
+    scope semantics are enabled (matching REPL behavior).
 
 ### [Top-level diagnostic (`toplevel/*`)](@id diagnostic/reference/toplevel)
 

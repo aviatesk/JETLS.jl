@@ -50,6 +50,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Unreachable code is displayed as faded/grayed out with the `Unnecessary` tag.
   A "Delete unreachable code" quick fix code action is also available.
 
+- Added [`lowering/ambiguous-soft-scope`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/ambiguous-soft-scope) diagnostic that warns when a variable assignment inside a `for`/`while`/`try` block at the top level shadows an existing global variable.
+  This matches the warning Julia itself emits at runtime for this pattern.
+  Two code actions are offered: "Insert `global` declaration" (preferred) and "Insert `local` declaration".
+  This diagnostic is suppressed for notebook cells, where soft scope semantics are enabled.
+
 ### Changed
 
 - [`lowering/undef-local-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-local-var) now recognizes correlated conditions to reduce false positives.

@@ -960,6 +960,38 @@ function find_capture_sites(
     return @somereal relatedInformation Some(nothing)
 end
 
+function analyze_ambiguous_soft_scope!(
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, ctx3::JL.VariableAnalysisContext,
+        reported::Set{LoweringDiagnosticKey}
+    )
+    for binfo in ctx3.bindings.info
+        binfo.is_ambiguous_local || continue
+        binfo.is_internal && continue
+        bn = binfo.name
+        startswith(bn, '#') && continue
+        provs = JS.flattened_provenance(JL.binding_ex(ctx3, binfo.id))
+        is_from_user_ast(provs) || continue
+        prov = last(provs)
+        range = jsobj_to_range(prov, fi)
+        key = LoweringDiagnosticKey(range, :ambiguous, bn)
+        key in reported ? continue : push!(reported, key)
+        indent = get_line_indent(fi, range.start.line)
+        push!(diagnostics, Diagnostic(;
+            range,
+            severity = DiagnosticSeverity.Warning,
+            message = "Assignment to `$bn` in soft scope is ambiguous " *
+                      "because a global variable by the same name exists: " *
+                      "`$bn` will be treated as a new local. " *
+                      "Disambiguate by using `local $bn` to suppress this " *
+                      "warning or `global $bn` to assign to the existing " *
+                      "global variable.",
+            source = DIAGNOSTIC_SOURCE_LIVE,
+            code = LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE,
+            codeDescription = diagnostic_code_description(LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE),
+            data = AmbiguousSoftScopeData(bn, indent)))
+    end
+end
+
 const SORT_IMPORTS_MAX_LINE_LENGTH = 92
 const SORT_IMPORTS_INDENT = "    "
 
@@ -1196,6 +1228,8 @@ function analyze_lowered_code!(
 
     has_implicit_args = ismacro[] || is_generated0(st0)
 
+    analyze_ambiguous_soft_scope!(diagnostics, fi, ctx3, reported)
+
     analyze_unused_bindings!(
         diagnostics, fi, st0, ctx3, binding_occurrences, has_implicit_args, reported,
         kwarg_type_names, kwarg_locations;
@@ -1218,7 +1252,9 @@ end
 
 function lowering_diagnostics!(
         diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo, mod::Module, st0::JS.SyntaxTree;
-        skip_analysis_requiring_context::Bool = false, kwargs...
+        skip_analysis_requiring_context::Bool = false,
+        soft_scope::Bool = false,
+        kwargs...
     )
     @assert JS.kind(st0) ∉ JS.KSet"toplevel module"
 
@@ -1227,7 +1263,8 @@ function lowering_diagnostics!(
     (st0, _) = desugar_main_macrocall(st0)
     world = Base.get_world_counter()
     res = try
-        jl_lower_for_scope_resolution(mod, st0, world; recover_from_macro_errors=false, convert_closures=true)
+        jl_lower_for_scope_resolution(mod, st0, world;
+            recover_from_macro_errors=false, convert_closures=true, soft_scope)
     catch err
         if err isa JL.LoweringError
             if !err.internal
@@ -1488,12 +1525,14 @@ function toplevel_lowering_diagnostics(
     st0_top = build_syntax_tree(file_info)
     skip_analysis_requiring_context = !has_analyzed_context(server.state, uri; lookup_func)
     allow_unused_underscore = get_config(server, :diagnostic, :allow_unused_underscore)
+    soft_scope = is_notebook_cell_uri(server.state, uri)
     iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
         is_cancelled(cancel_flag) && return traversal_terminator
         pos = offset_to_xy(file_info, JS.first_byte(st0))
         (; mod, analyzer, postprocessor) = get_context_info(server.state, uri, pos; lookup_func)
         lowering_diagnostics!(diagnostics, uri, file_info, mod, st0;
-            skip_analysis_requiring_context, allow_unused_underscore, analyzer, postprocessor)
+            skip_analysis_requiring_context, allow_unused_underscore, soft_scope,
+            analyzer, postprocessor)
     end
 
     if !skip_analysis_requiring_context

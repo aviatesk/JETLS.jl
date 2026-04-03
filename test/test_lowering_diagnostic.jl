@@ -1929,4 +1929,94 @@ end
     end
 end
 
+module soft_scope_module
+    global x = 1
+end
+
+@testset "ambiguous soft scope detection" begin
+    let diagnostics = get_lowered_diagnostics(soft_scope_module, """
+        for _ = 1:10
+            x = 2
+        end
+        """)
+        ds = filter(d -> d.code == JETLS.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE, diagnostics)
+        @test length(ds) == 1
+        d = only(ds)
+        @test d.severity == DiagnosticSeverity.Warning
+        @test contains(d.message, "`x`")
+        @test d.data isa AmbiguousSoftScopeData
+        @test d.data.name == "x"
+        # lowering/unused-local should also be reported
+        unused = filter(
+            d -> d.code == JETLS.LOWERING_UNUSED_LOCAL_CODE && contains(d.message, "`x`"),
+            diagnostics)
+        @test length(unused) == 1
+    end
+
+    # No diagnostic inside a function (hard scope)
+    let diagnostics = get_lowered_diagnostics(soft_scope_module, """
+        function f()
+            for _ = 1:10
+                x = 2
+            end
+        end
+        """)
+        ds = filter(d -> d.code == JETLS.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE, diagnostics)
+        @test isempty(ds)
+    end
+
+    # No diagnostic when no global by that name exists
+    let diagnostics = get_lowered_diagnostics(soft_scope_module, """
+        for _ = 1:10
+            y = 2
+        end
+        """)
+        ds = filter(d -> d.code == JETLS.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE, diagnostics)
+        @test isempty(ds)
+    end
+
+    # Explicit `global` suppresses the diagnostic
+    let diagnostics = get_lowered_diagnostics(soft_scope_module, """
+        for _ = 1:10
+            global x = 2
+        end
+        """)
+        ds = filter(d -> d.code == JETLS.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE, diagnostics)
+        @test isempty(ds)
+    end
+
+    # while loop
+    let diagnostics = get_lowered_diagnostics(soft_scope_module, """
+        while true
+            x = 2
+            break
+        end
+        """)
+        ds = filter(d -> d.code == JETLS.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE, diagnostics)
+        @test length(ds) == 1
+    end
+
+    @testset "soft scope mode (notebook)" begin
+        # With soft_scope=true, ambiguous soft scope diagnostic should not fire
+        let diagnostics = get_lowered_diagnostics(soft_scope_module, """
+            for _ = 1:10
+                x = 2
+            end
+            """; soft_scope=true)
+            ds = filter(d -> d.code == JETLS.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE, diagnostics)
+            @test isempty(ds)
+        end
+
+        # Without soft_scope, the same code should produce the diagnostic
+        let diagnostics = get_lowered_diagnostics(soft_scope_module, """
+            for _ = 1:10
+                x = 2
+            end
+            """; soft_scope=false)
+            ds = filter(d -> d.code == JETLS.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE, diagnostics)
+            @test length(ds) == 1
+        end
+    end
+end
+
 end # module test_lowering_diagnostics

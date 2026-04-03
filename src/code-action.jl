@@ -41,6 +41,7 @@ function handle_CodeActionRequest(
     unused_import_code_actions!(code_actions, uri, diagnostics)
     unreachable_code_actions!(code_actions, uri, diagnostics)
     sort_imports_code_actions!(code_actions, uri, diagnostics)
+    ambiguous_soft_scope_code_actions!(code_actions, uri, diagnostics)
     return send(server,
         CodeActionResponse(;
             id = msg.id,
@@ -193,6 +194,39 @@ function sort_imports_code_actions!(
             edit = WorkspaceEdit(;
                 changes = Dict{URI,Vector{TextEdit}}(
                     uri => TextEdit[TextEdit(; range=diagnostic.range, newText=data.new_text)]))))
+    end
+    return code_actions
+end
+
+function ambiguous_soft_scope_code_actions!(
+        code_actions::Vector{Union{CodeAction,Command}}, uri::URI,
+        diagnostics::Vector{Diagnostic}
+    )
+    for diagnostic in diagnostics
+        diagnostic.code == LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE || continue
+        data = diagnostic.data
+        data isa AmbiguousSoftScopeData || continue
+        insert_pos = Position(; line = diagnostic.range.start.line, character = 0)
+        insert_range = Range(; start = insert_pos, var"end" = insert_pos)
+        push!(code_actions, CodeAction(;
+            title = "Insert `global $(data.name)` declaration",
+            kind = CodeActionKind.QuickFix,
+            diagnostics = Diagnostic[diagnostic],
+            isPreferred = true,
+            edit = WorkspaceEdit(;
+                changes = Dict{URI,Vector{TextEdit}}(
+                    uri => TextEdit[TextEdit(;
+                        range = insert_range,
+                        newText = data.indent * "global $(data.name)\n")]))))
+        push!(code_actions, CodeAction(;
+            title = "Insert `local $(data.name)` declaration",
+            kind = CodeActionKind.QuickFix,
+            diagnostics = Diagnostic[diagnostic],
+            edit = WorkspaceEdit(;
+                changes = Dict{URI,Vector{TextEdit}}(
+                    uri => TextEdit[TextEdit(;
+                        range = insert_range,
+                        newText = data.indent * "local $(data.name)\n")]))))
     end
     return code_actions
 end
