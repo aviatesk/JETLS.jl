@@ -639,7 +639,7 @@ mktemp() do file, io
     close(io)
     err = IOBuffer()
     try
-        run(pipeline(`$(Base.julia_cmd()) --startup-file=no $file`; stderr=err))
+        run(pipeline(`$(Base.julia_cmd()) --startup-file=no --color=no $file`; stderr=err))
     catch
     end
     output = String(take!(err))
