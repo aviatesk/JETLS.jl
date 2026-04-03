@@ -179,8 +179,8 @@ function find_global_binding_definitions(
         search_st0_top = build_syntax_tree(fi)
         for occurrence in find_global_binding_occurrences!(state, search_uri, fi, search_st0_top, binfo)
             if occurrence.kind === :def
-                range, _ = unadjust_range(state, search_uri, jsobj_to_range(occurrence.tree, fi))
-                push!(seen_locations, (search_uri, range))
+                range, adjusted_uri = unadjust_range(state, search_uri, jsobj_to_range(occurrence.tree, fi))
+                push!(seen_locations, (adjusted_uri, range))
             end
         end
     end

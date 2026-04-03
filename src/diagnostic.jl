@@ -1563,7 +1563,7 @@ function get_full_diagnostics(server::Server; ensure_cleared::Union{Bool,URI} = 
     if ensure_cleared isa URI && !haskey(uri2diagnostics, ensure_cleared)
         uri2diagnostics[ensure_cleared] = Diagnostic[]
     end
-    map_notebook_diagnostics!(uri2diagnostics, state)
+    localize_notebook_diagnostics!(uri2diagnostics, state)
     return uri2diagnostics
 end
 
@@ -1730,7 +1730,7 @@ function handle_DocumentDiagnosticRequest(
     apply_diagnostic_config!(diagnostics, server.state.config_manager, uri, root_path)
     notebook_uri = get_notebook_uri_for_cell(server.state, uri)
     if notebook_uri !== nothing
-        diagnostics = map_cell_diagnostics(server.state, notebook_uri, uri, diagnostics)
+        diagnostics = localize_notebook_diagnostics(server.state, notebook_uri, uri, diagnostics)
     end
     return send(server,
         DocumentDiagnosticResponse(;
@@ -1811,7 +1811,7 @@ function send_workspace_diagnostics(
         apply_diagnostic_config!(diagnostics, state.config_manager, uri, root_path)
         notebook_uri = get_notebook_uri_for_cell(state, uri)
         if notebook_uri !== nothing
-            diagnostics = map_cell_diagnostics(state, notebook_uri, uri, diagnostics)
+            diagnostics = localize_notebook_diagnostics(state, notebook_uri, uri, diagnostics)
         end
 
         item = WorkspaceFullDocumentDiagnosticReport(;

@@ -184,8 +184,8 @@ function global_find_references_in_file!(
     for occurrence in find_global_binding_occurrences!(state, uri, fi, st0_top, binfo)
         is_def = occurrence.kind === :def
         if !is_def || include_declaration
-            range, _ = unadjust_range(state, uri, jsobj_to_range(occurrence.tree, fi))
-            push!(seen_locations, (uri, range))
+            range, adjusted_uri = unadjust_range(state, uri, jsobj_to_range(occurrence.tree, fi))
+            push!(seen_locations, (adjusted_uri, range))
         end
     end
     return seen_locations
@@ -197,19 +197,19 @@ function find_local_references!(
         include_declaration::Bool = true,
         is_generated::Bool = false,
     )
-    ranges = Set{Range}()
+    seen_locations = Set{Tuple{URI,Range}}()
     binding_occurrences = compute_binding_occurrences(ctx3, st3, is_generated)
     if haskey(binding_occurrences, binfo)
         for occurrence in binding_occurrences[binfo]
             is_def = occurrence.kind === :def
             if !is_def || include_declaration
-                range, _ = unadjust_range(server.state, uri, jsobj_to_range(occurrence.tree, fi))
-                push!(ranges, range)
+                range, adjusted_uri = unadjust_range(server.state, uri, jsobj_to_range(occurrence.tree, fi))
+                push!(seen_locations, (adjusted_uri, range))
             end
         end
     end
-    for range in ranges
-        push!(locations, Location(; uri, range))
+    for (loc_uri, range) in seen_locations
+        push!(locations, Location(; uri = loc_uri, range))
     end
     return locations
 end

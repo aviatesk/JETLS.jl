@@ -30,8 +30,9 @@ get_analysis_info(f, manager::AnalysisManager, uri::URI) = get(f, load(manager.c
 
 # Collect URIs to search: the current file and all files in the same analysis unit
 function collect_search_uris(server::Server, uri::URI)
-    uris_to_search = Set{URI}((uri,))
-    analysis_info = get_analysis_info(server.state.analysis_manager, uri)
+    this_uri = get_notebook_uri_for_cell(server.state, uri, uri)
+    uris_to_search = Set{URI}((this_uri,))
+    analysis_info = get_analysis_info(server.state.analysis_manager, this_uri)
     if analysis_info isa AnalysisResult
         for analyzed_uri in analyzed_file_uris(analysis_info)
             push!(uris_to_search, analyzed_uri)

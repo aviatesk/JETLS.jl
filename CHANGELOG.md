@@ -77,6 +77,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed lowering-based LSP features (document highlight, go-to-definition, find references, rename, hover) not working for functions with docstrings.
 
+- Fixed go-to-definition, find references, rename, and code actions not working correctly in notebooks.
+
 ## 2026-03-20
 
 - Commit: [`d14efce`](https://github.com/aviatesk/JETLS.jl/commit/d14efce)

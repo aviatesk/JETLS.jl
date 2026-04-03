@@ -217,18 +217,27 @@ function local_binding_rename(
             error = ResponseError(;
                 code = ErrorCodes.RequestFailed,
                 message = "Could not compute information for this local binding."))
-    rename_ranges = Set{Range}()
+    seen_locations = Set{Tuple{URI,Range}}()
     for occurrence in binding_occurrences[binfo]
-        range, _ = unadjust_range(state, uri, jsobj_to_range(occurrence.tree, fi))
-        push!(rename_ranges, range)
+        range, adjusted_uri = unadjust_range(state, uri, jsobj_to_range(occurrence.tree, fi))
+        push!(seen_locations, (adjusted_uri, range))
     end
-    edits = TextEdit[TextEdit(; range, newText = newName) for range in rename_ranges]
+    edits_by_uri = Dict{URI,Vector{TextEdit}}()
+    for (loc_uri, range) in seen_locations
+        edit = TextEdit(; range, newText = newName)
+        push!(get!(Vector{TextEdit}, edits_by_uri, loc_uri), edit)
+    end
 
     if supports(server, :workspace, :workspaceEdit, :documentChanges)
-        textDocument = OptionalVersionedTextDocumentIdentifier(; uri, fi.version)
-        result = WorkspaceEdit(; documentChanges = TextDocumentEdit[TextDocumentEdit(; textDocument, edits)])
+        documentChanges = TextDocumentEdit[
+            TextDocumentEdit(;
+                textDocument = OptionalVersionedTextDocumentIdentifier(;
+                    uri = edit_uri, version = fi.version),
+                edits)
+            for (edit_uri, edits) in edits_by_uri]
+        result = WorkspaceEdit(; documentChanges)
     else
-        result = WorkspaceEdit(; changes = Dict(uri => edits))
+        result = WorkspaceEdit(; changes = edits_by_uri)
     end
 
     return (; result, error = nothing)
@@ -313,7 +322,7 @@ function collect_global_rename_edits!(
     )
     state = server.state
     n_files = length(uris_to_search)
-    seen_ranges = Set{Range}()
+    seen_locations = Set{Tuple{URI,Range}}()
     for (i, uri) in enumerate(uris_to_search)
         if is_cancelled(cancel_flag)
             return false
@@ -335,17 +344,26 @@ function collect_global_rename_edits!(
             version = fi.version
         end
         search_st0_top = build_syntax_tree(fi)
-        empty!(seen_ranges)
+        empty!(seen_locations)
         collect_global_rename_ranges_in_file!(
-            seen_ranges, state, uri, fi, search_st0_top, binfo)
+            seen_locations, state, uri, fi, search_st0_top, binfo)
+        isempty(seen_locations) && continue
 
-        if !isempty(seen_ranges)
-            edits = TextEdit[TextEdit(; range, newText = newName) for range in seen_ranges]
-            if changes isa Vector{TextDocumentEdit}
-                textDocument = OptionalVersionedTextDocumentIdentifier(; uri, version)
+        # Group edits by URI (for notebooks, occurrences may map to different cell URIs)
+        edits_by_uri = Dict{URI,Vector{TextEdit}}()
+        for (loc_uri, range) in seen_locations
+            edit = TextEdit(; range, newText = newName)
+            push!(get!(Vector{TextEdit}, edits_by_uri, loc_uri), edit)
+        end
+        if changes isa Vector{TextDocumentEdit}
+            for (edit_uri, edits) in edits_by_uri
+                textDocument = OptionalVersionedTextDocumentIdentifier(;
+                    uri = edit_uri, version)
                 push!(changes, TextDocumentEdit(; textDocument, edits))
-            else
-                changes[uri] = edits
+            end
+        else
+            for (edit_uri, edits) in edits_by_uri
+                append!(get!(Vector{TextEdit}, changes, edit_uri), edits)
             end
         end
     end
@@ -353,16 +371,16 @@ function collect_global_rename_edits!(
 end
 
 function collect_global_rename_ranges_in_file!(
-        seen_ranges::Set{Range}, state::ServerState, uri::URI, fi::FileInfo,
+        seen_locations::Set{Tuple{URI,Range}}, state::ServerState, uri::URI, fi::FileInfo,
         st0_top::JS.SyntaxTree, binfo::JL.BindingInfo
     )
     ismacro = startswith(binfo.name, '@')
     for occurrence in find_global_binding_occurrences!(state, uri, fi, st0_top, binfo)
         adjust_first = ismacro && is_macrocall_use_site(fi, occurrence.tree) ? 1 : 0
-        range, _ = unadjust_range(state, uri, jsobj_to_range(occurrence.tree, fi; adjust_first))
-        push!(seen_ranges, range)
+        range, adjusted_uri = unadjust_range(state, uri, jsobj_to_range(occurrence.tree, fi; adjust_first))
+        push!(seen_locations, (adjusted_uri, range))
     end
-    return seen_ranges
+    return seen_locations
 end
 
 function file_rename(
