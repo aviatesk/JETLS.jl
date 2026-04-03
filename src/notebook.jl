@@ -1,11 +1,11 @@
 # Document synchronization
 # ========================
 
-get_notebook_info(state::ServerState, uri::URI) =
-    get(load(state.notebook_cache), uri, nothing)
+get_notebook_info(state::ServerState, uri::URI, default=nothing) =
+    get(load(state.notebook_cache), uri, default)
 
-get_notebook_uri_for_cell(state::ServerState, cell_uri::URI) =
-    get(load(state.cell_to_notebook), cell_uri, nothing)
+get_notebook_uri_for_cell(state::ServerState, cell_uri::URI, default=nothing) =
+    get(load(state.cell_to_notebook), cell_uri, default)
 
 function concatenate_cells(cells::Vector{NotebookCellInfo})
     source = ""
@@ -364,43 +364,54 @@ function global_to_cell_range(concat::ConcatenatedNotebook, range::Range)
 end
 
 """
-    adjust_position(state::ServerState, uri::URI, pos::Position)
+    adjust_position(state::ServerState, cell_uri::URI, cell_pos::Position) -> global_pos::Position
 
-Adjust a cell-local position to a global position in the concatenated notebook source.
-If the URI is not a notebook cell, returns the position unchanged.
+Convert a cell-local position to a global position in the concatenated notebook source.
+If `cell_uri` is not a notebook cell, returns `cell_pos` unchanged.
 """
-function adjust_position(state::ServerState, uri::URI, pos::Position)
-    notebook_uri = @something get_notebook_uri_for_cell(state, uri) return pos
-    notebook_info = @something get_notebook_info(state, notebook_uri) return pos
-    return @something cell_to_global_position(notebook_info.concat, uri, pos) return pos
+function adjust_position(state::ServerState, cell_uri::URI, cell_pos::Position)
+    notebook_uri = @something get_notebook_uri_for_cell(state, cell_uri) return cell_pos
+    notebook_info = @something get_notebook_info(state, notebook_uri) return cell_pos
+    return @something cell_to_global_position(notebook_info.concat, cell_uri, cell_pos) return cell_pos
 end
 
 """
-    unadjust_position(state::ServerState, uri::URI, pos::Position) -> (Position, URI)
+    unadjust_position(state::ServerState, cell_uri::URI, pos::Position) -> (cell_pos::Position, resolved_cell_uri::URI)
 
-Convert a global position in the concatenated notebook source back to a cell-local position.
-Returns a tuple of (position, cell_uri) where cell_uri is the URI of the cell containing the position.
-If the URI is not a notebook cell, returns the position and URI unchanged.
+Given a `cell_uri` and a global position `pos` in the concatenated notebook
+source, convert `pos` back to a cell-local position. The returned
+`resolved_cell_uri` is the URI of the cell that actually contains `cell_pos`,
+which may differ from `cell_uri` (e.g. go-to-definition across cells).
+If `cell_uri` is not a notebook cell, returns `(pos, cell_uri)` unchanged.
 """
-function unadjust_position(state::ServerState, uri::URI, pos::Position)
-    notebook_uri = @something get_notebook_uri_for_cell(state, uri) return (pos, uri)
-    notebook_info = @something get_notebook_info(state, notebook_uri) return (pos, uri)
-    return @something global_to_cell_position(notebook_info.concat, pos) return (pos, uri)
+function unadjust_position(state::ServerState, cell_uri::URI, pos::Position)
+    notebook_uri = @something get_notebook_uri_for_cell(state, cell_uri) return (pos, cell_uri)
+    notebook_info = @something get_notebook_info(state, notebook_uri) return (pos, cell_uri)
+    return @something global_to_cell_position(notebook_info.concat, pos) return (pos, cell_uri)
 end
 
 """
-    unadjust_range(state::ServerState, uri::URI, range::Range) -> (Range, URI)
+    unadjust_range(state::ServerState, cell_uri::URI, range::Range) -> (cell_range::Range, resolved_cell_uri::URI)
 
-Convert a global range in the concatenated notebook source back to a cell-local range.
-Returns a tuple of (range, cell_uri). Note: start and end positions are assumed to be in the same cell.
-If the URI is not a notebook cell, returns the range and URI unchanged.
+Given a `cell_uri` and a global `range` in the concatenated notebook source,
+convert `range` back to a cell-local range. The returned
+`resolved_cell_uri` is the URI of the cell containing the start position of
+`cell_range`. Start and end positions are assumed to be in the same cell.
+If `cell_uri` is not a notebook cell, returns `(range, cell_uri)` unchanged.
 """
-function unadjust_range(state::ServerState, uri::URI, range::Range)
-    start_pos, start_uri = unadjust_position(state, uri, range.start)
-    end_pos, _ = unadjust_position(state, uri, range.var"end")
+function unadjust_range(state::ServerState, cell_uri::URI, range::Range)
+    start_pos, start_uri = unadjust_position(state, cell_uri, range.start)
+    end_pos, _ = unadjust_position(state, cell_uri, range.var"end")
     return Range(; start = start_pos, var"end" = end_pos), start_uri
 end
 
+"""
+    unadjust_location(state::ServerState, cell_uri::URI, loc::Location) -> cell_loc::Location
+
+Convert a `Location` whose URI is the notebook URI back to a cell-local
+location. If `cell_uri` is not a notebook cell, or `loc.uri` does not
+match the notebook URI, returns `loc` unchanged.
+"""
 function unadjust_location(state::ServerState, cell_uri::URI, loc::Location)
     notebook_uri = @something get_notebook_uri_for_cell(state, cell_uri) return loc
     loc.uri == notebook_uri || return loc
