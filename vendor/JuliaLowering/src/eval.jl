@@ -2,16 +2,16 @@
 # May be removed?
 
 function lower(mod::Module, ex0; expr_compat_mode=false, world=Base.get_world_counter())
-    ctx1, ex1 = expand_forms_1(  mod,  ex0, expr_compat_mode, world)
-    ctx2, ex2 = expand_forms_2(  ctx1, ex1)
-    ctx3, ex3 = resolve_scopes(  ctx2, ex2)
-    ctx4, ex4 = convert_closures(ctx3, ex3)
-    ctx5, ex5 = linearize_ir(    ctx4, ex4)
+     ctx1, ex1 = expand_forms_1(  mod,  ex0, expr_compat_mode, world)
+     ctx2, ex2 = expand_forms_2(  ctx1, ex1)
+     ctx3, ex3 = resolve_scopes(  ctx2, ex2)
+     ctx4, ex4 = convert_closures(ctx3, ex3)
+    _ctx5, ex5 = linearize_ir(    ctx4, ex4)
     ex5
 end
 
 function macroexpand(mod::Module, ex; expr_compat_mode=false, world=Base.get_world_counter())
-    ctx1, ex1 = expand_forms_1(mod, ex, expr_compat_mode, world)
+    _ctx1, ex1 = expand_forms_1(mod, ex, expr_compat_mode, world)
     ex1
 end
 
@@ -85,10 +85,11 @@ function lower_step(iter, mod, world=Base.get_world_counter())
         return Core.svec(:begin_module, version, newmod_name, notbare, loc)
     else
         # Non macro expansion parts of lowering
-        ctx2, ex2 = expand_forms_2(ctx1, ex)
-        ctx3, ex3 = resolve_scopes(ctx2, ex2)
-        ctx4, ex4 = convert_closures(ctx3, ex3)
-        ctx5, ex5 = linearize_ir(ctx4, ex4)
+        @assert @isdefined(ctx1) "Assertion to tell the compiler about the definedness of this variable"
+         ctx2, ex2 = expand_forms_2(ctx1, ex)
+         ctx3, ex3 = resolve_scopes(ctx2, ex2)
+         ctx4, ex4 = convert_closures(ctx3, ex3)
+        _ctx5, ex5 = linearize_ir(ctx4, ex4)
         thunk = to_lowered_expr(ex5)
         return Core.svec(:thunk, thunk)
     end
@@ -159,11 +160,11 @@ end
 function ir_debug_info_state(ex)
     e1 = first(flattened_provenance(ex))
     topfile = filename(e1)
-    [(topfile, [], Vector{Int32}())]
+    Tuple{String, Vector{Any}, Vector{Int32}}[(topfile, [], Vector{Int32}())]
 end
 
 function add_ir_debug_info!(current_codelocs_stack, stmt)
-    locstk = [(filename(e), source_location(e)[1]) for e in flattened_provenance(stmt)]
+    locstk = Tuple{String, Int32}[(filename(e), source_location(e)[1]) for e in flattened_provenance(stmt)]
     for j in 1:length(locstk)
         if j === 1 && current_codelocs_stack[j][1] != locstk[j][1]
             # dilemma: the filename stack here shares no prefix with that of the
@@ -224,10 +225,12 @@ function to_code_info(ex::SyntaxTree, slots::Vector{Slot}, meta::CompileHints)
         # TODO: Do we actually want unique names here? The C code in
         # `jl_new_code_info_from_ir` has logic to simplify gensym'd names and
         # use the empty string for compiler-generated bindings.
-        ni = get(slot_rename_inds, name, 0)
-        slot_rename_inds[name] = ni + 1
-        if ni > 0
-            name = "$name@$ni"
+        if name !== UNUSED
+            ni = get(slot_rename_inds, name, 0)
+            slot_rename_inds[name] = ni + 1
+            if ni > 0
+                name = "$name@$ni"
+            end
         end
         sname = Symbol(name)
         slotnames[i] = sname
@@ -325,13 +328,8 @@ function _to_lowered_expr(ex::SyntaxTree, stmt_offset::Int)
     if is_literal(k)
         ex.value
     elseif k == K"core"
-        name = ex.name_val
-        if name == "cglobal"
-            # Inference expects cglobal as call argument to be `GlobalRef`,
-            # so we resolve that name as a symbol of `Core.Intrinsics` here.
-            # https://github.com/JuliaLang/julia/blob/7a8cd6e202f1d1216a6c0c0b928fb43a123cada8/Compiler/src/validation.jl#L87
-            GlobalRef(Core.Intrinsics, :cglobal)
-        elseif name == "nothing"
+        name = ex.name_val::String
+        if name === "nothing"
             # Translate Core.nothing into literal `nothing`s (flisp uses a
             # special form (null) for this during desugaring, etc)
             nothing
@@ -339,24 +337,24 @@ function _to_lowered_expr(ex::SyntaxTree, stmt_offset::Int)
             GlobalRef(Core, Symbol(name))
         end
     elseif k == K"top"
-        GlobalRef(Base, Symbol(ex.name_val))
+        GlobalRef(Base, Symbol(ex.name_val::String))
     elseif k == K"globalref"
-        GlobalRef(ex.mod, Symbol(ex.name_val))
+        GlobalRef(ex.mod::Module, Symbol(ex.name_val::String))
     elseif k == K"Identifier"
         # Implicitly refers to name in parent module
         # TODO: Should we even have plain identifiers at this point or should
         # they all effectively be resolved into GlobalRef earlier?
-        Symbol(ex.name_val)
+        Symbol(ex.name_val::String)
     elseif k == K"SourceLocation"
         QuoteNode(source_location(LineNumberNode, ex))
     elseif k == K"Symbol"
-        QuoteNode(Symbol(ex.name_val))
+        QuoteNode(Symbol(ex.name_val::String))
     elseif k == K"slot"
-        Core.SlotNumber(ex.var_id)
+        Core.SlotNumber(ex.var_id::IdTag)
     elseif k == K"static_parameter"
-        Expr(:static_parameter, ex.var_id)
+        Expr(:static_parameter, ex.var_id::IdTag)
     elseif k == K"SSAValue"
-        Core.SSAValue(ex.var_id + stmt_offset)
+        Core.SSAValue(ex.var_id::IdTag + stmt_offset)
     elseif k == K"return"
         Core.ReturnNode(_to_lowered_expr(ex[1], stmt_offset))
     elseif k == K"inert"
@@ -394,18 +392,18 @@ function _to_lowered_expr(ex::SyntaxTree, stmt_offset::Int)
         # opaque_closure_method has special non-evaluated semantics for the
         # `functionloc` line number node so we need to undo a level of quoting
         arg4 = args[4]
-        @jl_assert arg4 isa QuoteNode e
+        @jl_assert arg4 isa QuoteNode ex
         args[4] = arg4.value
         Expr(:opaque_closure_method, args...)
     elseif k == K"meta"
         args = Any[_to_lowered_expr(e, stmt_offset) for e in children(ex)]
         # Unpack K"Symbol" QuoteNode as `Expr(:meta)` requires an identifier here.
         arg1 = args[1]
-        @jl_assert arg1 isa QuoteNode e
+        @jl_assert arg1 isa QuoteNode ex
         args[1] = arg1.value
         Expr(:meta, args...)
     elseif k == K"static_eval"
-        @jl_assert numchildren(ex) == 1 e
+        @jl_assert numchildren(ex) == 1 ex
         @stm ex[1] begin
             # tuple should just be ccall library spec
             [K"tuple" s lib] -> Expr(:tuple,

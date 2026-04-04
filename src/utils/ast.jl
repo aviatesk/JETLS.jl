@@ -3,7 +3,7 @@
 # but shares the immutable data within attribute dictionaries
 function copy_syntax_tree(st::JS.SyntaxTree)
     g = JS.syntax_graph(st)
-    new_attrs = Dict{Symbol,Any}()
+    new_attrs = Dict{Symbol,Dict{JL.IdTag,Any}}()
     for (k, v) in pairs(g.attributes)
         new_attrs[k] = copy(v)
     end
@@ -119,9 +119,11 @@ function is_doc0(st0::JS.SyntaxTree)
     JS.kind(st0) === JS.K"macrocall" || return false
     JS.numchildren(st0) >= 1 || return false
     macro_name = st0[1]
-    JS.kind(macro_name) === JS.K"Value" || return false
-    hasproperty(macro_name, :value) || return false
-    return macro_name.value == GlobalRef(Core, Symbol("@doc"))
+    return JS.kind(macro_name) === JS.K"Identifier" &&
+           JS.hasattr(macro_name, :name_val) &&
+           macro_name.name_val == "@doc" &&
+           JS.hasattr(macro_name, :mod) &&
+           macro_name.mod === Core
 end
 
 """
@@ -202,6 +204,8 @@ function _remove_macrocalls(st::JS.SyntaxTree)
             # `is_generated` can track argument usage within
             # returned quoted expressions.
             return st, false
+        elseif is_doc0(st)
+            return _remove_macrocalls(st[end])[1], true
         end
         new_children = JS.SyntaxList(JS.syntax_graph(st))
         for i = 2:JS.numchildren(st)
@@ -219,8 +223,7 @@ function _remove_macrocalls(st::JS.SyntaxTree)
         push!(new_children, nc)
     end
     k = JS.kind(st)
-    new_node = changed ?
-        JL.@ast(JS.syntax_graph(st), st, [k new_children...]) : st
+    new_node = changed ? JL.@ast(JS.syntax_graph(st), st, [k new_children...]) : st
     return (new_node, changed)
 end
 
@@ -417,7 +420,7 @@ end
 
 # TODO use something like `JuliaInterpreter.ExprSplitter`
 
-function iterate_toplevel_tree(callback, st0_top::JS.SyntaxTree)
+function iterate_toplevel_tree(callback, st0_top::SyntaxTree0)
     sl = JS.SyntaxList(st0_top)
     while !isempty(sl)
         st0 = pop!(sl)
@@ -748,32 +751,26 @@ function is_trivia(tc::TokenCursor, pass_newlines::Bool)
 end
 
 """
-    get_line_indent(fi::FileInfo, byte_offset::Int) -> Union{String,Nothing}
+    get_line_indent(fi::FileInfo, line::Integer) -> String
 
-Get the leading whitespace (indentation) at `byte_offset`.
-
-Returns the indentation string when the position is at the start of a line
-(after a newline or at the start of the file). Returns `nothing` when the
-position is preceded by non-whitespace tokens on the same line, indicating
-that the position is not at the beginning of a line.
+Get the leading whitespace (indentation) of the given 0-indexed line.
 
 # Examples
-- `"    export a, b"` at byte 5 (start of `export`) → `"    "`
-- `"begin\\n    export a, b"` at `export` → `"    "`
-- `"begin export a, b"` at `export` → `nothing`
+- `"    export a, b"` line 0 → `"    "`
+- `"begin\\n    export a, b"` line 1 → `"    "`
+- `"begin\\n    export a, b"` line 0 → `""`
 """
-function get_line_indent(fi::FileInfo, byte_offset::Int)
-    prev_tc = prev_nontrivia(fi.parsed_stream, byte_offset; strict=true)
-    if prev_tc === nothing
-        return String(fi.parsed_stream.textbuf[1:byte_offset-1])
-    elseif JS.kind(prev_tc) === JS.K"NewlineWs"
-        # NewlineWs includes both newline and following whitespace (e.g., "\n    ")
-        tok_text = fi.parsed_stream.textbuf[JS.byte_range(prev_tc)]
-        newline_end = findlast(c::UInt8 -> c == UInt8('\n') || c == UInt8('\r'), tok_text)
-        return newline_end === nothing ? "" : String(tok_text[newline_end+1:end])
-    else
-        return nothing
+function get_line_indent(fi::FileInfo, line::Integer)
+    textbuf = fi.parsed_stream.textbuf
+    byte = xy_to_offset(fi, Position(; line, character = 0))
+    n = length(textbuf)
+    i = byte
+    while i <= n
+        b = textbuf[i]
+        b == UInt8(' ') || b == UInt8('\t') || break
+        i += 1
     end
+    return String(textbuf[byte:i-1])
 end
 
 # TODO: This is used so that `r"foo"|` or `r"foo" |` don't show signature help,
@@ -988,4 +985,13 @@ function is_from_user_ast(provs::JS.SyntaxList)
     fprov, lprov = first(provs), last(provs)
     JS.sourcefile(lprov) == JS.sourcefile(fprov) || return false
     return JS.byte_range(lprov) ⊆ JS.byte_range(fprov)
+end
+
+function is_throw_call(ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTree)
+    JS.kind(st3) === JS.K"call" || return false
+    JS.numchildren(st3) >= 1 || return false
+    func = st3[1]
+    JS.kind(func) === JS.K"BindingId" || return false
+    binfo = JL.get_binding(ctx3, func.var_id::JL.IdTag)
+    return binfo.kind === :global && binfo.name == "throw"
 end

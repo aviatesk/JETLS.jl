@@ -151,14 +151,12 @@ function flatten_document_symbols!(
         parent_detail::Union{Nothing,String} = nothing
     )
     for doc_sym in doc_symbols
-        location = if notebook_info !== nothing
+        location = Location(; uri, range = doc_sym.range)
+        if notebook_info !== nothing
             result = global_to_cell_range(notebook_info.concat, doc_sym.range)
-            result === nothing ? nothing : Location(; uri = result[1], range = result[2])
-        else
-            nothing
-        end
-        if location === nothing
-            location = Location(; uri, range = doc_sym.range)
+            if result !== nothing
+                location = Location(; uri = result[1], range = result[2])
+            end
         end
         if (doc_sym.kind == SymbolKind.Object || # this means "argument" (see document-symbol.jl)
             doc_sym.kind == SymbolKind.Field)

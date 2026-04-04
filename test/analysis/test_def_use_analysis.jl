@@ -203,18 +203,458 @@ end
 end
 
 @testset "correlated conditions" begin
-    # Same condition in two if statements - CFG path exists but is infeasible
-    status = get_undef_status("""
-    function func(x)
-        if x > 0
-            y = 42
+    # Simple variable condition: `if x` assigns y, later `if x` uses y
+    let status = get_undef_status("""
+        function func(x::Bool)
+            if x
+                y = 42
+            end
+            if x
+                println(y)
+            end
         end
-        if x > 0
-            return sin(y)
-        end
+        """)
+        @test status["y"] === false
     end
-    """)
-    @test status["y"] === nothing
+
+    # Compound condition: not handled (only simple BindingId conditions)
+    let status = get_undef_status("""
+        function func(x)
+            if x > 0
+                y = 42
+            end
+            if x > 0
+                return sin(y)
+            end
+        end
+        """)
+        @test status["y"] === nothing
+    end
+
+    # Condition variable reassigned between the two ifs invalidates
+    let status = get_undef_status("""
+        function func()
+            x = rand(Bool)
+            if x
+                y = 42
+            end
+            x = rand(Bool)
+            if x
+                println(y)
+            end
+        end
+        """)
+        @test status["y"] === nothing
+    end
+
+    # Assignment inside nested if within the first branch: conservative
+    let status = get_undef_status("""
+        function func(x, z)
+            if x
+                if z
+                    y = 42
+                end
+            end
+            if x
+                println(y)
+            end
+        end
+        """)
+        @test status["y"] === nothing
+    end
+
+    # Multiple variables assigned in the first branch
+    let status = get_undef_status("""
+        function func(x::Bool)
+            if x
+                y = 42
+                z = 10
+            end
+            if x
+                println(y + z)
+            end
+        end
+        """)
+        @test status["y"] === false
+        @test status["z"] === false
+    end
+
+    # First if inside a conditional: implication scoped to that branch
+    let status = get_undef_status("""
+        function func(x, z)
+            if z
+                if x
+                    y = 42
+                end
+            end
+            if x
+                println(y)
+            end
+        end
+        """)
+        @test status["y"] === nothing
+    end
+
+    # Both ifs nested in the same branch: implication is valid
+    let status = get_undef_status("""
+        function func(x, z)
+            if z
+                if x
+                    y = 42
+                end
+                if x
+                    println(y)
+                end
+            end
+        end
+        """)
+        @test status["y"] === false
+    end
+
+    # Condition variable reassigned in one branch, used after
+    let status = get_undef_status("""
+        function func()
+            x = rand(Bool)
+            if x
+                y = 42
+            end
+            if rand(Bool)
+                x = false
+            end
+            if x
+                println(y)
+            end
+        end
+        """)
+        @test status["y"] === nothing
+    end
+
+    # && chain lookup: `if x` records, `if x && z` looks up x
+    let status = get_undef_status("""
+        function func(x, z)
+            if x
+                y = 42
+            end
+            if x && z
+                println(y)
+            end
+        end
+        """)
+        @test status["y"] === false
+    end
+
+    # && chain lookup: operand order doesn't matter
+    let status = get_undef_status("""
+        function func(x, z)
+            if x
+                y = 42
+            end
+            if z && x
+                println(y)
+            end
+        end
+        """)
+        @test status["y"] === false
+    end
+
+    # && chain: compound recording and lookup
+    let status = get_undef_status("""
+        function func(x, z)
+            if x && z
+                y = 42
+            end
+            if x && z
+                println(y)
+            end
+        end
+        """)
+        @test status["y"] === false
+    end
+
+    # && compound: subset lookup (superset condition)
+    let status = get_undef_status("""
+        function func(x, z, w)
+            if x && z
+                y = 42
+            end
+            if x && z && w
+                println(y)
+            end
+        end
+        """)
+        @test status["y"] === false
+    end
+
+    # && compound: individual operand does NOT satisfy compound
+    let status = get_undef_status("""
+        function func(x, z)
+            if x && z
+                y = 42
+            end
+            if x
+                println(y)
+            end
+        end
+        """)
+        @test status["y"] === nothing
+    end
+
+    # && compound: condition var reassigned invalidates compound
+    let status = get_undef_status("""
+        function func()
+            x = rand(Bool)
+            z = rand(Bool)
+            if x && z
+                y = 42
+            end
+            x = rand(Bool)
+            if x && z
+                println(y)
+            end
+        end
+        """)
+        @test status["y"] === nothing
+    end
+
+    # && chain with nested &&
+    let status = get_undef_status("""
+        function func(x, y, z)
+            if x
+                w = 42
+            end
+            if y
+                v = 10
+            end
+            if x && y && z
+                println(w + v)
+            end
+        end
+        """)
+        @test status["w"] === false
+        @test status["v"] === false
+    end
+
+    # Nested ifs lifted to compound condition
+    let status = get_undef_status("""
+        function func(a::Bool, b::Bool)
+            if a
+                if b
+                    y = 42
+                end
+            end
+            if a && b
+                println(y)
+            end
+        end
+        """)
+        @test status["y"] === false
+    end
+
+    # Deeper nesting: three levels lifted
+    let status = get_undef_status("""
+        function func(a::Bool, b::Bool, c::Bool)
+            if a
+                if b
+                    if c
+                        y = 42
+                    end
+                end
+            end
+            if a && b && c
+                println(y)
+            end
+        end
+        """)
+        @test status["y"] === false
+    end
+
+    # Nested if with condition var reassigned after: invalidates lifted implication
+    let status = get_undef_status("""
+        function func()
+            a = rand(Bool)
+            b = rand(Bool)
+            if a
+                if b
+                    y = 42
+                end
+            end
+            a = rand(Bool)
+            if a && b
+                println(y)
+            end
+        end
+        """)
+        @test status["y"] === nothing
+    end
+
+    # Nested if with non-BindingId outer: no lifting
+    let status = get_undef_status("""
+        function func(x, b)
+            if x > 0
+                if b
+                    y = 42
+                end
+            end
+            if b
+                println(y)
+            end
+        end
+        """)
+        @test status["y"] === nothing
+    end
+
+    # Nested ifs on both sides (no &&): active stack provides combined lookup
+    let status = get_undef_status("""
+        function func(a::Bool, b::Bool)
+            if a
+                if b
+                    y = 42
+                end
+            end
+            if a
+                if b
+                    println(y)
+                end
+            end
+        end
+        """)
+        @test status["y"] === false
+    end
+
+    # Delta lifting: existing implication extended inside branch
+    let status = get_undef_status("""
+        function func(a::Bool, b::Bool)
+            if b
+                y = 42
+            end
+            if a
+                if b
+                    z = 10
+                end
+            end
+            if a && b
+                println(y + z)
+            end
+        end
+        """)
+        @test status["y"] === false
+        @test status["z"] === false
+    end
+
+    # Lift when outer condition is already in key (lift_with ⊆ key)
+    let status = get_undef_status("""
+        function func(a::Bool, b::Bool)
+            if a
+                if a && b
+                    y = 42
+                end
+            end
+            if a && b
+                println(y)
+            end
+        end
+        """)
+        @test status["y"] === false
+    end
+
+    # function_decl in correlated condition
+    let status = get_undef_status("""
+        function func(x::Bool)
+            if x
+                function y()
+                    1
+                end
+            end
+            if x
+                y()
+            end
+        end
+        """)
+        @test status["y"] === false
+    end
+
+    # function_decl in correlated condition with && lookup
+    let status = get_undef_status("""
+        function func(x::Bool, z::Bool)
+            if x
+                function y()
+                    1
+                end
+            end
+            if x && z
+                y()
+            end
+        end
+        """)
+        @test status["y"] === false
+    end
+
+    # elseif preserves implication from the original condition
+    let status = get_undef_status("""
+        function func(x::Bool)
+            if x
+                y = 1
+            end
+            if rand(Bool)
+            elseif x
+                println(y)
+            end
+        end
+        """)
+        @test status["y"] === false
+    end
+
+    # invalidation then re-establishment of the same condition
+    let status = get_undef_status("""
+        function func(x::Bool)
+            if x
+                y = 1
+            end
+            x = true
+            if x
+                y = 2
+            end
+            if x
+                println(y)
+            end
+        end
+        """)
+        @test status["y"] === false
+    end
+
+    # non-direct assign (e.g. `+=`) should not be recorded as implication
+    let status = get_undef_status("""
+        function func(x::Bool)
+            y = 0
+            if x
+                y += 1
+            end
+            if x
+                println(y)
+            end
+        end
+        """)
+        # `y += 1` is not a direct assign, so the correlated condition
+        # analysis should not suppress the warning for `y` — but `y` is
+        # always defined here anyway because of the initial `y = 0`.
+        @test status["y"] === false
+    end
+
+    # `y += 1` lowers to `y = y + 1`, which is a direct assign and
+    # creates an implication.  The use of `y` inside `y += 1` is still
+    # potentially undefined, but the second `if x` branch is suppressed.
+    let status = get_undef_status("""
+        function func(x::Bool)
+            if x
+                y += 1
+            end
+            if x
+                println(y)
+            end
+        end
+        """)
+        @test status["y"] === nothing
+    end
 end
 
 @testset "closure capture" begin
@@ -415,6 +855,7 @@ end
     @test status["y"] === false
 
     # Without allow_throw_optimization, the same code reports may-be-undefined
+    # (compound condition `x > 0` is not handled by correlated condition analysis)
     status_no_opt = get_undef_status("""
     function f(x)
         if x > 0

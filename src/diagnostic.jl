@@ -270,7 +270,7 @@ function jet_frame_to_uri(frame)
     frame.file === :none && return nothing
     filename = String(frame.file)
     # TODO Clean this up and make we can always use `filename2uri` here.
-    if startswith(filename, "Untitled")
+    if isunsavedfile(filename)
         return filename2uri(filename)
     else
         return filepath2uri(to_full_path(filename))
@@ -335,7 +335,7 @@ function jet_result_to_diagnostics!(uri2diagnostics::URI2Diagnostics, result::JE
         diagnostic = @something jet_toplevel_error_report_to_diagnostic(report, postprocessor) continue
         filename = report.file
         filename === :none && continue
-        if startswith(filename, "Untitled")
+        if isunsavedfile(filename)
             uri = filename2uri(filename)
         else
             uri = filepath2uri(to_full_path(filename))
@@ -469,7 +469,7 @@ end
 toplevel_warning_report_to_uri_impl(report::MethodOverwriteReport) = filepath2uri(report.filepath)
 
 function toplevel_warning_report_to_diagnostic_impl(report::MethodOverwriteReport, ::SavedFileInfo, postprocessor::JET.PostProcessor)
-    sig_str = postprocessor(sprint(Base.show_tuple_as_call, Symbol(""), report.sig))
+    sig_str = postprocessor(@invokelatest sprint(Base.show_tuple_as_call, Symbol(""), report.sig))
     mod_str = postprocessor(sprint(show, report.mod))
     message = "Method definition $sig_str in module $mod_str overwritten"
     relatedInformation = DiagnosticRelatedInformation[
@@ -584,21 +584,23 @@ end
 # Compute a mapping from source locations to the set of identifier names found in keyword
 # argument type annotations.
 function compute_kwarg_type_annotation_names(st0::JS.SyntaxTree)
-    result = Dict{Tuple{Int,Int},Set{String}}()
+    type_names = Dict{Tuple{Int,Int},Set{String}}()
+    locations = Set{Tuple{Int,Int}}()
     traverse(st0) do node
         JS.kind(node) === JS.K"kw" || return
         JS.numchildren(node) >= 1 || return traversal_no_recurse
         child = node[1]
+        push!(locations, JS.source_location(child))
         if JS.kind(child) === JS.K"::" && JS.numchildren(child) >= 2
             names = Set{String}()
             collect_identifier_names!(names, child[2])
             if !isempty(names)
-                result[JS.source_location(child)] = names
+                type_names[JS.source_location(child)] = names
             end
         end
         return traversal_no_recurse
     end
-    return result
+    return type_names, locations
 end
 
 function collect_identifier_names!(names::Set{String}, st::JS.SyntaxTree)
@@ -653,7 +655,8 @@ function analyze_unused_bindings!(
         diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::JS.SyntaxTree, ctx3::JL.VariableAnalysisContext,
         binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence{Tree3}}},
         has_implicit_args::Bool, reported::Set{LoweringDiagnosticKey},
-        kwarg_type_names::Dict{Tuple{Int,Int},Set{String}};
+        kwarg_type_names::Dict{Tuple{Int,Int},Set{String}},
+        kwarg_locations::Set{Tuple{Int,Int}};
         allow_unused_underscore::Bool
     ) where Tree3<:JS.SyntaxTree
     for (binfo, occurrences) in binding_occurrences
@@ -672,7 +675,8 @@ function analyze_unused_bindings!(
         provs = JS.flattened_provenance(JL.binding_ex(ctx3, binfo.id))
         is_from_user_ast(provs) || continue
         prov = last(provs)
-        if bk === :argument
+        is_argument = bk === :argument
+        if is_argument
             prov_loc = JS.source_location(prov)
             if is_kwarg_constraining_used_sparam(kwarg_type_names, prov_loc, ctx3)
                 continue
@@ -687,10 +691,10 @@ function analyze_unused_bindings!(
             # diagnostic should be reported.
             continue
         end
-        if bk === :argument
+        if is_argument
             message = "Unused argument `$bn`"
             code = LOWERING_UNUSED_ARGUMENT_CODE
-            data = nothing
+            data = UnusedArgumentData(prov_loc in kwarg_locations)
         else
             message = "Unused local binding `$bn`"
             code = LOWERING_UNUSED_LOCAL_CODE
@@ -956,6 +960,38 @@ function find_capture_sites(
     return @somereal relatedInformation Some(nothing)
 end
 
+function analyze_ambiguous_soft_scope!(
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, ctx3::JL.VariableAnalysisContext,
+        reported::Set{LoweringDiagnosticKey}
+    )
+    for binfo in ctx3.bindings.info
+        binfo.is_ambiguous_local || continue
+        binfo.is_internal && continue
+        bn = binfo.name
+        startswith(bn, '#') && continue
+        provs = JS.flattened_provenance(JL.binding_ex(ctx3, binfo.id))
+        is_from_user_ast(provs) || continue
+        prov = last(provs)
+        range = jsobj_to_range(prov, fi)
+        key = LoweringDiagnosticKey(range, :ambiguous, bn)
+        key in reported ? continue : push!(reported, key)
+        indent = get_line_indent(fi, range.start.line)
+        push!(diagnostics, Diagnostic(;
+            range,
+            severity = DiagnosticSeverity.Warning,
+            message = "Assignment to `$bn` in soft scope is ambiguous " *
+                      "because a global variable by the same name exists: " *
+                      "`$bn` will be treated as a new local. " *
+                      "Disambiguate by using `local $bn` to suppress this " *
+                      "warning or `global $bn` to assign to the existing " *
+                      "global variable.",
+            source = DIAGNOSTIC_SOURCE_LIVE,
+            code = LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE,
+            codeDescription = diagnostic_code_description(LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE),
+            data = AmbiguousSoftScopeData(bn, indent)))
+    end
+end
+
 const SORT_IMPORTS_MAX_LINE_LENGTH = 92
 const SORT_IMPORTS_INDENT = "    "
 
@@ -971,7 +1007,7 @@ function analyze_unsorted_imports!(
         if !is_sorted_imports(names)
             range = jsobj_to_range(st0′, fi)
             sorted_names = sort!(names; by=get_import_sort_key)
-            base_indent = get_line_indent(fi, JS.first_byte(st0′))
+            base_indent = get_line_indent(fi, range.start.line)
             new_text = generate_sorted_import_text(st0′, sorted_names, base_indent)
             push!(diagnostics, Diagnostic(;
                 range,
@@ -989,7 +1025,7 @@ end
 
 function generate_sorted_import_text(
         node::JS.SyntaxTree, sorted_names::Vector{JS.SyntaxTree},
-        base_indent::Union{String,Nothing}
+        base_indent::String
     )
     kind = JS.kind(node)
     keyword = kind === JS.K"import" ? "import" :
@@ -1008,9 +1044,6 @@ function generate_sorted_import_text(
     end
     name_texts = String[lstrip(JS.sourcetext(n)) for n in sorted_names]
     single_line = prefix * join(name_texts, ", ")
-    if base_indent === nothing
-        return single_line
-    end
     if length(base_indent) + length(single_line) <= SORT_IMPORTS_MAX_LINE_LENGTH
         return single_line
     end
@@ -1090,6 +1123,94 @@ function get_import_sort_key(st0::JS.SyntaxTree)
     end
 end
 
+# Checks whether a statement is a block terminator — i.e. subsequent
+# statements in the same block are unreachable. This includes `return`,
+# `throw`, `break`, `continue`, and branching constructs (`if`/`try`)
+# where all branches contain a block terminator.
+function is_block_terminator(
+        ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTree,
+        allow_throw_optimization::Bool
+    )
+    k = JS.kind(st3)
+    k === JS.K"return" && return true
+    k === JS.K"break" && return true
+    allow_throw_optimization && is_throw_call(ctx3, st3) && return true
+    if (k === JS.K"if" || k === JS.K"elseif") && JS.numchildren(st3) >= 3
+        return (_is_block_terminator(ctx3, st3[2], allow_throw_optimization) &&
+                _is_block_terminator(ctx3, st3[3], allow_throw_optimization))
+    end
+    if k === JS.K"trycatchelse" && JS.numchildren(st3) >= 2
+        return (_is_block_terminator(ctx3, st3[1], allow_throw_optimization) &&
+                _is_block_terminator(ctx3, st3[2], allow_throw_optimization))
+    end
+    if k === JS.K"tryfinally" && JS.numchildren(st3) >= 1
+        return _is_block_terminator(ctx3, st3[1], allow_throw_optimization)
+    end
+    return false
+end
+
+function _is_block_terminator(
+        ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTree,
+        allow_throw_optimization::Bool
+    )
+    k = JS.kind(st3)
+    if k === JS.K"block"
+        for child in JS.children(st3)
+            _is_block_terminator(ctx3, child, allow_throw_optimization) && return true
+        end
+        return false
+    end
+    return is_block_terminator(ctx3, st3, allow_throw_optimization)
+end
+
+function analyze_unreachable_code!(
+        diagnostics::Vector{Diagnostic}, fi::FileInfo,
+        ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTree,
+        allow_throw_optimization::Bool
+    )
+    traverse(st3) do st3′::JS.SyntaxTree
+        JS.kind(st3′) === JS.K"block" || return nothing
+        nchildren = JS.numchildren(st3′)
+        for i in 1:nchildren
+            child = st3′[i]
+            is_block_terminator(ctx3, child, allow_throw_optimization) || continue
+            # All subsequent children in this block are unreachable
+            first_range = last_range = nothing
+            for j in (i+1):nchildren
+                unreachable_st = st3′[j]
+                provs = JL.flattened_provenance(unreachable_st)
+                is_from_user_ast(provs) || continue
+                range = jsobj_to_range(last(provs), fi)
+                if isnothing(first_range)
+                    first_range = range
+                end
+                last_range = range
+            end
+            if !isnothing(first_range) && !isnothing(last_range)
+                merged_range = Range(;
+                    start = first_range.start,
+                    var"end" = last_range.var"end")
+                # Compute delete range: from end of the terminator to end of the unreachable region
+                terminator_range = jsobj_to_range(child, fi)
+                delete_range = Range(;
+                    start = terminator_range.var"end",
+                    var"end" = last_range.var"end")
+                push!(diagnostics, Diagnostic(;
+                    range = merged_range,
+                    severity = DiagnosticSeverity.Information,
+                    message = "Unreachable code",
+                    source = DIAGNOSTIC_SOURCE_LIVE,
+                    code = LOWERING_UNREACHABLE_CODE,
+                    codeDescription = diagnostic_code_description(LOWERING_UNREACHABLE_CODE),
+                    tags = DiagnosticTag.Ty[DiagnosticTag.Unnecessary],
+                    data = UnreachableCodeData(delete_range)))
+            end
+            break
+        end
+        return nothing
+    end
+end
+
 function analyze_lowered_code!(
         diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo, res::NamedTuple;
         skip_analysis_requiring_context::Bool = false,
@@ -1103,12 +1224,15 @@ function analyze_lowered_code!(
     binding_occurrences = compute_binding_occurrences(ctx3, st3, is_generated0(st0);
         ismacro, include_global_bindings=true)
     reported = Set{LoweringDiagnosticKey}() # to prevent duplicate reports for unused default or keyword arguments
-    kwarg_type_names = compute_kwarg_type_annotation_names(st0)
+    (kwarg_type_names, kwarg_locations) = compute_kwarg_type_annotation_names(st0)
 
     has_implicit_args = ismacro[] || is_generated0(st0)
 
+    analyze_ambiguous_soft_scope!(diagnostics, fi, ctx3, reported)
+
     analyze_unused_bindings!(
-        diagnostics, fi, st0, ctx3, binding_occurrences, has_implicit_args, reported, kwarg_type_names;
+        diagnostics, fi, st0, ctx3, binding_occurrences, has_implicit_args, reported,
+        kwarg_type_names, kwarg_locations;
         allow_unused_underscore)
 
     skip_analysis_requiring_context ||
@@ -1121,12 +1245,16 @@ function analyze_lowered_code!(
 
     analyze_captured_boxes!(diagnostics, uri, fi, ctx4, st3, reported)
 
+    analyze_unreachable_code!(diagnostics, fi, ctx3, st3, allow_throw_optimization)
+
     return diagnostics
 end
 
 function lowering_diagnostics!(
         diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo, mod::Module, st0::JS.SyntaxTree;
-        skip_analysis_requiring_context::Bool = false, kwargs...
+        skip_analysis_requiring_context::Bool = false,
+        soft_scope::Bool = false,
+        kwargs...
     )
     @assert JS.kind(st0) ∉ JS.KSet"toplevel module"
 
@@ -1135,7 +1263,8 @@ function lowering_diagnostics!(
     (st0, _) = desugar_main_macrocall(st0)
     world = Base.get_world_counter()
     res = try
-        jl_lower_for_scope_resolution(mod, st0, world; recover_from_macro_errors=false, convert_closures=true)
+        jl_lower_for_scope_resolution(mod, st0, world;
+            recover_from_macro_errors=false, convert_closures=true, soft_scope)
     catch err
         if err isa JL.LoweringError
             if !err.internal
@@ -1199,7 +1328,6 @@ function lowering_diagnostics!(
     return analyze_lowered_code!(diagnostics, uri, fi, res;
         skip_analysis_requiring_context, allow_throw_optimization, kwargs...)
 end
-lowering_diagnostics(args...; kwargs...) = lowering_diagnostics!(Diagnostic[], args...; kwargs...) # used by tests
 
 struct ImportInfo
     uri::URI
@@ -1397,12 +1525,14 @@ function toplevel_lowering_diagnostics(
     st0_top = build_syntax_tree(file_info)
     skip_analysis_requiring_context = !has_analyzed_context(server.state, uri; lookup_func)
     allow_unused_underscore = get_config(server, :diagnostic, :allow_unused_underscore)
+    soft_scope = is_notebook_cell_uri(server.state, uri)
     iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
         is_cancelled(cancel_flag) && return traversal_terminator
         pos = offset_to_xy(file_info, JS.first_byte(st0))
         (; mod, analyzer, postprocessor) = get_context_info(server.state, uri, pos; lookup_func)
         lowering_diagnostics!(diagnostics, uri, file_info, mod, st0;
-            skip_analysis_requiring_context, allow_unused_underscore, analyzer, postprocessor)
+            skip_analysis_requiring_context, allow_unused_underscore, soft_scope,
+            analyzer, postprocessor)
     end
 
     if !skip_analysis_requiring_context
@@ -1433,7 +1563,7 @@ function get_full_diagnostics(server::Server; ensure_cleared::Union{Bool,URI} = 
     if ensure_cleared isa URI && !haskey(uri2diagnostics, ensure_cleared)
         uri2diagnostics[ensure_cleared] = Diagnostic[]
     end
-    map_notebook_diagnostics!(uri2diagnostics, state)
+    localize_notebook_diagnostics!(uri2diagnostics, state)
     return uri2diagnostics
 end
 
@@ -1600,7 +1730,7 @@ function handle_DocumentDiagnosticRequest(
     apply_diagnostic_config!(diagnostics, server.state.config_manager, uri, root_path)
     notebook_uri = get_notebook_uri_for_cell(server.state, uri)
     if notebook_uri !== nothing
-        diagnostics = map_cell_diagnostics(server.state, notebook_uri, uri, diagnostics)
+        diagnostics = localize_notebook_diagnostics(server.state, notebook_uri, uri, diagnostics)
     end
     return send(server,
         DocumentDiagnosticResponse(;
@@ -1681,7 +1811,7 @@ function send_workspace_diagnostics(
         apply_diagnostic_config!(diagnostics, state.config_manager, uri, root_path)
         notebook_uri = get_notebook_uri_for_cell(state, uri)
         if notebook_uri !== nothing
-            diagnostics = map_cell_diagnostics(state, notebook_uri, uri, diagnostics)
+            diagnostics = localize_notebook_diagnostics(state, notebook_uri, uri, diagnostics)
         end
 
         item = WorkspaceFullDocumentDiagnosticReport(;
@@ -1717,6 +1847,10 @@ function send_empty_workspace_diagnostics(
         server::Server, msg::WorkspaceDiagnosticRequest, uris_to_search::Set{URI},
         cancel_flag::CancelFlag
     )
+    previous_result_ids = Dict{URI,String}()
+    for prev in msg.params.previousResultIds
+        previous_result_ids[prev.uri] = prev.value
+    end
     partial_token = msg.params.partialResultToken
     items = WorkspaceDocumentDiagnosticReport[]
     for uri in uris_to_search
@@ -1726,11 +1860,18 @@ function send_empty_workspace_diagnostics(
                 result = nothing,
                 error = request_cancelled_error()))
         is_synchronized(server.state, uri) && continue
-        item = WorkspaceFullDocumentDiagnosticReport(;
-            uri,
-            version = null,
-            resultId = ALL_FILES_DISABLED_RESULT_ID,
-            items = empty_diagnostics)
+        if get(previous_result_ids, uri, nothing) == ALL_FILES_DISABLED_RESULT_ID
+            item = WorkspaceUnchangedDocumentDiagnosticReport(;
+                uri,
+                version = null,
+                resultId = ALL_FILES_DISABLED_RESULT_ID)
+        else
+            item = WorkspaceFullDocumentDiagnosticReport(;
+                uri,
+                version = null,
+                resultId = ALL_FILES_DISABLED_RESULT_ID,
+                items = empty_diagnostics)
+        end
         if partial_token !== nothing
             send_partial_result(server, partial_token,
                 WorkspaceDiagnosticReportPartialResult(; items = WorkspaceDocumentDiagnosticReport[item]))

@@ -26,6 +26,7 @@ function is_location_unknown(m::Method)
     line ≤ 0 && return true
     file, _ = functionloc(m)
     if isnothing(file)
+        isunsavedfile(String(m.file)) && return false
         return true
     end
     return false
@@ -43,8 +44,12 @@ For now, it just returns the first line of the method
 """
 function LSP.Location(m::Method)
     file, line = functionloc(m)
-    file = file::String
-    file = to_full_path(file)
+    if file === nothing
+        file = String(m.file) # method defined in unsaved buffer
+    else
+        file = file::String
+        file = to_full_path(file)
+    end
     return Location(;
         uri = filename2uri(file),
         range = Range(;
@@ -89,7 +94,7 @@ function handle_DefinitionRequest(
 
     locationlink_support = supports(server, :textDocument, :definition, :linkSupport)
 
-    binding_result = _select_target_binding(st0, offset, mod; caller="handle_DefinitionRequest")
+    binding_result = select_target_binding(st0, offset, mod; caller="handle_DefinitionRequest")
     if !isnothing(binding_result)
         (; ctx3, st3, binding) = binding_result
         binfo = JL.get_binding(ctx3, binding)
@@ -174,8 +179,8 @@ function find_global_binding_definitions(
         search_st0_top = build_syntax_tree(fi)
         for occurrence in find_global_binding_occurrences!(state, search_uri, fi, search_st0_top, binfo)
             if occurrence.kind === :def
-                range, _ = unadjust_range(state, search_uri, jsobj_to_range(occurrence.tree, fi))
-                push!(seen_locations, (search_uri, range))
+                range, adjusted_uri = unadjust_range(state, search_uri, jsobj_to_range(occurrence.tree, fi))
+                push!(seen_locations, (adjusted_uri, range))
             end
         end
     end

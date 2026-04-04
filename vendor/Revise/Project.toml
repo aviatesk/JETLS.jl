@@ -1,6 +1,6 @@
 name = "Revise"
 uuid = "d54aa4ff-5f0d-5e64-8d83-7613e0a93f9b"
-version = "3.14.0"
+version = "3.14.1"
 
 [deps]
 LibGit2 = "76f85450-5226-5b5a-8eaa-529ad045b433"
@@ -50,25 +50,25 @@ test = ["CatIndices", "Distributed", "EndpointRanges", "EponymTuples", "Example"
 
 [sources.OrderedCollections]
 subdir = "vendor/OrderedCollections"
-rev = "64acdf6644ee743c4c603e1461c34f75097ef31e"
+rev = "ac1a945279a02e2a0862d27a88f58a5cb06c2ca6"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.LoweredCodeUtils]
 subdir = "vendor/LoweredCodeUtils"
-rev = "64acdf6644ee743c4c603e1461c34f75097ef31e"
+rev = "ac1a945279a02e2a0862d27a88f58a5cb06c2ca6"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.JuliaInterpreter]
 subdir = "vendor/JuliaInterpreter"
-rev = "64acdf6644ee743c4c603e1461c34f75097ef31e"
+rev = "ac1a945279a02e2a0862d27a88f58a5cb06c2ca6"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.Preferences]
 subdir = "vendor/Preferences"
-rev = "64acdf6644ee743c4c603e1461c34f75097ef31e"
+rev = "ac1a945279a02e2a0862d27a88f58a5cb06c2ca6"
 url = "https://github.com/aviatesk/JETLS.jl"
 
 [sources.CodeTracking]
 subdir = "vendor/CodeTracking"
-rev = "64acdf6644ee743c4c603e1461c34f75097ef31e"
+rev = "ac1a945279a02e2a0862d27a88f58a5cb06c2ca6"
 url = "https://github.com/aviatesk/JETLS.jl"

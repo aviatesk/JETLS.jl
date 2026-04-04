@@ -73,6 +73,23 @@ end
         end
     end
 
+    @testset "docstring function references" begin
+        let code = """
+            \"\"\"Docstring\"\"\"
+            function func(│xx│x│, yyy)
+                println(│xx│x│, yyy)
+            end
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            for pos in positions
+                refs = find_references(clean_code, pos)
+                @test length(refs) == 2
+                @test any(ref -> ref.range.start == positions[1] && ref.range.var"end" == positions[3], refs)
+                @test any(ref -> ref.range.start == positions[4] && ref.range.var"end" == positions[6], refs)
+            end
+        end
+    end
+
     @testset "@generated function references" begin
         let code = """
             @generated function foo(│xx│x│)

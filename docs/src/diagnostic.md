@@ -27,18 +27,26 @@ Depth = 3:4
 Each diagnostic has a severity level that indicates how serious the issue is.
 JETLS supports four severity levels defined by the [LSP specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#diagnosticSeverity):
 
-- **`Error`** (`1`): Critical issues that prevent code from working correctly.
-  Most LSP clients display these with red underlines and error markers.
-- **`Warning`** (`2`): Potential problems that should be reviewed. Typically
-  shown with yellow/orange underlines and warning markers.
-- **`Information`** (`3`): Informational messages about code that may benefit
-  from attention. Often displayed with blue underlines or subtle markers.
-- **`Hint`** (`4`): Suggestions for improvements or best practices. Usually
-  shown with the least intrusive visual indicators.
+- **`Error`** (`1`): invalid code that cannot be compiled or loaded
+  (e.g. syntax errors, lowering errors)
+- **`Warning`** (`2`): code that is likely a bug
+  (e.g. undefined variables, type mismatches)
+- **`Information`** (`3`): valid code that is probably unintentional
+  (e.g. unused bindings, unreachable code)
+- **`Hint`** (`4`): stylistic suggestions where the code works as
+  intended but could be written more cleanly
+  (e.g. unsorted import names)
 
-How diagnostics are displayed depends on your LSP client (VS Code, Neovim,
-etc.), but most clients use color-coded underlines and gutter markers that
-correspond to these severity levels.
+The LSP specification does not prescribe how clients should render
+each severity level, so the actual display varies by editor. In
+practice, most editors display `Error`, `Warning`, and `Information`
+with color-coded underlines (red, yellow, blue) and gutter markers,
+while `Hint` is typically rendered with a more subtle indicator such as faded
+text or an ellipsis (`...`).[^vscode_severity]
+
+[^vscode_severity]: VS Code, which serves as the de facto reference for LSP
+    client behavior, follows these conventions.
+    In VS Code, `Hint` diagnostics are not listed in the Problems Panel.
 
 You can change the severity of any diagnostic by
 [configuring `diagnostic` section](@ref diagnostic/configuring).
@@ -105,7 +113,9 @@ Here is a summary table of the diagnostics explained in this section:
 | [`lowering/undef-local-var`](@ref diagnostic/reference/lowering/undef-local-var)                 | `Warning/Information` | `JETLS/live`  | References to undefined local variables            |
 | [`lowering/captured-boxed-variable`](@ref diagnostic/reference/lowering/captured-boxed-variable) | `Information`         | `JETLS/live`  | Variables captured by closures that require boxing |
 | [`lowering/unused-import`](@ref diagnostic/reference/lowering/unused-import)                     | `Information`         | `JETLS/live`  | Imported names that are never used                 |
+| [`lowering/unreachable-code`](@ref diagnostic/reference/lowering/unreachable-code)               | `Information`         | `JETLS/live`  | Code after a block terminator that is never reached  |
 | [`lowering/unsorted-import-names`](@ref diagnostic/reference/lowering/unsorted-import-names)     | `Hint`                | `JETLS/live`  | Import/export names not sorted alphabetically      |
+| [`lowering/ambiguous-soft-scope`](@ref diagnostic/reference/lowering/ambiguous-soft-scope)       | `Warning`             | `JETLS/live`  | Assignment in soft scope shadows a global variable |
 | [`toplevel/error`](@ref diagnostic/reference/toplevel/error)                                     | `Error`               | `JETLS/save`  | Errors during code loading                         |
 | [`toplevel/method-overwrite`](@ref diagnostic/reference/toplevel/method-overwrite)               | `Warning`             | `JETLS/save`  | Method definitions that overwrite previous ones    |
 | [`toplevel/abstract-field`](@ref diagnostic/reference/toplevel/abstract-field)                   | `Information`         | `JETLS/save`  | Struct fields with abstract types                  |
@@ -338,27 +348,47 @@ pointing to definition sites to help understand the control flow.
     end
     ```
 
-!!! tip "Workaround: Using `@assert @isdefined` as a hint"
-    There are cases where you know a variable is always defined at a certain point,
-    but the analysis cannot prove it. This includes correlated conditions, complex
-    control flow, or general runtime invariants that the compiler cannot figure out
-    statically. In such cases, you can use `@assert @isdefined(var) "..."` as a hint:
+!!! note "Correlated condition analysis"
+    The analysis recognizes correlated conditions: if a variable is assigned
+    under a condition and later used under the same condition, no diagnostic
+    is emitted. This works with simple variables, `&&` chains, and nested
+    `if` blocks:
     ```julia
     function correlated(cond)
         if cond
             y = 42
         end
         if cond
-            # The analysis reports "may be undefined" because it doesn't track
-            # that `cond` is the same in both branches
-            @assert @isdefined(y) "Assertion to tell the compiler about the definedness of this variable"
-            return sin(y)  # No diagnostic after the assertion
+            return sin(y)  # No diagnostic: analysis tracks that `cond`
+                           # is the same in both branches
         end
     end
     ```
-    This hint allows the compiler to avoid generating unnecessary `UndefVarError`
-    handling code, and also serves as documentation that you've verified the
-    variable is defined at this point.
+    This is limited to conditions that are simple local variables or `&&`
+    chains of local variables (e.g. `if x && z`). Compound expressions
+    like `if x > 0` are not tracked as correlated conditions.
+
+!!! tip "Workaround: Using `@assert @isdefined` as a hint"
+    There are cases where you know a variable is always defined at a
+    certain point, but the analysis cannot prove it. This includes
+    compound conditions (e.g. `if !isnothing(x)`), complex control flow, or
+    general runtime invariants that the compiler cannot figure out
+    statically. In such cases, you can use
+    `@assert @isdefined(var) "..."` as a hint:
+    ```julia
+    function compound_condition(x)
+        if !isnothing(x)
+            y = sin(x)
+        end
+        if !isnothing(x)
+            @assert @isdefined(y) "compiler hint"
+            return cos(y)  # No diagnostic after the assertion
+        end
+    end
+    ```
+    This hint allows the compiler to avoid generating unnecessary
+    `UndefVarError` handling code, and also serves as documentation
+    that you've verified the variable is defined at this point.
 
 #### [Captured boxed variable (`lowering/captured-boxed-variable`)](@id diagnostic/reference/lowering/captured-boxed-variable)
 
@@ -367,9 +397,9 @@ pointing to definition sites to help understand the control flow.
 Reported when a variable is captured by a closure and requires "boxing" due to
 being assigned multiple times. Captured boxed variables are stored in heap-allocated
 containers (a.k.a. `Core.Box`), which can cause type instability and hinder
-compiler optimizations.[^perftip]
+compiler optimizations.[^performance_tip]
 
-[^perftip]:
+[^performance_tip]:
     For detailed information about how captured variables affect performance,
     see Julia's [Performance Tips on captured variables](https://docs.julialang.org/en/v1/manual/performance-tips/#man-performance-captured).
 
@@ -499,6 +529,51 @@ module.
     @gencall sin(42)  # `sin` is used here
     ```
 
+#### [Unreachable code (`lowering/unreachable-code`)](@id diagnostic/reference/lowering/unreachable-code)
+
+**Default severity**: `Information`
+
+Reported when code appears after a statement that always exits the
+current block, making subsequent code unreachable. The unreachable
+code is rendered with the `Unnecessary` tag, which causes editors to
+display it as faded/grayed out.
+
+Example:
+
+```julia
+function after_return()
+    return 1
+    x = 2  # Unreachable code (JETLS lowering/unreachable-code)
+    y = 3  # Also unreachable
+end
+
+function after_throw()
+    throw(ErrorException("error"))
+    cleanup()  # Unreachable code (JETLS lowering/unreachable-code)
+end
+
+function all_branches_return(x)
+    if x > 0
+        return 1
+    else
+        return -1
+    end
+    println("unreachable")  # Unreachable code (JETLS lowering/unreachable-code)
+end
+
+function after_continue()
+    for i = 1:10
+        continue
+        println(i)  # Unreachable code (JETLS lowering/unreachable-code)
+    end
+end
+```
+
+!!! tip "Code action available"
+    A "Delete unreachable code" quick fix is available that removes
+    the unreachable region along with surrounding whitespace, from
+    the end of the terminating statement to the end of the dead code.
+
 #### [Unsorted import names (`lowering/unsorted-import-names`)](@id diagnostic/reference/lowering/unsorted-import-names)
 
 **Default severity**: `Hint`
@@ -527,6 +602,86 @@ export bar, @foo  # Names are not sorted alphabetically (JETLS lowering/unsorted
     When the sorted result exceeds 92 characters (
     [Julia's conventional maximum line length](https://docs.julialang.org/en/v1.14-dev/devdocs/contributing/formatting/#General-Formatting-Guidelines-for-Julia-code-contributions)),
     the code action wraps to multiple lines with 4-space continuation indent.
+
+#### [Ambiguous soft scope (`lowering/ambiguous-soft-scope`)](@id diagnostic/reference/lowering/ambiguous-soft-scope)
+
+**Default severity**: `Warning`
+
+Reported when a variable is assigned inside a `for`, `while`, or
+`try`/`catch` block at the top level of a file, and a global variable
+with the same name already exists[^on_soft_scope]. This assignment is
+ambiguous because it behaves differently depending on where the code
+runs:
+- In the REPL or notebooks: assigns to the existing global
+- In a file: creates a new local variable, leaving the global
+  unchanged
+
+[^on_soft_scope]: See
+    [On Soft Scope](https://docs.julialang.org/en/v1/manual/variables-and-scoping/#on-soft-scope)
+    in the Julia manual.
+
+Example ([A Common Confusion](https://docs.julialang.org/en/v1/manual/variables-and-scoping/#A-Common-Confusion-2479cb3548c466db) adapted from the Julia manual):
+
+```@eval
+using Markdown
+
+mktemp() do file, io
+    code = """
+    # Print the numbers 1 through 5
+    global i = 0
+    while i < 5
+        i += 1  # Assignment to `i` in soft scope is ambiguous (JETLS lowering/ambiguous-soft-scope)
+                # Variable `i` may be used before it is defined (JETLS lowering/undef-local-var)
+        println(i)
+    end
+    """
+    write(io, code)
+    close(io)
+    err = IOBuffer()
+    try
+        run(pipeline(`$(Base.julia_cmd()) --startup-file=no --color=no $file`; stderr=err))
+    catch
+    end
+    output = String(take!(err))
+    lines = split(output, '\n')
+    idx = findfirst(l -> startswith(l, "Stacktrace:"), lines)
+    if idx !== nothing
+        lines = lines[1:idx]
+    end
+    push!(lines, "...")
+    output = join(lines, '\n')
+    output = replace(output, file=>"ambiguous-scope.jl")
+
+    Markdown.parse("""
+    > `ambiguous-scope.jl`
+    ``````julia
+    $(code)
+    ``````
+
+    This diagnostic matches the warning that Julia itself emits at runtime.
+    Running the example above as a file produces:
+    > `julia ambiguous-scope.jl`
+    ``````
+    $(output)
+    ``````
+    """)
+end
+```
+
+!!! note "Why is `lowering/undef-local-var` also reported?"
+    Since `i += 1` desugars to `i = i + 1`, the new local `i` is read
+    before being assigned, which also triggers
+    [`lowering/undef-local-var`](@ref diagnostic/reference/lowering/undef-local-var)
+    and causes the `UndefVarError` shown above at runtime.
+
+!!! tip "Code actions available"
+    Two quick fixes are offered: "Insert `global i` declaration" (preferred)
+    to assign to the existing global, and "Insert `local i` declaration" to
+    explicitly mark the variable as local and suppress the warning.
+
+!!! note "Notebook mode"
+    This diagnostic is suppressed for [notebooks](@ref notebook), where soft
+    scope semantics are enabled (matching REPL behavior).
 
 ### [Top-level diagnostic (`toplevel/*`)](@id diagnostic/reference/toplevel)
 
@@ -631,7 +786,7 @@ end
 
 !!! tip
     If you intentionally use abstract field types (e.g., in cases where data
-    types are inherently only known at compile time[^nospecializetip]),
+    types are inherently only known at compile time[^nospecialize_tip]),
     you can suppress this diagnostic using [pattern-based configuration](@ref config/diagnostic-patterns):
     ```toml
     [[diagnostic.patterns]]
@@ -641,7 +796,7 @@ end
     severity = "off"
     ```
 
-[^nospecializetip]: For such cases, you can add `@nospecialize` to the use-site methods to allow them to handle abstract data types while avoiding excessive compilation.
+[^nospecialize_tip]: For such cases, you can add `@nospecialize` to the use-site methods to allow them to handle abstract data types while avoiding excessive compilation.
 
 ### [Inference diagnostic (`inference/*`)](@id diagnostic/reference/inference)
 

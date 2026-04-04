@@ -87,6 +87,11 @@ end
         x = MyStruct(42)
         return x.propert  # FieldError: type MyStruct has no field `propert`, available fields: `property` (JETLS inference/field-error)
     end
+
+    f32(x::Float32) = sin(x) + cos(x)
+    let x = rand()
+        @show f32(x) # no matching method found `f32(::Float64)` (JETLS inference/method-error)
+    end
     """
 
     # Use withscript to create a temporary file and run the test
@@ -98,16 +103,18 @@ end
             @test raw_res isa PublishDiagnosticsNotification
             @test raw_res.params.uri == uri
 
-            found_diagnostic = false
+            found_diagnostic1 = found_diagnostic2 = false
             for diag in raw_res.params.diagnostics
-                if (diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE &&
-                    diag.code == JETLS.INFERENCE_FIELD_ERROR_CODE &&
-                    occursin("type MyStruct has no field `propert`, available fields: `property`", diag.message))
-                    found_diagnostic = true
-                    break
+                if diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE
+                    if diag.code == JETLS.INFERENCE_FIELD_ERROR_CODE && occursin("type MyStruct has no field `propert`, available fields: `property`", diag.message)
+                        found_diagnostic1 = true
+                    elseif diag.code == JETLS.INFERENCE_METHOD_ERROR_CODE && occursin("no matching method found `f32(::Float64)`", diag.message)
+                        found_diagnostic2 = true
+                    end
                 end
             end
-            @test found_diagnostic
+            @test found_diagnostic1
+            @test found_diagnostic2
         end
     end
 end
@@ -115,7 +122,6 @@ end
 @testset "inference diagnostic (package analysis)" begin
     withpackage("TestPackageAnalysis", """
         module TestPackageAnalysis
-        export hello
 
         struct Hello
             who::String
@@ -126,10 +132,13 @@ end
 
         module BadModule
             using ..TestPackageAnalysis: Hello
-            function badhello(x::Hello)
-                # Undefined variable 'y'
-                return "Hello, \$(y.who)"
+            function badhello1(x::Hello)
+                return "Hello, \$(y.who)"  # `TestPackageAnalysis.BadModule.y` is not defined (JETLS inference/undef-global-var)
             end
+            function badhello2(x::Hello)
+                return _badhello2(x.who)  # no matching method found `_badhello2(::String)` (JETLS inference/method-error)
+            end
+            _badhello2(x::Hello) = "Hello, \$(x.who)"
         end
 
         end # module TestPackageAnalysis
@@ -143,17 +152,23 @@ end
             @test raw_res isa PublishDiagnosticsNotification
             @test raw_res.params.uri == uri
 
-            found_diagnostic = false
+            found_diagnostic1 = found_diagnostic2 = false
             for diag in raw_res.params.diagnostics
-                if (diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE &&
-                    # this also tests that JETLS doesn't show the nonsensical `var"..."`
-                    # string caused by JET's internal details
-                    occursin("`TestPackageAnalysis.BadModule.y` is not defined", diag.message))
-                    found_diagnostic = true
-                    break
+                if diag.source == JETLS.DIAGNOSTIC_SOURCE_SAVE
+                    if diag.code == JETLS.INFERENCE_UNDEF_GLOBAL_VAR_CODE &&
+                        occursin("`TestPackageAnalysis.BadModule.y` is not defined", diag.message)
+                        # this also tests that JETLS doesn't show the nonsensical `var"..."`
+                        # string caused by JET's internal details
+                        found_diagnostic1 = true
+                    end
+                    if diag.code == JETLS.INFERENCE_METHOD_ERROR_CODE &&
+                        occursin("no matching method found `_badhello2(::String)`", diag.message)
+                        found_diagnostic2 = true
+                    end
                 end
             end
-            @test found_diagnostic
+            @test found_diagnostic1
+            @test found_diagnostic2
         end
     end
 end

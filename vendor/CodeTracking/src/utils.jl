@@ -294,7 +294,8 @@ function kwmethod_basename(meth::Method)
         mtch = match(r"^#+(.*)#", sname)
     end
     name = mtch === nothing ? name : Symbol(only(mtch.captures))
-    ftypname = Symbol(string('#', name))
+    name_final = name
+    ftypname = Symbol(string('#', name_final))
     idx = findfirst(Base.unwrap_unionall(meth.sig).parameters) do @nospecialize(T)
         if isa(T, DataType)
             Tname = T.name.name
@@ -302,14 +303,14 @@ function kwmethod_basename(meth::Method)
                 p1 = Base.unwrap_unionall(T.parameters[1])
                 Tname = isa(p1, DataType) ? p1.name.name :
                         isa(p1, TypeVar) ? p1.name : error("unexpected type ", typeof(p1), "for ", meth)
-                return Tname == name
+                return Tname == name_final
             end
             return ftypname === Tname
         end
         false
     end
-    idx === nothing && return name, 0
-    return name, idx
+    idx === nothing && return name_final, 0
+    return name_final, idx
 end
 
 """
@@ -335,8 +336,13 @@ end
 
 function src_from_REPL(origin::AbstractString, repl = Base.active_repl)
     hist_idx = parse(Int, origin)
-    hp = repl.interface.modes[1].hist
-    return hp.history[hp.start_idx+hist_idx]
+    hp = repl.interface.modes[1].hist::REPL.REPLHistoryProvider
+    entry = hp.history[hp.start_idx+hist_idx]
+    @static if VERSION ≥ v"1.13-"
+        return entry.content
+    else
+        return entry
+    end
 end
 
 function basepath(id::PkgId)

@@ -15,6 +15,7 @@ using Core: LineInfoNode, MethodTable
 using Base.Meta: isexpr
 using UUIDs
 using InteractiveUtils
+using REPL: REPL
 
 export code_expr, @code_expr, code_string, @code_string, whereis, definition, pkgfiles, signatures_at
 
@@ -63,12 +64,12 @@ const method_lookup_callback = Ref{Any}(nothing)
 
 # Callback for `signatures_at` (lookup by file/lineno). `lookupfunc = expressions_callback[]`
 # must have the form
-#    mod, exsigs = lookupfunc(id, relpath)
+#    mod, exs_infos = lookupfunc(id, relpath)
 # where
 #    id is the PkgId of the corresponding package
 #    relpath is the path of the file from the basedir of `id`
 #    mod is the "active" module at that point in the source
-#    exsigs is a `ex => mt_sigs` dictionary, where `ex` is the source expression and `mt_sigs`
+#    exs_infos is a `ex => mt_sigs` dictionary, where `ex` is the source expression and `mt_sigs`
 #        a list of `method_table => signature` pairs defined by that expression.
 const expressions_callback = Ref{Any}(nothing)
 
@@ -209,8 +210,8 @@ function signatures_at(id::PkgId, relpath::AbstractString, line::Integer)
     expressions = expressions_callback[]
     expressions === nothing && error("cannot look up methods by line number, try `using Revise` before loading other packages")
     try
-        for (mod, exsigs) in Base.invokelatest(expressions, id, relpath)
-            for (ex, mt_sigs) in exsigs
+        for (_, exs_infos) in Base.invokelatest(expressions, id, relpath)
+            for (ex, mt_sigs) in exs_infos
                 lr = linerange(ex)
                 lr === nothing && continue
                 line ∈ lr && return mt_sigs
