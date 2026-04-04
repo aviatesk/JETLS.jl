@@ -561,7 +561,8 @@ function Base.iterate(iter::ExprSplitter, state=nothing)
         if isa(body, Expr) && body.head === :module
             # Just document the module itself and push the module def onto the stack
             excopy = Expr(ex.head, ex.args[1], ex.args[2], ex.args[3])
-            push!(excopy.args, body.args[2])
+            module_name = body.args[end - 1]
+            push!(excopy.args, module_name)
             append!(excopy.args, ex.args[5:end])   # there should only be at most a 5th, but just for robustness
             ex = excopy
             push_modex!(iter, mod, body)

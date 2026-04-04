@@ -13,6 +13,10 @@ end
 
 isdefined(Main, :Revise) ? Main.Revise.includet("script.jl") : include("script.jl")
 
+if isdefined(Test, :detect_closure_boxes)
+    @test isempty(Test.detect_closure_boxes(CodeTracking))
+end
+
 @testset "CodeTracking.jl" begin
     m = first(methods(f1))
     file, line = whereis(m)
@@ -112,7 +116,7 @@ isdefined(Main, :Revise) ? Main.Revise.includet("script.jl") : include("script.j
     @test whereis(m) == ("REPL[1]", 1)
     # Test with broken lookup
     oldlookup = CodeTracking.method_lookup_callback[]
-    CodeTracking.method_lookup_callback[] = m -> error("oops")
+    CodeTracking.method_lookup_callback[] = (_) -> error("oops")
     @test whereis(m) == ("REPL[1]", 1)
     CodeTracking.method_lookup_callback[] = oldlookup
 
