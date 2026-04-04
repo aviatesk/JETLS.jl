@@ -35,14 +35,18 @@ function uri2filepath(uri::URI)
     return value
 end
 
-function filename2uri(filename::String)
-    if startswith(filename, "Untitled")
+isunsavedfile(filename::AbstractString) = startswith(filename, "Untitled")
+
+isunsaveduri(uri::URI) = uri.scheme == "untitled"
+
+function filename2uri(filename::AbstractString)
+    if isunsavedfile(filename)
         return URI(scheme="untitled", path=filename)
     end
     return filepath2uri(filename)
 end
 
-function filepath2uri(path::String)
+function filepath2uri(path::AbstractString)
     isabspath(path) || error("Non-absolute path `$path` is not supported.")
 
     path = normpath(path)

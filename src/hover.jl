@@ -120,12 +120,9 @@ function handle_HoverRequest(
         return send(server, HoverResponse(; id = msg.id, result = null))
     end
     identifier = Symbol(identifier_node.name_val)
-    documentation = Base.Docs.doc(DocsBinding(parentmod, identifier))
+    documentation = @invokelatest(Base.Docs.doc(DocsBinding(parentmod, identifier)))::Markdown.MD
     value = postprocessor(documentation)
-
-    contents = MarkupContent(;
-        kind = MarkupKind.Markdown,
-        value)
+    contents = MarkupContent(; kind = MarkupKind.Markdown, value)
     range, _ = unadjust_range(state, uri, jsobj_to_range(node, fi))
     return send(server, HoverResponse(;
         id = msg.id,

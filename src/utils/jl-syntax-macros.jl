@@ -4,6 +4,20 @@
 
 # TODO: @inline, @noinline, @inbounds, @simd, @ccall, @isdefined, @assume_effects
 
+"""
+    mapchildren(f, ctx, ex, indices::UnitRange{Int})
+
+Like `JS.mapchildren(f, ctx, ex)`, but applies `f` only to children at the
+given `indices`, leaving other children unchanged.
+"""
+function mapchildren(f, ctx, ex::JS.SyntaxTree, indices::UnitRange{<:Integer})
+    i = Ref(0)
+    JS.mapchildren(ctx, ex) do c
+        i[] += 1
+        i[] in indices ? f(c) : c
+    end
+end
+
 function Base.var"@nospecialize"(__context__::JL.MacroContext)
     JL.@ast(__context__,
             __context__.macrocall::JS.SyntaxTree,
@@ -58,7 +72,7 @@ function Base.var"@kwdef"(__context__::JL.MacroContext, ex::JS.SyntaxTree)
 
     stripped_body = JL.@ast(__context__, type_body::JS.SyntaxTree,
                            [JS.K"block" stripped...])
-    new_struct = JS.mapchildren(_ -> stripped_body, __context__, ex, Int[3])
+    new_struct = mapchildren(_ -> stripped_body, __context__, ex, 3:3)
 
     if isempty(field_names)
         return new_struct
@@ -72,10 +86,10 @@ function Base.var"@kwdef"(__context__::JL.MacroContext, ex::JS.SyntaxTree)
 end
 
 function _kwdef_collect_fields!(
-        ctx::JL.MacroContext, body::JS.SyntaxTree,
-        field_names::Vector{JS.SyntaxTree},
+        ctx::JL.MacroContext, body::JS.SyntaxTree, field_names::Vector{JS.SyntaxTree},
         field_defaults::Vector{Union{Nothing,JS.SyntaxTree}},
-        stripped::Vector{JS.SyntaxTree})
+        stripped::Vector{JS.SyntaxTree}
+    )
     for field in JS.children(body)
         k = JS.kind(field)
         k === JS.K"Value" && continue
@@ -86,7 +100,7 @@ function _kwdef_collect_fields!(
                JS.kind(field[1]) === JS.K"="
             inner = field[1]
             _kwdef_push_field!(inner[1], inner[2], field_names, field_defaults)
-            push!(stripped, JS.mapchildren(_ -> inner[1], ctx, field, [1]))
+            push!(stripped, mapchildren(_ -> inner[1], ctx, field, 1:1))
         elseif k === JS.K"block"
             _kwdef_collect_fields!(ctx, field, field_names, field_defaults, stripped)
         else
@@ -101,9 +115,9 @@ function _kwdef_collect_fields!(
 end
 
 function _kwdef_push_field!(
-        decl::JS.SyntaxTree, default::JS.SyntaxTree,
-        field_names::Vector{JS.SyntaxTree},
-        field_defaults::Vector{Union{Nothing,JS.SyntaxTree}})
+        decl::JS.SyntaxTree, default::JS.SyntaxTree, field_names::Vector{JS.SyntaxTree},
+        field_defaults::Vector{Union{Nothing,JS.SyntaxTree}}
+    )
     name = _kwdef_extract_name(decl)
     if name !== nothing
         push!(field_names, name)
@@ -127,9 +141,9 @@ function _kwdef_extract_name(st::JS.SyntaxTree)
 end
 
 function _kwdef_make_constructors(
-        ctx::JL.MacroContext, type_sig::JS.SyntaxTree,
-        field_names::Vector{JS.SyntaxTree},
-        field_defaults::Vector{Union{Nothing,JS.SyntaxTree}})
+        ctx::JL.MacroContext, type_sig::JS.SyntaxTree, field_names::Vector{JS.SyntaxTree},
+        field_defaults::Vector{Union{Nothing,JS.SyntaxTree}}
+    )
     mc = __source__ = ctx.macrocall::JS.SyntaxTree
 
     if JS.kind(type_sig) === JS.K"<:"

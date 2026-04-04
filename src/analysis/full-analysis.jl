@@ -30,8 +30,9 @@ get_analysis_info(f, manager::AnalysisManager, uri::URI) = get(f, load(manager.c
 
 # Collect URIs to search: the current file and all files in the same analysis unit
 function collect_search_uris(server::Server, uri::URI)
-    uris_to_search = Set{URI}((uri,))
-    analysis_info = get_analysis_info(server.state.analysis_manager, uri)
+    this_uri = get_notebook_uri_for_cell(server.state, uri, uri)
+    uris_to_search = Set{URI}((this_uri,))
+    analysis_info = get_analysis_info(server.state.analysis_manager, this_uri)
     if analysis_info isa AnalysisResult
         for analyzed_uri in analyzed_file_uris(analysis_info)
             push!(uris_to_search, analyzed_uri)
@@ -86,36 +87,36 @@ struct InstantiationRequest
     filekind::Symbol                 # :script, :src, :test
     filedir::String                  # used for :test to construct runtestsuri
     root_path::Union{String,Nothing} # used for progress
-    notebook::Bool
+    isnotebook::Bool
 end
 function InstantiationRequest(
-        env_path::String, root_path::Union{String,Nothing}, notebook::Bool=false
+        env_path::String, root_path::Union{String,Nothing}, isnotebook::Bool=false
     )
-    return InstantiationRequest(env_path, nothing, :script, "", root_path, notebook)
+    return InstantiationRequest(env_path, nothing, :script, "", root_path, isnotebook)
 end
 function InstantiationRequest(
         env_path::String, pkgname::Union{Nothing,String}, filekind::Symbol,
         filedir::String, root_path::Union{String,Nothing}
     )
-    return InstantiationRequest(env_path, pkgname, filekind, filedir, root_path, #=notebook=#false)
+    return InstantiationRequest(env_path, pkgname, filekind, filedir, root_path, #=isnotebook=#false)
 end
 function InstantiationRequest(
         env_path::String, pkgid::Base.PkgId, root_path::Union{String,Nothing}
     )
-    return InstantiationRequest(env_path, pkgid, :src, "", root_path, #=notebook=#false)
+    return InstantiationRequest(env_path, pkgid, :src, "", root_path, #=isnotebook=#false)
 end
 
 struct InstantiationProgressCaller <: RequestCaller
     uri::URI
     ins_request::InstantiationRequest
-    onsave::Bool
+    invalidate::Bool
     notify_diagnostics::Bool
     token::ProgressToken
 end
 
 struct AnalysisProgressCaller <: RequestCaller
     uri::URI
-    onsave::Bool
+    invalidate::Bool
     entry::AnalysisEntry
     prev_analysis_result::Union{Nothing,AnalysisResult}
     notify_diagnostics::Bool
@@ -125,31 +126,31 @@ cancellable_token(rc::AnalysisProgressCaller) = rc.token
 
 function request_instantiation_progress!(
         server::Server, uri::URI, ins_request::InstantiationRequest,
-        onsave::Bool, notify_diagnostics::Bool
+        invalidate::Bool, notify_diagnostics::Bool
     )
     id = String(gensym(:WorkDoneProgressCreateRequest_instantiation))
     token = String(gensym(:InstantiationProgress))
-    addrequest!(server, id => InstantiationProgressCaller(uri, ins_request, onsave, notify_diagnostics, token))
+    addrequest!(server, id => InstantiationProgressCaller(uri, ins_request, invalidate, notify_diagnostics, token))
     params = WorkDoneProgressCreateParams(; token)
     send(server, WorkDoneProgressCreateRequest(; id, params))
 end
 
 function handle_instantiation_progress_response(server::Server, caller::InstantiationProgressCaller)
-    (; uri, ins_request, onsave, notify_diagnostics, token) = caller
+    (; uri, ins_request, invalidate, notify_diagnostics, token) = caller
     entry = do_instantiation_with_progress(server, uri, ins_request, token)
     # Now request a new progress token for the analysis phase
-    request_analysis_progress!(server, uri, onsave, entry, #=prev_analysis_result=#nothing, notify_diagnostics)
+    request_analysis_progress!(server, uri, invalidate, entry, #=prev_analysis_result=#nothing, notify_diagnostics)
 end
 
 function request_analysis_progress!(
-        server::Server, uri::URI, onsave::Bool, @nospecialize(entry::AnalysisEntry),
+        server::Server, uri::URI, invalidate::Bool, @nospecialize(entry::AnalysisEntry),
         prev_analysis_result::Union{Nothing,AnalysisResult},
         notify_diagnostics::Bool
     )
     id = String(gensym(:WorkDoneProgressCreateRequest_analysis))
     token = String(gensym(:AnalysisProgress))
     addrequest!(server, id => AnalysisProgressCaller(
-        uri, onsave, entry, prev_analysis_result, notify_diagnostics, token))
+        uri, invalidate, entry, prev_analysis_result, notify_diagnostics, token))
     params = WorkDoneProgressCreateParams(; token)
     send(server, WorkDoneProgressCreateRequest(; id, params))
 end
@@ -157,10 +158,10 @@ end
 function handle_analysis_progress_response(
         server::Server, caller::AnalysisProgressCaller, cancel_flag::CancelFlag
     )
-    (; uri, onsave, entry, prev_analysis_result, notify_diagnostics, token) = caller
+    (; uri, invalidate, entry, prev_analysis_result, notify_diagnostics, token) = caller
     cancellable_token = CancellableToken(token, cancel_flag)
     schedule_analysis!(
-        server, uri, entry, prev_analysis_result, onsave;
+        server, uri, entry, prev_analysis_result, invalidate;
         cancellable_token, notify_diagnostics)
 end
 
@@ -207,7 +208,7 @@ end
 # ========================
 
 """
-    request_analysis!(server, uri, onsave; wait=false, notify_diagnostics=true)
+    request_analysis!(server::Server, uri::URI, invalidate::Bool; wait::Bool=false, notify_diagnostics::Bool=true)
 
 Driver function that requests full-analysis for a file.
 
@@ -219,7 +220,7 @@ asynchronously when the client confirms each progress token.
 When `wait=true` or progress is not supported, the function performs the work synchronously
 and blocks until analysis completes.
 
-The `onsave` parameter affects generation management: when `true`, the generation counter
+The `invalidate` parameter affects generation management: when `true`, the generation counter
 is incremented to ensure analysis runs even if the file content hasn't changed since the
 last analysis (useful for save-triggered re-analysis).
 
@@ -227,7 +228,7 @@ The `notify_diagnostics` parameter controls whether to send diagnostic notificat
 analysis completes (used by tests to suppress notifications).
 """
 function request_analysis!(
-        server::Server, uri::URI, onsave::Bool;
+        server::Server, uri::URI, invalidate::Bool;
         wait::Bool = false,
         notify_diagnostics::Bool = true,
         cancellable_token::Union{Nothing,CancellableToken} = nothing,
@@ -252,7 +253,7 @@ function request_analysis!(
             return nothing
         elseif phase1_result isa InstantiationRequest
             if !wait && supports(server, :window, :workDoneProgress)
-                request_instantiation_progress!(server, uri, phase1_result, onsave, notify_diagnostics)
+                request_instantiation_progress!(server, uri, phase1_result, invalidate, notify_diagnostics)
                 return nothing
             else
                 entry = do_instantiation(server, uri, phase1_result)
@@ -263,17 +264,20 @@ function request_analysis!(
     end
 
     if !wait && supports(server, :window, :workDoneProgress)
-        request_analysis_progress!(server, uri, onsave, entry, prev_analysis_result, notify_diagnostics)
+        request_analysis_progress!(server, uri, invalidate, entry, prev_analysis_result, notify_diagnostics)
     else
         completion = Base.Event()
-        schedule_analysis!(server, uri, entry, prev_analysis_result, onsave;
+        schedule_analysis!(server, uri, entry, prev_analysis_result, invalidate;
             completion, cancellable_token, notify_diagnostics, debounce)
         wait && Base.wait(completion)
     end
 end
 
 """
-    schedule_analysis!(server, uri, entry, prev_analysis_result, onsave; ...)
+    schedule_analysis!(
+        server::Server, uri::URI, entry::AnalysisEntry,
+        prev_analysis_result::Union{Nothing,AnalysisResult}, invalidate::Bool;
+        ...)
 
 Schedule analysis for a confirmed entry. This is called after entry lookup is complete.
 Handles generation management, debouncing, and queueing.
@@ -293,7 +297,7 @@ for the details of this concurrent analysis management.
 """
 function schedule_analysis!(
         server::Server, uri::URI, @nospecialize(entry::AnalysisEntry),
-        prev_analysis_result::Union{Nothing,AnalysisResult}, onsave::Bool;
+        prev_analysis_result::Union{Nothing,AnalysisResult}, invalidate::Bool;
         completion::Base.Event = Base.Event(),
         cancellable_token::Union{Nothing,CancellableToken} = nothing,
         notify_diagnostics::Bool = true,
@@ -301,13 +305,13 @@ function schedule_analysis!(
     )
     manager = server.state.analysis_manager
 
-    generation = onsave ? increment_generation!(manager, entry) : get_generation(manager, entry)
+    generation = invalidate ? increment_generation!(manager, entry) : get_generation(manager, entry)
 
     request = AnalysisRequest(
         entry, uri, generation, cancellable_token, notify_diagnostics,
         prev_analysis_result, completion)
 
-    if onsave && debounce > 0
+    if invalidate && debounce > 0
         store!(manager.debounced) do debounced
             if haskey(debounced, request.entry)
                 # Cancel existing timer if any
@@ -464,8 +468,10 @@ end
 function has_any_parse_errors(server::Server, request::AnalysisRequest)
     prev_analysis_result = @something request.prev_analysis_result return false # fresh analysis, no knowledge about the sources
     return any(analyzed_file_uris(prev_analysis_result)) do uri::URI
-        saved_fi = @something get_saved_file_info(server.state, uri) return false
-        return !isempty(saved_fi.parsed_stream.diagnostics)
+        (; parsed_stream) = @something (isunsaveduri(uri) ?
+            get_file_info(server.state, uri) :
+            get_saved_file_info(server.state, uri)) return false
+        return !isempty(parsed_stream.diagnostics)
     end
 end
 
@@ -546,11 +552,11 @@ function execute_analysis_request(server::Server, request::AnalysisRequest)
         end
     else error("Unsupported analysis entry $entry") end
 
-    ret = new_analysis_result(interp, request, result)
+    ret, analysis_result_replaced = new_analysis_result(interp, request, result)
 
     # TODO Request fallback analysis in cases this script was not analyzed by the analysis entry
     # request.uri ∉ analyzed_file_uris(ret)
-    return ret, true
+    return ret, analysis_result_replaced
 end
 
 function begin_full_analysis_progress(
@@ -579,14 +585,24 @@ function analyze_parsed_if_exist(
     uri = entryuri(request.entry)
     jetconfigs = getjetconfigs(request.entry)
     fi = get_saved_file_info(server.state, uri)
-    if !isnothing(fi)
-        filename = uri2filename(uri)
-        interp = LSInterpreter(server, request; activation_done)
-        return interp, JET.analyze_and_report_expr!(interp, fi.syntax_node, filename, args...; jetconfigs...)
-    else
+    if isnothing(fi)
         filepath = @something uri2filepath(uri) error(lazy"Unsupported URI: $uri")
         interp = LSInterpreter(server, request; activation_done)
         return interp, JET.analyze_and_report_file!(interp, filepath, args...; jetconfigs...)
+    elseif isunsaveduri(uri)
+        interp = LSInterpreter(server, request; activation_done)
+        filename = uri2filename(uri)
+        fi = get_file_info(server.state, uri)
+        if isnothing(fi)
+            return interp, JET.analyze_and_report_text!(interp, "", filename, args...; jetconfigs...)
+        else
+            syntax_node = JS.build_tree(JS.SyntaxNode, fi.parsed_stream; filename)
+            return interp, JET.analyze_and_report_expr!(interp, syntax_node, filename, args...; jetconfigs...)
+        end
+    else
+        interp = LSInterpreter(server, request; activation_done)
+        filename = uri2filename(uri)
+        return interp, JET.analyze_and_report_expr!(interp, fi.syntax_node, filename, args...; jetconfigs...)
     end
 end
 
@@ -609,14 +625,17 @@ function new_analysis_result(interp::LSInterpreter, request::AnalysisRequest, re
     jet_result_to_diagnostics!(uri2diagnostics, result, postprocessor)
 
     (; entry, prev_analysis_result) = request
-    if !(isempty(result.res.toplevel_error_reports) || isnothing(prev_analysis_result))
+    replace_analysis_result = isempty(result.res.toplevel_error_reports) || isnothing(prev_analysis_result)
+    if !replace_analysis_result
         (; actual2virtual, analyzer, analyzed_file_infos) = prev_analysis_result
     else
         actual2virtual = result.res.actual2virtual::JET.Actual2Virtual
         analyzer = update_analyzer_world(result.analyzer)
     end
 
-    return AnalysisResult(entry, uri2diagnostics, analyzer, analyzed_file_infos, actual2virtual)
+    analysis_result = AnalysisResult(entry, uri2diagnostics, analyzer,
+        analyzed_file_infos, actual2virtual)
+    return analysis_result, replace_analysis_result
 end
 
 # Revise-based package analysis
@@ -910,24 +929,24 @@ end
 
 struct ScriptAnalysisEntry <: AnalysisEntry
     uri::URI
-    notebook::Bool
+    isnotebook::Bool
 end
 ScriptAnalysisEntry(uri::URI) = ScriptAnalysisEntry(uri, false)
 entryuri_impl(entry::ScriptAnalysisEntry) = entry.uri
 function progress_title_impl(entry::ScriptAnalysisEntry)
-    suffix = entry.notebook ? " [notebook (no env)]" : " [script (no env)]"
+    suffix = entry.isnotebook ? " [notebook (no env)]" : " [script (no env)]"
     return basename(uri2filename(entry.uri)) * suffix
 end
 
 struct ScriptInEnvAnalysisEntry <: AnalysisEntry
     env_path::String
     uri::URI
-    notebook::Bool
+    isnotebook::Bool
 end
 ScriptInEnvAnalysisEntry(env_path::String, uri::URI) = ScriptInEnvAnalysisEntry(env_path, uri, false)
 entryuri_impl(entry::ScriptInEnvAnalysisEntry) = entry.uri
 function progress_title_impl(entry::ScriptInEnvAnalysisEntry)
-    suffix = entry.notebook ? " [notebook (in env)]" : " [script (in env)]"
+    suffix = entry.isnotebook ? " [notebook (in env)]" : " [script (in env)]"
     return basename(uri2filename(entry.uri)) * suffix
 end
 
@@ -998,15 +1017,15 @@ function lookup_analysis_entry(server::Server, uri::URI)
         end
     end
 
-    notebook = is_notebook_uri(state, uri)
+    isnotebook = is_notebook_uri(state, uri)
     env_path = result
     if isnothing(env_path)
-        return ScriptAnalysisEntry(uri, notebook)
-    elseif uri.scheme == "untitled" || notebook
+        return ScriptAnalysisEntry(uri, isnotebook)
+    elseif isunsaveduri(uri) || isnotebook
         if is_env_cached(server, env_path)
-            return ScriptInEnvAnalysisEntry(env_path, uri, notebook)
+            return ScriptInEnvAnalysisEntry(env_path, uri, isnotebook)
         else
-            return InstantiationRequest(env_path, root_path, notebook)
+            return InstantiationRequest(env_path, root_path, isnotebook)
         end
     end
 
@@ -1065,10 +1084,10 @@ end
 # =========================
 
 function do_instantiation(server::Server, uri::URI, ins_request::InstantiationRequest)
-    (; env_path, pkgname, filekind, filedir, notebook) = ins_request
+    (; env_path, pkgname, filekind, filedir, isnotebook) = ins_request
     if pkgname === nothing
         ensure_instantiated_if_requested!(server, env_path)
-        return ScriptInEnvAnalysisEntry(env_path, uri, notebook)
+        return ScriptInEnvAnalysisEntry(env_path, uri, isnotebook)
     elseif pkgname isa Base.PkgId
         pkgid = pkgname
         instantiate_package_environment!(server, env_path, pkgid.name)
@@ -1076,7 +1095,7 @@ function do_instantiation(server::Server, uri::URI, ins_request::InstantiationRe
     else
         pkgid, pkgfile = @something(
             instantiate_package_environment!(server, env_path, pkgname),
-            return ScriptInEnvAnalysisEntry(env_path, uri, notebook))
+            return ScriptInEnvAnalysisEntry(env_path, uri, isnotebook))
         if filekind === :src
             return PackageSourceAnalysisEntry(env_path, filepath2uri(pkgfile), pkgid)
         else # :test

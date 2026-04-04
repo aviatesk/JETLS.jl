@@ -39,7 +39,9 @@ function handle_CodeActionRequest(
     unused_variable_code_actions!(code_actions, uri, diagnostics;
         allow_unused_underscore = get_config(server, :diagnostic, :allow_unused_underscore))
     unused_import_code_actions!(code_actions, uri, diagnostics)
+    unreachable_code_actions!(code_actions, uri, diagnostics)
     sort_imports_code_actions!(code_actions, uri, diagnostics)
+    ambiguous_soft_scope_code_actions!(code_actions, uri, diagnostics)
     return send(server,
         CodeActionResponse(;
             id = msg.id,
@@ -55,7 +57,13 @@ function unused_variable_code_actions!(
     for diagnostic in diagnostics
         code = diagnostic.code
         if code == LOWERING_UNUSED_ARGUMENT_CODE || code == LOWERING_UNUSED_LOCAL_CODE
-            add_rename_unused_var_code_actions!(code_actions, uri, diagnostic; allow_unused_underscore)
+            is_kwarg = let data = diagnostic.data
+                data isa UnusedArgumentData && data.is_kwarg
+            end
+            if !is_kwarg
+                add_rename_unused_var_code_actions!(code_actions, uri, diagnostic;
+                    allow_unused_underscore)
+            end
             if code == LOWERING_UNUSED_LOCAL_CODE
                 add_delete_unused_var_code_actions!(code_actions, uri, diagnostic)
             end
@@ -148,6 +156,28 @@ function add_delete_unused_var_code_actions!(
     end
 end
 
+function unreachable_code_actions!(
+        code_actions::Vector{Union{CodeAction,Command}},
+        uri::URI, diagnostics::Vector{Diagnostic}
+    )
+    for diagnostic in diagnostics
+        diagnostic.code == LOWERING_UNREACHABLE_CODE || continue
+        data = diagnostic.data
+        data isa UnreachableCodeData || continue
+        push!(code_actions, CodeAction(;
+            title = "Delete unreachable code",
+            kind = CodeActionKind.QuickFix,
+            diagnostics = Diagnostic[diagnostic],
+            isPreferred = true,
+            edit = WorkspaceEdit(;
+                changes = Dict{URI,Vector{TextEdit}}(
+                    uri => TextEdit[TextEdit(;
+                        range = data.delete_range,
+                        newText = "")]))))
+    end
+    return code_actions
+end
+
 function sort_imports_code_actions!(
         code_actions::Vector{Union{CodeAction,Command}},
         uri::URI, diagnostics::Vector{Diagnostic}
@@ -164,6 +194,39 @@ function sort_imports_code_actions!(
             edit = WorkspaceEdit(;
                 changes = Dict{URI,Vector{TextEdit}}(
                     uri => TextEdit[TextEdit(; range=diagnostic.range, newText=data.new_text)]))))
+    end
+    return code_actions
+end
+
+function ambiguous_soft_scope_code_actions!(
+        code_actions::Vector{Union{CodeAction,Command}}, uri::URI,
+        diagnostics::Vector{Diagnostic}
+    )
+    for diagnostic in diagnostics
+        diagnostic.code == LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE || continue
+        data = diagnostic.data
+        data isa AmbiguousSoftScopeData || continue
+        insert_pos = Position(; line = diagnostic.range.start.line, character = 0)
+        insert_range = Range(; start = insert_pos, var"end" = insert_pos)
+        push!(code_actions, CodeAction(;
+            title = "Insert `global $(data.name)` declaration",
+            kind = CodeActionKind.QuickFix,
+            diagnostics = Diagnostic[diagnostic],
+            isPreferred = true,
+            edit = WorkspaceEdit(;
+                changes = Dict{URI,Vector{TextEdit}}(
+                    uri => TextEdit[TextEdit(;
+                        range = insert_range,
+                        newText = data.indent * "global $(data.name)\n")]))))
+        push!(code_actions, CodeAction(;
+            title = "Insert `local $(data.name)` declaration",
+            kind = CodeActionKind.QuickFix,
+            diagnostics = Diagnostic[diagnostic],
+            edit = WorkspaceEdit(;
+                changes = Dict{URI,Vector{TextEdit}}(
+                    uri => TextEdit[TextEdit(;
+                        range = insert_range,
+                        newText = data.indent * "local $(data.name)\n")]))))
     end
     return code_actions
 end

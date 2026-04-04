@@ -62,6 +62,27 @@ include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
         end
     end
 
+    @testset "rename prepare with docstring" begin
+        let code = """
+            \"\"\"Docstring\"\"\"
+            function func(│xxx│, yyy)
+                println(│xxx│, yyy)
+            end
+            """
+            filename = joinpath(@__DIR__, "testfile.jl")
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 4
+            fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
+            furi = filename2uri(filename)
+            @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+            for pos in positions
+                rename_prep = JETLS.local_binding_rename_preparation(state, furi, fi, pos, @__MODULE__)
+                @test !isnothing(rename_prep)
+                @test rename_prep.placeholder == "xxx"
+            end
+        end
+    end
+
     @testset "rename prepare with macrocall" begin
         let code = """
             func(│xxx│) = @something rand((│xxx│, nothing)) return nothing
@@ -93,7 +114,7 @@ end
         @test length(positions) == 9
         fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
         @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
-        furi = filename2uri("Untitled" * filename)
+        furi = filename2uri("Untitled-" * filename)
         for (i, pos) in enumerate(positions)
             if i in (4,5,6) # println, should never be called if client supports rename prepare
                 rename = JETLS.local_binding_rename(server, furi, fi, pos, @__MODULE__, "zzz")
@@ -123,7 +144,7 @@ end
         clean_code, positions = JETLS.get_text_and_positions(code)
         @test length(positions) == 1
         fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
-        furi = filename2uri("Untitled" * filename)
+        furi = filename2uri("Untitled-" * filename)
         let
             (; result, error) = JETLS.local_binding_rename(server, furi, fi, only(positions), @__MODULE__, "zzz zzz")
             @test isnothing(result) && error isa ResponseError
@@ -145,7 +166,7 @@ end
         @test length(positions) == 4
         fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
         @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
-        furi = filename2uri("Untitled" * filename)
+        furi = filename2uri("Untitled-" * filename)
         for pos in positions
             (; result, error) = JETLS.local_binding_rename(server, furi, fi, pos, @__MODULE__, "zzz zzz")
             @test result isa WorkspaceEdit && isnothing(error)
@@ -173,7 +194,7 @@ end
             @test length(positions) == 6
             fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
             @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
-            furi = filename2uri("Untitled" * filename)
+            furi = filename2uri("Untitled-" * filename)
             for pos in positions
                 (; result, error) = JETLS.local_binding_rename(server, furi, fi, pos, @__MODULE__, "SSS")
                 @test result isa WorkspaceEdit && isnothing(error)
@@ -197,6 +218,38 @@ end
         end
     end
 
+    @testset "rename with docstring" begin
+        let code = """
+            \"\"\"Docstring\"\"\"
+            function func(│xxx│, yyy)
+                println(│xxx│, yyy)
+            end
+            """
+            filename = joinpath(@__DIR__, "testfile.jl")
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 4
+            fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
+            @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+            furi = filename2uri("Untitled-" * filename)
+            for pos in positions
+                (; result, error) = JETLS.local_binding_rename(server, furi, fi, pos, @__MODULE__, "zzz")
+                @test result isa WorkspaceEdit && isnothing(error)
+                for (uri, edits) in result.changes
+                    @test furi == uri
+                    @test length(edits) == 2
+                    @test count(edits) do edit
+                        edit.newText == "zzz" &&
+                        edit.range == Range(; start=positions[1], var"end"=positions[2])
+                    end == 1
+                    @test count(edits) do edit
+                        edit.newText == "zzz" &&
+                        edit.range == Range(; start=positions[3], var"end"=positions[4])
+                    end == 1
+                end
+            end
+        end
+    end
+
     @testset "rename with macrocall" begin
         let code = """
             func(│xxx│) = @something rand((│xxx│, nothing)) return nothing
@@ -206,7 +259,7 @@ end
             @test length(positions) == 4
             fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
             @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
-            furi = filename2uri("Untitled" * filename)
+            furi = filename2uri("Untitled-" * filename)
             for pos in positions
                 (; result, error) = JETLS.local_binding_rename(server, furi, fi, pos, @__MODULE__, "yyy")
                 @test result isa WorkspaceEdit && isnothing(error)
@@ -237,7 +290,7 @@ end
             @test length(positions) == 6
             fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
             @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
-            furi = filename2uri("Untitled" * filename)
+            furi = filename2uri("Untitled-" * filename)
             for pos in positions
                 (; result, error) = JETLS.local_binding_rename(
                     server, furi, fi, pos, @__MODULE__, "y")
@@ -261,7 +314,7 @@ end
             @test length(positions) == 6
             fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
             @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
-            furi = filename2uri("Untitled" * filename)
+            furi = filename2uri("Untitled-" * filename)
             for pos in positions
                 (; result, error) = JETLS.local_binding_rename(
                     server, furi, fi, pos, @__MODULE__, "S")
@@ -387,7 +440,7 @@ end
         @test length(positions) == 6
         fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
         @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
-        furi = filename2uri("Untitled" * filename)
+        furi = filename2uri("Untitled-" * filename)
         for pos in positions
             (; result, error) = JETLS.global_binding_rename(server, furi, fi, pos, @__MODULE__, "qux")
             @test result isa WorkspaceEdit && isnothing(error)
@@ -414,7 +467,7 @@ end
             @test length(positions) == 5
             fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
             @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
-            furi = filename2uri("Untitled" * filename)
+            furi = filename2uri("Untitled-" * filename)
             # Test from definition position
             let pos = positions[1]
                 (; result, error) = JETLS.global_binding_rename(
@@ -454,7 +507,7 @@ end
             filename = joinpath(@__DIR__, "testfile.jl")
             clean_code, positions = JETLS.get_text_and_positions(code)
             fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
-            furi = filename2uri("Untitled" * filename)
+            furi = filename2uri("Untitled-" * filename)
             for pos in positions
                 (; result, error) = JETLS.global_binding_rename(
                     server, furi, fi, pos, @__MODULE__, "@newmacro")

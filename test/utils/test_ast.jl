@@ -360,25 +360,27 @@ end
 @testset "get_line_indent" begin
     let code = "export a, b"
         fi = JETLS.FileInfo(#=version=#0, code, @__FILE__)
-        @test JETLS.get_line_indent(fi, 1) == ""
+        @test JETLS.get_line_indent(fi, 0) == ""
     end
     let code = "    export a, b"
         fi = JETLS.FileInfo(#=version=#0, code, @__FILE__)
-        @test JETLS.get_line_indent(fi, 5) == "    "
+        @test JETLS.get_line_indent(fi, 0) == "    "
     end
     let code = "begin\n    export a, b\nend"
         fi = JETLS.FileInfo(#=version=#0, code, @__FILE__)
-        export_offset = sizeof("begin\n    ") + 1
-        @test JETLS.get_line_indent(fi, export_offset) == "    "
+        @test JETLS.get_line_indent(fi, 0) == ""
+    end
+    let code = "begin\n    export a, b\nend"
+        fi = JETLS.FileInfo(#=version=#0, code, @__FILE__)
+        @test JETLS.get_line_indent(fi, 1) == "    "
     end
     let code = "\t\texport a, b"
         fi = JETLS.FileInfo(#=version=#0, code, @__FILE__)
-        @test JETLS.get_line_indent(fi, 3) == "\t\t"
+        @test JETLS.get_line_indent(fi, 0) == "\t\t"
     end
     let code = "begin export a, b end"
         fi = JETLS.FileInfo(#=version=#0, code, @__FILE__)
-        export_offset = sizeof("begin ") + 1
-        @test JETLS.get_line_indent(fi, export_offset) === nothing
+        @test JETLS.get_line_indent(fi, 0) == ""
     end
 end
 

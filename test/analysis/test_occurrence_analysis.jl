@@ -375,7 +375,7 @@ function with_global_binding_occurrences(
     pos = first(positions)
     offset = JETLS.xy_to_offset(clean_code, pos, filename)
     (; ctx3, binding) = @something(
-        JETLS._select_target_binding(st0_top, offset, lowering_module),
+        JETLS.select_target_binding(st0_top, offset, lowering_module),
         error("No binding found at cursor position"))
     target_binfo = JL.get_binding(ctx3, binding)
     @test target_binfo.kind === :global

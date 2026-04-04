@@ -35,6 +35,7 @@ end
             trim_error_nodes::Bool = true,
             recover_from_macro_errors::Bool = true,
             convert_closures::Bool = false,
+            soft_scope::Bool = false,
         ) -> (; st0, st1, st2, st3, ctx3)
 
 Perform the first three passes of lowering.
@@ -43,6 +44,11 @@ Depending on keyword arguments, also attempt to handle junk input in the ways a 
 - `recover_from_macro_errors`: If errors occur during macro expansion, trim macrocalls and retry.
   This may happen for several reasons; the analyzer may not have picked up the
   macro definition yet, or the user could be working on the macrocall.
+- `convert_closures`: Also run the closure conversion pass (pass 4),
+  returning `ctx4` and `st4` in addition to the scope resolution results.
+- `soft_scope`: Enable soft scope semantics (REPL/notebook behavior)
+  where assignments in `for`/`while`/`try` blocks at the top level assign to
+  existing globals instead of creating new locals.
 
 Throw if lowering fails otherwise.
 
@@ -53,6 +59,7 @@ function jl_lower_for_scope_resolution(
         trim_error_nodes::Bool = true,
         recover_from_macro_errors::Bool = true,
         convert_closures::Bool = false,
+        soft_scope::Bool = false,
     )
     if trim_error_nodes
         st0 = without_kinds(st0, JS.KSet"error")
@@ -67,15 +74,16 @@ function jl_lower_for_scope_resolution(
         st0 = remove_macrocalls(st0)
         JL.expand_forms_1(mod, st0, true, world)
     end
-    return _jl_lower_for_scope_resolution(ctx1, st0, st1; convert_closures)
+    return _jl_lower_for_scope_resolution(ctx1, st0, st1; convert_closures, soft_scope)
 end
 
 function _jl_lower_for_scope_resolution(
         ctx1::JL.MacroExpansionContext, st0::JS.SyntaxTree, st1::JS.SyntaxTree;
-        convert_closures::Bool = false
+        convert_closures::Bool = false,
+        soft_scope::Bool = false,
     )
     ctx2, st2 = JL.expand_forms_2(ctx1, st1)
-    ctx3, st3 = JL.resolve_scopes(ctx2, st2)
+    ctx3, st3 = JL.resolve_scopes(ctx2, st2; soft_scope)
     convert_closures || return (; st0, st1, st2, st3, ctx3)
     ctx4, st4 = JL.convert_closures(ctx3, st3)
     return (; st0, st1, st2, st3, st4, ctx3, ctx4)
@@ -199,7 +207,7 @@ function is_kwcall_lambda(ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTree)
         end
 end
 
-function __select_target_binding(
+function _select_target_binding(
         ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTree, offset::Int;
         is_generated::Bool = false)
     return @something(
@@ -210,8 +218,16 @@ function __select_target_binding(
         return nothing)
 end
 
-function _select_target_binding(st0_top::JS.SyntaxTree, offset::Int, mod::Module;
-                                caller::AbstractString = "_select_target_binding")
+"""
+    select_target_binding(st0_top, offset, mod) -> Union{Nothing, NamedTuple}
+
+Return the binding closest to the cursor at `offset` within `st0_top`,
+or `nothing` if no binding is found. On success the returned named tuple
+contains `(; ctx3, st3, st0, binding)` where `binding` satisfies
+`JS.kind(binding) === JS.K"BindingId"`.
+"""
+function select_target_binding(st0_top::JS.SyntaxTree, offset::Int, mod::Module;
+                                caller::AbstractString = "select_target_binding")
     st0 = @something greatest_local(st0_top, offset) return nothing # nothing we can lower
 
     macrocall_result = select_macrocall_binding(st0, offset, mod, caller)
@@ -226,7 +242,7 @@ function _select_target_binding(st0_top::JS.SyntaxTree, offset::Int, mod::Module
         return nothing
     end
     binding = @something(
-        __select_target_binding(ctx3, st3, offset; is_generated=is_generated0(st0)),
+        _select_target_binding(ctx3, st3, offset; is_generated=is_generated0(st0)),
         return nothing)
     binding = normalize_local_alias_to_global(ctx3, binding)
     return (; ctx3, st3, st0, binding)
@@ -265,7 +281,7 @@ function select_macrocall_binding(
         st0::JS.SyntaxTree, offset::Int, mod::Module, caller::AbstractString
     )
     is_macrocall_name = (offset::Int) -> (st0′::JS.SyntaxTree) ->
-        JS.kind(st0′) === JS.K"macrocall" && JS.numchildren(st0′) ≥ 1 &&
+        JS.kind(st0′) === JS.K"macrocall" && JS.numchildren(st0′) ≥ 1 && !is_doc0(st0′) &&
         offset in JS.byte_range(st0′[1])
     bas = byte_ancestors(is_macrocall_name(offset), st0, offset)
     if isempty(bas)
@@ -292,18 +308,6 @@ function select_macrocall_binding(
 end
 
 """
-    select_target_binding(st0_top::JS.SyntaxTree, offset::Int, mod::Module) -> target_binding::Union{Nothing,JS.SyntaxTree}
-
-For the same purpose as [`select_target_identifier`](@ref), returns the `target_binding::JS.SyntaxTree`
-closest to the cursor at the `offset` position.
-It is guaranteed that `target_binding` satisfies `JS.kind(target_binding) === JS.K"BindingId"`.
-"""
-function select_target_binding(st0_top::JS.SyntaxTree, offset::Int, mod::Module)
-    (; binding) = @something _select_target_binding(st0_top, offset, mod) return nothing
-    return binding
-end
-
-"""
     select_target_binding_definitions(st0_top::JS.SyntaxTree, offset::Int, mod::Module) ->
         nothing or (binding::JS.SyntaxTree, definitions::JS.SyntaxList)
 
@@ -315,7 +319,7 @@ has no definitions. Otherwise returns a tuple of `(binding, definitions)` where:
 - `definitions` is a `JS.SyntaxList` containing all definition sites for that binding
 """
 function select_target_binding_definitions(st0_top::JS.SyntaxTree, offset::Int, mod::Module)
-    (; ctx3, st3, binding) = @something _select_target_binding(st0_top, offset, mod) return nothing
+    (; ctx3, st3, binding) = @something select_target_binding(st0_top, offset, mod) return nothing
     binfo = JL.get_binding(ctx3, binding)
     definitions = @somereal lookup_binding_definitions(st3, binfo) return nothing
     return binding, definitions

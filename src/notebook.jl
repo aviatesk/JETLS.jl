@@ -1,11 +1,11 @@
 # Document synchronization
 # ========================
 
-get_notebook_info(state::ServerState, uri::URI) =
-    get(load(state.notebook_cache), uri, nothing)
+get_notebook_info(state::ServerState, uri::URI, default=nothing) =
+    get(load(state.notebook_cache), uri, default)
 
-get_notebook_uri_for_cell(state::ServerState, cell_uri::URI) =
-    get(load(state.cell_to_notebook), cell_uri, nothing)
+get_notebook_uri_for_cell(state::ServerState, cell_uri::URI, default=nothing) =
+    get(load(state.cell_to_notebook), cell_uri, default)
 
 function concatenate_cells(cells::Vector{NotebookCellInfo})
     source = ""
@@ -25,9 +25,12 @@ function cache_notebook_file_info!(server::Server, notebook_uri::URI, notebook_i
     state = server.state
     parsed_stream = ParseStream!(notebook_info.concat.source)
     fi = FileInfo(notebook_info.version, parsed_stream, notebook_uri, notebook_info.encoding)
-    return store!(state.file_cache) do cache
+    store!(state.file_cache) do cache
         Base.PersistentDict(cache, notebook_uri => fi), fi
     end
+    invalidate_document_symbol_cache!(state, notebook_uri)
+    invalidate_binding_occurrences_cache!(state, notebook_uri)
+    return fi
 end
 
 function cache_notebook_saved_file_info!(server::Server, notebook_uri::URI, notebook_info::NotebookInfo)
@@ -130,7 +133,7 @@ function handle_DidOpenNotebookDocumentNotification(
     end
     cache_notebook_file_info!(server, notebook_uri, notebook_info)
     cache_notebook_saved_file_info!(server, notebook_uri, notebook_info)
-    request_analysis!(server, notebook_uri, #=onsave=#false)
+    request_analysis!(server, notebook_uri, #=invalidate=#false)
     nothing
 end
 
@@ -195,7 +198,7 @@ function handle_DidSaveNotebookDocumentNotification(
         return nothing
     end
     cache_notebook_saved_file_info!(server, notebook_uri, notebook_info)
-    request_analysis!(server, notebook_uri, #=onsave=#true)
+    request_analysis!(server, notebook_uri, #=invalidate=#true)
     nothing
 end
 
@@ -227,13 +230,15 @@ end
 
 is_notebook_uri(state::ServerState, uri::URI) = haskey(load(state.notebook_cache), uri)
 
-function map_notebook_diagnostics!(uri2diagnostics::URI2Diagnostics, state::ServerState)
+is_notebook_cell_uri(state::ServerState, uri::URI) = haskey(load(state.cell_to_notebook), uri)
+
+function localize_notebook_diagnostics!(uri2diagnostics::URI2Diagnostics, state::ServerState)
     notebook_uris_to_delete = URI[]
     for uri in keys(uri2diagnostics)
         is_notebook_uri(state, uri) || continue
         notebook_uri = uri
         notebook_info = @something get_notebook_info(state, notebook_uri) continue
-        cell_diagnostics = map_notebook_diagnostics_for_uri(state, uri2diagnostics, notebook_uri)
+        cell_diagnostics = localize_notebook_diagnostics_for_uri(state, uri2diagnostics, notebook_uri)
         for cell in notebook_info.cells
             cell.kind == NotebookCellKind.Code || continue
             diagnostics = get!(Vector{Diagnostic}, uri2diagnostics, cell.uri)
@@ -247,55 +252,7 @@ function map_notebook_diagnostics!(uri2diagnostics::URI2Diagnostics, state::Serv
     end
 end
 
-function localize_diagnostic(
-        diag::Diagnostic, cell_range::CellRange, concat::ConcatenatedNotebook
-    )
-    local_start_line = diag.range.start.line - cell_range.line_offset
-    local_end_line = diag.range.var"end".line - cell_range.line_offset
-    local_range = Range(;
-        start = Position(; line = local_start_line, character = diag.range.start.character),
-        var"end" = Position(; line = local_end_line, character = diag.range.var"end".character))
-    local_related_information = related_information = diag.relatedInformation
-    if !isnothing(related_information)
-        local_related_information = localize_related_information(related_information, concat)
-    end
-    if !isnothing(local_related_information)
-        return Diagnostic(diag; range = local_range, relatedInformation = local_related_information)
-    else
-        return Diagnostic(diag; range = local_range)
-    end
-end
-
-function localize_related_information(
-        relatedInformation::Vector{DiagnosticRelatedInformation},
-        concat::ConcatenatedNotebook
-    )
-    isempty(relatedInformation) && return relatedInformation
-    result = nothing
-    for (i, info) in enumerate(relatedInformation)
-        info_cell_range = find_cell_range_by_uri(concat, info.location.uri)
-        if info_cell_range !== nothing
-            local_start_line = info.location.range.start.line - info_cell_range.line_offset
-            local_end_line = info.location.range.var"end".line - info_cell_range.line_offset
-            local_range = Range(;
-                start = Position(;
-                    line = local_start_line,
-                    character = info.location.range.start.character),
-                var"end" = Position(;
-                    line = local_end_line,
-                    character = info.location.range.var"end".character))
-            if isnothing(result)
-                result = copy(relatedInformation)
-            end
-            result[i] = DiagnosticRelatedInformation(;
-                location = Location(; uri = info.location.uri, range = local_range),
-                message = info.message)
-        end
-    end
-    return result
-end
-
-function map_notebook_diagnostics_for_uri(
+function localize_notebook_diagnostics_for_uri(
         state::ServerState, uri2diagnostics::URI2Diagnostics, notebook_uri::URI
     )
     cell_diagnostics = Dict{URI,Vector{Diagnostic}}()
@@ -303,24 +260,86 @@ function map_notebook_diagnostics_for_uri(
     isempty(notebook_info.concat.cell_ranges) && return cell_diagnostics
     concat = notebook_info.concat
     for diag in uri2diagnostics[notebook_uri]
-        cell_range = @something find_cell_for_line(concat, diag.range.start.line) continue
-        cell_diag = localize_diagnostic(diag, cell_range, concat)
-        push!(get!(Vector{Diagnostic}, cell_diagnostics, cell_range.cell_uri), cell_diag)
+        cell_uri, cell_diag = @something localize_diagnostic(diag, state, concat) continue
+        push!(get!(Vector{Diagnostic}, cell_diagnostics, cell_uri), cell_diag)
     end
     return cell_diagnostics
 end
 
-function map_cell_diagnostics(
+function localize_diagnostic(
+        diag::Diagnostic, state::ServerState, concat::ConcatenatedNotebook
+    )
+    cell_uri, local_range = @something global_to_cell_range(concat, diag.range) return nothing
+    local_related_information = related_information = diag.relatedInformation
+    if !isnothing(related_information)
+        local_related_information =
+            localize_related_information(related_information, state, concat)
+    end
+    local_data = localize_diagnostic_data(diag.data, concat)
+    return cell_uri => Diagnostic(diag;
+        range = local_range,
+        relatedInformation = local_related_information,
+        data = local_data)
+end
+
+function localize_range(range::Range, concat::ConcatenatedNotebook)
+    _, local_range = @something global_to_cell_range(concat, range) return range
+    return local_range
+end
+
+function localize_diagnostic_data(@nospecialize(data), concat::ConcatenatedNotebook)
+    if data isa UnreachableCodeData
+        return UnreachableCodeData(localize_range(data.delete_range, concat))
+    elseif data isa UnusedImportData
+        return UnusedImportData(localize_range(data.delete_range, concat))
+    elseif data isa UnusedVariableData
+        assignment_range = data.assignment_range
+        if assignment_range !== nothing
+            assignment_range = localize_range(assignment_range, concat)
+        end
+        lhs_eq_range = data.lhs_eq_range
+        if lhs_eq_range !== nothing
+            lhs_eq_range = localize_range(lhs_eq_range, concat)
+        end
+        return UnusedVariableData(
+            data.is_tuple_unpacking, assignment_range, lhs_eq_range)
+    end
+    return data
+end
+
+function localize_related_information(
+        relatedInformation::Vector{DiagnosticRelatedInformation},
+        state::ServerState, concat::ConcatenatedNotebook
+    )
+    isempty(relatedInformation) && return relatedInformation
+    result = nothing
+    for (i, info) in enumerate(relatedInformation)
+        info_uri = info.location.uri
+        info_range = info.location.range
+        is_cell = find_cell_range_by_uri(concat, info_uri) !== nothing
+        if !is_cell && !is_notebook_uri(state, info_uri)
+            continue
+        end
+        local_uri, local_range = @something global_to_cell_range(concat, info_range) continue
+        if isnothing(result)
+            result = copy(relatedInformation)
+        end
+        result[i] = DiagnosticRelatedInformation(;
+            location = Location(; uri = local_uri, range = local_range),
+            message = info.message)
+    end
+    return result
+end
+
+function localize_notebook_diagnostics(
         state::ServerState, notebook_uri::URI, cell_uri::URI, diagnostics::Vector{Diagnostic}
     )
     notebook_info = @something get_notebook_info(state, notebook_uri) return Diagnostic[]
     concat = notebook_info.concat
-    cell_range = @something find_cell_range_by_uri(concat, cell_uri) return Diagnostic[]
     result = Diagnostic[]
     for diag in diagnostics
-        found_range = @something find_cell_for_line(concat, diag.range.start.line) continue
-        found_range.cell_uri == cell_uri || continue
-        cell_diag = localize_diagnostic(diag, cell_range, concat)
+        localized_cell_uri, cell_diag = @something localize_diagnostic(diag, state, concat) continue
+        localized_cell_uri == cell_uri || continue
         push!(result, cell_diag)
     end
     return result
@@ -372,36 +391,43 @@ function global_to_cell_range(concat::ConcatenatedNotebook, range::Range)
 end
 
 """
-    adjust_position(state::ServerState, uri::URI, pos::Position)
+    adjust_position(state::ServerState, cell_uri::URI, cell_pos::Position) -> global_pos::Position
 
-Adjust a cell-local position to a global position in the concatenated notebook source.
-If the URI is not a notebook cell, returns the position unchanged.
+Convert a cell-local position to a global position in the concatenated notebook source.
+If `cell_uri` is not a notebook cell, returns `cell_pos` unchanged.
 """
-function adjust_position(state::ServerState, uri::URI, pos::Position)
-    notebook_uri = @something get_notebook_uri_for_cell(state, uri) return pos
-    notebook_info = @something get_notebook_info(state, notebook_uri) return pos
-    return @something cell_to_global_position(notebook_info.concat, uri, pos) return pos
+function adjust_position(state::ServerState, cell_uri::URI, cell_pos::Position)
+    notebook_uri = @something get_notebook_uri_for_cell(state, cell_uri) return cell_pos
+    notebook_info = @something get_notebook_info(state, notebook_uri) return cell_pos
+    return @something cell_to_global_position(notebook_info.concat, cell_uri, cell_pos) return cell_pos
 end
 
 """
-    unadjust_position(state::ServerState, uri::URI, pos::Position) -> (Position, URI)
+    unadjust_position(state::ServerState, uri::URI, pos::Position) -> (cell_pos::Position, resolved_cell_uri::URI)
 
-Convert a global position in the concatenated notebook source back to a cell-local position.
-Returns a tuple of (position, cell_uri) where cell_uri is the URI of the cell containing the position.
-If the URI is not a notebook cell, returns the position and URI unchanged.
+Convert a global position `pos` in the concatenated notebook source back to a cell-local
+position. `uri` can be either a cell URI or a notebook URI.
+The returned `resolved_cell_uri` is the URI of the cell that actually contains `cell_pos`,
+which may differ from `uri` (e.g. go-to-definition across cells).
+If `uri` is not a notebook-related URI, returns `(pos, uri)` unchanged.
 """
 function unadjust_position(state::ServerState, uri::URI, pos::Position)
-    notebook_uri = @something get_notebook_uri_for_cell(state, uri) return (pos, uri)
-    notebook_info = @something get_notebook_info(state, notebook_uri) return (pos, uri)
+    notebook_info = get_notebook_info(state, uri)
+    if notebook_info === nothing
+        notebook_uri = @something get_notebook_uri_for_cell(state, uri) return (pos, uri)
+        notebook_info = @something get_notebook_info(state, notebook_uri) return (pos, uri)
+    end
     return @something global_to_cell_position(notebook_info.concat, pos) return (pos, uri)
 end
 
 """
-    unadjust_range(state::ServerState, uri::URI, range::Range) -> (Range, URI)
+    unadjust_range(state::ServerState, uri::URI, range::Range) -> (cell_range::Range, resolved_cell_uri::URI)
 
-Convert a global range in the concatenated notebook source back to a cell-local range.
-Returns a tuple of (range, cell_uri). Note: start and end positions are assumed to be in the same cell.
-If the URI is not a notebook cell, returns the range and URI unchanged.
+Convert a global `range` in the concatenated notebook source back to a cell-local range.
+`uri` can be either a cell URI or a notebook URI.
+The returned `resolved_cell_uri` is the URI of the cell containing the start position of
+`cell_range`. Start and end positions are assumed to be in the same cell.
+If `uri` is not a notebook-related URI, returns `(range, uri)` unchanged.
 """
 function unadjust_range(state::ServerState, uri::URI, range::Range)
     start_pos, start_uri = unadjust_position(state, uri, range.start)
@@ -409,6 +435,13 @@ function unadjust_range(state::ServerState, uri::URI, range::Range)
     return Range(; start = start_pos, var"end" = end_pos), start_uri
 end
 
+"""
+    unadjust_location(state::ServerState, cell_uri::URI, loc::Location) -> cell_loc::Location
+
+Convert a `Location` whose URI is the notebook URI back to a cell-local
+location. If `cell_uri` is not a notebook cell, or `loc.uri` does not
+match the notebook URI, returns `loc` unchanged.
+"""
 function unadjust_location(state::ServerState, cell_uri::URI, loc::Location)
     notebook_uri = @something get_notebook_uri_for_cell(state, cell_uri) return loc
     loc.uri == notebook_uri || return loc

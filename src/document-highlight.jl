@@ -54,7 +54,7 @@ function document_highlights!(
     (; mod) = get_context_info(state, uri, pos)
 
     (; ctx3, st3, st0, binding) = @something begin
-        _select_target_binding(st0_top, offset, mod; caller="document_highlights!")
+        select_target_binding(st0_top, offset, mod; caller="document_highlights!")
     end return highlights
 
     binfo = JL.get_binding(ctx3, binding)

@@ -16,9 +16,13 @@ function get_lowered_diagnostics(mod::Module, text::AbstractString; kwargs...)
     filename = abspath(pkgdir(JETLS), "test", "test_lowering_diagnostic.jl")
     fi = JETLS.FileInfo(#=version=#0, text, filename)
     uri = filepath2uri(filename)
-    st0 = JETLS.build_syntax_tree(fi)
-    @assert JS.kind(st0) === JS.K"toplevel"
-    return JETLS.lowering_diagnostics(uri, fi, mod, st0[1]; kwargs...)
+    st0_top = JETLS.build_syntax_tree(fi)
+    @assert JS.kind(st0_top) === JS.K"toplevel"
+    diagnostics = LSP.Diagnostic[]
+    JETLS.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
+        JETLS.lowering_diagnostics!(diagnostics, uri, fi, mod, st0; kwargs...)
+    end
+    return diagnostics
 end
 
 macro gen_unused(x)
@@ -84,6 +88,17 @@ length_utf16(s::AbstractString) = sum(c::Char -> codepoint(c) < 0x10000 ? 1 : 2,
         @test diagnostic.message == "Unused argument `y`"
         @test diagnostic.range.start.line == 0
         @test diagnostic.range.var"end".line == 0
+    end
+
+    let diagnostics = get_lowered_diagnostics("""
+        \"\"\"Docstring\"\"\"
+        function foo(x, y)
+            return x
+        end
+        """)
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.message == "Unused argument `y`"
     end
 
     let diagnostics = get_lowered_diagnostics("""
@@ -446,7 +461,7 @@ length_utf16(s::AbstractString) = sum(c::Char -> codepoint(c) < 0x10000 ? 1 : 2,
             withserver() do (; writereadmsg, id_counter, server)
                 JETLS.cache_file_info!(server, uri, 1, script)
                 JETLS.cache_saved_file_info!(server.state, uri, script)
-                JETLS.request_analysis!(server, uri, #=onsave=#false; wait=true, notify_diagnostics=false)
+                JETLS.request_analysis!(server, uri, #=invalidate=#false; wait=true, notify_diagnostics=false)
 
                 id = id_counter[] += 1
                 (; raw_res) = writereadmsg(DocumentDiagnosticRequest(;
@@ -673,27 +688,24 @@ end
     end
 
     @testset "toplevel lowering error diagnostics" begin
-        server = JETLS.Server()
-        uri = URI("file://$(@__FILE__)")
-        text = """
-        macro foo(x, y) \$(x) end
-        macro bar(x, y) \$(x) end
-        """
-        fi = JETLS.cache_file_info!(server, uri, #=version=#0, text)
-        diagnostics = JETLS.toplevel_lowering_diagnostics(server, uri, fi)
-        @test length(diagnostics) == 2
-        @test count(diagnostics) do diagnostic
-            diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE &&
-            diagnostic.message == "`\$` expression outside string or quote" &&
-            diagnostic.range.start.line == 0 &&
-            diagnostic.range.var"end".line == 0
-        end == 1
-        @test count(diagnostics) do diagnostic
-            diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE &&
-            diagnostic.message == "`\$` expression outside string or quote" &&
-            diagnostic.range.start.line == 1 &&
-            diagnostic.range.var"end".line == 1
-        end == 1
+        let diagnostics = get_lowered_diagnostics("""
+            macro foo(x, y) \$(x) end
+            macro bar(x, y) \$(x) end
+            """)
+            @test length(diagnostics) == 2
+            @test count(diagnostics) do diagnostic
+                diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE &&
+                diagnostic.message == "`\$` expression outside string or quote" &&
+                diagnostic.range.start.line == 0 &&
+                diagnostic.range.var"end".line == 0
+            end == 1
+            @test count(diagnostics) do diagnostic
+                diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE &&
+                diagnostic.message == "`\$` expression outside string or quote" &&
+                diagnostic.range.start.line == 1 &&
+                diagnostic.range.var"end".line == 1
+            end == 1
+        end
     end
 
     @testset "macro not found error diagnostics" begin
@@ -997,12 +1009,12 @@ end
 
     @testset "diagnostic points to the use on undef path, not the defined use" begin
         let diagnostics = get_lowered_diagnostics("""
-            function f(x::Bool)
+            function f(x::Bool, y::Bool)
                 if x
                     z = "Hi"
                     println(z)
                 end
-                if x
+                if y
                     println(z)
                 end
             end
@@ -1560,7 +1572,7 @@ end
             withserver() do (; writereadmsg, id_counter, server)
                 JETLS.cache_file_info!(server, uri, 1, script)
                 JETLS.cache_saved_file_info!(server.state, uri, script)
-                JETLS.request_analysis!(server, uri, #=onsave=#false; wait=true, notify_diagnostics=false)
+                JETLS.request_analysis!(server, uri, #=invalidate=#false; wait=true, notify_diagnostics=false)
 
                 id = id_counter[] += 1
                 (; raw_res) = writereadmsg(DocumentDiagnosticRequest(;
@@ -1578,6 +1590,431 @@ end
                 @test diagnostic.message == "Unused import `sin`"
                 @test diagnostic.range.start.line == 6
             end
+        end
+    end
+end
+
+@testset "unreachable code detection" begin
+    let diagnostics = get_lowered_diagnostics("""
+        function foo()
+            return 1
+            x = 2
+        end
+        """)
+        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        @test length(unreachable) == 1
+        @test only(unreachable).message == "Unreachable code"
+        @test only(unreachable).range.start.line == 2
+    end
+
+    # multiple unreachable statements should be merged into one diagnostic
+    let diagnostics = get_lowered_diagnostics("""
+        function foo()
+            return 1
+            x = 2
+            y = 3
+        end
+        """)
+        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        @test length(unreachable) == 1
+        @test only(unreachable).range.start.line == 2
+        @test only(unreachable).range.var"end".line == 3
+    end
+
+    # throw optimization: code after `throw` is unreachable
+    let diagnostics = get_lowered_diagnostics("""
+        function foo()
+            throw(ErrorException("error"))
+            x = 2
+        end
+        """)
+        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        @test length(unreachable) == 1
+        @test only(unreachable).range.start.line == 2
+    end
+
+    # no diagnostic when there's no unreachable code
+    let diagnostics = get_lowered_diagnostics("""
+        function foo()
+            x = 2
+            return x
+        end
+        """)
+        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        @test isempty(unreachable)
+    end
+
+    # return in a branch doesn't make subsequent code unreachable
+    let diagnostics = get_lowered_diagnostics("""
+        function foo(x)
+            if x > 0
+                return 1
+            end
+            return 0
+        end
+        """)
+        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        @test isempty(unreachable)
+    end
+
+    # return as the last statement in a function body: no unreachable code
+    let diagnostics = get_lowered_diagnostics("""
+        function foo()
+            return 1
+        end
+        """)
+        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        @test isempty(unreachable)
+    end
+
+    # all branches return: code after if/else is unreachable
+    let diagnostics = get_lowered_diagnostics("""
+        function foo()
+            if rand(Bool)
+                println("true")
+                return 1
+            else
+                println("false")
+                return 2
+            end
+            println("fallback")
+        end
+        """)
+        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        @test length(unreachable) == 1
+        @test only(unreachable).range.start.line == 8
+    end
+
+    # all branches throw: code after if/else is unreachable
+    let diagnostics = get_lowered_diagnostics("""
+        function foo(x)
+            if x > 0
+                throw(ErrorException("positive"))
+            else
+                throw(ErrorException("non-positive"))
+            end
+            println("unreachable")
+        end
+        """)
+        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        @test length(unreachable) == 1
+        @test only(unreachable).range.start.line == 6
+    end
+
+    # mixed return/throw in branches: code after if/else is unreachable
+    let diagnostics = get_lowered_diagnostics("""
+        function foo(x)
+            if x > 0
+                return 1
+            else
+                throw(ErrorException("error"))
+            end
+            println("unreachable")
+        end
+        """)
+        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        @test length(unreachable) == 1
+        @test only(unreachable).range.start.line == 6
+    end
+
+    # only one branch returns: code after if/else is still reachable
+    let diagnostics = get_lowered_diagnostics("""
+        function foo(x)
+            if x > 0
+                return 1
+            else
+                println("negative")
+            end
+            println("reachable")
+        end
+        """)
+        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        @test isempty(unreachable)
+    end
+
+    # all branches of if/elseif/else return: code after is unreachable
+    let diagnostics = get_lowered_diagnostics("""
+        function foo(x)
+            if x > 0
+                return 1
+            elseif x < 0
+                return -1
+            else
+                return 0
+            end
+            println("unreachable")
+        end
+        """)
+        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        @test length(unreachable) == 1
+        @test only(unreachable).range.start.line == 8
+    end
+
+    # one elseif branch doesn't return: code after is reachable
+    let diagnostics = get_lowered_diagnostics("""
+        function foo(x)
+            if x > 0
+                return 1
+            elseif x < 0
+                println("negative")
+            else
+                return 0
+            end
+            println("reachable")
+        end
+        """)
+        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        @test isempty(unreachable)
+    end
+
+    # try/catch: both branches return → unreachable
+    let diagnostics = get_lowered_diagnostics("""
+        function foo()
+            try
+                return 1
+            catch
+                return 2
+            end
+            println("unreachable")
+        end
+        """)
+        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        @test length(unreachable) == 1
+    end
+
+    # try/catch: only catch returns → reachable
+    let diagnostics = get_lowered_diagnostics("""
+        function foo()
+            try
+                println("might throw")
+            catch
+                return 1
+            end
+            println("reachable")
+        end
+        """)
+        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        @test isempty(unreachable)
+    end
+
+    # try/finally: try body returns → unreachable
+    let diagnostics = get_lowered_diagnostics("""
+        function foo()
+            try
+                return 1
+            finally
+                println("cleanup")
+            end
+            println("unreachable")
+        end
+        """)
+        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        @test length(unreachable) == 1
+    end
+
+    # try/finally: try body doesn't return → reachable
+    let diagnostics = get_lowered_diagnostics("""
+        function foo()
+            try
+                println("might throw")
+            finally
+                println("cleanup")
+            end
+            println("reachable")
+        end
+        """)
+        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        @test isempty(unreachable)
+    end
+
+    # code after `continue` in a loop is unreachable
+    let diagnostics = get_lowered_diagnostics("""
+        function foo()
+            for i = 1:10
+                continue
+                println(i)
+            end
+        end
+        """)
+        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        @test length(unreachable) == 1
+    end
+
+    # code after `break` in a loop is unreachable
+    let diagnostics = get_lowered_diagnostics("""
+        function foo()
+            for i = 1:10
+                break
+                println(i)
+            end
+        end
+        """)
+        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        @test length(unreachable) == 1
+    end
+
+    # all branches break/continue: code after if/else in loop is unreachable
+    let diagnostics = get_lowered_diagnostics("""
+        function foo()
+            for i = 1:10
+                if i < 5
+                    break
+                else
+                    continue
+                end
+                println("unreachable")
+            end
+        end
+        """)
+        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        @test length(unreachable) == 1
+    end
+
+    # only one branch breaks: code after if/else in loop is reachable
+    let diagnostics = get_lowered_diagnostics("""
+        function foo()
+            for i = 1:10
+                if i < 5
+                    break
+                else
+                    println("else")
+                end
+                println("reachable")
+            end
+        end
+        """)
+        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        @test isempty(unreachable)
+    end
+
+    # code after `break` in a while loop is unreachable
+    let diagnostics = get_lowered_diagnostics("""
+        function foo()
+            while true
+                break
+                println("unreachable")
+            end
+        end
+        """)
+        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        @test length(unreachable) == 1
+    end
+
+    # code after `continue` in a while loop is unreachable
+    let diagnostics = get_lowered_diagnostics("""
+        function foo()
+            i = 0
+            while i < 10
+                i += 1
+                continue
+                println("unreachable")
+            end
+        end
+        """)
+        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        @test length(unreachable) == 1
+    end
+
+    # code after `return` in a while loop body is unreachable
+    let diagnostics = get_lowered_diagnostics("""
+        function foo()
+            while true
+                return 1
+                println("unreachable")
+            end
+        end
+        """)
+        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        @test length(unreachable) == 1
+    end
+end
+
+module soft_scope_module
+    global x = 1
+end
+
+@testset "ambiguous soft scope detection" begin
+    let diagnostics = get_lowered_diagnostics(soft_scope_module, """
+        for _ = 1:10
+            x = 2
+        end
+        """)
+        ds = filter(d -> d.code == JETLS.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE, diagnostics)
+        @test length(ds) == 1
+        d = only(ds)
+        @test d.severity == DiagnosticSeverity.Warning
+        @test contains(d.message, "`x`")
+        @test d.data isa AmbiguousSoftScopeData
+        @test d.data.name == "x"
+        # lowering/unused-local should also be reported
+        unused = filter(
+            d -> d.code == JETLS.LOWERING_UNUSED_LOCAL_CODE && contains(d.message, "`x`"),
+            diagnostics)
+        @test length(unused) == 1
+    end
+
+    # No diagnostic inside a function (hard scope)
+    let diagnostics = get_lowered_diagnostics(soft_scope_module, """
+        function f()
+            for _ = 1:10
+                x = 2
+            end
+        end
+        """)
+        ds = filter(d -> d.code == JETLS.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE, diagnostics)
+        @test isempty(ds)
+    end
+
+    # No diagnostic when no global by that name exists
+    let diagnostics = get_lowered_diagnostics(soft_scope_module, """
+        for _ = 1:10
+            y = 2
+        end
+        """)
+        ds = filter(d -> d.code == JETLS.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE, diagnostics)
+        @test isempty(ds)
+    end
+
+    # Explicit `global` suppresses the diagnostic
+    let diagnostics = get_lowered_diagnostics(soft_scope_module, """
+        for _ = 1:10
+            global x = 2
+        end
+        """)
+        ds = filter(d -> d.code == JETLS.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE, diagnostics)
+        @test isempty(ds)
+    end
+
+    # while loop
+    let diagnostics = get_lowered_diagnostics(soft_scope_module, """
+        while true
+            x = 2
+            break
+        end
+        """)
+        ds = filter(d -> d.code == JETLS.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE, diagnostics)
+        @test length(ds) == 1
+    end
+
+    @testset "soft scope mode (notebook)" begin
+        # With soft_scope=true, ambiguous soft scope diagnostic should not fire
+        let diagnostics = get_lowered_diagnostics(soft_scope_module, """
+            for _ = 1:10
+                x = 2
+            end
+            """; soft_scope=true)
+            ds = filter(d -> d.code == JETLS.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE, diagnostics)
+            @test isempty(ds)
+        end
+
+        # Without soft_scope, the same code should produce the diagnostic
+        let diagnostics = get_lowered_diagnostics(soft_scope_module, """
+            for _ = 1:10
+                x = 2
+            end
+            """; soft_scope=false)
+            ds = filter(d -> d.code == JETLS.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE, diagnostics)
+            @test length(ds) == 1
         end
     end
 end

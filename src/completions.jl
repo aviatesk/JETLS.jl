@@ -113,8 +113,9 @@ function to_completion(
         label_desc = "sparam"
     end
 
-    if !isnothing(binding.type)
-        label_detail = "::" * JL.sourcetext(binding.type)
+    typeid = binding.type
+    if !isnothing(typeid)
+        label_detail = "::" * JS.sourcetext(JS.SyntaxTree(JS.syntax_graph(st), typeid))
     end
 
     io = IOBuffer()
@@ -127,9 +128,7 @@ function to_completion(
     showtext = "`@ " * simple_loc_text(uri; line) * "`"
     println(io, create_source_location_link(uri, showtext; line, character))
     value = String(take!(io))
-    documentation = MarkupContent(;
-        kind = MarkupKind.Markdown,
-        value)
+    documentation = MarkupContent(; kind = MarkupKind.Markdown, value)
 
     CompletionItem(;
         label = binding.name,
@@ -612,6 +611,8 @@ function call_completions!(
     (; mod, analyzer, postprocessor) = get_context_info(state, uri, pos)
     fntyp = @something resolve_type(analyzer, mod, call[1]) return nothing
 
+    fntyp isa Core.Const || return nothing
+
     argtypes = collect_call_argtypes(analyzer, mod, ca)
     fixup_argtypes!(argtypes, fntyp)
     matches = find_all_matches(argtypes)
@@ -713,12 +714,12 @@ end
 
 function lookup_method_documentation(match::Core.MethodMatch)
     m = match.method
-    isdefinedglobal(m.module, m.name) || return nothing
-    mfunc = getglobal(m.module, m.name)
+    invokelatest(isdefinedglobal, m.module, m.name) || return nothing
+    mfunc = invokelatest(getglobal, m.module, m.name)
     tt = Base.unwrap_unionall(m.sig)
     tt isa DataType || return nothing
     sig = Tuple{tt.parameters[2:end]...}
-    return Base.Docs.doc(mfunc, sig)::Markdown.MD
+    return @invokelatest(Base.Docs.doc(mfunc, sig))::Markdown.MD
 end
 
 const builtin_functions = Core.Builtin[getglobal(Core, n) for n in names(Core) if getglobal(Core, n) isa Core.Builtin]
@@ -731,15 +732,14 @@ function resolve_completion_item(state::ServerState, item::CompletionItem)
         data.resolver_id == completion_resolver_info.id)
         (; mod, postprocessor) = completion_resolver_info
         name = Symbol(data.name)
-        binding = Base.Docs.Binding(mod, name)
-        docs = postprocessor(Base.Docs.doc(binding))
+        docs = postprocessor(@invokelatest(Base.Docs.doc(Base.Docs.Binding(mod, name)))::Markdown.MD)
         (; labelDetails, detail) = item
         # This `kind` doesn't have much meaning in itself, but at least by setting `kind`,
         # we enable tree-sitter-based highlighting of the `label` in zed-julia
         kind = CompletionItemKind.Snippet
         if isnothing(detail) || isnothing(kind)
-            if isdefinedglobal(mod, name)
-                obj = getglobal(mod, name)
+            if invokelatest(isdefinedglobal, mod, name)::Bool
+                obj = invokelatest(getglobal, mod, name)
                 if obj isa Type
                     if obj in builtin_types
                         detail = "[builtin type]"
@@ -784,7 +784,8 @@ function resolve_completion_item(state::ServerState, item::CompletionItem)
         doc = @something lookup_method_documentation(match) return item
         documentation = completion_resolver_info.postprocessor(string(doc))
         _, result = infer_match!(CC.NativeInterpreter(Base.get_world_counter()), match)
-        rettyp = CC.widenconst(result.result)
+        resulttyp = @something result.result return item
+        rettyp = CC.widenconst(resulttyp)
         # TODO Show effects and exception type?
         typstr = completion_resolver_info.postprocessor(string(rettyp))
         detail = " ::" * typstr

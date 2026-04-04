@@ -19,7 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`ea73622...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/ea73622...HEAD)
+- Diff: [`d14efce...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/d14efce...HEAD)
 
 ### Announcement
 
@@ -43,6 +43,54 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > ```
 > This disables analysis for matched files. Basic features like completion still might work, but most LSP features will be unfunctional.
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
+
+### Added
+
+- Added [`lowering/unreachable-code`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/unreachable-code) diagnostic that detects code after block terminators (`return`, `throw`, `break`, `continue`), including cases where all branches of `if`/`elseif`/`else` or `try`/`catch` contain a terminator.
+  Unreachable code is displayed as faded/grayed out with the `Unnecessary` tag.
+  A "Delete unreachable code" quick fix code action is also available.
+
+- Added [`lowering/ambiguous-soft-scope`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/ambiguous-soft-scope) diagnostic that warns when a variable assignment inside a `for`/`while`/`try` block at the top level shadows an existing global variable.
+  This matches the warning Julia itself emits at runtime for this pattern.
+  Two code actions are offered: "Insert `global` declaration" (preferred) and "Insert `local` declaration".
+  This diagnostic is suppressed for notebook cells, where soft scope semantics are enabled.
+
+### Changed
+
+- [`lowering/undef-local-var`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/lowering/undef-local-var) now recognizes correlated conditions to reduce false positives.
+  When a variable is assigned under a condition (e.g. `if x; y = 42; end`) and later used under the same condition (`if x; println(y); end`), the diagnostic is no longer emitted.
+  This also works with `&&` chains (`if x && z`), nested `if` blocks that are equivalent to `&&`, and combinations of both.
+
+- Updated JuliaSyntax.jl and JuliaLowering.jl dependency versions to latest.
+  The updated JuliaLowering pipeline is faster overall (https://github.com/JuliaLang/julia/pull/61425), improving performance of LSP features that rely on lowering such as diagnostics and document highlight.
+
+- The JETLS's own def-use analysis (`analyze_def_use_all_lambdas`) is now ~5x faster (684ms → 127ms).
+  Combined with the JuliaSyntax/JuliaLowering pipeline improvements above, the overall analysis pipeline time is reduced by ~2x (3649ms → 1772ms) on a large file ([`test/test_lowering_diagnostic.jl`](https://github.com/aviatesk/JETLS.jl/blob/f893ccfe/test/test_lowering_diagnostic.jl), ~1600 lines) (https://github.com/aviatesk/JETLS.jl/pull/612).
+
+- The "Prefix with `_`" code action is no longer offered for unused keyword arguments, since renaming a keyword argument changes the function's calling convention.
+
+### Fixed
+
+- Fixed world age warnings (`WARNING: Detected access to binding 'xxx' in a world prior to its definition world. ...`) that could occur when the language server interacts with user-defined methods or types at a newer world age.
+  This affected diagnostic printing, documentation lookup (hover, completions), and signature help display.
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/485)
+
+- Fixed full analysis not working on unsaved (`untitled:`) buffers.
+  Unlike saved files where analysis runs on save, unsaved buffers trigger
+  analysis on each content change with a fixed 3-second debounce.
+
+- Fixed lowering-based LSP features (document highlight, go-to-definition, find references, rename, hover) not working for functions with docstrings.
+
+- Fixed go-to-definition, find references, rename, and code actions not working correctly in notebooks.
+
+## 2026-03-20
+
+- Commit: [`d14efce`](https://github.com/aviatesk/JETLS.jl/commit/d14efce)
+- Diff: [`ea73622...d14efce`](https://github.com/aviatesk/JETLS.jl/compare/ea73622...d14efce)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-03-20")'
+  ```
 
 ### Added
 
