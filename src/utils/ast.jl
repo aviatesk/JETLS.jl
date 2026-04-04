@@ -3,7 +3,7 @@
 # but shares the immutable data within attribute dictionaries
 function copy_syntax_tree(st::JS.SyntaxTree)
     g = JS.syntax_graph(st)
-    new_attrs = Dict{Symbol,Any}()
+    new_attrs = Dict{Symbol,Dict{JL.IdTag,Any}}()
     for (k, v) in pairs(g.attributes)
         new_attrs[k] = copy(v)
     end
@@ -420,7 +420,7 @@ end
 
 # TODO use something like `JuliaInterpreter.ExprSplitter`
 
-function iterate_toplevel_tree(callback, st0_top::JS.SyntaxTree)
+function iterate_toplevel_tree(callback, st0_top::SyntaxTree0)
     sl = JS.SyntaxList(st0_top)
     while !isempty(sl)
         st0 = pop!(sl)

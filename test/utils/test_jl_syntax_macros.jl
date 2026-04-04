@@ -125,8 +125,7 @@ children_kinds(st::JS.SyntaxTree) = JS.Kind[JS.kind(c) for c in JS.children(st)]
         ]
             st0 = jlparse(code)
             world = Base.get_world_counter()
-            result = JETLS.jl_lower_for_scope_resolution(
-                lowering_module, st0, world)
+            result = JETLS.jl_lower_for_scope_resolution(lowering_module, st0, world)
             @test result isa NamedTuple
         end
     end
