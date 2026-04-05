@@ -25,7 +25,7 @@ Sockets = "6462fe0b-24de-5631-8697-dd941f90decc"
 TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 
 [sources]
-Compiler = {rev = "9f5c3a72ad", subdir = "Compiler", url = "https://github.com/JuliaLang/julia"}
+Compiler = {rev = "avi/julia-JETLS-Compiler-head", subdir = "Compiler", url = "https://github.com/JuliaLang/julia"}
 JET = {rev = "476bd1413c", url = "https://github.com/aviatesk/JET.jl"}
 JuliaLowering = {rev = "cfab3f5f6c", subdir = "JuliaLowering", url = "https://github.com/JuliaLang/julia"}
 JuliaSyntax = {rev = "cfab3f5f6c", subdir = "JuliaSyntax", url = "https://github.com/JuliaLang/julia"}
