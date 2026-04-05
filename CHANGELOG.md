@@ -44,6 +44,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > This disables analysis for matched files. Basic features like completion still might work, but most LSP features will be unfunctional.
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
 
+### Fixed
+
+- Fixed a crash during signature analysis (`AssertionError: invalid cache_argtypes`) that occurred when constant propagation encountered methods using `@nospecializeinfer` with varying varargs arities.
+  Updated the bundled `Compiler.jl` revision with the upstream fix (https://github.com/JuliaLang/julia#61502) (Closed https://github.com/aviatesk/JETLS.jl/issues/618).
+
 ## 2026-04-04
 
 - Commit: [`8deefa8`](https://github.com/aviatesk/JETLS.jl/commit/8deefa8)
