@@ -106,16 +106,16 @@ Here is a summary table of the diagnostics explained in this section:
 | [`syntax/parse-error`](@ref diagnostic/reference/syntax/parse-error)                             | `Error`               | `JETLS/live`  | Syntax parsing errors detected by JuliaSyntax.jl   |
 | [`lowering/error`](@ref diagnostic/reference/lowering/error)                                     | `Error`               | `JETLS/live`  | General lowering errors                            |
 | [`lowering/macro-expansion-error`](@ref diagnostic/reference/lowering/macro-expansion-error)     | `Error`               | `JETLS/live`  | Errors during macro expansion                      |
+| [`lowering/undef-global-var`](@ref diagnostic/reference/lowering/undef-global-var)               | `Warning`             | `JETLS/live`  | References to undefined global variables           |
+| [`lowering/undef-local-var`](@ref diagnostic/reference/lowering/undef-local-var)                 | `Warning/Information` | `JETLS/live`  | References to undefined local variables            |
+| [`lowering/ambiguous-soft-scope`](@ref diagnostic/reference/lowering/ambiguous-soft-scope)       | `Warning`             | `JETLS/live`  | Assignment in soft scope shadows a global variable |
+| [`lowering/captured-boxed-variable`](@ref diagnostic/reference/lowering/captured-boxed-variable) | `Information`         | `JETLS/live`  | Variables captured by closures that require boxing |
 | [`lowering/unused-argument`](@ref diagnostic/reference/lowering/unused-argument)                 | `Information`         | `JETLS/live`  | Function arguments that are never used             |
 | [`lowering/unused-local`](@ref diagnostic/reference/lowering/unused-local)                       | `Information`         | `JETLS/live`  | Local variables that are never used                |
 | [`lowering/unused-assignment`](@ref diagnostic/reference/lowering/unused-assignment)             | `Information`         | `JETLS/live`  | Assignments whose values are never read            |
-| [`lowering/undef-global-var`](@ref diagnostic/reference/lowering/undef-global-var)               | `Warning`             | `JETLS/live`  | References to undefined global variables           |
-| [`lowering/undef-local-var`](@ref diagnostic/reference/lowering/undef-local-var)                 | `Warning/Information` | `JETLS/live`  | References to undefined local variables            |
-| [`lowering/captured-boxed-variable`](@ref diagnostic/reference/lowering/captured-boxed-variable) | `Information`         | `JETLS/live`  | Variables captured by closures that require boxing |
 | [`lowering/unused-import`](@ref diagnostic/reference/lowering/unused-import)                     | `Information`         | `JETLS/live`  | Imported names that are never used                 |
 | [`lowering/unreachable-code`](@ref diagnostic/reference/lowering/unreachable-code)               | `Information`         | `JETLS/live`  | Code after a block terminator that is never reached  |
 | [`lowering/unsorted-import-names`](@ref diagnostic/reference/lowering/unsorted-import-names)     | `Hint`                | `JETLS/live`  | Import/export names not sorted alphabetically      |
-| [`lowering/ambiguous-soft-scope`](@ref diagnostic/reference/lowering/ambiguous-soft-scope)       | `Warning`             | `JETLS/live`  | Assignment in soft scope shadows a global variable |
 | [`toplevel/error`](@ref diagnostic/reference/toplevel/error)                                     | `Error`               | `JETLS/save`  | Errors during code loading                         |
 | [`toplevel/method-overwrite`](@ref diagnostic/reference/toplevel/method-overwrite)               | `Warning`             | `JETLS/save`  | Method definitions that overwrite previous ones    |
 | [`toplevel/abstract-field`](@ref diagnostic/reference/toplevel/abstract-field)                   | `Information`         | `JETLS/save`  | Struct fields with abstract types                  |
@@ -185,97 +185,6 @@ end
 @myinline callsin(x) = sin(x)  # Error expanding macro
                                # Expected long function definition (JETLS lowering/macro-expansion-error)
 ```
-
-#### [Unused argument (`lowering/unused-argument`)](@id diagnostic/reference/lowering/unused-argument)
-
-**Default severity**: `Information`
-
-Function arguments that are declared but never used in the function body.
-
-By default, arguments with names starting with `_` are not reported; see
-[`allow_unused_underscore`](@ref config/diagnostic-allow_unused_underscore).
-
-Example:
-
-```julia
-function unused_argument(x, y)  # Unused argument `y` (JETLS lowering/unused-argument)
-    return x + 1
-end
-```
-
-!!! tip "Code action available"
-    You can use the "Prefix with '_'" code action to quickly rename unused
-    arguments, indicating they are intentionally unused.
-
-#### [Unused local variable (`lowering/unused-local`)](@id diagnostic/reference/lowering/unused-local)
-
-**Default severity**: `Information`
-
-Local variables that are never used anywhere in their scope.
-
-By default, variables with names starting with `_` are not reported; see
-[`allow_unused_underscore`](@ref config/diagnostic-allow_unused_underscore).
-
-Example:
-
-```julia
-function unused_local()
-    x = 10  # Unused local binding `x` (JETLS lowering/unused-local)
-    return println(10)
-end
-```
-
-!!! tip "Code action available"
-    Several code actions are available for this diagnostic:
-    - "Prefix with '_'" to indicate the variable is intentionally unused
-    - "Delete assignment" to remove only the left-hand side (keeping the
-      right-hand side expression)
-    - "Delete statement" to remove the entire assignment statement
-
-#### [Unused assignment (`lowering/unused-assignment`)](@id diagnostic/reference/lowering/unused-assignment)
-
-**Default severity**: `Information`
-
-Assignments to local variables whose values are never read. This
-diagnostic targets individual assignments where the value is overwritten
-or the function exits before the value is read.
-
-This diagnostic does not overlap with
-[`lowering/unused-local`](@ref diagnostic/reference/lowering/unused-local):
-`unused-local` reports variables that are never used anywhere, while
-`unused-assignment` reports specific assignments to variables that *are*
-used elsewhere. For example:
-
-```julia
-function f(x::Bool)
-    if x
-        z = "Hi"
-        println(z)  # z is used here, so `lowering/unused-local` is NOT reported
-    end
-    if x
-        z = "Hey"   # but this assignment's value is never read → `lowering/lunused-assignment`
-    end
-end
-```
-
-Compare with a fully unused variable, which only triggers `unused-local`:
-
-```julia
-function g()
-    y = 42  # y is never used anywhere → `lowering/unused-local`
-end
-```
-
-!!! tip "Code action available"
-    Two code actions are available for this diagnostic:
-    - "Delete assignment" to remove only the left-hand side (keeping the
-      right-hand side expression)
-    - "Delete statement" to remove the entire assignment statement
-
-!!! note "Closure-captured variables"
-    Variables captured by closures are excluded from this analysis to
-    avoid false positives, since the CFG cannot precisely model when
-    closures are called.
 
 #### [Undefined global variable (`lowering/undef-global-var`)](@id diagnostic/reference/lowering/undef-global-var)
 
@@ -390,6 +299,86 @@ pointing to definition sites to help understand the control flow.
     `UndefVarError` handling code, and also serves as documentation
     that you've verified the variable is defined at this point.
 
+#### [Ambiguous soft scope (`lowering/ambiguous-soft-scope`)](@id diagnostic/reference/lowering/ambiguous-soft-scope)
+
+**Default severity**: `Warning`
+
+Reported when a variable is assigned inside a `for`, `while`, or
+`try`/`catch` block at the top level of a file, and a global variable
+with the same name already exists[^on_soft_scope]. This assignment is
+ambiguous because it behaves differently depending on where the code
+runs:
+- In the REPL or notebooks: assigns to the existing global
+- In a file: creates a new local variable, leaving the global
+  unchanged
+
+[^on_soft_scope]: See
+    [On Soft Scope](https://docs.julialang.org/en/v1/manual/variables-and-scoping/#on-soft-scope)
+    in the Julia manual.
+
+Example ([A Common Confusion](https://docs.julialang.org/en/v1/manual/variables-and-scoping/#A-Common-Confusion-2479cb3548c466db) adapted from the Julia manual):
+
+```@eval
+using Markdown
+
+mktemp() do file, io
+    code = """
+    # Print the numbers 1 through 5
+    global i = 0
+    while i < 5
+        i += 1  # Assignment to `i` in soft scope is ambiguous (JETLS lowering/ambiguous-soft-scope)
+                # Variable `i` may be used before it is defined (JETLS lowering/undef-local-var)
+        println(i)
+    end
+    """
+    write(io, code)
+    close(io)
+    err = IOBuffer()
+    try
+        run(pipeline(`$(Base.julia_cmd()) --startup-file=no --color=no $file`; stderr=err))
+    catch
+    end
+    output = String(take!(err))
+    lines = split(output, '\n')
+    idx = findfirst(l -> startswith(l, "Stacktrace:"), lines)
+    if idx !== nothing
+        lines = lines[1:idx]
+    end
+    push!(lines, "...")
+    output = join(lines, '\n')
+    output = replace(output, file=>"ambiguous-scope.jl")
+
+    Markdown.parse("""
+    > `ambiguous-scope.jl`
+    ``````julia
+    $(code)
+    ``````
+
+    This diagnostic matches the warning that Julia itself emits at runtime.
+    Running the example above as a file produces:
+    > `julia ambiguous-scope.jl`
+    ``````
+    $(output)
+    ``````
+    """)
+end
+```
+
+!!! note "Why is `lowering/undef-local-var` also reported?"
+    Since `i += 1` desugars to `i = i + 1`, the new local `i` is read
+    before being assigned, which also triggers
+    [`lowering/undef-local-var`](@ref diagnostic/reference/lowering/undef-local-var)
+    and causes the `UndefVarError` shown above at runtime.
+
+!!! tip "Code actions available"
+    Two quick fixes are offered: "Insert `global i` declaration" (preferred)
+    to assign to the existing global, and "Insert `local i` declaration" to
+    explicitly mark the variable as local and suppress the warning.
+
+!!! note "Notebook mode"
+    This diagnostic is suppressed for [notebooks](@ref notebook), where soft
+    scope semantics are enabled (matching REPL behavior).
+
 #### [Captured boxed variable (`lowering/captured-boxed-variable`)](@id diagnostic/reference/lowering/captured-boxed-variable)
 
 **Default severity**: `Information`
@@ -472,6 +461,97 @@ end
     them. Also note that the cases where the flisp lowerer (a.k.a. `code_lowered`)
     generates `Core.Box` do not necessarily match the cases where JETLS reports
     captured boxes.
+
+#### [Unused argument (`lowering/unused-argument`)](@id diagnostic/reference/lowering/unused-argument)
+
+**Default severity**: `Information`
+
+Function arguments that are declared but never used in the function body.
+
+By default, arguments with names starting with `_` are not reported; see
+[`allow_unused_underscore`](@ref config/diagnostic-allow_unused_underscore).
+
+Example:
+
+```julia
+function unused_argument(x, y)  # Unused argument `y` (JETLS lowering/unused-argument)
+    return x + 1
+end
+```
+
+!!! tip "Code action available"
+    You can use the "Prefix with '_'" code action to quickly rename unused
+    arguments, indicating they are intentionally unused.
+
+#### [Unused local variable (`lowering/unused-local`)](@id diagnostic/reference/lowering/unused-local)
+
+**Default severity**: `Information`
+
+Local variables that are never used anywhere in their scope.
+
+By default, variables with names starting with `_` are not reported; see
+[`allow_unused_underscore`](@ref config/diagnostic-allow_unused_underscore).
+
+Example:
+
+```julia
+function unused_local()
+    x = 10  # Unused local binding `x` (JETLS lowering/unused-local)
+    return println(10)
+end
+```
+
+!!! tip "Code action available"
+    Several code actions are available for this diagnostic:
+    - "Prefix with '_'" to indicate the variable is intentionally unused
+    - "Delete assignment" to remove only the left-hand side (keeping the
+      right-hand side expression)
+    - "Delete statement" to remove the entire assignment statement
+
+#### [Unused assignment (`lowering/unused-assignment`)](@id diagnostic/reference/lowering/unused-assignment)
+
+**Default severity**: `Information`
+
+Assignments to local variables whose values are never read. This
+diagnostic targets individual assignments where the value is overwritten
+or the function exits before the value is read.
+
+This diagnostic does not overlap with
+[`lowering/unused-local`](@ref diagnostic/reference/lowering/unused-local):
+`unused-local` reports variables that are never used anywhere, while
+`unused-assignment` reports specific assignments to variables that *are*
+used elsewhere. For example:
+
+```julia
+function f(x::Bool)
+    if x
+        z = "Hi"
+        println(z)  # z is used here, so `lowering/unused-local` is NOT reported
+    end
+    if x
+        z = "Hey"   # but this assignment's value is never read → `lowering/lunused-assignment`
+    end
+end
+```
+
+Compare with a fully unused variable, which only triggers `unused-local`:
+
+```julia
+function g()
+    y = 42  # y is never used anywhere → `lowering/unused-local`
+end
+```
+
+!!! tip "Code action available"
+    Two code actions are available for this diagnostic:
+    - "Delete assignment" to remove only the left-hand side (keeping the
+      right-hand side expression)
+    - "Delete statement" to remove the entire assignment statement
+
+!!! note "Closure-captured variables"
+    Variables captured by closures are excluded from this analysis to
+    avoid false positives, since the CFG cannot precisely model when
+    closures are called.
 
 #### [Unused import (`lowering/unused-import`)](@id diagnostic/reference/lowering/unused-import)
 
@@ -602,86 +682,6 @@ export bar, @foo  # Names are not sorted alphabetically (JETLS lowering/unsorted
     When the sorted result exceeds 92 characters (
     [Julia's conventional maximum line length](https://docs.julialang.org/en/v1.14-dev/devdocs/contributing/formatting/#General-Formatting-Guidelines-for-Julia-code-contributions)),
     the code action wraps to multiple lines with 4-space continuation indent.
-
-#### [Ambiguous soft scope (`lowering/ambiguous-soft-scope`)](@id diagnostic/reference/lowering/ambiguous-soft-scope)
-
-**Default severity**: `Warning`
-
-Reported when a variable is assigned inside a `for`, `while`, or
-`try`/`catch` block at the top level of a file, and a global variable
-with the same name already exists[^on_soft_scope]. This assignment is
-ambiguous because it behaves differently depending on where the code
-runs:
-- In the REPL or notebooks: assigns to the existing global
-- In a file: creates a new local variable, leaving the global
-  unchanged
-
-[^on_soft_scope]: See
-    [On Soft Scope](https://docs.julialang.org/en/v1/manual/variables-and-scoping/#on-soft-scope)
-    in the Julia manual.
-
-Example ([A Common Confusion](https://docs.julialang.org/en/v1/manual/variables-and-scoping/#A-Common-Confusion-2479cb3548c466db) adapted from the Julia manual):
-
-```@eval
-using Markdown
-
-mktemp() do file, io
-    code = """
-    # Print the numbers 1 through 5
-    global i = 0
-    while i < 5
-        i += 1  # Assignment to `i` in soft scope is ambiguous (JETLS lowering/ambiguous-soft-scope)
-                # Variable `i` may be used before it is defined (JETLS lowering/undef-local-var)
-        println(i)
-    end
-    """
-    write(io, code)
-    close(io)
-    err = IOBuffer()
-    try
-        run(pipeline(`$(Base.julia_cmd()) --startup-file=no --color=no $file`; stderr=err))
-    catch
-    end
-    output = String(take!(err))
-    lines = split(output, '\n')
-    idx = findfirst(l -> startswith(l, "Stacktrace:"), lines)
-    if idx !== nothing
-        lines = lines[1:idx]
-    end
-    push!(lines, "...")
-    output = join(lines, '\n')
-    output = replace(output, file=>"ambiguous-scope.jl")
-
-    Markdown.parse("""
-    > `ambiguous-scope.jl`
-    ``````julia
-    $(code)
-    ``````
-
-    This diagnostic matches the warning that Julia itself emits at runtime.
-    Running the example above as a file produces:
-    > `julia ambiguous-scope.jl`
-    ``````
-    $(output)
-    ``````
-    """)
-end
-```
-
-!!! note "Why is `lowering/undef-local-var` also reported?"
-    Since `i += 1` desugars to `i = i + 1`, the new local `i` is read
-    before being assigned, which also triggers
-    [`lowering/undef-local-var`](@ref diagnostic/reference/lowering/undef-local-var)
-    and causes the `UndefVarError` shown above at runtime.
-
-!!! tip "Code actions available"
-    Two quick fixes are offered: "Insert `global i` declaration" (preferred)
-    to assign to the existing global, and "Insert `local i` declaration" to
-    explicitly mark the variable as local and suppress the warning.
-
-!!! note "Notebook mode"
-    This diagnostic is suppressed for [notebooks](@ref notebook), where soft
-    scope semantics are enabled (matching REPL behavior).
 
 ### [Top-level diagnostic (`toplevel/*`)](@id diagnostic/reference/toplevel)
 
