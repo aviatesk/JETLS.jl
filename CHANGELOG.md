@@ -44,6 +44,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > This disables analysis for matched files. Basic features like completion still might work, but most LSP features will be unfunctional.
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
 
+### Added
+
+- Extended noreturn optimization to recognize `error`, `rethrow`, and `exit` in addition to `throw`. These calls are now treated as block terminators for unreachable code detection and undef variable analysis, reducing false positives when these functions are used as guards. For example, the following code no longer produces a false "possibly undefined" warning on `y`:
+  ```julia
+  function f(x)
+      if x > 0
+          y = x
+      else
+          error("x must be positive")
+      end
+      return sin(y)  # no warning: error() guarantees y is defined
+  end
+  ```
+
 ### Changed
 
 - Updated JuliaSyntax.jl and JuliaLowering.jl dependency versions to latest.

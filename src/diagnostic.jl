@@ -1129,51 +1129,52 @@ end
 # where all branches contain a block terminator.
 function is_block_terminator(
         ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTree,
-        allow_throw_optimization::Bool
+        allow_noreturn_optimization::Vector{Symbol}
     )
     k = JS.kind(st3)
     k === JS.K"return" && return true
     k === JS.K"break" && return true
-    allow_throw_optimization && is_throw_call(ctx3, st3) && return true
+    !isempty(allow_noreturn_optimization) &&
+        is_noreturn_call(ctx3, st3, allow_noreturn_optimization) && return true
     if (k === JS.K"if" || k === JS.K"elseif") && JS.numchildren(st3) >= 3
-        return (_is_block_terminator(ctx3, st3[2], allow_throw_optimization) &&
-                _is_block_terminator(ctx3, st3[3], allow_throw_optimization))
+        return (_is_block_terminator(ctx3, st3[2], allow_noreturn_optimization) &&
+                _is_block_terminator(ctx3, st3[3], allow_noreturn_optimization))
     end
     if k === JS.K"trycatchelse" && JS.numchildren(st3) >= 2
-        return (_is_block_terminator(ctx3, st3[1], allow_throw_optimization) &&
-                _is_block_terminator(ctx3, st3[2], allow_throw_optimization))
+        return (_is_block_terminator(ctx3, st3[1], allow_noreturn_optimization) &&
+                _is_block_terminator(ctx3, st3[2], allow_noreturn_optimization))
     end
     if k === JS.K"tryfinally" && JS.numchildren(st3) >= 1
-        return _is_block_terminator(ctx3, st3[1], allow_throw_optimization)
+        return _is_block_terminator(ctx3, st3[1], allow_noreturn_optimization)
     end
     return false
 end
 
 function _is_block_terminator(
         ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTree,
-        allow_throw_optimization::Bool
+        allow_noreturn_optimization::Vector{Symbol}
     )
     k = JS.kind(st3)
     if k === JS.K"block"
         for child in JS.children(st3)
-            _is_block_terminator(ctx3, child, allow_throw_optimization) && return true
+            _is_block_terminator(ctx3, child, allow_noreturn_optimization) && return true
         end
         return false
     end
-    return is_block_terminator(ctx3, st3, allow_throw_optimization)
+    return is_block_terminator(ctx3, st3, allow_noreturn_optimization)
 end
 
 function analyze_unreachable_code!(
         diagnostics::Vector{Diagnostic}, fi::FileInfo,
         ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTree,
-        allow_throw_optimization::Bool
+        allow_noreturn_optimization::Vector{Symbol}
     )
     traverse(st3) do st3′::JS.SyntaxTree
         JS.kind(st3′) === JS.K"block" || return nothing
         nchildren = JS.numchildren(st3′)
         for i in 1:nchildren
             child = st3′[i]
-            is_block_terminator(ctx3, child, allow_throw_optimization) || continue
+            is_block_terminator(ctx3, child, allow_noreturn_optimization) || continue
             # All subsequent children in this block are unreachable
             first_range = last_range = nothing
             for j in (i+1):nchildren
@@ -1215,7 +1216,7 @@ function analyze_lowered_code!(
         diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo, res::NamedTuple;
         skip_analysis_requiring_context::Bool = false,
         allow_unused_underscore::Bool = true,
-        allow_throw_optimization::Bool = false,
+        allow_noreturn_optimization::Vector{Symbol} = Symbol[],
         analyzer::Union{Nothing,LSAnalyzer} = nothing,
         postprocessor::LSPostProcessor = LSPostProcessor()
     )
@@ -1238,14 +1239,14 @@ function analyze_lowered_code!(
     skip_analysis_requiring_context ||
         analyze_undefined_global_bindings!(diagnostics, fi, ctx3, binding_occurrences, reported; analyzer, postprocessor)
 
-    (undef_info, dead_store_info) = analyze_def_use_all_lambdas(ctx3, st3;
-        allow_throw_optimization)
+    (undef_info, dead_store_info) =
+        analyze_def_use_all_lambdas(ctx3, st3; allow_noreturn_optimization)
     analyze_undefined_local_bindings!(diagnostics, uri, fi, undef_info, reported)
     analyze_unused_assignments!(diagnostics, fi, st0, dead_store_info, reported; allow_unused_underscore)
 
     analyze_captured_boxes!(diagnostics, uri, fi, ctx4, st3, reported)
 
-    analyze_unreachable_code!(diagnostics, fi, ctx3, st3, allow_throw_optimization)
+    analyze_unreachable_code!(diagnostics, fi, ctx3, st3, allow_noreturn_optimization)
 
     return diagnostics
 end
@@ -1321,12 +1322,22 @@ function lowering_diagnostics!(
         end
     end
 
-    allow_throw_optimization =
-        Base.invoke_in_world(world, isdefinedglobal, mod, :throw)::Bool &&
-        Base.invoke_in_world(world, getglobal, mod, :throw) === Core.throw
+    allow_noreturn_optimization = Symbol[]
+    noreturn_globals = (
+        (:throw, Core.throw),
+        (:error, Base.error),
+        (:rethrow, Base.rethrow),
+        (:exit,  Base.exit),
+    )
+    for (name, expected) in noreturn_globals
+        if Base.invoke_in_world(world, isdefinedglobal, mod, name)::Bool &&
+                Base.invoke_in_world(world, getglobal, mod, name) === expected
+            push!(allow_noreturn_optimization, name)
+        end
+    end
 
     return analyze_lowered_code!(diagnostics, uri, fi, res;
-        skip_analysis_requiring_context, allow_throw_optimization, kwargs...)
+        skip_analysis_requiring_context, allow_noreturn_optimization, kwargs...)
 end
 
 struct ImportInfo

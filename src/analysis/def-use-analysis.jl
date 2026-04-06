@@ -332,7 +332,7 @@ end
 
 function linearize_def_use_events!(
         lin::EventLinearizer, ctx3::JL.VariableAnalysisContext, ex3::JS.SyntaxTree,
-        candidates::Set{JL.IdTag}, allow_throw_optimization::Bool
+        candidates::Set{JL.IdTag}, allow_noreturn_optimization::Vector{Symbol}
     )
     k = JS.kind(ex3)
 
@@ -350,7 +350,7 @@ function linearize_def_use_events!(
         outer_target = get(lin.break_targets, label_name, nothing)
         lin.break_targets[label_name] = exit_label
         if JS.numchildren(ex3) >= 2
-            linearize_def_use_events!(lin, ctx3, ex3[2], candidates, allow_throw_optimization)
+            linearize_def_use_events!(lin, ctx3, ex3[2], candidates, allow_noreturn_optimization)
         end
         if isnothing(outer_target)
             delete!(lin.break_targets, label_name)
@@ -362,7 +362,7 @@ function linearize_def_use_events!(
     elseif k == JS.K"break"
         # Process value child if present (break label value)
         if JS.numchildren(ex3) >= 2
-            linearize_def_use_events!(lin, ctx3, ex3[2], candidates, allow_throw_optimization)
+            linearize_def_use_events!(lin, ctx3, ex3[2], candidates, allow_noreturn_optimization)
         end
         # Emit goto to matching symbolicblock exit if label is known
         if JS.numchildren(ex3) >= 1 && JS.kind(ex3[1]) == JS.K"symboliclabel"
@@ -381,7 +381,7 @@ function linearize_def_use_events!(
 
     elseif k == JS.K"="
         # Process RHS first
-        linearize_def_use_events!(lin, ctx3, ex3[2], candidates, allow_throw_optimization)
+        linearize_def_use_events!(lin, ctx3, ex3[2], candidates, allow_noreturn_optimization)
         # Then record assignment
         lhs = ex3[1]
         if JS.kind(lhs) == JS.K"BindingId"
@@ -395,7 +395,7 @@ function linearize_def_use_events!(
     elseif k == JS.K"function_decl"
         # Process the RHS first (method_defs)
         for i in 2:JS.numchildren(ex3)
-            linearize_def_use_events!(lin, ctx3, ex3[i], candidates, allow_throw_optimization)
+            linearize_def_use_events!(lin, ctx3, ex3[i], candidates, allow_noreturn_optimization)
         end
         # Then emit the assign event for the function name
         lhs = ex3[1]
@@ -420,7 +420,7 @@ function linearize_def_use_events!(
             skip_label = undef_make_label!(lin)
             undef_emit_gotoifnot!(lin, skip_label)
             let saved = undef_save_cond_implied(lin)
-                linearize_def_use_events!(lin, ctx3, ex3[3], candidates, allow_throw_optimization)
+                linearize_def_use_events!(lin, ctx3, ex3[3], candidates, allow_noreturn_optimization)
                 undef_restore_cond_implied!(lin, saved)
             end
             undef_emit_label!(lin, skip_label)
@@ -432,13 +432,13 @@ function linearize_def_use_events!(
     elseif k == JS.K"decl"
         # decl nodes: the BindingId is declaration, not use; only visit type expression
         if JS.numchildren(ex3) >= 2
-            linearize_def_use_events!(lin, ctx3, ex3[2], candidates, allow_throw_optimization)
+            linearize_def_use_events!(lin, ctx3, ex3[2], candidates, allow_noreturn_optimization)
         end
 
     elseif k == JS.K"if" || k == JS.K"elseif"
         # if cond then_branch [else_branch]
         cond = ex3[1]
-        linearize_def_use_events!(lin, ctx3, cond, candidates, allow_throw_optimization)
+        linearize_def_use_events!(lin, ctx3, cond, candidates, allow_noreturn_optimization)
 
         end_label = undef_make_label!(lin)
         else_label = undef_make_label!(lin)
@@ -459,7 +459,7 @@ function linearize_def_use_events!(
 
         isnothing(cond_key) || push!(lin.active_cond_vars, cond_key)
         let saved = undef_save_cond_implied(lin)
-            linearize_def_use_events!(lin, ctx3, ex3[2], candidates, allow_throw_optimization)
+            linearize_def_use_events!(lin, ctx3, ex3[2], candidates, allow_noreturn_optimization)
             undef_restore_cond_implied!(lin, saved; lift_with=cond_key)
         end
         isnothing(cond_key) || pop!(lin.active_cond_vars)
@@ -472,7 +472,7 @@ function linearize_def_use_events!(
         undef_emit_label!(lin, else_label)
         let saved = undef_save_cond_implied(lin)
             if JS.numchildren(ex3) >= 3
-                linearize_def_use_events!(lin, ctx3, ex3[3], candidates, allow_throw_optimization)
+                linearize_def_use_events!(lin, ctx3, ex3[3], candidates, allow_noreturn_optimization)
             end
             undef_restore_cond_implied!(lin, saved)
         end
@@ -484,10 +484,10 @@ function linearize_def_use_events!(
         end_label = undef_make_label!(lin)
 
         undef_emit_label!(lin, top_label)
-        linearize_def_use_events!(lin, ctx3, ex3[1], candidates, allow_throw_optimization)
+        linearize_def_use_events!(lin, ctx3, ex3[1], candidates, allow_noreturn_optimization)
         undef_emit_gotoifnot!(lin, end_label)
         let saved = undef_save_cond_implied(lin)
-            linearize_def_use_events!(lin, ctx3, ex3[2], candidates, allow_throw_optimization)
+            linearize_def_use_events!(lin, ctx3, ex3[2], candidates, allow_noreturn_optimization)
             undef_restore_cond_implied!(lin, saved)
         end
         undef_emit_goto!(lin, top_label)
@@ -499,8 +499,8 @@ function linearize_def_use_events!(
 
         undef_emit_label!(lin, top_label)
         let saved = undef_save_cond_implied(lin)
-            linearize_def_use_events!(lin, ctx3, ex3[1], candidates, allow_throw_optimization)
-            linearize_def_use_events!(lin, ctx3, ex3[2], candidates, allow_throw_optimization)
+            linearize_def_use_events!(lin, ctx3, ex3[1], candidates, allow_noreturn_optimization)
+            linearize_def_use_events!(lin, ctx3, ex3[2], candidates, allow_noreturn_optimization)
             undef_restore_cond_implied!(lin, saved)
         end
         undef_emit_gotoifnot!(lin, end_label)
@@ -514,16 +514,16 @@ function linearize_def_use_events!(
         # Try block can throw at any point
         undef_emit_gotoifnot!(lin, catch_label)
         let saved = undef_save_cond_implied(lin)
-            linearize_def_use_events!(lin, ctx3, ex3[1], candidates, allow_throw_optimization)
+            linearize_def_use_events!(lin, ctx3, ex3[1], candidates, allow_noreturn_optimization)
             undef_restore_cond_implied!(lin, saved)
         end
         undef_emit_goto!(lin, end_label)
 
         undef_emit_label!(lin, catch_label)
         let saved = undef_save_cond_implied(lin)
-            linearize_def_use_events!(lin, ctx3, ex3[2], candidates, allow_throw_optimization)
+            linearize_def_use_events!(lin, ctx3, ex3[2], candidates, allow_noreturn_optimization)
             if JS.numchildren(ex3) >= 3
-                linearize_def_use_events!(lin, ctx3, ex3[3], candidates, allow_throw_optimization)
+                linearize_def_use_events!(lin, ctx3, ex3[3], candidates, allow_noreturn_optimization)
             end
             undef_restore_cond_implied!(lin, saved)
         end
@@ -536,28 +536,29 @@ function linearize_def_use_events!(
 
         undef_emit_gotoifnot!(lin, finally_label)
         let saved = undef_save_cond_implied(lin)
-            linearize_def_use_events!(lin, ctx3, ex3[1], candidates, allow_throw_optimization)
+            linearize_def_use_events!(lin, ctx3, ex3[1], candidates, allow_noreturn_optimization)
             undef_restore_cond_implied!(lin, saved)
         end
 
         undef_emit_label!(lin, finally_label)
-        linearize_def_use_events!(lin, ctx3, ex3[2], candidates, allow_throw_optimization)
+        linearize_def_use_events!(lin, ctx3, ex3[2], candidates, allow_noreturn_optimization)
 
         undef_emit_label!(lin, end_label)
 
     elseif k == JS.K"return"
         if JS.numchildren(ex3) >= 1
-            linearize_def_use_events!(lin, ctx3, ex3[1], candidates, allow_throw_optimization)
+            linearize_def_use_events!(lin, ctx3, ex3[1], candidates, allow_noreturn_optimization)
         end
         unreachable = undef_new_block!(lin)
         undef_switch_to_block!(lin, unreachable)
 
     else # Default: process all children
         for child in JS.children(ex3)
-            linearize_def_use_events!(lin, ctx3, child, candidates, allow_throw_optimization)
+            linearize_def_use_events!(lin, ctx3, child, candidates, allow_noreturn_optimization)
         end
 
-        if allow_throw_optimization && is_throw_call(ctx3, ex3)
+        if !isempty(allow_noreturn_optimization) &&
+                is_noreturn_call(ctx3, ex3, allow_noreturn_optimization)
             unreachable = undef_new_block!(lin)
             undef_switch_to_block!(lin, unreachable)
         end
@@ -655,7 +656,7 @@ function collect_closure_captured_vars(body::JS.SyntaxTree, candidates::Set{JL.I
 end
 
 """
-    analyze_def_use(ctx3, ex3; allow_throw_optimization) -> (undef_info, dead_store_info)
+    analyze_def_use(ctx3, ex3; allow_noreturn_optimization) -> (undef_info, dead_store_info)
 
 Combined CFG-aware analysis for local bindings in a single lambda.
 Builds the event-based CFG once and runs both undef analysis and dead
@@ -667,7 +668,7 @@ Returns a tuple of:
 """
 function analyze_def_use(
         ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTree;
-        allow_throw_optimization::Bool=false
+        allow_noreturn_optimization::Vector{Symbol}=Symbol[]
     )
     undef_result = Dict{JL.BindingInfo, UndefInfo}()
     dead_store_result = Dict{JL.BindingInfo, DeadStoreInfo}()
@@ -695,7 +696,7 @@ function analyze_def_use(
 
     lin = EventLinearizer()
     if JS.numchildren(st3) >= 3
-        linearize_def_use_events!(lin, ctx3, st3[3], candidates, allow_throw_optimization)
+        linearize_def_use_events!(lin, ctx3, st3[3], candidates, allow_noreturn_optimization)
     end
     undef_finalize_cfg!(lin)
 
@@ -796,7 +797,7 @@ function analyze_def_use(
 end
 
 """
-    analyze_def_use_all_lambdas(ctx3, st3; allow_throw_optimization)
+    analyze_def_use_all_lambdas(ctx3, st3; allow_noreturn_optimization)
         -> (undef_info, dead_store_info)
 
 Analyze undef status and dead stores for all lambdas in the syntax tree.
@@ -804,13 +805,13 @@ Builds the CFG once per lambda and runs both analyses on it.
 """
 function analyze_def_use_all_lambdas(
         ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTree;
-        allow_throw_optimization::Bool = false
+        allow_noreturn_optimization::Vector{Symbol} = Symbol[]
     )
     undef_result = Dict{JL.BindingInfo, UndefInfo}()
     dead_store_result = Dict{JL.BindingInfo, DeadStoreInfo}()
     traverse(st3) do st3′::JS.SyntaxTree
         if JS.kind(st3′) == JS.K"lambda"
-            undef_info, dead_store_info = analyze_def_use(ctx3, st3′; allow_throw_optimization)
+            undef_info, dead_store_info = analyze_def_use(ctx3, st3′; allow_noreturn_optimization)
             merge!(undef_result, undef_info)
             merge!(dead_store_result, dead_store_info)
         end
