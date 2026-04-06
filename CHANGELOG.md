@@ -46,6 +46,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- Fixed scope resolution for notebook cells to use soft scope semantics, so that assignments inside loops correctly resolve to existing globals instead of creating ambiguous locals.
 - Fixed a crash during signature analysis (`AssertionError: invalid cache_argtypes`) that occurred when constant propagation encountered methods using `@nospecializeinfer` with varying varargs arities.
   Updated the bundled `Compiler.jl` revision with the upstream fix (https://github.com/JuliaLang/julia#61502) (Closed https://github.com/aviatesk/JETLS.jl/issues/618).
 
