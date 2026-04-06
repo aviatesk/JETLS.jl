@@ -6,7 +6,8 @@ matching in `compute_binding_occurrences`.
 """
 function collect_inert_global_occurrences!(
         occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence{Tree3}}},
-        ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTree, mod::Module
+        ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTree, mod::Module;
+        soft_scope::Bool = false
     ) where Tree3<:JS.SyntaxTree
     arg_names = Set{String}()
     for binfo in ctx3.bindings.info
@@ -25,7 +26,7 @@ function collect_inert_global_occurrences!(
             # Unwrap `$` nodes (replace with their content) instead of removing
             # them, so that parent nodes like dot expressions (`x.$name`)
             # remain well-formed and non-interpolated identifiers are resolved.
-            jl_lower_for_scope_resolution(mod, unwrap_interpolations(st[1]))
+            jl_lower_for_scope_resolution(mod, unwrap_interpolations(st[1]); soft_scope)
         catch
             return nothing
         end
@@ -408,12 +409,18 @@ function compute_binding_occurrences_st0(
         lookup_func = gen_lookup_out_of_scope!(state, uri),
         include_global_bindings::Bool = false
     )
+    soft_scope = is_notebook_cell_uri(state, uri) ||
+        # Handlers like References and Rename receive notebook cell URIs, just like
+        # other LSP handlers. However, when performing a global search over an analysis
+        # unit using `collect_search_uris`, the notebook URI is used instead, and its
+        # lowering requires `soft_scope`.
+        is_notebook_uri(state, uri)
     (; mod) = get_context_info(state, uri, offset_to_xy(fi, JS.first_byte(st0)); lookup_func)
     (; ctx3, st3) = try
         # Remove macros to preserve precise source locations.
         # TODO: This won't be necessary once JuliaLowering can preserve precise
         # source locations for old macro-expanded code.
-        jl_lower_for_scope_resolution(mod, remove_macrocalls(st0))
+        jl_lower_for_scope_resolution(mod, remove_macrocalls(st0); soft_scope)
     catch
         return nothing
     end
@@ -422,12 +429,12 @@ function compute_binding_occurrences_st0(
         include_global_bindings)
 
     if include_global_bindings
-        collect_macrocall_occurrences!(binding_occurrences, mod, st0)
+        collect_macrocall_occurrences!(binding_occurrences, mod, st0; soft_scope)
         # Global bindings used inside inert nodes (quoted expressions) are not
         # resolved by scope analysis. This applies to `@generated` functions,
         # macro definitions, and any function that constructs quoted expressions.
         # Run independent scope resolution on inert content to collect them.
-        collect_inert_global_occurrences!(binding_occurrences, ctx3, st3, mod)
+        collect_inert_global_occurrences!(binding_occurrences, ctx3, st3, mod; soft_scope)
     end
 
     return binding_occurrences
@@ -435,14 +442,15 @@ end
 
 function collect_macrocall_occurrences!(
         occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence{Tree3}}},
-        mod::Module, st0::JS.SyntaxTree
+        mod::Module, st0::JS.SyntaxTree;
+        soft_scope::Bool = false
     ) where Tree3<:JS.SyntaxTree
     traverse(st0) do st::JS.SyntaxTree
         JS.kind(st) === JS.K"macrocall" || return nothing
         JS.numchildren(st) ≥ 1 || return nothing
         macrocall_name = st[1]
         (; ctx3) = try
-            jl_lower_for_scope_resolution(mod, macrocall_name)
+            jl_lower_for_scope_resolution(mod, macrocall_name; soft_scope)
         catch
             return traversal_no_recurse
         end

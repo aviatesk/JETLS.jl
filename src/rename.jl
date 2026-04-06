@@ -54,24 +54,26 @@ function handle_PrepareRenameRequest(
     fi = result
 
     (; mod) = get_context_info(state, uri, pos)
+    soft_scope = is_notebook_cell_uri(state, uri)
     return send(server,
         PrepareRenameResponse(;
             id = msg.id,
             result = @something(
-                local_binding_rename_preparation(state, uri, fi, pos, mod),
-                global_binding_rename_preparation(state, uri, fi, pos, mod),
+                local_binding_rename_preparation(state, uri, fi, pos, mod; soft_scope),
+                global_binding_rename_preparation(state, uri, fi, pos, mod; soft_scope),
                 file_rename_preparation(state, uri, fi, pos),
                 null)))
 end
 
 function local_binding_rename_preparation(
-        state::ServerState, uri::URI, fi::FileInfo, pos::Position, mod::Module
+        state::ServerState, uri::URI, fi::FileInfo, pos::Position, mod::Module;
+        soft_scope::Bool = false
     )
     st0_top = build_syntax_tree(fi)
     offset = xy_to_offset(fi, pos)
 
     (; ctx3, binding) = @something begin
-        select_target_binding(st0_top, offset, mod; caller="local_binding_rename_preparation")
+        select_target_binding(st0_top, offset, mod; caller="local_binding_rename_preparation", soft_scope)
     end return nothing
 
     binfo = JL.get_binding(ctx3, binding)
@@ -84,13 +86,14 @@ function local_binding_rename_preparation(
 end
 
 function global_binding_rename_preparation(
-        state::ServerState, uri::URI, fi::FileInfo, pos::Position, mod::Module
+        state::ServerState, uri::URI, fi::FileInfo, pos::Position, mod::Module;
+        soft_scope::Bool = false
     )
     st0_top = build_syntax_tree(fi)
     offset = xy_to_offset(fi, pos)
 
     (; ctx3, binding) = @something begin
-        select_target_binding(st0_top, offset, mod; caller="global_binding_rename_preparation")
+        select_target_binding(st0_top, offset, mod; caller="global_binding_rename_preparation", soft_scope)
     end return nothing
 
     binfo = JL.get_binding(ctx3, binding)
@@ -178,22 +181,24 @@ function rename(
         token::Union{Nothing,ProgressToken} = nothing,
         cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG)
     (; mod) = get_context_info(server.state, uri, pos)
+    soft_scope = is_notebook_cell_uri(server.state, uri)
     return @something(
-        local_binding_rename(server, uri, fi, pos, mod, newName),
-        global_binding_rename(server, uri, fi, pos, mod, newName; token, cancel_flag),
+        local_binding_rename(server, uri, fi, pos, mod, newName; soft_scope),
+        global_binding_rename(server, uri, fi, pos, mod, newName; token, cancel_flag, soft_scope),
         file_rename(server, uri, fi, pos, newName),
         (; result = null, error = nothing))
 end
 
 function local_binding_rename(
-        server::Server, uri::URI, fi::FileInfo, pos::Position, mod::Module, newName::String
+        server::Server, uri::URI, fi::FileInfo, pos::Position, mod::Module, newName::String;
+        soft_scope::Bool = false
     )
     state = server.state
     st0_top = build_syntax_tree(fi)
     offset = xy_to_offset(fi, pos)
 
     (; ctx3, st3, st0, binding) = @something begin
-        select_target_binding(st0_top, offset, mod; caller="local_binding_rename")
+        select_target_binding(st0_top, offset, mod; caller="local_binding_rename", soft_scope)
     end return nothing
 
     binfo = JL.get_binding(ctx3, binding)
@@ -246,13 +251,14 @@ end
 function global_binding_rename(
         server::Server, uri::URI, fi::FileInfo, pos::Position, mod::Module, newName::String;
         token::Union{Nothing,ProgressToken} = nothing,
-        cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG
+        cancel_flag::AbstractCancelFlag = DUMMY_CANCEL_FLAG,
+        soft_scope::Bool = false
     )
     st0_top = build_syntax_tree(fi)
     offset = xy_to_offset(fi, pos)
 
     (; ctx3, binding) = @something begin
-        select_target_binding(st0_top, offset, mod; caller="global_binding_rename")
+        select_target_binding(st0_top, offset, mod; caller="global_binding_rename", soft_scope)
     end return nothing
 
     binfo = JL.get_binding(ctx3, binding)

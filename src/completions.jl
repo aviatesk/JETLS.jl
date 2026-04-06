@@ -161,7 +161,8 @@ function local_completions!(
     # so that we can get some completions even for incomplete code
     st0 = build_syntax_tree(fi)
     (; mod) = get_context_info(s, uri, pos)
-    cbs = @something cursor_bindings(st0, xy_to_offset(fi, pos), mod) return nothing
+    soft_scope = is_notebook_cell_uri(s, uri)
+    cbs = @something cursor_bindings(st0, xy_to_offset(fi, pos), mod; soft_scope) return nothing
     for (bi, st, dist) in cbs
         ci = to_completion(bi, st, dist, uri, fi)
         prev_ci = get(items, ci.label, nothing)
@@ -631,11 +632,12 @@ function call_completions!(
             use_snippet = supports(state, :textDocument, :completion, :completionItem, :snippetSupport))
     else
         @assert should_complete_kwargs
+        soft_scope = is_notebook_cell_uri(state, uri)
         kwarg_comp_info = (;
             existing_kws = Set{String}(keys(ca.kw_map)),
             seen_kwarg_names = Set{String}(),
             insert_spaces = should_insert_spaces_around_equal(fi, ca),
-            local_bindings = has_equals ? nothing : cursor_bindings(st0, b, mod))
+            local_bindings = has_equals ? nothing : cursor_bindings(st0, b, mod; soft_scope))
     end
 
     method_sig_sort_idx = 1

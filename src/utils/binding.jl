@@ -97,11 +97,14 @@ JuliaLowering throws away the mapping from scopes to bindings (scopes are stored
 as an ephemeral stack.)  We work around this by taking all available bindings
 and filtering out any that aren't declared in a scope containing the cursor.
 """
-function cursor_bindings(st0_top::JS.SyntaxTree, offset::Int, mod::Module)
+function cursor_bindings(
+        st0_top::JS.SyntaxTree, offset::Int, mod::Module;
+        soft_scope::Bool = false
+    )
     st0 = @something greatest_local(st0_top, offset) return nothing # nothing we can lower
     (st0, _) = desugar_main_macrocall(st0)
     (; ctx3, st2) = try
-        jl_lower_for_scope_resolution(mod, st0)
+        jl_lower_for_scope_resolution(mod, st0; soft_scope)
     catch err
         JETLS_DEBUG_LOWERING && @warn "Error in lowering" err
         JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
@@ -226,16 +229,19 @@ or `nothing` if no binding is found. On success the returned named tuple
 contains `(; ctx3, st3, st0, binding)` where `binding` satisfies
 `JS.kind(binding) === JS.K"BindingId"`.
 """
-function select_target_binding(st0_top::JS.SyntaxTree, offset::Int, mod::Module;
-                                caller::AbstractString = "select_target_binding")
+function select_target_binding(
+        st0_top::JS.SyntaxTree, offset::Int, mod::Module;
+        caller::AbstractString = "select_target_binding",
+        soft_scope::Bool = false
+    )
     st0 = @something greatest_local(st0_top, offset) return nothing # nothing we can lower
 
-    macrocall_result = select_macrocall_binding(st0, offset, mod, caller)
+    macrocall_result = select_macrocall_binding(st0, offset, mod, caller; soft_scope)
     macrocall_result !== nothing && return macrocall_result
 
     (; ctx3, st3) = try
         # Remove macros to preserve precise source locations
-        jl_lower_for_scope_resolution(mod, remove_macrocalls(st0))
+        jl_lower_for_scope_resolution(mod, remove_macrocalls(st0); soft_scope)
     catch err
         JETLS_DEBUG_LOWERING && @warn "Error in lowering ($caller)" err
         JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
@@ -278,7 +284,8 @@ function normalize_local_alias_to_global(
 end
 
 function select_macrocall_binding(
-        st0::JS.SyntaxTree, offset::Int, mod::Module, caller::AbstractString
+        st0::JS.SyntaxTree, offset::Int, mod::Module, caller::AbstractString;
+        soft_scope::Bool = false
     )
     is_macrocall_name = (offset::Int) -> (st0′::JS.SyntaxTree) ->
         JS.kind(st0′) === JS.K"macrocall" && JS.numchildren(st0′) ≥ 1 && !is_doc0(st0′) &&
@@ -292,7 +299,7 @@ function select_macrocall_binding(
     isempty(bas) && return nothing
     macrocall_name = bas[1][1]
     (; ctx3, st3) = try
-        jl_lower_for_scope_resolution(mod, macrocall_name)
+        jl_lower_for_scope_resolution(mod, macrocall_name; soft_scope)
     catch err
         JETLS_DEBUG_LOWERING && @warn "Error in lowering ($caller)" err
         JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
@@ -318,8 +325,10 @@ has no definitions. Otherwise returns a tuple of `(binding, definitions)` where:
 - `binding` is the `JS.SyntaxTree` node representing the binding at the cursor
 - `definitions` is a `JS.SyntaxList` containing all definition sites for that binding
 """
-function select_target_binding_definitions(st0_top::JS.SyntaxTree, offset::Int, mod::Module)
-    (; ctx3, st3, binding) = @something select_target_binding(st0_top, offset, mod) return nothing
+function select_target_binding_definitions(
+        st0_top::JS.SyntaxTree, offset::Int, mod::Module; soft_scope::Bool = false,
+    )
+    (; ctx3, st3, binding) = @something select_target_binding(st0_top, offset, mod; soft_scope) return nothing
     binfo = JL.get_binding(ctx3, binding)
     definitions = @somereal lookup_binding_definitions(st3, binfo) return nothing
     return binding, definitions

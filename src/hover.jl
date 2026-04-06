@@ -22,10 +22,11 @@ end
 # register(currently_running, hover_registration())
 
 function local_binding_hover(
-        state::ServerState, fi::FileInfo, uri::URI, st0_top::JS.SyntaxTree, offset::Int, mod::Module
+        state::ServerState, fi::FileInfo, uri::URI, st0_top::JS.SyntaxTree, offset::Int, mod::Module;
+        soft_scope::Bool = false
     )
     target_binding, definitions = @something begin
-        select_target_binding_definitions(st0_top, offset, mod)
+        select_target_binding_definitions(st0_top, offset, mod; soft_scope)
     end return nothing
     contents = MarkupContent(;
         kind = MarkupKind.Markdown,
@@ -72,8 +73,9 @@ function handle_HoverRequest(
     st0_top = build_syntax_tree(fi)
     offset = xy_to_offset(fi, pos)
     (; mod, analyzer, postprocessor) = get_context_info(state, uri, pos)
+    soft_scope = is_notebook_cell_uri(state, uri)
 
-    local_hover = local_binding_hover(state, fi, uri, st0_top, offset, mod)
+    local_hover = local_binding_hover(state, fi, uri, st0_top, offset, mod; soft_scope)
     isnothing(local_hover) || return send(server, HoverResponse(;
         id = msg.id,
         result = local_hover))
