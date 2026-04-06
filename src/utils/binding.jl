@@ -326,10 +326,12 @@ has no definitions. Otherwise returns a tuple of `(binding, definitions)` where:
 - `definitions` is a `JS.SyntaxList` containing all definition sites for that binding
 """
 function select_target_binding_definitions(
-        st0_top::JS.SyntaxTree, offset::Int, mod::Module; soft_scope::Bool = false,
+        st0_top::JS.SyntaxTree, offset::Int, mod::Module;
+        soft_scope::Bool = false, skip_global::Bool = false
     )
     (; ctx3, st3, binding) = @something select_target_binding(st0_top, offset, mod; soft_scope) return nothing
     binfo = JL.get_binding(ctx3, binding)
+    skip_global && binfo.kind === :global && return nothing
     definitions = @somereal lookup_binding_definitions(st3, binfo) return nothing
     return binding, definitions
 end

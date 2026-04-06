@@ -26,7 +26,7 @@ function local_binding_hover(
         soft_scope::Bool = false
     )
     target_binding, definitions = @something begin
-        select_target_binding_definitions(st0_top, offset, mod; soft_scope)
+        select_target_binding_definitions(st0_top, offset, mod; soft_scope, skip_global=true)
     end return nothing
     contents = MarkupContent(;
         kind = MarkupKind.Markdown,
