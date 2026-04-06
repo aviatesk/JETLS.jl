@@ -563,7 +563,7 @@ end
 #---------------------
 LoweringError:
 function ccall()
-#        └───┘ ── invalid function name
+#        └───┘ ── ccall is a reserved identifier
 end
 
 ########################################
@@ -583,7 +583,7 @@ end
 #---------------------
 LoweringError:
 function ccall{<:T}()
-#        └───┘ ── invalid function name
+#        └───┘ ── ccall is a reserved identifier
 end
 
 ########################################

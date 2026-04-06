@@ -1,5 +1,3 @@
-@testset "Miscellaneous" begin
-
 test_mod = Module()
 
 # Blocks
@@ -263,6 +261,58 @@ end
     @test lower_str(Main, "x + y").args[1].has_image_globalref === true
 end
 
+baremodule baremod
+macro int128_str(x);  error("baremod macro; expected call to Core macro"); end
+macro uint128_str(x); error("baremod macro; expected call to Core macro"); end
+macro big_str(x);     error("baremod macro; expected call to Core macro"); end
+macro cmd(x);         error("baremod macro; expected call to Core macro"); end
+macro doc(x, y);      error("baremod macro; expected call to Core macro"); end
+global nothing = "baremod.nothing; expected core nothing"
+end
+@testset "globalrefs inserted by parsing" begin
+    local jl_s_eval = x->JuliaLowering.include_string(baremod, x; expr_compat_mode=true)
+    local fl_s_eval = x->fl_eval(baremod, JuliaSyntax.parsestmt(Expr, x; filename="file"))
+
+    let s = "100000000000000000000000000000"
+        @test jl_s_eval(s) == fl_s_eval(s)
+    end
+    let s = "0x100000000000000000000000000000"
+        @test jl_s_eval(s) == fl_s_eval(s)
+    end
+    let s = "10000000000000000000000000000000000000000000000000000000000000000"
+        @test jl_s_eval(s) == fl_s_eval(s)
+    end
+    let s = "`ls`"
+        @test jl_s_eval(s) == fl_s_eval(s)
+    end
+
+    let s = """
+            "foo" function fl_documented_function(); fl_documented_function; end
+            """
+        @test fl_s_eval(s) isa Function
+    end
+    @test baremod.fl_documented_function() == baremod.fl_documented_function
+    let s = """
+            "foo" function jl_documented_function(); jl_documented_function; end
+            """
+        @test jl_s_eval(s) isa Function
+    end
+    @test baremod.jl_documented_function() == baremod.jl_documented_function
+
+    let s = """
+            function fl_ret_nothing(); return; end
+            """
+        @test fl_s_eval(s) isa Function
+    end
+    @test baremod.fl_ret_nothing() == Core.nothing
+    let s = """
+            function jl_ret_nothing(); return; end
+            """
+        @test fl_s_eval(s) isa Function
+    end
+    @test baremod.jl_ret_nothing() == Core.nothing
+end
+
 @testset "docstrings: doc-only expressions" begin
     local jeval(mod, str) = JuliaLowering.include_string(mod, str; expr_compat_mode=true)
     jeval(test_mod, "function fun_exists(x); x; end")
@@ -420,6 +470,46 @@ emptyblock_result = JuliaLowering.eval(test_mod, Expr(:(=), :emptyblock_144, Exp
     """) == `cmdstrinnerstr123`
 end
 
+let op_mod = Module(:opmod, false)
+    @testset "operators" for run in [
+            s->fl_eval(op_mod, JuliaSyntax.parseall(Expr, s)),
+            s->JuliaLowering.include_string(op_mod, s; expr_compat_mode=true),
+            s->JuliaLowering.include_string(op_mod, s; expr_compat_mode=false)]
+
+        @testset "unary prefix (no parens needed)" for op in String["⋆", "±", "∓", "~", "!", "¬", "√", "∛", "∜"]
+            @test run("$(op)x = (x,)") isa Function
+            Core.@latestworld
+            @test run(op) isa Function
+            @test run("$(op)1") == (1,)
+            @test run("""
+                let $(op)x = (x,x)
+                    $(op)1
+                end """) == (1,1)
+        end
+        @testset "prefix" for op in String["..", "+", "-", "⋆", "±", "∓", "~", "!", "¬", "√", "∛", "∜"]
+            @test run("$op(a,b,c) = 3") isa Function
+            Core.@latestworld
+            @test run(op) isa Function
+            @test run("$op(1,2,3)") == 3
+            @test run("""
+                let $op(a,b,c) = (c,b,a)
+                    $op(1,2,3)
+                end """) == (3,2,1)
+        end
+        @testset "infix" for op in String["&", "|", "+", "-", ":", ".."]
+            @test run("a$(op)b = (a,b)") isa Function
+            Core.@latestworld
+            @test run(op) isa Function
+            @test run("var\"$op\"(1,2)") == (1,2)
+            @test run("1$(op)2") == (1,2)
+            @test run("""
+                let a$(op)b = (b,a)
+                    1$(op)2
+                end """) == (2,1)
+        end
+    end
+end
+
 @testset "jl_assert" begin
     st = @ast_ [K"function" "foo"::K"Identifier"]
     if JL.DEBUG
@@ -445,6 +535,4 @@ end
             nothing
         end
     end
-end
-
 end

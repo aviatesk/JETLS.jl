@@ -170,13 +170,13 @@ function eval_macro_name(ctx::MacroExpansionContext, mctx::MacroContext, ex0::Sy
     ex = expand_forms_1(ctx, ex0)
     try
         if kind(ex) === K"Value"
-            !(ex.value isa GlobalRef) ? ex.value :
-                Base.invoke_in_world(ctx.macro_world, getglobal,
-                                     ex.value.mod, ex.value.name)
+            ex.value
         elseif kind(ex) === K"Identifier"
-            layer = get(ex, :scope_layer, nothing)
-            if !isnothing(layer)
-                mod = ctx.scope_layers[layer].mod
+            # module from globalref, or some expansion, or default
+            if hasattr(ex, :mod)
+                mod = ex.mod::Module
+            elseif hasattr(ex, :scope_layer)
+                mod = ctx.scope_layers[ex.scope_layer::LayerId].mod
             end
             Base.invoke_in_world(ctx.macro_world, getproperty,
                                  mod, Symbol(ex.name_val))
