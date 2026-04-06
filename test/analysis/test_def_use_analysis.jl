@@ -9,10 +9,10 @@ include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
 
 module lowering_module end
 
-function get_undef_status(text::AbstractString; mod::Module=lowering_module, allow_throw_optimization::Bool=false)
+function get_undef_status(text::AbstractString; mod::Module=lowering_module, allow_noreturn_optimization::Vector{Symbol}=Symbol[])
     st0 = jlparse(text; rule=:statement, filename=@__FILE__)
     (; ctx3, st3) = JETLS.jl_lower_for_scope_resolution(mod, st0; trim_error_nodes=false, recover_from_macro_errors=false)
-    (undef_info, _) = JETLS.analyze_def_use_all_lambdas(ctx3, st3; allow_throw_optimization)
+    (undef_info, _) = JETLS.analyze_def_use_all_lambdas(ctx3, st3; allow_noreturn_optimization)
     result = Dict{String, Union{Nothing,Bool}}()
     for (binfo, info) in undef_info
         if !binfo.is_internal && binfo.kind == :local
@@ -838,8 +838,10 @@ end
     @test status["x"] === nothing  # may be undefined (not must be undefined)
 end
 
-@testset "throw optimization" begin
-    # @assert @isdefined(y) acts as a hint when allow_throw_optimization=true
+@testset "noreturn optimization" begin
+    noreturn_syms = Symbol[:throw, :error, :rethrow, :exit]
+
+    # @assert @isdefined(y) acts as a hint when noreturn optimization is enabled
     # Because if y is not defined, throw() is called and code after is unreachable
     status = get_undef_status("""
     function f(x)
@@ -851,10 +853,10 @@ end
             return sin(y)
         end
     end
-    """; allow_throw_optimization=true)
+    """; allow_noreturn_optimization=noreturn_syms)
     @test status["y"] === false
 
-    # Without allow_throw_optimization, the same code reports may-be-undefined
+    # Without noreturn optimization, the same code reports may-be-undefined
     # (compound condition `x > 0` is not handled by correlated condition analysis)
     status_no_opt = get_undef_status("""
     function f(x)
@@ -866,11 +868,10 @@ end
             return sin(y)
         end
     end
-    """; allow_throw_optimization=false)
+    """)
     @test status_no_opt["y"] === nothing
 
     # Direct throw() call also works as noreturn hint
-    # (if/else ensures all paths to sin(y) go through assignment)
     status = get_undef_status("""
     function f(x)
         if x > 0
@@ -880,7 +881,47 @@ end
         end
         return sin(y)
     end
-    """; allow_throw_optimization=true)
+    """; allow_noreturn_optimization=noreturn_syms)
+    @test status["y"] === false
+
+    # error() also works as noreturn hint
+    status = get_undef_status("""
+    function f(x)
+        if x > 0
+            y = x
+        else
+            error("x must be positive")
+        end
+        return sin(y)
+    end
+    """; allow_noreturn_optimization=noreturn_syms)
+    @test status["y"] === false
+
+    # exit() also works as noreturn hint
+    status = get_undef_status("""
+    function f(x)
+        if x > 0
+            y = x
+        else
+            exit(1)
+        end
+        return sin(y)
+    end
+    """; allow_noreturn_optimization=noreturn_syms)
+    @test status["y"] === false
+
+    # rethrow() in catch block works as noreturn hint
+    status = get_undef_status("""
+    function f(x)
+        local y
+        try
+            y = parse(Int, x)
+        catch
+            rethrow()
+        end
+        return y
+    end
+    """; allow_noreturn_optimization=noreturn_syms)
     @test status["y"] === false
 end
 
@@ -900,12 +941,12 @@ end # @testset "undef analysis" begin
 
 function get_dead_stores(text::AbstractString;
         mod::Module=lowering_module,
-        allow_throw_optimization::Bool=false)
+        allow_noreturn_optimization::Vector{Symbol}=Symbol[])
     st0 = jlparse(text; rule=:statement, filename=@__FILE__)
     (; ctx3, st3) = JETLS.jl_lower_for_scope_resolution(mod, st0;
         trim_error_nodes=false, recover_from_macro_errors=false)
     (_, dead_store_info) = JETLS.analyze_def_use_all_lambdas(ctx3, st3;
-        allow_throw_optimization)
+        allow_noreturn_optimization)
     result = Dict{String,Int}()
     for (binfo, dsinfo) in dead_store_info
         if !binfo.is_internal && binfo.kind == :local

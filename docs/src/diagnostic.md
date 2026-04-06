@@ -299,6 +299,24 @@ pointing to definition sites to help understand the control flow.
     `UndefVarError` handling code, and also serves as documentation
     that you've verified the variable is defined at this point.
 
+!!! tip "Noreturn functions as guards"
+    Calls to `throw`, `error`, `rethrow`, and `exit` are recognized
+    as noreturn. If an else branch calls one of these, the analysis
+    knows code after the branch can only be reached when the variable
+    is defined:
+    ```julia
+    function guarded(x)
+        if x > 0
+            y = x
+        else
+            error("x must be positive")
+        end
+        return sin(y)  # No diagnostic: error() guarantees y is defined
+    end
+    ```
+    See the [caveat on noreturn functions](@ref diagnostic/reference/lowering/unreachable-code)
+    in the unreachable code section for limitations.
+
 #### [Ambiguous soft scope (`lowering/ambiguous-soft-scope`)](@id diagnostic/reference/lowering/ambiguous-soft-scope)
 
 **Default severity**: `Warning`
@@ -627,11 +645,6 @@ function after_return()
     y = 3  # Also unreachable
 end
 
-function after_throw()
-    throw(ErrorException("error"))
-    cleanup()  # Unreachable code (JETLS lowering/unreachable-code)
-end
-
 function all_branches_return(x)
     if x > 0
         return 1
@@ -647,12 +660,38 @@ function after_continue()
         println(i)  # Unreachable code (JETLS lowering/unreachable-code)
     end
 end
+
+function after_throw()
+    throw(ErrorException("error"))
+    cleanup()  # Unreachable code (JETLS lowering/unreachable-code)
+end
+
+function after_error()
+    error("something went wrong")
+    cleanup()  # Unreachable code (JETLS lowering/unreachable-code)
+end
+
+function after_rethrow()
+    try
+        do_something()
+    catch
+        rethrow()
+        println("unreachable")  # Unreachable code (JETLS lowering/unreachable-code)
+    end
+end
 ```
 
 !!! tip "Code action available"
     A "Delete unreachable code" quick fix is available that removes
     the unreachable region along with surrounding whitespace, from
     the end of the terminating statement to the end of the dead code.
+
+!!! note "Caveat on noreturn functions"
+    The analysis assumes that `error`, `rethrow`, and `exit` never return.
+    If any loaded code adds an overload that returns normally, the analysis may
+    produce incorrect results.
+    Such overloading is extremely unlikely in practice, and this possibility is
+    accepted as a trade-off for better diagnostics.
 
 #### [Unsorted import names (`lowering/unsorted-import-names`)](@id diagnostic/reference/lowering/unsorted-import-names)
 
