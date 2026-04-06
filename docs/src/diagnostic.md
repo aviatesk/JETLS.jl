@@ -817,8 +817,8 @@ diagnostic can detect comprehensive cases including qualified references
 Example:
 
 ```julia
-function undef_global_var()
-    return undefined_global  # `undefined_global` is not defined (JETLS inference/undef-global-var)
+function undef_global_var(x)
+    Base.Math.sinkernel(x)  # `Base.Math.sinkernel` is not defined (JETLS inference/undef-global-var)
 end
 ```
 
