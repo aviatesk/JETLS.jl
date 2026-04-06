@@ -52,9 +52,10 @@ function document_highlights!(
     st0_top = build_syntax_tree(fi)
     offset = xy_to_offset(fi, pos)
     (; mod) = get_context_info(state, uri, pos)
+    soft_scope = is_notebook_cell_uri(state, uri)
 
     (; ctx3, st3, st0, binding) = @something begin
-        select_target_binding(st0_top, offset, mod; caller="document_highlights!")
+        select_target_binding(st0_top, offset, mod; caller="document_highlights!", soft_scope)
     end return highlights
 
     binfo = JL.get_binding(ctx3, binding)

@@ -11,10 +11,20 @@ include("jsjl-utils.jl")
 
 module lowering_module end
 
-function get_cursor_bindings(fi::JETLS.FileInfo, b::Int)
+function get_cursor_bindings(
+        fi::JETLS.FileInfo, b::Int;
+        mod::Module = lowering_module,
+        soft_scope::Bool = false
+    )
     st0 = JETLS.build_syntax_tree(fi)
-    cb = JETLS.cursor_bindings(st0, b, lowering_module)
+    cb = JETLS.cursor_bindings(st0, b, mod; soft_scope)
     return isnothing(cb) ? [] : cb
+end
+function get_cursor_bindings(marked_text::AbstractString; kwargs...)
+    text, positions = JETLS.get_text_and_positions(marked_text)
+    fi = JETLS.FileInfo(#=version=#0, text, @__FILE__)
+    b = JETLS.xy_to_offset(fi, positions[1])
+    return get_cursor_bindings(fi, b; kwargs...)
 end
 
 function get_local_completions(s::AbstractString, b::Int)
@@ -1225,6 +1235,35 @@ end
     @test test_cursor_equals_position("func(; a=1, │)") === nothing
     @test test_cursor_equals_position("func(; │") === nothing  # incomplete
     @test test_cursor_equals_position("func(; a=1, │") === nothing  # incomplete
+end
+
+module soft_scope_completions_module
+    global x = 1
+end
+
+@testset "soft scope completions" begin
+    # Place the cursor at a use site (println(x)) so `is_relevant` doesn't
+    # filter out `x`.
+    let marked_text = """
+        for _ = 1:10
+            x = 2
+            println(│x)
+        end
+        """
+        # Without soft_scope: `x` is a new local (ambiguous local)
+        cbs_hard = get_cursor_bindings(marked_text;
+            mod=soft_scope_completions_module, soft_scope=false)
+        xs_hard = filter(((bi, _, _),) -> bi.name == "x", cbs_hard)
+        @test length(xs_hard) == 1
+        @test xs_hard[1][1].kind === :local
+
+        # With soft_scope: `x` assigns to the existing global
+        cbs_soft = get_cursor_bindings(marked_text;
+            mod=soft_scope_completions_module, soft_scope=true)
+        xs_soft = filter(((bi, _, _),) -> bi.name == "x", cbs_soft)
+        @test length(xs_soft) == 1
+        @test xs_soft[1][1].kind === :global
+    end
 end
 
 end # module test_completions

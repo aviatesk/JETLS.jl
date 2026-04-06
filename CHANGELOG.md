@@ -19,7 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`d14efce...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/d14efce...HEAD)
+- Diff: [`8deefa8...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/8deefa8...HEAD)
 
 ### Announcement
 
@@ -43,6 +43,42 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > ```
 > This disables analysis for matched files. Basic features like completion still might work, but most LSP features will be unfunctional.
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
+
+### Added
+
+- Extended noreturn optimization to recognize `error`, `rethrow`, and `exit` in addition to `throw`. These calls are now treated as block terminators for unreachable code detection and undef variable analysis, reducing false positives when these functions are used as guards. For example, the following code no longer produces a false "possibly undefined" warning on `y`:
+  ```julia
+  function f(x)
+      if x > 0
+          y = x
+      else
+          error("x must be positive")
+      end
+      return sin(y)  # no warning: error() guarantees y is defined
+  end
+  ```
+
+- Noreturn detection now works for nested calls (e.g. `println(error(x))`) where a noreturn function appears in argument position.
+
+### Changed
+
+- Updated JuliaSyntax.jl and JuliaLowering.jl dependency versions to latest.
+
+### Fixed
+
+- Fixed scope resolution for notebook cells to use soft scope semantics, so that assignments inside loops correctly resolve to existing globals instead of creating ambiguous locals.
+
+- Fixed a crash during signature analysis (`AssertionError: invalid cache_argtypes`) that occurred when constant propagation encountered methods using `@nospecializeinfer` with varying varargs arities.
+  Updated the bundled `Compiler.jl` revision with the upstream fix (https://github.com/JuliaLang/julia#61502) (Closed https://github.com/aviatesk/JETLS.jl/issues/618).
+
+## 2026-04-04
+
+- Commit: [`8deefa8`](https://github.com/aviatesk/JETLS.jl/commit/8deefa8)
+- Diff: [`d14efce...8deefa8`](https://github.com/aviatesk/JETLS.jl/compare/d14efce...8deefa8)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-04-04")'
+  ```
 
 ### Added
 
