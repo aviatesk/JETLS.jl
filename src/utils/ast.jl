@@ -994,7 +994,12 @@ function is_noreturn_call(
     JS.kind(st3) === JS.K"call" || return false
     JS.numchildren(st3) >= 1 || return false
     func = st3[1]
-    JS.kind(func) === JS.K"BindingId" || return false
-    binfo = JL.get_binding(ctx3, func.var_id::JL.IdTag)
-    return binfo.kind === :global && Symbol(binfo.name) in allow_noreturn_optimization
+    if JS.kind(func) === JS.K"BindingId"
+        binfo = JL.get_binding(ctx3, func.var_id::JL.IdTag)
+        binfo.kind === :global && Symbol(binfo.name) in allow_noreturn_optimization && return true
+    end
+    for i in 2:JS.numchildren(st3)
+        is_noreturn_call(ctx3, st3[i], allow_noreturn_optimization) && return true
+    end
+    return false
 end

@@ -923,6 +923,19 @@ end
     end
     """; allow_noreturn_optimization=noreturn_syms)
     @test status["y"] === false
+
+    # nested noreturn call in argument position
+    status = get_undef_status("""
+    function f(x)
+        if x > 0
+            y = x
+        else
+            println(error("x must be positive"))
+        end
+        return sin(y)
+    end
+    """; allow_noreturn_optimization=noreturn_syms)
+    @test status["y"] === false
 end
 
 @testset "top-level block without function" begin

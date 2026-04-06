@@ -1645,6 +1645,18 @@ end
         @test only(unreachable).range.start.line == 2
     end
 
+    # noreturn optimization: nested noreturn call in argument position
+    let diagnostics = get_lowered_diagnostics("""
+        function foo(x)
+            println(error(x))
+            return x
+        end
+        """)
+        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        @test length(unreachable) == 1
+        @test only(unreachable).range.start.line == 2
+    end
+
     # noreturn optimization: code after `rethrow` in catch is unreachable
     let diagnostics = get_lowered_diagnostics("""
         function foo()
