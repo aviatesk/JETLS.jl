@@ -5,9 +5,10 @@ function find_kind(s::String)
     return isnothing(out) ? nothing : JS.Kind(out)
 end
 
+# flisp: dot-operators
 function is_dotted_operator(s::AbstractString)
     return length(s) >= 2 &&
-        s[1] === '.' &&
+        s[1] === '.' && s[2] !== '.' &&
         JS.is_operator(something(find_kind(s[2:end]), K"None"))
 end
 

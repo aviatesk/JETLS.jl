@@ -392,6 +392,35 @@ function (.+)(x,y)
 end
 
 ########################################
+# Error: Invalid dotop function name
+function var".+"(x,y)
+end
+#---------------------
+LoweringError:
+function var".+"(x,y)
+#            └┘ ── dotted operator is not a valid function name
+end
+
+########################################
+# dotted normal name is fine
+function var".f"(); end
+#---------------------
+1   (method TestMod..f)
+2   latestworld
+3   TestMod..f
+4   (call core.Typeof %₃)
+5   (call core.svec %₄)
+6   (call core.svec)
+7   SourceLocation::1:10
+8   (call core.svec %₅ %₆ %₇)
+9   --- method TestMod..f %₈
+    slots: [slot₁/#self#(!read)]
+    1   (return core.nothing)
+10  latestworld
+11  TestMod..f
+12  (return %₁₁)
+
+########################################
 # Error: Invalid function name
 function f[](x,y)
 end

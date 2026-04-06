@@ -1633,6 +1633,58 @@ end
         @test only(unreachable).range.start.line == 2
     end
 
+    # noreturn optimization: code after `error` is unreachable
+    let diagnostics = get_lowered_diagnostics("""
+        function foo()
+            error("something went wrong")
+            x = 2
+        end
+        """)
+        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        @test length(unreachable) == 1
+        @test only(unreachable).range.start.line == 2
+    end
+
+    # noreturn optimization: nested noreturn call in argument position
+    let diagnostics = get_lowered_diagnostics("""
+        function foo(x)
+            println(error(x))
+            return x
+        end
+        """)
+        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        @test length(unreachable) == 1
+        @test only(unreachable).range.start.line == 2
+    end
+
+    # noreturn optimization: code after `rethrow` in catch is unreachable
+    let diagnostics = get_lowered_diagnostics("""
+        function foo()
+            try
+                do_something()
+            catch
+                rethrow()
+                println("unreachable")
+            end
+        end
+        """)
+        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        @test length(unreachable) == 1
+        @test only(unreachable).range.start.line == 5
+    end
+
+    # noreturn optimization: code after `exit` is unreachable
+    let diagnostics = get_lowered_diagnostics("""
+        function foo()
+            exit(1)
+            x = 2
+        end
+        """)
+        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        @test length(unreachable) == 1
+        @test only(unreachable).range.start.line == 2
+    end
+
     # no diagnostic when there's no unreachable code
     let diagnostics = get_lowered_diagnostics("""
         function foo()
@@ -1689,9 +1741,9 @@ end
     let diagnostics = get_lowered_diagnostics("""
         function foo(x)
             if x > 0
-                throw(ErrorException("positive"))
+                error("positive")
             else
-                throw(ErrorException("non-positive"))
+                error("non-positive")
             end
             println("unreachable")
         end
@@ -1707,7 +1759,7 @@ end
             if x > 0
                 return 1
             else
-                throw(ErrorException("error"))
+                error("error")
             end
             println("unreachable")
         end

@@ -110,7 +110,7 @@ function read_transport_layer(io::IO)
         end
         line = chomp(readline(io))
     end
-    @isdefined(var"Content-Length") || throw(ErrorException("Got header without Content-Length"))
+    @isdefined(var"Content-Length") || error("Got header without Content-Length")
     message_length = parse(Int, var"Content-Length")
     return String(read(io, message_length))
 end

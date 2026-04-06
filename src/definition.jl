@@ -91,10 +91,11 @@ function handle_DefinitionRequest(
     st0 = build_syntax_tree(fi)
     offset = xy_to_offset(fi, origin_position)
     (; mod, analyzer) = get_context_info(state, uri, origin_position)
+    soft_scope = is_notebook_cell_uri(state, uri)
 
     locationlink_support = supports(server, :textDocument, :definition, :linkSupport)
 
-    binding_result = select_target_binding(st0, offset, mod; caller="handle_DefinitionRequest")
+    binding_result = select_target_binding(st0, offset, mod; caller="handle_DefinitionRequest", soft_scope)
     if !isnothing(binding_result)
         (; ctx3, st3, binding) = binding_result
         binfo = JL.get_binding(ctx3, binding)

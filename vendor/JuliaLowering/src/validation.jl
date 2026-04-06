@@ -682,6 +682,9 @@ vst1_macro_calldecl_name(vcx, st) = @stm st begin
 end
 
 vst1_calldecl_name(vcx, st) = @stm st begin
+    [K"Identifier"] -> vst1_ident(vcx, st; lhs=true) &
+        (!is_dotted_operator(st.name_val::String) ? pass() :
+        @fail(st, "dotted operator is not a valid function name"))
     [K"." _ _] ->
         vst1_calldecl_dot_name(vcx, st)
     [K"curly" t tvs...] ->
@@ -697,7 +700,7 @@ vst1_calldecl_name(vcx, st) = @stm st begin
 
     [K"where" t tds...] ->
         vst1_calldecl_name(vcx, t) & all(vst1_typevar_decl, vcx, tds)
-    _ -> @fail(st, "invalid function name") | vst1_ident(vcx, st; lhs=true)
+    _ -> @fail(st, "invalid function name")
 end
 
 # Check mandatory and optional positional params:

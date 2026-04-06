@@ -770,9 +770,12 @@ function extract_enum_value!(
 end
 
 # Binding-based extraction for scoped children (function body, let block, etc.)
-function extract_scoped_children(st0::JS.SyntaxTree, fi::FileInfo, mod::Module)
+function extract_scoped_children(
+        st0::JS.SyntaxTree, fi::FileInfo, mod::Module;
+        soft_scope::Bool = false
+    )
     (; ctx3) = try
-        jl_lower_for_scope_resolution(mod, st0)
+        jl_lower_for_scope_resolution(mod, st0; soft_scope)
     catch
         return nothing
     end

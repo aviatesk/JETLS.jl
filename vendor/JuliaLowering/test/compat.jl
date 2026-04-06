@@ -421,6 +421,13 @@ test_programs = [
     "try x catch e; y finally z end",
     "try x catch e; y else z end",
     "try x catch e; y else z finally w end",
+    "..",
+    "a..b",
+    "..(a)",
+    "..(..,..)",
+    "@.",
+    "@..",
+    "@..."
 ]
 test_toplevel_programs = [
     "\"docstr\"\nthing_to_be_documented",
