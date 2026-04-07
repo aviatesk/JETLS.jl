@@ -44,6 +44,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > This disables analysis for matched files. Basic features like completion still might work, but most LSP features will be unfunctional.
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
 
+### Added
+
+- Added [`inference/non-boolean-cond`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/non-boolean-cond) diagnostic that detects non-boolean values used in boolean context (e.g. `if`, `while`, ternary `?:`, `&&`, `||`).
+  ```julia
+  function find_zero(xs::Vector{Union{Missing,Int}})
+      for i in eachindex(xs)
+          xs[i] == 0 && return i  # non-boolean `Missing` found in boolean context
+      end
+  end
+  ```
+
 ### Changed
 
 - Updated JuliaSyntax.jl and JuliaLowering.jl dependencies.
