@@ -1,4 +1,6 @@
-const SyntaxTree0 = typeof(JS.build_tree(JS.SyntaxTree, JS.parse!(JS.ParseStream(""))))
+const Attrs0 = Dict{Symbol, Dict{Int64, Any}}
+const SyntaxTree0 = JS.SyntaxTree{Attrs0}
+const SyntaxList0 = JS.SyntaxList{Attrs0,Vector{Int}}
 
 abstract type ExtraDiagnosticsKey end
 to_uri(key::ExtraDiagnosticsKey) = to_uri_impl(key)::URI

@@ -100,7 +100,7 @@ function merge_and_track(on_difference, old_val, new_val, path::Tuple{Vararg{Sym
     elseif new_val === missing
         changed = true
     else
-        changed = old_val != new_val
+        changed = (old_val != new_val)::Bool
     end
     changed && on_difference(old_val, new_val, path)
     return new_val === nothing ? old_val : new_val

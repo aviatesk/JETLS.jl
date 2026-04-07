@@ -33,14 +33,14 @@ end
 # =====
 
 """
-    flatten_args(call::JS.SyntaxTree) -> (args::JS.SyntaxList, first_kwarg_i::Int, has_semicolon::Bool) or nothing
+    flatten_args(call::SyntaxTree0) -> (args::JS.SyntaxList, first_kwarg_i::Int, has_semicolon::Bool) or nothing
 
 Return `(args::JS.SyntaxList, first_kwarg_i::Int, has_semicolon::Bool)`,
 one `SyntaxTree` per argument to call.
 Ignore function name and `K"error"` (e.g. missing closing paren).
 `has_semicolon` is true if the call contains a `K"parameters"` node (explicit semicolon).
 """
-function flatten_args(call::JS.SyntaxTree)
+function flatten_args(call::SyntaxTree0)
     while kind(call) === K"where"
         call = call[1]
     end
@@ -130,7 +130,7 @@ Keywords should be ignored if `cursor` is within the keyword's name.
 Note: the `=` form doesn't always correspond to a keyword arg after macro
 expansion, but signature help is only used on unexpanded code.
 """
-function find_kws(args::JS.SyntaxList, kw_i::Int; sig=false, cursor::Int=-1)
+function find_kws(args::SyntaxList0, kw_i::Int; sig=false, cursor::Int=-1)
     out = Dict{String, Int}()
     for i in (sig ? (kw_i:lastindex(args)) : eachindex(args))
         kind(args[i]) ∉ JS.KSet"= kw" && i < kw_i && continue
@@ -158,7 +158,7 @@ Information from a call site's arguments for filtering method signatures.
 - `kind`: Item in `CALL_KINDS`
 """
 struct CallArgs
-    args::JS.SyntaxList
+    args::SyntaxList0
     kw_i::Int
     pos_map::Dict{Int, Tuple{Int, Union{Int, Nothing}}}
     pos_args_lb::Int
@@ -166,7 +166,7 @@ struct CallArgs
     kw_map::Dict{String, Int}
     has_semicolon::Bool
     kind::JS.Kind
-    function CallArgs(st0::JS.SyntaxTree, cursor::Int=-1)
+    function CallArgs(st0::SyntaxTree0, cursor::Int=-1)
         @assert -1 ∉ JS.byte_range(st0)
         args, kw_i, has_semicolon = @something flatten_args(st0) begin
             println(stderr, JS.sourcetext(st0))
