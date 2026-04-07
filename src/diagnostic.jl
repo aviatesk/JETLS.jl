@@ -1136,6 +1136,9 @@ function is_block_terminator(
     k === JS.K"break" && return true
     !isempty(allow_noreturn_optimization) &&
         is_noreturn_call(ctx3, st3, allow_noreturn_optimization) && return true
+    if k === JS.K"=" && JS.numchildren(st3) >= 2
+        return is_block_terminator(ctx3, st3[2], allow_noreturn_optimization)
+    end
     if (k === JS.K"if" || k === JS.K"elseif") && JS.numchildren(st3) >= 3
         return (_is_block_terminator(ctx3, st3[2], allow_noreturn_optimization) &&
                 _is_block_terminator(ctx3, st3[3], allow_noreturn_optimization))
