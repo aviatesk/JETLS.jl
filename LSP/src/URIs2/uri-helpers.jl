@@ -35,13 +35,22 @@ function uri2filepath(uri::URI)
     return value
 end
 
-isunsavedfile(filename::AbstractString) = startswith(filename, "Untitled")
+isunsavedfile(filename::AbstractString) =
+    startswith(filename, "Untitled") || # VSCode convention (untitled:Untitled-123)
+    occursin(r"^\d+$", filename) # SublimeText convention (buffer:123)
 
-isunsaveduri(uri::URI) = uri.scheme == "untitled"
+function get_unsaved_scheme(filename::AbstractString)
+    startswith(filename, "Untitled") && return "untitled" # VSCode convention
+    occursin(r"^\d+$", filename) && return "buffer" # SublimeText convention
+    return nothing
+end
+
+isunsaveduri(uri::URI) = uri.scheme == "untitled" || uri.scheme == "buffer"
 
 function filename2uri(filename::AbstractString)
-    if isunsavedfile(filename)
-        return URI(scheme="untitled", path=filename)
+    unsaved_scheme = get_unsaved_scheme(filename)
+    if unsaved_scheme !== nothing
+        return URI(scheme=unsaved_scheme, path=filename)
     end
     return filepath2uri(filename)
 end

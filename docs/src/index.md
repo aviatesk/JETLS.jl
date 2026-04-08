@@ -160,6 +160,7 @@ Minimal [Sublime](https://www.sublimetext.com/) setup using the
       "enabled": true,
       "command": ["jetls", "serve", "--socket=${port}"],
       "selector": "source.julia",
+      "schemes": ["file", "buffer"],
       "tcp_port": 0
     }
   }
