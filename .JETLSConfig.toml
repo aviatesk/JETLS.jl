@@ -34,26 +34,6 @@ match_type = "regex"
 severity = "off"
 path = "src/testrunner/testrunner-types.jl"
 
-# TODO [JuliaLowering]
-# Temporarily downgrade some known JuliaLowering issues to information level
-[[diagnostic.patterns]]
-pattern = "^Lowering TODO:"
-match_by = "message"
-match_type = "regex"
-severity = "info"
-[[diagnostic.patterns]]
-pattern = "Invalid function name"
-match_by = "message"
-match_type = "literal"
-severity = "info"
-path = "src/analysis/Analyzer.jl"
-[[diagnostic.patterns]] # https://github.com/aviatesk/JETLS.jl/issues/480
-pattern = "lowering/unused-argument"
-match_by = "code"
-match_type = "literal"
-severity = "info"
-path = "src/config.jl"
-
 # Treat all other diagnostics as warnings (for early detection via jetls check)
 [[diagnostic.patterns]]
 pattern = ".*"
