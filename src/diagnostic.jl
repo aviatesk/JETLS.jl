@@ -1232,15 +1232,10 @@ function analyze_lowered_code!(
 
     has_implicit_args = ismacro[] || is_generated0(st0)
 
-    analyze_ambiguous_soft_scope!(diagnostics, fi, ctx3, reported)
-
     analyze_unused_bindings!(
         diagnostics, fi, st0, ctx3, binding_occurrences, has_implicit_args, reported,
         kwarg_type_names, kwarg_locations;
         allow_unused_underscore)
-
-    skip_analysis_requiring_context ||
-        analyze_undefined_global_bindings!(diagnostics, fi, ctx3, binding_occurrences, reported; analyzer, postprocessor)
 
     (undef_info, dead_store_info) =
         analyze_def_use_all_lambdas(ctx3, st3; allow_noreturn_optimization)
@@ -1248,8 +1243,12 @@ function analyze_lowered_code!(
     analyze_unused_assignments!(diagnostics, fi, st0, dead_store_info, reported; allow_unused_underscore)
 
     analyze_captured_boxes!(diagnostics, uri, fi, ctx4, st3, reported)
-
     analyze_unreachable_code!(diagnostics, fi, ctx3, st3, allow_noreturn_optimization)
+
+    if !skip_analysis_requiring_context
+        analyze_undefined_global_bindings!(diagnostics, fi, ctx3, binding_occurrences, reported; analyzer, postprocessor)
+        analyze_ambiguous_soft_scope!(diagnostics, fi, ctx3, reported)
+    end
 
     return diagnostics
 end
