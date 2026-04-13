@@ -51,7 +51,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Fixed
 
 - Unreachable code after assignment with noreturn RHS (e.g. `y = error(x)`) is now correctly detected.
-- Fixed errors when opening unsaved buffers in Sublime Text, which uses the `buffer:` URI scheme instead of VSCode's `untitled:` scheme convention ([#626](https://github.com/aviatesk/JETLS.jl/issues/626)).
+
+- Fixed errors when opening unsaved buffers in Sublime Text, which uses the `buffer:` URI scheme instead of VSCode's `untitled:` scheme convention (https://github.com/aviatesk/JETLS.jl/issues/626).
 
 ## 2026-04-06
 
