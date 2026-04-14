@@ -19,7 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`c954d83...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/c954d83...HEAD)
+- Diff: [`d1ebbb2...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/d1ebbb2...HEAD)
 
 ### Announcement
 
@@ -43,6 +43,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > ```
 > This disables analysis for matched files. Basic features like completion still might work, but most LSP features will be unfunctional.
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
+
+## 2026-04-14
+
+- Commit: [`d1ebbb2`](https://github.com/aviatesk/JETLS.jl/commit/d1ebbb2)
+- Diff: [`c954d83...d1ebbb2`](https://github.com/aviatesk/JETLS.jl/compare/c954d83...d1ebbb2)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-04-14")'
+  ```
 
 ### Added
 
