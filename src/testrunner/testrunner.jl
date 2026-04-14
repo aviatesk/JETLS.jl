@@ -278,7 +278,7 @@ function testrunner_testcase_code_actions!(
             return traversal_no_recurse
         elseif JS.kind(st0) === JS.K"macrocall" && JS.numchildren(st0) ≥ 1
             macroname = st0[1]
-            if hasproperty(macroname, :name_val) && macroname.name_val in TEST_MACROS
+            if hasproperty(macroname, :name_val) && macroname.name_val::String in TEST_MACROS
                 tcr = jsobj_to_range(st0, fi; adjust_last=1) # +1 to support cases like `@test ...│`
                 overlap(action_range, tcr) || return nothing
                 tcl = JS.source_line(st0)

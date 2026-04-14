@@ -18,28 +18,10 @@ function mapchildren(f, ctx, ex::JS.SyntaxTree, indices::UnitRange{<:Integer})
     end
 end
 
-function Base.var"@nospecialize"(__context__::JL.MacroContext)
-    JL.@ast(__context__,
-            __context__.macrocall::JS.SyntaxTree,
-            [JS.K"meta" "nospecialize"::JS.K"Symbol"])
-end
-
-# `@nospecialize` with 1-arg is defined in JuliaLowering.jl.
-
-function Base.var"@nospecialize"(
-        __context__::JL.MacroContext,
-        ex1::JS.SyntaxTree, ex2::JS.SyntaxTree, exs::JS.SyntaxTree...
-    )
-    to_nospecialize = JS.SyntaxTree[ex1, ex2, exs...]
-    JL.@ast(__context__,
-            __context__.macrocall::JS.SyntaxTree,
-            [JS.K"block" map(st->JL._apply_nospecialize(__context__, st), to_nospecialize)...])
-end
-
 function Base.var"@specialize"(__context__::JL.MacroContext)
     JL.@ast(__context__,
             __context__.macrocall::JS.SyntaxTree,
-            [JS.K"meta" "specialize"::JS.K"Symbol"])
+            [JS.K"meta" "specialize"::JS.K"Identifier"])
 end
 
 function Base.var"@specialize"(__context__::JL.MacroContext, ex::JS.SyntaxTree)

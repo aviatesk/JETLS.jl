@@ -223,7 +223,7 @@ macro define_eq_overloads(Tyname)
     hash_func = :(function Base.hash(x::$Tyname, h::UInt); $hash_body; end)
     eq_body = foldr(fld2typs; init = true) do fld2typ, x
         fld, typ = fld2typ
-        if typ in _EGAL_TYPES_
+        if (typ in _EGAL_TYPES_)::Bool
             eq_ex = :(x1.$fld === x2.$fld)
         else
             eq_ex = :((x1.$fld == x2.$fld)::Bool)

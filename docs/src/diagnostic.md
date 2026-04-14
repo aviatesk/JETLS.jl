@@ -123,6 +123,7 @@ Here is a summary table of the diagnostics explained in this section:
 | [`inference/field-error`](@ref diagnostic/reference/inference/field-error)                       | `Warning`             | `JETLS/save`  | Access to non-existent struct fields               |
 | [`inference/bounds-error`](@ref diagnostic/reference/inference/bounds-error)                     | `Warning`             | `JETLS/save`  | Out-of-bounds field access by index                |
 | [`inference/method-error`](@ref diagnostic/reference/inference/method-error)                     | `Warning`             | `JETLS/save`  | No matching method found for function calls        |
+| [`inference/non-boolean-cond`](@ref diagnostic/reference/inference/non-boolean-cond)             | `Warning`             | `JETLS/save`  | Non-boolean value used in boolean context          |
 | [`testrunner/test-failure`](@ref diagnostic/reference/testrunner/test-failure)                   | `Error`               | `JETLS/extra` | Test failures from TestRunner integration          |
 
 ### [Syntax diagnostic (`syntax/*`)](@id diagnostic/reference/syntax)
@@ -932,6 +933,57 @@ function union_split_method_error(x::Union{Int,String})
                         # (JETLS inference/method-error)
 end
 ```
+
+#### [Non-boolean condition (`inference/non-boolean-cond`)](@id diagnostic/reference/inference/non-boolean-cond)
+
+**Default severity:** `Warning`
+
+Non-boolean values used in boolean context, such as `if` or `while` conditions.
+Julia requires conditions to be strictly `Bool`; using other types will raise a
+`TypeError` at runtime.
+
+Examples:
+
+```julia
+function non_boolean_example()
+    x = 1
+    if x  # non-boolean `Int64` found in boolean context
+          # (JETLS inference/non-boolean-cond)
+        return "truthy"
+    end
+end
+```
+
+When union-split types include non-boolean branches:
+
+```julia
+function find_zero(xs::Vector{Union{Missing,Int}})
+    for i in eachindex(xs)
+        xs[i] == 0 && return i  # non-boolean `Missing` found in boolean context (1/2 union split)
+                                # (JETLS inference/non-boolean-cond)
+    end
+end
+```
+
+!!! tip "Common case: `Any`-typed arguments and `==`"
+    When an argument is inferred as `Any`, `==` returns
+    `Union{Bool,Missing}` (because `==(::Missing, ::Any)` is a
+    candidate method):
+
+    ```julia
+    function check(x, y::AbstractString)
+        x == :flag || error("x is invalid")  # non-boolean `Missing` found in boolean context (1/2 union split)
+                                             # (JETLS inference/non-boolean-cond)
+        return println(y)
+    end
+    ```
+
+    You can resolve this by either:
+    - Restricting the argument type so that `==` no longer returns
+      `Missing` (e.g. `x::Symbol`).
+    - Adding a `::Bool` return type annotation to the comparison
+      expression if you know `x` will never be `missing`
+      (e.g. `(x == :flag)::Bool`).
 
 ### [TestRunner diagnostic (`testrunner/*`)](@id diagnostic/reference/testrunner)
 

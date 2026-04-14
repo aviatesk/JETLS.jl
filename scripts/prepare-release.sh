@@ -103,6 +103,9 @@ julia --startup-file=no --project=. scripts/vendor-deps.jl --source-branch=maste
 # Step 5: Commit the final release
 echo "==> Step 5: Committing release"
 echo "$JETLS_VERSION" > JETLS_VERSION
+# Update Project.toml version (convert YYYY-MM-DD to YYYY.MM.DD for Julia VersionNumber)
+TOML_VERSION="${JETLS_VERSION//-/.}"
+sed "s/^version = \".*\"/version = \"$TOML_VERSION\"/" Project.toml > Project.toml.tmp && mv Project.toml.tmp Project.toml
 git add -A
 git commit -m "release: $JETLS_VERSION"
 

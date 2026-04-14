@@ -1,7 +1,8 @@
 module Analyzer
 
 export LSAnalyzer, inference_error_report_severity, inference_error_report_stack, reset_report_target_modules!
-export BoundsErrorReport, FieldErrorReport, MethodErrorReport, UndefVarErrorReport
+export BoundsErrorReport, FieldErrorReport, MethodErrorReport, NonBooleanCondErrorReport,
+    UndefVarErrorReport
 
 using Core.IR
 using JET.JETInterface
@@ -40,7 +41,7 @@ to detect [`LSErrorReport`](@ref)s, along with analyzing types and effects.
 struct LSAnalyzer <: ToplevelAbstractAnalyzer
     state::AnalyzerState
     analysis_token::AnalysisToken
-    method_table::CC.CachedMethodTable{CC.InternalMethodTable}
+    method_table::CC.CachedMethodTable{CC.OverlayMethodTable}
 
     """
         `LSAnalyzer.report_target_modules::::Union{Nothing,Set{Module}}`
@@ -65,7 +66,7 @@ struct LSAnalyzer <: ToplevelAbstractAnalyzer
             report_target_modules::Union{Nothing,Set{Module}},
             invariable_analysis_hash::UInt
         )
-        method_table = CC.CachedMethodTable(CC.InternalMethodTable(state.world))
+        method_table = CC.CachedMethodTable(CC.OverlayMethodTable(state.world, jetls_method_table))
         return new(state, analysis_token, method_table, report_target_modules, invariable_analysis_hash)
     end
 end
@@ -156,6 +157,25 @@ JETInterface.AnalysisToken(analyzer::LSAnalyzer) = analyzer.analysis_token
 
 const LS_ANALYZER_CACHE = Dict{UInt,AnalysisToken}()
 const LS_ANALYZER_CACHE_LOCK = ReentrantLock()
+
+# method overlay
+# ==============
+
+Base.Experimental.@MethodTable jetls_method_table
+
+@static if VERSION < v"1.14.0-DEV.2024"
+# Backport JuliaLang/julia#61526
+Base.Experimental.@overlay jetls_method_table Base.in(x, itr::Tuple) = _in_tuple(x, itr)
+function _in_tuple(x, @nospecialize(itr::Tuple), result = false)
+    @inline
+    isempty(itr) && return result
+    v = (itr[1] == x)
+    if v === true
+        return true
+    end
+    return _in_tuple(x, Base.tail(itr), result | v)
+end
+end
 
 # internal API
 # ============
@@ -320,6 +340,20 @@ function CC.abstract_eval_special_value(analyzer::LSAnalyzer, @nospecialize(e), 
     return @invoke CC.abstract_eval_special_value(analyzer::ToplevelAbstractAnalyzer, e::Any, sstate::CC.StatementState, sv::CC.InferenceState)
 end
 
+function CC.abstract_eval_value(analyzer::LSAnalyzer, @nospecialize(e), sstate::CC.StatementState, sv::CC.InferenceState)
+    ret = @invoke CC.abstract_eval_value(analyzer::ToplevelAbstractAnalyzer, e::Any, sstate::CC.StatementState, sv::CC.InferenceState)
+    if should_analyze(analyzer, sv)
+        stmt = JET.get_stmt((sv, JET.get_currpc(sv)))
+        if isa(stmt, GotoIfNot)
+            t = CC.widenconst(ret)
+            if t !== Union{}
+                report_non_boolean_cond!(analyzer, sv, t)
+            end
+        end
+    end
+    return ret
+end
+
 # analysis
 # ========
 
@@ -329,12 +363,11 @@ end
 Abstract type for error reports analyzed by [`LSAnalyzer`](@ref).
 
 Subtypes:
-- `UndefVarErrorReport`: Undefined variables (global, static parameters[^unimplemented])
+- `UndefVarErrorReport`: Undefined variables (global only, undefined static parameters is not analyzed currently)
 - `FieldErrorReport`: Access to non-existent struct fields
 - `BoundsErrorReport`: Out-of-bounds field access by index
-- `MethodErrorReport`: Method dispatch errors[^unimplemented]
-
-[^unimplemented]: Currently unimplemented.
+- `MethodErrorReport`: Method dispatch errors
+- `NonBooleanCondErrorReport`: Non-boolean value used in boolean context
 """
 abstract type LSErrorReport <: InferenceErrorReport end
 
@@ -577,6 +610,66 @@ function report_method_error_for_union_split!(
     end
     if empty_matches !== nothing
         add_new_report!(analyzer, sv.result, MethodErrorReport(sv, empty_matches...))
+    end
+end
+
+# NonBooleanCondErrorReport
+# -------------------------
+
+@jetreport struct NonBooleanCondErrorReport <: LSErrorReport
+    @nospecialize t # ::Union{Type, Vector{Type}}
+    union_split::Int
+    uncovered::Bool
+end
+inference_error_report_stack_impl(r::NonBooleanCondErrorReport) = length(r.vst):-1:1
+inference_error_report_severity_impl(::NonBooleanCondErrorReport) = DiagnosticSeverity.Warning
+function JETInterface.print_report_message(io::IO, report::NonBooleanCondErrorReport)
+    (; t, union_split, uncovered) = report
+    if union_split == 0
+        print(io, "non-boolean `", t, "`")
+        if uncovered
+            print(io, " may be used in boolean context")
+        else
+            print(io, " found in boolean context")
+        end
+    else
+        ts = t::Vector{Any}
+        nts = length(ts)
+        print(io, "non-boolean ")
+        for i = 1:nts
+            print(io, '`', ts[i], '`')
+            i == nts || print(io, ", ")
+        end
+        if uncovered
+            print(io, " may be used in boolean context")
+        else
+            print(io, " found in boolean context")
+        end
+        print(io, " (", nts, '/', union_split, " union split)")
+    end
+end
+
+function report_non_boolean_cond!(analyzer::LSAnalyzer, sv::CC.InferenceState, @nospecialize(t))
+    check_uncovered = false
+    ⊑ = CC.partialorder(CC.typeinf_lattice(analyzer))
+    if isa(t, Union)
+        info = nothing
+        uts = Base.uniontypes(t)
+        for ut in uts
+            if !(check_uncovered ? ut ⊑ Bool : CC.hasintersect(ut, Bool))
+                if info === nothing
+                    info = Any[], length(uts)
+                end
+                push!(info[1], ut)
+            end
+        end
+        if info !== nothing
+            add_new_report!(analyzer, sv.result, NonBooleanCondErrorReport(sv, info..., #=uncovered=#check_uncovered))
+        end
+    else
+        if !(check_uncovered ? t ⊑ Bool : CC.hasintersect(t, Bool))
+            add_new_report!(analyzer, sv.result, NonBooleanCondErrorReport(sv, t, 0, #=uncovered=#check_uncovered))
+        end
     end
 end
 

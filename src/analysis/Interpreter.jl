@@ -239,8 +239,10 @@ function JET.virtual_process!(interp::LSInterpreter,
         end
         percentage = let prev_analysis_result = interp.request.prev_analysis_result
             n_files = isnothing(prev_analysis_result) ? 0 : length(prev_analysis_result.analyzed_file_infos)
+            analyze_from_definitions = JET.InterpretationState(interp).config.analyze_from_definitions
+            analyze_from_definitions = analyze_from_definitions isa Symbol || analyze_from_definitions
             iszero(n_files) ? 0 : compute_percentage(interp.counter[], n_files,
-                JET.InterpretationState(interp).config.analyze_from_definitions ? 50 : 100)
+                analyze_from_definitions ? 50 : 100)
         end
         send_progress(interp.server, cancellable_token.token,
             WorkDoneProgressReport(;

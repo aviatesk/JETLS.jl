@@ -35,28 +35,31 @@ function uri2filepath(uri::URI)
     return value
 end
 
-isunsavedfile(filename::AbstractString) = startswith(filename, "Untitled")
+isunsavedfile(filename::AbstractString) =
+    startswith(filename, "Untitled") || # VSCode convention (untitled:Untitled-123)
+    occursin(r"^\d+$", filename) # SublimeText convention (buffer:123)
 
-isunsaveduri(uri::URI) = uri.scheme == "untitled"
+function get_unsaved_scheme(filename::AbstractString)
+    startswith(filename, "Untitled") && return "untitled" # VSCode convention
+    occursin(r"^\d+$", filename) && return "buffer" # SublimeText convention
+    return nothing
+end
+
+isunsaveduri(uri::URI) = uri.scheme == "untitled" || uri.scheme == "buffer"
 
 function filename2uri(filename::AbstractString)
-    if isunsavedfile(filename)
-        return URI(scheme="untitled", path=filename)
+    unsaved_scheme = get_unsaved_scheme(filename)
+    if unsaved_scheme !== nothing
+        return URI(; scheme=unsaved_scheme, path=filename)
     end
     return filepath2uri(filename)
 end
 
 function filepath2uri(path::AbstractString)
     isabspath(path) || error("Non-absolute path `$path` is not supported.")
-
     path = normpath(path)
-
-    @static if Sys.iswindows()
-        path = replace(path, "\\" => "/")
-    end
-
+    @static Sys.iswindows() && (path = replace(path, "\\" => "/"))
     authority = ""
-
     if startswith(path, "//")
         # UNC path //foo/bar/foobar
         idx = findnext("/", path, 3)
@@ -70,6 +73,5 @@ function filepath2uri(path::AbstractString)
     elseif length(path)>=2 && isascii(path[1]) && isletter(path[1]) && path[2]==':'
         path = string('/', lowercase(path[1]), SubString(path, 2))
     end
-
-    return URI(scheme="file", authority=authority, path=path)
+    return URI(; scheme="file", authority, path)
 end

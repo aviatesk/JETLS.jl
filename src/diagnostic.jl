@@ -55,7 +55,7 @@ function parse_diagnostic_pattern(x::AbstractDict{String})
     end
 
     for key in keys(x)
-        if key ∉ ("pattern", "match_by", "match_type", "severity", "path")
+        if key::String ∉ ("pattern", "match_by", "match_type", "severity", "path")
             throw(DiagnosticConfigError(
                 lazy"Unknown field \"$key\" in diagnostic pattern for pattern \"$pattern_value\". " *
                 "Valid fields are: pattern, match_by, match_type, severity, path"))
@@ -259,6 +259,15 @@ end
 # utilities
 # =========
 
+# TODO Move this logic to `filename2uri`?
+function to_valid_uri(filename::AbstractString)
+    if isunsavedfile(filename)
+        return filename2uri(filename)
+    else
+        return filepath2uri(to_full_path(filename))
+    end
+end
+
 function jet_frame_to_location(frame)
     frame.file === :none && return nothing
     return Location(;
@@ -268,13 +277,7 @@ end
 
 function jet_frame_to_uri(frame)
     frame.file === :none && return nothing
-    filename = String(frame.file)
-    # TODO Clean this up and make we can always use `filename2uri` here.
-    if isunsavedfile(filename)
-        return filename2uri(filename)
-    else
-        return filepath2uri(to_full_path(filename))
-    end
+    return to_valid_uri(String(frame.file))
 end
 
 function jet_frame_to_range(frame)
@@ -335,11 +338,7 @@ function jet_result_to_diagnostics!(uri2diagnostics::URI2Diagnostics, result::JE
         diagnostic = @something jet_toplevel_error_report_to_diagnostic(report, postprocessor) continue
         filename = report.file
         filename === :none && continue
-        if isunsavedfile(filename)
-            uri = filename2uri(filename)
-        else
-            uri = filepath2uri(to_full_path(filename))
-        end
+        uri = to_valid_uri(filename)
         push!(uri2diagnostics[uri], diagnostic)
     end
     displayable_reports = collect_displayable_reports(result.res.inference_error_reports, keys(uri2diagnostics))
@@ -421,6 +420,8 @@ function inference_error_report_code(@nospecialize report::JET.InferenceErrorRep
         return INFERENCE_BOUNDS_ERROR_CODE
     elseif report isa MethodErrorReport
         return INFERENCE_METHOD_ERROR_CODE
+    elseif report isa NonBooleanCondErrorReport
+        return INFERENCE_NON_BOOLEAN_COND_CODE
     end
     error(lazy"Diagnostic code is not defined for this report: $report")
 end
@@ -466,7 +467,7 @@ struct MethodOverwriteReport <: ToplevelWarningReport
     ) = new(mod, sig, filepath, lines, original_filepath, original_lines)
 end
 
-toplevel_warning_report_to_uri_impl(report::MethodOverwriteReport) = filepath2uri(report.filepath)
+toplevel_warning_report_to_uri_impl(report::MethodOverwriteReport) = to_valid_uri(report.filepath)
 
 function toplevel_warning_report_to_diagnostic_impl(report::MethodOverwriteReport, ::SavedFileInfo, postprocessor::JET.PostProcessor)
     sig_str = postprocessor(@invokelatest sprint(Base.show_tuple_as_call, Symbol(""), report.sig))
@@ -475,7 +476,7 @@ function toplevel_warning_report_to_diagnostic_impl(report::MethodOverwriteRepor
     relatedInformation = DiagnosticRelatedInformation[
         DiagnosticRelatedInformation(;
             location = Location(;
-                uri = filepath2uri(report.original_filepath),
+                uri = to_valid_uri(report.original_filepath),
                 range = lines_range(report.original_lines)),
             message = "The first method definition $sig_str")
     ]
@@ -500,7 +501,7 @@ struct AbstractFieldReport <: ToplevelWarningReport
     ) = new(filepath, fieldline, typ, fname, ft)
 end
 
-toplevel_warning_report_to_uri_impl(report::AbstractFieldReport) = filepath2uri(report.filepath)
+toplevel_warning_report_to_uri_impl(report::AbstractFieldReport) = to_valid_uri(report.filepath)
 
 function toplevel_warning_report_to_diagnostic_impl(report::AbstractFieldReport, sfi::SavedFileInfo, postprocessor::JET.PostProcessor)
     typ_str = postprocessor(sprint(show, report.typ))
@@ -532,7 +533,7 @@ function stacktrace_to_related_information(stacktrace::Vector{Base.StackTraces.S
     relatedInformation = DiagnosticRelatedInformation[]
     for stackframe in stacktrace
         stackframe.file === :none && continue
-        uri = filepath2uri(to_full_path(stackframe.file))
+        uri = to_valid_uri(String(stackframe.file))
         range = line_range(stackframe.line)
         location = Location(; uri, range)
         message = let linfo = stackframe.linfo
@@ -552,7 +553,7 @@ end
 function provenances_to_related_information!(relatedInformation::Vector{DiagnosticRelatedInformation}, provs, msg)
     for prov in provs
         filename = JS.filename(prov)
-        uri = filepath2uri(to_full_path(filename))
+        uri = to_valid_uri(filename)
         sr = JS.sourceref(prov)
         if sr isa JS.SourceRef
             # use precise location information if available
@@ -1136,6 +1137,9 @@ function is_block_terminator(
     k === JS.K"break" && return true
     !isempty(allow_noreturn_optimization) &&
         is_noreturn_call(ctx3, st3, allow_noreturn_optimization) && return true
+    if k === JS.K"=" && JS.numchildren(st3) >= 2
+        return is_block_terminator(ctx3, st3[2], allow_noreturn_optimization)
+    end
     if (k === JS.K"if" || k === JS.K"elseif") && JS.numchildren(st3) >= 3
         return (_is_block_terminator(ctx3, st3[2], allow_noreturn_optimization) &&
                 _is_block_terminator(ctx3, st3[3], allow_noreturn_optimization))
@@ -1229,15 +1233,10 @@ function analyze_lowered_code!(
 
     has_implicit_args = ismacro[] || is_generated0(st0)
 
-    analyze_ambiguous_soft_scope!(diagnostics, fi, ctx3, reported)
-
     analyze_unused_bindings!(
         diagnostics, fi, st0, ctx3, binding_occurrences, has_implicit_args, reported,
         kwarg_type_names, kwarg_locations;
         allow_unused_underscore)
-
-    skip_analysis_requiring_context ||
-        analyze_undefined_global_bindings!(diagnostics, fi, ctx3, binding_occurrences, reported; analyzer, postprocessor)
 
     (undef_info, dead_store_info) =
         analyze_def_use_all_lambdas(ctx3, st3; allow_noreturn_optimization)
@@ -1245,8 +1244,12 @@ function analyze_lowered_code!(
     analyze_unused_assignments!(diagnostics, fi, st0, dead_store_info, reported; allow_unused_underscore)
 
     analyze_captured_boxes!(diagnostics, uri, fi, ctx4, st3, reported)
-
     analyze_unreachable_code!(diagnostics, fi, ctx3, st3, allow_noreturn_optimization)
+
+    if !skip_analysis_requiring_context
+        analyze_undefined_global_bindings!(diagnostics, fi, ctx3, binding_occurrences, reported; analyzer, postprocessor)
+        analyze_ambiguous_soft_scope!(diagnostics, fi, ctx3, reported)
+    end
 
     return diagnostics
 end
