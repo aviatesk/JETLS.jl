@@ -259,6 +259,15 @@ end
 # utilities
 # =========
 
+# TODO Move this logic to `filename2uri`?
+function to_valid_uri(filename::AbstractString)
+    if isunsavedfile(filename)
+        return filename2uri(filename)
+    else
+        return filepath2uri(to_full_path(filename))
+    end
+end
+
 function jet_frame_to_location(frame)
     frame.file === :none && return nothing
     return Location(;
@@ -268,13 +277,7 @@ end
 
 function jet_frame_to_uri(frame)
     frame.file === :none && return nothing
-    filename = String(frame.file)
-    # TODO Clean this up and make we can always use `filename2uri` here.
-    if isunsavedfile(filename)
-        return filename2uri(filename)
-    else
-        return filepath2uri(to_full_path(filename))
-    end
+    return to_valid_uri(String(frame.file))
 end
 
 function jet_frame_to_range(frame)
@@ -335,11 +338,7 @@ function jet_result_to_diagnostics!(uri2diagnostics::URI2Diagnostics, result::JE
         diagnostic = @something jet_toplevel_error_report_to_diagnostic(report, postprocessor) continue
         filename = report.file
         filename === :none && continue
-        if isunsavedfile(filename)
-            uri = filename2uri(filename)
-        else
-            uri = filepath2uri(to_full_path(filename))
-        end
+        uri = to_valid_uri(filename)
         push!(uri2diagnostics[uri], diagnostic)
     end
     displayable_reports = collect_displayable_reports(result.res.inference_error_reports, keys(uri2diagnostics))
@@ -468,7 +467,7 @@ struct MethodOverwriteReport <: ToplevelWarningReport
     ) = new(mod, sig, filepath, lines, original_filepath, original_lines)
 end
 
-toplevel_warning_report_to_uri_impl(report::MethodOverwriteReport) = filepath2uri(report.filepath)
+toplevel_warning_report_to_uri_impl(report::MethodOverwriteReport) = to_valid_uri(report.filepath)
 
 function toplevel_warning_report_to_diagnostic_impl(report::MethodOverwriteReport, ::SavedFileInfo, postprocessor::JET.PostProcessor)
     sig_str = postprocessor(@invokelatest sprint(Base.show_tuple_as_call, Symbol(""), report.sig))
@@ -477,7 +476,7 @@ function toplevel_warning_report_to_diagnostic_impl(report::MethodOverwriteRepor
     relatedInformation = DiagnosticRelatedInformation[
         DiagnosticRelatedInformation(;
             location = Location(;
-                uri = filepath2uri(report.original_filepath),
+                uri = to_valid_uri(report.original_filepath),
                 range = lines_range(report.original_lines)),
             message = "The first method definition $sig_str")
     ]
@@ -502,7 +501,7 @@ struct AbstractFieldReport <: ToplevelWarningReport
     ) = new(filepath, fieldline, typ, fname, ft)
 end
 
-toplevel_warning_report_to_uri_impl(report::AbstractFieldReport) = filepath2uri(report.filepath)
+toplevel_warning_report_to_uri_impl(report::AbstractFieldReport) = to_valid_uri(report.filepath)
 
 function toplevel_warning_report_to_diagnostic_impl(report::AbstractFieldReport, sfi::SavedFileInfo, postprocessor::JET.PostProcessor)
     typ_str = postprocessor(sprint(show, report.typ))
@@ -534,7 +533,7 @@ function stacktrace_to_related_information(stacktrace::Vector{Base.StackTraces.S
     relatedInformation = DiagnosticRelatedInformation[]
     for stackframe in stacktrace
         stackframe.file === :none && continue
-        uri = filepath2uri(to_full_path(stackframe.file))
+        uri = to_valid_uri(String(stackframe.file))
         range = line_range(stackframe.line)
         location = Location(; uri, range)
         message = let linfo = stackframe.linfo
@@ -554,7 +553,7 @@ end
 function provenances_to_related_information!(relatedInformation::Vector{DiagnosticRelatedInformation}, provs, msg)
     for prov in provs
         filename = JS.filename(prov)
-        uri = filepath2uri(to_full_path(filename))
+        uri = to_valid_uri(filename)
         sr = JS.sourceref(prov)
         if sr isa JS.SourceRef
             # use precise location information if available
