@@ -22,11 +22,15 @@ function withserver(f;
                     workspaceFolders::Union{Nothing,Vector{WorkspaceFolder}}=nothing,
                     rootUri::Union{Nothing,URI}=nothing,
                     settings::Union{Nothing,AbstractDict}=nothing)
-    in = Base.BufferStream()
-    out = Base.BufferStream()
+    in_pipe = Pipe()
+    out_pipe = Pipe()
+    Base.link_pipe!(in_pipe; reader_supports_async=true, writer_supports_async=true)
+    Base.link_pipe!(out_pipe; reader_supports_async=true, writer_supports_async=true)
+    in = in_pipe.in
+    out = out_pipe.out
     received_queue = Channel{Any}(Inf)
     sent_queue = Channel{Any}(Inf)
-    endpoint = Endpoint(in, out)
+    endpoint = Endpoint(in_pipe.out, out_pipe.in)
     server = Server(endpoint) do s::Symbol, x
         @nospecialize x
         if s === :received
@@ -215,6 +219,8 @@ function withserver(f;
         finally
             close(in)
             close(out)
+            close(in_pipe.out)
+            close(out_pipe.in)
         end
     end
 end
