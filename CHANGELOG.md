@@ -67,6 +67,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed errors when opening unsaved buffers in Sublime Text, which uses the `buffer:` URI scheme instead of VSCode's `untitled:` scheme convention (https://github.com/aviatesk/JETLS.jl/issues/626).
 
+- Fixed false "macro name not found" diagnostics on macros like `@enumx` that internally generate baremodules
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/628).
+
 ## 2026-04-06
 
 - Commit: [`c954d83`](https://github.com/aviatesk/JETLS.jl/commit/c954d83)
