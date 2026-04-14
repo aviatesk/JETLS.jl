@@ -545,7 +545,7 @@ function make_insert_text(msig::AbstractString, num_existing_args::Int, use_snip
     return join(parts, ", ")
 end
 
-function cursor_equals_position(ca::CallArgs, b::Int)::Union{Nothing,Bool}
+function cursor_equals_position(ca::CallArgs, b::Int)
     for arg in ca.args
         br = JS.byte_range(arg)
         first(br) ≤ b ≤ last(br) + 1 || continue

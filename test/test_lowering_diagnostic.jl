@@ -1621,7 +1621,7 @@ end
         @test only(unreachable).range.var"end".line == 3
     end
 
-    # throw optimization: code after `throw` is unreachable
+    # noreturn optimization: code after `throw` is unreachable
     let diagnostics = get_lowered_diagnostics("""
         function foo()
             throw(ErrorException("error"))
@@ -1650,6 +1650,18 @@ end
         function foo(x)
             println(error(x))
             return x
+        end
+        """)
+        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        @test length(unreachable) == 1
+        @test only(unreachable).range.start.line == 2
+    end
+
+    # noreturn optimization: assignment with noreturn RHS
+    let diagnostics = get_lowered_diagnostics("""
+        function foo(x)
+            y = error(x)
+            println(y)
         end
         """)
         unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)

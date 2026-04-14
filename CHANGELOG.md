@@ -19,7 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`8deefa8...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/8deefa8...HEAD)
+- Diff: [`c954d83...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/c954d83...HEAD)
 
 ### Announcement
 
@@ -43,6 +43,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > ```
 > This disables analysis for matched files. Basic features like completion still might work, but most LSP features will be unfunctional.
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
+
+### Added
+
+- Added [`inference/non-boolean-cond`](https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/inference/non-boolean-cond) diagnostic that detects non-boolean values used in boolean context (e.g. `if`, `while`, ternary `?:`, `&&`, `||`).
+  ```julia
+  function find_zero(xs::Vector{Union{Missing,Int}})
+      for i in eachindex(xs)
+          xs[i] == 0 && return i  # non-boolean `Missing` found in boolean context
+      end
+  end
+  ```
+
+### Changed
+
+- The release script now sets `Project.toml` version to `YYYY.MM.DD` (converted from the `YYYY-MM-DD` release date), so `pkg> app status` displays a meaningful version (https://github.com/aviatesk/JETLS.jl/issues/629).
+
+- Updated JuliaSyntax.jl and JuliaLowering.jl dependencies.
+
+### Fixed
+
+- Unreachable code after assignment with noreturn RHS (e.g. `y = error(x)`) is now correctly detected.
+
+- Fixed errors when opening unsaved buffers in Sublime Text, which uses the `buffer:` URI scheme instead of VSCode's `untitled:` scheme convention (https://github.com/aviatesk/JETLS.jl/issues/626).
+
+- Fixed false "macro name not found" diagnostics on macros like `@enumx` that internally generate baremodules
+  (Closed https://github.com/aviatesk/JETLS.jl/issues/628).
+
+## 2026-04-06
+
+- Commit: [`c954d83`](https://github.com/aviatesk/JETLS.jl/commit/c954d83)
+- Diff: [`8deefa8...c954d83`](https://github.com/aviatesk/JETLS.jl/compare/8deefa8...c954d83)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-04-06")'
+  ```
 
 ### Added
 

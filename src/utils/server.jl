@@ -311,9 +311,13 @@ function get_context_module(analysis_result::AnalysisResult, uri::URI, pos::Posi
     safi = @something analyzed_file_info(analysis_result, uri) return Main
     curline = Int(pos.line) + 1
     curmod = Main
+    currange = 0:typemax(Int)
     for (range, mod) in safi.module_range_infos
         curline in range || continue
-        curmod = mod
+        if range ⊆ currange
+            curmod = mod
+            currange = range
+        end
     end
     return curmod
 end
