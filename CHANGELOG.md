@@ -57,6 +57,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- The release script now sets `Project.toml` version to `YYYY.MM.DD` (converted from the `YYYY-MM-DD` release date), so `pkg> app status` displays a meaningful version (https://github.com/aviatesk/JETLS.jl/issues/629).
+
 - Updated JuliaSyntax.jl and JuliaLowering.jl dependencies.
 
 ### Fixed
