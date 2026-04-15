@@ -6,6 +6,25 @@ using JETLS.URIs2
 
 using JETLS: get_text_and_positions
 
+"""
+    wait_for_file_cache_version(state::JETLS.ServerState, uri::URI, version::Int; timeout::Float64=10.0)
+
+Wait until the file cache for `uri` is updated to the given `version`.
+Use this between `writemsg` (notification) and `writereadmsg` (request) to
+ensure the sequential worker has finished processing the notification before
+the concurrent worker handles the request.
+"""
+function wait_for_file_cache_version(state::JETLS.ServerState, uri::URIs2.URI,
+                                     version::Int; timeout::Float64=10.0)
+    deadline = time() + timeout
+    while time() < deadline
+        fi = get(JETLS.load(state.file_cache), uri, nothing)
+        fi !== nothing && fi.version == version && return
+        sleep(0.01)
+    end
+    error("Timed out waiting for file cache version $version for $uri")
+end
+
 function take_with_timeout!(chn::Channel; interval=1, limit=60)
     while limit > 0
         if isready(chn)

@@ -112,6 +112,7 @@ end
                             changes = [TextDocumentContentChangeEvent(; text = cell1_text)])]))
                 writemsg(make_DidChangeNotebookDocumentNotification(notebook_uri, change; version = 2))
             end
+            wait_for_file_cache_version(server.state, notebook_uri, 2)
 
             # 3. Send textDocument/diagnostic for cell 2 -> verify unused `y` diagnostic
             let id = id_counter[] += 1
@@ -147,6 +148,7 @@ end
                             changes = [TextDocumentContentChangeEvent(; text = new_text)])]))
                 writemsg(make_DidChangeNotebookDocumentNotification(notebook_uri, change; version = 3))
             end
+            wait_for_file_cache_version(server.state, notebook_uri, 3)
 
             # 5. Verify diagnostics no longer have unused `y`
             let id = id_counter[] += 1
