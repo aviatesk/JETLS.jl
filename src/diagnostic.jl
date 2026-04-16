@@ -257,13 +257,11 @@ function diagnostic_code_description(code::AbstractString)
 end
 
 function apply_markdown_message!(diagnostics::Vector{Diagnostic})
-    i = 1
-    while i <= length(diagnostics)
+    for i = 1:length(diagnostics)
         diagnostic = diagnostics[i]
         if diagnostic.message isa String && occursin('`', diagnostic.message)
             diagnostics[i] = Diagnostic(diagnostic; message = MarkupContent(; kind = MarkupKind.Markdown, value = diagnostic.message))
         end
-        i += 1
     end
 end
 
