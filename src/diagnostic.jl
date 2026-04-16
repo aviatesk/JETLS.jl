@@ -202,7 +202,6 @@ function _apply_diagnostic_config(
     else
         path_for_glob = filepath
     end
-    message = diagnostic.message
     severity = nothing
     best_specificity = 0
     for pattern_config in patterns
@@ -210,7 +209,7 @@ function _apply_diagnostic_config(
         if globpath !== nothing && !occursin(globpath, path_for_glob)
             continue
         end
-        target = pattern_config.match_by == "message" ? message : code
+        target = pattern_config.match_by == "message" ? get_raw_message(diagnostic) : code
         is_message_match = pattern_config.match_by == "message"
         specificity = calculate_match_specificity(
             pattern_config.pattern, target, is_message_match)
@@ -256,6 +255,15 @@ function diagnostic_code_description(code::AbstractString)
         href = URI("https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/$code"))
 end
 
+function apply_markdown_message!(diagnostics::Vector{Diagnostic})
+    for i = 1:length(diagnostics)
+        diagnostic = diagnostics[i]
+        if diagnostic.message isa String
+            diagnostics[i] = Diagnostic(diagnostic; message = MarkupContent(; kind = MarkupKind.Markdown, value = diagnostic.message))
+        end
+    end
+end
+
 # utilities
 # =========
 
@@ -299,6 +307,8 @@ function lines_range((start_line, end_line)::Pair{Int,Int})
     var"end" = Position(; line=end_line, character=Int(typemax(Int32)))
     return Range(; start, var"end")
 end
+
+get_raw_message(diagnostic::Diagnostic) = diagnostic.message isa String ? diagnostic.message : diagnostic.message.value
 
 # syntax diagnostics
 # ==================
@@ -1626,6 +1636,9 @@ function notify_diagnostics!(server::Server, uri2diagnostics::URI2Diagnostics; e
             continue
         end
         apply_diagnostic_config!(diagnostics, state.config_manager, uri, root_path)
+        if supports(server, :textDocument, :diagnostic, :markupMessageSupport)
+            apply_markdown_message!(diagnostics)
+        end
         send(server, PublishDiagnosticsNotification(;
             params = PublishDiagnosticsParams(;
                 uri,
@@ -1746,6 +1759,9 @@ function handle_DocumentDiagnosticRequest(
     if notebook_uri !== nothing
         diagnostics = localize_notebook_diagnostics(server.state, notebook_uri, uri, diagnostics)
     end
+    if supports(server, :textDocument, :diagnostic, :markupMessageSupport)
+        apply_markdown_message!(diagnostics)
+    end
     return send(server,
         DocumentDiagnosticResponse(;
             id = msg.id,
@@ -1826,6 +1842,10 @@ function send_workspace_diagnostics(
         notebook_uri = get_notebook_uri_for_cell(state, uri)
         if notebook_uri !== nothing
             diagnostics = localize_notebook_diagnostics(state, notebook_uri, uri, diagnostics)
+        end
+
+        if supports(server, :textDocument, :diagnostic, :markupMessageSupport)
+            apply_markdown_message!(diagnostics)
         end
 
         item = WorkspaceFullDocumentDiagnosticReport(;

@@ -551,7 +551,7 @@ function print_diagnostics(
             textbuf = Vector{UInt8}(text)
             start_byte = _xy_to_offset(textbuf, diagnostic.range.start, PositionEncodingKind.UTF16)
             end_byte = _xy_to_offset(textbuf, diagnostic.range.var"end", PositionEncodingKind.UTF16)
-            note = diagnostic.message
+            note = get_raw_message(diagnostic)
             if diagnostic.code !== nothing
                 note *= " [$severity_str:$(diagnostic.code)]"
             else
