@@ -202,7 +202,6 @@ function _apply_diagnostic_config(
     else
         path_for_glob = filepath
     end
-    message = diagnostic.message
     severity = nothing
     best_specificity = 0
     for pattern_config in patterns
@@ -210,7 +209,7 @@ function _apply_diagnostic_config(
         if globpath !== nothing && !occursin(globpath, path_for_glob)
             continue
         end
-        target = pattern_config.match_by == "message" ? message : code
+        target = pattern_config.match_by == "message" ? get_raw_message(diagnostic) : code
         is_message_match = pattern_config.match_by == "message"
         specificity = calculate_match_specificity(
             pattern_config.pattern, target, is_message_match)
@@ -308,6 +307,8 @@ function lines_range((start_line, end_line)::Pair{Int,Int})
     var"end" = Position(; line=end_line, character=Int(typemax(Int32)))
     return Range(; start, var"end")
 end
+
+get_raw_message(diagnostic::Diagnostic) = diagnostic.message isa String ? diagnostic.message : diagnostic.message.value
 
 # syntax diagnostics
 # ==================
