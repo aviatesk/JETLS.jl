@@ -256,6 +256,17 @@ function diagnostic_code_description(code::AbstractString)
         href = URI("https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/$code"))
 end
 
+function apply_markdown_message!(diagnostics::Vector{Diagnostic})
+    i = 1
+    while i <= length(diagnostics)
+        diagnostic = diagnostics[i]
+        if diagnostic.message isa String && occursin('`', diagnostic.message)
+            diagnostics[i] = Diagnostic(diagnostic; message = MarkupContent(; kind = MarkupKind.Markdown, value = diagnostic.message))
+        end
+        i += 1
+    end
+end
+
 # utilities
 # =========
 
@@ -1626,6 +1637,9 @@ function notify_diagnostics!(server::Server, uri2diagnostics::URI2Diagnostics; e
             continue
         end
         apply_diagnostic_config!(diagnostics, state.config_manager, uri, root_path)
+        if supports(server, :textDocument, :diagnostic, :markupMessageSupport)
+            apply_markdown_message!(diagnostics)
+        end
         send(server, PublishDiagnosticsNotification(;
             params = PublishDiagnosticsParams(;
                 uri,
@@ -1746,6 +1760,9 @@ function handle_DocumentDiagnosticRequest(
     if notebook_uri !== nothing
         diagnostics = localize_notebook_diagnostics(server.state, notebook_uri, uri, diagnostics)
     end
+    if supports(server, :textDocument, :diagnostic, :markupMessageSupport)
+        apply_markdown_message!(diagnostics)
+    end
     return send(server,
         DocumentDiagnosticResponse(;
             id = msg.id,
@@ -1826,6 +1843,10 @@ function send_workspace_diagnostics(
         notebook_uri = get_notebook_uri_for_cell(state, uri)
         if notebook_uri !== nothing
             diagnostics = localize_notebook_diagnostics(state, notebook_uri, uri, diagnostics)
+        end
+
+        if supports(server, :textDocument, :diagnostic, :markupMessageSupport)
+            apply_markdown_message!(diagnostics)
         end
 
         item = WorkspaceFullDocumentDiagnosticReport(;
