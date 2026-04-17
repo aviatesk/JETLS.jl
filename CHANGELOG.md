@@ -54,6 +54,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - When a reference-count code lens is rendered for a file whose full analysis has not yet been run, clicking now triggers a warning notification (via `window/showMessage`) explaining why the count is unavailable, instead of opening an empty references peek.
 
+- Diagnostic messages are now sent as `MarkupContent` when the client advertises the [`textDocument.diagnostic.markupMessageSupport`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#diagnosticClientCapabilities) capability (added in LSP 3.18). In supporting clients (e.g. recent Sublime LSP), Markdown formatting such as inline code delimited by backticks now renders properly instead of showing the literal characters. (https://github.com/aviatesk/JETLS.jl/pull/633)
+
 ## 2026-04-14
 
 - Commit: [`d1ebbb2`](https://github.com/aviatesk/JETLS.jl/commit/d1ebbb2)
