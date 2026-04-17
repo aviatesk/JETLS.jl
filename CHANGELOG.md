@@ -44,6 +44,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > This disables analysis for matched files. Basic features like completion still might work, but most LSP features will be unfunctional.
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
 
+### Breaking
+
+- Clients that previously implemented a handler for the JETLS-defined `jetls.showReferences` command should switch to handling `editor.action.showReferences` instead. The new arguments are `[uriString, position, locations]`, where `locations` is the pre-resolved LSP `Location[]`; clients no longer need to issue a `textDocument/references` request themselves and can simply display the provided locations. See the [Neovim setup section](https://aviatesk.github.io/JETLS.jl/release/#Neovim) in the documentation for an example handler.
+
+### Changed
+
+- The reference-count code lens now emits `editor.action.showReferences` (a VSCode convention command) directly, instead of the JETLS-defined custom command `jetls.showReferences`. LSP does not standardize a way for a server to hand pre-resolved reference locations to the client, so this choice trades strict LSP spec purity for broader out-of-the-box editor support. VSCode continues to work via the `jetls-client` extension, and editors that follow the VSCode convention (e.g. Zed) now dispatch the lens out of the box. Editors that do not follow the VSCode convention (e.g. Neovim) need to register a client-side handler for `editor.action.showReferences`.
+
+- When a reference-count code lens is rendered for a file whose full analysis has not yet been run, clicking now triggers a warning notification (via `window/showMessage`) explaining why the count is unavailable, instead of opening an empty references peek.
+
 ## 2026-04-14
 
 - Commit: [`d1ebbb2`](https://github.com/aviatesk/JETLS.jl/commit/d1ebbb2)

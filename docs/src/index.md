@@ -147,6 +147,42 @@ vim.lsp.config("jetls", {
 vim.lsp.enable("jetls")
 ```
 
+If you enable the [`code_lens.references`](@ref config/code_lens-references)
+configuration option, also register a handler for the
+`editor.action.showReferences` command, which JETLS emits on the reference-count
+code lens following the VSCode convention.[^show_references_handler]
+
+[^show_references_handler]:
+    Without this handler, Neovim reports
+    "does not support command `editor.action.showReferences`"
+    when the code lens is clicked. Register a per-client handler
+    via the `commands` field of `vim.lsp.config` so the handler is
+    scoped to the JETLS client only (rather than polluting the
+    global `vim.lsp.commands` table). The snippet below sends the
+    resolved locations to the quickfix list:
+
+    ```lua
+    vim.lsp.config("jetls", {
+        -- ... other options ...
+        commands = {
+            ["editor.action.showReferences"] = function(command, ctx)
+                local client = assert(vim.lsp.get_client_by_id(ctx.client_id))
+                local file_uri, position, references =
+                    unpack(command.arguments)
+                local items = vim.lsp.util.locations_to_items(
+                    references, client.offset_encoding)
+                vim.fn.setqflist({}, " ", {
+                    title = command.title, items = items })
+                vim.lsp.util.show_document({
+                    uri = file_uri,
+                    range = { start = position, ["end"] = position },
+                }, client.offset_encoding)
+                vim.cmd("botright copen")
+            end,
+        },
+    })
+    ```
+
 ### Sublime
 
 Minimal [Sublime](https://www.sublimetext.com/) setup using the
