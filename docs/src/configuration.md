@@ -446,16 +446,10 @@ Configure code lens behavior.
 - **Type**: boolean
 - **Default**: `false`
 
-Show reference counts for top-level symbols (functions, structs, constants,
-abstract types, primitive types, modules). When enabled, JETLS displays a code
-lens above each symbol showing how many times it is referenced in the codebase.
-
-Clicking the code lens dispatches the `editor.action.showReferences` command
-(a VSCode convention) carrying the pre-resolved reference locations. Clients
-that follow this convention (VSCode, Zed, etc.) open the references panel out
-of the box; clients that don't (e.g. Neovim) need to register a client-side
-handler for `editor.action.showReferences` — see the
-[Neovim setup](@ref index/editor-setup/neovim) for an example.
+Enable or disable the [reference-count code lens](@ref features/code-lens/references).
+When enabled, JETLS displays a code lens above each top-level symbol
+(functions, structs, constants, abstract/primitive types, modules) showing
+how many times it is referenced in the codebase.
 
 ```toml
 [code_lens]

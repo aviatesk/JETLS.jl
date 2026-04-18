@@ -61,6 +61,7 @@ end
 
 const pages = Any[
         "Index"                  => "index.md",
+        "Features"               => "features.md",
         "Diagnostic"             => "diagnostic.md",
         "Formatter integration"  => "formatting.md",
         "TestRunner integration" => "testrunner.md",
