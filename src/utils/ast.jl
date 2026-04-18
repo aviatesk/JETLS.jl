@@ -127,33 +127,37 @@ function is_doc0(st0::JS.SyntaxTree)
 end
 
 """
-    collect_import_names(st0::JS.SyntaxTree) -> Vector{JS.SyntaxTree}
+    collect_import_names(st0::JS.SyntaxTree) -> Vector{Pair{JS.SyntaxTree, String}}
 
-Return the child nodes of an `import`/`using`/`export`/`public` statement that
-represent the named items being imported/exported/declared public. For
-`using M: a, b`, returns `[a, b]`; for `using M.A` (no `:`), returns the
-imported path nodes.
+Return pairs of `(node, sort_key)` for the named items of an
+`import`/`using`/`export`/`public` statement: the child node representing
+each item alongside its sort key (see [`get_import_sort_key`](@ref)).
+For `using M: a, b` returns entries for `a` and `b`; for `using M.A` (no
+`:`) returns entries for the imported path nodes.
 """
 function collect_import_names(st0::JS.SyntaxTree)
     kind = JS.kind(st0)
-    names = JS.SyntaxTree[]
+    names = Pair{JS.SyntaxTree, String}[]
     if kind === JS.K"import" || kind === JS.K"using"
         nchildren = JS.numchildren(st0)
         if nchildren == 1
             child = st0[1]
             if JS.kind(child) === JS.K":"
                 for i = 2:JS.numchildren(child)
-                    push!(names, child[i])
+                    name = child[i]
+                    push!(names, name => get_import_sort_key(name))
                 end
             end
         elseif nchildren > 1
             for i = 1:nchildren
-                push!(names, st0[i])
+                name = st0[i]
+                push!(names, name => get_import_sort_key(name))
             end
         end
     elseif kind === JS.K"export" || kind === JS.K"public"
         for i = 1:JS.numchildren(st0)
-            push!(names, st0[i])
+            name = st0[i]
+            push!(names, name => get_import_sort_key(name))
         end
     end
     return names
@@ -189,18 +193,6 @@ function get_local_import_identifier(st0::JS.SyntaxTree)
     else
         return nothing
     end
-end
-
-function is_sorted_imports(names::Vector{JS.SyntaxTree})
-    length(names) < 2 && return true
-    for i = 1:length(names)-1
-        key1 = get_import_sort_key(names[i])
-        key2 = get_import_sort_key(names[i+1])
-        if key1 > key2
-            return false
-        end
-    end
-    return true
 end
 
 function get_import_sort_key(st0::JS.SyntaxTree)

@@ -1014,10 +1014,10 @@ function analyze_unsorted_imports!(
         if kind ∉ JS.KSet"import using export public"
             return nothing
         end
-        names = collect_import_names(st0′)
-        if !is_sorted_imports(names)
+        name_keys = collect_import_names(st0′)
+        if !issorted(name_keys; by=last)
             range = jsobj_to_range(st0′, fi)
-            sorted_names = sort!(names; by=get_import_sort_key)
+            sorted_names = first.(sort!(name_keys; by=last))
             base_indent = get_line_indent(fi, range.start.line)
             new_text = generate_sorted_import_text(st0′, sorted_names, base_indent)
             push!(diagnostics, Diagnostic(;
