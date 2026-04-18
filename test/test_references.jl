@@ -190,6 +190,31 @@ end
             end
         end
     end
+
+    @testset "export/public references" begin
+        # Cursor on an exported name should find all references, including
+        # the export statement itself.
+        let code = """
+            function │myfunc│(x)
+                x + 1
+            end
+            export │myfunc│
+            │myfunc│(1)
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 6
+            for pos in positions
+                refs = find_references(clean_code, pos; include_declaration=true)
+                @test length(refs) == 3
+            end
+            # With includeDeclaration=false, the definition in `function myfunc`
+            # is excluded, but the `:use` inside `export` is kept.
+            for pos in positions
+                refs = find_references(clean_code, pos; include_declaration=false)
+                @test length(refs) == 2
+            end
+        end
+    end
 end
 
 end # module test_references
