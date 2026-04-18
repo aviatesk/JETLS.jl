@@ -37,7 +37,7 @@ function collect_search_uris(server::Server, uri::URI)
         for analyzed_uri in analyzed_file_uris(analysis_info)
             push!(uris_to_search, analyzed_uri)
         end
-    elseif analysis_info isa OutOfScope && @isdefined(Revise)
+    elseif analysis_info isa OutOfScope && Revise !== nothing
         # TODO: This implementation should be revisited when Revise is integrated into full-analysis
         out_of_scope = analysis_info
         pkgid = Base.PkgId(something(out_of_scope.module_context, Main))
