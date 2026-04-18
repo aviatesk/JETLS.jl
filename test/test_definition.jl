@@ -27,7 +27,10 @@ end
 
 include("setup.jl")
 
-# Helper to run a single definition test
+# Full-analysis helper — use this only for tests that exercise the
+# reflection-based fallback (`Base` symbols, module `moduleloc`, etc.).
+# Lowering-only tests should use `with_find_definition` instead, which
+# skips the full server lifecycle and runs much faster.
 function with_definition_request(tester, text::AbstractString; kwargs...)
     clean_code, positions = JETLS.get_text_and_positions(text; kwargs...)
     withscript(clean_code) do script_path
@@ -49,10 +52,28 @@ function with_definition_request(tester, text::AbstractString; kwargs...)
     end
 end
 
+# Lightweight helper that invokes `find_definition` directly. Suitable
+# for tests that only need source-level (lowering-based) binding
+# resolution.
+function with_find_definition(tester, text::AbstractString; kwargs...)
+    clean_code, positions = JETLS.get_text_and_positions(text; kwargs...)
+    filename = joinpath(@__DIR__, "testfile_$(gensym(:definition)).jl")
+    fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
+    furi = filename2uri(filename)
+    server = JETLS.Server()
+    JETLS.store!(server.state.file_cache) do cache
+        Base.PersistentDict(cache, furi => fi), nothing
+    end
+    for (i, pos) in enumerate(positions)
+        locations, _ = JETLS.find_definition(server, furi, fi, pos)
+        tester(i, isempty(locations) ? null : locations, furi)
+    end
+end
+
 @testset "'Definition' for modules and methods" begin
     @testset "function definition" begin
         cnt = 0
-        with_definition_request("""
+        with_find_definition("""
             func(x) = 1
             fu│nc(1.0)
             func(1.│0)
@@ -134,7 +155,7 @@ end
 
     @testset "struct type and function aggregation" begin
         cnt = 0
-        with_definition_request("""
+        with_find_definition("""
             struct Hello
                 who::String
                 Hello(who::AbstractString) = new(String(who))
@@ -200,9 +221,10 @@ end
             Core│.isdefined
         """) do i, result, uri
             if i == 1
-                @test result isa Location
-                @test result.uri == uri
-                @test result.range.start.line == 0
+                @test result isa Vector{Location}
+                @test length(result) == 1
+                @test only(result).uri == uri
+                @test only(result).range.start.line == 0
             elseif i == 2  # Core doesn't return meaningful location
                 @test result === null
             end
@@ -211,9 +233,12 @@ end
         @test cnt == 2
     end
 
+end
+
+@testset "'Definition' for local bindings" begin
     @testset "local definition" begin
         local cnt = 0
-        with_definition_request("""
+        with_find_definition("""
             function func(x, y)
                 if rand(Bool)
                     z = x
@@ -237,12 +262,10 @@ end
         end
         @test cnt == 1
     end
-end
 
-@testset "'Definition' for local bindings with docstring" begin
     @testset "local definition with docstring" begin
         cnt = 0
-        with_definition_request("""
+        with_find_definition("""
             \"\"\"Docstring\"\"\"
             function func(xxx, yyy)
                 value = xxx│ + yyy
@@ -259,12 +282,10 @@ end
         end
         @test cnt == 1
     end
-end
 
-@testset "'Definition' for local bindings" begin
     @testset "local definition with macrocall" begin
         cnt = 0
-        with_definition_request("""
+        with_find_definition("""
             function func(xxx, yyy)
                 value = @something rand((xxx│, yyy, nothing))
                 return value
@@ -293,7 +314,7 @@ end
     with_definition_request("""
         using Base: sin
         si│n(1.0)
-    """) do i, results, uri
+    """) do _, results, uri
         @test results isa Vector{Location}
         @test length(results) >= 1
         # Jump must go outside the current file (to Base's source).
@@ -309,7 +330,7 @@ end
 
 @testset "'Definition' for global bindings" begin
     cnt = 0
-    with_definition_request("""
+    with_find_definition("""
         GLOBAL_VAR = 42
         const CONST_VAR = 100
         MUTABLE_VAR = 1
