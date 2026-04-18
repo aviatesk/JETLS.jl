@@ -48,6 +48,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Clients that previously implemented a handler for the JETLS-defined `jetls.showReferences` command should switch to handling `editor.action.showReferences` instead. The new arguments are `[uriString, position, locations]`, where `locations` is the pre-resolved LSP `Location[]`; clients no longer need to issue a `textDocument/references` request themselves and can simply display the provided locations. See the [Neovim setup section](https://aviatesk.github.io/JETLS.jl/release/#Neovim) in the documentation for an example handler.
 
+### Added
+
+- Added `textDocument/declaration` ("go to declaration"). Invoking it on an imported name jumps to the import site (e.g. `using Base: sin` or `using Base: foo as bar`), and on a `local` declaration jumps to the `local` line.
+  When the symbol at the cursor has no dedicated declaration site (e.g. a bare global assignment `x = 1`, a `Base` function, a module reference), the request transparently falls back to the same logic as `textDocument/definition` — including the reflection-based lookup for modules and methods — so `textDocument/declaration` never dead-ends on a resolvable symbol. This mirrors the convention used by rust-analyzer, gopls, and pyright for languages without a C/C++-style declaration/definition split.
+
 ### Changed
 
 - The reference-count code lens now emits `editor.action.showReferences` (a VSCode convention command) directly, instead of the JETLS-defined custom command `jetls.showReferences`. LSP does not standardize a way for a server to hand pre-resolved reference locations to the client, so this choice trades strict LSP spec purity for broader out-of-the-box editor support. VSCode continues to work via the `jetls-client` extension, and editors that follow the VSCode convention (e.g. Zed) now dispatch the lens out of the box. Editors that do not follow the VSCode convention (e.g. Neovim) need to register a client-side handler for `editor.action.showReferences`.
