@@ -328,7 +328,7 @@ function collect_global_rename_edits!(
     )
     state = server.state
     n_files = length(uris_to_search)
-    seen_locations = Set{Tuple{URI,Range}}()
+    seen_edits = Set{Tuple{URI,Range,String}}()
     for (i, uri) in enumerate(uris_to_search)
         if is_cancelled(cancel_flag)
             return false
@@ -350,15 +350,15 @@ function collect_global_rename_edits!(
             version = fi.version
         end
         search_st0_top = build_syntax_tree(fi)
-        empty!(seen_locations)
-        collect_global_rename_ranges_in_file!(
-            seen_locations, state, uri, fi, search_st0_top, binfo)
-        isempty(seen_locations) && continue
+        empty!(seen_edits)
+        collect_global_rename_edits_in_file!(
+            seen_edits, state, uri, fi, search_st0_top, binfo, newName)
+        isempty(seen_edits) && continue
 
         # Group edits by URI (for notebooks, occurrences may map to different cell URIs)
         edits_by_uri = Dict{URI,Vector{TextEdit}}()
-        for (loc_uri, range) in seen_locations
-            edit = TextEdit(; range, newText = newName)
+        for (loc_uri, range, newText) in seen_edits
+            edit = TextEdit(; range, newText)
             push!(get!(Vector{TextEdit}, edits_by_uri, loc_uri), edit)
         end
         if changes isa Vector{TextDocumentEdit}
@@ -376,17 +376,95 @@ function collect_global_rename_edits!(
     return true
 end
 
-function collect_global_rename_ranges_in_file!(
-        seen_locations::Set{Tuple{URI,Range}}, state::ServerState, uri::URI, fi::FileInfo,
-        st0_top::JS.SyntaxTree, binfo::JL.BindingInfo
+function collect_global_rename_edits_in_file!(
+        seen_edits::Set{Tuple{URI,Range,String}}, state::ServerState, uri::URI, fi::FileInfo,
+        st0_top::JS.SyntaxTree, binfo::JL.BindingInfo, newName::String
     )
     ismacro = startswith(binfo.name, '@')
     for occurrence in find_global_binding_occurrences!(state, uri, fi, st0_top, binfo)
-        adjust_first = ismacro && is_macrocall_use_site(fi, occurrence.tree) ? 1 : 0
-        range, adjusted_uri = unadjust_range(state, uri, jsobj_to_range(occurrence.tree, fi; adjust_first))
-        push!(seen_locations, (adjusted_uri, range))
+        id_byte_range = JS.byte_range(occurrence.tree)
+        classification = classify_import_rename(st0_top, id_byte_range, occurrence.kind)
+        if classification === :needs_as
+            # Insert ` as <newname>` right after the full identifier (including any
+            # leading `@`), keeping the source name intact.
+            full_range = jsobj_to_range(occurrence.tree, fi)
+            insert_range, adjusted_uri =
+                unadjust_range(state, uri, Range(; start=full_range.var"end", var"end"=full_range.var"end"))
+            newText = ismacro ? " as @$newName" : " as $newName"
+            push!(seen_edits, (adjusted_uri, insert_range, newText))
+        elseif classification === :alias && begin
+                collapse = collapse_alias_to_source(st0_top, id_byte_range, fi, newName, ismacro)
+                collapse !== nothing
+            end
+            # Renaming an alias back to its source name — drop the ` as <alias>` suffix
+            # so the import simplifies to `using M: <source>` instead of `<source> as <source>`.
+            collapse_range, adjusted_uri = unadjust_range(state, uri, collapse)
+            push!(seen_edits, (adjusted_uri, collapse_range, ""))
+        else
+            adjust_first = ismacro && is_macrocall_use_site(fi, occurrence.tree) ? 1 : 0
+            range, adjusted_uri = unadjust_range(state, uri, jsobj_to_range(occurrence.tree, fi; adjust_first))
+            push!(seen_edits, (adjusted_uri, range, newName))
+        end
     end
-    return seen_locations
+    return seen_edits
+end
+
+# Classify a `:decl` occurrence sitting inside an `import`/`using` statement.
+# Returns one of:
+# - `:regular`        — not in an `import`/`using`; treat as a normal rename.
+# - `:alias`          — the identifier is the alias of a `K"as"` node (`using M: foo as bar`);
+#                       a standard replace renames only the alias.
+# - `:needs_as`       — the identifier is a bare source name in an `import`/`using` form that
+#                       accepts `as` (any `import` form, or `using M: name` inside a colon list);
+#                       we rewrite `name` → `name as newname` and rename local uses as usual.
+# - `:implicit_bare`  — bare source name in `using M`, `using M, N`, or `using M.N` where
+#                       `using ... as ...` is not legal syntax; fall back to a standard replace
+#                       (breaks code, but matches the rename policy for implicit imports).
+function classify_import_rename(st0_top::JS.SyntaxTree, id_byte_range::UnitRange{Int}, kind::Symbol)
+    kind === :decl || return :regular
+    bas = byte_ancestors(st0_top, id_byte_range)
+    import_stmt_idx = findfirst(b::JS.SyntaxTree -> JS.kind(b) in JS.KSet"import using", bas)
+    isnothing(import_stmt_idx) && return :regular
+    has_colon = false
+    for i = 1:import_stmt_idx-1
+        k = JS.kind(bas[i])
+        if k === JS.K"as"
+            as_node = bas[i]
+            if JS.numchildren(as_node) >= 2 && JS.byte_range(as_node[2]) == id_byte_range
+                return :alias
+            end
+            return :regular
+        elseif k === JS.K":"
+            has_colon = true
+        end
+    end
+    import_kind = JS.kind(bas[import_stmt_idx])
+    if import_kind === JS.K"import" || has_colon
+        return :needs_as
+    end
+    return :implicit_bare
+end
+
+# If the alias occurrence is being renamed back to the source name of its
+# surrounding `K"as"` node, return the LSP range covering ` as <alias>` so a
+# single empty-text edit can delete it. Otherwise return `nothing`.
+function collapse_alias_to_source(
+        st0_top::JS.SyntaxTree, id_byte_range::UnitRange{Int}, fi::FileInfo,
+        newName::String, ismacro::Bool
+    )
+    bas = byte_ancestors(st0_top, id_byte_range)
+    as_idx = @something findfirst(b::JS.SyntaxTree -> JS.kind(b) === JS.K"as", bas) return nothing
+    as_node = bas[as_idx]
+    JS.numchildren(as_node) >= 2 || return nothing
+    source_path = as_node[1]
+    source_id = @something get_local_import_identifier(source_path) return nothing
+    source_name = get(source_id, :name_val, nothing)
+    source_name isa AbstractString || return nothing
+    effective_new = ismacro ? "@" * newName : newName
+    source_name == effective_new || return nothing
+    source_range = jsobj_to_range(source_path, fi)
+    alias_range = jsobj_to_range(as_node[2], fi)
+    return Range(; start=source_range.var"end", var"end"=alias_range.var"end")
 end
 
 function file_rename(

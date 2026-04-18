@@ -9,15 +9,41 @@ include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
 
 function rename_testcase(
         code::AbstractString, n::Int;
-        filename::AbstractString = joinpath(@__DIR__, "testfile.jl"),
+        # Use a unique filename per call so that the various server caches
+        # (file cache, binding-occurrences cache, analysis info) keyed by URI
+        # stay isolated between tests — otherwise successive tests sharing a
+        # URI can hit stale cache entries when byte ranges of top-level
+        # statements happen to coincide.
+        filename::AbstractString = joinpath(@__DIR__, "testfile_$(gensym(:rename_testcase)).jl"),
+        server::Union{JETLS.Server,Nothing} = nothing,
+        context_module::Union{Module,Nothing} = nothing,
     )
     clean_code, positions = JETLS.get_text_and_positions(code)
     @test length(positions) == n
     fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
     @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
     furi = filename2uri(filename)
+    # Register the file with the provided server so that
+    # `get_file_info`/`collect_global_rename_edits!` can actually find it —
+    # otherwise global rename silently returns an empty `changes` dict.
+    if server !== nothing
+        JETLS.store!(server.state.file_cache) do cache
+            Base.PersistentDict(cache, furi => fi), nothing
+        end
+        # Tie the file URI to a dedicated module so that `get_context_info`
+        # (and downstream occurrence resolution) agrees with whatever module
+        # the caller passes to `global_binding_rename`. Without this the file
+        # falls back to `Main`, causing a module mismatch that makes
+        # `find_global_binding_occurrences!` miss every occurrence.
+        if context_module !== nothing
+            JETLS.cache_out_of_scope!(
+                server.state.analysis_manager, furi, JETLS.OutOfScope(context_module))
+        end
+    end
     return fi, positions, furi
 end
+
+module test_import_rename_context end
 
 @testset "local_binding_rename_preparation" begin
     state = JETLS.ServerState()
@@ -439,22 +465,96 @@ end
     end
 
     @testset "import/using rename" begin
-        # Renaming from a cursor on an imported name should rewrite every
-        # occurrence, including the import site itself.
+        # Renaming a bare imported name inserts ` as newname` at the import
+        # site (preserving the source name) and replaces local uses.
         let code = """
             using Base: │foo│
             │foo│(1)
             bar() = │foo│()
             """
-            fi, positions, furi = rename_testcase(code, 6)
+            fi, positions, furi = rename_testcase(code, 6; server, context_module=test_import_rename_context)
             for pos in positions
                 (; result, error) = JETLS.global_binding_rename(
-                    server, furi, fi, pos, @__MODULE__, "qux")
+                    server, furi, fi, pos, test_import_rename_context, "qux")
                 @test result isa WorkspaceEdit && isnothing(error)
-                for (_, edits) in result.changes
-                    @test length(edits) == 3
-                    @test all(edit -> edit.newText == "qux", edits)
-                end
+                edits = only(result.changes).second
+                @test length(edits) == 3
+                @test count(e -> e.newText == "qux", edits) == 2
+                @test count(e -> e.newText == " as qux", edits) == 1
+                # The as-insertion is zero-width, right after the import identifier
+                as_edit = only(filter(e -> e.newText == " as qux", edits))
+                @test as_edit.range.start == as_edit.range.var"end"
+                @test as_edit.range.start == positions[2]
+            end
+        end
+
+        # Renaming an existing `as`-alias just renames the alias.
+        let code = """
+            using Base: foo as │myfoo│
+            │myfoo│(1)
+            """
+            fi, positions, furi = rename_testcase(code, 4; server, context_module=test_import_rename_context)
+            for pos in positions
+                (; result, error) = JETLS.global_binding_rename(
+                    server, furi, fi, pos, test_import_rename_context, "qux")
+                @test result isa WorkspaceEdit && isnothing(error)
+                edits = only(result.changes).second
+                @test length(edits) == 2
+                @test all(e -> e.newText == "qux", edits)
+            end
+        end
+
+        # Renaming an alias back to its source name drops the ` as <alias>`.
+        let code = """
+            using Random: randcycle as │randcycle2│
+            │randcycle2│(5)
+            """
+            fi, positions, furi = rename_testcase(code, 4; server, context_module=test_import_rename_context)
+            for pos in positions
+                (; result, error) = JETLS.global_binding_rename(
+                    server, furi, fi, pos, test_import_rename_context, "randcycle")
+                @test result isa WorkspaceEdit && isnothing(error)
+                edits = only(result.changes).second
+                @test length(edits) == 2
+                @test count(e -> e.newText == "randcycle", edits) == 1
+                @test count(e -> e.newText == "", edits) == 1
+                # The deletion is at the end of `randcycle` inside the import,
+                # spanning through the end of `randcycle2` (i.e. ` as randcycle2`)
+                delete_edit = only(filter(e -> e.newText == "", edits))
+                @test delete_edit.range.var"end" == positions[2]
+            end
+        end
+
+        # `import M.name` supports `as`, so the same as-insertion is used.
+        let code = """
+            import Base.│sin│
+            │sin│(1.0)
+            """
+            fi, positions, furi = rename_testcase(code, 4; server, context_module=test_import_rename_context)
+            for pos in positions
+                (; result, error) = JETLS.global_binding_rename(
+                    server, furi, fi, pos, test_import_rename_context, "mysin")
+                @test result isa WorkspaceEdit && isnothing(error)
+                edits = only(result.changes).second
+                @test length(edits) == 2
+                @test count(e -> e.newText == "mysin", edits) == 1
+                @test count(e -> e.newText == " as mysin", edits) == 1
+            end
+        end
+
+        # `using M.name` cannot use `as` (invalid Julia syntax), so fall back
+        # to a bare replacement of the module name.
+        let code = """
+            using Base.│Iterators│
+            """
+            fi, positions, furi = rename_testcase(code, 2; server, context_module=test_import_rename_context)
+            for pos in positions
+                (; result, error) = JETLS.global_binding_rename(
+                    server, furi, fi, pos, test_import_rename_context, "MyIter")
+                @test result isa WorkspaceEdit && isnothing(error)
+                edits = only(result.changes).second
+                @test length(edits) == 1
+                @test only(edits).newText == "MyIter"
             end
         end
     end

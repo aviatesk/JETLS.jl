@@ -626,6 +626,7 @@ struct CachedSyntaxTree
 end
 JS.first_byte(cst::CachedSyntaxTree) = cst.fb
 JS.last_byte(cst::CachedSyntaxTree) = cst.lb
+JS.byte_range(cst::CachedSyntaxTree) = cst.fb:cst.lb
 JS.source_location(cst::CachedSyntaxTree) = (cst.line, cst.column)
 
 struct CachedBindingOccurrence
