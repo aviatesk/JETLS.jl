@@ -486,14 +486,24 @@ Return the largest tree that can introduce local bindings that are visible to th
 (if any such tree exists).
 """
 function greatest_local(st0::JS.SyntaxTree, offset::Int)
-    bas = byte_ancestors(st0, offset)
-    first_global = findfirst(st::JS.SyntaxTree -> JS.kind(st) in JS.KSet"toplevel module", bas)
-    isnothing(first_global) && return nothing
+    result = _find_greatest_local(st0, offset)
+    result !== nothing && return result
+    # When the cursor sits just past the last token of a line (e.g. `export
+    # foo│\n`), `offset` points at a byte owned only by `toplevel`, so the
+    # initial lookup yields nothing. Retry with `offset - 1` to select the
+    # node just to the left of the cursor, mirroring the offset-1 fallbacks
+    # in `_select_target_binding` / `select_macrocall_binding`.
+    return offset > 1 ? _find_greatest_local(st0, offset - 1) : nothing
+end
 
+function _find_greatest_local(st0::JS.SyntaxTree, offset::Int)
+    bas = byte_ancestors(st0, offset)
+    first_global = @something begin
+        findfirst(st::JS.SyntaxTree -> JS.kind(st) in JS.KSet"toplevel module", bas)
+    end return nothing
     if first_global == 1
         return nothing
     end
-
     idx = Ref(first_global - 1)
     while JS.kind(bas[idx[]]) === JS.K"block"
         if any(j::Int -> JS.kind(bas[idx[]][j]) === JS.K"local", 1:JS.numchildren(bas[idx[]]))
