@@ -127,7 +127,7 @@ function is_doc0(st0::JS.SyntaxTree)
 end
 
 """
-    collect_import_names(st0::JS.SyntaxTree) -> Vector{Pair{JS.SyntaxTree, String}}
+    collect_import_names(st0::SyntaxTree0) -> Vector{Pair{SyntaxTree0, String}}
 
 Return pairs of `(node, sort_key)` for the named items of an
 `import`/`using`/`export`/`public` statement: the child node representing
@@ -135,9 +135,9 @@ each item alongside its sort key (see [`get_import_sort_key`](@ref)).
 For `using M: a, b` returns entries for `a` and `b`; for `using M.A` (no
 `:`) returns entries for the imported path nodes.
 """
-function collect_import_names(st0::JS.SyntaxTree)
+function collect_import_names(st0::SyntaxTree0)
     kind = JS.kind(st0)
-    names = Pair{JS.SyntaxTree, String}[]
+    names = Pair{SyntaxTree0, String}[]
     if kind === JS.K"import" || kind === JS.K"using"
         nchildren = JS.numchildren(st0)
         if nchildren == 1

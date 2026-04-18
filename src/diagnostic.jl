@@ -1017,9 +1017,9 @@ function analyze_unsorted_imports!(
         name_keys = collect_import_names(st0′)
         if !issorted(name_keys; by=last)
             range = jsobj_to_range(st0′, fi)
-            sorted_names = first.(sort!(name_keys; by=last))
+            sorted_name_keys = sort!(name_keys; by=last)
             base_indent = get_line_indent(fi, range.start.line)
-            new_text = generate_sorted_import_text(st0′, sorted_names, base_indent)
+            new_text = generate_sorted_import_text(st0′, sorted_name_keys, base_indent)
             push!(diagnostics, Diagnostic(;
                 range,
                 severity = DiagnosticSeverity.Hint,
@@ -1035,7 +1035,7 @@ function analyze_unsorted_imports!(
 end
 
 function generate_sorted_import_text(
-        node::JS.SyntaxTree, sorted_names::Vector{JS.SyntaxTree},
+        node::JS.SyntaxTree, sorted_name_keys::Vector{Pair{SyntaxTree0,String}},
         base_indent::String
     )
     kind = JS.kind(node)
@@ -1053,7 +1053,7 @@ function generate_sorted_import_text(
     else
         prefix = "$keyword "
     end
-    name_texts = String[lstrip(JS.sourcetext(n)) for n in sorted_names]
+    name_texts = String[lstrip(JS.sourcetext(n)) for (n,_) in sorted_name_keys]
     single_line = prefix * join(name_texts, ", ")
     if length(base_indent) + length(single_line) <= SORT_IMPORTS_MAX_LINE_LENGTH
         return single_line
