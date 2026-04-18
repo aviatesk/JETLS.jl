@@ -177,9 +177,18 @@ function compute_binding_occurrences(
     return occurrences
 end
 
+"""
+`skip_recording` maps a binding to a byte range. A BindingId is skipped only if
+both its binding and its byte range match an entry. This distinguishes synthetic
+BindingIds that lowering inserts at the definition-site range (e.g., inside
+`method`, `function_type`, or `removable` nodes) from genuine uses such as
+self-recursive calls, which have distinct byte ranges.
+"""
+const SkipRecording = Dict{JL.BindingInfo,UnitRange{Int}}
+
 function record_occurrence!(occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence{Tree3}}},
         kind::Symbol, st::Tree3, ctx3::JL.VariableAnalysisContext;
-        skip_recording::Union{Nothing,Set{JL.BindingInfo}} = nothing
+        skip_recording::Union{Nothing,SkipRecording} = nothing
     ) where Tree3<:JS.SyntaxTree
     if JS.kind(st) === JS.K"BindingId"
         binfo = JL.get_binding(ctx3, st)
@@ -190,11 +199,16 @@ end
 
 function record_occurrence!(occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence{Tree3}}},
         kind::Symbol, st::Tree3, binfo::JL.BindingInfo;
-        skip_recording::Union{Nothing,Set{JL.BindingInfo}} = nothing
+        skip_recording::Union{Nothing,SkipRecording} = nothing
     ) where Tree3<:JS.SyntaxTree
-    if haskey(occurrences, binfo) && (binfo ∉ @something skip_recording ())
-        push!(occurrences[binfo], BindingOccurrence(st, kind))
+    haskey(occurrences, binfo) || return occurrences
+    if !isnothing(skip_recording)
+        skip_range = get(skip_recording, binfo, nothing)
+        if skip_range !== nothing && JS.byte_range(st) == skip_range
+            return occurrences
+        end
     end
+    push!(occurrences[binfo], BindingOccurrence(st, kind))
     return occurrences
 end
 
@@ -205,10 +219,9 @@ function compute_binding_occurrences!(
         occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence{Tree3}}},
         ctx3::JL.VariableAnalysisContext, st3::Tree3;
         ismacro::Union{Nothing,Base.RefValue{Bool}} = nothing,
-        skip_recording_uses::Union{Nothing,Set{JL.BindingInfo}} = nothing
+        skip_recording_uses::Union{Nothing,SkipRecording} = nothing
     ) where Tree3<:JS.SyntaxTree
     stack = JS.SyntaxList(st3)
-    infunc = false
     while !isempty(stack)
         st = pop!(stack)
         k = JS.kind(st)
@@ -226,7 +239,6 @@ function compute_binding_occurrences!(
 
         start_idx = 1
         if k === JS.K"function_decl"
-            infunc = true
             if nc ≥ 1
                 func = st[1]
                 if JS.kind(func) === JS.K"BindingId"
@@ -247,20 +259,42 @@ function compute_binding_occurrences!(
                     start_idx = 2
                 end
             end
-        elseif infunc && k === JS.K"block" && nc ≥ 1
-            blk1 = st[1]
-            if JS.kind(blk1) === JS.K"function_decl" && JS.numchildren(blk1) ≥ 1
-                # This is an inner function definition -- the binding of this inner function
-                # is "used" in the language constructs required to define the method,
-                # but what we're interested in is whether it's actually used in the outer scope.
-                # We add this inner function to `skip_recording_uses` and recurse.
-                innerfunc = blk1[1]
-                if JS.kind(innerfunc) === JS.K"BindingId"
-                    innerfuncinfo = JL.get_binding(ctx3, innerfunc)
-                    compute_binding_occurrences!(occurrences, ctx3, st; ismacro,
-                        skip_recording_uses = Set((innerfuncinfo,)))
-                    continue
+        elseif k === JS.K"block" && nc ≥ 1 && JS.kind(st[1]) === JS.K"function_decl"
+            # This block wraps a function definition. Each function's own binding
+            # appears as BindingId in internal lowering nodes (`method`,
+            # `function_type`, `removable`, or as the trailing "return value" of
+            # the definition) that are not user-visible uses. We collect the
+            # bindings of all leading `function_decl` children (a single block
+            # may declare multiple functions, e.g., a keyword function generates
+            # both the user-visible function and a `#kw_body#…` helper) and map
+            # each to its definition-site byte range in `skip_recording_uses`
+            # before recursing. BindingIds whose range matches are skipped, while
+            # genuine uses at different ranges (e.g., self-recursive calls) are
+            # still recorded. Bindings already present in `skip_recording_uses`
+            # are used as a termination condition to avoid infinite recursion.
+            newly_added = Pair{JL.BindingInfo,UnitRange{Int}}[]
+            for i = 1:nc
+                child = st[i]
+                JS.kind(child) === JS.K"function_decl" || continue
+                JS.numchildren(child) ≥ 1 || continue
+                funcnode = child[1]
+                JS.kind(funcnode) === JS.K"BindingId" || continue
+                funcinfo = JL.get_binding(ctx3, funcnode)
+                if isnothing(skip_recording_uses) || !haskey(skip_recording_uses, funcinfo)
+                    push!(newly_added, funcinfo => JS.byte_range(funcnode))
                 end
+            end
+            if !isempty(newly_added)
+                if isnothing(skip_recording_uses)
+                    compute_binding_occurrences!(occurrences, ctx3, st;
+                        ismacro, skip_recording_uses = SkipRecording(newly_added))
+                else
+                    for br in newly_added; push!(skip_recording_uses, br); end
+                    compute_binding_occurrences!(occurrences, ctx3, st;
+                        ismacro, skip_recording_uses)
+                    for (b, _) in newly_added; delete!(skip_recording_uses, b); end
+                end
+                continue
             end
         elseif k === JS.K"lambda"
             # All blocks except the last one define arguments and static parameters,

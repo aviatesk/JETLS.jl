@@ -67,8 +67,31 @@ end
             clean_code, positions = JETLS.get_text_and_positions(code)
             @test length(positions) == 8
             for pos in positions
-                refs = find_references(clean_code, pos; include_declaration=false)
+                refs = find_references(clean_code, pos; include_declaration=true)
                 @test length(refs) == 4
+            end
+            for pos in positions
+                refs = find_references(clean_code, pos; include_declaration=false)
+                @test length(refs) == 2
+            end
+        end
+
+        let code = """
+            function │kwfunc│(x; kw=nothing)
+                (x, kw)
+            end
+
+            result = │kwfunc│(1)
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 4
+            for pos in positions
+                refs = find_references(clean_code, pos; include_declaration=true)
+                @test length(refs) == 2
+            end
+            for pos in positions
+                refs = find_references(clean_code, pos; include_declaration=false)
+                @test length(refs) == 1
             end
         end
     end
@@ -153,8 +176,6 @@ end
         end
 
         # includeDeclaration=false from macrocall
-        # Note: macro definition also has :use occurrences (from JuliaLowering),
-        # so includeDeclaration=false still includes the definition location
         let code = """
             macro mymacro(ex)
                 esc(ex)
@@ -165,7 +186,7 @@ end
             clean_code, positions = JETLS.get_text_and_positions(code)
             for pos in positions
                 refs = find_references(clean_code, pos; include_declaration=false)
-                @test length(refs) == 2
+                @test length(refs) == 1
             end
         end
     end
