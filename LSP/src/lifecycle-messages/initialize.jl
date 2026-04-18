@@ -44,13 +44,13 @@
     """
     signatureHelpProvider::Union{Nothing, SignatureHelpOptions} = nothing
 
-    # """
-    # The server provides go to declaration support.
+    """
+    The server provides go to declaration support.
 
-    # # Tags
-    # - since - 3.14.0
-    # """
-    # declarationProvider::Union{Nothing, Bool, DeclarationOptions, DeclarationRegistrationOptions} = nothing
+    # Tags
+    - since - 3.14.0
+    """
+    declarationProvider::Union{Nothing, Bool, DeclarationOptions, DeclarationRegistrationOptions} = nothing
 
     """
     The server provides goto definition support.
@@ -337,13 +337,13 @@ end
     """
     signatureHelp::Union{SignatureHelpClientCapabilities, Nothing} = nothing
 
-    # """
-    # Capabilities specific to the `textDocument/declaration` request.
+    """
+    Capabilities specific to the `textDocument/declaration` request.
 
-    # # Tags
-    # - since – 3.14.0
-    # """
-    # declaration::Union{DeclarationClientCapabilities, Nothing} = nothing
+    # Tags
+    - since – 3.14.0
+    """
+    declaration::Union{DeclarationClientCapabilities, Nothing} = nothing
 
     """
     Capabilities specific to the `textDocument/definition` request.
