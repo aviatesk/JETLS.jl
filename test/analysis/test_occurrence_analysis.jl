@@ -386,6 +386,77 @@ end
             @test boccs !== nothing && isempty(boccs)
         end
     end
+
+    @testset "import/using" begin
+        # `using M: a, b` / `import M: a, b` — each name as `:decl`
+        for keyword in ("using", "import")
+            let boccs = get_binding_occurrences_st0("$keyword Base: foo, bar";
+                                                    include_global_bindings=true)
+                @test length(boccs) == 2
+                for name in ("foo", "bar")
+                    i = @something findfirst(((b, _),) -> b.name == name, collect(boccs))
+                    binfo, occs = collect(boccs)[i]
+                    @test binfo.kind === :global
+                    @test length(occs) == 1
+                    @test only(occs).kind === :decl
+                end
+            end
+        end
+        # `using M: a as b` — the alias is the local binding
+        let boccs = get_binding_occurrences_st0("using Base: foo as bar";
+                                                include_global_bindings=true)
+            @test length(boccs) == 1
+            binfo, occs = only(boccs)
+            @test binfo.name == "bar"
+            @test only(occs).kind === :decl
+        end
+        # `import M.a` — last component is the local binding
+        let boccs = get_binding_occurrences_st0("import Base.foo";
+                                                include_global_bindings=true)
+            @test length(boccs) == 1
+            binfo, occs = only(boccs)
+            @test binfo.name == "foo"
+            @test only(occs).kind === :decl
+        end
+        # `using M` / `import M` — the module name is the local binding
+        for keyword in ("using", "import")
+            let boccs = get_binding_occurrences_st0("$keyword Base";
+                                                    include_global_bindings=true)
+                @test length(boccs) == 1
+                binfo, occs = only(boccs)
+                @test binfo.name == "Base"
+                @test only(occs).kind === :decl
+            end
+        end
+        # `using A, B` — each module name
+        let boccs = get_binding_occurrences_st0("using Base, LinearAlgebra";
+                                                include_global_bindings=true)
+            @test length(boccs) == 2
+            for name in ("Base", "LinearAlgebra")
+                i = @something findfirst(((b, _),) -> b.name == name, collect(boccs))
+                binfo, occs = collect(boccs)[i]
+                @test only(occs).kind === :decl
+            end
+        end
+        # `using M.a` / `import M.a` — trailing component is the local binding
+        for keyword in ("using", "import")
+            let boccs = get_binding_occurrences_st0("$keyword Base.Iterators";
+                                                    include_global_bindings=true)
+                @test length(boccs) == 1
+                binfo, occs = only(boccs)
+                @test binfo.name == "Iterators"
+                @test only(occs).kind === :decl
+            end
+        end
+        # Relative: `using .A` / `import ..A.B` — trailing component
+        let boccs = get_binding_occurrences_st0("using .Inner";
+                                                include_global_bindings=true)
+            @test length(boccs) == 1
+            binfo, occs = only(boccs)
+            @test binfo.name == "Inner"
+            @test only(occs).kind === :decl
+        end
+    end
 end
 
 function with_global_binding_occurrences(
@@ -553,6 +624,36 @@ macro noop(ex) esc(ex) end
             """, "@m") do ranges, positions
             @test length(positions) == 10
             @test length(ranges) == 5
+        end
+    end
+
+    @testset "import/using" begin
+        with_global_binding_occurrences("""
+            using Base: │foo│
+            │foo│(1)
+            """, "foo") do ranges, positions
+            @test length(positions) == 4
+            @test length(ranges) == 2
+            @test Range(; start=positions[1], var"end"=positions[2]) in ranges
+            @test Range(; start=positions[3], var"end"=positions[4]) in ranges
+        end
+        with_global_binding_occurrences("""
+            using Base: foo as │bar│
+            │bar│(1)
+            """, "bar") do ranges, positions
+            @test length(positions) == 4
+            @test length(ranges) == 2
+            @test Range(; start=positions[1], var"end"=positions[2]) in ranges
+            @test Range(; start=positions[3], var"end"=positions[4]) in ranges
+        end
+        with_global_binding_occurrences("""
+            import Base.│foo│
+            │foo│(1)
+            """, "foo") do ranges, positions
+            @test length(positions) == 4
+            @test length(ranges) == 2
+            @test Range(; start=positions[1], var"end"=positions[2]) in ranges
+            @test Range(; start=positions[3], var"end"=positions[4]) in ranges
         end
     end
 

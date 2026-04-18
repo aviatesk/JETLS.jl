@@ -164,14 +164,54 @@ function collect_import_names(st0::SyntaxTree0)
 end
 
 """
+    foreach_local_import_identifier(f, st0::JS.SyntaxTree)
+
+Invoke `f(id_st)` once for each locally-introduced identifier of an
+`import`/`using` statement `st0`. Covers every form that actually binds
+a name in the current scope:
+
+- `using A` / `import A` — `A`
+- `using A, B` / `import A, B` — `A`, `B`
+- `using A.B` / `import A.B` / `using .A.B` — the trailing component
+- `using A: x, y` / `import A: x, y` — each listed name
+- `using A: x as y` — the alias `y`
+- `import A: x as y` — likewise
+"""
+function foreach_local_import_identifier(f, st0::JS.SyntaxTree)
+    kind = JS.kind(st0)
+    kind in JS.KSet"import using" || return
+    nchildren = JS.numchildren(st0)
+    if nchildren == 1 && JS.kind(st0[1]) === JS.K":"
+        child = st0[1]
+        for i = 2:JS.numchildren(child)
+            id_st = get_local_import_identifier(child[i])
+            id_st === nothing || f(id_st)
+        end
+    else
+        # Direct children are `K"."` paths (one per comma-separated module),
+        # e.g. `using A` → `[K"."(A)]`, `using A, B` → `[K"."(A), K"."(B)]`,
+        # `using .A.B` → `[K"."(., A, B)]`. The locally-introduced name is the
+        # last component of each path.
+        for i = 1:nchildren
+            id_st = get_local_import_identifier(st0[i])
+            id_st === nothing || f(id_st)
+        end
+    end
+    return
+end
+
+"""
     get_local_import_identifier(st0::JS.SyntaxTree) -> Union{JS.SyntaxTree, Nothing}
 
 Return the `K"Identifier"` node that represents the local binding introduced
-by a single element of an `import`/`using` statement, or `nothing` if `st0`
-does not introduce a local binding:
-- `using M: a` / `using M: a, b` — `a`/`b` directly
-- `using M: a as b` — the alias `b`
-- `import M.a` — the trailing component `a`
+by a single element of an `import`/`using` statement, or `nothing` if the
+element is not a well-formed name path. Accepts both the top-level module
+path children (`using A.B` → path `A.B`) and the names listed after `:`
+(`using A: foo` → path `foo`):
+- path with a bare `Identifier` — the identifier itself
+- dotted path `K"."` — the trailing component (skipping the relative `.`
+  or `..` prefixes of forms like `.A` / `..A.B`)
+- `K"as"` (inside a colon list) — the alias
 """
 function get_local_import_identifier(st0::JS.SyntaxTree)
     kind = JS.kind(st0)
@@ -181,7 +221,6 @@ function get_local_import_identifier(st0::JS.SyntaxTree)
     elseif kind === JS.K"Identifier"
         return st0
     elseif kind === JS.K"."
-        # `import M.a` style within a colon list
         npath = JS.numchildren(st0)
         if npath >= 1
             last_st = st0[npath]
