@@ -282,6 +282,31 @@ end
     end
 end
 
+@testset "'Definition' for imported names" begin
+    # Cursor on an imported name should NOT stop at the import site.
+    # The import site is a declaration (`:decl`), so `textDocument/definition`
+    # falls through to reflection-based lookup and jumps to the source
+    # (e.g. `sin` in Base).
+    sin_cand_file, sin_cand_line = functionloc(first(methods(sin, (Float64,))))
+    sin_cand_file = JETLS.to_full_path(sin_cand_file)
+    cnt = 0
+    with_definition_request("""
+        using Base: sin
+        si│n(1.0)
+    """) do i, results, uri
+        @test results isa Vector{Location}
+        @test length(results) >= 1
+        # Jump must go outside the current file (to Base's source).
+        @test all(r -> JETLS.uri2filepath(r.uri) != JETLS.uri2filepath(uri), results)
+        @test any(results) do r
+            JETLS.uri2filepath(r.uri) == sin_cand_file &&
+            r.range.start.line == (sin_cand_line - 1)
+        end
+        cnt += 1
+    end
+    @test cnt == 1
+end
+
 @testset "'Definition' for global bindings" begin
     cnt = 0
     with_definition_request("""

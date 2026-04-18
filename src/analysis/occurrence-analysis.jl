@@ -451,14 +451,24 @@ function compute_binding_occurrences_st0(
         is_notebook_uri(state, uri)
     (; mod) = get_context_info(state, uri, offset_to_xy(fi, JS.first_byte(st0)); lookup_func)
 
-    # Lowering `export`/`public` statements collapses their listed identifiers into opaque
-    # `K"Value"` nodes and records no `BindingInfo` for them, so the usual traversal finds nothing.
-    # Handle them directly: each child identifier is recorded as a `:use` of the
-    # corresponding global binding in the surrounding module.
-    if include_global_bindings && JS.kind(st0) in JS.KSet"export public"
-        binding_occurrences = Dict{JL.BindingInfo,Set{BindingOccurrence{typeof(st0)}}}()
-        collect_export_public_occurrences!(binding_occurrences, st0, mod)
-        return binding_occurrences
+    # Lowering `export`/`public`/`import`/`using` statements collapses their listed
+    # identifiers into opaque `K"Value"` nodes and records no `BindingInfo` for them,
+    # so the usual traversal finds nothing. Handle them directly:
+    # - `export foo`/`public foo`: record `foo` as a `:use` of the corresponding global
+    #   binding in the surrounding module.
+    # - `using M: foo`/`import M: foo`/`import M.foo`: record the local alias identifier
+    #   (`foo`, or `bar` in `foo as bar`) as a `:def` of the local global binding.
+    if include_global_bindings
+        k0 = JS.kind(st0)
+        if k0 in JS.KSet"export public"
+            binding_occurrences = Dict{JL.BindingInfo,Set{BindingOccurrence{typeof(st0)}}}()
+            collect_export_public_occurrences!(binding_occurrences, st0, mod)
+            return binding_occurrences
+        elseif k0 in JS.KSet"import using"
+            binding_occurrences = Dict{JL.BindingInfo,Set{BindingOccurrence{typeof(st0)}}}()
+            collect_import_using_occurrences!(binding_occurrences, st0, mod)
+            return binding_occurrences
+        end
     end
 
     (; ctx3, st3) = try
@@ -498,6 +508,21 @@ function collect_export_public_occurrences!(
         binfo = JL.BindingInfo(0, name, :global, 0; mod)
         target_set = get!(Set{BindingOccurrence{Tree3}}, occurrences, binfo)
         push!(target_set, BindingOccurrence{Tree3}(child, :use))
+    end
+    return occurrences
+end
+
+function collect_import_using_occurrences!(
+        occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence{Tree3}}},
+        st0::Tree3, mod::Module
+    ) where Tree3<:JS.SyntaxTree
+    foreach_local_import_identifier(st0) do id_st::Tree3
+        name = get(id_st, :name_val, nothing)
+        name isa AbstractString || return
+        binfo = JL.BindingInfo(0, name, :global, 0; mod)
+        target_set = get!(Set{BindingOccurrence{Tree3}}, occurrences, binfo)
+        push!(target_set, BindingOccurrence{Tree3}(id_st, :decl))
+        return
     end
     return occurrences
 end

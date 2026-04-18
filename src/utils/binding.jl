@@ -242,6 +242,9 @@ function select_target_binding(
     export_public_result = select_export_public_binding(st0, offset, mod, caller; soft_scope)
     export_public_result !== nothing && return export_public_result
 
+    import_using_result = select_import_using_binding(st0, offset, mod, caller; soft_scope)
+    import_using_result !== nothing && return import_using_result
+
     (; ctx3, st3) = try
         # Remove macros to preserve precise source locations
         jl_lower_for_scope_resolution(mod, remove_macrocalls(st0); soft_scope)
@@ -346,6 +349,50 @@ function select_export_public_binding(
         j::Int -> JS.kind(parent[j]) === JS.K"Identifier" && offset in JS.byte_range(parent[j]),
             1:JS.numchildren(parent)) return nothing; end
     name_node = parent[i]
+    (; ctx3, st3) = try
+        jl_lower_for_scope_resolution(mod, name_node; soft_scope)
+    catch err
+        JETLS_DEBUG_LOWERING && @warn "Error in lowering ($caller)" err
+        JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
+        return nothing
+    end
+    for binfo in ctx3.bindings.info
+        binding = JL.binding_ex(ctx3, binfo)
+        if offset in JS.byte_range(binding)
+            return (; ctx3, st3, st0=name_node, binding)
+        end
+    end
+    return nothing
+end
+
+# Mirror `select_export_public_binding` for `import`/`using`. The listed
+# identifiers also collapse into opaque `K"Value"` nodes during lowering, so we
+# detect the cursor against `foreach_local_import_identifier` and lower the
+# single matching identifier to synthesize a normal binding tuple.
+function select_import_using_binding(
+        st0::JS.SyntaxTree, offset::Int, mod::Module, caller::AbstractString;
+        soft_scope::Bool = false
+    )
+    find_name_node_at = function (offset::Int, st0′::JS.SyntaxTree)
+        hit = Ref{Union{Nothing,JS.SyntaxTree}}(nothing)
+        foreach_local_import_identifier(st0′) do id_st::JS.SyntaxTree
+            offset in JS.byte_range(id_st) || return
+            hit[] = id_st
+            return
+        end
+        return hit[]
+    end
+    find_container = (offset::Int) -> (st0′::JS.SyntaxTree) ->
+        JS.kind(st0′) in JS.KSet"import using" &&
+            find_name_node_at(offset, st0′) !== nothing
+    bas = byte_ancestors(find_container(offset), st0, offset)
+    if isempty(bas)
+        # Support cases like `foo│` at the end of an imported name
+        offset -= 1
+        bas = byte_ancestors(find_container(offset), st0, offset)
+    end
+    isempty(bas) && return nothing
+    name_node = @something find_name_node_at(offset, bas[1]) return nothing
     (; ctx3, st3) = try
         jl_lower_for_scope_resolution(mod, name_node; soft_scope)
     catch err

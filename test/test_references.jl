@@ -191,6 +191,27 @@ end
         end
     end
 
+    @testset "import/using references" begin
+        # Cursor on an imported name should find the import site + uses.
+        let code = """
+            using Base: │myfunc│
+            │myfunc│(1)
+            │myfunc│()
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 6
+            for pos in positions
+                refs = find_references(clean_code, pos; include_declaration=true)
+                @test length(refs) == 3
+            end
+            # includeDeclaration=false excludes the import site (`:def`).
+            for pos in positions
+                refs = find_references(clean_code, pos; include_declaration=false)
+                @test length(refs) == 2
+            end
+        end
+    end
+
     @testset "export/public references" begin
         # Cursor on an exported name should find all references, including
         # the export statement itself.

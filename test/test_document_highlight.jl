@@ -510,6 +510,54 @@ end
                 end
             end
         end
+
+        @testset "import/using highlights" begin
+            # Import sites are `:decl` occurrences (like `local x`), so they
+            # highlight as `Text` rather than `Write`.
+            let code = """
+                using Base: │myfunc│
+                │myfunc│(1)
+                """
+                fi, positions = highlight_testcase(code, 4)
+                for pos in positions
+                    highlights = JETLS.document_highlights(fi, pos)
+                    @test length(highlights) == 2
+                    @test count(highlights) do highlight
+                        highlight.range.start == positions[1] &&
+                        highlight.range.var"end" == positions[2] &&
+                        highlight.kind == DocumentHighlightKind.Text
+                    end == 1
+                    @test count(highlights) do highlight
+                        highlight.range.start == positions[3] &&
+                        highlight.range.var"end" == positions[4] &&
+                        highlight.kind == DocumentHighlightKind.Read
+                    end == 1
+                end
+            end
+
+            # Alias: clicking on the alias name highlights it + uses
+            let code = """
+                using Base: foo as │myfunc│
+                │myfunc│(1)
+                """
+                fi, positions = highlight_testcase(code, 4)
+                for pos in positions
+                    highlights = JETLS.document_highlights(fi, pos)
+                    @test length(highlights) == 2
+                end
+            end
+
+            let code = """
+                import Base.│myfunc│
+                │myfunc│(1)
+                """
+                fi, positions = highlight_testcase(code, 4)
+                for pos in positions
+                    highlights = JETLS.document_highlights(fi, pos)
+                    @test length(highlights) == 2
+                end
+            end
+        end
     end
 end
 

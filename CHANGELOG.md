@@ -62,6 +62,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Names listed in `export` and `public` statements are now treated as references to the surrounding module's global bindings. `textDocument/documentHighlight`, `textDocument/references`, `textDocument/definition`, and `textDocument/rename` all now work when the cursor is placed on an exported/public name, and the export/public site is included in highlight and reference results (and rewritten by rename) for the corresponding binding.
 
+- Locally-introduced names from `import`/`using` statements are now treated as local declarations. This includes every form that actually binds a name: `using A` / `import A`, `using A, B`, dotted paths like `using A.B` (trailing `B`), relative paths like `using .Inner`, and explicit names in `using A: x, y` / `using A: x as y`. `textDocument/documentHighlight`, `textDocument/references`, and `textDocument/rename` all now work when the cursor is placed on an imported name, and the import site participates in their results just like any other declaration site (e.g. `local x`).
+
 ## 2026-04-14
 
 - Commit: [`d1ebbb2`](https://github.com/aviatesk/JETLS.jl/commit/d1ebbb2)

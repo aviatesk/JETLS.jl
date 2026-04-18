@@ -438,6 +438,27 @@ end
         end
     end
 
+    @testset "import/using rename" begin
+        # Renaming from a cursor on an imported name should rewrite every
+        # occurrence, including the import site itself.
+        let code = """
+            using Base: │foo│
+            │foo│(1)
+            bar() = │foo│()
+            """
+            fi, positions, furi = rename_testcase(code, 6)
+            for pos in positions
+                (; result, error) = JETLS.global_binding_rename(
+                    server, furi, fi, pos, @__MODULE__, "qux")
+                @test result isa WorkspaceEdit && isnothing(error)
+                for (_, edits) in result.changes
+                    @test length(edits) == 3
+                    @test all(edit -> edit.newText == "qux", edits)
+                end
+            end
+        end
+    end
+
     @testset "export/public rename" begin
         # Renaming from a cursor inside `export`/`public` should rewrite every
         # occurrence, including the export statement itself.
