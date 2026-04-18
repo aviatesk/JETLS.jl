@@ -86,7 +86,16 @@ function _unwrap_interpolations(st::JS.SyntaxTree)
         push!(new_children, nc)
     end
     k = JS.kind(st)
-    new_node = changed ? JL.@ast(JS.syntax_graph(st), st, [k new_children...]) : st
+    # Preserve `name_val` when reconstructing: kinds like `K"unknown_head"`
+    # (used by compound assignments such as `+=`) carry the operator name in
+    # `name_val`, and JuliaLowering's validator requires it to be present.
+    new_node = if !changed
+        st
+    elseif hasproperty(st, :name_val)
+        JL.@ast(JS.syntax_graph(st), st, [k(name_val=st.name_val::String) new_children...])
+    else
+        JL.@ast(JS.syntax_graph(st), st, [k new_children...])
+    end
     return (new_node, changed)
 end
 
@@ -352,7 +361,16 @@ function _remove_macrocalls(st::JS.SyntaxTree)
         push!(new_children, nc)
     end
     k = JS.kind(st)
-    new_node = changed ? JL.@ast(JS.syntax_graph(st), st, [k new_children...]) : st
+    # Preserve `name_val` when reconstructing: kinds like `K"unknown_head"`
+    # (used by compound assignments such as `+=`) carry the operator name in
+    # `name_val`, and JuliaLowering's validator requires it to be present.
+    new_node = if !changed
+        st
+    elseif hasproperty(st, :name_val)
+        JL.@ast(JS.syntax_graph(st), st, [k(name_val=st.name_val::String) new_children...])
+    else
+        JL.@ast(JS.syntax_graph(st), st, [k new_children...])
+    end
     return (new_node, changed)
 end
 
@@ -417,25 +435,44 @@ end
 """
     remove_macrocalls(st0::JS.SyntaxTree) -> JS.SyntaxTree
 
-Convert `macrocall` nodes to `block` nodes while preserving binding provenance information
-in the arguments passed to macrocalls.
-
-This transformation converts `macrocall children...` to `block children...`, preserving
-the binding provenance information contained within expressions passed as arguments to
-macrocalls. As a result, LSP features that rely on binding source information (primarily
-using surface AST level information) can work in many cases based on binding resolution
-performed on the transformed tree `st0′`.
+Convert each `macrocall` node to a `block` node, keeping the arguments intact so that
+identifiers passed to macros retain their original source locations. The transformed
+tree can then be fed into scope/binding resolution to drive LSP features such as
+find-references, document-highlight, rename, and go-to-definition.
 
 This is useful because JuliaLowering's macro expansion (for old-style macros) loses
 fine-grained provenance information, reducing it to line-level granularity. For example,
 in `@noop foo`, highlighting `foo` would incorrectly highlight `@noop foo` entirely
-if macro expansion were performed. By removing macrocalls before lowering, we
-preserve precise source locations for bindings outside of macrocalls.
+if macro expansion were performed. By removing macrocalls before lowering, we preserve
+precise source locations for bindings outside of macrocalls, at the cost of discarding
+any bindings or control flow the macros themselves would have introduced.
 
-Note that bindings inside macrocalls will not be analyzed, but this trade-off might be
-preferable to having incorrect source ranges. This is especially true for LSP features
-like document-highlight and find-references where source-level information is critical,
-as information inside macros is often not needed for these features.
+!!! note "Usage scope"
+    The transformed tree is intended only for scope/binding resolution. It
+    intentionally does not preserve semantic validity: replacing a macrocall with a
+    raw `block` can place statements like `return` into expression contexts that are
+    not legal Julia (e.g. `x = (begin ...; return nothing; end)`). Feeding the
+    transformed tree into flow-sensitive analyses such as `analyze_def_use` or
+    `analyze_unreachable_code!` can therefore produce nonsensical results and must
+    be avoided.
+
+!!! note "Assumption on macro behavior"
+    Macros are treated as if `@m expr` behaved like `begin expr end` — i.e. they
+    neither introduce new syntactic structures, bind new names, nor alter control
+    flow. Macros that change syntactic shape or binding structure (e.g.
+    `@nospecialize`, `@generated`, `@kwdef`, `@main`) are handled as explicit
+    special cases inside `_remove_macrocalls`. Macros that merely rewrite control
+    flow (e.g. `@something`/`@assert` into conditional `return`/`throw`) are
+    tolerated: scope resolution on the transformed tree may be less precise in
+    their vicinity — e.g. reachability and post-macro-only bindings — but still
+    yields useful results for source-level LSP features.
+
+!!! note "Future direction"
+    This transform is a workaround for old-style macros that lose provenance during
+    expansion. New-style JuliaLowering macros preserve provenance and are therefore
+    exempt from removal (see the `@kwdef` branch in `_remove_macrocalls`). As more
+    macros migrate to the new style, the scope of this transformation is expected to
+    shrink.
 """
 function remove_macrocalls(st0::JS.SyntaxTree)
     ensure_jl_source_attr!(JS.syntax_graph(st0))

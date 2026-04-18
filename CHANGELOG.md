@@ -71,6 +71,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - `textDocument/rename` on imported names now preserves the source-module name by introducing or updating an `as` alias instead of rewriting the original name. For example, renaming `sin` in `using Base: sin` produces `using Base: sin as newsin` plus `newsin` at every use site — avoiding the previous result of `using Base: newsin` which would not resolve. `using M: name as alias` simply renames the alias; `import M.name` and `import M` extend to `import M.name as newname` / `import M as newname`. Conversely, renaming an alias back to its source name (e.g. renaming `randcycle2` back to `randcycle` in `using Random: randcycle as randcycle2`) drops the ` as …` suffix so the import simplifies to `using Random: randcycle`. In the few forms where Julia does not accept `as` at all (`using M`, `using M, N`, `using M.Sub`), rename falls back to a bare replacement.
 
+- Fixed `textDocument/references`, `textDocument/documentHighlight`, `textDocument/definition`, `textDocument/declaration`, and `textDocument/rename` silently returning no results inside top-level definitions that combine a compound-assignment operator with a macro call (e.g. `x += @elapsed foo()`). The [reference-count code lens](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/code_lens-references) on such definitions previously reported `0 references` even when the symbol was used.
+
 ## 2026-04-14
 
 - Commit: [`d1ebbb2`](https://github.com/aviatesk/JETLS.jl/commit/d1ebbb2)

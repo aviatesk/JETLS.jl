@@ -236,6 +236,54 @@ end
             end
         end
     end
+
+    # Compound-assignment operators (`+=`, `-=`, ...) combined with a macrocall
+    # (`x += @elapsed ...`) parse into a `K"unknown_head"` node whose `name_val`
+    # attribute carries the operator name; losing that attribute during
+    # `remove_macrocalls` reconstruction used to make scope-resolution silently
+    # fail, causing `find_references` to return empty on symbols defined in such
+    # functions.
+    @testset "compound assignment with macrocall" begin
+        # Cursor on the definition site of a function whose body contains
+        # `+= @elapsed ...`: select_target_binding must succeed.
+        let code = """
+            function │foo│(x)
+                t = 0.0
+                t += @elapsed sleep(0)
+                return x + t
+            end
+
+            result = │foo│(1)
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 4
+            for pos in positions
+                refs = find_references(clean_code, pos)
+                @test length(refs) == 2
+            end
+        end
+
+        # Call site lives inside another function that also uses `+= @elapsed`:
+        # exercises find_global_binding_occurrences!'s per-statement lowering.
+        let code = """
+            function │foo│(x)
+                return x + 1
+            end
+
+            function bar()
+                total = 0.0
+                total += @elapsed │foo│(1)
+                return total
+            end
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 4
+            for pos in positions
+                refs = find_references(clean_code, pos)
+                @test length(refs) == 2
+            end
+        end
+    end
 end
 
 end # module test_references

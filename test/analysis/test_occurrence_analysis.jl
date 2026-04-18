@@ -299,6 +299,21 @@ ismacro_callback(ismacro) = @test ismacro[]
                 binding.name == "args" && binding.kind === :argument && any(o->o.kind===:use, occurrences)
             end
         end
+        # Compound-assignment operators (`+=`, `-=`, ...) are parsed as
+        # `K"unknown_head"` with a `name_val` attribute that JuliaLowering's
+        # validator requires. `remove_macrocalls` must preserve `name_val` when
+        # reconstructing the parent node, otherwise lowering fails.
+        with_binding_occurrences("""
+            function func()
+                t = 0.0
+                t += @elapsed sleep(0)
+                return t
+            end
+            """; remove_macrocalls=true) do binding_occurrences
+            @test any(binding_occurrences) do (binding, occurrences)
+                binding.name == "t" && binding.kind === :local && any(o->o.kind===:use, occurrences)
+            end
+        end
     end
 
     # aviatesk/JETLS.jl#480
@@ -455,6 +470,31 @@ end
             binfo, occs = only(boccs)
             @test binfo.name == "Inner"
             @test only(occs).kind === :decl
+        end
+    end
+
+    # Inert (quoted) content inside `@generated` functions is processed via
+    # `_unwrap_interpolations`, which must preserve `name_val` on ancestors of
+    # interpolations (e.g. `K"unknown_head"` from compound assignments like `+=`)
+    # so that lowering succeeds and global bindings inside the quote are recorded.
+    @testset "inert content with compound assignment + interpolation" begin
+        let boccs = get_binding_occurrences_st0("""
+                @generated function f(x)
+                    return quote
+                        total = 0
+                        sleep(0)
+                        total += \$x
+                        return total
+                    end
+                end
+                """; include_global_bindings=true)
+            @test boccs !== nothing
+            # `sleep` is referenced only inside the inert block, so finding it
+            # requires `_unwrap_interpolations` to succeed through the `+=` node.
+            i = @something findfirst(((b, _),) -> b.name == "sleep", collect(boccs))
+            binfo, occs = collect(boccs)[i]
+            @test binfo.kind === :global
+            @test any(o -> o.kind === :use, occs)
         end
     end
 end
