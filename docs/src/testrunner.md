@@ -27,12 +27,12 @@ interactive code lenses above each `@testset`:
 > ```@raw html
 > <div class="display-light-only">
 > ```
-> ![TestRunner Code Lens](assets/testrunner-code-lens.png)
+> ![TestRunner Code Lens](assets/testrunner/code-lens.png)
 > ```@raw html
 > </div>
 > <div class="display-dark-only">
 > ```
-> ![TestRunner Code Lens](assets/testrunner-code-lens-dark.png)
+> ![TestRunner Code Lens](assets/testrunner/code-lens-dark.png)
 > ```@raw html
 > </div>
 > ```
@@ -44,12 +44,12 @@ After running tests, the code lens is refreshed as follows:
 > ```@raw html
 > <div class="display-light-only">
 > ```
-> ![TestRunner Code Lens with Results](assets/testrunner-code-lens-refreshed.png)
+> ![TestRunner Code Lens with Results](assets/testrunner/code-lens-refreshed.png)
 > ```@raw html
 > </div>
 > <div class="display-dark-only">
 > ```
-> ![TestRunner Code Lens with Results](assets/testrunner-code-lens-refreshed-dark.png)
+> ![TestRunner Code Lens with Results](assets/testrunner/code-lens-refreshed-dark.png)
 > ```@raw html
 > </div>
 > ```
@@ -62,12 +62,12 @@ You can trigger test runs via "code actions" that are explicitly requested by th
 > ```@raw html
 > <div class="display-light-only">
 > ```
-> ![TestRunner Code Actions](assets/testrunner-code-actions.png)
+> ![TestRunner Code Actions](assets/testrunner/code-actions.png)
 > ```@raw html
 > </div>
 > <div class="display-dark-only">
 > ```
-> ![TestRunner Code Actions](assets/testrunner-code-actions-dark.png)
+> ![TestRunner Code Actions](assets/testrunner/code-actions-dark.png)
 > ```@raw html
 > </div>
 > ```
@@ -76,12 +76,12 @@ You can trigger test runs via "code actions" that are explicitly requested by th
 > ```@raw html
 > <div class="display-light-only">
 > ```
-> ![TestRunner Code Actions @test case](assets/testrunner-code-actions-test-case.png)
+> ![TestRunner Code Actions @test case](assets/testrunner/code-actions-test-case.png)
 > ```@raw html
 > </div>
 > <div class="display-dark-only">
 > ```
-> ![TestRunner Code Actions @test case](assets/testrunner-code-actions-test-case-dark.png)
+> ![TestRunner Code Actions @test case](assets/testrunner/code-actions-test-case-dark.png)
 > ```@raw html
 > </div>
 > ```
@@ -97,12 +97,12 @@ lines where the failures occurred, making it easy to identify and fix issues:
 > ```@raw html
 > <div class="display-light-only">
 > ```
-> ![TestRunner Diagnostics](assets/testrunner-diagnostics.png)
+> ![TestRunner Diagnostics](assets/testrunner/diagnostics.png)
 > ```@raw html
 > </div>
 > <div class="display-dark-only">
 > ```
-> ![TestRunner Diagnostics](assets/testrunner-diagnostics-dark.png)
+> ![TestRunner Diagnostics](assets/testrunner/diagnostics-dark.png)
 > ```@raw html
 > </div>
 > ```
