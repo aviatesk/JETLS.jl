@@ -56,6 +56,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Diagnostic messages are now sent as `MarkupContent` when the client advertises the [`textDocument.diagnostic.markupMessageSupport`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#diagnosticClientCapabilities) capability (added in LSP 3.18). In supporting clients (e.g. recent Sublime LSP), Markdown formatting such as inline code delimited by backticks now renders properly instead of showing the literal characters. (https://github.com/aviatesk/JETLS.jl/pull/633)
 
+### Fixed
+
+- Fixed `textDocument/references` so that `includeDeclaration=false` now correctly excludes method definitions and declarations of the target binding. As a side benefit, the [reference-count code lens](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/code_lens-references) (which queries references with `includeDeclaration=false`) now reports accurate counts, where the declaration site was previously being counted as an extra reference.
+
 ## 2026-04-14
 
 - Commit: [`d1ebbb2`](https://github.com/aviatesk/JETLS.jl/commit/d1ebbb2)
