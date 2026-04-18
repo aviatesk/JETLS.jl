@@ -7,6 +7,18 @@ using JETLS.LSP
 include(normpath(pkgdir(JETLS), "test", "setup.jl"))
 include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
 
+function rename_testcase(
+        code::AbstractString, n::Int;
+        filename::AbstractString = joinpath(@__DIR__, "testfile.jl"),
+    )
+    clean_code, positions = JETLS.get_text_and_positions(code)
+    @test length(positions) == n
+    fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
+    @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+    furi = filename2uri(filename)
+    return fi, positions, furi
+end
+
 @testset "local_binding_rename_preparation" begin
     state = JETLS.ServerState()
     let code = """
@@ -14,12 +26,7 @@ include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
             │pri│ntln│(│xx│x│, yyy)
         end
         """
-        filename = joinpath(@__DIR__, "testfile.jl")
-        clean_code, positions = JETLS.get_text_and_positions(code)
-        @test length(positions) == 9
-        fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
-        furi = filename2uri(filename)
-        @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+        fi, positions, furi = rename_testcase(code, 9)
         for (i, pos) in enumerate(positions)
             if i in (4,5,6) # println
                 rename_prep = JETLS.local_binding_rename_preparation(state, furi, fi, pos, @__MODULE__)
@@ -35,11 +42,7 @@ include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
     let code = """
         func(xxx) = println(xxx, 4│2)
         """
-        filename = joinpath(@__DIR__, "testfile.jl")
-        clean_code, positions = JETLS.get_text_and_positions(code)
-        @test length(positions) == 1
-        fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
-        furi = filename2uri(filename)
+        fi, positions, furi = rename_testcase(code, 1)
         rename_prep = JETLS.local_binding_rename_preparation(state, furi, fi, only(positions), @__MODULE__)
         @test isnothing(rename_prep)
     end
@@ -48,12 +51,7 @@ include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
         let code = """
             func(::│TTT│) where │TTT│<:Integer = zero(│TTT│)
             """
-            filename = joinpath(@__DIR__, "testfile.jl")
-            clean_code, positions = JETLS.get_text_and_positions(code)
-            @test length(positions) == 6
-            fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
-            furi = filename2uri(filename)
-            @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+            fi, positions, furi = rename_testcase(code, 6)
             for pos in positions
                 rename_prep = JETLS.local_binding_rename_preparation(state, furi, fi, pos, @__MODULE__)
                 @test !isnothing(rename_prep)
@@ -69,12 +67,7 @@ include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
                 println(│xxx│, yyy)
             end
             """
-            filename = joinpath(@__DIR__, "testfile.jl")
-            clean_code, positions = JETLS.get_text_and_positions(code)
-            @test length(positions) == 4
-            fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
-            furi = filename2uri(filename)
-            @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+            fi, positions, furi = rename_testcase(code, 4)
             for pos in positions
                 rename_prep = JETLS.local_binding_rename_preparation(state, furi, fi, pos, @__MODULE__)
                 @test !isnothing(rename_prep)
@@ -87,12 +80,7 @@ include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
         let code = """
             func(│xxx│) = @something rand((│xxx│, nothing)) return nothing
             """
-            filename = joinpath(@__DIR__, "testfile.jl")
-            clean_code, positions = JETLS.get_text_and_positions(code)
-            @test length(positions) == 4
-            fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
-            furi = filename2uri(filename)
-            @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+            fi, positions, furi = rename_testcase(code, 4)
             for pos in positions
                 rename_prep = JETLS.local_binding_rename_preparation(state, furi, fi, pos, @__MODULE__)
                 @test !isnothing(rename_prep)
@@ -109,12 +97,7 @@ end
             │pri│ntln│(│xx│x│, yyy)
         end
         """
-        filename = joinpath(@__DIR__, "testfile.jl")
-        clean_code, positions = JETLS.get_text_and_positions(code)
-        @test length(positions) == 9
-        fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
-        @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
-        furi = filename2uri("Untitled-" * filename)
+        fi, positions, furi = rename_testcase(code, 9)
         for (i, pos) in enumerate(positions)
             if i in (4,5,6) # println, should never be called if client supports rename prepare
                 rename = JETLS.local_binding_rename(server, furi, fi, pos, @__MODULE__, "zzz")
@@ -140,11 +123,7 @@ end
 
     # Guard against invalid variable names
     let code = "func(xx│x, yyy) = println(xxx, yyy)"
-        filename = joinpath(@__DIR__, "testfile.jl")
-        clean_code, positions = JETLS.get_text_and_positions(code)
-        @test length(positions) == 1
-        fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
-        furi = filename2uri("Untitled-" * filename)
+        fi, positions, furi = rename_testcase(code, 1)
         let
             (; result, error) = JETLS.local_binding_rename(server, furi, fi, only(positions), @__MODULE__, "zzz zzz")
             @test isnothing(result) && error isa ResponseError
@@ -161,12 +140,7 @@ end
 
     # Allow renaming on var"names"
     let code = """func(var"│xxx│") = println(var"│xxx│")"""
-        filename = joinpath(@__DIR__, "testfile.jl")
-        clean_code, positions = JETLS.get_text_and_positions(code)
-        @test length(positions) == 4
-        fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
-        @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
-        furi = filename2uri("Untitled-" * filename)
+        fi, positions, furi = rename_testcase(code, 4)
         for pos in positions
             (; result, error) = JETLS.local_binding_rename(server, furi, fi, pos, @__MODULE__, "zzz zzz")
             @test result isa WorkspaceEdit && isnothing(error)
@@ -189,12 +163,7 @@ end
         let code = """
             func(::│TTT│) where │TTT│<:Integer = zero(│TTT│)
             """
-            filename = joinpath(@__DIR__, "testfile.jl")
-            clean_code, positions = JETLS.get_text_and_positions(code)
-            @test length(positions) == 6
-            fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
-            @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
-            furi = filename2uri("Untitled-" * filename)
+            fi, positions, furi = rename_testcase(code, 6)
             for pos in positions
                 (; result, error) = JETLS.local_binding_rename(server, furi, fi, pos, @__MODULE__, "SSS")
                 @test result isa WorkspaceEdit && isnothing(error)
@@ -225,12 +194,7 @@ end
                 println(│xxx│, yyy)
             end
             """
-            filename = joinpath(@__DIR__, "testfile.jl")
-            clean_code, positions = JETLS.get_text_and_positions(code)
-            @test length(positions) == 4
-            fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
-            @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
-            furi = filename2uri("Untitled-" * filename)
+            fi, positions, furi = rename_testcase(code, 4)
             for pos in positions
                 (; result, error) = JETLS.local_binding_rename(server, furi, fi, pos, @__MODULE__, "zzz")
                 @test result isa WorkspaceEdit && isnothing(error)
@@ -254,12 +218,7 @@ end
         let code = """
             func(│xxx│) = @something rand((│xxx│, nothing)) return nothing
             """
-            filename = joinpath(@__DIR__, "testfile.jl")
-            clean_code, positions = JETLS.get_text_and_positions(code)
-            @test length(positions) == 4
-            fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
-            @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
-            furi = filename2uri("Untitled-" * filename)
+            fi, positions, furi = rename_testcase(code, 4)
             for pos in positions
                 (; result, error) = JETLS.local_binding_rename(server, furi, fi, pos, @__MODULE__, "yyy")
                 @test result isa WorkspaceEdit && isnothing(error)
@@ -285,12 +244,7 @@ end
                 return :(copy(│x│) + │x│)
             end
             """
-            filename = joinpath(@__DIR__, "testfile.jl")
-            clean_code, positions = JETLS.get_text_and_positions(code)
-            @test length(positions) == 6
-            fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
-            @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
-            furi = filename2uri("Untitled-" * filename)
+            fi, positions, furi = rename_testcase(code, 6)
             for pos in positions
                 (; result, error) = JETLS.local_binding_rename(
                     server, furi, fi, pos, @__MODULE__, "y")
@@ -309,12 +263,7 @@ end
                 return :(zero(│T│))
             end
             """
-            filename = joinpath(@__DIR__, "testfile.jl")
-            clean_code, positions = JETLS.get_text_and_positions(code)
-            @test length(positions) == 6
-            fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
-            @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
-            furi = filename2uri("Untitled-" * filename)
+            fi, positions, furi = rename_testcase(code, 6)
             for pos in positions
                 (; result, error) = JETLS.local_binding_rename(
                     server, furi, fi, pos, @__MODULE__, "S")
@@ -336,12 +285,7 @@ end
         │bar│ = │foo│()
         │println│(│bar│)
         """
-        filename = joinpath(@__DIR__, "testfile.jl")
-        clean_code, positions = JETLS.get_text_and_positions(code)
-        @test length(positions) == 10
-        fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
-        furi = filename2uri(filename)
-        @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+        fi, positions, furi = rename_testcase(code, 10)
 
         for pos in positions[1:2]
             rename_prep = JETLS.global_binding_rename_preparation(state, furi, fi, pos, @__MODULE__)
@@ -376,11 +320,7 @@ end
 
     # Non-binding position should be rejected
     let code = "func(xxx) = println(xxx, 4│2)"
-        filename = joinpath(@__DIR__, "testfile.jl")
-        clean_code, positions = JETLS.get_text_and_positions(code)
-        @test length(positions) == 1
-        fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
-        furi = filename2uri(filename)
+        fi, positions, furi = rename_testcase(code, 1)
         rename_prep = JETLS.global_binding_rename_preparation(
             state, furi, fi, only(positions), @__MODULE__)
         @test isnothing(rename_prep)
@@ -394,11 +334,7 @@ end
             end
             @mymacro println("hello")
             """
-            filename = joinpath(@__DIR__, "testfile.jl")
-            clean_code, positions = JETLS.get_text_and_positions(code)
-            @test length(positions) == 2
-            fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
-            furi = filename2uri(filename)
+            fi, positions, furi = rename_testcase(code, 2)
             # Only test start position (end position selects implicit macro arg)
             rename_prep = JETLS.global_binding_rename_preparation(
                 state, furi, fi, positions[1], @__MODULE__)
@@ -413,11 +349,7 @@ end
             end
             │@my│macro println("hello")
             """
-            filename = joinpath(@__DIR__, "testfile.jl")
-            clean_code, positions = JETLS.get_text_and_positions(code)
-            @test length(positions) == 2
-            fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
-            furi = filename2uri(filename)
+            fi, positions, furi = rename_testcase(code, 2)
             for pos in positions
                 rename_prep = JETLS.global_binding_rename_preparation(
                     state, furi, fi, pos, @__MODULE__)
@@ -435,12 +367,7 @@ end
         baz() = │foo│()
         │foo│(x) = x + 1
         """
-        filename = joinpath(@__DIR__, "testfile.jl")
-        clean_code, positions = JETLS.get_text_and_positions(code)
-        @test length(positions) == 6
-        fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
-        @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
-        furi = filename2uri("Untitled-" * filename)
+        fi, positions, furi = rename_testcase(code, 6)
         for pos in positions
             (; result, error) = JETLS.global_binding_rename(server, furi, fi, pos, @__MODULE__, "qux")
             @test result isa WorkspaceEdit && isnothing(error)
@@ -462,12 +389,7 @@ end
             │@│mymacro println("hello")
             │@│mymacro println("world")
             """
-            filename = joinpath(@__DIR__, "testfile.jl")
-            clean_code, positions = JETLS.get_text_and_positions(code)
-            @test length(positions) == 5
-            fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
-            @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
-            furi = filename2uri("Untitled-" * filename)
+            fi, positions, furi = rename_testcase(code, 5)
             # Test from definition position
             let pos = positions[1]
                 (; result, error) = JETLS.global_binding_rename(
@@ -504,10 +426,7 @@ end
             end
             │@│mymacro println("hello")
             """
-            filename = joinpath(@__DIR__, "testfile.jl")
-            clean_code, positions = JETLS.get_text_and_positions(code)
-            fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
-            furi = filename2uri("Untitled-" * filename)
+            fi, positions, furi = rename_testcase(code, 3)
             for pos in positions
                 (; result, error) = JETLS.global_binding_rename(
                     server, furi, fi, pos, @__MODULE__, "@newmacro")
@@ -527,11 +446,7 @@ end
             export │foo│
             bar() = │foo│()
             """
-            filename = joinpath(@__DIR__, "testfile.jl")
-            clean_code, positions = JETLS.get_text_and_positions(code)
-            @test length(positions) == 6
-            fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
-            furi = filename2uri("Untitled-" * filename)
+            fi, positions, furi = rename_testcase(code, 6)
             for pos in positions
                 (; result, error) = JETLS.global_binding_rename(
                     server, furi, fi, pos, @__MODULE__, "qux")
@@ -555,11 +470,8 @@ end
 
         for target_name = ("foo.jl", "subdir/foo.jl", "README.md")
             let code = """include("│$(target_name)│")"""
-                filename = joinpath(dir, "main.jl")
-                clean_code, positions = JETLS.get_text_and_positions(code)
-                @test length(positions) == 2
-                fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
-                furi = filename2uri(filename)
+                fi, positions, furi = rename_testcase(code, 2;
+                    filename = joinpath(dir, "main.jl"))
                 for pos in positions
                     rename_prep = JETLS.file_rename_preparation(state, furi, fi, pos)
                     @test !isnothing(rename_prep)
@@ -569,10 +481,8 @@ end
         end
 
         let code = """include("│nonexistent.jl│")"""
-            filename = joinpath(dir, "main.jl")
-            clean_code, positions = JETLS.get_text_and_positions(code)
-            fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
-            furi = filename2uri(filename)
+            fi, positions, furi = rename_testcase(code, 2;
+                filename = joinpath(dir, "main.jl"))
             rename_prep = JETLS.file_rename_preparation(state, furi, fi, positions[1])
             @test isnothing(rename_prep)
         end
@@ -584,11 +494,8 @@ end
     mktempdir() do dir
         touch(joinpath(dir, "foo.jl"))
         let code = """include("│foo.jl│")"""
-            filename = joinpath(dir, "main.jl")
-            clean_code, positions = JETLS.get_text_and_positions(code)
-            @test length(positions) == 2
-            fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
-            furi = filename2uri(filename)
+            fi, positions, furi = rename_testcase(code, 2;
+                filename = joinpath(dir, "main.jl"))
             for pos in positions
                 (; result, error) = JETLS.file_rename(server, furi, fi, pos, "bar.jl")
                 @test result isa WorkspaceEdit && isnothing(error)
