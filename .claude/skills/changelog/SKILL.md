@@ -41,3 +41,15 @@ Use the following subsections as needed (in this order):
 - When closing a GitHub issue, append
   `(Closed https://github.com/aviatesk/JETLS.jl/issues/NNN)`.
 - Use backticks for diagnostic names, function names, and code elements.
+
+## Entry content
+
+Write entries from the user's perspective. Describe what changed in
+terms of user-visible behavior — not implementation details.
+
+- Don't include internal mechanisms (AST node types, specific
+  JuliaLowering/JuliaSyntax internals, traversal strategies) unless a
+  user could reasonably observe or interact with them.
+- The "why" of a fix rarely matters to users; the "what" of the new
+  behavior does. If the prior behavior is worth mentioning, describe
+  its user-visible symptom, not its cause.
