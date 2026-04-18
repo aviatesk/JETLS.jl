@@ -25,8 +25,16 @@ interactive code lenses above each `@testset`:
 
 > - `▶ Run "testset_name"`: Run the testset for the first time
 > ```@raw html
-> <img class="display-light-only" src="../assets/testrunner-code-lens.png" alt="TestRunner Code Lens"/>
-> <img class="display-dark-only" src="../assets/testrunner-code-lens-dark.png" alt="TestRunner Code Lens"/>
+> <div class="display-light-only">
+> ```
+> ![TestRunner Code Lens](assets/testrunner-code-lens.png)
+> ```@raw html
+> </div>
+> <div class="display-dark-only">
+> ```
+> ![TestRunner Code Lens](assets/testrunner-code-lens-dark.png)
+> ```@raw html
+> </div>
 > ```
 
 After running tests, the code lens is refreshed as follows:
@@ -34,8 +42,16 @@ After running tests, the code lens is refreshed as follows:
 > - `☰ Open logs`: View the detailed test output in a new editor tab
 > - `✓ Clear result`: Remove the test results and inline diagnostics
 > ```@raw html
-> <img class="display-light-only" src="../assets/testrunner-code-lens-refreshed.png" alt="TestRunner Code Lens with Results"/>
-> <img class="display-dark-only" src="../assets/testrunner-code-lens-refreshed-dark.png" alt="TestRunner Code Lens with Results"/>
+> <div class="display-light-only">
+> ```
+> ![TestRunner Code Lens with Results](assets/testrunner-code-lens-refreshed.png)
+> ```@raw html
+> </div>
+> <div class="display-dark-only">
+> ```
+> ![TestRunner Code Lens with Results](assets/testrunner-code-lens-refreshed-dark.png)
+> ```@raw html
+> </div>
 > ```
 
 ### [Code actions](@id testrunner/features/code-actions)
@@ -44,14 +60,30 @@ You can trigger test runs via "code actions" that are explicitly requested by th
 
 > - Inside a `@testset` block: Run the entire testset
 > ```@raw html
-> <img class="display-light-only" src="../assets/testrunner-code-actions.png" alt="TestRunner Code Actions"/>
-> <img class="display-dark-only" src="../assets/testrunner-code-actions-dark.png" alt="TestRunner Code Actions"/>
+> <div class="display-light-only">
+> ```
+> ![TestRunner Code Actions](assets/testrunner-code-actions.png)
+> ```@raw html
+> </div>
+> <div class="display-dark-only">
+> ```
+> ![TestRunner Code Actions](assets/testrunner-code-actions-dark.png)
+> ```@raw html
+> </div>
 > ```
 
 > - On an individual `@test` macro: Run just that specific test case
 > ```@raw html
-> <img class="display-light-only" src="../assets/testrunner-code-actions-test-case.png" alt="TestRunner Code Actions @test case"/>
-> <img class="display-dark-only" src="../assets/testrunner-code-actions-test-case-dark.png" alt="TestRunner Code Actions @test case"/>
+> <div class="display-light-only">
+> ```
+> ![TestRunner Code Actions @test case](assets/testrunner-code-actions-test-case.png)
+> ```@raw html
+> </div>
+> <div class="display-dark-only">
+> ```
+> ![TestRunner Code Actions @test case](assets/testrunner-code-actions-test-case-dark.png)
+> ```@raw html
+> </div>
 > ```
 
 Note that when running individual `@test` cases, the error results are displayed
@@ -63,8 +95,16 @@ pop up message to view detailed error messages that persist.
 Failed tests are displayed as diagnostics (red squiggly lines) at the exact
 lines where the failures occurred, making it easy to identify and fix issues:
 > ```@raw html
-> <img class="display-light-only" src="../assets/testrunner-diagnostics.png" alt="TestRunner Diagnostics"/>
-> <img class="display-dark-only" src="../assets/testrunner-diagnostics-dark.png" alt="TestRunner Diagnostics"/>
+> <div class="display-light-only">
+> ```
+> ![TestRunner Diagnostics](assets/testrunner-diagnostics.png)
+> ```@raw html
+> </div>
+> <div class="display-dark-only">
+> ```
+> ![TestRunner Diagnostics](assets/testrunner-diagnostics-dark.png)
+> ```@raw html
+> </div>
 > ```
 
 ### [Progress notifications](@id testrunner/features/progress-notifications)
