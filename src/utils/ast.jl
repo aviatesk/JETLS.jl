@@ -127,6 +127,104 @@ function is_doc0(st0::JS.SyntaxTree)
 end
 
 """
+    collect_import_names(st0::JS.SyntaxTree) -> Vector{JS.SyntaxTree}
+
+Return the child nodes of an `import`/`using`/`export`/`public` statement that
+represent the named items being imported/exported/declared public. For
+`using M: a, b`, returns `[a, b]`; for `using M.A` (no `:`), returns the
+imported path nodes.
+"""
+function collect_import_names(st0::JS.SyntaxTree)
+    kind = JS.kind(st0)
+    names = JS.SyntaxTree[]
+    if kind === JS.K"import" || kind === JS.K"using"
+        nchildren = JS.numchildren(st0)
+        if nchildren == 1
+            child = st0[1]
+            if JS.kind(child) === JS.K":"
+                for i = 2:JS.numchildren(child)
+                    push!(names, child[i])
+                end
+            end
+        elseif nchildren > 1
+            for i = 1:nchildren
+                push!(names, st0[i])
+            end
+        end
+    elseif kind === JS.K"export" || kind === JS.K"public"
+        for i = 1:JS.numchildren(st0)
+            push!(names, st0[i])
+        end
+    end
+    return names
+end
+
+"""
+    get_local_import_identifier(st0::JS.SyntaxTree) -> Union{JS.SyntaxTree, Nothing}
+
+Return the `K"Identifier"` node that represents the local binding introduced
+by a single element of an `import`/`using` statement, or `nothing` if `st0`
+does not introduce a local binding:
+- `using M: a` / `using M: a, b` — `a`/`b` directly
+- `using M: a as b` — the alias `b`
+- `import M.a` — the trailing component `a`
+"""
+function get_local_import_identifier(st0::JS.SyntaxTree)
+    kind = JS.kind(st0)
+    if kind === JS.K"as"
+        # `using M: a as b` -> identifier for "b"
+        return st0[2]
+    elseif kind === JS.K"Identifier"
+        return st0
+    elseif kind === JS.K"."
+        # `import M.a` style within a colon list
+        npath = JS.numchildren(st0)
+        if npath >= 1
+            last_st = st0[npath]
+            if JS.kind(last_st) === JS.K"Identifier"
+                return last_st
+            end
+        end
+        return nothing
+    else
+        return nothing
+    end
+end
+
+function is_sorted_imports(names::Vector{JS.SyntaxTree})
+    length(names) < 2 && return true
+    for i = 1:length(names)-1
+        key1 = get_import_sort_key(names[i])
+        key2 = get_import_sort_key(names[i+1])
+        if key1 > key2
+            return false
+        end
+    end
+    return true
+end
+
+function get_import_sort_key(st0::JS.SyntaxTree)
+    kind = JS.kind(st0)
+    if kind === JS.K"as"
+        return get_import_sort_key(st0[1])
+    elseif kind === JS.K"."
+        parts = String[]
+        for i = 1:JS.numchildren(st0)
+            child = st0[i]
+            ckind = JS.kind(child)
+            if ckind === JS.K"Identifier"
+                push!(parts, JS.sourcetext(child))
+            end
+        end
+        return join(parts, ".")
+    elseif kind === JS.K"Identifier"
+        return JS.sourcetext(st0)
+    else
+        return JS.sourcetext(st0)
+    end
+end
+
+"""
     foreach_inert_identifier(callback, st::JS.SyntaxTree)
 
 Traverse `st` looking for `K"inert"` nodes, and call `f(id_node)` for each
