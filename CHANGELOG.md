@@ -64,6 +64,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Locally-introduced names from `import`/`using` statements are now treated as local declarations. This includes every form that actually binds a name: `using A` / `import A`, `using A, B`, dotted paths like `using A.B` (trailing `B`), relative paths like `using .Inner`, and explicit names in `using A: x, y` / `using A: x as y`. `textDocument/documentHighlight`, `textDocument/references`, and `textDocument/rename` all now work when the cursor is placed on an imported name, and the import site participates in their results just like any other declaration site (e.g. `local x`).
 
+- `textDocument/rename` on imported names now preserves the source-module name by introducing or updating an `as` alias instead of rewriting the original name. For example, renaming `sin` in `using Base: sin` produces `using Base: sin as newsin` plus `newsin` at every use site — avoiding the previous result of `using Base: newsin` which would not resolve. `using M: name as alias` simply renames the alias; `import M.name` and `import M` extend to `import M.name as newname` / `import M as newname`. Conversely, renaming an alias back to its source name (e.g. renaming `randcycle2` back to `randcycle` in `using Random: randcycle as randcycle2`) drops the ` as …` suffix so the import simplifies to `using Random: randcycle`. In the few forms where Julia does not accept `as` at all (`using M`, `using M, N`, `using M.Sub`), rename falls back to a bare replacement.
+
 ## 2026-04-14
 
 - Commit: [`d1ebbb2`](https://github.com/aviatesk/JETLS.jl/commit/d1ebbb2)
