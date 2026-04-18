@@ -450,6 +450,17 @@ function compute_binding_occurrences_st0(
         # lowering requires `soft_scope`.
         is_notebook_uri(state, uri)
     (; mod) = get_context_info(state, uri, offset_to_xy(fi, JS.first_byte(st0)); lookup_func)
+
+    # Lowering `export`/`public` statements collapses their listed identifiers into opaque
+    # `K"Value"` nodes and records no `BindingInfo` for them, so the usual traversal finds nothing.
+    # Handle them directly: each child identifier is recorded as a `:use` of the
+    # corresponding global binding in the surrounding module.
+    if include_global_bindings && JS.kind(st0) in JS.KSet"export public"
+        binding_occurrences = Dict{JL.BindingInfo,Set{BindingOccurrence{typeof(st0)}}}()
+        collect_export_public_occurrences!(binding_occurrences, st0, mod)
+        return binding_occurrences
+    end
+
     (; ctx3, st3) = try
         # Remove macros to preserve precise source locations.
         # TODO: This won't be necessary once JuliaLowering can preserve precise
@@ -472,6 +483,23 @@ function compute_binding_occurrences_st0(
     end
 
     return binding_occurrences
+end
+
+function collect_export_public_occurrences!(
+        occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence{Tree3}}},
+        st0::Tree3, mod::Module
+    ) where Tree3<:JS.SyntaxTree
+    JS.kind(st0) in JS.KSet"export public" || return occurrences
+    for i = 1:JS.numchildren(st0)
+        child = st0[i]
+        JS.kind(child) === JS.K"Identifier" || continue
+        name = get(child, :name_val, nothing)
+        name isa AbstractString || continue
+        binfo = JL.BindingInfo(0, name, :global, 0; mod)
+        target_set = get!(Set{BindingOccurrence{Tree3}}, occurrences, binfo)
+        push!(target_set, BindingOccurrence{Tree3}(child, :use))
+    end
+    return occurrences
 end
 
 function collect_macrocall_occurrences!(

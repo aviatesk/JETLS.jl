@@ -60,6 +60,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed `textDocument/references` so that `includeDeclaration=false` now correctly excludes method definitions and declarations of the target binding. As a side benefit, the [reference-count code lens](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/code_lens-references) (which queries references with `includeDeclaration=false`) now reports accurate counts, where the declaration site was previously being counted as an extra reference.
 
+- Names listed in `export` and `public` statements are now treated as references to the surrounding module's global bindings. `textDocument/documentHighlight`, `textDocument/references`, `textDocument/definition`, and `textDocument/rename` all now work when the cursor is placed on an exported/public name, and the export/public site is included in highlight and reference results (and rewritten by rename) for the corresponding binding.
+
 ## 2026-04-14
 
 - Commit: [`d1ebbb2`](https://github.com/aviatesk/JETLS.jl/commit/d1ebbb2)

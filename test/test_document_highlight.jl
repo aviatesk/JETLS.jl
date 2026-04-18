@@ -467,6 +467,49 @@ end
                 end
             end
         end
+
+        @testset "export/public highlights" begin
+            let code = """
+                function │myfunc│(x)
+                    x + 1
+                end
+                export │myfunc│
+                │myfunc│(1)
+                """
+                fi, positions = highlight_testcase(code, 6)
+                for pos in positions
+                    highlights = JETLS.document_highlights(fi, pos)
+                    @test length(highlights) == 3
+                    @test count(highlights) do highlight
+                        highlight.range.start == positions[1] &&
+                        highlight.range.var"end" == positions[2] &&
+                        highlight.kind == DocumentHighlightKind.Write
+                    end == 1
+                    @test count(highlights) do highlight
+                        highlight.range.start == positions[3] &&
+                        highlight.range.var"end" == positions[4] &&
+                        highlight.kind == DocumentHighlightKind.Read
+                    end == 1
+                    @test count(highlights) do highlight
+                        highlight.range.start == positions[5] &&
+                        highlight.range.var"end" == positions[6] &&
+                        highlight.kind == DocumentHighlightKind.Read
+                    end == 1
+                end
+            end
+
+            let code = """
+                const │MYCONST│ = "constant"
+                public │MYCONST│
+                get_const() = │MYCONST│ + 1
+                """
+                fi, positions = highlight_testcase(code, 6)
+                for pos in positions
+                    highlights = JETLS.document_highlights(fi, pos)
+                    @test length(highlights) == 3
+                end
+            end
+        end
     end
 end
 

@@ -359,6 +359,33 @@ end
             @test length(occs) == 1
         end
     end
+
+    @testset "export/public" begin
+        let boccs = get_binding_occurrences_st0("export foo, @bar, baz";
+                                                include_global_bindings=true)
+            @test length(boccs) == 3
+            for name in ("foo", "@bar", "baz")
+                i = @something findfirst(((b, _),) -> b.name == name, collect(boccs))
+                binfo, occs = collect(boccs)[i]
+                @test binfo.kind === :global
+                @test length(occs) == 1
+                @test only(occs).kind === :use
+            end
+        end
+        let boccs = get_binding_occurrences_st0("public qux";
+                                                include_global_bindings=true)
+            @test length(boccs) == 1
+            binfo, occs = only(boccs)
+            @test binfo.name == "qux"
+            @test binfo.kind === :global
+            @test only(occs).kind === :use
+        end
+        # Without `include_global_bindings`, export/public yields no occurrences
+        # (no local/argument bindings to track).
+        let boccs = get_binding_occurrences_st0("export foo")
+            @test boccs !== nothing && isempty(boccs)
+        end
+    end
 end
 
 function with_global_binding_occurrences(
@@ -526,6 +553,45 @@ macro noop(ex) esc(ex) end
             """, "@m") do ranges, positions
             @test length(positions) == 10
             @test length(ranges) == 5
+        end
+    end
+
+    @testset "export/public" begin
+        with_global_binding_occurrences("""
+            │foo│() = 42
+            export │foo│
+            bar() = │foo│()
+            """, "foo") do ranges, positions
+            @test length(positions) == 6
+            @test length(ranges) == 3
+            @test Range(; start=positions[1], var"end"=positions[2]) in ranges
+            @test Range(; start=positions[3], var"end"=positions[4]) in ranges
+            @test Range(; start=positions[5], var"end"=positions[6]) in ranges
+        end
+        with_global_binding_occurrences("""
+            const │MY_CONST│ = 100
+            public │MY_CONST│
+            use_const() = │MY_CONST│ * 2
+            """, "MY_CONST") do ranges, positions
+            @test length(positions) == 6
+            @test length(ranges) == 3
+            @test Range(; start=positions[1], var"end"=positions[2]) in ranges
+            @test Range(; start=positions[3], var"end"=positions[4]) in ranges
+            @test Range(; start=positions[5], var"end"=positions[6]) in ranges
+        end
+        # Macro identifiers in export
+        with_global_binding_occurrences("""
+            macro │mymacro│(ex)
+                esc(ex)
+            end
+            export │@mymacro│
+            result = │@mymacro│ 42
+            """, "@mymacro") do ranges, positions
+            @test length(positions) == 6
+            @test length(ranges) == 3
+            @test Range(; start=positions[1], var"end"=positions[2]) in ranges
+            @test Range(; start=positions[3], var"end"=positions[4]) in ranges
+            @test Range(; start=positions[5], var"end"=positions[6]) in ranges
         end
     end
 end

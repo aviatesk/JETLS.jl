@@ -518,6 +518,31 @@ end
             end
         end
     end
+
+    @testset "export/public rename" begin
+        # Renaming from a cursor inside `export`/`public` should rewrite every
+        # occurrence, including the export statement itself.
+        let code = """
+            │foo│() = 42
+            export │foo│
+            bar() = │foo│()
+            """
+            filename = joinpath(@__DIR__, "testfile.jl")
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 6
+            fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
+            furi = filename2uri("Untitled-" * filename)
+            for pos in positions
+                (; result, error) = JETLS.global_binding_rename(
+                    server, furi, fi, pos, @__MODULE__, "qux")
+                @test result isa WorkspaceEdit && isnothing(error)
+                for (_, edits) in result.changes
+                    @test length(edits) == 3
+                    @test all(edit -> edit.newText == "qux", edits)
+                end
+            end
+        end
+    end
 end
 
 @testset "file_rename_preparation" begin
