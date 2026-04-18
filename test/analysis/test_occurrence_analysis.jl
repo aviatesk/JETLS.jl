@@ -468,7 +468,7 @@ function with_global_binding_occurrences(
     furi = filename2uri(filename)
     state = JETLS.ServerState()
 
-    @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+    @assert issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
 
     pos = first(positions)
     offset = JETLS.xy_to_offset(clean_code, pos, filename)

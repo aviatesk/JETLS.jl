@@ -17,9 +17,9 @@ end
 
 function highlight_testcase(code::AbstractString, n::Int)
     clean_code, positions = JETLS.get_text_and_positions(code)
-    @test length(positions) == n
+    @assert length(positions) == n
     fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
-    @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+    @assert issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
     return fi, positions
 end
 

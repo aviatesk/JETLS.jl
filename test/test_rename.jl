@@ -19,9 +19,9 @@ function rename_testcase(
         context_module::Union{Module,Nothing} = nothing,
     )
     clean_code, positions = JETLS.get_text_and_positions(code)
-    @test length(positions) == n
+    @assert length(positions) == n
     fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
-    @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+    @assert issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
     furi = filename2uri(filename)
     # Register the file with the provided server so that
     # `get_file_info`/`collect_global_rename_edits!` can actually find it —
