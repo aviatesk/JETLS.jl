@@ -15,6 +15,14 @@ struct MyType
     field::Int
 end
 
+function highlight_testcase(code::AbstractString, n::Int)
+    clean_code, positions = JETLS.get_text_and_positions(code)
+    @test length(positions) == n
+    fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
+    @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+    return fi, positions
+end
+
 @testset "document_highlights!" begin
     @testset "local binding highlights" begin
         let code = """
@@ -22,10 +30,7 @@ end
                 println(│xx│x│, yyy)
             end
             """
-            clean_code, positions = JETLS.get_text_and_positions(code)
-            @test length(positions) == 6
-            fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
-            @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+            fi, positions = highlight_testcase(code, 6)
             for pos in positions
                 highlights = JETLS.document_highlights(fi, pos)
                 @test length(highlights) == 2
@@ -47,10 +52,7 @@ end
                 println(xxx, │kw│)
             end
             """
-            clean_code, positions = JETLS.get_text_and_positions(code)
-            @test length(positions) == 4
-            fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
-            @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+            fi, positions = highlight_testcase(code, 4)
             for pos in positions
                 highlights = JETLS.document_highlights(fi, pos)
                 @test length(highlights) == 2
@@ -71,10 +73,7 @@ end
             code = """
             func(::│TTT│) where │TTT│<:Number = zero(│TTT│)
             """
-            clean_code, positions = JETLS.get_text_and_positions(code)
-            @test length(positions) == 6
-            fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
-            @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+            fi, positions = highlight_testcase(code, 6)
             for pos in positions
                 highlights = JETLS.document_highlights(fi, pos)
                 @test length(highlights) == 3
@@ -99,10 +98,7 @@ end
             code = """
             func(│xxx│) = @something rand((│xxx│, nothing)) return nothing
             """
-            clean_code, positions = JETLS.get_text_and_positions(code)
-            @test length(positions) == 4
-            fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
-            @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+            fi, positions = highlight_testcase(code, 4)
             for pos in positions
                 highlights = JETLS.document_highlights(fi, pos)
                 @test length(highlights) == 2
@@ -126,10 +122,7 @@ end
                 zzz, yyy
             end
             """
-            clean_code, positions = JETLS.get_text_and_positions(code)
-            @test length(positions) == 4
-            fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
-            @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+            fi, positions = highlight_testcase(code, 4)
             for pos in positions
                 highlights = JETLS.document_highlights(fi, pos)
                 @test length(highlights) == 2
@@ -152,10 +145,7 @@ end
                 println(│xxx│, │yyy│)
             end
             """
-            clean_code, positions = JETLS.get_text_and_positions(code)
-            @test length(positions) == 10
-            fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
-            @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+            fi, positions = highlight_testcase(code, 10)
             for i = (1,2,5,6,7,8) # x
                 pos = positions[i]
                 highlights = JETLS.document_highlights(fi, pos)
@@ -208,10 +198,7 @@ end
 
             result = │myfunc│(2, 3)
             """
-            clean_code, positions = JETLS.get_text_and_positions(code)
-            @test length(positions) == 8
-            fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
-            @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+            fi, positions = highlight_testcase(code, 8)
             for pos in positions
                 highlights = JETLS.document_highlights(fi, pos)
                 @test length(highlights) == 4
@@ -248,10 +235,7 @@ end
                 return │fib│(n-1) + │fib│(n-2)
             end
             """
-            clean_code, positions = JETLS.get_text_and_positions(code)
-            @test length(positions) == 6
-            fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
-            @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+            fi, positions = highlight_testcase(code, 6)
             for pos in positions
                 highlights = JETLS.document_highlights(fi, pos)
                 @test length(highlights) == 3
@@ -282,10 +266,7 @@ end
 
             │globalvar│ = 100
             """
-            clean_code, positions = JETLS.get_text_and_positions(code)
-            @test length(positions) == 6
-            fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
-            @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+            fi, positions = highlight_testcase(code, 6)
             for pos in positions
                 highlights = JETLS.document_highlights(fi, pos)
                 @test length(highlights) == 3
@@ -314,10 +295,7 @@ end
                 │MYCONST│
             end
             """
-            clean_code, positions = JETLS.get_text_and_positions(code)
-            @test length(positions) == 4
-            fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
-            @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+            fi, positions = highlight_testcase(code, 4)
             for pos in positions
                 highlights = JETLS.document_highlights(fi, pos)
                 @test length(highlights) == 2
@@ -343,10 +321,7 @@ end
                 @noop │MYCONST│
             end
             """
-            clean_code, positions = JETLS.get_text_and_positions(code)
-            @test length(positions) == 4
-            fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
-            @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+            fi, positions = highlight_testcase(code, 4)
             for pos in positions
                 highlights = JETLS.document_highlights(fi, pos)
                 @test length(highlights) == 2
@@ -374,10 +349,7 @@ end
 
             instance = │MyType│(42)
             """
-            clean_code, positions = JETLS.get_text_and_positions(code)
-            @test length(positions) == 6
-            fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
-            @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+            fi, positions = highlight_testcase(code, 6)
             for pos in positions
                 highlights = JETLS.document_highlights(fi, pos)
                 @test length(highlights) == 3
@@ -405,10 +377,7 @@ end
                     return :(copy(│x│) + │x│)
                 end
                 """
-                clean_code, positions = JETLS.get_text_and_positions(code)
-                @test length(positions) == 6
-                fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
-                @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+                fi, positions = highlight_testcase(code, 6)
                 for pos in positions
                     highlights = JETLS.document_highlights(fi, pos)
                     @test length(highlights) == 3
@@ -434,10 +403,7 @@ end
                     return :(zero(│T│))
                 end
                 """
-                clean_code, positions = JETLS.get_text_and_positions(code)
-                @test length(positions) == 6
-                fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
-                @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+                fi, positions = highlight_testcase(code, 6)
                 for pos in positions
                     highlights = JETLS.document_highlights(fi, pos)
                     @test length(highlights) == 3
@@ -452,10 +418,7 @@ end
                     println(│xxx│, yyy)
                 end
                 """
-                clean_code, positions = JETLS.get_text_and_positions(code)
-                @test length(positions) == 4
-                fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
-                @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+                fi, positions = highlight_testcase(code, 4)
                 for pos in positions
                     highlights = JETLS.document_highlights(fi, pos)
                     @test length(highlights) == 2
@@ -482,10 +445,7 @@ end
                 │@mymacro│ println("hello")
                 │@mymacro│ println("world")
                 """
-                clean_code, positions = JETLS.get_text_and_positions(code)
-                @test length(positions) == 7
-                fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
-                @test issorted(positions; by = x -> JETLS.xy_to_offset(fi, x))
+                fi, positions = highlight_testcase(code, 7)
                 for pos in positions
                     highlights = JETLS.document_highlights(fi, pos)
                     @test length(highlights) == 3
