@@ -228,7 +228,7 @@ function compute_binding_occurrences!(
         if k === JS.K"function_decl"
             infunc = true
             if nc ≥ 1
-                local func = st[1]
+                func = st[1]
                 if JS.kind(func) === JS.K"BindingId"
                     binfo = JL.get_binding(ctx3, func)
                     record_occurrence!(occurrences, :decl, func, binfo)
@@ -254,9 +254,9 @@ function compute_binding_occurrences!(
                 # is "used" in the language constructs required to define the method,
                 # but what we're interested in is whether it's actually used in the outer scope.
                 # We add this inner function to `skip_recording_uses` and recurse.
-                local func = blk1[1]
-                if JS.kind(func) === JS.K"BindingId"
-                    innerfuncinfo = JL.get_binding(ctx3, func)
+                innerfunc = blk1[1]
+                if JS.kind(innerfunc) === JS.K"BindingId"
+                    innerfuncinfo = JL.get_binding(ctx3, innerfunc)
                     compute_binding_occurrences!(occurrences, ctx3, st; ismacro,
                         skip_recording_uses = Set((innerfuncinfo,)))
                     continue
