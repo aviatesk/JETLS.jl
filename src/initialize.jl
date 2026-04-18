@@ -94,6 +94,15 @@ function handle_InitializeRequest(
         end
     end
 
+    if supports(server, :textDocument, :declaration, :dynamicRegistration)
+        declarationProvider = nothing # will be registered dynamically
+    else
+        declarationProvider = declaration_options()
+        if JETLS_DEV_MODE
+            @info "Registering 'textDocument/declaration' with `InitializeResponse`"
+        end
+    end
+
     if supports(server, :textDocument, :definition, :dynamicRegistration)
         definitionProvider = nothing # will be registered dynamically
     else
@@ -252,6 +261,7 @@ function handle_InitializeRequest(
                 save = true),
             completionProvider,
             signatureHelpProvider,
+            declarationProvider,
             definitionProvider,
             referencesProvider,
             documentHighlightProvider,
@@ -352,6 +362,13 @@ function handle_InitializedNotification(server::Server)
         # NOTE If completion's `dynamicRegistration` is not supported,
         # it needs to be registered along with initialization in the `InitializeResponse`,
         # since `SignatureHelpRegistrationOptions` does not extend `StaticRegistrationOptions`.
+    end
+
+    if supports(server, :textDocument, :declaration, :dynamicRegistration)
+        push!(registrations, declaration_registration())
+        if JETLS_DEV_MODE
+            @info "Dynamically registering 'textDocument/declaration' upon `InitializedNotification`"
+        end
     end
 
     if supports(server, :textDocument, :definition, :dynamicRegistration)

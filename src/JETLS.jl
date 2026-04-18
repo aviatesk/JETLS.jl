@@ -101,6 +101,7 @@ include("apply-edit.jl")
 include("execute-command.jl")
 include("signature-help.jl")
 include("completions.jl")
+include("declaration.jl")
 include("definition.jl")
 include("references.jl")
 include("hover.jl")
@@ -424,6 +425,8 @@ function handle_request_message(server::Server, @nospecialize(msg), cancel_flag:
         handle_CompletionResolveRequest(server, msg)
     elseif msg isa SignatureHelpRequest
         handle_SignatureHelpRequest(server, msg, cancel_flag)
+    elseif msg isa DeclarationRequest
+        handle_DeclarationRequest(server, msg, cancel_flag)
     elseif msg isa DefinitionRequest
         handle_DefinitionRequest(server, msg, cancel_flag)
     elseif msg isa ReferencesRequest
