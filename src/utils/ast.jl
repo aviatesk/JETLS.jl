@@ -126,21 +126,11 @@ is_generated0(st0::SyntaxTree0) = is_macrocall_st0(st0, "@generated")
 # is why `_remove_macrocalls` exists — these don't need to be rewritten to a
 # `block` to keep accurate locations for scope resolution.
 #
-# `@eval` is deliberately kept off this list: its new-style implementation
-# wraps the argument in `[K"quote" ex]`, which makes
-# `collect_inert_global_occurrences!` record argument-position `$`
-# interpolations as `:global` occurrences in addition to the regular
-# `:local` ones from the enclosing scope. The underlying cause is that
-# `collect_inert_global_occurrences!` resolves inert content in isolation
-# without threading the enclosing `ctx3`, so names escaped via `$` that
-# really bind to enclosing locals are treated as free globals.
-# `select_target_binding` then picks the `:global` entry for `\$x` and
-# misses the matching `:local` defs/uses, breaking LSP features
-# (find-references, highlight, rename, ...). Stripping `@eval` the usual
-# way plus `_unwrap_interpolations` on lifted children keeps a single
-# consistent binding for the identifier.
-# TODO Once `collect_inert_global_occurrences!` honors the enclosing scope,
-# `@eval` can be moved back into this list.
+# `@eval` is kept off: preserving it surfaces its inert `[K"quote" ex]`
+# template to `collect_inert_global_occurrences!`, which resolves inert
+# content without threading the enclosing `ctx3` and would therefore
+# record `$x` interpolations of enclosing locals as spurious `:global`
+# occurrences. Stripping via `_remove_macrocalls` avoids this.
 const NEW_STYLE_MACROCALL_NAMES = (
     # JuliaLowering/src/syntax_macros.jl
     "@__FUNCTION__",
