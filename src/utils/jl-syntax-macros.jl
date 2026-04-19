@@ -106,6 +106,24 @@ function Base.Threads.var"@spawn"(__context__::JL.MacroContext, ::JS.SyntaxTree.
                                  "wrong number of arguments in @spawn"))
 end
 
+# New-style implementation of `Base.@label`. Mirrors `Base.@goto` in
+# `JuliaLowering/src/syntax_macros.jl`: `@label name` lowers to a
+# `K"symboliclabel"` so that scope analysis treats the name as a goto target.
+#
+# The block forms documented in `Base.@label` (`@label expr`, `@label name
+# expr`) are intentionally not supported here — the goto-target form is the
+# common case and the only one needed for most LSP analyses.
+function Base.var"@label"(__context__::JL.MacroContext, ex::JS.SyntaxTree)
+    JS.kind(ex) === JS.K"Identifier" ||
+        throw(JL.MacroExpansionError(ex, "@label requires an identifier"))
+    return JL.@ast(__context__, ex, [JS.K"symboliclabel" ex])
+end
+
+function Base.var"@label"(__context__::JL.MacroContext, ::JS.SyntaxTree...)
+    throw(JL.MacroExpansionError(__context__.macrocall::JS.SyntaxTree,
+        "@label currently only supports the `@label name` form"))
+end
+
 # New-style `@kwdef` macro that preserves provenance information.
 # This strips default values from struct fields and generates keyword constructors,
 # matching the semantics of Base.@kwdef.

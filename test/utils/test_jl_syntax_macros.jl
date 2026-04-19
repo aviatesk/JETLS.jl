@@ -275,4 +275,50 @@ end
     end
 end
 
+function label_expand(code::AbstractString)
+    st0 = jlparse(code; rule=:statement)
+    world = Base.get_world_counter()
+    _, st1 = JL.expand_forms_1(lowering_module, st0, true, world)
+    return st1
+end
+
+@testset "@label" begin
+    # Full lowering succeeds when paired with `@goto`.
+    let code = """
+            function f()
+                @goto start
+                @label start
+            end
+            """
+        st0 = jlparse(code; rule=:statement)
+        world = Base.get_world_counter()
+        @test JETLS.jl_lower_for_scope_resolution(lowering_module, st0, world;
+            recover_from_macro_errors=false) isa NamedTuple
+    end
+
+    # Non-identifier argument is rejected.
+    let err = try
+            label_expand("@label 42")
+            nothing
+        catch err
+            err
+        end
+        @test err isa JL.MacroExpansionError
+        @test occursin("requires an identifier", err.msg)
+    end
+
+    # The block forms (`@label expr`, `@label name expr`) are intentionally not
+    # supported; the variadic fallback gives a clear message instead of a
+    # `MethodError`.
+    let err = try
+            label_expand("@label foo body")
+            nothing
+        catch err
+            err
+        end
+        @test err isa JL.MacroExpansionError
+        @test occursin("only supports the `@label name` form", err.msg)
+    end
+end
+
 end # module test_jl_syntax_macros

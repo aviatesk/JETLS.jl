@@ -153,6 +153,7 @@ const NEW_STYLE_MACROCALL_NAMES = (
     "@nospecialize",
     # src/utils/jl-syntax-macros.jl
     "@kwdef",
+    "@label",
     "@spawn",
     "@specialize",
 )
