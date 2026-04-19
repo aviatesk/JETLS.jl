@@ -156,6 +156,30 @@ function compute_binding_occurrences(
         end
     end
 
+    # Re-key `:local (mod=nothing)` aliases introduced by type definitions
+    # (struct / abstract type / primitive type) onto the matching hidden
+    # `:global (is_internal=true)` binding in the same `ctx3`. This normalizes
+    # struct-alias occurrences so they appear under a concrete-module `:global`
+    # entry like ordinary globals, letting downstream consumers match on
+    # `(mod, name, :global)` exactly without a nothing-mod fallback.
+    alias_remaps = Pair{JL.BindingInfo,JL.BindingInfo}[]
+    for binfo in keys(occurrences)
+        binfo.kind === :local || continue
+        isnothing(binfo.mod) || continue
+        for other in ctx3.bindings.info
+            other.kind === :global || continue
+            other.is_internal || continue
+            other.name == binfo.name || continue
+            push!(alias_remaps, binfo => other)
+            break
+        end
+    end
+    for (local_binfo, global_binfo) in alias_remaps
+        local_occs = pop!(occurrences, local_binfo)
+        existing = get!(Set{BindingOccurrence{Tree3}}, occurrences, global_binfo)
+        union!(existing, local_occs)
+    end
+
     # Fix up usedness information of arguments that are only used within the argument list.
     # to avoid reporting "unused variable diagnostics" for `x` in cases like:
     # ```julia
@@ -374,20 +398,11 @@ function compute_binding_occurrences!(
     return occurrences, ismacro
 end
 
-# Match global bindings across independently-lowered top-level statements.
-# Each top-level statement is lowered independently, so the same name may
-# appear with different `mod` values. Type definitions (struct, abstract type,
-# primitive type) produce a `:local` binding with `mod=nothing` alongside a
-# hidden `is_internal=true` global binding. At usage sites in other top-level
-# statements, the same name appears as `:global` with `mod=<module>`.
-# We match when `mod` is `nothing` on either side to bridge this gap.
 function is_matching_global_binding(
         a::Union{BindingInfoKey,JL.BindingInfo},
         b::Union{BindingInfoKey,JL.BindingInfo},
     )
-    a.name == b.name || return false
-    a.mod === b.mod && return true
-    return isnothing(a.mod) || isnothing(b.mod)
+    return a.kind === :global && b.kind === :global && a.name == b.name && a.mod === b.mod
 end
 
 function find_global_binding_occurrences!(

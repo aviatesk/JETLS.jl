@@ -140,6 +140,31 @@ end
                 @test length(refs) == 3
             end
         end
+
+        # Regression test for `is_matching_global_binding` + occurrence remap:
+        # a `@generated` argument whose name coincides with a module-level
+        # `global` must NOT be linked to that global. In earlier implementations
+        # the inert `:(xxx)` recorded `xxx` as `:argument (mod=nothing)` and the
+        # `nothing`-mod fallback in `is_matching_global_binding` matched it to
+        # the same-named `:global (mod=<module>)`, producing bogus cross-links.
+        let code = """
+            @generated function func(│xxxx│)
+                :(│xxxx│)
+            end
+            global │xxxx│ = 42
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 6  # 2 markers per identifier × 3 identifiers
+            # Argument and its inert `:use` are linked to each other (2 refs),
+            # but the module-level `global xxxx` is an independent binding.
+            refs_arg   = find_references(clean_code, positions[1])  # `func(xxxx)` arg
+            refs_inert = find_references(clean_code, positions[3])  # inert `:(xxxx)`
+            refs_glob  = find_references(clean_code, positions[5])  # `global xxxx = 42`
+            @test length(refs_arg) == 2
+            @test length(refs_inert) == 2
+            @test length(refs_glob) == 1
+            @test Set(r.range for r in refs_arg) == Set(r.range for r in refs_inert)
+        end
     end
 
     @testset "macro references" begin
