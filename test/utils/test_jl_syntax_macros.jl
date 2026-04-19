@@ -150,4 +150,129 @@ children_kinds(st::JS.SyntaxTree) = JS.Kind[JS.kind(c) for c in JS.children(st)]
     end
 end
 
+function spawn_expand(code::AbstractString)
+    st0 = jlparse(code; rule=:statement)
+    world = Base.get_world_counter()
+    _, st1 = JL.expand_forms_1(lowering_module, st0, true, world)
+    return st1
+end
+
+@testset "Threads.@spawn" begin
+    @testset "macro expansion" begin
+        # Single-argument form: returns the body unchanged.
+        let st1 = spawn_expand("Threads.@spawn sin(xxx)")
+            @test JS.kind(st1) === JS.K"call"
+            @test JS.sourcetext(st1[1]) == "sin"
+            @test JS.sourcetext(st1[2]) == "xxx"
+        end
+
+        # Two-argument form: emits `block(threadpool, body)`.
+        let st1 = spawn_expand("Threads.@spawn :default sin(xxx)")
+            @test JS.kind(st1) === JS.K"block"
+            @test JS.numchildren(st1) == 2
+            @test JS.kind(st1[1]) === JS.K"inert"
+            @test JS.kind(st1[2]) === JS.K"call"
+        end
+
+        # `$x` in the body must be unwrapped: a surviving `K"$"` outside of a
+        # quote context would fail later lowering passes.
+        let st1 = spawn_expand("Threads.@spawn sin(\$xxx)")
+            @test JS.kind(st1) === JS.K"call"
+            @test all(c -> JS.kind(c) !== JS.K"$", JS.children(st1))
+            @test JS.sourcetext(st1[2]) == "xxx"
+        end
+
+        # All allowed threadpool literals are accepted.
+        for tp in (":interactive", ":default", ":samepool")
+            @test spawn_expand("Threads.@spawn $tp 1+1") isa JS.SyntaxTree
+        end
+
+        # A bare identifier is accepted (e.g. `def = :default; @spawn def body`).
+        @test spawn_expand("Threads.@spawn pool 1+1") isa JS.SyntaxTree
+    end
+
+    @testset "error cases" begin
+        # Unsupported literal threadpool is rejected at expansion time, with the
+        # same message as the runtime `Base.Threads.@spawn` check.
+        let err = try
+                spawn_expand("Threads.@spawn :foo 1+1")
+                nothing
+            catch err
+                err
+            end
+            @test err isa JL.MacroExpansionError
+            @test occursin("unsupported threadpool in @spawn: foo", err.msg)
+        end
+
+        # Zero arguments and 3+ arguments both fall through to the variadic fallback method.
+        for code in ("Threads.@spawn", "Threads.@spawn :default :foo 1+1")
+            let err = try
+                    spawn_expand(code)
+                    nothing
+                catch err
+                    err
+                end
+                @test err isa JL.MacroExpansionError
+                @test occursin("wrong number of arguments in @spawn", err.msg)
+            end
+        end
+
+        # Anything other than `:default`/`:interactive`/`:samepool` literals or
+        # a bare identifier is rejected. The original macro defers most of
+        # these to a runtime `_spawn_set_thrpool(::Symbol)` MethodError; we
+        # catch them at expansion time so the user gets immediate feedback.
+        for code in (
+                "Threads.@spawn 42 body",          # numeric literal
+                "Threads.@spawn 1.0 body",         # float literal
+                "Threads.@spawn \"default\" body", # string literal
+                "Threads.@spawn true body",        # bool literal
+                "Threads.@spawn 'a' body",         # char literal
+                "Threads.@spawn f() body",         # call expression
+                "Threads.@spawn M.pool body",      # qualified access
+                "Threads.@spawn :(foo()) body",    # quoted non-symbol expression
+            )
+            let err = try
+                    spawn_expand(code)
+                    nothing
+                catch err
+                    err
+                end
+                @test err isa JL.MacroExpansionError
+                @test occursin("threadpool argument in @spawn must be", err.msg)
+            end
+        end
+    end
+
+    @testset "binding resolution preserves provenance" begin
+        # The whole point of the new-style stub: identifiers inside the
+        # expansion must keep accurate byte ranges so that downstream LSP
+        # analyses (notably `lowering/undef-global-var`) can accept them via
+        # `is_from_user_ast`. With the old-style macro the inner `xxx` ends up
+        # with a `0:0` byte range and gets filtered out.
+        let code = "spawnfunc() = Threads.@spawn :default sin(xxx)"
+            st0 = jlparse(code; rule=:statement)
+            world = Base.get_world_counter()
+            res = JETLS.jl_lower_for_scope_resolution(lowering_module, st0, world;
+                recover_from_macro_errors=false, convert_closures=true)
+            ismacro = Ref(false)
+            binding_occurrences = JETLS.compute_binding_occurrences(
+                res.ctx3, res.st3, false; ismacro, include_global_bindings=true)
+
+            xxx_binfo = nothing
+            for (binfo, _) in binding_occurrences
+                if binfo.kind === :global && binfo.name == "xxx"
+                    xxx_binfo = binfo
+                    break
+                end
+            end
+            @test xxx_binfo !== nothing
+            provs = JS.flattened_provenance(JL.binding_ex(res.ctx3, xxx_binfo.id))
+            @test JETLS.is_from_user_ast(provs)
+            # Innermost provenance points at the user-written `xxx`, not the
+            # macrocall as a whole.
+            @test JS.sourcetext(last(provs)) == "xxx"
+        end
+    end
+end
+
 end # module test_jl_syntax_macros
