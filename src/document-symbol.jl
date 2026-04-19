@@ -909,9 +909,6 @@ function extract_local_symbols_from_scopes(
     return extract_local_scope_bindings(lctx, root_scope_ids)
 end
 
-is_any_local_binding(binfo::JL.BindingInfo) =
-    binfo.kind === :local || binfo.kind === :argument || binfo.kind === :static_parameter
-
 function extract_local_scope_bindings(lctx::LocalScopeContext, scope_ids::Vector{Int})
     symbols = DocumentSymbol[]
     extract_local_scope_bindings!(symbols, lctx, scope_ids)
