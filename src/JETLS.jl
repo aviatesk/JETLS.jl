@@ -65,7 +65,8 @@ Analyzer.LSAnalyzer(args...; kwargs...) = LSAnalyzer(ScriptAnalysisEntry(filepat
 
 include("analysis/resolver.jl")
 
-include("FixedSizeFIFOQueue/FixedSizeFIFOQueue.jl")
+include("FixedSizeQueues/FixedSizeQueues.jl")
+using .FixedSizeQueues
 
 include("utils/general.jl")
 

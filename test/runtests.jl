@@ -7,7 +7,7 @@ include("setup.jl")
 end
 
 @testset "AtomicContainers" include("AtomicContainers/test_AtomicContainers.jl")
-@testset "FixedSizeFIFOQueue" include("FixedSizeFIFOQueue/test_FixedSizeFIFOQueue.jl")
+@testset "FixedSizeQueues" include("FixedSizeQueues/test_FixedSizeQueues.jl")
 
 @testset "JETLS" begin
     @testset "utils" begin

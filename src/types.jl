@@ -667,7 +667,7 @@ const ConfigManager = LWContainer{ConfigManagerData, LWStats}
 const UnsyncedFileCacheData = Base.PersistentDict{URI,FileInfo}
 const UnsyncedFileCache = LWContainer{UnsyncedFileCacheData, LWStats}
 
-const HandledHistory = FixedSizeFIFOQueue{MessageId}
+const HandledHistory = FixedSizeQueue{MessageId}
 
 struct HandledToken
     id::MessageId
