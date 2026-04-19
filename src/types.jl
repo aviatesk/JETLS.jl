@@ -376,14 +376,6 @@ const DIAGNOSTIC_SOURCE_LIVE = "JETLS/live"
 const DIAGNOSTIC_SOURCE_SAVE = "JETLS/save"
 const DIAGNOSTIC_SOURCE_EXTRA = "JETLS/extra"
 
-const VALID_DIAGNOSTIC_CATEGORIES = Set{String}((
-    "syntax",
-    "lowering",
-    "toplevel",
-    "inference",
-    "testrunner",
-))
-
 const SYNTAX_DIAGNOSTIC_CODE = "syntax/parse-error"
 const LOWERING_UNUSED_ARGUMENT_CODE = "lowering/unused-argument"
 const LOWERING_UNUSED_LOCAL_CODE = "lowering/unused-local"
