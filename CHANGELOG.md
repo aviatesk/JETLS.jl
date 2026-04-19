@@ -53,6 +53,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Added `textDocument/declaration` ("go to declaration"). Invoking it on an imported name jumps to the import site (e.g. `using Base: sin` or `using Base: foo as bar`), and on a `local` declaration jumps to the `local` line.
   When the symbol at the cursor has no dedicated declaration site (e.g. a bare global assignment `x = 1`, a `Base` function, a module reference), the request transparently falls back to the same logic as `textDocument/definition` — including the reflection-based lookup for modules and methods — so `textDocument/declaration` never dead-ends on a resolvable symbol. This mirrors the convention used by rust-analyzer, gopls, and pyright for languages without a C/C++-style declaration/definition split.
 
+- Clearly invalid `Threads.@spawn` and `@label` invocations now surface as `lowering/macro-expansion-error` diagnostics, instead of being silently accepted (only to fail later at runtime) or producing confusing fallout from later analysis passes:
+  - `Threads.@spawn` with the wrong number of arguments.
+  - `Threads.@spawn` with an unsupported threadpool argument — anything other than `:default` / `:interactive` / `:samepool` literals or a bare variable name. Forms like `Threads.@spawn 42 body` or `Threads.@spawn :unknownpool body` are now flagged immediately, instead of only failing at runtime with an opaque `MethodError` from `_spawn_set_thrpool(::Symbol)`.
+  - `@label` used in any form other than `@label name` (the goto-target form). The block-valued forms `@label expr` and `@label name expr` are not yet supported and are reported explicitly rather than silently misanalysed.
+
 ### Changed
 
 - The reference-count code lens now emits `editor.action.showReferences` (a VSCode convention command) directly, instead of the JETLS-defined custom command `jetls.showReferences`. LSP does not standardize a way for a server to hand pre-resolved reference locations to the client, so this choice trades strict LSP spec purity for broader out-of-the-box editor support. VSCode continues to work via the `jetls-client` extension, and editors that follow the VSCode convention (e.g. Zed) now dispatch the lens out of the box. Editors that do not follow the VSCode convention (e.g. Neovim) need to register a client-side handler for `editor.action.showReferences`.
@@ -72,6 +77,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `textDocument/rename` on imported names now preserves the source-module name by introducing or updating an `as` alias instead of rewriting the original name. For example, renaming `sin` in `using Base: sin` produces `using Base: sin as newsin` plus `newsin` at every use site — avoiding the previous result of `using Base: newsin` which would not resolve. `using M: name as alias` simply renames the alias; `import M.name` and `import M` extend to `import M.name as newname` / `import M as newname`. Conversely, renaming an alias back to its source name (e.g. renaming `randcycle2` back to `randcycle` in `using Random: randcycle as randcycle2`) drops the ` as …` suffix so the import simplifies to `using Random: randcycle`. In the few forms where Julia does not accept `as` at all (`using M`, `using M, N`, `using M.Sub`), rename falls back to a bare replacement.
 
 - Fixed `textDocument/references`, `textDocument/documentHighlight`, `textDocument/definition`, `textDocument/declaration`, and `textDocument/rename` silently returning no results inside top-level definitions that combine a compound-assignment operator with a macro call (e.g. `x += @elapsed foo()`). The [reference-count code lens](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/code_lens-references) on such definitions previously reported `0 references` even when the symbol was used.
+
+- LSP features such as `textDocument/references`, `textDocument/rename`, `textDocument/documentHighlight`, `textDocument/definition`, and `textDocument/declaration`, as well as diagnostics like `lowering/undef-global-var` and `lowering/unused-assignment`, now work on identifiers used inside `@__FUNCTION__`, `@ccall`, `@cfunction`, `@goto`, `@isdefined`, `@locals`, `@label`, and `Threads.@spawn` macrocalls.
+  Previously, these macros caused JETLS to lose the precise source positions of their argument identifiers, so the analyzer either skipped them entirely or pointed at the macrocall as a whole — for example, in `spawnfunc() = Threads.@spawn :default sin(undefvar)` the undefined `undefvar` was missed by `lowering/undef-global-var` and could not be located by go-to-definition or rename, but is now handled correctly.
+
+- Fixed false-positive `lowering/unused-assignment` reports for the assign-then-`@goto`-to-`@label` pattern. For example:
+  ```julia
+  function f(cond)
+      local reports
+      if cond
+          reports = compute_cached()
+          @goto done
+      end
+      reports = compute_default()
+      @label done
+      use(reports)
+  end
+  ```
+  The `reports = compute_cached()` assignment was incorrectly flagged as a dead store because the goto edge from `@goto done` to `@label done` was not modeled, so the analyzer assumed the unconditional assignment after the label always overwrote it.
 
 ## 2026-04-14
 
