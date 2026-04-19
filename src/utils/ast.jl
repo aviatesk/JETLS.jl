@@ -115,14 +115,49 @@ function is_macrocall_st0(st0::JS.SyntaxTree, names::AbstractString...)
     return name_val in names
 end
 
-is_nospecialize_or_specialize_macrocall0(st0::JS.SyntaxTree) =
-    is_macrocall_st0(st0, "@nospecialize", "@specialize")
-
 is_mainfunc0(st0::JS.SyntaxTree) = is_macrocall_st0(st0, "@main")
 
-is_kwdef0(st0::JS.SyntaxTree) = is_macrocall_st0(st0, "@kwdef")
-
 is_generated0(st0::JS.SyntaxTree) = is_macrocall_st0(st0, "@generated")
+
+# Simple (non-qualified) macro names whose new-style implementations in
+# `JuliaLowering/src/syntax_macros.jl` and `src/utils/jl-syntax-macros.jl`
+# preserve fine-grained source provenance during expansion. Unlike old-style
+# macros — whose expansion collapses source positions to line granularity and
+# is why `_remove_macrocalls` exists — these don't need to be rewritten to a
+# `block` to keep accurate locations for scope resolution.
+#
+# `@eval` is deliberately kept off this list: its new-style implementation
+# wraps the argument in `[K"quote" ex]`, which makes
+# `collect_inert_global_occurrences!` record argument-position `$`
+# interpolations as `:global` occurrences in addition to the regular
+# `:local` ones from the enclosing scope. The underlying cause is that
+# `collect_inert_global_occurrences!` resolves inert content in isolation
+# without threading the enclosing `ctx3`, so names escaped via `$` that
+# really bind to enclosing locals are treated as free globals.
+# `select_target_binding` then picks the `:global` entry for `\$x` and
+# misses the matching `:local` defs/uses, breaking LSP features
+# (find-references, highlight, rename, ...). Stripping `@eval` the usual
+# way plus `_unwrap_interpolations` on lifted children keeps a single
+# consistent binding for the identifier.
+# TODO Once `collect_inert_global_occurrences!` honors the enclosing scope,
+# `@eval` can be moved back into this list.
+const NEW_STYLE_MACROCALL_NAMES = (
+    # JuliaLowering/src/syntax_macros.jl
+    "@__FUNCTION__",
+    "@ccall",
+    "@cfunction",
+    "@generated",
+    "@goto",
+    "@isdefined",
+    "@locals",
+    "@nospecialize",
+    # src/utils/jl-syntax-macros.jl
+    "@kwdef",
+    "@specialize",
+)
+
+is_new_style_macrocall0(st0::JS.SyntaxTree) =
+    is_macrocall_st0(st0, NEW_STYLE_MACROCALL_NAMES...)
 
 function is_doc0(st0::JS.SyntaxTree)
     JS.kind(st0) === JS.K"macrocall" || return false
@@ -320,27 +355,16 @@ end
 
 function _remove_macrocalls(st::JS.SyntaxTree)
     if JS.kind(st) === JS.K"macrocall"
-        if is_nospecialize_or_specialize_macrocall0(st)
-            # Special case `@nospecialize`/`@specialize`:
-            # These macros are sometimes used in method definition argument lists, but
-            # if we apply the `_remove_macrocalls` transformation directly, it would
-            # result in a `:block` expression being inserted into the argument list,
-            # preventing generation of a correct lowered tree.
-            # Furthermore, JuliaLowering.jl provides new macro style definitions for
-            # these macros, so there's no need to remove them in the first place.
+        if is_new_style_macrocall0(st)
+            # Macros with new-style JuliaLowering implementations preserve
+            # fine-grained provenance during expansion, so we don't need to
+            # rewrite them to a `block` to keep source locations accurate.
+            # See `NEW_STYLE_MACROCALL_NAMES` for the list and the rationale
+            # for why certain candidates (notably `@eval`) are excluded.
             return st, false
         elseif is_mainfunc0(st)
             # `@main` functions are desugared by `desugar_main_macrocall` below,
             # so there's no need to remove them here
-            return st, false
-        elseif is_kwdef0(st)
-            # `@kwdef` has a new-style macro definition (in jl-syntax-macros.jl) that
-            # preserves provenance, so there's no need to remove it here.
-            return st, false
-        elseif is_generated0(st)
-            # `@generated` functions need to be preserved so that
-            # `is_generated` can track argument usage within
-            # returned quoted expressions.
             return st, false
         elseif is_doc0(st)
             return _remove_macrocalls(st[end])[1], true
@@ -467,20 +491,19 @@ any bindings or control flow the macros themselves would have introduced.
 !!! note "Assumption on macro behavior"
     Macros are treated as if `@m expr` behaved like `begin expr end` — i.e. they
     neither introduce new syntactic structures, bind new names, nor alter control
-    flow. Macros that change syntactic shape or binding structure (e.g.
-    `@nospecialize`, `@generated`, `@kwdef`, `@main`) are handled as explicit
-    special cases inside `_remove_macrocalls`. Macros that merely rewrite control
-    flow (e.g. `@something`/`@assert` into conditional `return`/`throw`) are
-    tolerated: scope resolution on the transformed tree may be less precise in
-    their vicinity — e.g. reachability and post-macro-only bindings — but still
-    yields useful results for source-level LSP features.
+    flow. Macros that merely rewrite control flow (e.g. `@something`/`@assert`
+    into conditional `return`/`throw`) are a known limitation rather than a
+    handled case: scope resolution on the transformed tree can be incorrect in
+    their vicinity — e.g. reachability and post-macro-only bindings — though it
+    still yields useful results for source-level LSP features in practice.
 
 !!! note "Future direction"
-    This transform is a workaround for old-style macros that lose provenance during
-    expansion. New-style JuliaLowering macros preserve provenance and are therefore
-    exempt from removal (see the `@kwdef` branch in `_remove_macrocalls`). As more
-    macros migrate to the new style, the scope of this transformation is expected to
-    shrink.
+    This transform is a workaround for old-style macros that lose provenance
+    during expansion. Macros with new-style JuliaLowering implementations (listed
+    in `NEW_STYLE_MACROCALL_NAMES`) already preserve provenance and are therefore
+    exempt from removal, and `@main` is handled separately by
+    `desugar_main_macrocall`. As more macros migrate to the new style, the scope
+    of this transformation is expected to shrink.
 """
 function remove_macrocalls(st0::JS.SyntaxTree)
     ensure_jl_source_attr!(JS.syntax_graph(st0))

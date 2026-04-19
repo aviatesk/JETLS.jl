@@ -309,6 +309,29 @@ end
             end
         end
     end
+
+    # `@ccall foo(...)` treats `foo` as a C library symbol, not a reference to
+    # a Julia binding. `@ccall` has a new-style JuliaLowering implementation
+    # that correctly encodes this by wrapping `foo` in `K"inert"`, so scope
+    # resolution must leave it alone. That only holds while
+    # `_remove_macrocalls` preserves the `@ccall` macrocall (because the
+    # macrocall is in `NEW_STYLE_MACROCALL_NAMES`) — if it ever falls back to
+    # the generic stripping path, `foo` gets lifted into a plain `block` and
+    # is misresolved to the enclosing Julia binding of the same name.
+    @testset "@ccall C symbol vs enclosing Julia binding" begin
+        let code = """
+            let │strlen│ = length
+                @ccall strlen("foo"::Cstring)::Csize_t
+            end
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 2
+            # The `let` binding position finds only itself; the C symbol
+            # `strlen` inside `@ccall` is not linked to the Julia local.
+            refs_at_let = find_references(clean_code, positions[1])
+            @test length(refs_at_let) == 1
+        end
+    end
 end
 
 end # module test_references
