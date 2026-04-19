@@ -1,62 +1,4 @@
 """
-Collect global bindings used inside `K"inert"` nodes by running independent
-scope resolution on the inert content, and record them as `:use` occurrences.
-Argument names are excluded since they are already handled by name-based
-matching in `compute_binding_occurrences`.
-"""
-function collect_inert_global_occurrences!(
-        occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence{Tree3}}},
-        ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTree, mod::Module;
-        soft_scope::Bool = false
-    ) where Tree3<:JS.SyntaxTree
-    arg_names = Set{String}()
-    for binfo in ctx3.bindings.info
-        if binfo.kind === :argument && !binfo.is_internal
-            push!(arg_names, binfo.name)
-        end
-    end
-    st3_range = JS.byte_range(st3)
-    traverse(st3) do st3′::JS.SyntaxTree
-        JS.kind(st3′) === JS.K"inert" || return nothing
-        JS.numchildren(st3′) >= 1 || return nothing
-        # Skip the outer inert that wraps the entire generator template
-        JS.byte_range(st3′) == st3_range && return nothing
-        ires = try
-            # Inert nodes with `$` (interpolation) fail to lower directly.
-            # Unwrap `$` nodes (replace with their content) instead of removing
-            # them, so that parent nodes like dot expressions (`x.$name`)
-            # remain well-formed and non-interpolated identifiers are resolved.
-            jl_lower_for_scope_resolution(mod, unwrap_interpolations(st3′[1]); soft_scope)
-        catch
-            return nothing
-        end
-        for binfo in ires.ctx3.bindings.info
-            if binfo.kind === :global && !binfo.is_internal && !(binfo.name in arg_names)
-                # Use the inert ctx's BindingInfo as key; when cached via
-                # BindingInfoKey(mod, name, :global) it matches the import.
-                occ_set = get!(Set{BindingOccurrence{Tree3}}, occurrences, binfo)
-                push!(occ_set, BindingOccurrence(
-                    JL.binding_ex(ires.ctx3, binfo.id), :use))
-            end
-        end
-        return nothing
-    end
-    return occurrences
-end
-
-function collect_inert_identifiers(st3::JS.SyntaxTree)
-    result = Dict{String,Vector{JS.SyntaxTree}}()
-    foreach_inert_identifier(st3) do id_node::JS.SyntaxTree
-        JS.hasattr(id_node, :name_val) || return true
-        name_val = id_node.name_val
-        name_val isa AbstractString || return true
-        push!(get!(Vector{JS.SyntaxTree}, result, name_val), id_node)
-        return true
-    end
-    return result
-end
-
-"""
     compute_binding_occurrences(
             ctx3::JL.VariableAnalysisContext, st3::Tree3, is_generated::Bool;
             ismacro::Union{Nothing,Base.RefValue{Bool}} = nothing
@@ -199,6 +141,18 @@ function compute_binding_occurrences(
     end
 
     return occurrences
+end
+
+function collect_inert_identifiers(st3::JS.SyntaxTree)
+    result = Dict{String,Vector{JS.SyntaxTree}}()
+    foreach_inert_identifier(st3) do id_node::JS.SyntaxTree
+        JS.hasattr(id_node, :name_val) || return true
+        name_val = id_node.name_val
+        name_val isa AbstractString || return true
+        push!(get!(Vector{JS.SyntaxTree}, result, name_val), id_node)
+        return true
+    end
+    return result
 end
 
 """
@@ -563,6 +517,107 @@ function collect_macrocall_occurrences!(
             end
         end
         return nothing # Don't TraversalNoRecurse since macro calls can be nested
+    end
+    return occurrences
+end
+
+"""
+    collect_inert_global_occurrences!
+
+Collect global bindings used inside `K"inert"` nodes by running independent
+scope resolution on each inert subtree and recording any non-internal
+`:global` bindings it finds as `:use` occurrences. The inert subtree is
+lowered with `mod` — the enclosing module at the inert's position — as
+the resolution module.
+
+# Approximation
+
+This is a pragmatic approximation, not a precise analysis. The enclosing
+module is correct for the cases where quoted code is eventually evaluated
+there:
+
+- `@eval body` — `body` is `eval`'d in the module where `@eval` appears.
+- User-defined macro bodies — free identifiers in a macro's returned AST
+  are hygienically resolved in the macro's defining module.
+- `@generated` function bodies — the returned AST becomes the generated
+  method's body, compiled in the function's module; global references
+  inside thus resolve in that module.
+
+The approximation breaks down whenever the inert content is ultimately
+evaluated somewhere other than `mod`. Detecting these cases would
+require cross-function / whole-program analysis that we don't currently
+perform:
+
+- The inert content is spliced into another quote that introduces a
+  new local scope — e.g. a builder that returns
+  `quote function f(x); \$body; end end`, where identifiers inside
+  `body` are meant to resolve against `f`'s arguments, not globals in
+  `mod`.
+- The resulting `Expr`/`SyntaxTree` is handed off to `Core.eval` in a
+  different module — e.g. `g() = :(foo())` later called as
+  `Core.eval(SomeOtherModule, g())`, so `foo` resolves in
+  `SomeOtherModule` rather than `g`'s defining module.
+
+These cases may produce orphan entries (recorded in the wrong module) or
+miss real references. They are accepted as a known limitation.
+
+# Argument-name handling
+
+Free identifiers inside inert content that match an enclosing
+function/macro argument name are filtered out to avoid false
+`:global :use` occurrences. Two independent reasons motivate this:
+
+- `@generated` bodies — plain identifiers in the returned quote are
+  compile-time references to the function's parameters.
+  `compute_binding_occurrences` already records them as
+  `:argument :use` via `collect_inert_identifiers` when
+  `is_generated=true`; the filter prevents duplicating those as
+  `:global :use` here.
+- `quote ... \$arg ... end` inside any function or macro body —
+  scope resolution handles `\$arg` correctly (the argument `arg` is
+  used as an interpolation value, recorded as `:argument :use` in
+  the usual walk), and the inert template itself is not a reference
+  to `arg`. But `unwrap_interpolations` strips the `\$` node for
+  lowering, turning `\$arg` into a bare `arg` identifier which the
+  fresh resolution then classifies as `:global`. The filter
+  compensates for this unwrap artifact.
+"""
+function collect_inert_global_occurrences!(
+        occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence{Tree3}}},
+        ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTree, mod::Module;
+        soft_scope::Bool = false
+    ) where Tree3<:JS.SyntaxTree
+    arg_names = Set{String}()
+    for binfo in ctx3.bindings.info
+        if binfo.kind === :argument && !binfo.is_internal
+            push!(arg_names, binfo.name)
+        end
+    end
+    st3_range = JS.byte_range(st3)
+    traverse(st3) do st3′::JS.SyntaxTree
+        JS.kind(st3′) === JS.K"inert" || return nothing
+        JS.numchildren(st3′) >= 1 || return nothing
+        # Skip the outer inert that wraps the entire generator template
+        JS.byte_range(st3′) == st3_range && return nothing
+        ires = try
+            # Inert nodes with `$` (interpolation) fail to lower directly.
+            # Unwrap `$` nodes (replace with their content) instead of removing
+            # them, so that parent nodes like dot expressions (`x.$name`)
+            # remain well-formed and non-interpolated identifiers are resolved.
+            jl_lower_for_scope_resolution(mod, unwrap_interpolations(st3′[1]); soft_scope)
+        catch
+            return nothing
+        end
+        for binfo in ires.ctx3.bindings.info
+            if binfo.kind === :global && !binfo.is_internal && !(binfo.name in arg_names)
+                # Use the inert ctx's BindingInfo as key; when cached via
+                # BindingInfoKey(mod, name, :global) it matches the import.
+                occ_set = get!(Set{BindingOccurrence{Tree3}}, occurrences, binfo)
+                push!(occ_set, BindingOccurrence(
+                    JL.binding_ex(ires.ctx3, binfo.id), :use))
+            end
+        end
+        return nothing
     end
     return occurrences
 end
