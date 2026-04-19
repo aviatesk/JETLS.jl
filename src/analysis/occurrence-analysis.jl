@@ -16,17 +16,17 @@ function collect_inert_global_occurrences!(
         end
     end
     st3_range = JS.byte_range(st3)
-    traverse(st3) do st::JS.SyntaxTree
-        JS.kind(st) === JS.K"inert" || return nothing
-        JS.numchildren(st) >= 1 || return nothing
+    traverse(st3) do st3′::JS.SyntaxTree
+        JS.kind(st3′) === JS.K"inert" || return nothing
+        JS.numchildren(st3′) >= 1 || return nothing
         # Skip the outer inert that wraps the entire generator template
-        JS.byte_range(st) == st3_range && return nothing
+        JS.byte_range(st3′) == st3_range && return nothing
         ires = try
             # Inert nodes with `$` (interpolation) fail to lower directly.
             # Unwrap `$` nodes (replace with their content) instead of removing
             # them, so that parent nodes like dot expressions (`x.$name`)
             # remain well-formed and non-interpolated identifiers are resolved.
-            jl_lower_for_scope_resolution(mod, unwrap_interpolations(st[1]); soft_scope)
+            jl_lower_for_scope_resolution(mod, unwrap_interpolations(st3′[1]); soft_scope)
         catch
             return nothing
         end

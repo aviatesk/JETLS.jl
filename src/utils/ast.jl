@@ -104,7 +104,7 @@ function unwrap_interpolations(st::JS.SyntaxTree)
     return _unwrap_interpolations(st)[1]
 end
 
-function is_macrocall_st0(st0::JS.SyntaxTree, names::AbstractString...)
+function is_macrocall_st0(st0::SyntaxTree0, names::AbstractString...)
     JS.kind(st0) === JS.K"macrocall" || return false
     JS.numchildren(st0) >= 1 || return false
     macro_name = st0[1]
@@ -115,9 +115,9 @@ function is_macrocall_st0(st0::JS.SyntaxTree, names::AbstractString...)
     return name_val in names
 end
 
-is_mainfunc0(st0::JS.SyntaxTree) = is_macrocall_st0(st0, "@main")
+is_mainfunc0(st0::SyntaxTree0) = is_macrocall_st0(st0, "@main")
 
-is_generated0(st0::JS.SyntaxTree) = is_macrocall_st0(st0, "@generated")
+is_generated0(st0::SyntaxTree0) = is_macrocall_st0(st0, "@generated")
 
 # Simple (non-qualified) macro names whose new-style implementations in
 # `JuliaLowering/src/syntax_macros.jl` and `src/utils/jl-syntax-macros.jl`
@@ -156,10 +156,10 @@ const NEW_STYLE_MACROCALL_NAMES = (
     "@specialize",
 )
 
-is_new_style_macrocall0(st0::JS.SyntaxTree) =
+is_new_style_macrocall0(st0::SyntaxTree0) =
     is_macrocall_st0(st0, NEW_STYLE_MACROCALL_NAMES...)
 
-function is_doc0(st0::JS.SyntaxTree)
+function is_doc0(st0::SyntaxTree0)
     JS.kind(st0) === JS.K"macrocall" || return false
     JS.numchildren(st0) >= 1 || return false
     macro_name = st0[1]
@@ -353,24 +353,24 @@ function is_nospecialize_or_specialize_macrocall3(st3::JS.SyntaxTree)
     return macro_name.name_val == "nospecialize" || macro_name.name_val == "specialize"
 end
 
-function _remove_macrocalls(st::JS.SyntaxTree)
-    if JS.kind(st) === JS.K"macrocall"
-        if is_new_style_macrocall0(st)
+function _remove_macrocalls(st0::SyntaxTree0)
+    if JS.kind(st0) === JS.K"macrocall"
+        if is_new_style_macrocall0(st0)
             # Macros with new-style JuliaLowering implementations preserve
             # fine-grained provenance during expansion, so we don't need to
             # rewrite them to a `block` to keep source locations accurate.
             # See `NEW_STYLE_MACROCALL_NAMES` for the list and the rationale
             # for why certain candidates (notably `@eval`) are excluded.
-            return st, false
-        elseif is_mainfunc0(st)
+            return st0, false
+        elseif is_mainfunc0(st0)
             # `@main` functions are desugared by `desugar_main_macrocall` below,
             # so there's no need to remove them here
-            return st, false
-        elseif is_doc0(st)
-            return _remove_macrocalls(st[end])[1], true
+            return st0, false
+        elseif is_doc0(st0)
+            return _remove_macrocalls(st0[end])[1], true
         end
-        new_children = JS.SyntaxList(JS.syntax_graph(st))
-        for i = 2:JS.numchildren(st)
+        new_children = JS.SyntaxList(JS.syntax_graph(st0))
+        for i = 2:JS.numchildren(st0)
             # `$` interpolations at macrocall-argument position are legal only
             # because the macro will typically splice the argument into a
             # `quote`/`:(...)` (`@eval`, code-generating macros, user-defined
@@ -378,36 +378,36 @@ function _remove_macrocalls(st::JS.SyntaxTree)
             # arguments out of the macrocall into a bare `block`, any surviving
             # `$` would be out of context and fail lowering, so unwrap
             # interpolations on the lifted child.
-            stripped, _ = _remove_macrocalls(st[i])
+            stripped, _ = _remove_macrocalls(st0[i])
             push!(new_children, _unwrap_interpolations(stripped)[1])
         end
-        return JL.@ast(JS.syntax_graph(st), st, [JS.K"block" new_children...]), true
-    elseif JS.is_leaf(st)
-        return st, false
+        return JL.@ast(JS.syntax_graph(st0), st0, [JS.K"block" new_children...]), true
+    elseif JS.is_leaf(st0)
+        return st0, false
     end
-    (st, changed) = desugar_main_macrocall(st)
-    new_children = JS.SyntaxList(JS.syntax_graph(st))
-    for c in JS.children(st)
+    (st0, changed) = desugar_main_macrocall(st0)
+    new_children = JS.SyntaxList(JS.syntax_graph(st0))
+    for c in JS.children(st0)
         nc, cc = _remove_macrocalls(c)
         changed |= cc
         push!(new_children, nc)
     end
-    k = JS.kind(st)
+    k = JS.kind(st0)
     # Preserve `name_val` when reconstructing: kinds like `K"unknown_head"`
     # (used by compound assignments such as `+=`) carry the operator name in
     # `name_val`, and JuliaLowering's validator requires it to be present.
     new_node = if !changed
-        st
-    elseif hasproperty(st, :name_val)
-        JL.@ast(JS.syntax_graph(st), st, [k(name_val=st.name_val::String) new_children...])
+        st0
+    elseif hasproperty(st0, :name_val)
+        JL.@ast(JS.syntax_graph(st0), st0, [k(name_val=st0.name_val::String) new_children...])
     else
-        JL.@ast(JS.syntax_graph(st), st, [k new_children...])
+        JL.@ast(JS.syntax_graph(st0), st0, [k new_children...])
     end
     return (new_node, changed)
 end
 
 """
-    desugar_main_macrocall(st0::JS.SyntaxTree) -> Tuple{JS.SyntaxTree, Bool}
+    desugar_main_macrocall(st0::SyntaxTree0) -> Tuple{SyntaxTree0, Bool}
 
 If `st0` is a `function (@main)(args...) ... end`, `(@main)(args...) = ...`,
 `function @main(args...) ... end`, or `@main(args...) = ...` definition, replace
@@ -417,7 +417,7 @@ This avoids macro expansion failure when multiple standalone files defining
 `@main` are analyzed in the same session — the second file's sandbox module
 already has `main` imported from the first, causing `@main` expansion to error.
 """
-function desugar_main_macrocall(st0::JS.SyntaxTree)
+function desugar_main_macrocall(st0::SyntaxTree0)
     k = JS.kind(st0)
     if k === JS.K"function"
         JS.numchildren(st0) >= 1 || return (st0, false)
@@ -505,7 +505,7 @@ any bindings or control flow the macros themselves would have introduced.
     `desugar_main_macrocall`. As more macros migrate to the new style, the scope
     of this transformation is expected to shrink.
 """
-function remove_macrocalls(st0::JS.SyntaxTree)
+function remove_macrocalls(st0::SyntaxTree0)
     ensure_jl_source_attr!(JS.syntax_graph(st0))
     return first(_remove_macrocalls(st0))
 end
