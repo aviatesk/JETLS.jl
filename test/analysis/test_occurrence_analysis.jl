@@ -314,6 +314,24 @@ ismacro_callback(ismacro) = @test ismacro[]
                 binding.name == "t" && binding.kind === :local && any(o->o.kind===:use, occurrences)
             end
         end
+        # `$` interpolations at macrocall-argument position are only legal
+        # because the macro will typically splice the argument into a quote.
+        # Once `remove_macrocalls` lifts the arguments into a bare `block`,
+        # any surviving `$` would be out of context and fail lowering, so
+        # the transform must unwrap interpolations on the lifted children.
+        # Note: `@mymacro` does not need to exist — the macrocall is stripped
+        # before `jl_lower_for_scope_resolution` runs.
+        with_binding_occurrences("""
+            function func()
+                x = 10
+                @mymacro foo = \$x
+                return x
+            end
+            """; remove_macrocalls=true) do binding_occurrences
+            @test any(binding_occurrences) do (binding, occurrences)
+                binding.name == "x" && binding.kind === :local && any(o->o.kind===:use, occurrences)
+            end
+        end
     end
 
     # aviatesk/JETLS.jl#480
@@ -492,6 +510,31 @@ end
             # `sleep` is referenced only inside the inert block, so finding it
             # requires `_unwrap_interpolations` to succeed through the `+=` node.
             i = @something findfirst(((b, _),) -> b.name == "sleep", collect(boccs))
+            binfo, occs = collect(boccs)[i]
+            @test binfo.kind === :global
+            @test any(o -> o.kind === :use, occs)
+        end
+    end
+
+    # Code-generating macros splice their arguments into an implicit `quote`,
+    # so argument-position `$` interpolations are valid in source. When
+    # `remove_macrocalls` lifts those arguments into a bare `block`, the `$`
+    # must be unwrapped — otherwise lowering fails for the whole enclosing
+    # statement and any occurrences it contains are dropped.
+    # Note: `@mymacro` does not need to exist — the macrocall is stripped
+    # before `jl_lower_for_scope_resolution` runs.
+    @testset "macrocall argument with interpolation" begin
+        let boccs = get_binding_occurrences_st0("""
+                let valid = MY_CONST
+                    @mymacro something(::Type{Int}) = \$valid
+                end
+                """; include_global_bindings=true)
+            @test boccs !== nothing
+            # Without the interpolation fix in `_remove_macrocalls`, lowering
+            # of this `let` fails because `\$valid` is left bare in a `block`
+            # after the macrocall is stripped — and `MY_CONST` is never
+            # recorded.
+            i = @something findfirst(((b, _),) -> b.name == "MY_CONST", collect(boccs))
             binfo, occs = collect(boccs)[i]
             @test binfo.kind === :global
             @test any(o -> o.kind === :use, occs)

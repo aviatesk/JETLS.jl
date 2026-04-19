@@ -347,7 +347,15 @@ function _remove_macrocalls(st::JS.SyntaxTree)
         end
         new_children = JS.SyntaxList(JS.syntax_graph(st))
         for i = 2:JS.numchildren(st)
-            push!(new_children, _remove_macrocalls(st[i])[1])
+            # `$` interpolations at macrocall-argument position are legal only
+            # because the macro will typically splice the argument into a
+            # `quote`/`:(...)` (`@eval`, code-generating macros, user-defined
+            # macros that build a quoted expression, etc.). Once we lift the
+            # arguments out of the macrocall into a bare `block`, any surviving
+            # `$` would be out of context and fail lowering, so unwrap
+            # interpolations on the lifted child.
+            stripped, _ = _remove_macrocalls(st[i])
+            push!(new_children, _unwrap_interpolations(stripped)[1])
         end
         return JL.@ast(JS.syntax_graph(st), st, [JS.K"block" new_children...]), true
     elseif JS.is_leaf(st)

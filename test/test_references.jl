@@ -284,6 +284,31 @@ end
             end
         end
     end
+
+    # Code-generating macros splice their arguments into an implicit `quote`,
+    # so argument-position `\$` interpolations are only legal while the
+    # macrocall is present. `_remove_macrocalls` must unwrap these
+    # interpolations when lifting macro arguments into a `block`; otherwise
+    # scope resolution silently fails on any top-level statement containing
+    # `@mymacro … \$x` and references inside such statements are lost.
+    # Note: `@mymacro` does not need to exist — the macrocall is stripped
+    # before scope resolution runs.
+    @testset "macrocall argument with interpolation" begin
+        let code = """
+            const │MY_CONST│ = Set{Symbol}((:foo,))
+
+            let valid = │MY_CONST│
+                @mymacro something(::Type{Int}) = \$valid
+            end
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 4
+            for pos in positions
+                refs = find_references(clean_code, pos)
+                @test length(refs) == 2
+            end
+        end
+    end
 end
 
 end # module test_references
