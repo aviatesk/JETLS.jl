@@ -94,20 +94,25 @@ function compute_binding_occurrences(
         end
     end
 
-    # Re-key `:local (mod=nothing)` aliases introduced by type definitions
-    # (struct / abstract type / primitive type) onto the matching hidden
-    # `:global (is_internal=true)` binding in the same `ctx3`. This normalizes
-    # struct-alias occurrences so they appear under a concrete-module `:global`
-    # entry like ordinary globals, letting downstream consumers match on
-    # `(mod, name, :global)` exactly without a nothing-mod fallback.
+    # Type definitions emit two bindings at the same source token: a
+    # `:local (mod=nothing)` alias and a `:global`. The local collects
+    # user-written `:use` occurrences from inside the type body (e.g.
+    # self-recursive field types like `next::Union{Node, Nothing}`
+    # resolve to the local). Merge its bucket into the global so those
+    # uses surface under a single `(mod, name, :global)` entry.
+    #
+    # Discriminator: matching declaration `byte_range`. An unrelated
+    # `local Foo` / `let Foo = 1` that happens to share a name with a
+    # `:global Foo` has a different decl byte_range and is not merged.
     alias_remaps = Pair{JL.BindingInfo,JL.BindingInfo}[]
     for binfo in keys(occurrences)
         binfo.kind === :local || continue
         isnothing(binfo.mod) || continue
+        local_decl_range = JS.byte_range(JL.binding_ex(ctx3, binfo))
         for other in ctx3.bindings.info
             other.kind === :global || continue
-            other.is_internal || continue
             other.name == binfo.name || continue
+            JS.byte_range(JL.binding_ex(ctx3, other)) == local_decl_range || continue
             push!(alias_remaps, binfo => other)
             break
         end
@@ -133,50 +138,29 @@ function collect_inert_identifiers(st3::SyntaxTreeC)
     return result
 end
 
-"""
-`skip_recording` maps a binding to a byte range. A BindingId is skipped only if
-both its binding and its byte range match an entry. This distinguishes synthetic
-BindingIds that lowering inserts at the definition-site range (e.g., inside
-`method`, `function_type`, or `removable` nodes) from genuine uses such as
-self-recursive calls, which have distinct byte ranges.
-"""
-const SkipRecording = Dict{JL.BindingInfo,UnitRange{Int}}
-
 function may_record_occurrence!(occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence}},
-        kind::Symbol, st::SyntaxTreeC, ctx3::JL.VariableAnalysisContext;
-        skip_recording::Union{Nothing,SkipRecording} = nothing
+        kind::Symbol, st::SyntaxTreeC, ctx3::JL.VariableAnalysisContext,
     )
     if JS.kind(st) === JS.K"BindingId"
         binfo = JL.get_binding(ctx3, st)
-        _may_record_occurrence!(occurrences, kind, st, binfo; skip_recording)
+        _may_record_occurrence!(occurrences, kind, st, binfo)
         return true
     end
     return false
 end
 
 function _may_record_occurrence!(occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence}},
-        kind::Symbol, st::SyntaxTreeC, binfo::JL.BindingInfo;
-        skip_recording::Union{Nothing,SkipRecording} = nothing
+        kind::Symbol, st::SyntaxTreeC, binfo::JL.BindingInfo,
     )
     haskey(occurrences, binfo) || return
-    if !isnothing(skip_recording)
-        skip_range = get(skip_recording, binfo, nothing)
-        if skip_range !== nothing && JS.byte_range(st) == skip_range
-            return
-        end
-    end
     push!(occurrences[binfo], BindingOccurrence(st, kind))
     occurrences
 end
-
-is_selffunc(b::JL.BindingInfo) = b.name == "#self#"
-is_kwsorter_func(b::JL.BindingInfo) = startswith(b.name, '#') && endswith(b.name, r"#\d+$")
 
 function compute_binding_occurrences!(
         occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence}},
         ctx3::JL.VariableAnalysisContext, st3::SyntaxTreeC;
         include_global_bindings::Bool = false,
-        skip_recording_uses::Union{Nothing,SkipRecording} = nothing
     )
     stack = JS.SyntaxList(st3)
     while !isempty(stack)
@@ -184,7 +168,13 @@ function compute_binding_occurrences!(
         k = JS.kind(st)
         nc = JS.numchildren(st)
         if k === JS.K"BindingId"
-            may_record_occurrence!(occurrences, :use, st, ctx3; skip_recording=skip_recording_uses)
+            # JL marks synthetic machinery references (e.g. function self-refs
+            # inside `K"method"`/`K"function_type"`, type self-refs inside
+            # `_typebody!`/`_equiv_typedef` calls) with `:synthetic_ref`. Those
+            # are not user-visible uses of the binding.
+            if !JL.getmeta(st, :synthetic_ref, false)::Bool
+                may_record_occurrence!(occurrences, :use, st, ctx3)
+            end
         end
 
         start_idx = 1
@@ -195,43 +185,6 @@ function compute_binding_occurrences!(
         elseif k in JS.KSet"method_defs constdecl"
             if nc ≥ 1 && may_record_occurrence!(occurrences, :def, st[1], ctx3)
                 start_idx = 2
-            end
-        elseif k === JS.K"block" && nc ≥ 1 && JS.kind(st[1]) === JS.K"function_decl"
-            # This block wraps a function definition. Each function's own binding
-            # appears as BindingId in internal lowering nodes (`method`,
-            # `function_type`, `removable`, or as the trailing "return value" of
-            # the definition) that are not user-visible uses. We collect the
-            # bindings of all leading `function_decl` children (a single block
-            # may declare multiple functions, e.g., a keyword function generates
-            # both the user-visible function and a `#kw_body#…` helper) and map
-            # each to its definition-site byte range in `skip_recording_uses`
-            # before recursing. BindingIds whose range matches are skipped, while
-            # genuine uses at different ranges (e.g., self-recursive calls) are
-            # still recorded. Bindings already present in `skip_recording_uses`
-            # are used as a termination condition to avoid infinite recursion.
-            newly_added = Pair{JL.BindingInfo,UnitRange{Int}}[]
-            for i = 1:nc
-                child = st[i]
-                JS.kind(child) === JS.K"function_decl" || continue
-                JS.numchildren(child) ≥ 1 || continue
-                funcnode = child[1]
-                JS.kind(funcnode) === JS.K"BindingId" || continue
-                funcinfo = JL.get_binding(ctx3, funcnode)
-                if isnothing(skip_recording_uses) || !haskey(skip_recording_uses, funcinfo)
-                    push!(newly_added, funcinfo => JS.byte_range(funcnode))
-                end
-            end
-            if !isempty(newly_added)
-                if isnothing(skip_recording_uses)
-                    compute_binding_occurrences!(occurrences, ctx3, st;
-                        skip_recording_uses = SkipRecording(newly_added))
-                else
-                    for br in newly_added; push!(skip_recording_uses, br); end
-                    compute_binding_occurrences!(occurrences, ctx3, st;
-                        skip_recording_uses)
-                    for (b, _) in newly_added; delete!(skip_recording_uses, b); end
-                end
-                continue
             end
         elseif k === JS.K"lambda"
             # All blocks except the last one define arguments and static parameters,
@@ -254,53 +207,6 @@ function compute_binding_occurrences!(
             start_idx = 2 # the left hand side, i.e. "definition", does not account for usage
             if nc ≥ 1
                 may_record_occurrence!(occurrences, :def, st[1], ctx3)
-                if nc ≥ 2
-                    rhs = st[2]
-                    # In struct definitions, `local struct_name` is somehow introduced,
-                    # so special case it here: https://github.com/c42f/JuliaLowering.jl/blob/4b12ab19dad40c64767558be0a8a338eb4cc9172/src/desugaring.jl#L3833
-                    # TODO investigate why this local binding introduction is necessary on the JL side
-                    if JS.kind(rhs) === JS.K"BindingId" && JL.get_binding(ctx3, rhs).name == "struct_type"
-                        start_idx = 1
-                    end
-                end
-            end
-        elseif k === JS.K"call" && nc ≥ 1
-            arg1 = st[1]
-            skip_arguments = false
-            if JS.kind(arg1) === JS.K"BindingId"
-                funcbind = JL.get_binding(ctx3, arg1)
-                if is_selffunc(funcbind)
-                    # Don't count self arguments used in self calls as "usage".
-                    # This is necessary to issue unused argument diagnostics for `x` in cases like:
-                    # ```julia
-                    # hasmatch(x::RegexMatch, y::Bool=false) = nothing
-                    # ```
-                    skip_arguments = true
-                elseif is_kwsorter_func(funcbind)
-                    # Argument uses in keyword function calls also need to be skipped for the same reason.
-                    # Without this, `:use` of `a` in `func(a; x) = x` would be counted.
-                    skip_arguments = true
-                end
-            elseif JS.kind(arg1) === JS.K"top" && get(arg1, :name_val, "") == "kwerr"
-                # Skip argument uses for `kwerr` calls as well
-                skip_arguments = true
-            end
-            if skip_arguments
-                for i = nc:-1:2 # reversed since we use `pop!`
-                    argⱼ = st[i]
-                    if JS.kind(argⱼ) === JS.K"BindingId"
-                        bkind = JL.get_binding(ctx3, argⱼ).kind
-                        # Skip both `:argument` and `:local` bindings.
-                        # `:local` bindings appear in kwsorter calls when
-                        # `scope_nest` is used for dependent keyword defaults.
-                        if bkind === :argument || bkind === :local
-                            continue
-                        end
-                    end
-                    push!(stack, st[i])
-                end
-                push!(stack, arg1)
-                continue
             end
         end
         for i = nc:-1:start_idx # reversed since we use `pop!`
