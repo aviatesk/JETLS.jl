@@ -54,7 +54,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
-- The reference-count code lens now emits `editor.action.showReferences` (a VSCode convention command) directly, instead of the JETLS-defined `jetls.showReferences`. Editors that follow the VSCode convention (e.g. Zed) now dispatch the lens out of the box; editors that do not (e.g. Neovim) need to register a client-side handler.
+- The [reference-count code lens](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/code_lens-references) now emits `editor.action.showReferences` (a VSCode convention command) directly, instead of the JETLS-defined `jetls.showReferences`. Editors that follow the VSCode convention (e.g. Zed) now dispatch the lens out of the box; editors that do not (e.g. Neovim) need to register a client-side handler.
 
 - When a reference-count code lens is clicked on a file whose full analysis has not yet run, a warning notification (via `window/showMessage`) is now shown instead of an empty references peek.
 
@@ -63,6 +63,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Fixed
 
 - Fixed `textDocument/references` so that `includeDeclaration=false` now correctly excludes method definitions and declarations of the target binding. As a side benefit, the [reference-count code lens](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/code_lens-references) now reports accurate counts.
+
+- Fixed the reference-count code lens, `textDocument/references`, `textDocument/documentHighlight`, and `textDocument/rename` silently dropping results after a full analysis completes.
 
 - Names listed in `export` and `public` statements are now treated as references to the surrounding module's global bindings, so `textDocument/documentHighlight`, `textDocument/references`, `textDocument/definition`, and `textDocument/rename` all work when the cursor is placed on an exported/public name.
 

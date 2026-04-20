@@ -104,7 +104,7 @@ end
 function cache_intermediate_analysis_result!(interp::LSInterpreter)
     result = JET.JETToplevelResult(interp.analyzer, interp.state.res, "LSInterpreter (intermediate result)", ())
     intermediate_result, _ = JETLS.new_analysis_result(interp, interp.request, result)
-    JETLS.update_analysis_cache!(interp.server.state.analysis_manager, intermediate_result)
+    JETLS.update_analysis_cache!(interp.server.state, intermediate_result)
 end
 
 function JET.analyze_from_definitions!(interp::LSInterpreter, config::JET.ToplevelConfig)

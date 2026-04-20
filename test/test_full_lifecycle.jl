@@ -2,6 +2,8 @@ module test_full_lifecycle
 
 include("setup.jl")
 
+@testset "full completion cycle" begin
+
 let (pkgcode, positions) = JETLS.get_text_and_positions("""
     module TestFullLifecycle
 
@@ -150,6 +152,101 @@ let (pkgcode, positions) = JETLS.get_text_and_positions("""
 
         # also test cases when external script is open
         withserver(test_full_cycle)
+    end
+end
+
+end # @testset "full completion cycle" begin
+
+# Regression test: `textDocument/references` previously returned stale
+# results after script-mode reanalysis because the cached occurrences kept
+# `binfo.mod` from the previous virtual module while the new target binding
+# resolved in the freshly gensym'd virtual module of the new analysis run.
+@testset "occurrence cache invalidation across script-mode reanalysis" begin
+    script_code = """
+    func│(x) = sin(x)
+
+    function main(args::Vector{String})::Cint
+        println(func(@something tryparse(Int, first(args)) return 1))
+        return 0
+    end
+    """
+    clean_code, positions = JETLS.get_text_and_positions(script_code)
+    @test length(positions) == 1
+    refpos = only(positions)
+
+    withscript(clean_code) do script_path
+        uri = filepath2uri(script_path)
+        withserver() do (; writereadmsg, id_counter)
+            # Open the file; the response publishes diagnostics only once the
+            # initial full analysis completes.
+            let (; raw_res) = writereadmsg(
+                    make_DidOpenTextDocumentNotification(uri, clean_code))
+                @test raw_res isa PublishDiagnosticsNotification
+                @test raw_res.params.uri == uri
+            end
+
+            refparams = ReferenceParams(;
+                textDocument = TextDocumentIdentifier(; uri),
+                position = refpos,
+                context = ReferenceContext(; includeDeclaration = true))
+
+            # First request populates `binding_occurrences_cache` with
+            # entries keyed against the first analysis run's virtual module.
+            refs_first = let id = id_counter[] += 1
+                (; raw_res) = writereadmsg(
+                    ReferencesRequest(; id, params = refparams))
+                @test raw_res isa ReferencesResponse && raw_res.id == id
+                raw_res.result
+            end
+            @test refs_first isa Vector{Location}
+            @test length(refs_first) == 2
+
+            # Trigger reanalysis: script mode mints a new gensym'd virtual
+            # module, so the cached occurrences become stale unless
+            # `update_analysis_cache!` invalidates them.
+            let (; raw_res) = writereadmsg(
+                    DidSaveTextDocumentNotification(;
+                        params = DidSaveTextDocumentParams(;
+                            textDocument = TextDocumentIdentifier(; uri),
+                            text = clean_code)))
+                @test raw_res isa PublishDiagnosticsNotification
+                @test raw_res.params.uri == uri
+            end
+
+            # Without the invalidation, the stale cache would fail to match
+            # the target binding's new virtual module and references would
+            # drop to 0 or 1 here.
+            refs_second = let id = id_counter[] += 1
+                (; raw_res) = writereadmsg(
+                    ReferencesRequest(; id, params = refparams))
+                @test raw_res isa ReferencesResponse && raw_res.id == id
+                raw_res.result
+            end
+            @test refs_second isa Vector{Location}
+            @test length(refs_second) == 2
+
+            # Reanalyze once more to exercise the virtual-module -> virtual-module
+            # transition: the previous reanalysis populated the cache with
+            # entries keyed against its virtual module, and this run produces yet
+            # another gensym'd virtual module.
+            let (; raw_res) = writereadmsg(
+                    DidSaveTextDocumentNotification(;
+                        params = DidSaveTextDocumentParams(;
+                            textDocument = TextDocumentIdentifier(; uri),
+                            text = clean_code)))
+                @test raw_res isa PublishDiagnosticsNotification
+                @test raw_res.params.uri == uri
+            end
+
+            refs_third = let id = id_counter[] += 1
+                (; raw_res) = writereadmsg(
+                    ReferencesRequest(; id, params = refparams))
+                @test raw_res isa ReferencesResponse && raw_res.id == id
+                raw_res.result
+            end
+            @test refs_third isa Vector{Location}
+            @test length(refs_third) == 2
+        end
     end
 end
 
