@@ -412,7 +412,7 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
     tm = round(time() - s, digits=2)
     JETLS_DEV_MODE && @info "Analysis completed in $tm seconds:" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
 
-    update_analysis_cache!(manager, analysis_result)
+    update_analysis_cache!(server.state, analysis_result)
     mark_analyzed_generation!(manager, request)
     request.notify_diagnostics && notify_diagnostics!(server)
 
@@ -502,8 +502,10 @@ function cleanup_prev_methods(prev_result::AnalysisResult)
     end
 end
 
-function update_analysis_cache!(manager::AnalysisManager, analysis_result::AnalysisResult)
+function update_analysis_cache!(state::ServerState, analysis_result::AnalysisResult)
+    manager = state.analysis_manager
     analyzed_uris = analyzed_file_uris(analysis_result)
+    prev_cache = load(manager.cache)
     store!(manager.cache) do cache
         new_cache = copy(cache)
         for uri in analyzed_uris
@@ -511,6 +513,29 @@ function update_analysis_cache!(manager::AnalysisManager, analysis_result::Analy
         end
         return new_cache, nothing
     end
+    # Cached occurrences embed `binfo.mod` from the module context that was in effect when
+    # they were computed. Analysis modes that use virtualized contexts
+    # (scripts, old package mode) mint a fresh gensym'd virtual module on every successful
+    # run, so the module identity changes between consecutive reanalyses.
+    # Invalidate so lowering-based LSP handlers recompute under then current module context.
+    # Revise-based analysis keeps module identity stable across runs, so we
+    # skip invalidation when `module_range_infos` is unchanged.
+    for uri in analyzed_uris
+        if module_range_infos_unchanged(prev_cache, analysis_result, uri)
+            continue
+        end
+        invalidate_binding_occurrences_cache!(state, uri)
+    end
+end
+
+function module_range_infos_unchanged(
+        prev_cache::Dict{URI,AnalysisInfo}, new_result::AnalysisResult, uri::URI,
+    )
+    prev_result = get(prev_cache, uri, nothing)
+    prev_result isa AnalysisResult || return false
+    prev_safi = @something analyzed_file_info(prev_result, uri) return false
+    new_safi = @something analyzed_file_info(new_result, uri) return false
+    return prev_safi.module_range_infos == new_safi.module_range_infos
 end
 
 function mark_analyzed_generation!(manager::AnalysisManager, request::AnalysisRequest)
