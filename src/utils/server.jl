@@ -188,7 +188,11 @@ Returns:
 """
 function get_file_info(
         s::ServerState, uri::URI, cancel_flag::AbstractCancelFlag;
-        timeout::Float64 = 10., cancelled_error_data = nothing
+        # Shorten `timeout` and polling `sleep` under `JETLS_TEST_MODE` so tests
+        # that intentionally exercise the timeout path (e.g. "File cache error
+        # handling") don't block for the full production timeout.
+        timeout::Float64 = @static(JETLS_TEST_MODE ? 1.0 : 10.),
+        cancelled_error_data = nothing
     )
     start = time()
     request_id = objectid(cancel_flag) # Each request uses a unique `cancel_flag`, so this objectid can be used as a request-unique ID
@@ -207,7 +211,9 @@ function get_file_info(
             return nothing
         end
         JETLS_DEV_MODE && @info "Waiting for file cache" uri _id=request_id maxlog=1
-        sleep(0.5)
+        # Shorten the polling interval under `JETLS_TEST_MODE` (paired with the
+        # shortened `timeout` above) so the timeout-exercising tests finish fast.
+        sleep(@static JETLS_TEST_MODE ? 0.05 : 0.5)
     end
     return nothing
 end

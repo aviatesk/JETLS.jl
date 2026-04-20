@@ -330,7 +330,10 @@ end
                     notify(event)
                 end
             end
-            sleep(5.0)
+            # Send `DidOpen` after the handler has started polling but before
+            # `get_file_info`'s `JETLS_TEST_MODE` timeout (1.0s) fires, so the
+            # test exercises the "cache arrives during polling" path.
+            sleep(0.5)
             writereadmsg(make_DidOpenTextDocumentNotification(uri, read(script_path, String)); read=0, check=false)
             wait(event)
             @test success

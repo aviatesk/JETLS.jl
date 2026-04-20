@@ -25,7 +25,7 @@ function wait_for_file_cache_version(state::JETLS.ServerState, uri::URIs2.URI,
     error("Timed out waiting for file cache version $version for $uri")
 end
 
-function take_with_timeout!(chn::Channel; interval=1, limit=60)
+function take_with_timeout!(chn::Channel; interval=0.1, limit=600)
     while limit > 0
         if isready(chn)
             return take!(chn)
