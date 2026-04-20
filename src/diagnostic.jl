@@ -1085,14 +1085,13 @@ function is_block_terminator(
         allow_noreturn_optimization::Vector{Symbol}
     )
     k = JS.kind(st3)
-    k === JS.K"return" && return true
-    k === JS.K"break" && return true
+    k in JS.KSet"return break" && return true
     !isempty(allow_noreturn_optimization) &&
         is_noreturn_call(ctx3, st3, allow_noreturn_optimization) && return true
     if k === JS.K"=" && JS.numchildren(st3) >= 2
         return is_block_terminator(ctx3, st3[2], allow_noreturn_optimization)
     end
-    if (k === JS.K"if" || k === JS.K"elseif") && JS.numchildren(st3) >= 3
+    if (k in JS.KSet"if elseif") && JS.numchildren(st3) >= 3
         return (_is_block_terminator(ctx3, st3[2], allow_noreturn_optimization) &&
                 _is_block_terminator(ctx3, st3[3], allow_noreturn_optimization))
     end
@@ -1354,7 +1353,7 @@ function analyze_unused_imports!(
         # by the binding occurrence analysis
         time_ast_analysis += @elapsed traverse(st0_top) do st0::JS.SyntaxTree
             kind = JS.kind(st0)
-            if kind === JS.K"export" || kind === JS.K"public"
+            if kind in JS.KSet"export public"
                 # `using .Inner: foo; export foo` - foo is used via re-export
                 mod = get_context_module(state, search_uri, offset_to_xy(search_fi, JS.first_byte(st0)))
                 for i = 1:JS.numchildren(st0)
