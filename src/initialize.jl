@@ -51,17 +51,19 @@ function handle_InitializeRequest(
         # leave Refs undefined
     end
 
-    client_pid = something(init_params.processId, client_process_id, Some(nothing))
-    version = JETLS_VERSION
-    if version == "dev"
-        version *= " ($(pkgdir(JETLS)))"
+    if !JETLS_TEST_MODE
+        client_pid = something(init_params.processId, client_process_id, Some(nothing))
+        version = JETLS_VERSION
+        if version == "dev"
+            version *= " ($(pkgdir(JETLS)))"
+        end
+        workspace = isdefined(state, :root_path) ? state.root_path :
+            isempty(state.workspaceFolders) ? "(no workspace)" : "(multi-root)"
+        title = "jetls serve --$transport" *
+                (client_pid !== nothing ? " --clientProcessId=$client_pid" : "") *
+                " [version: $version, workspace: $workspace]"
+        @ccall uv_set_process_title(title::Cstring)::Cint
     end
-    workspace = isdefined(state, :root_path) ? state.root_path :
-        isempty(state.workspaceFolders) ? "(no workspace)" : "(multi-root)"
-    title = "jetls serve --$transport" *
-            (client_pid !== nothing ? " --clientProcessId=$client_pid" : "") *
-            " [version: $version, workspace: $workspace]"
-    @ccall uv_set_process_title(title::Cstring)::Cint
 
     # NOTE: Static server settings that require a server restart to take effect should be
     # accessed during server initialization via `state.init_params.initializationOptions`.
