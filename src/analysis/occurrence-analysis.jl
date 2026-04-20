@@ -65,7 +65,7 @@ function compute_binding_occurrences(
 
     isempty(occurrences) && return occurrences
 
-    compute_binding_occurrences!(occurrences, ctx3, st3; ismacro)
+    compute_binding_occurrences!(occurrences, ctx3, st3; ismacro, include_global_bindings)
 
     # In `@generated` functions, arguments are typically used only inside returned
     # quoted expressions (`:(...)`) which appear as `inert` nodes after lowering.
@@ -196,6 +196,7 @@ is_kwsorter_func(b::JL.BindingInfo) = startswith(b.name, '#') && endswith(b.name
 function compute_binding_occurrences!(
         occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence{Tree3}}},
         ctx3::JL.VariableAnalysisContext, st3::Tree3;
+        include_global_bindings::Bool = false,
         ismacro::Union{Nothing,Base.RefValue{Bool}} = nothing,
         skip_recording_uses::Union{Nothing,SkipRecording} = nothing
     ) where Tree3<:JS.SyntaxTree
@@ -204,7 +205,7 @@ function compute_binding_occurrences!(
         st = pop!(stack)
         k = JS.kind(st)
         nc = JS.numchildren(st)
-        if k === JS.K"local" # || k === JS.K"function_decl"
+        if k === JS.K"local" || (include_global_bindings && k === JS.K"global")
             if nc ≥ 1
                 record_occurrence!(occurrences, :decl, st[1], ctx3)
                 continue # avoid to recurse to skip recording use

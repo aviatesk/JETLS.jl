@@ -368,24 +368,26 @@ ismacro_callback(ismacro) = @test ismacro[]
 end
 
 function get_binding_occurrences_st0(text::AbstractString;
-        filename::String = joinpath(@__DIR__, "testfile.jl"), kwargs...)
+        filename::String = joinpath(@__DIR__, "testfile.jl"),
+        include_global_bindings::Bool = true, kwargs...)
     fi = JETLS.FileInfo(#=version=#0, text, filename)
     st0 = jlparse(text; rule=:statement)
     uri = filename2uri(filename)
     state = JETLS.ServerState()
     return JETLS.compute_binding_occurrences_st0(state, uri, fi, st0;
-        lookup_func = Returns(JETLS.OutOfScope(lowering_module)), kwargs...)
+        lookup_func = Returns(JETLS.OutOfScope(lowering_module)),
+        include_global_bindings, kwargs...)
 end
 
 @testset "compute_binding_occurrences_st0" begin
     @testset "macro calls" begin
-        let boccs = get_binding_occurrences_st0("@nospecialize"; include_global_bindings=true)
+        let boccs = get_binding_occurrences_st0("@nospecialize")
             @test length(boccs) == 1
             binfo, occs = only(boccs)
             @test binfo.name == "@nospecialize"
             @test length(occs) == 1
         end
-        let boccs = get_binding_occurrences_st0("Base.@nospecialize"; include_global_bindings=true)
+        let boccs = get_binding_occurrences_st0("Base.@nospecialize")
             @test length(boccs) == 1
             binfo, occs = only(boccs)
             @test binfo.name == "Base"
@@ -394,8 +396,7 @@ end
     end
 
     @testset "export/public" begin
-        let boccs = get_binding_occurrences_st0("export foo, @bar, baz";
-                                                include_global_bindings=true)
+        let boccs = get_binding_occurrences_st0("export foo, @bar, baz")
             @test length(boccs) == 3
             for name in ("foo", "@bar", "baz")
                 i = @something findfirst(((b, _),) -> b.name == name, collect(boccs))
@@ -405,8 +406,7 @@ end
                 @test only(occs).kind === :use
             end
         end
-        let boccs = get_binding_occurrences_st0("public qux";
-                                                include_global_bindings=true)
+        let boccs = get_binding_occurrences_st0("public qux")
             @test length(boccs) == 1
             binfo, occs = only(boccs)
             @test binfo.name == "qux"
@@ -414,8 +414,8 @@ end
             @test only(occs).kind === :use
         end
         # Without `include_global_bindings`, export/public yields no occurrences
-        # (no local/argument bindings to track).
-        let boccs = get_binding_occurrences_st0("export foo")
+        let boccs = get_binding_occurrences_st0("export foo";
+                                                include_global_bindings=false)
             @test boccs !== nothing && isempty(boccs)
         end
     end
@@ -423,8 +423,7 @@ end
     @testset "import/using" begin
         # `using M: a, b` / `import M: a, b` — each name as `:decl`
         for keyword in ("using", "import")
-            let boccs = get_binding_occurrences_st0("$keyword Base: foo, bar";
-                                                    include_global_bindings=true)
+            let boccs = get_binding_occurrences_st0("$keyword Base: foo, bar")
                 @test length(boccs) == 2
                 for name in ("foo", "bar")
                     i = @something findfirst(((b, _),) -> b.name == name, collect(boccs))
@@ -436,16 +435,14 @@ end
             end
         end
         # `using M: a as b` — the alias is the local binding
-        let boccs = get_binding_occurrences_st0("using Base: foo as bar";
-                                                include_global_bindings=true)
+        let boccs = get_binding_occurrences_st0("using Base: foo as bar")
             @test length(boccs) == 1
             binfo, occs = only(boccs)
             @test binfo.name == "bar"
             @test only(occs).kind === :decl
         end
         # `import M.a` — last component is the local binding
-        let boccs = get_binding_occurrences_st0("import Base.foo";
-                                                include_global_bindings=true)
+        let boccs = get_binding_occurrences_st0("import Base.foo")
             @test length(boccs) == 1
             binfo, occs = only(boccs)
             @test binfo.name == "foo"
@@ -453,8 +450,7 @@ end
         end
         # `using M` / `import M` — the module name is the local binding
         for keyword in ("using", "import")
-            let boccs = get_binding_occurrences_st0("$keyword Base";
-                                                    include_global_bindings=true)
+            let boccs = get_binding_occurrences_st0("$keyword Base")
                 @test length(boccs) == 1
                 binfo, occs = only(boccs)
                 @test binfo.name == "Base"
@@ -462,8 +458,7 @@ end
             end
         end
         # `using A, B` — each module name
-        let boccs = get_binding_occurrences_st0("using Base, LinearAlgebra";
-                                                include_global_bindings=true)
+        let boccs = get_binding_occurrences_st0("using Base, LinearAlgebra")
             @test length(boccs) == 2
             for name in ("Base", "LinearAlgebra")
                 i = @something findfirst(((b, _),) -> b.name == name, collect(boccs))
@@ -473,8 +468,7 @@ end
         end
         # `using M.a` / `import M.a` — trailing component is the local binding
         for keyword in ("using", "import")
-            let boccs = get_binding_occurrences_st0("$keyword Base.Iterators";
-                                                    include_global_bindings=true)
+            let boccs = get_binding_occurrences_st0("$keyword Base.Iterators")
                 @test length(boccs) == 1
                 binfo, occs = only(boccs)
                 @test binfo.name == "Iterators"
@@ -482,12 +476,91 @@ end
             end
         end
         # Relative: `using .A` / `import ..A.B` — trailing component
-        let boccs = get_binding_occurrences_st0("using .Inner";
-                                                include_global_bindings=true)
+        let boccs = get_binding_occurrences_st0("using .Inner")
             @test length(boccs) == 1
             binfo, occs = only(boccs)
             @test binfo.name == "Inner"
             @test only(occs).kind === :decl
+        end
+    end
+
+    @testset "local declaration" begin
+        only_locals(boccs) = filter(((b, _),) -> b.kind === :local, collect(boccs))
+        # `local x = 1` inside a function — `x` gets `:decl` and `:def`.
+        let locals = only_locals(get_binding_occurrences_st0(
+                "function f(); local x = 1; end"))
+            @test length(locals) == 1
+            binfo, occs = only(locals)
+            @test binfo.name == "x"
+            @test count(o -> o.kind === :decl, occs) == 1
+            @test count(o -> o.kind === :def, occs) == 1
+        end
+        # `local x, y` — each name recorded as `:decl` (plus `:def` from the
+        # following assignment).
+        let locals = only_locals(get_binding_occurrences_st0(
+                "function f(); local x, y; x = 1; y = 2; end"))
+            @test length(locals) == 2
+            for name in ("x", "y")
+                i = @something findfirst(((b, _),) -> b.name == name, locals)
+                binfo, occs = locals[i]
+                @test count(o -> o.kind === :decl, occs) == 1
+                @test count(o -> o.kind === :def, occs) == 1
+            end
+        end
+        # Bare `local x` followed by an assignment and a use.
+        let locals = only_locals(get_binding_occurrences_st0(
+                "function f(); local x; x = 1; x; end"))
+            @test length(locals) == 1
+            binfo, occs = only(locals)
+            @test binfo.name == "x"
+            @test count(o -> o.kind === :decl, occs) == 1
+            @test count(o -> o.kind === :def, occs) == 1
+            @test count(o -> o.kind === :use, occs) == 1
+        end
+        # `local` also works in a `let` block.
+        let locals = only_locals(get_binding_occurrences_st0(
+                "let; local x = 1; end"))
+            @test length(locals) == 1
+            binfo, occs = only(locals)
+            @test binfo.name == "x"
+            @test count(o -> o.kind === :decl, occs) == 1
+            @test count(o -> o.kind === :def, occs) == 1
+        end
+    end
+
+    @testset "global declaration" begin
+        # `global x = 1` — the name is recorded as `:decl` (plus its `:def`).
+        let boccs = get_binding_occurrences_st0("global x = 1")
+            @test length(boccs) == 1
+            binfo, occs = only(boccs)
+            @test binfo.name == "x"
+            @test binfo.kind === :global
+            @test count(o -> o.kind === :decl, occs) == 1
+            @test count(o -> o.kind === :def, occs) == 1
+        end
+        # `global x, y` — each name recorded as `:decl`.
+        let boccs = get_binding_occurrences_st0("global x, y")
+            @test length(boccs) == 2
+            for name in ("x", "y")
+                i = @something findfirst(((b, _),) -> b.name == name, collect(boccs))
+                binfo, occs = collect(boccs)[i]
+                @test binfo.kind === :global
+                @test only(occs).kind === :decl
+            end
+        end
+        # Bare `global x` — single `:decl` occurrence.
+        let boccs = get_binding_occurrences_st0("global x")
+            @test length(boccs) == 1
+            binfo, occs = only(boccs)
+            @test binfo.name == "x"
+            @test binfo.kind === :global
+            @test only(occs).kind === :decl
+        end
+        # Without `include_global_bindings`, `global` yields no occurrences
+        # (no local/argument bindings to track).
+        let boccs = get_binding_occurrences_st0("global x = 1";
+                                                include_global_bindings=false)
+            @test boccs !== nothing && isempty(boccs)
         end
     end
 
@@ -505,7 +578,7 @@ end
                         return total
                     end
                 end
-                """; include_global_bindings=true)
+                """)
             @test boccs !== nothing
             # `sleep` is referenced only inside the inert block, so finding it
             # requires `_unwrap_interpolations` to succeed through the `+=` node.
@@ -528,7 +601,7 @@ end
                 let valid = MY_CONST
                     @mymacro something(::Type{Int}) = \$valid
                 end
-                """; include_global_bindings=true)
+                """)
             @test boccs !== nothing
             # Without the interpolation fix in `_remove_macrocalls`, lowering
             # of this `let` fails because `\$valid` is left bare in a `block`
