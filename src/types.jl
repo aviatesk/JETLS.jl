@@ -518,7 +518,7 @@ end
 
 const DEFAULT_CONFIG = JETLSConfig(;
     diagnostic = DiagnosticConfig(true, true, true, DiagnosticPattern[]),
-    full_analysis = FullAnalysisConfig(1.0, true),
+    full_analysis = FullAnalysisConfig(@static(JETLS_TEST_MODE ? 0.0 : 1.0), true),
     testrunner = TestRunnerConfig(@static Sys.iswindows() ? "testrunner.bat" : "testrunner"),
     formatter = "Runic",
     completion = CompletionConfig(LaTeXEmojiConfig(missing), MethodSignatureConfig(missing)),
