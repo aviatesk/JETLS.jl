@@ -1176,14 +1176,13 @@ function analyze_lowered_code!(
         postprocessor::LSPostProcessor = LSPostProcessor()
     )
     (; ctx3, ctx4, st0, st3) = res
-    ismacro = Ref(false)
     binding_occurrences = compute_binding_occurrences(ctx3, st3, is_generated0(st0);
-        ismacro, include_global_bindings=true)
+        include_global_bindings=true)
+
     reported = Set{LoweringDiagnosticKey}() # to prevent duplicate reports for unused default or keyword arguments
     (kwarg_type_names, kwarg_locations) = compute_kwarg_type_annotation_names(st0)
 
-    has_implicit_args = ismacro[] || is_generated0(st0)
-
+    has_implicit_args = is_macro0(st0) || is_generated0(st0)
     analyze_unused_bindings!(
         diagnostics, fi, st0, ctx3, binding_occurrences, has_implicit_args, reported,
         kwarg_type_names, kwarg_locations;

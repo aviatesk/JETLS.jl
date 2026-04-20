@@ -12,7 +12,6 @@ module lowering_module end
 with_binding_occurrences(callback, code::AbstractString; kwargs...) =
     with_binding_occurrences(callback, lowering_module, code; kwargs...)
 function with_binding_occurrences(callback, mod::Module, code::AbstractString;
-                                  ismacro_callback = nothing,
                                   remove_macrocalls::Bool = false,
                                   is_generated::Bool = false)
     st0 = jlparse(code; rule=:statement)
@@ -20,15 +19,9 @@ function with_binding_occurrences(callback, mod::Module, code::AbstractString;
         st0 = JETLS.remove_macrocalls(st0)
     end
     (; ctx3, st3) = JETLS.jl_lower_for_scope_resolution(mod, st0)
-    ismacro = isnothing(ismacro_callback) ? nothing : Ref(false)
-    binding_occurrences = JETLS.compute_binding_occurrences(ctx3, st3, is_generated; ismacro)
-    if !isnothing(ismacro_callback)
-        ismacro_callback(ismacro)
-    end
+    binding_occurrences = JETLS.compute_binding_occurrences(ctx3, st3, is_generated)
     callback(binding_occurrences)
 end
-nomacro_callback(ismacro) = @test !ismacro[]
-ismacro_callback(ismacro) = @test ismacro[]
 
 @testset "compute_binding_occurrences" begin
     with_binding_occurrences("""
@@ -37,7 +30,7 @@ ismacro_callback(ismacro) = @test ismacro[]
             println(x)
             return y
         end
-        """; ismacro_callback = nomacro_callback) do binding_occurrences
+        """) do binding_occurrences
         binfos = collect(keys(binding_occurrences))
         @test length(binfos) == 4
         let i = @something findfirst(binfo->binfo.name=="x", binfos)
@@ -92,7 +85,7 @@ ismacro_callback(ismacro) = @test ismacro[]
         macro m(x, y)
             return Expr(:block, __source__, esc(x))
         end
-        """; ismacro_callback = ismacro_callback) do binding_occurrences
+        """) do binding_occurrences
         binfos = collect(keys(binding_occurrences))
         @test length(binfos) == 4
         let i = @something findfirst(binfo->binfo.name=="x", binfos)
@@ -148,7 +141,7 @@ ismacro_callback(ismacro) = @test ismacro[]
             function func1(::TTT1) where TTT1<:Integer
                 return zero(TTT1)
             end
-            """; ismacro_callback = nomacro_callback) do binding_occurrences
+            """) do binding_occurrences
             binfos = collect(keys(binding_occurrences))
             # there are two different bindings representing the `TTT1`, one for defineing the
             # signature type and the other for static parameter binding within the method body
@@ -175,7 +168,7 @@ ismacro_callback(ismacro) = @test ismacro[]
         end
         """
         for code in (code1, code2)
-            with_binding_occurrences(code; ismacro_callback = nomacro_callback) do binding_occurrences
+            with_binding_occurrences(code) do binding_occurrences
                 binfos = collect(keys(binding_occurrences))
                 # there are two different bindings representing each for `TTT1` and `TTT2`,
                 # one for defineing the signature type and the other for static parameter binding within the method body
@@ -214,7 +207,7 @@ ismacro_callback(ismacro) = @test ismacro[]
                 end
                 println(xxx)
             end
-            """; ismacro_callback = nomacro_callback) do binding_occurrences
+            """) do binding_occurrences
             binfos = collect(keys(binding_occurrences))
             idxs = findall(binfo->binfo.name=="xxx", binfos)
             @test length(idxs) == 2
@@ -240,7 +233,7 @@ ismacro_callback(ismacro) = @test ismacro[]
             function func(xxx::TTT)::Float64 where TTT<:Integer
                 return sin(xxx)
             end
-            """; ismacro_callback = nomacro_callback) do binding_occurrences
+            """) do binding_occurrences
             binfos = collect(keys(binding_occurrences))
             idx = only(findall(binfo->binfo.name=="xxx", binfos))
             occurrences = binding_occurrences[binfos[idx]]
@@ -253,7 +246,7 @@ ismacro_callback(ismacro) = @test ismacro[]
     end
 
     @testset "keyword arguments" begin
-        with_binding_occurrences("func(a; kw) = kw"; ismacro_callback = nomacro_callback) do binding_occurrences
+        with_binding_occurrences("func(a; kw) = kw") do binding_occurrences
             @test !any(binding_occurrences) do (binding, occurrences)
                 binding.name == "a" && binding.kind === :argument && any(o->o.kind===:use, occurrences)
             end
@@ -261,7 +254,7 @@ ismacro_callback(ismacro) = @test ismacro[]
                 binding.name == "kw" && binding.kind === :argument && any(o->o.kind===:use, occurrences)
             end
         end
-        with_binding_occurrences("func(a; kw) = a"; ismacro_callback = nomacro_callback) do binding_occurrences
+        with_binding_occurrences("func(a; kw) = a") do binding_occurrences
             @test any(binding_occurrences) do (binding, occurrences)
                 binding.name == "a" && binding.kind === :argument && any(o->o.kind===:use, occurrences)
             end
@@ -269,7 +262,7 @@ ismacro_callback(ismacro) = @test ismacro[]
                 binding.name == "kw" && binding.kind === :argument && any(o->o.kind===:use, occurrences)
             end
         end
-        with_binding_occurrences("func(a; kw) = nothing"; ismacro_callback = nomacro_callback) do binding_occurrences
+        with_binding_occurrences("func(a; kw) = nothing") do binding_occurrences
             @test !any(binding_occurrences) do (binding, occurrences)
                 binding.name == "a" && binding.kind === :argument && any(o->o.kind===:use, occurrences)
             end

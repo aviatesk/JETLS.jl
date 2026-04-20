@@ -1,7 +1,7 @@
 """
     compute_binding_occurrences(
             ctx3::JL.VariableAnalysisContext, st3::Tree3, is_generated::Bool;
-            ismacro::Union{Nothing,Base.RefValue{Bool}} = nothing
+            include_global_bindings::Bool = false
         ) where Tree3<:JS.SyntaxTree
         -> binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence{Tree3}}}
 
@@ -19,7 +19,6 @@ information:
 # Arguments
 - `ctx3`: Variable analysis context from JuliaLowering containing binding information
 - `st3`: Lowered syntax tree (after scope resolution) to analyze
-- `ismacro`: Optional mutable reference to track if any function binding is a macro
 
 # Returns
 `binding_occurrences` is a dictionary mapping each non-internal local/argument binding to
@@ -34,7 +33,6 @@ a set of `BindingOccurrence` objects that record where and how the binding appea
 """
 function compute_binding_occurrences(
         ctx3::JL.VariableAnalysisContext, st3::Tree3, is_generated::Bool;
-        ismacro::Union{Nothing,Base.RefValue{Bool}} = nothing,
         include_global_bindings::Bool = false
     ) where Tree3<:JS.SyntaxTree
     occurrences = Dict{JL.BindingInfo,Set{BindingOccurrence{Tree3}}}()
@@ -65,7 +63,7 @@ function compute_binding_occurrences(
 
     isempty(occurrences) && return occurrences
 
-    compute_binding_occurrences!(occurrences, ctx3, st3; ismacro, include_global_bindings)
+    compute_binding_occurrences!(occurrences, ctx3, st3; include_global_bindings)
 
     # In `@generated` functions, arguments are typically used only inside returned
     # quoted expressions (`:(...)`) which appear as `inert` nodes after lowering.
@@ -164,30 +162,31 @@ self-recursive calls, which have distinct byte ranges.
 """
 const SkipRecording = Dict{JL.BindingInfo,UnitRange{Int}}
 
-function record_occurrence!(occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence{Tree3}}},
+function may_record_occurrence!(occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence{Tree3}}},
         kind::Symbol, st::Tree3, ctx3::JL.VariableAnalysisContext;
         skip_recording::Union{Nothing,SkipRecording} = nothing
     ) where Tree3<:JS.SyntaxTree
     if JS.kind(st) === JS.K"BindingId"
         binfo = JL.get_binding(ctx3, st)
-        record_occurrence!(occurrences, kind, st, binfo; skip_recording)
+        _may_record_occurrence!(occurrences, kind, st, binfo; skip_recording)
+        return true
     end
-    return occurrences
+    return false
 end
 
-function record_occurrence!(occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence{Tree3}}},
+function _may_record_occurrence!(occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence{Tree3}}},
         kind::Symbol, st::Tree3, binfo::JL.BindingInfo;
         skip_recording::Union{Nothing,SkipRecording} = nothing
     ) where Tree3<:JS.SyntaxTree
-    haskey(occurrences, binfo) || return occurrences
+    haskey(occurrences, binfo) || return
     if !isnothing(skip_recording)
         skip_range = get(skip_recording, binfo, nothing)
         if skip_range !== nothing && JS.byte_range(st) == skip_range
-            return occurrences
+            return
         end
     end
     push!(occurrences[binfo], BindingOccurrence(st, kind))
-    return occurrences
+    occurrences
 end
 
 is_selffunc(b::JL.BindingInfo) = b.name == "#self#"
@@ -197,7 +196,6 @@ function compute_binding_occurrences!(
         occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence{Tree3}}},
         ctx3::JL.VariableAnalysisContext, st3::Tree3;
         include_global_bindings::Bool = false,
-        ismacro::Union{Nothing,Base.RefValue{Bool}} = nothing,
         skip_recording_uses::Union{Nothing,SkipRecording} = nothing
     ) where Tree3<:JS.SyntaxTree
     stack = JS.SyntaxList(st3)
@@ -205,38 +203,18 @@ function compute_binding_occurrences!(
         st = pop!(stack)
         k = JS.kind(st)
         nc = JS.numchildren(st)
-        if k === JS.K"local" || (include_global_bindings && k === JS.K"global")
-            if nc ≥ 1
-                record_occurrence!(occurrences, :decl, st[1], ctx3)
-                continue # avoid to recurse to skip recording use
-            end
-        end
-
         if k === JS.K"BindingId"
-            record_occurrence!(occurrences, :use, st, ctx3; skip_recording=skip_recording_uses)
+            may_record_occurrence!(occurrences, :use, st, ctx3; skip_recording=skip_recording_uses)
         end
 
         start_idx = 1
-        if k === JS.K"function_decl"
-            if nc ≥ 1
-                func = st[1]
-                if JS.kind(func) === JS.K"BindingId"
-                    binfo = JL.get_binding(ctx3, func)
-                    record_occurrence!(occurrences, :decl, func, binfo)
-                    if !isnothing(ismacro)
-                        ismacro[] |= startswith(binfo.name, "@")
-                    end
-                    start_idx = 2
-                end
+        if k in JS.KSet"local function_decl" || (include_global_bindings && k === JS.K"global")
+            if nc ≥ 1 && may_record_occurrence!(occurrences, :decl, st[1], ctx3)
+                start_idx = 2 # skip recording use
             end
         elseif k === JS.K"method_defs" || k === JS.K"constdecl"
-            if nc ≥ 1
-                local global_binding = st[1]
-                if JS.kind(global_binding) === JS.K"BindingId"
-                    binfo = JL.get_binding(ctx3, global_binding)
-                    record_occurrence!(occurrences, :def, global_binding, binfo)
-                    start_idx = 2
-                end
+            if nc ≥ 1 && may_record_occurrence!(occurrences, :def, st[1], ctx3)
+                start_idx = 2
             end
         elseif k === JS.K"block" && nc ≥ 1 && JS.kind(st[1]) === JS.K"function_decl"
             # This block wraps a function definition. Each function's own binding
@@ -266,11 +244,11 @@ function compute_binding_occurrences!(
             if !isempty(newly_added)
                 if isnothing(skip_recording_uses)
                     compute_binding_occurrences!(occurrences, ctx3, st;
-                        ismacro, skip_recording_uses = SkipRecording(newly_added))
+                        skip_recording_uses = SkipRecording(newly_added))
                 else
                     for br in newly_added; push!(skip_recording_uses, br); end
                     compute_binding_occurrences!(occurrences, ctx3, st;
-                        ismacro, skip_recording_uses)
+                        skip_recording_uses)
                     for (b, _) in newly_added; delete!(skip_recording_uses, b); end
                 end
                 continue
@@ -281,13 +259,13 @@ function compute_binding_occurrences!(
             if nc ≥ 2
                 arglist = st[1]
                 for i = 1:JS.numchildren(arglist)
-                    record_occurrence!(occurrences, :def, arglist[i], ctx3)
+                    may_record_occurrence!(occurrences, :def, arglist[i], ctx3)
                 end
                 start_idx = 2
                 if nc ≥ 3
                     sparamlist = st[2]
                     for i = 1:JS.numchildren(sparamlist)
-                        record_occurrence!(occurrences, :def, sparamlist[i], ctx3)
+                        may_record_occurrence!(occurrences, :def, sparamlist[i], ctx3)
                     end
                     start_idx = 3
                 end
@@ -295,7 +273,7 @@ function compute_binding_occurrences!(
         elseif k === JS.K"="
             start_idx = 2 # the left hand side, i.e. "definition", does not account for usage
             if nc ≥ 1
-                record_occurrence!(occurrences, :def, st[1], ctx3)
+                may_record_occurrence!(occurrences, :def, st[1], ctx3)
                 if nc ≥ 2
                     rhs = st[2]
                     # In struct definitions, `local struct_name` is somehow introduced,
@@ -350,7 +328,7 @@ function compute_binding_occurrences!(
         end
     end
 
-    return occurrences, ismacro
+    return occurrences
 end
 
 function is_matching_global_binding(

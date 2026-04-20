@@ -254,9 +254,8 @@ end
             world = Base.get_world_counter()
             res = JETLS.jl_lower_for_scope_resolution(lowering_module, st0, world;
                 recover_from_macro_errors=false, convert_closures=true)
-            ismacro = Ref(false)
             binding_occurrences = JETLS.compute_binding_occurrences(
-                res.ctx3, res.st3, false; ismacro, include_global_bindings=true)
+                res.ctx3, res.st3, false; include_global_bindings=true)
 
             xxx_binfo = nothing
             for (binfo, _) in binding_occurrences

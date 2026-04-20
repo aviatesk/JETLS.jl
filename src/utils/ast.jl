@@ -119,6 +119,8 @@ is_mainfunc0(st0::SyntaxTree0) = is_macrocall_st0(st0, "@main")
 
 is_generated0(st0::SyntaxTree0) = is_macrocall_st0(st0, "@generated")
 
+is_macro0(st0::SyntaxTree0) = JS.kind(st0) === JS.K"macro"
+
 # Simple (non-qualified) macro names whose new-style implementations in
 # `JuliaLowering/src/syntax_macros.jl` and `src/utils/jl-syntax-macros.jl`
 # preserve fine-grained source provenance during expansion. Unlike old-style
