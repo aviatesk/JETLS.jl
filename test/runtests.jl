@@ -9,8 +9,8 @@ end
 @testset "AtomicContainers" include("AtomicContainers/test_AtomicContainers.jl")
 @testset "FixedSizeQueues" include("FixedSizeQueues/test_FixedSizeQueues.jl")
 
-@testset "JETLS" begin
-    @testset "utils" begin
+@testset "JETLS" verbose=true begin
+    @testset "utils" verbose=true begin
         @testset "general" include("utils/test_general.jl")
         @testset "ast" include("utils/test_ast.jl")
         @testset "binding" include("utils/test_binding.jl")
@@ -20,7 +20,7 @@ end
         @testset "string" include("utils/test_string.jl")
         @testset "jl-syntax-macros" include("utils/test_jl_syntax_macros.jl")
     end
-    @testset "analysis" begin
+    @testset "analysis" verbose=true begin
         @testset "occurrence" include("analysis/test_occurrence_analysis.jl")
         @testset "def use" include("analysis/test_def_use_analysis.jl")
         @testset "LSAnalyzer" include("analysis/test_Analyzer.jl")
