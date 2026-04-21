@@ -357,6 +357,24 @@ end
             @test length(refs_at_let) == 1
         end
     end
+
+    # Cursor on a non-`\$` identifier inside a preserved macrocall's inert
+    # template must resolve to the matching module-level global.
+    @testset "cursor on inert global inside preserved macrocall" begin
+        let code = """
+            struct │LSAnalyzer│ end
+            let x = 1
+                @eval some_func(::│LSAnalyzer│) = \$x
+            end
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 4
+            for pos in positions
+                refs = find_references(clean_code, pos)
+                @test length(refs) == 2
+            end
+        end
+    end
 end
 
 end # module test_references

@@ -152,6 +152,41 @@ end
         end
         @test cnt == 1
     end
+
+    # User-written identifiers escaped into a macro's generated code
+    # (here via `\$` inside `@eval`) should resolve to the enclosing
+    # user binding, not to any binding synthesized by the macro itself.
+    let cnt = 0
+        with_target_binding("""
+            let │valid_keys│ = 42
+                @eval some_func() = \$│valid_keys│
+            end
+            """) do _, (; ctx3, binding)
+            binfo = JL.get_binding(ctx3, binding)
+            @test binfo.name == "valid_keys"
+            @test binfo.kind === :local
+            cnt += 1
+        end
+        @test cnt == 4
+    end
+
+    # User-written identifiers sitting in a macro's inert/quoted template
+    # (here the type name inside `@eval`) should resolve to the matching
+    # module-level global.
+    let cnt = 0
+        with_target_binding("""
+            struct │LSAnalyzer│ end
+            let x = 1
+                @eval some_func(::│LSAnalyzer│) = \$x
+            end
+            """) do _, (; ctx3, binding)
+            binfo = JL.get_binding(ctx3, binding)
+            @test binfo.name == "LSAnalyzer"
+            @test binfo.kind === :global
+            cnt += 1
+        end
+        @test cnt == 4
+    end
 end
 
 function with_target_binding_definitions(f, text::AbstractString; kwargs...)

@@ -127,17 +127,12 @@ is_macro0(st0::SyntaxTree0) = JS.kind(st0) === JS.K"macro"
 # macros — whose expansion collapses source positions to line granularity and
 # is why `_remove_macrocalls` exists — these don't need to be rewritten to a
 # `block` to keep accurate locations for scope resolution.
-#
-# `@eval` is kept off: preserving it surfaces its inert `[K"quote" ex]`
-# template to `collect_inert_global_occurrences!`, which resolves inert
-# content without threading the enclosing `ctx3` and would therefore
-# record `$x` interpolations of enclosing locals as spurious `:global`
-# occurrences. Stripping via `_remove_macrocalls` avoids this.
 const NEW_STYLE_MACROCALL_NAMES = (
     # JuliaLowering/src/syntax_macros.jl
     "@__FUNCTION__",
     "@ccall",
     "@cfunction",
+    "@eval",
     "@generated",
     "@goto",
     "@isdefined",
@@ -353,8 +348,7 @@ function _remove_macrocalls(st0::SyntaxTree0)
             # Macros with new-style JuliaLowering implementations preserve
             # fine-grained provenance during expansion, so we don't need to
             # rewrite them to a `block` to keep source locations accurate.
-            # See `NEW_STYLE_MACROCALL_NAMES` for the list and the rationale
-            # for why certain candidates (notably `@eval`) are excluded.
+            # See `NEW_STYLE_MACROCALL_NAMES` for the list.
             return st0, false
         elseif is_mainfunc0(st0)
             # `@main` functions are desugared by `desugar_main_macrocall` below,
