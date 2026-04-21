@@ -217,7 +217,11 @@ is_core_toplevel_declaration_call(::Any) = false
     )
     if ret isa CC.AbstractEvalBasicStatementResult
         rt = ret.rt
-        # Keep Core top-level declarations from poisoning inference with `Union{}`
+        # JuliaLowering emits `Core.declare_global` / `Core.declare_const` as
+        # bookkeeping statements. On Julia 1.12, the base evaluator returns
+        # `Union{}` for these declaration ops in this path, and
+        # `ASTTypeAnnotator` would otherwise copy that into statement
+        # annotations. Normalize them to `Nothing` instead.
         if rt === Union{} && is_core_toplevel_declaration_call(stmt)
             rt = Nothing
         end

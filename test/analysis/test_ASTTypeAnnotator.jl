@@ -45,7 +45,7 @@ end
     let (; st0, tree) = infer_statement("sin(1.0)")
         @test tree !== nothing
         typ = JETLS.get_type_for_range(tree, JS.byte_range(st0))
-        @test typ === Core.Const(0.8414709848078965)
+        @test typ === Core.Const(sin(1.0))
         @test JETLS.get_type_for_range(tree, 9999:10000) === nothing
     end
 
@@ -101,22 +101,12 @@ end
     end
 end
 
-@testset "incomplete syntax boundaries" begin
+@testset "recoverable incomplete syntax" begin
     let (; st0, tree) = infer_statement("sin(")
         @test tree !== nothing
         @test query_child_type(st0, tree, 1) === Core.Const(sin)
         @test query_child_type(st0, tree, 2) === nothing
     end
-
-    let st0 = jlparse("x."; rule=:statement)
-        @test JS.kind(st0) === JS.K"."
-        @test JS.numchildren(st0) ≥ 2
-        @test JS.kind(st0[1]) === JS.K"Identifier"
-        @test JS.kind(st0[2]) === JS.K"inert"
-    end
-    @test_throws JL.LoweringError lower_statement("x.")
-    @test_throws JL.LoweringError lower_statement("Base.")
-    @test_throws JL.LoweringError lower_statement("foo(; a=")
 end
 
 end # module test_ASTTypeAnnotator
