@@ -193,6 +193,16 @@ function CC.builtin_tfunction(interp::ASTTypeAnnotator, @nospecialize(f::Core.Bu
     return @invoke CC.builtin_tfunction(interp::CC.AbstractInterpreter, f::Core.Builtin, argtypes::Vector{Any}, sv::CC.InferenceState)
 end
 
+function is_core_toplevel_declaration_call(stmt::Expr)
+    stmt.head === :call || return false
+    isempty(stmt.args) && return false
+    callee = stmt.args[1]
+    return callee isa GlobalRef &&
+           callee.mod === Core &&
+           (callee.name === :declare_global || callee.name === :declare_const)
+end
+is_core_toplevel_declaration_call(::Any) = false
+
 @inline function CC.abstract_eval_basic_statement(
         interp::ASTTypeAnnotator, @nospecialize(stmt), sstate::CC.StatementState,
         frame::CC.InferenceState, result::Union{Nothing, CC.Future{CC.RTEffects}}
@@ -206,8 +216,13 @@ end
         frame::CC.InferenceState, result::Union{Nothing, CC.Future{CC.RTEffects}}
     )
     if ret isa CC.AbstractEvalBasicStatementResult
+        rt = ret.rt
+        # Keep Core top-level declarations from poisoning inference with `Union{}`
+        if rt === Union{} && is_core_toplevel_declaration_call(stmt)
+            rt = Nothing
+        end
         ret = CC.AbstractEvalBasicStatementResult(
-            ret.rt, ret.exct, ret.effects, ret.changes, ret.refinements,
+            rt, ret.exct, ret.effects, ret.changes, ret.refinements,
             #=currsaw_latestworld=#false
         )
     end
