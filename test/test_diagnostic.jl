@@ -309,13 +309,18 @@ end
             local success::Bool = false
             let id = id_counter[] += 1
                 Threads.@spawn try
+                    # `check=false`: this call races with the main thread's
+                    # `writereadmsg(DidOpen; ...)` below on `received_queue` drain.
+                    # Checking here would spuriously see `DidOpen` still queued
+                    # (CI flake). Emptiness is still verified at shutdown via
+                    # `withserver`'s own `writereadmsg` calls.
                     (; raw_res) = writereadmsg(
                         DocumentDiagnosticRequest(;
                             id,
                             params = DocumentDiagnosticParams(;
                                 textDocument = TextDocumentIdentifier(; uri)
                             ));
-                        read = 2)
+                        read = 2, check = false)
                     @test any(raw_res) do @nospecialize res
                         res isa DocumentDiagnosticResponse &&
                         res.result isa RelatedFullDocumentDiagnosticReport
