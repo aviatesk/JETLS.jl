@@ -123,54 +123,123 @@ function CC.const_prop_argument_heuristic(interp::ASTTypeAnnotator, arginfo::CC.
     return @invoke CC.const_prop_argument_heuristic(interp::CC.AbstractInterpreter, arginfo::CC.ArgInfo, sv::CC.InferenceState)
 end
 
-function _infer_method(interp::ASTTypeAnnotator, e::Expr, sstate::CC.StatementState, sv::CC.InferenceState)
-    ea = e.args
-    na = length(ea)
-    na == 3 || return nothing
-    src = ea[3]
-    src isa Core.CodeInfo || return 2
-
-    treesttmt = interp.toptree[1][sv.currpc]
-    JS.numchildren(treesttmt) == na || return 3
-    innertree = treesttmt[3]
-    JS.kind(innertree) === JS.K"code_info" || return 4
-
-    argtypes = CC.collect_argtypes(interp, ea, sstate, sv)
-    argtypes !== nothing || return 5
-    msig = argtypes[2]
-    msig isa Core.Const || return 6
-    msigval = msig.val
-    msigval isa Core.SimpleVector || return 7
-    length(msigval) ≥ 2 || return 8
-    atypes, tvars = msigval
-    atypes isa Core.SimpleVector || return 9
-    tvars isa Core.SimpleVector || return 10
-    tt = form_method_signature(atypes, tvars)
-    match = Base._which(tt; world = CC.get_inference_world(interp), raise = false)
-    isnothing(match) && return 11
-    newmi = CC.specialize_method(match)
-
-    interp = ASTTypeAnnotator(innertree, newmi, interp.limit_aggressive_inference)
-    result = CC.InferenceResult(newmi)
-    frame = CC.InferenceState(result, src, #=cache=#:no, interp)
-    CC.typeinf(interp, frame)
-    return nothing
-end
-
-# Infer the inner method body with its method signatures
-function infer_method(interp::ASTTypeAnnotator, e::Expr, sstate::CC.StatementState, sv::CC.InferenceState)
-    ret = @something _infer_method(interp, e, sstate, sv) return nothing
-    JETLS_DEV_MODE && @info "Inner method inference failed" reason = ret
-    return nothing
-end
-
-function form_method_signature(atypes::Core.SimpleVector, sparams::Core.SimpleVector)
-    atype = Tuple{atypes...}
-    for i = length(sparams):-1:1
-        atype = UnionAll(sparams[i]::TypeVar, atype)
+function _infer_method_body!(
+        innertree::JL.SyntaxTree, mi::Core.MethodInstance, src::Core.CodeInfo,
+        limit_aggressive_inference::Bool, argtypes::Union{Nothing, Vector{Any}} = nothing
+    )
+    innerinterp = ASTTypeAnnotator(innertree, mi, limit_aggressive_inference)
+    result = if isnothing(argtypes)
+        CC.InferenceResult(mi)
+    else
+        CC.InferenceResult(mi, argtypes, nothing)
     end
-    return atype
+    frame = CC.InferenceState(result, src, #=cache=#:no, innerinterp)
+    CC.typeinf(innerinterp, frame)
+    return nothing
 end
+
+function resolve_method_signature_arg(sv::CC.InferenceState, x::Core.SSAValue)
+    ret = resolve_method_signature_arg(sv, sv.src.code[x.id])
+    ret !== nothing && return ret
+    ssa_type = sv.src.ssavaluetypes[x.id]
+    ssa_type isa Core.Const && return ssa_type.val
+    ssa_type isa CC.PartialTypeVar && return ssa_type.tv
+    return nothing
+end
+resolve_method_signature_arg(sv::CC.InferenceState, x::Core.Const) =
+    resolve_method_signature_arg(sv, x.val)
+resolve_method_signature_arg(::CC.InferenceState, x::QuoteNode) = x.value
+function resolve_method_signature_arg(::CC.InferenceState, x::GlobalRef)
+    isdefined(x.mod, x.name) && return getfield(x.mod, x.name)
+    return nothing
+end
+function resolve_method_signature_arg(sv::CC.InferenceState, x::Expr)
+    x.head === :call || return nothing
+    callee = x.args[1]
+    callee isa GlobalRef || return nothing
+    callee.mod === Core || return nothing
+    if callee.name === :svec
+        args = Any[]
+        for i in 2:length(x.args)
+            arg = resolve_method_signature_arg(sv, x.args[i])
+            arg === nothing && return nothing
+            push!(args, arg)
+        end
+        return Core.svec(args...)
+    elseif callee.name === :Typeof && length(x.args) == 2
+        arg = resolve_method_signature_arg(sv, x.args[2])
+        return arg === Any ? Any : typeof(arg)
+    elseif callee.name === :apply_type && length(x.args) >= 2
+        head = resolve_method_signature_arg(sv, x.args[2])
+        head isa Type || head === Union || return nothing
+        params = Any[]
+        for i in 3:length(x.args)
+            p = resolve_method_signature_arg(sv, x.args[i])
+            p === nothing && return nothing
+            push!(params, p)
+        end
+        return try
+            Core.apply_type(head, params...)
+        catch
+            nothing
+        end
+    end
+    return nothing
+end
+resolve_method_signature_arg(::CC.InferenceState, x::TypeVar) = x
+function resolve_method_signature_arg(sv::CC.InferenceState, x::Core.SlotNumber)
+    slot_type = CC.argextype(x, sv.src, sv.sptypes)
+    slot_type isa Core.Const && return slot_type.val
+    slot_type isa CC.PartialTypeVar && return slot_type.tv
+    for i in 1:length(sv.src.code)
+        stmt = sv.src.code[i]
+        if stmt isa Expr && stmt.head === :(=) && stmt.args[1] == x
+            ssa_type = sv.src.ssavaluetypes[i]
+            ssa_type isa Core.Const && return ssa_type.val
+            ssa_type isa CC.PartialTypeVar && return ssa_type.tv
+        end
+    end
+    return nothing
+end
+resolve_method_signature_arg(::CC.InferenceState, ::Any) = nothing
+
+function annotate_method_definition!(
+        interp::ASTTypeAnnotator, stmt::Expr, stmt_tree::JS.SyntaxTree, sv::CC.InferenceState
+    )
+    length(stmt.args) == 3 || return nothing
+    src = stmt.args[3]
+    src isa Core.CodeInfo || return nothing
+    JS.numchildren(stmt_tree) == 3 || return nothing
+    inner_tree = stmt_tree[3]
+    JS.kind(inner_tree) === JS.K"code_info" || return nothing
+
+    msig = resolve_method_signature_arg(sv, stmt.args[2])
+    msig isa Core.SimpleVector || return nothing
+    length(msig) ≥ 2 || return nothing
+
+    atypes = msig[1]
+    atypes isa Core.SimpleVector || return nothing
+    msig[2] isa Core.SimpleVector || return nothing
+
+    argtypes = Vector{Any}(undef, length(atypes))
+    for i in 1:length(atypes)
+        atype = atypes[i]
+        if atype isa Type
+            argtypes[i] = atype
+        elseif atype isa TypeVar
+            argtypes[i] = atype.ub
+        else
+            return nothing
+        end
+    end
+
+    method_instance = @ccall jl_method_instance_for_thunk(
+        src::Any, sv.mod::Any
+    )::Ref{Core.MethodInstance}
+    _infer_method_body!(inner_tree, method_instance, src, interp.limit_aggressive_inference, argtypes)
+    return nothing
+end
+
 
 function CC.builtin_tfunction(interp::ASTTypeAnnotator, @nospecialize(f::Core.Builtin), argtypes::Vector{Any}, sv::CC.InferenceState)
     if f === Core.svec
@@ -207,9 +276,6 @@ is_core_toplevel_declaration_call(::Any) = false
         interp::ASTTypeAnnotator, @nospecialize(stmt), sstate::CC.StatementState,
         frame::CC.InferenceState, result::Union{Nothing, CC.Future{CC.RTEffects}}
     )
-    if stmt isa Expr && stmt.head === :method && length(stmt.args) ≥ 3 && interp.topmi === frame.linfo
-        infer_method(interp, stmt, sstate, frame)
-    end
     # Ignore :latestworld effect completely
     ret = @invoke CC.abstract_eval_basic_statement(
         interp::CC.AbstractInterpreter, stmt::Any, sstate::CC.StatementState,
@@ -234,7 +300,10 @@ is_core_toplevel_declaration_call(::Any) = false
 end
 
 function annotate_types!(citree::JL.SyntaxTree, frame::CC.InferenceState)
-    for i = 1:length(frame.src.code)
+    ncode = length(frame.src.code)
+    ntree = JS.numchildren(citree)
+    nstmts = min(ncode, ntree)
+    for i = 1:nstmts
         stmt = frame.src.code[i]
         stmttype = frame.src.ssavaluetypes[i]
         stmttree = citree[i]
@@ -264,6 +333,9 @@ function annotate_types!(citree::JL.SyntaxTree, frame::CC.InferenceState)
                     JS.setattr!(treeref[i], :type, argtyp)
                 end
             end
+            if stmt.head === :call
+                JS.setattr!(treeref, :type, stmttype)
+            end
         elseif stmt isa ReturnNode
             rettyp = CC.argextype(stmt.val, frame.src, frame.sptypes)
             JS.setattr!(stmttree, :type, rettyp)
@@ -275,6 +347,14 @@ function CC.finishinfer!(frame::CC.InferenceState, interp::ASTTypeAnnotator, cyc
     ret = @invoke CC.finishinfer!(frame::CC.InferenceState, interp::CC.AbstractInterpreter, cycleid::Int)
     if frame.linfo === interp.topmi
         annotate_types!(interp.toptree[1], frame)
+        nstmts = min(length(frame.src.code), JS.numchildren(interp.toptree[1]))
+        for i = 1:nstmts
+            stmt = frame.src.code[i]
+            stmt isa Core.Const && stmt.val isa Expr && (stmt = stmt.val)
+            stmt isa Expr || continue
+            stmt.head === :method || continue
+            annotate_method_definition!(interp, stmt, interp.toptree[1][i], frame)
+        end
     end
     return ret
 end
