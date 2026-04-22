@@ -1325,7 +1325,7 @@ function analyze_unused_imports!(
     isempty(mod_imported_names) && return diagnostics
 
     mod_used_names = Dict{Module,Set{String}}()
-    time_get_file_info = time_build_syntax_tree = time_binding_occurrences = time_ast_analysis = 0.0
+    time_get_file_info = time_build_syntax_tree = time_binding_occurrences = 0.0
     search_uris = collect_search_uris(server, uri)
     for search_uri in search_uris
         skip_context_check || has_analyzed_context(state, search_uri) || continue
@@ -1347,29 +1347,8 @@ function analyze_unused_imports!(
                 end
             end
         end
-
-        # Collect exported names from source-level syntax tree, since they are not tracked
-        # by the binding occurrence analysis
-        time_ast_analysis += @elapsed traverse(st0_top) do st0::JS.SyntaxTree
-            kind = JS.kind(st0)
-            if kind in JS.KSet"export public"
-                # `using .Inner: foo; export foo` - foo is used via re-export
-                mod = get_context_module(state, search_uri, offset_to_xy(search_fi, JS.first_byte(st0)))
-                for i = 1:JS.numchildren(st0)
-                    child = st0[i]
-                    if JS.kind(child) === JS.K"Identifier"
-                        name = get(child, :name_val, nothing)
-                        if name isa String
-                            push!(get!(Set{String}, mod_used_names, mod), name)
-                        end
-                    end
-                end
-                return TraversalNoRecurse()
-            end
-            return nothing
-        end
     end
-    # @info "analyze_unused_imports! timing" uri length(search_uris) time_get_file_info time_build_syntax_tree time_binding_occurrences time_ast_analysis
+    # @info "analyze_unused_imports! timing" uri length(search_uris) time_get_file_info time_build_syntax_tree time_binding_occurrences
 
     for (mod, imported_names) in mod_imported_names
         used_names = get(mod_used_names, mod, nothing)
