@@ -1374,6 +1374,29 @@ end
 analyze_unused_imports(args...; kwargs...) = # used by tests
     analyze_unused_imports!(Diagnostic[], args...; kwargs...)
 
+# Returns true if `st0_top` contains an `import`/`using` with explicit names
+# (the only shape `analyze_unused_imports!` can flag). Gates whether the
+# workspace/diagnostic `result_id` must fold in the analysis unit's state.
+function file_has_explicit_imports(st0_top::JS.SyntaxTree)
+    found = traverse(st0_top) do st0::JS.SyntaxTree
+        k = JS.kind(st0)
+        if k ∈ JS.KSet"import using"
+            if JS.numchildren(st0) == 1
+                child = st0[1]
+                ck = JS.kind(child)
+                if ck === JS.K":"
+                    return TraversalReturn(true; terminate=true)
+                elseif ck === JS.K"." && k === JS.K"import" && JS.numchildren(child) >= 2
+                    return TraversalReturn(true; terminate=true)
+                end
+            end
+            return TraversalNoRecurse()
+        end
+        return nothing
+    end
+    return found === true
+end
+
 # Returns tuples of (name, name_range, delete_range).
 # For single imports like `using M: x`, delete_range covers the entire import statement.
 # For multiple imports like `using M: x, y`, delete_range covers the name plus comma/whitespace.
@@ -1692,6 +1715,27 @@ function handle_WorkspaceDiagnosticRequest(
     end
 end
 
+# Derives the `resultId` sent back for `workspace/diagnostic`. When the file has
+# explicit imports it folds every unit member's version into the key so a sibling
+# edit invalidates this file's cached diagnostics and `analyze_unused_imports!` reruns.
+# Files without explicit imports stay keyed on their own version alone.
+function compute_workspace_diagnostic_result_id(server::Server, uri::URI, fi::FileInfo)
+    state = server.state
+    if !file_has_explicit_imports(build_syntax_tree(fi))
+        return string(fi.version)
+    end
+    result_id_hash = zero(UInt)
+    for search_uri in collect_search_uris(server, uri)
+        search_fi = @something begin
+            get_file_info(state, search_uri)
+        end begin
+            get_unsynced_file_info!(state, search_uri)
+        end continue
+        result_id_hash ⊻= hash((search_uri, search_fi.version))
+    end
+    return string(result_id_hash)
+end
+
 function send_workspace_diagnostics(
         server::Server, msg::WorkspaceDiagnosticRequest, uris_to_search::Set{URI},
         cancel_flag::CancelFlag
@@ -1723,8 +1767,7 @@ function send_workspace_diagnostics(
             continue
         end
 
-        version = fi.version
-        result_id = string(version)
+        result_id = compute_workspace_diagnostic_result_id(server, uri, fi)
         prev_result_id = get(previous_result_ids, uri, nothing)
         if prev_result_id !== nothing && prev_result_id == result_id
             item = WorkspaceUnchangedDocumentDiagnosticReport(;
