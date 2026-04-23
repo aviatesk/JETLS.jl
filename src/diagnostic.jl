@@ -1673,10 +1673,22 @@ function handle_WorkspaceDiagnosticRequest(
         server::Server, msg::WorkspaceDiagnosticRequest, cancel_flag::CancelFlag
     )
     uris_to_search = collect_workspace_uris(server)
-    if get_config(server, :diagnostic, :all_files)
-        return send_workspace_diagnostics(server, msg, uris_to_search, cancel_flag)
-    else
-        return send_empty_workspace_diagnostics(server, msg, uris_to_search, cancel_flag)
+    try
+        if get_config(server, :diagnostic, :all_files)
+            send_workspace_diagnostics(server, msg, uris_to_search, cancel_flag)
+        else
+            send_empty_workspace_diagnostics(server, msg, uris_to_search, cancel_flag)
+        end
+    catch err
+        send(server,
+            WorkspaceDiagnosticResponse(;
+                id = msg.id,
+                result = nothing,
+                error = ResponseError(;
+                    code = ErrorCodes.ServerCancelled,
+                    message = "workspace/diagnostic handling failed",
+                    data = DiagnosticServerCancellationData(; retriggerRequest = true))))
+        rethrow(err)
     end
 end
 
