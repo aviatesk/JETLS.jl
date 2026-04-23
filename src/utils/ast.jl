@@ -171,7 +171,7 @@ For `using M: a, b` returns entries for `a` and `b`; for `using M.A` (no
 function collect_import_names(st0::SyntaxTree0)
     kind = JS.kind(st0)
     names = Pair{SyntaxTree0, String}[]
-    if kind === JS.K"import" || kind === JS.K"using"
+    if kind in JS.KSet"import using"
         nchildren = JS.numchildren(st0)
         if nchildren == 1
             child = st0[1]
@@ -187,7 +187,7 @@ function collect_import_names(st0::SyntaxTree0)
                 push!(names, name => get_import_sort_key(name))
             end
         end
-    elseif kind === JS.K"export" || kind === JS.K"public"
+    elseif kind in JS.KSet"export public"
         for i = 1:JS.numchildren(st0)
             name = st0[i]
             push!(names, name => get_import_sort_key(name))

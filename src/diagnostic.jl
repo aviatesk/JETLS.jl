@@ -1042,7 +1042,7 @@ function generate_sorted_import_text(
     keyword = kind === JS.K"import" ? "import" :
               kind === JS.K"using" ? "using" :
               kind === JS.K"export" ? "export" : "public"
-    if kind === JS.K"import" || kind === JS.K"using"
+    if kind in JS.KSet"import using"
         nchildren = JS.numchildren(node)
         if nchildren == 1 && JS.kind(node[1]) === JS.K":"
             module_path = lstrip(JS.sourcetext(node[1][1]))
@@ -1381,8 +1381,7 @@ function collect_explicit_import_names(st0::JS.SyntaxTree, fi::FileInfo)
     kind = JS.kind(st0)
     names = Tuple{String,Range,Range}[]
     kind ∈ JS.KSet"import using" || return names
-    nchildren = JS.numchildren(st0)
-    if nchildren == 1
+    if JS.numchildren(st0) == 1
         child = st0[1]
         ckind = JS.kind(child)
         if ckind === JS.K":"

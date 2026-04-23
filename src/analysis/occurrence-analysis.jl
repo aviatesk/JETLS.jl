@@ -212,7 +212,7 @@ function compute_binding_occurrences!(
             if nc ≥ 1 && may_record_occurrence!(occurrences, :decl, st[1], ctx3)
                 start_idx = 2 # skip recording use
             end
-        elseif k === JS.K"method_defs" || k === JS.K"constdecl"
+        elseif k in JS.KSet"method_defs constdecl"
             if nc ≥ 1 && may_record_occurrence!(occurrences, :def, st[1], ctx3)
                 start_idx = 2
             end
