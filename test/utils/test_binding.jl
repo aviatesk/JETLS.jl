@@ -648,6 +648,26 @@ end
         end
         @test cnt == 1
     end
+
+    # `` `...` `` parses to `Core.@cmd(LineNumberNode, CmdString)` where the
+    # cmd content is a single opaque `CmdString` leaf — the parser does not
+    # split `\$name` interpolations into child nodes. So a cursor placed on
+    # the `x` inside `` `\$x` `` resolves to the `CmdString` (not an
+    # `Identifier`), and binding lookup can't reach the `x` argument above.
+    # Macro expansion recovers usedness but with byte-range-0:0 provenance,
+    # which doesn't help source-position-based lookups.
+    @testset "cmd literal interpolation" begin
+        cnt = 0
+        with_target_binding_definitions("""
+            function f(x)
+                `echo \$x│`
+            end
+        """) do _, res
+            @test_broken !isnothing(res)
+            cnt += 1
+        end
+        @test cnt == 1
+    end
 end
 
 end # module test_binding

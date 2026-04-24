@@ -104,7 +104,7 @@ function unwrap_interpolations(st::JS.SyntaxTree)
     return _unwrap_interpolations(st)[1]
 end
 
-function is_macrocall_st0(st0::SyntaxTree0, names::AbstractString...)
+function is_macrocall_st0(st0::SyntaxTree0, names::AbstractString...; from::Union{Nothing,Module}=nothing)
     JS.kind(st0) === JS.K"macrocall" || return false
     JS.numchildren(st0) >= 1 || return false
     macro_name = st0[1]
@@ -112,7 +112,7 @@ function is_macrocall_st0(st0::SyntaxTree0, names::AbstractString...)
     hasproperty(macro_name, :name_val) || return false
     name_val = macro_name.name_val
     name_val isa String || return false
-    return name_val in names
+    return name_val in names && (isnothing(from) || (JS.hasattr(macro_name, :mod) && macro_name.mod === from))
 end
 
 is_mainfunc0(st0::SyntaxTree0) = is_macrocall_st0(st0, "@main")
@@ -148,16 +148,9 @@ const NEW_STYLE_MACROCALL_NAMES = (
 is_new_style_macrocall0(st0::SyntaxTree0) =
     is_macrocall_st0(st0, NEW_STYLE_MACROCALL_NAMES...)
 
-function is_doc0(st0::SyntaxTree0)
-    JS.kind(st0) === JS.K"macrocall" || return false
-    JS.numchildren(st0) >= 1 || return false
-    macro_name = st0[1]
-    return JS.kind(macro_name) === JS.K"Identifier" &&
-           JS.hasattr(macro_name, :name_val) &&
-           macro_name.name_val == "@doc" &&
-           JS.hasattr(macro_name, :mod) &&
-           macro_name.mod === Core
-end
+is_doc0(st0::SyntaxTree0) = is_macrocall_st0(st0, "@doc"; from=Core)
+
+is_cmd0(st0::SyntaxTree0) = is_macrocall_st0(st0, "@cmd"; from=Core)
 
 """
     collect_import_names(st0::SyntaxTree0) -> Vector{Pair{SyntaxTree0, String}}
@@ -356,6 +349,15 @@ function _remove_macrocalls(st0::SyntaxTree0)
             return st0, false
         elseif is_doc0(st0)
             return _remove_macrocalls(st0[end])[1], true
+        elseif is_cmd0(st0)
+            # `` `foo` `` parses to `Core.@cmd(LineNumberNode, CmdString)` where
+            # `CmdString` is an opaque leaf JuliaLowering has no rule for at
+            # statement position. Strip-to-block would result in lowering failure,
+            # so leave the macrocall intact and let `Core.@cmd` expansion run.
+            # Expansion collapses interpolations' provenance, which means features like
+            # rename/references can't pinpoint a name used inside a cmd literal --
+            # but binding occurrence analysis still get correct results.
+            return st0, false
         end
         new_children = JS.SyntaxList(JS.syntax_graph(st0))
         for i = 2:JS.numchildren(st0)

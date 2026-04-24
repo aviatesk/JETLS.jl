@@ -325,6 +325,36 @@ end
                 binding.name == "x" && binding.kind === :local && any(o->o.kind===:use, occurrences)
             end
         end
+        # `` `...` `` parses to `Core.@cmd(LineNumberNode, CmdString)` whose
+        # `CmdString` leaf has no JuliaLowering rule. `is_cmd0` lets the macro
+        # expand instead of stripping, so names interpolated with `\$` end up
+        # as `:use` occurrences. Their source provenance collapses to 0:0 but
+        # usedness tracking is correct.
+        with_binding_occurrences("""
+            function func(x)
+                y = 2
+                `echo \$x --v=\$(y+1) bar`
+            end
+            """; remove_macrocalls=true) do binding_occurrences
+            binfos = collect(keys(binding_occurrences))
+            let i = @something findfirst(b->b.name=="x" && b.kind===:argument, binfos)
+                occurrences = collect(binding_occurrences[binfos[i]])
+                x_use = findfirst(o->o.kind===:use, occurrences)
+                @test !isnothing(x_use)
+                # Old-style `@cmd` expansion collapses source provenance of
+                # interpolated uses to byte-range 0:0, which breaks
+                # source-position based features (rename/references). A proper
+                # fix needs upstream parser/lowering support for cmd-literal
+                # interpolations.
+                @test_broken JS.first_byte(occurrences[x_use].tree) > 0
+            end
+            let i = @something findfirst(b->b.name=="y" && b.kind===:local, binfos)
+                occurrences = collect(binding_occurrences[binfos[i]])
+                y_use = findfirst(o->o.kind===:use, occurrences)
+                @test !isnothing(y_use)
+                @test_broken JS.first_byte(occurrences[y_use].tree) > 0
+            end
+        end
     end
 
     # aviatesk/JETLS.jl#480
