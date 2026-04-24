@@ -367,14 +367,15 @@ function get_binding_occurrences!(
         if file_cache !== nothing && haskey(file_cache, range_key)
             return cache, file_cache[range_key]
         end
-        result = @something compute_binding_occurrences_st0(state, uri, fi, st0; kwargs...) begin
-            return cache, nothing
-        end
+        # Cache lowering failures as empty results so repeated calls for the same statement
         cache_result = BindingOccurrencesResult()
-        for (binfo, occurrences) in result
-            cached_set = get!(Set{CachedBindingOccurrence}, cache_result, BindingInfoKey(binfo))
-            for occurrence in occurrences
-                push!(cached_set, CachedBindingOccurrence(occurrence))
+        result = compute_binding_occurrences_st0(state, uri, fi, st0; kwargs...)
+        if result !== nothing
+            for (binfo, occurrences) in result
+                cached_set = get!(Set{CachedBindingOccurrence}, cache_result, BindingInfoKey(binfo))
+                for occurrence in occurrences
+                    push!(cached_set, CachedBindingOccurrence(occurrence))
+                end
             end
         end
         if file_cache === nothing
