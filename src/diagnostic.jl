@@ -1677,7 +1677,7 @@ const DIAGNOSTIC_REGISTRATION_METHOD = "textDocument/diagnostic"
 function diagnostic_options()
     return DiagnosticOptions(;
         identifier = "JETLS/diagnostic",
-        interFileDependencies = false,
+        interFileDependencies = true,
         workspaceDiagnostics = true)
 end
 
