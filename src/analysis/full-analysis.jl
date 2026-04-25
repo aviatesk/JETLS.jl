@@ -525,6 +525,7 @@ function update_analysis_cache!(state::ServerState, analysis_result::AnalysisRes
             continue
         end
         invalidate_binding_occurrences_cache!(state, uri)
+        invalidate_lowering_diagnostics_cache!(state, uri)
     end
 end
 

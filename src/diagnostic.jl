@@ -1299,17 +1299,52 @@ struct ImportInfo
     delete_range::Range
 end
 
+const UsedNamesByUnit = Dict{Set{URI},Dict{Module,Set{String}}}
+
+function compute_unit_used_names(
+        server::Server, search_uris::Set{URI};
+        skip_context_check::Bool = false
+    )
+    state = server.state
+    mod_used_names = Dict{Module,Set{String}}()
+    for search_uri in search_uris
+        skip_context_check || has_analyzed_context(state, search_uri) || continue
+        search_fi = @something begin
+            get_file_info(state, search_uri)
+        end begin
+            get_unsynced_file_info!(state, search_uri)
+        end continue
+        search_st0_top = build_syntax_tree(search_fi)
+
+        iterate_toplevel_tree(search_st0_top) do st0::JS.SyntaxTree
+            binding_occurrences = @something get_binding_occurrences!(
+                state, search_uri, search_fi, st0; include_global_bindings = true) return
+            mod = get_context_module(state, search_uri, offset_to_xy(search_fi, JS.first_byte(st0)))
+            for (binfo_key, occurrences) in binding_occurrences
+                binfo_key.kind === :global || continue
+                if any(o -> o.kind === :use, occurrences)
+                    push!(get!(Set{String}, mod_used_names, mod), binfo_key.name)
+                end
+            end
+        end
+    end
+    return mod_used_names
+end
+
 # Detects unused imports by scanning all workspace files for usages of imported names.
 # This analysis can be slow if implemented naively, but achieves practical performance through:
 # - Early return for files without import/using statements (~1ms depending on file size)
-# - Syntax tree caching for unsynced files (~150ms → ~25ms for ~50 files, see `FileInfo.syntax_tree0`)
+# - Syntax tree caching for unsynced files (see `FileInfo.syntax_tree0`)
 # - Binding occurrences caching (see `BindingOccurrencesCache`)
+# - Per-unit used-name memoization via `used_names_cache`, which lets a single
+#   `workspace/diagnostic` pull reuse the expensive `mod_used_names` aggregation
+#   across every import-bearing file in the same analysis unit
 # - Unchanged file skipping in workspace/diagnostic
-# With these optimizations, analyzing a workspace of ~50 files typically takes ~50-100ms.
 function analyze_unused_imports!(
         diagnostics::Vector{Diagnostic}, server::Server, uri::URI,
         fi::FileInfo, st0_top::JS.SyntaxTree;
-        skip_context_check::Bool = false
+        skip_context_check::Bool = false,
+        used_names_cache::UsedNamesByUnit = UsedNamesByUnit()
     )
     state = server.state
     mod_imported_names = Dict{Module,Dict{String,Vector{ImportInfo}}}()
@@ -1324,31 +1359,10 @@ function analyze_unused_imports!(
     end
     isempty(mod_imported_names) && return diagnostics
 
-    mod_used_names = Dict{Module,Set{String}}()
-    time_get_file_info = time_build_syntax_tree = time_binding_occurrences = 0.0
     search_uris = collect_search_uris(server, uri)
-    for search_uri in search_uris
-        skip_context_check || has_analyzed_context(state, search_uri) || continue
-        time_get_file_info += @elapsed search_fi = @something begin
-            get_file_info(state, search_uri)
-        end begin
-            get_unsynced_file_info!(state, search_uri)
-        end continue
-        time_build_syntax_tree += @elapsed st0_top = build_syntax_tree(search_fi)
-
-        time_binding_occurrences += @elapsed iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
-            binding_occurrences = @something get_binding_occurrences!(
-                state, search_uri, search_fi, st0; include_global_bindings = true) return
-            mod = get_context_module(state, search_uri, offset_to_xy(search_fi, JS.first_byte(st0)))
-            for (binfo_key, occurrences) in binding_occurrences
-                binfo_key.kind === :global || continue
-                if any(o -> o.kind === :use, occurrences)
-                    push!(get!(Set{String}, mod_used_names, mod), binfo_key.name)
-                end
-            end
-        end
+    mod_used_names = get!(used_names_cache, search_uris) do
+        compute_unit_used_names(server, search_uris; skip_context_check)
     end
-    # @info "analyze_unused_imports! timing" uri length(search_uris) time_get_file_info time_build_syntax_tree time_binding_occurrences
 
     for (mod, imported_names) in mod_imported_names
         used_names = get(mod_used_names, mod, nothing)
@@ -1373,6 +1387,29 @@ end
 
 analyze_unused_imports(args...; kwargs...) = # used by tests
     analyze_unused_imports!(Diagnostic[], args...; kwargs...)
+
+# Returns true if `st0_top` contains an `import`/`using` with explicit names
+# (the only shape `analyze_unused_imports!` can flag). Gates whether the
+# workspace/diagnostic `result_id` must fold in the analysis unit's state.
+function file_has_explicit_imports(st0_top::JS.SyntaxTree)
+    found = traverse(st0_top) do st0::JS.SyntaxTree
+        k = JS.kind(st0)
+        if k ∈ JS.KSet"import using"
+            if JS.numchildren(st0) == 1
+                child = st0[1]
+                ck = JS.kind(child)
+                if ck === JS.K":"
+                    return TraversalReturn(true; terminate=true)
+                elseif ck === JS.K"." && k === JS.K"import" && JS.numchildren(child) >= 2
+                    return TraversalReturn(true; terminate=true)
+                end
+            end
+            return TraversalNoRecurse()
+        end
+        return nothing
+    end
+    return found === true
+end
 
 # Returns tuples of (name, name_range, delete_range).
 # For single imports like `using M: x`, delete_range covers the entire import statement.
@@ -1437,12 +1474,16 @@ function collect_explicit_import_names(st0::JS.SyntaxTree, fi::FileInfo)
     return names
 end
 
-function toplevel_lowering_diagnostics(
-        server::Server, uri::URI, file_info::FileInfo, cancel_flag::CancelFlag=DUMMY_CANCEL_FLAG;
+# Runs `lowering_diagnostics!` over every top-level statement of `file_info`,
+# returning the per-file diagnostics that depend solely on this file's content
+# and analysis context. `analyze_unused_imports!` is not included because its
+# result depends on sibling files in the analysis unit.
+function compute_lowering_diagnostics(
+        server::Server, uri::URI, file_info::FileInfo, st0_top::JS.SyntaxTree,
+        cancel_flag::CancelFlag;
         lookup_func = nothing
     )
     diagnostics = Diagnostic[]
-    st0_top = build_syntax_tree(file_info)
     skip_analysis_requiring_context = !has_analyzed_context(server.state, uri; lookup_func)
     allow_unused_underscore = get_config(server, :diagnostic, :allow_unused_underscore)
     soft_scope = is_notebook_cell_uri(server.state, uri)
@@ -1454,11 +1495,64 @@ function toplevel_lowering_diagnostics(
             skip_analysis_requiring_context, allow_unused_underscore, soft_scope,
             analyzer, postprocessor)
     end
+    return diagnostics
+end
 
-    if !skip_analysis_requiring_context
-        analyze_unused_imports!(diagnostics, server, uri, file_info, st0_top)
+# Cached accessor for the per-file lowering diagnostics. The cached `Vector` is
+# treated as read-only; callers must copy before mutating (e.g. before appending
+# `analyze_unused_imports!` results). Cache misses and cancelled computations
+# both return without caching; only a fully computed result is stored.
+function get_lowering_diagnostics!(
+        server::Server, uri::URI, file_info::FileInfo, st0_top::JS.SyntaxTree,
+        cancel_flag::CancelFlag;
+        lookup_func = nothing
+    )
+    # For notebooks, every cell URI in a notebook resolves to the same
+    # concat-source `FileInfo`, so cache under the notebook URI to share
+    # entries across cells and to match the invalidation site
+    # (`cache_notebook_file_info!` invalidates the notebook URI).
+    cache_uri = @something get_notebook_uri_for_cell(server.state, uri) uri
+    return store!(server.state.lowering_diagnostics_cache) do cache::LoweringDiagnosticsCacheData
+        if haskey(cache, cache_uri)
+            return cache, cache[cache_uri]
+        end
+        result = compute_lowering_diagnostics(server, uri, file_info, st0_top, cancel_flag;
+                                              lookup_func)
+        if is_cancelled(cancel_flag)
+            return cache, result
+        end
+        return LoweringDiagnosticsCacheData(cache, cache_uri => result), result
     end
+end
 
+function invalidate_lowering_diagnostics_cache!(state::ServerState, uri::URI)
+    store!(state.lowering_diagnostics_cache) do cache::LoweringDiagnosticsCacheData
+        if haskey(cache, uri)
+            Base.delete(cache, uri), nothing
+        else
+            cache, nothing
+        end
+    end
+end
+
+function clear_lowering_diagnostics_cache!(state::ServerState)
+    store!(state.lowering_diagnostics_cache) do _::LoweringDiagnosticsCacheData
+        LoweringDiagnosticsCacheData(), nothing
+    end
+end
+
+function toplevel_lowering_diagnostics(
+        server::Server, uri::URI, file_info::FileInfo, cancel_flag::CancelFlag=DUMMY_CANCEL_FLAG;
+        lookup_func = nothing,
+        used_names_cache::UsedNamesByUnit = UsedNamesByUnit(),
+    )
+    st0_top = build_syntax_tree(file_info)
+    cached = get_lowering_diagnostics!(server, uri, file_info, st0_top, cancel_flag; lookup_func)
+    is_cancelled(cancel_flag) && return cached
+    diagnostics = copy(cached)
+    if has_analyzed_context(server.state, uri; lookup_func)
+        analyze_unused_imports!(diagnostics, server, uri, file_info, st0_top; used_names_cache)
+    end
     return diagnostics
 end
 
@@ -1692,6 +1786,27 @@ function handle_WorkspaceDiagnosticRequest(
     end
 end
 
+# Derives the `resultId` sent back for `workspace/diagnostic`. When the file has
+# explicit imports it folds every unit member's version into the key so a sibling
+# edit invalidates this file's cached diagnostics and `analyze_unused_imports!` reruns.
+# Files without explicit imports stay keyed on their own version alone.
+function compute_workspace_diagnostic_result_id(server::Server, uri::URI, fi::FileInfo)
+    state = server.state
+    if !file_has_explicit_imports(build_syntax_tree(fi))
+        return string(fi.version)
+    end
+    result_id_hash = zero(UInt)
+    for search_uri in collect_search_uris(server, uri)
+        search_fi = @something begin
+            get_file_info(state, search_uri)
+        end begin
+            get_unsynced_file_info!(state, search_uri)
+        end continue
+        result_id_hash ⊻= hash((search_uri, search_fi.version))
+    end
+    return string(result_id_hash)
+end
+
 function send_workspace_diagnostics(
         server::Server, msg::WorkspaceDiagnosticRequest, uris_to_search::Set{URI},
         cancel_flag::CancelFlag
@@ -1706,6 +1821,7 @@ function send_workspace_diagnostics(
     root_path = isdefined(state, :root_path) ? state.root_path : nothing
     debuginfo = nothing
     # debuginfo = (; synced = URI[], analyzed = URI[], skipped = URI[], failed = URI[])
+    used_names_cache = UsedNamesByUnit()
     for uri in uris_to_search
         is_cancelled(cancel_flag) && return send(server,
             WorkspaceDiagnosticResponse(;
@@ -1723,8 +1839,7 @@ function send_workspace_diagnostics(
             continue
         end
 
-        version = fi.version
-        result_id = string(version)
+        result_id = compute_workspace_diagnostic_result_id(server, uri, fi)
         prev_result_id = get(previous_result_ids, uri, nothing)
         if prev_result_id !== nothing && prev_result_id == result_id
             item = WorkspaceUnchangedDocumentDiagnosticReport(;
@@ -1742,7 +1857,7 @@ function send_workspace_diagnostics(
         end
 
         if isempty(fi.parsed_stream.diagnostics)
-            diagnostics = toplevel_lowering_diagnostics(server, uri, fi)
+            diagnostics = toplevel_lowering_diagnostics(server, uri, fi; used_names_cache)
         else
             diagnostics = parsed_stream_to_diagnostics(fi)
         end
