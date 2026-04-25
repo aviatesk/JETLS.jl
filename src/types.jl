@@ -663,6 +663,8 @@ const DocumentSymbolCacheData = Base.PersistentDict{URI,Vector{DocumentSymbol}}
 const DocumentSymbolCache = LWContainer{DocumentSymbolCacheData, LWStats}
 const BindingOccurrencesCacheData = Base.PersistentDict{URI,BindingOccurrencesCacheEntry}
 const BindingOccurrencesCache = LWContainer{BindingOccurrencesCacheData, LWStats}
+const LoweringDiagnosticsCacheData = Base.PersistentDict{URI,Vector{Diagnostic}}
+const LoweringDiagnosticsCache = LWContainer{LoweringDiagnosticsCacheData, LWStats}
 const ConfigManager = LWContainer{ConfigManagerData, LWStats}
 const UnsyncedFileCacheData = Base.PersistentDict{URI,FileInfo}
 const UnsyncedFileCache = LWContainer{UnsyncedFileCacheData, LWStats}
@@ -693,6 +695,11 @@ mutable struct ServerState
     # It should also be invalidated when full-analysis updates module context,
     # but that is not yet implemented.
     const binding_occurrences_cache::BindingOccurrencesCache
+    # Per-file cache of the diagnostics produced by `lowering_diagnostics!` over a
+    # file's top-level statements. Lets cross-file `workspace/diagnostic`
+    # invalidations (see `compute_workspace_diagnostic_result_id`) skip re-running
+    # `jl_lower_for_scope_resolution` for files whose own content is unchanged.
+    const lowering_diagnostics_cache::LoweringDiagnosticsCache
     const analysis_manager::AnalysisManager
     const extra_diagnostics::ExtraDiagnostics
     const currently_handled::CurrentlyHandled
@@ -719,6 +726,7 @@ mutable struct ServerState
             #=unsynced_file_cache=# UnsyncedFileCache(UnsyncedFileCacheData()),
             #=document_symbol_cache=# DocumentSymbolCache(DocumentSymbolCacheData()),
             #=binding_occurrences_cache=# BindingOccurrencesCache(BindingOccurrencesCacheData()),
+            #=lowering_diagnostics_cache=# LoweringDiagnosticsCache(LoweringDiagnosticsCacheData()),
             #=analysis_manager=# AnalysisManager(),
             #=extra_diagnostics=# ExtraDiagnostics(ExtraDiagnosticsData()),
             #=currently_handled=# CurrentlyHandled(),

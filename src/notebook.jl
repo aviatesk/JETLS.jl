@@ -30,6 +30,7 @@ function cache_notebook_file_info!(server::Server, notebook_uri::URI, notebook_i
     end
     invalidate_document_symbol_cache!(state, notebook_uri)
     invalidate_binding_occurrences_cache!(state, notebook_uri)
+    invalidate_lowering_diagnostics_cache!(state, notebook_uri)
     return fi
 end
 
