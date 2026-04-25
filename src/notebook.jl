@@ -37,9 +37,7 @@ function cache_notebook_file_info!(server::Server, notebook_uri::URI, notebook_i
     store!(state.file_cache) do cache
         Base.PersistentDict(cache, notebook_uri => fi), fi
     end
-    invalidate_document_symbol_cache!(state, notebook_uri)
-    invalidate_binding_occurrences_cache!(state, notebook_uri)
-    invalidate_lowering_diagnostics_cache!(state, notebook_uri)
+    invalidate_per_file_caches!(state, notebook_uri)
     return fi
 end
 

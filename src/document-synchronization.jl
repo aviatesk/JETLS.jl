@@ -4,6 +4,17 @@ function ParseStream!(s::Union{AbstractString,Vector{UInt8}})
     return stream
 end
 
+# Drop every per-file cache entry for `uri`. Called whenever a file's content
+# changes (didChange/didOpen, notebook cell edits, watched-file events) or its
+# module context changes (full-analysis updates). `clear_*_cache!` (e.g. for
+# diagnostic config changes) is separate because not all caches share that
+# invalidation trigger.
+function invalidate_per_file_caches!(state::ServerState, uri::URI)
+    invalidate_document_symbol_cache!(state, uri)
+    invalidate_binding_occurrences_cache!(state, uri)
+    invalidate_lowering_diagnostics_cache!(state, uri)
+end
+
 """
     cache_file_info!(server::Server, uri::URI, version::Int, text::Union{AbstractString,Vector{UInt8}})
     cache_file_info!(server::Server, uri::URI, version::Int, parsed_stream::JS.ParseStream)
@@ -30,9 +41,7 @@ function cache_file_info!(
         Base.PersistentDict(cache, uri => fi), nothing
     end
 
-    invalidate_document_symbol_cache!(state, uri)
-    invalidate_binding_occurrences_cache!(state, uri)
-    invalidate_lowering_diagnostics_cache!(state, uri)
+    invalidate_per_file_caches!(state, uri)
 
     if !state.suppress_notifications && any_deleted
         notify_diagnostics!(server; ensure_cleared=uri)
