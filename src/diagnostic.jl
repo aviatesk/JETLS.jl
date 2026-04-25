@@ -1507,16 +1507,21 @@ function get_lowering_diagnostics!(
         cancel_flag::CancelFlag;
         lookup_func = nothing
     )
+    # For notebooks, every cell URI in a notebook resolves to the same
+    # concat-source `FileInfo`, so cache under the notebook URI to share
+    # entries across cells and to match the invalidation site
+    # (`cache_notebook_file_info!` invalidates the notebook URI).
+    cache_uri = @something get_notebook_uri_for_cell(server.state, uri) uri
     return store!(server.state.lowering_diagnostics_cache) do cache::LoweringDiagnosticsCacheData
-        if haskey(cache, uri)
-            return cache, cache[uri]
+        if haskey(cache, cache_uri)
+            return cache, cache[cache_uri]
         end
         result = compute_lowering_diagnostics(server, uri, file_info, st0_top, cancel_flag;
                                               lookup_func)
         if is_cancelled(cancel_flag)
             return cache, result
         end
-        return LoweringDiagnosticsCacheData(cache, uri => result), result
+        return LoweringDiagnosticsCacheData(cache, cache_uri => result), result
     end
 end
 
