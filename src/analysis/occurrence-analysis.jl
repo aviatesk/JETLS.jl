@@ -361,9 +361,10 @@ end
 function get_binding_occurrences!(
         state::ServerState, uri::URI, fi::FileInfo, st0::JS.SyntaxTree; kwargs...
     )
+    cache_uri = canonical_cache_uri(state, uri)
     range_key = JS.byte_range(st0)
     return store!(state.binding_occurrences_cache) do cache::BindingOccurrencesCacheData
-        file_cache = get(cache, uri, nothing)
+        file_cache = get(cache, cache_uri, nothing)
         if file_cache !== nothing && haskey(file_cache, range_key)
             return cache, file_cache[range_key]
         end
@@ -383,7 +384,7 @@ function get_binding_occurrences!(
         else
             file_cache = BindingOccurrencesCacheEntry(file_cache, range_key => cache_result)
         end
-        return BindingOccurrencesCacheData(cache, uri => file_cache), cache_result
+        return BindingOccurrencesCacheData(cache, cache_uri => file_cache), cache_result
     end
 end
 
@@ -603,9 +604,10 @@ function collect_inert_global_occurrences!(
 end
 
 function invalidate_binding_occurrences_cache!(state::ServerState, uri::URI)
+    cache_uri = canonical_cache_uri(state, uri)
     store!(state.binding_occurrences_cache) do cache::BindingOccurrencesCacheData
-        if haskey(cache, uri)
-            Base.delete(cache, uri), nothing
+        if haskey(cache, cache_uri)
+            Base.delete(cache, cache_uri), nothing
         else
             cache, nothing
         end
