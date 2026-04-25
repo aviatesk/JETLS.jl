@@ -297,7 +297,7 @@ Returns a named tuple containing:
   to recognize, which are caused by JET implementation details
 """
 function get_context_info(state::ServerState, uri::URI, pos::Position; lookup_func=nothing)
-    lookup_uri = @something get_notebook_uri_for_cell(state, uri) uri
+    lookup_uri = canonical_cache_uri(state, uri)
     if lookup_func !== nothing
         analysis_info = get_analysis_info(lookup_func, state.analysis_manager, lookup_uri)
     else
@@ -328,7 +328,7 @@ function get_context_module(analysis_result::AnalysisResult, uri::URI, pos::Posi
     return curmod
 end
 function get_context_module(state::ServerState, uri::URI, pos::Position; lookup_func=nothing)
-    lookup_uri = @something get_notebook_uri_for_cell(state, uri) uri
+    lookup_uri = canonical_cache_uri(state, uri)
     if lookup_func !== nothing
         analysis_info = get_analysis_info(lookup_func, state.analysis_manager, lookup_uri)
     else
@@ -346,7 +346,7 @@ get_post_processor(::OutOfScope) = LSPostProcessor(JET.PostProcessor())
 get_post_processor(analysis_result::AnalysisResult) = LSPostProcessor(JET.PostProcessor(analysis_result.actual2virtual))
 
 function has_analyzed_context(state::ServerState, uri::URI; lookup_func=nothing)
-    lookup_uri = @something get_notebook_uri_for_cell(state, uri) uri
+    lookup_uri = canonical_cache_uri(state, uri)
     if lookup_func !== nothing
         analysis_info = get_analysis_info(lookup_func, state.analysis_manager, lookup_uri)
     else

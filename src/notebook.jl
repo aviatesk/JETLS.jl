@@ -7,6 +7,15 @@ get_notebook_info(state::ServerState, uri::URI, default=nothing) =
 get_notebook_uri_for_cell(state::ServerState, cell_uri::URI, default=nothing) =
     get(load(state.cell_to_notebook), cell_uri, default)
 
+# Per-file caches (`document_symbol_cache`, `binding_occurrences_cache`,
+# `lowering_diagnostics_cache`) key on a single canonical URI per logical file.
+# For notebooks, every cell URI shares the same concat-source `FileInfo`, so the
+# canonical key is the notebook URI. Cache accessors and their invalidations
+# both run input through this helper so reads, writes, and invalidations always
+# meet on the same key.
+canonical_cache_uri(state::ServerState, uri::URI) =
+    get_notebook_uri_for_cell(state, uri, uri)
+
 function concatenate_cells(cells::Vector{NotebookCellInfo})
     source = ""
     cell_ranges = CellRange[]
@@ -28,9 +37,7 @@ function cache_notebook_file_info!(server::Server, notebook_uri::URI, notebook_i
     store!(state.file_cache) do cache
         Base.PersistentDict(cache, notebook_uri => fi), fi
     end
-    invalidate_document_symbol_cache!(state, notebook_uri)
-    invalidate_binding_occurrences_cache!(state, notebook_uri)
-    invalidate_lowering_diagnostics_cache!(state, notebook_uri)
+    invalidate_per_file_caches!(state, notebook_uri)
     return fi
 end
 

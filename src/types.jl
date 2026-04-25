@@ -683,22 +683,15 @@ mutable struct ServerState
     # Cache for files not synced via document-synchronization (unsynced files).
     # Populated on-demand by `get_unsynced_file_info!`, invalidated by `workspace/didChangeWatchedFiles`.
     const unsynced_file_cache::UnsyncedFileCache
-    # Document symbol cache for both synced and unsynced files.
-    # Uses LWContainer for concurrent writes from:
-    # - `get_document_symbols!` (on cache miss)
-    # - `textDocument/didChange` (invalidates synced files)
-    # - `workspace/didChangeWatchedFiles` (invalidates unsynced files)
+    # Per-file caches keyed on the canonical (notebook-aware) URI of a logical file.
+    # All three are dropped together via `invalidate_per_file_caches!` on content change
+    # (didChange/didOpen, notebook cell edits, watched-file events).
+    # `binding_occurrences_cache` and `lowering_diagnostics_cache` are additionally
+    # invalidated by `update_analysis_cache!` when full-analysis changes module context,
+    # since both embed `binfo.mod`. `lowering_diagnostics_cache` is also cleared wholesale
+    # on diagnostic-affecting config changes via `clear_lowering_diagnostics_cache!`.
     const document_symbol_cache::DocumentSymbolCache
-    # Binding occurrences cache for global binding analysis (references, rename).
-    # Same invalidation pattern as document_symbol_cache.
-    # TODO: This cache uses analysis context (module context from full-analysis).
-    # It should also be invalidated when full-analysis updates module context,
-    # but that is not yet implemented.
     const binding_occurrences_cache::BindingOccurrencesCache
-    # Per-file cache of the diagnostics produced by `lowering_diagnostics!` over a
-    # file's top-level statements. Lets cross-file `workspace/diagnostic`
-    # invalidations (see `compute_workspace_diagnostic_result_id`) skip re-running
-    # `jl_lower_for_scope_resolution` for files whose own content is unchanged.
     const lowering_diagnostics_cache::LoweringDiagnosticsCache
     const analysis_manager::AnalysisManager
     const extra_diagnostics::ExtraDiagnostics

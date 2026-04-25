@@ -65,23 +65,25 @@ function strip_name_from_detail(sym::DocumentSymbol)
 end
 
 function get_document_symbols!(state::ServerState, uri::URI, fi::FileInfo)
+    cache_uri = canonical_cache_uri(state, uri)
     return store!(state.document_symbol_cache) do cache::DocumentSymbolCacheData
-        if haskey(cache, uri)
-            symbols = cache[uri]
+        if haskey(cache, cache_uri)
+            symbols = cache[cache_uri]
             return cache, symbols
         end
         st0 = build_syntax_tree(fi)
         pos = Position(; line=0, character=0)
         (; mod) = get_context_info(state, uri, pos)
         symbols = extract_document_symbols(st0, fi, mod)
-        return DocumentSymbolCacheData(cache, uri => symbols), symbols
+        return DocumentSymbolCacheData(cache, cache_uri => symbols), symbols
     end
 end
 
 function invalidate_document_symbol_cache!(state::ServerState, uri::URI)
+    cache_uri = canonical_cache_uri(state, uri)
     store!(state.document_symbol_cache) do cache::DocumentSymbolCacheData
-        if haskey(cache, uri)
-            Base.delete(cache, uri), nothing
+        if haskey(cache, cache_uri)
+            Base.delete(cache, cache_uri), nothing
         else
             cache, nothing
         end
