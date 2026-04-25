@@ -4,6 +4,7 @@
 const NUMERIC_CHARACTERS = tuple(string.('0':'9')...)
 const METHOD_COMPLETION_TRIGGER_CHARACTERS = ("(", ",", " ")
 const COMPLETION_TRIGGER_CHARACTERS = [
+    ".",  # dot completion
     "@",  # macro completion
     "\\", # LaTeX completion
     ":",  # emoji completion
@@ -142,7 +143,10 @@ end
 
 should_invoke_auto_completion(::Nothing, ::Bool=false) = true
 function should_invoke_auto_completion(context::CompletionContext, allow_macro::Bool=false)
-    if !allow_macro || context.triggerCharacter != "@"
+    allow_character_trigger =
+        context.triggerCharacter == "." ||
+        (allow_macro && context.triggerCharacter == "@")
+    if !allow_character_trigger
         # Don't trigger completion just by typing a numeric character, etc.
         if context.triggerKind != CompletionTriggerKind.Invoked
             return false
@@ -178,6 +182,209 @@ end
 
 # global completions
 # ==================
+
+function infer_dotprefix_type(
+        mod::Module, st0_top::JS.SyntaxTree, offset::Int
+    )
+    st0 = @something greatest_local(st0_top, offset) return nothing
+    dotprefix = @something select_dotprefix_identifier(st0, offset) return nothing
+    (; ctx3, st3) = try
+        jl_lower_for_scope_resolution(mod, st0)
+    catch err
+        JETLS_DEBUG_LOWERING && @warn "Error in lowering (dot completion)" err
+        JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
+        return nothing
+    end
+    inferred_tree = @something infer_toplevel_tree(ctx3, st3, mod) return nothing
+    typ = get_type_for_range(inferred_tree, JS.byte_range(dotprefix))
+    return typ
+end
+
+function collect_field_infos(@nospecialize typ)
+    T = CC.widenconst(typ)
+    T isa Type || return nothing
+    nfields = try
+        fieldcount(T)
+    catch
+        return nothing
+    end
+    infos = Pair{Symbol,Any}[]
+    sizehint!(infos, nfields)
+    for i = 1:nfields
+        push!(infos, fieldname(T, i) => fieldtype(T, i))
+    end
+    return infos
+end
+
+const GENERIC_PROPERTYNAMES_METHOD = which(propertynames, (Any,))
+
+function propertynames_method_match(@nospecialize typ)
+    T = CC.widenconst(typ)
+    if T isa Union
+        return nothing
+    end
+    T isa Type || return nothing
+    isconcretetype(T) || return nothing
+    return Base._which(Tuple{typeof(propertynames),T}; raise=false)
+end
+
+function field_completion_eligible(@nospecialize typ)
+    T = CC.widenconst(typ)
+    if T isa Union
+        return field_completion_eligible(T.a) && field_completion_eligible(T.b)
+    end
+    match = propertynames_method_match(T)
+    match === nothing && return false
+    return match.method === GENERIC_PROPERTYNAMES_METHOD
+end
+
+function extract_static_property_names(stmt)
+    if stmt isa Tuple
+        all(x -> x isa Symbol, stmt) || return nothing
+        return Symbol[stmt...]
+    elseif stmt isa Expr
+        if stmt.head === :tuple
+            names = Symbol[]
+            for arg in stmt.args
+                if arg isa Symbol
+                    push!(names, arg)
+                elseif arg isa QuoteNode && arg.value isa Symbol
+                    push!(names, arg.value)
+                else
+                    return nothing
+                end
+            end
+            return names
+        elseif stmt.head === :call && stmt.args[1] === Core.tuple
+            names = Symbol[]
+            for arg in stmt.args[2:end]
+                if arg isa Symbol
+                    push!(names, arg)
+                elseif arg isa QuoteNode && arg.value isa Symbol
+                    push!(names, arg.value)
+                else
+                    return nothing
+                end
+            end
+            return names
+        end
+    end
+    return nothing
+end
+
+function collect_static_property_names(@nospecialize typ)
+    T = CC.widenconst(typ)
+    if T isa Union
+        names1 = @something collect_static_property_names(T.a) return nothing
+        names2 = @something collect_static_property_names(T.b) return nothing
+        return union(names1, names2)
+    end
+
+    match = propertynames_method_match(T)
+    match === nothing && return nothing
+    match.method === GENERIC_PROPERTYNAMES_METHOD && return nothing
+
+    ast = Base.uncompressed_ast(match.method)
+    stmts = ast.code
+    length(stmts) == 2 || return nothing
+    stmts[end] isa Core.ReturnNode || return nothing
+    return extract_static_property_names(stmts[1])
+end
+
+function add_property_completion!(
+        items::Dict{String,CompletionItem}, s::String, detail::Union{Nothing,String},
+        sort_offset::Int
+    )
+    items[s] = CompletionItem(;
+        label = s,
+        labelDetails = CompletionItemLabelDetails(;
+            detail,
+            description = "property"),
+        kind = CompletionItemKind.Property,
+        sortText = get_sort_text(sort_offset))
+end
+
+function add_dot_property_completions!(
+        items::Dict{String,CompletionItem}, @nospecialize(val),
+        postprocessor::LSPostProcessor
+    )
+    fieldinfos = @something collect_field_infos(typeof(val)) Pair{Symbol,Any}[]
+    fieldtypes = Dict{Symbol,Any}(fieldinfos)
+    pnames = try
+        @invokelatest propertynames(val, false)
+    catch
+        return #=isIncomplete=#false
+    end
+    for (i, pname) in enumerate(pnames)
+        s = string(pname)
+        detail = if pname isa Symbol
+            ftyp = get(fieldtypes, pname, nothing)
+            isnothing(ftyp) ? nothing : "::" * postprocessor(string(ftyp))
+        else
+            nothing
+        end
+        add_property_completion!(items, s, detail, i)
+    end
+    return #=isIncomplete=#false
+end
+
+function add_static_dot_property_completions!(
+        items::Dict{String,CompletionItem}, @nospecialize(typ),
+        postprocessor::LSPostProcessor
+    )
+    pnames = @something collect_static_property_names(typ) return #=isIncomplete=#false
+    fieldinfos = @something collect_field_infos(typ) Pair{Symbol,Any}[]
+    fieldtypes = Dict{Symbol,Any}(fieldinfos)
+    for (i, pname) in enumerate(pnames)
+        s = String(pname)
+        ftyp = get(fieldtypes, pname, nothing)
+        detail = isnothing(ftyp) ? nothing : "::" * postprocessor(string(ftyp))
+        add_property_completion!(items, s, detail, i)
+    end
+    return #=isIncomplete=#false
+end
+
+function add_dot_field_completions!(
+        items::Dict{String,CompletionItem}, @nospecialize(typ),
+        postprocessor::LSPostProcessor
+    )
+    field_completion_eligible(typ) || return #=isIncomplete=#false
+    fieldinfos = @something collect_field_infos(typ) return #=isIncomplete=#false
+    for (i, (fname, ftyp)) in enumerate(fieldinfos)
+        s = String(fname)
+        items[s] = CompletionItem(;
+            label = s,
+            labelDetails = CompletionItemLabelDetails(;
+                detail = "::" * postprocessor(string(ftyp)),
+                description = "field"),
+            kind = CompletionItemKind.Field,
+            sortText = get_sort_text(i))
+    end
+    return #=isIncomplete=#false
+end
+
+function add_dot_completions!(
+        items::Dict{String,CompletionItem}, analyzer::LSAnalyzer,
+        mod::Module, postprocessor::LSPostProcessor,
+        st::JS.SyntaxTree, dotprefix::JS.SyntaxTree, offset::Int
+    )
+    prefixtyp = resolve_type(analyzer, mod, dotprefix)
+    if prefixtyp isa Core.Const
+        prefixval = prefixtyp.val
+        if prefixval isa Module
+            return prefixval
+        end
+        return add_dot_property_completions!(items, prefixval, postprocessor)
+    end
+    prefixtyp = @something(
+        infer_dotprefix_type(mod, st, offset),
+        prefixtyp,
+        return #=isIncomplete=#false)
+    if !field_completion_eligible(prefixtyp)
+        return add_static_dot_property_completions!(items, prefixtyp, postprocessor)
+    end
+    return add_dot_field_completions!(items, prefixtyp, postprocessor)
+end
 
 function global_completions!(
         items::Dict{String,CompletionItem},
@@ -225,20 +432,14 @@ function global_completions!(
     offset = xy_to_offset(fi, pos)
     dotprefix = select_dotprefix_identifier(st, offset)
     if !isnothing(dotprefix)
-        prefixtyp = resolve_type(analyzer, completion_module, dotprefix)
-        # If dotprefix is not a module, cancel completion entirely.
-        # TODO In the future, let's add property completions and such.
-        enable_completions = false
-        if prefixtyp isa Core.Const
-            prefixval = prefixtyp.val
-            if prefixval isa Module
-                completion_module = prefixval
-                enable_completions = true
-            end
+        dot_completion_result = add_dot_completions!(
+            items, analyzer, completion_module, postprocessor, st, dotprefix, offset)
+        if dot_completion_result isa Module
+            completion_module = dot_completion_result
+        else
+            return dot_completion_result
         end
-        enable_completions || return #=isIncomplete=#false
-        # disable local completions for dot-prefixed code for now
-        is_completed |= true
+        is_completed = true
     end
     resolver_id = String(gensym("GlobalCompletionResolverInfo_resovler_id"))
     store!(state.completion_resolver_info, completion_module) do _, mod::Module
