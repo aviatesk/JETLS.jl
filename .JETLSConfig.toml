@@ -18,14 +18,6 @@ match_type = "regex"
 severity = "off"
 path = "LSP/src/**/*.jl"
 
-# This is type instability within JSON3.jl
-[[diagnostic.patterns]]
-pattern = "no matching method found `convert(.+)`"
-match_by = "message"
-match_type = "regex"
-severity = "off"
-path = "src/testrunner/testrunner-types.jl"
-
 # Treat all other diagnostics as warnings (for early detection via jetls check)
 [[diagnostic.patterns]]
 pattern = ".*"
