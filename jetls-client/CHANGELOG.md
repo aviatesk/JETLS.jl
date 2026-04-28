@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 - Diff: [`169faf25...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/169faf25...HEAD)
 
+### Removed
+
+- Removed the `jetls.showReferences` command. JETLS now emits the built-in
+  `editor.action.showReferences` directly for the reference-count code
+  lens; the new `resolveCodeLens` middleware handles the argument
+  conversion.
+
 ## v0.3.5
 
 - Commit: [`169faf25`](https://github.com/aviatesk/JETLS.jl/commit/169faf25)

@@ -152,6 +152,41 @@ end
         end
         @test cnt == 1
     end
+
+    # User-written identifiers escaped into a macro's generated code
+    # (here via `\$` inside `@eval`) should resolve to the enclosing
+    # user binding, not to any binding synthesized by the macro itself.
+    let cnt = 0
+        with_target_binding("""
+            let │valid_keys│ = 42
+                @eval some_func() = \$│valid_keys│
+            end
+            """) do _, (; ctx3, binding)
+            binfo = JL.get_binding(ctx3, binding)
+            @test binfo.name == "valid_keys"
+            @test binfo.kind === :local
+            cnt += 1
+        end
+        @test cnt == 4
+    end
+
+    # User-written identifiers sitting in a macro's inert/quoted template
+    # (here the type name inside `@eval`) should resolve to the matching
+    # module-level global.
+    let cnt = 0
+        with_target_binding("""
+            struct │LSAnalyzer│ end
+            let x = 1
+                @eval some_func(::│LSAnalyzer│) = \$x
+            end
+            """) do _, (; ctx3, binding)
+            binfo = JL.get_binding(ctx3, binding)
+            @test binfo.name == "LSAnalyzer"
+            @test binfo.kind === :global
+            cnt += 1
+        end
+        @test cnt == 4
+    end
 end
 
 function with_target_binding_definitions(f, text::AbstractString; kwargs...)
@@ -609,6 +644,26 @@ end
             end
         """) do _, res
             @test isnothing(res)
+            cnt += 1
+        end
+        @test cnt == 1
+    end
+
+    # `` `...` `` parses to `Core.@cmd(LineNumberNode, CmdString)` where the
+    # cmd content is a single opaque `CmdString` leaf — the parser does not
+    # split `\$name` interpolations into child nodes. So a cursor placed on
+    # the `x` inside `` `\$x` `` resolves to the `CmdString` (not an
+    # `Identifier`), and binding lookup can't reach the `x` argument above.
+    # Macro expansion recovers usedness but with byte-range-0:0 provenance,
+    # which doesn't help source-position-based lookups.
+    @testset "cmd literal interpolation" begin
+        cnt = 0
+        with_target_binding_definitions("""
+            function f(x)
+                `echo \$x│`
+            end
+        """) do _, res
+            @test_broken !isnothing(res)
             cnt += 1
         end
         @test cnt == 1

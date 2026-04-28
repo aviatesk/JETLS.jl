@@ -473,6 +473,49 @@ async function startLanguageServer() {
         vscode.workspace.createFileSystemWatcher("**/.JETLSProfile"),
       ],
     },
+    middleware: {
+      // `editor.action.showReferences` is a built-in VSCode command that
+      // requires actual `vscode.Uri`/`vscode.Position`/`vscode.Location`
+      // instances, but server-sent command arguments arrive as plain JSON.
+      // Convert them here before VSCode dispatches the command.
+      resolveCodeLens: async (codeLens, token, next) => {
+        const resolved = await next(codeLens, token);
+        if (
+          resolved?.command?.command === "editor.action.showReferences" &&
+          Array.isArray(resolved.command.arguments) &&
+          resolved.command.arguments.length === 3
+        ) {
+          const [uriString, pos, locs] = resolved.command.arguments as [
+            string,
+            { line: number; character: number },
+            {
+              uri: string;
+              range: {
+                start: { line: number; character: number };
+                end: { line: number; character: number };
+              };
+            }[],
+          ];
+          resolved.command.arguments = [
+            vscode.Uri.parse(uriString),
+            new vscode.Position(pos.line, pos.character),
+            locs.map(
+              (loc) =>
+                new vscode.Location(
+                  vscode.Uri.parse(loc.uri),
+                  new vscode.Range(
+                    loc.range.start.line,
+                    loc.range.start.character,
+                    loc.range.end.line,
+                    loc.range.end.character,
+                  ),
+                ),
+            ),
+          ];
+        }
+        return resolved;
+      },
+    },
     initializationOptions,
     outputChannel,
   };
@@ -654,53 +697,6 @@ export function activate(context: ExtensionContext) {
       "jetls-client.restartLanguageServer",
       () => {
         restartLanguageServer();
-      },
-    ),
-  );
-  context.subscriptions.push(
-    vscode.commands.registerCommand(
-      "jetls.showReferences",
-      async (uriString: string, line: number, character: number) => {
-        if (!languageClient) {
-          return;
-        }
-        const uri = vscode.Uri.parse(uriString);
-        const position = new vscode.Position(line, character);
-        interface LspLocation {
-          uri: string;
-          range: {
-            start: { line: number; character: number };
-            end: { line: number; character: number };
-          };
-        }
-        const locations = await languageClient.sendRequest<LspLocation[]>(
-          "textDocument/references",
-          {
-            textDocument: { uri: uriString },
-            position: { line, character },
-            context: { includeDeclaration: false },
-          },
-        );
-        if (locations && locations.length > 0) {
-          const vsLocations = locations.map(
-            (loc) =>
-              new vscode.Location(
-                vscode.Uri.parse(loc.uri),
-                new vscode.Range(
-                  loc.range.start.line,
-                  loc.range.start.character,
-                  loc.range.end.line,
-                  loc.range.end.character,
-                ),
-              ),
-          );
-          vscode.commands.executeCommand(
-            "editor.action.showReferences",
-            uri,
-            position,
-            vsLocations,
-          );
-        }
       },
     ),
   );

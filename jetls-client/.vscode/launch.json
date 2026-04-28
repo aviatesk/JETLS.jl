@@ -10,7 +10,7 @@
       "outFiles": ["${workspaceRoot}/out/**/*.js"],
       "sourceMaps": true,
       "autoAttachChildProcesses": true,
-      "preLaunchTask": "npm: watch"
+      "preLaunchTask": "npm: build:watch"
     }
   ]
 }

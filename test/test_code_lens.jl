@@ -97,6 +97,37 @@ end
             @test length(results) == 1
         end
     end
+
+    @testset "no lens for local bindings inside function bodies" begin
+        let code = """
+            function outer(r0)
+                f = x -> x * r0
+                g() = f(r0)
+                return g()
+            end
+            outer(42)
+            """
+            results = get_code_lenses_with_counts(code)
+            @test length(results) == 1
+            lens, _ = results[1]
+            @test lens.range.start.line == 0 # only `outer`
+        end
+    end
+
+    @testset "lens for struct inner methods (still global)" begin
+        let code = """
+            struct Foo
+                x::Int
+                Foo() = new(0)
+            end
+            Foo()
+            """
+            results = get_code_lenses_with_counts(code)
+            names_lines = sort([lens.range.start.line for (lens, _) in results])
+            @test 0 in names_lines      # Foo (struct)
+            @test 2 in names_lines      # inner constructor `Foo() = new(0)`
+        end
+    end
 end
 
 end # module test_code_lens

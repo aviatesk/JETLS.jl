@@ -6,7 +6,26 @@ using JETLS.URIs2
 
 using JETLS: get_text_and_positions
 
-function take_with_timeout!(chn::Channel; interval=1, limit=60)
+"""
+    wait_for_file_cache_version(state::JETLS.ServerState, uri::URI, version::Int; timeout::Float64=10.0)
+
+Wait until the file cache for `uri` is updated to the given `version`.
+Use this between `writemsg` (notification) and `writereadmsg` (request) to
+ensure the sequential worker has finished processing the notification before
+the concurrent worker handles the request.
+"""
+function wait_for_file_cache_version(state::JETLS.ServerState, uri::URIs2.URI,
+                                     version::Int; timeout::Float64=10.0)
+    deadline = time() + timeout
+    while time() < deadline
+        fi = get(JETLS.load(state.file_cache), uri, nothing)
+        fi !== nothing && fi.version == version && return
+        sleep(0.01)
+    end
+    error("Timed out waiting for file cache version $version for $uri")
+end
+
+function take_with_timeout!(chn::Channel; interval=0.1, limit=600)
     while limit > 0
         if isready(chn)
             return take!(chn)
@@ -22,11 +41,15 @@ function withserver(f;
                     workspaceFolders::Union{Nothing,Vector{WorkspaceFolder}}=nothing,
                     rootUri::Union{Nothing,URI}=nothing,
                     settings::Union{Nothing,AbstractDict}=nothing)
-    in = Base.BufferStream()
-    out = Base.BufferStream()
+    in_pipe = Pipe()
+    out_pipe = Pipe()
+    Base.link_pipe!(in_pipe; reader_supports_async=true, writer_supports_async=true)
+    Base.link_pipe!(out_pipe; reader_supports_async=true, writer_supports_async=true)
+    in = in_pipe.in
+    out = out_pipe.out
     received_queue = Channel{Any}(Inf)
     sent_queue = Channel{Any}(Inf)
-    endpoint = Endpoint(in, out)
+    endpoint = Endpoint(in_pipe.out, out_pipe.in)
     server = Server(endpoint) do s::Symbol, x
         @nospecialize x
         if s === :received
@@ -215,6 +238,8 @@ function withserver(f;
         finally
             close(in)
             close(out)
+            close(in_pipe.out)
+            close(out_pipe.in)
         end
     end
 end

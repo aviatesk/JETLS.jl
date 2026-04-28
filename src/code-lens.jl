@@ -1,6 +1,6 @@
 const CODE_LENS_REGISTRATION_ID = "jetls-code-lens"
 const CODE_LENS_REGISTRATION_METHOD = "textDocument/codeLens"
-const COMMAND_SHOW_REFERENCES = "jetls.showReferences"
+const COMMAND_SHOW_REFERENCES = "editor.action.showReferences"
 
 function code_lens_options()
     return CodeLensOptions(;
@@ -54,11 +54,20 @@ const REFERENCES_CODE_LENS_SYMBOL_KINDS = (
     SymbolKind.Enum,      # @enum
 )
 
+# Only descend into containers whose direct children introduce global bindings.
+# `Function` bodies and `Namespace` constructs (`let`/`for`/`while`/`if`) create
+# local scopes, so any nested `Function` symbol there is a closure or inner
+# function whose references stay within the enclosing scope.
+const REFERENCES_CODE_LENS_RECURSE_KINDS = (
+    SymbolKind.Module,
+    SymbolKind.Struct,
+)
+
 function references_code_lenses!(
         code_lenses::Vector{CodeLens}, state::ServerState, uri::URI, fi::FileInfo
     )
-    symbols = get_document_symbols!(state, uri, fi)
-    isnothing(symbols) && return code_lenses
+    symbols = @something get_document_symbols!(state, uri, fi) return code_lenses
+    symbols = localize_document_symbols(state, uri, symbols)
     collect_references_code_lenses!(code_lenses, uri, symbols)
     return code_lenses
 end
@@ -73,9 +82,11 @@ function collect_references_code_lenses!(
             data = ReferencesCodeLensData(uri, range.start.line, range.start.character)
             push!(code_lenses, CodeLens(; range, data))
         end
-        children = symbol.children
-        if children !== nothing
-            collect_references_code_lenses!(code_lenses, uri, children)
+        if symbol.kind in REFERENCES_CODE_LENS_RECURSE_KINDS
+            children = symbol.children
+            if children !== nothing
+                collect_references_code_lenses!(code_lenses, uri, children)
+            end
         end
     end
     return nothing
@@ -90,14 +101,15 @@ function handle_CodeLensResolveRequest(
         return send(server, CodeLensResolveResponse(; id = msg.id, result = code_lens))
 
     pos = Position(; line = data.line, character = data.character)
-    arguments = Any[string(data.uri), pos.line, pos.character]
 
     if !has_analyzed_context(server.state, data.uri)
         command = Command(;
             title = "? references",
-            command = COMMAND_SHOW_REFERENCES,
-            arguments)
-        resolved = CodeLens(; range = code_lens.range, command, data = code_lens.data)
+            command = COMMAND_SHOW_MESSAGE,
+            arguments = Any[
+                "Reference count is unavailable: full analysis has not been run for this file yet.",
+                MessageType.Warning])
+        resolved = CodeLens(; range = code_lens.range, command)
         return send(server, CodeLensResolveResponse(; id = msg.id, result = resolved))
     end
 
@@ -107,13 +119,15 @@ function handle_CodeLensResolveRequest(
     end
 
     fi = result
-    locations = find_references(server, data.uri, fi, pos;
+    global_pos = adjust_position(server.state, data.uri, pos)
+    locations = find_references(server, data.uri, fi, global_pos;
         include_declaration = false, cancel_flag)
     count = locations isa Vector ? length(locations) : 0
-
-    title = count == 1 ? "1 reference" : "$count references"
-    command = Command(; title, command = COMMAND_SHOW_REFERENCES, arguments)
-    resolved = CodeLens(; range = code_lens.range, command, data = code_lens.data)
+    command = Command(;
+        title = count == 1 ? "1 reference" : "$count references",
+        command = COMMAND_SHOW_REFERENCES,
+        arguments = Any[string(data.uri), pos, locations isa Vector ? locations : Location[]])
+    resolved = CodeLens(; range = code_lens.range, command)
     return send(server,
         CodeLensResolveResponse(; id = msg.id, result = resolved))
 end

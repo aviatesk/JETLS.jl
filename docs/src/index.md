@@ -1,4 +1,4 @@
-# JETLS.jl documentation
+# [JETLS.jl documentation](@id index)
 
 The goal of this project is to develop a new language server for
 [Julia](https://julialang.org/), currently called "JETLS".
@@ -16,17 +16,20 @@ diagnostic, macro-aware go-to definition and such.
     Not production-ready; APIs and behavior may change.
     Stability and performance are limited. Expect bugs and rough edges.
 
-## Server installation
+See the [Features](@ref features) page for a visual overview of the LSP
+features JETLS provides.
+
+## [Server installation](@id index/server-installation)
 
 Editor clients for JETLS generally do not bundle the JETLS server itself.
 You need to install the `jetls` executable separately before using any editor integration.
 
-### Prerequisites
+### [Prerequisites](@id index/server-installation/prerequisites)
 
 JETLS requires [Julia v1.12.2](https://julialang.org/downloads) or later.
 It does not support Julia 1.12.1 or earlier, nor Julia 1.13+/nightly.
 
-### Installing the `jetls` executable
+### [Installing the `jetls` executable](@id index/server-installation/install)
 
 All editor integrations require the [`jetls` executable app](https://pkgdocs.julialang.org/dev/apps/),
 which is the main entry point for running JETLS.
@@ -57,11 +60,11 @@ is properly added to your `PATH`.
     julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2025-11-25")'
     ```
 
-## Editor setup
+## [Editor setup](@id index/editor-setup)
 
 After installing the `jetls` executable, set up your editor to use it.
 
-### VSCode
+### [VSCode](@id index/editor-setup/vscode)
 
 [`jetls-client`](https://marketplace.visualstudio.com/items?itemName=aviatesk.jetls-client)
 is a [VSCode](https://code.visualstudio.com/) client extension for JETLS.
@@ -86,7 +89,7 @@ For advanced launching configurations and JETLS behavior settings, see the
     you may encounter confusing situations where, for example, completion candidates
     are provided from different backends.
 
-### Emacs
+### [Emacs](@id index/editor-setup/emacs)
 
 Minimal [Emacs](https://www.gnu.org/software/emacs/)
 ([eglot](https://github.com/joaotavora/eglot) client) setup:
@@ -117,7 +120,8 @@ To fix this, use the `--stdio` method instead of TCP sockets.
 
 As the `--stdio` connection can become corrupted if another code writes to the `stdin`/`stdout`, it is considered less stable.
 
-### Vim
+### [Vim](@id index/editor-setup/vim)
+
 Minimal [Vim](https://www.vim.org) setup using the
 [Vim9 LSP plugin](https://github.com/yegappan/lsp)
 
@@ -131,7 +135,7 @@ call LspAddServer([#{name: 'JETLS.jl',
                  \ }])
 ```
 
-### Neovim
+### [Neovim](@id index/editor-setup/neovim)
 
 Minimal [Neovim](https://neovim.io/) setup (requires Neovim v0.11):
 
@@ -147,7 +151,43 @@ vim.lsp.config("jetls", {
 vim.lsp.enable("jetls")
 ```
 
-### Sublime
+If you enable the [`code_lens.references`](@ref config/code_lens-references)
+configuration option, also register a handler for the
+`editor.action.showReferences` command, which JETLS emits on the reference-count
+code lens following the VSCode convention.[^show_references_handler]
+
+[^show_references_handler]:
+    Without this handler, Neovim reports
+    "does not support command `editor.action.showReferences`"
+    when the code lens is clicked. Register a per-client handler
+    via the `commands` field of `vim.lsp.config` so the handler is
+    scoped to the JETLS client only (rather than polluting the
+    global `vim.lsp.commands` table). The snippet below sends the
+    resolved locations to the quickfix list:
+
+    ```lua
+    vim.lsp.config("jetls", {
+        -- ... other options ...
+        commands = {
+            ["editor.action.showReferences"] = function(command, ctx)
+                local client = assert(vim.lsp.get_client_by_id(ctx.client_id))
+                local file_uri, position, references =
+                    unpack(command.arguments)
+                local items = vim.lsp.util.locations_to_items(
+                    references, client.offset_encoding)
+                vim.fn.setqflist({}, " ", {
+                    title = command.title, items = items })
+                vim.lsp.util.show_document({
+                    uri = file_uri,
+                    range = { start = position, ["end"] = position },
+                }, client.offset_encoding)
+                vim.cmd("botright copen")
+            end,
+        },
+    })
+    ```
+
+### [Sublime](@id index/editor-setup/sublime)
 
 Minimal [Sublime](https://www.sublimetext.com/) setup using the
 [Sublime-LSP plugin](https://github.com/sublimelsp/LSP) and modifying the
@@ -167,13 +207,13 @@ Minimal [Sublime](https://www.sublimetext.com/) setup using the
 }
 ```
 
-### Zed
+### [Zed](@id index/editor-setup/zed)
 
 [Zed](https://zed.dev/) extension for Julia/JETLS is available:
 See [`aviatesk/zed-julia#avi/JETLS`](https://github.com/aviatesk/zed-julia/tree/avi/JETLS)
 for the detailed installation steps.
 
-### Helix
+### [Helix](@id index/editor-setup/helix)
 
 Minimal [Helix](https://helix-editor.com/) setup:
 
@@ -187,7 +227,7 @@ language-servers = [ "jetls" ]
 jetls = { command = "jetls", args = ["serve"] }
 ```
 
-### Advanced: using local JETLS checkout
+### [Advanced: using local JETLS checkout](@id index/editor-setup/advanced)
 
 Advanced users can run JETLS directly from a local checkout by replacing
 the `jetls` executable with `julia -m JETLS`:
@@ -201,7 +241,7 @@ julia --startup-file=no --project=/path/to/JETLS -m JETLS serve
     analyzed. The `release` branch avoids this by vendoring dependencies with
     rewritten UUIDs.
 
-## Quick links
+## [Quick links](@id index/quick-links)
 
 ```@contents
 Pages = Main.quick_links_pages

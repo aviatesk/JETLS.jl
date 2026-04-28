@@ -1,16 +1,18 @@
 const EXECUTE_COMMAND_REGISTRATION_ID = "jetls-execute-command"
 const EXECUTE_COMMAND_REGISTRATION_METHOD = "workspace/executeCommand"
 
-const COMMAND_TESTRUNNER_RUN_TESTSET = "JETLS.TestRunner.run@testset"
-const COMMAND_TESTRUNNER_RUN_TESTCASE = "JETLS.TestRunner.run@test"
-const COMMAND_TESTRUNNER_CLEAR_RESULT = "JETLS.TestRunner.clearResult"
-const COMMAND_TESTRUNNER_OPEN_LOGS = "JETLS.TestRunner.openLogs"
+const COMMAND_TESTRUNNER_RUN_TESTSET = "jetls.testrunner.run@testset"
+const COMMAND_TESTRUNNER_RUN_TESTCASE = "jetls.testrunner.run@test"
+const COMMAND_TESTRUNNER_CLEAR_RESULT = "jetls.testrunner.clearResult"
+const COMMAND_TESTRUNNER_OPEN_LOGS = "jetls.testrunner.openLogs"
+const COMMAND_SHOW_MESSAGE = "jetls.showMessage"
 
 const SUPPORTED_COMMANDS = [
     COMMAND_TESTRUNNER_RUN_TESTSET,
     COMMAND_TESTRUNNER_RUN_TESTCASE,
     COMMAND_TESTRUNNER_OPEN_LOGS,
     COMMAND_TESTRUNNER_CLEAR_RESULT,
+    COMMAND_SHOW_MESSAGE,
 ]
 
 function execute_command_options()
@@ -42,6 +44,8 @@ function handle_ExecuteCommandRequest(server::Server, msg::ExecuteCommandRequest
         return execute_testrunner_open_logs_command(server, msg)
     elseif command == COMMAND_TESTRUNNER_CLEAR_RESULT
         return execute_testrunner_clear_result_command(server, msg)
+    elseif command == COMMAND_SHOW_MESSAGE
+        return execute_show_message_command(server, msg)
     end
     return send(server,
         invalid_execute_command_response(msg, "Unknown execution command: $command"))
@@ -135,6 +139,28 @@ function execute_testrunner_clear_result_command(server::Server, msg::ExecuteCom
     idx = @tryparsearg server msg[2]::Int
     tsn = @tryparsearg server msg[3]::String
     try_clear_testrunner_result!(server, uri, idx, tsn)
+    return send(server,
+        ExecuteCommandResponse(;
+            id = msg.id,
+            result = null))
+end
+
+function execute_show_message_command(server::Server, msg::ExecuteCommandRequest)
+    message = @tryparsearg server msg[1]::String
+    arguments = msg.params.arguments
+    type = MessageType.Info
+    if arguments !== nothing && length(arguments) ≥ 2
+        type_arg = arguments[2]
+        type_arg isa MessageType.Ty || return send(server,
+            invalid_execute_command_response(msg,
+                lazy"Expected `arguments[2]::$(MessageType.Ty)` for `workspace/executeCommand` request"))
+        1 ≤ type_arg ≤ 5 || return send(server,
+            invalid_execute_command_response(msg,
+                lazy"Expected `arguments[2]` to be in 1..5 (see `MessageType`)"))
+        type = type_arg
+    end
+    send(server, ShowMessageNotification(;
+        params = ShowMessageParams(; type, message)))
     return send(server,
         ExecuteCommandResponse(;
             id = msg.id,

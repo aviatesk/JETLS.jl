@@ -468,9 +468,9 @@ function report_builtin_error!(
     end
 end
 
-const MODULE_SETFIELD_MSG = "cannot assign variables in other modules"
-type_error_msg(f, expected, actual) = (@nospecialize;
-    lazy"TypeError: in $f, expected $expected, got a value of type $actual")
+# const MODULE_SETFIELD_MSG = "cannot assign variables in other modules"
+# type_error_msg(f, expected, actual) = (@nospecialize;
+#     lazy"TypeError: in $f, expected $expected, got a value of type $actual")
 
 function report_fieldaccess!(
         analyzer::LSAnalyzer, sv::CC.InferenceState, @nospecialize(f), argtypes::Vector{Any},

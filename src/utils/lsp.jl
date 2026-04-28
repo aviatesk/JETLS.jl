@@ -102,11 +102,6 @@ function simple_loc_text(uri::URI; line::Union{Integer,Nothing}=nothing)
     return loctext
 end
 
-function file_cache_error(uri::URI; data=nothing)
-    message = lazy"File cache for $uri is not found"
-    return request_failed_error(message; data)
-end
-
 function request_failed_error(message::AbstractString; data=nothing)
     return ResponseError(;
         code = ErrorCodes.RequestFailed,
@@ -121,68 +116,32 @@ function request_cancelled_error(message::AbstractString="Request was cancelled"
         data)
 end
 
+show_message(server::Server, message::AbstractString, type::MessageType.Ty) =
+    send(server, ShowMessageNotification(; params = ShowMessageParams(; type, message)))
+
 """
     show_error_message(server::Server, message::AbstractString)
 
-Send an error notification to the client using window/showMessage.
+Send an error notification to the client using `window/showMessage`.
 """
-function show_error_message(server::Server, message::AbstractString)
-    send(server, ShowMessageNotification(;
-        params = ShowMessageParams(;
-            type = MessageType.Error,
-            message)))
-end
+show_error_message(server::Server, message::AbstractString) =
+    show_message(server, message, MessageType.Error)
 
 """
     show_info_message(server::Server, message::AbstractString)
 
-Send an info notification to the client using window/showMessage.
+Send an info notification to the client using `window/showMessage`.
 """
-function show_info_message(server::Server, message::AbstractString)
-    send(server, ShowMessageNotification(;
-        params = ShowMessageParams(;
-            type = MessageType.Info,
-            message)))
-end
+show_info_message(server::Server, message::AbstractString) =
+    show_message(server, message, MessageType.Info)
 
 """
     show_warning_message(server::Server, message::AbstractString)
 
-Send a warning notification to the client using window/showMessage.
+Send a warning notification to the client using `window/showMessage`.
 """
-function show_warning_message(server::Server, message::AbstractString)
-    send(server, ShowMessageNotification(;
-        params = ShowMessageParams(;
-            type = MessageType.Warning,
-            message)))
-end
-
-"""
-    show_log_message(server::Server, message::AbstractString)
-
-Send a log message to the client using window/logMessage.
-This appears in the client's output channel rather than as a popup.
-"""
-function show_log_message(server::Server, message::AbstractString)
-    send(server, LogMessageNotification(;
-        params = LogMessageParams(;
-            type = MessageType.Log,
-            message)))
-end
-
-"""
-    show_debug_message(server::Server, message::AbstractString)
-
-Send a debug message to the client using window/logMessage.
-This appears in the client's output channel and is typically only shown
-when the client is in debug/verbose mode.
-"""
-function show_debug_message(server::Server, message::AbstractString)
-    send(server, LogMessageNotification(;
-        params = LogMessageParams(;
-            type = MessageType.Debug,
-            message)))
-end
+show_warning_message(server::Server, message::AbstractString) =
+    show_message(server, message, MessageType.Warning)
 
 """
     handle_response_error(server::Server, msg::Dict{Symbol,Any}, context::AbstractString)

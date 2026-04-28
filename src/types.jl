@@ -376,14 +376,6 @@ const DIAGNOSTIC_SOURCE_LIVE = "JETLS/live"
 const DIAGNOSTIC_SOURCE_SAVE = "JETLS/save"
 const DIAGNOSTIC_SOURCE_EXTRA = "JETLS/extra"
 
-const VALID_DIAGNOSTIC_CATEGORIES = Set{String}((
-    "syntax",
-    "lowering",
-    "toplevel",
-    "inference",
-    "testrunner",
-))
-
 const SYNTAX_DIAGNOSTIC_CODE = "syntax/parse-error"
 const LOWERING_UNUSED_ARGUMENT_CODE = "lowering/unused-argument"
 const LOWERING_UNUSED_LOCAL_CODE = "lowering/unused-local"
@@ -526,7 +518,7 @@ end
 
 const DEFAULT_CONFIG = JETLSConfig(;
     diagnostic = DiagnosticConfig(true, true, true, DiagnosticPattern[]),
-    full_analysis = FullAnalysisConfig(1.0, true),
+    full_analysis = FullAnalysisConfig(@static(JETLS_TEST_MODE ? 0.0 : 1.0), true),
     testrunner = TestRunnerConfig(@static Sys.iswindows() ? "testrunner.bat" : "testrunner"),
     formatter = "Runic",
     completion = CompletionConfig(LaTeXEmojiConfig(missing), MethodSignatureConfig(missing)),
@@ -626,6 +618,7 @@ struct CachedSyntaxTree
 end
 JS.first_byte(cst::CachedSyntaxTree) = cst.fb
 JS.last_byte(cst::CachedSyntaxTree) = cst.lb
+JS.byte_range(cst::CachedSyntaxTree) = cst.fb:cst.lb
 JS.source_location(cst::CachedSyntaxTree) = (cst.line, cst.column)
 
 struct CachedBindingOccurrence
@@ -670,11 +663,13 @@ const DocumentSymbolCacheData = Base.PersistentDict{URI,Vector{DocumentSymbol}}
 const DocumentSymbolCache = LWContainer{DocumentSymbolCacheData, LWStats}
 const BindingOccurrencesCacheData = Base.PersistentDict{URI,BindingOccurrencesCacheEntry}
 const BindingOccurrencesCache = LWContainer{BindingOccurrencesCacheData, LWStats}
+const LoweringDiagnosticsCacheData = Base.PersistentDict{URI,Vector{Diagnostic}}
+const LoweringDiagnosticsCache = LWContainer{LoweringDiagnosticsCacheData, LWStats}
 const ConfigManager = LWContainer{ConfigManagerData, LWStats}
 const UnsyncedFileCacheData = Base.PersistentDict{URI,FileInfo}
 const UnsyncedFileCache = LWContainer{UnsyncedFileCacheData, LWStats}
 
-const HandledHistory = FixedSizeFIFOQueue{MessageId}
+const HandledHistory = FixedSizeQueue{MessageId}
 
 struct HandledToken
     id::MessageId
@@ -688,18 +683,16 @@ mutable struct ServerState
     # Cache for files not synced via document-synchronization (unsynced files).
     # Populated on-demand by `get_unsynced_file_info!`, invalidated by `workspace/didChangeWatchedFiles`.
     const unsynced_file_cache::UnsyncedFileCache
-    # Document symbol cache for both synced and unsynced files.
-    # Uses LWContainer for concurrent writes from:
-    # - `get_document_symbols!` (on cache miss)
-    # - `textDocument/didChange` (invalidates synced files)
-    # - `workspace/didChangeWatchedFiles` (invalidates unsynced files)
+    # Per-file caches keyed on the canonical (notebook-aware) URI of a logical file.
+    # All three are dropped together via `invalidate_per_file_caches!` on content change
+    # (didChange/didOpen, notebook cell edits, watched-file events).
+    # `binding_occurrences_cache` and `lowering_diagnostics_cache` are additionally
+    # invalidated by `update_analysis_cache!` when full-analysis changes module context,
+    # since both embed `binfo.mod`. `lowering_diagnostics_cache` is also cleared wholesale
+    # on diagnostic-affecting config changes via `clear_lowering_diagnostics_cache!`.
     const document_symbol_cache::DocumentSymbolCache
-    # Binding occurrences cache for global binding analysis (references, rename).
-    # Same invalidation pattern as document_symbol_cache.
-    # TODO: This cache uses analysis context (module context from full-analysis).
-    # It should also be invalidated when full-analysis updates module context,
-    # but that is not yet implemented.
     const binding_occurrences_cache::BindingOccurrencesCache
+    const lowering_diagnostics_cache::LoweringDiagnosticsCache
     const analysis_manager::AnalysisManager
     const extra_diagnostics::ExtraDiagnostics
     const currently_handled::CurrentlyHandled
@@ -726,6 +719,7 @@ mutable struct ServerState
             #=unsynced_file_cache=# UnsyncedFileCache(UnsyncedFileCacheData()),
             #=document_symbol_cache=# DocumentSymbolCache(DocumentSymbolCacheData()),
             #=binding_occurrences_cache=# BindingOccurrencesCache(BindingOccurrencesCacheData()),
+            #=lowering_diagnostics_cache=# LoweringDiagnosticsCache(LoweringDiagnosticsCacheData()),
             #=analysis_manager=# AnalysisManager(),
             #=extra_diagnostics=# ExtraDiagnostics(ExtraDiagnosticsData()),
             #=currently_handled=# CurrentlyHandled(),

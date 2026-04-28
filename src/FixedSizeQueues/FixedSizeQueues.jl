@@ -1,4 +1,8 @@
-mutable struct FixedSizeFIFOQueue{T}
+module FixedSizeQueues
+
+export FixedSizeQueue
+
+mutable struct FixedSizeQueue{T}
     const data::Vector{T}
     head::Int
     tail::Int
@@ -6,15 +10,15 @@ mutable struct FixedSizeFIFOQueue{T}
     const capacity::Int
     const items::Set{T}
 
-    function FixedSizeFIFOQueue{T}(capacity::Int) where T
+    function FixedSizeQueue{T}(capacity::Int) where T
         capacity > 0 || throw(ArgumentError("Capacity must be positive"))
         data = Vector{T}(undef, capacity)
         new{T}(data, 1, 1, 0, capacity, Set{T}())
     end
-    FixedSizeFIFOQueue(capacity::Int) = FixedSizeFIFOQueue{Any}(capacity)
+    FixedSizeQueue(capacity::Int) = FixedSizeQueue{Any}(capacity)
 end
 
-function Base.push!(queue::FixedSizeFIFOQueue{T}, item::T) where T
+function Base.push!(queue::FixedSizeQueue{T}, item::T) where T
     if queue.size == queue.capacity
         # Queue is full, overwrite oldest element
         old_item = queue.data[queue.head]
@@ -33,17 +37,15 @@ function Base.push!(queue::FixedSizeFIFOQueue{T}, item::T) where T
     return queue
 end
 
-Base.in(item::T, queue::FixedSizeFIFOQueue{T}) where T = item in queue.items
+Base.in(item::T, queue::FixedSizeQueue{T}) where T = item in queue.items
 
-Base.isempty(queue::FixedSizeFIFOQueue) = queue.size == 0
+Base.isempty(queue::FixedSizeQueue) = queue.size == 0
 
-isfull(queue::FixedSizeFIFOQueue) = queue.size == queue.capacity
+Base.isfull(queue::FixedSizeQueue) = queue.size == queue.capacity
 
-Base.length(queue::FixedSizeFIFOQueue) = queue.size
+Base.length(queue::FixedSizeQueue) = queue.size
 
-capacity(queue::FixedSizeFIFOQueue) = queue.capacity
-
-function Base.collect(queue::FixedSizeFIFOQueue{T}) where T
+function Base.collect(queue::FixedSizeQueue{T}) where T
     result = Vector{T}(undef, queue.size)
     idx = queue.head
     for i in 1:queue.size
@@ -53,7 +55,9 @@ function Base.collect(queue::FixedSizeFIFOQueue{T}) where T
     return result
 end
 
-function Base.show(io::IO, queue::FixedSizeFIFOQueue{T}) where T
+function Base.show(io::IO, queue::FixedSizeQueue{T}) where T
     items = collect(queue)
-    print(io, "FixedSizeFIFOQueue{$T}(capacity=$(queue.capacity), items=$items)")
+    print(io, "FixedSizeQueue{$T}(capacity=$(queue.capacity), items=$items)")
 end
+
+end # module FixedSizeQueues

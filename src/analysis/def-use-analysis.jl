@@ -69,6 +69,11 @@ mutable struct EventLinearizer
     # Maps symbolic label names (e.g. "loop-exit", "loop-cont") to CFG label IDs
     # for handling `K"symbolicblock"` / `K"break"` pairs from lowered loops.
     const break_targets::Dict{String,Int}
+    # Maps `@label name` / `@goto name` label names to CFG label IDs. Unlike
+    # `break_targets`, these are not nested — `@label`/`@goto` reference each
+    # other across the whole lambda body, and forward references are resolved
+    # at finalization via `pending_gotos`.
+    const goto_targets::Dict{String,Int}
     # Correlated condition analysis.  Maps a set of condition BindingId
     # var_ids to the set of variables definitely assigned in the true
     # branch.  Scoped via save/restore; invalidated on reassignment.
@@ -80,7 +85,8 @@ mutable struct EventLinearizer
     const active_cond_vars::Vector{Set{JL.IdTag}}
     function EventLinearizer()
         blocks = EventBlock[EventBlock(1)]
-        new(blocks, 1, Dict{Int,Int}(), Tuple{Int,Int}[], 0, Dict{String,Int}(),
+        new(blocks, 1, Dict{Int,Int}(), Tuple{Int,Int}[], 0,
+            Dict{String,Int}(), Dict{String,Int}(),
             Dict{Set{JL.IdTag},Set{JL.IdTag}}(), Set{JL.IdTag}[])
     end
 end
@@ -144,6 +150,14 @@ function undef_finalize_cfg!(lin::EventLinearizer)
             undef_add_edge!(lin, from_block, to_block)
         end
     end
+end
+
+function _undef_get_or_create_goto_label!(lin::EventLinearizer, name::String)
+    existing = get(lin.goto_targets, name, nothing)
+    isnothing(existing) || return existing
+    label_id = undef_make_label!(lin)
+    lin.goto_targets[name] = label_id
+    return label_id
 end
 
 # Save/restore for correlated condition implications.  Used to scope
@@ -375,6 +389,20 @@ function linearize_def_use_events!(
         end
         unreachable = undef_new_block!(lin)
         undef_switch_to_block!(lin, unreachable)
+
+    elseif k == JS.K"symboliclabel"
+        # `@label name` — register a CFG label at the current position so any
+        # `K"symbolicgoto"` referencing this name (forward or backward) can
+        # land here. At `st3` this node is a leaf; the name lives on `name_val`.
+        label_id = _undef_get_or_create_goto_label!(lin, ex3.name_val::String)
+        undef_emit_label!(lin, label_id)
+
+    elseif k == JS.K"symbolicgoto" || k == JS.K"oldsymbolicgoto"
+        # `@goto name` — unconditional jump to the matching `K"symboliclabel"`.
+        # Forward references work because `pending_gotos` is resolved later in
+        # `undef_finalize_cfg!`.
+        label_id = _undef_get_or_create_goto_label!(lin, ex3.name_val::String)
+        undef_emit_goto!(lin, label_id)
 
     elseif JS.is_leaf(ex3) || JL.is_quoted(ex3)
         # Nothing to do

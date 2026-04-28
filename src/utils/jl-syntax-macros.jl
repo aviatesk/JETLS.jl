@@ -2,7 +2,7 @@
 # addition to JuliaLowering.jl/src/syntax_macros.jl, and can be merged there
 # when possible.
 
-# TODO: @inline, @noinline, @inbounds, @simd, @ccall, @isdefined, @assume_effects
+# TODO: @inline, @noinline, @inbounds, @simd, @assume_effects
 
 """
     mapchildren(f, ctx, ex, indices::UnitRange{Int})
@@ -34,6 +34,94 @@ function Base.var"@specialize"(
     )
     JL.@ast(__context__, __context__.macrocall::JS.SyntaxTree,
             [JS.K"block" ex1 ex2 exs...])
+end
+
+# Stub new-style implementation of `Threads.@spawn`. The real macro wraps the
+# expression in a `Task` and schedules it on a thread pool, but for LSP
+# analysis we only care that identifiers in the user-written body keep
+# accurate provenance, so the threading constructs are dropped entirely.
+#
+# `$x` interpolations in the body would normally copy the value of `x` into
+# the constructed closure; for scope resolution this is equivalent to a plain
+# reference to `x` in the enclosing scope, so we strip the `K"$"` wrappers
+# (`unwrap_interpolations`) before returning the body. Without this, a `$`
+# surviving outside of a quote context would fail later lowering passes.
+#
+# The optional threadpool argument is preserved as a sibling in a `block` so
+# it shows up in find-references etc. when written as a variable; literal
+# `:default`/`:interactive`/`:samepool` symbols remain inert under a
+# `K"quote"` and don't pollute scope analysis.
+#
+# Error reporting mirrors `Base.Threads.@spawn`: an unsupported threadpool and
+# the wrong number of arguments both `throw` so that JETLS surfaces them as
+# `lowering/macro-expansion-error` diagnostics. The real macro defers the type
+# check on the threadpool to runtime (`_spawn_set_thrpool(::Task, ::Symbol)`),
+# but we are stricter at expansion time and only accept what we can statically
+# tell will (or might at runtime) be one of the allowed pool symbols:
+#
+# - `:default`, `:interactive`, `:samepool` literals
+# - a bare identifier (e.g. `def = :default; Threads.@spawn def body`)
+#
+# Anything else (other literals, function calls, qualified access, ...) is
+# rejected so the user gets immediate LSP feedback.
+const _SPAWN_THREADPOOLS = ("interactive", "default", "samepool")
+
+function Base.Threads.var"@spawn"(__context__::JL.MacroContext, ex::JS.SyntaxTree)
+    return JL.@ast(__context__, __context__.macrocall::JS.SyntaxTree,
+        unwrap_interpolations(ex))
+end
+
+function Base.Threads.var"@spawn"(
+        __context__::JL.MacroContext,
+        threadpool::JS.SyntaxTree, ex::JS.SyntaxTree
+    )
+    _validate_spawn_threadpool(threadpool)
+    return JL.@ast(__context__, __context__.macrocall::JS.SyntaxTree,
+        [JS.K"block" threadpool unwrap_interpolations(ex)])
+end
+
+function _validate_spawn_threadpool(threadpool::JS.SyntaxTree)
+    k = JS.kind(threadpool)
+    if k === JS.K"Identifier"
+        return # variable reference — assumed to evaluate to a Symbol at runtime
+    elseif k === JS.K"inert" && JS.numchildren(threadpool) >= 1
+        # Literal symbol form (`:foo` parses as `K"inert"` containing
+        # `K"Identifier"`, the EST analog of `QuoteNode(:foo)`).
+        inner = threadpool[1]
+        if JS.kind(inner) === JS.K"Identifier" && hasproperty(inner, :name_val)
+            name = inner.name_val
+            if name isa AbstractString
+                name in _SPAWN_THREADPOOLS && return
+                throw(JL.MacroExpansionError(threadpool,
+                    "unsupported threadpool in @spawn: $name"))
+            end
+        end
+    end
+    throw(JL.MacroExpansionError(threadpool,
+        "threadpool argument in @spawn must be `:default`, `:interactive`, `:samepool`, or a bare variable"))
+end
+
+function Base.Threads.var"@spawn"(__context__::JL.MacroContext, ::JS.SyntaxTree...)
+    throw(JL.MacroExpansionError(__context__.macrocall::JS.SyntaxTree,
+                                 "wrong number of arguments in @spawn"))
+end
+
+# New-style implementation of `Base.@label`. Mirrors `Base.@goto` in
+# `JuliaLowering/src/syntax_macros.jl`: `@label name` lowers to a
+# `K"symboliclabel"` so that scope analysis treats the name as a goto target.
+#
+# The block forms documented in `Base.@label` (`@label expr`, `@label name
+# expr`) are intentionally not supported here — the goto-target form is the
+# common case and the only one needed for most LSP analyses.
+function Base.var"@label"(__context__::JL.MacroContext, ex::JS.SyntaxTree)
+    JS.kind(ex) === JS.K"Identifier" ||
+        throw(JL.MacroExpansionError(ex, "@label requires an identifier"))
+    return JL.@ast(__context__, ex, [JS.K"symboliclabel" ex])
+end
+
+function Base.var"@label"(__context__::JL.MacroContext, ::JS.SyntaxTree...)
+    throw(JL.MacroExpansionError(__context__.macrocall::JS.SyntaxTree,
+        "@label currently only supports the `@label name` form"))
 end
 
 # New-style `@kwdef` macro that preserves provenance information.

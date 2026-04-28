@@ -202,7 +202,6 @@ function _apply_diagnostic_config(
     else
         path_for_glob = filepath
     end
-    message = diagnostic.message
     severity = nothing
     best_specificity = 0
     for pattern_config in patterns
@@ -210,7 +209,7 @@ function _apply_diagnostic_config(
         if globpath !== nothing && !occursin(globpath, path_for_glob)
             continue
         end
-        target = pattern_config.match_by == "message" ? message : code
+        target = pattern_config.match_by == "message" ? get_raw_message(diagnostic) : code
         is_message_match = pattern_config.match_by == "message"
         specificity = calculate_match_specificity(
             pattern_config.pattern, target, is_message_match)
@@ -256,6 +255,15 @@ function diagnostic_code_description(code::AbstractString)
         href = URI("https://aviatesk.github.io/JETLS.jl/release/diagnostic/#diagnostic/reference/$code"))
 end
 
+function apply_markdown_message!(diagnostics::Vector{Diagnostic})
+    for i = 1:length(diagnostics)
+        diagnostic = diagnostics[i]
+        if diagnostic.message isa String
+            diagnostics[i] = Diagnostic(diagnostic; message = MarkupContent(; kind = MarkupKind.Markdown, value = diagnostic.message))
+        end
+    end
+end
+
 # utilities
 # =========
 
@@ -299,6 +307,8 @@ function lines_range((start_line, end_line)::Pair{Int,Int})
     var"end" = Position(; line=end_line, character=Int(typemax(Int32)))
     return Range(; start, var"end")
 end
+
+get_raw_message(diagnostic::Diagnostic) = diagnostic.message isa String ? diagnostic.message : diagnostic.message.value
 
 # syntax diagnostics
 # ==================
@@ -1004,12 +1014,12 @@ function analyze_unsorted_imports!(
         if kind ∉ JS.KSet"import using export public"
             return nothing
         end
-        names = collect_import_names(st0′)
-        if !is_sorted_imports(names)
+        name_keys = collect_import_names(st0′)
+        if !issorted(name_keys; by=last)
             range = jsobj_to_range(st0′, fi)
-            sorted_names = sort!(names; by=get_import_sort_key)
+            sorted_name_keys = sort!(name_keys; by=last)
             base_indent = get_line_indent(fi, range.start.line)
-            new_text = generate_sorted_import_text(st0′, sorted_names, base_indent)
+            new_text = generate_sorted_import_text(st0′, sorted_name_keys, base_indent)
             push!(diagnostics, Diagnostic(;
                 range,
                 severity = DiagnosticSeverity.Hint,
@@ -1025,14 +1035,14 @@ function analyze_unsorted_imports!(
 end
 
 function generate_sorted_import_text(
-        node::JS.SyntaxTree, sorted_names::Vector{JS.SyntaxTree},
+        node::JS.SyntaxTree, sorted_name_keys::Vector{Pair{SyntaxTree0,String}},
         base_indent::String
     )
     kind = JS.kind(node)
     keyword = kind === JS.K"import" ? "import" :
               kind === JS.K"using" ? "using" :
               kind === JS.K"export" ? "export" : "public"
-    if kind === JS.K"import" || kind === JS.K"using"
+    if kind in JS.KSet"import using"
         nchildren = JS.numchildren(node)
         if nchildren == 1 && JS.kind(node[1]) === JS.K":"
             module_path = lstrip(JS.sourcetext(node[1][1]))
@@ -1043,7 +1053,7 @@ function generate_sorted_import_text(
     else
         prefix = "$keyword "
     end
-    name_texts = String[lstrip(JS.sourcetext(n)) for n in sorted_names]
+    name_texts = String[lstrip(JS.sourcetext(n)) for (n,_) in sorted_name_keys]
     single_line = prefix * join(name_texts, ", ")
     if length(base_indent) + length(single_line) <= SORT_IMPORTS_MAX_LINE_LENGTH
         return single_line
@@ -1066,64 +1076,6 @@ function generate_sorted_import_text(
     return join(lines, "\n")
 end
 
-function collect_import_names(st0::JS.SyntaxTree)
-    kind = JS.kind(st0)
-    names = JS.SyntaxTree[]
-    if kind === JS.K"import" || kind === JS.K"using"
-        nchildren = JS.numchildren(st0)
-        if nchildren == 1
-            child = st0[1]
-            if JS.kind(child) === JS.K":"
-                for i = 2:JS.numchildren(child)
-                    push!(names, child[i])
-                end
-            end
-        elseif nchildren > 1
-            for i = 1:nchildren
-                push!(names, st0[i])
-            end
-        end
-    elseif kind === JS.K"export" || kind === JS.K"public"
-        for i = 1:JS.numchildren(st0)
-            push!(names, st0[i])
-        end
-    end
-    return names
-end
-
-function is_sorted_imports(names::Vector{JS.SyntaxTree})
-    length(names) < 2 && return true
-    for i = 1:length(names)-1
-        key1 = get_import_sort_key(names[i])
-        key2 = get_import_sort_key(names[i+1])
-        if key1 > key2
-            return false
-        end
-    end
-    return true
-end
-
-function get_import_sort_key(st0::JS.SyntaxTree)
-    kind = JS.kind(st0)
-    if kind === JS.K"as"
-        return get_import_sort_key(st0[1])
-    elseif kind === JS.K"."
-        parts = String[]
-        for i = 1:JS.numchildren(st0)
-            child = st0[i]
-            ckind = JS.kind(child)
-            if ckind === JS.K"Identifier"
-                push!(parts, JS.sourcetext(child))
-            end
-        end
-        return join(parts, ".")
-    elseif kind === JS.K"Identifier"
-        return JS.sourcetext(st0)
-    else
-        return JS.sourcetext(st0)
-    end
-end
-
 # Checks whether a statement is a block terminator — i.e. subsequent
 # statements in the same block are unreachable. This includes `return`,
 # `throw`, `break`, `continue`, and branching constructs (`if`/`try`)
@@ -1133,14 +1085,13 @@ function is_block_terminator(
         allow_noreturn_optimization::Vector{Symbol}
     )
     k = JS.kind(st3)
-    k === JS.K"return" && return true
-    k === JS.K"break" && return true
+    k in JS.KSet"return break" && return true
     !isempty(allow_noreturn_optimization) &&
         is_noreturn_call(ctx3, st3, allow_noreturn_optimization) && return true
     if k === JS.K"=" && JS.numchildren(st3) >= 2
         return is_block_terminator(ctx3, st3[2], allow_noreturn_optimization)
     end
-    if (k === JS.K"if" || k === JS.K"elseif") && JS.numchildren(st3) >= 3
+    if (k in JS.KSet"if elseif") && JS.numchildren(st3) >= 3
         return (_is_block_terminator(ctx3, st3[2], allow_noreturn_optimization) &&
                 _is_block_terminator(ctx3, st3[3], allow_noreturn_optimization))
     end
@@ -1225,14 +1176,13 @@ function analyze_lowered_code!(
         postprocessor::LSPostProcessor = LSPostProcessor()
     )
     (; ctx3, ctx4, st0, st3) = res
-    ismacro = Ref(false)
     binding_occurrences = compute_binding_occurrences(ctx3, st3, is_generated0(st0);
-        ismacro, include_global_bindings=true)
+        include_global_bindings=true)
+
     reported = Set{LoweringDiagnosticKey}() # to prevent duplicate reports for unused default or keyword arguments
     (kwarg_type_names, kwarg_locations) = compute_kwarg_type_annotation_names(st0)
 
-    has_implicit_args = ismacro[] || is_generated0(st0)
-
+    has_implicit_args = is_macro0(st0) || is_generated0(st0)
     analyze_unused_bindings!(
         diagnostics, fi, st0, ctx3, binding_occurrences, has_implicit_args, reported,
         kwarg_type_names, kwarg_locations;
@@ -1349,17 +1299,52 @@ struct ImportInfo
     delete_range::Range
 end
 
+const UsedNamesByUnit = Dict{Set{URI},Dict{Module,Set{String}}}
+
+function compute_unit_used_names(
+        server::Server, search_uris::Set{URI};
+        skip_context_check::Bool = false
+    )
+    state = server.state
+    mod_used_names = Dict{Module,Set{String}}()
+    for search_uri in search_uris
+        skip_context_check || has_analyzed_context(state, search_uri) || continue
+        search_fi = @something begin
+            get_file_info(state, search_uri)
+        end begin
+            get_unsynced_file_info!(state, search_uri)
+        end continue
+        search_st0_top = build_syntax_tree(search_fi)
+
+        iterate_toplevel_tree(search_st0_top) do st0::JS.SyntaxTree
+            binding_occurrences = @something get_binding_occurrences!(
+                state, search_uri, search_fi, st0; include_global_bindings = true) return
+            mod = get_context_module(state, search_uri, offset_to_xy(search_fi, JS.first_byte(st0)))
+            for (binfo_key, occurrences) in binding_occurrences
+                binfo_key.kind === :global || continue
+                if any(o -> o.kind === :use, occurrences)
+                    push!(get!(Set{String}, mod_used_names, mod), binfo_key.name)
+                end
+            end
+        end
+    end
+    return mod_used_names
+end
+
 # Detects unused imports by scanning all workspace files for usages of imported names.
 # This analysis can be slow if implemented naively, but achieves practical performance through:
 # - Early return for files without import/using statements (~1ms depending on file size)
-# - Syntax tree caching for unsynced files (~150ms → ~25ms for ~50 files, see `FileInfo.syntax_tree0`)
+# - Syntax tree caching for unsynced files (see `FileInfo.syntax_tree0`)
 # - Binding occurrences caching (see `BindingOccurrencesCache`)
+# - Per-unit used-name memoization via `used_names_cache`, which lets a single
+#   `workspace/diagnostic` pull reuse the expensive `mod_used_names` aggregation
+#   across every import-bearing file in the same analysis unit
 # - Unchanged file skipping in workspace/diagnostic
-# With these optimizations, analyzing a workspace of ~50 files typically takes ~50-100ms.
 function analyze_unused_imports!(
         diagnostics::Vector{Diagnostic}, server::Server, uri::URI,
         fi::FileInfo, st0_top::JS.SyntaxTree;
-        skip_context_check::Bool = false
+        skip_context_check::Bool = false,
+        used_names_cache::UsedNamesByUnit = UsedNamesByUnit()
     )
     state = server.state
     mod_imported_names = Dict{Module,Dict{String,Vector{ImportInfo}}}()
@@ -1374,52 +1359,10 @@ function analyze_unused_imports!(
     end
     isempty(mod_imported_names) && return diagnostics
 
-    mod_used_names = Dict{Module,Set{String}}()
-    time_get_file_info = time_build_syntax_tree = time_binding_occurrences = time_ast_analysis = 0.0
     search_uris = collect_search_uris(server, uri)
-    for search_uri in search_uris
-        skip_context_check || has_analyzed_context(state, search_uri) || continue
-        time_get_file_info += @elapsed search_fi = @something begin
-            get_file_info(state, search_uri)
-        end begin
-            get_unsynced_file_info!(state, search_uri)
-        end continue
-        time_build_syntax_tree += @elapsed st0_top = build_syntax_tree(search_fi)
-
-        time_binding_occurrences += @elapsed iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
-            binding_occurrences = @something get_binding_occurrences!(
-                state, search_uri, search_fi, st0; include_global_bindings = true) return
-            mod = get_context_module(state, search_uri, offset_to_xy(search_fi, JS.first_byte(st0)))
-            for (binfo_key, occurrences) in binding_occurrences
-                binfo_key.kind === :global || continue
-                if any(o -> o.kind === :use, occurrences)
-                    push!(get!(Set{String}, mod_used_names, mod), binfo_key.name)
-                end
-            end
-        end
-
-        # Collect exported names from source-level syntax tree, since they are not tracked
-        # by the binding occurrence analysis
-        time_ast_analysis += @elapsed traverse(st0_top) do st0::JS.SyntaxTree
-            kind = JS.kind(st0)
-            if kind === JS.K"export" || kind === JS.K"public"
-                # `using .Inner: foo; export foo` - foo is used via re-export
-                mod = get_context_module(state, search_uri, offset_to_xy(search_fi, JS.first_byte(st0)))
-                for i = 1:JS.numchildren(st0)
-                    child = st0[i]
-                    if JS.kind(child) === JS.K"Identifier"
-                        name = get(child, :name_val, nothing)
-                        if name isa String
-                            push!(get!(Set{String}, mod_used_names, mod), name)
-                        end
-                    end
-                end
-                return TraversalNoRecurse()
-            end
-            return nothing
-        end
+    mod_used_names = get!(used_names_cache, search_uris) do
+        compute_unit_used_names(server, search_uris; skip_context_check)
     end
-    # @info "analyze_unused_imports! timing" uri length(search_uris) time_get_file_info time_build_syntax_tree time_binding_occurrences time_ast_analysis
 
     for (mod, imported_names) in mod_imported_names
         used_names = get(mod_used_names, mod, nothing)
@@ -1445,6 +1388,29 @@ end
 analyze_unused_imports(args...; kwargs...) = # used by tests
     analyze_unused_imports!(Diagnostic[], args...; kwargs...)
 
+# Returns true if `st0_top` contains an `import`/`using` with explicit names
+# (the only shape `analyze_unused_imports!` can flag). Gates whether the
+# workspace/diagnostic `result_id` must fold in the analysis unit's state.
+function file_has_explicit_imports(st0_top::JS.SyntaxTree)
+    found = traverse(st0_top) do st0::JS.SyntaxTree
+        k = JS.kind(st0)
+        if k ∈ JS.KSet"import using"
+            if JS.numchildren(st0) == 1
+                child = st0[1]
+                ck = JS.kind(child)
+                if ck === JS.K":"
+                    return TraversalReturn(true; terminate=true)
+                elseif ck === JS.K"." && k === JS.K"import" && JS.numchildren(child) >= 2
+                    return TraversalReturn(true; terminate=true)
+                end
+            end
+            return TraversalNoRecurse()
+        end
+        return nothing
+    end
+    return found === true
+end
+
 # Returns tuples of (name, name_range, delete_range).
 # For single imports like `using M: x`, delete_range covers the entire import statement.
 # For multiple imports like `using M: x, y`, delete_range covers the name plus comma/whitespace.
@@ -1452,8 +1418,7 @@ function collect_explicit_import_names(st0::JS.SyntaxTree, fi::FileInfo)
     kind = JS.kind(st0)
     names = Tuple{String,Range,Range}[]
     kind ∈ JS.KSet"import using" || return names
-    nchildren = JS.numchildren(st0)
-    if nchildren == 1
+    if JS.numchildren(st0) == 1
         child = st0[1]
         ckind = JS.kind(child)
         if ckind === JS.K":"
@@ -1509,34 +1474,16 @@ function collect_explicit_import_names(st0::JS.SyntaxTree, fi::FileInfo)
     return names
 end
 
-function get_local_import_identifier(st0::JS.SyntaxTree)
-    kind = JS.kind(st0)
-    if kind === JS.K"as"
-        # `using M: a as b` -> identifier for "b"
-        return st0[2]
-    elseif kind === JS.K"Identifier"
-        return st0
-    elseif kind === JS.K"."
-        # `import M.a` style within a colon list
-        npath = JS.numchildren(st0)
-        if npath >= 1
-            last_st = st0[npath]
-            if JS.kind(last_st) === JS.K"Identifier"
-                return last_st
-            end
-        end
-        return nothing
-    else
-        return nothing
-    end
-end
-
-function toplevel_lowering_diagnostics(
-        server::Server, uri::URI, file_info::FileInfo, cancel_flag::CancelFlag=DUMMY_CANCEL_FLAG;
+# Runs `lowering_diagnostics!` over every top-level statement of `file_info`,
+# returning the per-file diagnostics that depend solely on this file's content
+# and analysis context. `analyze_unused_imports!` is not included because its
+# result depends on sibling files in the analysis unit.
+function compute_lowering_diagnostics(
+        server::Server, uri::URI, file_info::FileInfo, st0_top::JS.SyntaxTree,
+        cancel_flag::CancelFlag;
         lookup_func = nothing
     )
     diagnostics = Diagnostic[]
-    st0_top = build_syntax_tree(file_info)
     skip_analysis_requiring_context = !has_analyzed_context(server.state, uri; lookup_func)
     allow_unused_underscore = get_config(server, :diagnostic, :allow_unused_underscore)
     soft_scope = is_notebook_cell_uri(server.state, uri)
@@ -1548,11 +1495,61 @@ function toplevel_lowering_diagnostics(
             skip_analysis_requiring_context, allow_unused_underscore, soft_scope,
             analyzer, postprocessor)
     end
+    return diagnostics
+end
 
-    if !skip_analysis_requiring_context
-        analyze_unused_imports!(diagnostics, server, uri, file_info, st0_top)
+# Cached accessor for the per-file lowering diagnostics. The cached `Vector` is
+# treated as read-only; callers must copy before mutating (e.g. before appending
+# `analyze_unused_imports!` results). Cache misses and cancelled computations
+# both return without caching; only a fully computed result is stored.
+function get_lowering_diagnostics!(
+        server::Server, uri::URI, file_info::FileInfo, st0_top::JS.SyntaxTree,
+        cancel_flag::CancelFlag;
+        lookup_func = nothing
+    )
+    cache_uri = canonical_cache_uri(server.state, uri)
+    return store!(server.state.lowering_diagnostics_cache) do cache::LoweringDiagnosticsCacheData
+        if haskey(cache, cache_uri)
+            return cache, cache[cache_uri]
+        end
+        result = compute_lowering_diagnostics(server, uri, file_info, st0_top, cancel_flag;
+                                              lookup_func)
+        if is_cancelled(cancel_flag)
+            return cache, result
+        end
+        return LoweringDiagnosticsCacheData(cache, cache_uri => result), result
     end
+end
 
+function invalidate_lowering_diagnostics_cache!(state::ServerState, uri::URI)
+    cache_uri = canonical_cache_uri(state, uri)
+    store!(state.lowering_diagnostics_cache) do cache::LoweringDiagnosticsCacheData
+        if haskey(cache, cache_uri)
+            Base.delete(cache, cache_uri), nothing
+        else
+            cache, nothing
+        end
+    end
+end
+
+function clear_lowering_diagnostics_cache!(state::ServerState)
+    store!(state.lowering_diagnostics_cache) do _::LoweringDiagnosticsCacheData
+        LoweringDiagnosticsCacheData(), nothing
+    end
+end
+
+function toplevel_lowering_diagnostics(
+        server::Server, uri::URI, file_info::FileInfo, cancel_flag::CancelFlag=DUMMY_CANCEL_FLAG;
+        lookup_func = nothing,
+        used_names_cache::UsedNamesByUnit = UsedNamesByUnit(),
+    )
+    st0_top = build_syntax_tree(file_info)
+    cached = get_lowering_diagnostics!(server, uri, file_info, st0_top, cancel_flag; lookup_func)
+    is_cancelled(cancel_flag) && return cached
+    diagnostics = copy(cached)
+    if has_analyzed_context(server.state, uri; lookup_func)
+        analyze_unused_imports!(diagnostics, server, uri, file_info, st0_top; used_names_cache)
+    end
     return diagnostics
 end
 
@@ -1626,6 +1623,9 @@ function notify_diagnostics!(server::Server, uri2diagnostics::URI2Diagnostics; e
             continue
         end
         apply_diagnostic_config!(diagnostics, state.config_manager, uri, root_path)
+        if supports(server, :textDocument, :diagnostic, :markupMessageSupport)
+            apply_markdown_message!(diagnostics)
+        end
         send(server, PublishDiagnosticsNotification(;
             params = PublishDiagnosticsParams(;
                 uri,
@@ -1677,7 +1677,7 @@ const DIAGNOSTIC_REGISTRATION_METHOD = "textDocument/diagnostic"
 function diagnostic_options()
     return DiagnosticOptions(;
         identifier = "JETLS/diagnostic",
-        interFileDependencies = false,
+        interFileDependencies = true,
         workspaceDiagnostics = true)
 end
 
@@ -1746,6 +1746,9 @@ function handle_DocumentDiagnosticRequest(
     if notebook_uri !== nothing
         diagnostics = localize_notebook_diagnostics(server.state, notebook_uri, uri, diagnostics)
     end
+    if supports(server, :textDocument, :diagnostic, :markupMessageSupport)
+        apply_markdown_message!(diagnostics)
+    end
     return send(server,
         DocumentDiagnosticResponse(;
             id = msg.id,
@@ -1761,11 +1764,44 @@ function handle_WorkspaceDiagnosticRequest(
         server::Server, msg::WorkspaceDiagnosticRequest, cancel_flag::CancelFlag
     )
     uris_to_search = collect_workspace_uris(server)
-    if get_config(server, :diagnostic, :all_files)
-        return send_workspace_diagnostics(server, msg, uris_to_search, cancel_flag)
-    else
-        return send_empty_workspace_diagnostics(server, msg, uris_to_search, cancel_flag)
+    try
+        if get_config(server, :diagnostic, :all_files)
+            send_workspace_diagnostics(server, msg, uris_to_search, cancel_flag)
+        else
+            send_empty_workspace_diagnostics(server, msg, uris_to_search, cancel_flag)
+        end
+    catch err
+        send(server,
+            WorkspaceDiagnosticResponse(;
+                id = msg.id,
+                result = nothing,
+                error = ResponseError(;
+                    code = ErrorCodes.ServerCancelled,
+                    message = "workspace/diagnostic handling failed",
+                    data = DiagnosticServerCancellationData(; retriggerRequest = true))))
+        rethrow(err)
     end
+end
+
+# Derives the `resultId` sent back for `workspace/diagnostic`. When the file has
+# explicit imports it folds every unit member's version into the key so a sibling
+# edit invalidates this file's cached diagnostics and `analyze_unused_imports!` reruns.
+# Files without explicit imports stay keyed on their own version alone.
+function compute_workspace_diagnostic_result_id(server::Server, uri::URI, fi::FileInfo)
+    state = server.state
+    if !file_has_explicit_imports(build_syntax_tree(fi))
+        return string(fi.version)
+    end
+    result_id_hash = zero(UInt)
+    for search_uri in collect_search_uris(server, uri)
+        search_fi = @something begin
+            get_file_info(state, search_uri)
+        end begin
+            get_unsynced_file_info!(state, search_uri)
+        end continue
+        result_id_hash ⊻= hash((search_uri, search_fi.version))
+    end
+    return string(result_id_hash)
 end
 
 function send_workspace_diagnostics(
@@ -1782,6 +1818,7 @@ function send_workspace_diagnostics(
     root_path = isdefined(state, :root_path) ? state.root_path : nothing
     debuginfo = nothing
     # debuginfo = (; synced = URI[], analyzed = URI[], skipped = URI[], failed = URI[])
+    used_names_cache = UsedNamesByUnit()
     for uri in uris_to_search
         is_cancelled(cancel_flag) && return send(server,
             WorkspaceDiagnosticResponse(;
@@ -1799,8 +1836,7 @@ function send_workspace_diagnostics(
             continue
         end
 
-        version = fi.version
-        result_id = string(version)
+        result_id = compute_workspace_diagnostic_result_id(server, uri, fi)
         prev_result_id = get(previous_result_ids, uri, nothing)
         if prev_result_id !== nothing && prev_result_id == result_id
             item = WorkspaceUnchangedDocumentDiagnosticReport(;
@@ -1818,7 +1854,7 @@ function send_workspace_diagnostics(
         end
 
         if isempty(fi.parsed_stream.diagnostics)
-            diagnostics = toplevel_lowering_diagnostics(server, uri, fi)
+            diagnostics = toplevel_lowering_diagnostics(server, uri, fi; used_names_cache)
         else
             diagnostics = parsed_stream_to_diagnostics(fi)
         end
@@ -1826,6 +1862,10 @@ function send_workspace_diagnostics(
         notebook_uri = get_notebook_uri_for_cell(state, uri)
         if notebook_uri !== nothing
             diagnostics = localize_notebook_diagnostics(state, notebook_uri, uri, diagnostics)
+        end
+
+        if supports(server, :textDocument, :diagnostic, :markupMessageSupport)
+            apply_markdown_message!(diagnostics)
         end
 
         item = WorkspaceFullDocumentDiagnosticReport(;

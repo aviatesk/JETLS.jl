@@ -283,24 +283,15 @@ end
 function with_completion_request(
         tester, text::AbstractString;
         context::Union{Nothing, CompletionContext} = nothing,
-        full_analysis::Bool = false,
         kwargs...
     )
     clean_code, positions = JETLS.get_text_and_positions(text; kwargs...)
-
     withscript(clean_code) do script_path
         uri = filepath2uri(script_path)
         withserver() do (; writereadmsg, id_counter, server)
-            if full_analysis
-                (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, clean_code))
-                @test raw_res isa PublishDiagnosticsNotification
-                @test raw_res.params.uri == uri
-            else
-                JETLS.cache_file_info!(server, uri, 1, clean_code)
-                JETLS.cache_saved_file_info!(server.state, uri, clean_code)
-                JETLS.request_analysis!(server, uri, #=invalidate=#false; wait=true, notify_diagnostics=false)
-            end
-
+            JETLS.cache_file_info!(server, uri, 1, clean_code)
+            JETLS.cache_saved_file_info!(server.state, uri, clean_code)
+            JETLS.request_analysis!(server, uri, #=invalidate=#false; wait=true, notify_diagnostics=false)
             for (i, pos) in enumerate(positions)
                 params = CompletionParams(;
                     textDocument = TextDocumentIdentifier(; uri),
@@ -312,6 +303,32 @@ function with_completion_request(
                 tester(i, raw_res.result, uri)
             end
         end
+    end
+end
+
+# Lightweight version of `with_completion_request` for cases where full module
+# context (populated by `request_analysis!`) isn't needed.
+# The `mod` context falls back to `Main`, so this works for tests against names defined in
+# `Main`/`Base`/`Core` and for purely local/keyword/latex/emoji completions.
+function with_completion_items(
+        tester, text::AbstractString;
+        context::Union{Nothing, CompletionContext} = nothing,
+        kwargs...
+    )
+    clean_code, positions = JETLS.get_text_and_positions(text; kwargs...)
+    uri = filepath2uri(@__FILE__)
+    state = JETLS.ServerState()
+    state.init_params = InitializeParams(;
+        processId = getpid(),
+        rootUri = nothing,
+        capabilities = ClientCapabilities())
+    fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
+    JETLS.store!(state.file_cache) do cache
+        Base.PersistentDict(cache, uri => fi), nothing
+    end
+    for (i, pos) in enumerate(positions)
+        items, isIncomplete = JETLS.get_completion_items(state, uri, fi, pos, context)
+        tester(i, (; items, isIncomplete), uri)
     end
 end
 
@@ -427,7 +444,7 @@ end
 
     context = CompletionContext(; triggerKind = CompletionTriggerKind.Invoked)
     cnt = Ref(0)
-    with_completion_request(text; context) do _, result, _
+    with_completion_items(text; context) do _, result, _
         items = result.items
         @test any(items) do item
             item.label == "yyy"
@@ -441,7 +458,7 @@ end
 @testset "empty completion" begin
     let text = "│"
         cnt = Ref(0)
-        with_completion_request(text) do _, result, _
+        with_completion_items(text) do _, result, _
             items = result.items
             # should not crash and return something
             @test length(items) > 0
@@ -452,7 +469,7 @@ end
 
     let text = "\n\n\n│"
         cnt = Ref(0)
-        with_completion_request(text) do _, result, _
+        with_completion_items(text) do _, result, _
             items = result.items
             # should not crash and return something
             @test length(items) > 0
@@ -473,7 +490,7 @@ end
             triggerKind = CompletionTriggerKind.TriggerCharacter,
             triggerCharacter = "@")
         cnt = Ref(0)
-        with_completion_request(text; context) do _, result, _
+        with_completion_items(text; context) do _, result, _
             items = result.items
             @test any(items) do item
                 item.label == "@nospecialize" &&
@@ -499,7 +516,7 @@ end
         """
         context = CompletionContext(; triggerKind = CompletionTriggerKind.Invoked)
         cnt = Ref(0)
-        with_completion_request(text; context) do _, result, _
+        with_completion_items(text; context) do _, result, _
             items = result.items
             @test any(items) do item
                 item.label == "@nospecialize" &&
@@ -521,7 +538,7 @@ end
         """
         context = CompletionContext(; triggerKind = CompletionTriggerKind.Invoked)
         cnt = Ref(0)
-        with_completion_request(text; context) do _, result, _
+        with_completion_items(text; context) do _, result, _
             items = result.items
             @test any(items) do item
                 item.label == "yyy"
@@ -539,7 +556,7 @@ end
         """
         context = CompletionContext(; triggerKind = CompletionTriggerKind.Invoked)
         cnt = Ref(0)
-        with_completion_request(text; context) do _, result, _
+        with_completion_items(text; context) do _, result, _
             items = result.items
             @test any(items) do item
                 item.label == "@nospecialize" &&
@@ -756,7 +773,7 @@ end
             triggerKind = CompletionTriggerKind.TriggerCharacter,
             triggerCharacter = "\\")
         cnt = Ref(0)
-        with_completion_request(text; context) do _, result, _
+        with_completion_items(text; context) do _, result, _
             items = result.items
             @test any(items) do item
                 item.label == "\\alpha"
@@ -783,7 +800,7 @@ end
             triggerKind = CompletionTriggerKind.TriggerCharacter,
             triggerCharacter = ":")
         cnt = Ref(0)
-        with_completion_request(text; context) do _, result, _
+        with_completion_items(text; context) do _, result, _
             items = result.items
             @test any(items) do item
                 item.label == "\\:pizza:"
@@ -891,7 +908,7 @@ end
             triggerKind = CompletionTriggerKind.TriggerCharacter,
             triggerCharacter = "(")
         cnt = Ref(0)
-        with_completion_request(text; context) do _, result, _
+        with_completion_items(text; context) do _, result, _
             items = result.items
             @test count(items) do item
                 item.labelDetails !== nothing &&
@@ -912,7 +929,7 @@ end
             triggerKind = CompletionTriggerKind.TriggerCharacter,
             triggerCharacter = ",")
         cnt = Ref(0)
-        with_completion_request(text; context) do _, result, _
+        with_completion_items(text; context) do _, result, _
             items = result.items
             @test count(items) do item
                 item.labelDetails !== nothing &&
@@ -932,7 +949,7 @@ end
             triggerKind = CompletionTriggerKind.TriggerCharacter,
             triggerCharacter = ",")
         cnt = Ref(0)
-        with_completion_request(text; context) do _, result, _
+        with_completion_items(text; context) do _, result, _
             items = result.items
             @test_broken count(items) do item
                 item.labelDetails !== nothing &&
@@ -952,7 +969,7 @@ end
             triggerKind = CompletionTriggerKind.TriggerCharacter,
             triggerCharacter = ",")
         cnt = Ref(0)
-        with_completion_request(text; context) do _, result, _
+        with_completion_items(text; context) do _, result, _
             items = result.items
             @test all(items) do item
                 newText = get_newText(item)
@@ -973,7 +990,7 @@ end
             triggerKind = CompletionTriggerKind.TriggerCharacter,
             triggerCharacter = " ")
         cnt = Ref(0)
-        with_completion_request(text; context) do _, result, _
+        with_completion_items(text; context) do _, result, _
             items = result.items
             @test all(items) do item
                 newText = get_newText(item)
@@ -996,7 +1013,7 @@ end
             triggerKind = CompletionTriggerKind.TriggerCharacter,
             triggerCharacter = " ")
         cnt = Ref(0)
-        with_completion_request(text; context) do _, result, _
+        with_completion_items(text; context) do _, result, _
             items = result.items
             method_items = filter(items) do item
                 item.labelDetails !== nothing &&
@@ -1019,7 +1036,7 @@ end
             triggerKind = CompletionTriggerKind.TriggerCharacter,
             triggerCharacter = ",")
         cnt = Ref(0)
-        with_completion_request(text; context) do _, result, _
+        with_completion_items(text; context) do _, result, _
             items = result.items
             @test all(items) do item
                 newText = get_newText(item)
@@ -1039,7 +1056,7 @@ end
             triggerKind = CompletionTriggerKind.TriggerCharacter,
             triggerCharacter = "(")
         cnt = Ref(0)
-        with_completion_request(text; context) do _, result, _
+        with_completion_items(text; context) do _, result, _
             cnt[] = 1
         end
         @test cnt[] == 1
@@ -1057,7 +1074,7 @@ end
             triggerKind = CompletionTriggerKind.TriggerCharacter,
             triggerCharacter = ";")
         cnt = Ref(0)
-        with_completion_request(text; context) do _, result, _
+        with_completion_items(text; context) do _, result, _
             items = result.items
             keyword_items = filter(items) do item
                 item.labelDetails !== nothing &&
@@ -1082,7 +1099,7 @@ end
             triggerKind = CompletionTriggerKind.TriggerCharacter,
             triggerCharacter = " ")
         cnt = Ref(0)
-        with_completion_request(text; context) do _, result, _
+        with_completion_items(text; context) do _, result, _
             items = result.items
             keyword_items = filter(items) do item
                 item.labelDetails !== nothing &&
@@ -1104,7 +1121,7 @@ end
             triggerKind = CompletionTriggerKind.TriggerCharacter,
             triggerCharacter = "=")
         cnt = Ref(0)
-        with_completion_request(text; context) do _, result, _
+        with_completion_items(text; context) do _, result, _
             items = result.items
             keyword_items = filter(items) do item
                 item.labelDetails !== nothing &&
@@ -1126,7 +1143,7 @@ end
             triggerKind = CompletionTriggerKind.TriggerCharacter,
             triggerCharacter = " ")
         cnt = Ref(0)
-        with_completion_request(text; context) do _, result, _
+        with_completion_items(text; context) do _, result, _
             items = result.items
             keyword_items = filter(items) do item
                 item.labelDetails !== nothing &&
@@ -1146,7 +1163,7 @@ end
         """
         context = CompletionContext(; triggerKind = CompletionTriggerKind.Invoked)
         cnt = Ref(0)
-        with_completion_request(text; context) do _, result, _
+        with_completion_items(text; context) do _, result, _
             items = result.items
             keyword_items = filter(items) do item
                 item.labelDetails !== nothing &&

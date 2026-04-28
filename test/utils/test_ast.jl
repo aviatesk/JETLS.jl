@@ -120,6 +120,69 @@ include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
     end
 end
 
+@testset "greatest_local" begin
+    # Return the innermost non-toplevel/non-module node containing the cursor.
+    let code = """
+        function foo(│x│)
+            return │x│ + 1
+        end
+        """
+        clean_code, positions = JETLS.get_text_and_positions(code)
+        st = jlparse(clean_code)
+        for pos in positions
+            offset = JETLS.xy_to_offset(clean_code, pos, @__FILE__)
+            local_tree = JETLS.greatest_local(st, offset)
+            @test !isnothing(local_tree)
+            @test JS.kind(local_tree) === JS.K"function"
+        end
+    end
+
+    # Cursor inside a module but not any contained statement: no local scope.
+    let code = """
+        module M
+        │
+        end
+        """
+        clean_code, positions = JETLS.get_text_and_positions(code)
+        offset = JETLS.xy_to_offset(clean_code, only(positions), @__FILE__)
+        st = jlparse(clean_code)
+        @test isnothing(JETLS.greatest_local(st, offset))
+    end
+
+    # Offset past the end of the source.
+    let code = "x = 1\n"
+        st = jlparse(code)
+        @test isnothing(JETLS.greatest_local(st, 1000))
+    end
+
+    # Fallback: when the cursor is just past the last token on a line (e.g.
+    # `export foo│\n`), the raw offset lands on whitespace owned only by
+    # `toplevel`. `greatest_local` should retry with `offset - 1` and return
+    # the enclosing statement.
+    let code = """
+        export foo
+        foo(1)
+        """
+        clean_code = code
+        st = jlparse(clean_code)
+        # Offset at the newline after `foo` (i.e. one past the identifier's last byte).
+        offset = sizeof("export foo") + 1
+        local_tree = JETLS.greatest_local(st, offset)
+        @test !isnothing(local_tree)
+        @test JS.kind(local_tree) === JS.K"export"
+    end
+
+    # Same fallback for trailing identifier in a statement-ending position.
+    let code = "x = 1\ny\n"
+        st = jlparse(code)
+        offset = sizeof("x = 1\ny") + 1  # just past `y`, on the newline
+        local_tree = JETLS.greatest_local(st, offset)
+        @test !isnothing(local_tree)
+        @test JS.kind(local_tree) === JS.K"Identifier"
+        @test JS.sourcetext(local_tree) == "y"
+    end
+end
+
 @testset "token_at_offset / token_before_offset" begin
     # Test token_at_offset with simple identifiers
     let code = "alpha beta gamma"

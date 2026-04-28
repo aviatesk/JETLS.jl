@@ -61,6 +61,7 @@ function handle_config_file_change!(
     source = "[.JETLSConfig.toml] $(dirname(changed_path)) ($kind)"
     notify_config_changes(server, tracker, source)
     if tracker.diagnostic_setting_changed
+        clear_lowering_diagnostics_cache!(server.state)
         notify_diagnostics!(server; ensure_cleared = true)
         request_diagnostic_refresh!(server)
     end
@@ -148,8 +149,7 @@ function handle_jl_file_change!(server::Server, change::FileEvent)
             @assert change.type == FileChangeType.Deleted
             invalidate_unsynced_file_cache!(state, uri)
         end
-        invalidate_document_symbol_cache!(state, uri)
-        invalidate_binding_occurrences_cache!(state, uri)
+        invalidate_per_file_caches!(state, uri)
     end
     request_diagnostic_refresh!(server)
 end
