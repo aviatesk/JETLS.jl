@@ -245,6 +245,48 @@ end
         end
     end
 
+    # JL-synthesized forwarding stubs (`#self#` / `#kwcall_self#` /
+    # `#ctor-self#` / `#kw_body#f#N`) pass user args as machinery. Those
+    # forwards must not be counted as `:use`, but user-written default
+    # expressions placed as args of the same stubs must still be `:use`.
+    @testset "skip args in JL-synthesized forwarding calls" begin
+        # Optional positional + keyword (no dependent default).
+        with_binding_occurrences("f(x, y=1; k=1) = x + y + k") do boccs
+            for (b, occs) in boccs
+                b.kind === :argument || continue
+                if b.name == "x"
+                    @test count(o -> o.kind === :use, occs) == 1
+                end
+            end
+        end
+        # Inner constructor with optional positional defaults.
+        with_binding_occurrences("struct B; v::Int; B(y=1, z=2) = new(y + z); end") do boccs
+            for (b, occs) in boccs
+                b.kind === :argument || continue
+                if b.name == "y"
+                    @test count(o -> o.kind === :use, occs) == 1
+                elseif b.name == "z"
+                    @test count(o -> o.kind === :use, occs) == 1
+                end
+            end
+        end
+        # Dependent defaults: `y=x` and `kw=y` are user-written refs that
+        # must be preserved alongside the machinery-forward args.
+        with_binding_occurrences("f(x, y=x; kw=y) = x + y + kw") do boccs
+            use_positions = Dict{String,Set{Int}}()
+            for (b, occs) in boccs
+                b.kind === :argument || continue
+                for o in occs
+                    o.kind === :use || continue
+                    push!(get!(Set{Int}, use_positions, b.name), JS.first_byte(o.tree))
+                end
+            end
+            @test length(get(use_positions, "x", Set{Int}())) == 2  # default + body
+            @test length(get(use_positions, "y", Set{Int}())) == 2  # default + body
+            @test length(get(use_positions, "kw", Set{Int}())) == 1 # body
+        end
+    end
+
     @testset "keyword arguments" begin
         with_binding_occurrences("func(a; kw) = kw") do binding_occurrences
             @test !any(binding_occurrences) do (binding, occurrences)
@@ -403,6 +445,137 @@ function get_binding_occurrences_st0(text::AbstractString;
 end
 
 @testset "compute_binding_occurrences_st0" begin
+    # Function definitions reference the function name in machinery nodes
+    # (`K"method"` / `K"function_type"` / `K"removable"` / the method-less
+    # trailing return-value shim / kwsorter body methods / optional-
+    # positional self-forwarding stubs). Those refs must be `synthetic_ref`
+    # on the JL side so the user's `foo` token surfaces as `:decl`
+    # (+ `:def` for method definitions) but never as `:use`.
+    @testset "function definitions have no spurious :use" begin
+        for (code, declonly) in (("function foo end", true),
+                                 ("foo(x) = x", false),
+                                 ("function foo(x); x; end", false),
+                                 ("foo(x, y=1) = x + y", false),
+                                 ("foo(x; k=1) = x + k", false),
+                                 ("foo(x, y=1; k=1) = x + y + k", false),
+                                 ("foo(x::T) where T = x", false),
+                                 ("foo(x)::Int = x", false),
+                                 ("foo(x, y...) = (x, y)", false),
+                                 ("@generated function foo(x); :(x + 1); end", false),
+                                 ("function foo(x::Int, y=x); y; end", false))
+            let boccs = get_binding_occurrences_st0(code)
+                pairs = collect(boccs)
+                i = @something findfirst(((b, _),) -> b.name == "foo", pairs)
+                binfo, occurrences = pairs[i]
+                @test binfo.kind === :global
+                @test count(o -> o.kind === :decl, occurrences) ≥ 1
+                @test count(o -> o.kind === :def, occurrences) ≥ !declonly
+                @test count(o -> o.kind === :use, occurrences) == 0
+            end
+        end
+    end
+
+    # Macro definitions follow the same machinery pattern as functions;
+    # the macro name must not surface as `:use` from the lowering scaffolding.
+    @testset "macro definitions have no spurious :use" begin
+        for (code, declonly) in (("macro foo end", true),
+                                 ("macro foo(x); x; end", false),
+                                 ("macro foo(x, y); x; end", false),
+                                 ("macro foo(args...); args; end", false))
+            let boccs = get_binding_occurrences_st0(code)
+                pairs = collect(boccs)
+                i = @something findfirst(((b, _),) -> b.name == "@foo", pairs)
+                binfo, occurrences = pairs[i]
+                @test binfo.kind === :global
+                @test count(o -> o.kind === :decl, occurrences) == 1
+                @test count(o -> o.kind === :def, occurrences) ≥ !declonly
+                @test count(o -> o.kind === :use, occurrences) == 0
+            end
+        end
+    end
+
+    # kwfunc machinery refs are skipped, but a genuine self-recursive
+    # call in the body is still recorded as `:use`.
+    @testset "self-recursive call" begin
+        let boccs = get_binding_occurrences_st0("""
+                function foo(x; kw=1)
+                    return foo(x - 1; kw=kw + 1)
+                end
+                """)
+            pairs = collect(boccs)
+            i = @something findfirst(((b, _),) -> b.name == "foo", pairs)
+            binfo, occurrences = pairs[i]
+            @test binfo.kind === :global
+            # `foo` has one `:decl` (the function definition on line 1) and
+            # one `:use` (the recursive call on line 2).
+            @test count(o -> o.kind === :decl, occurrences) == 1
+            @test count(o -> o.kind === :use, occurrences) == 1
+            @test count(occurrences) do occurrence
+                occurrence.kind === :use &&
+                JS.source_line(occurrence.tree) == 2
+            end == 1
+        end
+    end
+
+    # Type definitions reference the type name in machinery calls
+    # (`_typebody!` / `_equiv_typedef` / `_defaultctors` / redef compat
+    # shim). Those refs must be `synthetic_ref` on the JL side so the
+    # user's `A` token surfaces as `:decl` + `:def` but never as `:use`.
+    @testset "type definitions have no spurious :use" begin
+        for code in ("struct A end",
+                     "mutable struct A; x::Int; end",
+                     "struct A{T}; x::T; end",
+                     "struct A; x::Int; A(x) = new(x); end",
+                     "abstract type A end",
+                     "abstract type A <: Integer end",
+                     "primitive type A 8 end")
+            let boccs = get_binding_occurrences_st0(code)
+                pairs = collect(boccs)
+                i = @something findfirst(((b, _),) -> b.name == "A", pairs)
+                binfo, occurrences = pairs[i]
+                @test binfo.kind === :global
+                @test count(o -> o.kind === :decl, occurrences) ≥ 1
+                @test count(o -> o.kind === :def, occurrences) ≥ 1
+                @test count(o -> o.kind === :use, occurrences) == 0
+            end
+        end
+    end
+
+    # `compute_binding_occurrences`'s alias-remap step merges the
+    # `:local (mod=nothing)` alias that JL introduces for type definitions
+    # into the matching `:global` binding. An unrelated `local Foo = 1` /
+    # `let Foo = 1` that happens to share a name with a `:global Foo` in
+    # the same lowering unit must NOT be merged — the two have different
+    # declaration byte ranges, which the guard relies on.
+    @testset "alias-remap does not capture unrelated local of same name" begin
+        let boccs = get_binding_occurrences_st0("""
+                let
+                    struct Foo end
+                    function bar()
+                        local Foo = 1
+                        return Foo
+                    end
+                end
+                """)
+            # The struct-`Foo` global should hold both its own decl and the
+            # remapped local-alias occurrences, but NOT the unrelated
+            # `local Foo` inside `bar`. After the remap, exactly two
+            # buckets named "Foo" should remain: the global (the struct)
+            # and the unrelated local inside `bar`.
+            foos = filter(((b, _),) -> b.name == "Foo", collect(boccs))
+            @test length(foos) == 2
+            @test count(((b, _),) -> b.kind === :global, foos) == 1
+            @test count(((b, _),) -> b.kind === :local, foos) == 1
+            local_foo_pair = foos[findfirst(((b, _),) -> b.kind === :local, foos)]
+            local_occs = local_foo_pair.second
+            # The unrelated local `Foo` has one `:def` (the assignment on
+            # line 4) and one `:use` (the return on line 5). If the guard
+            # were missing, these would be merged into the global instead.
+            @test count(o -> o.kind === :def, local_occs) == 1
+            @test count(o -> o.kind === :use, local_occs) == 1
+        end
+    end
+
     @testset "macro calls" begin
         let boccs = get_binding_occurrences_st0("@nospecialize")
             @test length(boccs) == 1
