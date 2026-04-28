@@ -32,20 +32,42 @@ end
                 @test any(ref -> ref.range.start == positions[4] && ref.range.var"end" == positions[6], refs)
             end
         end
-    end
 
-    @testset "includeDeclaration=false" begin
-        let code = """
-            function func(│xx│x│, yyy)
-                println(│xx│x│, yyy)
+        @testset "includeDeclaration=false" begin
+            let code = """
+                function func(│xx│x│, yyy)
+                    println(│xx│x│, yyy)
+                end
+                """
+                clean_code, positions = JETLS.get_text_and_positions(code)
+                for pos in positions
+                    refs = find_references(clean_code, pos; include_declaration=false)
+                    @test length(refs) == 1
+                    ref = only(refs)
+                    @test ref.range.start == positions[4] && ref.range.var"end" == positions[6]
+                end
             end
-            """
-            clean_code, positions = JETLS.get_text_and_positions(code)
-            for pos in positions
-                refs = find_references(clean_code, pos; include_declaration=false)
-                @test length(refs) == 1
-                ref = only(refs)
-                @test ref.range.start == positions[4] && ref.range.var"end" == positions[6]
+
+            # `local xxx` is a declaration site, not a reference; it should be
+            # excluded together with the assignment when `includeDeclaration=false`.
+            let code = """
+                function func()
+                    local │xx│x│
+                    │xx│x│ = 1
+                    return │xx│x│
+                end
+                """
+                clean_code, positions = JETLS.get_text_and_positions(code)
+                for pos in positions
+                    refs = find_references(clean_code, pos; include_declaration=true)
+                    @test length(refs) == 3
+                end
+                for pos in positions
+                    refs = find_references(clean_code, pos; include_declaration=false)
+                    @test length(refs) == 1
+                    ref = only(refs)
+                    @test ref.range.start == positions[7] && ref.range.var"end" == positions[9]
+                end
             end
         end
     end
