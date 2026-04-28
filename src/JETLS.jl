@@ -107,6 +107,7 @@ include("definition.jl")
 include("references.jl")
 include("hover.jl")
 include("document-highlight.jl")
+include("document-link.jl")
 include("document-symbol.jl")
 include("workspace-symbol.jl")
 include("code-action.jl")
@@ -448,6 +449,8 @@ function handle_request_message(server::Server, @nospecialize(msg), cancel_flag:
         handle_CodeLensRequest(server, msg, cancel_flag)
     elseif msg isa CodeLensResolveRequest
         handle_CodeLensResolveRequest(server, msg, cancel_flag)
+    elseif msg isa DocumentLinkRequest
+        handle_DocumentLinkRequest(server, msg, cancel_flag)
     elseif msg isa CodeActionRequest
         handle_CodeActionRequest(server, msg, cancel_flag)
     elseif msg isa InlayHintRequest
