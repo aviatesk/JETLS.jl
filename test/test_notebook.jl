@@ -67,6 +67,20 @@ function make_DocumentFormattingRequest(id::Int, uri::URI)
             options = FormattingOptions(; tabSize = 4, insertSpaces = true)))
 end
 
+function make_DocumentSymbolRequest(id::Int, uri::URI)
+    return DocumentSymbolRequest(;
+        id,
+        params = DocumentSymbolParams(;
+            textDocument = TextDocumentIdentifier(; uri)))
+end
+
+function make_CodeLensRequest(id::Int, uri::URI)
+    return CodeLensRequest(;
+        id,
+        params = CodeLensParams(;
+            textDocument = TextDocumentIdentifier(; uri)))
+end
+
 @testset "notebook end to end" begin
     mktempdir() do tempdir; Pkg.activate(tempdir) do
         Pkg.add("Example"; io=devnull)
@@ -299,6 +313,90 @@ end
                 @test edit.range.var"end".character == 5
                 # Verify the formatted text (cat just echoes input)
                 @test edit.newText == "y = 2\nz = 3"
+            end
+        end
+    end
+end
+
+@testset "notebook documentSymbol and codeLens" begin
+    mktempdir() do tempdir
+        notebook_uri = filepath2uri(normpath(tempdir, "test.ipynb"))
+
+        # `code_lens.references` defaults to false, enable it for this test
+        settings = Dict{String,Any}(
+            "code_lens" => Dict{String,Any}(
+                "references" => true,
+            )
+        )
+
+        withserver(; settings) do (; writereadmsg, id_counter)
+            cell1_uri = make_cell_uri(tempdir, 1)
+            cell2_uri = make_cell_uri(tempdir, 2)
+
+            # cell 1: only `x = 1`. cell 2: defines `myfunc` (line 0) and uses
+            # it (line 3) — without cell-local conversion, both would appear
+            # at notebook-global lines 1 and 4.
+            let cell1_text = "let x = 1\nprintln(sin(x))\nend"
+                cell2_text = "function myfunc(y)\n    y + 1\nend\nresult = myfunc(42)"
+                cells = NotebookCell[
+                    NotebookCell(; kind = NotebookCellKind.Code, document = cell1_uri),
+                    NotebookCell(; kind = NotebookCellKind.Code, document = cell2_uri),
+                ]
+                cell_texts = Dict{URI,String}(cell1_uri => cell1_text, cell2_uri => cell2_text)
+                writereadmsg(
+                    make_DidOpenNotebookDocumentNotification(notebook_uri, cells, cell_texts);
+                    read=2)
+            end
+
+            # documentSymbol for cell 1 should only return cell 1's `x`
+            let id = id_counter[] += 1
+                (; raw_res) = writereadmsg(make_DocumentSymbolRequest(id, cell1_uri))
+                @test raw_res isa DocumentSymbolResponse
+                syms = raw_res.result
+                @test syms isa Vector{DocumentSymbol}
+                @test length(syms) == 1
+                @test syms[1].name == " " # let block
+                @test syms[1].selectionRange.start.line == 0
+                @test length(syms[1].children) == 1 && syms[1].children[1].name == "x"
+            end
+
+            # documentSymbol for cell 2 should return cell 2's `myfunc` and
+            # `result`, both with cell-local line numbers
+            let id = id_counter[] += 1
+                (; raw_res) = writereadmsg(make_DocumentSymbolRequest(id, cell2_uri))
+                @test raw_res isa DocumentSymbolResponse
+                syms = raw_res.result
+                @test syms isa Vector{DocumentSymbol}
+                names = [s.name for s in syms]
+                @test "myfunc" in names && "result" in names
+                @test !(" " in names)
+                myfunc_sym = syms[findfirst(s -> s.name == "myfunc", syms)]
+                @test myfunc_sym.selectionRange.start.line == 0
+                result_sym = syms[findfirst(s -> s.name == "result", syms)]
+                @test result_sym.selectionRange.start.line == 3
+            end
+
+            # codeLens for cell 1: no eligible symbols (just an assignment)
+            let id = id_counter[] += 1
+                (; raw_res) = writereadmsg(make_CodeLensRequest(id, cell1_uri))
+                @test raw_res isa CodeLensResponse
+                @test raw_res.result isa LSP.Null ||
+                    (raw_res.result isa Vector && isempty(raw_res.result))
+            end
+
+            # codeLens for cell 2: one lens for `myfunc` at cell-local line 0
+            let id = id_counter[] += 1
+                (; raw_res) = writereadmsg(make_CodeLensRequest(id, cell2_uri))
+                @test raw_res isa CodeLensResponse
+                lenses = raw_res.result
+                @test lenses isa Vector{CodeLens}
+                @test length(lenses) == 1
+                lens = lenses[1]
+                @test lens.range.start.line == 0
+                data = lens.data
+                @test data isa JETLS.ReferencesCodeLensData
+                @test data.uri == cell2_uri
+                @test data.line == 0
             end
         end
     end

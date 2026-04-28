@@ -47,6 +47,7 @@ function handle_DocumentSymbolRequest(
     end
     fi = result
     symbols = get_document_symbols!(state, uri, fi)
+    symbols = localize_document_symbols(state, uri, symbols)
     result = isempty(symbols) ? null : map(strip_name_from_detail, symbols)
     return send(server, DocumentSymbolResponse(; id = msg.id, result))
 end

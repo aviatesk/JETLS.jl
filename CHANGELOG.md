@@ -95,6 +95,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed `lowering/unused-import` going stale in `workspace/diagnostic` when an explicit import in one file is consumed (or stops being consumed) by a sibling file in the same analysis unit. Closed files now refresh the diagnostic when a sibling edit could affect it.
 
+- Fixed `textDocument/documentSymbol` and the reference-count code lens on the Jupyter notebook view in VSCode.
+
 ## 2026-04-14
 
 - Commit: [`d1ebbb2`](https://github.com/aviatesk/JETLS.jl/commit/d1ebbb2)

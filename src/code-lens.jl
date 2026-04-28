@@ -66,8 +66,8 @@ const REFERENCES_CODE_LENS_RECURSE_KINDS = (
 function references_code_lenses!(
         code_lenses::Vector{CodeLens}, state::ServerState, uri::URI, fi::FileInfo
     )
-    symbols = get_document_symbols!(state, uri, fi)
-    isnothing(symbols) && return code_lenses
+    symbols = @something get_document_symbols!(state, uri, fi) return code_lenses
+    symbols = localize_document_symbols(state, uri, symbols)
     collect_references_code_lenses!(code_lenses, uri, symbols)
     return code_lenses
 end
@@ -119,7 +119,8 @@ function handle_CodeLensResolveRequest(
     end
 
     fi = result
-    locations = find_references(server, data.uri, fi, pos;
+    global_pos = adjust_position(server.state, data.uri, pos)
+    locations = find_references(server, data.uri, fi, global_pos;
         include_declaration = false, cancel_flag)
     count = locations isa Vector ? length(locations) : 0
     command = Command(;
