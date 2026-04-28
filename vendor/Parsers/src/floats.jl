@@ -40,30 +40,103 @@ function typeparser(conf::AbstractConf{T}, source, pos, len, b, code, pl, option
     return pos, code, pl, T(x)
 end
 
+function _copy_nulterminated(source::AbstractVector{UInt8}, pos, len)
+    vlen = max(0, len)
+    buf = Vector{UInt8}(undef, vlen + 1)
+    vlen > 0 && copyto!(buf, 1, source, pos, vlen)
+    @inbounds buf[vlen + 1] = 0x00
+    return buf
+end
+
+@inline _contiguous(source) = false
+@inline _contiguous(source::StridedVector{UInt8}) = stride(source, 1) == 1
+@inline _writable_contiguous(source) = false
+@inline _writable_contiguous(source::Vector{UInt8}) = true
+@inline _writable_contiguous(source::SubArray{UInt8,1}) =
+    parent(source) isa Vector{UInt8} && _contiguous(source)
+
+@inline _nulterminated(source, len) = false
+@inline _nulterminated(source::String, len) = len == sizeof(source)
+@inline _nulterminated(source::Base.CodeUnits{UInt8,String}, len) = len == length(source)
+@inline function _nulterminated(source::AbstractVector{UInt8}, len)
+    return _contiguous(source) && len < length(source) && @inbounds(source[len + 1]) == 0x00
+end
+
+@inline function _ends_on_delimiter(source::AbstractVector{UInt8}, len, options)
+    0 < len <= length(source) || return false
+    @inbounds b = source[len]
+    return b == UInt8('\n') || b == UInt8('\r') || (options.flags.checkdelim && options.delim == b)
+end
+
+function _bigfloat_buffer(source::AbstractVector{UInt8}, pos, len, b, code, options)
+    _, _, pl, _ = typeparser(DefaultConf{String}(), source, pos, len, b, code, poslen(pos, 0), options)
+    return _copy_nulterminated(source, pl.pos, pl.len)
+end
+
+_bigfloat_buffer(source::AbstractString, pos, len, b, code, options) =
+    _bigfloat_buffer(codeunits(source), pos, len, b, code, options)
+
+function _bigfloat_buffer(source::IO, pos, len, b, code, options)
+    _, _, pl, _ = typeparser(DefaultConf{String}(), source, pos, len, b, code, poslen(pos, 0), options)
+    vlen = max(0, pl.len)
+    buf = Vector{UInt8}(undef, vlen + 1)
+    fastseek!(source, pl.pos - 1)
+    readbytes!(source, buf, vlen)
+    @inbounds buf[vlen + 1] = 0x00
+    fastseek!(source, pos - 1)
+    return buf
+end
+
+@inline function _mpfr_strtofr(z, ptr, endptr, base, rounding)
+    return ccall((:mpfr_strtofr, :libmpfr), Int32, (Ref{BigFloat}, Cstring, Ref{Ptr{UInt8}}, Int32, Base.MPFR.MPFRRoundingMode), z, ptr, endptr, base, rounding)
+end
+
+@inline function _finish_bigfloat(source, pos, code, pl, z, ptr, base, rounding)
+    endptr = Ref{Ptr{UInt8}}()
+    err = _mpfr_strtofr(z, ptr, endptr, base, rounding)
+    code |= endptr[] == ptr ? INVALID : OK
+    pos += Int(endptr[] - ptr)
+    source isa IO && fastseek!(source, pos - 1)
+    return pos, code, PosLen(pl.pos, max(0, pos - pl.pos)), z
+end
+
 function typeparser(::AbstractConf{BigFloat}, source, pos, len, b, code, pl, options)
     base = 0
     rounding = Base.MPFR.ROUNDING_MODE[]
     z = BigFloat(precision=Base.MPFR.DEFAULT_PRECISION[])
-    if source isa AbstractVector{UInt8} || source isa String
-        str = source
-        strpos = pos
+    if _nulterminated(source, len)
+        GC.@preserve source begin
+            return _finish_bigfloat(source, pos, code, pl, z, pointer(source, pos), base, rounding)
+        end
+    elseif _writable_contiguous(source)
+        nulpos = if _ends_on_delimiter(source, len, options)
+            len
+        else
+            _, _, strpl, _ = typeparser(DefaultConf{String}(), source, pos, len, b, code, poslen(pos, 0), options)
+            strpl.pos + strpl.len
+        end
+        if nulpos <= length(source)
+            @inbounds byte = source[nulpos]
+            @inbounds source[nulpos] = 0x00
+            try
+                GC.@preserve source begin
+                    return _finish_bigfloat(source, pos, code, pl, z, pointer(source, pos), base, rounding)
+                end
+            finally
+                @inbounds source[nulpos] = byte
+            end
+        else
+            _, _, strpl, _ = typeparser(DefaultConf{String}(), source, pos, len, b, code, poslen(pos, 0), options)
+            buf = _copy_nulterminated(source, strpl.pos, strpl.len)
+            GC.@preserve buf begin
+                return _finish_bigfloat(source, pos, code, pl, z, pointer(buf), base, rounding)
+            end
+        end
     else
-        _, _, _pl, _ = typeparser(String, source, pos, len, b, code, pl, options)
-        _pos = position(source)
-        vpos, vlen = _pl.pos, _pl.len
-        fastseek!(source, vpos - 1)
-        str = Base.StringVector(vlen)
-        strpos = 1
-        readbytes!(source, str, vlen)
-        fastseek!(source, _pos) # reset IO to earlier position
-    end
-    GC.@preserve str begin
-        ptr = pointer(str, strpos)
-        endptr = Ref{Ptr{UInt8}}()
-        err = ccall((:mpfr_strtofr, :libmpfr), Int32, (Ref{BigFloat}, Cstring, Ref{Ptr{UInt8}}, Int32, Base.MPFR.MPFRRoundingMode), z, ptr, endptr, base, rounding)
-        code |= endptr[] == ptr ? INVALID : OK
-        pos += Int(endptr[] - ptr)
-        return pos, code, PosLen(pl.pos, max(0, pos - pl.pos)), z
+        buf = _bigfloat_buffer(source, pos, len, b, code, options)
+        GC.@preserve buf begin
+            return _finish_bigfloat(source, pos, code, pl, z, pointer(buf), base, rounding)
+        end
     end
 end
 
