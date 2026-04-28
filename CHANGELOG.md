@@ -19,7 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`d1ebbb2...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/d1ebbb2...HEAD)
+- Diff: [`e784de8...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/e784de8...HEAD)
 
 ### Announcement
 
@@ -47,6 +47,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Breaking
 
 - Clients that previously handled the JETLS-defined `jetls.showReferences` command should switch to handling `editor.action.showReferences` instead. The new arguments are `[uriString, position, locations]`, where `locations` is the pre-resolved LSP `Location[]`, so clients no longer need to issue a `textDocument/references` request themselves. See the [Neovim setup section](https://aviatesk.github.io/JETLS.jl/release/#Neovim) for an example handler.
+
+## 2026-04-28
+
+- Commit: [`e784de8`](https://github.com/aviatesk/JETLS.jl/commit/e784de8)
+- Diff: [`d1ebbb2...e784de8`](https://github.com/aviatesk/JETLS.jl/compare/d1ebbb2...e784de8)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-04-28")'
+  ```
 
 ### Added
 
