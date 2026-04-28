@@ -29,7 +29,7 @@ without restarting the server.
 
 In JETLS, since we need to use packages that aren’t yet registered
 (e.g., [JuliaLowering.jl](https://github.com/JuliaLang/julia/tree/master/JuliaLowering)) or
-specific branches of [JET.jl](https://github.com/c42f/JuliaLowering.jl) and
+specific branches of [JET.jl](https://github.com/aviatesk/JET.jl) and
 [JuliaSyntax.jl](https://github.com/JuliaLang/julia/tree/master/JuliaSyntax),
 the [Project.toml](./Project.toml) includes
 [`[sources]` section](https://pkgdocs.julialang.org/v1/toml-files/#The-[sources]-section).

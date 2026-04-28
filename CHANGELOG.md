@@ -50,6 +50,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- Added a [Features](https://aviatesk.github.io/JETLS.jl/dev/features/) overview page to the documentation, providing a visual showcase of every LSP feature JETLS provides.
+
 - Added `textDocument/declaration` ("go to declaration"). It jumps to the import site on an imported name (e.g. `using Base: sin`) and to the `local` line on a `local` declaration. When the symbol has no dedicated declaration site, the request falls back to the same logic as `textDocument/definition`.
 
 - Added `textDocument/documentLink` support for `include("path")` and `include_dependency("path")` calls. The path string becomes a clickable link that opens the referenced file. Only non-interpolated string arguments whose path resolves to an existing file (relative to the current file's directory) are surfaced.

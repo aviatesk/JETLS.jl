@@ -16,6 +16,9 @@ diagnostic, macro-aware go-to definition and such.
     Not production-ready; APIs and behavior may change.
     Stability and performance are limited. Expect bugs and rough edges.
 
+See the [Features](@ref features) page for a visual overview of the LSP
+features JETLS provides.
+
 ## [Server installation](@id index/server-installation)
 
 Editor clients for JETLS generally do not bundle the JETLS server itself.
