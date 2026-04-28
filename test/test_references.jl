@@ -32,20 +32,42 @@ end
                 @test any(ref -> ref.range.start == positions[4] && ref.range.var"end" == positions[6], refs)
             end
         end
-    end
 
-    @testset "includeDeclaration=false" begin
-        let code = """
-            function func(│xx│x│, yyy)
-                println(│xx│x│, yyy)
+        @testset "includeDeclaration=false" begin
+            let code = """
+                function func(│xx│x│, yyy)
+                    println(│xx│x│, yyy)
+                end
+                """
+                clean_code, positions = JETLS.get_text_and_positions(code)
+                for pos in positions
+                    refs = find_references(clean_code, pos; include_declaration=false)
+                    @test length(refs) == 1
+                    ref = only(refs)
+                    @test ref.range.start == positions[4] && ref.range.var"end" == positions[6]
+                end
             end
-            """
-            clean_code, positions = JETLS.get_text_and_positions(code)
-            for pos in positions
-                refs = find_references(clean_code, pos; include_declaration=false)
-                @test length(refs) == 1
-                ref = only(refs)
-                @test ref.range.start == positions[4] && ref.range.var"end" == positions[6]
+
+            # `local xxx` is a declaration site, not a reference; it should be
+            # excluded together with the assignment when `includeDeclaration=false`.
+            let code = """
+                function func()
+                    local │xx│x│
+                    │xx│x│ = 1
+                    return │xx│x│
+                end
+                """
+                clean_code, positions = JETLS.get_text_and_positions(code)
+                for pos in positions
+                    refs = find_references(clean_code, pos; include_declaration=true)
+                    @test length(refs) == 3
+                end
+                for pos in positions
+                    refs = find_references(clean_code, pos; include_declaration=false)
+                    @test length(refs) == 1
+                    ref = only(refs)
+                    @test ref.range.start == positions[7] && ref.range.var"end" == positions[9]
+                end
             end
         end
     end
@@ -67,8 +89,31 @@ end
             clean_code, positions = JETLS.get_text_and_positions(code)
             @test length(positions) == 8
             for pos in positions
-                refs = find_references(clean_code, pos; include_declaration=false)
+                refs = find_references(clean_code, pos; include_declaration=true)
                 @test length(refs) == 4
+            end
+            for pos in positions
+                refs = find_references(clean_code, pos; include_declaration=false)
+                @test length(refs) == 2
+            end
+        end
+
+        let code = """
+            function │kwfunc│(x; kw=nothing)
+                (x, kw)
+            end
+
+            result = │kwfunc│(1)
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 4
+            for pos in positions
+                refs = find_references(clean_code, pos; include_declaration=true)
+                @test length(refs) == 2
+            end
+            for pos in positions
+                refs = find_references(clean_code, pos; include_declaration=false)
+                @test length(refs) == 1
             end
         end
     end
@@ -117,6 +162,31 @@ end
                 @test length(refs) == 3
             end
         end
+
+        # Regression test for `is_matching_global_binding` + occurrence remap:
+        # a `@generated` argument whose name coincides with a module-level
+        # `global` must NOT be linked to that global. In earlier implementations
+        # the inert `:(xxx)` recorded `xxx` as `:argument (mod=nothing)` and the
+        # `nothing`-mod fallback in `is_matching_global_binding` matched it to
+        # the same-named `:global (mod=<module>)`, producing bogus cross-links.
+        let code = """
+            @generated function func(│xxxx│)
+                :(│xxxx│)
+            end
+            global │xxxx│ = 42
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 6  # 2 markers per identifier × 3 identifiers
+            # Argument and its inert `:use` are linked to each other (2 refs),
+            # but the module-level `global xxxx` is an independent binding.
+            refs_arg   = find_references(clean_code, positions[1])  # `func(xxxx)` arg
+            refs_inert = find_references(clean_code, positions[3])  # inert `:(xxxx)`
+            refs_glob  = find_references(clean_code, positions[5])  # `global xxxx = 42`
+            @test length(refs_arg) == 2
+            @test length(refs_inert) == 2
+            @test length(refs_glob) == 1
+            @test Set(r.range for r in refs_arg) == Set(r.range for r in refs_inert)
+        end
     end
 
     @testset "macro references" begin
@@ -153,8 +223,6 @@ end
         end
 
         # includeDeclaration=false from macrocall
-        # Note: macro definition also has :use occurrences (from JuliaLowering),
-        # so includeDeclaration=false still includes the definition location
         let code = """
             macro mymacro(ex)
                 esc(ex)
@@ -165,6 +233,166 @@ end
             clean_code, positions = JETLS.get_text_and_positions(code)
             for pos in positions
                 refs = find_references(clean_code, pos; include_declaration=false)
+                @test length(refs) == 1
+            end
+        end
+    end
+
+    @testset "import/using references" begin
+        # Cursor on an imported name should find the import site + uses.
+        let code = """
+            using Base: │myfunc│
+            │myfunc│(1)
+            │myfunc│()
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 6
+            for pos in positions
+                refs = find_references(clean_code, pos; include_declaration=true)
+                @test length(refs) == 3
+            end
+            # includeDeclaration=false excludes the import site (`:def`).
+            for pos in positions
+                refs = find_references(clean_code, pos; include_declaration=false)
+                @test length(refs) == 2
+            end
+        end
+    end
+
+    @testset "export/public references" begin
+        # Cursor on an exported name should find all references, including
+        # the export statement itself.
+        let code = """
+            function │myfunc│(x)
+                x + 1
+            end
+            export │myfunc│
+            │myfunc│(1)
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 6
+            for pos in positions
+                refs = find_references(clean_code, pos; include_declaration=true)
+                @test length(refs) == 3
+            end
+            # With includeDeclaration=false, the definition in `function myfunc`
+            # is excluded, but the `:use` inside `export` is kept.
+            for pos in positions
+                refs = find_references(clean_code, pos; include_declaration=false)
+                @test length(refs) == 2
+            end
+        end
+    end
+
+    # Compound-assignment operators (`+=`, `-=`, ...) combined with a macrocall
+    # (`x += @elapsed ...`) parse into a `K"unknown_head"` node whose `name_val`
+    # attribute carries the operator name; losing that attribute during
+    # `remove_macrocalls` reconstruction used to make scope-resolution silently
+    # fail, causing `find_references` to return empty on symbols defined in such
+    # functions.
+    @testset "compound assignment with macrocall" begin
+        # Cursor on the definition site of a function whose body contains
+        # `+= @elapsed ...`: select_target_binding must succeed.
+        let code = """
+            function │foo│(x)
+                t = 0.0
+                t += @elapsed sleep(0)
+                return x + t
+            end
+
+            result = │foo│(1)
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 4
+            for pos in positions
+                refs = find_references(clean_code, pos)
+                @test length(refs) == 2
+            end
+        end
+
+        # Call site lives inside another function that also uses `+= @elapsed`:
+        # exercises find_global_binding_occurrences!'s per-statement lowering.
+        let code = """
+            function │foo│(x)
+                return x + 1
+            end
+
+            function bar()
+                total = 0.0
+                total += @elapsed │foo│(1)
+                return total
+            end
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 4
+            for pos in positions
+                refs = find_references(clean_code, pos)
+                @test length(refs) == 2
+            end
+        end
+    end
+
+    # Code-generating macros splice their arguments into an implicit `quote`,
+    # so argument-position `\$` interpolations are only legal while the
+    # macrocall is present. `_remove_macrocalls` must unwrap these
+    # interpolations when lifting macro arguments into a `block`; otherwise
+    # scope resolution silently fails on any top-level statement containing
+    # `@mymacro … \$x` and references inside such statements are lost.
+    # Note: `@mymacro` does not need to exist — the macrocall is stripped
+    # before scope resolution runs.
+    @testset "macrocall argument with interpolation" begin
+        let code = """
+            const │MY_CONST│ = Set{Symbol}((:foo,))
+
+            let valid = │MY_CONST│
+                @mymacro something(::Type{Int}) = \$valid
+            end
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 4
+            for pos in positions
+                refs = find_references(clean_code, pos)
+                @test length(refs) == 2
+            end
+        end
+    end
+
+    # `@ccall foo(...)` treats `foo` as a C library symbol, not a reference to
+    # a Julia binding. `@ccall` has a new-style JuliaLowering implementation
+    # that correctly encodes this by wrapping `foo` in `K"inert"`, so scope
+    # resolution must leave it alone. That only holds while
+    # `_remove_macrocalls` preserves the `@ccall` macrocall (because the
+    # macrocall is in `NEW_STYLE_MACROCALL_NAMES`) — if it ever falls back to
+    # the generic stripping path, `foo` gets lifted into a plain `block` and
+    # is misresolved to the enclosing Julia binding of the same name.
+    @testset "@ccall C symbol vs enclosing Julia binding" begin
+        let code = """
+            let │strlen│ = length
+                @ccall strlen("foo"::Cstring)::Csize_t
+            end
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 2
+            # The `let` binding position finds only itself; the C symbol
+            # `strlen` inside `@ccall` is not linked to the Julia local.
+            refs_at_let = find_references(clean_code, positions[1])
+            @test length(refs_at_let) == 1
+        end
+    end
+
+    # Cursor on a non-`\$` identifier inside a preserved macrocall's inert
+    # template must resolve to the matching module-level global.
+    @testset "cursor on inert global inside preserved macrocall" begin
+        let code = """
+            struct │LSAnalyzer│ end
+            let x = 1
+                @eval some_func(::│LSAnalyzer│) = \$x
+            end
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 4
+            for pos in positions
+                refs = find_references(clean_code, pos)
                 @test length(refs) == 2
             end
         end

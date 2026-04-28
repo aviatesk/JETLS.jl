@@ -309,13 +309,18 @@ end
             local success::Bool = false
             let id = id_counter[] += 1
                 Threads.@spawn try
+                    # `check=false`: this call races with the main thread's
+                    # `writereadmsg(DidOpen; ...)` below on `received_queue` drain.
+                    # Checking here would spuriously see `DidOpen` still queued
+                    # (CI flake). Emptiness is still verified at shutdown via
+                    # `withserver`'s own `writereadmsg` calls.
                     (; raw_res) = writereadmsg(
                         DocumentDiagnosticRequest(;
                             id,
                             params = DocumentDiagnosticParams(;
                                 textDocument = TextDocumentIdentifier(; uri)
                             ));
-                        read = 2)
+                        read = 2, check = false)
                     @test any(raw_res) do @nospecialize res
                         res isa DocumentDiagnosticResponse &&
                         res.result isa RelatedFullDocumentDiagnosticReport
@@ -330,7 +335,10 @@ end
                     notify(event)
                 end
             end
-            sleep(5.0)
+            # Send `DidOpen` after the handler has started polling but before
+            # `get_file_info`'s `JETLS_TEST_MODE` timeout (1.0s) fires, so the
+            # test exercises the "cache arrives during polling" path.
+            sleep(0.5)
             writereadmsg(make_DidOpenTextDocumentNotification(uri, read(script_path, String)); read=0, check=false)
             wait(event)
             @test success

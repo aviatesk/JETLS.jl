@@ -1,7 +1,7 @@
 name = "Parsers"
 uuid = "2bf889ff-109e-5fa9-9ba3-339ee07cbe67"
 authors = ["quinnj <quinn.jacobd@gmail.com>"]
-version = "2.8.3"
+version = "2.8.4"
 
 [deps]
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
@@ -27,5 +27,5 @@ test = ["Aqua", "Serialization", "Test"]
 
 [sources.PrecompileTools]
 subdir = "vendor/PrecompileTools"
-rev = "665af0eeedc36d50469592482562739c85652ed9"
+rev = "0e4480b76ea0b1c01f4d9dadc849333aa83db14e"
 url = "https://github.com/aviatesk/JETLS.jl"

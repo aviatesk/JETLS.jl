@@ -1,3 +1,10 @@
+@interface ClientDiagnosticsTagOptions begin
+    """
+    The tags supported by the client.
+    """
+    valueSet::Vector{DiagnosticTag.Ty}
+end
+
 # Publish diagnostics
 # ===================
 
@@ -39,12 +46,7 @@ See also the [Diagnostic](@ref diagnostic) section.
     # Tags
     - since - 3.15.0
     """
-    tagSupport::Union{Nothing, @interface begin
-        """
-        The tags supported by the client.
-        """
-        valueSet::Vector{DiagnosticTag.Ty}
-    end} = nothing
+    tagSupport::Union{Nothing, ClientDiagnosticsTagOptions} = nothing
 
     """
     Whether the client interprets the version property of the
@@ -142,6 +144,37 @@ Client capabilities specific to diagnostic pull requests.
     pulls.
     """
     relatedDocumentSupport::Union{Nothing, Bool} = nothing
+
+    """
+    Whether the clients accepts diagnostics with related information.
+    """
+    relatedInformation::Union{Nothing, Bool} = nothing
+
+    """
+    Client supports the tag property to provide meta data about a diagnostic.
+    Clients supporting tags have to handle unknown tags gracefully.
+    """
+    tagSupport::Union{Nothing, ClientDiagnosticsTagOptions} = nothing
+
+    """
+    Client supports a codeDescription property
+    """
+    codeDescriptionSupport::Union{Nothing, Bool} = nothing
+
+    """
+    Whether the client supports `MarkupContent` in diagnostic messages.
+
+    # Tags
+    - since - 3.18.0
+    """
+    markupMessageSupport::Union{Nothing, Bool} = nothing
+
+    """
+    Whether code action supports the `data` property which is
+    preserved between a `textDocument/publishDiagnostics` and
+    `textDocument/codeAction` request.
+    """
+    dataSupport::Union{Nothing, Bool} = nothing
 end
 
 """

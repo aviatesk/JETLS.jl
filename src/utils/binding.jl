@@ -186,6 +186,12 @@ function find_target_binding(ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTre
         if binfo.is_internal || startswith(binfo.name, "#") || binfo.name in _IMPLICIT_BINDING_NAMES
             return nothing
         end
+        # Skip bindings constructed inside a macro body — e.g. `@eval`'s
+        # synthetic `eval_result` local, whose `srcref` covers the whole
+        # macrocall and would otherwise shadow the user identifier inside.
+        # `$`-escaped user bindings stay at layer 1, so this only filters out
+        # macro-local bindings.
+        binding_scope_layer(ctx3, binfo) === 1 || return nothing
         return TraversalReturn(st)
     end
 end
@@ -239,6 +245,12 @@ function select_target_binding(
     macrocall_result = select_macrocall_binding(st0, offset, mod, caller; soft_scope)
     macrocall_result !== nothing && return macrocall_result
 
+    export_public_result = select_export_public_binding(st0, offset, mod, caller; soft_scope)
+    export_public_result !== nothing && return export_public_result
+
+    import_using_result = select_import_using_binding(st0, offset, mod, caller; soft_scope)
+    import_using_result !== nothing && return import_using_result
+
     (; ctx3, st3) = try
         # Remove macros to preserve precise source locations
         jl_lower_for_scope_resolution(mod, remove_macrocalls(st0); soft_scope)
@@ -247,11 +259,17 @@ function select_target_binding(
         JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
         return nothing
     end
-    binding = @something(
-        _select_target_binding(ctx3, st3, offset; is_generated=is_generated0(st0)),
-        return nothing)
-    binding = normalize_local_alias_to_global(ctx3, binding)
-    return (; ctx3, st3, st0, binding)
+    primary = _select_target_binding(ctx3, st3, offset; is_generated=is_generated0(st0))
+    if primary !== nothing
+        binding = normalize_local_alias_to_global(ctx3, primary)
+        return (; ctx3, st3, st0, binding)
+    end
+    # Fall back to resolving an identifier inside a preserved macrocall's
+    # inert template (e.g. `LSAnalyzer` in `@eval ::LSAnalyzer = ...`).
+    # Inert contents aren't scope-resolved, so no `BindingId` exists for
+    # `find_target_binding` to pick up — we run a fresh resolution on just
+    # the inert subtree.
+    return find_inert_global_target_binding(st0, st3, offset, mod; soft_scope)
 end
 
 function find_inert_target_binding(
@@ -263,6 +281,55 @@ function find_inert_target_binding(
         return JL.binding_ex(ctx3, binfo.id)
     end
     return nothing
+end
+
+find_inert_global_target_binding(
+    st0::JS.SyntaxTree, st3::JS.SyntaxTree, offset::Int, mod::Module;
+    soft_scope::Bool = false
+) = @something(
+    _find_inert_global_target_binding(st0, st3, offset, mod; soft_scope),
+    # Handle `var│` at end-of-token (same retry as `_select_target_binding`).
+    _find_inert_global_target_binding(st0, st3, offset-1, mod; soft_scope),
+    return nothing)
+
+function _find_inert_global_target_binding(
+        st0::JS.SyntaxTree, st3::JS.SyntaxTree, offset::Int, mod::Module;
+        soft_scope::Bool = false
+    )
+    name = @something find_inert_identifier_name(st3, offset) return nothing
+    inert_tree = @something enclosing_inert_tree(st3, offset) return nothing
+    JS.numchildren(inert_tree) ≥ 1 || return nothing
+    ires = try
+        jl_lower_for_scope_resolution(mod, unwrap_interpolations(inert_tree[1]); soft_scope)
+    catch
+        return nothing
+    end
+    for binfo in ires.ctx3.bindings.info
+        binfo.kind === :global || continue
+        binfo.is_internal && continue
+        binfo.name == name || continue
+        binding = JL.binding_ex(ires.ctx3, binfo.id)
+        return (; ctx3 = ires.ctx3, st3 = ires.st3, st0, binding)
+    end
+    return nothing
+end
+
+# Find the innermost `K"inert"` node in `st3` whose byte range contains
+# `offset`. Used to run fresh scope resolution on just that inert subtree.
+function enclosing_inert_tree(st3::JS.SyntaxTree, offset::Int)
+    best = Ref{Union{Nothing,JS.SyntaxTree}}(nothing)
+    best_len = Ref(typemax(Int))
+    traverse(st3) do st::JS.SyntaxTree
+        JS.kind(st) === JS.K"inert" || return nothing
+        offset in JS.byte_range(st) || return nothing
+        len = length(JS.byte_range(st))
+        if len < best_len[]
+            best[] = st
+            best_len[] = len
+        end
+        return nothing
+    end
+    return best[]
 end
 
 # Struct/type definitions generate a local binding with `mod=nothing` for
@@ -309,6 +376,95 @@ function select_macrocall_binding(
         binding = JL.binding_ex(ctx3, binfo)
         if offset in JS.byte_range(binding)
             return (; ctx3, st3, st0=macrocall_name, binding)
+        end
+    end
+    return nothing
+end
+
+# Lowering an `export`/`public` statement collapses the listed identifiers into
+# opaque `K"Value"` nodes, leaving no `BindingId` for the cursor to resolve to.
+# Detect that case directly and lower just the single identifier under the
+# cursor so callers receive a normal `(ctx3, st3, st0, binding)` tuple.
+function select_export_public_binding(
+        st0::JS.SyntaxTree, offset::Int, mod::Module, caller::AbstractString;
+        soft_scope::Bool = false
+    )
+    find_name_node = (offset::Int) -> (st0′::JS.SyntaxTree) -> begin
+        JS.kind(st0′) in JS.KSet"export public" || return false
+        for i = 1:JS.numchildren(st0′)
+            c = st0′[i]
+            JS.kind(c) === JS.K"Identifier" || continue
+            offset in JS.byte_range(c) && return true
+        end
+        return false
+    end
+    bas = byte_ancestors(find_name_node(offset), st0, offset)
+    if isempty(bas)
+        # Support cases like `foo│` at the end of an exported name
+        offset -= 1
+        bas = byte_ancestors(find_name_node(offset), st0, offset)
+    end
+    isempty(bas) && return nothing
+    parent = bas[1]
+    i = let offset=offset; @something findfirst(
+        j::Int -> JS.kind(parent[j]) === JS.K"Identifier" && offset in JS.byte_range(parent[j]),
+            1:JS.numchildren(parent)) return nothing; end
+    name_node = parent[i]
+    (; ctx3, st3) = try
+        jl_lower_for_scope_resolution(mod, name_node; soft_scope)
+    catch err
+        JETLS_DEBUG_LOWERING && @warn "Error in lowering ($caller)" err
+        JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
+        return nothing
+    end
+    for binfo in ctx3.bindings.info
+        binding = JL.binding_ex(ctx3, binfo)
+        if offset in JS.byte_range(binding)
+            return (; ctx3, st3, st0=name_node, binding)
+        end
+    end
+    return nothing
+end
+
+# Mirror `select_export_public_binding` for `import`/`using`. The listed
+# identifiers also collapse into opaque `K"Value"` nodes during lowering, so we
+# detect the cursor against `foreach_local_import_identifier` and lower the
+# single matching identifier to synthesize a normal binding tuple.
+function select_import_using_binding(
+        st0::JS.SyntaxTree, offset::Int, mod::Module, caller::AbstractString;
+        soft_scope::Bool = false
+    )
+    find_name_node_at = function (offset::Int, st0′::JS.SyntaxTree)
+        hit = Ref{Union{Nothing,JS.SyntaxTree}}(nothing)
+        foreach_local_import_identifier(st0′) do id_st::JS.SyntaxTree
+            offset in JS.byte_range(id_st) || return
+            hit[] = id_st
+            return
+        end
+        return hit[]
+    end
+    find_container = (offset::Int) -> (st0′::JS.SyntaxTree) ->
+        JS.kind(st0′) in JS.KSet"import using" &&
+            find_name_node_at(offset, st0′) !== nothing
+    bas = byte_ancestors(find_container(offset), st0, offset)
+    if isempty(bas)
+        # Support cases like `foo│` at the end of an imported name
+        offset -= 1
+        bas = byte_ancestors(find_container(offset), st0, offset)
+    end
+    isempty(bas) && return nothing
+    name_node = @something find_name_node_at(offset, bas[1]) return nothing
+    (; ctx3, st3) = try
+        jl_lower_for_scope_resolution(mod, name_node; soft_scope)
+    catch err
+        JETLS_DEBUG_LOWERING && @warn "Error in lowering ($caller)" err
+        JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
+        return nothing
+    end
+    for binfo in ctx3.bindings.info
+        binding = JL.binding_ex(ctx3, binfo)
+        if offset in JS.byte_range(binding)
+            return (; ctx3, st3, st0=name_node, binding)
         end
     end
     return nothing

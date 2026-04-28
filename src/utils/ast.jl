@@ -86,7 +86,16 @@ function _unwrap_interpolations(st::JS.SyntaxTree)
         push!(new_children, nc)
     end
     k = JS.kind(st)
-    new_node = changed ? JL.@ast(JS.syntax_graph(st), st, [k new_children...]) : st
+    # Preserve `name_val` when reconstructing: kinds like `K"unknown_head"`
+    # (used by compound assignments such as `+=`) carry the operator name in
+    # `name_val`, and JuliaLowering's validator requires it to be present.
+    new_node = if !changed
+        st
+    elseif hasproperty(st, :name_val)
+        JL.@ast(JS.syntax_graph(st), st, [k(name_val=st.name_val::String) new_children...])
+    else
+        JL.@ast(JS.syntax_graph(st), st, [k new_children...])
+    end
     return (new_node, changed)
 end
 
@@ -95,7 +104,7 @@ function unwrap_interpolations(st::JS.SyntaxTree)
     return _unwrap_interpolations(st)[1]
 end
 
-function is_macrocall_st0(st0::JS.SyntaxTree, names::AbstractString...)
+function is_macrocall_st0(st0::SyntaxTree0, names::AbstractString...; from::Union{Nothing,Module}=nothing)
     JS.kind(st0) === JS.K"macrocall" || return false
     JS.numchildren(st0) >= 1 || return false
     macro_name = st0[1]
@@ -103,27 +112,173 @@ function is_macrocall_st0(st0::JS.SyntaxTree, names::AbstractString...)
     hasproperty(macro_name, :name_val) || return false
     name_val = macro_name.name_val
     name_val isa String || return false
-    return name_val in names
+    return name_val in names && (isnothing(from) || (JS.hasattr(macro_name, :mod) && macro_name.mod === from))
 end
 
-is_nospecialize_or_specialize_macrocall0(st0::JS.SyntaxTree) =
-    is_macrocall_st0(st0, "@nospecialize", "@specialize")
+is_mainfunc0(st0::SyntaxTree0) = is_macrocall_st0(st0, "@main")
 
-is_mainfunc0(st0::JS.SyntaxTree) = is_macrocall_st0(st0, "@main")
+is_generated0(st0::SyntaxTree0) = is_macrocall_st0(st0, "@generated")
 
-is_kwdef0(st0::JS.SyntaxTree) = is_macrocall_st0(st0, "@kwdef")
+is_macro0(st0::SyntaxTree0) = JS.kind(st0) === JS.K"macro"
 
-is_generated0(st0::JS.SyntaxTree) = is_macrocall_st0(st0, "@generated")
+# Simple (non-qualified) macro names whose new-style implementations in
+# `JuliaLowering/src/syntax_macros.jl` and `src/utils/jl-syntax-macros.jl`
+# preserve fine-grained source provenance during expansion. Unlike old-style
+# macros — whose expansion collapses source positions to line granularity and
+# is why `_remove_macrocalls` exists — these don't need to be rewritten to a
+# `block` to keep accurate locations for scope resolution.
+const NEW_STYLE_MACROCALL_NAMES = (
+    # JuliaLowering/src/syntax_macros.jl
+    "@__FUNCTION__",
+    "@ccall",
+    "@cfunction",
+    "@eval",
+    "@generated",
+    "@goto",
+    "@isdefined",
+    "@locals",
+    "@nospecialize",
+    # src/utils/jl-syntax-macros.jl
+    "@kwdef",
+    "@label",
+    "@spawn",
+    "@specialize",
+)
 
-function is_doc0(st0::JS.SyntaxTree)
-    JS.kind(st0) === JS.K"macrocall" || return false
-    JS.numchildren(st0) >= 1 || return false
-    macro_name = st0[1]
-    return JS.kind(macro_name) === JS.K"Identifier" &&
-           JS.hasattr(macro_name, :name_val) &&
-           macro_name.name_val == "@doc" &&
-           JS.hasattr(macro_name, :mod) &&
-           macro_name.mod === Core
+is_new_style_macrocall0(st0::SyntaxTree0) =
+    is_macrocall_st0(st0, NEW_STYLE_MACROCALL_NAMES...)
+
+is_doc0(st0::SyntaxTree0) = is_macrocall_st0(st0, "@doc"; from=Core)
+
+is_cmd0(st0::SyntaxTree0) = is_macrocall_st0(st0, "@cmd"; from=Core)
+
+"""
+    collect_import_names(st0::SyntaxTree0) -> Vector{Pair{SyntaxTree0, String}}
+
+Return pairs of `(node, sort_key)` for the named items of an
+`import`/`using`/`export`/`public` statement: the child node representing
+each item alongside its sort key (see [`get_import_sort_key`](@ref)).
+For `using M: a, b` returns entries for `a` and `b`; for `using M.A` (no
+`:`) returns entries for the imported path nodes.
+"""
+function collect_import_names(st0::SyntaxTree0)
+    kind = JS.kind(st0)
+    names = Pair{SyntaxTree0, String}[]
+    if kind in JS.KSet"import using"
+        nchildren = JS.numchildren(st0)
+        if nchildren == 1
+            child = st0[1]
+            if JS.kind(child) === JS.K":"
+                for i = 2:JS.numchildren(child)
+                    name = child[i]
+                    push!(names, name => get_import_sort_key(name))
+                end
+            end
+        elseif nchildren > 1
+            for i = 1:nchildren
+                name = st0[i]
+                push!(names, name => get_import_sort_key(name))
+            end
+        end
+    elseif kind in JS.KSet"export public"
+        for i = 1:JS.numchildren(st0)
+            name = st0[i]
+            push!(names, name => get_import_sort_key(name))
+        end
+    end
+    return names
+end
+
+"""
+    foreach_local_import_identifier(f, st0::JS.SyntaxTree)
+
+Invoke `f(id_st)` once for each locally-introduced identifier of an
+`import`/`using` statement `st0`. Covers every form that actually binds
+a name in the current scope:
+
+- `using A` / `import A` — `A`
+- `using A, B` / `import A, B` — `A`, `B`
+- `using A.B` / `import A.B` / `using .A.B` — the trailing component
+- `using A: x, y` / `import A: x, y` — each listed name
+- `using A: x as y` — the alias `y`
+- `import A: x as y` — likewise
+"""
+function foreach_local_import_identifier(f, st0::JS.SyntaxTree)
+    kind = JS.kind(st0)
+    kind in JS.KSet"import using" || return
+    nchildren = JS.numchildren(st0)
+    if nchildren == 1 && JS.kind(st0[1]) === JS.K":"
+        child = st0[1]
+        for i = 2:JS.numchildren(child)
+            id_st = get_local_import_identifier(child[i])
+            id_st === nothing || f(id_st)
+        end
+    else
+        # Direct children are `K"."` paths (one per comma-separated module),
+        # e.g. `using A` → `[K"."(A)]`, `using A, B` → `[K"."(A), K"."(B)]`,
+        # `using .A.B` → `[K"."(., A, B)]`. The locally-introduced name is the
+        # last component of each path.
+        for i = 1:nchildren
+            id_st = get_local_import_identifier(st0[i])
+            id_st === nothing || f(id_st)
+        end
+    end
+    return
+end
+
+"""
+    get_local_import_identifier(st0::JS.SyntaxTree) -> Union{JS.SyntaxTree, Nothing}
+
+Return the `K"Identifier"` node that represents the local binding introduced
+by a single element of an `import`/`using` statement, or `nothing` if the
+element is not a well-formed name path. Accepts both the top-level module
+path children (`using A.B` → path `A.B`) and the names listed after `:`
+(`using A: foo` → path `foo`):
+- path with a bare `Identifier` — the identifier itself
+- dotted path `K"."` — the trailing component (skipping the relative `.`
+  or `..` prefixes of forms like `.A` / `..A.B`)
+- `K"as"` (inside a colon list) — the alias
+"""
+function get_local_import_identifier(st0::JS.SyntaxTree)
+    kind = JS.kind(st0)
+    if kind === JS.K"as"
+        # `using M: a as b` -> identifier for "b"
+        return st0[2]
+    elseif kind === JS.K"Identifier"
+        return st0
+    elseif kind === JS.K"."
+        npath = JS.numchildren(st0)
+        if npath >= 1
+            last_st = st0[npath]
+            if JS.kind(last_st) === JS.K"Identifier"
+                return last_st
+            end
+        end
+        return nothing
+    else
+        return nothing
+    end
+end
+
+function get_import_sort_key(st0::JS.SyntaxTree)
+    kind = JS.kind(st0)
+    if kind === JS.K"as"
+        return get_import_sort_key(st0[1])
+    elseif kind === JS.K"."
+        parts = String[]
+        for i = 1:JS.numchildren(st0)
+            child = st0[i]
+            ckind = JS.kind(child)
+            if ckind === JS.K"Identifier"
+                push!(parts, JS.sourcetext(child))
+            end
+        end
+        return join(parts, ".")
+    elseif kind === JS.K"Identifier"
+        return JS.sourcetext(st0)
+    else
+        return JS.sourcetext(st0)
+    end
 end
 
 """
@@ -180,55 +335,69 @@ function is_nospecialize_or_specialize_macrocall3(st3::JS.SyntaxTree)
     return macro_name.name_val == "nospecialize" || macro_name.name_val == "specialize"
 end
 
-function _remove_macrocalls(st::JS.SyntaxTree)
-    if JS.kind(st) === JS.K"macrocall"
-        if is_nospecialize_or_specialize_macrocall0(st)
-            # Special case `@nospecialize`/`@specialize`:
-            # These macros are sometimes used in method definition argument lists, but
-            # if we apply the `_remove_macrocalls` transformation directly, it would
-            # result in a `:block` expression being inserted into the argument list,
-            # preventing generation of a correct lowered tree.
-            # Furthermore, JuliaLowering.jl provides new macro style definitions for
-            # these macros, so there's no need to remove them in the first place.
-            return st, false
-        elseif is_mainfunc0(st)
+function _remove_macrocalls(st0::SyntaxTree0)
+    if JS.kind(st0) === JS.K"macrocall"
+        if is_new_style_macrocall0(st0)
+            # Macros with new-style JuliaLowering implementations preserve
+            # fine-grained provenance during expansion, so we don't need to
+            # rewrite them to a `block` to keep source locations accurate.
+            # See `NEW_STYLE_MACROCALL_NAMES` for the list.
+            return st0, false
+        elseif is_mainfunc0(st0)
             # `@main` functions are desugared by `desugar_main_macrocall` below,
             # so there's no need to remove them here
-            return st, false
-        elseif is_kwdef0(st)
-            # `@kwdef` has a new-style macro definition (in jl-syntax-macros.jl) that
-            # preserves provenance, so there's no need to remove it here.
-            return st, false
-        elseif is_generated0(st)
-            # `@generated` functions need to be preserved so that
-            # `is_generated` can track argument usage within
-            # returned quoted expressions.
-            return st, false
-        elseif is_doc0(st)
-            return _remove_macrocalls(st[end])[1], true
+            return st0, false
+        elseif is_doc0(st0)
+            return _remove_macrocalls(st0[end])[1], true
+        elseif is_cmd0(st0)
+            # `` `foo` `` parses to `Core.@cmd(LineNumberNode, CmdString)` where
+            # `CmdString` is an opaque leaf JuliaLowering has no rule for at
+            # statement position. Strip-to-block would result in lowering failure,
+            # so leave the macrocall intact and let `Core.@cmd` expansion run.
+            # Expansion collapses interpolations' provenance, which means features like
+            # rename/references can't pinpoint a name used inside a cmd literal --
+            # but binding occurrence analysis still get correct results.
+            return st0, false
         end
-        new_children = JS.SyntaxList(JS.syntax_graph(st))
-        for i = 2:JS.numchildren(st)
-            push!(new_children, _remove_macrocalls(st[i])[1])
+        new_children = JS.SyntaxList(JS.syntax_graph(st0))
+        for i = 2:JS.numchildren(st0)
+            # `$` interpolations at macrocall-argument position are legal only
+            # because the macro will typically splice the argument into a
+            # `quote`/`:(...)` (`@eval`, code-generating macros, user-defined
+            # macros that build a quoted expression, etc.). Once we lift the
+            # arguments out of the macrocall into a bare `block`, any surviving
+            # `$` would be out of context and fail lowering, so unwrap
+            # interpolations on the lifted child.
+            stripped, _ = _remove_macrocalls(st0[i])
+            push!(new_children, _unwrap_interpolations(stripped)[1])
         end
-        return JL.@ast(JS.syntax_graph(st), st, [JS.K"block" new_children...]), true
-    elseif JS.is_leaf(st)
-        return st, false
+        return JL.@ast(JS.syntax_graph(st0), st0, [JS.K"block" new_children...]), true
+    elseif JS.is_leaf(st0)
+        return st0, false
     end
-    (st, changed) = desugar_main_macrocall(st)
-    new_children = JS.SyntaxList(JS.syntax_graph(st))
-    for c in JS.children(st)
+    (st0, changed) = desugar_main_macrocall(st0)
+    new_children = JS.SyntaxList(JS.syntax_graph(st0))
+    for c in JS.children(st0)
         nc, cc = _remove_macrocalls(c)
         changed |= cc
         push!(new_children, nc)
     end
-    k = JS.kind(st)
-    new_node = changed ? JL.@ast(JS.syntax_graph(st), st, [k new_children...]) : st
+    k = JS.kind(st0)
+    # Preserve `name_val` when reconstructing: kinds like `K"unknown_head"`
+    # (used by compound assignments such as `+=`) carry the operator name in
+    # `name_val`, and JuliaLowering's validator requires it to be present.
+    new_node = if !changed
+        st0
+    elseif hasproperty(st0, :name_val)
+        JL.@ast(JS.syntax_graph(st0), st0, [k(name_val=st0.name_val::String) new_children...])
+    else
+        JL.@ast(JS.syntax_graph(st0), st0, [k new_children...])
+    end
     return (new_node, changed)
 end
 
 """
-    desugar_main_macrocall(st0::JS.SyntaxTree) -> Tuple{JS.SyntaxTree, Bool}
+    desugar_main_macrocall(st0::SyntaxTree0) -> Tuple{SyntaxTree0, Bool}
 
 If `st0` is a `function (@main)(args...) ... end`, `(@main)(args...) = ...`,
 `function @main(args...) ... end`, or `@main(args...) = ...` definition, replace
@@ -238,7 +407,7 @@ This avoids macro expansion failure when multiple standalone files defining
 `@main` are analyzed in the same session — the second file's sandbox module
 already has `main` imported from the first, causing `@main` expansion to error.
 """
-function desugar_main_macrocall(st0::JS.SyntaxTree)
+function desugar_main_macrocall(st0::SyntaxTree0)
     k = JS.kind(st0)
     if k === JS.K"function"
         JS.numchildren(st0) >= 1 || return (st0, false)
@@ -288,27 +457,45 @@ end
 """
     remove_macrocalls(st0::JS.SyntaxTree) -> JS.SyntaxTree
 
-Convert `macrocall` nodes to `block` nodes while preserving binding provenance information
-in the arguments passed to macrocalls.
-
-This transformation converts `macrocall children...` to `block children...`, preserving
-the binding provenance information contained within expressions passed as arguments to
-macrocalls. As a result, LSP features that rely on binding source information (primarily
-using surface AST level information) can work in many cases based on binding resolution
-performed on the transformed tree `st0′`.
+Convert each `macrocall` node to a `block` node, keeping the arguments intact so that
+identifiers passed to macros retain their original source locations. The transformed
+tree can then be fed into scope/binding resolution to drive LSP features such as
+find-references, document-highlight, rename, and go-to-definition.
 
 This is useful because JuliaLowering's macro expansion (for old-style macros) loses
 fine-grained provenance information, reducing it to line-level granularity. For example,
 in `@noop foo`, highlighting `foo` would incorrectly highlight `@noop foo` entirely
-if macro expansion were performed. By removing macrocalls before lowering, we
-preserve precise source locations for bindings outside of macrocalls.
+if macro expansion were performed. By removing macrocalls before lowering, we preserve
+precise source locations for bindings outside of macrocalls, at the cost of discarding
+any bindings or control flow the macros themselves would have introduced.
 
-Note that bindings inside macrocalls will not be analyzed, but this trade-off might be
-preferable to having incorrect source ranges. This is especially true for LSP features
-like document-highlight and find-references where source-level information is critical,
-as information inside macros is often not needed for these features.
+!!! note "Usage scope"
+    The transformed tree is intended only for scope/binding resolution. It
+    intentionally does not preserve semantic validity: replacing a macrocall with a
+    raw `block` can place statements like `return` into expression contexts that are
+    not legal Julia (e.g. `x = (begin ...; return nothing; end)`). Feeding the
+    transformed tree into flow-sensitive analyses such as `analyze_def_use` or
+    `analyze_unreachable_code!` can therefore produce nonsensical results and must
+    be avoided.
+
+!!! note "Assumption on macro behavior"
+    Macros are treated as if `@m expr` behaved like `begin expr end` — i.e. they
+    neither introduce new syntactic structures, bind new names, nor alter control
+    flow. Macros that merely rewrite control flow (e.g. `@something`/`@assert`
+    into conditional `return`/`throw`) are a known limitation rather than a
+    handled case: scope resolution on the transformed tree can be incorrect in
+    their vicinity — e.g. reachability and post-macro-only bindings — though it
+    still yields useful results for source-level LSP features in practice.
+
+!!! note "Future direction"
+    This transform is a workaround for old-style macros that lose provenance
+    during expansion. Macros with new-style JuliaLowering implementations (listed
+    in `NEW_STYLE_MACROCALL_NAMES`) already preserve provenance and are therefore
+    exempt from removal, and `@main` is handled separately by
+    `desugar_main_macrocall`. As more macros migrate to the new style, the scope
+    of this transformation is expected to shrink.
 """
-function remove_macrocalls(st0::JS.SyntaxTree)
+function remove_macrocalls(st0::SyntaxTree0)
     ensure_jl_source_attr!(JS.syntax_graph(st0))
     return first(_remove_macrocalls(st0))
 end
@@ -486,14 +673,24 @@ Return the largest tree that can introduce local bindings that are visible to th
 (if any such tree exists).
 """
 function greatest_local(st0::JS.SyntaxTree, offset::Int)
-    bas = byte_ancestors(st0, offset)
-    first_global = findfirst(st::JS.SyntaxTree -> JS.kind(st) in JS.KSet"toplevel module", bas)
-    isnothing(first_global) && return nothing
+    result = _find_greatest_local(st0, offset)
+    result !== nothing && return result
+    # When the cursor sits just past the last token of a line (e.g. `export
+    # foo│\n`), `offset` points at a byte owned only by `toplevel`, so the
+    # initial lookup yields nothing. Retry with `offset - 1` to select the
+    # node just to the left of the cursor, mirroring the offset-1 fallbacks
+    # in `_select_target_binding` / `select_macrocall_binding`.
+    return offset > 1 ? _find_greatest_local(st0, offset - 1) : nothing
+end
 
+function _find_greatest_local(st0::JS.SyntaxTree, offset::Int)
+    bas = byte_ancestors(st0, offset)
+    first_global = @something begin
+        findfirst(st::JS.SyntaxTree -> JS.kind(st) in JS.KSet"toplevel module", bas)
+    end return nothing
     if first_global == 1
         return nothing
     end
-
     idx = Ref(first_global - 1)
     while JS.kind(bas[idx[]]) === JS.K"block"
         if any(j::Int -> JS.kind(bas[idx[]][j]) === JS.K"local", 1:JS.numchildren(bas[idx[]]))
@@ -833,6 +1030,25 @@ function select_target_string(st0::JS.SyntaxTree, offset::Int)
         return first(bas)
     end
     return select_target_node(filter, selector, st0, offset)
+end
+
+"""
+    resolve_path_string_literal(string_node::JS.SyntaxTree, basedir::AbstractString)
+        -> Union{Nothing, @NamedTuple{value::String, path::String}}
+
+If `string_node` is a non-interpolated string literal whose value joins with
+`basedir` to form an existing path, return its raw `value` and the resolved
+`path`. Otherwise return `nothing`.
+"""
+function resolve_path_string_literal(
+        string_node::JS.SyntaxTree, basedir::AbstractString
+    )
+    JS.hasattr(string_node, :value) || return nothing
+    value = string_node.value
+    value isa AbstractString || return nothing
+    path = joinpath(basedir, value)
+    ispath(path) || return nothing
+    return (; value = String(value), path = String(path))
 end
 
 function select_target_node(filter, selector, st0::JS.SyntaxTree, offset::Int)

@@ -58,15 +58,6 @@
   ...
   ```
 
-- For AI agents: **ONLY INCLUDE COMMENTS WHERE TRULY NECESSARY**.
-  When the function name or implementation clearly indicates its purpose or
-  behavior, redundant comments are unnecessary.
-
-- On the other hand, for general utilities that expected to be used in multiple
-  places in the language server, it's fine to use docstrings to clarify their
-  behavior. However, even in these cases, if the function name and behavior are
-  self-explanatory, no special docstring is needed.
-
 - When modifying config structs in `src/types.jl`, follow the schema
   regeneration procedure in [DEVELOPMENT.md](./DEVELOPMENT.md#configuration-schema).
 
@@ -79,6 +70,32 @@
       @info ...
   end
   ```
+
+## Comments guideline
+Default to writing no comments. The general rule is
+**ONLY INCLUDE COMMENTS WHERE TRULY NECESSARY**: when the function name
+or implementation already makes the intent clear, comments are noise.
+
+When a comment is warranted:
+- Focus on what/why — the behavior contract, hidden constraints,
+  non-obvious invariants, or rationale.
+- Do not merely restate what the code does or walk the reader through
+  the implementation flow; a reader can derive that from the code itself.
+
+Exception: if the code is a genuine hack or encodes a surprising
+invariant, keep the detail and flag the hack explicitly — a future
+reader needs that context.
+
+For general utilities used across the language server, docstrings are
+fine when they clarify behavior. Even here, if the function name and
+behavior are self-explanatory, no docstring is needed.
+
+### Comments in test code
+The same principles apply to tests. In particular, don't explain the
+implementation flow of the code under test in order to justify the
+expected value — keep the comment at the behavior level
+(e.g. "cursor on X should resolve to Y"). If the test setup itself is
+a genuine hack, flag that explicitly.
 
 # Running test code
 Please make sure to test new code when you wrote.

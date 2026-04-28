@@ -47,6 +47,7 @@ function handle_DocumentSymbolRequest(
     end
     fi = result
     symbols = get_document_symbols!(state, uri, fi)
+    symbols = localize_document_symbols(state, uri, symbols)
     result = isempty(symbols) ? null : map(strip_name_from_detail, symbols)
     return send(server, DocumentSymbolResponse(; id = msg.id, result))
 end
@@ -65,23 +66,25 @@ function strip_name_from_detail(sym::DocumentSymbol)
 end
 
 function get_document_symbols!(state::ServerState, uri::URI, fi::FileInfo)
+    cache_uri = canonical_cache_uri(state, uri)
     return store!(state.document_symbol_cache) do cache::DocumentSymbolCacheData
-        if haskey(cache, uri)
-            symbols = cache[uri]
+        if haskey(cache, cache_uri)
+            symbols = cache[cache_uri]
             return cache, symbols
         end
         st0 = build_syntax_tree(fi)
         pos = Position(; line=0, character=0)
         (; mod) = get_context_info(state, uri, pos)
         symbols = extract_document_symbols(st0, fi, mod)
-        return DocumentSymbolCacheData(cache, uri => symbols), symbols
+        return DocumentSymbolCacheData(cache, cache_uri => symbols), symbols
     end
 end
 
 function invalidate_document_symbol_cache!(state::ServerState, uri::URI)
+    cache_uri = canonical_cache_uri(state, uri)
     store!(state.document_symbol_cache) do cache::DocumentSymbolCacheData
-        if haskey(cache, uri)
-            Base.delete(cache, uri), nothing
+        if haskey(cache, cache_uri)
+            Base.delete(cache, cache_uri), nothing
         else
             cache, nothing
         end
@@ -908,9 +911,6 @@ function extract_local_symbols_from_scopes(
         func_to_scopes, fi, Set{Tuple{Int,Int}}(), root_range, static_param_names)
     return extract_local_scope_bindings(lctx, root_scope_ids)
 end
-
-is_any_local_binding(binfo::JL.BindingInfo) =
-    binfo.kind === :local || binfo.kind === :argument || binfo.kind === :static_parameter
 
 function extract_local_scope_bindings(lctx::LocalScopeContext, scope_ids::Vector{Int})
     symbols = DocumentSymbol[]

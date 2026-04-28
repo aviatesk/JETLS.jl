@@ -948,6 +948,56 @@ end
     @test status["x"] === true
 end
 
+@testset "@label / @goto control flow" begin
+    # Forward goto skips over the unconditional assignment, leaving the label
+    # body's `return x` reachable on a path where `x` is undefined.
+    let status = get_undef_status("""
+        function f(cond)
+            local x
+            if cond
+                @goto skip
+            end
+            x = 1
+            @label skip
+            return x
+        end
+        """)
+        @test status["x"] === nothing
+    end
+
+    # Both branches of a forward `if/@goto … @label` join cleanly assigning `x`,
+    # so `x` is definitely defined at the label body's `return`.
+    let status = get_undef_status("""
+        function f(cond)
+            local x
+            if cond
+                x = 1
+                @goto done
+            end
+            x = 2
+            @label done
+            return x
+        end
+        """)
+        @test status["x"] === false
+    end
+
+    # Backward goto (loop pattern): label first, then goto. The label is
+    # reachable both via fallthrough and the back-edge from goto.
+    let status = get_undef_status("""
+        function f()
+            local x
+            x = 1
+            @label loop
+            x = x + 1
+            x < 10 && @goto loop
+            return x
+        end
+        """)
+        @test status["x"] === false
+    end
+end
+
 end # @testset "undef analysis" begin
 
 # --- Dead store (unused assignment) analysis ---
@@ -1232,6 +1282,59 @@ end
     end
     """)
     @test !haskey(ds, "result")
+end
+
+@testset "@label / @goto control flow" begin
+    # Regression test for the pattern in `full-analysis.jl:841`: a value
+    # assigned right before `@goto label` and read after `@label label` was
+    # incorrectly reported as a dead store, because `K"symbolicgoto"` /
+    # standalone `K"symboliclabel"` were not modeled in the CFG.
+    let ds = get_dead_stores("""
+        function f(cond)
+            local reports
+            if cond
+                reports = "from cond"
+                @goto done
+            end
+            reports = "default"
+            @label done
+            return reports
+        end
+        """)
+        @test !haskey(ds, "reports")
+    end
+
+    # Bare `@label` with no matching `@goto` should not introduce phantom edges
+    # that mask real dead stores.
+    let ds = get_dead_stores("""
+        function f()
+            x = 1
+            x = 2
+            @label here
+            return x
+        end
+        """)
+        @test ds["x"] == 1
+    end
+
+    # Conversely, when the `@label` sits before an unconditional reassignment,
+    # the value assigned right before `@goto` IS dead — the goto lands on the
+    # label and the next statement clobbers it. The fix shouldn't suppress
+    # this legitimate dead store.
+    let ds = get_dead_stores("""
+        function f(cond)
+            local reports
+            if cond
+                reports = "from cond"
+                @goto done
+            end
+            @label done
+            reports = "default"
+            return reports
+        end
+        """)
+        @test ds["reports"] == 1
+    end
 end
 
 end # @testset "dead store analysis" begin

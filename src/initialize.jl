@@ -51,17 +51,19 @@ function handle_InitializeRequest(
         # leave Refs undefined
     end
 
-    client_pid = something(init_params.processId, client_process_id, Some(nothing))
-    version = JETLS_VERSION
-    if version == "dev"
-        version *= " ($(pkgdir(JETLS)))"
+    if !JETLS_TEST_MODE
+        client_pid = something(init_params.processId, client_process_id, Some(nothing))
+        version = JETLS_VERSION
+        if version == "dev"
+            version *= " ($(pkgdir(JETLS)))"
+        end
+        workspace = isdefined(state, :root_path) ? state.root_path :
+            isempty(state.workspaceFolders) ? "(no workspace)" : "(multi-root)"
+        title = "jetls serve --$transport" *
+                (client_pid !== nothing ? " --clientProcessId=$client_pid" : "") *
+                " [version: $version, workspace: $workspace]"
+        @ccall uv_set_process_title(title::Cstring)::Cint
     end
-    workspace = isdefined(state, :root_path) ? state.root_path :
-        isempty(state.workspaceFolders) ? "(no workspace)" : "(multi-root)"
-    title = "jetls serve --$transport" *
-            (client_pid !== nothing ? " --clientProcessId=$client_pid" : "") *
-            " [version: $version, workspace: $workspace]"
-    @ccall uv_set_process_title(title::Cstring)::Cint
 
     # NOTE: Static server settings that require a server restart to take effect should be
     # accessed during server initialization via `state.init_params.initializationOptions`.
@@ -91,6 +93,15 @@ function handle_InitializeRequest(
         signatureHelpProvider = signature_help_options()
         if JETLS_DEV_MODE
             @info "Registering 'textDocument/signatureHelp' with `InitializeResponse`"
+        end
+    end
+
+    if supports(server, :textDocument, :declaration, :dynamicRegistration)
+        declarationProvider = nothing # will be registered dynamically
+    else
+        declarationProvider = declaration_options()
+        if JETLS_DEV_MODE
+            @info "Registering 'textDocument/declaration' with `InitializeResponse`"
         end
     end
 
@@ -154,6 +165,15 @@ function handle_InitializeRequest(
         codeLensProvider = code_lens_options()
         if JETLS_DEV_MODE
             @info "Registering 'textDocument/codeLens' with `InitializeResponse`"
+        end
+    end
+
+    if supports(server, :textDocument, :documentLink, :dynamicRegistration)
+        documentLinkProvider = nothing # will be registered dynamically
+    else
+        documentLinkProvider = document_link_options()
+        if JETLS_DEV_MODE
+            @info "Registering 'textDocument/documentLink' with `InitializeResponse`"
         end
     end
 
@@ -252,6 +272,7 @@ function handle_InitializeRequest(
                 save = true),
             completionProvider,
             signatureHelpProvider,
+            declarationProvider,
             definitionProvider,
             referencesProvider,
             documentHighlightProvider,
@@ -260,6 +281,7 @@ function handle_InitializeRequest(
             diagnosticProvider,
             codeActionProvider,
             codeLensProvider,
+            documentLinkProvider,
             documentFormattingProvider,
             documentRangeFormattingProvider,
             executeCommandProvider,
@@ -354,6 +376,13 @@ function handle_InitializedNotification(server::Server)
         # since `SignatureHelpRegistrationOptions` does not extend `StaticRegistrationOptions`.
     end
 
+    if supports(server, :textDocument, :declaration, :dynamicRegistration)
+        push!(registrations, declaration_registration())
+        if JETLS_DEV_MODE
+            @info "Dynamically registering 'textDocument/declaration' upon `InitializedNotification`"
+        end
+    end
+
     if supports(server, :textDocument, :definition, :dynamicRegistration)
         push!(registrations, definition_registration())
         if JETLS_DEV_MODE
@@ -422,6 +451,17 @@ function handle_InitializedNotification(server::Server)
         # NOTE If codeLens's `dynamicRegistration` is not supported,
         # it needs to be registered along with initialization in the `InitializeResponse`,
         # since `CodeLensRegistrationOptions` does not extend `StaticRegistrationOptions`.
+    end
+
+    if supports(server, :textDocument, :documentLink, :dynamicRegistration)
+        push!(registrations, document_link_registration())
+        if JETLS_DEV_MODE
+            @info "Dynamically registering 'textDocument/documentLink' upon `InitializedNotification`"
+        end
+    else
+        # NOTE If documentLink's `dynamicRegistration` is not supported,
+        # it needs to be registered along with initialization in the `InitializeResponse`,
+        # since `DocumentLinkRegistrationOptions` does not extend `StaticRegistrationOptions`.
     end
 
     if supports(server, :textDocument, :codeAction, :dynamicRegistration)

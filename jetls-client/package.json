@@ -43,10 +43,6 @@
       {
         "command": "jetls-client.restartLanguageServer",
         "title": "JETLS Client: Restart JETLS Language Server"
-      },
-      {
-        "command": "jetls.showReferences",
-        "title": "JETLS: Show References"
       }
     ],
     "configuration": {

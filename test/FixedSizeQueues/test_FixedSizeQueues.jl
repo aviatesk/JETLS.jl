@@ -1,7 +1,7 @@
-module test_FixedSizeFIFOQueue
+module test_FixedSizeQueues
 
 using Test
-using JETLS: FixedSizeFIFOQueue, capacity, isfull
+using JETLS.FixedSizeQueues
 
 struct TestType
     x::Int
@@ -12,12 +12,12 @@ mutable struct MutableTestType
     data::Vector{Int}
 end
 
-@testset "FixedSizeFIFOQueue basic operations" begin
-    let q = FixedSizeFIFOQueue{Int}(3)
+@testset "FixedSizeQueue basic operations" begin
+    let q = FixedSizeQueue{Int}(3)
         @test isempty(q)
         @test !isfull(q)
         @test length(q) == 0
-        @test capacity(q) == 3
+        @test q.capacity == 3
 
         push!(q, 1)
         @test !isempty(q)
@@ -32,7 +32,7 @@ end
         @test 1 in q && 2 in q && 3 in q
     end
 
-    let q = FixedSizeFIFOQueue{Int}(3)
+    let q = FixedSizeQueue{Int}(3)
         push!(q, 1)
         push!(q, 2)
         push!(q, 3)
@@ -48,8 +48,8 @@ end
     end
 end
 
-@testset "FixedSizeFIFOQueue type flexibility" begin
-    let q = FixedSizeFIFOQueue(2)
+@testset "FixedSizeQueue type flexibility" begin
+    let q = FixedSizeQueue(2)
         push!(q, "hello")
         push!(q, 42)
         @test "hello" in q
@@ -61,7 +61,7 @@ end
         @test :symbol in q
     end
 
-    let q = FixedSizeFIFOQueue{TestType}(2)
+    let q = FixedSizeQueue{TestType}(2)
         t1 = TestType(1)
         t2 = TestType(2)
         t3 = TestType(3)
@@ -78,8 +78,8 @@ end
     end
 end
 
-@testset "FixedSizeFIFOQueue edge cases" begin
-    let q = FixedSizeFIFOQueue{String}(1)
+@testset "FixedSizeQueue edge cases" begin
+    let q = FixedSizeQueue{String}(1)
         push!(q, "a")
         @test "a" in q
         push!(q, "b")
@@ -87,12 +87,12 @@ end
         @test "b" in q
     end
 
-    @test_throws ArgumentError FixedSizeFIFOQueue{Int}(0)
-    @test_throws ArgumentError FixedSizeFIFOQueue{Int}(-1)
+    @test_throws ArgumentError FixedSizeQueue{Int}(0)
+    @test_throws ArgumentError FixedSizeQueue{Int}(-1)
 end
 
-@testset "FixedSizeFIFOQueue collect and display" begin
-    let q = FixedSizeFIFOQueue{Int}(3)
+@testset "FixedSizeQueue collect and display" begin
+    let q = FixedSizeQueue{Int}(3)
         push!(q, 1)
         push!(q, 2)
         push!(q, 3)
@@ -105,14 +105,14 @@ end
         @test items == [2, 3, 4]
 
         str = string(q)
-        @test occursin("FixedSizeFIFOQueue{Int", str)
+        @test occursin("FixedSizeQueue{Int", str)
         @test occursin("capacity=3", str)
         @test occursin("[2, 3, 4]", str)
     end
 end
 
-@testset "FixedSizeFIFOQueue large capacity" begin
-    let q = FixedSizeFIFOQueue{Union{Int,String}}(1000)
+@testset "FixedSizeQueue large capacity" begin
+    let q = FixedSizeQueue{Union{Int,String}}(1000)
         for i in 1:500
             push!(q, i)
         end
@@ -141,8 +141,8 @@ end
     end
 end
 
-@testset "FixedSizeFIFOQueue garbage collection" begin
-    let q = FixedSizeFIFOQueue{MutableTestType}(2)
+@testset "FixedSizeQueue garbage collection" begin
+    let q = FixedSizeQueue{MutableTestType}(2)
         obj1 = MutableTestType(1, [1,2,3])
         obj2 = MutableTestType(2, [4,5,6])
         obj3 = MutableTestType(3, [7,8,9])
@@ -158,4 +158,4 @@ end
     end
 end
 
-end # module test_FixedSizeFIFOQueue
+end # module test_FixedSizeQueues

@@ -446,10 +446,10 @@ Configure code lens behavior.
 - **Type**: boolean
 - **Default**: `false`
 
-Show reference counts for top-level symbols (functions, structs, constants,
-abstract types, primitive types, modules). When enabled, JETLS displays a code
-lens above each symbol showing how many times it is referenced in the codebase.
-Clicking the code lens opens the references panel.
+Enable or disable the [reference-count code lens](@ref features/code-lens/references).
+When enabled, JETLS displays a code lens above each top-level symbol
+(functions, structs, constants, abstract/primitive types, modules) showing
+how many times it is referenced in the codebase.
 
 ```toml
 [code_lens]

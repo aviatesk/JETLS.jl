@@ -7,6 +7,15 @@ get_notebook_info(state::ServerState, uri::URI, default=nothing) =
 get_notebook_uri_for_cell(state::ServerState, cell_uri::URI, default=nothing) =
     get(load(state.cell_to_notebook), cell_uri, default)
 
+# Per-file caches (`document_symbol_cache`, `binding_occurrences_cache`,
+# `lowering_diagnostics_cache`) key on a single canonical URI per logical file.
+# For notebooks, every cell URI shares the same concat-source `FileInfo`, so the
+# canonical key is the notebook URI. Cache accessors and their invalidations
+# both run input through this helper so reads, writes, and invalidations always
+# meet on the same key.
+canonical_cache_uri(state::ServerState, uri::URI) =
+    get_notebook_uri_for_cell(state, uri, uri)
+
 function concatenate_cells(cells::Vector{NotebookCellInfo})
     source = ""
     cell_ranges = CellRange[]
@@ -28,8 +37,7 @@ function cache_notebook_file_info!(server::Server, notebook_uri::URI, notebook_i
     store!(state.file_cache) do cache
         Base.PersistentDict(cache, notebook_uri => fi), fi
     end
-    invalidate_document_symbol_cache!(state, notebook_uri)
-    invalidate_binding_occurrences_cache!(state, notebook_uri)
+    invalidate_per_file_caches!(state, notebook_uri)
     return fi
 end
 
@@ -343,6 +351,54 @@ function localize_notebook_diagnostics(
         push!(result, cell_diag)
     end
     return result
+end
+
+# Document symbol
+# ===============
+
+"""
+    localize_document_symbols(
+            state::ServerState, uri::URI, symbols::Vector{DocumentSymbol}
+        ) -> Vector{DocumentSymbol}
+
+When `uri` is a notebook cell, convert each symbol's ranges from notebook-global
+coordinates to cell-local coordinates and drop symbols whose `selectionRange`
+does not belong to that cell. Returns `symbols` unchanged when `uri` is not a
+notebook cell URI.
+"""
+function localize_document_symbols(
+        state::ServerState, uri::URI, symbols::Vector{DocumentSymbol}
+    )
+    notebook_uri = @something get_notebook_uri_for_cell(state, uri) return symbols
+    notebook_info = @something get_notebook_info(state, notebook_uri) return symbols
+    return _localize_document_symbols(notebook_info.concat, uri, symbols)
+end
+
+function _localize_document_symbols(
+        concat::ConcatenatedNotebook, cell_uri::URI, symbols::Vector{DocumentSymbol}
+    )
+    new_symbols = DocumentSymbol[]
+    for symbol in symbols
+        new_symbol = localize_document_symbol(concat, cell_uri, symbol)
+        isnothing(new_symbol) || push!(new_symbols, new_symbol)
+    end
+    return new_symbols
+end
+
+function localize_document_symbol(
+        concat::ConcatenatedNotebook, cell_uri::URI, symbol::DocumentSymbol
+    )
+    sel_cell_uri, new_selection_range =
+        @something global_to_cell_range(concat, symbol.selectionRange) return nothing
+    sel_cell_uri == cell_uri || return nothing
+    range_result = global_to_cell_range(concat, symbol.range)
+    new_range = isnothing(range_result) ? new_selection_range : range_result[2]
+    children = symbol.children
+    new_children = isnothing(children) ? nothing : _localize_document_symbols(concat, cell_uri, children)
+    return DocumentSymbol(symbol;
+        range = new_range,
+        selectionRange = new_selection_range,
+        children = @somereal new_children Some(nothing))
 end
 
 # Position

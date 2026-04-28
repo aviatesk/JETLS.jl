@@ -19,7 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`c954d83...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/c954d83...HEAD)
+- Diff: [`d1ebbb2...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/d1ebbb2...HEAD)
 
 ### Announcement
 
@@ -43,6 +43,72 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > ```
 > This disables analysis for matched files. Basic features like completion still might work, but most LSP features will be unfunctional.
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
+
+### Breaking
+
+- Clients that previously handled the JETLS-defined `jetls.showReferences` command should switch to handling `editor.action.showReferences` instead. The new arguments are `[uriString, position, locations]`, where `locations` is the pre-resolved LSP `Location[]`, so clients no longer need to issue a `textDocument/references` request themselves. See the [Neovim setup section](https://aviatesk.github.io/JETLS.jl/release/#Neovim) for an example handler.
+
+### Added
+
+- Added a [Features](https://aviatesk.github.io/JETLS.jl/dev/features/) overview page to the documentation, providing a visual showcase of every LSP feature JETLS provides.
+
+- Added `textDocument/declaration` ("go to declaration"). It jumps to the import site on an imported name (e.g. `using Base: sin`) and to the `local` line on a `local` declaration. When the symbol has no dedicated declaration site, the request falls back to the same logic as `textDocument/definition`.
+
+- Added `textDocument/documentLink` support for `include("path")` and `include_dependency("path")` calls. The path string becomes a clickable link that opens the referenced file. Only non-interpolated string arguments whose path resolves to an existing file (relative to the current file's directory) are surfaced.
+
+### Changed
+
+- The [reference-count code lens](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/code_lens-references) now emits `editor.action.showReferences` (a VSCode convention command) directly, instead of the JETLS-defined `jetls.showReferences`. Editors that follow the VSCode convention (e.g. Zed) now dispatch the lens out of the box; editors that do not (e.g. Neovim) need to register a client-side handler.
+
+- When a reference-count code lens is clicked on a file whose full analysis has not yet run, a warning notification (via `window/showMessage`) is now shown instead of an empty references peek.
+
+- The reference-count code lens is no longer shown on closures and inner functions defined inside another function body (e.g. `f = x -> ...`, nested `function`s). Inner constructors and methods inside `struct` bodies still get a lens.
+
+- Diagnostic messages are now sent as `MarkupContent` when the client advertises the [`textDocument.diagnostic.markupMessageSupport`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#diagnosticClientCapabilities) capability (LSP 3.18), so Markdown formatting such as inline code renders properly in supporting clients (e.g. recent Sublime LSP). (https://github.com/aviatesk/JETLS.jl/pull/633)
+
+### Fixed
+
+- Fixed `textDocument/references` so that `includeDeclaration=false` now correctly excludes method definitions and declarations of the target binding. As a side benefit, the [reference-count code lens](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/code_lens-references) now reports accurate counts.
+
+- Fixed the reference-count code lens, `textDocument/references`, `textDocument/documentHighlight`, and `textDocument/rename` silently dropping results after a full analysis completes.
+
+- Names listed in `export` and `public` statements are now treated as references to the surrounding module's global bindings, so `textDocument/documentHighlight`, `textDocument/references`, `textDocument/definition`, and `textDocument/rename` all work when the cursor is placed on an exported/public name.
+
+- Locally-introduced names from `import`/`using` statements are now treated as local declarations. This covers every binding form, including `using A` / `import A`, `using A, B`, dotted paths (`using A.B`), relative paths (`using .Inner`), and explicit names (`using A: x, y` / `using A: x as y`).
+
+- `textDocument/rename` on imported names now preserves the source-module name by introducing or updating an `as` alias. For example, renaming `sin` in `using Base: sin` produces `using Base: sin as newsin` plus `newsin` at use sites. Renaming an alias back to its source name drops the ` as …` suffix. In forms where Julia does not accept `as` (`using M`, `using M, N`, `using M.Sub`), rename falls back to a bare replacement.
+
+- Fixed `textDocument/references`, `textDocument/documentHighlight`, `textDocument/definition`, `textDocument/declaration`, and `textDocument/rename` silently returning no results inside top-level definitions that combine a compound-assignment operator with a macro call (e.g. `x += @elapsed foo()`).
+
+- By providing new-style macro definitions for JuliaLowering, LSP features (`textDocument/references`, `textDocument/rename`, `textDocument/documentHighlight`, `textDocument/definition`, `textDocument/declaration`) and diagnostics (`lowering/undef-global-var`, `lowering/unused-assignment`) now perform correct scope resolution on identifiers used inside `@__FUNCTION__`, `@ccall`, `@cfunction`, `@goto`, `@isdefined`, `@locals`, `@label`, and `Threads.@spawn` macrocalls, which previously could yield incorrect results in edge cases.
+
+- Fixed false-positive `lowering/unused-assignment` reports for the assign-then-`@goto`-to-`@label` pattern, where the goto edge from `@goto done` to `@label done` was not modeled in the CFG so assignments before the `@goto` were incorrectly treated as overwritten by assignments after the `@label`.
+  For example:
+  ```julia
+  function f(cond)
+      local reports
+      if cond
+          reports = compute_cached()
+          @goto done
+      end
+      reports = compute_default()
+      @label done
+      use(reports)
+  end
+  ```
+
+- Fixed `lowering/unused-import` going stale in `workspace/diagnostic` when an explicit import in one file is consumed (or stops being consumed) by a sibling file in the same analysis unit. Closed files now refresh the diagnostic when a sibling edit could affect it.
+
+- Fixed `textDocument/documentSymbol` and the reference-count code lens on the Jupyter notebook view in VSCode.
+
+## 2026-04-14
+
+- Commit: [`d1ebbb2`](https://github.com/aviatesk/JETLS.jl/commit/d1ebbb2)
+- Diff: [`c954d83...d1ebbb2`](https://github.com/aviatesk/JETLS.jl/compare/c954d83...d1ebbb2)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-04-14")'
+  ```
 
 ### Added
 
