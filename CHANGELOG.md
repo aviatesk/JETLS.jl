@@ -52,6 +52,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Added `textDocument/declaration` ("go to declaration"). It jumps to the import site on an imported name (e.g. `using Base: sin`) and to the `local` line on a `local` declaration. When the symbol has no dedicated declaration site, the request falls back to the same logic as `textDocument/definition`.
 
+- Added `textDocument/documentLink` support for `include("path")` and `include_dependency("path")` calls. The path string becomes a clickable link that opens the referenced file. Only non-interpolated string arguments whose path resolves to an existing file (relative to the current file's directory) are surfaced.
+
 ### Changed
 
 - The [reference-count code lens](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/code_lens-references) now emits `editor.action.showReferences` (a VSCode convention command) directly, instead of the JETLS-defined `jetls.showReferences`. Editors that follow the VSCode convention (e.g. Zed) now dispatch the lens out of the box; editors that do not (e.g. Neovim) need to register a client-side handler.

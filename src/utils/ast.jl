@@ -1032,6 +1032,25 @@ function select_target_string(st0::JS.SyntaxTree, offset::Int)
     return select_target_node(filter, selector, st0, offset)
 end
 
+"""
+    resolve_path_string_literal(string_node::JS.SyntaxTree, basedir::AbstractString)
+        -> Union{Nothing, @NamedTuple{value::String, path::String}}
+
+If `string_node` is a non-interpolated string literal whose value joins with
+`basedir` to form an existing path, return its raw `value` and the resolved
+`path`. Otherwise return `nothing`.
+"""
+function resolve_path_string_literal(
+        string_node::JS.SyntaxTree, basedir::AbstractString
+    )
+    JS.hasattr(string_node, :value) || return nothing
+    value = string_node.value
+    value isa AbstractString || return nothing
+    path = joinpath(basedir, value)
+    ispath(path) || return nothing
+    return (; value = String(value), path = String(path))
+end
+
 function select_target_node(filter, selector, st0::JS.SyntaxTree, offset::Int)
     bas = @somereal byte_ancestors(st0, offset) @goto minus1
     if !filter(bas)

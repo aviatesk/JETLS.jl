@@ -100,10 +100,10 @@
     """
     codeLensProvider::Union{Nothing, CodeLensOptions} = nothing
 
-    # """
-    # The server provides document link support.
-    # """
-    # documentLinkProvider::Union{Nothing, DocumentLinkOptions} = nothing
+    """
+    The server provides document link support.
+    """
+    documentLinkProvider::Union{Nothing, DocumentLinkOptions} = nothing
 
     # """
     # The server provides color provider support.
@@ -391,10 +391,10 @@ end
     """
     codeLens::Union{CodeLensClientCapabilities, Nothing} = nothing
 
-    # """
-    # Capabilities specific to the `textDocument/documentLink` request.
-    # """
-    # documentLink::Union{DocumentLinkClientCapabilities, Nothing} = nothing
+    """
+    Capabilities specific to the `textDocument/documentLink` request.
+    """
+    documentLink::Union{DocumentLinkClientCapabilities, Nothing} = nothing
 
     # """
     # Capabilities specific to the `textDocument/documentColor` and the

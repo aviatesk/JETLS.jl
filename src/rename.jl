@@ -119,11 +119,11 @@ function file_rename_preparation(
         select_target_string(st0_top, offset)
     end return nothing
 
-    JS.hasattr(string_node, :value) || return nothing
-    str = string_node.value
-    ispath(joinpath(dirname(uri2filename(uri)), str)) || return nothing
+    resolved = @something(
+        resolve_path_string_literal(string_node, dirname(uri2filename(uri))),
+        return nothing)
     range, _ = unadjust_range(state, uri, jsobj_to_range(string_node, fi))
-    return (; range, placeholder = str)
+    return (; range, placeholder = resolved.value)
 end
 
 function handle_RenameRequest(
@@ -478,14 +478,13 @@ function file_rename(
         select_target_string(st0_top, offset)
     end return nothing
 
-    JS.hasattr(string_node, :value) || return nothing
-    oldName = string_node.value
     basedir = dirname(uri2filename(uri))
-    oldPath = joinpath(basedir, oldName)
-    ispath(oldPath) || return nothing
+    resolved = @something(
+        resolve_path_string_literal(string_node, basedir),
+        return nothing)
     newPath = joinpath(basedir, newName)
 
-    oldUri = filename2uri(oldPath)
+    oldUri = filename2uri(resolved.path)
     newUri = filename2uri(newPath)
     renameFile = RenameFile(; oldUri, newUri)
 

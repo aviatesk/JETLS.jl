@@ -168,6 +168,15 @@ function handle_InitializeRequest(
         end
     end
 
+    if supports(server, :textDocument, :documentLink, :dynamicRegistration)
+        documentLinkProvider = nothing # will be registered dynamically
+    else
+        documentLinkProvider = document_link_options()
+        if JETLS_DEV_MODE
+            @info "Registering 'textDocument/documentLink' with `InitializeResponse`"
+        end
+    end
+
     if supports(server, :textDocument, :codeAction, :dynamicRegistration)
         codeActionProvider = nothing # will be registered dynamically
     else
@@ -272,6 +281,7 @@ function handle_InitializeRequest(
             diagnosticProvider,
             codeActionProvider,
             codeLensProvider,
+            documentLinkProvider,
             documentFormattingProvider,
             documentRangeFormattingProvider,
             executeCommandProvider,
@@ -441,6 +451,17 @@ function handle_InitializedNotification(server::Server)
         # NOTE If codeLens's `dynamicRegistration` is not supported,
         # it needs to be registered along with initialization in the `InitializeResponse`,
         # since `CodeLensRegistrationOptions` does not extend `StaticRegistrationOptions`.
+    end
+
+    if supports(server, :textDocument, :documentLink, :dynamicRegistration)
+        push!(registrations, document_link_registration())
+        if JETLS_DEV_MODE
+            @info "Dynamically registering 'textDocument/documentLink' upon `InitializedNotification`"
+        end
+    else
+        # NOTE If documentLink's `dynamicRegistration` is not supported,
+        # it needs to be registered along with initialization in the `InitializeResponse`,
+        # since `DocumentLinkRegistrationOptions` does not extend `StaticRegistrationOptions`.
     end
 
     if supports(server, :textDocument, :codeAction, :dynamicRegistration)
