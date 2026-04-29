@@ -18,6 +18,9 @@ function mapchildren(f, ctx, ex::JS.SyntaxTree, indices::UnitRange{<:Integer})
     end
 end
 
+@noinline throw_macro_error(node::JS.SyntaxTree, msg::AbstractString) =
+    throw(JL.MacroExpansionError(node, msg))
+
 function Base.var"@specialize"(__context__::JL.MacroContext)
     JL.@ast(__context__,
             __context__.macrocall::JS.SyntaxTree,
@@ -92,18 +95,17 @@ function _validate_spawn_threadpool(threadpool::JS.SyntaxTree)
             name = inner.name_val
             if name isa AbstractString
                 name in _SPAWN_THREADPOOLS && return
-                throw(JL.MacroExpansionError(threadpool,
-                    "unsupported threadpool in @spawn: $name"))
+                throw_macro_error(threadpool, "unsupported threadpool in @spawn: $name")
             end
         end
     end
-    throw(JL.MacroExpansionError(threadpool,
-        "threadpool argument in @spawn must be `:default`, `:interactive`, `:samepool`, or a bare variable"))
+    throw_macro_error(threadpool,
+        "threadpool argument in @spawn must be `:default`, `:interactive`, `:samepool`, or a bare variable")
 end
 
 function Base.Threads.var"@spawn"(__context__::JL.MacroContext, ::JS.SyntaxTree...)
-    throw(JL.MacroExpansionError(__context__.macrocall::JS.SyntaxTree,
-                                 "wrong number of arguments in @spawn"))
+    throw_macro_error(__context__.macrocall::JS.SyntaxTree,
+                 "wrong number of arguments in @spawn")
 end
 
 # New-style implementation of `Base.@label`. Mirrors `Base.@goto` in
@@ -115,13 +117,13 @@ end
 # common case and the only one needed for most LSP analyses.
 function Base.var"@label"(__context__::JL.MacroContext, ex::JS.SyntaxTree)
     JS.kind(ex) === JS.K"Identifier" ||
-        throw(JL.MacroExpansionError(ex, "@label requires an identifier"))
+        throw_macro_error(ex, "@label requires an identifier")
     return JL.@ast(__context__, ex, [JS.K"symboliclabel" ex])
 end
 
 function Base.var"@label"(__context__::JL.MacroContext, ::JS.SyntaxTree...)
-    throw(JL.MacroExpansionError(__context__.macrocall::JS.SyntaxTree,
-        "@label currently only supports the `@label name` form"))
+    throw_macro_error(__context__.macrocall::JS.SyntaxTree,
+        "@label currently only supports the `@label name` form")
 end
 
 # New-style `@kwdef` macro that preserves provenance information.
@@ -129,7 +131,7 @@ end
 # matching the semantics of Base.@kwdef.
 function Base.var"@kwdef"(__context__::JL.MacroContext, ex::JS.SyntaxTree)
     JS.kind(ex) === JS.K"struct" ||
-        throw(JL.MacroExpansionError(ex, "Invalid usage of @kwdef"))
+        throw_macro_error(ex, "Invalid usage of @kwdef")
 
     # EST struct children: [Value(is_mutable), type_sig, body]
     type_sig = ex[2]
@@ -260,6 +262,6 @@ function _kwdef_make_constructors(
 
         return JS.SyntaxTree[def1, def2]
     else
-        throw(JL.MacroExpansionError(type_sig, "Invalid type signature for @kwdef"))
+        throw_macro_error(type_sig, "Invalid type signature for @kwdef")
     end
 end
