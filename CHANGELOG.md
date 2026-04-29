@@ -44,6 +44,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > This disables analysis for matched files. Basic features like completion still might work, but most LSP features will be unfunctional.
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
 
+### Changed
+
+- The reference count code lens is no longer shown for inner constructors of a `struct`.
+
 ## 2026-04-28
 
 - Commit: [`e784de8`](https://github.com/aviatesk/JETLS.jl/commit/e784de8)
@@ -71,7 +75,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - When a reference-count code lens is clicked on a file whose full analysis has not yet run, a warning notification (via `window/showMessage`) is now shown instead of an empty references peek.
 
-- The reference-count code lens is no longer shown on closures and inner functions defined inside another function body (e.g. `f = x -> ...`, nested `function`s). Inner constructors and methods inside `struct` bodies still get a lens.
+- The reference-count code lens is no longer shown on closures and inner functions defined inside another function body (e.g. `f = x -> ...`, nested `function`s).
 
 - Diagnostic messages are now sent as `MarkupContent` when the client advertises the [`textDocument.diagnostic.markupMessageSupport`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#diagnosticClientCapabilities) capability (LSP 3.18), so Markdown formatting such as inline code renders properly in supporting clients (e.g. recent Sublime LSP). (https://github.com/aviatesk/JETLS.jl/pull/633)
 
