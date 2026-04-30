@@ -299,4 +299,248 @@ end
         """) isa NamedTuple
 end
 
+module test_lowering_module; using Test; end
+test_macro_expand(code::AbstractString) = jlexpand(test_lowering_module, code)
+test_macro_lower(code::AbstractString) = jlresolve(test_lowering_module, code)
+
+@testset "Test.@test" begin
+    @testset "macro expansion" begin
+        # Bare expression: returned unchanged.
+        let st1 = test_macro_expand("@test x == 1")
+            @test JS.kind(st1) === JS.K"call"
+            @test strip(JS.sourcetext(st1)) == "x == 1"
+        end
+
+        # Special keyword arguments are accepted but discarded.
+        for kw in ("broken=true", "skip=cond", "context=ctx")
+            let st1 = test_macro_expand("@test x $kw")
+                @test JS.kind(st1) === JS.K"Identifier"
+                @test strip(JS.sourcetext(st1)) == "x"
+            end
+        end
+
+        # Other keyword arguments (e.g. `atol`) are forwarded by the real
+        # macro to the test expression; the new-style stub accepts them
+        # silently.
+        let st1 = test_macro_expand("@test foo(x) atol=0.1")
+            @test JS.kind(st1) === JS.K"call"
+        end
+    end
+
+    @testset "validation" begin
+        # `broken`/`skip`/`context` may each appear at most once.
+        for kw in ("broken", "skip", "context")
+            let err = try
+                    test_macro_expand("@test x $(kw)=true $(kw)=false")
+                    nothing
+                catch err
+                    err
+                end
+                @test err isa JL.MacroExpansionError
+                @test occursin("cannot set `$kw` keyword multiple times", err.msg)
+            end
+        end
+
+        # `skip` and `broken` are mutually exclusive.
+        let err = try
+                test_macro_expand("@test x skip=true broken=true")
+                nothing
+            catch err
+                err
+            end
+            @test err isa JL.MacroExpansionError
+            @test occursin("cannot set both `skip` and `broken`", err.msg)
+        end
+
+        # Non-`key=value` positional arguments are rejected.
+        let err = try
+                test_macro_expand("@test x foo")
+                nothing
+            catch err
+                err
+            end
+            @test err isa JL.MacroExpansionError
+            @test occursin("expected `keyword=value`", err.msg)
+        end
+    end
+
+    @testset "binding resolution preserves provenance" begin
+        # Identifiers inside `@test` keep accurate byte ranges so downstream
+        # LSP analyses can recognize them as user-written via `is_from_user_ast`.
+        let res = test_macro_lower("testfunc() = @test sin(xxx) == 1.0")
+            binding_occurrences = JETLS.compute_binding_occurrences(
+                res.ctx3, res.st3, false; include_global_bindings=true)
+            xxx_binfo = nothing
+            for (binfo, _) in binding_occurrences
+                if binfo.kind === :global && binfo.name == "xxx"
+                    xxx_binfo = binfo
+                    break
+                end
+            end
+            @test xxx_binfo !== nothing
+            provs = JS.flattened_provenance(JL.binding_ex(res.ctx3, xxx_binfo.id))
+            @test JS.sourcetext(last(provs)) == "xxx"
+        end
+    end
+end
+
+@testset "Test.@testset" begin
+    @testset "macro expansion" begin
+        # Body is wrapped in a `let` block so that bindings introduced inside
+        # the testset don't leak into the enclosing scope.
+        let st1 = test_macro_expand("""
+                @testset "x" begin
+                    a = 1
+                    @test a == 1
+                end
+                """)
+            @test JS.kind(st1) === JS.K"let"
+            @test JS.numchildren(st1) == 2
+            @test JS.kind(st1[1]) === JS.K"block" # bindings (empty)
+            @test JS.kind(st1[2]) === JS.K"block" # body
+        end
+
+        # No description form.
+        let st1 = test_macro_expand("@testset begin a = 1 end")
+            @test JS.kind(st1) === JS.K"let"
+        end
+
+        # Description and options are dropped, only the trailing body matters.
+        let st1 = test_macro_expand("""
+                @testset MyType "x" verbose=true begin
+                    @test true
+                end
+                """)
+            @test JS.kind(st1) === JS.K"let"
+        end
+
+        # `for` loop form: the for sits inside the let body block.
+        let st1 = test_macro_expand("""
+                @testset "x" for i = 1:10
+                    @test i > 0
+                end
+                """)
+            @test JS.kind(st1) === JS.K"let"
+        end
+    end
+
+    @testset "validation" begin
+        # No-argument form rejected.
+        let err = try
+                test_macro_expand("@testset")
+                nothing
+            catch err
+                err
+            end
+            @test err isa JL.MacroExpansionError
+            @test occursin("No arguments to @testset", err.msg)
+        end
+
+        # Body argument must be a `for`/`begin`/`call`/`let`.
+        for body in ("42", "\"x\"", "x = 1")
+            let err = try
+                    test_macro_expand("@testset \"name\" $body")
+                    nothing
+                catch err
+                    err
+                end
+                @test err isa JL.MacroExpansionError
+                @test occursin("body argument must be", err.msg)
+            end
+        end
+
+        # Multiple descriptions / testset types are rejected.
+        let err = try
+                test_macro_expand("@testset \"a\" \"b\" begin end")
+                nothing
+            catch err
+                err
+            end
+            @test err isa JL.MacroExpansionError
+            @test occursin("multiple descriptions", err.msg)
+        end
+        let err = try
+                test_macro_expand("@testset Foo Bar begin end")
+                nothing
+            catch err
+                err
+            end
+            @test err isa JL.MacroExpansionError
+            @test occursin("multiple testset types", err.msg)
+        end
+
+        # Duplicate options are rejected.
+        let err = try
+                test_macro_expand("@testset verbose=true verbose=false begin end")
+                nothing
+            catch err
+                err
+            end
+            @test err isa JL.MacroExpansionError
+            @test occursin("option `verbose` already provided", err.msg)
+        end
+
+        # Unexpected leading arguments (e.g. integer literals) are rejected.
+        let err = try
+                test_macro_expand("@testset 42 begin end")
+                nothing
+            catch err
+                err
+            end
+            @test err isa JL.MacroExpansionError
+            @test occursin("unexpected argument", err.msg)
+        end
+
+        # Qualified testset types (e.g. `Test.DefaultTestSet`) are accepted.
+        @test test_macro_expand("@testset Test.DefaultTestSet \"x\" begin end") isa JS.SyntaxTree
+
+        # Interpolated descriptions are accepted.
+        @test test_macro_expand("@testset \"name-\$i\" begin end") isa JS.SyntaxTree
+    end
+
+    @testset "scope isolation + provenance" begin
+        # A binding introduced in one `@testset` body must not be visible from
+        # a sibling `@testset`, mirroring the `try`/`catch` scope of the real
+        # macro. User-written identifiers must also keep accurate byte ranges
+        # so that downstream LSP analyses accept them as user-written via
+        # `is_from_user_ast`.
+        let res = test_macro_lower("""
+                function f()
+                    # A local `leaked` exists for the first testset, and the second
+                    # testset's reference resolves to a separate global binding.
+                    @testset "a" begin
+                        leaked = 1
+                        @test leaked == 1
+                    end
+                    @testset "b" begin
+                        @test leaked == 1
+                    end
+                end
+                """)
+            binding_occurrences = JETLS.compute_binding_occurrences(
+                res.ctx3, res.st3, false; include_global_bindings=true)
+
+            local_leaked = filter(collect(binding_occurrences)) do (binfo, _)
+                binfo.kind === :local && binfo.name == "leaked"
+            end
+            global_leaked = filter(collect(binding_occurrences)) do (binfo, _)
+                binfo.kind === :global && binfo.name == "leaked"
+            end
+
+            @test !isempty(local_leaked)
+            @test !isempty(global_leaked)
+
+            (local_binfo, _) = first(local_leaked)
+            local_provs = JS.flattened_provenance(JL.binding_ex(res.ctx3, local_binfo.id))
+            @test JS.sourcetext(last(local_provs)) == "leaked"
+            @test JS.source_location(last(local_provs))[1] == 3
+
+            (global_binfo, _) = first(global_leaked)
+            global_provs = JS.flattened_provenance(JL.binding_ex(res.ctx3, global_binfo.id))
+            @test JS.sourcetext(last(global_provs)) == "leaked"
+            @test JS.source_location(last(global_provs))[1] == 7
+        end
+    end
+end
+
 end # module test_jl_syntax_macros

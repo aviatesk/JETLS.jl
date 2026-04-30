@@ -143,6 +143,8 @@ const NEW_STYLE_MACROCALL_NAMES = (
     "@label",
     "@spawn",
     "@specialize",
+    "@test",
+    "@testset",
 )
 
 is_new_style_macrocall0(st0::SyntaxTree0) =

@@ -265,3 +265,99 @@ function _kwdef_make_constructors(
         throw_macro_error(type_sig, "Invalid type signature for @kwdef")
     end
 end
+
+# Stubs for `Test.@test` / `Test.@testset` that drop the test-recording
+# machinery and just route the user-written body through scope resolution.
+
+# Other kws (e.g. `atol=0.1`) are passed through unchecked since the real
+# `Test.@test` forwards them to the test expression. We expand to `ex` alone
+# because a `K"="` kw node in expression position would fail later lowering.
+function Test.var"@test"(__context__::JL.MacroContext, ex::JS.SyntaxTree, kws::JS.SyntaxTree...)
+    mc = __context__.macrocall::JS.SyntaxTree
+    seen_broken = seen_skip = seen_context = nothing
+    for kw in kws
+        name = _validate_test_kw(kw)
+        if name == "broken"
+            seen_broken === nothing || throw_macro_error(kw,
+                "invalid test macro call: cannot set `broken` keyword multiple times")
+            seen_broken = kw
+        elseif name == "skip"
+            seen_skip === nothing || throw_macro_error(kw,
+                "invalid test macro call: cannot set `skip` keyword multiple times")
+            seen_skip = kw
+        elseif name == "context"
+            seen_context === nothing || throw_macro_error(kw,
+                "invalid test macro call: cannot set `context` keyword multiple times")
+            seen_context = kw
+        end
+    end
+    if seen_skip !== nothing && seen_broken !== nothing
+        throw_macro_error(mc,
+            "invalid test macro call: cannot set both `skip` and `broken` keywords")
+    end
+    return JL.@ast(__context__, mc, ex)
+end
+
+function _validate_test_kw(kw::JS.SyntaxTree)
+    JS.kind(kw) === JS.K"=" ||
+        throw_macro_error(kw, "invalid test macro call: expected `keyword=value`")
+    JS.numchildren(kw) == 2 ||
+        throw_macro_error(kw, "invalid test macro call: malformed keyword argument")
+    name = kw[1]
+    (JS.kind(name) === JS.K"Identifier" && hasproperty(name, :name_val)) ||
+        throw_macro_error(name, "invalid test macro call: keyword name must be an identifier")
+    return name.name_val::String
+end
+
+# Argument validation mirrors `parse_testset_args` in
+# `stdlib/Test/src/Test.jl`. The body is wrapped in a `let` block to
+# reproduce the local scope the real macro creates via `try`/`catch` —
+# without it, bindings would leak into the enclosing scope and sibling
+# testsets would share names.
+function Test.var"@testset"(__context__::JL.MacroContext, args::JS.SyntaxTree...)
+    mc = __context__.macrocall::JS.SyntaxTree
+    isempty(args) && throw_macro_error(mc, "No arguments to @testset")
+
+    body = last(args)
+    if JS.kind(body) ∉ JS.KSet"for block call let"
+        throw_macro_error(body,
+            "@testset: body argument must be a `for`, `begin`/`end`, function call, or `let` expression")
+    end
+
+    desc = testsettype = nothing
+    seen_options = Set{String}()
+    for i in 1:length(args)-1
+        arg = args[i]
+        k = JS.kind(arg)
+        if k === JS.K"Identifier" || k === JS.K"."
+            testsettype === nothing ||
+                throw_macro_error(arg, "@testset: multiple testset types provided")
+            testsettype = arg
+        elseif k === JS.K"String" || k === JS.K"string"
+            desc === nothing ||
+                throw_macro_error(arg, "@testset: multiple descriptions provided")
+            desc = arg
+        elseif k === JS.K"="
+            name = _validate_testset_option(arg)
+            name in seen_options &&
+                throw_macro_error(arg, "@testset: option `$name` already provided")
+            push!(seen_options, name)
+        else
+            throw_macro_error(arg, "@testset: unexpected argument")
+        end
+    end
+
+    return JL.@ast(__context__, mc,
+        [JS.K"let"
+            [JS.K"block"]            # empty bindings list
+            [JS.K"block" body]])
+end
+
+function _validate_testset_option(arg::JS.SyntaxTree)
+    JS.numchildren(arg) == 2 ||
+        throw_macro_error(arg, "@testset: malformed option")
+    name = arg[1]
+    (JS.kind(name) === JS.K"Identifier" && hasproperty(name, :name_val)) ||
+        throw_macro_error(name, "@testset: option name must be an identifier")
+    return name.name_val::String
+end

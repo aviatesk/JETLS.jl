@@ -41,6 +41,7 @@ using JuliaLowering: JuliaLowering as JL
 using REPL: REPL # loading REPL is necessary to make `Base.Docs.doc(::Base.Docs.Binding)` work
 using Markdown: Markdown
 using TOML: TOML
+using Test: Test # used to define new-style implementations of `@test`/`@testset`
 
 using Configurations: @option, Configurations, Maybe
 using Glob: Glob
