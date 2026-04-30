@@ -23,6 +23,7 @@ REPL = "3fa0cd96-eef1-5676-8a61-b3b8758bbffb"
 Revise = "295af30f-e4ad-537b-8983-00126c2a3abe"
 Sockets = "6462fe0b-24de-5631-8697-dd941f90decc"
 TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [sources]
 Compiler = {rev = "avi/JETLS-Compiler-head", subdir = "Compiler", url = "https://github.com/JuliaLang/julia"}
@@ -48,6 +49,7 @@ REPL = "1.11.0"
 Revise = "3.13"
 Sockets = "1.11.0"
 TOML = "1.0.3"
+Test = "1.11.0"
 julia = "1.12.2"
 
 [apps.jetls]

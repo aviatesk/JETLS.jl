@@ -10,6 +10,15 @@ severity = "off"
 path = "LSP/src/LSP.jl"
 
 # TODO [JETLS]
+# `JETLSTestModule` is a pseudo lowering context only used as `analysis_overrides.module_name` for our test files; it is never reachable from JETLS itself, so diagnositcs against it are noise.
+[[diagnostic.patterns]]
+pattern = ".*"
+match_by = "message"
+match_type = "regex"
+severity = "off"
+path = "src/utils/JETLSTestModule.jl"
+
+# TODO [JETLS]
 # `@interface` type instability for anonymous interface definitions
 [[diagnostic.patterns]]
 pattern = "no matching method found `.*var\"AnonymousInterface.*`"
@@ -50,5 +59,7 @@ path = "LSP/**/*.jl"
 # Just disable analysis for test files for now
 [[initialization_options.analysis_overrides]]
 path = "test/**/*.jl"
+module_name = "JETLSTestModule"
 [[initialization_options.analysis_overrides]]
 path = "LSP/test/**/*.jl"
+module_name = "JETLSTestModule"

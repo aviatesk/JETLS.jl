@@ -43,6 +43,12 @@ function find_analysis_env_path(state::ServerState, uri::URI)
                             return OutOfScope()
                         end
                         return UserModule(env_path, pkg_name, pkg_uuid)
+                    elseif module_name == "JETLSTestModule"
+                        # Skip full analysis but provide a context module that has `Test`
+                        # available, so that lowering analysis can handle macros like
+                        # `@testset`/`@test` defined in test files.
+                        JETLS_DEV_MODE && @info "Using `JETLSTestModule` as out-of-scope lowering context" path=filepath
+                        return OutOfScope(JETLSTestModule)
                     else
                         mod = @something find_loaded_module(module_name) begin
                             @warn "Analysis module override specified but module not found" module_name path=filepath
