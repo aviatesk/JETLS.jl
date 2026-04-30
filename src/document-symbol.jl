@@ -151,7 +151,10 @@ function extract_module_symbol!(
     name = @something extract_name_val(name_node) return nothing
     mod = parent_mod
     if invokelatest(isdefinedglobal, parent_mod, Symbol(name))
-        mod = invokelatest(getglobal, parent_mod, Symbol(name))::Module
+        childmod = invokelatest(getglobal, parent_mod, Symbol(name))
+        if childmod isa Module
+            mod = childmod
+        end
     end
     children = DocumentSymbol[]
     body = st0[end]
