@@ -533,12 +533,12 @@ end
             (local_binfo, _) = first(local_leaked)
             local_provs = JS.flattened_provenance(JL.binding_ex(res.ctx3, local_binfo.id))
             @test JS.sourcetext(last(local_provs)) == "leaked"
-            @test JS.source_location(last(local_provs))[1] == 3
+            @test JS.source_location(last(local_provs))[1] == 5
 
             (global_binfo, _) = first(global_leaked)
             global_provs = JS.flattened_provenance(JL.binding_ex(res.ctx3, global_binfo.id))
             @test JS.sourcetext(last(global_provs)) == "leaked"
-            @test JS.source_location(last(global_provs))[1] == 7
+            @test JS.source_location(last(global_provs))[1] == 9
         end
     end
 end
