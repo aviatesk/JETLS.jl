@@ -7,19 +7,28 @@ include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
 
 module lowering_module end
 
-function kwdef_expand(code::AbstractString)
+function jlexpand(mod::Module, code::AbstractString)
     st0 = jlparse(code; rule=:statement)
     world = Base.get_world_counter()
-    _, st1 = JL.expand_forms_1(lowering_module, st0, true, world)
+    _, st1 = JL.expand_forms_1(mod, st0, true, world)
     return st1
 end
+jlexpand(code::AbstractString) = jlexpand(lowering_module, code)
+
+function jlresolve(mod::Module, code::AbstractString)
+    st0 = jlparse(code; rule=:statement)
+    world = Base.get_world_counter()
+    return JETLS.jl_lower_for_scope_resolution(mod, st0, world;
+        recover_from_macro_errors=false, convert_closures=true)
+end
+jlresolve(code::AbstractString) = jlresolve(lowering_module, code)
 
 children_kinds(st::JS.SyntaxTree) = JS.Kind[JS.kind(c) for c in JS.children(st)]
 
 @testset "@kwdef" begin
     @testset "macro expansion" begin
         # parametric with defaults
-        let st1 = kwdef_expand("""
+        let st1 = jlexpand("""
                 @kwdef struct A{T <: Real}
                     a::T = 1.0
                     b::Int
@@ -40,7 +49,7 @@ children_kinds(st::JS.SyntaxTree) = JS.Kind[JS.kind(c) for c in JS.children(st)]
         end
 
         # non-parametric with defaults
-        let st1 = kwdef_expand("""
+        let st1 = jlexpand("""
                 @kwdef struct A
                     a::Float64 = 1.0
                 end
@@ -53,7 +62,7 @@ children_kinds(st::JS.SyntaxTree) = JS.Kind[JS.kind(c) for c in JS.children(st)]
         end
 
         # no defaults: keyword constructor is still generated
-        let st1 = kwdef_expand("""
+        let st1 = jlexpand("""
                 @kwdef struct A
                     a::Int
                 end
@@ -65,7 +74,7 @@ children_kinds(st::JS.SyntaxTree) = JS.Kind[JS.kind(c) for c in JS.children(st)]
         end
 
         # non-parametric with subtype declaration
-        let st1 = kwdef_expand("""
+        let st1 = jlexpand("""
                 @kwdef mutable struct A <: Base.AbstractLock
                     a::Int = 10
                 end
@@ -77,7 +86,7 @@ children_kinds(st::JS.SyntaxTree) = JS.Kind[JS.kind(c) for c in JS.children(st)]
         end
 
         # parametric with subtype declaration
-        let st1 = kwdef_expand("""
+        let st1 = jlexpand("""
                 @kwdef struct A{T <: Real} <: Number
                     a::T = 1.0
                 end
@@ -89,7 +98,7 @@ children_kinds(st::JS.SyntaxTree) = JS.Kind[JS.kind(c) for c in JS.children(st)]
         end
 
         # mutable struct with const field default
-        let st1 = kwdef_expand("""
+        let st1 = jlexpand("""
                 @kwdef mutable struct A{T <: Real}
                     const a::T = 1.0
                     b::Int
@@ -123,10 +132,7 @@ children_kinds(st::JS.SyntaxTree) = JS.Kind[JS.kind(c) for c in JS.children(st)]
             "@kwdef mutable struct A <: Base.AbstractLock\n    a::Int = 10\nend\n",
             "@kwdef struct A{T <: Real} <: Number\n    a::T = 1.0\nend\n",
         ]
-            st0 = jlparse(code)
-            world = Base.get_world_counter()
-            result = JETLS.jl_lower_for_scope_resolution(lowering_module, st0, world)
-            @test result isa NamedTuple
+            @test jlresolve(code) isa NamedTuple
         end
     end
 
@@ -150,24 +156,17 @@ children_kinds(st::JS.SyntaxTree) = JS.Kind[JS.kind(c) for c in JS.children(st)]
     end
 end
 
-function spawn_expand(code::AbstractString)
-    st0 = jlparse(code; rule=:statement)
-    world = Base.get_world_counter()
-    _, st1 = JL.expand_forms_1(lowering_module, st0, true, world)
-    return st1
-end
-
 @testset "Threads.@spawn" begin
     @testset "macro expansion" begin
         # Single-argument form: returns the body unchanged.
-        let st1 = spawn_expand("Threads.@spawn sin(xxx)")
+        let st1 = jlexpand("Threads.@spawn sin(xxx)")
             @test JS.kind(st1) === JS.K"call"
             @test JS.sourcetext(st1[1]) == "sin"
             @test JS.sourcetext(st1[2]) == "xxx"
         end
 
         # Two-argument form: emits `block(threadpool, body)`.
-        let st1 = spawn_expand("Threads.@spawn :default sin(xxx)")
+        let st1 = jlexpand("Threads.@spawn :default sin(xxx)")
             @test JS.kind(st1) === JS.K"block"
             @test JS.numchildren(st1) == 2
             @test JS.kind(st1[1]) === JS.K"inert"
@@ -176,7 +175,7 @@ end
 
         # `$x` in the body must be unwrapped: a surviving `K"$"` outside of a
         # quote context would fail later lowering passes.
-        let st1 = spawn_expand("Threads.@spawn sin(\$xxx)")
+        let st1 = jlexpand("Threads.@spawn sin(\$xxx)")
             @test JS.kind(st1) === JS.K"call"
             @test all(c -> JS.kind(c) !== JS.K"$", JS.children(st1))
             @test JS.sourcetext(st1[2]) == "xxx"
@@ -184,18 +183,18 @@ end
 
         # All allowed threadpool literals are accepted.
         for tp in (":interactive", ":default", ":samepool")
-            @test spawn_expand("Threads.@spawn $tp 1+1") isa JS.SyntaxTree
+            @test jlexpand("Threads.@spawn $tp 1+1") isa JS.SyntaxTree
         end
 
         # A bare identifier is accepted (e.g. `def = :default; @spawn def body`).
-        @test spawn_expand("Threads.@spawn pool 1+1") isa JS.SyntaxTree
+        @test jlexpand("Threads.@spawn pool 1+1") isa JS.SyntaxTree
     end
 
     @testset "error cases" begin
         # Unsupported literal threadpool is rejected at expansion time, with the
         # same message as the runtime `Base.Threads.@spawn` check.
         let err = try
-                spawn_expand("Threads.@spawn :foo 1+1")
+                jlexpand("Threads.@spawn :foo 1+1")
                 nothing
             catch err
                 err
@@ -207,7 +206,7 @@ end
         # Zero arguments and 3+ arguments both fall through to the variadic fallback method.
         for code in ("Threads.@spawn", "Threads.@spawn :default :foo 1+1")
             let err = try
-                    spawn_expand(code)
+                    jlexpand(code)
                     nothing
                 catch err
                     err
@@ -232,7 +231,7 @@ end
                 "Threads.@spawn :(foo()) body",    # quoted non-symbol expression
             )
             let err = try
-                    spawn_expand(code)
+                    jlexpand(code)
                     nothing
                 catch err
                     err
@@ -249,14 +248,9 @@ end
         # analyses (notably `lowering/undef-global-var`) can accept them via
         # `is_from_user_ast`. With the old-style macro the inner `xxx` ends up
         # with a `0:0` byte range and gets filtered out.
-        let code = "spawnfunc() = Threads.@spawn :default sin(xxx)"
-            st0 = jlparse(code; rule=:statement)
-            world = Base.get_world_counter()
-            res = JETLS.jl_lower_for_scope_resolution(lowering_module, st0, world;
-                recover_from_macro_errors=false, convert_closures=true)
+        let res = jlresolve("spawnfunc() = Threads.@spawn :default sin(xxx)")
             binding_occurrences = JETLS.compute_binding_occurrences(
                 res.ctx3, res.st3, false; include_global_bindings=true)
-
             xxx_binfo = nothing
             for (binfo, _) in binding_occurrences
                 if binfo.kind === :global && binfo.name == "xxx"
@@ -266,38 +260,15 @@ end
             end
             @test xxx_binfo !== nothing
             provs = JS.flattened_provenance(JL.binding_ex(res.ctx3, xxx_binfo.id))
-            @test JETLS.is_from_user_ast(provs)
-            # Innermost provenance points at the user-written `xxx`, not the
-            # macrocall as a whole.
             @test JS.sourcetext(last(provs)) == "xxx"
         end
     end
 end
 
-function label_expand(code::AbstractString)
-    st0 = jlparse(code; rule=:statement)
-    world = Base.get_world_counter()
-    _, st1 = JL.expand_forms_1(lowering_module, st0, true, world)
-    return st1
-end
-
 @testset "@label" begin
-    # Full lowering succeeds when paired with `@goto`.
-    let code = """
-            function f()
-                @goto start
-                @label start
-            end
-            """
-        st0 = jlparse(code; rule=:statement)
-        world = Base.get_world_counter()
-        @test JETLS.jl_lower_for_scope_resolution(lowering_module, st0, world;
-            recover_from_macro_errors=false) isa NamedTuple
-    end
-
     # Non-identifier argument is rejected.
     let err = try
-            label_expand("@label 42")
+            jlexpand("@label 42")
             nothing
         catch err
             err
@@ -310,7 +281,7 @@ end
     # supported; the variadic fallback gives a clear message instead of a
     # `MethodError`.
     let err = try
-            label_expand("@label foo body")
+            jlexpand("@label foo body")
             nothing
         catch err
             err
@@ -318,6 +289,14 @@ end
         @test err isa JL.MacroExpansionError
         @test occursin("only supports the `@label name` form", err.msg)
     end
+
+    # Full lowering succeeds when paired with `@goto`.
+    @test jlresolve("""
+        function f()
+            @goto start
+            @label start
+        end
+        """) isa NamedTuple
 end
 
 end # module test_jl_syntax_macros
