@@ -2042,10 +2042,10 @@ end
     # control transfers via the goto edge before the surrounding `return` would execute,
     # so post-label code stays live.
     let diagnostics = get_lowered_diagnostics("""
-        function foo()
-            return identity(@goto fallback)
+        function foo(cnd::Bool)
+            return cnd ? @goto(fallback) : println("Return")
             @label fallback
-            println("Hit")
+            println("Fallback")
         end
         """)
         unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)

@@ -70,10 +70,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Updated JuliaSyntax.jl and JuliaLowering.jl dependency versions to latest, improving the performance of lowering-based LSP features (https://github.com/JuliaLang/julia/pull/61597).
 
+### Fixed
+
 - `lowering/unreachable-code` now uses control-flow reachability instead of syntactic block-walking, fixing several false positives and missed cases:
-  - Code reachable via `@goto` nested inside an expression (e.g. `return f(@goto label); @label label; ...`) is no longer reported as unreachable.
-  - Code after `try ... finally ... end` whose `try` body always terminates is now correctly flagged as unreachable.
-  - The `@something(x, return default)` early-return idiom no longer triggers a spurious warning over the entire macro call.
+  - Code reachable via `@goto` nested inside an expression (e.g. `return cnd ? @goto(fallback) : println("Return"); @label fallback; ...`) is no longer reported as unreachable.
+  - Code after `try ... finally ... end` whose `try` body always terminates is now correctly flagged as unreachable.ro call.
 
 ## 2026-04-28
 
