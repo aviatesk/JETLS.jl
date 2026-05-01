@@ -387,6 +387,7 @@ const LOWERING_UNDEF_LOCAL_VAR_CODE = "lowering/undef-local-var"
 const LOWERING_CAPTURED_BOXED_VARIABLE_CODE = "lowering/captured-boxed-variable"
 const LOWERING_UNSORTED_IMPORT_NAMES_CODE = "lowering/unsorted-import-names"
 const LOWERING_UNUSED_IMPORT_CODE = "lowering/unused-import"
+const LOWERING_UNUSED_LABEL_CODE = "lowering/unused-label"
 const LOWERING_UNREACHABLE_CODE = "lowering/unreachable-code"
 const LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE = "lowering/ambiguous-soft-scope"
 const TOPLEVEL_ERROR_CODE = "toplevel/error"
@@ -412,6 +413,7 @@ const ALL_DIAGNOSTIC_CODES = Set{String}(String[
     LOWERING_CAPTURED_BOXED_VARIABLE_CODE,
     LOWERING_UNSORTED_IMPORT_NAMES_CODE,
     LOWERING_UNUSED_IMPORT_CODE,
+    LOWERING_UNUSED_LABEL_CODE,
     LOWERING_UNREACHABLE_CODE,
     LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE,
     TOPLEVEL_ERROR_CODE,

@@ -154,11 +154,17 @@ transforms parsed syntax into a simpler intermediate representation.
 
 General lowering errors that don't fit into more specific categories.
 
-Example:
+Examples:
 
 ```julia
-function lowering_error(x)
+macro lowering_error(x)
     $(x)  # `$` expression outside string or quote block (JETLS lowering/error)
+end
+
+function unresolved_goto()
+    @label retry
+    inner = () -> @goto retry  # label `retry` referenced but not defined (JETLS lowering/error)
+    inner()                    # (`@goto` cannot cross function boundaries)
 end
 ```
 
@@ -631,6 +637,35 @@ module.
     end
     @gencall sin(42)  # `sin` is used here
     ```
+
+#### [Unused label (`lowering/unused-label`)](@id diagnostic/reference/lowering/unused-label)
+
+**Default severity**: `Information`
+
+Reported when a `@label` is declared but never referenced by any `@goto`
+in the same function body. The label is marked with the `Unnecessary`
+tag.[^unnecessary_tag]
+
+Example:
+
+```julia
+function unused_label()
+    @label spare  # Unused label `spare` (JETLS lowering/unused-label)
+    return 1
+end
+```
+
+Because `@goto` cannot cross function boundaries, a `@label` in an outer
+function is also unused even when an inner closure references the same
+name:
+
+```julia
+function outer()
+    @label here  # Unused label `here` (JETLS lowering/unused-label)
+    inner = () -> @goto here  # also reported as `lowering/error`
+    inner()
+end
+```
 
 #### [Unreachable code (`lowering/unreachable-code`)](@id diagnostic/reference/lowering/unreachable-code)
 
