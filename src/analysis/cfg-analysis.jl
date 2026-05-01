@@ -16,8 +16,8 @@
 # 3. **Unreachable-code analysis**: identifies `K"block"` children whose
 #    recorded CFG block is unreachable from the lambda entry. The CFG
 #    accurately models expression-nested control transfers, so e.g.
-#    `return f(@goto label); @label label; <code>` correctly recognizes
-#    `<code>` as reachable via the goto edge.
+#    `return cnd ? @goto(fallback) : println("Return"); @label fallback; <code>`
+#    correctly recognizes `<code>` as reachable via the goto edge.
 #
 # The key technique is placing each event in its own "event block" (not
 # traditional basic blocks — each block contains at most one event).
@@ -30,12 +30,40 @@
 # The result types `UndefInfo` and `DeadStoreInfo` are also part of the public surface
 # because they appear in the returned dicts.
 
+# Per-block variable event recorded on `EventBlock.event`. `kind` is one of
+# `:assign` / `:use` / `:isdefined` (the last is a hint for CFG analysis, not
+# a real def). Using a named struct rather than a `Tuple` keeps the field
+# layout stable for the compiler when stored as an `Union{Nothing, ...}`
+# and avoids per-push tuple boxing in `Vector{...}` containers below.
+struct BlockEvent
+    kind::Symbol
+    var_id::JL.IdTag
+    st::JS.SyntaxTree
+end
+
+# Per-variable, per-block event entry stored in `LambdaCFG.var_events`.
+# Same `kind` semantics as `BlockEvent`; here `block_id` identifies the
+# CFG block the event was emitted into.
+struct VarEvent
+    kind::Symbol
+    block_id::Int
+    st::JS.SyntaxTree
+end
+
+# A `K"block"` child statement together with the CFG blocks execution
+# enters and leaves it in. Stored on `EventLinearizer.statement_blocks`
+# and consumed by `analyze_unreachable!`.
+struct StatementRecord
+    before_block::Int
+    after_block::Int
+    st::JS.SyntaxTree
+end
+
 mutable struct EventBlock
     const id::Int
     const succs::Vector{Int}
-    # Event in this block (at most one per block due to emit creating new blocks)
-    # event_kind: :assign, :use, or :isdefined (hint for CFG analysis, not a real def)
-    event::Union{Nothing, Tuple{Symbol,JL.IdTag,JS.SyntaxTree}}
+    # Event in this block (at most one per block due to emit creating new blocks).
+    event::Union{Nothing, BlockEvent}
 end
 
 EventBlock(id::Int) = EventBlock(id, Int[], nothing)
@@ -74,7 +102,7 @@ mutable struct EventLinearizer
     # `K"symboliclabel"`, whose own block becomes reachable via a `K"symbolicgoto"` edge
     # resolved at finalization, even when the preceding fall-through (before_block) is
     # unreachable.
-    const statement_blocks::Vector{Tuple{Int,Int,JS.SyntaxTree}}
+    const statement_blocks::Vector{StatementRecord}
     # Tracks whether the most recently processed construct emitted a control-flow terminator
     # (`return`, `break`, `goto`, ...) without a matching label, leaving `current_block`
     # known to be unreachable from the entry. Used by `K"tryfinally"` to decide whether to
@@ -88,7 +116,7 @@ mutable struct EventLinearizer
         new(blocks, 1, Dict{Int,Int}(), Tuple{Int,Int}[], 0,
             Dict{String,Int}(), Dict{String,Int}(),
             Dict{Set{JL.IdTag},Set{JL.IdTag}}(), Set{JL.IdTag}[],
-            Tuple{Int,Int,JS.SyntaxTree}[], false)
+            StatementRecord[], false)
     end
 end
 
@@ -109,7 +137,7 @@ function undef_add_edge!(lin::EventLinearizer, from::Int, to::Int)
 end
 
 function undef_emit_event!(lin::EventLinearizer, event_kind::Symbol, var_id::JL.IdTag, st::JS.SyntaxTree)
-    lin.blocks[lin.current_block].event = (event_kind, var_id, st)
+    lin.blocks[lin.current_block].event = BlockEvent(event_kind, var_id, st)
     # Create a new block to ensure proper ordering.
     # This allows the path-based analysis to track intra-block event order:
     # `x = 1; println(x)` becomes BB1(assign) → BB2(use), so the analysis
@@ -619,7 +647,7 @@ function linearize_cfg_events!(
             before_block = lin.current_block
             linearize_cfg_events!(lin, ctx3, child, candidates, allow_noreturn_optimization)
             after_block = lin.current_block
-            push!(lin.statement_blocks, (before_block, after_block, child))
+            push!(lin.statement_blocks, StatementRecord(before_block, after_block, child))
         end
 
     else # Default: process all children
@@ -762,9 +790,8 @@ Fields:
 - `candidates::Set{JL.IdTag}`: local binding ids tracked for def-use
 - `closure_captured::Set{JL.IdTag}`: subset of `candidates` captured by
   closures; excluded from dead-store analysis
-- `var_events::Dict{JL.IdTag, Vector{Tuple{Symbol,Int,JS.SyntaxTree}}}`:
-  per-variable event list indexed by `var_id`, avoiding
-  O(blocks × candidates) scans during analysis
+- `var_events::Dict{JL.IdTag, Vector{VarEvent}}`: per-variable event list indexed by
+  `var_id`, avoiding O(blocks × candidates) scans during analysis
 - `exit_blocks::BitSet`: CFG blocks with no successors, used for
   must-execute queries during undef analysis
 """
@@ -772,7 +799,7 @@ struct LambdaCFG
     lin::EventLinearizer
     candidates::Set{JL.IdTag}
     closure_captured::Set{JL.IdTag}
-    var_events::Dict{JL.IdTag, Vector{Tuple{Symbol,Int,JS.SyntaxTree}}}
+    var_events::Dict{JL.IdTag, Vector{VarEvent}}
     exit_blocks::BitSet
 end
 
@@ -809,14 +836,13 @@ function build_lambda_cfg(
 
     # Pre-build var_id → event list index to avoid O(blocks × candidates)
     # scanning in the per-variable loop of `analyze_local_def_use!`.
-    var_events = Dict{JL.IdTag, Vector{Tuple{Symbol,Int,JS.SyntaxTree}}}()
+    var_events = Dict{JL.IdTag, Vector{VarEvent}}()
     for block in lin.blocks
         evt = block.event
         isnothing(evt) && continue
-        (event_kind, id, st) = evt
-        id in candidates || continue
-        evts = get!(Vector{Tuple{Symbol,Int,JS.SyntaxTree}}, var_events, id)
-        push!(evts, (event_kind, block.id, st))
+        evt.var_id in candidates || continue
+        evts = get!(Vector{VarEvent}, var_events, evt.var_id)
+        push!(evts, VarEvent(evt.kind, block.id, evt.st))
     end
 
     # Pre-compute exit blocks (no successors) for must-execute checks.
@@ -835,9 +861,9 @@ function analyze_unreachable!(
         unreachable_statements::Set{JS.SyntaxTree}, cfg::LambdaCFG
     )
     reachable = compute_reachable_blocks(cfg.lin.blocks)
-    for (before_block, after_block, stmt) in cfg.lin.statement_blocks
-        (before_block in reachable || after_block in reachable) && continue
-        push!(unreachable_statements, stmt)
+    for rec in cfg.lin.statement_blocks
+        (rec.before_block in reachable || rec.after_block in reachable) && continue
+        push!(unreachable_statements, rec.st)
     end
     return unreachable_statements
 end
@@ -898,16 +924,16 @@ function analyze_local_def_use!(
         real_assign_blocks = BitSet()  # for dead store (only :assign)
         use_blocks = BitSet()
         event_trees = Dict{Int,JS.SyntaxTree}()
-        for (event_kind, block_id, st) in evts
-            event_trees[block_id] = st
-            if event_kind === :assign
-                push!(defs, st)
-                push!(assign_blocks, block_id)
-                push!(real_assign_blocks, block_id)
-            elseif event_kind === :isdefined
-                push!(assign_blocks, block_id)
+        for evt in evts
+            event_trees[evt.block_id] = evt.st
+            if evt.kind === :assign
+                push!(defs, evt.st)
+                push!(assign_blocks, evt.block_id)
+                push!(real_assign_blocks, evt.block_id)
+            elseif evt.kind === :isdefined
+                push!(assign_blocks, evt.block_id)
             else # :use
-                push!(use_blocks, block_id)
+                push!(use_blocks, evt.block_id)
             end
         end
 
@@ -999,8 +1025,8 @@ all three CFG-aware analyses on it:
   CFG block is not reachable from the lambda entry. Returned as
   `Set{JS.SyntaxTree}`. Because the CFG accurately models
   expression-nested control transfers, patterns like
-  `return f(@goto label); @label label; <code>` correctly keep
-  `<code>` reachable via the goto edge.
+  `return cnd ? @goto(fallback) : println("Return"); @label fallback; <code>`
+  correctly keep `<code>` reachable via the goto edge.
 
 Results from every visited lambda are merged into a single set of
 result containers that are threaded through the traversal, so no
