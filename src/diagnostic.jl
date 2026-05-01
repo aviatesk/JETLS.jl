@@ -1159,7 +1159,7 @@ function analyze_unreachable_code!(
                     code = LOWERING_UNREACHABLE_CODE,
                     codeDescription = diagnostic_code_description(LOWERING_UNREACHABLE_CODE),
                     tags = DiagnosticTag.Ty[DiagnosticTag.Unnecessary],
-                    data = UnreachableCodeData(delete_range)))
+                    data = DeleteRangeData(:unreachable_code, delete_range)))
             end
             break
         end
@@ -1203,7 +1203,10 @@ function check_lambda_gotos!(
     for (name, st) in labels
         name in referenced && continue
         # Skip macro-generated labels — only report user-written ones.
-        is_from_user_ast(JL.flattened_provenance(st)) || continue
+        provs = JL.flattened_provenance(st)
+        is_from_user_ast(provs) || continue
+        # `first(provs)` is the user-written `@label name` macrocall.
+        delete_range = line_absorbing_delete_range(first(provs), fi)
         push!(diagnostics, Diagnostic(;
             range = jsobj_to_range(st, fi),
             severity = DiagnosticSeverity.Information,
@@ -1211,7 +1214,8 @@ function check_lambda_gotos!(
             source = DIAGNOSTIC_SOURCE_LIVE,
             code = LOWERING_UNUSED_LABEL_CODE,
             codeDescription = diagnostic_code_description(LOWERING_UNUSED_LABEL_CODE),
-            tags = DiagnosticTag.Ty[DiagnosticTag.Unnecessary]))
+            tags = DiagnosticTag.Ty[DiagnosticTag.Unnecessary],
+            data = DeleteRangeData(:unused_label, delete_range)))
     end
 end
 
@@ -1466,7 +1470,7 @@ function analyze_unused_imports!(
                     code = LOWERING_UNUSED_IMPORT_CODE,
                     codeDescription = diagnostic_code_description(LOWERING_UNUSED_IMPORT_CODE),
                     tags = DiagnosticTag.Ty[DiagnosticTag.Unnecessary],
-                    data = UnusedImportData(info.delete_range)))
+                    data = DeleteRangeData(:unused_import, info.delete_range)))
             end
         end
     end
@@ -1520,7 +1524,7 @@ function collect_explicit_import_names(st0::JS.SyntaxTree, fi::FileInfo)
                 name_range = jsobj_to_range(id_st, fi)
                 if nnames == 1
                     # Single import: delete entire statement
-                    delete_range = jsobj_to_range(st0, fi)
+                    delete_range = line_absorbing_delete_range(st0, fi)
                 else
                     # Multiple imports: delete name with comma
                     idx = i - 1  # 1-based index among names
@@ -1553,7 +1557,7 @@ function collect_explicit_import_names(st0::JS.SyntaxTree, fi::FileInfo)
                 if JS.kind(last_st) === JS.K"Identifier"
                     # Single import: delete entire statement
                     name_range = jsobj_to_range(last_st, fi)
-                    delete_range = jsobj_to_range(st0, fi)
+                    delete_range = line_absorbing_delete_range(st0, fi)
                     push!(names, (JS.sourcetext(last_st), name_range, delete_range))
                 end
             end

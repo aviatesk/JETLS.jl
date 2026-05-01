@@ -667,6 +667,9 @@ function outer()
 end
 ```
 
+!!! tip "Code action available"
+    Use the "Remove unused label" code action to delete the `@label` statement.
+
 #### [Unreachable code (`lowering/unreachable-code`)](@id diagnostic/reference/lowering/unreachable-code)
 
 **Default severity**: `Information`

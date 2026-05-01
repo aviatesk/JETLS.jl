@@ -1149,6 +1149,46 @@ function jsobj_to_range(
     end
 end
 
+"""
+    line_absorbing_delete_range(obj, fi::FileInfo) -> Range
+
+Build a delete range covering the bytes of `obj`. When `obj` is the only
+non-whitespace content on its line, the range is extended to absorb the
+surrounding indentation and the trailing newline so that deletion does not
+leave a stray blank line behind. Otherwise, the result equals
+[`jsobj_to_range(obj, fi)`](@ref jsobj_to_range).
+
+Intended for `data.delete_range` of a `DeleteRangeData` quick-fix that
+removes a whole statement (e.g. `using M: x`, `@label foo`).
+"""
+function line_absorbing_delete_range(obj, fi::FileInfo)
+    fb = JS.first_byte(obj)
+    lb = JS.last_byte(obj)
+    textbuf = fi.parsed_stream.textbuf
+    line_start = fb
+    while line_start > 1 && textbuf[line_start - 1] != UInt8('\n')
+        c = textbuf[line_start - 1]
+        if c != UInt8(' ') && c != UInt8('\t')
+            return jsobj_to_range(obj, fi)
+        end
+        line_start -= 1
+    end
+    after_end = lb + 1
+    while after_end ≤ length(textbuf) && textbuf[after_end] != UInt8('\n')
+        c = textbuf[after_end]
+        if c != UInt8(' ') && c != UInt8('\t')
+            return jsobj_to_range(obj, fi)
+        end
+        after_end += 1
+    end
+    if after_end ≤ length(textbuf) && textbuf[after_end] == UInt8('\n')
+        after_end += 1
+    end
+    return Range(;
+        start = offset_to_xy(fi, line_start),
+        var"end" = offset_to_xy(fi, after_end))
+end
+
 function try_extract_field_line(node::JS.SyntaxNode, structname::Symbol, fname::Symbol)
     if JS.kind(node) === JS.K"struct" && JS.numchildren(node) ≥ 2
         structnm = node[1]
