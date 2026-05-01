@@ -958,7 +958,7 @@ function find_capture_sites(
                 # Find references to binfo.id inside this lambda
                 traverse(node) do inner::JL.SyntaxTree
                     if JS.kind(inner) === JS.K"BindingId" && JL._binding_id(inner) == binfo.id
-                        varprov = first(JL.flattened_provenance(inner))
+                        varprov = last(JL.flattened_provenance(inner))
                         push!(relatedInformation, DiagnosticRelatedInformation(;
                             location = Location(; uri, range = jsobj_to_range(varprov, fi)),
                             message = "Captured by closure"))
@@ -1192,8 +1192,15 @@ function check_lambda_gotos!(
         # Skip macro-generated labels — only report user-written ones.
         provs = JL.flattened_provenance(st)
         is_from_user_ast(provs) || continue
-        # `first(provs)` is the user-written `@label name` macrocall.
-        delete_range = line_absorbing_delete_range(first(provs), fi)
+        # The provenance chain ends with the label-name identifier; the
+        # entry immediately above it (`provs[end-1]`) is the user-written
+        # `@label name` macrocall, which is what we want to delete.
+        # Using `first(provs)` would instead pick the outermost source —
+        # and for a `@label` nested inside another macrocall (e.g.
+        # `@testset begin; @label foo; end`) that is the entire enclosing
+        # macrocall, not the `@label` line.
+        delete_obj = length(provs) >= 2 ? provs[end-1] : first(provs)
+        delete_range = line_absorbing_delete_range(delete_obj, fi)
         push!(diagnostics, Diagnostic(;
             range = jsobj_to_range(st, fi),
             severity = DiagnosticSeverity.Information,

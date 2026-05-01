@@ -76,6 +76,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - Code reachable via `@goto` nested inside an expression (e.g. `return cnd ? @goto(fallback) : println("Return"); @label fallback; ...`) is no longer reported as unreachable.
   - Code after `try ... finally ... end` whose `try` body always terminates is now correctly flagged as unreachable.
 
+- Fixed `lowering/captured-box` related-information ("Captured by closure") highlighting the entire enclosing macrocall (e.g. a whole `@testset begin ... end` block) instead of the captured identifier when the captured reference lived inside a macro expansion.
+
 ## 2026-04-28
 
 - Commit: [`e784de8`](https://github.com/aviatesk/JETLS.jl/commit/e784de8)

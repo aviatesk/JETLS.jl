@@ -1362,6 +1362,31 @@ end
         """)
         @test isempty(diagnostics)
     end
+
+    # Regression: when a captured-binding's reference lives inside a macro expansion
+    # (e.g. a `@testset` body), the related-information range must point at the actual
+    # identifier — not the entire enclosing macrocall, which for macro-expanded references
+    # picks the outermost source = `@testset begin ... end` instead of `walk`).
+    let diagnostics = get_lowered_diagnostics(JETLS.JETLSTestModule, """
+        @testset "outer" begin
+            walk(st) = walk(st-1)
+            walk(5)
+        end
+        """)
+        ds = filter(d -> d.code == JETLS.LOWERING_CAPTURED_BOXED_VARIABLE_CODE, diagnostics)
+        @test length(ds) == 1
+        d = only(ds)
+        @test d.message == "`walk` is captured and boxed"
+        @test !isnothing(d.relatedInformation)
+        for ri in d.relatedInformation
+            @test ri.message == "Captured by closure"
+            # Each related range must cover only the `walk` identifier,
+            # not span the whole `@testset begin ... end` macrocall.
+            r = ri.location.range
+            @test r.start.line == r.var"end".line
+            @test r.var"end".character - r.start.character == length("walk")
+        end
+    end
 end
 
 is_unsorted_import_names_diagnostic(diagnostic) =
@@ -2300,6 +2325,29 @@ end
         ds = filter(d -> d.code == JETLS.LOWERING_UNUSED_LABEL_CODE, diagnostics)
         @test length(ds) == 1
         @test only(ds).message == "Unused label `outer`"
+    end
+
+    # Regression: when an unused `@label` is nested inside another
+    # macrocall (e.g. `@testset`), the auto-fix delete range must cover
+    # only the `@label name` line — not the entire enclosing macrocall.
+    let diagnostics = get_lowered_diagnostics(JETLS.JETLSTestModule, """
+        @testset "outer" begin
+            @label spare
+            return 1
+        end
+        """)
+        ds = filter(d -> d.code == JETLS.LOWERING_UNUSED_LABEL_CODE, diagnostics)
+        @test length(ds) == 1
+        d = only(ds)
+        @test d.message == "Unused label `spare`"
+        @test d.data isa JETLS.DeleteRangeData
+        dr = d.data.delete_range
+        # Line-absorbing delete range over `@label spare` (line 2,
+        # 0-indexed = 1) up to the start of line 3.
+        @test dr.start.line == 1
+        @test dr.start.character == 0
+        @test dr.var"end".line == 2
+        @test dr.var"end".character == 0
     end
 end
 
