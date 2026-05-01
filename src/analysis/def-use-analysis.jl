@@ -83,11 +83,32 @@ mutable struct EventLinearizer
     # currently inside.  Used by `undef_emit_cond_implied_hints!` so that
     # nested `if a; if b; ...` lookups see the combined condition Set([a,b]).
     const active_cond_vars::Vector{Set{JL.IdTag}}
+    # For each direct child of each `K"block"` visited during
+    # linearization, record `(before_block, after_block, statement)`:
+    #   - before_block: `current_block` when we start processing the child
+    #   - after_block:  `current_block` after the child has been processed
+    # Used by `collect_unreachable_statements!`: a statement is unreachable iff BOTH blocks
+    # are unreachable from block 1.
+    #
+    # Tracking after_block (not just before_block) matters for forms like
+    # `K"symboliclabel"`, whose own block becomes reachable via a `K"symbolicgoto"` edge
+    # resolved at finalization, even when the preceding fall-through (before_block) is
+    # unreachable.
+    const statement_blocks::Vector{Tuple{Int,Int,JS.SyntaxTree}}
+    # Tracks whether the most recently processed construct emitted a control-flow terminator
+    # (`return`, `break`, `goto`, ...) without a matching label, leaving `current_block`
+    # known to be unreachable from the entry. Used by `K"tryfinally"` to decide whether to
+    # wire its `end_label` (post-try) up to the finally body: when the try body is known
+    # to terminate, post-try is unreachable and we must not connect the finally-end to it
+    # (otherwise `analyze_unreachable_code!` would consider post-try reachable through the
+    # finally's gotoifnot bypass).
+    current_known_unreachable::Bool
     function EventLinearizer()
         blocks = EventBlock[EventBlock(1)]
         new(blocks, 1, Dict{Int,Int}(), Tuple{Int,Int}[], 0,
             Dict{String,Int}(), Dict{String,Int}(),
-            Dict{Set{JL.IdTag},Set{JL.IdTag}}(), Set{JL.IdTag}[])
+            Dict{Set{JL.IdTag},Set{JL.IdTag}}(), Set{JL.IdTag}[],
+            Tuple{Int,Int,JS.SyntaxTree}[], false)
     end
 end
 
@@ -127,6 +148,10 @@ function undef_emit_label!(lin::EventLinearizer, label_id::Int)
     lin.label_to_block[label_id] = block_id
     undef_add_edge!(lin, lin.current_block, block_id)
     undef_switch_to_block!(lin, block_id)
+    # A label can have additional incoming edges (from gotos resolved at
+    # finalization), so we conservatively assume the new current block is
+    # reachable.
+    lin.current_known_unreachable = false
     return block_id
 end
 
@@ -134,6 +159,7 @@ function undef_emit_goto!(lin::EventLinearizer, label_id::Int)
     push!(lin.pending_gotos, (lin.current_block, label_id))
     unreachable = undef_new_block!(lin)
     undef_switch_to_block!(lin, unreachable)
+    lin.current_known_unreachable = true
 end
 
 function undef_emit_gotoifnot!(lin::EventLinearizer, false_label::Int)
@@ -389,6 +415,7 @@ function linearize_def_use_events!(
         end
         unreachable = undef_new_block!(lin)
         undef_switch_to_block!(lin, unreachable)
+        lin.current_known_unreachable = true
 
     elseif k == JS.K"symboliclabel"
         # `@label name` — register a CFG label at the current position so any
@@ -568,17 +595,52 @@ function linearize_def_use_events!(
             undef_restore_cond_implied!(lin, saved)
         end
 
+        # If the try body terminated, post-try is unreachable; the finally
+        # body still runs (modeled via the gotoifnot bypass) but its
+        # completion does not flow into post-try.
+        try_body_terminated = lin.current_known_unreachable
+
         undef_emit_label!(lin, finally_label)
         linearize_def_use_events!(lin, ctx3, ex3[2], candidates, allow_noreturn_optimization)
 
-        undef_emit_label!(lin, end_label)
+        if try_body_terminated
+            end_block = undef_new_block!(lin)
+            lin.label_to_block[end_label] = end_block
+            undef_switch_to_block!(lin, end_block)
+            lin.current_known_unreachable = true
+        else
+            undef_emit_label!(lin, end_label)
+        end
 
     elseif k == JS.K"return"
         if JS.numchildren(ex3) >= 1
             linearize_def_use_events!(lin, ctx3, ex3[1], candidates, allow_noreturn_optimization)
         end
+        # Switch to a fresh "phantom" block — no edge from the
+        # return-emitting block — so the linearizer keeps a valid
+        # `current_block` for whatever syntactically follows the return.
+        # The phantom has no incoming edges, so subsequent events recorded
+        # against it are correctly treated as unreachable. Same pattern:
+        # `undef_emit_goto!`, no-target `K"break"`, noreturn-call branch.
         unreachable = undef_new_block!(lin)
         undef_switch_to_block!(lin, unreachable)
+        lin.current_known_unreachable = true
+
+    elseif k == JS.K"block"
+        # Record each direct child as a "statement" tagged with both the
+        # block where execution would arrive at the child (before) and the
+        # block execution leaves it in (after). Used by reachability-based
+        # unreachable analysis: a statement is reachable iff EITHER block
+        # is reachable from the entry. Tracking the after-block matters for
+        # forms like `K"symboliclabel"` whose own block becomes reachable
+        # only via a `K"symbolicgoto"` edge resolved at finalization, even
+        # though fall-through from the previous statement is unreachable.
+        for child in JS.children(ex3)
+            before_block = lin.current_block
+            linearize_def_use_events!(lin, ctx3, child, candidates, allow_noreturn_optimization)
+            after_block = lin.current_block
+            push!(lin.statement_blocks, (before_block, after_block, child))
+        end
 
     else # Default: process all children
         for child in JS.children(ex3)
@@ -589,6 +651,7 @@ function linearize_def_use_events!(
                 is_noreturn_call(ctx3, ex3, allow_noreturn_optimization)
             unreachable = undef_new_block!(lin)
             undef_switch_to_block!(lin, unreachable)
+            lin.current_known_unreachable = true
         end
     end
 end
@@ -684,24 +747,66 @@ function collect_closure_captured_vars(body::JS.SyntaxTree, candidates::Set{JL.I
 end
 
 """
-    analyze_def_use(ctx3, ex3; allow_noreturn_optimization) -> (undef_info, dead_store_info)
+    compute_reachable_blocks(blocks::Vector{EventBlock}) -> BitSet
 
-Combined CFG-aware analysis for local bindings in a single lambda.
-Builds the event-based CFG once and runs both undef analysis and dead
-store analysis on it.
+Return the set of block ids reachable from block 1 (the lambda entry) by
+following `succs` edges. Used by reachability-based unreachable-code
+detection.
+"""
+function compute_reachable_blocks(blocks::Vector{EventBlock})
+    reachable = BitSet()
+    isempty(blocks) && return reachable
+    push!(reachable, 1)
+    queue = Int[1]
+    while !isempty(queue)
+        b = popfirst!(queue)
+        for s in blocks[b].succs
+            if !(s in reachable)
+                push!(reachable, s)
+                push!(queue, s)
+            end
+        end
+    end
+    return reachable
+end
 
-Returns a tuple of:
-- `undef_info::Dict{JL.BindingInfo, UndefInfo}`: undef status per variable
-- `dead_store_info::Dict{JL.BindingInfo, DeadStoreInfo}`: dead stores per variable
+"""
+    collect_unreachable_statements!(result::Set{JS.SyntaxTree}, lin::EventLinearizer)
+
+Populate `result` with statements recorded during CFG construction whose
+recorded block is not reachable from block 1.
+"""
+function collect_unreachable_statements!(
+        result::Set{JS.SyntaxTree}, lin::EventLinearizer
+    )
+    reachable = compute_reachable_blocks(lin.blocks)
+    for (before_block, after_block, stmt) in lin.statement_blocks
+        (before_block in reachable || after_block in reachable) && continue
+        push!(result, stmt)
+    end
+    return result
+end
+
+"""
+    analyze_def_use(ctx3, ex3; allow_noreturn_optimization)
+        -> (; undef_info, dead_store_info, unreachable_statements)
+
+Combined CFG-aware analysis for a single lambda. Builds the event-based
+CFG once and runs:
+- undef analysis (per local binding)
+- dead store analysis (per local binding)
+- reachability-based unreachable-code detection (statement-level)
 """
 function analyze_def_use(
         ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTree;
         allow_noreturn_optimization::Vector{Symbol}=Symbol[]
     )
-    undef_result = Dict{JL.BindingInfo, UndefInfo}()
-    dead_store_result = Dict{JL.BindingInfo, DeadStoreInfo}()
+    undef_info = Dict{JL.BindingInfo, UndefInfo}()
+    dead_store_info = Dict{JL.BindingInfo, DeadStoreInfo}()
+    unreachable_statements = Set{JS.SyntaxTree}()
 
-    JS.kind(st3) == JS.K"lambda" || return (undef_result, dead_store_result)
+    JS.kind(st3) == JS.K"lambda" ||
+        return (; undef_info, dead_store_info, unreachable_statements)
 
     lambda_bindings = st3.lambda_bindings::JL.LambdaBindings
     candidates = Set{JL.IdTag}()
@@ -713,7 +818,19 @@ function analyze_def_use(
         end
     end
 
-    isempty(candidates) && return (undef_result, dead_store_result)
+    # Build CFG once; reachability analysis below needs it even when there
+    # are no def-use candidates (e.g. a function with no local variables
+    # can still contain unreachable statements after a `return`).
+    lin = EventLinearizer()
+    if JS.numchildren(st3) >= 3
+        linearize_def_use_events!(lin, ctx3, st3[3], candidates, allow_noreturn_optimization)
+    end
+    undef_finalize_cfg!(lin)
+
+    collect_unreachable_statements!(unreachable_statements, lin)
+
+    isempty(candidates) &&
+        return (; undef_info, dead_store_info, unreachable_statements)
 
     # Variables captured by closures are excluded from dead store analysis
     closure_captured = if JS.numchildren(st3) >= 3
@@ -721,12 +838,6 @@ function analyze_def_use(
     else
         Set{JL.IdTag}()
     end
-
-    lin = EventLinearizer()
-    if JS.numchildren(st3) >= 3
-        linearize_def_use_events!(lin, ctx3, st3[3], candidates, allow_noreturn_optimization)
-    end
-    undef_finalize_cfg!(lin)
 
     # Pre-build var_id → event list index to avoid
     # O(blocks × candidates) scanning in the per-variable loop
@@ -754,7 +865,7 @@ function analyze_def_use(
 
         evts = get(var_events, var_id, nothing)
         if isnothing(evts)
-            undef_result[binfo] = UndefInfo()
+            undef_info[binfo] = UndefInfo()
             continue
         end
 
@@ -778,10 +889,10 @@ function analyze_def_use(
 
         # --- Undef analysis ---
         if isempty(use_blocks)
-            undef_result[binfo] = UndefInfo(defs, Pair{Bool,JS.SyntaxTree}[])
+            undef_info[binfo] = UndefInfo(defs, Pair{Bool,JS.SyntaxTree}[])
         elseif isempty(assign_blocks)
             undef_uses = Pair{Bool,JS.SyntaxTree}[true => event_trees[ub] for ub in use_blocks]
-            undef_result[binfo] = UndefInfo(defs, undef_uses)
+            undef_info[binfo] = UndefInfo(defs, undef_uses)
         else
             reached = undef_reachable_uses(lin.blocks, 1, use_blocks, assign_blocks, visited)
             if !isempty(reached)
@@ -792,9 +903,9 @@ function analyze_def_use(
                                 undef_is_must_execute(lin.blocks, ub, exit_blocks, visited)
                     push!(undef_uses, is_strict => event_trees[ub])
                 end
-                undef_result[binfo] = UndefInfo(defs, undef_uses)
+                undef_info[binfo] = UndefInfo(defs, undef_uses)
             else
-                undef_result[binfo] = UndefInfo(defs, Pair{Bool,JS.SyntaxTree}[])
+                undef_info[binfo] = UndefInfo(defs, Pair{Bool,JS.SyntaxTree}[])
             end
         end
 
@@ -817,33 +928,35 @@ function analyze_def_use(
             end
         end
         if !isempty(dead_defs)
-            dead_store_result[binfo] = DeadStoreInfo(dead_defs)
+            dead_store_info[binfo] = DeadStoreInfo(dead_defs)
         end
     end
 
-    return (undef_result, dead_store_result)
+    return (; undef_info, dead_store_info, unreachable_statements)
 end
 
 """
     analyze_def_use_all_lambdas(ctx3, st3; allow_noreturn_optimization)
-        -> (undef_info, dead_store_info)
+        -> (; undef_info, dead_store_info, unreachable_statements)
 
-Analyze undef status and dead stores for all lambdas in the syntax tree.
-Builds the CFG once per lambda and runs both analyses on it.
+Aggregate `analyze_def_use` results across every `K"lambda"` in `st3`.
+Builds the CFG once per lambda and runs all three analyses on it.
 """
 function analyze_def_use_all_lambdas(
         ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTree;
         allow_noreturn_optimization::Vector{Symbol} = Symbol[]
     )
-    undef_result = Dict{JL.BindingInfo, UndefInfo}()
-    dead_store_result = Dict{JL.BindingInfo, DeadStoreInfo}()
+    undef_info = Dict{JL.BindingInfo, UndefInfo}()
+    dead_store_info = Dict{JL.BindingInfo, DeadStoreInfo}()
+    unreachable_statements = Set{JS.SyntaxTree}()
     traverse(st3) do st3′::JS.SyntaxTree
         if JS.kind(st3′) == JS.K"lambda"
-            undef_info, dead_store_info = analyze_def_use(ctx3, st3′; allow_noreturn_optimization)
-            merge!(undef_result, undef_info)
-            merge!(dead_store_result, dead_store_info)
+            r = analyze_def_use(ctx3, st3′; allow_noreturn_optimization)
+            merge!(undef_info, r.undef_info)
+            merge!(dead_store_info, r.dead_store_info)
+            union!(unreachable_statements, r.unreachable_statements)
         end
         return nothing
     end
-    return (undef_result, dead_store_result)
+    return (; undef_info, dead_store_info, unreachable_statements)
 end
