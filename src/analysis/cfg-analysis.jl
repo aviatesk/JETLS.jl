@@ -120,42 +120,42 @@ mutable struct EventLinearizer
     end
 end
 
-function undef_new_block!(lin::EventLinearizer)
+function cfg_new_block!(lin::EventLinearizer)
     id = length(lin.blocks) + 1
     push!(lin.blocks, EventBlock(id))
     return id
 end
 
-function undef_switch_to_block!(lin::EventLinearizer, id::Int)
+function cfg_switch_to_block!(lin::EventLinearizer, id::Int)
     lin.current_block = id
 end
 
-function undef_add_edge!(lin::EventLinearizer, from::Int, to::Int)
+function cfg_add_edge!(lin::EventLinearizer, from::Int, to::Int)
     if !(to in lin.blocks[from].succs)
         push!(lin.blocks[from].succs, to)
     end
 end
 
-function undef_emit_event!(lin::EventLinearizer, event_kind::Symbol, var_id::JL.IdTag, st::JS.SyntaxTree)
+function cfg_emit_event!(lin::EventLinearizer, event_kind::Symbol, var_id::JL.IdTag, st::JS.SyntaxTree)
     lin.blocks[lin.current_block].event = BlockEvent(event_kind, var_id, st)
     # Create a new block to ensure proper ordering.
     # This allows the path-based analysis to track intra-block event order:
     # `x = 1; println(x)` becomes BB1(assign) → BB2(use), so the analysis
     # correctly detects that all paths to use go through assignment.
-    next_block = undef_new_block!(lin)
-    undef_add_edge!(lin, lin.current_block, next_block)
-    undef_switch_to_block!(lin, next_block)
+    next_block = cfg_new_block!(lin)
+    cfg_add_edge!(lin, lin.current_block, next_block)
+    cfg_switch_to_block!(lin, next_block)
 end
 
-function undef_make_label!(lin::EventLinearizer)
+function cfg_make_label!(lin::EventLinearizer)
     return lin.next_label += 1
 end
 
-function undef_emit_label!(lin::EventLinearizer, label_id::Int)
-    block_id = undef_new_block!(lin)
+function cfg_emit_label!(lin::EventLinearizer, label_id::Int)
+    block_id = cfg_new_block!(lin)
     lin.label_to_block[label_id] = block_id
-    undef_add_edge!(lin, lin.current_block, block_id)
-    undef_switch_to_block!(lin, block_id)
+    cfg_add_edge!(lin, lin.current_block, block_id)
+    cfg_switch_to_block!(lin, block_id)
     # A label can have additional incoming edges (from gotos resolved at
     # finalization), so we conservatively assume the new current block is
     # reachable.
@@ -163,33 +163,33 @@ function undef_emit_label!(lin::EventLinearizer, label_id::Int)
     return block_id
 end
 
-function undef_emit_goto!(lin::EventLinearizer, label_id::Int)
+function cfg_emit_goto!(lin::EventLinearizer, label_id::Int)
     push!(lin.pending_gotos, (lin.current_block, label_id))
-    unreachable = undef_new_block!(lin)
-    undef_switch_to_block!(lin, unreachable)
+    unreachable = cfg_new_block!(lin)
+    cfg_switch_to_block!(lin, unreachable)
     lin.current_known_unreachable = true
 end
 
-function undef_emit_gotoifnot!(lin::EventLinearizer, false_label::Int)
-    true_block = undef_new_block!(lin)
-    undef_add_edge!(lin, lin.current_block, true_block)
+function cfg_emit_gotoifnot!(lin::EventLinearizer, false_label::Int)
+    true_block = cfg_new_block!(lin)
+    cfg_add_edge!(lin, lin.current_block, true_block)
     push!(lin.pending_gotos, (lin.current_block, false_label))
-    undef_switch_to_block!(lin, true_block)
+    cfg_switch_to_block!(lin, true_block)
 end
 
 function cfg_finalize!(lin::EventLinearizer)
     for (from_block, label_id) in lin.pending_gotos
         if haskey(lin.label_to_block, label_id)
             to_block = lin.label_to_block[label_id]
-            undef_add_edge!(lin, from_block, to_block)
+            cfg_add_edge!(lin, from_block, to_block)
         end
     end
 end
 
-function _undef_get_or_create_goto_label!(lin::EventLinearizer, name::String)
+function cfg_get_or_create_goto_label!(lin::EventLinearizer, name::String)
     existing = get(lin.goto_targets, name, nothing)
     isnothing(existing) || return existing
-    label_id = undef_make_label!(lin)
+    label_id = cfg_make_label!(lin)
     lin.goto_targets[name] = label_id
     return label_id
 end
@@ -266,7 +266,7 @@ function undef_emit_isdefined_hints!(
         if JS.kind(arg) == JS.K"BindingId"
             var_id = arg.var_id::JL.IdTag
             if var_id in candidates
-                undef_emit_event!(lin, :isdefined, var_id, arg)
+                cfg_emit_event!(lin, :isdefined, var_id, arg)
             end
         end
     end
@@ -359,7 +359,7 @@ function undef_emit_cond_implied_hints!(
         key ⊆ cond_key || continue
         for var_id in implied
             if var_id in candidates
-                undef_emit_event!(lin, :isdefined, var_id, cond)
+                cfg_emit_event!(lin, :isdefined, var_id, cond)
             end
         end
     end
@@ -387,13 +387,13 @@ function linearize_cfg_events!(
     if k == JS.K"BindingId"
         var_id = ex3.var_id::JL.IdTag
         if var_id in candidates
-            undef_emit_event!(lin, :use, var_id, ex3)
+            cfg_emit_event!(lin, :use, var_id, ex3)
         end
 
     elseif k == JS.K"symbolicblock"
         label_node = ex3[1]
         label_name = label_node.name_val::String
-        exit_label = undef_make_label!(lin)
+        exit_label = cfg_make_label!(lin)
         # Save and set the break target for this label (handles nesting)
         outer_target = get(lin.break_targets, label_name, nothing)
         lin.break_targets[label_name] = exit_label
@@ -405,7 +405,7 @@ function linearize_cfg_events!(
         else
             lin.break_targets[label_name] = outer_target
         end
-        undef_emit_label!(lin, exit_label)
+        cfg_emit_label!(lin, exit_label)
 
     elseif k == JS.K"break"
         # Process value child if present (break label value)
@@ -417,27 +417,27 @@ function linearize_cfg_events!(
             label_name = ex3[1].name_val::String
             target_label = get(lin.break_targets, label_name, nothing)
             if !isnothing(target_label)
-                undef_emit_goto!(lin, target_label)
+                cfg_emit_goto!(lin, target_label)
                 return
             end
         end
-        unreachable = undef_new_block!(lin)
-        undef_switch_to_block!(lin, unreachable)
+        unreachable = cfg_new_block!(lin)
+        cfg_switch_to_block!(lin, unreachable)
         lin.current_known_unreachable = true
 
     elseif k == JS.K"symboliclabel"
         # `@label name` — register a CFG label at the current position so any
         # `K"symbolicgoto"` referencing this name (forward or backward) can
         # land here. At `st3` this node is a leaf; the name lives on `name_val`.
-        label_id = _undef_get_or_create_goto_label!(lin, ex3.name_val::String)
-        undef_emit_label!(lin, label_id)
+        label_id = cfg_get_or_create_goto_label!(lin, ex3.name_val::String)
+        cfg_emit_label!(lin, label_id)
 
     elseif k == JS.K"symbolicgoto" || k == JS.K"oldsymbolicgoto"
         # `@goto name` — unconditional jump to the matching `K"symboliclabel"`.
         # Forward references work because `pending_gotos` is resolved later in
         # `cfg_finalize!`.
-        label_id = _undef_get_or_create_goto_label!(lin, ex3.name_val::String)
-        undef_emit_goto!(lin, label_id)
+        label_id = cfg_get_or_create_goto_label!(lin, ex3.name_val::String)
+        cfg_emit_goto!(lin, label_id)
 
     elseif JS.is_leaf(ex3) || JL.is_quoted(ex3)
         # Nothing to do
@@ -450,7 +450,7 @@ function linearize_cfg_events!(
         if JS.kind(lhs) == JS.K"BindingId"
             var_id = lhs.var_id::JL.IdTag
             if var_id in candidates
-                undef_emit_event!(lin, :assign, var_id, lhs)
+                cfg_emit_event!(lin, :assign, var_id, lhs)
             end
             undef_invalidate_cond_implies!(lin, var_id)
         end
@@ -465,7 +465,7 @@ function linearize_cfg_events!(
         if JS.kind(lhs) == JS.K"BindingId"
             var_id = lhs.var_id::JL.IdTag
             if var_id in candidates
-                undef_emit_event!(lin, :assign, var_id, lhs)
+                cfg_emit_event!(lin, :assign, var_id, lhs)
             end
             undef_invalidate_cond_implies!(lin, var_id)
         end
@@ -480,13 +480,13 @@ function linearize_cfg_events!(
         nested_lb = ex3.lambda_bindings::JL.LambdaBindings
         has_outer_capture = any(is_capt && id in candidates for (id, is_capt) in nested_lb.locals_capt)
         if has_outer_capture && JS.numchildren(ex3) >= 3
-            skip_label = undef_make_label!(lin)
-            undef_emit_gotoifnot!(lin, skip_label)
+            skip_label = cfg_make_label!(lin)
+            cfg_emit_gotoifnot!(lin, skip_label)
             let saved = undef_save_cond_implied(lin)
                 linearize_cfg_events!(lin, ctx3, ex3[3], candidates, allow_noreturn_optimization)
                 undef_restore_cond_implied!(lin, saved)
             end
-            undef_emit_label!(lin, skip_label)
+            cfg_emit_label!(lin, skip_label)
         end
 
     elseif k == JS.K"local"
@@ -503,10 +503,10 @@ function linearize_cfg_events!(
         cond = ex3[1]
         linearize_cfg_events!(lin, ctx3, cond, candidates, allow_noreturn_optimization)
 
-        end_label = undef_make_label!(lin)
-        else_label = undef_make_label!(lin)
+        end_label = cfg_make_label!(lin)
+        else_label = cfg_make_label!(lin)
 
-        undef_emit_gotoifnot!(lin, else_label)
+        cfg_emit_gotoifnot!(lin, else_label)
 
         # Special case: if the condition contains @isdefined(var), the var is
         # definitely defined in the true branch. This handles both direct
@@ -530,9 +530,9 @@ function linearize_cfg_events!(
         # Record implications AFTER restore so they live in the outer scope.
         undef_record_cond_implies!(lin, cond_key, undef_collect_branch_direct_assigns(ex3[2], candidates))
 
-        undef_emit_goto!(lin, end_label)
+        cfg_emit_goto!(lin, end_label)
 
-        undef_emit_label!(lin, else_label)
+        cfg_emit_label!(lin, else_label)
         let saved = undef_save_cond_implied(lin)
             if JS.numchildren(ex3) >= 3
                 linearize_cfg_events!(lin, ctx3, ex3[3], candidates, allow_noreturn_optimization)
@@ -540,49 +540,49 @@ function linearize_cfg_events!(
             undef_restore_cond_implied!(lin, saved)
         end
 
-        undef_emit_label!(lin, end_label)
+        cfg_emit_label!(lin, end_label)
 
     elseif k == JS.K"_while"
-        top_label = undef_make_label!(lin)
-        end_label = undef_make_label!(lin)
+        top_label = cfg_make_label!(lin)
+        end_label = cfg_make_label!(lin)
 
-        undef_emit_label!(lin, top_label)
+        cfg_emit_label!(lin, top_label)
         linearize_cfg_events!(lin, ctx3, ex3[1], candidates, allow_noreturn_optimization)
-        undef_emit_gotoifnot!(lin, end_label)
+        cfg_emit_gotoifnot!(lin, end_label)
         let saved = undef_save_cond_implied(lin)
             linearize_cfg_events!(lin, ctx3, ex3[2], candidates, allow_noreturn_optimization)
             undef_restore_cond_implied!(lin, saved)
         end
-        undef_emit_goto!(lin, top_label)
-        undef_emit_label!(lin, end_label)
+        cfg_emit_goto!(lin, top_label)
+        cfg_emit_label!(lin, end_label)
 
     elseif k == JS.K"_do_while"
-        top_label = undef_make_label!(lin)
-        end_label = undef_make_label!(lin)
+        top_label = cfg_make_label!(lin)
+        end_label = cfg_make_label!(lin)
 
-        undef_emit_label!(lin, top_label)
+        cfg_emit_label!(lin, top_label)
         let saved = undef_save_cond_implied(lin)
             linearize_cfg_events!(lin, ctx3, ex3[1], candidates, allow_noreturn_optimization)
             linearize_cfg_events!(lin, ctx3, ex3[2], candidates, allow_noreturn_optimization)
             undef_restore_cond_implied!(lin, saved)
         end
-        undef_emit_gotoifnot!(lin, end_label)
-        undef_emit_goto!(lin, top_label)
-        undef_emit_label!(lin, end_label)
+        cfg_emit_gotoifnot!(lin, end_label)
+        cfg_emit_goto!(lin, top_label)
+        cfg_emit_label!(lin, end_label)
 
     elseif k == JS.K"trycatchelse"
-        catch_label = undef_make_label!(lin)
-        end_label = undef_make_label!(lin)
+        catch_label = cfg_make_label!(lin)
+        end_label = cfg_make_label!(lin)
 
         # Try block can throw at any point
-        undef_emit_gotoifnot!(lin, catch_label)
+        cfg_emit_gotoifnot!(lin, catch_label)
         let saved = undef_save_cond_implied(lin)
             linearize_cfg_events!(lin, ctx3, ex3[1], candidates, allow_noreturn_optimization)
             undef_restore_cond_implied!(lin, saved)
         end
-        undef_emit_goto!(lin, end_label)
+        cfg_emit_goto!(lin, end_label)
 
-        undef_emit_label!(lin, catch_label)
+        cfg_emit_label!(lin, catch_label)
         let saved = undef_save_cond_implied(lin)
             linearize_cfg_events!(lin, ctx3, ex3[2], candidates, allow_noreturn_optimization)
             if JS.numchildren(ex3) >= 3
@@ -591,13 +591,13 @@ function linearize_cfg_events!(
             undef_restore_cond_implied!(lin, saved)
         end
 
-        undef_emit_label!(lin, end_label)
+        cfg_emit_label!(lin, end_label)
 
     elseif k == JS.K"tryfinally"
-        finally_label = undef_make_label!(lin)
-        end_label = undef_make_label!(lin)
+        finally_label = cfg_make_label!(lin)
+        end_label = cfg_make_label!(lin)
 
-        undef_emit_gotoifnot!(lin, finally_label)
+        cfg_emit_gotoifnot!(lin, finally_label)
         let saved = undef_save_cond_implied(lin)
             linearize_cfg_events!(lin, ctx3, ex3[1], candidates, allow_noreturn_optimization)
             undef_restore_cond_implied!(lin, saved)
@@ -608,16 +608,16 @@ function linearize_cfg_events!(
         # completion does not flow into post-try.
         try_body_terminated = lin.current_known_unreachable
 
-        undef_emit_label!(lin, finally_label)
+        cfg_emit_label!(lin, finally_label)
         linearize_cfg_events!(lin, ctx3, ex3[2], candidates, allow_noreturn_optimization)
 
         if try_body_terminated
-            end_block = undef_new_block!(lin)
+            end_block = cfg_new_block!(lin)
             lin.label_to_block[end_label] = end_block
-            undef_switch_to_block!(lin, end_block)
+            cfg_switch_to_block!(lin, end_block)
             lin.current_known_unreachable = true
         else
-            undef_emit_label!(lin, end_label)
+            cfg_emit_label!(lin, end_label)
         end
 
     elseif k == JS.K"return"
@@ -629,9 +629,9 @@ function linearize_cfg_events!(
         # `current_block` for whatever syntactically follows the return.
         # The phantom has no incoming edges, so subsequent events recorded
         # against it are correctly treated as unreachable. Same pattern:
-        # `undef_emit_goto!`, no-target `K"break"`, noreturn-call branch.
-        unreachable = undef_new_block!(lin)
-        undef_switch_to_block!(lin, unreachable)
+        # `cfg_emit_goto!`, no-target `K"break"`, noreturn-call branch.
+        unreachable = cfg_new_block!(lin)
+        cfg_switch_to_block!(lin, unreachable)
         lin.current_known_unreachable = true
 
     elseif k == JS.K"block"
@@ -657,8 +657,8 @@ function linearize_cfg_events!(
 
         if !isempty(allow_noreturn_optimization) &&
                 is_noreturn_call(ctx3, ex3, allow_noreturn_optimization)
-            unreachable = undef_new_block!(lin)
-            undef_switch_to_block!(lin, unreachable)
+            unreachable = cfg_new_block!(lin)
+            cfg_switch_to_block!(lin, unreachable)
             lin.current_known_unreachable = true
         end
     end
@@ -666,7 +666,7 @@ end
 
 # Check if `start` can reach any block in `targets` WITHOUT going through any block in `avoid`.
 # `visited` is a caller-provided scratch `BitSet` that is cleared on entry.
-function undef_can_reach_avoiding(
+function cfg_can_reach_avoiding(
         blocks::Vector{EventBlock}, start::Int, targets::BitSet, avoid::BitSet,
         visited::BitSet
     )
@@ -693,7 +693,7 @@ end
 
 # Find all use blocks reachable from `start` avoiding `avoid`, sorted by block ID.
 # `visited` is a caller-provided scratch `BitSet` that is cleared on entry.
-function undef_reachable_uses(
+function cfg_reachable_targets(
         blocks::Vector{EventBlock}, start::Int, targets::BitSet, avoid::BitSet,
         visited::BitSet
     )
@@ -724,12 +724,12 @@ end
 # This is equivalent to: entry cannot reach exit without going through the block.
 # When `exit_blocks` / `visited` are supplied by the caller they are reused
 # across repeated calls for the same CFG, avoiding redundant allocation.
-function undef_is_must_execute(
+function cfg_is_must_execute(
         blocks::Vector{EventBlock}, block_id::Int, exit_blocks::BitSet, visited::BitSet
     )
     isempty(exit_blocks) && return true
     avoid = BitSet([block_id])
-    can_bypass = undef_can_reach_avoiding(blocks, 1, exit_blocks, avoid, visited)
+    can_bypass = cfg_can_reach_avoiding(blocks, 1, exit_blocks, avoid, visited)
     return !can_bypass
 end
 
@@ -944,13 +944,13 @@ function analyze_local_def_use!(
             undef_uses = Pair{Bool,JS.SyntaxTree}[true => event_trees[ub] for ub in use_blocks]
             undef_info[binfo] = UndefInfo(defs, undef_uses)
         else
-            reached = undef_reachable_uses(cfg.lin.blocks, 1, use_blocks, assign_blocks, visited)
+            reached = cfg_reachable_targets(cfg.lin.blocks, 1, use_blocks, assign_blocks, visited)
             if !isempty(reached)
                 min_assign_block = minimum(assign_blocks)
                 undef_uses = Pair{Bool,JS.SyntaxTree}[]
                 for ub in reached
                     is_strict = ub < min_assign_block &&
-                                undef_is_must_execute(cfg.lin.blocks, ub, cfg.exit_blocks, visited)
+                                cfg_is_must_execute(cfg.lin.blocks, ub, cfg.exit_blocks, visited)
                     push!(undef_uses, is_strict => event_trees[ub])
                 end
                 undef_info[binfo] = UndefInfo(defs, undef_uses)
@@ -971,7 +971,7 @@ function analyze_local_def_use!(
             for ab in real_assign_blocks
                 ab != def_block_id && push!(other_assigns, ab)
             end
-            can_reach_use = undef_can_reach_avoiding(
+            can_reach_use = cfg_can_reach_avoiding(
                 cfg.lin.blocks, def_block_id, use_blocks, other_assigns, visited)
             if !can_reach_use
                 push!(dead_defs, event_trees[def_block_id])
