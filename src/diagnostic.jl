@@ -1167,6 +1167,94 @@ function analyze_unreachable_code!(
     end
 end
 
+# `@goto`/`@label` resolution is normally validated by JuliaLowering's
+# `compile_body` (linear IR pass), which JETLS doesn't run. Mirror that
+# check against `st3` so unresolved gotos still surface as diagnostics.
+function analyze_unresolved_gotos!(
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, st3::JS.SyntaxTree
+    )
+    traverse(st3) do st3′::JS.SyntaxTree
+        JS.kind(st3′) === JS.K"lambda" || return nothing
+        JS.numchildren(st3′) >= 3 || return nothing
+        check_lambda_gotos!(diagnostics, fi, st3′[3])
+        return nothing
+    end
+end
+
+function check_lambda_gotos!(
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, body3::JS.SyntaxTree
+    )
+    gotos, labels = collect_gotos_labels(body3)
+    label_names = Set{String}(name for (name, _) in labels)
+    referenced = Set{String}()
+    for (name, st) in gotos
+        if name in label_names
+            push!(referenced, name)
+            continue
+        end
+        push!(diagnostics, Diagnostic(;
+            range = jsobj_to_range(st, fi),
+            severity = DiagnosticSeverity.Error,
+            message = "label `$name` referenced but not defined",
+            source = DIAGNOSTIC_SOURCE_LIVE,
+            code = LOWERING_ERROR_CODE,
+            codeDescription = diagnostic_code_description(LOWERING_ERROR_CODE)))
+    end
+    for (name, st) in labels
+        name in referenced && continue
+        # Skip macro-generated labels — only report user-written ones.
+        is_from_user_ast(JL.flattened_provenance(st)) || continue
+        push!(diagnostics, Diagnostic(;
+            range = jsobj_to_range(st, fi),
+            severity = DiagnosticSeverity.Information,
+            message = "Unused label `$name`",
+            source = DIAGNOSTIC_SOURCE_LIVE,
+            code = LOWERING_UNUSED_LABEL_CODE,
+            codeDescription = diagnostic_code_description(LOWERING_UNUSED_LABEL_CODE),
+            tags = DiagnosticTag.Ty[DiagnosticTag.Unnecessary]))
+    end
+end
+
+function collect_gotos_labels(st3::JS.SyntaxTree)
+    gotos = Tuple{String,JS.SyntaxTree}[]
+    labels = Tuple{String,JS.SyntaxTree}[]
+    collect_gotos_labels!(gotos, labels, st3)
+    return gotos, labels
+end
+function collect_gotos_labels!(
+        gotos::Vector{Tuple{String,JS.SyntaxTree}},
+        labels::Vector{Tuple{String,JS.SyntaxTree}},
+        st3::JS.SyntaxTree
+    )
+    k = JS.kind(st3)
+    if k === JS.K"lambda"
+        # Nested lambdas have their own goto/label scope; handled separately.
+        return
+    elseif (k === JS.K"symboliclabel") && hasproperty(st3, :name_val)
+        push!(labels, (st3.name_val::String, st3))
+        return
+    elseif (k === JS.K"symbolicgoto" || k === JS.K"oldsymbolicgoto") && hasproperty(st3, :name_val)
+        push!(gotos, (st3.name_val::String, st3))
+        return
+    elseif k === JS.K"symbolicblock"
+        # First child is a lowering-internal label (e.g. `loop-exit`) used by
+        # `K"break"`, not reachable via `@goto`; recurse only into the body.
+        if JS.numchildren(st3) >= 2
+            collect_gotos_labels!(gotos, labels, st3[2])
+        end
+        return
+    elseif k === JS.K"break"
+        # First child is a label name reference, not a declaration.
+        if JS.numchildren(st3) >= 2
+            collect_gotos_labels!(gotos, labels, st3[2])
+        end
+        return
+    end
+    for i in 1:JS.numchildren(st3)
+        collect_gotos_labels!(gotos, labels, st3[i])
+    end
+end
+
 function analyze_lowered_code!(
         diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo, res::NamedTuple;
         skip_analysis_requiring_context::Bool = false,
@@ -1195,6 +1283,7 @@ function analyze_lowered_code!(
 
     analyze_captured_boxes!(diagnostics, uri, fi, ctx4, st3, reported)
     analyze_unreachable_code!(diagnostics, fi, ctx3, st3, allow_noreturn_optimization)
+    analyze_unresolved_gotos!(diagnostics, fi, st3)
 
     if !skip_analysis_requiring_context
         analyze_undefined_global_bindings!(diagnostics, fi, ctx3, binding_occurrences, reported; analyzer, postprocessor)

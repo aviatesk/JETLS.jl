@@ -2083,4 +2083,131 @@ end
     end
 end
 
+@testset "unresolved goto detection" begin
+    # forward goto with matching label — no diagnostic
+    let diagnostics = get_lowered_diagnostics("""
+        begin
+            @goto here
+            println("dead")
+            @label here
+        end
+        """)
+        ds = filter(d -> d.code == JETLS.LOWERING_ERROR_CODE, diagnostics)
+        @test isempty(ds)
+    end
+
+    # backward goto with matching label — no diagnostic
+    let diagnostics = get_lowered_diagnostics("""
+        function f()
+            @label retry
+            @goto retry
+        end
+        """)
+        ds = filter(d -> d.code == JETLS.LOWERING_ERROR_CODE, diagnostics)
+        @test isempty(ds)
+    end
+
+    let diagnostics = get_lowered_diagnostics("""
+        begin
+            @goto nonexist
+            println("foo")
+        end
+        """)
+        ds = filter(d -> d.code == JETLS.LOWERING_ERROR_CODE, diagnostics)
+        @test length(ds) == 1
+        d = only(ds)
+        @test d.message == "label `nonexist` referenced but not defined"
+        @test d.severity == LSP.DiagnosticSeverity.Error
+        # range should cover the `nonexist` identifier
+        @test d.range.start.line == 1
+        @test d.range.start.character == sizeof("    @goto ")
+        @test d.range.var"end".character == sizeof("    @goto nonexist")
+    end
+
+    # `@goto` cannot cross lambda boundaries — label in outer fn,
+    # goto in inner closure should be reported as unresolved
+    let diagnostics = get_lowered_diagnostics("""
+        function f()
+            @label outer
+            g = () -> @goto outer
+            g()
+        end
+        """)
+        ds = filter(d -> d.code == JETLS.LOWERING_ERROR_CODE, diagnostics)
+        @test length(ds) == 1
+        @test only(ds).message == "label `outer` referenced but not defined"
+    end
+
+    # multiple unresolved gotos — each reported independently
+    let diagnostics = get_lowered_diagnostics("""
+        function f()
+            @goto a
+            @goto b
+        end
+        """)
+        ds = filter(d -> d.code == JETLS.LOWERING_ERROR_CODE, diagnostics)
+        @test length(ds) == 2
+        msgs = sort([d.message for d in ds])
+        @test msgs == [
+            "label `a` referenced but not defined",
+            "label `b` referenced but not defined",
+        ]
+    end
+end
+
+@testset "unused label detection" begin
+    let diagnostics = get_lowered_diagnostics("""
+        function f()
+            @label unused
+            return 1
+        end
+        """)
+        ds = filter(d -> d.code == JETLS.LOWERING_UNUSED_LABEL_CODE, diagnostics)
+        @test length(ds) == 1
+        d = only(ds)
+        @test d.message == "Unused label `unused`"
+        @test d.severity == LSP.DiagnosticSeverity.Information
+        @test !isnothing(d.tags) && LSP.DiagnosticTag.Unnecessary in d.tags
+        @test d.range.start.line == 1
+    end
+
+    # referenced label — no diagnostic
+    let diagnostics = get_lowered_diagnostics("""
+        function f()
+            @label loop
+            @goto loop
+        end
+        """)
+        ds = filter(d -> d.code == JETLS.LOWERING_UNUSED_LABEL_CODE, diagnostics)
+        @test isempty(ds)
+    end
+
+    # mix — only the unreferenced one is reported
+    let diagnostics = get_lowered_diagnostics("""
+        function f()
+            @label used
+            @goto used
+            @label spare
+        end
+        """)
+        ds = filter(d -> d.code == JETLS.LOWERING_UNUSED_LABEL_CODE, diagnostics)
+        @test length(ds) == 1
+        @test only(ds).message == "Unused label `spare`"
+    end
+
+    # `@goto` cannot cross lambda boundaries — outer label is unused even
+    # though an inner closure references the same name
+    let diagnostics = get_lowered_diagnostics("""
+        function f()
+            @label outer
+            g = () -> @goto outer
+            g()
+        end
+        """)
+        ds = filter(d -> d.code == JETLS.LOWERING_UNUSED_LABEL_CODE, diagnostics)
+        @test length(ds) == 1
+        @test only(ds).message == "Unused label `outer`"
+    end
+end
+
 end # module test_lowering_diagnostics

@@ -44,6 +44,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > This disables analysis for matched files. Basic features like completion still might work, but most LSP features will be unfunctional.
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
 
+### Added
+
+- `lowering/error` now reports `@goto` references that don't resolve to any `@label` in the same function body.
+  For example:
+  ```julia
+  function f()
+      @goto nonexist  # label `nonexist` referenced but not defined (JETLS lowering/error)
+      println("foo")
+  end
+  ```
+
+- Added the `lowering/unused-label` diagnostic, reported when a `@label` is declared but never referenced by any `@goto` in the same function body. The label is marked with the `Unnecessary` tag, so editors typically display it as faded/grayed out.
+  For example:
+  ```julia
+  function f()
+      @label spare  # Unused label `spare` (JETLS lowering/unused-label)
+      return 1
+  end
+  ```
+
 ### Changed
 
 - The reference count code lens is no longer shown for inner constructors of a `struct`.
