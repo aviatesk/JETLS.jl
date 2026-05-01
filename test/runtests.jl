@@ -22,7 +22,7 @@ end
     end
     @testset "analysis" verbose=true begin
         @testset "occurrence" include("analysis/test_occurrence_analysis.jl")
-        @testset "def use" include("analysis/test_def_use_analysis.jl")
+        @testset "cfg" include("analysis/test_cfg_analysis.jl")
         @testset "LSAnalyzer" include("analysis/test_Analyzer.jl")
     end
     @testset "types" include("test_types.jl")

@@ -1,4 +1,4 @@
-module test_def_use_analysis
+module test_cfg_analysis
 
 using Test
 using JETLS
@@ -12,7 +12,7 @@ module lowering_module end
 function get_undef_status(text::AbstractString; mod::Module=lowering_module, allow_noreturn_optimization::Vector{Symbol}=Symbol[])
     st0 = jlparse(text; rule=:statement, filename=@__FILE__)
     (; ctx3, st3) = JETLS.jl_lower_for_scope_resolution(mod, st0; trim_error_nodes=false, recover_from_macro_errors=false)
-    (; undef_info) = JETLS.analyze_def_use_all_lambdas(ctx3, st3; allow_noreturn_optimization)
+    (; undef_info) = JETLS.analyze_all_lambdas(ctx3, st3; allow_noreturn_optimization)
     result = Dict{String, Union{Nothing,Bool}}()
     for (binfo, info) in undef_info
         if !binfo.is_internal && binfo.kind == :local
@@ -1068,7 +1068,7 @@ function get_dead_stores(text::AbstractString;
     st0 = jlparse(text; rule=:statement, filename=@__FILE__)
     (; ctx3, st3) = JETLS.jl_lower_for_scope_resolution(mod, st0;
         trim_error_nodes=false, recover_from_macro_errors=false)
-    (; dead_store_info) = JETLS.analyze_def_use_all_lambdas(ctx3, st3;
+    (; dead_store_info) = JETLS.analyze_all_lambdas(ctx3, st3;
         allow_noreturn_optimization)
     result = Dict{String,Int}()
     for (binfo, dsinfo) in dead_store_info
@@ -1399,4 +1399,4 @@ end
 
 end # @testset "dead store analysis" begin
 
-end # module test_def_use_analysis
+end # module test_cfg_analysis

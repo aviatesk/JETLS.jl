@@ -807,7 +807,7 @@ function analyze_undefined_global_bindings!(
 end
 
 # This analysis reports `lowering/undef-local-var` on a change basis, based on
-# `analyze_def_use_all_lambdas`, which analyzes local binding definedness with the event
+# `analyze_all_lambdas`, which analyzes local binding definedness with the event
 # based binding assignment reachability analysis.
 # Severity levels (encoded in each entry of `UndefInfo.undef_uses`):
 # - Warning: `true => tree` → strict undef (guaranteed UndefVarError on some path)
@@ -1078,7 +1078,7 @@ end
 
 # Reachability-based unreachable-code detection. `unreachable_statements`
 # is the set of `K"block"` children that the per-lambda CFG built in
-# `analyze_def_use_all_lambdas` determined to be in unreachable blocks.
+# `analyze_all_lambdas` determined to be in unreachable blocks.
 #
 # Walking `K"block"` nodes here only serves to (a) locate consecutive runs
 # of unreachable statements that came from the same source position and
@@ -1268,7 +1268,7 @@ function analyze_lowered_code!(
         allow_unused_underscore)
 
     (; undef_info, dead_store_info, unreachable_statements) =
-        analyze_def_use_all_lambdas(ctx3, st3; allow_noreturn_optimization)
+        analyze_all_lambdas(ctx3, st3; allow_noreturn_optimization)
     analyze_undefined_local_bindings!(diagnostics, uri, fi, undef_info, reported)
     analyze_unused_assignments!(diagnostics, fi, st0, dead_store_info, reported; allow_unused_underscore)
 

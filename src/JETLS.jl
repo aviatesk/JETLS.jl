@@ -89,7 +89,7 @@ include("config.jl")
 include("workspace-configuration.jl")
 
 include("analysis/occurrence-analysis.jl")
-include("analysis/def-use-analysis.jl")
+include("analysis/cfg-analysis.jl")
 
 include("diagnostic.jl")
 
