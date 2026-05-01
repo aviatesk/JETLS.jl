@@ -2051,6 +2051,39 @@ end
         unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
         @test isempty(unreachable)
     end
+
+    # Same shape but via `@something(rand(), @goto fallback)`: the goto
+    # lives in the second macro argument, only evaluated when the first
+    # produced `nothing`. The label is reachable via that goto edge even
+    # though the surrounding `return` would otherwise terminate.
+    let diagnostics = get_lowered_diagnostics("""
+        function foo()
+            return @something rand((rand(), nothing)) @goto fallback
+            @label fallback
+            println("Hit")
+        end
+        """)
+        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        @test isempty(unreachable)
+    end
+
+    # `@something(x, return default)` is a common early-return idiom. The
+    # macro expands to nested `let val_i = arg_i; if isnothing(val_i) ...`,
+    # whose macro-introduced wrapper contains the user-written `return`.
+    # The wrapper's lowered form puts the `K"if"` AFTER the `K"="` whose
+    # rhs is `return`, but the wrapper's byte range encompasses the
+    # `return`, so reporting it would surface a confusing
+    # "macro-everything-is-unreachable" warning. The
+    # `byte_range(child).start > terminator_end` filter in
+    # `analyze_unreachable_code!` suppresses it.
+    let diagnostics = get_lowered_diagnostics("""
+        function find_thing(env)
+            return @something parse_thing(env) return nothing
+        end
+        """)
+        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        @test isempty(unreachable)
+    end
 end
 
 module soft_scope_module

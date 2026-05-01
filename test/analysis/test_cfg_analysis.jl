@@ -1058,6 +1058,35 @@ end
     end
 end
 
+@testset "@something short-circuit control flow" begin
+    # `@something(a, b)` only evaluates `b` when `a` is `nothing`. An
+    # assignment that lives inside a later argument is therefore conditional,
+    # so `v` may be undefined at the trailing `return`. If the macro stub
+    # collapsed to a flat `something(a, b)` call, both args would be
+    # evaluated unconditionally and `v` would be definitely defined.
+    let status = get_undef_status("""
+        function f(x)
+            local v
+            @something(x, (v = 1; nothing))
+            return v
+        end
+        """)
+        @test status["v"] === nothing
+    end
+
+    # Dual case: `v` is assigned in the first argument (always evaluated),
+    # so it is definitely defined regardless of what later args do.
+    let status = get_undef_status("""
+        function f()
+            local v
+            @something((v = 1; nothing), other)
+            return v
+        end
+        """)
+        @test status["v"] === false
+    end
+end
+
 end # @testset "undef analysis" begin
 
 # --- Dead store (unused assignment) analysis ---
