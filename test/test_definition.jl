@@ -33,6 +33,13 @@ include("setup.jl")
 # skips the full server lifecycle and runs much faster.
 function with_definition_request(tester, text::AbstractString; kwargs...)
     clean_code, positions = JETLS.get_text_and_positions(text; kwargs...)
+    # `cnt` lives inside the inner-most `withserver` `do`-block (where the
+    # for loop runs), so it is a plain function-local — not captured by
+    # any further closure — and avoids triggering the captured-box
+    # diagnostic the way an outer `cnt = 0` shadowed by a `do`-block
+    # callback would. Each invocation of `tester` returns an `Int`
+    # contribution that gets accumulated and bubbled out through the
+    # `withscript`/`withserver` return values.
     withscript(clean_code) do script_path
         uri = filepath2uri(script_path)
         withserver() do (; writereadmsg, id_counter)
@@ -40,14 +47,16 @@ function with_definition_request(tester, text::AbstractString; kwargs...)
             (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, clean_code))
             @test raw_res isa PublishDiagnosticsNotification
             @test raw_res.params.uri == uri
+            cnt = 0
             for (i, pos) in enumerate(positions)
                 (; raw_res) = writereadmsg(DefinitionRequest(;
                     id = id_counter[] += 1,
                     params = DefinitionParams(;
                         textDocument = TextDocumentIdentifier(; uri),
                         position = pos)))
-                tester(i, raw_res.result, uri)
+                cnt += tester(i, raw_res.result, uri)
             end
+            return cnt
         end
     end
 end
@@ -64,16 +73,17 @@ function with_find_definition(tester, text::AbstractString; kwargs...)
     JETLS.store!(server.state.file_cache) do cache
         Base.PersistentDict(cache, furi => fi), nothing
     end
+    cnt = 0
     for (i, pos) in enumerate(positions)
         locations, _ = JETLS.find_definition(server, furi, fi, pos)
-        tester(i, isempty(locations) ? null : locations, furi)
+        cnt += tester(i, isempty(locations) ? null : locations, furi)
     end
+    return cnt
 end
 
 @testset "'Definition' for modules and methods" begin
     @testset "function definition" begin
-        cnt = 0
-        with_find_definition("""
+        @test with_find_definition("""
             func(x) = 1
             fu│nc(1.0)
             func(1.│0)
@@ -90,17 +100,15 @@ end
                 @test first(result).uri == uri
                 @test first(result).range.start.line == 0
             end
-            cnt += 1
-        end
-        @test cnt == 3
+            return 1
+        end == 3
     end
 
     @testset "Base functions" begin
-        sin_cand_file, sin_cand_line = functionloc(first(methods(sin, (Float64,))))
-        sin_cand_file = JETLS.to_full_path(sin_cand_file)
+        sin_cand_file_, sin_cand_line = functionloc(first(methods(sin, (Float64,))))
+        sin_cand_file = JETLS.to_full_path(sin_cand_file_)
 
-        cnt = 0
-        with_definition_request("""
+        @test with_definition_request("""
             Base.Compiler.tm│eet
             si│n(1.0)
             1 +│ 2
@@ -120,14 +128,12 @@ end
                     candidate.uri.path != uri
                 end
             end
-            cnt += 1
-        end
-        @test cnt == 4
+            return 1
+        end == 4
     end
 
     @testset "function in module" begin
-        cnt = 0
-        with_definition_request("""
+        @test with_definition_request("""
             module M
                 m_func(x) = 1
                 m_│func(1.0)
@@ -139,23 +145,19 @@ end
                 @test length(result) == 1
                 @test first(result).uri == uri
                 @test first(result).range.start.line == 1
-                cnt += 1
             elseif i == 2
                 @test result === null
-                cnt += 1
             elseif i == 3
                 @test length(result) == 1
                 @test first(result).uri == uri
                 @test first(result).range.start.line == 1
-                cnt += 1
             end
-        end
-        @test cnt == 3
+            return 1
+        end == 3
     end
 
     @testset "struct type and function aggregation" begin
-        cnt = 0
-        with_find_definition("""
+        @test with_find_definition("""
             struct Hello
                 who::String
                 Hello(who::AbstractString) = new(String(who))
@@ -181,14 +183,12 @@ end
             elseif i == 3  # function with keyword arguments (aggregated)
                 @test first(result).range.start.line == 10
             end
-            cnt += 1
-        end
-        @test cnt == 3
+            return 1
+        end == 3
     end
 
     @testset "target node selection" begin
-        local cnt = 0
-        with_definition_request("""
+        @test with_definition_request("""
             func(x) = 1
             func│ # bare function
             func│(1.0) # right edge
@@ -206,14 +206,12 @@ end
             else  # qualified function (i == 4 or 5)
                 @test first(result).range.start.line == 5
             end
-            cnt += 1
-        end
-        @test cnt == 5
+            return 1
+        end == 5
     end
 
     @testset "module location" begin
-        cnt = 0
-        with_definition_request("""
+        @test with_definition_request("""
             module M2
                 m_func(x) = 1
             end
@@ -228,17 +226,15 @@ end
             elseif i == 2  # Core doesn't return meaningful location
                 @test result === null
             end
-            cnt += 1
-        end
-        @test cnt == 2
+            return 1
+        end == 2
     end
 
 end
 
 @testset "'Definition' for local bindings" begin
     @testset "local definition" begin
-        local cnt = 0
-        with_find_definition("""
+        @test with_find_definition("""
             function func(x, y)
                 if rand(Bool)
                     z = x
@@ -258,14 +254,12 @@ end
                 result.uri == uri &&
                 result.range.start.line == 4
             end
-            cnt += 1
-        end
-        @test cnt == 1
+            return 1
+        end == 1
     end
 
     @testset "local definition with docstring" begin
-        cnt = 0
-        with_find_definition("""
+        @test with_find_definition("""
             \"\"\"Docstring\"\"\"
             function func(xxx, yyy)
                 value = xxx│ + yyy
@@ -278,14 +272,12 @@ end
                 result.uri == uri &&
                 result.range.start.line == 1
             end
-            cnt += 1
-        end
-        @test cnt == 1
+            return 1
+        end == 1
     end
 
     @testset "local definition with macrocall" begin
-        cnt = 0
-        with_find_definition("""
+        @test with_find_definition("""
             function func(xxx, yyy)
                 value = @something rand((xxx│, yyy, nothing))
                 return value
@@ -297,9 +289,8 @@ end
                 result.uri == uri &&
                 result.range.start.line == 0
             end
-            cnt += 1
-        end
-        @test cnt == 1
+            return 1
+        end == 1
     end
 end
 
@@ -308,10 +299,9 @@ end
     # The import site is a declaration (`:decl`), so `textDocument/definition`
     # falls through to reflection-based lookup and jumps to the source
     # (e.g. `sin` in Base).
-    sin_cand_file, sin_cand_line = functionloc(first(methods(sin, (Float64,))))
-    sin_cand_file = JETLS.to_full_path(sin_cand_file)
-    cnt = 0
-    with_definition_request("""
+    sin_cand_file_, sin_cand_line = functionloc(first(methods(sin, (Float64,))))
+    sin_cand_file = JETLS.to_full_path(sin_cand_file_)
+    @test with_definition_request("""
         using Base: sin
         si│n(1.0)
     """) do _, results, uri
@@ -323,14 +313,12 @@ end
             JETLS.uri2filepath(r.uri) == sin_cand_file &&
             r.range.start.line == (sin_cand_line - 1)
         end
-        cnt += 1
-    end
-    @test cnt == 1
+        return 1
+    end == 1
 end
 
 @testset "'Definition' for global bindings" begin
-    cnt = 0
-    with_find_definition("""
+    @test with_find_definition("""
         GLOBAL_VAR = 42
         const CONST_VAR = 100
         MUTABLE_VAR = 1
@@ -353,9 +341,8 @@ end
             @test any(r -> r.range.start.line == 2, results)
             @test any(r -> r.range.start.line == 3, results)
         end
-        cnt += 1
-    end
-    @test cnt == 3
+        return 1
+    end == 3
 end
 
 end # module test_definition
