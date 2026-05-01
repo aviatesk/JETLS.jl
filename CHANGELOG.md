@@ -55,7 +55,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   end
   ```
 
-- Added the `lowering/unused-label` diagnostic, reported when a `@label` is declared but never referenced by any `@goto` in the same function body. The label is marked with the `Unnecessary` tag, so editors typically display it as faded/grayed out.
+- Added the `lowering/unused-label` diagnostic, reported when a `@label` is declared but never referenced by any `@goto` in the same function body. The label is marked with the `Unnecessary` tag, so editors typically display it as faded/grayed out. A "Remove unused label" code action is also offered to drop the entire `@label` statement.
   For example:
   ```julia
   function f()

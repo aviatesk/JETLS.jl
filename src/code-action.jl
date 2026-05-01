@@ -38,8 +38,7 @@ function handle_CodeActionRequest(
     diagnostics = msg.params.context.diagnostics
     unused_variable_code_actions!(code_actions, uri, diagnostics;
         allow_unused_underscore = get_config(server, :diagnostic, :allow_unused_underscore))
-    unused_import_code_actions!(code_actions, uri, diagnostics)
-    unreachable_code_actions!(code_actions, uri, diagnostics)
+    delete_range_code_actions!(code_actions, uri, diagnostics)
     sort_imports_code_actions!(code_actions, uri, diagnostics)
     ambiguous_soft_scope_code_actions!(code_actions, uri, diagnostics)
     return send(server,
@@ -74,17 +73,23 @@ function unused_variable_code_actions!(
     return code_actions
 end
 
-function unused_import_code_actions!(
+const DELETE_RANGE_TITLES = Dict{Symbol,String}(
+    :unreachable_code => "Delete unreachable code",
+    :unused_import    => "Remove unused import",
+    :unused_label     => "Remove unused label",
+)
+
+function delete_range_code_actions!(
         code_actions::Vector{Union{CodeAction,Command}},
         uri::URI,
         diagnostics::Vector{Diagnostic}
     )
     for diagnostic in diagnostics
-        diagnostic.code == LOWERING_UNUSED_IMPORT_CODE || continue
         data = diagnostic.data
-        data isa UnusedImportData || continue
+        data isa DeleteRangeData || continue
+        title = @something get(DELETE_RANGE_TITLES, data.kind, nothing) continue
         push!(code_actions, CodeAction(;
-            title = "Remove unused import",
+            title,
             kind = CodeActionKind.QuickFix,
             diagnostics = Diagnostic[diagnostic],
             isPreferred = true,
@@ -154,28 +159,6 @@ function add_delete_unused_var_code_actions!(
                             newText = "")]))))
         end
     end
-end
-
-function unreachable_code_actions!(
-        code_actions::Vector{Union{CodeAction,Command}},
-        uri::URI, diagnostics::Vector{Diagnostic}
-    )
-    for diagnostic in diagnostics
-        diagnostic.code == LOWERING_UNREACHABLE_CODE || continue
-        data = diagnostic.data
-        data isa UnreachableCodeData || continue
-        push!(code_actions, CodeAction(;
-            title = "Delete unreachable code",
-            kind = CodeActionKind.QuickFix,
-            diagnostics = Diagnostic[diagnostic],
-            isPreferred = true,
-            edit = WorkspaceEdit(;
-                changes = Dict{URI,Vector{TextEdit}}(
-                    uri => TextEdit[TextEdit(;
-                        range = data.delete_range,
-                        newText = "")]))))
-    end
-    return code_actions
 end
 
 function sort_imports_code_actions!(
