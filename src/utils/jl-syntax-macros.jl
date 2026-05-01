@@ -126,6 +126,43 @@ function Base.var"@label"(__context__::JL.MacroContext, ::JS.SyntaxTree...)
         "@label currently only supports the `@label name` form")
 end
 
+# New-style stub for `Base.@something`. Mirrors `Base.@something`'s nested
+# `let val_i = arg_i; if !isnothing(val_i) something(val_i) else <next> end end`
+# expansion so that:
+#   - each `arg_i` is evaluated at most once (binding occurrences and other
+#     identifier-level semantics inside `arg_i` are preserved exactly);
+#   - downstream def-use analysis sees the same conditional evaluation
+#     structure as the real macro — assignments inside `arg_{i+1}` are
+#     statically reachable only on paths where every preceding `arg_j` was
+#     `nothing`.
+#
+# `val_i` identifiers are introduced in the macro's scope layer (via
+# `JL.@ast`), so they cannot clash with user code, and `let`-binding scopes
+# them so they do not leak into the enclosing block.
+#
+# The zero-argument form mirrors `Base.@something()`: it expands to
+# `something(nothing)`, which throws at runtime.
+function Base.var"@something"(__context__::JL.MacroContext, args::JS.SyntaxTree...)
+    mc = __context__.macrocall::JS.SyntaxTree
+    expr = JL.@ast(__context__, mc,
+        [JS.K"call" "something"::JS.K"Identifier" nothing::JS.K"Value"])
+    for i in length(args):-1:1
+        arg = args[i]
+        val_name = "val_$i"
+        expr = JL.@ast(__context__, mc, [JS.K"let"
+            [JS.K"block"
+                [JS.K"=" val_name::JS.K"Identifier" arg]]
+            [JS.K"block"
+                [JS.K"if"
+                    [JS.K"call" "isnothing"::JS.K"Identifier"
+                        val_name::JS.K"Identifier"]
+                    expr
+                    [JS.K"call" "something"::JS.K"Identifier"
+                        val_name::JS.K"Identifier"]]]])
+    end
+    return expr
+end
+
 # New-style `@kwdef` macro that preserves provenance information.
 # This strips default values from struct fields and generates keyword constructors,
 # matching the semantics of Base.@kwdef.

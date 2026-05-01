@@ -141,6 +141,7 @@ const NEW_STYLE_MACROCALL_NAMES = (
     # src/utils/jl-syntax-macros.jl
     "@kwdef",
     "@label",
+    "@something",
     "@spawn",
     "@specialize",
     "@test",

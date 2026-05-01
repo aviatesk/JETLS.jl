@@ -74,7 +74,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - `lowering/unreachable-code` now uses control-flow reachability instead of syntactic block-walking, fixing several false positives and missed cases:
   - Code reachable via `@goto` nested inside an expression (e.g. `return cnd ? @goto(fallback) : println("Return"); @label fallback; ...`) is no longer reported as unreachable.
-  - Code after `try ... finally ... end` whose `try` body always terminates is now correctly flagged as unreachable.ro call.
+  - Code after `try ... finally ... end` whose `try` body always terminates is now correctly flagged as unreachable.
 
 ## 2026-04-28
 
