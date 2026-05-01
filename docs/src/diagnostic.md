@@ -486,6 +486,7 @@ end
 **Default severity**: `Information`
 
 Function arguments that are declared but never used in the function body.
+The argument is marked with the `Unnecessary` tag.[^unnecessary_tag]
 
 By default, arguments with names starting with `_` are not reported; see
 [`allow_unused_underscore`](@ref config/diagnostic-allow_unused_underscore).
@@ -506,7 +507,8 @@ end
 
 **Default severity**: `Information`
 
-Local variables that are never used anywhere in their scope.
+Local variables that are never used anywhere in their scope. The
+variable is marked with the `Unnecessary` tag.[^unnecessary_tag]
 
 By default, variables with names starting with `_` are not reported; see
 [`allow_unused_underscore`](@ref config/diagnostic-allow_unused_underscore).
@@ -533,7 +535,8 @@ end
 
 Assignments to local variables whose values are never read. This
 diagnostic targets individual assignments where the value is overwritten
-or the function exits before the value is read.
+or the function exits before the value is read. The assignment is
+marked with the `Unnecessary` tag.[^unnecessary_tag]
 
 This diagnostic does not overlap with
 [`lowering/unused-local`](@ref diagnostic/reference/lowering/unused-local):
@@ -578,7 +581,8 @@ end
 
 Reported when an explicitly imported name is never used within the same module
 space. This diagnostic helps identify unnecessary imports that can be removed
-to keep your code clean.
+to keep your code clean. The unused name is marked with the `Unnecessary`
+tag.[^unnecessary_tag]
 
 Example:
 
@@ -634,8 +638,7 @@ module.
 
 Reported when code appears after a statement that always exits the
 current block, making subsequent code unreachable. The unreachable
-code is rendered with the `Unnecessary` tag, which causes editors to
-display it as faded/grayed out.
+code is marked with the `Unnecessary` tag.[^unnecessary_tag]
 
 Example:
 
@@ -1069,3 +1072,8 @@ severity = "hint"
 For complete configuration options, severity values, pattern matching syntax,
 and more examples, see the [`[diagnostic]` configuration](@ref config/diagnostic)
 section in the [JETLS configuration](@ref config) page.
+
+
+[^unnecessary_tag]: The `Unnecessary` [diagnostic tag](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#diagnosticTag)
+    indicates that the marked code is unnecessary or unused, which
+    causes editors to display it as faded/grayed out.
