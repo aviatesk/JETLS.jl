@@ -1991,6 +1991,66 @@ end
         unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
         @test length(unreachable) == 1
     end
+
+    # Consecutive-run termination: when a reachable sibling appears between two would-be
+    # unreachable runs (here `@label skip` is reachable via the `@goto skip` edge),
+    # `analyze_unreachable_code!` must stop folding subsequent siblings into the
+    # diagnostic's range when iteration hits a reachable child. Otherwise the merged range
+    # would extend past the label all the way to the end of the block, swallowing the
+    # genuinely reachable `println("after")` into the report.
+    let diagnostics = get_lowered_diagnostics("""
+        function foo()
+            @goto skip
+            println("unreachable")
+            @label skip
+            println("after")
+        end
+        """)
+        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        @test length(unreachable) == 1
+        d = only(unreachable)
+        # The diagnostic's range must end at line 3 (`println("unreachable")`),
+        # not extend through line 4 (`@label skip`) or line 5 (`println("after")`).
+        @test d.range.var"end".line == 2  # 0-indexed: line 3
+    end
+
+    # Source-order filter for lowering artifacts: `for i = 1:N; break; ...` lowers to a
+    # do-while whose body block has the user body followed by an iterate-step assignment
+    # (`(= next iterate(itr, state))`) whose source provenance points back to the loop
+    # header `i = 1:N`. After `break`, the iterate-step is in an unreachable CFG block,
+    # so without source-order filter `byte_range(child).start > terminator_end`,
+    # `analyze_unreachable_code!` would emit a 2nd, baffling diagnostic pointing at the
+    # loop header itself.
+    let diagnostics = get_lowered_diagnostics("""
+        function foo()
+            for i = 1:10
+                break
+                println(i)
+            end
+        end
+        """)
+        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        # Without the filter this would be 2 (println + the iterate-step whose provenance
+        # is `i = 1:10`).
+        @test length(unreachable) == 1
+        d = only(unreachable)
+        # The single diagnostic should point at println(i), not at the for-loop header.
+        @test d.range.start.line == 3  # 0-indexed: line 4 (println(i))
+    end
+
+    # `@goto` nested inside a `return`'s expression keeps the matching `@label` reachable:
+    # control transfers via the goto edge before the surrounding `return` would execute,
+    # so post-label code stays live.
+    let diagnostics = get_lowered_diagnostics("""
+        function foo(cnd::Bool)
+            return cnd ? @goto(fallback) : println("Return")
+            @label fallback
+            println("Fallback")
+        end
+        """)
+        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        @test isempty(unreachable)
+    end
 end
 
 module soft_scope_module

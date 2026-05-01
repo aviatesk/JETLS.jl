@@ -476,8 +476,8 @@ any bindings or control flow the macros themselves would have introduced.
     intentionally does not preserve semantic validity: replacing a macrocall with a
     raw `block` can place statements like `return` into expression contexts that are
     not legal Julia (e.g. `x = (begin ...; return nothing; end)`). Feeding the
-    transformed tree into flow-sensitive analyses such as `analyze_def_use` or
-    `analyze_unreachable_code!` can therefore produce nonsensical results and must
+    transformed tree into flow-sensitive analyses such as `analyze_local_def_use!`
+    or `analyze_unreachable!` can therefore produce nonsensical results and must
     be avoided.
 
 !!! note "Assumption on macro behavior"

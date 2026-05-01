@@ -1,4 +1,4 @@
-module test_def_use_analysis
+module test_cfg_analysis
 
 using Test
 using JETLS
@@ -12,7 +12,7 @@ module lowering_module end
 function get_undef_status(text::AbstractString; mod::Module=lowering_module, allow_noreturn_optimization::Vector{Symbol}=Symbol[])
     st0 = jlparse(text; rule=:statement, filename=@__FILE__)
     (; ctx3, st3) = JETLS.jl_lower_for_scope_resolution(mod, st0; trim_error_nodes=false, recover_from_macro_errors=false)
-    (undef_info, _) = JETLS.analyze_def_use_all_lambdas(ctx3, st3; allow_noreturn_optimization)
+    (; undef_info) = JETLS.analyze_all_lambdas(ctx3, st3; allow_noreturn_optimization)
     result = Dict{String, Union{Nothing,Bool}}()
     for (binfo, info) in undef_info
         if !binfo.is_internal && binfo.kind == :local
@@ -998,6 +998,66 @@ end
     end
 end
 
+@testset "tryfinally with terminating try body" begin
+    # When the try body always terminates (e.g. `return`), post-try is
+    # unreachable: any use of a local there should NOT be flagged as
+    # potentially undefined, since that use never executes. Without the
+    # `current_known_unreachable` flag tracking in `K"tryfinally"`, the
+    # use would be reachable via the gotoifnot bypass through finally,
+    # making the post-try use look reachable from the entry on a path
+    # that misses the try-body assignment, and `x` would surface as
+    # `nothing` (potentially undef) — a false positive.
+    let status = get_undef_status("""
+        function f()
+            local x
+            try
+                x = 1
+                return 1
+            finally
+                cleanup()
+            end
+            return x
+        end
+        """)
+        @test status["x"] === false
+    end
+
+    # Same shape but with finally also assigning to the variable: still
+    # not flagged, for the same reason — the post-try use is unreachable.
+    let status = get_undef_status("""
+        function f()
+            local x
+            try
+                return 1
+            finally
+                x = 2
+            end
+            return x
+        end
+        """)
+        @test status["x"] === false
+    end
+
+    # Sanity check that the regular tryfinally case (try body doesn't
+    # terminate) still tracks definedness through the gotoifnot bypass:
+    # if the only assignment is in the try body, the use post-try might
+    # not have executed when control reached finally via the exception
+    # path, so x stays `nothing` (potentially undef).
+    let status = get_undef_status("""
+        function f()
+            local x
+            try
+                x = compute()
+            finally
+                cleanup()
+            end
+            return x
+        end
+        """)
+        @test status["x"] === nothing
+    end
+end
+
 end # @testset "undef analysis" begin
 
 # --- Dead store (unused assignment) analysis ---
@@ -1008,7 +1068,7 @@ function get_dead_stores(text::AbstractString;
     st0 = jlparse(text; rule=:statement, filename=@__FILE__)
     (; ctx3, st3) = JETLS.jl_lower_for_scope_resolution(mod, st0;
         trim_error_nodes=false, recover_from_macro_errors=false)
-    (_, dead_store_info) = JETLS.analyze_def_use_all_lambdas(ctx3, st3;
+    (; dead_store_info) = JETLS.analyze_all_lambdas(ctx3, st3;
         allow_noreturn_optimization)
     result = Dict{String,Int}()
     for (binfo, dsinfo) in dead_store_info
@@ -1339,4 +1399,4 @@ end
 
 end # @testset "dead store analysis" begin
 
-end # module test_def_use_analysis
+end # module test_cfg_analysis
