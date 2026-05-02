@@ -30,7 +30,7 @@ function summary_testrunner_result(result::TestRunnerResult)
 end
 
 testset_name(testsetinfo::TestsetInfo) = testset_name(testsetinfo.st0)
-function testset_name(testset::JS.SyntaxTree)
+function testset_name(testset::SyntaxTreeC)
     desc = testset_description_node(testset)
     isnothing(desc) && return ""
     if JS.kind(desc) === JS.K"String"
@@ -40,7 +40,7 @@ function testset_name(testset::JS.SyntaxTree)
     end
 end
 testset_line(testsetinfo::TestsetInfo) = testset_line(testsetinfo.st0)
-function testset_line(testset::JS.SyntaxTree)
+function testset_line(testset::SyntaxTreeC)
     desc = testset_description_node(testset)
     return isnothing(desc) ? JS.source_line(testset) : JS.source_line(desc)
 end
@@ -48,7 +48,7 @@ end
 # Find the description string node of a `@testset` macrocall.
 # Returns `K"String"` for simple literals (sourcetext has no quotes)
 # or `K"string"` for interpolated strings (sourcetext includes quotes).
-function testset_description_node(testset::JS.SyntaxTree)
+function testset_description_node(testset::SyntaxTreeC)
     for i = 2:JS.numchildren(testset)
         child = testset[i]
         if JS.kind(child) in JS.KSet"string String"
@@ -59,7 +59,7 @@ function testset_description_node(testset::JS.SyntaxTree)
 end
 
 """
-    compute_testsetinfos!(server::Server, st0::SyntaxTree0, prev_testsetinfos::Vector{TestsetInfo})
+    compute_testsetinfos!(server::Server, st0::SyntaxTreeC, prev_testsetinfos::Vector{TestsetInfo})
 
 Compute new testsetinfos from the syntax tree, preserving test results from
 previous testsetinfos where testset names match. Clears extra diagnostics for
@@ -69,7 +69,7 @@ Returns `(testsetinfos, any_deleted)` where `any_deleted` indicates whether any
 diagnostics were cleared.
 """
 function compute_testsetinfos!(
-        server::Server, st0::SyntaxTree0, prev_testsetinfos::Vector{TestsetInfo}
+        server::Server, st0::SyntaxTreeC, prev_testsetinfos::Vector{TestsetInfo}
     )
     new_testsets = find_executable_testsets(st0)
     m = length(new_testsets)
@@ -122,9 +122,9 @@ function compute_testsetinfos!(
     return testsetinfos, any_deleted
 end
 
-function find_executable_testsets(st0_top::SyntaxTree0)
+function find_executable_testsets(st0_top::SyntaxTreeC)
     testsets = JS.SyntaxList(JS.syntax_graph(st0_top))
-    traverse(st0_top) do st0::SyntaxTree0
+    traverse(st0_top) do st0::SyntaxTreeC
         if JS.kind(st0) in JS.KSet"function macro"
             # avoid visit inside function scope
             return traversal_no_recurse
@@ -272,7 +272,7 @@ function testrunner_testcase_code_actions!(
         code_actions::Vector{Union{CodeAction,Command}}, uri::URI, fi::FileInfo, action_range::Range
     )
     st0_top = build_syntax_tree(fi)
-    traverse(st0_top) do st0::SyntaxTree0
+    traverse(st0_top) do st0::SyntaxTreeC
         if JS.kind(st0) in JS.KSet"function macro"
             # avoid visit inside function scope
             return traversal_no_recurse

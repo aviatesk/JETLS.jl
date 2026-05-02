@@ -54,15 +54,6 @@ const REFERENCES_CODE_LENS_SYMBOL_KINDS = (
     SymbolKind.Enum,      # @enum
 )
 
-# Only descend into containers whose direct children introduce global bindings.
-# `Function` bodies and `Namespace` constructs (`let`/`for`/`while`/`if`) create
-# local scopes, so any nested `Function` symbol there is a closure or inner
-# function whose references stay within the enclosing scope.
-const REFERENCES_CODE_LENS_RECURSE_KINDS = (
-    SymbolKind.Module,
-    SymbolKind.Struct,
-)
-
 function references_code_lenses!(
         code_lenses::Vector{CodeLens}, state::ServerState, uri::URI, fi::FileInfo
     )
@@ -82,7 +73,7 @@ function collect_references_code_lenses!(
             data = ReferencesCodeLensData(uri, range.start.line, range.start.character)
             push!(code_lenses, CodeLens(; range, data))
         end
-        if symbol.kind in REFERENCES_CODE_LENS_RECURSE_KINDS
+        if symbol.kind == SymbolKind.Module
             children = symbol.children
             if children !== nothing
                 collect_references_code_lenses!(code_lenses, uri, children)

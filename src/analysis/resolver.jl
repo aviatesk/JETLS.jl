@@ -1,5 +1,5 @@
 """
-    resolve_type(analyzer::LSAnalyzer, context_module::Module, s0::Union{JS.SyntaxNode,JS.SyntaxTree})
+    resolve_type(analyzer::LSAnalyzer, context_module::Module, s0::Union{JS.SyntaxNode,SyntaxTreeC})
     resolve_type(analyzer::LSAnalyzer, context_module::Module, ex::Expr)
 
 Resolves the type of `s0` in the `context_module` that has been analyzed by the `analyzer`.
@@ -32,7 +32,7 @@ function resolve_type(analyzer::LSAnalyzer, context_module::Module, node::JS.Syn
     end
     return resolve_type(analyzer, context_module, ex)
 end
-function resolve_type(analyzer::LSAnalyzer, context_module::Module, st::JS.SyntaxTree)
+function resolve_type(analyzer::LSAnalyzer, context_module::Module, st::SyntaxTreeC)
     ex = try
         JL.est_to_expr(st)
     catch

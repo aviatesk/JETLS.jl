@@ -403,6 +403,14 @@ length_utf16(s::AbstractString) = sum(c::Char -> codepoint(c) < 0x10000 ? 1 : 2,
             @test length(diagnostics) == 1
             @test only(diagnostics).message == "Unused argument `x`"
         end
+        # positional arg with default value constraining a used static parameter
+        # should still be reported (the kwarg-sparam exception must not apply here)
+        let diagnostics = get_lowered_diagnostics("""
+            f(x::Type{T}=Float32) where {T} = T
+            """)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).message == "Unused argument `x`"
+        end
         # keyword arg with multiple type parameters, at least one used
         let diagnostics = get_lowered_diagnostics("""
             f(; x::Pair{S,T}=1=>2) where {S,T} = S
@@ -1362,6 +1370,31 @@ end
         """)
         @test isempty(diagnostics)
     end
+
+    # Regression: when a captured-binding's reference lives inside a macro expansion
+    # (e.g. a `@testset` body), the related-information range must point at the actual
+    # identifier — not the entire enclosing macrocall, which for macro-expanded references
+    # picks the outermost source = `@testset begin ... end` instead of `walk`).
+    let diagnostics = get_lowered_diagnostics(JETLS.JETLSTestModule, """
+        @testset "outer" begin
+            walk(st) = walk(st-1)
+            walk(5)
+        end
+        """)
+        ds = filter(d -> d.code == JETLS.LOWERING_CAPTURED_BOXED_VARIABLE_CODE, diagnostics)
+        @test length(ds) == 1
+        d = only(ds)
+        @test d.message == "`walk` is captured and boxed"
+        @test !isnothing(d.relatedInformation)
+        for ri in d.relatedInformation
+            @test ri.message == "Captured by closure"
+            # Each related range must cover only the `walk` identifier,
+            # not span the whole `@testset begin ... end` macrocall.
+            r = ri.location.range
+            @test r.start.line == r.var"end".line
+            @test r.var"end".character - r.start.character == length("walk")
+        end
+    end
 end
 
 is_unsorted_import_names_diagnostic(diagnostic) =
@@ -1991,6 +2024,99 @@ end
         unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
         @test length(unreachable) == 1
     end
+
+    # Consecutive-run termination: when a reachable sibling appears between two would-be
+    # unreachable runs (here `@label skip` is reachable via the `@goto skip` edge),
+    # `analyze_unreachable_code!` must stop folding subsequent siblings into the
+    # diagnostic's range when iteration hits a reachable child. Otherwise the merged range
+    # would extend past the label all the way to the end of the block, swallowing the
+    # genuinely reachable `println("after")` into the report.
+    let diagnostics = get_lowered_diagnostics("""
+        function foo()
+            @goto skip
+            println("unreachable")
+            @label skip
+            println("after")
+        end
+        """)
+        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        @test length(unreachable) == 1
+        d = only(unreachable)
+        # The diagnostic's range must end at line 3 (`println("unreachable")`),
+        # not extend through line 4 (`@label skip`) or line 5 (`println("after")`).
+        @test d.range.var"end".line == 2  # 0-indexed: line 3
+    end
+
+    # Source-order filter for lowering artifacts: `for i = 1:N; break; ...` lowers to a
+    # do-while whose body block has the user body followed by an iterate-step assignment
+    # (`(= next iterate(itr, state))`) whose source provenance points back to the loop
+    # header `i = 1:N`. After `break`, the iterate-step is in an unreachable CFG block,
+    # so without source-order filter `byte_range(child).start > terminator_end`,
+    # `analyze_unreachable_code!` would emit a 2nd, baffling diagnostic pointing at the
+    # loop header itself.
+    let diagnostics = get_lowered_diagnostics("""
+        function foo()
+            for i = 1:10
+                break
+                println(i)
+            end
+        end
+        """)
+        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        # Without the filter this would be 2 (println + the iterate-step whose provenance
+        # is `i = 1:10`).
+        @test length(unreachable) == 1
+        d = only(unreachable)
+        # The single diagnostic should point at println(i), not at the for-loop header.
+        @test d.range.start.line == 3  # 0-indexed: line 4 (println(i))
+    end
+
+    # `@goto` nested inside a `return`'s expression keeps the matching `@label` reachable:
+    # control transfers via the goto edge before the surrounding `return` would execute,
+    # so post-label code stays live.
+    let diagnostics = get_lowered_diagnostics("""
+        function foo(cnd::Bool)
+            return cnd ? @goto(fallback) : println("Return")
+            @label fallback
+            println("Fallback")
+        end
+        """)
+        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        @test isempty(unreachable)
+    end
+
+    # Same shape but via `@something(rand(), @goto fallback)`: the goto
+    # lives in the second macro argument, only evaluated when the first
+    # produced `nothing`. The label is reachable via that goto edge even
+    # though the surrounding `return` would otherwise terminate.
+    let diagnostics = get_lowered_diagnostics("""
+        function foo()
+            return @something rand((rand(), nothing)) @goto fallback
+            @label fallback
+            println("Hit")
+        end
+        """)
+        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        @test isempty(unreachable)
+    end
+
+    # `@something(x, return default)` is a common early-return idiom. The
+    # macro expands to nested `let val_i = arg_i; if isnothing(val_i) ...`,
+    # whose macro-introduced wrapper contains the user-written `return`.
+    # The wrapper's lowered form puts the `K"if"` AFTER the `K"="` whose
+    # rhs is `return`, but the wrapper's byte range encompasses the
+    # `return`, so reporting it would surface a confusing
+    # "macro-everything-is-unreachable" warning. The
+    # `byte_range(child).start > terminator_end` filter in
+    # `analyze_unreachable_code!` suppresses it.
+    let diagnostics = get_lowered_diagnostics("""
+        function find_thing(env)
+            return @something parse_thing(env) return nothing
+        end
+        """)
+        unreachable = filter(d -> d.code == JETLS.LOWERING_UNREACHABLE_CODE, diagnostics)
+        @test isempty(unreachable)
+    end
 end
 
 module soft_scope_module
@@ -2080,6 +2206,156 @@ end
             ds = filter(d -> d.code == JETLS.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE, diagnostics)
             @test length(ds) == 1
         end
+    end
+end
+
+@testset "unresolved goto detection" begin
+    # forward goto with matching label — no diagnostic
+    let diagnostics = get_lowered_diagnostics("""
+        begin
+            @goto here
+            println("dead")
+            @label here
+        end
+        """)
+        ds = filter(d -> d.code == JETLS.LOWERING_ERROR_CODE, diagnostics)
+        @test isempty(ds)
+    end
+
+    # backward goto with matching label — no diagnostic
+    let diagnostics = get_lowered_diagnostics("""
+        function f()
+            @label retry
+            @goto retry
+        end
+        """)
+        ds = filter(d -> d.code == JETLS.LOWERING_ERROR_CODE, diagnostics)
+        @test isempty(ds)
+    end
+
+    let diagnostics = get_lowered_diagnostics("""
+        begin
+            @goto nonexist
+            println("foo")
+        end
+        """)
+        ds = filter(d -> d.code == JETLS.LOWERING_ERROR_CODE, diagnostics)
+        @test length(ds) == 1
+        d = only(ds)
+        @test d.message == "label `nonexist` referenced but not defined"
+        @test d.severity == LSP.DiagnosticSeverity.Error
+        # range should cover the `nonexist` identifier
+        @test d.range.start.line == 1
+        @test d.range.start.character == sizeof("    @goto ")
+        @test d.range.var"end".character == sizeof("    @goto nonexist")
+    end
+
+    # `@goto` cannot cross lambda boundaries — label in outer fn,
+    # goto in inner closure should be reported as unresolved
+    let diagnostics = get_lowered_diagnostics("""
+        function f()
+            @label outer
+            g = () -> @goto outer
+            g()
+        end
+        """)
+        ds = filter(d -> d.code == JETLS.LOWERING_ERROR_CODE, diagnostics)
+        @test length(ds) == 1
+        @test only(ds).message == "label `outer` referenced but not defined"
+    end
+
+    # multiple unresolved gotos — each reported independently
+    let diagnostics = get_lowered_diagnostics("""
+        function f()
+            @goto a
+            @goto b
+        end
+        """)
+        ds = filter(d -> d.code == JETLS.LOWERING_ERROR_CODE, diagnostics)
+        @test length(ds) == 2
+        msgs = sort([d.message for d in ds])
+        @test msgs == [
+            "label `a` referenced but not defined",
+            "label `b` referenced but not defined",
+        ]
+    end
+end
+
+@testset "unused label detection" begin
+    let diagnostics = get_lowered_diagnostics("""
+        function f()
+            @label unused
+            return 1
+        end
+        """)
+        ds = filter(d -> d.code == JETLS.LOWERING_UNUSED_LABEL_CODE, diagnostics)
+        @test length(ds) == 1
+        d = only(ds)
+        @test d.message == "Unused label `unused`"
+        @test d.severity == LSP.DiagnosticSeverity.Information
+        @test !isnothing(d.tags) && LSP.DiagnosticTag.Unnecessary in d.tags
+        @test d.range.start.line == 1
+    end
+
+    # referenced label — no diagnostic
+    let diagnostics = get_lowered_diagnostics("""
+        function f()
+            @label loop
+            @goto loop
+        end
+        """)
+        ds = filter(d -> d.code == JETLS.LOWERING_UNUSED_LABEL_CODE, diagnostics)
+        @test isempty(ds)
+    end
+
+    # mix — only the unreferenced one is reported
+    let diagnostics = get_lowered_diagnostics("""
+        function f()
+            @label used
+            @goto used
+            @label spare
+        end
+        """)
+        ds = filter(d -> d.code == JETLS.LOWERING_UNUSED_LABEL_CODE, diagnostics)
+        @test length(ds) == 1
+        @test only(ds).message == "Unused label `spare`"
+    end
+
+    # `@goto` cannot cross lambda boundaries — outer label is unused even
+    # though an inner closure references the same name
+    let diagnostics = get_lowered_diagnostics("""
+        function f()
+            @label outer
+            g = () -> @goto outer
+            g()
+        end
+        """)
+        ds = filter(d -> d.code == JETLS.LOWERING_UNUSED_LABEL_CODE, diagnostics)
+        @test length(ds) == 1
+        @test only(ds).message == "Unused label `outer`"
+    end
+
+    # Regression: when an unused `@label` is nested inside another
+    # macrocall (e.g. `@testset`), the auto-fix delete range must cover
+    # only the `@label name` line — not the entire enclosing macrocall.
+    let diagnostics = get_lowered_diagnostics(JETLS.JETLSTestModule, """
+        @testset "outer" begin
+            @label spare
+            return 1
+        end
+        """)
+        ds = filter(d -> d.code == JETLS.LOWERING_UNUSED_LABEL_CODE, diagnostics)
+        @test length(ds) == 1
+        d = only(ds)
+        @test d.message == "Unused label `spare`"
+        @test d.data isa JETLS.DeleteRangeData
+        dr = d.data.delete_range
+        # Line-absorbing delete range over `@label spare` (line 2,
+        # 0-indexed = 1) up to the start of line 3.
+        @test dr.start.line == 1
+        @test dr.start.character == 0
+        @test dr.var"end".line == 2
+        @test dr.var"end".character == 0
     end
 end
 

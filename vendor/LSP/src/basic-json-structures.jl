@@ -597,10 +597,17 @@ struct AmbiguousSoftScopeData
 end
 export AmbiguousSoftScopeData
 
-struct UnreachableCodeData
+"""
+Diagnostic data attached to lowering diagnostics whose only quick fix is
+"delete this range." `kind` lets the code action handler pick a label
+appropriate to the diagnostic (e.g. "Remove unused import" vs. "Delete
+unreachable code") without splitting into one struct per diagnostic.
+"""
+struct DeleteRangeData
+    kind::Symbol
     delete_range::Range
 end
-export UnreachableCodeData
+export DeleteRangeData
 
 struct UnsortedImportData
     new_text::String
@@ -611,11 +618,6 @@ struct UnusedArgumentData
     is_kwarg::Bool
 end
 export UnusedArgumentData
-
-struct UnusedImportData
-    delete_range::Range
-end
-export UnusedImportData
 
 struct UnusedVariableData
     is_tuple_unpacking::Bool
@@ -687,7 +689,7 @@ Diagnostic objects are only valid in the scope of a resource.
     # Tags
     - since – 3.16.0
     """
-    data::Union{AmbiguousSoftScopeData, UnsortedImportData, UnreachableCodeData, UnusedArgumentData, UnusedImportData, UnusedVariableData, Nothing} = nothing
+    data::Union{AmbiguousSoftScopeData, DeleteRangeData, UnsortedImportData, UnusedArgumentData, UnusedVariableData, Nothing} = nothing
 end
 
 # Command

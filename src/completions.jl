@@ -95,7 +95,7 @@ Sending (4) and (5) to the client can happen eagerly in response to <TAB>
 in later versions.
 """
 function to_completion(
-        binding::JL.BindingInfo, st::JS.SyntaxTree, sort_offset::Int,
+        binding::JL.BindingInfo, st::SyntaxTreeC, sort_offset::Int,
         uri::URI, fi::FileInfo
     )
     label_kind = CompletionItemKind.Variable
@@ -115,7 +115,7 @@ function to_completion(
 
     typeid = binding.type
     if !isnothing(typeid)
-        label_detail = "::" * JS.sourcetext(JS.SyntaxTree(JS.syntax_graph(st), typeid))
+        label_detail = "::" * JS.sourcetext(SyntaxTreeC(JS.syntax_graph(st), typeid))
     end
 
     io = IOBuffer()
@@ -483,7 +483,7 @@ end
 # call completions (method signatures and keyword arguments)
 # ==========================================================
 
-function extract_param_text(p::JS.SyntaxTree)
+function extract_param_text(p::SyntaxTreeC)
      k = JS.kind(p)
     if k === JS.K"Identifier"
         return extract_name_val(p)
@@ -563,7 +563,7 @@ function cursor_equals_position(ca::CallArgs, b::Int)
     return nothing
 end
 
-function extract_kwarg_name_str(p::JS.SyntaxTree)
+function extract_kwarg_name_str(p::SyntaxTreeC)
     node = @something extract_kwarg_name(p; sig=true) return nothing
     return extract_name_val(node)
 end

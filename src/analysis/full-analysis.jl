@@ -375,6 +375,11 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
         @goto next_request
     end
 
+    if is_abandoned_unsaved_buffer(server, request.uri)
+        JETLS_DEV_MODE && @info "Skipped analysis for closed unsaved buffer" entry=progress_title(request.entry) uri=request.uri
+        @goto next_request
+    end
+
     if has_any_parse_errors(server, request)
         JETLS_DEV_MODE && @info "Requested analysis unit has parse errors" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
         @goto next_request
@@ -411,6 +416,16 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
     end
     tm = round(time() - s, digits=2)
     JETLS_DEV_MODE && @info "Analysis completed in $tm seconds:" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
+
+    if is_abandoned_unsaved_buffer(server, request.uri)
+        # Buffer was closed mid-analysis. `file_cache` becoming empty means didClose
+        # already ran (or is racing with us) and `cleanup_unsaved_analysis!` is taking care
+        # of `manager.cache`/generations/debounced + the OLD prev_result's methods.
+        # We just need to drop the methods this analysis just defined and skip the cache write.
+        JETLS_DEV_MODE && @info "Discarding analysis result for closed unsaved buffer" entry=progress_title(request.entry) uri=request.uri
+        cleanup_prev_methods(analysis_result)
+        @goto next_request
+    end
 
     update_analysis_cache!(server.state, analysis_result)
     mark_analyzed_generation!(manager, request)
@@ -499,6 +514,67 @@ function cleanup_prev_methods(prev_result::AnalysisResult)
             JETLS_DEV_MODE && @warn "Failed to delete method $m"
             JETLS_DEV_MODE && Base.showerror(stderr, e, catch_backtrace())
         end
+    end
+end
+
+# An unsaved (`untitled:`/`buffer:`) URI is "abandoned" once `file_cache` no
+# longer holds it: didClose has already cleared the buffer and the URI is
+# unique per session, so any remaining analysis work for it would only leak.
+is_abandoned_unsaved_buffer(server::Server, uri::URI) =
+    isunsaveduri(uri) && get_file_info(server.state, uri) === nothing
+
+"""
+    cleanup_unsaved_analysis!(server::Server, uri::URI)
+
+Drop the analysis state for an unsaved URI when its buffer is closed.
+Untitled URIs are unique per session, so leaving state behind would leak both
+the cache and the methods registered in `Core.methodtable` by previous
+analyses (otherwise visible as ghost entries in completions/signature help).
+
+This only handles state already in the caches. Any in-flight or queued analysis
+for this entry is short-circuited separately by `is_abandoned_unsaved_buffer`
+checks in `resolve_analysis_request`.
+"""
+function cleanup_unsaved_analysis!(server::Server, uri::URI)
+    @assert isunsaveduri(uri)
+    manager = server.state.analysis_manager
+    prev_result = get_analysis_info(manager, uri)
+    if prev_result isa AnalysisResult
+        entry = prev_result.entry
+        store!(manager.debounced) do debounced
+            haskey(debounced, entry) || return debounced, nothing
+            timer, completion = debounced[entry]
+            close(timer)
+            notify(completion)
+            new_debounced = copy(debounced)
+            delete!(new_debounced, entry)
+            return new_debounced, nothing
+        end
+        store!(manager.current_generations) do gens
+            haskey(gens, entry) || return gens, nothing
+            new_gens = copy(gens)
+            delete!(new_gens, entry)
+            return new_gens, nothing
+        end
+        store!(manager.analyzed_generations) do gens
+            haskey(gens, entry) || return gens, nothing
+            new_gens = copy(gens)
+            delete!(new_gens, entry)
+            return new_gens, nothing
+        end
+        cleanup_prev_methods(prev_result)
+    end
+    store!(manager.cache) do cache
+        new_cache = copy(cache)
+        if prev_result isa AnalysisResult
+            for analyzed_uri in analyzed_file_uris(prev_result)
+                delete!(new_cache, analyzed_uri)
+            end
+        else
+            haskey(new_cache, uri) || return cache, nothing
+            delete!(new_cache, uri)
+        end
+        return new_cache, nothing
     end
 end
 
@@ -610,13 +686,13 @@ function analyze_parsed_if_exist(
     )
     uri = entryuri(request.entry)
     jetconfigs = getjetconfigs(request.entry)
-    fi = get_saved_file_info(server.state, uri)
-    if isnothing(fi)
-        filepath = @something uri2filepath(uri) error(lazy"Unsupported URI: $uri")
-        interp = LSInterpreter(server, request; activation_done)
-        return interp, JET.analyze_and_report_file!(interp, filepath, args...; jetconfigs...)
-    elseif isunsaveduri(uri)
-        interp = LSInterpreter(server, request; activation_done)
+    interp = LSInterpreter(server, request; activation_done)
+    if isunsaveduri(uri)
+        # Unsaved buffers (`untitled:`/`buffer:`) are never persisted to the
+        # `saved_file_cache`; consult the live `file_cache` instead. When that is
+        # also empty (e.g. the buffer was closed before a debounced analysis fired),
+        # fall back to analyzing empty text so any methods previously defined by
+        # this entry get cleaned up.
         filename = uri2filename(uri)
         fi = get_file_info(server.state, uri)
         if isnothing(fi)
@@ -625,11 +701,13 @@ function analyze_parsed_if_exist(
             syntax_node = JS.build_tree(JS.SyntaxNode, fi.parsed_stream; filename)
             return interp, JET.analyze_and_report_expr!(interp, syntax_node, filename, args...; jetconfigs...)
         end
-    else
-        interp = LSInterpreter(server, request; activation_done)
-        filename = uri2filename(uri)
-        return interp, JET.analyze_and_report_expr!(interp, fi.syntax_node, filename, args...; jetconfigs...)
     end
+    fi = @something get_saved_file_info(server.state, uri) begin
+        filepath = @something uri2filepath(uri) error(lazy"Unsupported URI: $uri")
+        return interp, JET.analyze_and_report_file!(interp, filepath, args...; jetconfigs...)
+    end
+    filename = uri2filename(uri)
+    return interp, JET.analyze_and_report_expr!(interp, fi.syntax_node, filename, args...; jetconfigs...)
 end
 
 # update `AnalyzerState(analyzer).world` so that `analyzer` can infer any newly defined methods

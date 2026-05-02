@@ -531,7 +531,7 @@ end
 # lowering diagnostic
 # ===================
 
-const JL_MACRO_FILE = only(methods(JL.expand_macro, (JL.MacroExpansionContext,JS.SyntaxTree))).file
+const JL_MACRO_FILE = only(methods(JL.expand_macro, (JL.MacroExpansionContext,SyntaxTreeC))).file
 function scrub_expand_macro_stacktrace(stacktrace::Vector{Base.StackTraces.StackFrame})
     idx = @something findfirst(stacktrace) do stackframe::Base.StackTraces.StackFrame
         stackframe.func === :expand_macro && stackframe.file === JL_MACRO_FILE
@@ -594,37 +594,35 @@ end
 
 # Compute a mapping from source locations to the set of identifier names found in keyword
 # argument type annotations.
-function compute_kwarg_type_annotation_names(st0::JS.SyntaxTree)
+# `K"kw"` nodes are produced by JuliaSyntax for both true keyword arguments
+# (`f(; y=1)`) and positional arguments with default values (`f(y=1)`); only the former
+# sit under a `K"parameters"` node, so we track that during the walk.
+# An explicit stack is used (instead of recursion) so we don't risk overflowing
+# the C stack on pathologically deep user input.
+function compute_kwarg_type_annotation_names(st0::SyntaxTreeC)
     type_names = Dict{Tuple{Int,Int},Set{String}}()
     locations = Set{Tuple{Int,Int}}()
-    traverse(st0) do node
-        JS.kind(node) === JS.K"kw" || return
-        JS.numchildren(node) >= 1 || return traversal_no_recurse
-        child = node[1]
-        push!(locations, JS.source_location(child))
-        if JS.kind(child) === JS.K"::" && JS.numchildren(child) >= 2
-            names = Set{String}()
-            collect_identifier_names!(names, child[2])
-            if !isempty(names)
-                type_names[JS.source_location(child)] = names
+    stack = Tuple{SyntaxTreeC,Bool}[(st0, false)]
+    while !isempty(stack)
+        (node, in_parameters) = pop!(stack)
+        k = JS.kind(node)
+        if k === JS.K"kw" && in_parameters
+            JS.numchildren(node) >= 1 || continue
+            child = node[1]
+            push!(locations, JS.source_location(child))
+            if JS.kind(child) === JS.K"::" && JS.numchildren(child) >= 2
+                names = Set{String}()
+                collect_identifier_names!(names, child[2])
+                isempty(names) || (type_names[JS.source_location(child)] = names)
             end
+            continue
         end
-        return traversal_no_recurse
+        next_in_parameters = k === JS.K"parameters"
+        for i = JS.numchildren(node):-1:1
+            push!(stack, (node[i], next_in_parameters))
+        end
     end
     return type_names, locations
-end
-
-function collect_identifier_names!(names::Set{String}, st::JS.SyntaxTree)
-    if JS.kind(st) === JS.K"Identifier"
-        name = get(st, :name_val, nothing)
-        if name !== nothing
-            push!(names, name::String)
-        end
-        return
-    end
-    for i = 1:JS.numchildren(st)
-        collect_identifier_names!(names, st[i])
-    end
 end
 
 # Check if a keyword argument's type annotation constrains a `where`-clause static parameter
@@ -648,10 +646,9 @@ function is_kwarg_constraining_used_sparam(
 end
 
 function has_matching_argument_binding(
-        binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence{Tree3}}},
-        name::String, range::Range,
-        fi::FileInfo, ctx3::JL.VariableAnalysisContext
-    ) where Tree3<:JS.SyntaxTree
+        binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence}},
+        name::String, range::Range, fi::FileInfo, ctx3::JL.VariableAnalysisContext
+    )
     for (binfo2, _) in binding_occurrences
         binfo2.kind === :argument || continue
         binfo2.name == name || continue
@@ -663,13 +660,13 @@ function has_matching_argument_binding(
 end
 
 function analyze_unused_bindings!(
-        diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::JS.SyntaxTree, ctx3::JL.VariableAnalysisContext,
-        binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence{Tree3}}},
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::SyntaxTreeC, ctx3::JL.VariableAnalysisContext,
+        binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence}},
         has_implicit_args::Bool, reported::Set{LoweringDiagnosticKey},
         kwarg_type_names::Dict{Tuple{Int,Int},Set{String}},
         kwarg_locations::Set{Tuple{Int,Int}};
         allow_unused_underscore::Bool
-    ) where Tree3<:JS.SyntaxTree
+    )
     for (binfo, occurrences) in binding_occurrences
         bk = binfo.kind
         bk === :global && continue
@@ -724,7 +721,7 @@ function analyze_unused_bindings!(
 end
 
 function analyze_unused_assignments!(
-        diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::JS.SyntaxTree,
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::SyntaxTreeC,
         dead_store_info::Dict{JL.BindingInfo, DeadStoreInfo},
         reported::Set{LoweringDiagnosticKey};
         allow_unused_underscore::Bool
@@ -770,11 +767,11 @@ end
 #   full-analysis reports.
 function analyze_undefined_global_bindings!(
         diagnostics::Vector{Diagnostic}, fi::FileInfo, ctx3::JL.VariableAnalysisContext,
-        binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence{Tree3}}},
+        binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence}},
         reported::Set{LoweringDiagnosticKey};
         analyzer::Union{Nothing,LSAnalyzer} = nothing,
         postprocessor::LSPostProcessor = LSPostProcessor()
-    ) where Tree3<:JS.SyntaxTree
+    )
     world = Base.get_world_counter()
     for (binfo, occurrences) in binding_occurrences
         bk = binfo.kind
@@ -807,7 +804,7 @@ function analyze_undefined_global_bindings!(
 end
 
 # This analysis reports `lowering/undef-local-var` on a change basis, based on
-# `analyze_def_use_all_lambdas`, which analyzes local binding definedness with the event
+# `analyze_all_lambdas`, which analyzes local binding definedness with the event
 # based binding assignment reachability analysis.
 # Severity levels (encoded in each entry of `UndefInfo.undef_uses`):
 # - Warning: `true => tree` → strict undef (guaranteed UndefVarError on some path)
@@ -860,12 +857,12 @@ function analyze_undefined_local_bindings!(
 end
 
 function compute_unused_variable_data(
-        st0::JS.SyntaxTree,
-        prov::JS.SyntaxTree,
+        st0::SyntaxTreeC,
+        prov::SyntaxTreeC,
         fi::FileInfo
     )
     # Find parent K"=" node using byte_ancestors
-    ancestors = byte_ancestors(st::JS.SyntaxTree->JS.kind(st)===JS.K"=", st0, JS.byte_range(prov))
+    ancestors = byte_ancestors(st::SyntaxTreeC->JS.kind(st)===JS.K"=", st0, JS.byte_range(prov))
     isempty(ancestors) && return nothing
 
     assignment = first(ancestors)
@@ -899,7 +896,7 @@ end
 
 function analyze_captured_boxes!(
         diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo,
-        ctx4::JL.ClosureConversionCtx, st3::JL.SyntaxTree,
+        ctx4::JL.ClosureConversionCtx, st3::SyntaxTreeC,
         reported::Set{LoweringDiagnosticKey}
     )
     for binfo in ctx4.bindings.info
@@ -941,7 +938,7 @@ function is_captured_binding(binfo::JL.BindingInfo, ctx4::JL.ClosureConversionCt
 end
 
 function find_capture_sites(
-        st3::JL.SyntaxTree, binfo::JL.BindingInfo, ctx4::JL.ClosureConversionCtx,
+        st3::SyntaxTreeC, binfo::JL.BindingInfo, ctx4::JL.ClosureConversionCtx,
         uri::URI, fi::FileInfo
     )
     relatedInformation = DiagnosticRelatedInformation[]
@@ -950,15 +947,15 @@ function find_capture_sites(
             haskey(lambda.locals_capt, binfo.id) || continue
             lambda.locals_capt[binfo.id] || continue
             # Find the lambda in st3 that has matching lambda_bindings.self
-            traverse(st3) do node::JL.SyntaxTree
-                JS.kind(node) === JS.K"lambda" || return nothing
-                hasproperty(node, :lambda_bindings) || return nothing
-                lambda_bindings = node.lambda_bindings::JL.LambdaBindings
+            traverse(st3) do node3::SyntaxTreeC
+                JS.kind(node3) === JS.K"lambda" || return nothing
+                hasproperty(node3, :lambda_bindings) || return nothing
+                lambda_bindings = node3.lambda_bindings::JL.LambdaBindings
                 lambda_bindings.self == lambda.self || return nothing
                 # Find references to binfo.id inside this lambda
-                traverse(node) do inner::JL.SyntaxTree
+                traverse(node3) do inner::SyntaxTreeC
                     if JS.kind(inner) === JS.K"BindingId" && JL._binding_id(inner) == binfo.id
-                        varprov = first(JL.flattened_provenance(inner))
+                        varprov = last(JL.flattened_provenance(inner))
                         push!(relatedInformation, DiagnosticRelatedInformation(;
                             location = Location(; uri, range = jsobj_to_range(varprov, fi)),
                             message = "Captured by closure"))
@@ -1007,9 +1004,9 @@ const SORT_IMPORTS_MAX_LINE_LENGTH = 92
 const SORT_IMPORTS_INDENT = "    "
 
 function analyze_unsorted_imports!(
-        diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::JS.SyntaxTree
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::SyntaxTreeC
     )
-    traverse(st0) do st0′::JS.SyntaxTree
+    traverse(st0) do st0′::SyntaxTreeC
         kind = JS.kind(st0′)
         if kind ∉ JS.KSet"import using export public"
             return nothing
@@ -1035,7 +1032,7 @@ function analyze_unsorted_imports!(
 end
 
 function generate_sorted_import_text(
-        node::JS.SyntaxTree, sorted_name_keys::Vector{Pair{SyntaxTree0,String}},
+        node::SyntaxTreeC, sorted_name_keys::Vector{Pair{SyntaxTreeC,String}},
         base_indent::String
     )
     kind = JS.kind(node)
@@ -1076,95 +1073,177 @@ function generate_sorted_import_text(
     return join(lines, "\n")
 end
 
-# Checks whether a statement is a block terminator — i.e. subsequent
-# statements in the same block are unreachable. This includes `return`,
-# `throw`, `break`, `continue`, and branching constructs (`if`/`try`)
-# where all branches contain a block terminator.
-function is_block_terminator(
-        ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTree,
-        allow_noreturn_optimization::Vector{Symbol}
-    )
-    k = JS.kind(st3)
-    k in JS.KSet"return break" && return true
-    !isempty(allow_noreturn_optimization) &&
-        is_noreturn_call(ctx3, st3, allow_noreturn_optimization) && return true
-    if k === JS.K"=" && JS.numchildren(st3) >= 2
-        return is_block_terminator(ctx3, st3[2], allow_noreturn_optimization)
-    end
-    if (k in JS.KSet"if elseif") && JS.numchildren(st3) >= 3
-        return (_is_block_terminator(ctx3, st3[2], allow_noreturn_optimization) &&
-                _is_block_terminator(ctx3, st3[3], allow_noreturn_optimization))
-    end
-    if k === JS.K"trycatchelse" && JS.numchildren(st3) >= 2
-        return (_is_block_terminator(ctx3, st3[1], allow_noreturn_optimization) &&
-                _is_block_terminator(ctx3, st3[2], allow_noreturn_optimization))
-    end
-    if k === JS.K"tryfinally" && JS.numchildren(st3) >= 1
-        return _is_block_terminator(ctx3, st3[1], allow_noreturn_optimization)
-    end
-    return false
-end
-
-function _is_block_terminator(
-        ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTree,
-        allow_noreturn_optimization::Vector{Symbol}
-    )
-    k = JS.kind(st3)
-    if k === JS.K"block"
-        for child in JS.children(st3)
-            _is_block_terminator(ctx3, child, allow_noreturn_optimization) && return true
-        end
-        return false
-    end
-    return is_block_terminator(ctx3, st3, allow_noreturn_optimization)
-end
-
+# Reachability-based unreachable-code detection. `unreachable_statements`
+# is the set of `K"block"` children that the per-lambda CFG built in
+# `analyze_all_lambdas` determined to be in unreachable blocks.
+#
+# Walking `K"block"` nodes here only serves to (a) locate consecutive runs
+# of unreachable statements that came from the same source position and
+# (b) recover the "transition point" — the last reachable sibling — to
+# anchor the auto-fix delete range. The reachability decision itself is
+# entirely the CFG's, which means cases like
+# `return f(@goto label); @label label; ...` are correctly recognized as
+# reachable via the goto edge.
 function analyze_unreachable_code!(
-        diagnostics::Vector{Diagnostic}, fi::FileInfo,
-        ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTree,
-        allow_noreturn_optimization::Vector{Symbol}
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, st3::SyntaxTreeC,
+        unreachable_statements::Set{SyntaxTreeC}
     )
-    traverse(st3) do st3′::JS.SyntaxTree
+    isempty(unreachable_statements) && return
+    traverse(st3) do st3′::SyntaxTreeC
         JS.kind(st3′) === JS.K"block" || return nothing
         nchildren = JS.numchildren(st3′)
+        first_unreach_idx = 0
         for i in 1:nchildren
-            child = st3′[i]
-            is_block_terminator(ctx3, child, allow_noreturn_optimization) || continue
-            # All subsequent children in this block are unreachable
-            first_range = last_range = nothing
-            for j in (i+1):nchildren
-                unreachable_st = st3′[j]
-                provs = JL.flattened_provenance(unreachable_st)
-                is_from_user_ast(provs) || continue
-                range = jsobj_to_range(last(provs), fi)
-                if isnothing(first_range)
-                    first_range = range
-                end
-                last_range = range
+            if st3′[i] in unreachable_statements
+                first_unreach_idx = i
+                break
             end
-            if !isnothing(first_range) && !isnothing(last_range)
-                merged_range = Range(;
-                    start = first_range.start,
-                    var"end" = last_range.var"end")
-                # Compute delete range: from end of the terminator to end of the unreachable region
-                terminator_range = jsobj_to_range(child, fi)
-                delete_range = Range(;
-                    start = terminator_range.var"end",
-                    var"end" = last_range.var"end")
-                push!(diagnostics, Diagnostic(;
-                    range = merged_range,
-                    severity = DiagnosticSeverity.Information,
-                    message = "Unreachable code",
-                    source = DIAGNOSTIC_SOURCE_LIVE,
-                    code = LOWERING_UNREACHABLE_CODE,
-                    codeDescription = diagnostic_code_description(LOWERING_UNREACHABLE_CODE),
-                    tags = DiagnosticTag.Ty[DiagnosticTag.Unnecessary],
-                    data = UnreachableCodeData(delete_range)))
+        end
+        first_unreach_idx == 0 && return nothing
+        # When the entire block is unreachable from its first child, the block itself is
+        # unreachable in the parent's iteration; let the parent handle the report so we do
+        # not double-count.
+        first_unreach_idx == 1 && return nothing
+        terminator = st3′[first_unreach_idx - 1]
+        terminator_end = last(JS.byte_range(terminator))
+
+        first_range = last_range = nothing
+        for j in first_unreach_idx:nchildren
+            child = st3′[j]
+            # `break` (not `continue`): a reachable sibling marks the end of the unreachable
+            # run; subsequent unreachable runs in the same block are intentionally not
+            # folded into this diagnostic's range.
+            child in unreachable_statements || break
+            # `continue` (not `break`): filter out lowering-introduced sibling statements
+            # whose source position is not strictly after the terminator (e.g. a loop's
+            # iterate-step assignment whose source provenance points back to the loop
+            # header, or a macro-introduced wrapper whose range encompasses the user-written
+            # terminator-bearing argument), but keep iterating — genuine user-visible
+            # unreachable code may still follow the artifact.
+            first(JS.byte_range(child)) > terminator_end || continue
+            provs = JL.flattened_provenance(child)
+            is_from_user_ast(provs) || continue
+            range = jsobj_to_range(last(provs), fi)
+            if isnothing(first_range)
+                first_range = range
             end
-            break
+            last_range = range
+        end
+        if !isnothing(first_range) && !isnothing(last_range)
+            merged_range = Range(;
+                start = first_range.start,
+                var"end" = last_range.var"end")
+            terminator_lsp_range = jsobj_to_range(terminator, fi)
+            delete_range = Range(;
+                start = terminator_lsp_range.var"end",
+                var"end" = last_range.var"end")
+            push!(diagnostics, Diagnostic(;
+                range = merged_range,
+                severity = DiagnosticSeverity.Information,
+                message = "Unreachable code",
+                source = DIAGNOSTIC_SOURCE_LIVE,
+                code = LOWERING_UNREACHABLE_CODE,
+                codeDescription = diagnostic_code_description(LOWERING_UNREACHABLE_CODE),
+                tags = DiagnosticTag.Ty[DiagnosticTag.Unnecessary],
+                data = DeleteRangeData(:unreachable_code, delete_range)))
         end
         return nothing
     end
+end
+
+# `@goto`/`@label` resolution is normally validated by JuliaLowering's
+# `compile_body` (linear IR pass), which JETLS doesn't run. Mirror that
+# check against `st3` so unresolved gotos still surface as diagnostics.
+function analyze_unresolved_gotos!(
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, st3::SyntaxTreeC
+    )
+    traverse(st3) do st3′::SyntaxTreeC
+        JS.kind(st3′) === JS.K"lambda" || return nothing
+        JS.numchildren(st3′) >= 3 || return nothing
+        check_lambda_gotos!(diagnostics, fi, st3′[3])
+        return nothing
+    end
+end
+
+function check_lambda_gotos!(
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, body3::SyntaxTreeC
+    )
+    gotos, labels = collect_gotos_labels(body3)
+    label_names = Set{String}(name for (name, _) in labels)
+    referenced = Set{String}()
+    for (name, st) in gotos
+        if name in label_names
+            push!(referenced, name)
+            continue
+        end
+        push!(diagnostics, Diagnostic(;
+            range = jsobj_to_range(st, fi),
+            severity = DiagnosticSeverity.Error,
+            message = "label `$name` referenced but not defined",
+            source = DIAGNOSTIC_SOURCE_LIVE,
+            code = LOWERING_ERROR_CODE,
+            codeDescription = diagnostic_code_description(LOWERING_ERROR_CODE)))
+    end
+    for (name, st) in labels
+        name in referenced && continue
+        # Skip macro-generated labels — only report user-written ones.
+        provs = JL.flattened_provenance(st)
+        is_from_user_ast(provs) || continue
+        # The provenance chain ends with the label-name identifier; the
+        # entry immediately above it (`provs[end-1]`) is the user-written
+        # `@label name` macrocall, which is what we want to delete.
+        # Using `first(provs)` would instead pick the outermost source —
+        # and for a `@label` nested inside another macrocall (e.g.
+        # `@testset begin; @label foo; end`) that is the entire enclosing
+        # macrocall, not the `@label` line.
+        delete_obj = length(provs) >= 2 ? provs[end-1] : first(provs)
+        delete_range = line_absorbing_delete_range(delete_obj, fi)
+        push!(diagnostics, Diagnostic(;
+            range = jsobj_to_range(st, fi),
+            severity = DiagnosticSeverity.Information,
+            message = "Unused label `$name`",
+            source = DIAGNOSTIC_SOURCE_LIVE,
+            code = LOWERING_UNUSED_LABEL_CODE,
+            codeDescription = diagnostic_code_description(LOWERING_UNUSED_LABEL_CODE),
+            tags = DiagnosticTag.Ty[DiagnosticTag.Unnecessary],
+            data = DeleteRangeData(:unused_label, delete_range)))
+    end
+end
+
+function collect_gotos_labels(st3::SyntaxTreeC)
+    gotos = Tuple{String,SyntaxTreeC}[]
+    labels = Tuple{String,SyntaxTreeC}[]
+    collect_gotos_labels!(gotos, labels, st3)
+    return gotos, labels
+end
+function collect_gotos_labels!(
+        gotos::Vector{Tuple{String,SyntaxTreeC}}, labels::Vector{Tuple{String,SyntaxTreeC}},
+        st3::SyntaxTreeC
+    )
+    traverse(st3) do node
+        k = JS.kind(node)
+        if k === JS.K"lambda"
+            # Nested lambdas have their own goto/label scope; handled separately.
+            return traversal_no_recurse
+        elseif k === JS.K"symboliclabel" && hasproperty(node, :name_val)
+            push!(labels, (node.name_val::String, node))
+            return traversal_no_recurse
+        elseif (k === JS.K"symbolicgoto" || k === JS.K"oldsymbolicgoto") && hasproperty(node, :name_val)
+            push!(gotos, (node.name_val::String, node))
+            return traversal_no_recurse
+        elseif k === JS.K"symbolicblock" || k === JS.K"break"
+            # `K"symbolicblock"`'s first child is a lowering-internal label
+            # (e.g. `loop-exit`) used by `K"break"`, not reachable via `@goto`;
+            # `K"break"`'s first child is a label name reference, not a declaration.
+            # In both cases recurse only into the body (the second child).
+            if JS.numchildren(node) >= 2
+                collect_gotos_labels!(gotos, labels, node[2])
+            end
+            return traversal_no_recurse
+        end
+        return
+    end
+    return
 end
 
 function analyze_lowered_code!(
@@ -1188,13 +1267,14 @@ function analyze_lowered_code!(
         kwarg_type_names, kwarg_locations;
         allow_unused_underscore)
 
-    (undef_info, dead_store_info) =
-        analyze_def_use_all_lambdas(ctx3, st3; allow_noreturn_optimization)
+    (; undef_info, dead_store_info, unreachable_statements) =
+        analyze_all_lambdas(ctx3, st3; allow_noreturn_optimization)
     analyze_undefined_local_bindings!(diagnostics, uri, fi, undef_info, reported)
     analyze_unused_assignments!(diagnostics, fi, st0, dead_store_info, reported; allow_unused_underscore)
 
     analyze_captured_boxes!(diagnostics, uri, fi, ctx4, st3, reported)
-    analyze_unreachable_code!(diagnostics, fi, ctx3, st3, allow_noreturn_optimization)
+    analyze_unreachable_code!(diagnostics, fi, st3, unreachable_statements)
+    analyze_unresolved_gotos!(diagnostics, fi, st3)
 
     if !skip_analysis_requiring_context
         analyze_undefined_global_bindings!(diagnostics, fi, ctx3, binding_occurrences, reported; analyzer, postprocessor)
@@ -1205,7 +1285,7 @@ function analyze_lowered_code!(
 end
 
 function lowering_diagnostics!(
-        diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo, mod::Module, st0::JS.SyntaxTree;
+        diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo, mod::Module, st0::SyntaxTreeC;
         skip_analysis_requiring_context::Bool = false,
         soft_scope::Bool = false,
         kwargs...
@@ -1316,7 +1396,7 @@ function compute_unit_used_names(
         end continue
         search_st0_top = build_syntax_tree(search_fi)
 
-        iterate_toplevel_tree(search_st0_top) do st0::JS.SyntaxTree
+        iterate_toplevel_tree(search_st0_top) do st0::SyntaxTreeC
             binding_occurrences = @something get_binding_occurrences!(
                 state, search_uri, search_fi, st0; include_global_bindings = true) return
             mod = get_context_module(state, search_uri, offset_to_xy(search_fi, JS.first_byte(st0)))
@@ -1342,13 +1422,13 @@ end
 # - Unchanged file skipping in workspace/diagnostic
 function analyze_unused_imports!(
         diagnostics::Vector{Diagnostic}, server::Server, uri::URI,
-        fi::FileInfo, st0_top::JS.SyntaxTree;
+        fi::FileInfo, st0_top::SyntaxTreeC;
         skip_context_check::Bool = false,
         used_names_cache::UsedNamesByUnit = UsedNamesByUnit()
     )
     state = server.state
     mod_imported_names = Dict{Module,Dict{String,Vector{ImportInfo}}}()
-    traverse(st0_top) do st0::JS.SyntaxTree
+    traverse(st0_top) do st0::SyntaxTreeC
         JS.kind(st0) ∈ JS.KSet"import using" || return nothing
         mod = get_context_module(state, uri, offset_to_xy(fi, JS.first_byte(st0)))
         for (name, name_range, delete_range) in collect_explicit_import_names(st0, fi)
@@ -1377,7 +1457,7 @@ function analyze_unused_imports!(
                     code = LOWERING_UNUSED_IMPORT_CODE,
                     codeDescription = diagnostic_code_description(LOWERING_UNUSED_IMPORT_CODE),
                     tags = DiagnosticTag.Ty[DiagnosticTag.Unnecessary],
-                    data = UnusedImportData(info.delete_range)))
+                    data = DeleteRangeData(:unused_import, info.delete_range)))
             end
         end
     end
@@ -1391,8 +1471,8 @@ analyze_unused_imports(args...; kwargs...) = # used by tests
 # Returns true if `st0_top` contains an `import`/`using` with explicit names
 # (the only shape `analyze_unused_imports!` can flag). Gates whether the
 # workspace/diagnostic `result_id` must fold in the analysis unit's state.
-function file_has_explicit_imports(st0_top::JS.SyntaxTree)
-    found = traverse(st0_top) do st0::JS.SyntaxTree
+function file_has_explicit_imports(st0_top::SyntaxTreeC)
+    found = traverse(st0_top) do st0::SyntaxTreeC
         k = JS.kind(st0)
         if k ∈ JS.KSet"import using"
             if JS.numchildren(st0) == 1
@@ -1414,7 +1494,7 @@ end
 # Returns tuples of (name, name_range, delete_range).
 # For single imports like `using M: x`, delete_range covers the entire import statement.
 # For multiple imports like `using M: x, y`, delete_range covers the name plus comma/whitespace.
-function collect_explicit_import_names(st0::JS.SyntaxTree, fi::FileInfo)
+function collect_explicit_import_names(st0::SyntaxTreeC, fi::FileInfo)
     kind = JS.kind(st0)
     names = Tuple{String,Range,Range}[]
     kind ∈ JS.KSet"import using" || return names
@@ -1431,7 +1511,7 @@ function collect_explicit_import_names(st0::JS.SyntaxTree, fi::FileInfo)
                 name_range = jsobj_to_range(id_st, fi)
                 if nnames == 1
                     # Single import: delete entire statement
-                    delete_range = jsobj_to_range(st0, fi)
+                    delete_range = line_absorbing_delete_range(st0, fi)
                 else
                     # Multiple imports: delete name with comma
                     idx = i - 1  # 1-based index among names
@@ -1464,7 +1544,7 @@ function collect_explicit_import_names(st0::JS.SyntaxTree, fi::FileInfo)
                 if JS.kind(last_st) === JS.K"Identifier"
                     # Single import: delete entire statement
                     name_range = jsobj_to_range(last_st, fi)
-                    delete_range = jsobj_to_range(st0, fi)
+                    delete_range = line_absorbing_delete_range(st0, fi)
                     push!(names, (JS.sourcetext(last_st), name_range, delete_range))
                 end
             end
@@ -1479,7 +1559,7 @@ end
 # and analysis context. `analyze_unused_imports!` is not included because its
 # result depends on sibling files in the analysis unit.
 function compute_lowering_diagnostics(
-        server::Server, uri::URI, file_info::FileInfo, st0_top::JS.SyntaxTree,
+        server::Server, uri::URI, file_info::FileInfo, st0_top::SyntaxTreeC,
         cancel_flag::CancelFlag;
         lookup_func = nothing
     )
@@ -1487,7 +1567,7 @@ function compute_lowering_diagnostics(
     skip_analysis_requiring_context = !has_analyzed_context(server.state, uri; lookup_func)
     allow_unused_underscore = get_config(server, :diagnostic, :allow_unused_underscore)
     soft_scope = is_notebook_cell_uri(server.state, uri)
-    iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
+    iterate_toplevel_tree(st0_top) do st0::SyntaxTreeC
         is_cancelled(cancel_flag) && return traversal_terminator
         pos = offset_to_xy(file_info, JS.first_byte(st0))
         (; mod, analyzer, postprocessor) = get_context_info(server.state, uri, pos; lookup_func)
@@ -1503,7 +1583,7 @@ end
 # `analyze_unused_imports!` results). Cache misses and cancelled computations
 # both return without caching; only a fully computed result is stored.
 function get_lowering_diagnostics!(
-        server::Server, uri::URI, file_info::FileInfo, st0_top::JS.SyntaxTree,
+        server::Server, uri::URI, file_info::FileInfo, st0_top::SyntaxTreeC,
         cancel_flag::CancelFlag;
         lookup_func = nothing
     )

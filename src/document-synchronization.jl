@@ -126,8 +126,14 @@ function handle_DidCloseTextDocumentNotification(server::Server, msg::DidCloseTe
     # Extra diagnostics should only be published for open files
     clear_extra_diagnostics!(server, uri)
     # Republish textDocument/publishDiagnostics for cases with `diagnostic.all_files === false`,
-    # where diagnostics for this file must be suppressed
+    # where diagnostics for this file must be suppressed.
+    # This must run before `cleanup_unsaved_analysis!` below, since the suppression
+    # branch in `notify_diagnostics!` only emits the clearing notification when the
+    # analysis cache still reports non-empty diagnostics for this URI.
     notify_diagnostics!(server; ensure_cleared=uri)
+    if isunsaveduri(uri)
+        cleanup_unsaved_analysis!(server, uri)
+    end
     # Retrigger workspace/diagnostic to recalculate diagnostics for this closed file
     request_diagnostic_refresh!(server)
 end
