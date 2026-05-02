@@ -81,8 +81,8 @@ function add_block_end_inlay_hint!(
         commentrange = bstart:JS.first_byte(nexttc)-1
         commentstr = String(fi.parsed_stream.textbuf[commentrange])
         if (occursin(name, commentstr) ||
-            startswith(lstrip(commentstr), "# $keyword") ||
-            startswith(lstrip(commentstr), "#= $keyword"))
+            (keyword !== nothing && startswith(lstrip(commentstr), "# $keyword")) ||
+            (keyword !== nothing && startswith(lstrip(commentstr), "#= $keyword")))
             return
         end
     end
@@ -114,11 +114,11 @@ function get_block_keyword_label(sym::DocumentSymbol)
         startswith(detail, "mutable struct ") && return "mutable struct", "mutable struct " * sym.name
         startswith(detail, "struct ") && return "struct", "struct " * sym.name
     elseif sym.kind === SymbolKind.Namespace
-        startswith(detail, "if") && return "if", first(split(detail, '\n'))
-        startswith(detail, "@static if") && return "@static if", first(split(detail, '\n'))
-        startswith(detail, "let") && return "let", first(split(detail, '\n'))
-        startswith(detail, "for") && return "for", first(split(detail, '\n'))
-        startswith(detail, "while") && return "while", first(split(detail, '\n'))
+        startswith(detail, "if") && return "if", String(first(split(detail, '\n')))
+        startswith(detail, "@static if") && return "@static if", String(first(split(detail, '\n')))
+        startswith(detail, "let") && return "let", String(first(split(detail, '\n')))
+        startswith(detail, "for") && return "for", String(first(split(detail, '\n')))
+        startswith(detail, "while") && return "while", String(first(split(detail, '\n')))
     elseif sym.kind === SymbolKind.Event # `@testset`
         startswith(detail, "@testset") && return "@testset", detail
     end
