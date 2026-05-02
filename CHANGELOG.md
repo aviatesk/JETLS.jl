@@ -80,6 +80,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed an "Unsupported URI" error that could occur when an unsaved (`untitled:`) buffer was edited and then closed in quick succession. Closing an unsaved buffer now also clears any analysis state associated with it, so previously analyzed top-level overloads no longer linger as ghost entries in completions or signature help.
 
+- Fixed `textDocument/documentHighlight`, `textDoscument/references`, and `textDocument/rename` incorrectly treating same-named local arguments in disjoint scopes (e.g. two separate `do h ... end` blocks within the same `let` or function body) as the same binding.
+
 ## 2026-04-28
 
 - Commit: [`e784de8`](https://github.com/aviatesk/JETLS.jl/commit/e784de8)

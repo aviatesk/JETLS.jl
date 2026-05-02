@@ -36,7 +36,6 @@ function compute_binding_occurrences(
     )
     occurrences = Dict{JL.BindingInfo,Set{BindingOccurrence}}()
 
-    same_arg_bindings = Dict{Symbol,Vector{Int}}() # group together argument bindings with the same name
     same_location_bindings = Dict{Tuple{Symbol,Int,Int},Vector{Int}}() # group together local bindings with the same location and name
 
     for (i, binfo) = enumerate(ctx3.bindings.info)
@@ -44,9 +43,6 @@ function compute_binding_occurrences(
         if binfo.kind === :global
             include_global_bindings || continue
         else
-            if binfo.kind === :argument
-                push!(get!(Vector{Int}, same_arg_bindings, Symbol(binfo.name)), i)
-            end
             # Include arguments in location-based merging to unify them with
             # `:local` bindings at the same location. This is needed for:
             # - `@generated` functions: type parameters become actual arguments
@@ -54,6 +50,9 @@ function compute_binding_occurrences(
             # - Keyword arguments with dependent defaults: JuliaLowering's
             #   `scope_nest` creates `:local` bindings in `let` blocks that
             #   must be unified with the `:argument` binding in the body method.
+            # - Arguments referenced in another argument's default: JL creates
+            #   duplicate `:argument` bindings at the same source location for
+            #   the body method and the default-eval helper.
             lockey = (Symbol(binfo.name), JS.source_location(JL.binding_ex(ctx3, binfo.id))...)
             push!(get!(Vector{Int}, same_location_bindings, lockey), i)
         end
@@ -117,24 +116,6 @@ function compute_binding_occurrences(
         local_occs = pop!(occurrences, local_binfo)
         existing = get!(Set{BindingOccurrence}, occurrences, global_binfo)
         union!(existing, local_occs)
-    end
-
-    # Fix up usedness information of arguments that are only used within the argument list.
-    # to avoid reporting "unused variable diagnostics" for `x` in cases like:
-    # ```julia
-    # hasmatch(x::RegexMatch, y::Bool=isempty(x.matches)) = y
-    # ```
-    # Note: argument bindings are included in `same_location_bindings` above to bridge
-    # `:argument` and `:local` bindings for keyword arguments with dependent defaults.
-    # This is safe because `compute_binding_occurrences!` skips both `:argument` and
-    # `:local` bindings in self/kwsorter calls, preventing internal call machinery from
-    # being counted as usage.
-    for (_, idxs) in same_arg_bindings
-        length(idxs) == 1 && continue
-        newoccurrences = union!((occurrences[ctx3.bindings.info[idx]] for idx in idxs)...)
-        for idx in idxs
-            occurrences[ctx3.bindings.info[idx]] = newoccurrences
-        end
     end
 
     return occurrences

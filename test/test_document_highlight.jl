@@ -115,6 +115,49 @@ end
             end
         end
 
+        @testset "do-block parameters in same lowering unit" begin
+            # Two `do h` blocks share the same top-level statement but each
+            # introduces its own fresh `h` binding; highlights must not cross.
+            let code = """
+                let
+                    foo() do │h│
+                        │h│ + 1
+                    end
+                    bar() do │h│
+                        │h│ * 2
+                    end
+                end
+                """
+                fi, positions = highlight_testcase(code, 8)
+                for i in (1, 2, 3, 4) # cursor inside the first do-block
+                    highlights = JETLS.document_highlights(fi, positions[i])
+                    @test length(highlights) == 2
+                    @test count(highlights) do h
+                        h.range.start == positions[1] &&
+                        h.range.var"end" == positions[2]
+                    end == 1
+                    @test count(highlights) do h
+                        h.range.start == positions[3] &&
+                        h.range.var"end" == positions[4] &&
+                        h.kind == DocumentHighlightKind.Read
+                    end == 1
+                end
+                for i in (5, 6, 7, 8) # cursor inside the second do-block
+                    highlights = JETLS.document_highlights(fi, positions[i])
+                    @test length(highlights) == 2
+                    @test count(highlights) do h
+                        h.range.start == positions[5] &&
+                        h.range.var"end" == positions[6]
+                    end == 1
+                    @test count(highlights) do h
+                        h.range.start == positions[7] &&
+                        h.range.var"end" == positions[8] &&
+                        h.kind == DocumentHighlightKind.Read
+                    end == 1
+                end
+            end
+        end
+
         @testset "highlight with @nospecialize" begin
             code = """
             function func(@nospecialize(│xxx│), yyy)
