@@ -126,22 +126,13 @@ function Base.var"@label"(__context__::JL.MacroContext, ::JS.SyntaxTree...)
         "@label currently only supports the `@label name` form")
 end
 
-# New-style stub for `Base.@something`. Mirrors `Base.@something`'s nested
-# `let val_i = arg_i; if !isnothing(val_i) something(val_i) else <next> end end`
-# expansion so that:
-#   - each `arg_i` is evaluated at most once (binding occurrences and other
-#     identifier-level semantics inside `arg_i` are preserved exactly);
-#   - downstream def-use analysis sees the same conditional evaluation
-#     structure as the real macro — assignments inside `arg_{i+1}` are
-#     statically reachable only on paths where every preceding `arg_j` was
-#     `nothing`.
-#
-# `val_i` identifiers are introduced in the macro's scope layer (via
-# `JL.@ast`), so they cannot clash with user code, and `let`-binding scopes
-# them so they do not leak into the enclosing block.
-#
-# The zero-argument form mirrors `Base.@something()`: it expands to
-# `something(nothing)`, which throws at runtime.
+# New-style implementation of `Base.@something`. The macro is sometimes called with arguments
+# that themselves contain control flow (e.g. `@something(x, return default)`, `@something(x, @goto fallback)`).
+# Mirroring Base's nested `let val_i = arg_i; if !isnothing(val_i) something(val_i) else <next> end end`
+# chain as a new-style macro lets JuliaLowering model that control flow accurately in the
+# CFG, so LSP analyses (`lowering/unreachable-code`, `lowering/undef-local-var`, ...)
+# account for which paths each arg's body actually executes on.  The fresh `val_i` names
+# live in the macro's scope layer so they cannot clash with user code.
 function Base.var"@something"(__context__::JL.MacroContext, args::JS.SyntaxTree...)
     mc = __context__.macrocall::JS.SyntaxTree
     expr = JL.@ast(__context__, mc,

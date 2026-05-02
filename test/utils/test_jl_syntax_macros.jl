@@ -23,6 +23,9 @@ function jlresolve(mod::Module, code::AbstractString)
 end
 jlresolve(code::AbstractString) = jlresolve(lowering_module, code)
 
+jleval(mod::Module, code::AbstractString) = JL.eval(mod, jlparse(code; rule=:statement))
+jleval(code::AbstractString) = jleval(lowering_module, code)
+
 children_kinds(st::JS.SyntaxTree) = JS.Kind[JS.kind(c) for c in JS.children(st)]
 
 @testset "@kwdef" begin
@@ -300,91 +303,13 @@ end
 end
 
 @testset "@something" begin
-    @testset "macro expansion" begin
-        # Single argument: produces `let val_1 = arg; if isnothing(val_1)
-        # something(nothing) else something(val_1) end end`.
-        let st1 = jlexpand("@something xxx")
-            @test JS.kind(st1) === JS.K"let"
-            bindings, body = st1[1], st1[2]
-            @test JS.kind(bindings) === JS.K"block"
-            @test JS.kind(bindings[1]) === JS.K"="
-            @test bindings[1][1].name_val == "val_1"
-            @test JS.sourcetext(bindings[1][2]) == "xxx"
-            @test JS.kind(body) === JS.K"block"
-            ifnode = body[1]
-            @test JS.kind(ifnode) === JS.K"if"
-            cond = ifnode[1]
-            @test JS.kind(cond) === JS.K"call"
-            @test cond[1].name_val == "isnothing"
-            @test cond[2].name_val == "val_1"
-            then_branch = ifnode[2]
-            @test JS.kind(then_branch) === JS.K"call"
-            @test then_branch[1].name_val == "something"
-            @test JS.kind(then_branch[2]) === JS.K"Value"
-            @test then_branch[2].value === nothing
-            else_branch = ifnode[3]
-            @test JS.kind(else_branch) === JS.K"call"
-            @test else_branch[1].name_val == "something"
-            @test else_branch[2].name_val == "val_1"
-        end
-
-        # Multiple arguments: nests `let`/`if` per arg, with
-        # `something(nothing)` at the innermost then-branch.
-        let st1 = jlexpand("@something a b c")
-            count_let = Ref(0)
-            count_if = Ref(0)
-            innermost = Ref{Any}(nothing)
-            walk(st) = begin
-                k = JS.kind(st)
-                k === JS.K"let" && (count_let[] += 1)
-                k === JS.K"if" && (count_if[] += 1)
-                if k === JS.K"call" && JS.numchildren(st) == 2 &&
-                        st[1].name_val == "something" &&
-                        JS.kind(st[2]) === JS.K"Value" &&
-                        st[2].value === nothing
-                    innermost[] = st
-                end
-                for c in JS.children(st)
-                    var"#self#"(c)
-                end
-            end
-            walk(st1)
-            @test count_let[] == 3
-            @test count_if[] == 3
-            @test innermost[] !== nothing
-        end
-
-        # Zero arguments: matches `Base.@something()` — expands to
-        # `something(nothing)`.
-        let st1 = jlexpand("@something")
-            @test JS.kind(st1) === JS.K"call"
-            @test st1[1].name_val == "something"
-            @test JS.kind(st1[2]) === JS.K"Value"
-            @test st1[2].value === nothing
-        end
-    end
-
-    @testset "full lowering succeeds" begin
-        for code in [
-            "@something x",
-            "@something a b c",
-            "@something",
-            "function f(x)\n    @something(x, 1)\nend",
-        ]
-            @test jlresolve(code) isa NamedTuple
-        end
-    end
-
     @testset "binding resolution preserves provenance" begin
-        # User identifiers inside `@something` keep accurate byte ranges so
-        # downstream LSP analyses can recognize them as user-written via
-        # `is_from_user_ast`.
-        let res = jlresolve("somefunc() = @something(xxx, yyy)")
+        let res = jlresolve("somefunc(xxx) = @something(xxx, yyy)")
             binding_occurrences = JETLS.compute_binding_occurrences(
                 res.ctx3, res.st3, false; include_global_bindings=true)
             xxx_binfo = yyy_binfo = nothing
             for (binfo, _) in binding_occurrences
-                if binfo.kind === :global && binfo.name == "xxx"
+                if binfo.kind === :argument && binfo.name == "xxx"
                     xxx_binfo = binfo
                 elseif binfo.kind === :global && binfo.name == "yyy"
                     yyy_binfo = binfo
@@ -397,6 +322,39 @@ end
             yyy_provs = JS.flattened_provenance(JL.binding_ex(res.ctx3, yyy_binfo.id))
             @test JS.sourcetext(last(yyy_provs)) == "yyy"
         end
+    end
+
+    @testset "runtime semantics" begin
+        # Drive the new-style macro definition end-to-end via `JL.eval` and check the
+        # results match `Base.@something`'s contract: returns the first non-`nothing`
+        # argument (unwrapped from `Some` if present), short-circuits later arguments,
+        # and throws when every argument is `nothing` (or no arguments are supplied).
+
+        # Returns the first non-`nothing` argument
+        @test jleval("@something 1") === 1
+        @test jleval("@something \"abc\"") === "abc"
+        @test jleval("@something nothing 2") === 2
+        @test jleval("@something nothing nothing 3") === 3
+
+        # `Some`-wrapped value is unwrapped; `Some(nothing)` returns `nothing` (the canonical "explicit `nothing`" sentinel)
+        @test jleval("@something Some(42)") === 42
+        @test jleval("@something nothing Some(7)") === 7
+        @test jleval("@something Some(nothing)") === nothing
+
+        # All-`nothing` (and the zero-argument form) throws
+        @test_throws ArgumentError jleval("@something nothing")
+        @test_throws ArgumentError jleval("@something nothing nothing")
+        @test_throws ArgumentError jleval("@something")
+
+        # Short-circuit: later arguments are not evaluated once an earlier one produces a non-`nothing` value.
+        @test jleval("""let counter = Ref(false)
+            r = @something 42 (counter[] = true; 99)
+            (r, counter[])
+        end""") === (42, false)
+        @test jleval("""let counter = Ref(false)
+            r = @something nothing (counter[] = true; 99)
+            (r, counter[])
+        end""") === (99, true)
     end
 end
 
