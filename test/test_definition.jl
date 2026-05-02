@@ -33,13 +33,6 @@ include("setup.jl")
 # skips the full server lifecycle and runs much faster.
 function with_definition_request(tester, text::AbstractString; kwargs...)
     clean_code, positions = JETLS.get_text_and_positions(text; kwargs...)
-    # `cnt` lives inside the inner-most `withserver` `do`-block (where the
-    # for loop runs), so it is a plain function-local — not captured by
-    # any further closure — and avoids triggering the captured-box
-    # diagnostic the way an outer `cnt = 0` shadowed by a `do`-block
-    # callback would. Each invocation of `tester` returns an `Int`
-    # contribution that gets accumulated and bubbled out through the
-    # `withscript`/`withserver` return values.
     withscript(clean_code) do script_path
         uri = filepath2uri(script_path)
         withserver() do (; writereadmsg, id_counter)
