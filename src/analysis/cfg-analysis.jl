@@ -72,7 +72,8 @@ mutable struct EventLinearizer
     const blocks::Vector{EventBlock}
     current_block::Int
     const label_to_block::Dict{Int,Int}
-    const pending_gotos::Vector{Tuple{Int,Int}}  # (from_block, label_id)
+    # `(from_block, label_id)` — resolved into edges by `cfg_finalize!`.
+    const pending_gotos::Vector{Tuple{Int,Int}}
     next_label::Int
     # Maps symbolic label names (e.g. "loop-exit", "loop-cont") to CFG label IDs
     # for handling `K"symbolicblock"` / `K"break"` pairs from lowered loops.
@@ -103,20 +104,12 @@ mutable struct EventLinearizer
     # resolved at finalization, even when the preceding fall-through (before_block) is
     # unreachable.
     const statement_blocks::Vector{StatementRecord}
-    # Tracks whether the most recently processed construct emitted a control-flow terminator
-    # (`return`, `break`, `goto`, ...) without a matching label, leaving `current_block`
-    # known to be unreachable from the entry. Used by `K"tryfinally"` to decide whether to
-    # wire its `end_label` (post-try) up to the finally body: when the try body is known
-    # to terminate, post-try is unreachable and we must not connect the finally-end to it
-    # (otherwise `analyze_unreachable_code!` would consider post-try reachable through the
-    # finally's gotoifnot bypass).
-    current_known_unreachable::Bool
     function EventLinearizer()
         blocks = EventBlock[EventBlock(1)]
         new(blocks, 1, Dict{Int,Int}(), Tuple{Int,Int}[], 0,
             Dict{String,Int}(), Dict{String,Int}(),
             Dict{Set{JL.IdTag},Set{JL.IdTag}}(), Set{JL.IdTag}[],
-            StatementRecord[], false)
+            StatementRecord[])
     end
 end
 
@@ -156,10 +149,6 @@ function cfg_emit_label!(lin::EventLinearizer, label_id::Int)
     lin.label_to_block[label_id] = block_id
     cfg_add_edge!(lin, lin.current_block, block_id)
     cfg_switch_to_block!(lin, block_id)
-    # A label can have additional incoming edges (from gotos resolved at
-    # finalization), so we conservatively assume the new current block is
-    # reachable.
-    lin.current_known_unreachable = false
     return block_id
 end
 
@@ -167,7 +156,6 @@ function cfg_emit_goto!(lin::EventLinearizer, label_id::Int)
     push!(lin.pending_gotos, (lin.current_block, label_id))
     unreachable = cfg_new_block!(lin)
     cfg_switch_to_block!(lin, unreachable)
-    lin.current_known_unreachable = true
 end
 
 function cfg_emit_gotoifnot!(lin::EventLinearizer, false_label::Int)
@@ -423,7 +411,6 @@ function linearize_cfg_events!(
         end
         unreachable = cfg_new_block!(lin)
         cfg_switch_to_block!(lin, unreachable)
-        lin.current_known_unreachable = true
 
     elseif k == JS.K"symboliclabel"
         # `@label name` — register a CFG label at the current position so any
@@ -606,7 +593,7 @@ function linearize_cfg_events!(
         # If the try body terminated, post-try is unreachable; the finally
         # body still runs (modeled via the gotoifnot bypass) but its
         # completion does not flow into post-try.
-        try_body_terminated = lin.current_known_unreachable
+        try_body_terminated = !is_block_reachable_from_entry(lin, lin.current_block)
 
         cfg_emit_label!(lin, finally_label)
         linearize_cfg_events!(lin, ctx3, ex3[2], candidates, allow_noreturn_optimization)
@@ -615,7 +602,6 @@ function linearize_cfg_events!(
             end_block = cfg_new_block!(lin)
             lin.label_to_block[end_label] = end_block
             cfg_switch_to_block!(lin, end_block)
-            lin.current_known_unreachable = true
         else
             cfg_emit_label!(lin, end_label)
         end
@@ -632,7 +618,6 @@ function linearize_cfg_events!(
         # `cfg_emit_goto!`, no-target `K"break"`, noreturn-call branch.
         unreachable = cfg_new_block!(lin)
         cfg_switch_to_block!(lin, unreachable)
-        lin.current_known_unreachable = true
 
     elseif k == JS.K"block"
         # Record each direct child as a "statement" tagged with both the
@@ -659,7 +644,6 @@ function linearize_cfg_events!(
                 is_noreturn_call(ctx3, ex3, allow_noreturn_optimization)
             unreachable = cfg_new_block!(lin)
             cfg_switch_to_block!(lin, unreachable)
-            lin.current_known_unreachable = true
         end
     end
 end
@@ -752,6 +736,39 @@ function collect_closure_captured_vars(body::SyntaxTreeC, candidates::Set{JL.IdT
         return nothing
     end
     return result
+end
+
+# On-demand reachability check on the partially-built CFG. Like
+# `compute_reachable_blocks`, but additionally treats `pending_gotos`
+# whose target labels have already been emitted as edges, so it gives a
+# correct answer mid-linearization (before `cfg_finalize!` resolves
+# pending entries into real edges). Used by `K"tryfinally"` to decide
+# whether the try body fell through.
+function is_block_reachable_from_entry(lin::EventLinearizer, target::Int)
+    target == 1 && return true
+    visited = falses(length(lin.blocks))
+    visited[1] = true
+    stack = Int[1]
+    while !isempty(stack)
+        b = pop!(stack)
+        b == target && return true
+        for s in lin.blocks[b].succs
+            if !visited[s]
+                visited[s] = true
+                push!(stack, s)
+            end
+        end
+        for (from, label_id) in lin.pending_gotos
+            from == b || continue
+            haskey(lin.label_to_block, label_id) || continue
+            to = lin.label_to_block[label_id]
+            if !visited[to]
+                visited[to] = true
+                push!(stack, to)
+            end
+        end
+    end
+    return false
 end
 
 """

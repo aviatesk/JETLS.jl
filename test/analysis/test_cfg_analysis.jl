@@ -1003,8 +1003,8 @@ end
 @testset "tryfinally with terminating try body" begin
     # When the try body always terminates (e.g. `return`), post-try is
     # unreachable: any use of a local there should NOT be flagged as
-    # potentially undefined, since that use never executes. Without the
-    # `current_known_unreachable` flag tracking in `K"tryfinally"`, the
+    # potentially undefined, since that use never executes. Without
+    # `K"tryfinally"`'s special handling for a terminated try body, the
     # use would be reachable via the gotoifnot bypass through finally,
     # making the post-try use look reachable from the entry on a path
     # that misses the try-body assignment, and `x` would surface as
@@ -1716,14 +1716,10 @@ end
         @test "x = 3" in urs
     end
 
-    # Known limitation: `cfg_emit_label!` conservatively resets
-    # `current_known_unreachable = false` at every label boundary because
-    # labels can be reached by pending gotos resolved at finalization.
-    # When BOTH try and catch terminate, that reset masks the inner
-    # `K"trycatchelse"`'s end-state from the outer `K"tryfinally"`, so
-    # `try_body_terminated` is observed as `false` and post-try is wired
-    # to the finally bypass, even though the actual reachability has no
-    # real edge from a reachable block reaching post-try.
+    # Both try and catch terminate, finally falls through. The inner
+    # `K"trycatchelse"`'s end-block has no incoming edge from any reachable
+    # block, and `K"tryfinally"`'s on-demand reachability check picks that
+    # up, so post-try is detected as unreachable.
     let urs = get_unreachable_statements("""
         function f()
             try
@@ -1736,7 +1732,23 @@ end
             x = 3
         end
         """)
-        @test_broken "x = 3" in urs
+        @test "x = 3" in urs
+    end
+    let urs = get_unreachable_statements("""
+        function f(x)
+            try
+                if x
+                    return 1
+                else
+                    return 2
+                end
+            finally
+                cleanup()
+            end
+            y = 3
+        end
+        """)
+        @test "y = 3" in urs
     end
 end
 
