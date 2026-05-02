@@ -114,7 +114,7 @@ end
         end
     end
 
-    @testset "lens for struct inner methods (still global)" begin
+    @testset "no lens for struct inner constructors" begin
         let code = """
             struct Foo
                 x::Int
@@ -124,8 +124,7 @@ end
             """
             results = get_code_lenses_with_counts(code)
             names_lines = sort([lens.range.start.line for (lens, _) in results])
-            @test 0 in names_lines      # Foo (struct)
-            @test 2 in names_lines      # inner constructor `Foo() = new(0)`
+            @test names_lines == [0] # only `Foo` (struct), no lens for inner constructor
         end
     end
 end

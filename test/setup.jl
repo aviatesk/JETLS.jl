@@ -293,3 +293,9 @@ function make_DidChangeTextDocumentNotification(uri, text, version)
             textDocument = VersionedTextDocumentIdentifier(; uri, version),
             contentChanges = [TextDocumentContentChangeEvent(; text)]))
 end
+
+function make_DidCloseTextDocumentNotification(uri::URI)
+    return DidCloseTextDocumentNotification(;
+        params = DidCloseTextDocumentParams(;
+            textDocument = TextDocumentIdentifier(; uri)))
+end

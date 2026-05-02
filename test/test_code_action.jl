@@ -106,6 +106,19 @@ end
         """)
         @test isempty(code_actions)
     end
+
+    # Unused positional argument with a default value: rename action should appear
+    let (code_actions, uri, _) = get_unused_var_code_actions("""
+        function f(x, bar="bar")
+            return x
+        end
+        """)
+        @test length(code_actions) == 1
+        action = only(code_actions)
+        @test action.title == "Prefix with '_' to indicate intentionally unused"
+        edit = only(action.edit.changes[uri])
+        @test edit.newText == "_"
+    end
 end
 
 @testset "unused assignment code actions" begin
@@ -213,7 +226,7 @@ function get_unused_import_code_actions(marked_text::AbstractString)
     diagnostics = JETLS.analyze_unused_imports(server, uri, fi, st0_top;
         skip_context_check=true)
     code_actions = Union{CodeAction,Command}[]
-    JETLS.unused_import_code_actions!(code_actions, uri, diagnostics)
+    JETLS.delete_range_code_actions!(code_actions, uri, diagnostics)
     return code_actions, uri, positions
 end
 
@@ -260,13 +273,33 @@ end
         @test edit.range.start == positions[1]
         @test edit.range.var"end" == positions[2]
     end
+
+    # Single import on its own line: delete also absorbs the trailing newline
+    let (code_actions, uri, positions) = get_unused_import_code_actions(
+            "│using Base: cos\n│sin(1.0)")
+        @test length(code_actions) == 1
+        edit = only(code_actions[1].edit.changes[uri])
+        @test edit.newText == ""
+        @test edit.range.start == positions[1]
+        @test edit.range.var"end" == positions[2]
+    end
+
+    # Single import indented: also absorbs the leading indentation
+    let (code_actions, uri, positions) = get_unused_import_code_actions(
+            "module M\n│    using Base: cos\n│end")
+        @test length(code_actions) == 1
+        edit = only(code_actions[1].edit.changes[uri])
+        @test edit.newText == ""
+        @test edit.range.start == positions[1]
+        @test edit.range.var"end" == positions[2]
+    end
 end
 
 function get_unreachable_code_actions(marked_text::AbstractString)
     text, positions = JETLS.get_text_and_positions(marked_text)
     diagnostics, uri = get_lowering_diagnostics(text, JETLS.LOWERING_UNREACHABLE_CODE)
     code_actions = Union{CodeAction,Command}[]
-    JETLS.unreachable_code_actions!(code_actions, uri, diagnostics)
+    JETLS.delete_range_code_actions!(code_actions, uri, diagnostics)
     return code_actions, uri, positions
 end
 
@@ -311,6 +344,45 @@ end
         end
         """)
         @test isempty(code_actions)
+    end
+end
+
+function get_unused_label_code_actions(marked_text::AbstractString)
+    text, positions = JETLS.get_text_and_positions(marked_text)
+    diagnostics, uri = get_lowering_diagnostics(text, JETLS.LOWERING_UNUSED_LABEL_CODE)
+    code_actions = Union{CodeAction,Command}[]
+    JETLS.delete_range_code_actions!(code_actions, uri, diagnostics)
+    return code_actions, uri, positions
+end
+
+@testset "unused label code actions" begin
+    # Label on its own line: delete the whole line including indent and trailing newline
+    let (code_actions, uri, positions) = get_unused_label_code_actions("""
+        function f()
+        │    @label unused
+        │    return 1
+        end
+        """)
+        @test length(code_actions) == 1
+        action = only(code_actions)
+        @test action.title == "Remove unused label"
+        @test action.isPreferred == true
+        @test length(action.diagnostics) == 1
+        @test action.diagnostics[1].code == JETLS.LOWERING_UNUSED_LABEL_CODE
+        edit = only(action.edit.changes[uri])
+        @test edit.newText == ""
+        @test edit.range.start == positions[1]
+        @test edit.range.var"end" == positions[2]
+    end
+
+    # Label sharing a line with other statements: delete only the macrocall bytes
+    let (code_actions, uri, positions) = get_unused_label_code_actions(
+            "function f(); │@label unused│; return 1; end")
+        @test length(code_actions) == 1
+        edit = only(code_actions[1].edit.changes[uri])
+        @test edit.newText == ""
+        @test edit.range.start == positions[1]
+        @test edit.range.var"end" == positions[2]
     end
 end
 

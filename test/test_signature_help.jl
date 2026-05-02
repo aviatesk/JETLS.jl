@@ -369,22 +369,23 @@ include("setup.jl")
 function with_signature_help_request(tester, text::AbstractString; kwargs...)
     clean_code, positions = JETLS.get_text_and_positions(text; kwargs...)
 
-    withscript(clean_code) do script_path
+    return withscript(clean_code) do script_path
         uri = filepath2uri(script_path)
         withserver() do (; writereadmsg, id_counter)
             # run the full analysis first
             (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, clean_code))
             @test raw_res isa PublishDiagnosticsNotification
             @test raw_res.params.uri == uri
-
+            cnt = 0
             for (i, pos) in enumerate(positions)
                 (; raw_res) = writereadmsg(SignatureHelpRequest(;
                         id = id_counter[] += 1,
                         params = SignatureHelpParams(;
                             textDocument = TextDocumentIdentifier(; uri),
                             position = pos)))
-                tester(i, raw_res.result, uri, script_path)
+                cnt += tester(i, raw_res.result, uri, script_path)
             end
+            return cnt
         end
     end
 end
@@ -395,8 +396,7 @@ end
         foo(xxx, yyy) = :xxx_yyy
         foo(nothing,│)
         """
-        cnt = 0
-        with_signature_help_request(text) do _, result, _, script_path
+        @test with_signature_help_request(text) do _, result, _, script_path
             @test length(result.signatures) == 2
             @test any(result.signatures) do siginfo
                 siginfo.label == "foo(xxx)" &&
@@ -412,9 +412,8 @@ end
                 occursin("@ `Main` [$(script_path):2]($(filepath2uri(script_path))#L2)",
                     (siginfo.documentation::MarkupContent).value)
             end
-            cnt += 1
-        end
-        @test cnt == 1
+            return true
+        end == 1
     end
 
     # Test with DidChangeTextDocumentNotification

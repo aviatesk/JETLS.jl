@@ -228,6 +228,54 @@ end
         end
     end
 
+    @testset "same-named arguments in disjoint scopes" begin
+        # Two `do h` blocks share the same lowering unit but each introduces
+        # a fresh `h` binding; their occurrence sets must remain separate.
+        with_binding_occurrences("""
+            let
+                foo() do h
+                    h + 1
+                end
+                bar() do h
+                    h * 2
+                end
+            end
+            """) do binding_occurrences
+            binfos = collect(keys(binding_occurrences))
+            idxs = findall(binfo->binfo.name=="h" && binfo.kind===:argument, binfos)
+            @test length(idxs) == 2
+            @test binding_occurrences[binfos[idxs[1]]] !== binding_occurrences[binfos[idxs[2]]]
+            for idx in idxs
+                occurrences = binding_occurrences[binfos[idx]]
+                @test length(occurrences) == 2
+                @test count(o->o.kind===:def, occurrences) == 1
+                @test count(o->o.kind===:use, occurrences) == 1
+            end
+            # The two `h` bindings live on different lines (3 and 6),
+            # and the use on each line must belong to its own def.
+            for idx in idxs
+                occurrences = binding_occurrences[binfos[idx]]
+                def_line = only(o.tree for o in occurrences if o.kind===:def) |> JS.source_line
+                use_line = only(o.tree for o in occurrences if o.kind===:use) |> JS.source_line
+                @test (def_line, use_line) in ((2, 3), (5, 6))
+            end
+        end
+
+        # Same situation with two function definitions sharing the same lowering unit.
+        with_binding_occurrences("""
+            let
+                f(h) = h + 1
+                g(h) = h * 2
+                f(1) + g(2)
+            end
+            """) do binding_occurrences
+            binfos = collect(keys(binding_occurrences))
+            idxs = findall(binfo->binfo.name=="h" && binfo.kind===:argument, binfos)
+            @test length(idxs) == 2
+            @test binding_occurrences[binfos[idxs[1]]] !== binding_occurrences[binfos[idxs[2]]]
+        end
+    end
+
     @testset "with return type annotation" begin
         with_binding_occurrences("""
             function func(xxx::TTT)::Float64 where TTT<:Integer

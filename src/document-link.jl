@@ -46,7 +46,7 @@ function collect_include_document_links!(
     )
     basedir = dirname(uri2filename(uri))
     st0_top = build_syntax_tree(fi)
-    traverse(st0_top) do node::JS.SyntaxTree
+    traverse(st0_top) do node::SyntaxTreeC
         string_node = @something include_path_string_node(node) return
         resolved = @something resolve_path_string_literal(string_node, basedir) return
         range, _ = unadjust_range(state, uri, jsobj_to_range(string_node, fi))
@@ -59,7 +59,7 @@ end
 # If `node` is an `include("path")` call with a single non-interpolated string
 # argument, return that `K"String"` node. Otherwise return `nothing`.
 # Interpolated strings (e.g. `"$x.jl"`) parse into `K"string"` and are skipped.
-function include_path_string_node(node::JS.SyntaxTree)
+function include_path_string_node(node::SyntaxTreeC)
     JS.kind(node) === JS.K"call" || return nothing
     JS.numchildren(node) == 2 || return nothing
     callee = node[1]

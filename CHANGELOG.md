@@ -19,7 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`d1ebbb2...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/d1ebbb2...HEAD)
+- Diff: [`e784de8...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/e784de8...HEAD)
 
 ### Announcement
 
@@ -44,6 +44,55 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > This disables analysis for matched files. Basic features like completion still might work, but most LSP features will be unfunctional.
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
 
+### Added
+
+- `lowering/error` now reports `@goto` references that don't resolve to any `@label` in the same function body.
+  For example:
+  ```julia
+  function f()
+      @goto nonexist  # label `nonexist` referenced but not defined (JETLS lowering/error)
+      println("foo")
+  end
+  ```
+
+- Added the `lowering/unused-label` diagnostic, reported when a `@label` is declared but never referenced by any `@goto` in the same function body. The label is marked with the `Unnecessary` tag, so editors typically display it as faded/grayed out. A "Remove unused label" code action is also offered to drop the entire `@label` statement.
+  For example:
+  ```julia
+  function f()
+      @label spare  # Unused label `spare` (JETLS lowering/unused-label)
+      return 1
+  end
+  ```
+
+### Changed
+
+- The reference count code lens is no longer shown for inner constructors of a `struct`.
+
+- Updated JuliaSyntax.jl and JuliaLowering.jl dependency versions to latest, improving the performance of lowering-based LSP features (https://github.com/JuliaLang/julia/pull/61597).
+
+### Fixed
+
+- `lowering/unreachable-code` now uses control-flow reachability instead of syntactic block-walking, fixing several false positives and missed cases:
+  - Code reachable via `@goto` nested inside an expression (e.g. `return cnd ? @goto(fallback) : println("Return"); @label fallback; ...`) is no longer reported as unreachable.
+  - Code after `try ... finally ... end` whose `try` body always terminates is now correctly flagged as unreachable.
+
+- Fixed `lowering/captured-box` related-information ("Captured by closure") highlighting the entire enclosing macrocall (e.g. a whole `@testset begin ... end` block) instead of the captured identifier when the captured reference lived inside a macro expansion.
+
+- Fixed an "Unsupported URI" error that could occur when an unsaved (`untitled:`) buffer was edited and then closed in quick succession. Closing an unsaved buffer now also clears any analysis state associated with it, so previously analyzed top-level overloads no longer linger as ghost entries in completions or signature help.
+
+- Fixed `textDocument/documentHighlight`, `textDoscument/references`, and `textDocument/rename` incorrectly treating same-named local arguments in disjoint scopes (e.g. two separate `do h ... end` blocks within the same `let` or function body) as the same binding.
+
+- Fixed unused positional arguments with a default value (e.g. `bar` in `function f(x, bar="bar")`) being incorrectly treated as keyword arguments, suppressing the `"Prefix with '_' to indicate intentionally unused"` code action and skipping the unused-argument warning when the default's type annotation referenced a `where`-clause static parameter.
+
+## 2026-04-28
+
+- Commit: [`e784de8`](https://github.com/aviatesk/JETLS.jl/commit/e784de8)
+- Diff: [`d1ebbb2...e784de8`](https://github.com/aviatesk/JETLS.jl/compare/d1ebbb2...e784de8)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-04-28")'
+  ```
+
 ### Breaking
 
 - Clients that previously handled the JETLS-defined `jetls.showReferences` command should switch to handling `editor.action.showReferences` instead. The new arguments are `[uriString, position, locations]`, where `locations` is the pre-resolved LSP `Location[]`, so clients no longer need to issue a `textDocument/references` request themselves. See the [Neovim setup section](https://aviatesk.github.io/JETLS.jl/release/#Neovim) for an example handler.
@@ -62,7 +111,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - When a reference-count code lens is clicked on a file whose full analysis has not yet run, a warning notification (via `window/showMessage`) is now shown instead of an empty references peek.
 
-- The reference-count code lens is no longer shown on closures and inner functions defined inside another function body (e.g. `f = x -> ...`, nested `function`s). Inner constructors and methods inside `struct` bodies still get a lens.
+- The reference-count code lens is no longer shown on closures and inner functions defined inside another function body (e.g. `f = x -> ...`, nested `function`s).
 
 - Diagnostic messages are now sent as `MarkupContent` when the client advertises the [`textDocument.diagnostic.markupMessageSupport`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#diagnosticClientCapabilities) capability (LSP 3.18), so Markdown formatting such as inline code renders properly in supporting clients (e.g. recent Sublime LSP). (https://github.com/aviatesk/JETLS.jl/pull/633)
 

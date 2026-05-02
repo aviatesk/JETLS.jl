@@ -1,4 +1,4 @@
-module test_def_use_analysis
+module test_cfg_analysis
 
 using Test
 using JETLS
@@ -9,10 +9,12 @@ include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
 
 module lowering_module end
 
+# --- Undefined binding analysis ---
+
 function get_undef_status(text::AbstractString; mod::Module=lowering_module, allow_noreturn_optimization::Vector{Symbol}=Symbol[])
     st0 = jlparse(text; rule=:statement, filename=@__FILE__)
     (; ctx3, st3) = JETLS.jl_lower_for_scope_resolution(mod, st0; trim_error_nodes=false, recover_from_macro_errors=false)
-    (undef_info, _) = JETLS.analyze_def_use_all_lambdas(ctx3, st3; allow_noreturn_optimization)
+    (; undef_info) = JETLS.analyze_all_lambdas(ctx3, st3; allow_noreturn_optimization)
     result = Dict{String, Union{Nothing,Bool}}()
     for (binfo, info) in undef_info
         if !binfo.is_internal && binfo.kind == :local
@@ -998,6 +1000,95 @@ end
     end
 end
 
+@testset "tryfinally with terminating try body" begin
+    # When the try body always terminates (e.g. `return`), post-try is
+    # unreachable: any use of a local there should NOT be flagged as
+    # potentially undefined, since that use never executes. Without
+    # `K"tryfinally"`'s special handling for a terminated try body, the
+    # use would be reachable via the gotoifnot bypass through finally,
+    # making the post-try use look reachable from the entry on a path
+    # that misses the try-body assignment, and `x` would surface as
+    # `nothing` (potentially undef) — a false positive.
+    let status = get_undef_status("""
+        function f()
+            local x
+            try
+                x = 1
+                return 1
+            finally
+                cleanup()
+            end
+            return x
+        end
+        """)
+        @test status["x"] === false
+    end
+
+    # Same shape but with finally also assigning to the variable: still
+    # not flagged, for the same reason — the post-try use is unreachable.
+    let status = get_undef_status("""
+        function f()
+            local x
+            try
+                return 1
+            finally
+                x = 2
+            end
+            return x
+        end
+        """)
+        @test status["x"] === false
+    end
+
+    # Sanity check that the regular tryfinally case (try body doesn't
+    # terminate) still tracks definedness through the gotoifnot bypass:
+    # if the only assignment is in the try body, the use post-try might
+    # not have executed when control reached finally via the exception
+    # path, so x stays `nothing` (potentially undef).
+    let status = get_undef_status("""
+        function f()
+            local x
+            try
+                x = compute()
+            finally
+                cleanup()
+            end
+            return x
+        end
+        """)
+        @test status["x"] === nothing
+    end
+end
+
+@testset "@something short-circuit control flow" begin
+    # `@something(a, b)` only evaluates `b` when `a` is `nothing`. An
+    # assignment that lives inside a later argument is therefore conditional,
+    # so `v` may be undefined at the trailing `return`. If the macro stub
+    # collapsed to a flat `something(a, b)` call, both args would be
+    # evaluated unconditionally and `v` would be definitely defined.
+    let status = get_undef_status("""
+        function f(x)
+            local v
+            @something(x, (v = 1; nothing))
+            return v
+        end
+        """)
+        @test status["v"] === nothing
+    end
+
+    # Dual case: `v` is assigned in the first argument (always evaluated),
+    # so it is definitely defined regardless of what later args do.
+    let status = get_undef_status("""
+        function f()
+            local v
+            @something((v = 1; nothing), other)
+            return v
+        end
+        """)
+        @test status["v"] === false
+    end
+end
+
 end # @testset "undef analysis" begin
 
 # --- Dead store (unused assignment) analysis ---
@@ -1008,7 +1099,7 @@ function get_dead_stores(text::AbstractString;
     st0 = jlparse(text; rule=:statement, filename=@__FILE__)
     (; ctx3, st3) = JETLS.jl_lower_for_scope_resolution(mod, st0;
         trim_error_nodes=false, recover_from_macro_errors=false)
-    (_, dead_store_info) = JETLS.analyze_def_use_all_lambdas(ctx3, st3;
+    (; dead_store_info) = JETLS.analyze_all_lambdas(ctx3, st3;
         allow_noreturn_optimization)
     result = Dict{String,Int}()
     for (binfo, dsinfo) in dead_store_info
@@ -1339,4 +1430,387 @@ end
 
 end # @testset "dead store analysis" begin
 
-end # module test_def_use_analysis
+# --- Unreachable-statement analysis ---
+
+# Returns the source text of every CFG-level unreachable statement, sorted
+# by user-source byte offset. The list is the raw set produced by
+# `analyze_all_lambdas` and may include lowering-introduced statements
+# (e.g. the iterate-step assignment of a `for` loop) whose provenance
+# points back to a syntactically reachable location; the diagnostic layer
+# filters those out, the CFG layer does not.
+function get_unreachable_statements(text::AbstractString;
+        mod::Module=lowering_module,
+        allow_noreturn_optimization::Vector{Symbol}=Symbol[])
+    st0 = jlparse(text; rule=:statement, filename=@__FILE__)
+    (; ctx3, st3) = JETLS.jl_lower_for_scope_resolution(mod, st0;
+        trim_error_nodes=false, recover_from_macro_errors=false)
+    (; unreachable_statements) = JETLS.analyze_all_lambdas(ctx3, st3;
+        allow_noreturn_optimization)
+    provs = [last(JL.flattened_provenance(s)) for s in unreachable_statements]
+    sort!(provs; by=p -> first(JS.byte_range(p)))
+    return [JS.sourcetext(p) for p in provs]
+end
+
+@testset "unreachable statement analysis" begin
+
+@testset "unreachable after return" begin
+    let urs = get_unreachable_statements("""
+        function f()
+            return 1
+            x = 2
+        end
+        """)
+        @test urs == ["x = 2"]
+    end
+
+    let urs = get_unreachable_statements("""
+        function f()
+            return 1
+            x = 2
+            y = 3
+            z = 4
+        end
+        """)
+        @test urs == ["x = 2", "y = 3", "z = 4"]
+    end
+end
+
+@testset "if-else" begin
+    let urs = get_unreachable_statements("""
+        function f(x)
+            if x
+                return 1
+            else
+                return 2
+            end
+            y = 3
+        end
+        """)
+        @test "y = 3" in urs
+    end
+    let urs = get_unreachable_statements("""
+        function f(x, y)
+            if x
+                return 1
+            elseif y
+                return 2
+            else
+                return 3
+            end
+            z = 4
+        end
+        """)
+        @test "z = 4" in urs
+    end
+    let urs = get_unreachable_statements("""
+        function f(x)
+            if x
+                return 1
+            else
+                recover()
+            end
+            y = 3
+        end
+        """)
+        @test isempty(urs)
+    end
+    let urs = get_unreachable_statements("""
+        function f(x)
+            if x
+                return 1
+            end
+            y = 2
+        end
+        """)
+        @test isempty(urs)
+    end
+end
+
+@testset "loop" begin
+    let urs = get_unreachable_statements("""
+        function f()
+            while true
+                break
+                x = 1
+            end
+        end
+        """)
+        @test urs == ["x = 1"]
+    end
+
+    # `for` lowers to a do-while whose body has an iterate-step assignment
+    # whose source provenance points back at the loop header. After `break`,
+    # the iterate-step lives in an unreachable CFG block too, so the raw
+    # set contains both the user's `x = i` and the lowering artifact.
+    let urs = get_unreachable_statements("""
+        function f()
+            for i in 1:10
+                break
+                x = i
+            end
+        end
+        """)
+        @test "x = i" in urs
+        @test length(urs) == 2  # user statement + iterate-step artifact
+    end
+
+    # `continue` jumps back to the iterate-step, keeping that step
+    # reachable. Only the user's post-continue statement should remain.
+    let urs = get_unreachable_statements("""
+        function f()
+            for i in 1:10
+                continue
+                x = i
+            end
+        end
+        """)
+        @test urs == ["x = i"]
+    end
+end
+
+@testset "try-catch" begin
+    let urs = get_unreachable_statements("""
+        function f()
+            try
+                return 1
+            catch
+                return 2
+            end
+            x = 3
+        end
+        """)
+        @test "x = 3" in urs
+    end
+    let urs = get_unreachable_statements("""
+        function f()
+            try
+                return 1
+            catch
+                recover()
+            end
+            x = 2
+        end
+        """)
+        @test isempty(urs)
+    end
+    let urs = get_unreachable_statements("""
+        function f()
+            try
+                compute()
+            catch
+                return 0
+            end
+            x = 2
+        end
+        """)
+        @test isempty(urs)
+    end
+    let urs = get_unreachable_statements("""
+        function f()
+            try
+                return 1
+            catch
+                rethrow()
+            end
+            x = 2
+        end
+        """; allow_noreturn_optimization=Symbol[:throw, :error, :rethrow, :exit])
+        @test "x = 2" in urs
+    end
+end
+
+@testset "try-finally" begin
+    let urs = get_unreachable_statements("""
+        function f()
+            try
+                return 1
+            finally
+                cleanup()
+            end
+            x = 2
+        end
+        """)
+        @test "x = 2" in urs
+    end
+    let urs = get_unreachable_statements("""
+        function f()
+            try
+                compute()
+            finally
+                cleanup()
+            end
+            x = 2
+        end
+        """)
+        @test isempty(urs)
+    end
+    let urs = get_unreachable_statements("""
+        function f()
+            try
+                compute()
+            finally
+                return 0
+            end
+            x = 2
+        end
+        """)
+        @test "x = 2" in urs
+    end
+end
+
+@testset "try-catch-finally" begin
+    let urs = get_unreachable_statements("""
+        function f()
+            try
+                return 1
+            catch
+                recover()
+            finally
+                cleanup()
+            end
+            x = 2
+        end
+        """)
+        @test isempty(urs)
+    end
+    let urs = get_unreachable_statements("""
+        function f()
+            try
+                compute()
+            catch
+                return 0
+            finally
+                cleanup()
+            end
+            x = 2
+        end
+        """)
+        @test isempty(urs)
+    end
+    let urs = get_unreachable_statements("""
+        function f()
+            try
+                compute()
+            catch
+                recover()
+            finally
+                return 0
+            end
+            x = 2
+        end
+        """)
+        @test "x = 2" in urs
+    end
+    let urs = get_unreachable_statements("""
+        function f()
+            try
+                return 1
+            catch
+                recover()
+            finally
+                return 2
+            end
+            x = 3
+        end
+        """)
+        @test "x = 3" in urs
+    end
+
+    # Both try and catch terminate, finally falls through. The inner
+    # `K"trycatchelse"`'s end-block has no incoming edge from any reachable
+    # block, and `K"tryfinally"`'s on-demand reachability check picks that
+    # up, so post-try is detected as unreachable.
+    let urs = get_unreachable_statements("""
+        function f()
+            try
+                return 1
+            catch
+                return 2
+            finally
+                cleanup()
+            end
+            x = 3
+        end
+        """)
+        @test "x = 3" in urs
+    end
+    let urs = get_unreachable_statements("""
+        function f(x)
+            try
+                if x
+                    return 1
+                else
+                    return 2
+                end
+            finally
+                cleanup()
+            end
+            y = 3
+        end
+        """)
+        @test "y = 3" in urs
+    end
+end
+
+@testset "@goto / @label control flow" begin
+    let urs = get_unreachable_statements("""
+        function f()
+            @goto skip
+            x = 1
+            @label skip
+            return nothing
+        end
+        """)
+        @test urs == ["x = 1"]
+    end
+    let urs = get_unreachable_statements("""
+        function f()
+            x = 1
+            @label here
+            return x
+        end
+        """)
+        @test isempty(urs)
+    end
+end
+
+@testset "noreturn optimization" begin
+    noreturn_syms = Symbol[:throw, :error, :rethrow, :exit]
+
+    let urs = get_unreachable_statements("""
+        function f()
+            error("boom")
+            x = 1
+        end
+        """; allow_noreturn_optimization=noreturn_syms)
+        @test urs == ["x = 1"]
+    end
+
+    # Without opt-in, `error(...)` is just a regular call: post-call code remains reachable.
+    let urs = get_unreachable_statements("""
+        function f()
+            error("boom")
+            x = 1
+        end
+        """)
+        @test isempty(urs)
+    end
+end
+
+@testset "unreachable inside nested lambda" begin
+    let urs = get_unreachable_statements("""
+        function f()
+            g = function ()
+                return 1
+                x = 2
+            end
+            return g
+        end
+        """)
+        @test urs == ["x = 2"]
+    end
+end
+
+end # @testset "unreachable statement analysis" begin
+
+end # module test_cfg_analysis

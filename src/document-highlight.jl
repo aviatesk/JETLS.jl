@@ -91,7 +91,7 @@ document_highlight_kind(occurrence::AnyBindingOccurrence) =
 
 function global_document_highlights!(
         highlights′::Dict{Range,DocumentHighlightKind.Ty},
-        state::ServerState, uri::URI, fi::FileInfo, st0_top::JS.SyntaxTree,
+        state::ServerState, uri::URI, fi::FileInfo, st0_top::SyntaxTreeC,
         binfo::JL.BindingInfo,
     )
     for occurrence in find_global_binding_occurrences!(state, uri, fi, st0_top, binfo)

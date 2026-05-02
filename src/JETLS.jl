@@ -41,6 +41,7 @@ using JuliaLowering: JuliaLowering as JL
 using REPL: REPL # loading REPL is necessary to make `Base.Docs.doc(::Base.Docs.Binding)` work
 using Markdown: Markdown
 using TOML: TOML
+using Test: Test # used to define new-style implementations of `@test`/`@testset`
 
 using Configurations: @option, Configurations, Maybe
 using Glob: Glob
@@ -55,6 +56,10 @@ using .AtomicContainers
 const SWStats  = Nothing
 const LWStats  = Nothing
 const CASStats = Nothing
+
+const AttrsC = Dict{Symbol, Dict{Int64, Any}}
+const SyntaxTreeC = JS.SyntaxTree{AttrsC}
+const SyntaxListC = JS.SyntaxList{AttrsC,Vector{Int}}
 
 include("analysis/Analyzer.jl")
 using .Analyzer
@@ -77,6 +82,7 @@ include("utils/jl-syntax-macros.jl")
 include("utils/string.jl")
 include("utils/path.jl")
 include("utils/pkg.jl")
+include("utils/JETLSTestModule.jl")
 include("utils/ast.jl")
 include("utils/binding.jl")
 include("utils/lsp.jl")
@@ -87,7 +93,7 @@ include("config.jl")
 include("workspace-configuration.jl")
 
 include("analysis/occurrence-analysis.jl")
-include("analysis/def-use-analysis.jl")
+include("analysis/cfg-analysis.jl")
 
 include("diagnostic.jl")
 

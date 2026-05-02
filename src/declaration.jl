@@ -51,7 +51,7 @@ end
 
 """
     find_declaration(server, uri, fi, pos; soft_scope, fallback_to_definition=false) ->
-        (locations::Vector{Location}, origin_node::Union{JS.SyntaxTree,Nothing})
+        (locations::Vector{Location}, origin_node::Union{SyntaxTreeC,Nothing})
 
 Core routine behind `textDocument/declaration`. Returns the declaration
 locations for the symbol at `pos` (source-level `:decl` occurrences —

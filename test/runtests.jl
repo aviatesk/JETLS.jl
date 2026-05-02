@@ -22,7 +22,7 @@ end
     end
     @testset "analysis" verbose=true begin
         @testset "occurrence" include("analysis/test_occurrence_analysis.jl")
-        @testset "def use" include("analysis/test_def_use_analysis.jl")
+        @testset "cfg" include("analysis/test_cfg_analysis.jl")
         @testset "LSAnalyzer" include("analysis/test_Analyzer.jl")
     end
     @testset "types" include("test_types.jl")
@@ -49,5 +49,6 @@ end
     @testset "document link" include("test_document_link.jl")
     @testset "testrunner" include("test_testrunner.jl")
     @testset "full lifecycle" include("test_full_lifecycle.jl")
+    @testset "unsaved buffer" include("test_unsaved_buffer.jl")
     @testset "notebook" include("test_notebook.jl")
 end

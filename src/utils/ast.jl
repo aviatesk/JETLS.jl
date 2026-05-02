@@ -1,14 +1,14 @@
 # Lightweight copy function for SyntaxTree
 # This copies the SyntaxGraph's mutable structures (edge_ranges, edges, attributes)
 # but shares the immutable data within attribute dictionaries
-function copy_syntax_tree(st::JS.SyntaxTree)
+function copy_syntax_tree(st::SyntaxTreeC)
     g = JS.syntax_graph(st)
     new_attrs = Dict{Symbol,Dict{JL.IdTag,Any}}()
     for (k, v) in pairs(g.attributes)
         new_attrs[k] = copy(v)
     end
     new_graph = JS.SyntaxGraph(copy(g.edge_ranges), copy(g.edges), new_attrs)
-    return JS.SyntaxTree(new_graph, st._id)
+    return SyntaxTreeC(new_graph, st._id)
 end
 
 function build_syntax_tree(fi::FileInfo)
@@ -37,7 +37,7 @@ end
 Return a tree where all nodes of `kinds` are removed.  Should not modify any
 nodes, and should not create new nodes unnecessarily.
 """
-function _without_kinds(st::JS.SyntaxTree, kinds::Tuple{Vararg{JS.Kind}})
+function _without_kinds(st::SyntaxTreeC, kinds::Tuple{Vararg{JS.Kind}})
     if JS.kind(st) in kinds
         return (nothing, true)
     elseif JS.is_leaf(st)
@@ -56,11 +56,11 @@ function _without_kinds(st::JS.SyntaxTree, kinds::Tuple{Vararg{JS.Kind}})
     return (new_node, changed)
 end
 
-function without_kinds(st::JS.SyntaxTree, kinds::Tuple{Vararg{JS.Kind}})
+function without_kinds(st::SyntaxTreeC, kinds::Tuple{Vararg{JS.Kind}})
     ensure_jl_source_attr!(JS.syntax_graph(st))
     return (JS.kind(st) in kinds ?
         JL.@ast(JS.syntax_graph(st), st, [JS.K"TOMBSTONE"]) :
-        _without_kinds(st, kinds)[1])::JS.SyntaxTree
+        _without_kinds(st, kinds)[1])::SyntaxTreeC
 end
 
 """
@@ -68,7 +68,7 @@ Return a tree where `K"\$"` interpolation nodes are replaced by their content.
 Unlike `without_kinds` which removes nodes entirely, this preserves the child
 so that parent nodes (e.g. dot expressions like `x.\$name`) remain well-formed.
 """
-function _unwrap_interpolations(st::JS.SyntaxTree)
+function _unwrap_interpolations(st::SyntaxTreeC)
     if JS.kind(st) === JS.K"$"
         if JS.numchildren(st) >= 1
             nc, _ = _unwrap_interpolations(st[1])
@@ -99,12 +99,12 @@ function _unwrap_interpolations(st::JS.SyntaxTree)
     return (new_node, changed)
 end
 
-function unwrap_interpolations(st::JS.SyntaxTree)
+function unwrap_interpolations(st::SyntaxTreeC)
     ensure_jl_source_attr!(JS.syntax_graph(st))
     return _unwrap_interpolations(st)[1]
 end
 
-function is_macrocall_st0(st0::SyntaxTree0, names::AbstractString...; from::Union{Nothing,Module}=nothing)
+function is_macrocall_st0(st0::SyntaxTreeC, names::AbstractString...; from::Union{Nothing,Module}=nothing)
     JS.kind(st0) === JS.K"macrocall" || return false
     JS.numchildren(st0) >= 1 || return false
     macro_name = st0[1]
@@ -115,11 +115,11 @@ function is_macrocall_st0(st0::SyntaxTree0, names::AbstractString...; from::Unio
     return name_val in names && (isnothing(from) || (JS.hasattr(macro_name, :mod) && macro_name.mod === from))
 end
 
-is_mainfunc0(st0::SyntaxTree0) = is_macrocall_st0(st0, "@main")
+is_mainfunc0(st0::SyntaxTreeC) = is_macrocall_st0(st0, "@main")
 
-is_generated0(st0::SyntaxTree0) = is_macrocall_st0(st0, "@generated")
+is_generated0(st0::SyntaxTreeC) = is_macrocall_st0(st0, "@generated")
 
-is_macro0(st0::SyntaxTree0) = JS.kind(st0) === JS.K"macro"
+is_macro0(st0::SyntaxTreeC) = JS.kind(st0) === JS.K"macro"
 
 # Simple (non-qualified) macro names whose new-style implementations in
 # `JuliaLowering/src/syntax_macros.jl` and `src/utils/jl-syntax-macros.jl`
@@ -141,19 +141,22 @@ const NEW_STYLE_MACROCALL_NAMES = (
     # src/utils/jl-syntax-macros.jl
     "@kwdef",
     "@label",
+    "@something",
     "@spawn",
     "@specialize",
+    "@test",
+    "@testset",
 )
 
-is_new_style_macrocall0(st0::SyntaxTree0) =
+is_new_style_macrocall0(st0::SyntaxTreeC) =
     is_macrocall_st0(st0, NEW_STYLE_MACROCALL_NAMES...)
 
-is_doc0(st0::SyntaxTree0) = is_macrocall_st0(st0, "@doc"; from=Core)
+is_doc0(st0::SyntaxTreeC) = is_macrocall_st0(st0, "@doc"; from=Core)
 
-is_cmd0(st0::SyntaxTree0) = is_macrocall_st0(st0, "@cmd"; from=Core)
+is_cmd0(st0::SyntaxTreeC) = is_macrocall_st0(st0, "@cmd"; from=Core)
 
 """
-    collect_import_names(st0::SyntaxTree0) -> Vector{Pair{SyntaxTree0, String}}
+    collect_import_names(st0::SyntaxTreeC) -> Vector{Pair{SyntaxTreeC, String}}
 
 Return pairs of `(node, sort_key)` for the named items of an
 `import`/`using`/`export`/`public` statement: the child node representing
@@ -161,9 +164,9 @@ each item alongside its sort key (see [`get_import_sort_key`](@ref)).
 For `using M: a, b` returns entries for `a` and `b`; for `using M.A` (no
 `:`) returns entries for the imported path nodes.
 """
-function collect_import_names(st0::SyntaxTree0)
+function collect_import_names(st0::SyntaxTreeC)
     kind = JS.kind(st0)
-    names = Pair{SyntaxTree0, String}[]
+    names = Pair{SyntaxTreeC, String}[]
     if kind in JS.KSet"import using"
         nchildren = JS.numchildren(st0)
         if nchildren == 1
@@ -190,7 +193,7 @@ function collect_import_names(st0::SyntaxTree0)
 end
 
 """
-    foreach_local_import_identifier(f, st0::JS.SyntaxTree)
+    foreach_local_import_identifier(f, st0::SyntaxTreeC)
 
 Invoke `f(id_st)` once for each locally-introduced identifier of an
 `import`/`using` statement `st0`. Covers every form that actually binds
@@ -203,7 +206,7 @@ a name in the current scope:
 - `using A: x as y` — the alias `y`
 - `import A: x as y` — likewise
 """
-function foreach_local_import_identifier(f, st0::JS.SyntaxTree)
+function foreach_local_import_identifier(f, st0::SyntaxTreeC)
     kind = JS.kind(st0)
     kind in JS.KSet"import using" || return
     nchildren = JS.numchildren(st0)
@@ -227,7 +230,7 @@ function foreach_local_import_identifier(f, st0::JS.SyntaxTree)
 end
 
 """
-    get_local_import_identifier(st0::JS.SyntaxTree) -> Union{JS.SyntaxTree, Nothing}
+    get_local_import_identifier(st0::SyntaxTreeC) -> Union{SyntaxTreeC, Nothing}
 
 Return the `K"Identifier"` node that represents the local binding introduced
 by a single element of an `import`/`using` statement, or `nothing` if the
@@ -239,7 +242,7 @@ path children (`using A.B` → path `A.B`) and the names listed after `:`
   or `..` prefixes of forms like `.A` / `..A.B`)
 - `K"as"` (inside a colon list) — the alias
 """
-function get_local_import_identifier(st0::JS.SyntaxTree)
+function get_local_import_identifier(st0::SyntaxTreeC)
     kind = JS.kind(st0)
     if kind === JS.K"as"
         # `using M: a as b` -> identifier for "b"
@@ -260,7 +263,7 @@ function get_local_import_identifier(st0::JS.SyntaxTree)
     end
 end
 
-function get_import_sort_key(st0::JS.SyntaxTree)
+function get_import_sort_key(st0::SyntaxTreeC)
     kind = JS.kind(st0)
     if kind === JS.K"as"
         return get_import_sort_key(st0[1])
@@ -282,35 +285,29 @@ function get_import_sort_key(st0::JS.SyntaxTree)
 end
 
 """
-    foreach_inert_identifier(callback, st::JS.SyntaxTree)
+    foreach_inert_identifier(callback, st::SyntaxTreeC)
 
 Traverse `st` looking for `K"inert"` nodes, and call `f(id_node)` for each
 `K"Identifier"` found inside them. `callback` should return `true` to continue
 traversal or `false` to stop early.
 """
-function foreach_inert_identifier(callback, node::JS.SyntaxTree)
-    if JS.kind(node) === JS.K"inert"
-        foreach_identifier_in_inert(callback, node) || return false
-    else
-        for child in JS.children(node)
-            foreach_inert_identifier(callback, child) || return false
+function foreach_inert_identifier(@specialize(callback), node::SyntaxTreeC)
+    res = traverse(node) do n
+        JS.kind(n) === JS.K"inert" || return
+        inner = traverse(n) do m
+            JS.kind(m) === JS.K"Identifier" || return
+            callback(m) || return TraversalReturn(false; terminate=true)
+            return
         end
+        inner === false && return TraversalReturn(false; terminate=true)
+        return traversal_no_recurse
     end
-    return true
-end
-function foreach_identifier_in_inert(callback, node::JS.SyntaxTree)
-    if JS.kind(node) === JS.K"Identifier"
-        callback(node) || return false
-    end
-    for child in JS.children(node)
-        foreach_identifier_in_inert(callback, child) || return false
-    end
-    return true
+    return res !== false
 end
 
-function find_inert_identifier_name(st::JS.SyntaxTree, offset::Int)
+function find_inert_identifier_name(st::SyntaxTreeC, offset::Int)
     name = Ref{Union{Nothing,String}}(nothing)
-    foreach_inert_identifier(st) do id_node::JS.SyntaxTree
+    foreach_inert_identifier(st) do id_node::SyntaxTreeC
         if offset in JS.byte_range(id_node)
             JS.hasattr(id_node, :name_val) || return true
             name_val = id_node.name_val
@@ -323,7 +320,7 @@ function find_inert_identifier_name(st::JS.SyntaxTree, offset::Int)
     return name[]
 end
 
-function is_nospecialize_or_specialize_macrocall3(st3::JS.SyntaxTree)
+function is_nospecialize_or_specialize_macrocall3(st3::SyntaxTreeC)
     JS.kind(st3) === JS.K"macrocall" || return false
     JS.numchildren(st3) >= 1 || return false
     macro_name = st3[1]
@@ -335,7 +332,7 @@ function is_nospecialize_or_specialize_macrocall3(st3::JS.SyntaxTree)
     return macro_name.name_val == "nospecialize" || macro_name.name_val == "specialize"
 end
 
-function _remove_macrocalls(st0::SyntaxTree0)
+function _remove_macrocalls(st0::SyntaxTreeC)
     if JS.kind(st0) === JS.K"macrocall"
         if is_new_style_macrocall0(st0)
             # Macros with new-style JuliaLowering implementations preserve
@@ -397,7 +394,7 @@ function _remove_macrocalls(st0::SyntaxTree0)
 end
 
 """
-    desugar_main_macrocall(st0::SyntaxTree0) -> Tuple{SyntaxTree0, Bool}
+    desugar_main_macrocall(st0::SyntaxTreeC) -> Tuple{SyntaxTreeC, Bool}
 
 If `st0` is a `function (@main)(args...) ... end`, `(@main)(args...) = ...`,
 `function @main(args...) ... end`, or `@main(args...) = ...` definition, replace
@@ -407,7 +404,7 @@ This avoids macro expansion failure when multiple standalone files defining
 `@main` are analyzed in the same session — the second file's sandbox module
 already has `main` imported from the first, causing `@main` expansion to error.
 """
-function desugar_main_macrocall(st0::SyntaxTree0)
+function desugar_main_macrocall(st0::SyntaxTreeC)
     k = JS.kind(st0)
     if k === JS.K"function"
         JS.numchildren(st0) >= 1 || return (st0, false)
@@ -455,7 +452,7 @@ function desugar_main_macrocall(st0::SyntaxTree0)
 end
 
 """
-    remove_macrocalls(st0::JS.SyntaxTree) -> JS.SyntaxTree
+    remove_macrocalls(st0::SyntaxTreeC) -> SyntaxTreeC
 
 Convert each `macrocall` node to a `block` node, keeping the arguments intact so that
 identifiers passed to macros retain their original source locations. The transformed
@@ -474,8 +471,8 @@ any bindings or control flow the macros themselves would have introduced.
     intentionally does not preserve semantic validity: replacing a macrocall with a
     raw `block` can place statements like `return` into expression contexts that are
     not legal Julia (e.g. `x = (begin ...; return nothing; end)`). Feeding the
-    transformed tree into flow-sensitive analyses such as `analyze_def_use` or
-    `analyze_unreachable_code!` can therefore produce nonsensical results and must
+    transformed tree into flow-sensitive analyses such as `analyze_local_def_use!`
+    or `analyze_unreachable!` can therefore produce nonsensical results and must
     be avoided.
 
 !!! note "Assumption on macro behavior"
@@ -495,26 +492,38 @@ any bindings or control flow the macros themselves would have introduced.
     `desugar_main_macrocall`. As more macros migrate to the new style, the scope
     of this transformation is expected to shrink.
 """
-function remove_macrocalls(st0::SyntaxTree0)
+function remove_macrocalls(st0::SyntaxTreeC)
     ensure_jl_source_attr!(JS.syntax_graph(st0))
     return first(_remove_macrocalls(st0))
 end
 
-function unwrap_where(node::JS.SyntaxTree)
+function unwrap_where(node::SyntaxTreeC)
     while JS.kind(node) === JS.K"where" && JS.numchildren(node) ≥ 1
         node = node[1]
     end
     return node
 end
 
-extract_name_val(node::JS.SyntaxTree) =
+extract_name_val(node::SyntaxTreeC) =
     hasproperty(node, :name_val) ? node.name_val::String : nothing
+
+# Collect the `name_val` of every `K"Identifier"` node reachable from `st` into `names`.
+function collect_identifier_names!(names::Set{String}, st::SyntaxTreeC)
+    traverse(st) do node
+        if JS.kind(node) === JS.K"Identifier"
+            name = get(node, :name_val, nothing)
+            name === nothing || push!(names, name::String)
+        end
+        return
+    end
+    return names
+end
 
 """
 Like `Base.unique`, but over node ids, and with this comment promising that the
 lowest-index copy of each node is kept.
 """
-function deduplicate_syntaxlist(sl::JS.SyntaxList)
+function deduplicate_syntaxlist(sl::SyntaxListC)
     sl2 = JS.SyntaxList(sl.graph)
     seen = Set{JS.NodeId}()
     for st in sl
@@ -527,7 +536,7 @@ function deduplicate_syntaxlist(sl::JS.SyntaxList)
 end
 
 """
-    traverse(callback, st::JS.SyntaxTree, postorder::Bool=false)
+    traverse(callback, st::SyntaxTreeC, postorder::Bool=false)
 
 Traverse a `SyntaxTree`, calling `callback(node)` on each node.
 By default traverses in pre-order (parent before children).
@@ -543,7 +552,7 @@ The `callback` can control traversal by returning one of:
 The stored value from the last `TraversalReturn` is returned from `traverse`
 (or `nothing` if no `TraversalReturn` was used).
 """
-function traverse(@specialize(callback), st::JS.SyntaxTree, postorder::Bool=false)
+function traverse(@specialize(callback), st::SyntaxTreeC, postorder::Bool=false)
     stack = JS.SyntaxList(st)
     if postorder
         _traverse_postorder(callback, stack)
@@ -562,11 +571,14 @@ struct TraversalNoRecurse end
 const traversal_terminator = TraversalTerminator()
 const traversal_no_recurse = TraversalNoRecurse()
 
-function _traverse_preorder(@specialize(callback), stack::JS.SyntaxList)
+function _traverse_preorder(@specialize(callback), stack::SyntaxListC)
     local retval = nothing
     while !isempty(stack)
         x = pop!(stack)
-        ret = callback(x)
+        # Force inlining: keeps the callback's branches inside this loop, lets
+        # LLVM fold the small-Union return-tag dispatch, and avoids the
+        # per-iteration GC root spill that a Julia call boundary requires
+        ret = @inline callback(x)
         if ret isa TraversalReturn
             retval = ret.val
             ret.terminate ? break : continue
@@ -583,7 +595,7 @@ function _traverse_preorder(@specialize(callback), stack::JS.SyntaxList)
     return retval
 end
 
-function _traverse_postorder(@specialize(callback), stack::JS.SyntaxList)
+function _traverse_postorder(@specialize(callback), stack::SyntaxListC)
     local retval = nothing
     output = JS.SyntaxList(stack.graph)
     while !isempty(stack)
@@ -595,7 +607,8 @@ function _traverse_postorder(@specialize(callback), stack::JS.SyntaxList)
     end
     while !isempty(output)
         x = pop!(output)
-        ret = callback(x)
+        # See the `_traverse_preorder` comment above
+        ret = @inline callback(x)
         if ret isa TraversalReturn
             retval = ret.val
             ret.terminate ? break : continue
@@ -607,7 +620,7 @@ end
 
 # TODO use something like `JuliaInterpreter.ExprSplitter`
 
-function iterate_toplevel_tree(callback, st0_top::SyntaxTree0)
+function iterate_toplevel_tree(callback, st0_top::SyntaxTreeC)
     sl = JS.SyntaxList(st0_top)
     while !isempty(sl)
         st0 = pop!(sl)
@@ -632,8 +645,8 @@ function iterate_toplevel_tree(callback, st0_top::SyntaxTree0)
 end
 
 """
-    byte_ancestors([flt,] st::JS.SyntaxTree, rng::UnitRange{Int})
-    byte_ancestors([flt,] st::JS.SyntaxTree, byte::Int)
+    byte_ancestors([flt,] st::SyntaxTreeC, rng::UnitRange{Int})
+    byte_ancestors([flt,] st::SyntaxTreeC, byte::Int)
 
 Get a SyntaxList of `SyntaxTree`s containing certain bytes.
 
@@ -647,7 +660,7 @@ that satisfy the predicate.
 """
 byte_ancestors(args...) = byte_ancestors(Returns(true), args...)
 
-function byte_ancestors(flt, st::JS.SyntaxTree, rng::UnitRange{<:Integer})
+function byte_ancestors(flt, st::SyntaxTreeC, rng::UnitRange{<:Integer})
     sl = JS.SyntaxList(JS.syntax_graph(st))
     if rng ⊆ JS.byte_range(st) && flt(st)
         push!(sl, st)
@@ -664,15 +677,15 @@ function byte_ancestors(flt, st::JS.SyntaxTree, rng::UnitRange{<:Integer})
     # delete later duplicates when sorted parent->child
     return reverse!(deduplicate_syntaxlist(sl))
 end
-byte_ancestors(flt, st::JS.SyntaxTree, byte::Integer) = byte_ancestors(flt, st, byte:byte)
+byte_ancestors(flt, st::SyntaxTreeC, byte::Integer) = byte_ancestors(flt, st, byte:byte)
 
 """
-    greatest_local(st0::JS.SyntaxTree, offset::Int) -> st::Union{JS.SyntaxTree, Nothing}
+    greatest_local(st0::SyntaxTreeC, offset::Int) -> st::Union{SyntaxTreeC, Nothing}
 
 Return the largest tree that can introduce local bindings that are visible to the cursor
 (if any such tree exists).
 """
-function greatest_local(st0::JS.SyntaxTree, offset::Int)
+function greatest_local(st0::SyntaxTreeC, offset::Int)
     result = _find_greatest_local(st0, offset)
     result !== nothing && return result
     # When the cursor sits just past the last token of a line (e.g. `export
@@ -683,10 +696,10 @@ function greatest_local(st0::JS.SyntaxTree, offset::Int)
     return offset > 1 ? _find_greatest_local(st0, offset - 1) : nothing
 end
 
-function _find_greatest_local(st0::JS.SyntaxTree, offset::Int)
+function _find_greatest_local(st0::SyntaxTreeC, offset::Int)
     bas = byte_ancestors(st0, offset)
     first_global = @something begin
-        findfirst(st::JS.SyntaxTree -> JS.kind(st) in JS.KSet"toplevel module", bas)
+        findfirst(st::SyntaxTreeC -> JS.kind(st) in JS.KSet"toplevel module", bas)
     end return nothing
     if first_global == 1
         return nothing
@@ -973,20 +986,20 @@ end
 # TODO: This is used so that `r"foo"|` or `r"foo" |` don't show signature help,
 # but this edge case might be acceptable given that `r"foo" anything|` shouldn't
 # show signature help
-is_special_macrocall(st0::JS.SyntaxTree) =
+is_special_macrocall(st0::SyntaxTreeC) =
     JS.kind(st0) === JS.K"macrocall" && JS.numchildren(st0) >= 1 &&
     let mname = kind(st0[1]) === JS.K"." && JS.numchildren(st0[1]) === 2 ? st0[1][2] : st0[1]
         mname_s = hasproperty(mname, :name_val) ? mname.name_val : ""
         endswith(mname_s, "_str") || endswith(mname_s, "_cmd")
     end
 
-noparen_macrocall(st0::JS.SyntaxTree) =
+noparen_macrocall(st0::SyntaxTreeC) =
     JS.kind(st0) === JS.K"macrocall" &&
     !JS.has_flags(st0, JS.PARENS_FLAG) &&
     !is_special_macrocall(st0)
 
 """
-    select_target_identifier(st0::JS.SyntaxTree, offset::Int) -> target::Union{JS.SyntaxTree,Nothing}
+    select_target_identifier(st0::SyntaxTreeC, offset::Int) -> target::Union{SyntaxTreeC,Nothing}
 
 Determines the node that the user most likely intends to navigate to.
 Returns `nothing` if no suitable one is found.
@@ -999,7 +1012,7 @@ refs:
 - https://github.com/rust-lang/rust-analyzer/blob/6acff6c1f8306a0a1d29be8fd1ffa63cff1ad598/crates/ide/src/goto_definition.rs#L47-L62
 - https://github.com/aviatesk/JETLS.jl/pull/61#discussion_r2134707773
 """
-function select_target_identifier(st0::JS.SyntaxTree, offset::Int)
+function select_target_identifier(st0::SyntaxTreeC, offset::Int)
     filter = function (bas)
         JS.is_identifier(first(bas))
     end
@@ -1022,7 +1035,7 @@ function select_target_identifier(st0::JS.SyntaxTree, offset::Int)
     return select_target_node(filter, selector, st0, offset)
 end
 
-function select_target_string(st0::JS.SyntaxTree, offset::Int)
+function select_target_string(st0::SyntaxTreeC, offset::Int)
     filter = function (bas)
         JS.kind(first(bas)) === JS.K"String"
     end
@@ -1033,7 +1046,7 @@ function select_target_string(st0::JS.SyntaxTree, offset::Int)
 end
 
 """
-    resolve_path_string_literal(string_node::JS.SyntaxTree, basedir::AbstractString)
+    resolve_path_string_literal(string_node::SyntaxTreeC, basedir::AbstractString)
         -> Union{Nothing, @NamedTuple{value::String, path::String}}
 
 If `string_node` is a non-interpolated string literal whose value joins with
@@ -1041,7 +1054,7 @@ If `string_node` is a non-interpolated string literal whose value joins with
 `path`. Otherwise return `nothing`.
 """
 function resolve_path_string_literal(
-        string_node::JS.SyntaxTree, basedir::AbstractString
+        string_node::SyntaxTreeC, basedir::AbstractString
     )
     JS.hasattr(string_node, :value) || return nothing
     value = string_node.value
@@ -1051,7 +1064,7 @@ function resolve_path_string_literal(
     return (; value = String(value), path = String(path))
 end
 
-function select_target_node(filter, selector, st0::JS.SyntaxTree, offset::Int)
+function select_target_node(filter, selector, st0::SyntaxTreeC, offset::Int)
     bas = @somereal byte_ancestors(st0, offset) @goto minus1
     if !filter(bas)
         @label minus1
@@ -1066,13 +1079,13 @@ function select_target_node(filter, selector, st0::JS.SyntaxTree, offset::Int)
 end
 
 """
-    select_dotprefix_identifier(st::JS.SyntaxTree, offset::Int) -> dotprefix::Union{JS.SyntaxTree,Nothing}
+    select_dotprefix_identifier(st::SyntaxTreeC, offset::Int) -> dotprefix::Union{SyntaxTreeC,Nothing}
 
 If the code at `offset` position is dot accessor code, get the code being dot accessed.
 For example, `Base.show_│` returns the `SyntaxTree` of `Base`.
 If it's not dot accessor code, return `nothing`.
 """
-function select_dotprefix_identifier(st::JS.SyntaxTree, offset::Int)
+function select_dotprefix_identifier(st::SyntaxTreeC, offset::Int)
     bas = byte_ancestors(st, offset-1)
     dotprefix = nothing
     for i = 1:length(bas)
@@ -1147,6 +1160,46 @@ function jsobj_to_range(
     end
 end
 
+"""
+    line_absorbing_delete_range(obj, fi::FileInfo) -> Range
+
+Build a delete range covering the bytes of `obj`. When `obj` is the only
+non-whitespace content on its line, the range is extended to absorb the
+surrounding indentation and the trailing newline so that deletion does not
+leave a stray blank line behind. Otherwise, the result equals
+[`jsobj_to_range(obj, fi)`](@ref jsobj_to_range).
+
+Intended for `data.delete_range` of a `DeleteRangeData` quick-fix that
+removes a whole statement (e.g. `using M: x`, `@label foo`).
+"""
+function line_absorbing_delete_range(obj, fi::FileInfo)
+    fb = JS.first_byte(obj)
+    lb = JS.last_byte(obj)
+    textbuf = fi.parsed_stream.textbuf
+    line_start = fb
+    while line_start > 1 && textbuf[line_start - 1] != UInt8('\n')
+        c = textbuf[line_start - 1]
+        if c != UInt8(' ') && c != UInt8('\t')
+            return jsobj_to_range(obj, fi)
+        end
+        line_start -= 1
+    end
+    after_end = lb + 1
+    while after_end ≤ length(textbuf) && textbuf[after_end] != UInt8('\n')
+        c = textbuf[after_end]
+        if c != UInt8(' ') && c != UInt8('\t')
+            return jsobj_to_range(obj, fi)
+        end
+        after_end += 1
+    end
+    if after_end ≤ length(textbuf) && textbuf[after_end] == UInt8('\n')
+        after_end += 1
+    end
+    return Range(;
+        start = offset_to_xy(fi, line_start),
+        var"end" = offset_to_xy(fi, after_end))
+end
+
 function try_extract_field_line(node::JS.SyntaxNode, structname::Symbol, fname::Symbol)
     if JS.kind(node) === JS.K"struct" && JS.numchildren(node) ≥ 2
         structnm = node[1]
@@ -1180,7 +1233,7 @@ function try_extract_field_line(node::JS.SyntaxNode, structname::Symbol, fname::
 end
 
 """
-    is_from_user_ast(provs::JS.SyntaxList) -> Bool
+    is_from_user_ast(provs::SyntaxListC) -> Bool
 
 Determine whether a binding with the given provenances originates from user-written code.
 
@@ -1196,7 +1249,7 @@ like internal variables from `@ast`.
 !!! note
     This currently does not support old-style macros due to JuliaLowering limitations.
 """
-function is_from_user_ast(provs::JS.SyntaxList)
+function is_from_user_ast(provs::SyntaxListC)
     length(provs) == 1 && return true
     fprov, lprov = first(provs), last(provs)
     JS.sourcefile(lprov) == JS.sourcefile(fprov) || return false
@@ -1204,7 +1257,7 @@ function is_from_user_ast(provs::JS.SyntaxList)
 end
 
 function is_noreturn_call(
-        ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTree,
+        ctx3::JL.VariableAnalysisContext, st3::SyntaxTreeC,
         allow_noreturn_optimization::Vector{Symbol}
     )
     JS.kind(st3) === JS.K"call" || return false
