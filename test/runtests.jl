@@ -49,5 +49,6 @@ end
     @testset "document link" include("test_document_link.jl")
     @testset "testrunner" include("test_testrunner.jl")
     @testset "full lifecycle" include("test_full_lifecycle.jl")
+    @testset "unsaved buffer" include("test_unsaved_buffer.jl")
     @testset "notebook" include("test_notebook.jl")
 end
