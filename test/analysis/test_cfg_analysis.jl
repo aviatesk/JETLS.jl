@@ -1475,7 +1475,58 @@ end
     end
 end
 
-@testset "code after break in loop" begin
+@testset "if-else" begin
+    let urs = get_unreachable_statements("""
+        function f(x)
+            if x
+                return 1
+            else
+                return 2
+            end
+            y = 3
+        end
+        """)
+        @test "y = 3" in urs
+    end
+    let urs = get_unreachable_statements("""
+        function f(x, y)
+            if x
+                return 1
+            elseif y
+                return 2
+            else
+                return 3
+            end
+            z = 4
+        end
+        """)
+        @test "z = 4" in urs
+    end
+    let urs = get_unreachable_statements("""
+        function f(x)
+            if x
+                return 1
+            else
+                recover()
+            end
+            y = 3
+        end
+        """)
+        @test isempty(urs)
+    end
+    let urs = get_unreachable_statements("""
+        function f(x)
+            if x
+                return 1
+            end
+            y = 2
+        end
+        """)
+        @test isempty(urs)
+    end
+end
+
+@testset "loop" begin
     let urs = get_unreachable_statements("""
         function f()
             while true
