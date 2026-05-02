@@ -60,8 +60,6 @@ function _expr_to_est(graph::SyntaxGraph, @nospecialize(e), src::LineNumberNode)
         ident = newleaf(graph, src, K"Identifier")
         setattr!(ident, :name_val, String(e.args[1]::Symbol))
         setattr!(ident, :scope_layer, e.args[2])
-    elseif e isa Expr && e.head === :static_parameter
-        setattr!(newleaf(graph, src, K"Value"), :value, e)
     elseif e isa Expr && e.head === :lambda && length(e.args) == 2
         argnames = e.args[1]::Vector{Any}
         arg_cs = NodeId[]
@@ -425,8 +423,8 @@ function est_to_dst(st::SyntaxTree)
                  (s[1:prevind(s,end)], K"op=")
 
              op_leaf = newleaf(g, st, K"Identifier")
-             JS.copy_attrs!(op_leaf, st)
              setattr!(op_leaf, :name_val, op_s)
+             setattr!(op_leaf, :scope_layer, st.scope_layer)
              @ast g st [out_k rec(l) op_leaf rec(r)]
          end
         [K"comparison" cs0...] -> let cs = copy(cs0)
@@ -458,8 +456,16 @@ function est_to_dst(st::SyntaxTree)
             @ast g st [k _dst_sink_parameters(children(st))...]
         (_, when=(k = kind(st); k in KSet"curly ref")) ->
             @ast g st [k _dst_separate_dotop(st[1])
-                       _dst_sink_parameters(children(st)[2:end])...
-            ]
+                       _dst_sink_parameters(children(st)[2:end])...]
+        # tuple arg should not be converted or desugared
+        [K"foreigncall" [K"tuple" _...] args...] ->
+            @ast g st [K"foreigncall" [K"foreigncall_arg1" st[1]] args...]
+        ([K"call" [K"Identifier"] sym args...],
+         when=st[1].name_val::String === "ccall") -> if kind(sym) === K"tuple"
+             @ast g st [K"call" st[1] [K"foreigncall_arg1" st[2]] mapsyntax(rec, args)...]
+         else
+             @ast g st [K"call" st[1] rec(sym) mapsyntax(rec, args)...]
+         end
         [K"call" f args...] -> let
             out_k, out_f = @stm _dst_separate_dotop(f) begin
                 [K"." op] -> (K"dotcall", op)
@@ -592,6 +598,7 @@ function est_to_dst(st::SyntaxTree)
         [K"inbounds" _] -> newleaf(g, st, K"TOMBSTONE")
         [K"core" x] -> setattr!(mkleaf(st), :name_val, x.name_val)
         [K"top" x] -> setattr!(mkleaf(st), :name_val, x.name_val)
+        [K"static_parameter" x] -> setattr!(mkleaf(st), :var_id, x.value::IdTag)
         [K"copyast" [K"inert" ex]] -> @ast g st [K"call"
             interpolate_ast::K"Value"
             Expr::K"Value"
@@ -615,12 +622,26 @@ function est_to_dst(st::SyntaxTree)
             end
         end
         ([K"latestworld"], when=!is_leaf(st)) -> newleaf(g, st, K"latestworld")
-        [K"cfunction" typ fptr rt at sym] -> @ast g st [K"cfunction"
-            rec(typ) rec(fptr)
-            [K"static_eval"(rt, meta=name_hint("cfunction return type")) rec(rt)]
-            [K"static_eval"(at, meta=name_hint("cfunction argument type")) rec(at)]
-            rec(sym)
-        ]
+        [K"cfunction" typ fptr rt at sym] -> let
+            # Identifier callables are scope-resolved against the outermost
+            # lowering layer (which corresponds to the method module used by
+            # `method.c`'s `jl_toplevel_eval`), so the IR carries a binding
+            # reference matching `@cfunction`'s runtime resolution. Other
+            # forms (e.g. function definitions) stay inert.
+            out_fptr = if kind(fptr) == K"inert" && numchildren(fptr) == 1 &&
+                          kind(fptr[1]) == K"Identifier"
+                ident = setattr!(mkleaf(fptr[1]), :scope_layer, 1)
+                @ast g fptr [K"static_eval"(fptr) ident]
+            else
+                rec(fptr)
+            end
+            @ast g st [K"cfunction"
+                rec(typ) out_fptr
+                [K"static_eval"(rt, meta=name_hint("cfunction return type")) rec(rt)]
+                [K"static_eval"(at, meta=name_hint("cfunction argument type")) rec(at)]
+                rec(sym)
+            ]
+        end
 
         # avoid creating excess nodes
         _ -> let out_cs::Vector{NodeId} = map(x->rec(x)._id, children(st))
