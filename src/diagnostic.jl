@@ -1220,33 +1220,30 @@ function collect_gotos_labels!(
         gotos::Vector{Tuple{String,SyntaxTreeC}}, labels::Vector{Tuple{String,SyntaxTreeC}},
         st3::SyntaxTreeC
     )
-    k = JS.kind(st3)
-    if k === JS.K"lambda"
-        # Nested lambdas have their own goto/label scope; handled separately.
-        return
-    elseif (k === JS.K"symboliclabel") && hasproperty(st3, :name_val)
-        push!(labels, (st3.name_val::String, st3))
-        return
-    elseif (k === JS.K"symbolicgoto" || k === JS.K"oldsymbolicgoto") && hasproperty(st3, :name_val)
-        push!(gotos, (st3.name_val::String, st3))
-        return
-    elseif k === JS.K"symbolicblock"
-        # First child is a lowering-internal label (e.g. `loop-exit`) used by
-        # `K"break"`, not reachable via `@goto`; recurse only into the body.
-        if JS.numchildren(st3) >= 2
-            collect_gotos_labels!(gotos, labels, st3[2])
-        end
-        return
-    elseif k === JS.K"break"
-        # First child is a label name reference, not a declaration.
-        if JS.numchildren(st3) >= 2
-            collect_gotos_labels!(gotos, labels, st3[2])
+    traverse(st3) do node
+        k = JS.kind(node)
+        if k === JS.K"lambda"
+            # Nested lambdas have their own goto/label scope; handled separately.
+            return traversal_no_recurse
+        elseif k === JS.K"symboliclabel" && hasproperty(node, :name_val)
+            push!(labels, (node.name_val::String, node))
+            return traversal_no_recurse
+        elseif (k === JS.K"symbolicgoto" || k === JS.K"oldsymbolicgoto") && hasproperty(node, :name_val)
+            push!(gotos, (node.name_val::String, node))
+            return traversal_no_recurse
+        elseif k === JS.K"symbolicblock" || k === JS.K"break"
+            # `K"symbolicblock"`'s first child is a lowering-internal label
+            # (e.g. `loop-exit`) used by `K"break"`, not reachable via `@goto`;
+            # `K"break"`'s first child is a label name reference, not a declaration.
+            # In both cases recurse only into the body (the second child).
+            if JS.numchildren(node) >= 2
+                collect_gotos_labels!(gotos, labels, node[2])
+            end
+            return traversal_no_recurse
         end
         return
     end
-    for i in 1:JS.numchildren(st3)
-        collect_gotos_labels!(gotos, labels, st3[i])
-    end
+    return
 end
 
 function analyze_lowered_code!(

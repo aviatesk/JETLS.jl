@@ -227,20 +227,17 @@ function undef_restore_cond_implied!(
 end
 
 # Walk the top-level operands of a condition expression, unwrapping
-# EST `K"block"` wrappers and recursing through `&&` chains (all
+# EST `K"block"` wrappers and descending through `&&` chains (all
 # operands must be true in the true branch).
-function for_each_cond_operand(callback, cond::SyntaxTreeC)
-    k = JS.kind(cond)
-    if k == JS.K"block" && JS.numchildren(cond) == 1
-        return for_each_cond_operand(callback, cond[1])
-    elseif k == JS.K"&&"
-        for child in JS.children(cond)
-            for_each_cond_operand(callback, child)
+function for_each_cond_operand(@specialize(callback), cond::SyntaxTreeC)
+    traverse(cond) do node
+        k = JS.kind(node)
+        if k == JS.K"&&" || (k == JS.K"block" && JS.numchildren(node) == 1)
+            return # descend into children
         end
-    else
-        callback(cond)
+        callback(node)
+        return traversal_no_recurse
     end
-    return
 end
 
 # Emit `:isdefined` hints for `@isdefined(var)` in condition expressions.

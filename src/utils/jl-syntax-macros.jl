@@ -226,17 +226,16 @@ function _kwdef_push_field!(
 end
 
 function _kwdef_extract_name(st::SyntaxTreeC)
-    k = JS.kind(st)
-    if k === JS.K"Identifier"
-        return st
-    elseif k === JS.K"::" && JS.numchildren(st) >= 1
-        return _kwdef_extract_name(st[1])
-    elseif k === JS.K"const" && JS.numchildren(st) >= 1
-        return _kwdef_extract_name(st[1])
-    elseif k === JS.K"atomic" && JS.numchildren(st) >= 1
-        return _kwdef_extract_name(st[1])
-    else
-        return nothing
+    while true
+        k = JS.kind(st)
+        if k === JS.K"Identifier"
+            return st
+        elseif (k === JS.K"::" || k === JS.K"const" || k === JS.K"atomic") &&
+               JS.numchildren(st) >= 1
+            st = st[1]
+        else
+            return nothing
+        end
     end
 end
 
