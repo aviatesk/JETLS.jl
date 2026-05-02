@@ -1,7 +1,3 @@
-const Attrs0 = Dict{Symbol, Dict{Int64, Any}}
-const SyntaxTree0 = JS.SyntaxTree{Attrs0}
-const SyntaxList0 = JS.SyntaxList{Attrs0,Vector{Int}}
-
 abstract type ExtraDiagnosticsKey end
 to_uri(key::ExtraDiagnosticsKey) = to_uri_impl(key)::URI
 @eval to_key(key::ExtraDiagnosticsKey) = hash(key, $(rand(UInt)))
@@ -19,10 +15,10 @@ struct TestsetResult
 end
 
 struct TestsetInfo
-    st0::SyntaxTree0
+    st0::SyntaxTreeC
     result::TestsetResult
-    TestsetInfo(st0::SyntaxTree0) = new(st0)
-    TestsetInfo(st0::SyntaxTree0, result::TestsetResult) = new(st0, result)
+    TestsetInfo(st0::SyntaxTreeC) = new(st0)
+    TestsetInfo(st0::SyntaxTreeC, result::TestsetResult) = new(st0, result)
 end
 
 const EMPTY_TESTSETINFOS = TestsetInfo[]
@@ -36,7 +32,7 @@ struct FileInfo
     filename::String
     encoding::LSP.PositionEncodingKind.Ty
     testsetinfos::Vector{TestsetInfo}
-    syntax_tree0::Union{Nothing,SyntaxTree0}
+    syntax_tree0::Union{Nothing,SyntaxTreeC}
 
     function FileInfo(
             version::Int, parsed_stream::JS.ParseStream, filename::AbstractString,
@@ -583,13 +579,13 @@ function ConfigManagerData(
     return ConfigManagerData(file_config, lsp_config, file_config_path, initialized)
 end
 
-struct BindingOccurrence{Tree3<:JS.SyntaxTree}
-    tree::Tree3
+struct BindingOccurrence
+    tree::SyntaxTreeC
     kind::Symbol
 end
 
 # Types for binding occurrences cache.
-# IMPORTANT: We must not cache full `JS.SyntaxTree` or `JL.BindingInfo` objects
+# IMPORTANT: We must not cache full `SyntaxTreeC` or `JL.BindingInfo` objects
 # as they hold references to large internal structures (syntax graphs, lowering
 # contexts). Instead, we extract only the essential information needed for
 # LSP features, i.e. mainly binding kind and location information.
@@ -606,7 +602,7 @@ end
 
 A lightweight representation of syntax tree location information.
 This struct stores only the byte range and source location, implementing the
-minimum `JS.SyntaxTree` API (`first_byte`, `last_byte`, `source_location`)
+minimum `SyntaxTreeC` API (`first_byte`, `last_byte`, `source_location`)
 required by [`jsobj_to_range`](@ref) that convert syntax tree to LSP `Range` objects.
 """
 struct CachedSyntaxTree
@@ -614,7 +610,7 @@ struct CachedSyntaxTree
     lb::Int
     line::Int
     column::Int
-    function CachedSyntaxTree(st::JS.SyntaxTree)
+    function CachedSyntaxTree(st::SyntaxTreeC)
         return new(JS.first_byte(st), JS.last_byte(st), JS.source_location(st)...)
     end
 end

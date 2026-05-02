@@ -531,7 +531,7 @@ end
 # lowering diagnostic
 # ===================
 
-const JL_MACRO_FILE = only(methods(JL.expand_macro, (JL.MacroExpansionContext,JS.SyntaxTree))).file
+const JL_MACRO_FILE = only(methods(JL.expand_macro, (JL.MacroExpansionContext,SyntaxTreeC))).file
 function scrub_expand_macro_stacktrace(stacktrace::Vector{Base.StackTraces.StackFrame})
     idx = @something findfirst(stacktrace) do stackframe::Base.StackTraces.StackFrame
         stackframe.func === :expand_macro && stackframe.file === JL_MACRO_FILE
@@ -594,7 +594,7 @@ end
 
 # Compute a mapping from source locations to the set of identifier names found in keyword
 # argument type annotations.
-function compute_kwarg_type_annotation_names(st0::JS.SyntaxTree)
+function compute_kwarg_type_annotation_names(st0::SyntaxTreeC)
     type_names = Dict{Tuple{Int,Int},Set{String}}()
     locations = Set{Tuple{Int,Int}}()
     traverse(st0) do node
@@ -614,7 +614,7 @@ function compute_kwarg_type_annotation_names(st0::JS.SyntaxTree)
     return type_names, locations
 end
 
-function collect_identifier_names!(names::Set{String}, st::JS.SyntaxTree)
+function collect_identifier_names!(names::Set{String}, st::SyntaxTreeC)
     if JS.kind(st) === JS.K"Identifier"
         name = get(st, :name_val, nothing)
         if name !== nothing
@@ -648,10 +648,9 @@ function is_kwarg_constraining_used_sparam(
 end
 
 function has_matching_argument_binding(
-        binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence{Tree3}}},
-        name::String, range::Range,
-        fi::FileInfo, ctx3::JL.VariableAnalysisContext
-    ) where Tree3<:JS.SyntaxTree
+        binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence}},
+        name::String, range::Range, fi::FileInfo, ctx3::JL.VariableAnalysisContext
+    )
     for (binfo2, _) in binding_occurrences
         binfo2.kind === :argument || continue
         binfo2.name == name || continue
@@ -663,13 +662,13 @@ function has_matching_argument_binding(
 end
 
 function analyze_unused_bindings!(
-        diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::JS.SyntaxTree, ctx3::JL.VariableAnalysisContext,
-        binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence{Tree3}}},
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::SyntaxTreeC, ctx3::JL.VariableAnalysisContext,
+        binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence}},
         has_implicit_args::Bool, reported::Set{LoweringDiagnosticKey},
         kwarg_type_names::Dict{Tuple{Int,Int},Set{String}},
         kwarg_locations::Set{Tuple{Int,Int}};
         allow_unused_underscore::Bool
-    ) where Tree3<:JS.SyntaxTree
+    )
     for (binfo, occurrences) in binding_occurrences
         bk = binfo.kind
         bk === :global && continue
@@ -724,7 +723,7 @@ function analyze_unused_bindings!(
 end
 
 function analyze_unused_assignments!(
-        diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::JS.SyntaxTree,
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::SyntaxTreeC,
         dead_store_info::Dict{JL.BindingInfo, DeadStoreInfo},
         reported::Set{LoweringDiagnosticKey};
         allow_unused_underscore::Bool
@@ -770,11 +769,11 @@ end
 #   full-analysis reports.
 function analyze_undefined_global_bindings!(
         diagnostics::Vector{Diagnostic}, fi::FileInfo, ctx3::JL.VariableAnalysisContext,
-        binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence{Tree3}}},
+        binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence}},
         reported::Set{LoweringDiagnosticKey};
         analyzer::Union{Nothing,LSAnalyzer} = nothing,
         postprocessor::LSPostProcessor = LSPostProcessor()
-    ) where Tree3<:JS.SyntaxTree
+    )
     world = Base.get_world_counter()
     for (binfo, occurrences) in binding_occurrences
         bk = binfo.kind
@@ -860,12 +859,12 @@ function analyze_undefined_local_bindings!(
 end
 
 function compute_unused_variable_data(
-        st0::JS.SyntaxTree,
-        prov::JS.SyntaxTree,
+        st0::SyntaxTreeC,
+        prov::SyntaxTreeC,
         fi::FileInfo
     )
     # Find parent K"=" node using byte_ancestors
-    ancestors = byte_ancestors(st::JS.SyntaxTree->JS.kind(st)===JS.K"=", st0, JS.byte_range(prov))
+    ancestors = byte_ancestors(st::SyntaxTreeC->JS.kind(st)===JS.K"=", st0, JS.byte_range(prov))
     isempty(ancestors) && return nothing
 
     assignment = first(ancestors)
@@ -899,7 +898,7 @@ end
 
 function analyze_captured_boxes!(
         diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo,
-        ctx4::JL.ClosureConversionCtx, st3::JL.SyntaxTree,
+        ctx4::JL.ClosureConversionCtx, st3::SyntaxTreeC,
         reported::Set{LoweringDiagnosticKey}
     )
     for binfo in ctx4.bindings.info
@@ -941,7 +940,7 @@ function is_captured_binding(binfo::JL.BindingInfo, ctx4::JL.ClosureConversionCt
 end
 
 function find_capture_sites(
-        st3::JL.SyntaxTree, binfo::JL.BindingInfo, ctx4::JL.ClosureConversionCtx,
+        st3::SyntaxTreeC, binfo::JL.BindingInfo, ctx4::JL.ClosureConversionCtx,
         uri::URI, fi::FileInfo
     )
     relatedInformation = DiagnosticRelatedInformation[]
@@ -950,13 +949,13 @@ function find_capture_sites(
             haskey(lambda.locals_capt, binfo.id) || continue
             lambda.locals_capt[binfo.id] || continue
             # Find the lambda in st3 that has matching lambda_bindings.self
-            traverse(st3) do node::JL.SyntaxTree
-                JS.kind(node) === JS.K"lambda" || return nothing
-                hasproperty(node, :lambda_bindings) || return nothing
-                lambda_bindings = node.lambda_bindings::JL.LambdaBindings
+            traverse(st3) do node3::SyntaxTreeC
+                JS.kind(node3) === JS.K"lambda" || return nothing
+                hasproperty(node3, :lambda_bindings) || return nothing
+                lambda_bindings = node3.lambda_bindings::JL.LambdaBindings
                 lambda_bindings.self == lambda.self || return nothing
                 # Find references to binfo.id inside this lambda
-                traverse(node) do inner::JL.SyntaxTree
+                traverse(node3) do inner::SyntaxTreeC
                     if JS.kind(inner) === JS.K"BindingId" && JL._binding_id(inner) == binfo.id
                         varprov = last(JL.flattened_provenance(inner))
                         push!(relatedInformation, DiagnosticRelatedInformation(;
@@ -1007,9 +1006,9 @@ const SORT_IMPORTS_MAX_LINE_LENGTH = 92
 const SORT_IMPORTS_INDENT = "    "
 
 function analyze_unsorted_imports!(
-        diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::JS.SyntaxTree
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::SyntaxTreeC
     )
-    traverse(st0) do st0′::JS.SyntaxTree
+    traverse(st0) do st0′::SyntaxTreeC
         kind = JS.kind(st0′)
         if kind ∉ JS.KSet"import using export public"
             return nothing
@@ -1035,7 +1034,7 @@ function analyze_unsorted_imports!(
 end
 
 function generate_sorted_import_text(
-        node::JS.SyntaxTree, sorted_name_keys::Vector{Pair{SyntaxTree0,String}},
+        node::SyntaxTreeC, sorted_name_keys::Vector{Pair{SyntaxTreeC,String}},
         base_indent::String
     )
     kind = JS.kind(node)
@@ -1088,11 +1087,11 @@ end
 # `return f(@goto label); @label label; ...` are correctly recognized as
 # reachable via the goto edge.
 function analyze_unreachable_code!(
-        diagnostics::Vector{Diagnostic}, fi::FileInfo, st3::JS.SyntaxTree,
-        unreachable_statements::Set{JS.SyntaxTree}
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, st3::SyntaxTreeC,
+        unreachable_statements::Set{SyntaxTreeC}
     )
     isempty(unreachable_statements) && return
-    traverse(st3) do st3′::JS.SyntaxTree
+    traverse(st3) do st3′::SyntaxTreeC
         JS.kind(st3′) === JS.K"block" || return nothing
         nchildren = JS.numchildren(st3′)
         first_unreach_idx = 0
@@ -1158,9 +1157,9 @@ end
 # `compile_body` (linear IR pass), which JETLS doesn't run. Mirror that
 # check against `st3` so unresolved gotos still surface as diagnostics.
 function analyze_unresolved_gotos!(
-        diagnostics::Vector{Diagnostic}, fi::FileInfo, st3::JS.SyntaxTree
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, st3::SyntaxTreeC
     )
-    traverse(st3) do st3′::JS.SyntaxTree
+    traverse(st3) do st3′::SyntaxTreeC
         JS.kind(st3′) === JS.K"lambda" || return nothing
         JS.numchildren(st3′) >= 3 || return nothing
         check_lambda_gotos!(diagnostics, fi, st3′[3])
@@ -1169,7 +1168,7 @@ function analyze_unresolved_gotos!(
 end
 
 function check_lambda_gotos!(
-        diagnostics::Vector{Diagnostic}, fi::FileInfo, body3::JS.SyntaxTree
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, body3::SyntaxTreeC
     )
     gotos, labels = collect_gotos_labels(body3)
     label_names = Set{String}(name for (name, _) in labels)
@@ -1213,16 +1212,15 @@ function check_lambda_gotos!(
     end
 end
 
-function collect_gotos_labels(st3::JS.SyntaxTree)
-    gotos = Tuple{String,JS.SyntaxTree}[]
-    labels = Tuple{String,JS.SyntaxTree}[]
+function collect_gotos_labels(st3::SyntaxTreeC)
+    gotos = Tuple{String,SyntaxTreeC}[]
+    labels = Tuple{String,SyntaxTreeC}[]
     collect_gotos_labels!(gotos, labels, st3)
     return gotos, labels
 end
 function collect_gotos_labels!(
-        gotos::Vector{Tuple{String,JS.SyntaxTree}},
-        labels::Vector{Tuple{String,JS.SyntaxTree}},
-        st3::JS.SyntaxTree
+        gotos::Vector{Tuple{String,SyntaxTreeC}}, labels::Vector{Tuple{String,SyntaxTreeC}},
+        st3::SyntaxTreeC
     )
     k = JS.kind(st3)
     if k === JS.K"lambda"
@@ -1292,7 +1290,7 @@ function analyze_lowered_code!(
 end
 
 function lowering_diagnostics!(
-        diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo, mod::Module, st0::JS.SyntaxTree;
+        diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo, mod::Module, st0::SyntaxTreeC;
         skip_analysis_requiring_context::Bool = false,
         soft_scope::Bool = false,
         kwargs...
@@ -1403,7 +1401,7 @@ function compute_unit_used_names(
         end continue
         search_st0_top = build_syntax_tree(search_fi)
 
-        iterate_toplevel_tree(search_st0_top) do st0::JS.SyntaxTree
+        iterate_toplevel_tree(search_st0_top) do st0::SyntaxTreeC
             binding_occurrences = @something get_binding_occurrences!(
                 state, search_uri, search_fi, st0; include_global_bindings = true) return
             mod = get_context_module(state, search_uri, offset_to_xy(search_fi, JS.first_byte(st0)))
@@ -1429,13 +1427,13 @@ end
 # - Unchanged file skipping in workspace/diagnostic
 function analyze_unused_imports!(
         diagnostics::Vector{Diagnostic}, server::Server, uri::URI,
-        fi::FileInfo, st0_top::JS.SyntaxTree;
+        fi::FileInfo, st0_top::SyntaxTreeC;
         skip_context_check::Bool = false,
         used_names_cache::UsedNamesByUnit = UsedNamesByUnit()
     )
     state = server.state
     mod_imported_names = Dict{Module,Dict{String,Vector{ImportInfo}}}()
-    traverse(st0_top) do st0::JS.SyntaxTree
+    traverse(st0_top) do st0::SyntaxTreeC
         JS.kind(st0) ∈ JS.KSet"import using" || return nothing
         mod = get_context_module(state, uri, offset_to_xy(fi, JS.first_byte(st0)))
         for (name, name_range, delete_range) in collect_explicit_import_names(st0, fi)
@@ -1478,8 +1476,8 @@ analyze_unused_imports(args...; kwargs...) = # used by tests
 # Returns true if `st0_top` contains an `import`/`using` with explicit names
 # (the only shape `analyze_unused_imports!` can flag). Gates whether the
 # workspace/diagnostic `result_id` must fold in the analysis unit's state.
-function file_has_explicit_imports(st0_top::JS.SyntaxTree)
-    found = traverse(st0_top) do st0::JS.SyntaxTree
+function file_has_explicit_imports(st0_top::SyntaxTreeC)
+    found = traverse(st0_top) do st0::SyntaxTreeC
         k = JS.kind(st0)
         if k ∈ JS.KSet"import using"
             if JS.numchildren(st0) == 1
@@ -1501,7 +1499,7 @@ end
 # Returns tuples of (name, name_range, delete_range).
 # For single imports like `using M: x`, delete_range covers the entire import statement.
 # For multiple imports like `using M: x, y`, delete_range covers the name plus comma/whitespace.
-function collect_explicit_import_names(st0::JS.SyntaxTree, fi::FileInfo)
+function collect_explicit_import_names(st0::SyntaxTreeC, fi::FileInfo)
     kind = JS.kind(st0)
     names = Tuple{String,Range,Range}[]
     kind ∈ JS.KSet"import using" || return names
@@ -1566,7 +1564,7 @@ end
 # and analysis context. `analyze_unused_imports!` is not included because its
 # result depends on sibling files in the analysis unit.
 function compute_lowering_diagnostics(
-        server::Server, uri::URI, file_info::FileInfo, st0_top::JS.SyntaxTree,
+        server::Server, uri::URI, file_info::FileInfo, st0_top::SyntaxTreeC,
         cancel_flag::CancelFlag;
         lookup_func = nothing
     )
@@ -1574,7 +1572,7 @@ function compute_lowering_diagnostics(
     skip_analysis_requiring_context = !has_analyzed_context(server.state, uri; lookup_func)
     allow_unused_underscore = get_config(server, :diagnostic, :allow_unused_underscore)
     soft_scope = is_notebook_cell_uri(server.state, uri)
-    iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
+    iterate_toplevel_tree(st0_top) do st0::SyntaxTreeC
         is_cancelled(cancel_flag) && return traversal_terminator
         pos = offset_to_xy(file_info, JS.first_byte(st0))
         (; mod, analyzer, postprocessor) = get_context_info(server.state, uri, pos; lookup_func)
@@ -1590,7 +1588,7 @@ end
 # `analyze_unused_imports!` results). Cache misses and cancelled computations
 # both return without caching; only a fully computed result is stored.
 function get_lowering_diagnostics!(
-        server::Server, uri::URI, file_info::FileInfo, st0_top::JS.SyntaxTree,
+        server::Server, uri::URI, file_info::FileInfo, st0_top::SyntaxTreeC,
         cancel_flag::CancelFlag;
         lookup_func = nothing
     )
