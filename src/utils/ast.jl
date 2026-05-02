@@ -291,24 +291,18 @@ Traverse `st` looking for `K"inert"` nodes, and call `f(id_node)` for each
 `K"Identifier"` found inside them. `callback` should return `true` to continue
 traversal or `false` to stop early.
 """
-function foreach_inert_identifier(callback, node::SyntaxTreeC)
-    if JS.kind(node) === JS.K"inert"
-        foreach_identifier_in_inert(callback, node) || return false
-    else
-        for child in JS.children(node)
-            foreach_inert_identifier(callback, child) || return false
+function foreach_inert_identifier(@specialize(callback), node::SyntaxTreeC)
+    res = traverse(node) do n
+        JS.kind(n) === JS.K"inert" || return
+        inner = traverse(n) do m
+            JS.kind(m) === JS.K"Identifier" || return
+            callback(m) || return TraversalReturn(false; terminate=true)
+            return
         end
+        inner === false && return TraversalReturn(false; terminate=true)
+        return traversal_no_recurse
     end
-    return true
-end
-function foreach_identifier_in_inert(callback, node::SyntaxTreeC)
-    if JS.kind(node) === JS.K"Identifier"
-        callback(node) || return false
-    end
-    for child in JS.children(node)
-        foreach_identifier_in_inert(callback, child) || return false
-    end
-    return true
+    return res !== false
 end
 
 function find_inert_identifier_name(st::SyntaxTreeC, offset::Int)
@@ -581,7 +575,10 @@ function _traverse_preorder(@specialize(callback), stack::SyntaxListC)
     local retval = nothing
     while !isempty(stack)
         x = pop!(stack)
-        ret = callback(x)
+        # Force inlining: keeps the callback's branches inside this loop, lets
+        # LLVM fold the small-Union return-tag dispatch, and avoids the
+        # per-iteration GC root spill that a Julia call boundary requires
+        ret = @inline callback(x)
         if ret isa TraversalReturn
             retval = ret.val
             ret.terminate ? break : continue
@@ -610,7 +607,8 @@ function _traverse_postorder(@specialize(callback), stack::SyntaxListC)
     end
     while !isempty(output)
         x = pop!(output)
-        ret = callback(x)
+        # See the `_traverse_preorder` comment above
+        ret = @inline callback(x)
         if ret isa TraversalReturn
             retval = ret.val
             ret.terminate ? break : continue
