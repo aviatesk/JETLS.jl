@@ -403,6 +403,14 @@ length_utf16(s::AbstractString) = sum(c::Char -> codepoint(c) < 0x10000 ? 1 : 2,
             @test length(diagnostics) == 1
             @test only(diagnostics).message == "Unused argument `x`"
         end
+        # positional arg with default value constraining a used static parameter
+        # should still be reported (the kwarg-sparam exception must not apply here)
+        let diagnostics = get_lowered_diagnostics("""
+            f(x::Type{T}=Float32) where {T} = T
+            """)
+            @test length(diagnostics) == 1
+            @test only(diagnostics).message == "Unused argument `x`"
+        end
         # keyword arg with multiple type parameters, at least one used
         let diagnostics = get_lowered_diagnostics("""
             f(; x::Pair{S,T}=1=>2) where {S,T} = S

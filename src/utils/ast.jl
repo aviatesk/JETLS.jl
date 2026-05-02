@@ -513,6 +513,18 @@ end
 extract_name_val(node::SyntaxTreeC) =
     hasproperty(node, :name_val) ? node.name_val::String : nothing
 
+# Collect the `name_val` of every `K"Identifier"` node reachable from `st` into `names`.
+function collect_identifier_names!(names::Set{String}, st::SyntaxTreeC)
+    traverse(st) do node
+        if JS.kind(node) === JS.K"Identifier"
+            name = get(node, :name_val, nothing)
+            name === nothing || push!(names, name::String)
+        end
+        return
+    end
+    return names
+end
+
 """
 Like `Base.unique`, but over node ids, and with this comment promising that the
 lowest-index copy of each node is kept.

@@ -594,37 +594,35 @@ end
 
 # Compute a mapping from source locations to the set of identifier names found in keyword
 # argument type annotations.
+# `K"kw"` nodes are produced by JuliaSyntax for both true keyword arguments
+# (`f(; y=1)`) and positional arguments with default values (`f(y=1)`); only the former
+# sit under a `K"parameters"` node, so we track that during the walk.
+# An explicit stack is used (instead of recursion) so we don't risk overflowing
+# the C stack on pathologically deep user input.
 function compute_kwarg_type_annotation_names(st0::SyntaxTreeC)
     type_names = Dict{Tuple{Int,Int},Set{String}}()
     locations = Set{Tuple{Int,Int}}()
-    traverse(st0) do node
-        JS.kind(node) === JS.K"kw" || return
-        JS.numchildren(node) >= 1 || return traversal_no_recurse
-        child = node[1]
-        push!(locations, JS.source_location(child))
-        if JS.kind(child) === JS.K"::" && JS.numchildren(child) >= 2
-            names = Set{String}()
-            collect_identifier_names!(names, child[2])
-            if !isempty(names)
-                type_names[JS.source_location(child)] = names
+    stack = Tuple{SyntaxTreeC,Bool}[(st0, false)]
+    while !isempty(stack)
+        (node, in_parameters) = pop!(stack)
+        k = JS.kind(node)
+        if k === JS.K"kw" && in_parameters
+            JS.numchildren(node) >= 1 || continue
+            child = node[1]
+            push!(locations, JS.source_location(child))
+            if JS.kind(child) === JS.K"::" && JS.numchildren(child) >= 2
+                names = Set{String}()
+                collect_identifier_names!(names, child[2])
+                isempty(names) || (type_names[JS.source_location(child)] = names)
             end
+            continue
         end
-        return traversal_no_recurse
+        next_in_parameters = k === JS.K"parameters"
+        for i = JS.numchildren(node):-1:1
+            push!(stack, (node[i], next_in_parameters))
+        end
     end
     return type_names, locations
-end
-
-function collect_identifier_names!(names::Set{String}, st::SyntaxTreeC)
-    if JS.kind(st) === JS.K"Identifier"
-        name = get(st, :name_val, nothing)
-        if name !== nothing
-            push!(names, name::String)
-        end
-        return
-    end
-    for i = 1:JS.numchildren(st)
-        collect_identifier_names!(names, st[i])
-    end
 end
 
 # Check if a keyword argument's type annotation constrains a `where`-clause static parameter

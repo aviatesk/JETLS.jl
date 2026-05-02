@@ -106,6 +106,19 @@ end
         """)
         @test isempty(code_actions)
     end
+
+    # Unused positional argument with a default value: rename action should appear
+    let (code_actions, uri, _) = get_unused_var_code_actions("""
+        function f(x, bar="bar")
+            return x
+        end
+        """)
+        @test length(code_actions) == 1
+        action = only(code_actions)
+        @test action.title == "Prefix with '_' to indicate intentionally unused"
+        edit = only(action.edit.changes[uri])
+        @test edit.newText == "_"
+    end
 end
 
 @testset "unused assignment code actions" begin

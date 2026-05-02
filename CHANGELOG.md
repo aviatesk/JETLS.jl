@@ -82,6 +82,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed `textDocument/documentHighlight`, `textDoscument/references`, and `textDocument/rename` incorrectly treating same-named local arguments in disjoint scopes (e.g. two separate `do h ... end` blocks within the same `let` or function body) as the same binding.
 
+- Fixed unused positional arguments with a default value (e.g. `bar` in `function f(x, bar="bar")`) being incorrectly treated as keyword arguments, suppressing the `"Prefix with '_' to indicate intentionally unused"` code action and skipping the unused-argument warning when the default's type annotation referenced a `where`-clause static parameter.
+
 ## 2026-04-28
 
 - Commit: [`e784de8`](https://github.com/aviatesk/JETLS.jl/commit/e784de8)
