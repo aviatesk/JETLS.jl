@@ -378,7 +378,7 @@ end
 
 function collect_global_rename_edits_in_file!(
         seen_edits::Set{Tuple{URI,Range,String}}, state::ServerState, uri::URI, fi::FileInfo,
-        st0_top::JS.SyntaxTree, binfo::JL.BindingInfo, newName::String
+        st0_top::SyntaxTreeC, binfo::JL.BindingInfo, newName::String
     )
     ismacro = startswith(binfo.name, '@')
     for occurrence in find_global_binding_occurrences!(state, uri, fi, st0_top, binfo)
@@ -420,10 +420,10 @@ end
 # - `:implicit_bare`  — bare source name in `using M`, `using M, N`, or `using M.N` where
 #                       `using ... as ...` is not legal syntax; fall back to a standard replace
 #                       (breaks code, but matches the rename policy for implicit imports).
-function classify_import_rename(st0_top::JS.SyntaxTree, id_byte_range::UnitRange{Int}, kind::Symbol)
+function classify_import_rename(st0_top::SyntaxTreeC, id_byte_range::UnitRange{Int}, kind::Symbol)
     kind === :decl || return :regular
     bas = byte_ancestors(st0_top, id_byte_range)
-    import_stmt_idx = findfirst(b::JS.SyntaxTree -> JS.kind(b) in JS.KSet"import using", bas)
+    import_stmt_idx = findfirst(b::SyntaxTreeC -> JS.kind(b) in JS.KSet"import using", bas)
     isnothing(import_stmt_idx) && return :regular
     has_colon = false
     for i = 1:import_stmt_idx-1
@@ -449,11 +449,11 @@ end
 # surrounding `K"as"` node, return the LSP range covering ` as <alias>` so a
 # single empty-text edit can delete it. Otherwise return `nothing`.
 function collapse_alias_to_source(
-        st0_top::JS.SyntaxTree, id_byte_range::UnitRange{Int}, fi::FileInfo,
+        st0_top::SyntaxTreeC, id_byte_range::UnitRange{Int}, fi::FileInfo,
         newName::String, ismacro::Bool
     )
     bas = byte_ancestors(st0_top, id_byte_range)
-    as_idx = @something findfirst(b::JS.SyntaxTree -> JS.kind(b) === JS.K"as", bas) return nothing
+    as_idx = @something findfirst(b::SyntaxTreeC -> JS.kind(b) === JS.K"as", bas) return nothing
     as_node = bas[as_idx]
     JS.numchildren(as_node) >= 2 || return nothing
     source_path = as_node[1]

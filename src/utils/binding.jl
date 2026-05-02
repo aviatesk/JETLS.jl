@@ -4,7 +4,7 @@ function binding_scope_layer(ctx3, binding::JL.BindingInfo)
     st3 = JL.binding_ex(ctx3, binding.id)
     while get(st3, :source, nothing) isa JS.NodeId
         JS.hasattr(st3, :scope_layer) && return st3.scope_layer
-        st3 = JS.SyntaxTree(JS.syntax_graph(st3), st3.source)
+        st3 = SyntaxTreeC(JS.syntax_graph(st3), st3.source)
     end
     return 1
 end
@@ -15,9 +15,9 @@ Heuristic for showing completions.  A binding is relevant when all are true:
 - if nonglobal, it's defined before the cursor
 - (if global) it doesn't contain or immediately precede the cursor
 """
-function is_relevant(ctx3::JL.AbstractLoweringContext,
-                     binding::JL.BindingInfo,
-                     cursor::Int)
+function is_relevant(
+        ctx3::JL.AbstractLoweringContext, binding::JL.BindingInfo, cursor::Int
+    )
     (;start, stop) = JS.byte_range(JL.binding_ex(ctx3, binding.id))
     !binding.is_internal &&
         binding_scope_layer(ctx3, binding) === 1 && # hygiene: JL-expanded macros
@@ -31,7 +31,7 @@ end
 
 """
     jl_lower_for_scope_resolution(
-            mod::Module, st0::JS.SyntaxTree;
+            mod::Module, st0::SyntaxTreeC;
             trim_error_nodes::Bool = true,
             recover_from_macro_errors::Bool = true,
             convert_closures::Bool = false,
@@ -55,7 +55,7 @@ Throw if lowering fails otherwise.
 Note that ctx objects share mutable information, so we only return `ctx3`
 """
 function jl_lower_for_scope_resolution(
-        mod::Module, st0::JS.SyntaxTree, world::UInt = Base.get_world_counter();
+        mod::Module, st0::SyntaxTreeC, world::UInt = Base.get_world_counter();
         trim_error_nodes::Bool = true,
         recover_from_macro_errors::Bool = true,
         convert_closures::Bool = false,
@@ -78,7 +78,7 @@ function jl_lower_for_scope_resolution(
 end
 
 function _jl_lower_for_scope_resolution(
-        ctx1::JL.MacroExpansionContext, st0::JS.SyntaxTree, st1::JS.SyntaxTree;
+        ctx1::JL.MacroExpansionContext, st0::SyntaxTreeC, st1::SyntaxTreeC;
         convert_closures::Bool = false,
         soft_scope::Bool = false,
     )
@@ -98,7 +98,7 @@ as an ephemeral stack.)  We work around this by taking all available bindings
 and filtering out any that aren't declared in a scope containing the cursor.
 """
 function cursor_bindings(
-        st0_top::JS.SyntaxTree, offset::Int, mod::Module;
+        st0_top::SyntaxTreeC, offset::Int, mod::Module;
         soft_scope::Bool = false
     )
     st0 = @something greatest_local(st0_top, offset) return nothing # nothing we can lower
@@ -116,10 +116,10 @@ function cursor_bindings(
     binfos = filter(binfo -> is_relevant(ctx3, binfo, offset), ctx3.bindings.info)
 
     # for each binding: binfo, all syntaxtrees containing it, and the scope it belongs to
-    bscopeinfos = Tuple{JL.BindingInfo, Union{JS.SyntaxTree, Nothing}}[]
+    bscopeinfos = Tuple{JL.BindingInfo, Union{SyntaxTreeC, Nothing}}[]
     for binfo in binfos
         # TODO: find tree parents instead of byte parents?
-        bas = byte_ancestors(st2, JS.byte_range(JL.binding_ex(ctx3, binfo.id))) do st2′::JS.SyntaxTree
+        bas = byte_ancestors(st2, JS.byte_range(JL.binding_ex(ctx3, binfo.id))) do st2′::SyntaxTreeC
             # find the innermost hard scope containing this binding decl.  we shouldn't
             # be in multiple overlapping scopes that are not direct ancestors; that
             # should indicate a provenance failure
@@ -172,17 +172,17 @@ end
 # These span the full signature byte range and should not be selected by cursor.
 const _IMPLICIT_BINDING_NAMES = ("__context__", "__module__", "__source__")
 
-function find_target_binding(ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTree, offset::Int)
-    return traverse(st3) do st::JS.SyntaxTree
-        k = JS.kind(st)
-        if k === JS.K"lambda" && is_kwcall_lambda(ctx3, st)
+function find_target_binding(ctx3::JL.VariableAnalysisContext, st3::SyntaxTreeC, offset::Int)
+    return traverse(st3) do st3′::SyntaxTreeC
+        k = JS.kind(st3′)
+        if k === JS.K"lambda" && is_kwcall_lambda(ctx3, st3′)
             # Don't select a binding with `kwcall` definition.
             # What usually interesting to us is information about the main method.
             return traversal_no_recurse
         end
-        offset in JS.byte_range(st) || return nothing
+        offset in JS.byte_range(st3′) || return nothing
         k === JS.K"BindingId" || return nothing
-        binfo = JL.get_binding(ctx3, st)
+        binfo = JL.get_binding(ctx3, st3′)
         if binfo.is_internal || startswith(binfo.name, "#") || binfo.name in _IMPLICIT_BINDING_NAMES
             return nothing
         end
@@ -192,11 +192,11 @@ function find_target_binding(ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTre
         # `$`-escaped user bindings stay at layer 1, so this only filters out
         # macro-local bindings.
         binding_scope_layer(ctx3, binfo) === 1 || return nothing
-        return TraversalReturn(st)
+        return TraversalReturn(st3′)
     end
 end
 
-function is_kwcall_lambda(ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTree)
+function is_kwcall_lambda(ctx3::JL.VariableAnalysisContext, st3::SyntaxTreeC)
     @assert JS.kind(st3) === JS.K"lambda" "Expected `lambda` kind"
     JS.numchildren(st3) ≥ 1 || return false
     arglist = st3[1]
@@ -217,7 +217,7 @@ function is_kwcall_lambda(ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTree)
 end
 
 function _select_target_binding(
-        ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTree, offset::Int;
+        ctx3::JL.VariableAnalysisContext, st3::SyntaxTreeC, offset::Int;
         is_generated::Bool = false)
     return @something(
         find_target_binding(ctx3, st3, offset),
@@ -236,7 +236,7 @@ contains `(; ctx3, st3, st0, binding)` where `binding` satisfies
 `JS.kind(binding) === JS.K"BindingId"`.
 """
 function select_target_binding(
-        st0_top::JS.SyntaxTree, offset::Int, mod::Module;
+        st0_top::SyntaxTreeC, offset::Int, mod::Module;
         caller::AbstractString = "select_target_binding",
         soft_scope::Bool = false
     )
@@ -273,7 +273,7 @@ function select_target_binding(
 end
 
 function find_inert_target_binding(
-        ctx3::JL.VariableAnalysisContext, st3::JS.SyntaxTree, offset::Int)
+        ctx3::JL.VariableAnalysisContext, st3::SyntaxTreeC, offset::Int)
     name = @something find_inert_identifier_name(st3, offset) return nothing
     for binfo in ctx3.bindings.info
         binfo.kind === :argument || continue
@@ -284,7 +284,7 @@ function find_inert_target_binding(
 end
 
 find_inert_global_target_binding(
-    st0::JS.SyntaxTree, st3::JS.SyntaxTree, offset::Int, mod::Module;
+    st0::SyntaxTreeC, st3::SyntaxTreeC, offset::Int, mod::Module;
     soft_scope::Bool = false
 ) = @something(
     _find_inert_global_target_binding(st0, st3, offset, mod; soft_scope),
@@ -293,7 +293,7 @@ find_inert_global_target_binding(
     return nothing)
 
 function _find_inert_global_target_binding(
-        st0::JS.SyntaxTree, st3::JS.SyntaxTree, offset::Int, mod::Module;
+        st0::SyntaxTreeC, st3::SyntaxTreeC, offset::Int, mod::Module;
         soft_scope::Bool = false
     )
     name = @something find_inert_identifier_name(st3, offset) return nothing
@@ -316,10 +316,10 @@ end
 
 # Find the innermost `K"inert"` node in `st3` whose byte range contains
 # `offset`. Used to run fresh scope resolution on just that inert subtree.
-function enclosing_inert_tree(st3::JS.SyntaxTree, offset::Int)
-    best = Ref{Union{Nothing,JS.SyntaxTree}}(nothing)
+function enclosing_inert_tree(st3::SyntaxTreeC, offset::Int)
+    best = Ref{Union{Nothing,SyntaxTreeC}}(nothing)
     best_len = Ref(typemax(Int))
-    traverse(st3) do st::JS.SyntaxTree
+    traverse(st3) do st::SyntaxTreeC
         JS.kind(st) === JS.K"inert" || return nothing
         offset in JS.byte_range(st) || return nothing
         len = length(JS.byte_range(st))
@@ -338,7 +338,7 @@ end
 # XXX: The returned binding may have `is_internal=true` — callers that inspect
 # this flag should be aware of this.
 function normalize_local_alias_to_global(
-        ctx3::JL.VariableAnalysisContext, binding::JS.SyntaxTree,
+        ctx3::JL.VariableAnalysisContext, binding::SyntaxTreeC,
     )
     binfo = JL.get_binding(ctx3, binding)
     binfo.kind === :local && isnothing(binfo.mod) || return binding
@@ -351,10 +351,10 @@ function normalize_local_alias_to_global(
 end
 
 function select_macrocall_binding(
-        st0::JS.SyntaxTree, offset::Int, mod::Module, caller::AbstractString;
+        st0::SyntaxTreeC, offset::Int, mod::Module, caller::AbstractString;
         soft_scope::Bool = false
     )
-    is_macrocall_name = (offset::Int) -> (st0′::JS.SyntaxTree) ->
+    is_macrocall_name = (offset::Int) -> (st0′::SyntaxTreeC) ->
         JS.kind(st0′) === JS.K"macrocall" && JS.numchildren(st0′) ≥ 1 && !is_doc0(st0′) &&
         offset in JS.byte_range(st0′[1])
     bas = byte_ancestors(is_macrocall_name(offset), st0, offset)
@@ -386,10 +386,10 @@ end
 # Detect that case directly and lower just the single identifier under the
 # cursor so callers receive a normal `(ctx3, st3, st0, binding)` tuple.
 function select_export_public_binding(
-        st0::JS.SyntaxTree, offset::Int, mod::Module, caller::AbstractString;
+        st0::SyntaxTreeC, offset::Int, mod::Module, caller::AbstractString;
         soft_scope::Bool = false
     )
-    find_name_node = (offset::Int) -> (st0′::JS.SyntaxTree) -> begin
+    find_name_node = (offset::Int) -> (st0′::SyntaxTreeC) -> begin
         JS.kind(st0′) in JS.KSet"export public" || return false
         for i = 1:JS.numchildren(st0′)
             c = st0′[i]
@@ -431,19 +431,19 @@ end
 # detect the cursor against `foreach_local_import_identifier` and lower the
 # single matching identifier to synthesize a normal binding tuple.
 function select_import_using_binding(
-        st0::JS.SyntaxTree, offset::Int, mod::Module, caller::AbstractString;
+        st0::SyntaxTreeC, offset::Int, mod::Module, caller::AbstractString;
         soft_scope::Bool = false
     )
-    find_name_node_at = function (offset::Int, st0′::JS.SyntaxTree)
-        hit = Ref{Union{Nothing,JS.SyntaxTree}}(nothing)
-        foreach_local_import_identifier(st0′) do id_st::JS.SyntaxTree
+    find_name_node_at = function (offset::Int, st0′::SyntaxTreeC)
+        hit = Ref{Union{Nothing,SyntaxTreeC}}(nothing)
+        foreach_local_import_identifier(st0′) do id_st::SyntaxTreeC
             offset in JS.byte_range(id_st) || return
             hit[] = id_st
             return
         end
         return hit[]
     end
-    find_container = (offset::Int) -> (st0′::JS.SyntaxTree) ->
+    find_container = (offset::Int) -> (st0′::SyntaxTreeC) ->
         JS.kind(st0′) in JS.KSet"import using" &&
             find_name_node_at(offset, st0′) !== nothing
     bas = byte_ancestors(find_container(offset), st0, offset)
@@ -471,18 +471,18 @@ function select_import_using_binding(
 end
 
 """
-    select_target_binding_definitions(st0_top::JS.SyntaxTree, offset::Int, mod::Module) ->
-        nothing or (binding::JS.SyntaxTree, definitions::JS.SyntaxList)
+    select_target_binding_definitions(st0_top::SyntaxTreeC, offset::Int, mod::Module) ->
+        nothing or (binding::SyntaxTreeC, definitions::SyntaxListC)
 
 Find the binding at the cursor position and return all of its definition sites.
 
 Returns `nothing` if lowering fails, no binding is found at the cursor, or the binding
 has no definitions. Otherwise returns a tuple of `(binding, definitions)` where:
-- `binding` is the `JS.SyntaxTree` node representing the binding at the cursor
-- `definitions` is a `JS.SyntaxList` containing all definition sites for that binding
+- `binding` is the `SyntaxTreeC` node representing the binding at the cursor
+- `definitions` is a `SyntaxListC` containing all definition sites for that binding
 """
 function select_target_binding_definitions(
-        st0_top::JS.SyntaxTree, offset::Int, mod::Module;
+        st0_top::SyntaxTreeC, offset::Int, mod::Module;
         soft_scope::Bool = false, skip_global::Bool = false
     )
     (; ctx3, st3, binding) = @something select_target_binding(st0_top, offset, mod; soft_scope) return nothing
@@ -492,15 +492,15 @@ function select_target_binding_definitions(
     return binding, definitions
 end
 
-is_same_binding(x::JS.SyntaxTree, id::Int) = JS.kind(x) === JS.K"BindingId" && id == JL._binding_id(x)
+is_same_binding(x::SyntaxTreeC, id::Int) = JS.kind(x) === JS.K"BindingId" && id == JL._binding_id(x)
 
 is_local_binding(binfo::JL.BindingInfo) =
     binfo.kind === :argument || binfo.kind === :static_parameter || binfo.kind === :local
 
 """
-    lookup_binding_definitions(st3::JS.SyntaxTree, binfo::JL.BindingInfo) -> definitions::JS.SyntaxList
+    lookup_binding_definitions(st3::SyntaxTreeC, binfo::JL.BindingInfo) -> definitions::SyntaxListC
 
-Find all definition sites for a given binding in the syntax tree. Returns a `JS.SyntaxList`
+Find all definition sites for a given binding in the syntax tree. Returns a `SyntaxListC`
 containing the syntax nodes where the binding may be defined.
 
 This function traverses the syntax tree to collect `definitions` that tracks all the
@@ -508,7 +508,7 @@ assignment expressions (`=`) and function declarations where the binding may be 
 For `:argument` or `:static_parameter` bindings, `definitions` also includes the argument
 or static parameter declaration itself.
 """
-function lookup_binding_definitions(st3::JS.SyntaxTree, binfo::JL.BindingInfo)
+function lookup_binding_definitions(st3::SyntaxTreeC, binfo::JL.BindingInfo)
     if binfo.kind === :argument || binfo.kind === :static_parameter
         sl = JS.SyntaxList(JS.syntax_graph(st3), [binfo.node_id])
     else
@@ -517,15 +517,15 @@ function lookup_binding_definitions(st3::JS.SyntaxTree, binfo::JL.BindingInfo)
     return _lookup_binding_definitions!(sl, st3, binfo.id)
 end
 
-function _lookup_binding_definitions!(sl::JS.SyntaxList, st3::JS.SyntaxTree, binding_id::Int)
-    traverse(st3) do st::JS.SyntaxTree
-        if JS.kind(st) in JS.KSet"= kw" && JS.numchildren(st) ≥ 2
-            lhs = st[1]
+function _lookup_binding_definitions!(sl::SyntaxListC, st3::SyntaxTreeC, binding_id::Int)
+    traverse(st3) do st3′::SyntaxTreeC
+        if JS.kind(st3′) in JS.KSet"= kw" && JS.numchildren(st3′) ≥ 2
+            lhs = st3′[1]
             if is_same_binding(lhs, binding_id)
                 push!(sl, lhs)
             end
-        elseif JS.kind(st) === JS.K"function_decl" && JS.numchildren(st) ≥ 1
-            func = st[1]
+        elseif JS.kind(st3′) === JS.K"function_decl" && JS.numchildren(st3′) ≥ 1
+            func = st3′[1]
             if is_same_binding(func, binding_id)
                 push!(sl, func)
             end

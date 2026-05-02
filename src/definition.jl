@@ -105,7 +105,7 @@ end
 
 """
     find_definition(server, uri, fi, pos; soft_scope) ->
-        (locations::Vector{Location}, origin_node::Union{JS.SyntaxTree,Nothing})
+        (locations::Vector{Location}, origin_node::Union{SyntaxTreeC,Nothing})
 
 Core routine behind `textDocument/definition`. Returns the definition locations for
 the symbol at `pos` together with the syntax-tree node that represents the cursor's

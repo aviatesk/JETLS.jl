@@ -57,6 +57,10 @@ const SWStats  = Nothing
 const LWStats  = Nothing
 const CASStats = Nothing
 
+const AttrsC = Dict{Symbol, Dict{Int64, Any}}
+const SyntaxTreeC = JS.SyntaxTree{AttrsC}
+const SyntaxListC = JS.SyntaxList{AttrsC,Vector{Int}}
+
 include("analysis/Analyzer.jl")
 using .Analyzer
 
