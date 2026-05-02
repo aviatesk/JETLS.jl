@@ -1,6 +1,6 @@
-# Staging ground for common Base macros defined on SyntaxTree.  These are in
-# addition to JuliaLowering.jl/src/syntax_macros.jl, and can be merged there
-# when possible.
+# Staging ground for common Base macros defined in the new style definitions.
+# These are in addition to JuliaLowering.jl/src/syntax_macros.jl,
+# and can be merged there when possible.
 
 # TODO: @inline, @noinline, @inbounds, @simd, @assume_effects
 
@@ -105,7 +105,7 @@ end
 
 function Base.Threads.var"@spawn"(__context__::JL.MacroContext, ::JS.SyntaxTree...)
     throw_macro_error(__context__.macrocall::JS.SyntaxTree,
-                 "wrong number of arguments in @spawn")
+        "wrong number of arguments in @spawn")
 end
 
 # New-style implementation of `Base.@label`. Mirrors `Base.@goto` in
@@ -251,7 +251,7 @@ function _kwdef_make_constructors(
     end
 
     params = JS.SyntaxTree[]
-    for (name::JS.SyntaxTree, default) in zip(field_names, field_defaults)
+    for (name, default) in zip(field_names, field_defaults)
         if default !== nothing
             push!(params, JL.@ast(ctx, name, [JS.K"kw" name default]))
         else
@@ -269,8 +269,7 @@ function _kwdef_make_constructors(
     elseif JS.kind(type_sig) === JS.K"curly"
         S = type_sig[1]
         P = JS.SyntaxTree[type_sig[i] for i::Int in 2:JS.numchildren(type_sig)]
-        Q = JS.SyntaxTree[
-            JS.kind(p) === JS.K"<:" ? p[1] : p for p::JS.SyntaxTree in P]
+        Q = JS.SyntaxTree[JS.kind(p) === JS.K"<:" ? p[1] : p for p in P]
         SQ = JL.@ast(ctx, type_sig, [JS.K"curly" S Q...])
 
         # def1: S(; a=default, b) = S(a, b)
