@@ -88,6 +88,9 @@ include("utils/binding.jl")
 include("utils/lsp.jl")
 include("utils/server.jl")
 
+include("analysis/TypeAnnotation.jl")
+using .TypeAnnotation
+
 include("init-options.jl")
 include("config.jl")
 include("workspace-configuration.jl")

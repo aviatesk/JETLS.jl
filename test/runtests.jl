@@ -24,6 +24,7 @@ end
         @testset "occurrence" include("analysis/test_occurrence_analysis.jl")
         @testset "cfg" include("analysis/test_cfg_analysis.jl")
         @testset "LSAnalyzer" include("analysis/test_Analyzer.jl")
+        @testset "TypeAnnotation" include("analysis/test_TypeAnnotation.jl")
     end
     @testset "types" include("test_types.jl")
     @testset "config" include("test_config.jl")
