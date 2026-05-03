@@ -6,15 +6,19 @@ using JETLS: JL, JS
 using JETLS.TypeAnnotation
 using JETLS.JET: CC
 
-# Run the full pipeline a typical caller would: parse → lower → infer.
-# Returns `(fi, inferred)` so byte-range queries against `inferred` line up with `code`.
+# Run the full pipeline a typical caller would: parse → lower → infer, then
+# wrap the chunk's inferred tree (and `st3`, used to identify user-written
+# return values) in an `InferredTreeContext` ready for byte-range queries.
+# Returns `(fi, ctx)` so the test can also access `fi` for `xy_to_offset` etc.
 function type_annotate(code::AbstractString, mod::Module = Main; expect_degrade::Bool=false)
     fi = JETLS.FileInfo(1, code, @__FILE__)
     st0_top = JETLS.build_syntax_tree(fi)
+    st3_ref = Ref{JETLS.SyntaxTreeC}()
     inferred = Ref{JETLS.SyntaxTreeC}()
     JETLS.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
         result = @something get_inferrable_tree(st0, mod) return nothing
         (; ctx3, st3) = result
+        st3_ref[] = st3
         inferred[] = infer_toplevel_tree(ctx3, st3, mod)
         return nothing
     end
@@ -24,7 +28,7 @@ function type_annotate(code::AbstractString, mod::Module = Main; expect_degrade:
     else
         @test isassigned(inferred)
     end
-    return fi, inferred[]
+    return fi, InferredTreeContext(inferred[], st3_ref[])
 end
 
 # Byte range of the literal substring `s` inside `code`, in `JS.byte_range`
@@ -55,13 +59,13 @@ widenconst(typ) = CC.widenconst(@something typ return nothing)
 # assert that **every** occurrence of an identifier (or expression) gets
 # an annotation, not just the first one.
 function query_all_types(
-        fi::JETLS.FileInfo, inferred::JETLS.SyntaxTreeC, text::AbstractString
+        fi::JETLS.FileInfo, ctx::InferredTreeContext, text::AbstractString
     )
     st0_top = JETLS.build_syntax_tree(fi)
     types = Any[]
     JETLS.traverse(st0_top) do node::JS.SyntaxTree
         if JS.sourcetext(node) == text
-            push!(types, get_type_for_range(inferred, JS.byte_range(node)))
+            push!(types, get_type_for_range(ctx, JS.byte_range(node)))
         end
         return nothing
     end
@@ -123,8 +127,8 @@ end
                 x + 1
             end
             """
-            _, inferred = type_annotate(code)
-            @test widenconst(get_type_for_range(inferred, range_of(code, "x + 1"))) === Int
+            _, ctx = type_annotate(code)
+            @test widenconst(get_type_for_range(ctx, range_of(code, "x + 1"))) === Int
         end
     end
 
@@ -138,8 +142,8 @@ end
                 s
             end
             """
-            _, inferred = type_annotate(code)
-            @test widenconst(get_type_for_range(inferred, range_of(code, "init + xs[1]"))) === Int
+            _, ctx = type_annotate(code)
+            @test widenconst(get_type_for_range(ctx, range_of(code, "init + xs[1]"))) === Int
         end
     end
 
@@ -152,9 +156,9 @@ end
                 inner(xs[1])
             end
             """
-            _, inferred = type_annotate(code)
+            _, ctx = type_annotate(code)
             @testset "body" begin
-                @test widenconst(get_type_for_range(inferred, range_of(code, "y * 2"))) === Int
+                @test widenconst(get_type_for_range(ctx, range_of(code, "y * 2"))) === Int
             end
 
             # Limitation: from the enclosing function's body, calling a closure
@@ -162,7 +166,7 @@ end
             # call site degrades to `Any`. Recorded as `@test_broken` to flip when
             # the synthetic-name lookup gap is closed.
             @testset "closure call from outer body" begin
-                @test_broken widenconst(get_type_for_range(inferred, range_of(code, "inner(xs[1])"))) === Int
+                @test_broken widenconst(get_type_for_range(ctx, range_of(code, "inner(xs[1])"))) === Int
             end
         end
 
@@ -179,8 +183,8 @@ end
                     inner(xs[1])
                 end
                 """
-                _, inferred = type_annotate(code)
-                @test_broken widenconst(get_type_for_range(inferred, range_of(code, "y * factor"))) === Int
+                _, ctx = type_annotate(code)
+                @test_broken widenconst(get_type_for_range(ctx, range_of(code, "y * factor"))) === Int
             end
         end
     end
@@ -197,9 +201,9 @@ end
                 NamedTuple{(:a,)}((b ? "Z" : nothing,))
             end
             """
-            _, inferred = type_annotate(code)
+            _, ctx = type_annotate(code)
             rng = range_of(code, "NamedTuple{(:a,)}((b ? \"Z\" : nothing,))")
-            @test widenconst(get_type_for_range(inferred, rng)) <:
+            @test widenconst(get_type_for_range(ctx, rng)) <:
                 NamedTuple{(:a,), <:Tuple{Union{Nothing, String}}}
         end
     end
@@ -215,9 +219,9 @@ end
                 convert(T, 1)
             end
             """
-            _, inferred = type_annotate(code)
+            _, ctx = type_annotate(code)
             # A static-parameter-aware path would land somewhere `<: Number`.
-            @test_broken widenconst(get_type_for_range(inferred, range_of(code, "convert(T, 1)"))) <: Number
+            @test_broken widenconst(get_type_for_range(ctx, range_of(code, "convert(T, 1)"))) <: Number
         end
     end
 end
@@ -227,8 +231,8 @@ end
     # tmerge path collapses to that node's type.
     @testset "generic byte-range fallback" begin
         let code = "let x = [1.0]; x; end"
-            _, inferred = type_annotate(code)
-            @test widenconst(get_type_for_range(inferred, range_of(code, "[1.0]"))) ===
+            _, ctx = type_annotate(code)
+            @test widenconst(get_type_for_range(ctx, range_of(code, "[1.0]"))) ===
                 Vector{Float64}
         end
     end
@@ -237,15 +241,15 @@ end
     # can distinguish "no annotation" from "annotation says `nothing`".
     @testset "returns nothing for non-matching range" begin
         let code = "let x = 1; x; end"
-            _, inferred = type_annotate(code)
-            @test get_type_for_range(inferred, 10_000:10_001) === nothing
+            _, ctx = type_annotate(code)
+            @test get_type_for_range(ctx, 10_000:10_001) === nothing
         end
     end
 
     @testset "regular call dispatches to the user's call result" begin
         let code = "let v = [1.0, 2.0]; sum(v); end"
-            _, inferred = type_annotate(code)
-            @test widenconst(get_type_for_range(inferred, range_of(code, "sum(v)"))) ===
+            _, ctx = type_annotate(code)
+            @test widenconst(get_type_for_range(ctx, range_of(code, "sum(v)"))) ===
                 Float64
         end
     end
@@ -260,9 +264,9 @@ end
                 parse(Int, s; base = 10)
             end
             """
-            _, inferred = type_annotate(code)
+            _, ctx = type_annotate(code)
             typ = widenconst(get_type_for_range(
-                inferred, range_of(code, "parse(Int, s; base = 10)")))
+                ctx, range_of(code, "parse(Int, s; base = 10)")))
             @test typ === Int
             @test !occursin("NamedTuple", string(typ))
             @test !occursin("Tuple", string(typ))
@@ -272,9 +276,9 @@ end
     # `_str` macros expand to a single Core call.
     @testset "string macro returns the expansion result type" begin
         let code = "lazy\"hello\""
-            _, inferred = type_annotate(code)
+            _, ctx = type_annotate(code)
             @test widenconst(get_type_for_range(
-                inferred, range_of(code, "lazy\"hello\""))) <: Base.LazyString
+                ctx, range_of(code, "lazy\"hello\""))) <: Base.LazyString
         end
     end
 
@@ -288,9 +292,9 @@ end
                 @something x return false
             end
             """
-            _, inferred = type_annotate(code)
+            _, ctx = type_annotate(code)
             @test widenconst(get_type_for_range(
-                inferred, range_of(code, "@something x return false"))) === Int
+                ctx, range_of(code, "@something x return false"))) === Int
         end
     end
 
@@ -307,9 +311,9 @@ end
                     end
                 end
                 """
-                _, inferred = type_annotate(code)
+                _, ctx = type_annotate(code)
                 rng = range_of(code, "for x in xs\n        print(x)\n    end")
-                @test get_type_for_range(inferred, rng) === Core.Const(nothing)
+                @test get_type_for_range(ctx, rng) === Core.Const(nothing)
             end
         end
         @testset "while loop returns Const(nothing)" begin
@@ -320,9 +324,9 @@ end
                     end
                 end
                 """
-                _, inferred = type_annotate(code)
+                _, ctx = type_annotate(code)
                 rng = range_of(code, "while i < 3\n        i += 1\n    end")
-                @test get_type_for_range(inferred, rng) === Core.Const(nothing)
+                @test get_type_for_range(ctx, rng) === Core.Const(nothing)
             end
         end
     end
@@ -339,9 +343,9 @@ end
                     return x + 1
                 end
                 """
-                _, inferred = type_annotate(code)
+                _, ctx = type_annotate(code)
                 rng = range_of(code, rstrip(code, '\n'))
-                @test widenconst(get_type_for_range(inferred, rng)) === Int
+                @test widenconst(get_type_for_range(ctx, rng)) === Int
             end
         end
 
@@ -356,9 +360,9 @@ end
                     end
                 end
                 """
-                _, inferred = type_annotate(code)
+                _, ctx = type_annotate(code)
                 rng = range_of(code, rstrip(code, '\n'))
-                typ = widenconst(get_type_for_range(inferred, rng))
+                typ = widenconst(get_type_for_range(ctx, rng))
                 @test typ === Union{Int, Nothing}
             end
         end
@@ -370,9 +374,9 @@ end
                     return :(1 + 1)
                 end
                 """
-                _, inferred = type_annotate(code)
+                _, ctx = type_annotate(code)
                 rng = range_of(code, rstrip(code, '\n'))
-                @test widenconst(get_type_for_range(inferred, rng)) === Expr
+                @test widenconst(get_type_for_range(ctx, rng)) === Expr
             end
         end
 
@@ -382,9 +386,9 @@ end
                     return x + 1
                 end
                 """
-                _, inferred = type_annotate(code)
+                _, ctx = type_annotate(code)
                 rng = range_of(code, rstrip(code, '\n'))
-                @test widenconst(get_type_for_range(inferred, rng)) === Int
+                @test widenconst(get_type_for_range(ctx, rng)) === Int
             end
         end
 
@@ -394,9 +398,9 @@ end
                     x + y + z
                 end
                 """
-                _, inferred = type_annotate(code)
+                _, ctx = type_annotate(code)
                 rng = range_of(code, rstrip(code, '\n'))
-                @test widenconst(get_type_for_range(inferred, rng)) === Int
+                @test widenconst(get_type_for_range(ctx, rng)) === Int
             end
         end
 
@@ -410,9 +414,9 @@ end
                     s
                 end
                 """
-                _, inferred = type_annotate(code)
+                _, ctx = type_annotate(code)
                 rng = range_of(code, rstrip(code, '\n'))
-                @test widenconst(get_type_for_range(inferred, rng)) === Int
+                @test widenconst(get_type_for_range(ctx, rng)) === Int
             end
         end
     end
@@ -427,9 +431,9 @@ end
                     r = 0 < x < 10
                 end
                 """
-                _, inferred = type_annotate(code)
+                _, ctx = type_annotate(code)
                 rng = range_of(code, "0 < x < 10")
-                @test widenconst(get_type_for_range(inferred, rng)) === Bool
+                @test widenconst(get_type_for_range(ctx, rng)) === Bool
             end
         end
         @testset "chained comparison in tail position" begin
@@ -438,9 +442,9 @@ end
                     return 0 < x < 10
                 end
                 """
-                _, inferred = type_annotate(code)
+                _, ctx = type_annotate(code)
                 rng = range_of_kind(code, JS.K"comparison")
-                @test widenconst(get_type_for_range(inferred, rng)) === Bool
+                @test widenconst(get_type_for_range(ctx, rng)) === Bool
             end
         end
 
@@ -451,9 +455,9 @@ end
                     r
                 end
                 """
-                _, inferred = type_annotate(code)
+                _, ctx = type_annotate(code)
                 rng = range_of(code, "x > 0 && x")
-                @test widenconst(get_type_for_range(inferred, rng)) === Union{Bool, Int}
+                @test widenconst(get_type_for_range(ctx, rng)) === Union{Bool, Int}
             end
         end
         @testset "&& in tail position" begin
@@ -462,9 +466,9 @@ end
                     return x > 0 && x
                 end
                 """
-                _, inferred = type_annotate(code)
+                _, ctx = type_annotate(code)
                 rng = range_of_kind(code, JS.K"&&")
-                @test widenconst(get_type_for_range(inferred, rng)) === Union{Bool, Int}
+                @test widenconst(get_type_for_range(ctx, rng)) === Union{Bool, Int}
             end
         end
         @testset "|| in tail position" begin
@@ -473,9 +477,9 @@ end
                     return x > 0 || nothing
                 end
                 """
-                _, inferred = type_annotate(code)
+                _, ctx = type_annotate(code)
                 rng = range_of_kind(code, JS.K"||")
-                @test widenconst(get_type_for_range(inferred, rng)) === Union{Bool, Nothing}
+                @test widenconst(get_type_for_range(ctx, rng)) === Union{Bool, Nothing}
             end
         end
 
@@ -489,9 +493,9 @@ end
                     r
                 end
                 """
-                _, inferred = type_annotate(code)
+                _, ctx = type_annotate(code)
                 rng = range_of(code, "b ? x : nothing")
-                @test widenconst(get_type_for_range(inferred, rng)) === Union{Int, Nothing}
+                @test widenconst(get_type_for_range(ctx, rng)) === Union{Int, Nothing}
             end
         end
         @testset "ternary in tail position" begin
@@ -500,9 +504,9 @@ end
                     return b ? x : nothing
                 end
                 """
-                _, inferred = type_annotate(code)
+                _, ctx = type_annotate(code)
                 rng = range_of_kind(code, JS.K"if")
-                @test widenconst(get_type_for_range(inferred, rng)) === Union{Int, Nothing}
+                @test widenconst(get_type_for_range(ctx, rng)) === Union{Int, Nothing}
             end
         end
 
@@ -516,9 +520,9 @@ end
                     end
                 end
                 """
-                _, inferred = type_annotate(code)
+                _, ctx = type_annotate(code)
                 rng = range_of_kind(code, JS.K"if")
-                @test widenconst(get_type_for_range(inferred, rng)) === Union{Int, Nothing}
+                @test widenconst(get_type_for_range(ctx, rng)) === Union{Int, Nothing}
             end
         end
         @testset "if-elseif-else" begin
@@ -533,10 +537,188 @@ end
                     end
                 end
                 """
-                _, inferred = type_annotate(code)
+                _, ctx = type_annotate(code)
                 rng = range_of_kind(code, JS.K"if")
-                typ = widenconst(get_type_for_range(inferred, rng))
+                typ = widenconst(get_type_for_range(ctx, rng))
                 @test typ === Union{Int, String, Nothing}
+            end
+        end
+        # A user-written `return X` inside a branching expression exits the
+        # function entirely; `X` must not contribute to the enclosing
+        # expression's value (only the implicit fall-through does). When
+        # `X` is itself a tail-recursing form (`if` / `&&` / `||` / ternary
+        # / comparison / `block`), lowering splits it into per-branch tail
+        # returns at narrower byte ranges than `X` itself, so a literal
+        # byte-range match doesn't suffice. The walker over `st3`
+        # (post-desugaring, post-macro-expansion) handles all these uniform
+        # cases since they're already collapsed to `K"if"` / `K"block"` /
+        # nested `K"return"`.
+        #
+        # In every case below, the outer `if b ... end` should resolve to
+        # `Nothing` (the implicit fall-through is the only path that reaches
+        # `out`). `try` / `catch` is not yet covered (recorded as
+        # `@test_broken`).
+        @testset "user return inside branching expression" begin
+            @testset "simple value" begin
+                let code = """
+                    function format(x::Union{Int, Nothing})
+                        out = if x isa Int
+                            return string(x; base = 16)
+                        end
+                        return out
+                    end
+                    """
+                    _, ctx = type_annotate(code)
+                    rng = range_of_kind(code, JS.K"if")
+                    @test get_type_for_range(ctx, rng) === Core.Const(nothing)
+                end
+            end
+            @testset "wraps another if-else" begin
+                let code = """
+                    function f(b::Bool, c::Bool)
+                        out = if b
+                            return if c; 1; else; "x"; end
+                        end
+                        out
+                    end
+                    """
+                    _, ctx = type_annotate(code)
+                    # Inner if (the user's literal return value) tmerges its
+                    # branches correctly, as for any branching expression.
+                    inner_rng = range_of(code, "if c; 1; else; \"x\"; end")
+                    @test widenconst(get_type_for_range(ctx, inner_rng)) === Union{Int, String}
+                    outer_rng = range_of_kind(code, JS.K"if")
+                    @test widenconst(get_type_for_range(ctx, outer_rng)) === Nothing
+                end
+            end
+            @testset "wraps if-elseif-else" begin
+                let code = """
+                    function f(b::Bool, c::Bool, d::Bool)
+                        out = if b
+                            return if c; 1; elseif d; 2; else; 3; end
+                        end
+                        out
+                    end
+                    """
+                    _, ctx = type_annotate(code)
+                    outer_rng = range_of_kind(code, JS.K"if")
+                    @test widenconst(get_type_for_range(ctx, outer_rng)) === Nothing
+                end
+            end
+            @testset "wraps ternary" begin
+                let code = """
+                    function f(b::Bool, c::Bool)
+                        out = if b
+                            return c ? 1 : "x"
+                        end
+                        out
+                    end
+                    """
+                    _, ctx = type_annotate(code)
+                    outer_rng = range_of_kind(code, JS.K"if")
+                    @test widenconst(get_type_for_range(ctx, outer_rng)) === Nothing
+                end
+            end
+            @testset "wraps &&" begin
+                let code = """
+                    function f(b::Bool, c::Bool, x::Int)
+                        out = if b
+                            return c && x
+                        end
+                        out
+                    end
+                    """
+                    _, ctx = type_annotate(code)
+                    outer_rng = range_of_kind(code, JS.K"if")
+                    @test widenconst(get_type_for_range(ctx, outer_rng)) === Nothing
+                end
+            end
+            @testset "wraps ||" begin
+                let code = """
+                    function f(b::Bool, c::Bool, x::Int)
+                        out = if b
+                            return c || x
+                        end
+                        out
+                    end
+                    """
+                    _, ctx = type_annotate(code)
+                    outer_rng = range_of_kind(code, JS.K"if")
+                    @test widenconst(get_type_for_range(ctx, outer_rng)) === Nothing
+                end
+            end
+            @testset "wraps chained comparison" begin
+                let code = """
+                    function f(b::Bool, x::Int)
+                        out = if b
+                            return 0 < x < 10
+                        end
+                        out
+                    end
+                    """
+                    _, ctx = type_annotate(code)
+                    outer_rng = range_of_kind(code, JS.K"if")
+                    @test widenconst(get_type_for_range(ctx, outer_rng)) === Nothing
+                end
+            end
+            @testset "wraps begin/end block" begin
+                let code = """
+                    function f(b::Bool, x::Int)
+                        out = if b
+                            return begin x; "tail" end
+                        end
+                        out
+                    end
+                    """
+                    _, ctx = type_annotate(code)
+                    outer_rng = range_of_kind(code, JS.K"if")
+                    @test widenconst(get_type_for_range(ctx, outer_rng)) === Nothing
+                end
+            end
+            @testset "wraps try/catch" begin
+                let code = """
+                    function f(b::Bool)
+                        out = if b
+                            return try; 1; catch; "x"; end
+                        end
+                        out
+                    end
+                    """
+                    _, ctx = type_annotate(code)
+                    outer_rng = range_of_kind(code, JS.K"if")
+                    @test_broken widenconst(get_type_for_range(ctx, outer_rng)) === Nothing
+                end
+            end
+        end
+
+        # A `return` inside a macro expansion is invisible at the surface
+        # but visible in `st3` (post-expansion). The walker picks it up
+        # the same as a directly-written `return`.
+        @testset "return hidden by macro expansion" begin
+            # `@something args... return X` expands such that the literal
+            # `return X` exits the function when none of the args are
+            # non-`nothing`. Without filtering the macro-expanded
+            # `K"return"` SSA, the outer `if`'s value would leak the
+            # return-value type (`String` below).
+            @testset "Base.@something with `return` fallback" begin
+                let code = """
+                    function f(x::Union{Int, Nothing}, y::Union{Int, Nothing})
+                        out = if x isa Int
+                            @something y return "no value"
+                        end
+                        out
+                    end
+                    """
+                    _, ctx = type_annotate(code)
+                    outer_rng = range_of_kind(code, JS.K"if")
+                    @test widenconst(get_type_for_range(ctx, outer_rng)) === Union{Int, Nothing}
+                    # `out` at its trailing-line use site: the `String` from
+                    # `return "no value"` exits the function rather than
+                    # flowing through, so `out`'s narrowed type omits it
+                    # (it's `Union{Int, Nothing}`, not `Union{Int, Nothing, String}`).
+                    out_use_rng = findlast("out", code)
+                    @test widenconst(get_type_for_range(ctx, out_use_rng)) === Union{Int, Nothing}
+                end
             end
         end
     end
@@ -554,11 +736,11 @@ end
                 a + b
             end
             """
-            _, inferred = type_annotate(code)
+            _, ctx = type_annotate(code)
             @test widenconst(get_type_for_range(
-                inferred, range_of(code, "sincos(xs[1])"))) === Tuple{Float64, Float64}
+                ctx, range_of(code, "sincos(xs[1])"))) === Tuple{Float64, Float64}
             @test widenconst(get_type_for_range(
-                inferred, range_of(code, "a + b"))) === Float64
+                ctx, range_of(code, "a + b"))) === Float64
         end
     end
 
@@ -568,15 +750,15 @@ end
     # show useful information when the cursor is anywhere along the access.
     @testset "property access via dereferenced Ref" begin
         let code = "Ref((; scale = 2.0))[].scale"
-            _, inferred = type_annotate(code)
+            _, ctx = type_annotate(code)
             @test widenconst(get_type_for_range(
-                inferred, range_of(code, "Ref((; scale = 2.0))"))) ===
+                ctx, range_of(code, "Ref((; scale = 2.0))"))) ===
                 Base.RefValue{NamedTuple{(:scale,), Tuple{Float64}}}
             @test widenconst(get_type_for_range(
-                inferred, range_of(code, "Ref((; scale = 2.0))[]"))) ===
+                ctx, range_of(code, "Ref((; scale = 2.0))[]"))) ===
                 NamedTuple{(:scale,), Tuple{Float64}}
             @test widenconst(get_type_for_range(
-                inferred, range_of(code, "Ref((; scale = 2.0))[].scale"))) ===
+                ctx, range_of(code, "Ref((; scale = 2.0))[].scale"))) ===
                 Float64
         end
     end
@@ -594,15 +776,15 @@ end
                 result
             end
             """
-            fi, inferred = type_annotate(code)
-            cfg_types = query_all_types(fi, inferred, "cfg")
+            fi, ctx = type_annotate(code)
+            cfg_types = query_all_types(fi, ctx, "cfg")
             @test length(cfg_types) == 3 # binding + two field accesses
             @test all(t -> widenconst(t) ===
                 NamedTuple{(:scale, :offset), Tuple{Float64, Int}}, cfg_types)
-            raw_types = query_all_types(fi, inferred, "raw")
+            raw_types = query_all_types(fi, ctx, "raw")
             @test length(raw_types) == 2 # binding + reference in `raw * cfg.offset`
             @test all(t -> widenconst(t) === Float64, raw_types)
-            result_types = query_all_types(fi, inferred, "result")
+            result_types = query_all_types(fi, ctx, "result")
             @test length(result_types) == 2 # binding + tail reference
             @test all(t -> widenconst(t) === Float64, result_types)
         end
@@ -620,8 +802,8 @@ end
                 end
             end
             """
-            fi, inferred = type_annotate(code)
-            types = query_all_types(fi, inferred, "xxx")
+            fi, ctx = type_annotate(code)
+            types = query_all_types(fi, ctx, "xxx")
             @test any(t -> widenconst(t) === Int, types)
             @test any(t -> widenconst(t) === String, types)
         end
@@ -638,8 +820,8 @@ end
         # Toplevel `sin(`: the trailing `(error-t)` arg is stripped, leaving `(call sin)`.
         # The `sin` reference itself still resolves — usable for signature help on a half-typed call.
         let code = "sin("
-            _, inferred = type_annotate(code)
-            @test get_type_for_range(inferred, range_of(code, "sin")) === Core.Const(sin)
+            _, ctx = type_annotate(code)
+            @test get_type_for_range(ctx, range_of(code, "sin")) === Core.Const(sin)
         end
         # K"error" buried inside a function body: the body parses to `(. x (inert end))`
         # plus a sibling K"error", stripping the latter leaves a well-formed function.
@@ -650,8 +832,8 @@ end
                 x.
             end
             """
-            fi, inferred = type_annotate(code)
-            x_types = query_all_types(fi, inferred, "x")
+            fi, ctx = type_annotate(code)
+            x_types = query_all_types(fi, ctx, "x")
             @test any(t -> widenconst(t) === Some{String}, x_types)
         end
         # Locally bound variable with no declared type: `s` gets `Float64` from `sum(xs)`,
@@ -662,8 +844,8 @@ end
                 s.
             end
             """
-            fi, inferred = type_annotate(code)
-            s_types = query_all_types(fi, inferred, "s")
+            fi, ctx = type_annotate(code)
+            s_types = query_all_types(fi, ctx, "s")
             @test any(t -> widenconst(t) === Float64, s_types)
         end
     end
@@ -676,8 +858,8 @@ end
     # before inference so the RHS keeps a precise `Float64`.
     @testset "top-level bare assignment RHS" begin
         let code = "global x = sin(1.0)"
-            _, inferred = type_annotate(code)
-            @test widenconst(get_type_for_range(inferred, range_of(code, "sin(1.0)"))) === Float64
+            _, ctx = type_annotate(code)
+            @test widenconst(get_type_for_range(ctx, range_of(code, "sin(1.0)"))) === Float64
         end
     end
 end
