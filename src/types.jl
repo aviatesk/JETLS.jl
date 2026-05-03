@@ -540,8 +540,14 @@ end
 end
 @define_eq_overloads InlayHintBlockEndConfig
 
+@kwdef struct InlayHintTypesConfig <: ConfigSection
+    enabled::Maybe{Bool} = nothing
+end
+@define_eq_overloads InlayHintTypesConfig
+
 @kwdef struct InlayHintConfig <: ConfigSection
     block_end::Maybe{InlayHintBlockEndConfig} = nothing
+    types::Maybe{InlayHintTypesConfig} = nothing
 end
 @define_eq_overloads InlayHintConfig
 
@@ -569,7 +575,8 @@ const DEFAULT_CONFIG = JETLSConfig(;
     completion = CompletionConfig(LaTeXEmojiConfig(missing)),
     code_lens = CodeLensConfig(false, true),
     inlay_hint = InlayHintConfig(
-        InlayHintBlockEndConfig(true, 25)),
+        InlayHintBlockEndConfig(true, 25),
+        InlayHintTypesConfig(true)),
     initialization_options = DEFAULT_INIT_OPTIONS)
 
 function get_default_config(path::Symbol...)
