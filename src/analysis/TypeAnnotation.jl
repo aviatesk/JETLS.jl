@@ -160,13 +160,19 @@ Lower `st0` for scope resolution against `mod` and return the `(ctx3, st3)` pair
 [`infer_toplevel_tree`](@ref) consumes. Wraps `jl_lower_for_scope_resolution` with
 error handling: returns `nothing` if lowering throws (typically because the user's
 source contains parse errors or the macro context isn't yet ready).
+
+`K"error"` nodes are stripped from `st0` before lowering.
+JuliaSyntax doesn't bail on incomplete source — it builds a partial tree with `K"error"`
+siblings around the well-formed parts — and JuliaLowering happily lowers what remains, so
+the LSP gets meaningful types for the parts the user has finished typing (e.g. for
+`function f(x::T); x.; end` the body's `x` reference still resolves to `T`).
 """
 function get_inferrable_tree(
         st0::SyntaxTreeC, mod::Module;
         caller::AbstractString = "get_inferrable_tree"
     )
     (; ctx3, st3) = try
-        jl_lower_for_scope_resolution(mod, st0; trim_error_nodes=false, recover_from_macro_errors=false)
+        jl_lower_for_scope_resolution(mod, st0; trim_error_nodes=true, recover_from_macro_errors=false)
     catch err
         JETLS_DEBUG_LOWERING && @warn "Error in lowering ($caller)" err
         JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())

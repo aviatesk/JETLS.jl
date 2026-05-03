@@ -629,23 +629,42 @@ end
 end
 
 @testset "Pipeline-level edge cases" begin
-    # LSP requests routinely arrive on incomplete source as the user types.
-    # The pipeline (`get_inferrable_tree` → `infer_toplevel_tree`) must
-    # degrade gracefully — never throw — and the caller decides whether to
-    # show partial results or skip annotation for that chunk.
-    @testset "incomplete syntax doesn't crash the pipeline" begin
-        # lowering refuses to consume the K"error" leaf
-        @test isnothing(type_annotate("sin(", @__MODULE__; expect_degrade=true))
-        # Same property when the K"error" is buried inside a function body —
-        # the outer `function ... end` shape parses fine, but lowering still
-        # refuses the whole chunk and the pipeline degrades to `nothing`
-        # instead of throwing.
+    # JuliaSyntax doesn't bail on incomplete source — it produces a partial tree with
+    # `K"error"` siblings around the well-formed parts. `get_inferrable_tree` strips those
+    # error nodes, and JuliaLowering happily lowers what remains, so type queries on the
+    # well-formed portion come back accurate. This is what powers completion past `.` on
+    # a half-typed buffer.
+    @testset "partial inference on incomplete source" begin
+        # Toplevel `sin(`: the trailing `(error-t)` arg is stripped, leaving `(call sin)`.
+        # The `sin` reference itself still resolves — usable for signature help on a half-typed call.
+        let code = "sin("
+            _, inferred = type_annotate(code)
+            @test get_type_for_range(inferred, range_of(code, "sin")) === Core.Const(sin)
+        end
+        # K"error" buried inside a function body: the body parses to `(. x (inert end))`
+        # plus a sibling K"error", stripping the latter leaves a well-formed function.
+        # The body's `x` reference picks up the parameter's declared type, which is
+        # what completion on `x.|` needs.
         let code = """
             function f(x::Some{String})
                 x.
             end
             """
-            @test isnothing(type_annotate(code, @__MODULE__; expect_degrade=true))
+            fi, inferred = type_annotate(code)
+            x_types = query_all_types(fi, inferred, "x")
+            @test any(t -> widenconst(t) === Some{String}, x_types)
+        end
+        # Locally bound variable with no declared type: `s` gets `Float64` from `sum(xs)`,
+        # which the analysis must recover — AST reading alone can't.
+        let code = """
+            function f(xs::Vector{Float64})
+                s = sum(xs)
+                s.
+            end
+            """
+            fi, inferred = type_annotate(code)
+            s_types = query_all_types(fi, inferred, "s")
+            @test any(t -> widenconst(t) === Float64, s_types)
         end
     end
 
