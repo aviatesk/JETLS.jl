@@ -766,7 +766,7 @@ JS.byte_range(tc::TokenCursor) = JS.first_byte(tc):JS.last_byte(tc)
 JS.kind(tc::TokenCursor) = JS.kind(this(tc))
 
 """
-    token_at_offset(fi::FileInfo, offset::Int)
+    token_at_offset(fi::FileInfo, offset::Integer)
 
 Get the current token index at a given byte offset in a parsed file.
 
@@ -776,7 +776,7 @@ Example:
 - `alpha│ beta gamma` (`b`=6) returns the index of ` ` (whitespace)
 - `alpha │beta gamma` (`b`=7) returns the index of `beta`
 """
-function token_at_offset(ps::JS.ParseStream, offset::Int)
+function token_at_offset(ps::JS.ParseStream, offset::Integer)
     for tc in TokenCursor(ps)
         start_byte = tc.next_byte - this(tc).byte_span
         if start_byte ≤ offset < tc.next_byte
@@ -833,7 +833,7 @@ prev_nontrivia_byte(args...; kwargs...) =
     JS.last_byte(@something prev_nontrivia(args...; kwargs...) return nothing)
 
 """
-    prev_nontrivia(ps::JS.ParseStream, b::Int; pass_newlines::Bool=false, strict::Bool=false)
+    prev_nontrivia(ps::JS.ParseStream, b::Integer; pass_newlines::Bool=false, strict::Bool=false)
 
 Find the previous non-trivia token at or before byte position `b`.
 Returns the `tc::TokenCursor` for that token, or `nothing` if no non-trivia token is found
@@ -907,7 +907,7 @@ next_nontrivia_byte(args...; kwargs...) =
     JS.first_byte(@something next_nontrivia(args...; kwargs...) return nothing)
 
 """
-    next_nontrivia(ps::JS.ParseStream, b::Int; pass_newlines=false, strict=false)
+    next_nontrivia(ps::JS.ParseStream, b::Integer; pass_newlines=false, strict=false)
 
 Find the next non-trivia token at or after byte position `b`.
 Returns the `tc::TokenCursor` for that token, or `nothing` if no non-trivia token is found
@@ -943,7 +943,7 @@ next_nontrivia(ps, 40)  # returns nothing
 """
 next_nontrivia(args...; kwargs...) = find_nontrivia(#=prev_or_next=#false, args...; kwargs...)
 
-function find_nontrivia(prev_or_next::Bool, ps::JS.ParseStream, b::Int; pass_newlines::Bool=false, strict::Bool=false)
+function find_nontrivia(prev_or_next::Bool, ps::JS.ParseStream, b::Integer; pass_newlines::Bool=false, strict::Bool=false)
     tc = @something token_at_offset(ps, b) return nothing
     if !strict && !is_trivia(tc, pass_newlines)
         return tc
