@@ -448,6 +448,13 @@ Run and re-run `@testset` blocks directly from the editor. See
 
 ## [Inlay hint](@id features/inlay-hint)
 
+Show inline annotations in the editor without modifying the source. JETLS
+provides two kinds of inlay hints: structural `end`-tag labels for long
+blocks, and inferred type annotations next to expressions.
+
+All inlay hints can be disabled via your editor's global settings (e.g.
+`editor.inlayHints.enabled` in VSCode, on by default).
+
 ### [Block-end hints](@id features/inlay-hint/block-end)
 
 Label the construct that a long `end` keyword closes — `module Foo`,
@@ -468,6 +475,76 @@ enable/disable and threshold configuration.
 > ```@raw html
 > </div>
 > ```
+
+### [Type hints](@id features/inlay-hint/types)
+
+Show inferred types next to expressions — bindings, calls, function
+return types, branch results, etc. — so types are visible inline
+without hovering. Long types are clipped with `…` to fit inline;
+hover the hint to see the unclipped type in the tooltip.
+
+**Method bodies:** Hints currently come from inference starting at the
+declared signature — parameter types as written, defaulting to `Any`
+if absent. Because this drives Julia's standard inference machinery,
+features like `isa` / `isnothing` narrowing and return-type merging
+work as expected, and the inline hints let you read those results
+directly off the source.
+
+> ```@raw html
+> <div class="display-light-only">
+> ```
+> ![Type hints — method body](assets/features/inlay-hint-types-format.png)
+> ```@raw html
+> </div>
+> <div class="display-dark-only">
+> ```
+> ![Type hints — method body](assets/features/inlay-hint-types-format-dark.png)
+> ```@raw html
+> </div>
+> ```
+
+Note that, in the example above, the `isnothing(x)` branch shows `x::Union{…}`
+— the unclipped `Union{Int, String, Nothing}` is in the hover tooltip.
+
+**Top-level chunks:** Type hints aren't limited to method bodies, e.g.
+standalone `let` blocks, are each inferred independently and get the same
+per-statement annotations.
+
+> ```@raw html
+> <div class="display-light-only">
+> ```
+> ![Type hints — top-level chunk inference](assets/features/inlay-hint-types-monte-carlo.png)
+> ```@raw html
+> </div>
+> <div class="display-dark-only">
+> ```
+> ![Type hints — top-level chunk inference](assets/features/inlay-hint-types-monte-carlo-dark.png)
+> ```@raw html
+> </div>
+> ```
+
+**Non-obvious types and `Union{}`:** Types you wouldn't write by hand
+surface inline — `Vector{SubString{String}}` from `split`,
+`SubString{String}` from `first`. When inference proves an expression
+always errors, the type collapses to `Union{}`; the tooltip explains
+the bottom type. Here, `parse(Int, head, 16)` has no matching method
+(the right form is `parse(Int, head; base = 16)`), so the call
+receives both a `::Union{}` hint and JET's method-error diagnostic.
+
+> ```@raw html
+> <div class="display-light-only">
+> ```
+> ![Type hints — non-obvious types and Union{}](assets/features/inlay-hint-types-parse-hex.png)
+> ```@raw html
+> </div>
+> <div class="display-dark-only">
+> ```
+> ![Type hints — non-obvious types and Union{}](assets/features/inlay-hint-types-parse-hex-dark.png)
+> ```@raw html
+> </div>
+> ```
+
+Can be disabled with [`[inlay_hint.types] enabled`](@ref config/inlay_hint/types/enabled) configuration.
 
 ## [Semantic tokens](@id features/semantic-tokens)
 
