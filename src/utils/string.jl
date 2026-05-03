@@ -24,52 +24,30 @@ function apply_text_change(
         text::String, range::Range, new_text::String, encoding::PositionEncodingKind.Ty
     )
     textbuf = Vector{UInt8}(text)
-    start_byte = _xy_to_offset(textbuf, range.start, encoding)
-    end_byte = _xy_to_offset(textbuf, range.var"end", encoding)
+    line_starts = build_line_starts(textbuf)
+    start_byte = _xy_to_offset(textbuf, range.start, encoding, line_starts)
+    end_byte = _xy_to_offset(textbuf, range.var"end", encoding, line_starts)
     return String(textbuf[1:start_byte-1]) * new_text * String(textbuf[end_byte:end])
 end
 
-"""
-    pos_to_utf8_offset(s::String, ch::UInt, encoding::PositionEncodingKind.Ty = PositionEncodingKind.UTF16) -> offset::Int
-
-Convert a character position to a UTF-8 byte offset in a Julia string.
-
-# Arguments
-- `s::String`: A Julia string (UTF-8 encoded) representing a single line (no newlines)
-- `ch::UInt`: 0-based character/code-unit position in the specified encoding
-- `encoding::PositionEncodingKind.Ty`: The encoding that `ch` is based on (default: UTF-16)
-
-# Returns
-1-based byte offset in the UTF-8 encoded string `s`
-
-# Details
-According to the LSP specification:
-- For UTF-8: `ch` represents byte offset
-- For UTF-16: `ch` represents UTF-16 code units (characters in BMP count as 1, outside BMP count as 2)
-- For UTF-32: `ch` represents character count (each Unicode character counts as 1)
-"""
-function pos_to_utf8_offset(s::String, ch::UInt, encoding::PositionEncodingKind.Ty)
-    offset = 1
-    char_count = 0
-    if encoding == PositionEncodingKind.UTF16
-        while offset <= sizeof(s) && char_count < ch
-            cp = codepoint(s[offset])
-            utf16_units = cp < 0x10000 ? 1 : 2
-            char_count += utf16_units
-            if char_count > ch
-                break
-            end
-            offset = nextind(s, offset)
-        end
-    elseif encoding == PositionEncodingKind.UTF8 # UTF-8 counts bytes
-        offset = min(Int(ch), sizeof(s)) + 1
-    else # UTF-32 counts characters
-        while offset <= sizeof(s) && char_count < ch
-            char_count += 1
-            offset = nextind(s, offset)
-        end
+# UTF-8 leading byte → (n_bytes_in_sequence, n_code_units_in_target_encoding).
+# Continuation bytes (0x80..0xBF) appearing as a "leading byte" indicate malformed
+# UTF-8; we treat them as a single 1-unit char rather than throwing — matching the
+# robustness contract the LSP layer expects from invalid client input.
+# `encoding` only differentiates the 4-byte branch (UTF-16 surrogate pair = 2 units
+# vs. 1 unit elsewhere); callers short-circuit the UTF-8 path before reaching here.
+@inline function utf8_seq_info(byte::UInt8, encoding::PositionEncodingKind.Ty)
+    if byte < 0x80
+        return 1, UInt(1)
+    elseif byte < 0xC0
+        return 1, UInt(1)
+    elseif byte < 0xE0
+        return 2, UInt(1)
+    elseif byte < 0xF0
+        return 3, UInt(1)
+    else
+        return 4, encoding == PositionEncodingKind.UTF16 ? UInt(2) : UInt(1)
     end
-    return offset
 end
 
 """
@@ -95,25 +73,47 @@ closest valid position.
 """
 function xy_to_offset end
 
-xy_to_offset(fi::FileInfo, pos::Position) = _xy_to_offset(fi.parsed_stream.textbuf, pos, fi.encoding)
+xy_to_offset(fi::FileInfo, pos::Position) =
+    _xy_to_offset(fi.parsed_stream.textbuf, pos, fi.encoding, fi.line_starts)
 xy_to_offset( # used by tests
     s::Union{Vector{UInt8},AbstractString}, pos::Position, filename::AbstractString,
     encoding::PositionEncodingKind.Ty = PositionEncodingKind.UTF16
 ) = xy_to_offset(FileInfo(#=version=#0, s, filename, encoding), pos)
 
-function _xy_to_offset(textbuf::Vector{UInt8}, pos::Position, encoding::PositionEncodingKind.Ty)
-    b = 0
-    for _ in 1:pos.line
-        nextb = findnext(isequal(UInt8('\n')), textbuf, b + 1)
-        if isnothing(nextb) # guard against invalid `pos`
+function _xy_to_offset(
+        textbuf::Vector{UInt8}, pos::Position, encoding::PositionEncodingKind.Ty,
+        line_starts::LineStartsIndex
+    )
+    line_idx = min(Int(pos.line) + 1, length(line_starts))
+    line_start_byte = line_starts[line_idx]
+    line_end_byte = line_idx + 1 <= length(line_starts) ?
+        line_starts[line_idx + 1] - 1 : lastindex(textbuf) + 1
+    return units_to_byte_in_line(textbuf, line_start_byte, line_end_byte, pos.character, encoding)
+end
+
+# `ch` code units into the line → 1-based byte offset within textbuf. If `ch`
+# falls in the middle of a multi-unit character (UTF-16 surrogate pair), returns
+# the byte offset of that character.
+function units_to_byte_in_line(
+        textbuf::Vector{UInt8}, line_start::Integer, line_end::Integer,
+        ch::Integer, encoding::PositionEncodingKind.Ty
+    )
+    if encoding == PositionEncodingKind.UTF8
+        return min(Int(line_start) + Int(ch), Int(line_end))
+    end
+    target = UInt(ch)
+    i = Int(line_start)
+    bend = Int(line_end)
+    units = UInt(0)
+    @inbounds while i < bend && units < target
+        n_bytes, n_units = utf8_seq_info(textbuf[i], encoding)
+        if units + n_units > target
             break
         end
-        b = nextb
+        units += n_units
+        i += n_bytes
     end
-    lend = findnext(isequal(UInt8('\n')), textbuf, b + 1)
-    lend = isnothing(lend) ? lastindex(textbuf) + 1 : lend
-    curline = String(textbuf[b+1:lend-1]) # current line, containing no newlines
-    return b + pos_to_utf8_offset(curline, pos.character, encoding)
+    return i
 end
 
 """
@@ -138,73 +138,62 @@ to the specified encoding per LSP specification:
 """
 function offset_to_xy end
 
-offset_to_xy(fi::FileInfo, byte::Integer) = _offset_to_xy(fi.parsed_stream.textbuf, byte, fi.encoding)
-offset_to_xy(sfi::SavedFileInfo, byte::Integer) = _offset_to_xy(sfi.parsed_stream.textbuf, byte, sfi.encoding)
-
+offset_to_xy(fi::FileInfo, byte::Integer) =
+    _offset_to_xy(fi.parsed_stream.textbuf, byte, fi.encoding, fi.line_starts)
+offset_to_xy(sfi::SavedFileInfo, byte::Integer) =
+    _offset_to_xy(sfi.parsed_stream.textbuf, byte, sfi.encoding, sfi.line_starts)
 offset_to_xy( # used by tests
     s::Union{Vector{UInt8},AbstractString}, byte::Integer, filename::AbstractString,
     encoding::PositionEncodingKind.Ty = PositionEncodingKind.UTF16
 ) = offset_to_xy(FileInfo(#=version=#0, s, filename, encoding), byte)
 
-function _offset_to_xy(textbuf::Vector{UInt8}, byte::Integer, encoding::PositionEncodingKind.Ty)
+# One-shot overload for callers that don't have a cached index and only convert
+# a single offset (e.g. `cell_range`); builds `line_starts` internally.
+_offset_to_xy(textbuf::Vector{UInt8}, byte::Integer, encoding::PositionEncodingKind.Ty) =
+    _offset_to_xy(textbuf, byte, encoding, build_line_starts(textbuf))
+
+function _offset_to_xy(
+        textbuf::Vector{UInt8}, byte::Integer, encoding::PositionEncodingKind.Ty,
+        line_starts::LineStartsIndex
+    )
     if byte < 1
         throw(ArgumentError(lazy"Byte offset must be >= 1, got $byte"))
     elseif byte > lastindex(textbuf) + 1
         byte = lastindex(textbuf) + 1
     end
 
-    # Find which line the byte is on
-    line = 0
-    line_start_byte = 1
-    current_byte = 1
-
-    while current_byte < byte && current_byte <= lastindex(textbuf)
-        if textbuf[current_byte] == UInt8('\n')
-            line += 1
-            line_start_byte = current_byte + 1
-        end
-        current_byte += 1
-    end
-
-    # Find the end of the current line
-    line_end_byte = findnext(isequal(UInt8('\n')), textbuf, line_start_byte)
-    if isnothing(line_end_byte)
-        line_end_byte = lastindex(textbuf) + 1
-    end
-
-    target_byte_in_line = min(byte, line_end_byte)
-
-    # Count characters from line start to just before the target position
-    if target_byte_in_line > line_start_byte
-        if encoding == PositionEncodingKind.UTF8
-            # For UTF-8, character is the byte offset within the line (0-based)
-            character = target_byte_in_line - line_start_byte
-        else
-            character = 0
-            full_text = String(copy(textbuf))
-            byte_idx = line_start_byte
-
-            while byte_idx < target_byte_in_line && byte_idx <= sizeof(full_text)
-                next_byte_idx = nextind(full_text, byte_idx)
-                if next_byte_idx > target_byte_in_line
-                    break
-                end
-
-                if encoding == PositionEncodingKind.UTF16
-                    cp = codepoint(full_text[byte_idx])
-                    character += cp < 0x10000 ? 1 : 2
-                else # UTF-32
-                    character += 1
-                end
-
-                byte_idx = next_byte_idx
-            end
-        end
-    else
-        character = 0
-    end
-
+    line_idx = searchsortedlast(line_starts, byte)
+    line = line_idx - 1
+    line_start_byte = line_starts[line_idx]
+    line_end_byte = line_idx + 1 <= length(line_starts) ?
+        line_starts[line_idx + 1] - 1 :
+        lastindex(textbuf) + 1
+    target = min(Int(byte), line_end_byte)
+    character = Int(count_units_in_byte_range(textbuf, line_start_byte, target, encoding))
     return Position(; line, character)
+end
+
+# Byte range → number of code units of the requested encoding. Walks the line
+# only (not the whole textbuf) and avoids `String(copy(...))` allocations.
+function count_units_in_byte_range(
+        textbuf::Vector{UInt8}, b_start::Integer, b_end::Integer,
+        encoding::PositionEncodingKind.Ty
+    )
+    if encoding == PositionEncodingKind.UTF8
+        return UInt(b_end - b_start)
+    end
+    units = UInt(0)
+    i = Int(b_start)
+    bend = Int(b_end)
+    @inbounds while i < bend
+        n_bytes, n_units = utf8_seq_info(textbuf[i], encoding)
+        if i + n_bytes > bend
+            break # partial char at the end (shouldn't happen for well-formed input)
+        end
+        units += n_units
+        i += n_bytes
+    end
+    return units
 end
 
 """

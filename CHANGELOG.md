@@ -44,6 +44,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > This disables analysis for matched files. Basic features like completion still might work, but most LSP features will be unfunctional.
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
 
+### Changed
+
+- Significantly reduced latency on large files across most LSP features (hover, completion, diagnostics, inlay hint, code lens, …). For example, code lens generation on a file with 1000 `@testset` blocks dropped from ~590ms to ~1.4ms.
+
 ## 2026-05-02
 
 - Commit: [`28972ef`](https://github.com/aviatesk/JETLS.jl/commit/28972ef)
