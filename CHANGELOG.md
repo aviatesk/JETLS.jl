@@ -48,6 +48,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Significantly reduced latency on large files across most LSP features (hover, completion, diagnostics, inlay hint, code lens, …). For example, code lens generation on a file with 1000 `@testset` blocks dropped from ~590ms to ~1.4ms.
 
+### Fixed
+
+- Fixed `textDocument/inlayHint` for notebook cells, which previously misplaced hints (or rendered none at all) by treating the requested viewport and emitted hint positions as notebook-global coordinates rather than cell-local.
+
 ## 2026-05-02
 
 - Commit: [`28972ef`](https://github.com/aviatesk/JETLS.jl/commit/28972ef)
