@@ -44,6 +44,9 @@ testrunner = true                  # boolean, default: true
 enabled = true                     # boolean, default: true
 min_lines = 25                     # integer, default: 25
 
+[inlay_hint.types]
+enabled = true                     # boolean, default: true
+
 [testrunner]
 executable = "testrunner"          # string, default: "testrunner" (or "testrunner.bat" on Windows)
 ```
@@ -69,6 +72,8 @@ executable = "testrunner"          # string, default: "testrunner" (or "testrunn
   - [`[inlay_hint.block_end]`](@ref config/inlay_hint/block_end)
     - [`[inlay_hint.block_end] enabled`](@ref config/inlay_hint/block_end/enabled)
     - [`[inlay_hint.block_end] min_lines`](@ref config/inlay_hint/block_end/min_lines)
+  - [`[inlay_hint.types]`](@ref config/inlay_hint/types)
+    - [`[inlay_hint.types] enabled`](@ref config/inlay_hint/types/enabled)
 - [`[testrunner]`](@ref config/testrunner)
   - [`[testrunner] executable`](@ref config/testrunner/executable)
 
@@ -510,6 +515,23 @@ Minimum number of lines a block must span before its `end`-tag inlay hint is dis
 ```toml
 [inlay_hint.block_end]
 min_lines = 10  # Show hints for blocks with 10+ lines
+```
+
+#### [`[inlay_hint.types]`](@id config/inlay_hint/types)
+
+Inferred-type inlay hints displayed next to expressions.
+See [Type hints](@ref features/inlay-hint/types) for details.
+
+##### [`[inlay_hint.types] enabled`](@id config/inlay_hint/types/enabled)
+
+- **Type**: boolean
+- **Default**: `true`
+
+Enable or disable type inlay hints.
+
+```toml
+[inlay_hint.types]
+enabled = false  # Hide type hints; keep `end`-tag hints
 ```
 
 ### [`[testrunner]`](@id config/testrunner)

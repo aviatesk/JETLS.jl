@@ -263,6 +263,19 @@
           },
           "required": [],
           "type": "object"
+        },
+        "types": {
+          "additionalProperties": false,
+          "description": "Type inlay hints configuration. See [Type hints](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint/types).",
+          "properties": {
+            "enabled": {
+              "default": true,
+              "description": "Show inferred-type inlay hints — e.g., `x::T` for a binding, `f(arg::S)::T` for a call (annotating both the argument and result). Disable to keep only the structural `end`-tag hints.",
+              "type": "boolean"
+            }
+          },
+          "required": [],
+          "type": "object"
         }
       },
       "required": [],

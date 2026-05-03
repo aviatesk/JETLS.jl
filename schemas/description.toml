@@ -56,7 +56,11 @@ testrunner = "Show `Run`/`Debug` code lenses above `@testset` blocks. Some edito
 
 [InlayHintConfig]
 block_end = "Block-end inlay hints configuration. See [Block-end hints](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint/block_end)."
+types = "Type inlay hints configuration. See [Type hints](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint/types)."
 
 [InlayHintBlockEndConfig]
 enabled = "Enable or disable inlay hints displayed at block `end` keywords (e.g., `end # module Foo`). Supports: `module`, `function`, `macro`, `struct`, `if`, `let`, `for`, `while`, `@testset`."
 min_lines = "Minimum number of lines a block must span before its `end`-tag inlay hint is displayed."
+
+[InlayHintTypesConfig]
+enabled = "Show inferred-type inlay hints — e.g., `x::T` for a binding, `f(arg::S)::T` for a call (annotating both the argument and result). Disable to keep only the structural `end`-tag hints."
