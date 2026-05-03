@@ -1,5 +1,5 @@
-# JuliaLowering also throws away this information in resolve_scopes.  Go
-# backwards through lowering to seach for it.
+# JuliaLowering also throws away this information in `resolve_scopes`. Go
+# backwards through lowering to search for it.
 function binding_scope_layer(ctx3, binding::JL.BindingInfo)
     st3 = JL.binding_ex(ctx3, binding.id)
     while get(st3, :source, nothing) isa JS.NodeId
@@ -83,7 +83,17 @@ function _jl_lower_for_scope_resolution(
         soft_scope::Bool = false,
     )
     ctx2, st2 = JL.expand_forms_2(ctx1, st1)
-    ctx3, st3 = JL.resolve_scopes(ctx2, st2; soft_scope)
+    ctx3, st3 = try
+        JL.resolve_scopes(ctx2, st2; soft_scope)
+    catch err
+        if err isa MethodError &&
+           occursin("unsupported keyword argument \"soft_scope\"",
+                    sprint(showerror, err))
+            JL.resolve_scopes(ctx2, st2)
+        else
+            rethrow(err)
+        end
+    end
     convert_closures || return (; st0, st1, st2, st3, ctx3)
     ctx4, st4 = JL.convert_closures(ctx3, st3)
     return (; st0, st1, st2, st3, st4, ctx3, ctx4)

@@ -568,6 +568,81 @@ end
     end
 end
 
+@testset "dot completion trigger" begin
+    let text = """
+        Base.│
+        """
+        context = CompletionContext(;
+            triggerKind = CompletionTriggerKind.TriggerCharacter,
+            triggerCharacter = ".")
+        cnt = Ref(0)
+        with_completion_request(text; context) do _, result, _
+            items = result.items
+            @test any(item -> item.label == "show", items)
+            cnt[] += 1
+        end
+        @test cnt[] == 1
+    end
+end
+
+@testset "dot completion for typed values" begin
+    let text = """
+        struct MyStruct
+            a::Int
+            b::String
+        end
+        function test(s::MyStruct)
+            s.│
+        end
+        """
+        context = CompletionContext(;
+            triggerKind = CompletionTriggerKind.TriggerCharacter,
+            triggerCharacter = ".")
+        cnt = Ref(0)
+        with_completion_request(text; context) do _, result, _
+            items = result.items
+            @test length(items) == 2
+            aidx = findfirst(item -> item.label == "a", items)
+            bidx = findfirst(item -> item.label == "b", items)
+            @test !isnothing(aidx)
+            @test !isnothing(bidx)
+            @test items[aidx].kind == CompletionItemKind.Field
+            @test items[bidx].kind == CompletionItemKind.Field
+            cnt[] += 1
+        end
+        @test cnt[] == 1
+    end
+
+    let text = """
+        struct Proxy
+            inner::Dict{Symbol,Any}
+        end
+        Base.getproperty(p::Proxy, name::Symbol) = getfield(p, :inner)[name]
+        Base.propertynames(::Proxy) = (:a, :b)
+        function test(p::Proxy)
+            p.│
+        end
+        """
+        context = CompletionContext(;
+            triggerKind = CompletionTriggerKind.TriggerCharacter,
+            triggerCharacter = ".")
+        cnt = Ref(0)
+        with_completion_request(text; context) do _, result, _
+            items = result.items
+            @test length(items) == 2
+            aidx = findfirst(item -> item.label == "a", items)
+            bidx = findfirst(item -> item.label == "b", items)
+            @test !isnothing(aidx)
+            @test !isnothing(bidx)
+            @test all(item -> item.label != "inner", items)
+            @test items[aidx].kind == CompletionItemKind.Property
+            @test items[bidx].kind == CompletionItemKind.Property
+            cnt[] += 1
+        end
+        @test cnt[] == 1
+    end
+end
+
 # Latex&emoji
 # ===========
 
