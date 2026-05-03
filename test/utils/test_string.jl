@@ -1,104 +1,9 @@
 module test_string
 
 using Test
-using JETLS: JETLS, apply_text_change, encoded_length, offset_to_xy, pos_to_utf8_offset, xy_to_offset
+using JETLS: JETLS, apply_text_change, encoded_length, offset_to_xy, xy_to_offset
 using JETLS.LSP
 using JETLS.LSP.PositionEncodingKind: UTF16, UTF32, UTF8
-
-@testset "pos_to_utf8_offset" begin
-    @testset "ASCII (all encodings identical)" begin
-        s = "hello"
-        # All encodings produce the same results for ASCII
-        for ch in UInt(0):UInt(5)
-            utf8  = pos_to_utf8_offset(s, ch, UTF8)
-            utf16 = pos_to_utf8_offset(s, ch, UTF16)
-            utf32 = pos_to_utf8_offset(s, ch, UTF32)
-            @test utf8 == utf16 == utf32 == ch + 1
-        end
-    end
-
-    @testset "BMP characters (UTF-16 = UTF-32)" begin
-        s = "café"  # é is 2 bytes in UTF-8, but 1 unit in UTF-16/32
-        # UTF-8: ch is byte offset (0-based)
-        # UTF-16/32: ch is character count for BMP
-        for (ch, utf8_expected, utf16_expected) in [(0, 1, 1), (1, 2, 2), (2, 3, 3), (3, 4, 4), (4, 5, 6), (5, 6, 6)]
-            ch = UInt(ch)
-            @test pos_to_utf8_offset(s, ch, UTF8) == utf8_expected
-            @test pos_to_utf8_offset(s, ch, UTF16) == utf16_expected
-            @test pos_to_utf8_offset(s, ch, UTF32) == utf16_expected
-        end
-    end
-
-    @testset "Emoji with surrogate pairs (UTF-16 differs)" begin
-        s = "a😀b"  # 😀 needs 2 UTF-16 units (surrogate pair), 4 bytes in UTF-8
-
-        # UTF-8: character positions are byte offsets
-        # UTF-16: character positions are UTF-16 code unit counts
-        # UTF-32: character positions are character counts
-        @test pos_to_utf8_offset(s, UInt(2), UTF8) == 3   # Byte 2 (in middle of 'a')
-        @test pos_to_utf8_offset(s, UInt(2), UTF16) == 2  # After 'a', mid-emoji
-        @test pos_to_utf8_offset(s, UInt(2), UTF32) == 6  # After emoji
-
-        @test pos_to_utf8_offset(s, UInt(5), UTF8) == 6   # Byte 5 (in middle of emoji)
-        @test pos_to_utf8_offset(s, UInt(3), UTF16) == 6  # After emoji
-        @test pos_to_utf8_offset(s, UInt(3), UTF32) == 7  # After 'b'
-    end
-
-    @testset "ZWJ sequences (complex UTF-16 handling)" begin
-        s = "👨‍👩‍👧‍👦"  # Family: 4 emojis + 3 ZWJs = 25 bytes in UTF-8
-        # UTF-8: byte offset (25 bytes total)
-        # UTF-16: 11 UTF-16 units
-        # UTF-32: 7 characters
-        @test pos_to_utf8_offset(s, UInt(25), UTF8) == 26
-        @test pos_to_utf8_offset(s, UInt(11), UTF16) == 26
-        @test pos_to_utf8_offset(s, UInt(7), UTF32) == 26
-    end
-
-    @testset "Edge cases" begin
-        # Empty string
-        @test pos_to_utf8_offset("", UInt(0), UTF16) == 1
-        @test pos_to_utf8_offset("", UInt(10), UTF16) == 1
-        @test pos_to_utf8_offset("", UInt(0), UTF8) == 1
-        @test pos_to_utf8_offset("", UInt(10), UTF8) == 1  # Clamped to end
-
-        # Position beyond string - UTF-8 should clamp to string bounds
-        @test pos_to_utf8_offset("ab", UInt(10), UTF16) == 3
-        @test pos_to_utf8_offset("ab", UInt(10), UTF8) == 3  # Clamped to sizeof("ab")+1
-        @test pos_to_utf8_offset("abc", UInt(100), UTF8) == 4  # Clamped to end
-
-        # Position exactly at end of string
-        @test pos_to_utf8_offset("abc", UInt(3), UTF8) == 4  # Exactly at end
-
-        # Single emoji - UTF-16 stops mid-emoji at position 1
-        @test pos_to_utf8_offset("😀", UInt(1), UTF8) == 2  # Byte offset 1
-        @test pos_to_utf8_offset("😀", UInt(1), UTF16) == 1  # Mid-emoji!
-        @test pos_to_utf8_offset("😀", UInt(2), UTF16) == 5
-        @test pos_to_utf8_offset("😀", UInt(10), UTF8) == 5  # Clamped to end (4 bytes + 1)
-    end
-
-    @testset "UTF-16 vs UTF-8 differences" begin
-        s = "a😀b"
-        # Position 2: UTF-16 stops mid-emoji, UTF-8 is byte offset 2
-        @test pos_to_utf8_offset(s, UInt(2), UTF16) == 2  # Mid-emoji
-        @test pos_to_utf8_offset(s, UInt(2), UTF8) == 3   # Byte offset 2
-        @test pos_to_utf8_offset(s, UInt(2), UTF16) != pos_to_utf8_offset(s, UInt(2), UTF8)
-    end
-
-    @testset "Double latex symbols completion" begin
-        s = "≈\\"
-
-        # UTF-8: positions are byte offsets
-        @test pos_to_utf8_offset(s, UInt(0), UTF8) == 1  # Start
-        @test pos_to_utf8_offset(s, UInt(1), UTF8) == 2  # Byte 1 (inside ≈)
-        @test pos_to_utf8_offset(s, UInt(3), UTF8) == 4  # After ≈
-        @test pos_to_utf8_offset(s, UInt(4), UTF8) == 5  # After \
-
-        # UTF-16: positions are character counts (both are BMP characters)
-        @test pos_to_utf8_offset(s, UInt(0), UTF16) == 1  # Start
-        @test pos_to_utf8_offset(s, UInt(1), UTF16) == 4  # After ≈
-        @test pos_to_utf8_offset(s, UInt(2), UTF16) == 5  # After \
-    end
-end
 
 @testset "offset_to_xy with different encodings" begin
     @testset "ASCII text" begin
@@ -282,6 +187,30 @@ end
         @test xy_to_offset(textbuf, pos_utf16, @__FILE__, UTF16) == 10
     end
 
+    # Each grapheme is a non-BMP emoji (4 UTF-8 bytes / 2 UTF-16 units) joined
+    # by ZWJ (3 UTF-8 bytes / 1 UTF-16 unit / 1 UTF-32 char). Code-unit counts
+    # diverge sharply across encodings, which is where unit accumulation bugs
+    # tend to surface.
+    @testset "ZWJ sequences" begin
+        text = "👨‍👩‍👧‍👦" # Family: 4 emojis + 3 ZWJs = 25 bytes UTF-8 / 11 UTF-16 / 7 UTF-32
+        textbuf = Vector{UInt8}(text)
+        @test xy_to_offset(textbuf, Position(; line=0, character=25), @__FILE__, UTF8) == 26
+        @test xy_to_offset(textbuf, Position(; line=0, character=11), @__FILE__, UTF16) == 26
+        @test xy_to_offset(textbuf, Position(; line=0, character=7), @__FILE__, UTF32) == 26
+    end
+
+    # `≈\` is a real input shape from LaTeX-symbol completion (`\approx\<TAB>`):
+    # `≈` is a 3-byte BMP char (1 UTF-16 unit) followed by a 1-byte `\`. Regression
+    # guard for the off-by-one that earlier completion code hit here.
+    @testset "LaTeX symbol completion shape (≈\\\\)" begin
+        text = "≈\\"
+        textbuf = Vector{UInt8}(text)
+        @test xy_to_offset(textbuf, Position(; line=0, character=3), @__FILE__, UTF8) == 4   # after ≈
+        @test xy_to_offset(textbuf, Position(; line=0, character=4), @__FILE__, UTF8) == 5   # after \
+        @test xy_to_offset(textbuf, Position(; line=0, character=1), @__FILE__, UTF16) == 4  # after ≈
+        @test xy_to_offset(textbuf, Position(; line=0, character=2), @__FILE__, UTF16) == 5  # after \
+    end
+
     @testset "Beyond line end" begin
         text = "short\nlonger line\nx"
         textbuf = Vector{UInt8}(text)
@@ -346,6 +275,33 @@ end
                 pos = offset_to_xy(textbuf, byte, @__FILE__, encoding)
                 recovered = xy_to_offset(textbuf, pos, @__FILE__, encoding)
                 @test recovered == byte
+            end
+        end
+    end
+
+    # Mid-char input does NOT round-trip (snap loses information), but the
+    # snap is idempotent: byte → Position → byte_start → Position → same
+    # byte_start. Cross-direction guard against accidentally flipping snap
+    # direction in only one of the two functions.
+    @testset "Mid-char snap is idempotent" begin
+        # "café": é spans bytes 4-5; mid-char byte=5 should snap to byte=4
+        let textbuf = Vector{UInt8}("café")
+            for encoding in (UTF16, UTF32)
+                pos1 = offset_to_xy(textbuf, 5, @__FILE__, encoding)
+                byte1 = xy_to_offset(textbuf, pos1, @__FILE__, encoding)
+                @test byte1 == 4 # snapped to start of é, not original 5
+                pos2 = offset_to_xy(textbuf, byte1, @__FILE__, encoding)
+                @test xy_to_offset(textbuf, pos2, @__FILE__, encoding) == byte1
+            end
+        end
+        # "😀b": emoji spans bytes 1-4; any mid-emoji byte snaps to byte=1
+        let textbuf = Vector{UInt8}("😀b")
+            for encoding in (UTF16, UTF32), b in 2:4
+                pos1 = offset_to_xy(textbuf, b, @__FILE__, encoding)
+                byte1 = xy_to_offset(textbuf, pos1, @__FILE__, encoding)
+                @test byte1 == 1
+                pos2 = offset_to_xy(textbuf, byte1, @__FILE__, encoding)
+                @test xy_to_offset(textbuf, pos2, @__FILE__, encoding) == byte1
             end
         end
     end
