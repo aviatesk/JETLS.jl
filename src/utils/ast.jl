@@ -760,8 +760,8 @@ next_tok(tc::TokenCursor) =
 prev_tok(tc::TokenCursor) = tc.position <= 1 ? nothing :
     TokenCursor(tc.tokens, tc.position - 1, tc.next_byte - tc.tokens[tc.position].byte_span)
 this(tc::TokenCursor) = tc.tokens[tc.position]
-JS.first_byte(tc::TokenCursor) = tc.position <= 1 ? UInt32(1) : prev_tok(tc).next_byte
-JS.last_byte(tc::TokenCursor) = tc.next_byte - UInt32(1)
+JS.first_byte(tc::TokenCursor) = tc.position <= 1 ? 1 : Int(prev_tok(tc).next_byte)
+JS.last_byte(tc::TokenCursor) = Int(tc.next_byte) - 1
 JS.byte_range(tc::TokenCursor) = JS.first_byte(tc):JS.last_byte(tc)
 JS.kind(tc::TokenCursor) = JS.kind(this(tc))
 
