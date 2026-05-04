@@ -38,10 +38,12 @@ function handle_InlayHintRequest(
     end
     fi = result
 
-    min_lines = get_config(server, :inlay_hint, :block_end_min_lines)
     inlay_hints = InlayHint[]
-    symbols = get_document_symbols!(state, uri, fi)
-    syntactic_inlay_hints!(inlay_hints, symbols, fi, range; min_lines)
+    if get_config(server, :inlay_hint, :block_end, :enabled)
+        min_lines = get_config(server, :inlay_hint, :block_end, :min_lines)
+        symbols = get_document_symbols!(state, uri, fi)
+        syntactic_inlay_hints!(inlay_hints, symbols, fi, range; min_lines)
+    end
 
     return send(server, InlayHintResponse(;
         id = msg.id,

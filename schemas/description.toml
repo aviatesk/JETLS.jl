@@ -55,4 +55,8 @@ references = "Show reference counts above top-level symbols (functions, structs,
 testrunner = "Show `Run`/`Debug` code lenses above `@testset` blocks. Some editors (e.g., Zed) show these as code actions, causing duplication; zed-julia defaults to false."
 
 [InlayHintConfig]
-block_end_min_lines = "Minimum lines for a block to display an inlay hint at `end` (e.g., `end # module Foo`). Supports: `module`, `function`, `macro`, `struct`, `if`, `let`, `for`, `while`, `@testset`."
+block_end = "Block-end inlay hints configuration. See [Block-end hints](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint-block_end)."
+
+[InlayHintBlockEndConfig]
+enabled = "Enable or disable inlay hints displayed at block `end` keywords (e.g., `end # module Foo`). Supports: `module`, `function`, `macro`, `struct`, `if`, `let`, `for`, `while`, `@testset`."
+min_lines = "Minimum number of lines a block must span before its `end`-tag inlay hint is displayed."
