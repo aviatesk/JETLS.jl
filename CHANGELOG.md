@@ -44,6 +44,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > This disables analysis for matched files. Basic features like completion still might work, but most LSP features will be unfunctional.
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
 
+### Added
+
+- Added [`textDocument/semanticTokens`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_semanticTokens) support.
+  JETLS now emits `parameter`, `typeParameter`, and `variable` token types (with `declaration` / `definition` modifiers) so that themes can distinguish function arguments, type parameters, and local variables from generic identifiers. Global identifiers are also reported under a custom `jetls.unspecified` token type, which leaves the editor's syntactic color intact while still letting themes apply modifier styling to declaration/definition sites.
+  Both full and range requests are supported.
+  Because JETLS only emits identifier classifications and relies on the editor's syntactic highlighter for everything else, semantic tokens are only registered when the client advertises [`augmentsSyntaxTokens = true`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#semanticTokensClientCapabilities).
+  See <https://aviatesk.github.io/JETLS.jl/release/features/semantic-tokens> for details.
+
+  <img width="969" height="343" alt="semantic tokens demo" src="https://github.com/user-attachments/assets/93f92c5a-2de2-499f-a87f-7dfcfec5d0b0" />
+
 ### Changed
 
 - Significantly reduced latency on large files across most LSP features (hover, completion, diagnostics, inlay hint, code lens, …). For example, code lens generation on a file with 1000 `@testset` blocks dropped from ~590ms to ~1.4ms.
@@ -116,7 +126,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
-- Added a [Features](https://aviatesk.github.io/JETLS.jl/dev/features/) overview page to the documentation, providing a visual showcase of every LSP feature JETLS provides.
+- Added a [Features](https://aviatesk.github.io/JETLS.jl/release/features/) overview page to the documentation, providing a visual showcase of every LSP feature JETLS provides.
 
 - Added `textDocument/declaration` ("go to declaration"). It jumps to the import site on an imported name (e.g. `using Base: sin`) and to the `local` line on a `local` declaration. When the symbol has no dedicated declaration site, the request falls back to the same logic as `textDocument/definition`.
 

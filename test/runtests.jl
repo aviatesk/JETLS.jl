@@ -41,6 +41,7 @@ end
     @testset "references" include("test_references.jl")
     @testset "hover" include("test_hover.jl")
     @testset "inlay hint" include("test_inlay_hint.jl")
+    @testset "semantic tokens" include("test_semantic_tokens.jl")
     @testset "lowering diagnostic" include("test_lowering_diagnostic.jl")
     @testset "code action" include("test_code_action.jl")
     @testset "diagnostics" include("test_diagnostic.jl")

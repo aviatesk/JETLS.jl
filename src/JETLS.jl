@@ -123,6 +123,7 @@ include("code-action.jl")
 include("code-lens.jl")
 include("formatting.jl")
 include("inlay-hint.jl")
+include("semantic-tokens.jl")
 include("rename.jl")
 include("testrunner/testrunner.jl")
 include("profile.jl")
@@ -464,6 +465,10 @@ function handle_request_message(server::Server, @nospecialize(msg), cancel_flag:
         handle_CodeActionRequest(server, msg, cancel_flag)
     elseif msg isa InlayHintRequest
         handle_InlayHintRequest(server, msg, cancel_flag)
+    elseif msg isa SemanticTokensFullRequest
+        handle_SemanticTokensFullRequest(server, msg, cancel_flag)
+    elseif msg isa SemanticTokensRangeRequest
+        handle_SemanticTokensRangeRequest(server, msg, cancel_flag)
     elseif msg isa DocumentFormattingRequest
         handle_DocumentFormattingRequest(server, msg, cancel_flag)
     elseif msg isa DocumentRangeFormattingRequest
