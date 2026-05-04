@@ -40,8 +40,9 @@ prepend_inference_result = false   # boolean, default: (unset) auto-detect
 references = false                 # boolean, default: false
 testrunner = true                  # boolean, default: true
 
-[inlay_hint]
-block_end_min_lines = 25           # integer, default: 25
+[inlay_hint.block_end]
+enabled = true                     # boolean, default: true
+min_lines = 25                     # integer, default: 25
 
 [testrunner]
 executable = "testrunner"          # string, default: "testrunner" (or "testrunner.bat" on Windows)
@@ -65,7 +66,9 @@ executable = "testrunner"          # string, default: "testrunner" (or "testrunn
   - [`[code_lens] references`](@ref config/code_lens-references)
   - [`[code_lens] testrunner`](@ref config/code_lens-testrunner)
 - [`[inlay_hint]`](@ref config/inlay_hint)
-  - [`[inlay_hint] block_end_min_lines`](@ref config/inlay_hint-block_end_min_lines)
+  - [`[inlay_hint.block_end]`](@ref config/inlay_hint-block_end)
+    - [`[inlay_hint.block_end] enabled`](@ref config/inlay_hint-block_end-enabled)
+    - [`[inlay_hint.block_end] min_lines`](@ref config/inlay_hint-block_end-min_lines)
 - [`[testrunner]`](@ref config/testrunner)
   - [`[testrunner] executable`](@ref config/testrunner-executable)
 
@@ -480,21 +483,33 @@ testrunner = false  # Disable TestRunner code lenses
 
 Configure inlay hint behavior.
 
-#### [`[inlay_hint] block_end_min_lines`](@id config/inlay_hint-block_end_min_lines)
+#### [`[inlay_hint.block_end]`](@id config/inlay_hint-block_end)
+
+Inlay hints displayed at block `end` keywords.
+See [Block-end hints](@ref features/inlay-hint/block-end) for details.
+
+##### [`[inlay_hint.block_end] enabled`](@id config/inlay_hint-block_end-enabled)
+
+- **Type**: boolean
+- **Default**: `true`
+
+Enable or disable block-end inlay hints.
+
+```toml
+[inlay_hint.block_end]
+enabled = false  # Disable block-end inlay hints
+```
+
+##### [`[inlay_hint.block_end] min_lines`](@id config/inlay_hint-block_end-min_lines)
 
 - **Type**: integer
 - **Default**: `25`
 
-Minimum number of lines a block must span before JETLS displays an inlay hint
-at its `end` keyword. Inlay hints show what construct is ending, such as
-`module Foo`, `function foo` or `@testset "foo"`, helping navigate long blocks.
-
-Supported block types include `module`, `function`, `macro`, `struct`,
-`if`/`@static if`, `let`, `for`, `while`, and `@testset`.
+Minimum number of lines a block must span before its `end`-tag inlay hint is displayed.
 
 ```toml
-[inlay_hint]
-block_end_min_lines = 10  # Show hints for blocks with 10+ lines
+[inlay_hint.block_end]
+min_lines = 10  # Show hints for blocks with 10+ lines
 ```
 
 ### [`[testrunner]`](@id config/testrunner)

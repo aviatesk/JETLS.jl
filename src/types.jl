@@ -533,8 +533,13 @@ end
     testrunner::Maybe{Bool}
 end
 
+@option struct InlayHintBlockEndConfig <: ConfigSection
+    enabled::Maybe{Bool}
+    min_lines::Maybe{Int}
+end
+
 @option struct InlayHintConfig <: ConfigSection
-    block_end_min_lines::Maybe{Int}
+    block_end::Maybe{InlayHintBlockEndConfig}
 end
 
 @option struct JETLSConfig <: ConfigSection
@@ -559,7 +564,8 @@ const DEFAULT_CONFIG = JETLSConfig(;
     formatter = "Runic",
     completion = CompletionConfig(LaTeXEmojiConfig(missing), MethodSignatureConfig(missing)),
     code_lens = CodeLensConfig(false, true),
-    inlay_hint = InlayHintConfig(25),
+    inlay_hint = InlayHintConfig(
+        InlayHintBlockEndConfig(true, 25)),
     initialization_options = DEFAULT_INIT_OPTIONS)
 
 function get_default_config(path::Symbol...)

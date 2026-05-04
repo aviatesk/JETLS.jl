@@ -273,7 +273,9 @@ end
             # hints, and disable type inlay hints to avoid noise from
             # inferred types.
             "inlay_hint" => Dict{String,Any}(
-                "block_end_min_lines" => 0,
+                "block_end" => Dict{String,Any}(
+                    "min_lines" => 0,
+                ),
             ),
             # Use `cat` as a test formatter (just echoes input)
             "formatter" => Dict{String,Any}(

@@ -23,7 +23,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Announcement
 
-> [!warning]
+> [!info]
 > JETLS requires Julia 1.12.2 or later.
 > It does not support Julia 1.12.1 or earlier, nor Julia 1.13+/nightly.
 
@@ -43,6 +43,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > ```
 > This disables analysis for matched files. Basic features like completion still might work, but most LSP features will be unfunctional.
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
+
+> [!warning]
+> The `inlay_hint` configuration was reorganized into nested sub-tables so each hint kind has its own `enabled` toggle alongside its options.
+> The new shape adds [`inlay_hint.block_end.enabled`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint-block_end-enabled) for toggling block-end hints independently, and renames `inlay_hint.block_end_min_lines` to [`inlay_hint.block_end.min_lines`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint-block_end-min_lines).
+> Existing configs keep working for now: the legacy key is auto-migrated at load time with a one-shot deprecation warning. The legacy alias will be removed in a future release (around one month from now), so please update your config.
 
 ### Added
 

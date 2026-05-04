@@ -7,6 +7,13 @@ const JETLS_VERSION = let
     isfile(version_file) ? strip(read(version_file, String)) : "unknown"
 end
 
+# Append `old_path => new_path` pairs to register a key migration.
+# Each path is a list of nested keys; `migrate_deprecated_config_keys!` consults this
+# table and rewrites raw user config dicts before parsing.
+const deprecated_configurations = Pair{Vector{String},Vector{String}}[
+    ["inlay_hint", "block_end_min_lines"] => ["inlay_hint", "block_end", "min_lines"],
+]
+
 const __init__hooks__ = Any[]
 push_init_hook!(hook) = push!(__init__hooks__, hook)
 function __init__()

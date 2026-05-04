@@ -448,11 +448,13 @@ Run and re-run `@testset` blocks directly from the editor. See
 
 ## [Inlay hint](@id features/inlay-hint)
 
-Show inline annotations in the editor without modifying the source. JETLS
-currently supports block-end hints that label the construct a long `end`
-keyword closes. See
-[`[inlay_hint] block_end_min_lines`](@ref config/inlay_hint-block_end_min_lines)
-for the threshold configuration.
+### [Block-end hints](@id features/inlay-hint/block-end)
+
+Label the construct that a long `end` keyword closes — `module Foo`,
+`function foo`, `@testset "foo"`, and so on — to make navigation in long
+blocks easier.
+See [`[inlay_hint.block_end]`](@ref config/inlay_hint-block_end) for
+enable/disable and threshold configuration.
 
 > ```@raw html
 > <div class="display-light-only">
