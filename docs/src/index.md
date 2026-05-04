@@ -151,7 +151,7 @@ vim.lsp.config("jetls", {
 vim.lsp.enable("jetls")
 ```
 
-If you enable the [`code_lens.references`](@ref config/code_lens-references)
+If you enable the [`code_lens.references`](@ref config/code_lens/references)
 configuration option, also register a handler for the
 `editor.action.showReferences` command, which JETLS emits on the reference-count
 code lens following the VSCode convention.[^show_references_handler]

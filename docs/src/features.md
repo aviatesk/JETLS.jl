@@ -127,7 +127,7 @@ placeholders with type annotations. Inferred return type and documentation
 are resolved lazily.
 
 See [`[completion.method_signature] prepend_inference_result`](@ref
-config/completion-method_signature-prepend_inference_result) for the
+config/completion/method_signature/prepend_inference_result) for the
 configuration option that shows the inferred return type inline.
 
 > ```@raw html
@@ -406,7 +406,7 @@ lenses.
 
 ### [Reference count](@id features/code-lens/references)
 
-When [`code_lens.references`](@ref config/code_lens-references) is enabled,
+When [`code_lens.references`](@ref config/code_lens/references) is enabled,
 a reference count is displayed above each top-level symbol (functions,
 structs, constants, abstract/primitive types, modules). Clicking the lens
 dispatches the `editor.action.showReferences` command (a VSCode
@@ -453,7 +453,7 @@ Run and re-run `@testset` blocks directly from the editor. See
 Label the construct that a long `end` keyword closes — `module Foo`,
 `function foo`, `@testset "foo"`, and so on — to make navigation in long
 blocks easier.
-See [`[inlay_hint.block_end]`](@ref config/inlay_hint-block_end) for
+See [`[inlay_hint.block_end]`](@ref config/inlay_hint/block_end) for
 enable/disable and threshold configuration.
 
 > ```@raw html

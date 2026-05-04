@@ -38,7 +38,7 @@
           "properties": {
             "latex_emoji": {
               "additionalProperties": false,
-              "description": "LaTeX and emoji completion configuration. See [documentation](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/completion-latex_emoji-strip_prefix).",
+              "description": "LaTeX and emoji completion configuration. See [documentation](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/completion/latex_emoji/strip_prefix).",
               "properties": {
                 "strip_prefix": {
                   "$ref": "#/$defs/Core.Bool",
@@ -49,7 +49,7 @@
             },
             "method_signature": {
               "additionalProperties": false,
-              "description": "Method signature completion configuration. See [documentation](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/completion-method_signature-prepend_inference_result).",
+              "description": "Method signature completion configuration. See [documentation](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/completion/method_signature/prepend_inference_result).",
               "properties": {
                 "prepend_inference_result": {
                   "$ref": "#/$defs/Core.Bool",
@@ -82,7 +82,7 @@
             },
             "patterns": {
               "default": [],
-              "description": "Fine-grained control over diagnostics through pattern matching. See [Pattern-based diagnostic configuration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic-patterns).",
+              "description": "Fine-grained control over diagnostics through pattern matching. See [Pattern-based diagnostic configuration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic/patterns).",
               "items": {
                 "additionalProperties": false,
                 "properties": {
@@ -216,7 +216,7 @@
           "properties": {
             "block_end": {
               "additionalProperties": false,
-              "description": "Block-end inlay hints configuration. See [Block-end hints](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint-block_end).",
+              "description": "Block-end inlay hints configuration. See [Block-end hints](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint/block_end).",
               "properties": {
                 "enabled": {
                   "$ref": "#/$defs/Core.Bool",

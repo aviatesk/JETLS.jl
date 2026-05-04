@@ -178,7 +178,7 @@
               "properties": {
                 "latex_emoji": {
                   "additionalProperties": false,
-                  "markdownDescription": "LaTeX and emoji completion configuration. See [documentation](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/completion-latex_emoji-strip_prefix).",
+                  "markdownDescription": "LaTeX and emoji completion configuration. See [documentation](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/completion/latex_emoji/strip_prefix).",
                   "properties": {
                     "strip_prefix": {
                       "markdownDescription": "Controls whether to strip `\\` or `:` prefix from LaTeX/emoji completion labels. Some editors (e.g., Zed) have sorting issues with backslash in `sortText`. Auto-detected by default; set explicitly if completions appear in wrong order.",
@@ -190,7 +190,7 @@
                 },
                 "method_signature": {
                   "additionalProperties": false,
-                  "markdownDescription": "Method signature completion configuration. See [documentation](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/completion-method_signature-prepend_inference_result).",
+                  "markdownDescription": "Method signature completion configuration. See [documentation](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/completion/method_signature/prepend_inference_result).",
                   "properties": {
                     "prepend_inference_result": {
                       "markdownDescription": "When true, prepends inferred return type to completion documentation, ensuring visibility in editors where `CompletionItem.detail` may be cut off (e.g., Zed). Auto-detected by default based on client name; set explicitly if return types are not visible.",
@@ -291,7 +291,7 @@
                     ],
                     "type": "object"
                   },
-                  "markdownDescription": "Fine-grained control over diagnostics through pattern matching. See [Pattern-based diagnostic configuration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic-patterns).",
+                  "markdownDescription": "Fine-grained control over diagnostics through pattern matching. See [Pattern-based diagnostic configuration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic/patterns).",
                   "type": "array"
                 }
               },
@@ -361,7 +361,7 @@
               "properties": {
                 "block_end": {
                   "additionalProperties": false,
-                  "markdownDescription": "Block-end inlay hints configuration. See [Block-end hints](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint-block_end).",
+                  "markdownDescription": "Block-end inlay hints configuration. See [Block-end hints](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint/block_end).",
                   "properties": {
                     "enabled": {
                       "default": true,

@@ -12,7 +12,7 @@ initialization_options = "Static initialization options that are set once at ser
 enabled = "Enable or disable all JETLS diagnostics. When set to false, no diagnostic messages will be shown."
 all_files = "Report diagnostics for all workspace files (true) or only open files (false). Disable to reduce noise from many warnings."
 allow_unused_underscore = "Suppress unused variable diagnostics for `_`-prefixed names, following the common convention for intentionally unused variables."
-patterns = "Fine-grained control over diagnostics through pattern matching. See [Pattern-based diagnostic configuration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic-patterns)."
+patterns = "Fine-grained control over diagnostics through pattern matching. See [Pattern-based diagnostic configuration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic/patterns)."
 
 [DiagnosticPattern]
 pattern = "The pattern to match. For code matching, use diagnostic codes like `lowering/unused-argument`. For message matching, use text patterns like `Macro name .* not found`. This value is also used as the key when merging configurations from different sources."
@@ -41,8 +41,8 @@ path = "Glob pattern to match files for which analysis should be overridden (e.g
 module_name = "Optional module name to associate with the matched files. When specified, analysis is performed within the context of this module."
 
 [CompletionConfig]
-latex_emoji = "LaTeX and emoji completion configuration. See [documentation](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/completion-latex_emoji-strip_prefix)."
-method_signature = "Method signature completion configuration. See [documentation](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/completion-method_signature-prepend_inference_result)."
+latex_emoji = "LaTeX and emoji completion configuration. See [documentation](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/completion/latex_emoji/strip_prefix)."
+method_signature = "Method signature completion configuration. See [documentation](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/completion/method_signature/prepend_inference_result)."
 
 [LaTeXEmojiConfig]
 strip_prefix = "Controls whether to strip `\\` or `:` prefix from LaTeX/emoji completion labels. Some editors (e.g., Zed) have sorting issues with backslash in `sortText`. Auto-detected by default; set explicitly if completions appear in wrong order."
@@ -55,7 +55,7 @@ references = "Show reference counts above top-level symbols (functions, structs,
 testrunner = "Show `Run`/`Debug` code lenses above `@testset` blocks. Some editors (e.g., Zed) show these as code actions, causing duplication; zed-julia defaults to false."
 
 [InlayHintConfig]
-block_end = "Block-end inlay hints configuration. See [Block-end hints](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint-block_end)."
+block_end = "Block-end inlay hints configuration. See [Block-end hints](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint/block_end)."
 
 [InlayHintBlockEndConfig]
 enabled = "Enable or disable inlay hints displayed at block `end` keywords (e.g., `end # module Foo`). Supports: `module`, `function`, `macro`, `struct`, `if`, `let`, `for`, `while`, `@testset`."

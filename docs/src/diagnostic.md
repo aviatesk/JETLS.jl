@@ -77,7 +77,7 @@ JETLS uses three diagnostic sources:
   [`textDocument/diagnostic`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_diagnostic)
   (for open files) and
   [`workspace/diagnostic`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#workspace_diagnostic)
-  (for unopened files when [`diagnostic.all_files`](@ref config/diagnostic-all_files) is enabled).
+  (for unopened files when [`diagnostic.all_files`](@ref config/diagnostic/all_files) is enabled).
   Most clients request these as you edit, providing real-time feedback without
   requiring a file save. Includes syntax errors and lowering-based analysis
   (`syntax/*`, `lowering/*`).
@@ -495,7 +495,7 @@ Function arguments that are declared but never used in the function body.
 The argument is marked with the `Unnecessary` tag.[^unnecessary_tag]
 
 By default, arguments with names starting with `_` are not reported; see
-[`allow_unused_underscore`](@ref config/diagnostic-allow_unused_underscore).
+[`allow_unused_underscore`](@ref config/diagnostic/allow_unused_underscore).
 
 Example:
 
@@ -517,7 +517,7 @@ Local variables that are never used anywhere in their scope. The
 variable is marked with the `Unnecessary` tag.[^unnecessary_tag]
 
 By default, variables with names starting with `_` are not reported; see
-[`allow_unused_underscore`](@ref config/diagnostic-allow_unused_underscore).
+[`allow_unused_underscore`](@ref config/diagnostic/allow_unused_underscore).
 
 Example:
 
@@ -769,7 +769,7 @@ export bar, @foo  # Names are not sorted alphabetically (JETLS lowering/unsorted
 Top-level diagnostics are reported by JETLS's full analysis feature (source:
 `JETLS/save`), which runs when you save a file. To prevent excessive analysis
 on frequent saves, JETLS uses a debounce mechanism. See the
-[`[full_analysis] debounce`](@ref config/full_analysis-debounce) configuration
+[`[full_analysis] debounce`](@ref config/full_analysis/debounce) configuration
 documentation to adjust the debounce period.
 
 #### [Top-level error (`toplevel/error`)](@id diagnostic/reference/toplevel/error)
@@ -868,7 +868,7 @@ end
 !!! tip
     If you intentionally use abstract field types (e.g., in cases where data
     types are inherently only known at compile time[^nospecialize_tip]),
-    you can suppress this diagnostic using [pattern-based configuration](@ref config/diagnostic-patterns):
+    you can suppress this diagnostic using [pattern-based configuration](@ref config/diagnostic/patterns):
     ```toml
     [[diagnostic.patterns]]
     pattern = "`MyStruct` has abstract field `.*`"

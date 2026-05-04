@@ -46,7 +46,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 > [!warning]
 > The `inlay_hint` configuration was reorganized into nested sub-tables so each hint kind has its own `enabled` toggle alongside its options.
-> The new shape adds [`inlay_hint.block_end.enabled`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint-block_end-enabled) for toggling block-end hints independently, and renames `inlay_hint.block_end_min_lines` to [`inlay_hint.block_end.min_lines`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint-block_end-min_lines).
+> The new shape adds [`inlay_hint.block_end.enabled`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint/block_end/enabled) for toggling block-end hints independently, and renames `inlay_hint.block_end_min_lines` to [`inlay_hint.block_end.min_lines`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint/block_end/min_lines).
 > Existing configs keep working for now: the legacy key is auto-migrated at load time with a one-shot deprecation warning. The legacy alias will be removed in a future release (around one month from now), so please update your config.
 
 ### Added
@@ -139,7 +139,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
-- The [reference-count code lens](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/code_lens-references) now emits `editor.action.showReferences` (a VSCode convention command) directly, instead of the JETLS-defined `jetls.showReferences`. Editors that follow the VSCode convention (e.g. Zed) now dispatch the lens out of the box; editors that do not (e.g. Neovim) need to register a client-side handler.
+- The [reference-count code lens](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/code_lens/references) now emits `editor.action.showReferences` (a VSCode convention command) directly, instead of the JETLS-defined `jetls.showReferences`. Editors that follow the VSCode convention (e.g. Zed) now dispatch the lens out of the box; editors that do not (e.g. Neovim) need to register a client-side handler.
 
 - When a reference-count code lens is clicked on a file whose full analysis has not yet run, a warning notification (via `window/showMessage`) is now shown instead of an empty references peek.
 
@@ -149,7 +149,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
-- Fixed `textDocument/references` so that `includeDeclaration=false` now correctly excludes method definitions and declarations of the target binding. As a side benefit, the [reference-count code lens](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/code_lens-references) now reports accurate counts.
+- Fixed `textDocument/references` so that `includeDeclaration=false` now correctly excludes method definitions and declarations of the target binding. As a side benefit, the [reference-count code lens](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/code_lens/references) now reports accurate counts.
 
 - Fixed the reference-count code lens, `textDocument/references`, `textDocument/documentHighlight`, and `textDocument/rename` silently dropping results after a full analysis completes.
 
@@ -576,10 +576,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   constants, abstract types, primitive types, modules). When enabled, a code
   lens showing "N references" appears above each symbol definition. Clicking it
   opens the references panel. This feature is opt-in and can be enabled via
-  [`code_lens.references`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/code_lens-references)
+  [`code_lens.references`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/code_lens/references)
   configuration.
 
-- Added [`code_lens.testrunner`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/code_lens-testrunner)
+- Added [`code_lens.testrunner`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/code_lens/testrunner)
   configuration option to enable or disable TestRunner code lenses. Some editors
   (e.g., Zed) display code lenses as code actions, causing duplication.
   The [aviatesk/zed-julia](https://github.com/aviatesk/zed-julia) extension
@@ -598,7 +598,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `@testset`), an inlay hint is displayed at the `end` keyword showing what
   construct is ending, such as `module Foo` or `function bar`. The minimum
   block length can be configured via
-  [`inlay_hint.block_end_min_lines`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint-block_end_min_lines)
+  [`inlay_hint.block_end_min_lines`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint/block_end_min_lines)
   (default: 25 lines).
 
 ### Deprecated
@@ -672,7 +672,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   support to provide `JETLS/live` diagnostics (syntax errors and lowering-based
   analysis) for unopened files in the workspace.
 
-- Added [`diagnostic.all_files`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic-all_files)
+- Added [`diagnostic.all_files`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic/all_files)
   configuration option to control whether diagnostics are reported for unopened
   files. Disabling this can be useful to reduce noise when there are many
   warnings across the workspace.

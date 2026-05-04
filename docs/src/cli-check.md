@@ -172,8 +172,8 @@ For more details on available runtime flags, see the [Pkg documentation on runti
 configuration file used by the language server, and includes:
 
 - [Diagnostic severity overrides](@ref diagnostic/configuring)
-- [Pattern-based diagnostic filtering](@ref config/diagnostic-patterns)
-- [Path-specific rules](@ref config/diagnostic-patterns)
+- [Pattern-based diagnostic filtering](@ref config/diagnostic/patterns)
+- [Path-specific rules](@ref config/diagnostic/patterns)
 
 Example configuration to suppress certain diagnostics in CI:
 

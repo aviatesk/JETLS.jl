@@ -51,30 +51,30 @@ executable = "testrunner"          # string, default: "testrunner" (or "testrunn
 ## [Configuration reference](@id config/reference)
 
 - [`[full_analysis]`](@ref config/full_analysis)
-  - [`[full_analysis] debounce`](@ref config/full_analysis-debounce)
-  - [`[full_analysis] auto_instantiate`](@ref config/full_analysis-auto_instantiate)
+  - [`[full_analysis] debounce`](@ref config/full_analysis/debounce)
+  - [`[full_analysis] auto_instantiate`](@ref config/full_analysis/auto_instantiate)
 - [`formatter`](@ref config/formatter)
 - [`[diagnostic]`](@ref config/diagnostic)
-  - [`[diagnostic] enabled`](@ref config/diagnostic-enabled)
-  - [`[diagnostic] all_files`](@ref config/diagnostic-all_files)
-  - [`[diagnostic] allow_unused_underscore`](@ref config/diagnostic-allow_unused_underscore)
-  - [`[[diagnostic.patterns]]`](@ref config/diagnostic-patterns)
+  - [`[diagnostic] enabled`](@ref config/diagnostic/enabled)
+  - [`[diagnostic] all_files`](@ref config/diagnostic/all_files)
+  - [`[diagnostic] allow_unused_underscore`](@ref config/diagnostic/allow_unused_underscore)
+  - [`[[diagnostic.patterns]]`](@ref config/diagnostic/patterns)
 - [`[completion]`](@ref config/completion)
-  - [`[completion.latex_emoji] strip_prefix`](@ref config/completion-latex_emoji-strip_prefix)
-  - [`[completion.method_signature] prepend_inference_result`](@ref config/completion-method_signature-prepend_inference_result)
+  - [`[completion.latex_emoji] strip_prefix`](@ref config/completion/latex_emoji/strip_prefix)
+  - [`[completion.method_signature] prepend_inference_result`](@ref config/completion/method_signature/prepend_inference_result)
 - [`[code_lens]`](@ref config/code_lens)
-  - [`[code_lens] references`](@ref config/code_lens-references)
-  - [`[code_lens] testrunner`](@ref config/code_lens-testrunner)
+  - [`[code_lens] references`](@ref config/code_lens/references)
+  - [`[code_lens] testrunner`](@ref config/code_lens/testrunner)
 - [`[inlay_hint]`](@ref config/inlay_hint)
-  - [`[inlay_hint.block_end]`](@ref config/inlay_hint-block_end)
-    - [`[inlay_hint.block_end] enabled`](@ref config/inlay_hint-block_end-enabled)
-    - [`[inlay_hint.block_end] min_lines`](@ref config/inlay_hint-block_end-min_lines)
+  - [`[inlay_hint.block_end]`](@ref config/inlay_hint/block_end)
+    - [`[inlay_hint.block_end] enabled`](@ref config/inlay_hint/block_end/enabled)
+    - [`[inlay_hint.block_end] min_lines`](@ref config/inlay_hint/block_end/min_lines)
 - [`[testrunner]`](@ref config/testrunner)
-  - [`[testrunner] executable`](@ref config/testrunner-executable)
+  - [`[testrunner] executable`](@ref config/testrunner/executable)
 
 ### [`[full_analysis]`](@id config/full_analysis)
 
-#### [`[full_analysis] debounce`](@id config/full_analysis-debounce)
+#### [`[full_analysis] debounce`](@id config/full_analysis/debounce)
 
 - **Type**: number (seconds)
 - **Default**: `1.0`
@@ -90,7 +90,7 @@ may delay diagnostic updates.
 debounce = 2.0  # Wait 2 seconds after save before analyzing
 ```
 
-#### [`[full_analysis] auto_instantiate`](@id config/full_analysis-auto_instantiate)
+#### [`[full_analysis] auto_instantiate`](@id config/full_analysis/auto_instantiate)
 
 - **Type**: boolean
 - **Default**: `true`
@@ -155,7 +155,7 @@ severity level.
 See the [Diagnostic](@ref diagnostic) section for complete diagnostic reference
 including all available codes, their meanings, and examples.
 
-#### [`[diagnostic] enabled`](@id config/diagnostic-enabled)
+#### [`[diagnostic] enabled`](@id config/diagnostic/enabled)
 
 - **Type**: boolean
 - **Default**: `true`
@@ -168,7 +168,7 @@ messages will be shown.
 enabled = false  # Disable all diagnostics
 ```
 
-#### [`[diagnostic] all_files`](@id config/diagnostic-all_files)
+#### [`[diagnostic] all_files`](@id config/diagnostic/all_files)
 
 - **Type**: boolean
 - **Default**: `true`
@@ -189,7 +189,7 @@ there are many warnings across the workspace.
 all_files = false  # Disable diagnostics for unopened files
 ```
 
-#### [`[diagnostic] allow_unused_underscore`](@id config/diagnostic-allow_unused_underscore)
+#### [`[diagnostic] allow_unused_underscore`](@id config/diagnostic/allow_unused_underscore)
 
 - **Type**: boolean
 - **Default**: `true`
@@ -206,7 +206,7 @@ unused variables.
 allow_unused_underscore = false  # Report all unused variables
 ```
 
-#### [`[[diagnostic.patterns]]`](@id config/diagnostic-patterns)
+#### [`[[diagnostic.patterns]]`](@id config/diagnostic/patterns)
 
 Fine-grained control over diagnostics through pattern matching against either
 [diagnostic codes](@ref diagnostic/code) or messages.
@@ -299,7 +299,7 @@ severity = "hint"
 ```
 
 !!! note
-    When [`diagnostic.enabled`](@ref config/diagnostic-enabled) is `false`,
+    When [`diagnostic.enabled`](@ref config/diagnostic/enabled) is `false`,
     all diagnostics are disabled regardless of pattern settings.
 
 #### `[diagnostic]` configuration examples
@@ -374,7 +374,7 @@ additional examples and common use cases.
 
 Configure completion behavior.
 
-#### [`[completion.latex_emoji] strip_prefix`](@id config/completion-latex_emoji-strip_prefix)
+#### [`[completion.latex_emoji] strip_prefix`](@id config/completion/latex_emoji/strip_prefix)
 
 - **Type**: boolean
 - **Default**: (unset) auto-detect based on client
@@ -408,7 +408,7 @@ strip_prefix = true  # Force prefix stripping for clients with sortText issues
     If explicitly setting this option clearly improves behavior for your client,
     consider submitting a PR to add your client to the [auto-detection](https://github.com/aviatesk/JETLS.jl/blob/14fdc847252579c27e41cd50820aee509f8fd7bd/src/completions.jl#L386) logic.
 
-#### [`[completion.method_signature] prepend_inference_result`](@id config/completion-method_signature-prepend_inference_result)
+#### [`[completion.method_signature] prepend_inference_result`](@id config/completion/method_signature/prepend_inference_result)
 
 - **Type**: boolean
 - **Default**: (unset) auto-detect based on client
@@ -444,7 +444,7 @@ prepend_inference_result = true  # Show return type in documentation
 
 Configure code lens behavior.
 
-#### [`[code_lens] references`](@id config/code_lens-references)
+#### [`[code_lens] references`](@id config/code_lens/references)
 
 - **Type**: boolean
 - **Default**: `false`
@@ -459,7 +459,7 @@ how many times it is referenced in the codebase.
 references = true  # Enable reference count code lenses
 ```
 
-#### [`[code_lens] testrunner`](@id config/code_lens-testrunner)
+#### [`[code_lens] testrunner`](@id config/code_lens/testrunner)
 
 - **Type**: boolean
 - **Default**: `true`
@@ -483,12 +483,12 @@ testrunner = false  # Disable TestRunner code lenses
 
 Configure inlay hint behavior.
 
-#### [`[inlay_hint.block_end]`](@id config/inlay_hint-block_end)
+#### [`[inlay_hint.block_end]`](@id config/inlay_hint/block_end)
 
 Inlay hints displayed at block `end` keywords.
 See [Block-end hints](@ref features/inlay-hint/block-end) for details.
 
-##### [`[inlay_hint.block_end] enabled`](@id config/inlay_hint-block_end-enabled)
+##### [`[inlay_hint.block_end] enabled`](@id config/inlay_hint/block_end/enabled)
 
 - **Type**: boolean
 - **Default**: `true`
@@ -500,7 +500,7 @@ Enable or disable block-end inlay hints.
 enabled = false  # Disable block-end inlay hints
 ```
 
-##### [`[inlay_hint.block_end] min_lines`](@id config/inlay_hint-block_end-min_lines)
+##### [`[inlay_hint.block_end] min_lines`](@id config/inlay_hint/block_end/min_lines)
 
 - **Type**: integer
 - **Default**: `25`
@@ -514,7 +514,7 @@ min_lines = 10  # Show hints for blocks with 10+ lines
 
 ### [`[testrunner]`](@id config/testrunner)
 
-#### [`[testrunner] executable`](@id config/testrunner-executable)
+#### [`[testrunner] executable`](@id config/testrunner/executable)
 
 - **Type**: string
 - **Default**: `"testrunner"` or `"testrunner.bat"` on Windows
@@ -692,7 +692,7 @@ editors.
 
 ### [Configuration merging](@id config/merge)
 
-For array-type configuration fields (such as [`diagnostic.patterns`](@ref config/diagnostic-patterns)),
+For array-type configuration fields (such as [`diagnostic.patterns`](@ref config/diagnostic/patterns)),
 entries from both LSP config and file config are merged rather than one
 completely overriding the other. Entries with same keys are merged with file
 config taking precedence, while entries unique to either source are preserved.
