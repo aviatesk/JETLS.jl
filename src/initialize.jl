@@ -226,6 +226,23 @@ function handle_InitializeRequest(
         end
     end
 
+    # JETLS only emits identifier-level semantic tokens (parameter / typeParameter /
+    # variable / unspecified), leaving keywords / operators / literals / comments /
+    # macros to the client's syntactic highlighter. This only makes sense when the
+    # client merges semantic tokens on top of its syntactic highlighting (i.e.
+    # `augmentsSyntaxTokens = true`). For clients without that guarantee, we skip
+    # registration entirely so that they fall back to syntactic highlighting alone.
+    if !supports(state, :textDocument, :semanticTokens, :augmentsSyntaxTokens)
+        semanticTokensProvider = nothing
+    elseif supports(server, :textDocument, :semanticTokens, :dynamicRegistration)
+        semanticTokensProvider = nothing # will be registered dynamically
+    else
+        semanticTokensProvider = semantic_tokens_options()
+        if JETLS_DEV_MODE
+            @info "Registering 'textDocument/semanticTokens' with `InitializeResponse`"
+        end
+    end
+
     if supports(server, :textDocument, :rename, :dynamicRegistration)
         renameProvider = nothing # will be registered dynamically
     else
@@ -286,6 +303,7 @@ function handle_InitializeRequest(
             documentRangeFormattingProvider,
             executeCommandProvider,
             inlayHintProvider,
+            semanticTokensProvider,
             renameProvider,
             workspaceSymbolProvider,
         ),
@@ -504,6 +522,19 @@ function handle_InitializedNotification(server::Server)
         end
     else
         # NOTE If rename's `dynamicRegistration` is not supported,
+        # it needs to be registered along with initialization in the `InitializeResponse`.
+    end
+
+    # See the matching capability check in `handle_InitializeRequest` for why we
+    # only register semantic tokens when `augmentsSyntaxTokens = true`.
+    if (supports(state, :textDocument, :semanticTokens, :augmentsSyntaxTokens) &&
+        supports(server, :textDocument, :semanticTokens, :dynamicRegistration))
+        push!(registrations, semantic_tokens_registration())
+        if JETLS_DEV_MODE
+            @info "Dynamically registering 'textDocument/semanticTokens' upon `InitializedNotification`"
+        end
+    else
+        # NOTE If semanticTokens's `dynamicRegistration` is not supported,
         # it needs to be registered along with initialization in the `InitializeResponse`.
     end
 

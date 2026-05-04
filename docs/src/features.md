@@ -467,6 +467,95 @@ for the threshold configuration.
 > </div>
 > ```
 
+## [Semantic tokens](@id features/semantic-tokens)
+
+JETLS implements [`textDocument/semanticTokens`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_semanticTokens)
+to augment the editor's built-in syntactic highlighter (e.g. tree-sitter
+or TextMate grammar) with information that requires semantic analysis.
+Tokens for keywords, operators, literals, comments, and macros are left
+to the syntactic highlighter, which typically handles them well without
+semantic information.
+
+Emitted token types:
+
+- `parameter` — function arguments
+- `typeParameter` — `where` clause type variables
+- `variable` — locally scoped names
+- `jetls.unspecified` — global bindings (function, type, module, variable etc.)
+  whose concrete kind JETLS does not classify.
+  Sending a custom (non-predefined) type leaves the syntactic highlighter's
+  color in place while still allowing modifier styling (e.g. `.declaration`)
+  to apply.[^jetls_unspecified_styling]
+
+Modifiers:
+
+- `declaration` — explicit `local x` declarations
+- `definition` — assignments, function arguments, `where` bindings
+
+[^jetls_unspecified_styling]:
+    Do not assign a foreground color or `fontStyle` to `jetls.unspecified`
+    itself (e.g. `"jetls.unspecified": "#abcdef"`) — doing so would override the
+    syntactic highlighter's color, defeating the very reason we use a custom
+    token type. Modifier-targeted rules (`*.declaration`, `jetls.unspecified.declaration` etc.)
+    are the intended way to style these tokens.
+
+How these tokens are rendered depends on the editor theme. In the
+screenshot below (VSCode with the [Catppuccin theme](https://github.com/catppuccin/vscode)),
+`xs` and `factor` are colored as `parameter` and `T` as `typeParameter`, while
+the locally bound `total` and `x` use the `variable` color.
+Identifiers carrying the `definition` modifier are rendered in bold, so the
+definition sites of `xs`, `factor`, `T`, `total`, and `x` stand out from their
+references.[^semantic_tokens_customization]
+
+[^semantic_tokens_customization]:
+    The semantic tokens screenshots use
+    `editor.semanticTokenColorCustomizations` on top of Catppuccin to
+    color `typeParameter` distinctly and to render tokens carrying the
+    `definition` modifier in bold:
+
+    ```json
+    "editor.semanticTokenColorCustomizations": {
+      "[Catppuccin Latte]": {
+        "rules": {
+          "typeParameter": "#fe640b",
+          "*.definition": { "bold": true }
+        }
+      },
+      "[Catppuccin Mocha]": {
+        "rules": {
+          "typeParameter": "#fab387",
+          "*.definition": { "bold": true }
+        }
+      }
+    }
+    ```
+
+> ```@raw html
+> <div class="display-light-only">
+> ```
+> ![Semantic tokens](assets/features/semantic-tokens.png)
+> ```@raw html
+> </div>
+> <div class="display-dark-only">
+> ```
+> ![Semantic tokens](assets/features/semantic-tokens-dark.png)
+> ```@raw html
+> </div>
+> ```
+
+Both `textDocument/semanticTokens/full` and `textDocument/semanticTokens/range`
+requests are supported. Delta updates are not implemented.
+
+!!! note
+    Because JETLS only emits identifier classifications and leaves
+    keywords / operators / literals / comments / macros to the editor's
+    syntactic highlighter, semantic tokens are only registered when the
+    client advertises
+    [`augmentsSyntaxTokens = true`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#semanticTokensClientCapabilities)
+    in its capabilities.
+    Clients that do not declare this capability, or that explicitly set it to
+    `false`, will not have JETLS's semantic tokens feature activated.
+
 ## [Rename](@id features/rename)
 
 Rename local or global bindings across files analyzed together (e.g., a
