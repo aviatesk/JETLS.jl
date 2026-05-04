@@ -193,12 +193,8 @@ function extract_function_symbol!(
 end
 
 function extract_function_name(sig::SyntaxTreeC)
-    sig = unwrap_where(sig)
+    sig = unwrap_funcdef_sig(sig)
     k = JS.kind(sig)
-    if k === JS.K"::"
-        JS.numchildren(sig) ≥ 1 || return nothing
-        return extract_function_name(sig[1])::Union{Nothing,Tuple{String,SyntaxTreeC}}
-    end
     if k === JS.K"call"
         JS.numchildren(sig) ≥ 1 || return nothing
         callee = sig[1]
@@ -252,7 +248,7 @@ function extract_macro_symbol!(
     )
     JS.numchildren(st0) ≥ 1 || return nothing
     sig_orig = st0[1]
-    sig = unwrap_where(sig_orig)
+    sig = unwrap_funcdef_sig(sig_orig)
     if JS.kind(sig) === JS.K"call"
         JS.numchildren(sig) ≥ 1 || return nothing
         callee = sig[1]
@@ -494,11 +490,7 @@ function extract_toplevel_assignment_symbols!(
     JS.numchildren(st0) ≥ 2 || return nothing
     lhs = st0[1]
     JS.kind(lhs) in JS.KSet". ref" && return nothing # Skip property assignment like obj.field = value
-    lhs_unwrapped = unwrap_where(lhs)
-    if JS.kind(lhs_unwrapped) === JS.K"::"
-        JS.numchildren(lhs_unwrapped) ≥ 1 || return nothing
-        lhs_unwrapped = lhs_unwrapped[1]
-    end
+    lhs_unwrapped = unwrap_funcdef_sig(lhs)
     if JS.kind(lhs_unwrapped) === JS.K"call" || is_mainfunc0(lhs_unwrapped)
         extract_short_function_symbol!(symbols, st0, fi, mod)
         return nothing

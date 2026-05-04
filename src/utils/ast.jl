@@ -497,11 +497,21 @@ function remove_macrocalls(st0::SyntaxTreeC)
     return first(_remove_macrocalls(st0))
 end
 
-function unwrap_where(node::SyntaxTreeC)
-    while JS.kind(node) === JS.K"where" && JS.numchildren(node) ≥ 1
-        node = node[1]
+# Iteratively peel a function-definition signature's `where {…}` clauses and outer `::T`
+# return-type annotation, returning the innermost unwrapped node — usually a `K"call"`, but
+# callers should check (e.g. `f::Int = …` peels to a `K"Identifier"`). Parameter type
+# annotations like `f(x::T)` live inside the call's args, so this pass doesn't touch them.
+# On malformed input (a wrapper with no children) the wrapper is returned as-is, so callers'
+# kind checks naturally filter it without a separate `nothing` branch.
+function unwrap_funcdef_sig(node::SyntaxTreeC)
+    while true
+        k = JS.kind(node)
+        if (k === JS.K"where" || k === JS.K"::") && JS.numchildren(node) ≥ 1
+            node = node[1]
+        else
+            return node
+        end
     end
-    return node
 end
 
 extract_name_val(node::SyntaxTreeC) =
