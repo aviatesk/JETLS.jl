@@ -7,7 +7,7 @@ using JETLS.TypeAnnotation
 using JETLS.JET: CC
 
 # Run the full pipeline a typical caller would: parse → lower → infer, then
-# wrap the chunk's inferred tree (and `st3`, used to identify user-written
+# wrap the thunk's inferred tree (and `st3`, used to identify user-written
 # return values) in an `InferredTreeContext` ready for byte-range queries.
 # Returns `(fi, ctx)` so the test can also access `fi` for `xy_to_offset` etc.
 function type_annotate(code::AbstractString, mod::Module = Main; expect_degrade::Bool=false)
@@ -74,9 +74,9 @@ end
 
 @testset "get_inferrable_tree" begin
     # `iterate_toplevel_tree` walks each top-level expression independently;
-    # `get_inferrable_tree` is invoked once per chunk. Verify it lowers all
+    # `get_inferrable_tree` is invoked once per thunk. Verify it lowers all
     # of them, not just the first.
-    @testset "valid input returns inferrable tree for each chunk" begin
+    @testset "valid input returns inferrable tree for each thunk" begin
         let code = """
             let x = 1
                 x
@@ -118,7 +118,7 @@ end
 end
 
 @testset "Inference robustness across method shapes" begin
-    # Method bodies are inferred as their own anonymous chunks: argtypes are
+    # Method bodies are inferred as their own anonymous thunks: argtypes are
     # resolved from the lowered svec, no full-analysis-defined `Method` is
     # required for the body's user-named slots.
     @testset "annotates non-kwarg method body" begin
@@ -147,8 +147,11 @@ end
         end
     end
 
-    # Closures are hoisted to toplevel `:method` 3-arg statements by
-    # `JL.convert_closures`, so the closure body itself is inferred.
+    # Single-method local closures are converted to `OpaqueClosure` form via
+    # `JL.rewrite_local_closures_to_opaque` before `convert_closures`, so CC
+    # resolves both the body and the call site precisely (synthetic-struct
+    # closures would collapse both to `Any` since their type isn't materialized
+    # in `context_module`).
     @testset "annotates closure" begin
         let code = """
             function with_closure(xs::Vector{Int})
@@ -160,21 +163,14 @@ end
             @testset "body" begin
                 @test widenconst(get_type_for_range(ctx, range_of(code, "y * 2"))) === Int
             end
-
-            # Limitation: from the enclosing function's body, calling a closure
-            # dispatches on a synthetic type that isn't in `context_module`, so the
-            # call site degrades to `Any`. Recorded as `@test_broken` to flip when
-            # the synthetic-name lookup gap is closed.
             @testset "closure call from outer body" begin
-                @test_broken widenconst(get_type_for_range(ctx, range_of(code, "inner(xs[1])"))) === Int
+                @test widenconst(get_type_for_range(ctx, range_of(code, "inner(xs[1])"))) === Int
             end
         end
 
-        # Limitation: a captured variable inside the closure body is accessed via
-        # the synthetic self type's field. Since the self slot resolves to `Any`,
-        # the captured variable infers as `Any` and `Any`-typedness propagates
-        # through any operation involving it. The reference inside the closure
-        # would otherwise be `Int` once the gap is closed.
+        # Captured variables flow through the OC's env tuple; the body's
+        # `getfield(self, i)` access (emitted by `convert_closures` in opaque
+        # mode) resolves precisely from CC's PartialOpaque env type.
         @testset "captured variable in closure body" begin
             let code = """
                 function with_capture(xs::Vector{Int})
@@ -184,7 +180,258 @@ end
                 end
                 """
                 _, ctx = type_annotate(code)
-                @test_broken widenconst(get_type_for_range(ctx, range_of(code, "y * factor"))) === Int
+                @test widenconst(get_type_for_range(ctx, range_of(code, "y * factor"))) === Int
+            end
+        end
+
+        # Multiple captures of different types — the OC's env tuple keeps each
+        # capture's type independently; integer-positional access in the body
+        # resolves each precisely.
+        @testset "multiple captures of different types" begin
+            let code = """
+                function multi_cap(xs::Vector{Int})
+                    a = 1
+                    b = 2.0
+                    inner(y::Int) = y + a + b
+                    inner(xs[1])
+                end
+                """
+                _, ctx = type_annotate(code)
+                @test widenconst(get_type_for_range(ctx, range_of(code, "y + a + b"))) === Float64
+                @test widenconst(get_type_for_range(ctx, range_of(code, "inner(xs[1])"))) === Float64
+            end
+        end
+
+        # Nested closures: the inner closure is registered eagerly via
+        # `Base.uncompressed_ir` walk of each outer OC's body, so by the time
+        # CC's depth-first inference reaches the inner OC's call site, the
+        # inner Method already has its citree mapping in `oc_body_trees`.
+        @testset "nested closures (two levels)" begin
+            let code = """
+                function nested2(xs::Vector{Int})
+                    function oc(x::Int)
+                        ic(y::Int) = x + y
+                        ic(2)
+                    end
+                    oc(xs[1])
+                end
+                """
+                _, ctx = type_annotate(code)
+                @test widenconst(get_type_for_range(ctx, range_of(code, "x + y"))) === Int
+                @test widenconst(get_type_for_range(ctx, range_of(code, "ic(2)"))) === Int
+                @test widenconst(get_type_for_range(ctx, range_of(code, "oc(xs[1])"))) === Int
+            end
+        end
+
+        # Two independent single-method closures in the same scope. The rewrite
+        # fires for both and their OCs don't interfere (each gets its own LHS
+        # binding), so each call site infers precisely.
+        @testset "sibling closures (different names)" begin
+            let code = """
+                function siblings(xs::Vector{Int})
+                    a(x::Int) = x + 1
+                    b(x::Int) = x * 2
+                    (a(xs[1]), b(xs[1]))
+                end
+                """
+                _, ctx = type_annotate(code)
+                @test widenconst(get_type_for_range(ctx, range_of(code, "a(xs[1])"))) === Int
+                @test widenconst(get_type_for_range(ctx, range_of(code, "b(xs[1])"))) === Int
+            end
+        end
+
+        # Closure A captures a variable, closure B captures closure A. CC sees
+        # B's env contain a `PartialOpaque` for A and dispatches A's call
+        # precisely.
+        @testset "closure capturing another closure" begin
+            let code = """
+                function chain(xs::Vector{Int})
+                    x = 10
+                    a(y::Int) = x + y
+                    b(z::Int) = a(z) * 2
+                    b(xs[1])
+                end
+                """
+                _, ctx = type_annotate(code)
+                @test widenconst(get_type_for_range(ctx, range_of(code, "a(z) * 2"))) === Int
+                @test widenconst(get_type_for_range(ctx, range_of(code, "b(xs[1])"))) === Int
+            end
+        end
+
+        # Body annotations are always signature-based — same model as top-level method
+        # bodies. Body inference uses the eager `most_general_argtypes(po.typ)`
+        # specialization, and per-call-site specializations only update the call site
+        # annotation (`finishinfer!`'s marker is consumed once at the eager `finishinfer!`
+        # and skipped for subsequent dispatches). The untyped multi-call shape below is the
+        # most observable demonstration: under "last-write-wins" the body would depend on
+        # which call site CC infers last; here it should be `Any`.
+        @testset "closure body annotation is signature-based" begin
+            let code = """
+                function multi_call(xs::Vector{Float64}, ys::Vector{Int})
+                    f(x) = 2x
+                    (f(xs[1]), f(ys[1]))
+                end
+                """
+                _, ctx = type_annotate(code)
+                @test widenconst(get_type_for_range(ctx, range_of(code, "2x"))) === Any
+                @test widenconst(get_type_for_range(ctx, range_of(code, "f(xs[1])"))) === Float64
+                @test widenconst(get_type_for_range(ctx, range_of(code, "f(ys[1])"))) === Int
+            end
+        end
+
+        # Reassigned captures get boxed by `convert_closures` and the body
+        # reads `Core.Box.contents::Any` — JL-side erasure that the rewrite
+        # can't lift, so we just assert the resulting `Any`.
+        @testset "reassigned captured variable boxes to Any" begin
+            let code = """
+                function box_reassign(xs::Vector{Int})
+                    counter = 0
+                    inner(y::Int) = (counter += y; counter)
+                    inner(xs[1])
+                end
+                """
+                _, ctx = type_annotate(code)
+                @test widenconst(get_type_for_range(ctx, range_of(code, "inner(xs[1])"))) === Any
+            end
+        end
+
+        # Mutation outside the closure body that targets a captured variable
+        # also forces boxing — same Box-erasure as the reassignment case.
+        @testset "captured variable mutated after closure creation" begin
+            # Take a dummy argument so the def signature and call expression
+            # are distinguishable substrings — `range_of` would otherwise
+            # match the def first.
+            let code = """
+                function box_outer_mut(xs::Vector{Int})
+                    counter = 0
+                    inner(_) = counter
+                    counter += xs[1]
+                    inner(nothing)
+                end
+                """
+                _, ctx = type_annotate(code)
+                @test widenconst(get_type_for_range(ctx, range_of(code, "inner(nothing)"))) === Any
+            end
+        end
+
+        # Closures with `::RT` annotation: the rewrite preserves the lambda's
+        # return-type assertion (we pass the entire `lambda` subtree into
+        # `K"_opaque_closure"`), so JL's `convert_closures` keeps the
+        # body-level typeassert. The call site here flows the `PartialOpaque`
+        # directly without a `widenconst` boundary, so the precise rt comes
+        # from `abstract_call_opaque_closure`'s body inference, independent of
+        # any refinement to `PartialOpaque.typ`.
+        @testset "closure with return type annotation" begin
+            let code = """
+                function with_rt_annot(xs::Vector{Float64})
+                    f(y)::Float64 = xs[1] + y
+                    f(2.0)
+                end
+                """
+                _, ctx = type_annotate(code)
+                @test widenconst(get_type_for_range(ctx, range_of(code, "f(2.0)"))) === Float64
+            end
+            let code = """
+                function with_rt_annot(xs::Vector{Float64})
+                    f(y)::Int = xs[1] + y
+                    f(2.0)
+                end
+                """
+                _, ctx = type_annotate(code)
+                @test widenconst(get_type_for_range(ctx, range_of(code, "f(2.0)"))) === Int
+            end
+            # `::typeof(captured)` resolves through the OC's env tuple, so the
+            # return type assertion still infers precisely.
+            let code = """
+                function with_computed_rt(xs::Vector{Float64})
+                    x = xs[1]
+                    f(y)::typeof(x) = x + y
+                    f(2.0)
+                end
+                """
+                _, ctx = type_annotate(code)
+                @test widenconst(get_type_for_range(ctx, range_of(code, "f(2.0)"))) === Float64
+            end
+        end
+
+        # Self-referencing closures need boxing for the self capture (the
+        # binding has no value at OC construction time), and `Box.contents`
+        # is `::Any` — same JL-side erasure as the reassigned-capture case,
+        # also present for native closures, so we just assert the `Any`.
+        @testset "self-recursive closure" begin
+            let code = """
+                function self_rec()
+                    fact(n::Int)::Int = n <= 1 ? 1 : n * fact(n - 1)
+                    fact(5)
+                end
+                """
+                _, ctx = type_annotate(code)
+                @test widenconst(get_type_for_range(ctx, range_of(code, "fact(5)"))) === Any
+            end
+        end
+
+        # Multi-method local closures fall through to JL's synthetic struct
+        # path, but `infer_toplevel_tree` skips `Core.eval`, so the synthetic
+        # type never reaches `context_module` and the call collapses. Lifting
+        # this needs sandbox-materialization on the JETLS side — broken until.
+        @testset "multi-method local closure" begin
+            let code = """
+                function with_multi_method(x::Int)
+                    f(y::Int) = y + 1
+                    f(y::String) = string(y, "!")
+                    f(x)
+                end
+                """
+                _, ctx = type_annotate(code)
+                @test_broken widenconst(get_type_for_range(ctx, range_of(code, "f(x)"))) === Int
+            end
+        end
+
+        @testset "do-block as closure argument to map" begin
+            # Typed `do x::Int`: `ASTTypeAnnotator`'s override of
+            # `abstract_eval_new_opaque_closure` refines `PartialOpaque.typ`'s
+            # rt from `OC{argt, T} where T` to `OC{argt, Int}`. The resulting
+            # `Generator{Vector{Int}, OC{argt, Int}}` is fully concrete, so
+            # the OC's rt also survives `Base._collect`'s
+            # `Compiler.return_type(first, …)` probe and sizes the result
+            # vector to `Vector{Int}`. The override is JETLS-only because the
+            # refinement is IPO-unsound for upstream Julia (`typeof(oc)`'s `R`
+            # is fixed at construction by `rt_ub`, not the body's actual
+            # return); see JuliaLang/julia#61718.
+            let code = """
+                function with_do_typed(xs::Vector{Int})
+                    map(xs) do x::Int
+                        x * 2
+                    end
+                end
+                """
+                _, ctx = type_annotate(code)
+                @test widenconst(get_type_for_range(ctx, range_of(code, "x * 2"))) === Int
+                map_call = range_of(code, "map(xs) do x::Int\n        x * 2\n    end")
+                @test widenconst(get_type_for_range(ctx, map_call)) === Vector{Int}
+            end
+
+            # Untyped `do x`: the body is annotated from the eager
+            # `most_general_argtypes(Tuple{Any})` specialization (signature view, like a
+            # top-level untyped method body), so `x * 2` is `Any`. That matches what native
+            # closure inference would expose for the method body.
+            # The call-site annotation widens to `Vector` though: the OC's rt parameter
+            # stays `T<:Any` (no concrete rt to bind from the eager body), so
+            # `Generator{Vector{Int}, F<:OC{Tuple{Any}, T}}` is non-concrete and
+            # `Base._collect` can't recover the element type. Native closures dispatch
+            # through the synthetic struct's method table and infer this as `Vector{Int}`;
+            # matching that here would need call-site-aware refinement (thus kept `@test_broken`).
+            let code = """
+                function with_do(xs::Vector{Int})
+                    map(xs) do x
+                        x * 2
+                    end
+                end
+                """
+                _, ctx = type_annotate(code)
+                @test widenconst(get_type_for_range(ctx, range_of(code, "x * 2"))) === Any
+                map_call = range_of(code, "map(xs) do x\n        x * 2\n    end")
+                @test_broken widenconst(get_type_for_range(ctx, map_call)) === Vector{Int}
             end
         end
     end
@@ -209,7 +456,7 @@ end
     end
 
     # Limitation: `Expr(:static_parameter, i)` references inside a parametric
-    # method body. The chunk's MI is a thunk MI (`def isa Module`); CC's
+    # method body. The thunk's MI is a thunk MI (`def isa Module`); CC's
     # `sptypes_from_meth_instance` forces `EMPTY_SPTYPES` for toplevel MIs,
     # so a body expression that depends on `T` can't recover its bound and
     # falls through to `Any`.
@@ -850,7 +1097,7 @@ end
         end
     end
 
-    # Top-level bare assignment `x = sin(1.0)` lowers to a chunk that
+    # Top-level bare assignment `x = sin(1.0)` lowers to a thunk that
     # prepends `Core.declare_global(Main, :x, true)` + `Expr(:latestworld)`
     # before the RHS. Without intervention the world bump would make
     # `abstract_eval_globalref` widen `Main.sin` to `Any` and the call to

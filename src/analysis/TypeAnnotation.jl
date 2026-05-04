@@ -2,8 +2,8 @@ module TypeAnnotation
 
 using Core.IR
 using JET: CC
-using ..JETLS: JETLS_DEBUG_LOWERING, JETLS_DEV_MODE, JL, JS, SyntaxTreeC,
-    jl_lower_for_scope_resolution, traverse
+using ..JETLS: JETLS_DEBUG_LOWERING, JL, JS, SyntaxTreeC,
+    jl_lower_for_scope_resolution, rewrite_local_closures_to_opaque, traverse
 
 export InferredTreeContext, get_inferrable_tree, get_type_for_range, infer_toplevel_tree
 
@@ -19,6 +19,18 @@ struct ASTTypeAnnotator <: CC.AbstractInterpreter
     inf_params::CC.InferenceParams
     opt_params::CC.OptimizationParams
     inf_cache::Vector{CC.InferenceResult}
+    # OC `Method` → its body's `K"code_info"` SyntaxTree subtree. Populated by
+    # `register_oc_body_trees!` after a thunk's `resolve_definition_effects_in_ir`
+    # has replaced `:opaque_closure_method` Exprs with concrete `Method` objects;
+    # `finishinfer!` then annotates OC body frames CC has infered.
+    oc_body_trees::IdDict{Method,SyntaxTreeC}
+    # OC `Method`s that are pending body annotation — populated by the
+    # `abstract_eval_new_opaque_closure` override before the eager body
+    # inference runs, consumed by `finishinfer!` (annotate then delete). Ensures
+    # the body's citree is annotated from the eager `most_general_argtypes`
+    # specialization (signature view), not from per-call-site specializations
+    # — same model as top-level method bodies.
+    oc_methods_to_annotate::Set{Method}
     function ASTTypeAnnotator(
             toptree::SyntaxTreeC,
             topmi::MethodInstance;
@@ -27,9 +39,12 @@ struct ASTTypeAnnotator <: CC.AbstractInterpreter
                 aggressive_constant_propagation = true
             ),
             opt_params::CC.OptimizationParams = CC.OptimizationParams(),
-            inf_cache::Vector{CC.InferenceResult} = CC.InferenceResult[]
+            inf_cache::Vector{CC.InferenceResult} = CC.InferenceResult[],
+            oc_body_trees::IdDict{Method,SyntaxTreeC} = IdDict{Method,SyntaxTreeC}(),
+            oc_methods_to_annotate::Set{Method} = Set{Method}()
         )
-        return new(toptree, topmi, world, inf_params, opt_params, inf_cache)
+        return new(toptree, topmi, world, inf_params, opt_params, inf_cache,
+            oc_body_trees, oc_methods_to_annotate)
     end
 end
 CC.InferenceParams(interp::ASTTypeAnnotator) = interp.inf_params
@@ -44,13 +59,13 @@ CC.may_optimize(::ASTTypeAnnotator) = false
 # ASTTypeAnnotator doesn't need any sources to be cached, so discard them aggressively
 CC.transform_result_for_cache(::ASTTypeAnnotator, ::CC.InferenceResult, ::Core.SimpleVector) = nothing
 
-# `bail_out_toplevel_call(interp, sv::InferenceState) = sv.restrict_abstract_call_sites`
-# is `true` for thunk MIs (`def isa Module`), and `abstract_call_gf_by_type` then
-# refuses to infer any matching method whose `spec_types` isn't a `isdispatchtuple`
-# — i.e. methods with free type vars like `(::Type{NamedTuple{names}})(::Tuple)`,
-# whose result type would normally be `NamedTuple{names, Tuple{…}}`. Since we
-# always run inference on chunk thunks built from user-source method bodies, that
-# bail-out throws away precise types we'd otherwise have. Override to never bail.
+# `bail_out_toplevel_call(interp, sv::InferenceState) = sv.restrict_abstract_call_sites` is
+# `true` for thunk MIs (`def isa Module`), and `abstract_call_gf_by_type` then refuses to
+# infer any matching method whose `spec_types` isn't a `isdispatchtuple` — i.e. methods with
+# free type vars like `(::Type{NamedTuple{names}})(::Tuple)`, whose result type would
+# normally be `NamedTuple{names, Tuple{…}}`. Since we always run inference on top-level
+# thunks built from user-source method bodies, that bail-out throws away precise types
+# we'd otherwise have. Override to never bail.
 CC.bail_out_toplevel_call(::ASTTypeAnnotator, ::CC.InferenceState) = false
 
 function CC.concrete_eval_eligible(
@@ -67,6 +82,66 @@ function CC.concrete_eval_eligible(
         ret = :none
     end
     return ret
+end
+
+# Refine `PartialOpaque.typ`'s rt parameter using the OC body's eager inference
+# result, so the OC's static type carries the precise rt when it crosses
+# `widenconst` boundaries (most notably `Base.@default_eltype`'s
+# `Tuple{typeof(itr)}` widening in the `map(closure, vec)` chain). Without this,
+# the OC type stays `OpaqueClosure{argt, T} where T<:rt_ub` and downstream
+# `abstract_call_unknown` OC fallbacks see only `T<:Any`.
+#
+# This refinement is IPO-unsound in general — See JuliaLang/julia#61718 for the upstream
+# rejection. We accept the unsoundness here because `ASTTypeAnnotator` results never feed
+# optimization, caching, or runtime — they only drive tooling. The closure→OC rewrite already
+# accepts a class of incompleteness, so this unsoundness is also judged to be acceptable.
+# In most cases, it could become a problem when user code explicitly defines method
+# definitions for the `OpaqueClosure` type, and such cases are currently not very common.
+function CC.abstract_eval_new_opaque_closure(
+        interp::ASTTypeAnnotator, e::Expr, sstate::CC.StatementState, sv::CC.InferenceState
+    )
+    future = @invoke CC.abstract_eval_new_opaque_closure(
+        interp::CC.AbstractInterpreter, e::Expr, sstate::CC.StatementState, sv::CC.InferenceState)
+    rt_exct_effects = future[]
+    po = rt_exct_effects.rt
+    po isa CC.PartialOpaque || return future
+    CC.call_result_unused(sv, sv.currpc) && return future
+    # Mark this OC's `Method` so the eager body inference's `finishinfer!`
+    # annotates the citree (signature view, like top-level methods). The marker
+    # is consumed (deleted) atomically in `finishinfer!` itself; per-call-site
+    # specializations of the same Method find the marker missing and skip.
+    # We can't delete in this override's wrapper `Future` continuation because
+    # that continuation can run synchronously (when the inner `abstract_call_opaque_closure`
+    # returns an immediate `Future` due to in-progress / cache-hit body inference) —
+    # before the body's `finishinfer!` has actually run.
+    push!(interp.oc_methods_to_annotate, po.source)
+    # Re-run the eager body inference the default just did; CC's specialization
+    # cache absorbs the duplication and this avoids re-implementing the
+    # function's `:opaque_closure`-Expr argument-collection plumbing.
+    argtypes = CC.most_general_argtypes(po)
+    pushfirst!(argtypes, po.env)
+    arginfo, stmtinfo = CC.ArgInfo(nothing, argtypes), CC.StmtInfo(true, false)
+    callinfo = CC.abstract_call_opaque_closure(
+        interp, po, arginfo, stmtinfo, sv, #=check=#false)::CC.Future
+    return CC.Future{CC.RTEffects}(callinfo, interp, sv) do callinfo, _, _
+        refined_rt = refine_partial_opaque_rt(po, callinfo.rt)
+        return CC.RTEffects(refined_rt, rt_exct_effects.exct, rt_exct_effects.effects, rt_exct_effects.refinements)
+    end
+end
+
+function refine_partial_opaque_rt(po::CC.PartialOpaque, @nospecialize inferred_rt)
+    typ = po.typ
+    isa(typ, UnionAll) || return po
+    refined = CC.widenconst(inferred_rt)
+    (refined === Any || refined === Union{}) && return po
+    tv = typ.var
+    tv.lb <: refined <: tv.ub || return po
+    refined_typ = try
+        typ{refined}
+    catch
+        return po
+    end
+    return CC.PartialOpaque(refined_typ, po.env, po.parent, po.source)
 end
 
 # Slot type at a specific use site. `argextype(SlotNumber)` returns the joined
@@ -144,8 +219,67 @@ function CC.finishinfer!(frame::CC.InferenceState, interp::ASTTypeAnnotator, cyc
     ret = @invoke CC.finishinfer!(frame::CC.InferenceState, interp::CC.AbstractInterpreter, cycleid::Int)
     if frame.linfo === interp.topmi
         annotate_types!(interp.toptree[1], frame)
+    else
+        def = frame.linfo.def
+        # Annotate only when this is the eager body inference's `finishinfer!`
+        # (marker pushed by `abstract_eval_new_opaque_closure`); per-call-site
+        # specializations of the same Method find the marker missing and skip.
+        # The marker is consumed here (delete atomically with the annotation)
+        # so it doesn't leak into subsequent inferences in the same interp.
+        if def isa Method && def in interp.oc_methods_to_annotate
+            delete!(interp.oc_methods_to_annotate, def)
+            oc_citree = get(interp.oc_body_trees, def, nothing)
+            # `oc_citree[1]` is the body block, matching `annotate_types!`'s contract.
+            oc_citree === nothing || annotate_types!(oc_citree[1], frame)
+        end
     end
     return ret
+end
+
+# Walk `(citree, src)` and register `is_for_opaque_closure` `Method` objects
+# (the result of `resolve_definition_effects_in_ir` replacing
+# `:opaque_closure_method` Exprs in `src.code`) against the matching
+# `K"code_info"` subtree of the corresponding `K"opaque_closure_method"` syntax
+# node. Method-keyed (not CodeInfo-keyed) because `jl_method_set_source`
+# compresses the body — `frame.src` is a freshly decompressed copy and won't
+# `===` the original body `CodeInfo`.
+#
+# Recurses through each newly-registered OC's body via `Base.uncompressed_ir`
+# to register nested closures up-front. Unlike regular closures (which
+# `JL.convert_closures` hoists to top-level `:method` 3-arg statements),
+# `:opaque_closure_method` stays at the construction site, so an inner OC's
+# Method lives inside its outer OC's body — not in the thunk's top-level
+# `src.code`. Without the recursion, when CC dispatches the inner OC and
+# `finishinfer!` runs for it, the lookup against `oc_body_trees` misses.
+function register_oc_body_trees!(
+        oc_body_trees::IdDict{Method,SyntaxTreeC}, citree::SyntaxTreeC, src::CodeInfo
+    )
+    block_citree = JS.kind(citree) === JS.K"code_info" ? citree[1] : citree
+    JS.numchildren(block_citree) == length(src.code) || return oc_body_trees
+    for i = 1:length(src.code)
+        stmt = src.code[i]
+        node = block_citree[i]
+        stmt isa Method || continue
+        ocmeth = stmt
+        if ocmeth isa Method && ocmeth.is_for_opaque_closure
+            JS.kind(node) === JS.K"opaque_closure_method" || continue
+            body_citree = @something find_code_info_child(node) continue
+            haskey(oc_body_trees, ocmeth) && continue # avoid re-recursing on cycles
+            oc_body_trees[ocmeth] = body_citree
+            inner_src = Base.uncompressed_ir(ocmeth)
+            inner_src isa CodeInfo &&
+                register_oc_body_trees!(oc_body_trees, body_citree, inner_src)
+        end
+    end
+    return oc_body_trees
+end
+
+function find_code_info_child(node::SyntaxTreeC)
+    for i = 1:JS.numchildren(node)
+        c = node[i]
+        JS.kind(c) === JS.K"code_info" && return c
+    end
+    return nothing
 end
 
 # Type annotation driver
@@ -223,21 +357,21 @@ If full-analysis hasn't materialized those bindings, every user-defined name fal
 through to `Any` and method bodies are inferred against `Any` argtypes. Argument type
 instantiation simply isn't possible without the bindings being present.
 
-# Design: every chunk is an "anonymous toplevel chunk"
+# Design: "anonymous toplevel thunk" as inference unit
 
-The basic inference unit is a chunk: a `Core.CodeInfo` paired with a `SyntaxTreeC` whose
-`[1]` is the block of statements to annotate, plus a list of slot argtypes. The toplevel
-itself is such a chunk (nargs=0).
+The basic inference unit is a thunk: a `Core.CodeInfo` paired with a `SyntaxTreeC` whose
+first statement is the block of statements to annotate, plus a list of slot argtypes.
+The toplevel itself is such a thunk (nargs=0).
 
 Method definitions are handled the same way — *not* by going through `Method` /
 `MethodInstance` dispatch, but by treating each method's body `CodeInfo` as another
-anonymous chunk:
+anonymous thunk:
 
 1. We walk `inferred[1]` for `:method` 3-arg statements.
 2. For each, we statically evaluate the argtypes svec referenced from `args[2]` against
    `context_module` (`eval_to_value` follows the SSA chain in `src.code`, resolving
    `Core.apply_type`, `Core.Typeof`, `GlobalRef`, etc.).
-3. The resolved argtypes are fed to `infer_chunk!` together with the body `CodeInfo` and
+3. The resolved argtypes are fed to `infer_thunk!` together with the body `CodeInfo` and
    the corresponding `K"code_info"` subtree of `inferred`.
 
 No `Method` lookup, no dispatch, no `Base._which` — body inference needs only what's
@@ -245,7 +379,7 @@ already in `inferred` and `src.code`, plus the caller's `context_module` for res
 `GlobalRef`s in type expressions.
 
 !!! note "Why we don't let `CC.typeinf` recurse into `:method` itself"
-    The straightforward alternative would be to let inference of the toplevel chunk
+    The straightforward alternative would be to let inference of the toplevel thunk
     recurse into `:method` 3-arg statements via the usual dispatch path. That path
     doesn't reach `function f(...; kw...) end`: JuliaLowering introduces synthetic
     kwbody bindings (e.g. `var"#kw_body#f#0"`) whose names don't match the bindings
@@ -258,20 +392,19 @@ already in `inferred` and `src.code`, plus the caller's `context_module` for res
 The static-svec approach inherits a few precision losses around lowering's synthetic
 binding constructs. None of these break correctness; they only degrade types to `Any`.
 
-- **Closures.** `JL.convert_closures` hoists every closure to a toplevel `:method` 3-arg,
-  so closure body inference itself works normally — local variables, parameter types, and
-  the closure's return type are all annotated. But the closure is callable through a
-  synthetic type (`var"#closure#N"`) that isn't `getfield`-resolvable in `context_module`.
-  So:
-  - The closure's self slot resolves to `Any`, which means **captured variables**
-    (accessed via the self field) infer as `Any`.
-  - From the **enclosing function's body**, calling the closure dispatches on this
-    synthetic type, so the call site infers as `Any` and `Any`-typedness propagates
-    outward (e.g. an accumulator that sums a closure's results becomes `Any`).
+- **Closures.** Single-method local closures are rewritten to `K"_opaque_closure"` by
+  [`Closure2Opaque.rewrite_local_closures_to_opaque`](@ref) before `JL.convert_closures`,
+  so CC's native `OpaqueClosure` path handles them precisely (body, captures, and call site all infer).
+  Multi-method local closures (same name with multiple method definitions) aren't
+  representable as a single OC, so the rewrite skips them and JL's synthetic struct path
+  takes over. JL's standard runtime materializes the synthetic struct type before
+  dispatch, but `infer_toplevel_tree` deliberately avoids `Core.eval` to keep analysis
+  side-effect-free, so the synthetic type never appears in `context_module` and call
+  sites collapse to `Any`.
 
 - **Parametric methods.** TypeVars constructed via `Core.TypeVar(:T, ub)` in the argtypes
   svec are flattened to their upper bound (`val.ub`) so the slot has a usable `Type`.
-  Furthermore, the chunk's `MethodInstance` is a thunk MI (`def isa Module`); CC's
+  Furthermore, the thunk's `MethodInstance` is a thunk MI (`def isa Module`); CC's
   `sptypes_from_meth_instance` forces `EMPTY_SPTYPES` for toplevel MIs, so an
   `Expr(:static_parameter, i)` reference inside the body cannot retrieve `T` and infers
   as `Any`.
@@ -285,24 +418,30 @@ infer_toplevel_tree(args...; kwargs...) =
     (@something _infer_toplevel_tree(args...; kwargs...) return nothing).toptree
 
 function _infer_toplevel_tree(
-        ctx3::JL.VariableAnalysisContext, st3::SyntaxTreeC, context_module::Module;
+        ctx3::JL.VariableAnalysisContext, inferrable_tree3::SyntaxTreeC, context_module::Module;
         world::UInt = Base.get_world_counter()
     )
-    inferred = try
-        ctx4, st4 = JL.convert_closures(ctx3, st3)
+    inferrable_tree = try
+        # Route single-method local closures through `OpaqueClosure` instead of
+        # the synthetic-struct path. CC's native OC handling then resolves the
+        # closure body and call sites precisely (the synthetic-struct route
+        # collapses both to `Any` because the synthetic type isn't materialized
+        # in `context_module`).
+        st3_oc = rewrite_local_closures_to_opaque(ctx3, inferrable_tree3)
+        ctx4, st4 = JL.convert_closures(ctx3, st3_oc)
         _, st5 = JL.linearize_ir(ctx4, st4)
         st5
     catch e
         @error "infer_toplevel_tree: Lowering failed" e
         return nothing
     end |> prepare_type_attr
-    lwr = JL.to_lowered_expr(inferred)
+    lwr = JL.to_lowered_expr(inferrable_tree)
 
     Meta.isexpr(lwr, :thunk) || error("infer_toplevel_tree: Unexpected lowering result")
     src = lwr.args[1]::CodeInfo
 
-    interp = @something infer_chunk!(inferred, src, context_module, nothing, world) return nothing
-    infer_method_defs!(inferred, src, context_module, world)
+    interp = infer_thunk!(inferrable_tree, src, context_module, nothing, world)
+    infer_method_defs!(inferrable_tree, src, context_module, world)
     return interp
 end
 
@@ -314,39 +453,33 @@ end
 
 # `argtypes === nothing` keeps the `InferenceResult`'s default argtypes (intended
 # for nargs=0 thunks); a `Vector{Any}` overrides them with one entry per slot.
-function infer_chunk!(
-        tree::SyntaxTreeC, src::CodeInfo, context_module::Module,
-        argtypes::Union{Nothing, Vector{Any}}, world::UInt
-    )
+function infer_thunk!(tree::SyntaxTreeC, src::CodeInfo, context_module::Module,
+                      argtypes::Union{Nothing,Vector{Any}}, world::UInt)
     strip_latestworld!(src)
     mi = construct_toplevel_mi(src, context_module)
     interp = ASTTypeAnnotator(tree, mi; world)
+    register_oc_body_trees!(interp.oc_body_trees, tree, src)
     result = CC.InferenceResult(mi)
     if argtypes !== nothing
         # Thunk MIs have no `specTypes`-derived argtypes, so populate them
-        # explicitly to match the chunk's slot count.
+        # explicitly to match the thunk's slot count.
         empty!(result.argtypes)
         append!(result.argtypes, argtypes)
     end
-    frame = try
-        CC.InferenceState(result, src, #=cache=#:no, interp)
-    catch err
-        JETLS_DEV_MODE && @warn "infer_chunk!: InferenceState failed" err
-        return nothing
-    end
+    frame = CC.InferenceState(result, src, #=cache=#:no, interp)
     CC.typeinf(interp, frame)
     return interp
 end
 
 # `Expr(:latestworld)` syncs the current task's `world_age` to the global world counter.
-# JuliaLowering emits it after any binding-mutating op in the same chunk — `const`,
+# JuliaLowering emits it after any binding-mutating op in the same thunk — `const`,
 # `import`/`using`, method add, or the `Core.declare_global` that toplevel bare assignment
 # expands to — so subsequent stmts can see those changes at runtime. CC mirrors this by
 # flipping `currsaw_latestworld`, which makes `abstract_eval_globalref` widen every global
 # (e.g. `Main.sin`) to `Any` — a guard against mid-inference binding mutation.
 #
 # In our snapshot-typing pass that guard has no subject: full-analysis has already
-# materialized any binding changes the chunk produces into `context_module` at our fixed
+# materialized any binding changes the thunk produces into `context_module` at our fixed
 # `interp.world`, so the snapshot CC reads is already the post-mutation state, and we
 # never execute or cache the inferred result. Stripping the directive is therefore not
 # just safe but a precision win — it lets `Const` propagation survive across what would
@@ -408,7 +541,7 @@ function infer_method_defs!(
         argtypes = something(
             resolve_method_argtypes(sig_ref, src, nargs, context_module, world),
             Any[Any for _ in 1:nargs])
-        infer_chunk!(body_tree, body_codeinfo, context_module, argtypes, world)
+        infer_thunk!(body_tree, body_codeinfo, context_module, argtypes, world)
     end
     return
 end
