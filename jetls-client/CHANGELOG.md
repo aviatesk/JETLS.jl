@@ -12,10 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- Removed the `jetls.showReferences` command. JETLS now emits the built-in
-  `editor.action.showReferences` directly for the reference-count code
-  lens; the new `resolveCodeLens` middleware handles the argument
-  conversion.
+- Removed the `jetls.showReferences` command. JETLS now emits the built-in `editor.action.showReferences` directly for the reference-count code lens; the new `resolveCodeLens` middleware handles the argument conversion.
 
 ## v0.3.5
 
@@ -24,15 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- The `jetls-client.settings` and `jetls-client.initializationOptions`
-  schemas in `package.json` are now auto-generated from the Julia
-  configuration types, ensuring they stay in sync with the server.
-  CI checks have also been added to verify the schema remains
-  up to date. (aviatesk/JETLS.jl#413)
+- The `jetls-client.settings` and `jetls-client.initializationOptions` schemas in `package.json` are now auto-generated from the Julia configuration types, ensuring they stay in sync with the server. CI checks have also been added to verify the schema remains up to date. (aviatesk/JETLS.jl#413)
 
-- Removed unused test dependencies (`mocha`, `@types/mocha`,
-  `@vscode/test-electron`), reducing the dependency footprint
-  and eliminating associated security vulnerabilities.
+- Removed unused test dependencies (`mocha`, `@types/mocha`, `@vscode/test-electron`), reducing the dependency footprint and eliminating associated security vulnerabilities.
 
 ## v0.3.4
 
@@ -41,17 +32,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Added `code_lens.references` configuration option (default: `false`).
-  When enabled, shows reference counts for top-level symbols such as
-  functions, structs, constants, abstract types, primitive types, and
-  modules.
-- Added `jetls.showReferences` command that opens the references panel
-  when clicking a reference count code lens. (aviatesk/JETLS.jl#513)
+- Added `code_lens.references` configuration option (default: `false`). When enabled, shows reference counts for top-level symbols such as functions, structs, constants, abstract types, primitive types, and modules.
+- Added `jetls.showReferences` command that opens the references panel when clicking a reference count code lens. (aviatesk/JETLS.jl#513)
 
 ### Changed
 
-- Updated server launch to use the `jetls serve` subcommand explicitly.
-  (aviatesk/JETLS.jl#528, aviatesk/JETLS.jl#533)
+- Updated server launch to use the `jetls serve` subcommand explicitly. (aviatesk/JETLS.jl#528, aviatesk/JETLS.jl#533)
 - Updated dependency versions to fix audit issues.
 
 ## v0.3.3
@@ -61,9 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Added `all_files` configuration option (default: `true`). When enabled, JETLS
-  reports diagnostics for all Julia files in the workspace. When disabled,
-  diagnostics are only reported for files currently open in the editor.
+- Added `all_files` configuration option (default: `true`). When enabled, JETLS reports diagnostics for all Julia files in the workspace. When disabled, diagnostics are only reported for files currently open in the editor.
 
 ## v0.3.2
 
@@ -72,12 +56,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Added file system watchers for `workspace/didChangeWatchedFiles`. While JETLS
-  registers file watchers on the server side, vscode-languageclient doesn't
-  automatically set up the actual file system watchers in response.
-  This change ensures file change notifications are properly sent to the server,
-  enabling features like automatic config reloading and diagnostics refresh
-  when files change outside the editor.
+- Added file system watchers for `workspace/didChangeWatchedFiles`. While JETLS registers file watchers on the server side, vscode-languageclient doesn't automatically set up the actual file system watchers in response. This change ensures file change notifications are properly sent to the server, enabling features like automatic config reloading and diagnostics refresh when files change outside the editor.
 
 ## v0.3.1
 
@@ -86,11 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Added `allow_unused_underscore` configuration option (default: `true`). When
-  enabled, unused variable diagnostics (`lowering/unused-argument`,
-  `lowering/unused-local`) are suppressed for names starting with `_`
-  (underscore), following the common convention where `_`-prefixed names
-  indicate intentionally unused variables.
+- Added `allow_unused_underscore` configuration option (default: `true`). When enabled, unused variable diagnostics (`lowering/unused-argument`, `lowering/unused-local`) are suppressed for names starting with `_` (underscore), following the common convention where `_`-prefixed names indicate intentionally unused variables.
 
 ## v0.3.0
 
@@ -99,11 +74,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Fixed Windows spawning when using default settings (without explicit
-  `jetls-client.executable` configuration). The previous fix in v0.2.6 only
-  worked when users explicitly set the executable path to `jetls.bat`.
-  Now the extension always uses shell spawning on Windows, allowing `jetls`
-  to resolve to `jetls.bat` automatically. Thanks to @visr. (aviatesk/JETLS.jl#375)
+- Fixed Windows spawning when using default settings (without explicit `jetls-client.executable` configuration). The previous fix in v0.2.6 only worked when users explicitly set the executable path to `jetls.bat`. Now the extension always uses shell spawning on Windows, allowing `jetls` to resolve to `jetls.bat` automatically. Thanks to @visr. (aviatesk/JETLS.jl#375)
 
 ## v0.2.7
 
@@ -121,9 +92,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Fixed Windows support by using `jetls.bat` instead of `jetls.exe` as the
-  default executable, and enabling shell spawn mode for batch files.
-  Fixes aviatesk/JETLS.jl#339. Thanks to @visr. (aviatesk/JETLS.jl#372)
+- Fixed Windows support by using `jetls.bat` instead of `jetls.exe` as the default executable, and enabling shell spawn mode for batch files. Fixes aviatesk/JETLS.jl#339. Thanks to @visr. (aviatesk/JETLS.jl#372)
 
 ## v0.2.5
 
@@ -132,29 +101,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Jupyter notebook support: JETLS now provides language features for Julia code
-  cells in Jupyter notebooks. As shown in the demo below, all code cells are
-  analyzed together as a single source, as if the notebook were a single Julia
-  script. JETLS is aware of all cells, so features like go-to-definition,
-  completions, and diagnostics work across cells just as they would in a
-  regular Julia script.
+- Jupyter notebook support: JETLS now provides language features for Julia code cells in Jupyter notebooks. As shown in the demo below, all code cells are analyzed together as a single source, as if the notebook were a single Julia script. JETLS is aware of all cells, so features like go-to-definition, completions, and diagnostics work across cells just as they would in a regular Julia script.
 
   > JETLS × notebook LSP demo
 
   https://github.com/user-attachments/assets/b5bb5201-d735-4a37-b430-932b519254ee
 
-- Published extension to [Open VSX Registry](https://open-vsx.org/extension/aviatesk/jetls-client)
-  for users of VSCode-compatible editors like [Eclipse Theia](https://theia-ide.org/)
-  or [Cursor](https://cursor.com/).
-- Added `jetls-client.initializationOptions` setting for static server options
-  that require a restart to take effect. Currently supports `n_analysis_workers`
-  for configuring concurrent analysis worker tasks.
-  See <https://aviatesk.github.io/JETLS.jl/release/launching/#init-options> for details.
+- Published extension to [Open VSX Registry](https://open-vsx.org/extension/aviatesk/jetls-client) for users of VSCode-compatible editors like [Eclipse Theia](https://theia-ide.org/) or [Cursor](https://cursor.com/).
+- Added `jetls-client.initializationOptions` setting for static server options that require a restart to take effect. Currently supports `n_analysis_workers` for configuring concurrent analysis worker tasks. See <https://aviatesk.github.io/JETLS.jl/release/launching/#init-options> for details.
 
 ### Changed
 
-- Updated `vscode-languageclient` to 10.0.0-next.18 to enable pull diagnostics
-  support for Jupyter notebook cells.
+- Updated `vscode-languageclient` to 10.0.0-next.18 to enable pull diagnostics support for Jupyter notebook cells.
 
 ## v0.2.4
 
@@ -163,11 +121,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Added `jetls-client.settings.full_analysis.auto_instantiate` configuration option
-  (default: `true`). When enabled, JETLS automatically runs `Pkg.instantiate()` for
-  packages that have not been instantiated yet (e.g., freshly cloned repositories).
-  See <https://aviatesk.github.io/JETLS.jl/release/configuration/#config/full_analysis/auto_instantiate>
-  for more details. (aviatesk/JETLS.jl#337)
+- Added `jetls-client.settings.full_analysis.auto_instantiate` configuration option (default: `true`). When enabled, JETLS automatically runs `Pkg.instantiate()` for packages that have not been instantiated yet (e.g., freshly cloned repositories). See <https://aviatesk.github.io/JETLS.jl/release/configuration/#config/full_analysis/auto_instantiate> for more details. (aviatesk/JETLS.jl#337)
 
 ## v0.2.3
 
@@ -176,24 +130,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Improved
 
-- Improved error handling when the JETLS executable is not found (ENOENT error).
-  The extension now displays a user-friendly error notification with:
+- Improved error handling when the JETLS executable is not found (ENOENT error). The extension now displays a user-friendly error notification with:
   - The command that was attempted
   - The current PATH environment variable
   - A hint to restart VS Code if JETLS is already installed
   - Buttons to install JETLS or view the installation guide
+
   (aviatesk/JETLS.jl#335)
 
 ## v0.2.2
 
 - Commit: [`250188fc`](https://github.com/aviatesk/JETLS.jl/commit/9008d1b)
-- Diff: [`34278b3...250188fc`](https://github.com/aviatesk/JETLS.jl/compare/250188fc...9008d1b)
+- Diff: [`34278b3...250188fc`](https://github.com/aviatesk/JETLS.jl/compare/34278b3...250188fc)
 
 ### Fixed
 
-- (Really) fix installation command syntax in the migration commands invoked via
-  the extension installation/update notification to use correct `Pkg.Apps.add`
-  keyword argument format
+- (Really) fix installation command syntax in the migration commands invoked via the extension installation/update notification to use correct `Pkg.Apps.add` keyword argument format
 
 ## v0.2.1
 
@@ -202,8 +154,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Fixed installation command syntax in documentation and migration notification
-  to use correct `Pkg.Apps.add` keyword argument format
+- Fixed installation command syntax in documentation and migration notification to use correct `Pkg.Apps.add` keyword argument format
 
 ## v0.2.0
 
@@ -226,38 +177,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Added update notification system that prompts users to update the JETLS server
-  when the extension is updated.
+- Added update notification system that prompts users to update the JETLS server when the extension is updated.
 
 ### Changed
 
-- JETLS launch configuration has been significantly updated with the migration to the `jetls` executable app.
-  See <https://aviatesk.github.io/JETLS.jl/release/#Server-installation> for the new installation and configuration guide.
-  Most users can complete the migration by installing the `jetls` executable app:
+- JETLS launch configuration has been significantly updated with the migration to the `jetls` executable app. See <https://aviatesk.github.io/JETLS.jl/release/#Server-installation> for the new installation and configuration guide. Most users can complete the migration by installing the `jetls` executable app:
   ```bash
   julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="release")'
   ```
-- [JETLS configuration](https://aviatesk.github.io/JETLS.jl/release/configuration/)
-  should now be set with `jetls-client.settings` section,
-  not with `jetls-client.jetlsSettings`.
-- Added detailed markdown descriptions for all configuration options.
-  These descriptions are displayed in the VSCode settings UI and as hover
-  tooltips when editing `settings.json`
-- New `jetls-client.executable` configuration option that supports both standard
-  installation (object form with `path` and `threads` properties)
-  and local JETLS checkout (array form with full command)
-- Added support for applying diagnostic configuration to specific files only by
-  specifying glob patterns in the `path` field of
-  `jetls-client.settings.diagnostic.patterns`.
-  For more details, see <https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic/patterns>.
-  (aviatesk/JETLS.jl#313)
+- [JETLS configuration](https://aviatesk.github.io/JETLS.jl/release/configuration/) should now be set with `jetls-client.settings` section, not with `jetls-client.jetlsSettings`.
+- Added detailed markdown descriptions for all configuration options. These descriptions are displayed in the VSCode settings UI and as hover tooltips when editing `settings.json`
+- New `jetls-client.executable` configuration option that supports both standard installation (object form with `path` and `threads` properties) and local JETLS checkout (array form with full command)
+- Added support for applying diagnostic configuration to specific files only by specifying glob patterns in the `path` field of `jetls-client.settings.diagnostic.patterns`. For more details, see <https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic/patterns>. (aviatesk/JETLS.jl#313)
 
 ### Breaking
 
-- Thread setting for JETLS process should now be set via `jetls-client.executable.threads` option,
-  and the previous `jetls-client.juliaThreads` setting has been removed.
-- `jetls-client.juliaExecutablePath` and `jetls-client.jetlsDirectory`
-  configuration options have been removed in favor of the new `jetls-client.executable` configuration
+- Thread setting for JETLS process should now be set via `jetls-client.executable.threads` option, and the previous `jetls-client.juliaThreads` setting has been removed.
+- `jetls-client.juliaExecutablePath` and `jetls-client.jetlsDirectory` configuration options have been removed in favor of the new `jetls-client.executable` configuration
 - `jetls-client.jetlsSettings` has been renamed to `jetls-client.settings`
 
 ## v0.1.3
@@ -267,8 +203,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Added `jetls-client.jetlsSettings.diagnostic` configuration to control
-  diagnostic on/off state and severity levels (aviatesk/JETLS.jl#298)
+- Added `jetls-client.jetlsSettings.diagnostic` configuration to control diagnostic on/off state and severity levels (aviatesk/JETLS.jl#298)
 
 ## v0.1.2
 
@@ -277,11 +212,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Added `jetls-client.jetlsSettings.formatter` configuration to switch formatter
-  backend between [Runic](github.com/fredrikekre/Runic.jl) and
-  [JuliaFormatter](github.com/fredrikekre/Runic.jl).
-  See <https://aviatesk.github.io/JETLS.jl/release/formatting/> for more details.
-  (aviatesk/JETLS.jl#284)
+- Added `jetls-client.jetlsSettings.formatter` configuration to switch formatter backend between [Runic](github.com/fredrikekre/Runic.jl) and [JuliaFormatter](github.com/fredrikekre/Runic.jl). See <https://aviatesk.github.io/JETLS.jl/release/formatting/> for more details. (aviatesk/JETLS.jl#284)
 - Added support for configuring JETLS through VSCode's `settings.json` file (aviatesk/JETLS.jl#296)
 
 ## v0.1.1
