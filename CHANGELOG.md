@@ -19,7 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`28972ef...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/28972ef...HEAD)
+- Diff: [`563fd7e...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/563fd7e...HEAD)
 
 ### Announcement
 
@@ -48,6 +48,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > The `inlay_hint` configuration was reorganized into nested sub-tables so each hint kind has its own `enabled` toggle alongside its options.
 > The new shape adds [`inlay_hint.block_end.enabled`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint/block_end/enabled) for toggling block-end hints independently, and renames `inlay_hint.block_end_min_lines` to [`inlay_hint.block_end.min_lines`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint/block_end/min_lines).
 > Existing configs keep working for now: the legacy key is auto-migrated at load time with a one-shot deprecation warning. The legacy alias will be removed in a future release (around one month from now), so please update your config.
+
+## 2026-05-05
+
+- Commit: [`563fd7e`](https://github.com/aviatesk/JETLS.jl/commit/563fd7e)
+- Diff: [`28972ef...563fd7e`](https://github.com/aviatesk/JETLS.jl/compare/28972ef...563fd7e)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-05-05")'
+  ```
 
 ### Added
 
