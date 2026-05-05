@@ -138,8 +138,8 @@
               "n_analysis_workers": {
                 "default": 1,
                 "markdownDescription": "Number of concurrent analysis worker tasks for running full analysis (experimental). Default is 1. See [documentation](https://aviatesk.github.io/JETLS.jl/release/launching/#init-options/n_analysis_workers) for details and current limitations.",
-                "maximum": 9223372036854776000,
-                "minimum": -9223372036854776000,
+                "maximum": 9223372036854775807,
+                "minimum": -9223372036854775808,
                 "type": "integer"
               }
             },
@@ -347,7 +347,7 @@
                   "type": "boolean"
                 },
                 "debounce": {
-                  "default": 1,
+                  "default": 1.0,
                   "markdownDescription": "Debounce time in seconds before triggering full analysis after a file save. Higher values reduce analysis frequency but may delay diagnostic updates.",
                   "type": "number"
                 }
@@ -371,8 +371,8 @@
                     "min_lines": {
                       "default": 25,
                       "markdownDescription": "Minimum number of lines a block must span before its `end`-tag inlay hint is displayed.",
-                      "maximum": 9223372036854776000,
-                      "minimum": -9223372036854776000,
+                      "maximum": 9223372036854775807,
+                      "minimum": -9223372036854775808,
                       "type": "integer"
                     }
                   },
