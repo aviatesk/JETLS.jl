@@ -23,7 +23,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Announcement
 
-> [!info]
+> [!important]
 > JETLS requires Julia 1.12.2 or later.
 > It does not support Julia 1.12.1 or earlier, nor Julia 1.13+/nightly.
 
