@@ -7,56 +7,91 @@ using JETLS.LSP
 include(normpath(pkgdir(JETLS), "test", "setup.jl"))
 include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
 
-@testset "syntactic_inlay_hints!" begin
-    @testset "module inlay hints" begin
+# Inserts each `hint.label` at its `position` in `code` and returns the
+# resulting text, mirroring how an editor renders the hint (honouring
+# `paddingLeft` / `paddingRight`). ASCII-only — LSP `Position.character` is
+# treated as a byte index into the line. Hints on the same position are
+# inserted in their original (traversal) order.
+function apply_inlay_hints(code::AbstractString, hints::Vector{InlayHint})
+    by_line = Dict{Int,Vector{InlayHint}}()
+    for h in hints
+        push!(get!(() -> InlayHint[], by_line, h.position.line), h)
+    end
+    out = IOBuffer()
+    lines = split(code, '\n'; keepempty=true)
+    for (i, line) in enumerate(lines)
+        s = String(line)
+        line_hints = sort(get(by_line, i-1, InlayHint[]); by = h -> h.position.character)
+        cursor = 0
+        for h in line_hints
+            c = h.position.character
+            print(out, s[cursor+1:c])
+            something(h.paddingLeft, false) && print(out, ' ')
+            print(out, h.label)
+            something(h.paddingRight, false) && print(out, ' ')
+            cursor = c
+        end
+        print(out, s[cursor+1:end])
+        i < length(lines) && print(out, '\n')
+    end
+    return String(take!(out))
+end
+
+function get_syntactic_inlay_hints(
+        code::AbstractString;
+        range::Union{Range,Nothing} = nothing,
+        min_lines::Int = 0,
+    )
+    fi = JETLS.FileInfo(1, code, @__FILE__)
+    if range === nothing
+        n_lines = count(==('\n'), code)
+        range = Range(;
+            start = Position(; line = 0, character = 0),
+            var"end" = Position(; line = n_lines, character = 0))
+    end
+    return JETLS.syntactic_inlay_hints(fi, range; min_lines)
+end
+
+@testset "block end hints" begin
+    @testset "modules" begin
         let code = """
             module TestModule
             x = 1
             end
             """
-            fi = JETLS.FileInfo(1, code, @__FILE__)
-            range = Range(; start = Position(; line = 0, character = 0),
-                            var"end" = Position(; line = 3, character = 0))
-            inlay_hints = JETLS.syntactic_inlay_hints(fi, range; min_lines=0)
-            @test length(inlay_hints) == 1
-            @test inlay_hints[1].position == Position(; line = 2, character = 3)
-            @test inlay_hints[1].label == "module TestModule"
+            expected = """
+            module TestModule
+            x = 1
+            end #= module TestModule =#
+            """
+            @test apply_inlay_hints(code, get_syntactic_inlay_hints(code)) == expected
         end
 
+        # `end # module TestModule` already names the block, so the hint is
+        # suppressed (source round-trips unchanged).
         let code = """
             module TestModule
             x = 1
             y = 2
             end # module TestModule
             """
-            fi = JETLS.FileInfo(1, code, @__FILE__)
-            range = Range(; start = Position(; line = 0, character = 0),
-                            var"end" = Position(; line = 4, character = 0))
-            inlay_hints = JETLS.syntactic_inlay_hints(fi, range; min_lines=0)
-            @test isempty(inlay_hints)
+            @test apply_inlay_hints(code, get_syntactic_inlay_hints(code)) == code
         end
 
+        # `#= module TestModule =#` block-comment form is also recognized.
         let code = """
             module TestModule
             x = 1
             end #= module TestModule =#
             """
-            fi = JETLS.FileInfo(1, code, @__FILE__)
-            range = Range(; start = Position(; line = 0, character = 0),
-                            var"end" = Position(; line = 3, character = 0))
-            inlay_hints = JETLS.syntactic_inlay_hints(fi, range; min_lines=0)
-            @test isempty(inlay_hints)
+            @test apply_inlay_hints(code, get_syntactic_inlay_hints(code)) == code
         end
 
         @testset "one-liner modules" begin
             let code = """
                 module TestModule end
                 """
-                fi = JETLS.FileInfo(1, code, @__FILE__)
-                range = Range(; start = Position(; line = 0, character = 0),
-                                var"end" = Position(; line = 1, character = 0))
-                inlay_hints = JETLS.syntactic_inlay_hints(fi, range; min_lines=0)
-                @test isempty(inlay_hints)
+                @test apply_inlay_hints(code, get_syntactic_inlay_hints(code)) == code
             end
         end
 
@@ -68,46 +103,46 @@ include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
                 end
                 end
                 """
-                fi = JETLS.FileInfo(1, code, @__FILE__)
-                range = Range(; start = Position(; line = 0, character = 0),
-                                var"end" = Position(; line = 5, character = 0))
-                inlay_hints = JETLS.syntactic_inlay_hints(fi, range; min_lines=0)
-                @test length(inlay_hints) == 2
-                sort!(inlay_hints; by = hint -> hint.position.line)
-                @test inlay_hints[1].position == Position(; line = 3, character = 3)
-                @test inlay_hints[1].label == "module Inner"
-                @test inlay_hints[2].position == Position(; line = 4, character = 3)
-                @test inlay_hints[2].label == "module Outer"
+                expected = """
+                module Outer
+                module Inner
+                x = 1
+                end #= module Inner =#
+                end #= module Outer =#
+                """
+                @test apply_inlay_hints(code, get_syntactic_inlay_hints(code)) == expected
             end
         end
 
+        # Range that does not include the block's `end` line should suppress
+        # the hint entirely.
         @testset "range filtering" begin
             let code = """
                 module TestModule
                 x = 1
                 end
                 """
-                fi = JETLS.FileInfo(1, code, @__FILE__)
-                range = Range(; start = Position(; line = 0, character = 0),
-                                var"end" = Position(; line = 1, character = 0))
-                inlay_hints = JETLS.syntactic_inlay_hints(fi, range; min_lines=0)
-                @test isempty(inlay_hints)
+                range = Range(;
+                    start = Position(; line = 0, character = 0),
+                    var"end" = Position(; line = 1, character = 0))
+                @test apply_inlay_hints(code, get_syntactic_inlay_hints(code; range)) == code
             end
         end
 
+        # `end    # some comment` doesn't match the `# module name` shape, so
+        # the hint still emits.
         @testset "whitespace before comment" begin
             let code = """
                 module TestModule
                 x = 1
                 end    # some comment
                 """
-                fi = JETLS.FileInfo(1, code, @__FILE__)
-                range = Range(; start = Position(; line = 0, character = 0),
-                                var"end" = Position(; line = 3, character = 0))
-                inlay_hints = JETLS.syntactic_inlay_hints(fi, range; min_lines=0)
-                @test length(inlay_hints) == 1
-                @test inlay_hints[1].position == Position(; line = 2, character = 3)
-                @test inlay_hints[1].label == "module TestModule"
+                expected = """
+                module TestModule
+                x = 1
+                end #= module TestModule =#    # some comment
+                """
+                @test apply_inlay_hints(code, get_syntactic_inlay_hints(code)) == expected
             end
         end
 
@@ -117,29 +152,28 @@ include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
                 x = 1
                 end
                 """
-                fi = JETLS.FileInfo(1, code, @__FILE__)
-                range = Range(; start = Position(; line = 0, character = 0),
-                                var"end" = Position(; line = 3, character = 0))
-                inlay_hints = JETLS.syntactic_inlay_hints(fi, range; min_lines=0)
-                @test length(inlay_hints) == 1
-                @test inlay_hints[1].label == "baremodule TestModule"
+                expected = """
+                baremodule TestModule
+                x = 1
+                end #= baremodule TestModule =#
+                """
+                @test apply_inlay_hints(code, get_syntactic_inlay_hints(code)) == expected
             end
         end
     end
 
-    @testset "function inlay hints" begin
+    @testset "functions" begin
         let code = """
             function foo(x, y)
                 x + y
             end
             """
-            fi = JETLS.FileInfo(1, code, @__FILE__)
-            range = Range(; start = Position(; line = 0, character = 0),
-                            var"end" = Position(; line = 3, character = 0))
-            inlay_hints = JETLS.syntactic_inlay_hints(fi, range; min_lines=0)
-            @test length(inlay_hints) == 1
-            @test inlay_hints[1].position == Position(; line = 2, character = 3)
-            @test inlay_hints[1].label == "function foo"
+            expected = """
+            function foo(x, y)
+                x + y
+            end #= function foo =#
+            """
+            @test apply_inlay_hints(code, get_syntactic_inlay_hints(code)) == expected
         end
 
         @testset "short form function" begin
@@ -148,12 +182,12 @@ include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
                     x + 1
                 end
                 """
-                fi = JETLS.FileInfo(1, code, @__FILE__)
-                range = Range(; start = Position(; line = 0, character = 0),
-                                var"end" = Position(; line = 3, character = 0))
-                inlay_hints = JETLS.syntactic_inlay_hints(fi, range; min_lines=0)
-                @test length(inlay_hints) == 1
-                @test inlay_hints[1].label == "foo(...) ="
+                expected = """
+                foo(x) = begin
+                    x + 1
+                end #= foo(...) = =#
+                """
+                @test apply_inlay_hints(code, get_syntactic_inlay_hints(code)) == expected
             end
         end
 
@@ -161,11 +195,7 @@ include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
             let code = """
                 function foo(x) x + 1 end
                 """
-                fi = JETLS.FileInfo(1, code, @__FILE__)
-                range = Range(; start = Position(; line = 0, character = 0),
-                                var"end" = Position(; line = 1, character = 0))
-                inlay_hints = JETLS.syntactic_inlay_hints(fi, range; min_lines=0)
-                @test isempty(inlay_hints)
+                @test apply_inlay_hints(code, get_syntactic_inlay_hints(code)) == code
             end
         end
 
@@ -175,43 +205,40 @@ include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
                     x + 1
                 end # function foo
                 """
-                fi = JETLS.FileInfo(1, code, @__FILE__)
-                range = Range(; start = Position(; line = 0, character = 0),
-                                var"end" = Position(; line = 3, character = 0))
-                inlay_hints = JETLS.syntactic_inlay_hints(fi, range; min_lines=0)
-                @test isempty(inlay_hints)
+                @test apply_inlay_hints(code, get_syntactic_inlay_hints(code)) == code
             end
         end
     end
 
-    @testset "macro inlay hints" begin
+    @testset "macros" begin
         let code = """
             macro mymacro(x)
                 esc(x)
             end
             """
-            fi = JETLS.FileInfo(1, code, @__FILE__)
-            range = Range(; start = Position(; line = 0, character = 0),
-                            var"end" = Position(; line = 3, character = 0))
-            inlay_hints = JETLS.syntactic_inlay_hints(fi, range; min_lines=0)
-            @test length(inlay_hints) == 1
-            @test inlay_hints[1].label == "macro @mymacro"
+            expected = """
+            macro mymacro(x)
+                esc(x)
+            end #= macro @mymacro =#
+            """
+            @test apply_inlay_hints(code, get_syntactic_inlay_hints(code)) == expected
         end
     end
 
-    @testset "struct inlay hints" begin
+    @testset "structs" begin
         let code = """
             struct Foo
                 x::Int
                 y::String
             end
             """
-            fi = JETLS.FileInfo(1, code, @__FILE__)
-            range = Range(; start = Position(; line = 0, character = 0),
-                            var"end" = Position(; line = 4, character = 0))
-            inlay_hints = JETLS.syntactic_inlay_hints(fi, range; min_lines=0)
-            @test length(inlay_hints) == 1
-            @test inlay_hints[1].label == "struct Foo"
+            expected = """
+            struct Foo
+                x::Int
+                y::String
+            end #= struct Foo =#
+            """
+            @test apply_inlay_hints(code, get_syntactic_inlay_hints(code)) == expected
         end
 
         @testset "mutable struct" begin
@@ -220,29 +247,29 @@ include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
                     x::Int
                 end
                 """
-                fi = JETLS.FileInfo(1, code, @__FILE__)
-                range = Range(; start = Position(; line = 0, character = 0),
-                                var"end" = Position(; line = 3, character = 0))
-                inlay_hints = JETLS.syntactic_inlay_hints(fi, range; min_lines=0)
-                @test length(inlay_hints) == 1
-                @test inlay_hints[1].label == "mutable struct Bar"
+                expected = """
+                mutable struct Bar
+                    x::Int
+                end #= mutable struct Bar =#
+                """
+                @test apply_inlay_hints(code, get_syntactic_inlay_hints(code)) == expected
             end
         end
     end
 
-    @testset "control flow inlay hints" begin
+    @testset "control flow" begin
         @testset "if block" begin
             let code = """
                 if condition
                     x = 1
                 end
                 """
-                fi = JETLS.FileInfo(1, code, @__FILE__)
-                range = Range(; start = Position(; line = 0, character = 0),
-                                var"end" = Position(; line = 3, character = 0))
-                inlay_hints = JETLS.syntactic_inlay_hints(fi, range; min_lines=0)
-                @test length(inlay_hints) == 1
-                @test inlay_hints[1].label == "if condition"
+                expected = """
+                if condition
+                    x = 1
+                end #= if condition =#
+                """
+                @test apply_inlay_hints(code, get_syntactic_inlay_hints(code)) == expected
             end
 
             let code = """
@@ -254,12 +281,16 @@ include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
                     y = 0
                 end
                 """
-                fi = JETLS.FileInfo(1, code, @__FILE__)
-                range = Range(; start = Position(; line = 0, character = 0),
-                                var"end" = Position(; line = 7, character = 0))
-                inlay_hints = JETLS.syntactic_inlay_hints(fi, range; min_lines=0)
-                @test length(inlay_hints) == 1
-                @test inlay_hints[1].label == "if x > 0"
+                expected = """
+                if x > 0
+                    y = 1
+                elseif x < 0
+                    y = -1
+                else
+                    y = 0
+                end #= if x > 0 =#
+                """
+                @test apply_inlay_hints(code, get_syntactic_inlay_hints(code)) == expected
             end
         end
 
@@ -271,12 +302,14 @@ include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
                     const PATH_SEP = '/'
                 end
                 """
-                fi = JETLS.FileInfo(1, code, @__FILE__)
-                range = Range(; start = Position(; line = 0, character = 0),
-                                var"end" = Position(; line = 5, character = 0))
-                inlay_hints = JETLS.syntactic_inlay_hints(fi, range; min_lines=0)
-                @test length(inlay_hints) == 1
-                @test inlay_hints[1].label == "@static if Sys.iswindows()"
+                expected = """
+                @static if Sys.iswindows()
+                    const PATH_SEP = '\\\\'
+                else
+                    const PATH_SEP = '/'
+                end #= @static if Sys.iswindows() =#
+                """
+                @test apply_inlay_hints(code, get_syntactic_inlay_hints(code)) == expected
             end
         end
 
@@ -287,12 +320,13 @@ include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
                     z = x + y
                 end
                 """
-                fi = JETLS.FileInfo(1, code, @__FILE__)
-                range = Range(; start = Position(; line = 0, character = 0),
-                                var"end" = Position(; line = 4, character = 0))
-                inlay_hints = JETLS.syntactic_inlay_hints(fi, range; min_lines=0)
-                @test length(inlay_hints) == 1
-                @test inlay_hints[1].label == "let x = 1,"
+                expected = """
+                let x = 1,
+                    y = 2
+                    z = x + y
+                end #= let x = 1, =#
+                """
+                @test apply_inlay_hints(code, get_syntactic_inlay_hints(code)) == expected
             end
         end
 
@@ -302,12 +336,12 @@ include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
                     println(i)
                 end
                 """
-                fi = JETLS.FileInfo(1, code, @__FILE__)
-                range = Range(; start = Position(; line = 0, character = 0),
-                                var"end" = Position(; line = 3, character = 0))
-                inlay_hints = JETLS.syntactic_inlay_hints(fi, range; min_lines=0)
-                @test length(inlay_hints) == 1
-                @test inlay_hints[1].label == "for i in 1:10"
+                expected = """
+                for i in 1:10
+                    println(i)
+                end #= for i in 1:10 =#
+                """
+                @test apply_inlay_hints(code, get_syntactic_inlay_hints(code)) == expected
             end
         end
 
@@ -317,28 +351,28 @@ include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
                     x -= 1
                 end
                 """
-                fi = JETLS.FileInfo(1, code, @__FILE__)
-                range = Range(; start = Position(; line = 0, character = 0),
-                                var"end" = Position(; line = 3, character = 0))
-                inlay_hints = JETLS.syntactic_inlay_hints(fi, range; min_lines=0)
-                @test length(inlay_hints) == 1
-                @test inlay_hints[1].label == "while x > 0"
+                expected = """
+                while x > 0
+                    x -= 1
+                end #= while x > 0 =#
+                """
+                @test apply_inlay_hints(code, get_syntactic_inlay_hints(code)) == expected
             end
         end
     end
 
-    @testset "@testset inlay hints" begin
+    @testset "@testset blocks" begin
         let code = """
             @testset "my tests" begin
                 @test 1 == 1
             end
             """
-            fi = JETLS.FileInfo(1, code, @__FILE__)
-            range = Range(; start = Position(; line = 0, character = 0),
-                            var"end" = Position(; line = 3, character = 0))
-            inlay_hints = JETLS.syntactic_inlay_hints(fi, range; min_lines=0)
-            @test length(inlay_hints) == 1
-            @test inlay_hints[1].label == "@testset \"my tests\" begin"
+            expected = """
+            @testset "my tests" begin
+                @test 1 == 1
+            end #= @testset "my tests" begin =#
+            """
+            @test apply_inlay_hints(code, get_syntactic_inlay_hints(code)) == expected
         end
 
         @testset "nested @testset" begin
@@ -349,14 +383,14 @@ include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
                     end
                 end
                 """
-                fi = JETLS.FileInfo(1, code, @__FILE__)
-                range = Range(; start = Position(; line = 0, character = 0),
-                                var"end" = Position(; line = 5, character = 0))
-                inlay_hints = JETLS.syntactic_inlay_hints(fi, range; min_lines=0)
-                @test length(inlay_hints) == 2
-                sort!(inlay_hints; by = hint -> hint.position.line)
-                @test inlay_hints[1].label == "@testset \"inner\" begin"
-                @test inlay_hints[2].label == "@testset \"outer\" begin"
+                expected = """
+                @testset "outer" begin
+                    @testset "inner" begin
+                        @test true
+                    end #= @testset "inner" begin =#
+                end #= @testset "outer" begin =#
+                """
+                @test apply_inlay_hints(code, get_syntactic_inlay_hints(code)) == expected
             end
         end
     end
