@@ -95,9 +95,6 @@ include("utils/binding.jl")
 include("utils/lsp.jl")
 include("utils/server.jl")
 
-include("analysis/closure-to-opaque.jl")
-using .Closure2Opaque
-
 include("analysis/TypeAnnotation.jl")
 using .TypeAnnotation
 
