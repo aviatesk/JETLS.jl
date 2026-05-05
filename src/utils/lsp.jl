@@ -16,6 +16,8 @@ overlap(rng1::Range, rng2::Range) = max(rng1.start, rng2.start) <= min(rng1.var"
 @define_override_constructor LSP.Position
 @define_override_constructor LSP.Range
 @define_override_constructor LSP.DocumentSymbol
+@define_override_constructor LSP.InlayHint
+@define_override_constructor LSP.TextEdit
 
 const DEFAULT_DOCUMENT_SELECTOR = DocumentFilter[
     DocumentFilter(; language = "julia")

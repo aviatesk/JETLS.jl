@@ -24,6 +24,7 @@ end
         @testset "occurrence" include("analysis/test_occurrence_analysis.jl")
         @testset "cfg" include("analysis/test_cfg_analysis.jl")
         @testset "LSAnalyzer" include("analysis/test_Analyzer.jl")
+        @testset "TypeAnnotation" include("analysis/test_TypeAnnotation.jl")
     end
     @testset "types" include("test_types.jl")
     @testset "config" include("test_config.jl")
@@ -40,6 +41,7 @@ end
     @testset "references" include("test_references.jl")
     @testset "hover" include("test_hover.jl")
     @testset "inlay hint" include("test_inlay_hint.jl")
+    @testset "semantic tokens" include("test_semantic_tokens.jl")
     @testset "lowering diagnostic" include("test_lowering_diagnostic.jl")
     @testset "code action" include("test_code_action.jl")
     @testset "diagnostics" include("test_diagnostic.jl")

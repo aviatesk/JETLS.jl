@@ -23,6 +23,36 @@ end
 
 const EMPTY_TESTSETINFOS = TestsetInfo[]
 
+"""
+    LineStartsIndex
+
+`Vector{Int}` of 1-based byte offsets where each line begins. `line_starts[i]` is
+the byte at which line `i-1` (0-based, LSP convention) starts; `line_starts[1]`
+is always `1`. Built once per textbuf by [`build_line_starts`](@ref) so position
+↔ offset conversions on a [`FileInfo`](@ref) can locate the line in O(log N)
+instead of O(N).
+"""
+const LineStartsIndex = Vector{Int}
+
+"""
+    build_line_starts(textbuf::Vector{UInt8}) -> LineStartsIndex
+
+Walk `textbuf` once and return the byte offsets where each line begins. The first
+entry is always `1`; each subsequent entry is the byte immediately after a `'\\n'`.
+A trailing newline produces a phantom empty last line whose start is one past the
+end of the buffer (matching how LSP positions can land just past a terminating
+newline).
+"""
+function build_line_starts(textbuf::Vector{UInt8})
+    starts = Int[1]
+    @inbounds for i in 1:length(textbuf)
+        if textbuf[i] == UInt8('\n')
+            push!(starts, i + 1)
+        end
+    end
+    return starts
+end
+
 # Primary file cache for document synchronization.
 # Created on `textDocument/didOpen` and updated on `textDocument/didChange`.
 # Contains the current editor state, including unsaved edits.
@@ -33,6 +63,11 @@ struct FileInfo
     encoding::LSP.PositionEncodingKind.Ty
     testsetinfos::Vector{TestsetInfo}
     syntax_tree0::Union{Nothing,SyntaxTreeC}
+    # Cached line-starts index for the current `parsed_stream.textbuf`. `offset_to_xy`
+    # / `xy_to_offset` are called heavily by every LSP feature, so amortizing the
+    # O(N) line scan once per FileInfo (constructed on didOpen / didChange) is a
+    # net win across the server.
+    line_starts::LineStartsIndex
 
     function FileInfo(
             version::Int, parsed_stream::JS.ParseStream, filename::AbstractString,
@@ -48,7 +83,8 @@ struct FileInfo
         else
             syntax_tree0 = nothing
         end
-        new(version, parsed_stream, filename, encoding, testsetinfos, syntax_tree0)
+        line_starts = build_line_starts(parsed_stream.textbuf)
+        new(version, parsed_stream, filename, encoding, testsetinfos, syntax_tree0, line_starts)
     end
 end
 @define_override_constructor FileInfo # For testsetinfos update
@@ -74,11 +110,13 @@ struct SavedFileInfo
     parsed_stream::JS.ParseStream
     syntax_node::JS.SyntaxNode
     encoding::LSP.PositionEncodingKind.Ty
+    line_starts::LineStartsIndex
 
     function SavedFileInfo(parsed_stream::JS.ParseStream, uri::URI, encoding::LSP.PositionEncodingKind.Ty)
         filename = uri2filename(uri)
         syntax_node = JS.build_tree(JS.SyntaxNode, parsed_stream; filename)
-        new(parsed_stream, syntax_node, encoding)
+        line_starts = build_line_starts(parsed_stream.textbuf)
+        new(parsed_stream, syntax_node, encoding, line_starts)
     end
 end
 
@@ -495,8 +533,13 @@ end
     testrunner::Maybe{Bool}
 end
 
+@option struct InlayHintBlockEndConfig <: ConfigSection
+    enabled::Maybe{Bool}
+    min_lines::Maybe{Int}
+end
+
 @option struct InlayHintConfig <: ConfigSection
-    block_end_min_lines::Maybe{Int}
+    block_end::Maybe{InlayHintBlockEndConfig}
 end
 
 @option struct JETLSConfig <: ConfigSection
@@ -521,7 +564,8 @@ const DEFAULT_CONFIG = JETLSConfig(;
     formatter = "Runic",
     completion = CompletionConfig(LaTeXEmojiConfig(missing), MethodSignatureConfig(missing)),
     code_lens = CodeLensConfig(false, true),
-    inlay_hint = InlayHintConfig(25),
+    inlay_hint = InlayHintConfig(
+        InlayHintBlockEndConfig(true, 25)),
     initialization_options = DEFAULT_INIT_OPTIONS)
 
 function get_default_config(path::Symbol...)

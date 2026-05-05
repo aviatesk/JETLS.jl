@@ -166,7 +166,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `jetls-client.settings.full_analysis.auto_instantiate` configuration option
   (default: `true`). When enabled, JETLS automatically runs `Pkg.instantiate()` for
   packages that have not been instantiated yet (e.g., freshly cloned repositories).
-  See <https://aviatesk.github.io/JETLS.jl/release/configuration/#config/full_analysis-auto_instantiate>
+  See <https://aviatesk.github.io/JETLS.jl/release/configuration/#config/full_analysis/auto_instantiate>
   for more details. (aviatesk/JETLS.jl#337)
 
 ## v0.2.3
@@ -249,7 +249,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added support for applying diagnostic configuration to specific files only by
   specifying glob patterns in the `path` field of
   `jetls-client.settings.diagnostic.patterns`.
-  For more details, see <https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic-patterns>.
+  For more details, see <https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic/patterns>.
   (aviatesk/JETLS.jl#313)
 
 ### Breaking

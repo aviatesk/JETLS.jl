@@ -45,7 +45,7 @@ end
         function func(x; │kw│=nothing)
             println(kw)
         end
-        """) do i, (; binding)
+        """) do _, (; binding)
         @test JS.sourcetext(binding) == "kw"
         @test JS.source_line(binding) == 1
         return true
@@ -95,7 +95,7 @@ end
     # Macrocall name binding
     @test with_target_binding("""
         │@info│ "hello"
-        """) do i, (; ctx3, binding)
+        """) do _, (; ctx3, binding)
         binfo = JL.get_binding(ctx3, binding)
         @test binfo.kind === :global
         @test binfo.name == "@info"
@@ -118,7 +118,7 @@ end
         function func(│xxx│, yyy)
             println(│xxx│, yyy)
         end
-        """) do i, (; ctx3, binding)
+        """) do _, (; ctx3, binding)
         @test JS.sourcetext(binding) == "xxx"
         binfo = JL.get_binding(ctx3, binding)
         @test binfo.kind === :argument

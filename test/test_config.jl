@@ -313,4 +313,17 @@ end
     end
 end
 
+@testset "parse_config_dict accepts legacy `block_end_min_lines`" begin
+    deprecations = [
+        ["inlay_hint", "block_end_min_lines"] => ["inlay_hint", "block_end", "min_lines"]
+    ]
+    d = Dict{String,Any}(
+        "inlay_hint" => Dict{String,Any}(
+            "block_end_min_lines" => 7))
+    JETLS.migrate_deprecated_config_keys!(d, deprecations)
+    config = JETLS.parse_config_dict(d)
+    @test config isa JETLS.JETLSConfig
+    @test config.inlay_hint.block_end.min_lines == 7
+end
+
 end # test_config

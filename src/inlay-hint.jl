@@ -24,10 +24,13 @@ end
 
 function handle_InlayHintRequest(
         server::Server, msg::InlayHintRequest, cancel_flag::CancelFlag)
+    state = server.state
     uri = msg.params.textDocument.uri
-    range = msg.params.range
+    range = Range(;
+        start = adjust_position(state, uri, msg.params.range.start),
+        var"end" = adjust_position(state, uri, msg.params.range.var"end"))
 
-    result = get_file_info(server.state, uri, cancel_flag)
+    result = get_file_info(state, uri, cancel_flag)
     if isnothing(result)
         return send(server, InlayHintResponse(; id = msg.id, result = null))
     elseif result isa ResponseError
@@ -35,14 +38,16 @@ function handle_InlayHintRequest(
     end
     fi = result
 
-    min_lines = get_config(server, :inlay_hint, :block_end_min_lines)
     inlay_hints = InlayHint[]
-    symbols = get_document_symbols!(server.state, uri, fi)
-    syntactic_inlay_hints!(inlay_hints, symbols, fi, range; min_lines)
+    if get_config(server, :inlay_hint, :block_end, :enabled)
+        min_lines = get_config(server, :inlay_hint, :block_end, :min_lines)
+        symbols = get_document_symbols!(state, uri, fi)
+        syntactic_inlay_hints!(inlay_hints, symbols, fi, range; min_lines)
+    end
 
     return send(server, InlayHintResponse(;
         id = msg.id,
-        result = @somereal inlay_hints null))
+        result = @somereal localize_inlay_hints(state, uri, inlay_hints) null))
 end
 
 const INLAY_HINT_MIN_LINES = 25

@@ -1398,7 +1398,7 @@ function compute_unit_used_names(
 
         iterate_toplevel_tree(search_st0_top) do st0::SyntaxTreeC
             binding_occurrences = @something get_binding_occurrences!(
-                state, search_uri, search_fi, st0; include_global_bindings = true) return
+                state, search_uri, search_fi, st0) return
             mod = get_context_module(state, search_uri, offset_to_xy(search_fi, JS.first_byte(st0)))
             for (binfo_key, occurrences) in binding_occurrences
                 binfo_key.kind === :global || continue

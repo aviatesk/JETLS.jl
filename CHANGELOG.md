@@ -19,11 +19,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`e784de8...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/e784de8...HEAD)
+- Diff: [`28972ef...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/28972ef...HEAD)
 
 ### Announcement
 
-> [!warning]
+> [!info]
 > JETLS requires Julia 1.12.2 or later.
 > It does not support Julia 1.12.1 or earlier, nor Julia 1.13+/nightly.
 
@@ -43,6 +43,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > ```
 > This disables analysis for matched files. Basic features like completion still might work, but most LSP features will be unfunctional.
 > Note that `analysis_overrides` is provided as a temporary workaround and may be removed or changed at any time. A proper fix is being worked on.
+
+> [!warning]
+> The `inlay_hint` configuration was reorganized into nested sub-tables so each hint kind has its own `enabled` toggle alongside its options.
+> The new shape adds [`inlay_hint.block_end.enabled`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint/block_end/enabled) for toggling block-end hints independently, and renames `inlay_hint.block_end_min_lines` to [`inlay_hint.block_end.min_lines`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint/block_end/min_lines).
+> Existing configs keep working for now: the legacy key is auto-migrated at load time with a one-shot deprecation warning. The legacy alias will be removed in a future release (around one month from now), so please update your config.
+
+### Added
+
+- Added [`textDocument/semanticTokens`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_semanticTokens) support.
+  JETLS now emits `parameter`, `typeParameter`, and `variable` token types (with `declaration` / `definition` modifiers) so that themes can distinguish function arguments, type parameters, and local variables from generic identifiers. Global identifiers are also reported under a custom `jetls.unspecified` token type, which leaves the editor's syntactic color intact while still letting themes apply modifier styling to declaration/definition sites.
+  Both full and range requests are supported.
+  Because JETLS only emits identifier classifications and relies on the editor's syntactic highlighter for everything else, semantic tokens are only registered when the client advertises [`augmentsSyntaxTokens = true`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#semanticTokensClientCapabilities).
+  See <https://aviatesk.github.io/JETLS.jl/release/features/semantic-tokens> for details.
+
+  <img width="969" height="343" alt="semantic tokens demo" src="https://github.com/user-attachments/assets/93f92c5a-2de2-499f-a87f-7dfcfec5d0b0" />
+
+### Changed
+
+- Significantly reduced latency on large files across most LSP features (hover, completion, diagnostics, inlay hint, code lens, …). For example, code lens generation on a file with 1000 `@testset` blocks dropped from ~590ms to ~1.4ms.
+
+### Fixed
+
+- Fixed `textDocument/inlayHint` for notebook cells, which previously misplaced hints (or rendered none at all) by treating the requested viewport and emitted hint positions as notebook-global coordinates rather than cell-local.
+
+## 2026-05-02
+
+- Commit: [`28972ef`](https://github.com/aviatesk/JETLS.jl/commit/28972ef)
+- Diff: [`e784de8...28972ef`](https://github.com/aviatesk/JETLS.jl/compare/e784de8...28972ef)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-05-02")'
+  ```
 
 ### Added
 
@@ -99,7 +131,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
-- Added a [Features](https://aviatesk.github.io/JETLS.jl/dev/features/) overview page to the documentation, providing a visual showcase of every LSP feature JETLS provides.
+- Added a [Features](https://aviatesk.github.io/JETLS.jl/release/features/) overview page to the documentation, providing a visual showcase of every LSP feature JETLS provides.
 
 - Added `textDocument/declaration` ("go to declaration"). It jumps to the import site on an imported name (e.g. `using Base: sin`) and to the `local` line on a `local` declaration. When the symbol has no dedicated declaration site, the request falls back to the same logic as `textDocument/definition`.
 
@@ -107,7 +139,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
-- The [reference-count code lens](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/code_lens-references) now emits `editor.action.showReferences` (a VSCode convention command) directly, instead of the JETLS-defined `jetls.showReferences`. Editors that follow the VSCode convention (e.g. Zed) now dispatch the lens out of the box; editors that do not (e.g. Neovim) need to register a client-side handler.
+- The [reference-count code lens](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/code_lens/references) now emits `editor.action.showReferences` (a VSCode convention command) directly, instead of the JETLS-defined `jetls.showReferences`. Editors that follow the VSCode convention (e.g. Zed) now dispatch the lens out of the box; editors that do not (e.g. Neovim) need to register a client-side handler.
 
 - When a reference-count code lens is clicked on a file whose full analysis has not yet run, a warning notification (via `window/showMessage`) is now shown instead of an empty references peek.
 
@@ -117,7 +149,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
-- Fixed `textDocument/references` so that `includeDeclaration=false` now correctly excludes method definitions and declarations of the target binding. As a side benefit, the [reference-count code lens](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/code_lens-references) now reports accurate counts.
+- Fixed `textDocument/references` so that `includeDeclaration=false` now correctly excludes method definitions and declarations of the target binding. As a side benefit, the [reference-count code lens](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/code_lens/references) now reports accurate counts.
 
 - Fixed the reference-count code lens, `textDocument/references`, `textDocument/documentHighlight`, and `textDocument/rename` silently dropping results after a full analysis completes.
 
@@ -544,10 +576,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   constants, abstract types, primitive types, modules). When enabled, a code
   lens showing "N references" appears above each symbol definition. Clicking it
   opens the references panel. This feature is opt-in and can be enabled via
-  [`code_lens.references`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/code_lens-references)
+  [`code_lens.references`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/code_lens/references)
   configuration.
 
-- Added [`code_lens.testrunner`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/code_lens-testrunner)
+- Added [`code_lens.testrunner`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/code_lens/testrunner)
   configuration option to enable or disable TestRunner code lenses. Some editors
   (e.g., Zed) display code lenses as code actions, causing duplication.
   The [aviatesk/zed-julia](https://github.com/aviatesk/zed-julia) extension
@@ -566,7 +598,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `@testset`), an inlay hint is displayed at the `end` keyword showing what
   construct is ending, such as `module Foo` or `function bar`. The minimum
   block length can be configured via
-  [`inlay_hint.block_end_min_lines`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint-block_end_min_lines)
+  [`inlay_hint.block_end_min_lines`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint/block_end_min_lines)
   (default: 25 lines).
 
 ### Deprecated
@@ -640,7 +672,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   support to provide `JETLS/live` diagnostics (syntax errors and lowering-based
   analysis) for unopened files in the workspace.
 
-- Added [`diagnostic.all_files`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic-all_files)
+- Added [`diagnostic.all_files`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic/all_files)
   configuration option to control whether diagnostics are reported for unopened
   files. Disabling this can be useful to reduce noise when there are many
   warnings across the workspace.

@@ -341,6 +341,11 @@ function localize_notebook_diagnostics(
         state::ServerState, notebook_uri::URI, cell_uri::URI, diagnostics::Vector{Diagnostic}
     )
     notebook_info = @something get_notebook_info(state, notebook_uri) return Diagnostic[]
+    return _localize_notebook_diagnostics(state, notebook_info, cell_uri, diagnostics)
+end
+function _localize_notebook_diagnostics(
+        state::ServerState, notebook_info::NotebookInfo, cell_uri::URI, diagnostics::Vector{Diagnostic}
+    )
     concat = notebook_info.concat
     result = Diagnostic[]
     for diag in diagnostics
@@ -397,6 +402,56 @@ function localize_document_symbol(
         range = new_range,
         selectionRange = new_selection_range,
         children = @somereal new_children Some(nothing))
+end
+
+# Inlay hint
+# ==========
+
+"""
+    localize_inlay_hints(
+            state::ServerState, uri::URI, inlay_hints::Vector{InlayHint}
+        ) -> Vector{InlayHint}
+
+When `uri` is a notebook cell, convert each hint's `position` and the ranges of
+its `textEdits` from notebook-global coordinates to cell-local coordinates, and
+drop hints whose position does not belong to that cell. Returns `inlay_hints`
+unchanged when `uri` is not a notebook cell URI.
+"""
+function localize_inlay_hints(
+        state::ServerState, uri::URI, inlay_hints::Vector{InlayHint}
+    )
+    notebook_uri = @something get_notebook_uri_for_cell(state, uri) return inlay_hints
+    notebook_info = @something get_notebook_info(state, notebook_uri) return inlay_hints
+    return _localize_inlay_hints(uri, inlay_hints, notebook_info)
+end
+function _localize_inlay_hints(
+        uri::URI, inlay_hints::Vector{InlayHint}, notebook_info::NotebookInfo
+    )
+    new_hints = InlayHint[]
+    concat = notebook_info.concat
+    for hint in inlay_hints
+        pos_result = @something global_to_cell_position(concat, hint.position) continue
+        cell_pos, hint_cell_uri = pos_result
+        hint_cell_uri == uri || continue
+        textEdits = hint.textEdits
+        new_textEdits = if textEdits === nothing
+            nothing
+        else
+            edits = TextEdit[]
+            for edit in textEdits
+                range_result = global_to_cell_range(concat, edit.range)
+                isnothing(range_result) && continue
+                edit_cell_uri, cell_range = range_result
+                edit_cell_uri == uri || continue
+                push!(edits, TextEdit(edit; range = cell_range))
+            end
+            edits
+        end
+        push!(new_hints, InlayHint(hint;
+            position = cell_pos,
+            textEdits = @somereal new_textEdits Some(nothing)))
+    end
+    return new_hints
 end
 
 # Position

@@ -85,6 +85,9 @@ function load_file_config!(on_difference, server::Server, filepath::AbstractStri
         parsed = TOML.tryparsefile(filepath)
         parsed isa TOML.ParserError && return old_data, nothing
 
+        for msg in migrate_deprecated_config_keys!(parsed)
+            show_warning_message(server, msg)
+        end
         new_file_config = parse_config_dict(parsed, filepath)
         if new_file_config isa AbstractString
             show_error_message(server, new_file_config)

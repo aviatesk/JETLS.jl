@@ -319,14 +319,13 @@ function is_matching_global_binding(
 end
 
 function find_global_binding_occurrences!(
-        state::ServerState, uri::URI, fi::FileInfo, st0_top::SyntaxTreeC,
-        binfo::JL.BindingInfo;
-        kwargs...
+        state::ServerState, uri::URI, fi::FileInfo, st0_top::SyntaxTreeC, binfo::JL.BindingInfo;
+        lookup_func = gen_lookup_out_of_scope!(state, uri),
     )
     ret = Set{CachedBindingOccurrence}()
     iterate_toplevel_tree(st0_top) do st0::SyntaxTreeC
         binding_occurrences = @something get_binding_occurrences!(
-            state, uri, fi, st0; include_global_bindings = true, kwargs...) return
+            state, uri, fi, st0; lookup_func) return
         for (binfo′, occurrences) in binding_occurrences
             if is_matching_global_binding(binfo′, binfo)
                 for occurrence in occurrences
@@ -338,8 +337,14 @@ function find_global_binding_occurrences!(
     return ret
 end
 
+# Cached entry point. The cache key is only the byte range — `lookup_func`
+# is *not* part of the key. Production callers all rely on the default
+# `gen_lookup_out_of_scope!`, so they share the cache safely. Tests that
+# pass a custom `lookup_func` use isolated `ServerState` instances and
+# therefore don't collide with the production cache.
 function get_binding_occurrences!(
-        state::ServerState, uri::URI, fi::FileInfo, st0::SyntaxTreeC; kwargs...
+        state::ServerState, uri::URI, fi::FileInfo, st0::SyntaxTreeC;
+        lookup_func = gen_lookup_out_of_scope!(state, uri),
     )
     cache_uri = canonical_cache_uri(state, uri)
     range_key = JS.byte_range(st0)
@@ -350,7 +355,7 @@ function get_binding_occurrences!(
         end
         # Cache lowering failures as empty results so repeated calls for the same statement
         cache_result = BindingOccurrencesResult()
-        result = compute_binding_occurrences_st0(state, uri, fi, st0; kwargs...)
+        result = compute_full_binding_occurrences(state, uri, fi, st0; lookup_func)
         if result !== nothing
             for (binfo, occurrences) in result
                 cached_set = get!(Set{CachedBindingOccurrence}, cache_result, BindingInfoKey(binfo))
@@ -368,10 +373,9 @@ function get_binding_occurrences!(
     end
 end
 
-function compute_binding_occurrences_st0(
+function compute_full_binding_occurrences(
         state::ServerState, uri::URI, fi::FileInfo, st0::SyntaxTreeC;
         lookup_func = gen_lookup_out_of_scope!(state, uri),
-        include_global_bindings::Bool = false
     )
     soft_scope = is_notebook_cell_uri(state, uri) ||
         # Handlers like References and Rename receive notebook cell URIs, just like
@@ -388,17 +392,15 @@ function compute_binding_occurrences_st0(
     #   binding in the surrounding module.
     # - `using M: foo`/`import M: foo`/`import M.foo`: record the local alias identifier
     #   (`foo`, or `bar` in `foo as bar`) as a `:def` of the local global binding.
-    if include_global_bindings
-        k0 = JS.kind(st0)
-        if k0 in JS.KSet"export public"
-            binding_occurrences = Dict{JL.BindingInfo,Set{BindingOccurrence}}()
-            collect_export_public_occurrences!(binding_occurrences, st0, mod)
-            return binding_occurrences
-        elseif k0 in JS.KSet"import using"
-            binding_occurrences = Dict{JL.BindingInfo,Set{BindingOccurrence}}()
-            collect_import_using_occurrences!(binding_occurrences, st0, mod)
-            return binding_occurrences
-        end
+    k0 = JS.kind(st0)
+    if k0 in JS.KSet"export public"
+        binding_occurrences = Dict{JL.BindingInfo,Set{BindingOccurrence}}()
+        collect_export_public_occurrences!(binding_occurrences, st0, mod)
+        return binding_occurrences
+    elseif k0 in JS.KSet"import using"
+        binding_occurrences = Dict{JL.BindingInfo,Set{BindingOccurrence}}()
+        collect_import_using_occurrences!(binding_occurrences, st0, mod)
+        return binding_occurrences
     end
 
     (; ctx3, st3) = try
@@ -411,16 +413,14 @@ function compute_binding_occurrences_st0(
     end
     is_generated = is_generated0(st0)
     binding_occurrences = compute_binding_occurrences(ctx3, st3, is_generated;
-        include_global_bindings)
+        include_global_bindings = true)
 
-    if include_global_bindings
-        collect_macrocall_occurrences!(binding_occurrences, mod, st0; soft_scope)
-        # Global bindings used inside inert nodes (quoted expressions) are not
-        # resolved by scope analysis. This applies to `@generated` functions,
-        # macro definitions, and any function that constructs quoted expressions.
-        # Run independent scope resolution on inert content to collect them.
-        collect_inert_global_occurrences!(binding_occurrences, ctx3, st3, mod; soft_scope)
-    end
+    collect_macrocall_occurrences!(binding_occurrences, mod, st0; soft_scope)
+    # Global bindings used inside inert nodes (quoted expressions) are not
+    # resolved by scope analysis. This applies to `@generated` functions,
+    # macro definitions, and any function that constructs quoted expressions.
+    # Run independent scope resolution on inert content to collect them.
+    collect_inert_global_occurrences!(binding_occurrences, ctx3, st3, mod; soft_scope)
 
     return binding_occurrences
 end

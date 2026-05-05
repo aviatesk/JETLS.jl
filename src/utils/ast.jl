@@ -305,7 +305,7 @@ function foreach_inert_identifier(@specialize(callback), node::SyntaxTreeC)
     return res !== false
 end
 
-function find_inert_identifier_name(st::SyntaxTreeC, offset::Int)
+function find_inert_identifier_name(st::SyntaxTreeC, offset::Integer)
     name = Ref{Union{Nothing,String}}(nothing)
     foreach_inert_identifier(st) do id_node::SyntaxTreeC
         if offset in JS.byte_range(id_node)
@@ -497,11 +497,21 @@ function remove_macrocalls(st0::SyntaxTreeC)
     return first(_remove_macrocalls(st0))
 end
 
-function unwrap_where(node::SyntaxTreeC)
-    while JS.kind(node) === JS.K"where" && JS.numchildren(node) ≥ 1
-        node = node[1]
+# Iteratively peel a function-definition signature's `where {…}` clauses and outer `::T`
+# return-type annotation, returning the innermost unwrapped node — usually a `K"call"`, but
+# callers should check (e.g. `f::Int = …` peels to a `K"Identifier"`). Parameter type
+# annotations like `f(x::T)` live inside the call's args, so this pass doesn't touch them.
+# On malformed input (a wrapper with no children) the wrapper is returned as-is, so callers'
+# kind checks naturally filter it without a separate `nothing` branch.
+function unwrap_funcdef_sig(node::SyntaxTreeC)
+    while true
+        k = JS.kind(node)
+        if (k === JS.K"where" || k === JS.K"::") && JS.numchildren(node) ≥ 1
+            node = node[1]
+        else
+            return node
+        end
     end
-    return node
 end
 
 extract_name_val(node::SyntaxTreeC) =
@@ -646,7 +656,7 @@ end
 
 """
     byte_ancestors([flt,] st::SyntaxTreeC, rng::UnitRange{Int})
-    byte_ancestors([flt,] st::SyntaxTreeC, byte::Int)
+    byte_ancestors([flt,] st::SyntaxTreeC, byte::Integer)
 
 Get a SyntaxList of `SyntaxTree`s containing certain bytes.
 
@@ -680,12 +690,12 @@ end
 byte_ancestors(flt, st::SyntaxTreeC, byte::Integer) = byte_ancestors(flt, st, byte:byte)
 
 """
-    greatest_local(st0::SyntaxTreeC, offset::Int) -> st::Union{SyntaxTreeC, Nothing}
+    greatest_local(st0::SyntaxTreeC, offset::Integer) -> st::Union{SyntaxTreeC, Nothing}
 
 Return the largest tree that can introduce local bindings that are visible to the cursor
 (if any such tree exists).
 """
-function greatest_local(st0::SyntaxTreeC, offset::Int)
+function greatest_local(st0::SyntaxTreeC, offset::Integer)
     result = _find_greatest_local(st0, offset)
     result !== nothing && return result
     # When the cursor sits just past the last token of a line (e.g. `export
@@ -696,7 +706,7 @@ function greatest_local(st0::SyntaxTreeC, offset::Int)
     return offset > 1 ? _find_greatest_local(st0, offset - 1) : nothing
 end
 
-function _find_greatest_local(st0::SyntaxTreeC, offset::Int)
+function _find_greatest_local(st0::SyntaxTreeC, offset::Integer)
     bas = byte_ancestors(st0, offset)
     first_global = @something begin
         findfirst(st::SyntaxTreeC -> JS.kind(st) in JS.KSet"toplevel module", bas)
@@ -760,13 +770,13 @@ next_tok(tc::TokenCursor) =
 prev_tok(tc::TokenCursor) = tc.position <= 1 ? nothing :
     TokenCursor(tc.tokens, tc.position - 1, tc.next_byte - tc.tokens[tc.position].byte_span)
 this(tc::TokenCursor) = tc.tokens[tc.position]
-JS.first_byte(tc::TokenCursor) = tc.position <= 1 ? UInt32(1) : prev_tok(tc).next_byte
-JS.last_byte(tc::TokenCursor) = tc.next_byte - UInt32(1)
+JS.first_byte(tc::TokenCursor) = tc.position <= 1 ? 1 : Int(prev_tok(tc).next_byte)
+JS.last_byte(tc::TokenCursor) = Int(tc.next_byte) - 1
 JS.byte_range(tc::TokenCursor) = JS.first_byte(tc):JS.last_byte(tc)
 JS.kind(tc::TokenCursor) = JS.kind(this(tc))
 
 """
-    token_at_offset(fi::FileInfo, offset::Int)
+    token_at_offset(fi::FileInfo, offset::Integer)
 
 Get the current token index at a given byte offset in a parsed file.
 
@@ -776,7 +786,7 @@ Example:
 - `alpha│ beta gamma` (`b`=6) returns the index of ` ` (whitespace)
 - `alpha │beta gamma` (`b`=7) returns the index of `beta`
 """
-function token_at_offset(ps::JS.ParseStream, offset::Int)
+function token_at_offset(ps::JS.ParseStream, offset::Integer)
     for tc in TokenCursor(ps)
         start_byte = tc.next_byte - this(tc).byte_span
         if start_byte ≤ offset < tc.next_byte
@@ -791,12 +801,12 @@ token_at_offset(fi::FileInfo, pos::Position) =
 """
 Similar to `token_at_offset`, but when you need token `a` from `a| b c`
 """
-token_before_offset(ps::JS.ParseStream, offset::Int) = token_at_offset(ps, offset - 1)
+token_before_offset(ps::JS.ParseStream, offset::Integer) = token_at_offset(ps, offset - 1)
 token_before_offset(fi::FileInfo, pos::Position) =
     token_before_offset(fi.parsed_stream, xy_to_offset(fi, pos))
 
 """
-    prev_nontrivia_byte(ps::JS.ParseStream, b::Int; pass_newlines::Bool=false, strict::Bool=false)
+    prev_nontrivia_byte(ps::JS.ParseStream, b::Integer; pass_newlines::Bool=false, strict::Bool=false)
 
 Return the last byte position of the previous non-trivia token at or before byte `b`.
 Returns `nothing` if no non-trivia token is found or if `b` is beyond the input or before position 1.
@@ -833,7 +843,7 @@ prev_nontrivia_byte(args...; kwargs...) =
     JS.last_byte(@something prev_nontrivia(args...; kwargs...) return nothing)
 
 """
-    prev_nontrivia(ps::JS.ParseStream, b::Int; pass_newlines::Bool=false, strict::Bool=false)
+    prev_nontrivia(ps::JS.ParseStream, b::Integer; pass_newlines::Bool=false, strict::Bool=false)
 
 Find the previous non-trivia token at or before byte position `b`.
 Returns the `tc::TokenCursor` for that token, or `nothing` if no non-trivia token is found
@@ -870,7 +880,7 @@ prev_nontrivia(ps, 20)  # returns nothing (beyond input)
 prev_nontrivia(args...; kwargs...) = find_nontrivia(#=prev_or_next=#true, args...; kwargs...)
 
 """
-    next_nontrivia_byte(ps::JS.ParseStream, b::Int; pass_newlines::Bool=false, strict::Bool=false)
+    next_nontrivia_byte(ps::JS.ParseStream, b::Integer; pass_newlines::Bool=false, strict::Bool=false)
 
 Return the first byte position of the next non-trivia token at or after byte `b`.
 Returns `nothing` if no non-trivia token is found or if `b` is beyond the input.
@@ -907,7 +917,7 @@ next_nontrivia_byte(args...; kwargs...) =
     JS.first_byte(@something next_nontrivia(args...; kwargs...) return nothing)
 
 """
-    next_nontrivia(ps::JS.ParseStream, b::Int; pass_newlines=false, strict=false)
+    next_nontrivia(ps::JS.ParseStream, b::Integer; pass_newlines=false, strict=false)
 
 Find the next non-trivia token at or after byte position `b`.
 Returns the `tc::TokenCursor` for that token, or `nothing` if no non-trivia token is found
@@ -943,7 +953,7 @@ next_nontrivia(ps, 40)  # returns nothing
 """
 next_nontrivia(args...; kwargs...) = find_nontrivia(#=prev_or_next=#false, args...; kwargs...)
 
-function find_nontrivia(prev_or_next::Bool, ps::JS.ParseStream, b::Int; pass_newlines::Bool=false, strict::Bool=false)
+function find_nontrivia(prev_or_next::Bool, ps::JS.ParseStream, b::Integer; pass_newlines::Bool=false, strict::Bool=false)
     tc = @something token_at_offset(ps, b) return nothing
     if !strict && !is_trivia(tc, pass_newlines)
         return tc
@@ -999,7 +1009,7 @@ noparen_macrocall(st0::SyntaxTreeC) =
     !is_special_macrocall(st0)
 
 """
-    select_target_identifier(st0::SyntaxTreeC, offset::Int) -> target::Union{SyntaxTreeC,Nothing}
+    select_target_identifier(st0::SyntaxTreeC, offset::Integer) -> target::Union{SyntaxTreeC,Nothing}
 
 Determines the node that the user most likely intends to navigate to.
 Returns `nothing` if no suitable one is found.
@@ -1012,7 +1022,7 @@ refs:
 - https://github.com/rust-lang/rust-analyzer/blob/6acff6c1f8306a0a1d29be8fd1ffa63cff1ad598/crates/ide/src/goto_definition.rs#L47-L62
 - https://github.com/aviatesk/JETLS.jl/pull/61#discussion_r2134707773
 """
-function select_target_identifier(st0::SyntaxTreeC, offset::Int)
+function select_target_identifier(st0::SyntaxTreeC, offset::Integer)
     filter = function (bas)
         JS.is_identifier(first(bas))
     end
@@ -1035,7 +1045,7 @@ function select_target_identifier(st0::SyntaxTreeC, offset::Int)
     return select_target_node(filter, selector, st0, offset)
 end
 
-function select_target_string(st0::SyntaxTreeC, offset::Int)
+function select_target_string(st0::SyntaxTreeC, offset::Integer)
     filter = function (bas)
         JS.kind(first(bas)) === JS.K"String"
     end
@@ -1064,7 +1074,7 @@ function resolve_path_string_literal(
     return (; value = String(value), path = String(path))
 end
 
-function select_target_node(filter, selector, st0::SyntaxTreeC, offset::Int)
+function select_target_node(filter, selector, st0::SyntaxTreeC, offset::Integer)
     bas = @somereal byte_ancestors(st0, offset) @goto minus1
     if !filter(bas)
         @label minus1
@@ -1079,13 +1089,13 @@ function select_target_node(filter, selector, st0::SyntaxTreeC, offset::Int)
 end
 
 """
-    select_dotprefix_identifier(st::SyntaxTreeC, offset::Int) -> dotprefix::Union{SyntaxTreeC,Nothing}
+    select_dotprefix_identifier(st::SyntaxTreeC, offset::Integer) -> dotprefix::Union{SyntaxTreeC,Nothing}
 
 If the code at `offset` position is dot accessor code, get the code being dot accessed.
 For example, `Base.show_│` returns the `SyntaxTree` of `Base`.
 If it's not dot accessor code, return `nothing`.
 """
-function select_dotprefix_identifier(st::SyntaxTreeC, offset::Int)
+function select_dotprefix_identifier(st::SyntaxTreeC, offset::Integer)
     bas = byte_ancestors(st, offset-1)
     dotprefix = nothing
     for i = 1:length(bas)
@@ -1105,7 +1115,7 @@ end
 """
     jsobj_to_range(
             obj, fi::Union{FileInfo,SavedFileInfo};
-            adjust_first::Int = 0, adjust_last::Int = 0
+            adjust_first::Integer = 0, adjust_last::Integer = 0
         ) -> range::LSP.Range
 
 Returns the position information of a JuliaSyntax object in the source file in `LSP.Range` format.
@@ -1116,8 +1126,8 @@ Returns the position information of a JuliaSyntax object in the source file in `
 - `fi::FileInfo`: The file info containing the parsed content
 
 # Keyword Arguments
-- `adjust_first::Int = 0`: Adjustment to apply to the first byte position
-- `adjust_last::Int = 0`: Adjustment to apply to the last byte position
+- `adjust_first::Integer = 0`: Adjustment to apply to the first byte position
+- `adjust_last::Integer = 0`: Adjustment to apply to the last byte position
 
 # Returns
 `LSP.Range`: The position range of the object in the source file, with character positions
@@ -1137,7 +1147,7 @@ character/byte that is NOT part of the range.
 """
 function jsobj_to_range(
         obj, fi::Union{FileInfo,SavedFileInfo};
-        adjust_first::Int = 0, adjust_last::Int = 0
+        adjust_first::Integer = 0, adjust_last::Integer = 0
     )
     fb = JS.first_byte(obj)
     lb = JS.last_byte(obj)
