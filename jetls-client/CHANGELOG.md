@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 - Diff: [`169faf25...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/169faf25...HEAD)
 
+### Changed
+
+- The `inlay_hint` settings schema was reorganized into per-hint sub-tables. `inlay_hint.block_end_min_lines` has been renamed to `inlay_hint.block_end.min_lines`, and a new `inlay_hint.block_end.enabled` toggle (default `true`) lets you disable block-end hints independently.
+  Existing configs keep working for now: the legacy key is still accepted at load time and mapped onto the new key in memory (your config file is not modified automatically), with a one-shot deprecation warning. The legacy alias will be removed in releases after June 2026, so if you are still using `inlay_hint.block_end_min_lines`, please update your config.
+
 ### Removed
 
 - Removed the `jetls.showReferences` command. JETLS now emits the built-in `editor.action.showReferences` directly for the reference-count code lens; the new `resolveCodeLens` middleware handles the argument conversion.
