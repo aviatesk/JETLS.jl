@@ -230,7 +230,7 @@ end
 # EST `K"block"` wrappers and descending through `&&` chains (all
 # operands must be true in the true branch).
 function for_each_cond_operand(@specialize(callback), cond::SyntaxTreeC)
-    traverse(cond) do node
+    traverse(cond) do node::SyntaxTreeC
         k = JS.kind(node)
         if k == JS.K"&&" || (k == JS.K"block" && JS.numchildren(node) == 1)
             return # descend into children

@@ -310,3 +310,52 @@ end
 
 unmatched_keys_msg(header_msg::AbstractString, unmatched_keys) =
     header_msg * "\n" * join(map(x -> string('`', join(x, "."), '`'), unmatched_keys), ", ")
+
+# Rewrite raw user config dicts so deprecated key paths land at their new
+# location before `Configurations.from_dict` sees them. Returns a list of
+# user-facing warnings — one per deprecation actually present.
+#
+# The struct schema only knows the current key paths, so callers must invoke
+# this *before* parsing. Already-migrated values win over the legacy alias.
+function migrate_deprecated_config_keys!(
+        config_dict::AbstractDict,
+        deprecated_configs::Vector{Pair{Vector{String},Vector{String}}} = deprecated_configurations
+    )
+    warnings = String[]
+    for (old_path, new_path) in deprecated_configs
+        old_parent = walk_nested_dict(config_dict, @view old_path[1:end-1])
+        old_parent === nothing && continue
+        haskey(old_parent, old_path[end]) || continue
+        old_value = pop!(old_parent, old_path[end])
+
+        new_parent = ensure_nested_dict!(config_dict, @view new_path[1:end-1])
+        if new_parent !== nothing && !haskey(new_parent, new_path[end])
+            new_parent[new_path[end]] = old_value
+        end
+
+        push!(warnings,
+            "`" * join(old_path, ".") * "` is deprecated; " *
+            "use `" * join(new_path, ".") * "` instead.")
+    end
+    return warnings
+end
+
+# Follow `path` into `d`; return the dict at the end, or `nothing` if any step
+# is missing or non-dict-shaped.
+function walk_nested_dict(d::AbstractDict, path)
+    for k in path
+        d = get(d, k, nothing)
+        d isa AbstractDict || return nothing
+    end
+    return d
+end
+
+# Like `walk_nested_dict` but creates missing intermediate dicts.
+# Returns `nothing` only if a non-dict value blocks the path.
+function ensure_nested_dict!(d::AbstractDict, path)
+    for k in path
+        d = get!(() -> Dict{String,Any}(), d, k)
+        d isa AbstractDict || return nothing
+    end
+    return d
+end

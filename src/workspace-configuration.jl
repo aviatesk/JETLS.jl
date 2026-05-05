@@ -67,6 +67,9 @@ function store_lsp_config!(tracker::ConfigChangeTracker, server::Server, @nospec
         return delete_lsp_config!(tracker, server)
     end
     config_dict = config_value
+    for msg in migrate_deprecated_config_keys!(config_dict)
+        show_warning_message(server, msg)
+    end
     store!(server.state.config_manager) do old_data::ConfigManagerData
         new_lsp_config = parse_config_dict(config_dict)
         if new_lsp_config isa AbstractString

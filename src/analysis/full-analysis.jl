@@ -63,8 +63,14 @@ function lookup_out_of_scope!(state::ServerState, uri::URI)
     end
     return nothing
 end
+# `canonical_cache_uri` normalizes notebook cell URIs (e.g. `vscode-notebook-cell://...`)
+# to the underlying notebook URI before they reach `find_analysis_env_path`, which only
+# understands `file://` and unsaved-buffer URIs. Without this, any feature that calls
+# `get_context_info` for a cell URI would crash with `Unsupported URI: ...` whenever the
+# analysis cache misses (e.g. semantic tokens requested while full-analysis is still
+# running after `didOpen`).
 gen_lookup_out_of_scope!(state::ServerState, uri::URI) =
-    () -> lookup_out_of_scope!(state, uri)
+    () -> lookup_out_of_scope!(state, canonical_cache_uri(state, uri))
 
 function cache_out_of_scope!(manager::AnalysisManager, uri::URI, outofscope::OutOfScope)
     store!(manager.cache) do cache

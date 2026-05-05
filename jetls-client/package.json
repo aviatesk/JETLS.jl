@@ -178,7 +178,7 @@
               "properties": {
                 "latex_emoji": {
                   "additionalProperties": false,
-                  "markdownDescription": "LaTeX and emoji completion configuration. See [documentation](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/completion-latex_emoji-strip_prefix).",
+                  "markdownDescription": "LaTeX and emoji completion configuration. See [documentation](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/completion/latex_emoji/strip_prefix).",
                   "properties": {
                     "strip_prefix": {
                       "markdownDescription": "Controls whether to strip `\\` or `:` prefix from LaTeX/emoji completion labels. Some editors (e.g., Zed) have sorting issues with backslash in `sortText`. Auto-detected by default; set explicitly if completions appear in wrong order.",
@@ -190,7 +190,7 @@
                 },
                 "method_signature": {
                   "additionalProperties": false,
-                  "markdownDescription": "Method signature completion configuration. See [documentation](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/completion-method_signature-prepend_inference_result).",
+                  "markdownDescription": "Method signature completion configuration. See [documentation](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/completion/method_signature/prepend_inference_result).",
                   "properties": {
                     "prepend_inference_result": {
                       "markdownDescription": "When true, prepends inferred return type to completion documentation, ensuring visibility in editors where `CompletionItem.detail` may be cut off (e.g., Zed). Auto-detected by default based on client name; set explicitly if return types are not visible.",
@@ -291,7 +291,7 @@
                     ],
                     "type": "object"
                   },
-                  "markdownDescription": "Fine-grained control over diagnostics through pattern matching. See [Pattern-based diagnostic configuration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic-patterns).",
+                  "markdownDescription": "Fine-grained control over diagnostics through pattern matching. See [Pattern-based diagnostic configuration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/diagnostic/patterns).",
                   "type": "array"
                 }
               },
@@ -359,12 +359,25 @@
               "additionalProperties": false,
               "markdownDescription": "Inlay hint configuration. See [Inlay hint configuration](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint).",
               "properties": {
-                "block_end_min_lines": {
-                  "default": 25,
-                  "markdownDescription": "Minimum lines for a block to display an inlay hint at `end` (e.g., `end # module Foo`). Supports: `module`, `function`, `macro`, `struct`, `if`, `let`, `for`, `while`, `@testset`.",
-                  "maximum": 9223372036854775807,
-                  "minimum": -9223372036854775808,
-                  "type": "integer"
+                "block_end": {
+                  "additionalProperties": false,
+                  "markdownDescription": "Block-end inlay hints configuration. See [Block-end hints](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint/block_end).",
+                  "properties": {
+                    "enabled": {
+                      "default": true,
+                      "markdownDescription": "Enable or disable inlay hints displayed at block `end` keywords (e.g., `end # module Foo`). Supports: `module`, `function`, `macro`, `struct`, `if`, `let`, `for`, `while`, `@testset`.",
+                      "type": "boolean"
+                    },
+                    "min_lines": {
+                      "default": 25,
+                      "markdownDescription": "Minimum number of lines a block must span before its `end`-tag inlay hint is displayed.",
+                      "maximum": 9223372036854775807,
+                      "minimum": -9223372036854775808,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [],
+                  "type": "object"
                 }
               },
               "required": [],

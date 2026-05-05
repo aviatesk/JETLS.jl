@@ -7,6 +7,13 @@ const JETLS_VERSION = let
     isfile(version_file) ? strip(read(version_file, String)) : "unknown"
 end
 
+# Append `old_path => new_path` pairs to register a key migration.
+# Each path is a list of nested keys; `migrate_deprecated_config_keys!` consults this
+# table and rewrites raw user config dicts before parsing.
+const deprecated_configurations = Pair{Vector{String},Vector{String}}[
+    ["inlay_hint", "block_end_min_lines"] => ["inlay_hint", "block_end", "min_lines"],
+]
+
 const __init__hooks__ = Any[]
 push_init_hook!(hook) = push!(__init__hooks__, hook)
 function __init__()
@@ -88,6 +95,9 @@ include("utils/binding.jl")
 include("utils/lsp.jl")
 include("utils/server.jl")
 
+include("analysis/TypeAnnotation.jl")
+using .TypeAnnotation
+
 include("init-options.jl")
 include("config.jl")
 include("workspace-configuration.jl")
@@ -120,6 +130,7 @@ include("code-action.jl")
 include("code-lens.jl")
 include("formatting.jl")
 include("inlay-hint.jl")
+include("semantic-tokens.jl")
 include("rename.jl")
 include("testrunner/testrunner.jl")
 include("profile.jl")
@@ -461,6 +472,10 @@ function handle_request_message(server::Server, @nospecialize(msg), cancel_flag:
         handle_CodeActionRequest(server, msg, cancel_flag)
     elseif msg isa InlayHintRequest
         handle_InlayHintRequest(server, msg, cancel_flag)
+    elseif msg isa SemanticTokensFullRequest
+        handle_SemanticTokensFullRequest(server, msg, cancel_flag)
+    elseif msg isa SemanticTokensRangeRequest
+        handle_SemanticTokensRangeRequest(server, msg, cancel_flag)
     elseif msg isa DocumentFormattingRequest
         handle_DocumentFormattingRequest(server, msg, cancel_flag)
     elseif msg isa DocumentRangeFormattingRequest

@@ -513,7 +513,7 @@ escape_snippet_text(s::AbstractString) =
 
 function make_insert_text(msig::AbstractString, num_existing_args::Int, use_snippet::Bool)
     mnode = JS.parsestmt(JS.SyntaxTree, msig; ignore_errors=true)
-    mnode = unwrap_where(mnode)
+    mnode = unwrap_funcdef_sig(mnode)
     JS.kind(mnode) in CALL_KINDS || return nothing
     params, kwp_i, _ = flatten_args(mnode)
     pos_params_count = kwp_i - 1
@@ -671,7 +671,7 @@ function call_completions!(
         elseif @isdefined(kwarg_comp_info) # i.e. should_complete_kwargs
             (; existing_kws, seen_kwarg_names, insert_spaces, local_bindings) = kwarg_comp_info
             mnode = JS.parsestmt(JS.SyntaxTree, msig; ignore_errors=true)
-            mnode = unwrap_where(mnode)
+            mnode = unwrap_funcdef_sig(mnode)
             JS.kind(mnode) in CALL_KINDS || continue
             params, kwp_i, has_semicolon = flatten_args(mnode)
             kwname_sort_idx = 1

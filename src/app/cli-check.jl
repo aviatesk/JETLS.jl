@@ -525,6 +525,8 @@ function print_diagnostics(
             continue
         end
         src = JS.SourceFile(text; filename=filepath)
+        textbuf = Vector{UInt8}(text)
+        line_starts = build_line_starts(textbuf)
 
         rel_path = relpath(filepath, root_path)
         sorted_diagnostics = sort(diagnostics; by=d->(d.range.start.line, d.range.start.character))
@@ -548,9 +550,8 @@ function print_diagnostics(
                 severity_str = "hint"
             end
 
-            textbuf = Vector{UInt8}(text)
-            start_byte = _xy_to_offset(textbuf, diagnostic.range.start, PositionEncodingKind.UTF16)
-            end_byte = _xy_to_offset(textbuf, diagnostic.range.var"end", PositionEncodingKind.UTF16)
+            start_byte = _xy_to_offset(textbuf, diagnostic.range.start, PositionEncodingKind.UTF16, line_starts)
+            end_byte = _xy_to_offset(textbuf, diagnostic.range.var"end", PositionEncodingKind.UTF16, line_starts)
             note = get_raw_message(diagnostic)
             if diagnostic.code !== nothing
                 note *= " [$severity_str:$(diagnostic.code)]"

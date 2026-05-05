@@ -81,6 +81,14 @@ function make_CodeLensRequest(id::Int, uri::URI)
             textDocument = TextDocumentIdentifier(; uri)))
 end
 
+function make_InlayHintRequest(id::Int, uri::URI, range::Range)
+    return InlayHintRequest(;
+        id,
+        params = InlayHintParams(;
+            textDocument = TextDocumentIdentifier(; uri),
+            range))
+end
+
 @testset "notebook end to end" begin
     mktempdir() do tempdir; Pkg.activate(tempdir) do
         Pkg.add("Example"; io=devnull)
@@ -252,81 +260,29 @@ end
     end; end # mktempdir() do tempdir; Pkg.activate(tempdir) do
 end
 
-@testset "notebook formatting" begin
+@testset "notebook per-cell features" begin
     mktempdir() do tempdir
         notebook_uri = filepath2uri(normpath(tempdir, "test.ipynb"))
 
-        # Use `cat` as a test formatter (just echoes input)
         settings = Dict{String,Any}(
+            # `code_lens.references` defaults to false, enable it for this test
+            "code_lens" => Dict{String,Any}(
+                "references" => true,
+            ),
+            # Lower the block-end threshold so the small test cells emit
+            # hints, and disable type inlay hints to avoid noise from
+            # inferred types.
+            "inlay_hint" => Dict{String,Any}(
+                "block_end" => Dict{String,Any}(
+                    "min_lines" => 0,
+                ),
+            ),
+            # Use `cat` as a test formatter (just echoes input)
             "formatter" => Dict{String,Any}(
                 "custom" => Dict{String,Any}(
                     "executable" => "cat"
                 )
-            )
-        )
-
-        withserver(; settings) do (; server, writemsg, writereadmsg, id_counter)
-            cell1_uri = make_cell_uri(tempdir, 1)
-            cell2_uri = make_cell_uri(tempdir, 2)
-
-            # Open notebook with two cells and wait for diagnostics
-            # read=2: PublishDiagnosticsNotification for each cell
-            let cell1_text = "x = 1"
-                cell2_text = "y = 2\nz = 3"
-                cells = NotebookCell[
-                    NotebookCell(; kind = NotebookCellKind.Code, document = cell1_uri),
-                    NotebookCell(; kind = NotebookCellKind.Code, document = cell2_uri),
-                ]
-                cell_texts = Dict{URI,String}(cell1_uri => cell1_text, cell2_uri => cell2_text)
-                writereadmsg(make_DidOpenNotebookDocumentNotification(notebook_uri, cells, cell_texts); read=2)
-            end
-
-            # Request formatting for cell 1 only
-            let id = id_counter[] += 1
-                (; raw_res) = writereadmsg(make_DocumentFormattingRequest(id, cell1_uri))
-                @test raw_res isa DocumentFormattingResponse
-                edits = raw_res.result
-                @test edits !== nothing
-                @test length(edits) == 1
-                edit = edits[1]
-                # Verify the range is cell-local (covers just "x = 1")
-                @test edit.range.start.line == 0
-                @test edit.range.start.character == 0
-                @test edit.range.var"end".line == 0
-                @test edit.range.var"end".character == 5
-                # Verify the formatted text (cat just echoes input)
-                @test edit.newText == "x = 1"
-            end
-
-            # Verify cell 2 is independent - request formatting for cell 2
-            let id = id_counter[] += 1
-                (; raw_res) = writereadmsg(make_DocumentFormattingRequest(id, cell2_uri))
-                @test raw_res isa DocumentFormattingResponse
-                edits = raw_res.result
-                @test edits !== nothing
-                @test length(edits) == 1
-                edit = edits[1]
-                # Verify the range is cell-local (covers "y = 2\nz = 3")
-                @test edit.range.start.line == 0
-                @test edit.range.start.character == 0
-                @test edit.range.var"end".line == 1
-                @test edit.range.var"end".character == 5
-                # Verify the formatted text (cat just echoes input)
-                @test edit.newText == "y = 2\nz = 3"
-            end
-        end
-    end
-end
-
-@testset "notebook documentSymbol and codeLens" begin
-    mktempdir() do tempdir
-        notebook_uri = filepath2uri(normpath(tempdir, "test.ipynb"))
-
-        # `code_lens.references` defaults to false, enable it for this test
-        settings = Dict{String,Any}(
-            "code_lens" => Dict{String,Any}(
-                "references" => true,
-            )
+            ),
         )
 
         withserver(; settings) do (; writereadmsg, id_counter)
@@ -397,6 +353,95 @@ end
                 @test data isa JETLS.ReferencesCodeLensData
                 @test data.uri == cell2_uri
                 @test data.line == 0
+            end
+
+            # inlayHint for cell 1 — viewport spans the whole cell. The single
+            # `let` block-end hint should land at cell-local line 2 and its
+            # textEdit range must also be cell-local.
+            let id = id_counter[] += 1
+                viewport = Range(;
+                    start = Position(; line = 0, character = 0),
+                    var"end" = Position(; line = 3, character = 0))
+                (; raw_res) = writereadmsg(make_InlayHintRequest(id, cell1_uri, viewport))
+                @test raw_res isa InlayHintResponse
+                hints = raw_res.result
+                @test hints isa Vector{InlayHint}
+                @test length(hints) == 1
+                hint = hints[1]
+                @test hint.position.line == 2
+                @test hint.label == "let x = 1"
+                textEdits = hint.textEdits
+                @test textEdits isa Vector{TextEdit} && length(textEdits) == 1
+                @test textEdits[1].range.start.line == 2
+                @test textEdits[1].range.var"end".line == 2
+            end
+
+            # inlayHint for cell 2 — viewport spans the whole cell. The
+            # `function` hint must appear at cell-local line 2 (not the
+            # notebook-global line 5) and only cell 2's hint comes back
+            # (`result = …` is a one-liner, no block-end hint).
+            let id = id_counter[] += 1
+                viewport = Range(;
+                    start = Position(; line = 0, character = 0),
+                    var"end" = Position(; line = 4, character = 0))
+                (; raw_res) = writereadmsg(make_InlayHintRequest(id, cell2_uri, viewport))
+                @test raw_res isa InlayHintResponse
+                hints = raw_res.result
+                @test hints isa Vector{InlayHint}
+                @test length(hints) == 1
+                hint = hints[1]
+                @test hint.position.line == 2
+                @test hint.label == "function myfunc"
+                textEdits = hint.textEdits
+                @test textEdits isa Vector{TextEdit} && length(textEdits) == 1
+                @test textEdits[1].range.start.line == 2
+                @test textEdits[1].range.var"end".line == 2
+            end
+
+            # A viewport that doesn't cover the block end should produce no
+            # hints — verifies the cell-local viewport is honored, not silently
+            # promoted to the whole notebook.
+            let id = id_counter[] += 1
+                viewport = Range(;
+                    start = Position(; line = 0, character = 0),
+                    var"end" = Position(; line = 1, character = 0))
+                (; raw_res) = writereadmsg(make_InlayHintRequest(id, cell2_uri, viewport))
+                @test raw_res isa InlayHintResponse
+                @test raw_res.result isa LSP.Null ||
+                    (raw_res.result isa Vector && isempty(raw_res.result))
+            end
+
+            # formatting for cell 1 — `cat` echoes input. The edit range must
+            # be cell-local: cell 1 ends at line 2 (`end`, length 3).
+            let id = id_counter[] += 1
+                (; raw_res) = writereadmsg(make_DocumentFormattingRequest(id, cell1_uri))
+                @test raw_res isa DocumentFormattingResponse
+                edits = raw_res.result
+                @test edits !== nothing
+                @test length(edits) == 1
+                edit = edits[1]
+                @test edit.range.start.line == 0
+                @test edit.range.start.character == 0
+                @test edit.range.var"end".line == 2
+                @test edit.range.var"end".character == 3
+                @test edit.newText == "let x = 1\nprintln(sin(x))\nend"
+            end
+
+            # formatting for cell 2 — independent of cell 1. The edit range
+            # must end at cell-local line 3 (`result = myfunc(42)`, length 19),
+            # not the notebook-global line 6.
+            let id = id_counter[] += 1
+                (; raw_res) = writereadmsg(make_DocumentFormattingRequest(id, cell2_uri))
+                @test raw_res isa DocumentFormattingResponse
+                edits = raw_res.result
+                @test edits !== nothing
+                @test length(edits) == 1
+                edit = edits[1]
+                @test edit.range.start.line == 0
+                @test edit.range.start.character == 0
+                @test edit.range.var"end".line == 3
+                @test edit.range.var"end".character == 19
+                @test edit.newText == "function myfunc(y)\n    y + 1\nend\nresult = myfunc(42)"
             end
         end
     end
