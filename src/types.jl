@@ -538,8 +538,13 @@ end
     min_lines::Maybe{Int}
 end
 
+@option struct InlayHintTypesConfig <: ConfigSection
+    enabled::Maybe{Bool}
+end
+
 @option struct InlayHintConfig <: ConfigSection
     block_end::Maybe{InlayHintBlockEndConfig}
+    types::Maybe{InlayHintTypesConfig}
 end
 
 @option struct JETLSConfig <: ConfigSection
@@ -565,7 +570,8 @@ const DEFAULT_CONFIG = JETLSConfig(;
     completion = CompletionConfig(LaTeXEmojiConfig(missing), MethodSignatureConfig(missing)),
     code_lens = CodeLensConfig(false, true),
     inlay_hint = InlayHintConfig(
-        InlayHintBlockEndConfig(true, 25)),
+        InlayHintBlockEndConfig(true, 25),
+        InlayHintTypesConfig(true)),
     initialization_options = DEFAULT_INIT_OPTIONS)
 
 function get_default_config(path::Symbol...)

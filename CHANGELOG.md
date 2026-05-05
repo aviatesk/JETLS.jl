@@ -49,6 +49,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > The new shape adds [`inlay_hint.block_end.enabled`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint/block_end/enabled) for toggling block-end hints independently, and renames `inlay_hint.block_end_min_lines` to [`inlay_hint.block_end.min_lines`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint/block_end/min_lines).
 > Existing configs keep working for now: the legacy key is still accepted at load time and mapped onto the new key in memory (your config file is not modified automatically), with a one-shot deprecation warning. The legacy alias will be removed in releases after June 2026, so if you are still using `inlay_hint.block_end_min_lines`, please update your config.
 
+### Added
+
+- Added type inlay hints showing inferred types next to expressions (bindings, calls, function return types, branch results, etc.) so types are visible inline without hovering.
+  Method bodies are inferred against their declared signature, and top-level chunks (e.g. standalone `let` blocks) are inferred independently.
+  Hints are enabled by default; [`[inlay_hint.types] enabled`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint/types/enabled) toggles them.
+  See the [Type hints](https://aviatesk.github.io/JETLS.jl/release/features/#features/inlay-hint/types) page for examples.
+
+  <img width="976" height="637" alt="Inlay type hint demo" src="https://github.com/user-attachments/assets/baa2ff1b-df38-4304-a479-f2a2b4ba3e7b" />
+
 ### Changed
 
 - Block-end inlay hints now display as `#= … =#` block comments (e.g. `end #= module Foo =#`), so what's shown matches the text inserted when the hint is applied.

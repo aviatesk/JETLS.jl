@@ -276,6 +276,9 @@ end
                 "block_end" => Dict{String,Any}(
                     "min_lines" => 0,
                 ),
+                "types" => Dict{String,Any}(
+                    "enabled" => false,
+                ),
             ),
             # Use `cat` as a test formatter (just echoes input)
             "formatter" => Dict{String,Any}(
