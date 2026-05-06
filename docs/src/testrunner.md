@@ -184,9 +184,13 @@ If you see an error about `testrunner` not being found:
    `which testrunner`: otherwise you may need to add `~/.julia/bin` to `PATH`
 3. Restart your editor to ensure it picks up the updated `PATH`
 
-Test execution streams the current editor buffer to `testrunner` over stdin,
-so saving the file is not required and unsaved edits run as-is. This needs a
-`testrunner` CLI new enough to recognize the `--read-stdin` flag — if tests
-fail to start with an "Unknown option" error, reinstall `testrunner` (see
-[Prerequisites](@ref testrunner/prerequisites)) and confirm that
-`testrunner --help` lists `--read-stdin` under `Options:`.
+Starting with releases on or after 2026-05-06, test execution streams the
+current editor buffer to `testrunner` over stdin, so saving the file is not
+required and unsaved edits run as-is — including buffers (`untitled:` for
+VSCode / `buffer:` for Sublime Text) that have never been saved to disk,
+where relative `include` calls resolve from the workspace root.
+
+This needs a `testrunner` CLI new enough to recognize the `--read-stdin`
+flag — if tests fail to start with an "Unknown option" error, reinstall
+`testrunner` (see [Prerequisites](@ref testrunner/prerequisites)) and confirm
+that `testrunner --help` lists `--read-stdin` under `Options:`.

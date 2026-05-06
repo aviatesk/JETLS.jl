@@ -56,6 +56,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `textDocument/diagnostic` now returns an unchanged report when neither the document nor its analysis-unit siblings have changed since the previous pull, skipping diagnostic recomputation. This reduces redundant work on clients that aggressively re-pull diagnostics across all open files on each edit (e.g., Zed).
 
 - Test runner code lens / code action now runs against the current editor buffer rather than the saved file. JETLS pipes the live buffer to the `testrunner` subprocess over stdin, so unsaved edits (including brand-new `@testset` / `@test` cases) execute as-is and the previous "Save the file first to run tests" error no longer occurs.
+  The integration also works for buffers (`untitled:` for VSCode / `buffer:` for Sublime Text) that have never been saved to disk: relative `include` calls in the buffer resolve from the workspace root.
   This requires upgrading the `testrunner` CLI to a version that understands the `--read-stdin` flag. Reinstall the latest release with:
   ```bash
   julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/TestRunner.jl", rev="release")'

@@ -297,25 +297,38 @@ function testrunner_testcase_code_actions!(
     return code_actions
 end
 
+# Returns the workspace root to feed `testrunner` as `--root-path`, but only
+# when needed: for unsaved (`untitled:`/`buffer:`) URIs the `filepath` we send
+# has no `dirname`, so the runner needs an explicit base for relative
+# `include` calls. Saved files have a real `dirname` and should rely on it.
+function testrunner_root_path(state::ServerState, uri::URI)
+    isunsaveduri(uri) || return nothing
+    return isdefined(state, :root_path) ? state.root_path : nothing
+end
+
 # `@testset` execution
-function testrunner_cmd(executable::String, filepath::String, tsn::String, tsl::Int, test_env_path::Union{Nothing,String})
+function testrunner_cmd(executable::String, filepath::String, tsn::String, tsl::Int,
+                        test_env_path::Union{Nothing,String},
+                        root_path::Union{Nothing,String})
     tsn = rlstrip(tsn, '"')
     testrunner_exe = Sys.which(executable)
-    if isnothing(test_env_path)
-        return `$testrunner_exe --verbose --json --read-stdin $filepath $tsn --filter-lines=$tsl`
-    else
-        return `$testrunner_exe --verbose --project=$test_env_path --json --read-stdin $filepath $tsn --filter-lines=$tsl`
-    end
+    project_args = isnothing(test_env_path) ? `` : `--project=$test_env_path`
+    # `--root-path` only matters when `filepath` is a virtual identifier
+    # (no `dirname`); for saved files we omit it to avoid implying a
+    # workspace-relative include base that doesn't apply.
+    root_args = isnothing(root_path) ? `` : `--root-path=$root_path`
+    return `$testrunner_exe --verbose $project_args $root_args --json --read-stdin $filepath $tsn --filter-lines=$tsl`
 end
 
 # `@test` execution
-function testrunner_cmd(executable::String, filepath::String, tcl::Int, test_env_path::Union{Nothing,String})
+function testrunner_cmd(executable::String, filepath::String, tcl::Int,
+                        test_env_path::Union{Nothing,String},
+                        root_path::Union{Nothing,String})
     testrunner_exe = Sys.which(executable)
-    if isnothing(test_env_path)
-        return `$testrunner_exe --verbose --json --read-stdin $filepath L$tcl`
-    else
-        return `$testrunner_exe --verbose --project=$test_env_path --json --read-stdin $filepath L$tcl`
-    end
+    project_args = isnothing(test_env_path) ? `` : `--project=$test_env_path`
+    # See the `@testset` overload for the rationale behind `--root-path`.
+    root_args = isnothing(root_path) ? `` : `--root-path=$root_path`
+    return `$testrunner_exe --verbose $project_args $root_args --json --read-stdin $filepath L$tcl`
 end
 
 function testrunner_diagnostic_to_related_information(diagnostic::TestRunnerDiagnostic)
@@ -520,7 +533,8 @@ function _testrunner_run_testset(
 
     tsl = testset_line(fi.testsetinfos[idx])
     test_env_path = find_uri_env_path(server.state, uri)
-    cmd = testrunner_cmd(executable, filepath, tsn, tsl, test_env_path)
+    root_path = testrunner_root_path(server.state, uri)
+    cmd = testrunner_cmd(executable, filepath, tsn, tsl, test_env_path, root_path)
     source = JS.sourcetext(fi.parsed_stream)
     testrunnerproc = open(pipeline(cmd; stdin=IOBuffer(source)); read=true)
 
@@ -650,7 +664,8 @@ function _testrunner_run_testcase(
         cancellable_token::Union{Nothing,CancellableToken} = nothing
     )
     test_env_path = find_uri_env_path(server.state, uri)
-    cmd = testrunner_cmd(executable, filepath, tcl, test_env_path)
+    root_path = testrunner_root_path(server.state, uri)
+    cmd = testrunner_cmd(executable, filepath, tcl, test_env_path, root_path)
     testrunnerproc = open(pipeline(cmd; stdin=IOBuffer(source)); read=true)
 
     result = try
