@@ -2,7 +2,7 @@
 # These are in addition to JuliaLowering.jl/src/syntax_macros.jl,
 # and can be merged there when possible.
 
-# TODO: @inline, @noinline, @inbounds, @simd
+# TODO: @boundscheck, @simd
 
 """
     mapchildren(f, ctx, ex, indices::UnitRange{Int})
@@ -37,6 +37,39 @@ function Base.var"@specialize"(
     )
     JL.@ast(__context__, __context__.macrocall::SyntaxTreeC,
             [JS.K"block" ex1 ex2 exs...])
+end
+
+# `@inline` / `@noinline` / `Base.@propagate_inbounds` decorate a function definition
+# or a code block with codegen hints. The standard expansion rewrites the wrapped function
+# body to inject `Expr(:meta, …)` markers; that produces synthetic nodes whose byte ranges
+# don't anchor in the source, breaking surface lookups (inlay hints, hover, …) on the inner
+# funcdef. For static analysis the markers have no semantic effect, so we drop them and let
+# the wrapped expression flow through with its own provenance intact.
+# The 0-arg form keeps the `K"meta"` so scope resolution treats it like the original.
+function Base.var"@inline"(__context__::JL.MacroContext)
+    JL.@ast(__context__, __context__.macrocall::SyntaxTreeC,
+            [JS.K"meta" "inline"::JS.K"Identifier"])
+end
+
+function Base.var"@inline"(__context__::JL.MacroContext, ex::SyntaxTreeC)
+    JL.@ast(__context__, ex, ex)
+end
+
+function Base.var"@noinline"(__context__::JL.MacroContext)
+    JL.@ast(__context__, __context__.macrocall::SyntaxTreeC,
+            [JS.K"meta" "noinline"::JS.K"Identifier"])
+end
+
+function Base.var"@noinline"(__context__::JL.MacroContext, ex::SyntaxTreeC)
+    JL.@ast(__context__, ex, ex)
+end
+
+function Base.var"@propagate_inbounds"(__context__::JL.MacroContext, ex::SyntaxTreeC)
+    JL.@ast(__context__, ex, ex)
+end
+
+function Base.var"@inbounds"(__context__::JL.MacroContext, ex::SyntaxTreeC)
+    JL.@ast(__context__, ex, ex)
 end
 
 # Stub new-style implementation of `Threads.@spawn`. The real macro wraps the

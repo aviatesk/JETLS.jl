@@ -140,8 +140,12 @@ const NEW_STYLE_MACROCALL_NAMES = (
     "@nospecialize",
     # src/utils/jl-syntax-macros.jl
     "@assume_effects",
+    "@inbounds",
+    "@inline",
     "@kwdef",
     "@label",
+    "@noinline",
+    "@propagate_inbounds",
     "@something",
     "@spawn",
     "@specialize",

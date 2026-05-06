@@ -712,8 +712,15 @@ function InferredTreeContext(inferred_tree::SyntaxTreeC, st3::SyntaxTreeC)
         if !isempty(provs)
             fprov = first(provs)
             fprov_rng = JS.byte_range(fprov)
-            haskey(surface_kind_index, fprov_rng) ||
-                (surface_kind_index[fprov_rng] = JS.kind(fprov))
+            # Register *every* provenance entry, not just `first(provs)`. For
+            # macro-wrapped surface forms — `@inline f(x) = body` whose chain is
+            # `[macrocall, function]` — this makes the inner funcdef's span queryable
+            # in addition to the macrocall's outer span.
+            for prov in provs
+                prov_rng = JS.byte_range(prov)
+                haskey(surface_kind_index, prov_rng) ||
+                    (surface_kind_index[prov_rng] = JS.kind(prov))
+            end
 
             if JS.kind(st) === JS.K"call" && hasproperty(st, :type) &&
                     length(provs) >= 2 && JS.kind(fprov) === JS.K"macrocall"
