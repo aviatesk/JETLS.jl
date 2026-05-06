@@ -1428,6 +1428,99 @@ end
     end
 end
 
+@testset "tryfinally: assignment before return reaches finally use" begin
+    # `return` inside `try` runs `finally` before the function exits, so
+    # an assignment preceding the return is live with respect to a use in
+    # the finally body. Without modeling the return → finally edge, both
+    # try-body and catch-body assignments here looked dead because they
+    # only fall through to the unreachable post-return phantom.
+    let ds = get_dead_stores("""
+        function f()
+            local x::Float64
+            try
+                y = sin(rand((rand(), Inf)))
+                x = y
+                return 0
+            catch
+                x = 0.0
+                return 1
+            finally
+                push!(xs, x)
+            end
+        end
+        """)
+        @test !haskey(ds, "x")
+    end
+
+    # Single-branch variant without catch: same liveness through finally.
+    let ds = get_dead_stores("""
+        function f()
+            local x
+            try
+                x = compute()
+                return 0
+            finally
+                cleanup(x)
+            end
+        end
+        """)
+        @test !haskey(ds, "x")
+    end
+
+    # Sanity: a `return` outside any tryfinally still kills the
+    # preceding assignment (no finally to flow through). The use after
+    # `return` is unreachable, so the assignment cannot reach it.
+    let ds = get_dead_stores("""
+        function f()
+            x = 1
+            return 0
+            println(x)
+        end
+        """)
+        @test ds["x"] == 1
+    end
+end
+
+@testset "tryfinally: mid-try exception keeps intermediate assignments live" begin
+    # Classic state-tracking pattern: each step records progress before
+    # calling a possibly-throwing helper, and `finally` logs the latest
+    # progress reached. Every intermediate assignment can be the live
+    # value seen by `log(state)` if the next call throws, so none is dead.
+    let ds = get_dead_stores("""
+        function process()
+            state = "init"
+            try
+                state = "step1 starting"
+                step1()
+                state = "step2 starting"
+                step2()
+                state = "done"
+            finally
+                log(state)
+            end
+        end
+        """)
+        @test !haskey(ds, "state")
+    end
+
+    # Statements inside the finally body itself should NOT branch to the
+    # same finally label (the active stack is popped before linearizing
+    # the finally body): a clobbered local with no later use is still dead.
+    let ds = get_dead_stores("""
+        function f()
+            try
+                step()
+            finally
+                x = 1
+                x = 2
+                println(x)
+            end
+        end
+        """)
+        @test ds["x"] == 1
+    end
+end
+
 end # @testset "dead store analysis" begin
 
 # --- Unreachable-statement analysis ---
