@@ -25,8 +25,7 @@ using JETLS.Glob
         uri = filepath2uri(script_path)
         withserver() do (; writereadmsg, id_counter)
             # `textDocument/publishDiagnostics` is notified, but the diagnostics of syntax errors wouldn't be published
-            (; raw_res) = writereadmsg(
-                make_DidOpenTextDocumentNotification(uri, script_code))
+            writereadmsg(make_DidOpenTextDocumentNotification(uri, script_code))
 
             let id = id_counter[] += 1
                 (; raw_res) = writereadmsg(DocumentDiagnosticRequest(;
@@ -342,6 +341,213 @@ end
             writereadmsg(make_DidOpenTextDocumentNotification(uri, read(script_path, String)); read=0, check=false)
             wait(event)
             @test success
+        end
+    end
+end
+
+@testset "textDocument/diagnostic message cycle" begin
+    script_code = "x = 1\n"
+    withscript(script_code) do script_path
+        uri = filepath2uri(script_path)
+        withserver() do (; server, writemsg, writereadmsg, id_counter)
+            (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, script_code))
+            @test raw_res isa PublishDiagnosticsNotification
+
+            # initial pull: no `previousResultId` → full report carrying a `resultId`
+            local first_result_id::String
+            let id = id_counter[] += 1
+                (; raw_res) = writereadmsg(DocumentDiagnosticRequest(;
+                    id,
+                    params = DocumentDiagnosticParams(;
+                        textDocument = TextDocumentIdentifier(; uri))))
+                @test raw_res isa DocumentDiagnosticResponse
+                @test raw_res.result isa RelatedFullDocumentDiagnosticReport
+                @test raw_res.result.resultId isa String
+                first_result_id = raw_res.result.resultId
+            end
+
+            # repeat pull with matching `previousResultId` → unchanged report
+            let id = id_counter[] += 1
+                (; raw_res) = writereadmsg(DocumentDiagnosticRequest(;
+                    id,
+                    params = DocumentDiagnosticParams(;
+                        textDocument = TextDocumentIdentifier(; uri),
+                        previousResultId = first_result_id)))
+                @test raw_res isa DocumentDiagnosticResponse
+                @test raw_res.result isa RelatedUnchangedDocumentDiagnosticReport
+                @test raw_res.result.resultId == first_result_id
+            end
+
+            # editing the document bumps the version → `resultId` changes
+            writemsg(make_DidChangeTextDocumentNotification(uri, "x = 2\n", #=version=#2))
+            wait_for_file_cache_version(server.state, uri, 2)
+
+            local second_result_id::String
+            let id = id_counter[] += 1
+                (; raw_res) = writereadmsg(DocumentDiagnosticRequest(;
+                    id,
+                    params = DocumentDiagnosticParams(;
+                        textDocument = TextDocumentIdentifier(; uri),
+                        previousResultId = first_result_id)))
+                @test raw_res isa DocumentDiagnosticResponse
+                @test raw_res.result isa RelatedFullDocumentDiagnosticReport
+                @test raw_res.result.resultId isa String
+                @test raw_res.result.resultId != first_result_id
+                second_result_id = raw_res.result.resultId
+            end
+
+            # repeat pull after edit with new `resultId` → unchanged
+            let id = id_counter[] += 1
+                (; raw_res) = writereadmsg(DocumentDiagnosticRequest(;
+                    id,
+                    params = DocumentDiagnosticParams(;
+                        textDocument = TextDocumentIdentifier(; uri),
+                        previousResultId = second_result_id)))
+                @test raw_res isa DocumentDiagnosticResponse
+                @test raw_res.result isa RelatedUnchangedDocumentDiagnosticReport
+                @test raw_res.result.resultId == second_result_id
+            end
+
+            # mismatched `previousResultId` → full report (does not crash)
+            let id = id_counter[] += 1
+                (; raw_res) = writereadmsg(DocumentDiagnosticRequest(;
+                    id,
+                    params = DocumentDiagnosticParams(;
+                        textDocument = TextDocumentIdentifier(; uri),
+                        previousResultId = "not-a-real-id")))
+                @test raw_res isa DocumentDiagnosticResponse
+                @test raw_res.result isa RelatedFullDocumentDiagnosticReport
+                @test raw_res.result.resultId == second_result_id
+            end
+        end
+    end
+end
+
+@testset "workspace/diagnostic message cycle" begin
+    pkg_code = """
+    module TestWorkspaceDiagnostic
+    using Base: sum
+    include("util.jl")
+    end # module TestWorkspaceDiagnostic
+    """
+    util_code_initial = ""
+
+    pkg_setup = function ()
+        pkg_dir = dirname(Pkg.project().path)
+        write(normpath(pkg_dir, "src", "util.jl"), util_code_initial)
+    end
+    withpackage("TestWorkspaceDiagnostic", pkg_code; pkg_setup) do pkg_path
+        util_path = normpath(pkg_path, "src", "util.jl")
+        util_uri = filepath2uri(util_path)
+        rootUri = filepath2uri(pkg_path)
+        main_path = normpath(pkg_path, "src", "TestWorkspaceDiagnostic.jl")
+        main_uri = filepath2uri(main_path)
+        # The lifecycle below relies on `diagnostic.all_files = true` (the schema default),
+        # which is why no initial `settings` are passed. The final step flips it to `false`
+        # to verify that workspace/diagnostic suppresses unsynced files.
+        withserver(; rootUri) do (; server, writemsg, writereadmsg, id_counter)
+            # Open util.jl (NOT main.jl) → triggers package analysis from main.jl entry.
+            # With `diagnostic.all_files = true` (default), publishes happen for both files.
+            let (; raw_res) = writereadmsg(
+                    make_DidOpenTextDocumentNotification(util_uri, util_code_initial);
+                    read = 2)
+                @test all(msg -> msg isa PublishDiagnosticsNotification, raw_res)
+                @test Set(msg.params.uri for msg in raw_res) == Set([main_uri, util_uri])
+            end
+
+            # Initial workspace pull → main.jl carries unused-import on `sum`;
+            # util.jl is skipped (synced).
+            local first_main_id::String
+            let id = id_counter[] += 1
+                (; raw_res) = writereadmsg(WorkspaceDiagnosticRequest(;
+                    id,
+                    params = WorkspaceDiagnosticParams(;
+                        previousResultIds = PreviousResultId[])))
+                @test raw_res isa WorkspaceDiagnosticResponse
+                @test raw_res.result isa WorkspaceDiagnosticReport
+                items = raw_res.result.items
+                @test !any(item -> item.uri == util_uri, items)
+                main_idx = findfirst(item -> item.uri == main_uri, items)
+                @test main_idx !== nothing
+                main_item = items[main_idx]
+                @test main_item isa WorkspaceFullDocumentDiagnosticReport
+                @test any(d -> d.code == JETLS.LOWERING_UNUSED_IMPORT_CODE, main_item.items)
+                first_main_id = main_item.resultId
+            end
+
+            # Repeat pull with matching `previousResultIds` → unchanged report
+            let id = id_counter[] += 1
+                (; raw_res) = writereadmsg(WorkspaceDiagnosticRequest(;
+                    id,
+                    params = WorkspaceDiagnosticParams(;
+                        previousResultIds = PreviousResultId[
+                            PreviousResultId(; uri = main_uri, value = first_main_id)])))
+                @test raw_res isa WorkspaceDiagnosticResponse
+                items = raw_res.result.items
+                main_idx = findfirst(item -> item.uri == main_uri, items)
+                @test main_idx !== nothing
+                main_item = items[main_idx]
+                @test main_item isa WorkspaceUnchangedDocumentDiagnosticReport
+                @test main_item.resultId == first_main_id
+            end
+
+            # Edit util.jl to use `sum`. `analyze_unused_imports!` reads the latest
+            # `FileInfo` of every unit member each pull, so the next `workspace/diagnostic`
+            # picks up the change without needing to re-trigger full-analysis.
+            util_code_updated = "y = sum([1, 2, 3])\n"
+            writemsg(make_DidChangeTextDocumentNotification(util_uri, util_code_updated, #=version=#2))
+            wait_for_file_cache_version(server.state, util_uri, 2)
+
+            # Workspace pull again → main.jl's `resultId` changed (because util.jl's
+            # version is folded into main.jl's hash) and the unused-import is gone.
+            let id = id_counter[] += 1
+                (; raw_res) = writereadmsg(WorkspaceDiagnosticRequest(;
+                    id,
+                    params = WorkspaceDiagnosticParams(;
+                        previousResultIds = PreviousResultId[
+                            PreviousResultId(; uri = main_uri, value = first_main_id)])))
+                @test raw_res isa WorkspaceDiagnosticResponse
+                items = raw_res.result.items
+                main_idx = findfirst(item -> item.uri == main_uri, items)
+                @test main_idx !== nothing
+                main_item = items[main_idx]
+                @test main_item isa WorkspaceFullDocumentDiagnosticReport
+                @test main_item.resultId != first_main_id
+                @test !any(d -> d.code == JETLS.LOWERING_UNUSED_IMPORT_CODE, main_item.items)
+            end
+
+            # Disable `diagnostic.all_files` → workspace/diagnostic suppresses unsynced files.
+            # Expect: 1 `ShowMessageNotification` for the config change + 1
+            # `PublishDiagnosticsNotification` for the synced util.jl (sent by
+            # `notify_diagnostics!`). main.jl's only diagnostic is the lowering
+            # `unused-import` which is computed on demand and not stored in the analysis
+            # cache, so the `ensure_cleared` branch does not emit a clearing publish for it.
+            settings_off = Dict{String,Any}(
+                "diagnostic" => Dict{String,Any}("all_files" => false),
+            )
+            let (; raw_res) = writereadmsg(DidChangeConfigurationNotification(;
+                    params = DidChangeConfigurationParams(; settings = settings_off));
+                    read = 2)
+                @test count(msg -> msg isa ShowMessageNotification, raw_res) == 1
+                util_publish = findfirst(msg -> msg isa PublishDiagnosticsNotification, raw_res)
+                @test util_publish !== nothing
+                @test raw_res[util_publish].params.uri == util_uri
+            end
+
+            # Workspace pull → main.jl is returned but with empty items.
+            let id = id_counter[] += 1
+                (; raw_res) = writereadmsg(WorkspaceDiagnosticRequest(;
+                    id,
+                    params = WorkspaceDiagnosticParams(;
+                        previousResultIds = PreviousResultId[])))
+                @test raw_res isa WorkspaceDiagnosticResponse
+                items = raw_res.result.items
+                main_idx = findfirst(item -> item.uri == main_uri, items)
+                @test main_idx !== nothing
+                main_item = items[main_idx]
+                @test main_item isa WorkspaceFullDocumentDiagnosticReport
+                @test isempty(main_item.items)
+            end
         end
     end
 end
