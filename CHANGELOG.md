@@ -63,6 +63,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   ```
   and confirm the upgrade by running `testrunner --help` and checking that `--read-stdin` appears under `Options:`.
 
+### Fixed
+
+- `lowering/unused-assignment` no longer flags an assignment in a `try` (or `catch`) body as dead when the assigned variable is read in the enclosing `finally`, even if the assignment is followed by `return`. The `finally` block runs before the return takes effect, so the value is live.
+
 ## 2026-05-05
 
 - Commit: [`563fd7e`](https://github.com/aviatesk/JETLS.jl/commit/563fd7e)
