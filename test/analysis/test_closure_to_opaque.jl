@@ -241,4 +241,19 @@ end
     end
 end
 
+# Regression for 3a648d0b: `rewrite_closure_block`'s old cost compounded to O(2^D) across
+# `D` nested blocks, so real-world files effectively never finished.
+# Verify that the performance issue does not reproduce using an artificial test case.
+@testset "deep block nesting terminates" begin
+    function nest_begins(depth::Int)
+        body = "x = 1"
+        for _ in 1:depth
+            body = "begin\n$body\nend"
+        end
+        return body * "\n"
+    end
+    rewrite_only(nest_begins(5)) # JIT warmup
+    @test @elapsed(rewrite_only(nest_begins(30))) < 5
+end
+
 end # module test_closure_to_opaque
