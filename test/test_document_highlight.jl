@@ -23,7 +23,7 @@ function highlight_testcase(code::AbstractString, n::Int)
     return fi, positions
 end
 
-@testset "document_highlights!" begin
+@testset HierarchicalTestSet "document_highlights!" begin
     @testset "local binding highlights" begin
         let code = """
             function func(│xx│x│, yyy)

@@ -9,7 +9,7 @@ end
 @testset "AtomicContainers" include("AtomicContainers/test_AtomicContainers.jl")
 @testset "FixedSizeQueues" include("FixedSizeQueues/test_FixedSizeQueues.jl")
 
-@testset "JETLS" verbose=true begin
+@testset HierarchicalTestSet "JETLS" verbose=true begin
     @testset "utils" verbose=true begin
         @testset "general" include("utils/test_general.jl")
         @testset "ast" include("utils/test_ast.jl")
@@ -24,6 +24,7 @@ end
         @testset "occurrence" include("analysis/test_occurrence_analysis.jl")
         @testset "cfg" include("analysis/test_cfg_analysis.jl")
         @testset "LSAnalyzer" include("analysis/test_Analyzer.jl")
+        @testset "closure-to-opaque" include("analysis/test_closure_to_opaque.jl")
         @testset "TypeAnnotation" include("analysis/test_TypeAnnotation.jl")
     end
     @testset "types" include("test_types.jl")

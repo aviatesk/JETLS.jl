@@ -4,6 +4,8 @@ using Test
 using JETLS.AtomicContainers
 using JETLS.AtomicContainers: CASStats, LWStats, SWStats
 
+include("../HierarchicalTestSet.jl")
+
 struct PairSnap
     a::Int
     b::Int
@@ -207,7 +209,7 @@ function stress_test_mwmr2(ContainerType;
     resetstats!(box)
 end
 
-@testset "Atomic container stress test" begin
+@testset HierarchicalTestSet "Atomic container stress test" begin
     @testset "SWMR1 SWContainer"               stress_test_swmr1(SWContainer)
     @testset "SWMR1 SWContainer (with stats)"  stress_test_swmr1(SWContainer; StatsType=SWStats)
     @testset "SWMR1 LWContainer"               stress_test_swmr1(LWContainer)

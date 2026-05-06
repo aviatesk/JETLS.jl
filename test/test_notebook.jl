@@ -369,7 +369,7 @@ end
                 @test length(hints) == 1
                 hint = hints[1]
                 @test hint.position.line == 2
-                @test hint.label == "let x = 1"
+                @test hint.label == "#= let x = 1 =#"
                 textEdits = hint.textEdits
                 @test textEdits isa Vector{TextEdit} && length(textEdits) == 1
                 @test textEdits[1].range.start.line == 2
@@ -391,7 +391,7 @@ end
                 @test length(hints) == 1
                 hint = hints[1]
                 @test hint.position.line == 2
-                @test hint.label == "function myfunc"
+                @test hint.label == "#= function myfunc =#"
                 textEdits = hint.textEdits
                 @test textEdits isa Vector{TextEdit} && length(textEdits) == 1
                 @test textEdits[1].range.start.line == 2

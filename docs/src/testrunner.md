@@ -9,7 +9,7 @@ development environment.
 
 To use this feature, you need to install the `testrunner` executable:
 ```bash
-julia -e 'using Pkg; Pkg.Apps.add(url="https://github.com/aviatesk/TestRunner.jl#release")'
+julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/TestRunner.jl", rev="release")'
 ```
 
 Note that you need to manually make `~/.julia/bin` available on the `PATH`
@@ -184,6 +184,13 @@ If you see an error about `testrunner` not being found:
    `which testrunner`: otherwise you may need to add `~/.julia/bin` to `PATH`
 3. Restart your editor to ensure it picks up the updated `PATH`
 
-Test execution requires that your file is saved and matches the on-disk version.
-If you see a message asking you to save the file first, make sure to save your
-changes before running tests.
+Starting with releases on or after 2026-05-06, test execution streams the
+current editor buffer to `testrunner` over stdin, so saving the file is not
+required and unsaved edits run as-is — including buffers (`untitled:` for
+VSCode / `buffer:` for Sublime Text) that have never been saved to disk,
+where relative `include` calls resolve from the workspace root.
+
+This needs a `testrunner` CLI new enough to recognize the `--read-stdin`
+flag — if tests fail to start with an "Unknown option" error, reinstall
+`testrunner` (see [Prerequisites](@ref testrunner/prerequisites)) and confirm
+that `testrunner --help` lists `--read-stdin` under `Options:`.
