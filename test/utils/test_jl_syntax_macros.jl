@@ -602,4 +602,125 @@ end
     end
 end
 
+@testset "Base.@assume_effects" begin
+    @testset "macro expansion" begin
+        # Function-definition body is returned unchanged.
+        let st1 = jlexpand("Base.@assume_effects :foldable f(x) = x + 1")
+            @test JS.kind(st1) === JS.K"="
+            @test JS.kind(st1[1]) === JS.K"call" # f(x)
+        end
+
+        # `@ccall` body is passed through; the new-style `@ccall` macro then
+        # handles its own expansion downstream.
+        let st1 = jlexpand("Base.@assume_effects :total @ccall foo()::Cvoid")
+            @test st1 isa JS.SyntaxTree
+        end
+
+        # Call-site annotation: the body expression is returned unchanged.
+        let st1 = jlexpand("Base.@assume_effects :foldable foo(xxx)")
+            @test JS.kind(st1) === JS.K"call"
+            @test JS.sourcetext(st1[1]) == "foo"
+            @test JS.sourcetext(st1[2]) == "xxx"
+        end
+
+        # Multiple settings, including negation and shortcuts.
+        let st1 = jlexpand("Base.@assume_effects :total !:nothrow foo(xxx)")
+            @test JS.kind(st1) === JS.K"call"
+            @test JS.sourcetext(st1[2]) == "xxx"
+        end
+
+        # Declaration form (no body): expands to a no-op placeholder.
+        let st1 = jlexpand("Base.@assume_effects :foldable")
+            @test JS.kind(st1) === JS.K"Value"
+        end
+    end
+
+    @testset "validation" begin
+        # Zero-argument form rejected.
+        let err = try
+                jlexpand("Base.@assume_effects")
+                nothing
+            catch err
+                err
+            end
+            @test err isa JL.MacroExpansionError
+            @test occursin("at least one argument is required", err.msg)
+        end
+
+        # Unknown setting name (in non-final position) is rejected.
+        let err = try
+                jlexpand("Base.@assume_effects :badname foo()")
+                nothing
+            catch err
+                err
+            end
+            @test err isa JL.MacroExpansionError
+            @test occursin("unrecognized effect setting `:badname`", err.msg)
+        end
+
+        # Setting in non-final position must look like a setting form.
+        for bad in ("42", "\"foldable\"", "foo()")
+            let err = try
+                    jlexpand("Base.@assume_effects $bad foo()")
+                    nothing
+                catch err
+                    err
+                end
+                @test err isa JL.MacroExpansionError
+                @test occursin("expected an effect setting", err.msg)
+            end
+        end
+
+        # `:nortcall` and `:consistent_overlay` are not accepted as standalone
+        # inputs — they're internal-only (set via shortcuts).
+        for setting in (":nortcall", ":consistent_overlay")
+            let err = try
+                    jlexpand("Base.@assume_effects $setting foo()")
+                    nothing
+                catch err
+                    err
+                end
+                @test err isa JL.MacroExpansionError
+                @test occursin("unrecognized effect setting", err.msg)
+            end
+        end
+
+        # An unrecognized last argument is treated as a body (call-site
+        # annotation), not as a typo'd setting — matches Base's behavior.
+        @test jlexpand("Base.@assume_effects :foldable badname") isa JS.SyntaxTree
+    end
+
+    @testset "all recognized settings accepted" begin
+        for setting in (":consistent", ":effect_free", ":nothrow",
+                        ":terminates_globally", ":terminates_locally",
+                        ":notaskstate", ":inaccessiblememonly",
+                        ":noub", ":noub_if_noinbounds",
+                        ":foldable", ":removable", ":total")
+            @test jlexpand("Base.@assume_effects $setting f() = 1") isa JS.SyntaxTree
+            # Negated form should also be accepted.
+            @test jlexpand("Base.@assume_effects !$setting f() = 1") isa JS.SyntaxTree
+        end
+    end
+
+    @testset "binding resolution preserves provenance" begin
+        # The whole point of the new-style stub: identifiers inside the body
+        # must keep accurate byte ranges so downstream LSP analyses can accept
+        # them as user-written via `is_from_user_ast`.
+        let res = jlresolve("g() = Base.@assume_effects :foldable sin(xxx)")
+            binding_occurrences = JETLS.compute_binding_occurrences(
+                res.ctx3, res.st3, false; include_global_bindings=true)
+            xxx_binfo = nothing
+            for (binfo, _) in binding_occurrences
+                if binfo.kind === :global && binfo.name == "xxx"
+                    xxx_binfo = binfo
+                    break
+                end
+            end
+            @test xxx_binfo !== nothing
+            provs = JS.flattened_provenance(JL.binding_ex(res.ctx3, xxx_binfo.id))
+            @test JS.sourcetext(last(provs)) == "xxx"
+        end
+    end
+end
+
 end # module test_jl_syntax_macros

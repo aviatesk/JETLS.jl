@@ -2,7 +2,7 @@
 # These are in addition to JuliaLowering.jl/src/syntax_macros.jl,
 # and can be merged there when possible.
 
-# TODO: @inline, @noinline, @inbounds, @simd, @assume_effects
+# TODO: @inline, @noinline, @inbounds, @simd
 
 """
     mapchildren(f, ctx, ex, indices::UnitRange{Int})
@@ -386,4 +386,81 @@ function _validate_testset_option(arg::SyntaxTreeC)
     (JS.kind(name) === JS.K"Identifier" && hasproperty(name, :name_val)) ||
         throw_macro_error(name, "@testset: option name must be an identifier")
     return name.name_val::String
+end
+
+# Stub for `Base.@assume_effects`. The real macro emits `Expr(:purity)` / `Expr(:meta)`
+# directives that drive effect overrides in inference; for LSP analysis these are
+# irrelevant, so we just validate the setting names and route the user-written body through
+# unchanged. New-style expansion preserves provenance, which the old-style macro destroys.
+#
+# Accepted setting names mirror `Base.compute_assumed_setting` (`base/expr.jl`).
+# `:consistent_overlay` and `:nortcall` are deliberately omitted since Base does not accept
+# them as standalone inputs (they are only set via the `:foldable` / `:total` shortcuts).
+const _ASSUME_EFFECTS_SETTINGS = (
+    "consistent", "effect_free", "nothrow", "terminates_globally", "terminates_locally",
+    "notaskstate", "inaccessiblememonly", "noub", "noub_if_noinbounds", "foldable",
+    "removable", "total",
+)
+
+function Base.var"@assume_effects"(__context__::JL.MacroContext)
+    throw_macro_error(__context__.macrocall::SyntaxTreeC,
+        "@assume_effects: at least one argument is required")
+end
+
+function Base.var"@assume_effects"(
+        __context__::JL.MacroContext, args::SyntaxTreeC...
+    )
+    mc = __context__.macrocall::SyntaxTreeC
+    for i in 1:length(args)-1
+        _validate_assume_effect_setting(args[i])
+    end
+    lastex = args[end]
+    if _is_recognized_assume_effect_setting(lastex)
+        # Declaration form (Base's "anonymous function case"): all arguments
+        # are settings, no body. The real macro emits `Expr(:meta, purity)`
+        # to attach effects to the enclosing function; for LSP analysis we
+        # only need a no-op placeholder.
+        return JL.@ast(__context__, mc, nothing::JS.K"Value")
+    end
+    # `lastex` is the body — function definition, `@ccall` macrocall, or
+    # call-site annotation. All three cases reduce to "return the body
+    # unchanged" since we don't need to attach effect metadata.
+    return JL.@ast(__context__, mc, lastex)
+end
+
+function _validate_assume_effect_setting(setting::SyntaxTreeC)
+    name = _extract_assume_effect_setting_name(setting)
+    if name === nothing
+        throw_macro_error(setting,
+            "@assume_effects: expected an effect setting (e.g. `:consistent`, `!:nothrow`)")
+    elseif name ∉ _ASSUME_EFFECTS_SETTINGS
+        throw_macro_error(setting,
+            "@assume_effects: unrecognized effect setting `:$name`")
+    end
+    return nothing
+end
+
+function _is_recognized_assume_effect_setting(setting::SyntaxTreeC)
+    name = _extract_assume_effect_setting_name(setting)
+    return name !== nothing && name in _ASSUME_EFFECTS_SETTINGS
+end
+
+# Strip any number of `!` negations, then check for the symbol-literal shape
+# `:foo` (an `inert` node wrapping an `Identifier`). Returns the bare name
+# as a `String`, or `nothing` if the shape doesn't match.
+function _extract_assume_effect_setting_name(setting::SyntaxTreeC)
+    while JS.kind(setting) === JS.K"call" && JS.numchildren(setting) == 2
+        op = setting[1]
+        JS.kind(op) === JS.K"Identifier" && hasproperty(op, :name_val) &&
+            op.name_val === "!" || break
+        setting = setting[2]
+    end
+    if JS.kind(setting) === JS.K"inert" && JS.numchildren(setting) >= 1
+        inner = setting[1]
+        if JS.kind(inner) === JS.K"Identifier" && hasproperty(inner, :name_val)
+            name = inner.name_val
+            return name isa AbstractString ? name : nothing
+        end
+    end
+    return nothing
 end

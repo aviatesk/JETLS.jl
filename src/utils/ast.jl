@@ -139,6 +139,7 @@ const NEW_STYLE_MACROCALL_NAMES = (
     "@locals",
     "@nospecialize",
     # src/utils/jl-syntax-macros.jl
+    "@assume_effects",
     "@kwdef",
     "@label",
     "@something",
