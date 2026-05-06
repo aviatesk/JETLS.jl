@@ -302,9 +302,9 @@ function testrunner_cmd(executable::String, filepath::String, tsn::String, tsl::
     tsn = rlstrip(tsn, '"')
     testrunner_exe = Sys.which(executable)
     if isnothing(test_env_path)
-        return `$testrunner_exe --verbose --json $filepath $tsn --filter-lines=$tsl`
+        return `$testrunner_exe --verbose --json --read-stdin $filepath $tsn --filter-lines=$tsl`
     else
-        return `$testrunner_exe --verbose --project=$test_env_path --json $filepath $tsn --filter-lines=$tsl`
+        return `$testrunner_exe --verbose --project=$test_env_path --json --read-stdin $filepath $tsn --filter-lines=$tsl`
     end
 end
 
@@ -312,9 +312,9 @@ end
 function testrunner_cmd(executable::String, filepath::String, tcl::Int, test_env_path::Union{Nothing,String})
     testrunner_exe = Sys.which(executable)
     if isnothing(test_env_path)
-        return `$testrunner_exe --verbose --json $filepath L$tcl`
+        return `$testrunner_exe --verbose --json --read-stdin $filepath L$tcl`
     else
-        return `$testrunner_exe --verbose --project=$test_env_path --json $filepath L$tcl`
+        return `$testrunner_exe --verbose --project=$test_env_path --json --read-stdin $filepath L$tcl`
     end
 end
 
@@ -322,7 +322,7 @@ function testrunner_diagnostic_to_related_information(diagnostic::TestRunnerDiag
     relatedInformation = DiagnosticRelatedInformation[]
     for info in @something diagnostic.relatedInformation return nothing
         info.filename == "none" && continue
-        uri = filepath2uri(to_full_path(info.filename))
+        uri = to_valid_uri(info.filename)
         range = line_range(info.line)
         location = Location(; uri, range)
         message = info.message
@@ -334,7 +334,7 @@ end
 function testrunner_result_to_diagnostics(result::TestRunnerResult)
     uri2diagnostics = URI2Diagnostics()
     for diag in result.diagnostics
-        uri = filename2uri(to_full_path(diag.filename))
+        uri = to_valid_uri(diag.filename)
         relatedInformation = testrunner_diagnostic_to_related_information(diag)
         diagnostic = Diagnostic(;
             range = line_range(diag.line),
@@ -521,7 +521,8 @@ function _testrunner_run_testset(
     tsl = testset_line(fi.testsetinfos[idx])
     test_env_path = find_uri_env_path(server.state, uri)
     cmd = testrunner_cmd(executable, filepath, tsn, tsl, test_env_path)
-    testrunnerproc = open(cmd; read=true)
+    source = JS.sourcetext(fi.parsed_stream)
+    testrunnerproc = open(pipeline(cmd; stdin=IOBuffer(source)); read=true)
 
     result = try
         # Wait for the process with cancellation support
@@ -599,7 +600,7 @@ function _testrunner_run_testset(
 end
 
 function testrunner_run_testcase(
-        server::Server, uri::URI, tcl::Int, tct::String, filepath::String;
+        server::Server, uri::URI, tcl::Int, tct::String, filepath::String, source::String;
         cancellable_token::Union{Nothing,CancellableToken} = nothing
     )
     setting_path = (:testrunner, :executable)
@@ -627,7 +628,7 @@ function testrunner_run_testcase(
 
     local result::String
     try
-        result = _testrunner_run_testcase(server, executable, uri, tcl, tct, filepath; cancellable_token)
+        result = _testrunner_run_testcase(server, executable, uri, tcl, tct, filepath, source; cancellable_token)
     catch err
         result = sprint(Base.showerror, err, catch_backtrace())
         @error "Error from testrunner executor" err
@@ -644,12 +645,13 @@ function testrunner_run_testcase(
 end
 
 function _testrunner_run_testcase(
-        server::Server, executable::AbstractString, uri::URI, tcl::Int, tct::String, filepath::String;
+        server::Server, executable::AbstractString, uri::URI, tcl::Int, tct::String,
+        filepath::String, source::String;
         cancellable_token::Union{Nothing,CancellableToken} = nothing
     )
     test_env_path = find_uri_env_path(server.state, uri)
     cmd = testrunner_cmd(executable, filepath, tcl, test_env_path)
-    testrunnerproc = open(cmd; read=true)
+    testrunnerproc = open(pipeline(cmd; stdin=IOBuffer(source)); read=true)
 
     result = try
         # Wait for the process with cancellation support
@@ -768,20 +770,14 @@ cancellable_token(rc::TestRunnerTestsetProgressCaller) = rc.token
     testrunner_run_testset_from_uri(server::Server, uri::URI, idx::Int) -> Union{Nothing, String}
 
 Run tests for the testset at the given index in the file specified by URI.
-Validates that the file exists, is saved, and matches the on-disk version.
+The current editor buffer is piped to TestRunner via stdin, so the file does not need to be saved.
 Returns `nothing` if the test was started successfully, or an error message string otherwise.
 """
 function testrunner_run_testset_from_uri(server::Server, uri::URI, idx::Int, tsn::String)
     fi = @something get_file_info(server.state, uri) begin
         return "File is no longer available in the editor"
     end
-    sfi = @something get_saved_file_info(server.state, uri) begin
-        return "The file appears not to exist on disk. Save the file first to run tests."
-    end
-    if JS.sourcetext(fi.parsed_stream) ≠ JS.sourcetext(sfi.parsed_stream)
-        return "The editor state differs from the saved file. Save the file first to run tests."
-    end
-    filepath = @something uri2filepath(uri) return "Cannot determine file path for the URI"
+    filepath = uri2filename(uri)
 
     if supports(server, :window, :workDoneProgress)
         id = String(gensym(:WorkDoneProgressCreateRequest_testrunner))
@@ -812,6 +808,7 @@ struct TestRunnerTestcaseProgressCaller <: RequestCaller
     testcase_line::Int
     testcase_text::String
     filepath::String
+    source::String
     token::ProgressToken
 end
 cancellable_token(rc::TestRunnerTestcaseProgressCaller) = rc.token
@@ -820,22 +817,17 @@ function testrunner_run_testcase_from_uri(server::Server, uri::URI, tcl::Int, tc
     fi = @something get_file_info(server.state, uri) begin
         return "File is no longer available in the editor"
     end
-    sfi = @something get_saved_file_info(server.state, uri) begin
-        return "The file appears not to exist on disk. Save the file first to run tests."
-    end
-    if JS.sourcetext(fi.parsed_stream) ≠ JS.sourcetext(sfi.parsed_stream)
-        return "The editor state differs from the saved file. Save the file first to run tests."
-    end
-    filepath = @something uri2filepath(uri) return "Cannot determine file path for the URI"
+    filepath = uri2filename(uri)
+    source = JS.sourcetext(fi.parsed_stream)
 
     if supports(server, :window, :workDoneProgress)
         id = String(gensym(:WorkDoneProgressCreateRequest_testrunner))
         token = String(gensym(:TestRunnerProgress))
-        addrequest!(server, id=>TestRunnerTestcaseProgressCaller(uri, tcl, tct, filepath, token))
+        addrequest!(server, id=>TestRunnerTestcaseProgressCaller(uri, tcl, tct, filepath, source, token))
         params = WorkDoneProgressCreateParams(; token)
         send(server, WorkDoneProgressCreateRequest(; id, params))
     else
-        testrunner_run_testcase(server, uri, tcl, tct, filepath)
+        testrunner_run_testcase(server, uri, tcl, tct, filepath, String(source))
     end
     return nothing
 end
@@ -847,9 +839,9 @@ function handle_testrunner_testcase_progress_response(
     if handle_response_error(server, msg, "create work done progress")
         return
     end
-    (; uri, testcase_line, testcase_text, filepath, token) = request_caller
+    (; uri, testcase_line, testcase_text, filepath, source, token) = request_caller
     cancellable_token = CancellableToken(token, cancel_flag)
-    testrunner_run_testcase(server, uri, testcase_line, testcase_text, filepath; cancellable_token)
+    testrunner_run_testcase(server, uri, testcase_line, testcase_text, filepath, source; cancellable_token)
 end
 
 """
