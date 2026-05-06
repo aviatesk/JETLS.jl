@@ -28,7 +28,7 @@ function get_undef_status(text::AbstractString; mod::Module=lowering_module, all
     return result
 end
 
-@testset "undef analysis" begin
+@testset HierarchicalTestSet "undef analysis" begin
 
 @testset "sequential assignment then use" begin
     # Variable is assigned before use - definitely defined
@@ -1110,7 +1110,7 @@ function get_dead_stores(text::AbstractString;
     return result
 end
 
-@testset "dead store analysis" begin
+@testset HierarchicalTestSet "dead store analysis" begin
 
 @testset "simple use, no dead stores" begin
     ds = get_dead_stores("""
@@ -1451,7 +1451,7 @@ function get_unreachable_statements(text::AbstractString;
     return [JS.sourcetext(p) for p in provs]
 end
 
-@testset "unreachable statement analysis" begin
+@testset HierarchicalTestSet "unreachable statement analysis" begin
 
 @testset "unreachable after return" begin
     let urs = get_unreachable_statements("""
