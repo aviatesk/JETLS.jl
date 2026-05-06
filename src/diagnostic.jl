@@ -1750,6 +1750,15 @@ end
 
 # textDocument/diagnostic
 # =======================
+#
+# Algorithmically a subset of `workspace/diagnostic`: both share the same result-ID
+# derivation (`compute_diagnostic_result_id`) and emit the same diagnostics for
+# synchronized files. We still provide this endpoint, rather than only exposing
+# workspace pull, because some clients do not implement `workspace/diagnostic`, and
+# even when they do, clients are allowed to request both `textDocument/diagnostic`
+# and `workspace/diagnostic` at different times. Even if a client declares the
+# `workspace/diagnostic` capability, there is no mechanism in LSP to declare "this
+# client does not send `textDocument/diagnostic`", so we need to support both.
 
 const DIAGNOSTIC_REGISTRATION_ID = "jetls-diagnostic"
 const DIAGNOSTIC_REGISTRATION_METHOD = "textDocument/diagnostic"
@@ -1783,52 +1792,28 @@ end
 function handle_DocumentDiagnosticRequest(
         server::Server, msg::DocumentDiagnosticRequest, cancel_flag::CancelFlag)
     uri = msg.params.textDocument.uri
-
-    # This `previousResultId` calculation is mostly meaningless, but it might help the
-    # client accurately update these diagnostics.
-    # In particular, there seem to be cases where syntax error diagnostics remain in Zed
-    # when this field is not set.
-    previousResultid = msg.params.previousResultId
-    if isnothing(previousResultid)
-        resultId = "1"
-    else
-        resultId = @something tryparse(Int, previousResultid) begin
-            return send(server,
-                DocumentDiagnosticResponse(;
-                    id = msg.id,
-                    result = nothing,
-                    error = request_failed_error("Invalid previousResultId given")))
-        end
-        resultId = string(resultId+1)
-    end
-
     result = get_file_info(server.state, uri, cancel_flag)
     if isnothing(result)
         return send(server, DocumentDiagnosticResponse(;
             id = msg.id,
-            result = RelatedFullDocumentDiagnosticReport(; resultId, items = Diagnostic[])))
+            result = RelatedFullDocumentDiagnosticReport(; items = Diagnostic[])))
     elseif result isa ResponseError
         return send(server, DocumentDiagnosticResponse(; id = msg.id, result = nothing, error = result))
     end
     file_info = result
-    parsed_stream = file_info.parsed_stream
-    if isempty(parsed_stream.diagnostics)
-        diagnostics = toplevel_lowering_diagnostics(server, uri, file_info, cancel_flag)
-    else
-        diagnostics = parsed_stream_to_diagnostics(file_info)
+    resultId = compute_diagnostic_result_id(server, uri, file_info)
+    if msg.params.previousResultId == resultId
+        return send(server,
+            DocumentDiagnosticResponse(;
+                id = msg.id,
+                result = RelatedUnchangedDocumentDiagnosticReport(; resultId)))
     end
+    diagnostics = compute_pull_diagnostics(server, uri, file_info, cancel_flag)
     if is_cancelled(cancel_flag)
         return send(server, DocumentDiagnosticResponse(; id = msg.id, result = nothing, error = request_cancelled_error()))
     end
     root_path = isdefined(server.state, :root_path) ? server.state.root_path : nothing
-    apply_diagnostic_config!(diagnostics, server.state.config_manager, uri, root_path)
-    notebook_uri = get_notebook_uri_for_cell(server.state, uri)
-    if notebook_uri !== nothing
-        diagnostics = localize_notebook_diagnostics(server.state, notebook_uri, uri, diagnostics)
-    end
-    if supports(server, :textDocument, :diagnostic, :markupMessageSupport)
-        apply_markdown_message!(diagnostics)
-    end
+    diagnostics = postprocess_pull_diagnostics(server, uri, diagnostics, root_path)
     return send(server,
         DocumentDiagnosticResponse(;
             id = msg.id,
@@ -1863,11 +1848,11 @@ function handle_WorkspaceDiagnosticRequest(
     end
 end
 
-# Derives the `resultId` sent back for `workspace/diagnostic`. When the file has
-# explicit imports it folds every unit member's version into the key so a sibling
-# edit invalidates this file's cached diagnostics and `analyze_unused_imports!` reruns.
+# Derives the `resultId` sent back for `textDocument/diagnostic` and `workspace/diagnostic`.
+# When the file has explicit imports it folds every unit member's version into the key so a
+# sibling edit invalidates this file's cached diagnostics and `analyze_unused_imports!` reruns.
 # Files without explicit imports stay keyed on their own version alone.
-function compute_workspace_diagnostic_result_id(server::Server, uri::URI, fi::FileInfo)
+function compute_diagnostic_result_id(server::Server, uri::URI, fi::FileInfo)
     state = server.state
     if !file_has_explicit_imports(build_syntax_tree(fi))
         return string(fi.version)
@@ -1882,6 +1867,38 @@ function compute_workspace_diagnostic_result_id(server::Server, uri::URI, fi::Fi
         result_id_hash ⊻= hash((search_uri, search_fi.version))
     end
     return string(result_id_hash)
+end
+
+# Computes raw per-file diagnostics for both `textDocument/diagnostic` and
+# `workspace/diagnostic`. Falls back to parsed-stream diagnostics when the file does
+# not parse cleanly, otherwise runs the lowering-based analyses.
+function compute_pull_diagnostics(
+        server::Server, uri::URI, fi::FileInfo, cancel_flag::CancelFlag = DUMMY_CANCEL_FLAG;
+        used_names_cache::UsedNamesByUnit = UsedNamesByUnit(),
+    )
+    if isempty(fi.parsed_stream.diagnostics)
+        return toplevel_lowering_diagnostics(server, uri, fi, cancel_flag; used_names_cache)
+    else
+        return parsed_stream_to_diagnostics(fi)
+    end
+end
+
+# Applies config-based filtering, notebook localization, and markdown rendering
+# shared between `textDocument/diagnostic` and `workspace/diagnostic`.
+function postprocess_pull_diagnostics(
+        server::Server, uri::URI, diagnostics::Vector{Diagnostic},
+        root_path::Union{Nothing,String},
+    )
+    state = server.state
+    apply_diagnostic_config!(diagnostics, state.config_manager, uri, root_path)
+    notebook_uri = get_notebook_uri_for_cell(state, uri)
+    if notebook_uri !== nothing
+        diagnostics = localize_notebook_diagnostics(state, notebook_uri, uri, diagnostics)
+    end
+    if supports(server, :textDocument, :diagnostic, :markupMessageSupport)
+        apply_markdown_message!(diagnostics)
+    end
+    return diagnostics
 end
 
 function send_workspace_diagnostics(
@@ -1916,7 +1933,7 @@ function send_workspace_diagnostics(
             continue
         end
 
-        result_id = compute_workspace_diagnostic_result_id(server, uri, fi)
+        result_id = compute_diagnostic_result_id(server, uri, fi)
         prev_result_id = get(previous_result_ids, uri, nothing)
         if prev_result_id !== nothing && prev_result_id == result_id
             item = WorkspaceUnchangedDocumentDiagnosticReport(;
@@ -1933,20 +1950,13 @@ function send_workspace_diagnostics(
             continue
         end
 
-        if isempty(fi.parsed_stream.diagnostics)
-            diagnostics = toplevel_lowering_diagnostics(server, uri, fi; used_names_cache)
-        else
-            diagnostics = parsed_stream_to_diagnostics(fi)
-        end
-        apply_diagnostic_config!(diagnostics, state.config_manager, uri, root_path)
-        notebook_uri = get_notebook_uri_for_cell(state, uri)
-        if notebook_uri !== nothing
-            diagnostics = localize_notebook_diagnostics(state, notebook_uri, uri, diagnostics)
-        end
-
-        if supports(server, :textDocument, :diagnostic, :markupMessageSupport)
-            apply_markdown_message!(diagnostics)
-        end
+        diagnostics = compute_pull_diagnostics(server, uri, fi, cancel_flag; used_names_cache)
+        is_cancelled(cancel_flag) && return send(server,
+            WorkspaceDiagnosticResponse(;
+                id = msg.id,
+                result = nothing,
+                error = request_cancelled_error()))
+        diagnostics = postprocess_pull_diagnostics(server, uri, diagnostics, root_path)
 
         item = WorkspaceFullDocumentDiagnosticReport(;
             uri,

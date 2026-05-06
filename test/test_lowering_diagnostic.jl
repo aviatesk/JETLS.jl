@@ -38,7 +38,7 @@ end
 
 length_utf16(s::AbstractString) = sum(c::Char -> codepoint(c) < 0x10000 ? 1 : 2, collect(s); init=0)
 
-@testset "unused binding detection" begin
+@testset HierarchicalTestSet "unused binding detection" begin
     let diagnostics = get_lowered_diagnostics("""
         y = let x = 42
             sin(42)
@@ -686,7 +686,7 @@ let filename = normpath(pkgdir(JETLS), "test", "fixtures", "macros-JL.jl")
     JL.include_string(@__MODULE__, read(filename,String), filename)
 end
 
-@testset "JuliaLowering error diagnostics" begin
+@testset HierarchicalTestSet "JuliaLowering error diagnostics" begin
     @testset "lowering error diagnostics" begin
         diagnostics = get_lowered_diagnostics(@__MODULE__, "macro foo(x, y) \$(x) end")
         @test length(diagnostics) == 1
@@ -810,7 +810,7 @@ module TestLoweringUndefGlobalBinding
 const myfunc = (x) -> x
 end
 
-@testset "Undefined global binding report" begin
+@testset HierarchicalTestSet "Undefined global binding report" begin
     @test isempty(get_lowered_diagnostics(@__MODULE__, "let x = 42; println(sin(x)); end"))
     let diagnostics = get_lowered_diagnostics(@__MODULE__, """let x = 42
             undeffunc(x)
@@ -851,7 +851,7 @@ end
     """))
 end
 
-@testset "Undefined local binding report" begin
+@testset HierarchicalTestSet "Undefined local binding report" begin
     @testset "sequential assignment then use - no diagnostic" begin
         @test isempty(get_lowered_diagnostics("""
             function f()
@@ -1073,7 +1073,7 @@ end
     end
 end
 
-@testset "dead store detection" begin
+@testset HierarchicalTestSet "dead store detection" begin
     @testset "assignment at end of function is dead" begin
         let diagnostics = get_lowered_diagnostics("""
             function foo(x::Bool)
@@ -1204,7 +1204,7 @@ end
     end
 end
 
-@testset "captured boxed variable detection" begin
+@testset HierarchicalTestSet "captured boxed variable detection" begin
     # Variable modified after capture -> boxed
     let diagnostics = get_lowered_diagnostics("""
         function foo()
@@ -1489,7 +1489,7 @@ function get_unused_import_diagnostics(text::AbstractString)
     return JETLS.analyze_unused_imports(server, uri, fi, st0_top; skip_context_check=true)
 end
 
-@testset "unused imports detection" begin
+@testset HierarchicalTestSet "unused imports detection" begin
     let diagnostics = get_unused_import_diagnostics("""
         using Base: sin, cos
         sin(1.0)
@@ -1627,7 +1627,7 @@ end
     end
 end
 
-@testset "unreachable code detection" begin
+@testset HierarchicalTestSet "unreachable code detection" begin
     let diagnostics = get_lowered_diagnostics("""
         function foo()
             return 1
@@ -2123,7 +2123,7 @@ module soft_scope_module
     global x = 1
 end
 
-@testset "ambiguous soft scope detection" begin
+@testset HierarchicalTestSet "ambiguous soft scope detection" begin
     let diagnostics = get_lowered_diagnostics(soft_scope_module, """
         for _ = 1:10
             x = 2
@@ -2209,7 +2209,7 @@ end
     end
 end
 
-@testset "unresolved goto detection" begin
+@testset HierarchicalTestSet "unresolved goto detection" begin
     # forward goto with matching label — no diagnostic
     let diagnostics = get_lowered_diagnostics("""
         begin
@@ -2281,7 +2281,7 @@ end
     end
 end
 
-@testset "unused label detection" begin
+@testset HierarchicalTestSet "unused label detection" begin
     let diagnostics = get_lowered_diagnostics("""
         function f()
             @label unused

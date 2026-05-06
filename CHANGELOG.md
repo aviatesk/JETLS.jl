@@ -19,11 +19,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`28972ef...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/28972ef...HEAD)
+- Diff: [`563fd7e...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/563fd7e...HEAD)
 
 ### Announcement
 
-> [!info]
+> [!important]
 > JETLS requires Julia 1.12.2 or later.
 > It does not support Julia 1.12.1 or earlier, nor Julia 1.13+/nightly.
 
@@ -47,7 +47,66 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > [!warning]
 > The `inlay_hint` configuration was reorganized into nested sub-tables so each hint kind has its own `enabled` toggle alongside its options.
 > The new shape adds [`inlay_hint.block_end.enabled`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint/block_end/enabled) for toggling block-end hints independently, and renames `inlay_hint.block_end_min_lines` to [`inlay_hint.block_end.min_lines`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint/block_end/min_lines).
-> Existing configs keep working for now: the legacy key is auto-migrated at load time with a one-shot deprecation warning. The legacy alias will be removed in a future release (around one month from now), so please update your config.
+> Existing configs keep working for now: the legacy key is still accepted at load time and mapped onto the new key in memory (your config file is not modified automatically), with a one-shot deprecation warning. The legacy alias will be removed in releases after **June 2026**, so if you are still using `inlay_hint.block_end_min_lines`, please update your config.
+
+### Changed
+
+- Block-end inlay hints now display as `#= … =#` block comments (e.g. `end #= module Foo =#`), so what's shown matches the text inserted when the hint is applied.
+
+- `textDocument/diagnostic` now returns an unchanged report when neither the document nor its analysis-unit siblings have changed since the previous pull, skipping diagnostic recomputation. This reduces redundant work on clients that aggressively re-pull diagnostics across all open files on each edit (e.g., Zed).
+
+- Test runner code lens / code action now runs against the current editor buffer rather than the saved file. JETLS pipes the live buffer to the `testrunner` subprocess over stdin, so unsaved edits (including brand-new `@testset` / `@test` cases) execute as-is and the previous "Save the file first to run tests" error no longer occurs.
+  The integration also works for buffers (`untitled:` for VSCode / `buffer:` for Sublime Text) that have never been saved to disk: relative `include` calls in the buffer resolve from the workspace root.
+  This requires upgrading the `testrunner` CLI to a version that understands the `--read-stdin` flag. Reinstall the latest release with:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/TestRunner.jl", rev="release")'
+  ```
+  and confirm the upgrade by running `testrunner --help` and checking that `--read-stdin` appears under `Options:`.
+
+### Fixed
+
+- `lowering/unused-assignment` no longer flags an assignment in a `try` (or `catch`) body as dead when the assigned variable is read in the enclosing `finally`, even if the assignment is followed by `return`. The `finally` block runs before the return takes effect, so the value is live.
+  ```julia
+  function f()
+      local x::Float64
+      try
+          y = sin(rand((rand(), Inf)))
+          x = y               # previously: dead store
+          return 0
+      catch
+          x = 0.0             # previously: dead store
+          return 1
+      finally
+          push!(xs, x)
+      end
+  end
+  ```
+
+- `lowering/unused-assignment` no longer flags intermediate assignments in a `try` body when a later statement might throw.
+  Common state-tracking idioms like the following now keep `state = "step1 starting"` and `state = "step2 starting"` live with respect to `log(state)`:
+  ```julia
+  function process()
+      state = "init"
+      try
+          state = "step1 starting"  # previously: dead store
+          step1()
+          state = "step2 starting"  # previously: dead store
+          step2()
+          state = "done"
+      finally
+          log(state)
+      end
+  end
+  ```
+
+## 2026-05-05
+
+- Commit: [`563fd7e`](https://github.com/aviatesk/JETLS.jl/commit/563fd7e)
+- Diff: [`28972ef...563fd7e`](https://github.com/aviatesk/JETLS.jl/compare/28972ef...563fd7e)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-05-05")'
+  ```
 
 ### Added
 
@@ -55,7 +114,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   JETLS now emits `parameter`, `typeParameter`, and `variable` token types (with `declaration` / `definition` modifiers) so that themes can distinguish function arguments, type parameters, and local variables from generic identifiers. Global identifiers are also reported under a custom `jetls.unspecified` token type, which leaves the editor's syntactic color intact while still letting themes apply modifier styling to declaration/definition sites.
   Both full and range requests are supported.
   Because JETLS only emits identifier classifications and relies on the editor's syntactic highlighter for everything else, semantic tokens are only registered when the client advertises [`augmentsSyntaxTokens = true`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#semanticTokensClientCapabilities).
-  See <https://aviatesk.github.io/JETLS.jl/release/features/semantic-tokens> for details.
+  See <https://aviatesk.github.io/JETLS.jl/release/features/#features/semantic-tokens> for details.
 
   <img width="969" height="343" alt="semantic tokens demo" src="https://github.com/user-attachments/assets/93f92c5a-2de2-499f-a87f-7dfcfec5d0b0" />
 
@@ -127,7 +186,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Breaking
 
-- Clients that previously handled the JETLS-defined `jetls.showReferences` command should switch to handling `editor.action.showReferences` instead. The new arguments are `[uriString, position, locations]`, where `locations` is the pre-resolved LSP `Location[]`, so clients no longer need to issue a `textDocument/references` request themselves. See the [Neovim setup section](https://aviatesk.github.io/JETLS.jl/release/#Neovim) for an example handler.
+- Clients that previously handled the JETLS-defined `jetls.showReferences` command should switch to handling `editor.action.showReferences` instead. The new arguments are `[uriString, position, locations]`, where `locations` is the pre-resolved LSP `Location[]`, so clients no longer need to issue a `textDocument/references` request themselves. See the [Neovim setup section](https://aviatesk.github.io/JETLS.jl/release/#index/editor-setup/neovim) for an example handler.
 
 ### Added
 
@@ -139,7 +198,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
-- The [reference-count code lens](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/code_lens/references) now emits `editor.action.showReferences` (a VSCode convention command) directly, instead of the JETLS-defined `jetls.showReferences`. Editors that follow the VSCode convention (e.g. Zed) now dispatch the lens out of the box; editors that do not (e.g. Neovim) need to register a client-side handler.
+- The [reference-count code lens](https://aviatesk.github.io/JETLS.jl/release/features/#features/code-lens/references) now emits `editor.action.showReferences` (a VSCode convention command) directly, instead of the JETLS-defined `jetls.showReferences`. Editors that follow the VSCode convention (e.g. Zed) now dispatch the lens out of the box; editors that do not (e.g. Neovim) need to register a client-side handler.
 
 - When a reference-count code lens is clicked on a file whose full analysis has not yet run, a warning notification (via `window/showMessage`) is now shown instead of an empty references peek.
 
@@ -149,7 +208,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
-- Fixed `textDocument/references` so that `includeDeclaration=false` now correctly excludes method definitions and declarations of the target binding. As a side benefit, the [reference-count code lens](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/code_lens/references) now reports accurate counts.
+- Fixed `textDocument/references` so that `includeDeclaration=false` now correctly excludes method definitions and declarations of the target binding. As a side benefit, the [reference-count code lens](https://aviatesk.github.io/JETLS.jl/release/features/#features/code-lens/references) now reports accurate counts.
 
 - Fixed the reference-count code lens, `textDocument/references`, `textDocument/documentHighlight`, and `textDocument/rename` silently dropping results after a full analysis completes.
 
@@ -576,7 +635,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   constants, abstract types, primitive types, modules). When enabled, a code
   lens showing "N references" appears above each symbol definition. Clicking it
   opens the references panel. This feature is opt-in and can be enabled via
-  [`code_lens.references`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/code_lens/references)
+  [`code_lens.references`](https://aviatesk.github.io/JETLS.jl/release/features/#features/code-lens/references)
   configuration.
 
 - Added [`code_lens.testrunner`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/code_lens/testrunner)
@@ -695,7 +754,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Updated TestRunner.jl installation instructions to use the `#release` branch
   for vendored dependencies. TestRunner.jl should now be installed via
   ```bash
-  julia -e 'using Pkg; Pkg.Apps.add(url="https://github.com/aviatesk/TestRunner.jl#release")'
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/TestRunner.jl", rev="release")'
   ```
   (aviatesk/TestRunner.jl#14).
 

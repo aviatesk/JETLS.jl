@@ -104,12 +104,19 @@ mutable struct EventLinearizer
     # resolved at finalization, even when the preceding fall-through (before_block) is
     # unreachable.
     const statement_blocks::Vector{StatementRecord}
+    # Stack of enclosing `K"tryfinally"` finally-block label IDs. Pushed before linearizing
+    # the try body and popped before the finally body (so it is empty inside the finally
+    # body itself). Consulted by `K"return"` so that a return inside `try` routes through
+    # the innermost enclosing finally — modeling the runtime semantics of "finally runs
+    # before the return takes effect" — and an assignment in the try body can correctly
+    # reach a use in the finally body.
+    const active_finally_labels::Vector{Int}
     function EventLinearizer()
         blocks = EventBlock[EventBlock(1)]
         new(blocks, 1, Dict{Int,Int}(), Tuple{Int,Int}[], 0,
             Dict{String,Int}(), Dict{String,Int}(),
             Dict{Set{JL.IdTag},Set{JL.IdTag}}(), Set{JL.IdTag}[],
-            StatementRecord[])
+            StatementRecord[], Int[])
     end
 end
 
@@ -582,14 +589,23 @@ function linearize_cfg_events!(
         end_label = cfg_make_label!(lin)
 
         cfg_emit_gotoifnot!(lin, finally_label)
+        # `active_finally_labels` is consulted by `K"return"` (and only spans the try body
+        # — `pop!` happens before linearizing the finally body so a `return` inside
+        # `finally` is not redirected back to itself).
+        push!(lin.active_finally_labels, finally_label)
         let saved = undef_save_cond_implied(lin)
             linearize_cfg_events!(lin, ctx3, ex3[1], candidates, allow_noreturn_optimization)
             undef_restore_cond_implied!(lin, saved)
         end
+        pop!(lin.active_finally_labels)
 
-        # If the try body terminated, post-try is unreachable; the finally
-        # body still runs (modeled via the gotoifnot bypass) but its
-        # completion does not flow into post-try.
+        # If the try body terminated, post-try is unreachable; the finally body still
+        # runs (modeled via the entry-bypass `gotoifnot` and any `K"return"`-routed
+        # pending gotos from inside the try body) but its completion does not flow
+        # into post-try. This check is correct even after returns add pending gotos
+        # to `finally_label` because `is_block_reachable_from_entry` only follows
+        # pending gotos to already-resolved labels, and `finally_label` is registered
+        # below by `cfg_emit_label!`.
         try_body_terminated = !is_block_reachable_from_entry(lin, lin.current_block)
 
         cfg_emit_label!(lin, finally_label)
@@ -607,14 +623,16 @@ function linearize_cfg_events!(
         if JS.numchildren(ex3) >= 1
             linearize_cfg_events!(lin, ctx3, ex3[1], candidates, allow_noreturn_optimization)
         end
-        # Switch to a fresh "phantom" block — no edge from the
-        # return-emitting block — so the linearizer keeps a valid
-        # `current_block` for whatever syntactically follows the return.
-        # The phantom has no incoming edges, so subsequent events recorded
-        # against it are correctly treated as unreachable. Same pattern:
-        # `cfg_emit_goto!`, no-target `K"break"`, noreturn-call branch.
-        unreachable = cfg_new_block!(lin)
-        cfg_switch_to_block!(lin, unreachable)
+        if isempty(lin.active_finally_labels)
+            # Same pattern as `cfg_emit_goto!`, no-target `K"break"`, noreturn-call branch:
+            # phantom has no incoming edges, so post-return code is unreachable.
+            unreachable = cfg_new_block!(lin)
+            cfg_switch_to_block!(lin, unreachable)
+        else
+            # `return` inside `try` runs the enclosing `finally` first, so route the edge
+            # through it — otherwise an assignment preceding the return looks dead.
+            cfg_emit_goto!(lin, last(lin.active_finally_labels))
+        end
 
     elseif k == JS.K"block"
         # Record each direct child as a "statement" tagged with both the
@@ -630,6 +648,13 @@ function linearize_cfg_events!(
             linearize_cfg_events!(lin, ctx3, child, candidates, allow_noreturn_optimization)
             after_block = lin.current_block
             push!(lin.statement_blocks, StatementRecord(before_block, after_block, child))
+            # Inside a `try` body, model "exception thrown between statements escapes
+            # to the enclosing finally" by branching to the innermost active finally
+            # at every statement boundary. Combined with `K"tryfinally"`'s entry-bypass
+            # `gotoifnot`, this covers exception escape at every point in the try body.
+            if !isempty(lin.active_finally_labels)
+                cfg_emit_gotoifnot!(lin, last(lin.active_finally_labels))
+            end
         end
 
     else # Default: process all children

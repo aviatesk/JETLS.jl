@@ -91,7 +91,8 @@ function add_block_end_inlay_hint!(
             return
         end
     end
-    newText = " #= "* label * " =#"
+    displayLabel = "#= " * label * " =#"
+    newText = " " * displayLabel
     offset = encoded_length(newText, fi.encoding)
     textEdits = TextEdit[TextEdit(;
         range = Range(;
@@ -101,7 +102,7 @@ function add_block_end_inlay_hint!(
     push!(inlay_hints, InlayHint(;
         position = endpos,
         textEdits,
-        label = String(label),
+        label = displayLabel,
         paddingLeft = true))
     nothing
 end
