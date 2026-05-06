@@ -648,6 +648,13 @@ function linearize_cfg_events!(
             linearize_cfg_events!(lin, ctx3, child, candidates, allow_noreturn_optimization)
             after_block = lin.current_block
             push!(lin.statement_blocks, StatementRecord(before_block, after_block, child))
+            # Inside a `try` body, model "exception thrown between statements escapes
+            # to the enclosing finally" by branching to the innermost active finally
+            # at every statement boundary. Combined with `K"tryfinally"`'s entry-bypass
+            # `gotoifnot`, this covers exception escape at every point in the try body.
+            if !isempty(lin.active_finally_labels)
+                cfg_emit_gotoifnot!(lin, last(lin.active_finally_labels))
+            end
         end
 
     else # Default: process all children

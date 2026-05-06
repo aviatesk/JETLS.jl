@@ -1481,6 +1481,46 @@ end
     end
 end
 
+@testset "tryfinally: mid-try exception keeps intermediate assignments live" begin
+    # Classic state-tracking pattern: each step records progress before
+    # calling a possibly-throwing helper, and `finally` logs the latest
+    # progress reached. Every intermediate assignment can be the live
+    # value seen by `log(state)` if the next call throws, so none is dead.
+    let ds = get_dead_stores("""
+        function process()
+            state = "init"
+            try
+                state = "step1 starting"
+                step1()
+                state = "step2 starting"
+                step2()
+                state = "done"
+            finally
+                log(state)
+            end
+        end
+        """)
+        @test !haskey(ds, "state")
+    end
+
+    # Statements inside the finally body itself should NOT branch to the
+    # same finally label (the active stack is popped before linearizing
+    # the finally body): a clobbered local with no later use is still dead.
+    let ds = get_dead_stores("""
+        function f()
+            try
+                step()
+            finally
+                x = 1
+                x = 2
+                println(x)
+            end
+        end
+        """)
+        @test ds["x"] == 1
+    end
+end
+
 end # @testset "dead store analysis" begin
 
 # --- Unreachable-statement analysis ---
