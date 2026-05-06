@@ -576,7 +576,7 @@ function make_test_manager(config_dict::Dict{String,Any})
     return JETLS.ConfigManager(data)
 end
 
-@testset "diagnostic configuration" begin
+@testset HierarchicalTestSet "diagnostic configuration" begin
     @testset "DiagnosticConfig parsing/validation" begin
         @testset "valid patterns" begin
             let config_raw = Dict{String,Any}()

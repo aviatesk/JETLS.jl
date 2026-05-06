@@ -9,7 +9,7 @@ end
 @testset "AtomicContainers" include("AtomicContainers/test_AtomicContainers.jl")
 @testset "FixedSizeQueues" include("FixedSizeQueues/test_FixedSizeQueues.jl")
 
-@testset "JETLS" verbose=true begin
+@testset HierarchicalTestSet "JETLS" verbose=true begin
     @testset "utils" verbose=true begin
         @testset "general" include("utils/test_general.jl")
         @testset "ast" include("utils/test_ast.jl")

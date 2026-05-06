@@ -3,6 +3,8 @@ module test_definition
 using Test
 using JETLS
 
+include("setup.jl")
+
 @testset "method location" begin
     linenum = @__LINE__; method_for_test_method_definition_range() = 1
     @assert length(methods(method_for_test_method_definition_range)) == 1
@@ -24,8 +26,6 @@ const LINE_TestModuleDefinitionRange = (@__LINE__) - 3
     @test JETLS.URIs2.uri2filepath(loc.uri) == @__FILE__
     @test loc.range.start.line == LINE_TestModuleDefinitionRange-1
 end
-
-include("setup.jl")
 
 # Full-analysis helper — use this only for tests that exercise the
 # reflection-based fallback (`Base` symbols, module `moduleloc`, etc.).
@@ -74,7 +74,7 @@ function with_find_definition(tester, text::AbstractString; kwargs...)
     return cnt
 end
 
-@testset "'Definition' for modules and methods" begin
+@testset HierarchicalTestSet "'Definition' for modules and methods" begin
     @testset "function definition" begin
         @test with_find_definition("""
             func(x) = 1
@@ -225,7 +225,7 @@ end
 
 end
 
-@testset "'Definition' for local bindings" begin
+@testset HierarchicalTestSet "'Definition' for local bindings" begin
     @testset "local definition" begin
         @test with_find_definition("""
             function func(x, y)

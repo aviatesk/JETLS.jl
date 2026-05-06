@@ -17,7 +17,7 @@ function find_references(code::AbstractString, pos::Position; include_declaratio
     return locations
 end
 
-@testset "find_references" begin
+@testset HierarchicalTestSet "find_references" begin
     @testset "local binding references" begin
         let code = """
             function func(│xx│x│, yyy)
