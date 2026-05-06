@@ -53,6 +53,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Block-end inlay hints now display as `#= … =#` block comments (e.g. `end #= module Foo =#`), so what's shown matches the text inserted when the hint is applied.
 
+- `textDocument/diagnostic` now returns an unchanged report when neither the document nor its analysis-unit siblings have changed since the previous pull, skipping diagnostic recomputation. This reduces redundant work on clients that aggressively re-pull diagnostics across all open files on each edit (e.g., Zed).
+
 ## 2026-05-05
 
 - Commit: [`563fd7e`](https://github.com/aviatesk/JETLS.jl/commit/563fd7e)
