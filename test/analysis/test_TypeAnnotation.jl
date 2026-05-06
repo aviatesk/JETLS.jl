@@ -166,6 +166,12 @@ end
             @testset "closure call from outer body" begin
                 @test widenconst(get_type_for_range(ctx, range_of(code, "inner(xs[1])"))) === Int
             end
+            # `type_for_funcdef` walks `K"opaque_closure_method"` (mirroring its `K"method"`
+            # branch) so the funcdef's byte range surfaces the OC body's return type.
+            @testset "funcdef byte range" begin
+                rng = range_of(code, "inner(y::Int) = y * 2")
+                @test widenconst(get_type_for_range(ctx, rng)) === Int
+            end
         end
 
         # Captured variables flow through the OC's env tuple; the body's

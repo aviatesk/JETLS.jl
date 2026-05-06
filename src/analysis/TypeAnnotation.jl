@@ -831,42 +831,38 @@ end
 Look up the inferred type at surface byte range `rng`.
 Returns `nothing` if no lowered node corresponding to `rng` carries a `:type` attribute.
 
-Build the [`InferredTreeContext`](@ref) once per inferred tree and reuse it across
-queries — the per-tree O(N) index build is amortized across all queries against
-the same context.
+Build the [`InferredTreeContext`](@ref) once per inferred tree and reuse it across queries
+— the per-tree O(N) index build is amortized across all queries against the same context.
 
 # Dispatch
 
-Lowering routinely places multiple SSA-position nodes at the same surface byte
-range, so a naive `tmerge` of all matches would pull in synthetic helper types
-that the user never wrote. The dispatch picks a strategy based on the surface
-node's kind (recovered from `ctx.surface_kind_index`):
+Lowering routinely places multiple SSA-position nodes at the same surface byte range, so
+a naive `tmerge` of all matches would pull in synthetic helper types that the user never
+wrote. The dispatch picks a strategy based on the surface node's kind (recovered from
+`ctx.surface_kind_index`):
 
-- `K"call"` / `K"dotcall"` — returns the **last** `K"call"` lowered node at
-  `rng`. For `f(; kw=v)` kwcalls, the kwargs `NamedTuple` constructor and
-  `Core.tuple` builder sit at the same byte range as separate `K"call"`s, but
-  the user's call is emitted last, so this picks the user-visible result
-  without `Type{NamedTuple{…}}` or `Tuple{…}` chaff.
-- `K"macrocall"` — returns the **last** `K"call"` whose first provenance is
-  the macrocall at `rng`. That tail call carries the value type of the macro
-  expansion, while every internal helper inside the expansion shares the
-  macrocall's byte range but is not what the user means by the macrocall's
-  value.
-- `K"for"` / `K"while"` — always `Core.Const(nothing)`. Loop expressions
-  evaluate to `nothing`; this avoids `tmerge`-ing the iteration machinery
-  (`iterate` results, `=== nothing` checks, body return) that all share the
-  loop's byte range.
-- `K"function"` / `K"macro"` — returns the method body's `tmerge`d
-  return-statement type (i.e. the value-type of `function f(…) … end`),
-  looked up against the matching `K"method"` lowered node.
-- `K"comparison"` / `K"&&"` / `K"||"` / `K"if"` — branching expressions whose
-  value is the `tmerge` of each branch's value. Lowering emits a separate
-  branch as either a contained `K"return"` (tail position) or a merge-slot
-  `K"="` whose byte range matches `rng` (`r = a && b` etc.); both shapes get
-  merged.
-- otherwise — falls back to `tmerge` of every node at `rng`. Sufficient when
-  there is only a single typed node, or when merging is genuinely the right
-  answer (e.g. branches of a conditional).
+- `K"call"` / `K"dotcall"` — returns the **last** `K"call"` lowered node at `rng`. For
+  `f(; kw=v)` kwcalls, the kwargs `NamedTuple` constructor and `Core.tuple` builder sit at
+  the same byte range as separate `K"call"`s, but the user's call is emitted last, so this
+  picks the user-visible result without `Type{NamedTuple{…}}` or `Tuple{…}` chaff.
+- `K"macrocall"` — returns the **last** `K"call"` whose first provenance is the macrocall
+  at `rng`. That tail call carries the value type of the macro expansion, while every
+  internal helper inside the expansion shares the macrocall's byte range but is not what
+  the user means by the macrocall's value.
+- `K"for"` / `K"while"` — always `Core.Const(nothing)`. Loop expressions evaluate to
+  `nothing`; this avoids `tmerge`-ing the iteration machinery (`iterate` results,
+  `=== nothing` checks, body return) that all share the loop's byte range.
+- `K"function"` / `K"macro"` — returns the method body's `tmerge`d return-statement type
+  (i.e. the value-type of `function f(…) … end`), looked up against the matching
+  `K"method"` lowered node, or `K"opaque_closure_method"` for single-method local closures
+  rewritten by `rewrite_local_closures_to_opaque`.
+- `K"comparison"` / `K"&&"` / `K"||"` / `K"if"` — branching expressions whose value is the
+  `tmerge` of each branch's value. Lowering emits a separate branch as either a contained
+  `K"return"` (tail position) or a merge-slot `K"="` whose byte range matches `rng`
+  (`r = a && b` etc.); both shapes get merged.
+- otherwise — falls back to `tmerge` of every node at `rng`. Sufficient when there is only
+  a single typed node, or when merging is genuinely the right answer (e.g. branches of a
+  conditional).
 """
 function get_type_for_range(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
     surface_kind = surface_kind_at_range(ctx, rng)
@@ -967,7 +963,7 @@ end
 function type_for_funcdef(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
     typ = nothing
     for st in get(ctx.by_byte_range, rng, ())
-        JS.kind(st) === JS.K"method" || continue
+        JS.kind(st) in JS.KSet"method opaque_closure_method" || continue
         for i = 1:JS.numchildren(st)
             child = st[i]
             JS.kind(child) === JS.K"code_info" || continue
