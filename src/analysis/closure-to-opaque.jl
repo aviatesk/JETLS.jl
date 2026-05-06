@@ -54,7 +54,6 @@ function rewrite_closure_block(
     n = length(children_old)
     new_children = JS.SyntaxList(JS.syntax_graph(ctx))
     consumed = falses(n)
-    any_changed = false
     for i = 1:n
         consumed[i] && continue
         child = children_old[i]
@@ -67,14 +66,12 @@ function rewrite_closure_block(
                 if oc !== nothing
                     push!(new_children, _rewrite_local_closures_to_opaque(ctx, oc, multis))
                     consumed[md_idx] = true
-                    any_changed = true
                     continue
                 end
             end
         end
         push!(new_children, _rewrite_local_closures_to_opaque(ctx, child, multis))
     end
-    any_changed || return JS.mapchildren(c::SyntaxTreeC -> _rewrite_local_closures_to_opaque(ctx, c, multis), ctx, blk)
     return JL.@ast ctx blk [JS.K"block" new_children...]
 end
 
