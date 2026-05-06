@@ -325,12 +325,16 @@ function _kwdef_make_constructors(
     end
 end
 
-# Stubs for `Test.@test` / `Test.@testset` that drop the test-recording
-# machinery and just route the user-written body through scope resolution.
-
-# Other kws (e.g. `atol=0.1`) are passed through unchecked since the real
-# `Test.@test` forwards them to the test expression. We expand to `ex` alone
-# because a `K"="` kw node in expression position would fail later lowering.
+# Stubs for `Test.jl` testing macros. The real macros wrap user-written bodies in
+# test-recording / exception-catching / setup scaffolding; for LSP scope analysis we only
+# need each user-written sub-expression to flow through with its provenance intact, so we
+# drop the scaffolding and either return the body alone or emit a `block` so identifiers
+# inside every argument are visible to the resolver.
+#
+# For macros with the `body kws...` shape (`@test`, `@test_broken`, `@test_skip`) we
+# validate the kw shape and drop them entirely — the real macro just forwards them to the
+# test expression. For `@test_logs`, where kws sit alongside a list of patterns and a body,
+# we keep only the kw RHS so any user-written identifier there still gets scope-resolved.
 function Test.var"@test"(__context__::JL.MacroContext, ex::SyntaxTreeC, kws::SyntaxTreeC...)
     mc = __context__.macrocall::SyntaxTreeC
     seen_broken = seen_skip = seen_context = nothing
@@ -357,6 +361,97 @@ function Test.var"@test"(__context__::JL.MacroContext, ex::SyntaxTreeC, kws::Syn
     return JL.@ast(__context__, mc, ex)
 end
 
+function Test.var"@test_broken"(
+        __context__::JL.MacroContext, ex::SyntaxTreeC, kws::SyntaxTreeC...
+    )
+    for kw in kws
+        _validate_test_kw(kw)
+    end
+    return JL.@ast(__context__, __context__.macrocall::SyntaxTreeC, ex)
+end
+
+function Test.var"@test_skip"(
+        __context__::JL.MacroContext, ex::SyntaxTreeC, kws::SyntaxTreeC...
+    )
+    for kw in kws
+        _validate_test_kw(kw)
+    end
+    return JL.@ast(__context__, __context__.macrocall::SyntaxTreeC, ex)
+end
+
+function Test.var"@test_throws"(
+        __context__::JL.MacroContext, extype::SyntaxTreeC, ex::SyntaxTreeC
+    )
+    return JL.@ast(__context__, __context__.macrocall::SyntaxTreeC,
+        [JS.K"block" extype ex])
+end
+
+function Test.var"@test_throws"(__context__::JL.MacroContext, ::SyntaxTreeC...)
+    throw_macro_error(__context__.macrocall::SyntaxTreeC,
+        "@test_throws expects exactly two arguments: `extype` and `ex`")
+end
+
+function Test.var"@test_warn"(
+        __context__::JL.MacroContext, msg::SyntaxTreeC, ex::SyntaxTreeC
+    )
+    return JL.@ast(__context__, __context__.macrocall::SyntaxTreeC,
+        [JS.K"block" msg ex])
+end
+
+function Test.var"@test_nowarn"(__context__::JL.MacroContext, ex::SyntaxTreeC)
+    return JL.@ast(__context__, __context__.macrocall::SyntaxTreeC, ex)
+end
+
+function Test.var"@test_logs"(__context__::JL.MacroContext, args::SyntaxTreeC...)
+    mc = __context__.macrocall::SyntaxTreeC
+    isempty(args) && throw_macro_error(mc, "@test_logs needs at least one argument")
+    body = last(args)
+    block_children = SyntaxTreeC[]
+    for i in 1:length(args)-1
+        arg = args[i]
+        if JS.kind(arg) === JS.K"="
+            _validate_test_kw(arg)
+            push!(block_children, arg[2])
+        else
+            push!(block_children, arg)
+        end
+    end
+    push!(block_children, body)
+    return JL.@ast(__context__, mc, [JS.K"block" block_children...])
+end
+
+function Test.var"@test_deprecated"(__context__::JL.MacroContext, ex::SyntaxTreeC)
+    return JL.@ast(__context__, __context__.macrocall::SyntaxTreeC, ex)
+end
+
+function Test.var"@test_deprecated"(
+        __context__::JL.MacroContext, pattern::SyntaxTreeC, ex::SyntaxTreeC
+    )
+    return JL.@ast(__context__, __context__.macrocall::SyntaxTreeC,
+        [JS.K"block" pattern ex])
+end
+
+function Test.var"@test_deprecated"(__context__::JL.MacroContext, ::SyntaxTreeC...)
+    throw_macro_error(__context__.macrocall::SyntaxTreeC,
+        "@test_deprecated expects one or two arguments: `[pattern] expr`")
+end
+
+function Test.var"@inferred"(__context__::JL.MacroContext, ex::SyntaxTreeC)
+    return JL.@ast(__context__, __context__.macrocall::SyntaxTreeC, ex)
+end
+
+function Test.var"@inferred"(
+        __context__::JL.MacroContext, allow::SyntaxTreeC, ex::SyntaxTreeC
+    )
+    return JL.@ast(__context__, __context__.macrocall::SyntaxTreeC,
+        [JS.K"block" allow ex])
+end
+
+function Test.var"@inferred"(__context__::JL.MacroContext, ::SyntaxTreeC...)
+    throw_macro_error(__context__.macrocall::SyntaxTreeC,
+        "@inferred expects one or two arguments: `[allow] ex`")
+end
+
 function _validate_test_kw(kw::SyntaxTreeC)
     JS.kind(kw) === JS.K"=" ||
         throw_macro_error(kw, "invalid test macro call: expected `keyword=value`")
@@ -368,11 +463,6 @@ function _validate_test_kw(kw::SyntaxTreeC)
     return name.name_val::String
 end
 
-# Argument validation mirrors `parse_testset_args` in
-# `stdlib/Test/src/Test.jl`. The body is wrapped in a `let` block to
-# reproduce the local scope the real macro creates via `try`/`catch` —
-# without it, bindings would leak into the enclosing scope and sibling
-# testsets would share names.
 function Test.var"@testset"(__context__::JL.MacroContext, args::SyntaxTreeC...)
     mc = __context__.macrocall::SyntaxTreeC
     isempty(args) && throw_macro_error(mc, "No arguments to @testset")
@@ -406,6 +496,9 @@ function Test.var"@testset"(__context__::JL.MacroContext, args::SyntaxTreeC...)
         end
     end
 
+    # Wrap the body in a `let` block to reproduce the local scope the real
+    # macro creates via `try`/`catch` — without it, bindings would leak into
+    # the enclosing scope and sibling testsets would share names.
     return JL.@ast(__context__, mc,
         [JS.K"let"
             [JS.K"block"]            # empty bindings list

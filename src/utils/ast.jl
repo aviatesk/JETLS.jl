@@ -141,6 +141,7 @@ const NEW_STYLE_MACROCALL_NAMES = (
     # src/utils/jl-syntax-macros.jl
     "@assume_effects",
     "@inbounds",
+    "@inferred",
     "@inline",
     "@kwdef",
     "@label",
@@ -150,6 +151,13 @@ const NEW_STYLE_MACROCALL_NAMES = (
     "@spawn",
     "@specialize",
     "@test",
+    "@test_broken",
+    "@test_deprecated",
+    "@test_logs",
+    "@test_nowarn",
+    "@test_skip",
+    "@test_throws",
+    "@test_warn",
     "@testset",
 )
 

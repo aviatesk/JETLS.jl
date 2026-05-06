@@ -569,6 +569,192 @@ end
     end
 end
 
+@testset "Test.@test_throws" begin
+    @testset "macro expansion" begin
+        # Both args flow through a `block` so identifiers in either get scope analysis.
+        let st1 = test_macro_expand("@test_throws BoundsError xxx[4]")
+            @test JS.kind(st1) === JS.K"block"
+            @test JS.numchildren(st1) == 2
+        end
+    end
+
+    @testset "validation" begin
+        # `@test_throws` strictly requires two positional arguments.
+        for code in ("@test_throws", "@test_throws BoundsError",
+                     "@test_throws BoundsError xxx yyy")
+            let err = try
+                    test_macro_expand(code)
+                    nothing
+                catch err
+                    err
+                end
+                @test err isa JL.MacroExpansionError
+                @test occursin("@test_throws expects exactly two arguments", err.msg)
+            end
+        end
+    end
+
+    @testset "binding resolution preserves provenance" begin
+        let res = test_macro_lower("@test_throws BoundsError getindex(xxx)")
+            assert_binding_provenance(res, :global, "xxx")
+        end
+    end
+end
+
+@testset "Test.@test_broken / Test.@test_skip" begin
+    @testset "macro expansion" begin
+        for name in ("@test_broken", "@test_skip")
+            let st1 = test_macro_expand("$name xxx == 1")
+                @test JS.kind(st1) === JS.K"call"
+                @test strip(JS.sourcetext(st1)) == "xxx == 1"
+            end
+            # Keyword arguments (e.g. `atol=0.1`) are accepted but discarded.
+            let st1 = test_macro_expand("$name foo(xxx) atol=0.1")
+                @test JS.kind(st1) === JS.K"call"
+            end
+        end
+    end
+
+    @testset "validation" begin
+        # Non-`key=value` positional arguments are rejected.
+        for name in ("@test_broken", "@test_skip")
+            let err = try
+                    test_macro_expand("$name xxx foo")
+                    nothing
+                catch err
+                    err
+                end
+                @test err isa JL.MacroExpansionError
+                @test occursin("expected `keyword=value`", err.msg)
+            end
+        end
+    end
+
+    @testset "binding resolution preserves provenance" begin
+        for name in ("@test_broken", "@test_skip")
+            let res = test_macro_lower("$name sin(xxx) == 1.0")
+                assert_binding_provenance(res, :global, "xxx")
+            end
+        end
+    end
+end
+
+@testset "Test.@test_warn / Test.@test_nowarn" begin
+    @testset "macro expansion" begin
+        let st1 = test_macro_expand("@test_warn \"oops\" foo(xxx)")
+            @test JS.kind(st1) === JS.K"block"
+            @test JS.numchildren(st1) == 2
+        end
+        let st1 = test_macro_expand("@test_nowarn foo(xxx)")
+            @test JS.kind(st1) === JS.K"call"
+            @test JS.sourcetext(st1[1]) == "foo"
+            @test JS.sourcetext(st1[2]) == "xxx"
+        end
+    end
+
+    @testset "binding resolution preserves provenance" begin
+        let res = test_macro_lower("@test_warn \"oops\" sin(xxx)")
+            assert_binding_provenance(res, :global, "xxx")
+        end
+    end
+end
+
+@testset "Test.@test_logs" begin
+    @testset "macro expansion" begin
+        # Patterns + body all flow through a `block`.
+        let st1 = test_macro_expand("@test_logs (:info, \"msg\") foo(xxx)")
+            @test JS.kind(st1) === JS.K"block"
+            @test JS.numchildren(st1) == 2
+        end
+
+        # Keyword arguments (e.g. `min_level=Logging.Warn`) keep only the RHS so
+        # the `K"="` node doesn't reach later lowering passes.
+        let st1 = test_macro_expand("@test_logs min_level=yyy foo(xxx)")
+            @test JS.kind(st1) === JS.K"block"
+            @test all(c -> JS.kind(c) !== JS.K"=", JS.children(st1))
+        end
+    end
+
+    @testset "validation" begin
+        let err = try
+                test_macro_expand("@test_logs")
+                nothing
+            catch err
+                err
+            end
+            @test err isa JL.MacroExpansionError
+            @test occursin("@test_logs needs at least one argument", err.msg)
+        end
+    end
+
+    @testset "binding resolution preserves provenance" begin
+        # Both the pattern's RHS keyword value and the body must keep accurate
+        # byte ranges so downstream LSP analyses accept them as user-written.
+        let res = test_macro_lower("@test_logs (:info, \"msg\") min_level=yyy sin(xxx)")
+            assert_binding_provenance(res, :global, "xxx")
+            assert_binding_provenance(res, :global, "yyy")
+        end
+    end
+end
+
+@testset "Test.@test_deprecated" begin
+    @testset "macro expansion" begin
+        let st1 = test_macro_expand("@test_deprecated foo(xxx)")
+            @test JS.kind(st1) === JS.K"call"
+        end
+        let st1 = test_macro_expand("@test_deprecated r\"warn\" foo(xxx)")
+            @test JS.kind(st1) === JS.K"block"
+            @test JS.numchildren(st1) == 2
+        end
+    end
+
+    @testset "validation" begin
+        for code in ("@test_deprecated", "@test_deprecated a b c")
+            let err = try
+                    test_macro_expand(code)
+                    nothing
+                catch err
+                    err
+                end
+                @test err isa JL.MacroExpansionError
+                @test occursin("@test_deprecated expects one or two arguments", err.msg)
+            end
+        end
+    end
+end
+
+@testset "Test.@inferred" begin
+    @testset "macro expansion" begin
+        let st1 = test_macro_expand("@inferred foo(xxx)")
+            @test JS.kind(st1) === JS.K"call"
+        end
+        let st1 = test_macro_expand("@inferred Int foo(xxx)")
+            @test JS.kind(st1) === JS.K"block"
+            @test JS.numchildren(st1) == 2
+        end
+    end
+
+    @testset "validation" begin
+        for code in ("@inferred", "@inferred Int foo(x) extra")
+            let err = try
+                    test_macro_expand(code)
+                    nothing
+                catch err
+                    err
+                end
+                @test err isa JL.MacroExpansionError
+                @test occursin("@inferred expects one or two arguments", err.msg)
+            end
+        end
+    end
+
+    @testset "binding resolution preserves provenance" begin
+        let res = test_macro_lower("@inferred Int sin(xxx)")
+            assert_binding_provenance(res, :global, "xxx")
+        end
+    end
+end
+
 @testset "Base.@assume_effects" begin
     @testset "macro expansion" begin
         # Function-definition body is returned unchanged.
