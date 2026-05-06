@@ -28,6 +28,29 @@ jleval(code::AbstractString) = jleval(lowering_module, code)
 
 children_kinds(st::JS.SyntaxTree) = JS.Kind[JS.kind(c) for c in JS.children(st)]
 
+# Look up the first binding matching `kind`/`name` in the resolved scope and
+# verify its last provenance entry's sourcetext is `name` — i.e. the user-
+# written identifier survived macro expansion with its byte range intact, so
+# downstream LSP analyses (`is_from_user_ast` etc.) can recognize it as
+# user code. Used by every macro stub's "binding resolution preserves
+# provenance" testset.
+function assert_binding_provenance(res, kind::Symbol, name::AbstractString)
+    binding_occurrences = JETLS.compute_binding_occurrences(
+        res.ctx3, res.st3, false; include_global_bindings=true)
+    binfo = nothing
+    for (b, _) in binding_occurrences
+        if b.kind === kind && b.name == name
+            binfo = b
+            break
+        end
+    end
+    @test binfo !== nothing
+    binfo === nothing && return nothing
+    provs = JS.flattened_provenance(JL.binding_ex(res.ctx3, binfo.id))
+    @test JS.sourcetext(last(provs)) == name
+    return (binfo, provs)
+end
+
 @testset "@kwdef" begin
     @testset "macro expansion" begin
         # parametric with defaults
@@ -252,18 +275,7 @@ end
         # `is_from_user_ast`. With the old-style macro the inner `xxx` ends up
         # with a `0:0` byte range and gets filtered out.
         let res = jlresolve("spawnfunc() = Threads.@spawn :default sin(xxx)")
-            binding_occurrences = JETLS.compute_binding_occurrences(
-                res.ctx3, res.st3, false; include_global_bindings=true)
-            xxx_binfo = nothing
-            for (binfo, _) in binding_occurrences
-                if binfo.kind === :global && binfo.name == "xxx"
-                    xxx_binfo = binfo
-                    break
-                end
-            end
-            @test xxx_binfo !== nothing
-            provs = JS.flattened_provenance(JL.binding_ex(res.ctx3, xxx_binfo.id))
-            @test JS.sourcetext(last(provs)) == "xxx"
+            assert_binding_provenance(res, :global, "xxx")
         end
     end
 end
@@ -305,22 +317,8 @@ end
 @testset "@something" begin
     @testset "binding resolution preserves provenance" begin
         let res = jlresolve("somefunc(xxx) = @something(xxx, yyy)")
-            binding_occurrences = JETLS.compute_binding_occurrences(
-                res.ctx3, res.st3, false; include_global_bindings=true)
-            xxx_binfo = yyy_binfo = nothing
-            for (binfo, _) in binding_occurrences
-                if binfo.kind === :argument && binfo.name == "xxx"
-                    xxx_binfo = binfo
-                elseif binfo.kind === :global && binfo.name == "yyy"
-                    yyy_binfo = binfo
-                end
-            end
-            @test xxx_binfo !== nothing
-            @test yyy_binfo !== nothing
-            xxx_provs = JS.flattened_provenance(JL.binding_ex(res.ctx3, xxx_binfo.id))
-            @test JS.sourcetext(last(xxx_provs)) == "xxx"
-            yyy_provs = JS.flattened_provenance(JL.binding_ex(res.ctx3, yyy_binfo.id))
-            @test JS.sourcetext(last(yyy_provs)) == "yyy"
+            assert_binding_provenance(res, :argument, "xxx")
+            assert_binding_provenance(res, :global, "yyy")
         end
     end
 
@@ -424,21 +422,8 @@ test_macro_lower(code::AbstractString) = jlresolve(test_lowering_module, code)
     end
 
     @testset "binding resolution preserves provenance" begin
-        # Identifiers inside `@test` keep accurate byte ranges so downstream
-        # LSP analyses can recognize them as user-written via `is_from_user_ast`.
-        let res = test_macro_lower("testfunc() = @test sin(xxx) == 1.0")
-            binding_occurrences = JETLS.compute_binding_occurrences(
-                res.ctx3, res.st3, false; include_global_bindings=true)
-            xxx_binfo = nothing
-            for (binfo, _) in binding_occurrences
-                if binfo.kind === :global && binfo.name == "xxx"
-                    xxx_binfo = binfo
-                    break
-                end
-            end
-            @test xxx_binfo !== nothing
-            provs = JS.flattened_provenance(JL.binding_ex(res.ctx3, xxx_binfo.id))
-            @test JS.sourcetext(last(provs)) == "xxx"
+        let res = test_macro_lower("@test sin(xxx) == 1.0")
+            assert_binding_provenance(res, :global, "xxx")
         end
     end
 end
@@ -559,10 +544,7 @@ end
 
     @testset "scope isolation + provenance" begin
         # A binding introduced in one `@testset` body must not be visible from
-        # a sibling `@testset`, mirroring the `try`/`catch` scope of the real
-        # macro. User-written identifiers must also keep accurate byte ranges
-        # so that downstream LSP analyses accept them as user-written via
-        # `is_from_user_ast`.
+        # a sibling `@testset`, mirroring the `try`/`catch` scope of the real macro.
         let res = test_macro_lower("""
                 function f()
                     # A local `leaked` exists for the first testset, and the second
@@ -576,28 +558,13 @@ end
                     end
                 end
                 """)
-            binding_occurrences = JETLS.compute_binding_occurrences(
-                res.ctx3, res.st3, false; include_global_bindings=true)
+            local_result = assert_binding_provenance(res, :local, "leaked")
+            @test local_result !== nothing &&
+                JS.source_location(last(local_result[2]))[1] == 5
 
-            local_leaked = filter(collect(binding_occurrences)) do (binfo, _)
-                binfo.kind === :local && binfo.name == "leaked"
-            end
-            global_leaked = filter(collect(binding_occurrences)) do (binfo, _)
-                binfo.kind === :global && binfo.name == "leaked"
-            end
-
-            @test !isempty(local_leaked)
-            @test !isempty(global_leaked)
-
-            (local_binfo, _) = first(local_leaked)
-            local_provs = JS.flattened_provenance(JL.binding_ex(res.ctx3, local_binfo.id))
-            @test JS.sourcetext(last(local_provs)) == "leaked"
-            @test JS.source_location(last(local_provs))[1] == 5
-
-            (global_binfo, _) = first(global_leaked)
-            global_provs = JS.flattened_provenance(JL.binding_ex(res.ctx3, global_binfo.id))
-            @test JS.sourcetext(last(global_provs)) == "leaked"
-            @test JS.source_location(last(global_provs))[1] == 9
+            global_result = assert_binding_provenance(res, :global, "leaked")
+            @test global_result !== nothing &&
+                JS.source_location(last(global_result[2]))[1] == 9
         end
     end
 end
@@ -707,18 +674,7 @@ end
         # must keep accurate byte ranges so downstream LSP analyses can accept
         # them as user-written via `is_from_user_ast`.
         let res = jlresolve("g() = Base.@assume_effects :foldable sin(xxx)")
-            binding_occurrences = JETLS.compute_binding_occurrences(
-                res.ctx3, res.st3, false; include_global_bindings=true)
-            xxx_binfo = nothing
-            for (binfo, _) in binding_occurrences
-                if binfo.kind === :global && binfo.name == "xxx"
-                    xxx_binfo = binfo
-                    break
-                end
-            end
-            @test xxx_binfo !== nothing
-            provs = JS.flattened_provenance(JL.binding_ex(res.ctx3, xxx_binfo.id))
-            @test JS.sourcetext(last(provs)) == "xxx"
+            assert_binding_provenance(res, :global, "xxx")
         end
     end
 end
