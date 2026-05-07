@@ -1,0 +1,14 @@
+name = "OrderedCollections"
+uuid = "64c61135-0f01-5c34-beb9-07fc02084e85"
+version = "1.8.1"
+
+[extras]
+Serialization = "9e88b42a-f829-5b0c-bbe9-9e923198166b"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+
+[compat]
+julia = "1.7.1"
+
+[targets]
+test = ["Serialization", "Test", "Random"]

@@ -1,0 +1,7 @@
+name = "MSort"
+uuid = "75c9a4e7-9bfb-42c4-89fa-37abaaaaefd3"
+version = "0.1.0"
+authors = ["Tim Holy <tim.holy@gmail.com>"]
+
+[deps]
+PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"

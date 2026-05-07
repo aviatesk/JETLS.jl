@@ -13,6 +13,3 @@ docs/build/
 docs/src/CHANGELOG.md
 *.heapsnapshot
 .JETLSProfile
-
-# The following line is negated on release branches
-/vendor

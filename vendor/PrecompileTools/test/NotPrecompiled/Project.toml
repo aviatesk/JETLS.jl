@@ -1,0 +1,4 @@
+name = "NotPrecompiled"
+uuid = "82bf3039-9474-4881-94bd-824dbad9b14d"
+version = "0.1.0"
+authors = ["Tim Holy <tim.holy@gmail.com>"]

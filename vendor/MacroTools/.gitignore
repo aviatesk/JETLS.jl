@@ -1,0 +1,17 @@
+*.jl.cov
+*.jl.*.cov
+*.jl.mem
+Manifest.toml
+
+.DS_Store
+
+docs/build/
+docs/site/
+
+*.ipynb_checkpoints
+**/*.ipynb_checkpoints
+**/**/*.ipynb_checkpoints
+
+_*.dat
+*.swp
+__pycache__/
