@@ -499,6 +499,74 @@ end
         end
     end
 
+    # OC construction scaffolding shares its byte range with the user's yield expression
+    # for comprehension/`map` lambdas; queries at that range should surface only the body's
+    # value type. See `tmerge_at_range`.
+    @testset "OC construction noise at user expression byte range" begin
+        @testset "comprehension with typed iterator yield" begin
+            let code = "let xs = rand(3); [yld for yld::Float64 in xs]; end"
+                _, ctx = type_annotate(code)
+                # First `yld` in source order is the yield expression.
+                @test widenconst(get_type_for_range(ctx, range_of(code, "yld"))) === Float64
+            end
+        end
+        @testset "typed comprehension with typed iterator yield" begin
+            let code = "let xs = rand(3); Float64[yld for yld::Float64 in xs]; end"
+                _, ctx = type_annotate(code)
+                # First `yld` in source order is the yield expression.
+                @test widenconst(get_type_for_range(ctx, range_of(code, "yld"))) === Float64
+            end
+        end
+
+        @testset "comprehension with typed iterator with filter on iterator" begin
+            let code = "let xs = rand(3); [yld for yld::Float64 in xs if yld > 0]; end"
+                _, ctx = type_annotate(code)
+                # First `yld` in source order is the yield expression.
+                @test widenconst(get_type_for_range(ctx, range_of(code, "yld"))) === Float64
+            end
+        end
+
+        @testset "comprehension with typed tuple yield" begin
+            let code = """
+                let xs = rand(3), ys = rand(3)
+                    [(x, y) for (x, y)::Tuple{Float64,Float64} in zip(xs, ys)]
+                end
+                """
+                _, ctx = type_annotate(code)
+                # First `(x, y)` in source order is the yield expression.
+                @test widenconst(get_type_for_range(ctx, range_of(code, "(x, y)"))) ===
+                    Tuple{Float64,Float64}
+            end
+        end
+
+        # Multi-`for` lowers to nested OCs whose construction sites overlap source-wise;
+        # the inner-body slot must still resolve precisely. See `populate_oc_body_scope!`.
+        @testset "nested OC scopes (multi-for comprehension)" begin
+            let code = """
+                let xs = [1, 2, 3], ys = [1.0]
+                    [x + y for x::Int in xs for y::Float64 in ys]
+                end
+                """
+                _, ctx = type_annotate(code)
+                rng = range_of(code, "x + y")
+                @test widenconst(get_type_for_range(ctx, rng)) === Float64
+            end
+        end
+
+        # An explicit closure binding's reference surfaces `OpaqueClosure{…}` legitimately
+        # — the filter must not strip it.
+        @testset "explicit closure binding reference still surfaces the OC type" begin
+            let code = "let f = (x::Int) -> x + 1; f; end"
+                _, ctx = type_annotate(code)
+                # Reference `f` is the second occurrence (`; f;` near the end).
+                ref_rng = let i = findlast("f", code)
+                    first(i):last(i)
+                end
+                @test widenconst(get_type_for_range(ctx, ref_rng)) <: Core.OpaqueClosure
+            end
+        end
+    end
+
     @testset "regular call dispatches to the user's call result" begin
         let code = "let v = [1.0, 2.0]; sum(v); end"
             _, ctx = type_annotate(code)

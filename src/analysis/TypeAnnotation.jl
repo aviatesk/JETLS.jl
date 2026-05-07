@@ -695,6 +695,13 @@ struct InferredTreeContext
     # `K"return"` is part of the queried branching's value and isn't
     # filtered.
     user_return_value_ranges::Dict{UnitRange{Int}, UnitRange{Int}}
+    # For each lowered node inside the body of some OC, the byte range of that OC's
+    # `K"opaque_closure_method"`. Used by `tmerge_at_range` to filter OC construction
+    # scaffolding sharing a byte range with the user's yield expression: a node is kept
+    # only when the OC whose body it's in has the queried byte range — so inner-OC noise
+    # inside an outer OC body (e.g. multi-`for` comprehension, closure-of-closure) is
+    # filtered when querying at the inner OC's range.
+    oc_body_scope::Dict{Int,UnitRange{Int}}
 end
 
 function InferredTreeContext(inferred_tree::SyntaxTreeC, st3::SyntaxTreeC)
@@ -745,10 +752,39 @@ function InferredTreeContext(inferred_tree::SyntaxTreeC, st3::SyntaxTreeC)
     user_return_value_ranges = Dict{UnitRange{Int}, UnitRange{Int}}()
     collect_user_return_value_ranges!(user_return_value_ranges, st3)
 
+    oc_body_scope = Dict{Int,UnitRange{Int}}()
+    populate_oc_body_scope!(oc_body_scope, inferred_tree, nothing)
+
     return InferredTreeContext(
         inferred_tree, surface_kind_index, by_byte_range,
         macrocall_typed_calls, return_first_bytes, return_nodes,
-        user_return_value_ranges)
+        user_return_value_ranges, oc_body_scope)
+end
+
+# `K"code_info"` only marks an OC body when it's the body slot of a
+# `K"opaque_closure_method"` — the top-level thunk is also wrapped in `K"code_info"` and
+# would otherwise mark the entire tree. Each `K"opaque_closure_method"` opens its own
+# scope; entering its `K"code_info"` child overrides the inherited scope so an inner OC's
+# body is attributed to the inner method, not the outer.
+function populate_oc_body_scope!(
+        scope::Dict{Int,UnitRange{Int}},
+        node::SyntaxTreeC,
+        current::Union{Nothing,UnitRange{Int}},
+    )
+    current === nothing || (scope[node._id] = current)
+    JS.is_leaf(node) && return
+    if JS.kind(node) === JS.K"opaque_closure_method"
+        method_range = JS.byte_range(node)
+        for c in JS.children(node)
+            child_scope = JS.kind(c) === JS.K"code_info" ? method_range : current
+            populate_oc_body_scope!(scope, c, child_scope)
+        end
+    else
+        for c in JS.children(node)
+            populate_oc_body_scope!(scope, c, current)
+        end
+    end
+    return
 end
 
 # Walk `st`, find every `K"return"` node, and record the byte ranges of all
@@ -989,9 +1025,20 @@ function type_for_funcdef(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
 end
 
 function tmerge_at_range(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
+    nodes = get(ctx.by_byte_range, rng, ())
+    # When `OpaqueClosure` construction occurs at `rng` (most often a comprehension/
+    # `map`/`filter` auto-generated lambda whose source bytes coincide with the user's
+    # yield expression), the construction scaffolding — OC method object, argt/rt_lb svec,
+    # OC binding — would otherwise `tmerge` into the user-visible value and surface as
+    # `Union{T, Method, OpaqueClosure, Type}`. Keep only nodes attributed to the body of
+    # the OC at `rng`; outside that scope is scaffolding.
+    is_oc_site = any(s -> JS.kind(s) === JS.K"new_opaque_closure", nodes)
     typ = nothing
-    for st in get(ctx.by_byte_range, rng, ())
+    for st in nodes
         hasproperty(st, :type) || continue
+        if is_oc_site && get(ctx.oc_body_scope, st._id, nothing) !== rng
+            continue
+        end
         ntyp = st.type
         typ = typ === nothing ? ntyp : CC.tmerge(ntyp, typ)
     end
