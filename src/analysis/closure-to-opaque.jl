@@ -1,6 +1,6 @@
 module Closure2Opaque
 
-using ..JETLS: JL, JS, SyntaxTreeC
+using ..JETLS: JL, JS, SyntaxTreeC, TraversalReturn, traverse
 
 export rewrite_local_closures_to_opaque
 
@@ -196,27 +196,37 @@ function try_build_oc_assignment(
     return JL.@ast ctx method_defs [JS.K"=" func_name oc]
 end
 
+# `sig_call` must be matched by `var_id` (not "first svec_call DFS finds"):
+# nested closures embed the inner OC's `method_defs` inside the outer OC's lambda body,
+# so an unconstrained DFS attributes the inner's user-argtypes to the outer OC.
 function find_method_and_sig_call(root::SyntaxTreeC, target_var_id::Int)
-    method_node = sig_call = nothing
-    stack = SyntaxTreeC[root]
-    while !isempty(stack)
-        method_node === nothing || sig_call === nothing || break
-        node = pop!(stack)
-        if JS.kind(node) === JS.K"method" && JS.numchildren(node) == 3 &&
-                JS.kind(node[1]) === JS.K"BindingId" && node[1].var_id == target_var_id
-            method_node = node
-        elseif JS.kind(node) === JS.K"=" && JS.numchildren(node) == 2 &&
-                JS.kind(node[1]) === JS.K"BindingId" &&
-                JS.kind(node[2]) === JS.K"call" && is_core_svec_call(node[2])
-            sig_call = node[2]
-        end
-        if !JS.is_leaf(node)
-            for c in JS.children(node)
-                push!(stack, c)
-            end
-        end
-    end
+    method_node = @something find_method_node(root, target_var_id) return (nothing, nothing)
+    JS.numchildren(method_node) >= 2 || return (method_node, nothing)
+    sig_ref = method_node[2]
+    JS.kind(sig_ref) === JS.K"BindingId" || return (method_node, nothing)
+    sig_call = find_sig_call_for(root, sig_ref.var_id)
     return (method_node, sig_call)
+end
+
+function find_method_node(root::SyntaxTreeC, target_var_id::Int)
+    return traverse(root) do node::SyntaxTreeC
+        if (JS.kind(node) === JS.K"method" && JS.numchildren(node) == 3 &&
+            JS.kind(node[1]) === JS.K"BindingId" && node[1].var_id == target_var_id)
+            return TraversalReturn(node; terminate=true)
+        end
+        nothing
+    end
+end
+
+function find_sig_call_for(root::SyntaxTreeC, sig_var_id::Int)
+    return traverse(root) do node::SyntaxTreeC
+        if (JS.kind(node) === JS.K"=" && JS.numchildren(node) == 2 &&
+            JS.kind(node[1]) === JS.K"BindingId" && node[1].var_id == sig_var_id &&
+            JS.kind(node[2]) === JS.K"call" && is_core_svec_call(node[2]))
+            return TraversalReturn(node[2]; terminate=true)
+        end
+        nothing
+    end
 end
 
 function is_core_svec_call(call_node::SyntaxTreeC)

@@ -208,6 +208,30 @@ end
         @test val == 42
         @test count_opaque_closures(tree) == 2
     end
+
+    # Regression: nested typed closures must each get their own user-argtypes
+    # (no cross-attribution from inner to outer).
+    let (val, tree) = rewrite_lower_eval("""
+            let outer = (x::Int) -> begin
+                    inner = (y::Float64) -> x + y
+                    inner(2.5)
+                end
+                outer(3)
+            end
+            """)
+        @test val === 5.5
+        @test count_opaque_closures(tree) == 2
+    end
+
+    # Same shape via cartesian comprehension lowering.
+    let (val, tree) = rewrite_lower_eval("""
+            let xs = [1, 2, 3], ys = [10.0, 20.0]
+                [x + y for x::Int in xs for y::Float64 in ys]
+            end
+            """)
+        @test val == [11.0, 21.0, 12.0, 22.0, 13.0, 23.0]
+        @test count_opaque_closures(tree) == 2
+    end
 end
 
 @testset "do-block as map argument" begin
