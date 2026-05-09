@@ -77,11 +77,11 @@ end
 @testset HierarchicalTestSet "'Definition' for modules and methods" begin
     @testset "function definition" begin
         @test with_find_definition("""
-            func(x) = 1
-            fu│nc(1.0)
-            func(1.│0)
-            let; func│; end
-        """) do i, result, uri
+                func(x) = 1
+                fu│nc(1.0)
+                func(1.│0)
+                let; func│; end
+            """) do i, result, uri
             if i == 1
                 @test length(result) == 1
                 @test first(result).uri == uri
@@ -102,14 +102,14 @@ end
         sin_cand_file = JETLS.to_full_path(sin_cand_file_)
 
         @test with_definition_request("""
-            Base.Compiler.tm│eet
-            si│n(1.0)
-            1 +│ 2
-            cos(x) = 1
-            global x::Float64 = let x = 42
-                Base.co│s(x)
-            end
-        """) do i, result, uri
+                Base.Compiler.tm│eet
+                si│n(1.0)
+                1 +│ 2
+                cos(x) = 1
+                global x::Float64 = let x = 42
+                    Base.co│s(x)
+                end
+            """) do i, result, uri
             @test length(result) >= 1
             if i == 2  # sin
                 @test any(result) do candidate
@@ -127,13 +127,13 @@ end
 
     @testset "function in module" begin
         @test with_definition_request("""
-            module M
-                m_func(x) = 1
+                module M
+                    m_func(x) = 1
+                    m_│func(1.0)
+                end
                 m_│func(1.0)
-            end
-            m_│func(1.0)
-            M.m_│func(1.0)
-        """) do i, result, uri
+                M.m_│func(1.0)
+            """) do i, result, uri
             if i == 1
                 @test length(result) == 1
                 @test first(result).uri == uri
@@ -151,22 +151,22 @@ end
 
     @testset "struct type and function aggregation" begin
         @test with_find_definition("""
-            struct Hello
-                who::String
-                Hello(who::AbstractString) = new(String(who))
-            end
-            function say(h::Hel│lo)
-                println("Hello, \$(h.who)")
-            end
-            function say_defarg(h::Hello, s = "Hello")
-                println("\$s, \$(h.who)")
-            end
-            function say_kwarg(h::Hello; s = "Hello")
-                println("\$s, \$(h.who)")
-            end
-            say_defar│g
-            say_kwar│g
-        """) do i, result, uri
+                struct Hello
+                    who::String
+                    Hello(who::AbstractString) = new(String(who))
+                end
+                function say(h::Hel│lo)
+                    println("Hello, \$(h.who)")
+                end
+                function say_defarg(h::Hello, s = "Hello")
+                    println("\$s, \$(h.who)")
+                end
+                function say_kwarg(h::Hello; s = "Hello")
+                    println("\$s, \$(h.who)")
+                end
+                say_defar│g
+                say_kwar│g
+            """) do i, result, uri
             @test length(result) == 1
             @test first(result).uri == uri
             if i == 1  # struct type in function signature
@@ -182,16 +182,16 @@ end
 
     @testset "target node selection" begin
         @test with_definition_request("""
-            func(x) = 1
-            func│ # bare function
-            func│(1.0) # right edge
-            │func(1.0) # left edge
-            module M
-                m_func(x) = 1
-            end
-            M.m_func│(1.0)
-            M.│m_func(1.0)
-        """) do i, result, uri
+                func(x) = 1
+                func│ # bare function
+                func│(1.0) # right edge
+                │func(1.0) # left edge
+                module M
+                    m_func(x) = 1
+                end
+                M.m_func│(1.0)
+                M.│m_func(1.0)
+            """) do i, result, uri
             @test length(result) == 1
             @test first(result).uri == uri
             if i <= 3  # simple function
@@ -205,12 +205,12 @@ end
 
     @testset "module location" begin
         @test with_definition_request("""
-            module M2
-                m_func(x) = 1
-            end
-            M2│.m_func(1.0)
-            Core│.isdefined
-        """) do i, result, uri
+                module M2
+                    m_func(x) = 1
+                end
+                M2│.m_func(1.0)
+                Core│.isdefined
+            """) do i, result, uri
             if i == 1
                 @test result isa Vector{Location}
                 @test length(result) == 1
@@ -222,21 +222,20 @@ end
             return 1
         end == 2
     end
-
 end
 
 @testset HierarchicalTestSet "'Definition' for local bindings" begin
     @testset "local definition" begin
         @test with_find_definition("""
-            function func(x, y)
-                if rand(Bool)
-                    z = x
-                else
-                    z = y
+                function func(x, y)
+                    if rand(Bool)
+                        z = x
+                    else
+                        z = y
+                    end
+                    return z│
                 end
-                return z│
-            end
-        """) do _, results, uri
+            """) do _, results, uri
             @test results isa Vector{Location}
             @test length(results) == 2
             @test any(results) do result
@@ -253,12 +252,12 @@ end
 
     @testset "local definition with docstring" begin
         @test with_find_definition("""
-            \"\"\"Docstring\"\"\"
-            function func(xxx, yyy)
-                value = xxx│ + yyy
-                return value
-            end
-        """) do _, results, uri
+                \"\"\"Docstring\"\"\"
+                function func(xxx, yyy)
+                    value = xxx│ + yyy
+                    return value
+                end
+            """) do _, results, uri
             @test results isa Vector{Location}
             @test length(results) == 1
             @test any(results) do result
@@ -271,11 +270,11 @@ end
 
     @testset "local definition with macrocall" begin
         @test with_find_definition("""
-            function func(xxx, yyy)
-                value = @something rand((xxx│, yyy, nothing))
-                return value
-            end
-        """) do _, results, uri
+                function func(xxx, yyy)
+                    value = @something rand((xxx│, yyy, nothing))
+                    return value
+                end
+            """) do _, results, uri
             @test results isa Vector{Location}
             @test length(results) == 1
             @test any(results) do result
@@ -295,9 +294,9 @@ end
     sin_cand_file_, sin_cand_line = functionloc(first(methods(sin, (Float64,))))
     sin_cand_file = JETLS.to_full_path(sin_cand_file_)
     @test with_definition_request("""
-        using Base: sin
-        si│n(1.0)
-    """) do _, results, uri
+            using Base: sin
+            si│n(1.0)
+        """) do _, results, uri
         @test results isa Vector{Location}
         @test length(results) >= 1
         # Jump must go outside the current file (to Base's source).
@@ -312,14 +311,14 @@ end
 
 @testset "'Definition' for global bindings" begin
     @test with_find_definition("""
-        GLOBAL_VAR = 42
-        const CONST_VAR = 100
-        MUTABLE_VAR = 1
-        MUTABLE_VAR = 2
-        function use_globals()
-            GLOBAL_VA│R + CONST_VA│R + MUTABLE_VA│R
-        end
-    """) do i, results, uri
+            GLOBAL_VAR = 42
+            const CONST_VAR = 100
+            MUTABLE_VAR = 1
+            MUTABLE_VAR = 2
+            function use_globals()
+                GLOBAL_VA│R + CONST_VA│R + MUTABLE_VA│R
+            end
+        """) do i, results, uri
         @test results isa Vector{Location}
         if i == 1  # GLOBAL_VAR
             @test length(results) == 1

@@ -45,7 +45,7 @@ end
     @testset "semantic tokens" include("test_semantic_tokens.jl")
     @testset "lowering diagnostic" include("test_lowering_diagnostic.jl")
     @testset "code action" include("test_code_action.jl")
-    @testset "diagnostics" include("test_diagnostic.jl")
+    @testset "diagnostic" include("test_diagnostic.jl")
     @testset "did-change-watched-files" include("test_did_change_watched_files.jl")
     @testset "rename" include("test_rename.jl")
     @testset "code lens" include("test_code_lens.jl")
