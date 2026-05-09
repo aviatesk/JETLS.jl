@@ -356,6 +356,68 @@ end
     end
 end
 
+@testset "@assert" begin
+    @testset "macro expansion" begin
+        # Bare condition: lowered to `cond ? nothing : throw(AssertionError(...))`
+        # so the false branch terminates control flow.
+        let st1 = jlexpand("@assert x == 1")
+            @test JS.kind(st1) === JS.K"if"
+        end
+
+        # Condition + user message uses the message as the AssertionError arg.
+        let st1 = jlexpand("@assert x == 1 \"failed\"")
+            @test JS.kind(st1) === JS.K"if"
+        end
+
+        # Base silently ignores extra trailing message arguments; extras are
+        # piled into a leading block so they remain visible to the resolver.
+        let st1 = jlexpand("@assert x == 1 \"a\" \"b\"")
+            @test JS.kind(st1) === JS.K"block"
+            @test JS.kind(st1[end]) === JS.K"if"
+        end
+    end
+
+    @testset "validation" begin
+        # Zero-argument form rejected.
+        let err = try
+                jlexpand("@assert")
+                nothing
+            catch err
+                err
+            end
+            @test err isa JL.MacroExpansionError
+            @test occursin("at least one argument is required", err.msg)
+        end
+    end
+
+    @testset "control flow guards subsequent code" begin
+        # `@assert @isdefined(x)` followed by a use of `x`: the false branch
+        # throws, so `x` is guaranteed defined on the path that reaches the
+        # use. Without this, `lowering/undef-local-var` would flag `x`.
+        @test jlresolve("""
+            function f()
+                try
+                    x = 1
+                catch
+                    x = 2
+                finally
+                    @assert @isdefined(x) "x should be defined here"
+                    return x
+                end
+            end
+            """) isa NamedTuple
+    end
+
+    @testset "binding resolution preserves provenance" begin
+        # Identifiers in the condition and the message must both be visible
+        # to the resolver as user-written.
+        let res = jlresolve("@assert sin(xxx) == 0 \"oops: \$yyy\"")
+            assert_binding_provenance(res, :global, "xxx")
+            assert_binding_provenance(res, :global, "yyy")
+        end
+    end
+end
+
 module test_lowering_module; using Test; end
 test_macro_expand(code::AbstractString) = jlexpand(test_lowering_module, code)
 test_macro_lower(code::AbstractString) = jlresolve(test_lowering_module, code)
