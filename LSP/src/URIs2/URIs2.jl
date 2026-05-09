@@ -182,7 +182,7 @@ end
     end
 end
 
-@inline function is_ipliteral(s::AbstractString)
+@inline function is_ipliteral(_s::AbstractString)
     # TODO Implement this
     return false
 end

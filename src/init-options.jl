@@ -16,7 +16,7 @@ function parse_init_options(server::Server, @nospecialize init_options)
     init_options === nothing && return DEFAULT_INIT_OPTIONS
     init_options isa AbstractDict || return DEFAULT_INIT_OPTIONS
     parsed = try
-        validate_init_options(server, Configurations.from_dict(InitOptions, init_options))
+        validate_init_options(server, parse_config_from_dict(InitOptions, init_options))
     catch err
         show_warning_message(server,
             "Failed to parse initializationOptions, using defaults: $err")
@@ -47,7 +47,7 @@ function load_file_init_options(server::Server, filepath::AbstractString)
         return nothing
     end
     try
-        return validate_init_options(server, Configurations.from_dict(InitOptions, init_options_dict))
+        return validate_init_options(server, parse_config_from_dict(InitOptions, init_options_dict))
     catch err
         show_error_message(server,
             "Failed to parse `[initialization_options]` in $filepath: $err")

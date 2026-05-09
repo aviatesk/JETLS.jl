@@ -102,8 +102,8 @@ function load_file_config!(on_difference, server::Server, filepath::AbstractStri
     end
 end
 
-unmatched_keys_in_config_file_msg(filepath::AbstractString, unmatched_keys) =
-    unmatched_keys_msg("Configuration file at $filepath contains unknown keys:", unmatched_keys)
+unmatched_key_in_config_file_msg(filepath::AbstractString, path::Vector{String}) =
+    unmatched_key_msg("Configuration file at $filepath contains an unknown key:", path)
 
 function delete_file_config!(on_difference, manager::ConfigManager, filepath::AbstractString)
     store!(manager) do old_data::ConfigManagerData

@@ -213,8 +213,7 @@ const _EGAL_TYPES_ = Any[Symbol, Core.MethodInstance, Type]
 macro define_eq_overloads(Tyname)
     Ty = Core.eval(__module__, Tyname)
     fld2typs = Pair{Symbol,Any}[Pair{Symbol,Any}(fieldname(Ty, i), fieldtype(Ty, i)) for i = 1:fieldcount(Ty)]
-    h_init = UInt === UInt64 ? rand(UInt64) : rand(UInt32)
-    hash_body = quote h = $h_init end
+    hash_body = Expr(:block)
     for fld2typ in fld2typs
         fld, _ = fld2typ
         push!(hash_body.args, :(h = Base.hash(x.$fld, h)::UInt))

@@ -356,12 +356,13 @@ function Base.iterate(extra_diagnostics::ExtraDiagnosticsData, keysiter=(keys(ex
 end
 
 """
-To extend configuration options, define new `@option struct`s here:
+To extend configuration options, define new config structs here:
 
-    @option struct NewConfig <: ConfigSection
-        field1::Maybe{Type1}  # Maybe{T} from Configurations.jl allows optional fields
-        field2::Maybe{Type2}
+    @kwdef struct NewConfig <: ConfigSection
+        field1::Maybe{Type1} = nothing
+        field2::Maybe{Type2} = nothing
     end
+    @define_eq_overloads NewConfig
 
 All fields must be wrapped in `Maybe{}` to distinguish between cases of
 "no configuration set" and those of "user has set some configuration",
@@ -378,21 +379,32 @@ Finally, add the new config section to `JETLSConfig` struct below.
 """
 abstract type ConfigSection end
 
+const Maybe{T} = Union{Nothing,T}
+
 function merge_key_value end
 
-@option struct FullAnalysisConfig <: ConfigSection
-    debounce::Maybe{Float64}
-    auto_instantiate::Maybe{Bool}
+@kwdef struct FullAnalysisConfig <: ConfigSection
+    debounce::Maybe{Float64} = nothing
+    auto_instantiate::Maybe{Bool} = nothing
 end
+@define_eq_overloads FullAnalysisConfig
 
-@option struct TestRunnerConfig <: ConfigSection
-    executable::Maybe{String}
+@kwdef struct TestRunnerConfig <: ConfigSection
+    executable::Maybe{String} = nothing
 end
+@define_eq_overloads TestRunnerConfig
 
-@option "custom" struct CustomFormatterConfig
-    executable::Maybe{String}
-    executable_range::Maybe{String}
+@kwdef struct CustomFormatterConfig <: ConfigSection
+    executable::Maybe{String} = nothing
+    executable_range::Maybe{String} = nothing
 end
+@define_eq_overloads CustomFormatterConfig
+
+# Tag used to distinguish `CustomFormatterConfig` from a plain string in the formatter
+# field when serializing to / parsing from a config dict. With Configurations.jl this
+# was provided by `@option "custom"`, but JETLS's hand-rolled `parse_config_from_dict` needs the tag
+# stored explicitly.
+const CUSTOM_FORMATTER_ALIAS = "custom"
 
 const FormatterConfig = Union{String,CustomFormatterConfig}
 
@@ -471,24 +483,16 @@ struct DiagnosticPattern <: ConfigSection
     __pattern_value__::String # used for updated setting tracking
 end
 @define_eq_overloads DiagnosticPattern
-
-# Overload to inject custom validations for parsing `DiagnosticPattern` from
-# `Configuration.to_dict(::DiagnosticConfig, config::AbstractDict{String})`
-Base.convert(::Type{DiagnosticPattern}, x::AbstractDict{String}) =
-    parse_diagnostic_pattern(x)
-
 merge_key_value(pattern::DiagnosticPattern) =
     (pattern.match_by, pattern.match_type, pattern.path, pattern.__pattern_value__)
 
-# N.B. `@option` automatically adds `Base.:(==)` overloads for annotated types,
-# whose behavior is similar to those added by`@define_eq_overloads`
-
-@option struct DiagnosticConfig <: ConfigSection
-    enabled::Maybe{Bool}
-    all_files::Maybe{Bool}
-    allow_unused_underscore::Maybe{Bool}
-    patterns::Maybe{Vector{DiagnosticPattern}}
+@kwdef struct DiagnosticConfig <: ConfigSection
+    enabled::Maybe{Bool} = nothing
+    all_files::Maybe{Bool} = nothing
+    allow_unused_underscore::Maybe{Bool} = nothing
+    patterns::Maybe{Vector{DiagnosticPattern}} = nothing
 end
+@define_eq_overloads DiagnosticConfig
 
 # Internal, undocumented configuration for full-analysis module overrides.
 struct AnalysisOverride <: ConfigSection
@@ -496,15 +500,15 @@ struct AnalysisOverride <: ConfigSection
     module_name::Maybe{String}
 end
 @define_eq_overloads AnalysisOverride
-Base.convert(::Type{AnalysisOverride}, x::AbstractDict{String}) = parse_analysis_override(x)
 merge_key_value(analysis_override::AnalysisOverride) = analysis_override.path
 
 # Static initialization options from `InitializeParams.initializationOptions`.
 # These are set once during the initialize request and remain constant.
-@option struct InitOptions <: ConfigSection
-    n_analysis_workers::Maybe{Int}
-    analysis_overrides::Maybe{Vector{AnalysisOverride}}
+@kwdef struct InitOptions <: ConfigSection
+    n_analysis_workers::Maybe{Int} = nothing
+    analysis_overrides::Maybe{Vector{AnalysisOverride}} = nothing
 end
+@define_eq_overloads InitOptions
 function Base.show(io::IO, init_options::InitOptions)
     print(io, "InitOptions(;")
     n_analysis_workers = init_options.n_analysis_workers
@@ -515,47 +519,54 @@ function Base.show(io::IO, init_options::InitOptions)
 end
 const DEFAULT_INIT_OPTIONS = InitOptions(; n_analysis_workers=1, analysis_overrides=AnalysisOverride[])
 
-@option struct LaTeXEmojiConfig <: ConfigSection
-    strip_prefix::Maybe{Union{Missing,Bool}} # missing is used as sentinel for default setting value
+@kwdef struct LaTeXEmojiConfig <: ConfigSection
+    strip_prefix::Maybe{Union{Missing,Bool}} = nothing # missing is used as sentinel for default setting value
 end
+@define_eq_overloads LaTeXEmojiConfig
 
-@option struct MethodSignatureConfig <: ConfigSection
-    prepend_inference_result::Maybe{Union{Missing,Bool}} # missing is used as sentinel for default setting value
+@kwdef struct MethodSignatureConfig <: ConfigSection
+    prepend_inference_result::Maybe{Union{Missing,Bool}} = nothing # missing is used as sentinel for default setting value
 end
+@define_eq_overloads MethodSignatureConfig
 
-@option struct CompletionConfig <: ConfigSection
-    latex_emoji::Maybe{LaTeXEmojiConfig}
-    method_signature::Maybe{MethodSignatureConfig}
+@kwdef struct CompletionConfig <: ConfigSection
+    latex_emoji::Maybe{LaTeXEmojiConfig} = nothing
+    method_signature::Maybe{MethodSignatureConfig} = nothing
 end
+@define_eq_overloads CompletionConfig
 
-@option struct CodeLensConfig <: ConfigSection
-    references::Maybe{Bool}
-    testrunner::Maybe{Bool}
+@kwdef struct CodeLensConfig <: ConfigSection
+    references::Maybe{Bool} = nothing
+    testrunner::Maybe{Bool} = nothing
 end
+@define_eq_overloads CodeLensConfig
 
-@option struct InlayHintBlockEndConfig <: ConfigSection
-    enabled::Maybe{Bool}
-    min_lines::Maybe{Int}
+@kwdef struct InlayHintBlockEndConfig <: ConfigSection
+    enabled::Maybe{Bool} = nothing
+    min_lines::Maybe{Int} = nothing
 end
+@define_eq_overloads InlayHintBlockEndConfig
 
-@option struct InlayHintConfig <: ConfigSection
-    block_end::Maybe{InlayHintBlockEndConfig}
+@kwdef struct InlayHintConfig <: ConfigSection
+    block_end::Maybe{InlayHintBlockEndConfig} = nothing
 end
+@define_eq_overloads InlayHintConfig
 
-@option struct JETLSConfig <: ConfigSection
-    diagnostic::Maybe{DiagnosticConfig}
-    full_analysis::Maybe{FullAnalysisConfig}
-    testrunner::Maybe{TestRunnerConfig}
-    formatter::Maybe{FormatterConfig}
-    completion::Maybe{CompletionConfig}
-    code_lens::Maybe{CodeLensConfig}
-    inlay_hint::Maybe{InlayHintConfig}
+@kwdef struct JETLSConfig <: ConfigSection
+    diagnostic::Maybe{DiagnosticConfig} = nothing
+    full_analysis::Maybe{FullAnalysisConfig} = nothing
+    testrunner::Maybe{TestRunnerConfig} = nothing
+    formatter::Maybe{FormatterConfig} = nothing
+    completion::Maybe{CompletionConfig} = nothing
+    code_lens::Maybe{CodeLensConfig} = nothing
+    inlay_hint::Maybe{InlayHintConfig} = nothing
     # This initialization options are read once at the server initialization and held in
     # `server.state.init_options`, so it might seem strange to hold them here also,
     # but they need to be set here for cases where initialization options are set in
     # .JETLSConfig.toml.
-    initialization_options::Maybe{InitOptions}
+    initialization_options::Maybe{InitOptions} = nothing
 end
+@define_eq_overloads JETLSConfig
 
 const DEFAULT_CONFIG = JETLSConfig(;
     diagnostic = DiagnosticConfig(true, true, true, DiagnosticPattern[]),
