@@ -144,42 +144,88 @@ using JETLS
     end
 end
 
-@testset "UntypedConfigDict utilities" begin
-    TEST_DICT = JETLS.UntypedConfigDict(
-        "test_key1" => "test_value1",
-        "test_key2" => JETLS.UntypedConfigDict(
-            "nested_key1" => "nested_value1",
-            "nested_key2" => JETLS.UntypedConfigDict(
-                "deep_nested_key1" => "deep_nested_value1",
-                "deep_nested_key2" => "deep_nested_value2"
-            )
-        )
-    )
+@testset "`parse_config_from_dict` reports full key paths in `InvalidKeyError`" begin
+    let err = try
+            JETLS.parse_config_from_dict(JETLS.JETLSConfig, Dict{String,Any}("___unknown___" => 1))
+            nothing
+        catch e; e; end
+        @test err isa JETLS.InvalidKeyError
+        @test err.path == ["___unknown___"]
+    end
+    let err = try
+            JETLS.parse_config_from_dict(JETLS.JETLSConfig, Dict{String,Any}(
+                "diagnostic" => Dict{String,Any}("___unknown___" => 1)))
+            nothing
+        catch e; e; end
+        @test err isa JETLS.InvalidKeyError
+        @test err.path == ["diagnostic", "___unknown___"]
+    end
+end
 
-    TEST_DICT_DIFFERENT_KEY = JETLS.UntypedConfigDict(
-        "diffname_1" => "test_value1",
-        "test_key2" => JETLS.UntypedConfigDict(
-            "nested_key1" => "nested_value1",
-            "diffname_2" => JETLS.UntypedConfigDict(
-                "deep_nested_key1" => "deep_nested_value1",
-                "diffname_3" => "deep_nested_value2"
-            )
-        ),
-    )
+@testset "`parse_dict_value` error messages include the dotted path" begin
+    # Wrong leaf type at top level (single-segment path).
+    let err = try
+            JETLS.parse_config_from_dict(JETLS.DiagnosticConfig, Dict{String,Any}("enabled" => "yes"))
+            nothing
+        catch e; e; end
+        @test err isa ErrorException
+        @test occursin("Invalid value at `enabled`", err.msg)
+        @test occursin("expected Bool", err.msg)
+        @test occursin("got String", err.msg)
+    end
 
-    @testset "collect_unmatched_keys" begin
-        # It is correct that `test_key2.diffname_2.diffname_3` is not included,
-        # because `collect_unmatched_keys` does not track deeper nested differences in key names.
-        @test Set(JETLS.collect_unmatched_keys(TEST_DICT_DIFFERENT_KEY, TEST_DICT)) == Set([
-            ["diffname_1"],
-            ["test_key2", "diffname_2"],
-        ])
+    # Wrong leaf type at a nested location (multi-segment path).
+    let err = try
+            JETLS.parse_config_from_dict(JETLS.JETLSConfig, Dict{String,Any}(
+                "diagnostic" => Dict{String,Any}("allow_unused_underscore" => "yes")))
+            nothing
+        catch e; e; end
+        @test err isa ErrorException
+        @test occursin("Invalid value at `diagnostic.allow_unused_underscore`", err.msg)
+        @test occursin("expected Bool", err.msg)
+        @test occursin("got String", err.msg)
+    end
 
-        @test isempty(JETLS.collect_unmatched_keys(TEST_DICT, TEST_DICT))
+    # `ConfigSection` field that should be a table.
+    let err = try
+            JETLS.parse_config_from_dict(JETLS.JETLSConfig, Dict{String,Any}("diagnostic" => "nope"))
+            nothing
+        catch e; e; end
+        @test err isa ErrorException
+        @test occursin("Invalid value at `diagnostic`", err.msg)
+        @test occursin("expected a table for", err.msg)
+    end
 
-        # single-arg version should use DEFAULT_UNTYPED_CONFIG_DICT
-        @test JETLS.collect_unmatched_keys(TEST_DICT_DIFFERENT_KEY) ==
-              JETLS.collect_unmatched_keys(TEST_DICT_DIFFERENT_KEY, JETLS.DEFAULT_UNTYPED_CONFIG_DICT)
+    # Vector field that should be an array.
+    let err = try
+            JETLS.parse_config_from_dict(JETLS.JETLSConfig, Dict{String,Any}(
+                "diagnostic" => Dict{String,Any}("patterns" => "not an array")))
+            nothing
+        catch e; e; end
+        @test err isa ErrorException
+        @test occursin("Invalid value at `diagnostic.patterns`", err.msg)
+        @test occursin("expected an array", err.msg)
+    end
+
+    # Formatter field expects a string or `{custom = ...}` table.
+    let err = try
+            JETLS.parse_config_from_dict(JETLS.JETLSConfig, Dict{String,Any}("formatter" => 123))
+            nothing
+        catch e; e; end
+        @test err isa ErrorException
+        @test occursin("Invalid value at `formatter`", err.msg)
+        @test occursin("expected formatter string or table", err.msg)
+    end
+
+    # Formatter table missing the `custom` key.
+    let err = try
+            JETLS.parse_config_from_dict(JETLS.JETLSConfig, Dict{String,Any}(
+                "formatter" => Dict{String,Any}("not_custom" => Dict{String,Any}())))
+            nothing
+        catch e; e; end
+        @test err isa ErrorException
+        @test occursin("Invalid value at `formatter`", err.msg)
+        @test occursin("expected formatter table key `custom`", err.msg)
     end
 end
 

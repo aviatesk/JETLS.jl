@@ -50,7 +50,6 @@ using Markdown: Markdown
 using TOML: TOML
 using Test: Test # used to define new-style implementations of `@test`/`@testset`
 
-using Configurations: @option, Configurations, Maybe
 using Glob: Glob
 
 abstract type AnalysisEntry end # used by `Analyzer.LSAnalyzer`

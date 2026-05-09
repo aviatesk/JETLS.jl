@@ -56,8 +56,8 @@ function load_lsp_config!(server::Server, source::AbstractString; on_init::Bool=
     nothing
 end
 
-unmatched_keys_in_lsp_config_msg(unmatched_keys) =
-    unmatched_keys_msg("LSP configuration contains unknown keys:", unmatched_keys)
+unmatched_key_in_lsp_config_msg(path::Vector{String}) =
+    unmatched_key_msg("LSP configuration contains an unknown key:", path)
 
 function store_lsp_config!(tracker::ConfigChangeTracker, server::Server, @nospecialize(config_value), source::AbstractString)
     if !(config_value isa AbstractDict{String})
