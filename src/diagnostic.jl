@@ -1858,7 +1858,7 @@ end
 # `handle_lsp_config_change!` would be a no-op.
 function compute_diagnostic_result_id(server::Server, uri::URI, fi::FileInfo)
     state = server.state
-    config_hash = hash(get_config(state, :diagnostic)::DiagnosticConfig)
+    config_hash = hash(get_config(state, :diagnostic))
     if !file_has_explicit_imports(build_syntax_tree(fi))
         return string(hash((fi.version, config_hash)))
     end
