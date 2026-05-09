@@ -265,6 +265,34 @@ end
     end
 end
 
+# Keyword-argument closures fall through to the synthetic-struct path. JL splits
+# a kwarg closure into a multi-method wrapper (positional dispatch + kwsorter)
+# plus a single-method inner body helper that the wrapper's methods call.
+# Without propagation, the helper alone would match the rewrite shape and become
+# an OC in isolation, breaking the wrapper's synthetic-struct lowering when it
+# tries to resolve the helper's `function_type`. `collect_multi_method_bindings`
+# propagates from multi-method wrappers to any closure bindings their bodies
+# reference, keeping the helper on the same path as its wrapper.
+@testset "kwarg local closure should fall through" begin
+    let tree = rewrite_only("""
+            let
+                f = (x::Int; kw::Int=1) -> x * kw
+                f(42)
+            end
+            """)
+        @test count_opaque_closures(tree) == 0
+    end
+
+    let tree = rewrite_only("""
+            let
+                f(x::Int; kw::Int=1) = x * kw
+                f(42)
+            end
+            """)
+        @test count_opaque_closures(tree) == 0
+    end
+end
+
 # Regression for 3a648d0b: `rewrite_closure_block`'s old cost compounded to O(2^D) across
 # `D` nested blocks, so real-world files effectively never finished.
 # Verify that the performance issue does not reproduce using an artificial test case.
