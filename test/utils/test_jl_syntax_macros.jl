@@ -368,19 +368,14 @@ test_macro_lower(code::AbstractString) = jlresolve(test_lowering_module, code)
             @test strip(JS.sourcetext(st1)) == "x == 1"
         end
 
-        # Special keyword arguments are accepted but discarded.
-        for kw in ("broken=true", "skip=cond", "context=ctx")
+        # Keyword arguments keep only the RHS so the `K"="` node doesn't reach
+        # later lowering passes, but identifiers in the RHS still flow through
+        # to scope resolution.
+        for kw in ("broken=true", "skip=cond", "context=ctx", "atol=0.1")
             let st1 = test_macro_expand("@test x $kw")
-                @test JS.kind(st1) === JS.K"Identifier"
-                @test strip(JS.sourcetext(st1)) == "x"
+                @test JS.kind(st1) === JS.K"block"
+                @test all(c -> JS.kind(c) !== JS.K"=", JS.children(st1))
             end
-        end
-
-        # Other keyword arguments (e.g. `atol`) are forwarded by the real
-        # macro to the test expression; the new-style stub accepts them
-        # silently.
-        let st1 = test_macro_expand("@test foo(x) atol=0.1")
-            @test JS.kind(st1) === JS.K"call"
         end
     end
 
@@ -424,6 +419,13 @@ test_macro_lower(code::AbstractString) = jlresolve(test_lowering_module, code)
     @testset "binding resolution preserves provenance" begin
         let res = test_macro_lower("@test sin(xxx) == 1.0")
             assert_binding_provenance(res, :global, "xxx")
+        end
+        # Identifiers inside kw RHS values must keep their provenance so
+        # downstream LSP analyses (undef-var, references, ...) see them as
+        # user-written. With the kw fully dropped, `yyy` would be invisible.
+        let res = test_macro_lower("@test sin(xxx) == 1.0 broken=yyy")
+            assert_binding_provenance(res, :global, "xxx")
+            assert_binding_provenance(res, :global, "yyy")
         end
     end
 end
@@ -608,9 +610,11 @@ end
                 @test JS.kind(st1) === JS.K"call"
                 @test strip(JS.sourcetext(st1)) == "xxx == 1"
             end
-            # Keyword arguments (e.g. `atol=0.1`) are accepted but discarded.
+            # Keyword arguments keep only the RHS in a block so identifiers
+            # there still flow through to scope resolution.
             let st1 = test_macro_expand("$name foo(xxx) atol=0.1")
-                @test JS.kind(st1) === JS.K"call"
+                @test JS.kind(st1) === JS.K"block"
+                @test all(c -> JS.kind(c) !== JS.K"=", JS.children(st1))
             end
         end
     end
@@ -634,6 +638,10 @@ end
         for name in ("@test_broken", "@test_skip")
             let res = test_macro_lower("$name sin(xxx) == 1.0")
                 assert_binding_provenance(res, :global, "xxx")
+            end
+            let res = test_macro_lower("$name sin(xxx) == 1.0 atol=yyy")
+                assert_binding_provenance(res, :global, "xxx")
+                assert_binding_provenance(res, :global, "yyy")
             end
         end
     end

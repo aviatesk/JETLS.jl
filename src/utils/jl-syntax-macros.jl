@@ -331,15 +331,17 @@ end
 # drop the scaffolding and either return the body alone or emit a `block` so identifiers
 # inside every argument are visible to the resolver.
 #
-# For macros with the `body kws...` shape (`@test`, `@test_broken`, `@test_skip`) we
-# validate the kw shape and drop them entirely — the real macro just forwards them to the
-# test expression. For `@test_logs`, where kws sit alongside a list of patterns and a body,
-# we keep only the kw RHS so any user-written identifier there still gets scope-resolved.
+# For macros with the `body kws...` shape (`@test`, `@test_broken`, `@test_skip`,
+# `@test_logs`) we keep only the kw RHS so any user-written identifier there still gets
+# scope-resolved (e.g. `broken=flag` flows `flag` through to undef-var / reference
+# analysis), and drop the `K"="` wrapper itself so it doesn't reach later lowering passes.
 function Test.var"@test"(__context__::JL.MacroContext, ex::SyntaxTreeC, kws::SyntaxTreeC...)
     mc = __context__.macrocall::SyntaxTreeC
     seen_broken = seen_skip = seen_context = nothing
+    rhss = SyntaxTreeC[]
     for kw in kws
         name = _validate_test_kw(kw)
+        push!(rhss, kw[2])
         if name == "broken"
             seen_broken === nothing || throw_macro_error(kw,
                 "invalid test macro call: cannot set `broken` keyword multiple times")
@@ -358,25 +360,34 @@ function Test.var"@test"(__context__::JL.MacroContext, ex::SyntaxTreeC, kws::Syn
         throw_macro_error(mc,
             "invalid test macro call: cannot set both `skip` and `broken` keywords")
     end
-    return JL.@ast(__context__, mc, ex)
+    isempty(rhss) && return JL.@ast(__context__, mc, ex)
+    return JL.@ast(__context__, mc, [JS.K"block" rhss... ex])
 end
 
 function Test.var"@test_broken"(
         __context__::JL.MacroContext, ex::SyntaxTreeC, kws::SyntaxTreeC...
     )
+    mc = __context__.macrocall::SyntaxTreeC
+    rhss = SyntaxTreeC[]
     for kw in kws
         _validate_test_kw(kw)
+        push!(rhss, kw[2])
     end
-    return JL.@ast(__context__, __context__.macrocall::SyntaxTreeC, ex)
+    isempty(rhss) && return JL.@ast(__context__, mc, ex)
+    return JL.@ast(__context__, mc, [JS.K"block" rhss... ex])
 end
 
 function Test.var"@test_skip"(
         __context__::JL.MacroContext, ex::SyntaxTreeC, kws::SyntaxTreeC...
     )
+    mc = __context__.macrocall::SyntaxTreeC
+    rhss = SyntaxTreeC[]
     for kw in kws
         _validate_test_kw(kw)
+        push!(rhss, kw[2])
     end
-    return JL.@ast(__context__, __context__.macrocall::SyntaxTreeC, ex)
+    isempty(rhss) && return JL.@ast(__context__, mc, ex)
+    return JL.@ast(__context__, mc, [JS.K"block" rhss... ex])
 end
 
 function Test.var"@test_throws"(
