@@ -187,38 +187,6 @@ function Base.var"@something"(__context__::JL.MacroContext, args::SyntaxTreeC...
     return expr
 end
 
-# Stub for `Base.@assert`. Mirrors the real expansion
-# `cond ? nothing : throw(AssertionError(msg))` so that downstream control-flow analyses
-# (`lowering/undef-local-var`, `lowering/unreachable-code`, ...) correctly model the
-# assertion as a guard: code following `@assert cond` may assume `cond` was true, and any
-# unreachable branch (e.g. `@assert false; ...`) is recognized.
-#
-# When no user message is supplied, the source text of the condition is spliced in as
-# a static string placeholder, matching Base's `string(ex)` fallback. Base's `@assert`
-# accepts any number of trailing message arguments and silently uses only the first;
-# we mirror that leniency, but route extras through a leading `block` so identifiers
-# inside (e.g. an interpolated `"got $y"`) still get scope-resolved.
-function Base.var"@assert"(__context__::JL.MacroContext)
-    throw_macro_error(__context__.macrocall::SyntaxTreeC,
-        "@assert: at least one argument is required")
-end
-
-function Base.var"@assert"(
-        __context__::JL.MacroContext, ex::SyntaxTreeC, msgs::SyntaxTreeC...
-    )
-    mc = __context__.macrocall::SyntaxTreeC
-    msg_arg = isempty(msgs) ?
-        JL.@ast(__context__, mc, JS.sourcetext(ex)::JS.K"Value") :
-        msgs[1]
-    if_throw = JL.@ast(__context__, mc, [JS.K"if" ex
-        nothing::JS.K"Value"
-        [JS.K"call" "throw"::JS.K"Identifier"
-            [JS.K"call" "AssertionError"::JS.K"Identifier" msg_arg]]])
-    length(msgs) <= 1 && return if_throw
-    extras = msgs[2:end]
-    return JL.@ast(__context__, mc, [JS.K"block" extras... if_throw])
-end
-
 # New-style `@kwdef` macro that preserves provenance information.
 # This strips default values from struct fields and generates keyword constructors,
 # matching the semantics of Base.@kwdef.

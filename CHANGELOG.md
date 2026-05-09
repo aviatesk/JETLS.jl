@@ -65,8 +65,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Identifiers inside keyword arguments of `@test`, `@test_broken`, and `@test_skip` (e.g. `flag` in `@test x broken=flag`) are now picked up by scope resolution, so undef-var diagnostics and find-references work for them. Previously the keyword arguments were dropped during macro expansion.
 
-- `@assert` is now modeled as a control-flow guard in lowering analyses. Code following `@assert cond` may rely on `cond` being true (e.g. `@assert @isdefined(x); use(x)` no longer triggers a spurious `lowering/undef-local-var`), and identifiers inside the condition or message expressions are visible to scope resolution.
-
 ## 2026-05-08
 
 - Commit: [`72cc49c`](https://github.com/aviatesk/JETLS.jl/commit/72cc49c)
