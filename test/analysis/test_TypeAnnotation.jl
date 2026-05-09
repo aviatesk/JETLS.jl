@@ -777,6 +777,26 @@ end
                 @test get_type_for_range(ctx, range_of_kind(code, JS.K"macrocall")) !== nothing
             end
         end
+
+        # Querying just the function name's byte range at the def site used to
+        # return `Union{typeof(f), Type{typeof(f)}}` because the method's
+        # argtypes svec lowers to a `core.Typeof(f)` call sharing that range.
+        # `tmerge_at_range` filters this scaffolding so the user-visible value
+        # (`Const(f)`) survives intact.
+        @testset "method-def function name surfaces the value, not Union with Type{T}" begin
+            mod = Module()
+            @eval mod myfunc(x::Int) = x + 1
+            let code = """
+                function myfunc(x::Int)
+                    x + 1
+                end
+                """
+                _, ctx = type_annotate(code, mod)
+                typ = get_type_for_range(ctx, range_of(code, "myfunc"))
+                @test typ isa Core.Const
+                @test typ.val === mod.myfunc
+            end
+        end
     end
 
     # Branching expressions: value type is the `tmerge` of all branches. Each

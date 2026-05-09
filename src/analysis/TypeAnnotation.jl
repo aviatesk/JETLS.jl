@@ -1039,10 +1039,24 @@ function tmerge_at_range(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
         if is_oc_site && get(ctx.oc_body_scope, st._id, nothing) !== rng
             continue
         end
+        # Skip `core.Typeof(funcname)` calls that lowering inserts when building
+        # a method's argtypes svec — those calls share the function name's byte
+        # range and would `tmerge` `Const(Type{T})` into the value's `Const(T)`,
+        # surfacing `Union{T, Type{T}}` to consumers querying the def-site name.
+        is_method_def_typeof_scaffolding(st) && continue
         ntyp = st.type
         typ = typ === nothing ? ntyp : CC.tmerge(ntyp, typ)
     end
     return typ
+end
+
+function is_method_def_typeof_scaffolding(st::SyntaxTreeC)
+    JS.kind(st) === JS.K"call" || return false
+    JS.numchildren(st) ≥ 1 || return false
+    callee = st[1]
+    JS.kind(callee) === JS.K"core" || return false
+    JS.hasattr(callee, :name_val) || return false
+    return callee.name_val == "Typeof"
 end
 
 end # module TypeAnnotation
