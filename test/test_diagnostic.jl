@@ -346,14 +346,15 @@ end
 end
 
 @testset "textDocument/diagnostic message cycle" begin
-    script_code = "x = 1\n"
+    script_code = "func(x) = nothing\n"
     withscript(script_code) do script_path
         uri = filepath2uri(script_path)
         withserver() do (; server, writemsg, writereadmsg, id_counter)
             (; raw_res) = writereadmsg(make_DidOpenTextDocumentNotification(uri, script_code))
             @test raw_res isa PublishDiagnosticsNotification
 
-            # initial pull: no `previousResultId` → full report carrying a `resultId`
+            # initial pull: no `previousResultId` → full report carrying a `resultId`;
+            # `func(x) = nothing` has an unused argument, so one diagnostic is reported
             local first_result_id::String
             let id = id_counter[] += 1
                 (; raw_res) = writereadmsg(DocumentDiagnosticRequest(;
@@ -363,6 +364,8 @@ end
                 @test raw_res isa DocumentDiagnosticResponse
                 @test raw_res.result isa RelatedFullDocumentDiagnosticReport
                 @test raw_res.result.resultId isa String
+                @test length(raw_res.result.items) == 1
+                @test raw_res.result.items[1].code == "lowering/unused-argument"
                 first_result_id = raw_res.result.resultId
             end
 
@@ -378,8 +381,10 @@ end
                 @test raw_res.result.resultId == first_result_id
             end
 
-            # editing the document bumps the version → `resultId` changes
-            writemsg(make_DidChangeTextDocumentNotification(uri, "x = 2\n", #=version=#2))
+            # editing the document bumps the version → `resultId` changes; renaming to
+            # `_x` makes the unused-argument diagnostic disappear under the default
+            # `allow_unused_underscore=true` config
+            writemsg(make_DidChangeTextDocumentNotification(uri, "func(_x) = nothing\n", #=version=#2))
             wait_for_file_cache_version(server.state, uri, 2)
 
             local second_result_id::String
@@ -393,6 +398,7 @@ end
                 @test raw_res.result isa RelatedFullDocumentDiagnosticReport
                 @test raw_res.result.resultId isa String
                 @test raw_res.result.resultId != first_result_id
+                @test isempty(raw_res.result.items)
                 second_result_id = raw_res.result.resultId
             end
 
@@ -418,11 +424,13 @@ end
                 @test raw_res isa DocumentDiagnosticResponse
                 @test raw_res.result isa RelatedFullDocumentDiagnosticReport
                 @test raw_res.result.resultId == second_result_id
+                @test isempty(raw_res.result.items)
             end
 
             # `:diagnostic` config change → `resultId` changes so the client-side cached
             # `Unchanged` response is invalidated when the server's `request_diagnostic_refresh!`
-            # prompts the client to re-pull.
+            # prompts the client to re-pull. Flipping `allow_unused_underscore` to `false`
+            # also brings the `_x` unused-argument diagnostic back.
             let settings = Dict{String,Any}(
                     "diagnostic" => Dict{String,Any}("allow_unused_underscore" => false))
                 (; raw_res) = writereadmsg(DidChangeConfigurationNotification(;
@@ -442,6 +450,8 @@ end
                 @test raw_res isa DocumentDiagnosticResponse
                 @test raw_res.result isa RelatedFullDocumentDiagnosticReport
                 @test raw_res.result.resultId != second_result_id
+                @test length(raw_res.result.items) == 1
+                @test raw_res.result.items[1].code == "lowering/unused-argument"
                 third_result_id = raw_res.result.resultId
             end
             let id = id_counter[] += 1
