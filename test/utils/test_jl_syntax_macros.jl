@@ -28,6 +28,29 @@ jleval(code::AbstractString) = jleval(lowering_module, code)
 
 children_kinds(st::JS.SyntaxTree) = JS.Kind[JS.kind(c) for c in JS.children(st)]
 
+# Look up the first binding matching `kind`/`name` in the resolved scope and
+# verify its last provenance entry's sourcetext is `name` — i.e. the user-
+# written identifier survived macro expansion with its byte range intact, so
+# downstream LSP analyses (`is_from_user_ast` etc.) can recognize it as
+# user code. Used by every macro stub's "binding resolution preserves
+# provenance" testset.
+function assert_binding_provenance(res, kind::Symbol, name::AbstractString)
+    binding_occurrences = JETLS.compute_binding_occurrences(
+        res.ctx3, res.st3, false; include_global_bindings=true)
+    binfo = nothing
+    for (b, _) in binding_occurrences
+        if b.kind === kind && b.name == name
+            binfo = b
+            break
+        end
+    end
+    @test binfo !== nothing
+    binfo === nothing && return nothing
+    provs = JS.flattened_provenance(JL.binding_ex(res.ctx3, binfo.id))
+    @test JS.sourcetext(last(provs)) == name
+    return (binfo, provs)
+end
+
 @testset "@kwdef" begin
     @testset "macro expansion" begin
         # parametric with defaults
@@ -252,18 +275,7 @@ end
         # `is_from_user_ast`. With the old-style macro the inner `xxx` ends up
         # with a `0:0` byte range and gets filtered out.
         let res = jlresolve("spawnfunc() = Threads.@spawn :default sin(xxx)")
-            binding_occurrences = JETLS.compute_binding_occurrences(
-                res.ctx3, res.st3, false; include_global_bindings=true)
-            xxx_binfo = nothing
-            for (binfo, _) in binding_occurrences
-                if binfo.kind === :global && binfo.name == "xxx"
-                    xxx_binfo = binfo
-                    break
-                end
-            end
-            @test xxx_binfo !== nothing
-            provs = JS.flattened_provenance(JL.binding_ex(res.ctx3, xxx_binfo.id))
-            @test JS.sourcetext(last(provs)) == "xxx"
+            assert_binding_provenance(res, :global, "xxx")
         end
     end
 end
@@ -305,22 +317,8 @@ end
 @testset "@something" begin
     @testset "binding resolution preserves provenance" begin
         let res = jlresolve("somefunc(xxx) = @something(xxx, yyy)")
-            binding_occurrences = JETLS.compute_binding_occurrences(
-                res.ctx3, res.st3, false; include_global_bindings=true)
-            xxx_binfo = yyy_binfo = nothing
-            for (binfo, _) in binding_occurrences
-                if binfo.kind === :argument && binfo.name == "xxx"
-                    xxx_binfo = binfo
-                elseif binfo.kind === :global && binfo.name == "yyy"
-                    yyy_binfo = binfo
-                end
-            end
-            @test xxx_binfo !== nothing
-            @test yyy_binfo !== nothing
-            xxx_provs = JS.flattened_provenance(JL.binding_ex(res.ctx3, xxx_binfo.id))
-            @test JS.sourcetext(last(xxx_provs)) == "xxx"
-            yyy_provs = JS.flattened_provenance(JL.binding_ex(res.ctx3, yyy_binfo.id))
-            @test JS.sourcetext(last(yyy_provs)) == "yyy"
+            assert_binding_provenance(res, :argument, "xxx")
+            assert_binding_provenance(res, :global, "yyy")
         end
     end
 
@@ -424,21 +422,8 @@ test_macro_lower(code::AbstractString) = jlresolve(test_lowering_module, code)
     end
 
     @testset "binding resolution preserves provenance" begin
-        # Identifiers inside `@test` keep accurate byte ranges so downstream
-        # LSP analyses can recognize them as user-written via `is_from_user_ast`.
-        let res = test_macro_lower("testfunc() = @test sin(xxx) == 1.0")
-            binding_occurrences = JETLS.compute_binding_occurrences(
-                res.ctx3, res.st3, false; include_global_bindings=true)
-            xxx_binfo = nothing
-            for (binfo, _) in binding_occurrences
-                if binfo.kind === :global && binfo.name == "xxx"
-                    xxx_binfo = binfo
-                    break
-                end
-            end
-            @test xxx_binfo !== nothing
-            provs = JS.flattened_provenance(JL.binding_ex(res.ctx3, xxx_binfo.id))
-            @test JS.sourcetext(last(provs)) == "xxx"
+        let res = test_macro_lower("@test sin(xxx) == 1.0")
+            assert_binding_provenance(res, :global, "xxx")
         end
     end
 end
@@ -559,10 +544,7 @@ end
 
     @testset "scope isolation + provenance" begin
         # A binding introduced in one `@testset` body must not be visible from
-        # a sibling `@testset`, mirroring the `try`/`catch` scope of the real
-        # macro. User-written identifiers must also keep accurate byte ranges
-        # so that downstream LSP analyses accept them as user-written via
-        # `is_from_user_ast`.
+        # a sibling `@testset`, mirroring the `try`/`catch` scope of the real macro.
         let res = test_macro_lower("""
                 function f()
                     # A local `leaked` exists for the first testset, and the second
@@ -576,28 +558,309 @@ end
                     end
                 end
                 """)
-            binding_occurrences = JETLS.compute_binding_occurrences(
-                res.ctx3, res.st3, false; include_global_bindings=true)
+            local_result = assert_binding_provenance(res, :local, "leaked")
+            @test local_result !== nothing &&
+                JS.source_location(last(local_result[2]))[1] == 5
 
-            local_leaked = filter(collect(binding_occurrences)) do (binfo, _)
-                binfo.kind === :local && binfo.name == "leaked"
+            global_result = assert_binding_provenance(res, :global, "leaked")
+            @test global_result !== nothing &&
+                JS.source_location(last(global_result[2]))[1] == 9
+        end
+    end
+end
+
+@testset "Test.@test_throws" begin
+    @testset "macro expansion" begin
+        # Both args flow through a `block` so identifiers in either get scope analysis.
+        let st1 = test_macro_expand("@test_throws BoundsError xxx[4]")
+            @test JS.kind(st1) === JS.K"block"
+            @test JS.numchildren(st1) == 2
+        end
+    end
+
+    @testset "validation" begin
+        # `@test_throws` strictly requires two positional arguments.
+        for code in ("@test_throws", "@test_throws BoundsError",
+                     "@test_throws BoundsError xxx yyy")
+            let err = try
+                    test_macro_expand(code)
+                    nothing
+                catch err
+                    err
+                end
+                @test err isa JL.MacroExpansionError
+                @test occursin("@test_throws expects exactly two arguments", err.msg)
             end
-            global_leaked = filter(collect(binding_occurrences)) do (binfo, _)
-                binfo.kind === :global && binfo.name == "leaked"
+        end
+    end
+
+    @testset "binding resolution preserves provenance" begin
+        let res = test_macro_lower("@test_throws BoundsError getindex(xxx)")
+            assert_binding_provenance(res, :global, "xxx")
+        end
+    end
+end
+
+@testset "Test.@test_broken / Test.@test_skip" begin
+    @testset "macro expansion" begin
+        for name in ("@test_broken", "@test_skip")
+            let st1 = test_macro_expand("$name xxx == 1")
+                @test JS.kind(st1) === JS.K"call"
+                @test strip(JS.sourcetext(st1)) == "xxx == 1"
             end
+            # Keyword arguments (e.g. `atol=0.1`) are accepted but discarded.
+            let st1 = test_macro_expand("$name foo(xxx) atol=0.1")
+                @test JS.kind(st1) === JS.K"call"
+            end
+        end
+    end
 
-            @test !isempty(local_leaked)
-            @test !isempty(global_leaked)
+    @testset "validation" begin
+        # Non-`key=value` positional arguments are rejected.
+        for name in ("@test_broken", "@test_skip")
+            let err = try
+                    test_macro_expand("$name xxx foo")
+                    nothing
+                catch err
+                    err
+                end
+                @test err isa JL.MacroExpansionError
+                @test occursin("expected `keyword=value`", err.msg)
+            end
+        end
+    end
 
-            (local_binfo, _) = first(local_leaked)
-            local_provs = JS.flattened_provenance(JL.binding_ex(res.ctx3, local_binfo.id))
-            @test JS.sourcetext(last(local_provs)) == "leaked"
-            @test JS.source_location(last(local_provs))[1] == 5
+    @testset "binding resolution preserves provenance" begin
+        for name in ("@test_broken", "@test_skip")
+            let res = test_macro_lower("$name sin(xxx) == 1.0")
+                assert_binding_provenance(res, :global, "xxx")
+            end
+        end
+    end
+end
 
-            (global_binfo, _) = first(global_leaked)
-            global_provs = JS.flattened_provenance(JL.binding_ex(res.ctx3, global_binfo.id))
-            @test JS.sourcetext(last(global_provs)) == "leaked"
-            @test JS.source_location(last(global_provs))[1] == 9
+@testset "Test.@test_warn / Test.@test_nowarn" begin
+    @testset "macro expansion" begin
+        let st1 = test_macro_expand("@test_warn \"oops\" foo(xxx)")
+            @test JS.kind(st1) === JS.K"block"
+            @test JS.numchildren(st1) == 2
+        end
+        let st1 = test_macro_expand("@test_nowarn foo(xxx)")
+            @test JS.kind(st1) === JS.K"call"
+            @test JS.sourcetext(st1[1]) == "foo"
+            @test JS.sourcetext(st1[2]) == "xxx"
+        end
+    end
+
+    @testset "binding resolution preserves provenance" begin
+        let res = test_macro_lower("@test_warn \"oops\" sin(xxx)")
+            assert_binding_provenance(res, :global, "xxx")
+        end
+    end
+end
+
+@testset "Test.@test_logs" begin
+    @testset "macro expansion" begin
+        # Patterns + body all flow through a `block`.
+        let st1 = test_macro_expand("@test_logs (:info, \"msg\") foo(xxx)")
+            @test JS.kind(st1) === JS.K"block"
+            @test JS.numchildren(st1) == 2
+        end
+
+        # Keyword arguments (e.g. `min_level=Logging.Warn`) keep only the RHS so
+        # the `K"="` node doesn't reach later lowering passes.
+        let st1 = test_macro_expand("@test_logs min_level=yyy foo(xxx)")
+            @test JS.kind(st1) === JS.K"block"
+            @test all(c -> JS.kind(c) !== JS.K"=", JS.children(st1))
+        end
+    end
+
+    @testset "validation" begin
+        let err = try
+                test_macro_expand("@test_logs")
+                nothing
+            catch err
+                err
+            end
+            @test err isa JL.MacroExpansionError
+            @test occursin("@test_logs needs at least one argument", err.msg)
+        end
+    end
+
+    @testset "binding resolution preserves provenance" begin
+        # Both the pattern's RHS keyword value and the body must keep accurate
+        # byte ranges so downstream LSP analyses accept them as user-written.
+        let res = test_macro_lower("@test_logs (:info, \"msg\") min_level=yyy sin(xxx)")
+            assert_binding_provenance(res, :global, "xxx")
+            assert_binding_provenance(res, :global, "yyy")
+        end
+    end
+end
+
+@testset "Test.@test_deprecated" begin
+    @testset "macro expansion" begin
+        let st1 = test_macro_expand("@test_deprecated foo(xxx)")
+            @test JS.kind(st1) === JS.K"call"
+        end
+        let st1 = test_macro_expand("@test_deprecated r\"warn\" foo(xxx)")
+            @test JS.kind(st1) === JS.K"block"
+            @test JS.numchildren(st1) == 2
+        end
+    end
+
+    @testset "validation" begin
+        for code in ("@test_deprecated", "@test_deprecated a b c")
+            let err = try
+                    test_macro_expand(code)
+                    nothing
+                catch err
+                    err
+                end
+                @test err isa JL.MacroExpansionError
+                @test occursin("@test_deprecated expects one or two arguments", err.msg)
+            end
+        end
+    end
+end
+
+@testset "Test.@inferred" begin
+    @testset "macro expansion" begin
+        let st1 = test_macro_expand("@inferred foo(xxx)")
+            @test JS.kind(st1) === JS.K"call"
+        end
+        let st1 = test_macro_expand("@inferred Int foo(xxx)")
+            @test JS.kind(st1) === JS.K"block"
+            @test JS.numchildren(st1) == 2
+        end
+    end
+
+    @testset "validation" begin
+        for code in ("@inferred", "@inferred Int foo(x) extra")
+            let err = try
+                    test_macro_expand(code)
+                    nothing
+                catch err
+                    err
+                end
+                @test err isa JL.MacroExpansionError
+                @test occursin("@inferred expects one or two arguments", err.msg)
+            end
+        end
+    end
+
+    @testset "binding resolution preserves provenance" begin
+        let res = test_macro_lower("@inferred Int sin(xxx)")
+            assert_binding_provenance(res, :global, "xxx")
+        end
+    end
+end
+
+@testset "Base.@assume_effects" begin
+    @testset "macro expansion" begin
+        # Function-definition body is returned unchanged.
+        let st1 = jlexpand("Base.@assume_effects :foldable f(x) = x + 1")
+            @test JS.kind(st1) === JS.K"="
+            @test JS.kind(st1[1]) === JS.K"call" # f(x)
+        end
+
+        # `@ccall` body is passed through; the new-style `@ccall` macro then
+        # handles its own expansion downstream.
+        let st1 = jlexpand("Base.@assume_effects :total @ccall foo()::Cvoid")
+            @test st1 isa JS.SyntaxTree
+        end
+
+        # Call-site annotation: the body expression is returned unchanged.
+        let st1 = jlexpand("Base.@assume_effects :foldable foo(xxx)")
+            @test JS.kind(st1) === JS.K"call"
+            @test JS.sourcetext(st1[1]) == "foo"
+            @test JS.sourcetext(st1[2]) == "xxx"
+        end
+
+        # Multiple settings, including negation and shortcuts.
+        let st1 = jlexpand("Base.@assume_effects :total !:nothrow foo(xxx)")
+            @test JS.kind(st1) === JS.K"call"
+            @test JS.sourcetext(st1[2]) == "xxx"
+        end
+
+        # Declaration form (no body): expands to a no-op placeholder.
+        let st1 = jlexpand("Base.@assume_effects :foldable")
+            @test JS.kind(st1) === JS.K"Value"
+        end
+    end
+
+    @testset "validation" begin
+        # Zero-argument form rejected.
+        let err = try
+                jlexpand("Base.@assume_effects")
+                nothing
+            catch err
+                err
+            end
+            @test err isa JL.MacroExpansionError
+            @test occursin("at least one argument is required", err.msg)
+        end
+
+        # Unknown setting name (in non-final position) is rejected.
+        let err = try
+                jlexpand("Base.@assume_effects :badname foo()")
+                nothing
+            catch err
+                err
+            end
+            @test err isa JL.MacroExpansionError
+            @test occursin("unrecognized effect setting `:badname`", err.msg)
+        end
+
+        # Setting in non-final position must look like a setting form.
+        for bad in ("42", "\"foldable\"", "foo()")
+            let err = try
+                    jlexpand("Base.@assume_effects $bad foo()")
+                    nothing
+                catch err
+                    err
+                end
+                @test err isa JL.MacroExpansionError
+                @test occursin("expected an effect setting", err.msg)
+            end
+        end
+
+        # `:nortcall` and `:consistent_overlay` are not accepted as standalone
+        # inputs — they're internal-only (set via shortcuts).
+        for setting in (":nortcall", ":consistent_overlay")
+            let err = try
+                    jlexpand("Base.@assume_effects $setting foo()")
+                    nothing
+                catch err
+                    err
+                end
+                @test err isa JL.MacroExpansionError
+                @test occursin("unrecognized effect setting", err.msg)
+            end
+        end
+
+        # An unrecognized last argument is treated as a body (call-site
+        # annotation), not as a typo'd setting — matches Base's behavior.
+        @test jlexpand("Base.@assume_effects :foldable badname") isa JS.SyntaxTree
+    end
+
+    @testset "all recognized settings accepted" begin
+        for setting in (":consistent", ":effect_free", ":nothrow",
+                        ":terminates_globally", ":terminates_locally",
+                        ":notaskstate", ":inaccessiblememonly",
+                        ":noub", ":noub_if_noinbounds",
+                        ":foldable", ":removable", ":total")
+            @test jlexpand("Base.@assume_effects $setting f() = 1") isa JS.SyntaxTree
+            # Negated form should also be accepted.
+            @test jlexpand("Base.@assume_effects !$setting f() = 1") isa JS.SyntaxTree
+        end
+    end
+
+    @testset "binding resolution preserves provenance" begin
+        # The whole point of the new-style stub: identifiers inside the body
+        # must keep accurate byte ranges so downstream LSP analyses can accept
+        # them as user-written via `is_from_user_ast`.
+        let res = jlresolve("g() = Base.@assume_effects :foldable sin(xxx)")
+            assert_binding_provenance(res, :global, "xxx")
         end
     end
 end

@@ -1852,21 +1852,26 @@ end
 # When the file has explicit imports it folds every unit member's version into the key so a
 # sibling edit invalidates this file's cached diagnostics and `analyze_unused_imports!` reruns.
 # Files without explicit imports stay keyed on their own version alone.
+# `ConfigManagerData.diagnostic_settings_hash` is folded in so the resultId flips when
+# `[diagnostic]` config changes — otherwise the equality check below would still match the
+# client's `previousResultId` and the `request_diagnostic_refresh!` from
+# `handle_lsp_config_change!` would be a no-op.
 function compute_diagnostic_result_id(server::Server, uri::URI, fi::FileInfo)
     state = server.state
+    config_hash = hash(get_config(state, :diagnostic))
     if !file_has_explicit_imports(build_syntax_tree(fi))
-        return string(fi.version)
+        return string(hash((fi.version, config_hash)))
     end
-    result_id_hash = zero(UInt)
+    file_hash = zero(UInt)
     for search_uri in collect_search_uris(server, uri)
         search_fi = @something begin
             get_file_info(state, search_uri)
         end begin
             get_unsynced_file_info!(state, search_uri)
         end continue
-        result_id_hash ⊻= hash((search_uri, search_fi.version))
+        file_hash ⊻= hash((search_uri, search_fi.version))
     end
-    return string(result_id_hash)
+    return string(hash((file_hash, config_hash)))
 end
 
 # Computes raw per-file diagnostics for both `textDocument/diagnostic` and
