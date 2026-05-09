@@ -36,6 +36,7 @@ end
     @testset "signature help" include("test_signature_help.jl")
     @testset "declaration" include("test_declaration.jl")
     @testset "definition" include("test_definition.jl")
+    @testset "type definition" include("test_type_definition.jl")
     @testset "document highlight" include("test_document_highlight.jl")
     @testset "document symbol" include("test_document_symbol.jl")
     @testset "workspace symbol" include("test_workspace_symbol.jl")

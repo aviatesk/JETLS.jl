@@ -49,6 +49,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > The new shape adds [`inlay_hint.block_end.enabled`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint/block_end/enabled) for toggling block-end hints independently, and renames `inlay_hint.block_end_min_lines` to [`inlay_hint.block_end.min_lines`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint/block_end/min_lines).
 > Existing configs keep working for now: the legacy key is still accepted at load time and mapped onto the new key in memory (your config file is not modified automatically), with a one-shot deprecation warning. The legacy alias will be removed in releases after **June 2026**, so if you are still using `inlay_hint.block_end_min_lines`, please update your config.
 
+### Added
+
+- Added support for "Go to Type Definition" (`textDocument/typeDefinition`).
+  Invoking it on an expression jumps to the definition of its inferred type — e.g. landing on a binding of type `Foo` jumps to the `struct Foo` definition.
+  For `Union` types the response includes one location per constituent.
+
 ### Changed
 
 - `textDocument/semanticTokens` now classifies type parameters declared in `struct` / `abstract type` / `primitive type` headers (and their use sites inside the type body) as `typeParameter`. Previously these identifiers were classified as plain `variable`.
