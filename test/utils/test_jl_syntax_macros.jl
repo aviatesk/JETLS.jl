@@ -400,6 +400,148 @@ end
     end
 end
 
+# Helper: walk the EST and return the first `K"core"` / `K"top"` node whose
+# inner `K"Identifier"` matches `name`. Used to verify that the expansion
+# synthesizes `Core.invoke` / `Base.invokelatest` (and the synthesized
+# `getproperty` / `setindex!` / etc. references).
+function find_named_ref(st::JS.SyntaxTree, k::JS.Kind, name::AbstractString)
+    if JS.kind(st) === k && JS.numchildren(st) >= 1
+        inner = st[1]
+        if JS.kind(inner) === JS.K"Identifier" &&
+            hasproperty(inner, :name_val) && inner.name_val == name
+            return st
+        end
+    end
+    for c in JS.children(st)
+        r = find_named_ref(c, k, name)
+        r === nothing || return r
+    end
+    return nothing
+end
+
+@testset "@invoke / @invokelatest" begin
+    @testset "@invoke macro expansion" begin
+        # `f(args...)` -> `Core.invoke(f, Tuple{T1, ...}, args...)`.
+        let st1 = jlexpand("@invoke f(x::T, y)")
+            @test JS.kind(st1) === JS.K"call"
+            @test find_named_ref(st1, JS.K"core", "invoke") !== nothing
+            @test find_named_ref(st1, JS.K"core", "Tuple") !== nothing
+            # Annotation-less arg `y` falls back to `Core.Typeof(y)`.
+            @test find_named_ref(st1, JS.K"core", "Typeof") !== nothing
+        end
+
+        # `x.f` -> `Core.invoke(Base.getproperty, Tuple{...}, x, :f)`.
+        let st1 = jlexpand("@invoke x.f")
+            @test JS.kind(st1) === JS.K"call"
+            @test find_named_ref(st1, JS.K"core", "invoke") !== nothing
+            @test find_named_ref(st1, JS.K"top", "getproperty") !== nothing
+        end
+
+        # `xs[i]` -> `Core.invoke(Base.getindex, Tuple{...}, xs, i)`.
+        let st1 = jlexpand("@invoke xs[i]")
+            @test find_named_ref(st1, JS.K"top", "getindex") !== nothing
+        end
+
+        # `x.f = v` -> `Core.invoke(Base.setproperty!, Tuple{...}, x, :f, v)`.
+        let st1 = jlexpand("@invoke x.f = v")
+            @test find_named_ref(st1, JS.K"top", "setproperty!") !== nothing
+        end
+
+        # `xs[i] = v` -> `Core.invoke(Base.setindex!, Tuple{...}, xs, v, i)`.
+        let st1 = jlexpand("@invoke xs[i] = v")
+            @test find_named_ref(st1, JS.K"top", "setindex!") !== nothing
+        end
+
+        # kwargs survive as a `K"parameters"` block on the synthesized call.
+        let st1 = jlexpand("@invoke f(x::T; k=v)")
+            @test any(c -> JS.kind(c) === JS.K"parameters", JS.children(st1))
+        end
+    end
+
+    @testset "@invokelatest macro expansion" begin
+        # `f(args...)` -> `Base.invokelatest(f, args...)`. Note no `Tuple{...}`
+        # — types are not part of `invokelatest`'s signature.
+        let st1 = jlexpand("@invokelatest f(x, y)")
+            @test JS.kind(st1) === JS.K"call"
+            @test find_named_ref(st1, JS.K"top", "invokelatest") !== nothing
+            @test find_named_ref(st1, JS.K"core", "Tuple") === nothing
+        end
+
+        let st1 = jlexpand("@invokelatest x.f")
+            @test find_named_ref(st1, JS.K"top", "invokelatest") !== nothing
+            @test find_named_ref(st1, JS.K"top", "getproperty") !== nothing
+        end
+
+        let st1 = jlexpand("@invokelatest xs[i] = v")
+            @test find_named_ref(st1, JS.K"top", "setindex!") !== nothing
+        end
+
+        # kwargs survive on the synthesized call.
+        let st1 = jlexpand("@invokelatest f(x; k=v)")
+            @test any(c -> JS.kind(c) === JS.K"parameters", JS.children(st1))
+        end
+    end
+
+    @testset "validation" begin
+        for name in ("@invoke", "@invokelatest")
+            # Zero / multiple arguments fall through to the variadic fallback.
+            for code in ("$name", "$name f(x) g(y)")
+                let err = try
+                        jlexpand(code)
+                        nothing
+                    catch err
+                        err
+                    end
+                    @test err isa JL.MacroExpansionError
+                    @test occursin("expects exactly one argument", err.msg)
+                end
+            end
+
+            # Bare identifier / literal isn't one of the allowed call shapes.
+            for code in ("$name 42", "$name foo")
+                let err = try
+                        jlexpand(code)
+                        nothing
+                    catch err
+                        err
+                    end
+                    @test err isa JL.MacroExpansionError
+                    @test occursin("expected a `:call` expression", err.msg)
+                end
+            end
+
+            # `=` form requires the LHS to be `x.f` or `xs[i]`.
+            let err = try
+                    jlexpand("$name a = b")
+                    nothing
+                catch err
+                    err
+                end
+                @test err isa JL.MacroExpansionError
+                @test occursin("setproperty!", err.msg)
+            end
+        end
+    end
+
+    @testset "binding resolution preserves provenance" begin
+        for name in ("@invoke", "@invokelatest")
+            # `f`, the positional arg, and (for `@invoke`) the `::T` annotation
+            # should all remain visible to scope resolution.
+            let res = jlresolve("$name fff(xxx::TTT)")
+                assert_binding_provenance(res, :global, "fff")
+                assert_binding_provenance(res, :global, "xxx")
+                assert_binding_provenance(res, :global, "TTT")
+            end
+            # In setter forms, both the receiver and the rhs identifier survive.
+            let res = jlresolve("$name xs[iii] = vvv")
+                assert_binding_provenance(res, :global, "xs")
+                assert_binding_provenance(res, :global, "iii")
+                assert_binding_provenance(res, :global, "vvv")
+            end
+        end
+    end
+end
+
 module test_lowering_module; using Test; end
 test_macro_expand(code::AbstractString) = jlexpand(test_lowering_module, code)
 test_macro_lower(code::AbstractString) = jlresolve(test_lowering_module, code)

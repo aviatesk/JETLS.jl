@@ -219,6 +219,149 @@ function Base.var"@assert"(
     return JL.@ast(__context__, mc, [JS.K"block" extras... if_throw])
 end
 
+# New-style implementations of `Base.@invoke` / `Base.@invokelatest`. These match Base's
+# expansion (`Core.invoke(f, Tuple{T1,...}, args...)` / `Base.invokelatest(f, args...)`)
+# rather than routing the body through unchanged, so type inference (e.g.
+# `TypeAnnotation`) sees the actual `Core.invoke` / `Base.invokelatest` call and not the
+# surface-syntax call. The same call shapes Base's `destructure_callex` handles are
+# accepted (`f(args...; kwargs...)`, `x.f`, `xs[i]`, `x.f = v`, `xs[i] = v`); other shapes
+# are rejected at expansion time with a clear message.
+function Base.var"@invoke"(__context__::JL.MacroContext, ex::SyntaxTreeC)
+    f, args, kwargs = _destructure_invoke_callex(__context__, ex, "@invoke")
+    return _build_invoke_call(__context__, ex, f, args, kwargs)
+end
+
+function Base.var"@invoke"(__context__::JL.MacroContext, ::SyntaxTreeC...)
+    throw_macro_error(__context__.macrocall::SyntaxTreeC,
+        "@invoke expects exactly one argument: `f(args...; kwargs...)` (or one of `x.f`, `xs[i]`, `x.f = v`, `xs[i] = v`)")
+end
+
+function Base.var"@invokelatest"(__context__::JL.MacroContext, ex::SyntaxTreeC)
+    f, args, kwargs = _destructure_invoke_callex(__context__, ex, "@invokelatest")
+    return _build_invokelatest_call(__context__, f, args, kwargs)
+end
+
+function Base.var"@invokelatest"(__context__::JL.MacroContext, ::SyntaxTreeC...)
+    throw_macro_error(__context__.macrocall::SyntaxTreeC,
+        "@invokelatest expects exactly one argument: `f(args...; kwargs...)` (or one of `x.f`, `xs[i]`, `x.f = v`, `xs[i] = v`)")
+end
+
+# Mirror of Base's `destructure_callex` for EST: returns `(f, args, kwargs)` where
+# `f` is the function (already a `K"top"` reference for the synthesized `getproperty`,
+# `setindex!`, etc. forms), `args` are the positional arguments, and `kwargs` are the
+# raw `K"kw"` nodes (collected from both bare-`kw` children and `K"parameters"` blocks).
+function _destructure_invoke_callex(
+        ctx::JL.MacroContext, ex::SyntaxTreeC, m::AbstractString
+    )
+    k = JS.kind(ex)
+    if k === JS.K"call"
+        f = ex[1]
+        args = SyntaxTreeC[]
+        kwargs = SyntaxTreeC[]
+        for i in 2:JS.numchildren(ex)
+            child = ex[i]
+            ck = JS.kind(child)
+            if ck === JS.K"parameters"
+                for kw in JS.children(child)
+                    push!(kwargs, kw)
+                end
+            elseif ck === JS.K"kw"
+                push!(kwargs, child)
+            else
+                push!(args, child)
+            end
+        end
+        return f, args, kwargs
+    elseif k === JS.K"."
+        # `x.f` -> getproperty(x, :f). `ex[2]` is the `K"inert"`-wrapped field name.
+        f = JL.@ast(ctx, ex, [JS.K"top" "getproperty"::JS.K"Identifier"])
+        return f, SyntaxTreeC[ex[1], ex[2]], SyntaxTreeC[]
+    elseif k === JS.K"ref"
+        # `xs[i, j, ...]` -> getindex(xs, i, j, ...).
+        f = JL.@ast(ctx, ex, [JS.K"top" "getindex"::JS.K"Identifier"])
+        args = SyntaxTreeC[ex[i] for i in 1:JS.numchildren(ex)]
+        return f, args, SyntaxTreeC[]
+    elseif k === JS.K"=" && JS.numchildren(ex) == 2
+        lhs, rhs = ex[1], ex[2]
+        lhs_k = JS.kind(lhs)
+        if lhs_k === JS.K"."
+            # `x.f = v` -> setproperty!(x, :f, v).
+            f = JL.@ast(ctx, ex, [JS.K"top" "setproperty!"::JS.K"Identifier"])
+            return f, SyntaxTreeC[lhs[1], lhs[2], rhs], SyntaxTreeC[]
+        elseif lhs_k === JS.K"ref"
+            # `xs[i, ...] = v` -> setindex!(xs, v, i, ...).
+            args = SyntaxTreeC[lhs[1], rhs]
+            for i in 2:JS.numchildren(lhs)
+                push!(args, lhs[i])
+            end
+            f = JL.@ast(ctx, ex, [JS.K"top" "setindex!"::JS.K"Identifier"])
+            return f, args, SyntaxTreeC[]
+        end
+        throw_macro_error(ex,
+            "$m: expected a `setproperty!` expression `x.f = v` or `setindex!` expression `x[i] = v`")
+    end
+    throw_macro_error(ex,
+        "$m: expected a `:call` expression `f(args...; kwargs...)`")
+end
+
+# Build `Core.invoke(f, Tuple{T1, ...}, x, ...)`, mirroring Base's expansion. Each `x::T`
+# arg has its annotation stripped, with `T` going into the types tuple; a bare `x` arg
+# gets `Core.Typeof(x)` as its placeholder type.
+function _build_invoke_call(
+        ctx::JL.MacroContext, srcref::SyntaxTreeC,
+        f::SyntaxTreeC, args::Vector{SyntaxTreeC}, kwargs::Vector{SyntaxTreeC}
+    )
+    types = SyntaxTreeC[]
+    new_args = SyntaxTreeC[]
+    for arg in args
+        if JS.kind(arg) === JS.K"::" && JS.numchildren(arg) == 2
+            push!(new_args, arg[1])
+            push!(types, arg[2])
+        else
+            push!(new_args, arg)
+            push!(types, JL.@ast(ctx, arg,
+                [JS.K"call" [JS.K"core" "Typeof"::JS.K"Identifier"] arg]))
+        end
+    end
+    types_tuple = JL.@ast(ctx, srcref,
+        [JS.K"curly" [JS.K"core" "Tuple"::JS.K"Identifier"] types...])
+    mc = ctx.macrocall::SyntaxTreeC
+    if isempty(kwargs)
+        return JL.@ast(ctx, mc, [JS.K"call"
+            [JS.K"core" "invoke"::JS.K"Identifier"]
+            f
+            types_tuple
+            new_args...])
+    end
+    return JL.@ast(ctx, mc, [JS.K"call"
+        [JS.K"core" "invoke"::JS.K"Identifier"]
+        [JS.K"parameters" kwargs...]
+        f
+        types_tuple
+        new_args...])
+end
+
+# Build `Base.invokelatest(f, args...)`. We intentionally skip Base's `invokelatest_gr`
+# optimization (which special-cases globally-bound `f` via `GlobalRef`) since it doesn't
+# affect what user identifiers reach scope/type analysis.
+function _build_invokelatest_call(
+        ctx::JL.MacroContext,
+        f::SyntaxTreeC, args::Vector{SyntaxTreeC}, kwargs::Vector{SyntaxTreeC}
+    )
+    mc = ctx.macrocall::SyntaxTreeC
+    if isempty(kwargs)
+        return JL.@ast(ctx, mc, [JS.K"call"
+            [JS.K"top" "invokelatest"::JS.K"Identifier"]
+            f
+            args...])
+    end
+    return JL.@ast(ctx, mc, [JS.K"call"
+        [JS.K"top" "invokelatest"::JS.K"Identifier"]
+        [JS.K"parameters" kwargs...]
+        f
+        args...])
+end
+
 # New-style `@kwdef` macro that preserves provenance information.
 # This strips default values from struct fields and generates keyword constructors,
 # matching the semantics of Base.@kwdef.

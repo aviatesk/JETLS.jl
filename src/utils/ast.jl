@@ -144,6 +144,8 @@ const NEW_STYLE_MACROCALL_NAMES = (
     "@inbounds",
     "@inferred",
     "@inline",
+    "@invoke",
+    "@invokelatest",
     "@kwdef",
     "@label",
     "@noinline",

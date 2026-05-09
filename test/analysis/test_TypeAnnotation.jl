@@ -619,6 +619,28 @@ end
         end
     end
 
+    # `@invoke` / `@invokelatest` lower to `Core.invoke(f, Tuple{...}, args...)`
+    # and `Base.invokelatest(f, args...)` respectively. Both calls must dispatch
+    # to the user-visible result, not to internal scaffolding.
+    @testset "@invoke dispatches via Core.invoke and surfaces its result type" begin
+        let code = "let xs = [1, 2, 3]; @invoke length(xs::AbstractArray); end"
+            _, ctx = type_annotate(code)
+            @test widenconst(get_type_for_range(
+                ctx, range_of(code, "@invoke length(xs::AbstractArray)"))) === Int
+        end
+    end
+
+    # `Base.invokelatest` is opaque to inference (the dispatched method may live
+    # in a future world), so the result type is `Any`. This still confirms the
+    # macro lowered to a real call rather than degrading inference entirely.
+    @testset "@invokelatest surfaces a call type (Any) without degrading inference" begin
+        let code = "let v = [1.0, 2.0]; @invokelatest sum(v); end"
+            _, ctx = type_annotate(code)
+            @test widenconst(get_type_for_range(
+                ctx, range_of(code, "@invokelatest sum(v)"))) === Any
+        end
+    end
+
     # for/while loops always evaluate to `nothing`. The iteration machinery
     # (`iterate(xs)`, `iterate(xs, state)`, `=== nothing` checks, body return) all
     # places typed nodes at the loop's byte range, so naive tmerge would produce a
