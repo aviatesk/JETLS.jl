@@ -643,7 +643,23 @@ end
 
 # TODO use something like `JuliaInterpreter.ExprSplitter`
 
+"""
+    iterate_toplevel_tree(callback, st0_top::SyntaxTreeC)
+
+Walk each lowerable top-level subtree of `st0_top` (descending into `K"toplevel"`,
+`K"module"`, and docstring wrappers) and invoke `callback(st0)` on every leaf.
+
+The `callback` can control iteration by returning one of:
+- `traversal_terminator`: stop iteration immediately.
+- `TraversalReturn(val)`: store `val` as the return value and continue.
+- `TraversalReturn(val; terminate=true)`: store `val` and stop immediately.
+- anything else: continue.
+
+The stored value from the last `TraversalReturn` is returned (or `nothing` if no
+`TraversalReturn` was used).
+"""
 function iterate_toplevel_tree(callback, st0_top::SyntaxTreeC)
+    retval = nothing
     sl = JS.SyntaxList(st0_top)
     while !isempty(sl)
         st0 = pop!(sl)
@@ -662,9 +678,14 @@ function iterate_toplevel_tree(callback, st0_top::SyntaxTreeC)
             push!(sl, st0[end])
         else # st0 is lowerable tree
             ret = callback(st0)
+            if ret isa TraversalReturn
+                retval = ret.val
+                ret.terminate ? break : continue
+            end
             ret === traversal_terminator && break
         end
     end
+    return retval
 end
 
 """
