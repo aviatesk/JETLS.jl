@@ -250,6 +250,39 @@ which jumps to declaration sites (e.g., `import`/`using`, `local x`, or
 empty `function foo end`) when distinct from the definition, and falls
 back to go to definition otherwise.
 
+## [Go to type definition](@id features/go-to-type-definition)
+
+Jump to the definition of an expression's *type* rather than the expression
+itself, e.g. with the cursor on a binding of type `Foo`, JETLS navigates to the
+`struct Foo` definition; for a `Vector{Int}`-typed value, it lands on `Vector`'s
+definition.
+
+> ```@raw html
+> <div class="display-light-only">
+> ```
+> ![Go to type definition](assets/features/type-definition.png)
+> ```@raw html
+> </div>
+> <div class="display-dark-only">
+> ```
+> ![Go to type definition](assets/features/type-definition-dark.png)
+> ```@raw html
+> </div>
+> ```
+
+The cursor can be on:
+
+- An identifier (local binding, parameter, type name, etc.). The
+  inferred type at that position is resolved.
+- A dot-chain expression (`Base.Pa│ir`). The full chain is treated as
+  the target.
+- A call expression. Placing the cursor right after `)` (e.g.
+  `sin(1.0)│`) resolves to the call's return type. `do`-block calls
+  work the same way — `func() do ... end│` resolves to the call's
+  return type.
+
+For `Union` types, one location is returned per constituent.
+
 ## [Document link](@id features/document-link)
 
 Path strings inside `include("...")` and `include_dependency("...")`

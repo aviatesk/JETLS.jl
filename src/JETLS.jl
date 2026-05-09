@@ -122,6 +122,7 @@ include("signature-help.jl")
 include("completions.jl")
 include("declaration.jl")
 include("definition.jl")
+include("type-definition.jl")
 include("references.jl")
 include("hover.jl")
 include("document-highlight.jl")
@@ -450,6 +451,8 @@ function handle_request_message(server::Server, @nospecialize(msg), cancel_flag:
         handle_DeclarationRequest(server, msg, cancel_flag)
     elseif msg isa DefinitionRequest
         handle_DefinitionRequest(server, msg, cancel_flag)
+    elseif msg isa TypeDefinitionRequest
+        handle_TypeDefinitionRequest(server, msg, cancel_flag)
     elseif msg isa ReferencesRequest
         handle_ReferencesRequest(server, msg, cancel_flag)
     elseif msg isa HoverRequest

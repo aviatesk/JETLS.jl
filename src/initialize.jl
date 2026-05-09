@@ -114,6 +114,15 @@ function handle_InitializeRequest(
         end
     end
 
+    if supports(server, :textDocument, :typeDefinition, :dynamicRegistration)
+        typeDefinitionProvider = nothing # will be registered dynamically
+    else
+        typeDefinitionProvider = type_definition_options()
+        if JETLS_DEV_MODE
+            @info "Registering 'textDocument/typeDefinition' with `InitializeResponse`"
+        end
+    end
+
     if supports(server, :textDocument, :documentHighlight, :dynamicRegistration)
         documentHighlightProvider = nothing # will be registered dynamically
     else
@@ -291,6 +300,7 @@ function handle_InitializeRequest(
             signatureHelpProvider,
             declarationProvider,
             definitionProvider,
+            typeDefinitionProvider,
             referencesProvider,
             documentHighlightProvider,
             documentSymbolProvider,
@@ -410,6 +420,13 @@ function handle_InitializedNotification(server::Server)
         # NOTE If definition's `dynamicRegistration` is not supported,
         # it needs to be registered along with initialization in the `InitializeResponse`,
         # since `DefinitionRegistrationOptions` does not extend `StaticRegistrationOptions`.
+    end
+
+    if supports(server, :textDocument, :typeDefinition, :dynamicRegistration)
+        push!(registrations, type_definition_registration())
+        if JETLS_DEV_MODE
+            @info "Dynamically registering 'textDocument/typeDefinition' upon `InitializedNotification`"
+        end
     end
 
     if supports(server, :textDocument, :documentHighlight, :dynamicRegistration)
