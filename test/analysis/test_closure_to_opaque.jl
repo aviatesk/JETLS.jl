@@ -265,6 +265,33 @@ end
     end
 end
 
+# Default-positional-arg closures: JL emits a single `method_defs` whose outer
+# block packs both the default-filling forwarder (`f(x) = #self#(x, default)`)
+# and the full body (`f(x, y) = ...`). An OC can only hold one method, so OC
+# routing would either drop the full body or break the forwarder's self-call,
+# making both eager body inference and call-site inference collapse to `Union{}`.
+# `collect_multi_method_bindings` detects the in-node multi-method shape and
+# routes these through the synthetic-struct path instead.
+@testset "default-positional local closure should fall through" begin
+    let tree = rewrite_only("""
+            let
+                f(x::Int, y::Int=1) = x * y
+                f(42)
+            end
+            """)
+        @test count_opaque_closures(tree) == 0
+    end
+
+    let tree = rewrite_only("""
+            let
+                f = (x::Int, y::Int=1) -> x * y
+                f(42)
+            end
+            """)
+        @test count_opaque_closures(tree) == 0
+    end
+end
+
 # Keyword-argument closures fall through to the synthetic-struct path. JL splits
 # a kwarg closure into a multi-method wrapper (positional dispatch + kwsorter)
 # plus a single-method inner body helper that the wrapper's methods call.
