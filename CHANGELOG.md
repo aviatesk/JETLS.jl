@@ -55,6 +55,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Invoking it on an expression jumps to the definition of its inferred type — e.g. landing on a binding of type `Foo` jumps to the `struct Foo` definition.
   For `Union` types the response includes one location per constituent.
 
+  <img width="1333" height="571" alt="type definition demo" src="https://github.com/user-attachments/assets/b469f0d7-73ba-47aa-86e5-7861535459fd" />
+
 ### Changed
 
 - `textDocument/semanticTokens` now classifies type parameters declared in `struct` / `abstract type` / `primitive type` headers (and their use sites inside the type body) as `typeParameter`. Previously these identifiers were classified as plain `variable`.
