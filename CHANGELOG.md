@@ -59,6 +59,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- `textDocument/hover` now surfaces inferred types alongside documentation.
+  Any identifier, dot expression, call result, or indexing position can be queried — `func(x) :: Int`, `s[2] :: Float64`, `Base.Pair :: typeof(Pair)`, etc. — and the type is queried at the cursor's byte range so flow-sensitive type narrowing is reflected.
+  Binding hovers additionally carry a kind tag — `(argument)`, `(local)`, `(static parameter)`, or `(global)` — before the name, making the binding's role in scope visible.
+  Closures display as function-arrow signatures like `(x::Int, y::Int) -> Int`, with argument names recovered from the body when available.
+  Documentation is gathered both from the binding's own docstring and from the docstring of whatever value the expression resolves to via type inference. So e.g. given `sv = Some(sin)`, hovering on `sv.value` shows `sin`'s docstring even though `sin` doesn't appear at the cursor.
+
+  | Hover on call    | <img width="1244" height="433" alt="Hover on call demo" src="https://github.com/user-attachments/assets/18e087f4-2df2-4a2f-83c3-83ded78380bb" /> |
+  | ---------------- | -------------------- |
+  | Hover on closure | <img width="1244" height="433" alt="Hover on closure demo" src="https://github.com/user-attachments/assets/ce273ec7-59e1-4783-91d8-86da6933f72f" /> |
+
 - `textDocument/semanticTokens` now classifies type parameters declared in `struct` / `abstract type` / `primitive type` headers (and their use sites inside the type body) as `typeParameter`. Previously these identifiers were classified as plain `variable`.
 
 ### Fixed

@@ -76,22 +76,6 @@ function find_type_definition(server::Server, uri::URI, fi::FileInfo, pos::Posit
     return type_locations(state, uri, target_type), node
 end
 
-# Run inference on the toplevel subtree that contains `rng` and look up its
-# inferred type. Returns `nothing` if lowering/inference fails or no `:type`
-# annotation exists at `rng`.
-function infer_type_at_range(st0_top::SyntaxTreeC, mod::Module, rng::UnitRange{<:Integer})
-    return iterate_toplevel_tree(st0_top) do st0::SyntaxTreeC
-        rng ⊆ JS.byte_range(st0) || return nothing
-        result = @something(
-            get_inferrable_tree(st0, mod; caller="find_type_definition"),
-            return traversal_terminator)
-        (; ctx3, st3) = result
-        inferred = @something infer_toplevel_tree(ctx3, st3, mod) return traversal_terminator
-        ctx = InferredTreeContext(inferred, st3)
-        return TraversalReturn(get_type_for_range(ctx, rng); terminate=true)
-    end
-end
-
 # Convert a lattice element to a concrete `Type` whose definition the user wants
 # to navigate to. For `Core.Const(v)`, prefer `v` itself when it's already a
 # `Type` (so clicking on a type name jumps to that type), otherwise return
