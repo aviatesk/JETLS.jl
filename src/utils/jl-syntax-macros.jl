@@ -2,7 +2,7 @@
 # These are in addition to JuliaLowering.jl/src/syntax_macros.jl,
 # and can be merged there when possible.
 
-# TODO: @inline, @noinline, @inbounds, @simd, @assume_effects
+# TODO: @boundscheck, @simd
 
 """
     mapchildren(f, ctx, ex, indices::UnitRange{Int})
@@ -37,6 +37,39 @@ function Base.var"@specialize"(
     )
     JL.@ast(__context__, __context__.macrocall::SyntaxTreeC,
             [JS.K"block" ex1 ex2 exs...])
+end
+
+# `@inline` / `@noinline` / `Base.@propagate_inbounds` decorate a function definition
+# or a code block with codegen hints. The standard expansion rewrites the wrapped function
+# body to inject `Expr(:meta, …)` markers; that produces synthetic nodes whose byte ranges
+# don't anchor in the source, breaking surface lookups (inlay hints, hover, …) on the inner
+# funcdef. For static analysis the markers have no semantic effect, so we drop them and let
+# the wrapped expression flow through with its own provenance intact.
+# The 0-arg form keeps the `K"meta"` so scope resolution treats it like the original.
+function Base.var"@inline"(__context__::JL.MacroContext)
+    JL.@ast(__context__, __context__.macrocall::SyntaxTreeC,
+            [JS.K"meta" "inline"::JS.K"Identifier"])
+end
+
+function Base.var"@inline"(__context__::JL.MacroContext, ex::SyntaxTreeC)
+    JL.@ast(__context__, ex, ex)
+end
+
+function Base.var"@noinline"(__context__::JL.MacroContext)
+    JL.@ast(__context__, __context__.macrocall::SyntaxTreeC,
+            [JS.K"meta" "noinline"::JS.K"Identifier"])
+end
+
+function Base.var"@noinline"(__context__::JL.MacroContext, ex::SyntaxTreeC)
+    JL.@ast(__context__, ex, ex)
+end
+
+function Base.var"@propagate_inbounds"(__context__::JL.MacroContext, ex::SyntaxTreeC)
+    JL.@ast(__context__, ex, ex)
+end
+
+function Base.var"@inbounds"(__context__::JL.MacroContext, ex::SyntaxTreeC)
+    JL.@ast(__context__, ex, ex)
 end
 
 # Stub new-style implementation of `Threads.@spawn`. The real macro wraps the
@@ -292,12 +325,16 @@ function _kwdef_make_constructors(
     end
 end
 
-# Stubs for `Test.@test` / `Test.@testset` that drop the test-recording
-# machinery and just route the user-written body through scope resolution.
-
-# Other kws (e.g. `atol=0.1`) are passed through unchecked since the real
-# `Test.@test` forwards them to the test expression. We expand to `ex` alone
-# because a `K"="` kw node in expression position would fail later lowering.
+# Stubs for `Test.jl` testing macros. The real macros wrap user-written bodies in
+# test-recording / exception-catching / setup scaffolding; for LSP scope analysis we only
+# need each user-written sub-expression to flow through with its provenance intact, so we
+# drop the scaffolding and either return the body alone or emit a `block` so identifiers
+# inside every argument are visible to the resolver.
+#
+# For macros with the `body kws...` shape (`@test`, `@test_broken`, `@test_skip`) we
+# validate the kw shape and drop them entirely — the real macro just forwards them to the
+# test expression. For `@test_logs`, where kws sit alongside a list of patterns and a body,
+# we keep only the kw RHS so any user-written identifier there still gets scope-resolved.
 function Test.var"@test"(__context__::JL.MacroContext, ex::SyntaxTreeC, kws::SyntaxTreeC...)
     mc = __context__.macrocall::SyntaxTreeC
     seen_broken = seen_skip = seen_context = nothing
@@ -324,6 +361,97 @@ function Test.var"@test"(__context__::JL.MacroContext, ex::SyntaxTreeC, kws::Syn
     return JL.@ast(__context__, mc, ex)
 end
 
+function Test.var"@test_broken"(
+        __context__::JL.MacroContext, ex::SyntaxTreeC, kws::SyntaxTreeC...
+    )
+    for kw in kws
+        _validate_test_kw(kw)
+    end
+    return JL.@ast(__context__, __context__.macrocall::SyntaxTreeC, ex)
+end
+
+function Test.var"@test_skip"(
+        __context__::JL.MacroContext, ex::SyntaxTreeC, kws::SyntaxTreeC...
+    )
+    for kw in kws
+        _validate_test_kw(kw)
+    end
+    return JL.@ast(__context__, __context__.macrocall::SyntaxTreeC, ex)
+end
+
+function Test.var"@test_throws"(
+        __context__::JL.MacroContext, extype::SyntaxTreeC, ex::SyntaxTreeC
+    )
+    return JL.@ast(__context__, __context__.macrocall::SyntaxTreeC,
+        [JS.K"block" extype ex])
+end
+
+function Test.var"@test_throws"(__context__::JL.MacroContext, ::SyntaxTreeC...)
+    throw_macro_error(__context__.macrocall::SyntaxTreeC,
+        "@test_throws expects exactly two arguments: `extype` and `ex`")
+end
+
+function Test.var"@test_warn"(
+        __context__::JL.MacroContext, msg::SyntaxTreeC, ex::SyntaxTreeC
+    )
+    return JL.@ast(__context__, __context__.macrocall::SyntaxTreeC,
+        [JS.K"block" msg ex])
+end
+
+function Test.var"@test_nowarn"(__context__::JL.MacroContext, ex::SyntaxTreeC)
+    return JL.@ast(__context__, __context__.macrocall::SyntaxTreeC, ex)
+end
+
+function Test.var"@test_logs"(__context__::JL.MacroContext, args::SyntaxTreeC...)
+    mc = __context__.macrocall::SyntaxTreeC
+    isempty(args) && throw_macro_error(mc, "@test_logs needs at least one argument")
+    body = last(args)
+    block_children = SyntaxTreeC[]
+    for i in 1:length(args)-1
+        arg = args[i]
+        if JS.kind(arg) === JS.K"="
+            _validate_test_kw(arg)
+            push!(block_children, arg[2])
+        else
+            push!(block_children, arg)
+        end
+    end
+    push!(block_children, body)
+    return JL.@ast(__context__, mc, [JS.K"block" block_children...])
+end
+
+function Test.var"@test_deprecated"(__context__::JL.MacroContext, ex::SyntaxTreeC)
+    return JL.@ast(__context__, __context__.macrocall::SyntaxTreeC, ex)
+end
+
+function Test.var"@test_deprecated"(
+        __context__::JL.MacroContext, pattern::SyntaxTreeC, ex::SyntaxTreeC
+    )
+    return JL.@ast(__context__, __context__.macrocall::SyntaxTreeC,
+        [JS.K"block" pattern ex])
+end
+
+function Test.var"@test_deprecated"(__context__::JL.MacroContext, ::SyntaxTreeC...)
+    throw_macro_error(__context__.macrocall::SyntaxTreeC,
+        "@test_deprecated expects one or two arguments: `[pattern] expr`")
+end
+
+function Test.var"@inferred"(__context__::JL.MacroContext, ex::SyntaxTreeC)
+    return JL.@ast(__context__, __context__.macrocall::SyntaxTreeC, ex)
+end
+
+function Test.var"@inferred"(
+        __context__::JL.MacroContext, allow::SyntaxTreeC, ex::SyntaxTreeC
+    )
+    return JL.@ast(__context__, __context__.macrocall::SyntaxTreeC,
+        [JS.K"block" allow ex])
+end
+
+function Test.var"@inferred"(__context__::JL.MacroContext, ::SyntaxTreeC...)
+    throw_macro_error(__context__.macrocall::SyntaxTreeC,
+        "@inferred expects one or two arguments: `[allow] ex`")
+end
+
 function _validate_test_kw(kw::SyntaxTreeC)
     JS.kind(kw) === JS.K"=" ||
         throw_macro_error(kw, "invalid test macro call: expected `keyword=value`")
@@ -335,11 +463,6 @@ function _validate_test_kw(kw::SyntaxTreeC)
     return name.name_val::String
 end
 
-# Argument validation mirrors `parse_testset_args` in
-# `stdlib/Test/src/Test.jl`. The body is wrapped in a `let` block to
-# reproduce the local scope the real macro creates via `try`/`catch` —
-# without it, bindings would leak into the enclosing scope and sibling
-# testsets would share names.
 function Test.var"@testset"(__context__::JL.MacroContext, args::SyntaxTreeC...)
     mc = __context__.macrocall::SyntaxTreeC
     isempty(args) && throw_macro_error(mc, "No arguments to @testset")
@@ -373,6 +496,9 @@ function Test.var"@testset"(__context__::JL.MacroContext, args::SyntaxTreeC...)
         end
     end
 
+    # Wrap the body in a `let` block to reproduce the local scope the real
+    # macro creates via `try`/`catch` — without it, bindings would leak into
+    # the enclosing scope and sibling testsets would share names.
     return JL.@ast(__context__, mc,
         [JS.K"let"
             [JS.K"block"]            # empty bindings list
@@ -386,4 +512,81 @@ function _validate_testset_option(arg::SyntaxTreeC)
     (JS.kind(name) === JS.K"Identifier" && hasproperty(name, :name_val)) ||
         throw_macro_error(name, "@testset: option name must be an identifier")
     return name.name_val::String
+end
+
+# Stub for `Base.@assume_effects`. The real macro emits `Expr(:purity)` / `Expr(:meta)`
+# directives that drive effect overrides in inference; for LSP analysis these are
+# irrelevant, so we just validate the setting names and route the user-written body through
+# unchanged. New-style expansion preserves provenance, which the old-style macro destroys.
+#
+# Accepted setting names mirror `Base.compute_assumed_setting` (`base/expr.jl`).
+# `:consistent_overlay` and `:nortcall` are deliberately omitted since Base does not accept
+# them as standalone inputs (they are only set via the `:foldable` / `:total` shortcuts).
+const _ASSUME_EFFECTS_SETTINGS = (
+    "consistent", "effect_free", "nothrow", "terminates_globally", "terminates_locally",
+    "notaskstate", "inaccessiblememonly", "noub", "noub_if_noinbounds", "foldable",
+    "removable", "total",
+)
+
+function Base.var"@assume_effects"(__context__::JL.MacroContext)
+    throw_macro_error(__context__.macrocall::SyntaxTreeC,
+        "@assume_effects: at least one argument is required")
+end
+
+function Base.var"@assume_effects"(
+        __context__::JL.MacroContext, args::SyntaxTreeC...
+    )
+    mc = __context__.macrocall::SyntaxTreeC
+    for i in 1:length(args)-1
+        _validate_assume_effect_setting(args[i])
+    end
+    lastex = args[end]
+    if _is_recognized_assume_effect_setting(lastex)
+        # Declaration form (Base's "anonymous function case"): all arguments
+        # are settings, no body. The real macro emits `Expr(:meta, purity)`
+        # to attach effects to the enclosing function; for LSP analysis we
+        # only need a no-op placeholder.
+        return JL.@ast(__context__, mc, nothing::JS.K"Value")
+    end
+    # `lastex` is the body — function definition, `@ccall` macrocall, or
+    # call-site annotation. All three cases reduce to "return the body
+    # unchanged" since we don't need to attach effect metadata.
+    return JL.@ast(__context__, mc, lastex)
+end
+
+function _validate_assume_effect_setting(setting::SyntaxTreeC)
+    name = _extract_assume_effect_setting_name(setting)
+    if name === nothing
+        throw_macro_error(setting,
+            "@assume_effects: expected an effect setting (e.g. `:consistent`, `!:nothrow`)")
+    elseif name ∉ _ASSUME_EFFECTS_SETTINGS
+        throw_macro_error(setting,
+            "@assume_effects: unrecognized effect setting `:$name`")
+    end
+    return nothing
+end
+
+function _is_recognized_assume_effect_setting(setting::SyntaxTreeC)
+    name = _extract_assume_effect_setting_name(setting)
+    return name !== nothing && name in _ASSUME_EFFECTS_SETTINGS
+end
+
+# Strip any number of `!` negations, then check for the symbol-literal shape
+# `:foo` (an `inert` node wrapping an `Identifier`). Returns the bare name
+# as a `String`, or `nothing` if the shape doesn't match.
+function _extract_assume_effect_setting_name(setting::SyntaxTreeC)
+    while JS.kind(setting) === JS.K"call" && JS.numchildren(setting) == 2
+        op = setting[1]
+        JS.kind(op) === JS.K"Identifier" && hasproperty(op, :name_val) &&
+            op.name_val === "!" || break
+        setting = setting[2]
+    end
+    if JS.kind(setting) === JS.K"inert" && JS.numchildren(setting) >= 1
+        inner = setting[1]
+        if JS.kind(inner) === JS.K"Identifier" && hasproperty(inner, :name_val)
+            name = inner.name_val
+            return name isa AbstractString ? name : nothing
+        end
+    end
+    return nothing
 end

@@ -56,6 +56,20 @@ function generate_new_uuid(original_uuid::UUID)
     return uuid5(original_uuid, VENDOR_NAMESPACE)
 end
 
+function remove_stale_vendored_packages(packages::Vector{Pair{String, UUID}})
+    isdir(VENDOR_DIR) || return
+
+    expected = Set{String}(name for (name, _) in packages)
+
+    for entry in readdir(VENDOR_DIR)
+        entry_path = joinpath(VENDOR_DIR, entry)
+        isdir(entry_path) || continue
+        entry in expected && continue
+        @info "Removing stale vendored package: $entry_path"
+        rm(entry_path; recursive=true)
+    end
+end
+
 function copy_package_source(mod::Module, pkg_name::AbstractString)
     src_dir = pkgdir(mod)
     src_dir === nothing && error("Could not find source directory for $pkg_name")
@@ -503,6 +517,7 @@ function print_help()
         3. Clean manifest files
         4. Update dependencies with Pkg.update()
         5. Vendor packages:
+           - Remove stale packages no longer required from vendor/
            - Copy package sources to vendor/ directory
            - Rewrite UUIDs deterministically
            - Remove unused weakdeps/extensions
@@ -594,7 +609,10 @@ function vendor_loaded_packages(use_local_path::Bool, rev::Union{String, Nothing
 
     uuid_mapping = Dict{UUID, UUID}()
 
-    @info "Step 1: Copying packages and rewriting UUIDs..."
+    @info "Step 1: Removing stale vendored packages..."
+    remove_stale_vendored_packages(packages)
+
+    @info "Step 2: Copying packages and rewriting UUIDs..."
     for (pkg_name, original_uuid) in packages
         pkgid = Base.PkgId(original_uuid, pkg_name)
         mod = get(Base.loaded_modules, pkgid, nothing)
@@ -614,23 +632,23 @@ function vendor_loaded_packages(use_local_path::Bool, rev::Union{String, Nothing
         end
     end
 
-    @info "Step 2: Removing unused weakdeps and extensions..."
+    @info "Step 3: Removing unused weakdeps and extensions..."
     loaded_uuids = collect_loaded_package_uuids()
     for (pkg_name, _) in packages
         vendor_pkg_dir = joinpath(VENDOR_DIR, pkg_name)
         remove_unused_weakdeps_and_extensions!(vendor_pkg_dir, loaded_uuids, uuid_mapping)
     end
 
-    @info "Step 3: Updating inter-package dependencies..."
+    @info "Step 4: Updating inter-package dependencies..."
     for (pkg_name, _) in packages
         vendor_pkg_dir = joinpath(VENDOR_DIR, pkg_name)
         update_vendored_dependencies!(vendor_pkg_dir, uuid_mapping, use_local_path, rev)
     end
 
-    @info "Step 4: Updating Project.toml with vendored dependencies..."
+    @info "Step 5: Updating Project.toml with vendored dependencies..."
     update_project_with_vendored_deps(uuid_mapping, packages, use_local_path, rev)
 
-    @info "Step 5: Tidying up Project.toml format..."
+    @info "Step 6: Tidying up Project.toml format..."
     project_path = joinpath(CURRENT_DIR, "Project.toml")
     project = Pkg.Types.read_project(project_path)
     Pkg.Types.write_project(project, project_path)

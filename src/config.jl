@@ -124,21 +124,144 @@ If a field in `overlay` is `nothing`, the corresponding field from `base` is ret
 merge_settings(base::JETLSConfig, overlay::JETLSConfig) =
     merge_and_track(Returns(nothing), base, overlay, ())
 
-# TODO: Remove this. Now this is used for `collect_unmatched_keys` only. See the comment there.
-function parse_config_dict(config_dict::AbstractDict{String}, filepath::Union{Nothing,AbstractString} = nothing)
+"""
+    InvalidKeyError(path, expected_keys)
+
+Thrown by [`parse_config_from_dict`](@ref) when a config dict contains a key that does not
+match any field of the target [`ConfigSection`](@ref). `path` is the dotted key path to the
+offending entry (e.g. `["diagnostic", "patterns"]`); `expected_keys` is the list of
+field names of the target type at that path.
+"""
+struct InvalidKeyError <: Exception
+    path::Vector{String}
+    expected_keys::Vector{String}
+end
+function Base.showerror(io::IO, e::InvalidKeyError)
+    print(io, "InvalidKeyError: invalid key `", join(e.path, "."), "`",
+          ", expected one of: ", join((string('`', k, '`') for k in e.expected_keys), ", "))
+end
+
+"""
+    parse_config_from_dict(::Type{T}, d::AbstractDict{String}, path=String[])
+        where T<:ConfigSection -> T
+
+Recursively populate a [`ConfigSection`](@ref) struct from a config dict (typically
+parsed from `.JETLSConfig.toml` or `workspace/configuration`). Throws
+[`InvalidKeyError`](@ref) — carrying the full dotted path — on unknown keys; missing
+fields keep the struct's `@kwdef` defaults. `path` is threaded through nested calls
+so any error surfaced downstream knows where in the dict it originated; callers
+typically leave it at the default.
+"""
+function parse_config_from_dict(
+        ::Type{T}, d::AbstractDict{String}, path::Vector{String} = String[]
+    ) where T<:ConfigSection
+    valid_keys = String[String(name) for name in fieldnames(T)]
+    for key::String in keys(d)
+        key in valid_keys || throw(InvalidKeyError(String[path; key], valid_keys))
+    end
+    kwargs = Pair{Symbol,Any}[]
+    for fname in fieldnames(T)
+        sname = String(fname)
+        haskey(d, sname) || continue
+        v = parse_config_dict_value(fieldtype(T, fname), d[sname], String[path; sname])
+        push!(kwargs, fname => v)
+    end
+    return T(; kwargs...)
+end
+
+# Format an error message rooted at `path` (or unrooted at the top level). Messages
+# share the capital-prefix convention with `DiagnosticConfigError` thrown from
+# `parse_diagnostic_pattern` / `parse_analysis_override`.
+function parse_dict_error(path::Vector{String}, msg::AbstractString)
+    if isempty(path)
+        error(uppercasefirst(msg))
+    else
+        error("Invalid value at `", join(path, "."), "`: ", msg)
+    end
+end
+
+# Drives `parse_config_from_dict`'s field-by-field hydration: turns the raw dict value `x`
+# into the field's declared type `T`. Handles the small type tree we actually use — Maybe,
+# nested `ConfigSection`, vectors of `ConfigSection`, the formatter union, and plain
+# `convert`-able leaves. `DiagnosticPattern` / `AnalysisOverride` need bespoke validation
+# and are inlined here for the same reason `Maybe{FormatterConfig}` is — the set of special
+# cases is small and closed, so a dispatch hook would be over-built.
+function parse_config_dict_value(
+        T::Type, @nospecialize(x), path::Vector{String} = String[]
+    )
+    x === nothing && Nothing <: T && return nothing
+    if T isa Union
+        non_nothing = Type[U for U in Base.uniontypes(T) if U !== Nothing]
+        if length(non_nothing) == 1
+            # `Maybe{T}` for a single concrete `T` — dispatch directly so inner errors
+            # (e.g. `DiagnosticConfigError`, `InvalidKeyError`) bubble up unswallowed.
+            return parse_config_dict_value(non_nothing[1], x, path)
+        end
+        # `Maybe{FormatterConfig}` is the only union we parse from a dict that mixes a plain
+        # string and an alias-tagged option type. Hard-code it rather than building a
+        # general alias dispatch.
+        if String <: T && CustomFormatterConfig <: T
+            if x isa AbstractString
+                return convert(String, x)
+            elseif x isa AbstractDict{String}
+                haskey(x, CUSTOM_FORMATTER_ALIAS) ||
+                    parse_dict_error(path, "expected formatter table key `$(CUSTOM_FORMATTER_ALIAS)`, got keys $(collect(keys(x)))")
+                return parse_config_from_dict(
+                    CustomFormatterConfig, x[CUSTOM_FORMATTER_ALIAS], String[path; CUSTOM_FORMATTER_ALIAS])
+            else
+                parse_dict_error(path, "expected formatter string or table, got $(typeof(x))")
+            end
+        end
+        # Generic multi-type union (e.g. `Maybe{Union{Missing,Bool}}`): try each
+        # non-`Nothing` branch in order; the first one that converts wins.
+        for U in non_nothing
+            try
+                return parse_config_dict_value(U, x, path)
+            catch
+                continue
+            end
+        end
+        parse_dict_error(path, "expected $T, got $(typeof(x))")
+    end
+    if T <: ConfigSection
+        x isa AbstractDict{String} || parse_dict_error(path, "expected a table for $T, got $(typeof(x))")
+        T === DiagnosticPattern && return parse_diagnostic_pattern(x)
+        T === AnalysisOverride && return parse_analysis_override(x)
+        return parse_config_from_dict(T, x, path)
+    end
+    if T <: AbstractVector
+        x isa AbstractVector || parse_dict_error(path, "expected an array for $T, got $(typeof(x))")
+        E = eltype(T)
+        return E[parse_config_dict_value(E, e, path) for e in x]
+    end
     try
-        return Configurations.from_dict(JETLSConfig, config_dict)
+        return convert(T, x)
     catch e
-        # TODO: remove this when Configurations.jl support to report
-        #       full path of unknown key.
-        if e isa Configurations.InvalidKeyError
-            unknown_keys = collect_unmatched_keys(to_untyped_config_dict(config_dict))
-            if !isempty(unknown_keys)
-                if isnothing(filepath)
-                    return unmatched_keys_in_lsp_config_msg(unknown_keys)
-                else
-                    return unmatched_keys_in_config_file_msg(filepath, unknown_keys)
-                end
+        e isa MethodError || rethrow(e)
+        parse_dict_error(path, "expected $T, got $(typeof(x))")
+    end
+end
+
+"""
+    parse_config_dict(config_dict::AbstractDict{String}, filepath=nothing)
+        -> Union{JETLSConfig,String}
+
+Parse a raw `JETLSConfig` dict from `workspace/configuration` (`filepath=nothing`)
+or `.JETLSConfig.toml` (`filepath` set). Returns the parsed config on success, or a
+user-facing error message string on failure — covering unknown keys (with the full
+dotted path), invalid `[diagnostic]` patterns, and any other parse error.
+"""
+function parse_config_dict(
+        config_dict::AbstractDict{String}, filepath::Union{Nothing,AbstractString} = nothing
+    )
+    try
+        return parse_config_from_dict(JETLSConfig, config_dict)
+    catch e
+        if e isa InvalidKeyError
+            if isnothing(filepath)
+                return unmatched_key_in_lsp_config_msg(e.path)
+            else
+                return unmatched_key_in_config_file_msg(filepath, e.path)
             end
         elseif e isa DiagnosticConfigError
             if isnothing(filepath)
@@ -157,70 +280,6 @@ function parse_config_dict(config_dict::AbstractDict{String}, filepath::Union{No
             Failed to load configuration file at $filepath:
             $(e)
             """
-        end
-    end
-end
-
-const UntypedConfigDict = Base.PersistentDict{String, Any}
-to_untyped_config_dict(dict::AbstractDict) =
-    UntypedConfigDict((k => (v isa AbstractDict ? to_untyped_config_dict(v) : v) for (k, v) in dict)...)
-
-const DEFAULT_UNTYPED_CONFIG_DICT = to_untyped_config_dict(Configurations.to_dict(DEFAULT_CONFIG))
-
-"""
-    collect_unmatched_keys(this::UntypedConfigDict, ref::UntypedConfigDict) -> Vector{Vector{String}}
-
-Traverses the keys of `this` and returns a list of key paths that are not present in `ref`.
-Note that this function does *not* perform deep structural comparison for keys whose values are dictionaries.
-
-# Examples
-```julia-repl
-julia> collect_unmatched_keys(
-            UntypedConfigDict("key1" => UntypedConfigDict("key2" => 0, "key3"  => 0, "key4"  => 0)),
-            UntypedConfigDict("key1" => UntypedConfigDict("key2" => 0, "diff1" => 0, "diff2" => 0))
-        )
-2-element Vector{Vector{String}}:
- ["key1", "key3"]
- ["key1", "key4"]
-
-julia> collect_unmatched_keys(
-            UntypedConfigDict("key1" => 0, "key2" => 0),
-            UntypedConfigDict("key1" => 1, "key2" => 1)
-        )
-Vector{String}[]
-
-julia> collect_unmatched_keys(
-           UntypedConfigDict("key1" => UntypedConfigDict("key2" => 0, "key3" => 0)),
-           UntypedConfigDict("diff" => UntypedConfigDict("diff" => 0, "key3" => 0))
-        )
-1-element Vector{Vector{String}}:
- ["key1"]
-```
-
-TODO: Remove this. This is a temporary workaround to report unknown keys in the config file
-      until Configurations.jl supports reporting full path of unknown keys.
-"""
-function collect_unmatched_keys(this::UntypedConfigDict, ref::UntypedConfigDict=DEFAULT_UNTYPED_CONFIG_DICT)
-    unknown_keys = Vector{String}[]
-    collect_unmatched_keys!(unknown_keys, this, ref, String[])
-    return unknown_keys
-end
-
-function collect_unmatched_keys!(
-        unknown_keys::Vector{Vector{String}},
-        this::UntypedConfigDict, ref::UntypedConfigDict, key_path::Vector{String}
-    )
-    for (k, v) in this
-        current_path = [key_path; k]
-        b = get(ref, k, nothing)
-        if b === nothing
-            push!(unknown_keys, current_path)
-        elseif v isa AbstractDict
-            if b isa AbstractDict
-                collect_unmatched_keys!(unknown_keys, v, b, current_path)
-            else
-                push!(unknown_keys, current_path)
-            end
         end
     end
 end
@@ -308,11 +367,11 @@ function notify_config_changes(
     end
 end
 
-unmatched_keys_msg(header_msg::AbstractString, unmatched_keys) =
-    header_msg * "\n" * join(map(x -> string('`', join(x, "."), '`'), unmatched_keys), ", ")
+unmatched_key_msg(header_msg::AbstractString, path::Vector{String}) =
+    string(header_msg, "\n`", join(path, "."), "`")
 
 # Rewrite raw user config dicts so deprecated key paths land at their new
-# location before `Configurations.from_dict` sees them. Returns a list of
+# location before `parse_config_from_dict` sees them. Returns a list of
 # user-facing warnings — one per deprecation actually present.
 #
 # The struct schema only knows the current key paths, so callers must invoke
