@@ -639,7 +639,19 @@ end
         @test JS.kind(node) === JS.K"call"
         @test JS.sourcetext(node) == "obj.method(x)"
     end
-    # cursor not inside any call
+    # `K"ref"` (indexing) is treated as call-like since it lowers to `getindex`
+    let node = get_enclosing_call("xs[2]│")
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"ref"
+        @test JS.sourcetext(node) == "xs[2]"
+    end
+    # `K"tuple"` is treated as call-like
+    let node = get_enclosing_call("(1, 2)│")
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"tuple"
+        @test JS.sourcetext(node) == "(1, 2)"
+    end
+    # cursor not inside any call-like expression
     @test isnothing(get_enclosing_call("x = 42│"))
     @test isnothing(get_enclosing_call("│"))
 end

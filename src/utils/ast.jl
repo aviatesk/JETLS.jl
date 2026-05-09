@@ -1096,12 +1096,16 @@ end
     select_enclosing_call(st0::SyntaxTreeC, offset::Integer) ->
         target::Union{SyntaxTreeC, Nothing}
 
-Innermost `K"call"` / `K"dotcall"` whose byte range contains `offset`.
+Innermost `K"call"` / `K"dotcall"` / `K"ref"` / `K"tuple"` whose byte range
+contains `offset` — that is, the surface forms whose value is the result of
+a callable application (`f(args)`, `obj.f(args)`, `arr[idx]`, all of which
+lower to a `K"call"` and so carry an inferred return type).
+
 Probes both `offset` and `offset - 1`, picking the more specific (smaller
-byte range) call when both yield a hit. This makes `func(args)│` and
-`outer(inner(x)│)` symmetric — both resolve to the call that just
-closed at the cursor, rather than to whichever enclosing call also
-happens to span that byte.
+byte range) match when both yield a hit. This makes `func(args)│` and
+`outer(inner(x)│)` symmetric — both resolve to the form that just closed
+at the cursor, rather than to whichever enclosing form also happens to
+span that byte.
 """
 function select_enclosing_call(st0::SyntaxTreeC, offset::Integer)
     a = _innermost_call_at(st0, offset)
@@ -1114,7 +1118,7 @@ end
 
 function _innermost_call_at(st0::SyntaxTreeC, offset::Integer)
     for b in byte_ancestors(st0, offset)
-        JS.kind(b) in JS.KSet"call dotcall" && return b
+        JS.kind(b) in JS.KSet"call dotcall ref tuple" && return b
     end
     return nothing
 end
