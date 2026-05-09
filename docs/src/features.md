@@ -43,14 +43,18 @@ codes and examples.
 Parse errors detected by
 [JuliaSyntax.jl](https://github.com/JuliaLang/JuliaSyntax.jl).
 
-```@raw html
-<div class="display-light-only">
-  <img src="assets/features/diagnostic-syntax.png" alt="Syntax diagnostic">
-</div>
-<div class="display-dark-only">
-  <img src="assets/features/diagnostic-syntax-dark.png" alt="Syntax diagnostic">
-</div>
-```
+> ```@raw html
+> <div class="display-light-only">
+> ```
+> ![Syntax diagnostic](assets/features/diagnostic-syntax.png)
+> ```@raw html
+> </div>
+> <div class="display-dark-only">
+> ```
+> ![Syntax diagnostic](assets/features/diagnostic-syntax-dark.png)
+> ```@raw html
+> </div>
+> ```
 
 ### [Lowering diagnostics](@id features/diagnostic/lowering)
 
@@ -59,14 +63,18 @@ Static analysis issues produced during lowering by
 including undefined / unused bindings, unreachable code, scope
 ambiguities, and import-related issues.
 
-```@raw html
-<div class="display-light-only">
-  <img src="assets/features/diagnostic-lowering.png" alt="Lowering diagnostic">
-</div>
-<div class="display-dark-only">
-  <img src="assets/features/diagnostic-lowering-dark.png" alt="Lowering diagnostic">
-</div>
-```
+> ```@raw html
+> <div class="display-light-only">
+> ```
+> ![Lowering diagnostic](assets/features/diagnostic-lowering.png)
+> ```@raw html
+> </div>
+> <div class="display-dark-only">
+> ```
+> ![Lowering diagnostic](assets/features/diagnostic-lowering-dark.png)
+> ```@raw html
+> </div>
+> ```
 
 ### [Inference diagnostics](@id features/diagnostic/inference)
 
@@ -74,14 +82,18 @@ Type-level issues caught by [JET.jl](https://github.com/aviatesk/JET.jl)
 during type inference, such as non-existent field access, out-of-bounds
 indexing, method errors, and non-boolean conditions.
 
-```@raw html
-<div class="display-light-only">
-  <img src="assets/features/diagnostic-inference.png" alt="Inference diagnostic">
-</div>
-<div class="display-dark-only">
-  <img src="assets/features/diagnostic-inference-dark.png" alt="Inference diagnostic">
-</div>
-```
+> ```@raw html
+> <div class="display-light-only">
+> ```
+> ![Inference diagnostic](assets/features/diagnostic-inference.png)
+> ```@raw html
+> </div>
+> <div class="display-dark-only">
+> ```
+> ![Inference diagnostic](assets/features/diagnostic-inference-dark.png)
+> ```@raw html
+> </div>
+> ```
 
 ## [Completion](@id features/completion)
 
@@ -93,14 +105,18 @@ Completion for global symbols (functions, types, modules, constants) and
 local bindings. Global completion items include detailed kind information
 resolved lazily when a candidate is selected.
 
-```@raw html
-<div class="display-light-only">
-  <img src="assets/features/completion-global-local.png" alt="Global and local completion">
-</div>
-<div class="display-dark-only">
-  <img src="assets/features/completion-global-local-dark.png" alt="Global and local completion">
-</div>
-```
+> ```@raw html
+> <div class="display-light-only">
+> ```
+> ![Global and local completion](assets/features/completion-global-local.png)
+> ```@raw html
+> </div>
+> <div class="display-dark-only">
+> ```
+> ![Global and local completion](assets/features/completion-global-local-dark.png)
+> ```@raw html
+> </div>
+> ```
 
 ### [Method signature completion](@id features/completion/method-signature)
 
@@ -114,14 +130,18 @@ See [`[completion.method_signature] prepend_inference_result`](@ref
 config/completion/method_signature/prepend_inference_result) for the
 configuration option that shows the inferred return type inline.
 
-```@raw html
-<div class="display-light-only">
-  <img src="assets/features/completion-method.png" alt="Method signature completion">
-</div>
-<div class="display-dark-only">
-  <img src="assets/features/completion-method-dark.png" alt="Method signature completion">
-</div>
-```
+> ```@raw html
+> <div class="display-light-only">
+> ```
+> ![Method signature completion](assets/features/completion-method.png)
+> ```@raw html
+> </div>
+> <div class="display-dark-only">
+> ```
+> ![Method signature completion](assets/features/completion-method-dark.png)
+> ```@raw html
+> </div>
+> ```
 
 ### [Keyword argument completion](@id features/completion/keyword-argument)
 
@@ -129,14 +149,18 @@ Triggered inside a function call at the keyword argument position
 (e.g. `func(; |)` or `func(k|)`). Available keyword arguments are suggested
 with `=` appended. Already-specified keywords are excluded.
 
-```@raw html
-<div class="display-light-only">
-  <img src="assets/features/completion-keyword.png" alt="Keyword argument completion">
-</div>
-<div class="display-dark-only">
-  <img src="assets/features/completion-keyword-dark.png" alt="Keyword argument completion">
-</div>
-```
+> ```@raw html
+> <div class="display-light-only">
+> ```
+> ![Keyword argument completion](assets/features/completion-keyword.png)
+> ```@raw html
+> </div>
+> <div class="display-dark-only">
+> ```
+> ![Keyword argument completion](assets/features/completion-keyword-dark.png)
+> ```@raw html
+> </div>
+> ```
 
 ### [LaTeX and emoji completion](@id features/completion/latex-emoji)
 
@@ -154,10 +178,14 @@ REPL.
       <td>LaTeX symbol (<code>\</code>)</td>
       <td>
         <div class="display-light-only">
-          <img src="assets/features/completion-latex.png" alt="LaTeX completion">
+```
+![LaTeX completion](assets/features/completion-latex.png)
+```@raw html
         </div>
         <div class="display-dark-only">
-          <img src="assets/features/completion-latex-dark.png" alt="LaTeX completion">
+```
+![LaTeX completion](assets/features/completion-latex-dark.png)
+```@raw html
         </div>
       </td>
     </tr>
@@ -165,10 +193,14 @@ REPL.
       <td>Emoji (<code>\:</code>)</td>
       <td>
         <div class="display-light-only">
-          <img src="assets/features/completion-emoji.png" alt="Emoji completion">
+```
+![Emoji completion](assets/features/completion-emoji.png)
+```@raw html
         </div>
         <div class="display-dark-only">
-          <img src="assets/features/completion-emoji-dark.png" alt="Emoji completion">
+```
+![Emoji completion](assets/features/completion-emoji-dark.png)
+```@raw html
         </div>
       </td>
     </tr>
@@ -182,28 +214,36 @@ Method signatures are displayed as you type function arguments. Methods are
 filtered based on the inferred types of already-provided arguments — e.g.,
 typing `sin(1,` shows only methods compatible with an `Int` first argument.
 
-```@raw html
-<div class="display-light-only">
-  <img src="assets/features/signature-help.png" alt="Signature help">
-</div>
-<div class="display-dark-only">
-  <img src="assets/features/signature-help-dark.png" alt="Signature help">
-</div>
-```
+> ```@raw html
+> <div class="display-light-only">
+> ```
+> ![Signature help](assets/features/signature-help.png)
+> ```@raw html
+> </div>
+> <div class="display-dark-only">
+> ```
+> ![Signature help](assets/features/signature-help-dark.png)
+> ```@raw html
+> </div>
+> ```
 
 ## [Go to definition](@id features/go-to-definition)
 
 Jump to where a symbol is defined. JETLS resolves method and module
 definitions, as well as local bindings.
 
-```@raw html
-<div class="display-light-only">
-  <img src="assets/features/definition.png" alt="Go to definition">
-</div>
-<div class="display-dark-only">
-  <img src="assets/features/definition-dark.png" alt="Go to definition">
-</div>
-```
+> ```@raw html
+> <div class="display-light-only">
+> ```
+> ![Go to definition](assets/features/definition.png)
+> ```@raw html
+> </div>
+> <div class="display-dark-only">
+> ```
+> ![Go to definition](assets/features/definition-dark.png)
+> ```@raw html
+> </div>
+> ```
 
 JETLS also implements go to declaration (`textDocument/declaration`),
 which jumps to declaration sites (e.g., `import`/`using`, `local x`, or
@@ -217,14 +257,18 @@ itself, e.g. with the cursor on a binding of type `Foo`, JETLS navigates to the
 `struct Foo` definition; for a `Vector{Int}`-typed value, it lands on `Vector`'s
 definition.
 
-```@raw html
-<div class="display-light-only">
-  <img src="assets/features/type-definition.png" alt="Go to type definition">
-</div>
-<div class="display-dark-only">
-  <img src="assets/features/type-definition-dark.png" alt="Go to type definition">
-</div>
-```
+> ```@raw html
+> <div class="display-light-only">
+> ```
+> ![Go to type definition](assets/features/type-definition.png)
+> ```@raw html
+> </div>
+> <div class="display-dark-only">
+> ```
+> ![Go to type definition](assets/features/type-definition-dark.png)
+> ```@raw html
+> </div>
+> ```
 
 The cursor can be on:
 
@@ -246,14 +290,18 @@ calls become clickable links that open the referenced file. The path
 must be a single non-interpolated string and resolve to an existing
 file relative to the current document's directory.
 
-```@raw html
-<div class="display-light-only">
-  <img src="assets/features/document-link.png" alt="Document link">
-</div>
-<div class="display-dark-only">
-  <img src="assets/features/document-link-dark.png" alt="Document link">
-</div>
-```
+> ```@raw html
+> <div class="display-light-only">
+> ```
+> ![Document link](assets/features/document-link.png)
+> ```@raw html
+> </div>
+> <div class="display-dark-only">
+> ```
+> ![Document link](assets/features/document-link-dark.png)
+> ```@raw html
+> </div>
+> ```
 
 ## [Find references](@id features/find-references)
 
@@ -262,14 +310,18 @@ package and its `include`d files). Both local and global bindings are
 supported. When the client requests `includeDeclaration=false`, method
 definitions of the target are excluded.
 
-```@raw html
-<div class="display-light-only">
-  <img src="assets/features/find-references.png" alt="Find references">
-</div>
-<div class="display-dark-only">
-  <img src="assets/features/find-references-dark.png" alt="Find references">
-</div>
-```
+> ```@raw html
+> <div class="display-light-only">
+> ```
+> ![Find references](assets/features/find-references.png)
+> ```@raw html
+> </div>
+> <div class="display-dark-only">
+> ```
+> ![Find references](assets/features/find-references-dark.png)
+> ```@raw html
+> </div>
+> ```
 
 ## [Hover](@id features/hover)
 
@@ -323,14 +375,18 @@ Highlight all occurrences of the symbol at the cursor within the current
 file, distinguishing between writes (definitions, assignments) and reads
 (uses).
 
-```@raw html
-<div class="display-light-only">
-  <img src="assets/features/document-highlight.png" alt="Document highlight">
-</div>
-<div class="display-dark-only">
-  <img src="assets/features/document-highlight-dark.png" alt="Document highlight">
-</div>
-```
+> ```@raw html
+> <div class="display-light-only">
+> ```
+> ![Document highlight](assets/features/document-highlight.png)
+> ```@raw html
+> </div>
+> <div class="display-dark-only">
+> ```
+> ![Document highlight](assets/features/document-highlight-dark.png)
+> ```@raw html
+> </div>
+> ```
 
 ## [Document and workspace symbol](@id features/symbol)
 
@@ -345,10 +401,14 @@ file, distinguishing between writes (definitions, assignments) and reads
       <td>An outline view of the current file, listing modules, functions, methods, structs, constants, etc.</td>
       <td>
         <div class="display-light-only">
-          <img src="assets/features/document-symbol.png" alt="Document symbol">
+```
+![Document symbol](assets/features/document-symbol.png)
+```@raw html
         </div>
         <div class="display-dark-only">
-          <img src="assets/features/document-symbol-dark.png" alt="Document symbol">
+```
+![Document symbol](assets/features/document-symbol-dark.png)
+```@raw html
         </div>
       </td>
     </tr>
@@ -357,10 +417,14 @@ file, distinguishing between writes (definitions, assignments) and reads
       <td>Fuzzy-search across symbols in the whole workspace.</td>
       <td>
         <div class="display-light-only">
-          <img src="assets/features/workspace-symbol.png" alt="Workspace symbol">
+```
+![Workspace symbol](assets/features/workspace-symbol.png)
+```@raw html
         </div>
         <div class="display-dark-only">
-          <img src="assets/features/workspace-symbol-dark.png" alt="Workspace symbol">
+```
+![Workspace symbol](assets/features/workspace-symbol-dark.png)
+```@raw html
         </div>
       </td>
     </tr>
@@ -384,28 +448,36 @@ follow this convention open the references panel out of the box; clients
 that don't need a client-side handler — see the
 [Neovim setup](@ref index/editor-setup/neovim) for an example.
 
-```@raw html
-<div class="display-light-only">
-  <img src="assets/features/code-lens-references.png" alt="Reference count code lens">
-</div>
-<div class="display-dark-only">
-  <img src="assets/features/code-lens-references-dark.png" alt="Reference count code lens">
-</div>
-```
+> ```@raw html
+> <div class="display-light-only">
+> ```
+> ![Reference count code lens](assets/features/code-lens-references.png)
+> ```@raw html
+> </div>
+> <div class="display-dark-only">
+> ```
+> ![Reference count code lens](assets/features/code-lens-references-dark.png)
+> ```@raw html
+> </div>
+> ```
 
 ### [TestRunner code lens](@id features/code-lens/testrunner)
 
 Run and re-run `@testset` blocks directly from the editor. See
 [TestRunner code lens](@ref testrunner/features/code-lens) for details.
 
-```@raw html
-<div class="display-light-only">
-  <img src="assets/features/code-lens-testrunner.png" alt="TestRunner code lens">
-</div>
-<div class="display-dark-only">
-  <img src="assets/features/code-lens-testrunner-dark.png" alt="TestRunner code lens">
-</div>
-```
+> ```@raw html
+> <div class="display-light-only">
+> ```
+> ![TestRunner code lens](assets/features/code-lens-testrunner.png)
+> ```@raw html
+> </div>
+> <div class="display-dark-only">
+> ```
+> ![TestRunner code lens](assets/features/code-lens-testrunner-dark.png)
+> ```@raw html
+> </div>
+> ```
 
 ## [Inlay hint](@id features/inlay-hint)
 
@@ -417,14 +489,18 @@ blocks easier.
 See [`[inlay_hint.block_end]`](@ref config/inlay_hint/block_end) for
 enable/disable and threshold configuration.
 
-```@raw html
-<div class="display-light-only">
-  <img src="assets/features/inlay-hint-block-end.png" alt="Block-end inlay hint">
-</div>
-<div class="display-dark-only">
-  <img src="assets/features/inlay-hint-block-end-dark.png" alt="Block-end inlay hint">
-</div>
-```
+> ```@raw html
+> <div class="display-light-only">
+> ```
+> ![Block-end inlay hint](assets/features/inlay-hint-block-end.png)
+> ```@raw html
+> </div>
+> <div class="display-dark-only">
+> ```
+> ![Block-end inlay hint](assets/features/inlay-hint-block-end-dark.png)
+> ```@raw html
+> </div>
+> ```
 
 ## [Semantic tokens](@id features/semantic-tokens)
 
@@ -489,14 +565,18 @@ references.[^semantic_tokens_customization]
     }
     ```
 
-```@raw html
-<div class="display-light-only">
-  <img src="assets/features/semantic-tokens.png" alt="Semantic tokens">
-</div>
-<div class="display-dark-only">
-  <img src="assets/features/semantic-tokens-dark.png" alt="Semantic tokens">
-</div>
-```
+> ```@raw html
+> <div class="display-light-only">
+> ```
+> ![Semantic tokens](assets/features/semantic-tokens.png)
+> ```@raw html
+> </div>
+> <div class="display-dark-only">
+> ```
+> ![Semantic tokens](assets/features/semantic-tokens-dark.png)
+> ```@raw html
+> </div>
+> ```
 
 Both `textDocument/semanticTokens/full` and `textDocument/semanticTokens/range`
 requests are supported. Delta updates are not implemented.
@@ -516,26 +596,34 @@ requests are supported. Delta updates are not implemented.
 Rename local or global bindings across files analyzed together (e.g., a
 package and its `include`d files).
 
-```@raw html
-<div class="display-light-only">
-  <img src="assets/features/refactoring-rename.png" alt="Rename">
-</div>
-<div class="display-dark-only">
-  <img src="assets/features/refactoring-rename-dark.png" alt="Rename">
-</div>
-```
+> ```@raw html
+> <div class="display-light-only">
+> ```
+> ![Rename](assets/features/refactoring-rename.png)
+> ```@raw html
+> </div>
+> <div class="display-dark-only">
+> ```
+> ![Rename](assets/features/refactoring-rename-dark.png)
+> ```@raw html
+> </div>
+> ```
 
 When renaming a string literal that refers to a file path
 (e.g. in `include("foo.jl")`), JETLS also renames the file on disk.
 
-```@raw html
-<div class="display-light-only">
-  <img src="assets/features/refactoring-file-rename.png" alt="File rename">
-</div>
-<div class="display-dark-only">
-  <img src="assets/features/refactoring-file-rename-dark.png" alt="File rename">
-</div>
-```
+> ```@raw html
+> <div class="display-light-only">
+> ```
+> ![File rename](assets/features/refactoring-file-rename.png)
+> ```@raw html
+> </div>
+> <div class="display-dark-only">
+> ```
+> ![File rename](assets/features/refactoring-file-rename-dark.png)
+> ```@raw html
+> </div>
+> ```
 
 ## [Code actions](@id features/code-actions)
 
@@ -560,42 +648,60 @@ A few representative examples:
     <tr>
       <td>Prefix unused variable with <code>_</code></td>
       <td>
-        <a href="diagnostic.html#diagnostic/reference/lowering/unused-argument"><code>lowering/unused-argument</code></a>
+```
+[`lowering/unused-argument`](@ref diagnostic/reference/lowering/unused-argument)
+```@raw html
       </td>
       <td>
         <div class="display-light-only">
-          <img src="assets/features/code-actions-unused-arg.png" alt="Prefix unused argument with underscore">
+```
+![Prefix unused argument with underscore](assets/features/code-actions-unused-arg.png)
+```@raw html
         </div>
         <div class="display-dark-only">
-          <img src="assets/features/code-actions-unused-arg-dark.png" alt="Prefix unused argument with underscore">
+```
+![Prefix unused argument with underscore](assets/features/code-actions-unused-arg-dark.png)
+```@raw html
         </div>
       </td>
     </tr>
     <tr>
       <td>Insert <code>global</code> / <code>local</code> declaration</td>
       <td>
-        <a href="diagnostic.html#diagnostic/reference/lowering/ambiguous-soft-scope"><code>lowering/ambiguous-soft-scope</code></a>
+```
+[`lowering/ambiguous-soft-scope`](@ref diagnostic/reference/lowering/ambiguous-soft-scope)
+```@raw html
       </td>
       <td>
         <div class="display-light-only">
-          <img src="assets/features/code-actions-soft-scope.png" alt="Insert global/local declaration">
+```
+![Insert global/local declaration](assets/features/code-actions-soft-scope.png)
+```@raw html
         </div>
         <div class="display-dark-only">
-          <img src="assets/features/code-actions-soft-scope-dark.png" alt="Insert global/local declaration">
+```
+![Insert global/local declaration](assets/features/code-actions-soft-scope-dark.png)
+```@raw html
         </div>
       </td>
     </tr>
     <tr>
       <td>Sort import names</td>
       <td>
-        <a href="diagnostic.html#diagnostic/reference/lowering/unsorted-import-names"><code>lowering/unsorted-import-names</code></a>
+```
+[`lowering/unsorted-import-names`](@ref diagnostic/reference/lowering/unsorted-import-names)
+```@raw html
       </td>
       <td>
         <div class="display-light-only">
-          <img src="assets/features/code-actions-sort-imports.png" alt="Sort import names">
+```
+![Sort import names](assets/features/code-actions-sort-imports.png)
+```@raw html
         </div>
         <div class="display-dark-only">
-          <img src="assets/features/code-actions-sort-imports-dark.png" alt="Sort import names">
+```
+![Sort import names](assets/features/code-actions-sort-imports-dark.png)
+```@raw html
         </div>
       </td>
     </tr>
@@ -618,14 +724,18 @@ via code lenses and code actions, with results surfaced as inline
 diagnostics and logs. See [TestRunner integration](@ref testrunner) for
 setup and supported patterns.
 
-```@raw html
-<div class="display-light-only">
-  <img src="assets/features/testrunner-integration.png" alt="TestRunner integration">
-</div>
-<div class="display-dark-only">
-  <img src="assets/features/testrunner-integration-dark.png" alt="TestRunner integration">
-</div>
-```
+> ```@raw html
+> <div class="display-light-only">
+> ```
+> ![TestRunner integration](assets/features/testrunner-integration.png)
+> ```@raw html
+> </div>
+> <div class="display-dark-only">
+> ```
+> ![TestRunner integration](assets/features/testrunner-integration-dark.png)
+> ```@raw html
+> </div>
+> ```
 
 ## [Notebook support](@id features/notebook)
 
@@ -634,11 +744,15 @@ Cells are analyzed together, so all LSP features including diagnostics,
 go-to definition, find-references, etc., work across cells.
 See [Notebook support](@ref notebook) for details.
 
-```@raw html
-<div class="display-light-only">
-  <img src="assets/features/notebook-support.png" alt="Notebook support">
-</div>
-<div class="display-dark-only">
-  <img src="assets/features/notebook-support-dark.png" alt="Notebook support">
-</div>
-```
+> ```@raw html
+> <div class="display-light-only">
+> ```
+> ![Notebook support](assets/features/notebook-support.png)
+> ```@raw html
+> </div>
+> <div class="display-dark-only">
+> ```
+> ![Notebook support](assets/features/notebook-support-dark.png)
+> ```@raw html
+> </div>
+> ```
