@@ -49,6 +49,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > The new shape adds [`inlay_hint.block_end.enabled`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint/block_end/enabled) for toggling block-end hints independently, and renames `inlay_hint.block_end_min_lines` to [`inlay_hint.block_end.min_lines`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint/block_end/min_lines).
 > Existing configs keep working for now: the legacy key is still accepted at load time and mapped onto the new key in memory (your config file is not modified automatically), with a one-shot deprecation warning. The legacy alias will be removed in releases after **June 2026**, so if you are still using `inlay_hint.block_end_min_lines`, please update your config.
 
+### Changed
+
+- `textDocument/semanticTokens` now classifies type parameters declared in `struct` / `abstract type` / `primitive type` headers (and their use sites inside the type body) as `typeParameter`. Previously these identifiers were classified as plain `variable`.
+
 ## 2026-05-08
 
 - Commit: [`72cc49c`](https://github.com/aviatesk/JETLS.jl/commit/72cc49c)

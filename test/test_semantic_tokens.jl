@@ -89,6 +89,69 @@ end
         @test any(t -> t.line == 0 && t.char == 32 && t.len == 1 && t.mod == 0, type_params)
     end
 
+    @testset "struct type parameter" begin
+        # Plain `struct A{T}; ... end` doesn't introduce any `:static_parameter`;
+        # we recover `T` by walking the type header.
+        let code = """
+            struct A{T}
+                x::T
+            end
+            """
+            tokens = tokens_for(code)
+            type_params = filter(t -> t.type == TYPE_TYPE_PARAMETER, tokens)
+            @test length(type_params) == 2
+            @test any(t -> t.line == 0 && t.char == 9 && t.len == 1, type_params) # struct A{T}
+            @test any(t -> t.line == 1 && t.char == 7 && t.len == 1 && t.mod == 0, type_params) # x::T
+        end
+
+        # Constrained type params and multiple params; `Number` must stay as a regular
+        # type reference, not be lifted to `typeParameter`.
+        let code = """
+            struct B{T<:Number, S}
+                x::T
+                y::S
+            end
+            """
+            tokens = tokens_for(code)
+            type_params = filter(t -> t.type == TYPE_TYPE_PARAMETER, tokens)
+            @test any(t -> t.line == 0 && t.char == 9  && t.len == 1, type_params) # T in `B{T<:...,`
+            @test any(t -> t.line == 0 && t.char == 20 && t.len == 1, type_params) # S
+            @test any(t -> t.line == 1 && t.char == 7  && t.len == 1, type_params) # x::T
+            @test any(t -> t.line == 2 && t.char == 7  && t.len == 1, type_params) # y::S
+            @test !any(t -> t.line == 0 && t.char == 12 && t.type == TYPE_TYPE_PARAMETER, tokens) # Number
+        end
+
+        # `abstract type C{T} end`
+        let code = "abstract type C{T} end\n"
+            tokens = tokens_for(code)
+            type_params = filter(t -> t.type == TYPE_TYPE_PARAMETER, tokens)
+            @test any(t -> t.line == 0 && t.char == 16 && t.len == 1, type_params)
+        end
+
+        # Parametric inner ctor: every `T` should be `typeParameter`,
+        # including the ones reachable only through the `:local` alias
+        # (`struct A{T}` header and `x::T`, which the inner ctor's
+        # `:static_parameter` scope doesn't cover).
+        let code = """
+            struct A{T}
+                x::T
+                A{T}(x) where T = new{T}(convert(T, x))
+            end
+            """
+            tokens = tokens_for(code)
+            type_params = filter(t -> t.type == TYPE_TYPE_PARAMETER, tokens)
+            @test length(type_params) == 6
+            @test any(t -> t.line == 0 && t.char == 9  && t.len == 1 &&
+                           t.mod == (MOD_DEFINITION | MOD_DECLARATION), type_params)             # struct A{T}
+            @test any(t -> t.line == 1 && t.char == 7  && t.len == 1 && t.mod == 0, type_params) # x::T
+            @test any(t -> t.line == 2 && t.char == 6  && t.len == 1 && t.mod == 0, type_params) # A{T}(x)
+            @test any(t -> t.line == 2 && t.char == 18 && t.len == 1 &&
+                           t.mod == (MOD_DEFINITION | MOD_DECLARATION), type_params)             # where T
+            @test any(t -> t.line == 2 && t.char == 26 && t.len == 1 && t.mod == 0, type_params) # new{T}
+            @test any(t -> t.line == 2 && t.char == 37 && t.len == 1 && t.mod == 0, type_params) # convert(T, x)
+        end
+    end
+
     @testset "global use is emitted as `unspecified`" begin
         code = """
         println("hello")
