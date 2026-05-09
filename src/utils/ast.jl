@@ -1090,6 +1090,54 @@ function select_target_string(st0::SyntaxTreeC, offset::Integer)
 end
 
 """
+    select_enclosing_call(st0::SyntaxTreeC, offset::Integer) ->
+        target::Union{SyntaxTreeC, Nothing}
+
+Innermost `K"call"` / `K"dotcall"` whose byte range contains `offset`.
+Probes both `offset` and `offset - 1`, picking the more specific (smaller
+byte range) call when both yield a hit. This makes `func(args)│` and
+`outer(inner(x)│)` symmetric — both resolve to the call that just
+closed at the cursor, rather than to whichever enclosing call also
+happens to span that byte.
+"""
+function select_enclosing_call(st0::SyntaxTreeC, offset::Integer)
+    a = _innermost_call_at(st0, offset)
+    offset > 0 || return a
+    b = _innermost_call_at(st0, offset - 1)
+    a === nothing && return b
+    b === nothing && return a
+    return length(JS.byte_range(a)) <= length(JS.byte_range(b)) ? a : b
+end
+
+function _innermost_call_at(st0::SyntaxTreeC, offset::Integer)
+    for b in byte_ancestors(st0, offset)
+        JS.kind(b) in JS.KSet"call dotcall" && return b
+    end
+    return nothing
+end
+
+"""
+    select_target_for_type_query(st0::SyntaxTreeC, offset::Integer) ->
+        target::Union{SyntaxTreeC, Nothing}
+
+Pick the AST node whose `JS.byte_range` should be passed to `get_type_for_range` for the
+cursor at `offset`. Falls back through:
+
+1. [`select_target_identifier`](@ref) — handles identifiers and dot-chain expressions
+   (`Base.Compi│ler.tmeet` → `Base.Compiler`).
+2. [`select_enclosing_call`](@ref) — handles cursor positions that aren't on an identifier
+   but are inside (or right after) a call expression (`func(args)│` → the `func(args)` call,
+   whose type is the call's return type).
+
+Intended as the canonical cursor → AST resolver for TypeAnnotation-based features
+(type definition, hover-type, etc.).
+"""
+select_target_for_type_query(st0::SyntaxTreeC, offset::Integer) =
+    @something(
+        select_target_identifier(st0, offset),
+        return select_enclosing_call(st0, offset))
+
+"""
     resolve_path_string_literal(string_node::SyntaxTreeC, basedir::AbstractString)
         -> Union{Nothing, @NamedTuple{value::String, path::String}}
 

@@ -600,6 +600,87 @@ end
     @test isnothing(get_target_string("foo│()"))
 end
 
+select_enclosing_call(code::AbstractString, pos::Int) = JETLS.select_enclosing_call(jlparse(code), pos)
+function get_enclosing_call(code::AbstractString; kwargs...)
+    clean_code, positions = JETLS.get_text_and_positions(code; kwargs...)
+    @assert length(positions) == 1
+    fi = JETLS.FileInfo(1, clean_code, @__FILE__)
+    return select_enclosing_call(clean_code, JETLS.xy_to_offset(fi, positions[1]))
+end
+@testset "`select_enclosing_call`" begin
+    # cursor right after `)` resolves via the `offset - 1` retry
+    let node = get_enclosing_call("foo(1, 2)│")
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"call"
+        @test JS.sourcetext(node) == "foo(1, 2)"
+    end
+    # cursor inside the call's argument list
+    let node = get_enclosing_call("foo(1, │2)")
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"call"
+        @test JS.sourcetext(node) == "foo(1, 2)"
+    end
+    # innermost call wins when cursor sits inside both
+    let node = get_enclosing_call("outer(inner(│x))")
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"call"
+        @test JS.sourcetext(node) == "inner(x)"
+    end
+    # right after the inner `)` the more specific (inner) call wins over the
+    # outer call that also spans the cursor — symmetric with `func(args)│`
+    let node = get_enclosing_call("outer(inner(x)│)")
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"call"
+        @test JS.sourcetext(node) == "inner(x)"
+    end
+    # method call (dot-call expression)
+    let node = get_enclosing_call("obj.method(x)│")
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"call"
+        @test JS.sourcetext(node) == "obj.method(x)"
+    end
+    # cursor not inside any call
+    @test isnothing(get_enclosing_call("x = 42│"))
+    @test isnothing(get_enclosing_call("│"))
+end
+
+select_target_for_type_query(code::AbstractString, pos::Int) =
+    JETLS.select_target_for_type_query(jlparse(code), pos)
+function get_target_for_type_query(code::AbstractString; kwargs...)
+    clean_code, positions = JETLS.get_text_and_positions(code; kwargs...)
+    @assert length(positions) == 1
+    fi = JETLS.FileInfo(1, clean_code, @__FILE__)
+    return select_target_for_type_query(clean_code, JETLS.xy_to_offset(fi, positions[1]))
+end
+@testset "`select_target_for_type_query`" begin
+    # identifier path mirrors `select_target_identifier`
+    let node = get_target_for_type_query("f│oo(x)")
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"Identifier"
+        @test JS.sourcetext(node) == "foo"
+    end
+    # dot-chain path: walk up through `K"."` like `select_target_identifier`
+    let node = get_target_for_type_query("Base.Pa│ir(1, 2)")
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"."
+        @test JS.sourcetext(node) == "Base.Pair"
+    end
+    # call fallback when there is no identifier at the cursor
+    let node = get_target_for_type_query("foo(1, 2)│")
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"call"
+        @test JS.sourcetext(node) == "foo(1, 2)"
+    end
+    let node = get_target_for_type_query("Base.Pair(1, 2)│")
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"call"
+        @test JS.sourcetext(node) == "Base.Pair(1, 2)"
+    end
+    # neither identifier nor enclosing call
+    @test isnothing(get_target_for_type_query("x = 42│"))
+    @test isnothing(get_target_for_type_query("│"))
+end
+
 get_dotprefix_identifier(code::AbstractString, pos::Int) = JETLS.select_dotprefix_identifier(jlparse(code), pos)
 function get_dotprefix_identifier(code::AbstractString; kwargs...)
     clean_code, positions = JETLS.get_text_and_positions(code; kwargs...)
