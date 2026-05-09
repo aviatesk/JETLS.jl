@@ -419,6 +419,41 @@ end
                 @test raw_res.result isa RelatedFullDocumentDiagnosticReport
                 @test raw_res.result.resultId == second_result_id
             end
+
+            # `:diagnostic` config change → `resultId` changes so the client-side cached
+            # `Unchanged` response is invalidated when the server's `request_diagnostic_refresh!`
+            # prompts the client to re-pull.
+            let settings = Dict{String,Any}(
+                    "diagnostic" => Dict{String,Any}("allow_unused_underscore" => false))
+                (; raw_res) = writereadmsg(DidChangeConfigurationNotification(;
+                        params = DidChangeConfigurationParams(; settings));
+                    read = 2)
+                @test count(msg -> msg isa ShowMessageNotification, raw_res) == 1
+                @test count(msg -> msg isa PublishDiagnosticsNotification, raw_res) == 1
+            end
+
+            local third_result_id::String
+            let id = id_counter[] += 1
+                (; raw_res) = writereadmsg(DocumentDiagnosticRequest(;
+                    id,
+                    params = DocumentDiagnosticParams(;
+                        textDocument = TextDocumentIdentifier(; uri),
+                        previousResultId = second_result_id)))
+                @test raw_res isa DocumentDiagnosticResponse
+                @test raw_res.result isa RelatedFullDocumentDiagnosticReport
+                @test raw_res.result.resultId != second_result_id
+                third_result_id = raw_res.result.resultId
+            end
+            let id = id_counter[] += 1
+                (; raw_res) = writereadmsg(DocumentDiagnosticRequest(;
+                    id,
+                    params = DocumentDiagnosticParams(;
+                        textDocument = TextDocumentIdentifier(; uri),
+                        previousResultId = third_result_id)))
+                @test raw_res isa DocumentDiagnosticResponse
+                @test raw_res.result isa RelatedUnchangedDocumentDiagnosticReport
+                @test raw_res.result.resultId == third_result_id
+            end
         end
     end
 end
