@@ -105,7 +105,7 @@ const TESTRUNNER_DEFAULT = JETLS.get_config(JETLS.ConfigManager(JETLS.ConfigMana
                 (; raw_res) = writereadmsg(msg)
                 @test raw_res isa ShowMessageNotification
                 @test raw_res.params.type == MessageType.Error
-                expected_error_msg = JETLS.unmatched_keys_in_config_file_msg(config_path, [["full_analysis", "___unknown_key___"]])
+                expected_error_msg = JETLS.unmatched_key_in_config_file_msg(config_path, ["full_analysis", "___unknown_key___"])
                 @test occursin(expected_error_msg, raw_res.params.message)
             end
 

@@ -597,8 +597,6 @@ end
     end
 end
 
-using JETLS.Configurations: Configurations
-
 function make_test_diagnostic(;
         code::String,
         severity::DiagnosticSeverity.Ty,
@@ -616,7 +614,7 @@ function make_test_diagnostic(;
 end
 
 function make_test_manager(config_dict::Dict{String,Any})
-    lsp_config = JETLS.Configurations.from_dict(JETLS.JETLSConfig, config_dict)
+    lsp_config = JETLS.parse_config_from_dict(JETLS.JETLSConfig, config_dict)
     data = JETLS.ConfigManagerData(JETLS.EMPTY_CONFIG, lsp_config, nothing, true)
     return JETLS.ConfigManager(data)
 end
@@ -625,12 +623,12 @@ end
     @testset "DiagnosticConfig parsing/validation" begin
         @testset "valid patterns" begin
             let config_raw = Dict{String,Any}()
-                config = Configurations.from_dict(JETLS.DiagnosticConfig, config_raw)
+                config = JETLS.parse_config_from_dict(JETLS.DiagnosticConfig, config_raw)
                 @test config.enabled === nothing
                 @test config.patterns === nothing
             end
             let config_raw = Dict{String,Any}("enabled" => false)
-                config = Configurations.from_dict(JETLS.DiagnosticConfig, config_raw)
+                config = JETLS.parse_config_from_dict(JETLS.DiagnosticConfig, config_raw)
                 @test config.enabled === false
                 @test config.patterns === nothing
             end
@@ -643,7 +641,7 @@ end
                             "match_type" => "literal",
                             "severity" => "hint")
                     ])
-                config = Configurations.from_dict(JETLS.DiagnosticConfig, config_raw)
+                config = JETLS.parse_config_from_dict(JETLS.DiagnosticConfig, config_raw)
                 @test config.enabled === nothing
                 @test config.patterns !== nothing
                 @test length(config.patterns) == 1
@@ -662,7 +660,7 @@ end
                             "match_type" => "literal",
                             "severity" => 4)
                     ])
-                config = Configurations.from_dict(JETLS.DiagnosticConfig, config_raw)
+                config = JETLS.parse_config_from_dict(JETLS.DiagnosticConfig, config_raw)
                 pattern = only(config.patterns)
                 @test pattern.severity == DiagnosticSeverity.Hint
             end
@@ -675,7 +673,7 @@ end
                             "match_type" => "regex",
                             "severity" => "off")
                     ])
-                config = Configurations.from_dict(JETLS.DiagnosticConfig, config_raw)
+                config = JETLS.parse_config_from_dict(JETLS.DiagnosticConfig, config_raw)
                 pattern = only(config.patterns)
                 @test pattern.match_type == "regex"
                 @test pattern.pattern isa Regex
@@ -691,7 +689,7 @@ end
                             "match_type" => "literal",
                             "severity" => "info")
                     ])
-                config = Configurations.from_dict(JETLS.DiagnosticConfig, config_raw)
+                config = JETLS.parse_config_from_dict(JETLS.DiagnosticConfig, config_raw)
                 pattern = only(config.patterns)
                 @test pattern.match_by == "message"
                 @test pattern.pattern == "Macro name `@namespace` not found"
@@ -706,7 +704,7 @@ end
                             "match_type" => "regex",
                             "severity" => "hint")
                     ])
-                config = Configurations.from_dict(JETLS.DiagnosticConfig, config_raw)
+                config = JETLS.parse_config_from_dict(JETLS.DiagnosticConfig, config_raw)
                 pattern = only(config.patterns)
                 @test pattern.match_by == "message"
                 @test pattern.pattern isa Regex
@@ -729,7 +727,7 @@ end
                             "match_type" => "literal",
                             "severity" => "hint")
                     ])
-                config = Configurations.from_dict(JETLS.DiagnosticConfig, config_raw)
+                config = JETLS.parse_config_from_dict(JETLS.DiagnosticConfig, config_raw)
                 @test config.enabled === true
                 @test config.patterns !== nothing
                 @test length(config.patterns) == 2
@@ -744,7 +742,7 @@ end
                             "severity" => "hint",
                             "path" => "test/**/*.jl")
                     ])
-                config = Configurations.from_dict(JETLS.DiagnosticConfig, config_raw)
+                config = JETLS.parse_config_from_dict(JETLS.DiagnosticConfig, config_raw)
                 pattern = only(config.patterns)
                 @test pattern.path !== nothing
                 @test pattern.path isa Glob.FilenameMatch
@@ -759,7 +757,7 @@ end
         @testset "invalid patterns" begin
             let config_raw = Dict{String,Any}(
                     "invalid" => [])
-                @test_throws Configurations.InvalidKeyError Configurations.from_dict(
+                @test_throws JETLS.InvalidKeyError JETLS.parse_config_from_dict(
                     JETLS.DiagnosticConfig, config_raw)
             end
             let config_raw = Dict{String,Any}(
@@ -769,7 +767,7 @@ end
                             "match_type" => "literal",
                             "severity" => "info")
                     ])
-                @test_throws JETLS.DiagnosticConfigError Configurations.from_dict(
+                @test_throws JETLS.DiagnosticConfigError JETLS.parse_config_from_dict(
                     JETLS.DiagnosticConfig, config_raw)
             end
             let config_raw = Dict{String,Any}(
@@ -779,7 +777,7 @@ end
                             "match_type" => "literal",
                             "severity" => "info")
                     ])
-                @test_throws JETLS.DiagnosticConfigError Configurations.from_dict(
+                @test_throws JETLS.DiagnosticConfigError JETLS.parse_config_from_dict(
                     JETLS.DiagnosticConfig, config_raw)
             end
             let config_raw = Dict{String,Any}(
@@ -789,7 +787,7 @@ end
                             "match_by" => "code",
                             "severity" => "info")
                     ])
-                @test_throws JETLS.DiagnosticConfigError Configurations.from_dict(
+                @test_throws JETLS.DiagnosticConfigError JETLS.parse_config_from_dict(
                     JETLS.DiagnosticConfig, config_raw)
             end
             let config_raw = Dict{String,Any}(
@@ -799,7 +797,7 @@ end
                             "match_by" => "code",
                             "match_type" => "literal",)
                     ])
-                @test_throws JETLS.DiagnosticConfigError Configurations.from_dict(
+                @test_throws JETLS.DiagnosticConfigError JETLS.parse_config_from_dict(
                     JETLS.DiagnosticConfig, config_raw)
             end
             let config_raw = Dict{String,Any}(
@@ -810,7 +808,7 @@ end
                             "severity" => "info",
                             "match_type" => "literal")
                     ])
-                @test_throws JETLS.DiagnosticConfigError Configurations.from_dict(
+                @test_throws JETLS.DiagnosticConfigError JETLS.parse_config_from_dict(
                     JETLS.DiagnosticConfig, config_raw)
             end
             let config_raw = Dict{String,Any}(
@@ -821,7 +819,7 @@ end
                             "severity" => "info",
                             "match_type" => "literal")
                     ])
-                @test_throws JETLS.DiagnosticConfigError Configurations.from_dict(
+                @test_throws JETLS.DiagnosticConfigError JETLS.parse_config_from_dict(
                     JETLS.DiagnosticConfig, config_raw)
             end
             let config_raw = Dict{String,Any}(
@@ -832,7 +830,7 @@ end
                             "severity" => "invalid",
                             "match_type" => "literal")
                     ])
-                @test_throws JETLS.DiagnosticConfigError Configurations.from_dict(
+                @test_throws JETLS.DiagnosticConfigError JETLS.parse_config_from_dict(
                     JETLS.DiagnosticConfig, config_raw)
             end
             let config_raw = Dict{String,Any}(
@@ -843,7 +841,7 @@ end
                             "severity" => 5,
                             "match_type" => "literal")
                     ])
-                @test_throws JETLS.DiagnosticConfigError Configurations.from_dict(
+                @test_throws JETLS.DiagnosticConfigError JETLS.parse_config_from_dict(
                     JETLS.DiagnosticConfig, config_raw)
             end
             let config_raw = Dict{String,Any}(
@@ -854,7 +852,7 @@ end
                             "severity" => Dict{String,Any}(),
                             "match_type" => "literal")
                     ])
-                @test_throws JETLS.DiagnosticConfigError Configurations.from_dict(
+                @test_throws JETLS.DiagnosticConfigError JETLS.parse_config_from_dict(
                     JETLS.DiagnosticConfig, config_raw)
             end
             let config_raw = Dict{String,Any}(
@@ -865,7 +863,7 @@ end
                             "match_type" => "invalid",
                             "severity" => "info")
                     ])
-                @test_throws JETLS.DiagnosticConfigError Configurations.from_dict(
+                @test_throws JETLS.DiagnosticConfigError JETLS.parse_config_from_dict(
                     JETLS.DiagnosticConfig, config_raw)
             end
             let config_raw = Dict{String,Any}(
@@ -876,7 +874,7 @@ end
                             "match_type" => Dict{String,Any}(),
                             "severity" => "info")
                     ])
-                @test_throws JETLS.DiagnosticConfigError Configurations.from_dict(
+                @test_throws JETLS.DiagnosticConfigError JETLS.parse_config_from_dict(
                     JETLS.DiagnosticConfig, config_raw)
             end
             let config_raw = Dict{String,Any}(
@@ -887,7 +885,7 @@ end
                             "match_type" => "regex",
                             "severity" => "info")
                     ])
-                @test_throws JETLS.DiagnosticConfigError Configurations.from_dict(
+                @test_throws JETLS.DiagnosticConfigError JETLS.parse_config_from_dict(
                     JETLS.DiagnosticConfig, config_raw)
             end
             let config_raw = Dict{String,Any}(
@@ -899,7 +897,7 @@ end
                             "severity" => "info",
                             "invalid_key" => "value")
                     ])
-                @test_throws JETLS.DiagnosticConfigError Configurations.from_dict(
+                @test_throws JETLS.DiagnosticConfigError JETLS.parse_config_from_dict(
                     JETLS.DiagnosticConfig, config_raw)
             end
             let config_raw = Dict{String,Any}(
@@ -911,7 +909,7 @@ end
                             "severity" => "hint",
                             "path" => 123)
                     ])
-                @test_throws JETLS.DiagnosticConfigError Configurations.from_dict(
+                @test_throws JETLS.DiagnosticConfigError JETLS.parse_config_from_dict(
                     JETLS.DiagnosticConfig, config_raw)
             end
         end

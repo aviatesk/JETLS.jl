@@ -8,7 +8,6 @@ projects = ["docs", "test", "scripts"]
 
 [deps]
 Compiler = "807dbc54-b67e-4c79-8afb-eafe4df6f2e1"
-Configurations = "5218b696-f38b-4ac9-8b61-a12ec717816d"
 Glob = "c27321d9-0574-5035-807b-f59d2c89b15c"
 JET = "c3a54625-cd67-489e-a8e7-0a5a0ff4e31b"
 JuliaLowering = "f3c80556-a63f-4383-b822-37d64f81a311"
@@ -34,7 +33,6 @@ LSP = {path = "LSP"}
 
 [compat]
 Compiler = "0.1.1"
-Configurations = "0.17.6"
 Glob = "1.4"
 JET = "0.10.6"
 JuliaLowering = "1"

@@ -55,6 +55,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Fixed pull-model diagnostics (`textDocument/diagnostic` and `workspace/diagnostic`) to refresh after `[diagnostic]` configuration changes. Previously, changing settings such as `diagnostic.enabled`, `diagnostic.allow_unused_underscore`, or `diagnostic.patterns` did not invalidate the client's cached results, so stale diagnostics remained until the file was edited.
 
+### Changed
+
+- Configuration parse errors now point at the offending key with its full dotted path, e.g. ```Invalid value at `diagnostic.allow_unused_underscore`: expected Bool, got String``` for type mismatches and ```Configuration file at … contains an unknown key: \`diagnostic.unknown_field\` ``` for unrecognized keys. Previously these messages either omitted the location entirely or referenced only the immediate key.
+
+- Dropped the dependency on Configurations.jl. Configuration parsing and validation are now handled in-tree, so JETLS pulls in fewer transitive packages on first install and load.
+
 ## 2026-05-06
 
 - Commit: [`732c537`](https://github.com/aviatesk/JETLS.jl/commit/732c537)
