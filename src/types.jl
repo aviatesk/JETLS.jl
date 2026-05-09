@@ -489,6 +489,18 @@ merge_key_value(pattern::DiagnosticPattern) =
     allow_unused_underscore::Maybe{Bool}
     patterns::Maybe{Vector{DiagnosticPattern}}
 end
+# `@option` only generates content-based `==`, not `hash`, so the default `hash` falls
+# back to `objectid` and breaks the `==`/`hash` contract for `DiagnosticConfig` (its
+# `patterns::Vector` makes the parent's identity-based hash unstable across equal-valued
+# instances). `compute_diagnostic_result_id` folds this hash into pull-diagnostic
+# resultIds, so a content-based definition is required to avoid spurious invalidations.
+function Base.hash(config::DiagnosticConfig, h::UInt)
+    h = hash(config.enabled, h)
+    h = hash(config.all_files, h)
+    h = hash(config.allow_unused_underscore, h)
+    h = hash(config.patterns, h)
+    return h
+end
 
 # Internal, undocumented configuration for full-analysis module overrides.
 struct AnalysisOverride <: ConfigSection

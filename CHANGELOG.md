@@ -53,6 +53,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - JETLS now performs correct scope resolution on identifiers used inside Test.jl macro calls (i.e., `@testset`, `@test`, `@test_throws`, `@test_broken`, `@test_skip`, `@test_warn`, `@test_nowarn`, `@test_logs`, `@test_deprecated`, and `@inferred`), which previously could yield incorrect results in edge cases.
 
+- Fixed pull-model diagnostics (`textDocument/diagnostic` and `workspace/diagnostic`) to refresh after `[diagnostic]` configuration changes. Previously, changing settings such as `diagnostic.enabled`, `diagnostic.allow_unused_underscore`, or `diagnostic.patterns` did not invalidate the client's cached results, so stale diagnostics remained until the file was edited.
+
 ## 2026-05-06
 
 - Commit: [`732c537`](https://github.com/aviatesk/JETLS.jl/commit/732c537)
