@@ -161,7 +161,7 @@ function hover_type_string(@nospecialize(typ), source_text::AbstractString)
         return string(widened)
     end
     CC.isType(widened) && return nothing
-    return string(widened)
+    return string(widened)::String
 end
 
 # Look up the docstring for `parentmod.name`. Returns `nothing` on lookup

@@ -67,7 +67,7 @@ detail of the inference path — the user never wrote `OpaqueClosure` — so con
 want to surface the inferred closure type to the user should reformat it via this helper.
 """
 function format_opaque_closure_type(@nospecialize T)
-    argt, rt = @something unpack_opaque_closure_type(T) return string(T)
+    argt, rt = @something unpack_opaque_closure_type(T) return string(T)::String
     arg_strs = String[string(p) for p in argt.parameters]
     return string("(", join(arg_strs, ", "), ") -> ", rt)
 end
