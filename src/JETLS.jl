@@ -100,6 +100,8 @@ using .Closure2Opaque
 include("analysis/TypeAnnotation.jl")
 using .TypeAnnotation
 
+include("utils/type-annotation-utils.jl")
+
 include("init-options.jl")
 include("config.jl")
 include("workspace-configuration.jl")

@@ -325,47 +325,95 @@ definitions of the target are excluded.
 
 ## [Hover](@id features/hover)
 
-Hover over symbols to see documentation and source locations.
+Hover surfaces the inferred type and documentation at the cursor. It
+works on any identifier, dot expression (`Base.Compi│ler.tmeet`), call
+result (`func(args)│`), or indexing position (`xs[i]│`), and the type
+is queried at the cursor's byte range so flow-sensitive narrowing is
+reflected.
+
+Documentation is gathered both from the binding's own docstring and
+from the docstring of whatever value the expression resolves to via
+type inference (so e.g. hovering on `some.value` can surface `sin`'s
+docstring when the field resolves to `sin`).
+
+The type header is rendered as `expr :: T`, with a few specialized
+shapes:
+
+- Bindings carry a kind tag — `(argument)`, `(local)`,
+  `(static parameter)`, or `(global)` — before the name.
+- Closures are displayed as `(args::T...) -> rt`, with argument names recovered
+  from the body method when available.
+- Function singletons render as `typeof(<name>)` only when the source
+  text doesn't already mention the name, avoiding noise like
+  `sin :: typeof(sin)`.
 
 ```@raw html
 <table>
-<thead>
-<tr><th>Binding kind</th><th>Description</th><th>Example</th></tr>
-</thead>
-<tbody>
-<tr>
-<td>Global binding</td>
-<td>Shows documentation from the binding's docstring along with its source location.</td>
-<td>
-<div class="display-light-only">
+  <thead>
+    <tr><th>Target</th><th>Example</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Global binding</td>
+      <td>
+        <div class="display-light-only">
 ```
-![Hover on global binding](assets/features/hover-global-binding.png)
+![Hover on a global binding](assets/features/hover-global.png)
 ```@raw html
-</div>
-<div class="display-dark-only">
+        </div>
+        <div class="display-dark-only">
 ```
-![Hover on global binding](assets/features/hover-global-binding-dark.png)
+![Hover on a global binding](assets/features/hover-global-dark.png)
 ```@raw html
-</div>
-</td>
-</tr>
-<tr>
-<td>Local binding</td>
-<td>Shows the binding's definition location within the enclosing scope.</td>
-<td>
-<div class="display-light-only">
+        </div>
+      </td>
+    </tr>
+    <tr>
+      <td>Local binding</td>
+      <td>
+        <div class="display-light-only">
 ```
-![Hover on local binding](assets/features/hover-local-binding.png)
+![Hover on a local binding](assets/features/hover-local.png)
 ```@raw html
-</div>
-<div class="display-dark-only">
+        </div>
+        <div class="display-dark-only">
 ```
-![Hover on local binding](assets/features/hover-local-binding-dark.png)
+![Hover on a local binding](assets/features/hover-local-dark.png)
 ```@raw html
-</div>
-</td>
-</tr>
-</tbody>
+        </div>
+      </td>
+    </tr>
+    <tr>
+      <td>Call</td>
+      <td>
+        <div class="display-light-only">
+```
+![Hover on a call expression](assets/features/hover-call.png)
+```@raw html
+        </div>
+        <div class="display-dark-only">
+```
+![Hover on a call expression](assets/features/hover-call-dark.png)
+```@raw html
+        </div>
+      </td>
+    </tr>
+    <tr>
+      <td>Closure</td>
+      <td>
+        <div class="display-light-only">
+```
+![Hover on a closure](assets/features/hover-closure.png)
+```@raw html
+        </div>
+        <div class="display-dark-only">
+```
+![Hover on a closure](assets/features/hover-closure-dark.png)
+```@raw html
+        </div>
+      </td>
+    </tr>
+  </tbody>
 </table>
 ```
 
