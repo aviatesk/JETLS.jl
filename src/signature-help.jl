@@ -575,6 +575,7 @@ function cursor_siginfos(mod::Module, fi::FileInfo, b::Int, analyzer::LSAnalyzer
     argtypes′ = copy(argtypes)
     fixup_argtypes!(argtypes, fntyp)
     matches = find_all_matches(argtypes)
+    matches === nothing && return empty_siginfos
     isempty(matches) && return empty_siginfos
 
     # Influence parameter highlighting by selecting the active argument (which

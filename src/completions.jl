@@ -617,6 +617,7 @@ function call_completions!(
     argtypes = collect_call_argtypes(analyzer, mod, ca)
     fixup_argtypes!(argtypes, fntyp)
     matches = find_all_matches(argtypes)
+    matches === nothing && return nothing
     isempty(matches) && return nothing
 
     num_existing_args = ca.kw_i - 1
