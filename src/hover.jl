@@ -151,8 +151,11 @@ function hover_type_string(@nospecialize(typ), source_text::AbstractString)
     widened === Union{} && return nothing
     widened <: Core.OpaqueClosure && return format_opaque_closure_type(widened)
     if widened <: Function && CC.issingletontype(widened)
-        name = String(nameof(widened.instance))
-        if occursin(Regex("\\b" * Base.escape_string(name) * "\\b"), source_text)
+        # `\b` fails on names ending in `!` like `push!` since `!(` is
+        # non-word/non-word with no transition; spell out identifier
+        # boundaries and use `\Q\E` so operator names like `+` are literal.
+        name = String(nameof(widened.instance)::Symbol)
+        if occursin(Regex("(?<!\\w)\\Q" * name * "\\E(?![\\w!])"), source_text)
             return nothing
         end
         return string(widened)

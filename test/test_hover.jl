@@ -49,6 +49,8 @@ function single_hover_test(
     end
 end
 
+@test isnothing(JETLS.hover_type_string(Core.Const(push!), "push!"))
+
 @testset "'Hover' request/response" begin
     @testset "documented global binding" begin
         single_hover_test("""
