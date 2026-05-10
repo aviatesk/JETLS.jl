@@ -1,3 +1,111 @@
+"""
+    TypeAnnotation
+
+Type-annotation pipeline for the LSP feature path: parse → lower → infer → query.
+Produces a `SyntaxTreeC` whose nodes carry `:type` attributes computed by a custom
+`CC.AbstractInterpreter`, plus a query handle ([`InferredTreeContext`](@ref)) for
+byte-range type lookups.
+
+# Pipeline
+
+The four public pieces interlock in a fixed order — each step's output feeds the
+next:
+
+1. **Lower for scope resolution**:
+   [`get_inferrable_tree(st0::SyntaxTreeC, context_module::Module) -> (; ctx3::JL.VariableAnalysisContext, st3::SyntaxTreeC) | nothing`](@ref get_inferrable_tree)
+   walks a top-level `st0` through JuliaLowering's early scope passes against
+   `context_module`, returning an `(ctx3, st3)` pair. Surface `K"error"` nodes are stripped
+   first so incomplete user input still produces a usable lowered tree.
+
+2. **Infer & annotate**:
+   [`infer_toplevel_tree(ctx3::JL.VariableAnalysisContext, st3::SyntaxTreeC, context_module::Module; world::UInt = Base.get_world_counter()) -> inferred_tree::SyntaxTreeC`](@ref infer_toplevel_tree)
+   takes `(ctx3, st3)` through the remaining JuliaLowering passes (`convert_closures` →
+   `linearize_ir`), runs CC inference under the internal `ASTTypeAnnotator`, and
+   writes the inferred type of each lowered statement back into the tree as a
+   `:type` attribute. The result is a `inferred_tree::SyntaxTreeC` whose nodes — both at
+   toplevel and inside method bodies — carry per-statement types.
+
+3. **Build query indexes**:
+   [`InferredTreeContext(inferred_tree::SyntaxTreeC, st3::SyntaxTreeC) -> ctx::InferredTreeContext`](@ref InferredTreeContext)
+   wraps the annotated tree with \$O(N)\$-built indexes (`by_byte_range`, `surface_kind_index`,
+   return-tail maps, OC body scope, …) so downstream queries are \$O(1)\$ per call.
+   Build once per inferred tree, reuse across many queries.
+
+4. **Query**:
+   [`get_type_for_range(ctx::InferredTreeContext, rng::UnitRange{<:Integer}) -> typ`](@ref get_type_for_range)
+   is the main entry point: given a surface byte range, it picks a lookup strategy based on
+   the lowered surface kind (`K"call"`, `K"macrocall"`, `K"function"`, branching forms, …)
+   and returns the inferred lattice element.
+
+For LSP feature code, the `JETLS.build_inferred_context_at` helper in
+`utils/type-annotation-utils.jl` collapses steps 1–3 into a single call,
+returning a ready-to-query `InferredTreeContext`. `JETLS.infer_type_at_range`
+further wraps that with step 4 for the common single-query case.
+
+# Prerequisite: full-analysis must have run first
+
+`context_module` must already be populated by the time we reach this pipeline.
+Full analysis runs JET's concrete interpretation against the user's source
+through Julia's *own* lowering pipeline, materializing the user's bindings
+(functions, types, constants) into the appropriate module. By the time a hover /
+completion / inlay-hint reaches this pipeline, the caller has chosen
+`context_module` based on those full-analysis results, and we run a lightweight
+and stateless pass on top.
+
+The dependency is concrete, not advisory: the per-method-body argtypes
+resolution in step 2 works by `getfield`-ing user names out of `context_module`
+(e.g. evaluating `Core.Typeof(Main.f)`, `Core.apply_type(Main.Vector, Main.Int)`).
+Without those bindings present, every user-defined name falls through to `Any` and
+method bodies are inferred against `Any` argtypes.
+
+# Anonymous-thunk inference unit
+
+The basic inference unit is a thunk: a `Core.CodeInfo` paired with a
+`SyntaxTreeC` whose first statement is the block of statements to annotate, plus
+a list of slot argtypes. The toplevel itself is one such thunk (`nargs=0`);
+method definitions are handled the same way — *not* via `Method` / `MethodInstance`
+dispatch, but by treating each method's body `CodeInfo` as another anonymous thunk
+whose argtypes are statically evaluated from its sig svec against `context_module`.
+No `Method` lookup, no dispatch, no `Base._which`.
+
+!!! note "Why we don't let `CC.typeinf` recurse into `:method` itself"
+    The straightforward alternative would be to let inference of the toplevel
+    thunk recurse into `:method` 3-arg statements via the usual dispatch path.
+    That path doesn't reach `function f(...; kw...) end`: JuliaLowering
+    introduces synthetic kwbody bindings (e.g. `var"#kw_body#f#0"`) whose names
+    don't match the bindings full analysis materialized in `context_module` via
+    Julia's own lowering. Going through dispatch would either fail or hit stale
+    entries. Static svec evaluation avoids both; the synthetic-name slot simply
+    degrades to `Any` (see Limitations).
+
+# Limitations
+
+The static-svec approach inherits a few precision losses around lowering's
+synthetic binding constructs. None of these break correctness; they only degrade
+types to `Any`.
+
+- **Closures**: Single-method local closures are rewritten to `K"_opaque_closure"`
+  by [`Closure2Opaque.rewrite_local_closures_to_opaque`](@ref) before
+  `JL.convert_closures`, so CC's native `OpaqueClosure` path handles them
+  precisely (body, captures, and call sites all infer). Multi-method local
+  closures (same name with multiple method definitions) aren't representable as
+  a single OC, so the rewrite skips them and JL's synthetic struct path takes
+  over. JL's standard runtime materializes the synthetic struct type before
+  dispatch, but `infer_toplevel_tree` deliberately avoids `Core.eval` to keep
+  analysis side-effect-free, so the synthetic type never appears in
+  `context_module` and call sites collapse to `Any`.
+
+- **Synthetic kwbody self.** Same shape as the closure self issue: in the
+  kwbody method, slot 1 resolves to `Any` because the synthetic name isn't
+  defined in `context_module`. User-named slots (`init`, `xs`, …) still resolve
+  correctly via the svec, so the body code itself is inferred precisely.
+
+- **Parametric methods.** `TypeVar`s constructed via `Core.TypeVar(:T, ub)` in the
+  argtypes svec are flattened to their upper bound (`val.ub`) so the slot has a
+  usable `Type`. Furthermore, the thunk's `MethodInstance` is a thunk MI (`def isa Module`);
+  CC's `sptypes_from_meth_instance` forces `EMPTY_SPTYPES` for toplevel MIs, so an
+  `Expr(:static_parameter, i)` reference inside the body cannot retrieve `T` and infers as `Any`.
+"""
 module TypeAnnotation
 
 using Core.IR
@@ -292,26 +400,29 @@ end
 
 """
     get_inferrable_tree(
-            st0::SyntaxTreeC, mod::Module; caller::AbstractString = "get_inferrable_tree"
-        ) -> (; ctx3, st3) | nothing
+            st0::SyntaxTreeC, context_module::Module;
+            caller::AbstractString = "get_inferrable_tree"
+        ) -> (; ctx3::JL.VariableAnalysisContext, st3::SyntaxTreeC) | nothing
 
-Lower `st0` for scope resolution against `mod` and return the `(ctx3, st3)` pair that
-[`infer_toplevel_tree`](@ref) consumes. Wraps `jl_lower_for_scope_resolution` with
-error handling: returns `nothing` if lowering throws (typically because the user's
-source contains parse errors or the macro context isn't yet ready).
+[`TypeAnnotation`](@ref) pipeline step 1: lower `st0` for scope resolution against `mod`,
+returning the `(ctx3, st3)` pair that [`infer_toplevel_tree`](@ref) consumes.
+Returns `nothing` if lowering throws (typically a parse error or an unready macro context);
+errors are routed through `JETLS_DEBUG_LOWERING` rather than propagated.
 
-`K"error"` nodes are stripped from `st0` before lowering.
-JuliaSyntax doesn't bail on incomplete source — it builds a partial tree with `K"error"`
-siblings around the well-formed parts — and JuliaLowering happily lowers what remains, so
-the LSP gets meaningful types for the parts the user has finished typing (e.g. for
-`function f(x::T); x.; end` the body's `x` reference still resolves to `T`).
+`K"error"` nodes are stripped from `st0` before lowering so incomplete source
+still produces a usable tree — JuliaSyntax keeps parsing past errors and
+JuliaLowering happily lowers what's left. For example, in
+`function f(x::T); x.; end` the body's `x` reference still resolves to `T` after
+`K"error"` removal.
+
+See the [`TypeAnnotation`](@ref) module docstring for the full pipeline.
 """
 function get_inferrable_tree(
-        st0::SyntaxTreeC, mod::Module;
+        st0::SyntaxTreeC, context_module::Module;
         caller::AbstractString = "get_inferrable_tree"
     )
     (; ctx3, st3) = try
-        jl_lower_for_scope_resolution(mod, st0; trim_error_nodes=true, recover_from_macro_errors=false)
+        jl_lower_for_scope_resolution(context_module, st0; trim_error_nodes=true, recover_from_macro_errors=false)
     catch err
         JETLS_DEBUG_LOWERING && @warn "Error in lowering ($caller)" err
         JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
@@ -322,102 +433,25 @@ end
 
 """
     infer_toplevel_tree(
-            ctx3::JL.VariableAnalysisContext, st3::SyntaxTreeC, context_module::Module;
+            ctx3::JL.VariableAnalysisContext, st3::SyntaxTreeC,
+            context_module::Module;
             world::UInt = Base.get_world_counter()
         ) -> inferred::SyntaxTreeC
 
-Run type inference on a lowered toplevel expression and return the lowered syntax tree
-(`inferred`) annotated with a `:type` attribute on each lowered statement.
+[`TypeAnnotation`](@ref) pipeline step 2: take `(ctx3, st3)` (typically from
+[`get_inferrable_tree`](@ref)) through the remaining JuliaLowering passes, run CC
+inference under the internal `ASTTypeAnnotator`, and return a `SyntaxTreeC`
+annotated with a `:type` attribute on each lowered statement. The walk recurses
+into `:method` 3-arg statements: each method body is inferred as its own
+anonymous thunk against argtypes statically evaluated from the sig svec.
 
-`ctx3` and `st3` come from `JL.jl_lower_for_scope_resolution`, which runs JuliaLowering's
-early scope-resolution passes — typically obtained via [`get_inferrable_tree`](@ref).
-This function takes them through the remaining JuliaLowering passes, runs inference on
-the result, and writes the inferred types back into the graph.
+`world` (default: the current world) selects the inference world used
+throughout. The returned tree contains both top-level statements and method
+bodies, all annotated, so downstream lookups via [`get_type_for_range`](@ref)
+work for either without descending into bodies separately.
 
-`world` (default: the current world) selects the inference world used throughout.
-
-# Reading types from the result
-
-Use [`get_type_for_range`](@ref) to look up the inferred type at a surface byte range.
-Both top-level expressions and method bodies are annotated in the same returned tree,
-so the same query handles either — no need to descend into method bodies separately.
-For traversal-based use, types live on each annotated node as a `:type` attribute.
-
-# Prerequisite: full-analysis must have run first
-
-This LSP-feature path is intentionally separate from full-analysis, but it depends on
-full-analysis having already populated `context_module`. Full analysis runs JET's concrete
-interpretation against the user's source — which goes through Julia's own lowering
-pipeline, *not* JuliaLowering — and materializes the user's bindings (functions, types,
-constants, etc.) into the appropriate module. By the time an inlay-hint / hover /
-completion request reaches this function, the caller has already chosen `context_module`
-based on full-analysis results, and we run a lightweight pass on top: parse →
-JuliaLowering → inference, just to produce the per-statement type annotations the LSP
-feature needs.
-
-The dependency is concrete, not advisory: the per-method-body argtypes resolution in the
-"Design" section below works by `getfield`-ing user names out of `context_module` (see
-step 2: evaluating `Core.Typeof(Main.f)`, `Core.apply_type(Main.Vector, Main.Int)`, …).
-If full-analysis hasn't materialized those bindings, every user-defined name falls
-through to `Any` and method bodies are inferred against `Any` argtypes. Argument type
-instantiation simply isn't possible without the bindings being present.
-
-# Design: "anonymous toplevel thunk" as inference unit
-
-The basic inference unit is a thunk: a `Core.CodeInfo` paired with a `SyntaxTreeC` whose
-first statement is the block of statements to annotate, plus a list of slot argtypes.
-The toplevel itself is such a thunk (nargs=0).
-
-Method definitions are handled the same way — *not* by going through `Method` /
-`MethodInstance` dispatch, but by treating each method's body `CodeInfo` as another
-anonymous thunk:
-
-1. We walk `inferred[1]` for `:method` 3-arg statements.
-2. For each, we statically evaluate the argtypes svec referenced from `args[2]` against
-   `context_module` (`eval_to_value` follows the SSA chain in `src.code`, resolving
-   `Core.apply_type`, `Core.Typeof`, `GlobalRef`, etc.).
-3. The resolved argtypes are fed to `infer_thunk!` together with the body `CodeInfo` and
-   the corresponding `K"code_info"` subtree of `inferred`.
-
-No `Method` lookup, no dispatch, no `Base._which` — body inference needs only what's
-already in `inferred` and `src.code`, plus the caller's `context_module` for resolving
-`GlobalRef`s in type expressions.
-
-!!! note "Why we don't let `CC.typeinf` recurse into `:method` itself"
-    The straightforward alternative would be to let inference of the toplevel thunk
-    recurse into `:method` 3-arg statements via the usual dispatch path. That path
-    doesn't reach `function f(...; kw...) end`: JuliaLowering introduces synthetic
-    kwbody bindings (e.g. `var"#kw_body#f#0"`) whose names don't match the bindings
-    full analysis materialized in `context_module` via Julia's own lowering. Going
-    through dispatch would either fail or hit stale entries. Static svec evaluation
-    avoids both; the synthetic-name slot simply degrades to `Any` (see Limitations).
-
-# Limitations
-
-The static-svec approach inherits a few precision losses around lowering's synthetic
-binding constructs. None of these break correctness; they only degrade types to `Any`.
-
-- **Closures.** Single-method local closures are rewritten to `K"_opaque_closure"` by
-  [`Closure2Opaque.rewrite_local_closures_to_opaque`](@ref) before `JL.convert_closures`,
-  so CC's native `OpaqueClosure` path handles them precisely (body, captures, and call site all infer).
-  Multi-method local closures (same name with multiple method definitions) aren't
-  representable as a single OC, so the rewrite skips them and JL's synthetic struct path
-  takes over. JL's standard runtime materializes the synthetic struct type before
-  dispatch, but `infer_toplevel_tree` deliberately avoids `Core.eval` to keep analysis
-  side-effect-free, so the synthetic type never appears in `context_module` and call
-  sites collapse to `Any`.
-
-- **Parametric methods.** TypeVars constructed via `Core.TypeVar(:T, ub)` in the argtypes
-  svec are flattened to their upper bound (`val.ub`) so the slot has a usable `Type`.
-  Furthermore, the thunk's `MethodInstance` is a thunk MI (`def isa Module`); CC's
-  `sptypes_from_meth_instance` forces `EMPTY_SPTYPES` for toplevel MIs, so an
-  `Expr(:static_parameter, i)` reference inside the body cannot retrieve `T` and infers
-  as `Any`.
-
-- **Synthetic kwbody self.** Same shape as the closure self issue: in the kwbody method,
-  slot 1 resolves to `Any` because the synthetic name isn't defined in `context_module`.
-  User-named slots (`init`, `xs`, etc.) still resolve correctly via the svec, so the body
-  code itself is inferred precisely.
+See the [`TypeAnnotation`](@ref) module docstring for the rest of the pipeline,
+the full-analysis prerequisite, and the current limitations.
 """
 infer_toplevel_tree(args...; kwargs...) =
     (@something _infer_toplevel_tree(args...; kwargs...) return nothing).toptree
@@ -636,37 +670,29 @@ end
 # =======
 
 """
-    InferredTreeContext(inferred_tree::SyntaxTreeC, st3::SyntaxTreeC) -> ctx::InferredTreeContext
+    InferredTreeContext(
+            inferred_tree::SyntaxTreeC, st3::SyntaxTreeC
+        ) -> ctx::InferredTreeContext
 
-Public type-query handle for a lowered, inferred syntax tree. Bundles
-`inferred_tree` (the result of [`infer_toplevel_tree`](@ref)) with a set of
-prebuilt indexes so that [`get_type_for_range`](@ref) (and friends) can answer
-each query in O(1) — or O(log N) for the branching case — without re-walking
-the tree per call.
+[`TypeAnnotation`](@ref) pipeline step 3: wrap an annotated `inferred_tree` (from
+[`infer_toplevel_tree`](@ref)) plus the post-scope-resolution `st3` (from
+[`get_inferrable_tree`](@ref)) with prebuilt indexes, yielding a query handle
+that [`get_type_for_range`](@ref) and friends can answer in \$O(1)\$ per call (or
+\$O(log N)\$ for the branching case).
 
-`st3` is the post-scope-resolution tree (the `st3` field returned by
-[`get_inferrable_tree`](@ref)). It's used to identify byte ranges of
-*user-written* `return` values, which `type_for_branching` filters out so
-they don't pollute the value type of an enclosing branching expression.
-`st3` (rather than the surface tree) lets the analysis see through
-desugared `&&` / `||` / `?:` / chained comparisons (now `K"if"`) and
-through expanded macros — without it, those constructs would leak.
+`st3` (rather than the surface tree) is needed to identify byte ranges of
+*user-written* `return` values, which `type_for_branching` filters out so they
+don't pollute the value type of an enclosing branching expression. Using `st3`
+lets the analysis see through desugared `&&` / `||` / `?:` / chained
+comparisons (now `K"if"`) and through expanded macros — without it, those
+constructs would leak.
 
-# Lifecycle
+Build once per `inferred_tree` and reuse across queries — the single \$O(N)\$
+index build is amortized. Consumers should normally call [`get_type_for_range`](@ref) and
+treat this type as opaque; the fields are implementation detail and may be reorganized
+as new queries demand different indexes.
 
-The context is intended to be **built once per inferred tree** and reused
-across many queries. Constructing it does a single `O(N)` traversal that
-populates all indexes simultaneously. Typical usage:
-
-- in `JETLS` itself: cache an `InferredTreeContext` alongside (or in place
-  of) the inferred tree on the server's per-file state, rebuilding only when
-  the tree is rebuilt;
-- in tests / one-off callers: build a context per inferred tree, then query
-  against it.
-
-Consumers should normally just call [`get_type_for_range`](@ref) and treat
-this type as opaque; the fields are implementation detail and may be
-reorganized as new queries demand different indexes.
+See the [`TypeAnnotation`](@ref) module docstring for the full pipeline.
 """
 struct InferredTreeContext
     inferred_tree::SyntaxTreeC
@@ -876,11 +902,11 @@ end
 """
     get_type_for_range(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
 
-Look up the inferred type at surface byte range `rng`.
+[`TypeAnnotation`](@ref) pipeline step 4: look up the inferred type at surface byte range `rng`.
 Returns `nothing` if no lowered node corresponding to `rng` carries a `:type` attribute.
 
 Build the [`InferredTreeContext`](@ref) once per inferred tree and reuse it across queries
-— the per-tree O(N) index build is amortized across all queries against the same context.
+— see the [`TypeAnnotation`](@ref) module docstring for the full pipeline.
 
 # Dispatch
 
