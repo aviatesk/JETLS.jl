@@ -366,12 +366,12 @@ function run_check(args::Vector{String})
 end
 
 function start_cli_server(root_path::AbstractString)
-    server = Server(; suppress_notifications=true)
+    server = Server(; suppress_notifications=true, cli_mode=true)
 
-    # Normalize via URI round-trip so the casing matches paths derived from
-    # URIs (lowercase drive letter on Windows). Otherwise comparisons such as
-    # `issubdir(filepath, state.root_path)` in `find_analysis_env_path` can
-    # mis-classify in-tree files as out-of-scope (aviatesk/JETLS.jl#679).
+    # Normalize via URI round-trip so the casing of `state.root_path` matches
+    # paths reconstructed from URIs (lowercase drive letter on Windows).
+    # Required for path comparisons elsewhere — e.g. `relpath` for display,
+    # `startswith` in the `analysis_overrides` matcher.
     root_uri = filepath2uri(root_path)
     root_path = uri2filepath(root_uri)::String
     server.state.root_path = root_path
