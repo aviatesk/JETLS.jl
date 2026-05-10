@@ -53,6 +53,11 @@ CC.get_inference_world(interp::ASTTypeAnnotator) = interp.world
 CC.get_inference_cache(interp::ASTTypeAnnotator) = interp.inf_cache
 CC.cache_owner(::ASTTypeAnnotator) = ASTTypeAnnotatorToken()
 
+CC.typeinf_lattice(::ASTTypeAnnotator) =
+    CC.InferenceLattice(CC.MustAliasesLattice(CC.BaseInferenceLattice.instance))
+CC.ipo_lattice(::ASTTypeAnnotator) =
+    CC.InferenceLattice(CC.InterMustAliasesLattice(CC.IPOResultLattice.instance))
+
 # ASTTypeAnnotator is only used for type analysis, so it should disable optimization entirely
 CC.may_optimize(::ASTTypeAnnotator) = false
 

@@ -117,7 +117,7 @@ end
     end
 end
 
-@testset "Inference robustness across method shapes" begin
+@testset "Inference accuracy and robustness" begin
     # Method bodies are inferred as their own anonymous thunks: argtypes are
     # resolved from the lowered svec, no full-analysis-defined `Method` is
     # required for the body's user-named slots.
@@ -439,6 +439,27 @@ end
                 map_call = range_of(code, "map(xs) do x\n        x * 2\n    end")
                 @test_broken widenconst(get_type_for_range(ctx, map_call)) === Vector{Int}
             end
+        end
+    end
+
+    # `MustAliasesLattice` / `InterMustAliasesLattice` overrides on
+    # `ASTTypeAnnotator` propagate branch-narrowed types back to subsequent
+    # reads of the same `slot.field` on immutable, concretely-typed objects
+    # — without them, each `getfield` call on a Union-typed field returns
+    # the unrefined Union even inside the guarded branch.
+    @testset "MustAlias narrowing on field accesses" begin
+        let code = """
+            function f(s::Some{Union{Nothing,Int}})
+                if !isnothing(s.value)
+                    s.value
+                else
+                    0
+                end
+            end
+            """
+            fi, ctx = type_annotate(code)
+            types = query_all_types(fi, ctx, "s.value")
+            @test any(t -> widenconst(t) === Int, types)
         end
     end
 
@@ -1186,6 +1207,7 @@ end
             @test any(t -> widenconst(t) === String, types)
         end
     end
+
 end
 
 @testset "Pipeline-level edge cases" begin
