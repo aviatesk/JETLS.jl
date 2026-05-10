@@ -219,6 +219,19 @@ function Base.var"@assert"(
     return JL.@ast(__context__, mc, [JS.K"block" extras... if_throw])
 end
 
+# Stub for `Base.@show`. The real macro emits per-argument
+# `println("ex = ", repr(ex))` scaffolding and returns the last argument's value
+# (or `nothing` for the zero-arg form); for LSP analysis we only need each
+# user-written expression to flow through with its provenance intact, so we
+# drop the printing and route the args through a `block` whose final value
+# naturally matches Base's return semantics.
+function Base.var"@show"(__context__::JL.MacroContext, exs::SyntaxTreeC...)
+    mc = __context__.macrocall::SyntaxTreeC
+    isempty(exs) && return JL.@ast(__context__, mc, nothing::JS.K"Value")
+    length(exs) == 1 && return JL.@ast(__context__, mc, exs[1])
+    return JL.@ast(__context__, mc, [JS.K"block" exs...])
+end
+
 # New-style implementations of `Base.@invoke` / `Base.@invokelatest`. These match Base's
 # expansion (`Core.invoke(f, Tuple{T1,...}, args...)` / `Base.invokelatest(f, args...)`)
 # rather than routing the body through unchanged, so type inference (e.g.

@@ -400,6 +400,36 @@ end
     end
 end
 
+@testset "@show" begin
+    @testset "macro expansion" begin
+        # Zero-arg form: real `@show` returns `nothing`; the stub emits a
+        # placeholder `K"Value"` node.
+        let st1 = jlexpand("@show")
+            @test JS.kind(st1) === JS.K"Value"
+        end
+
+        # Single-arg form: returned unchanged so it slots into expressions like
+        # `x = @show foo` without an extra block wrapper.
+        let st1 = jlexpand("@show xxx")
+            @test JS.kind(st1) === JS.K"Identifier"
+            @test JS.sourcetext(st1) == "xxx"
+        end
+
+        # Multi-arg form: each user expression flows through a `block`.
+        let st1 = jlexpand("@show xxx yyy zzz")
+            @test JS.kind(st1) === JS.K"block"
+            @test JS.numchildren(st1) == 3
+        end
+    end
+
+    @testset "binding resolution preserves provenance" begin
+        let res = jlresolve("@show sin(xxx) cos(yyy)")
+            assert_binding_provenance(res, :global, "xxx")
+            assert_binding_provenance(res, :global, "yyy")
+        end
+    end
+end
+
 # Helper: walk the EST and return the first `K"core"` / `K"top"` node whose
 # inner `K"Identifier"` matches `name`. Used to verify that the expansion
 # synthesizes `Core.invoke` / `Base.invokelatest` (and the synthesized
