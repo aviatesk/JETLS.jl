@@ -51,6 +51,19 @@ function assert_binding_provenance(res, kind::Symbol, name::AbstractString)
     return (binfo, provs)
 end
 
+# Negative counterpart of `assert_binding_provenance`: verifies that no
+# binding of the given kind/name exists. Used for identifiers that the macro
+# stub intentionally drops (e.g. kwarg keys in logging macros, which are
+# metadata symbols and not user references).
+function assert_no_binding(res, kind::Symbol, name::AbstractString)
+    binding_occurrences = JETLS.compute_binding_occurrences(
+        res.ctx3, res.st3, false; include_global_bindings=true)
+    found = any(binding_occurrences) do (b, _)
+        b.kind === kind && b.name == name
+    end
+    @test !found
+end
+
 @testset "@kwdef" begin
     @testset "macro expansion" begin
         # parametric with defaults
@@ -426,6 +439,150 @@ end
         let res = jlresolve("@show sin(xxx) cos(yyy)")
             assert_binding_provenance(res, :global, "xxx")
             assert_binding_provenance(res, :global, "yyy")
+        end
+    end
+end
+
+# `@logmsg` is not exported from `Base`, so a module that uses it must
+# `using Logging` (or `using Base.CoreLogging`). The other logging macros
+# (`@debug`/`@info`/`@warn`/`@error`) are exported from `Base` by default.
+module logging_module
+    using Logging
+end
+logging_expand(code::AbstractString) = jlexpand(logging_module, code)
+logging_resolve(code::AbstractString) = jlresolve(logging_module, code)
+
+@testset "@debug / @info / @warn / @error" begin
+    @testset "macro expansion" begin
+        for name in ("@debug", "@info", "@warn", "@error")
+            # Bare message: wrapped in a `block` so the trailing
+            # `nothing::K"Value"` matches the macros' "always returns
+            # `nothing`" contract.
+            let st1 = logging_expand("$name \"msg\"")
+                @test JS.kind(st1) === JS.K"block"
+                @test JS.kind(st1[end]) === JS.K"Value"
+            end
+
+            # Mixed kwargs / bare positional / splat: kwarg RHS and the splat
+            # operand both flow through, the wrapping `K"="` and `K"..."`
+            # nodes are dropped so they don't reach later lowering passes.
+            let st1 = logging_expand("$name \"msg\" xxx yyy=zzz extras...")
+                @test JS.kind(st1) === JS.K"block"
+                @test all(c -> JS.kind(c) ∉ JS.KSet"= ...", JS.children(st1))
+            end
+
+            # The message itself can be a `begin`/`end` block (per the
+            # docstring's lazy-evaluation example); it flows through unchanged.
+            let st1 = logging_expand("$name begin x = 1; \"got \$x\" end")
+                @test JS.kind(st1) === JS.K"block"
+                @test JS.kind(st1[1]) === JS.K"block"
+            end
+        end
+    end
+
+    @testset "validation" begin
+        # Zero-arg form rejected for each macro.
+        for name in ("@debug", "@info", "@warn", "@error")
+            let err = try
+                    logging_expand(name)
+                    nothing
+                catch err
+                    err
+                end
+                @test err isa JL.MacroExpansionError
+                @test occursin("$name requires at least one argument", err.msg)
+            end
+        end
+
+        # Duplicate kwarg names are flagged at expansion time; without this,
+        # they'd surface only as a generic `syntax: field name "k" repeated`
+        # error from lowering the synthesized `(; k=1, k=2)` named tuple.
+        # Metadata keys (`_module`, `_group`, ...) are checked the same way,
+        # even though Base silently overwrites them.
+        for name in ("@debug", "@info", "@warn", "@error")
+            for code in ("$name \"msg\" k=1 k=2",
+                         "$name \"msg\" _module=a _module=b")
+                let err = try
+                        logging_expand(code)
+                        nothing
+                    catch err
+                        err
+                    end
+                    @test err isa JL.MacroExpansionError
+                    @test occursin("provided more than once", err.msg)
+                end
+            end
+        end
+    end
+
+    @testset "binding resolution preserves provenance" begin
+        # Identifiers in the message (including string interpolations), the
+        # kwarg values, the bare positional args, and any splat operand should
+        # all stay visible to scope resolution as user-written. The kwarg
+        # *key* `ppp`, on the other hand, is a metadata symbol — it must not
+        # reach scope resolution.
+        for name in ("@debug", "@info", "@warn", "@error")
+            let res = logging_resolve("$name \"msg: \$xxx\" yyy ppp=fff(qqq) eee...")
+                assert_binding_provenance(res, :global, "xxx")
+                assert_binding_provenance(res, :global, "yyy")
+                assert_binding_provenance(res, :global, "fff")
+                assert_binding_provenance(res, :global, "qqq")
+                assert_binding_provenance(res, :global, "eee")
+                assert_no_binding(res, :global, "ppp")
+            end
+        end
+    end
+end
+
+@testset "@logmsg" begin
+    @testset "macro expansion" begin
+        # Both `level` and `message` flow through a `block`; the trailing
+        # `nothing::K"Value"` matches the macro's return contract.
+        let st1 = logging_expand("@logmsg lvl \"msg\" xxx yyy=zzz")
+            @test JS.kind(st1) === JS.K"block"
+            @test JS.kind(st1[end]) === JS.K"Value"
+        end
+    end
+
+    @testset "validation" begin
+        # 0 and 1 arg both fall through to the variadic fallback, since
+        # `@logmsg` requires both a `level` and a `message`.
+        for code in ("@logmsg", "@logmsg lvl")
+            let err = try
+                    logging_expand(code)
+                    nothing
+                catch err
+                    err
+                end
+                @test err isa JL.MacroExpansionError
+                @test occursin("@logmsg requires at least two arguments", err.msg)
+            end
+        end
+
+        # Duplicate kwargs are flagged the same way as for the level-implicit
+        # logging macros.
+        let err = try
+                logging_expand("@logmsg lvl \"msg\" foo=1 foo=2")
+                nothing
+            catch err
+                err
+            end
+            @test err isa JL.MacroExpansionError
+            @test occursin("provided more than once", err.msg)
+        end
+    end
+
+    @testset "binding resolution preserves provenance" begin
+        # The level expression must stay visible — `@logmsg` is the only
+        # logging macro that takes a user-written level, and it's frequently
+        # a custom `LogLevel` constant whose definition site we want to track.
+        # The kwarg key `yyy` is a metadata symbol and must not surface as a
+        # binding.
+        let res = logging_resolve("@logmsg lvl \"msg: \$xxx\" yyy=zzz")
+            assert_binding_provenance(res, :global, "lvl")
+            assert_binding_provenance(res, :global, "xxx")
+            assert_binding_provenance(res, :global, "zzz")
+            assert_no_binding(res, :global, "yyy")
         end
     end
 end

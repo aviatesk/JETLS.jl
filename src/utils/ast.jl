@@ -121,49 +121,6 @@ is_generated0(st0::SyntaxTreeC) = is_macrocall_st0(st0, "@generated")
 
 is_macro0(st0::SyntaxTreeC) = JS.kind(st0) === JS.K"macro"
 
-# Simple (non-qualified) macro names whose new-style implementations in
-# `JuliaLowering/src/syntax_macros.jl` and `src/utils/jl-syntax-macros.jl`
-# preserve fine-grained source provenance during expansion. Unlike old-style
-# macros — whose expansion collapses source positions to line granularity and
-# is why `_remove_macrocalls` exists — these don't need to be rewritten to a
-# `block` to keep accurate locations for scope resolution.
-const NEW_STYLE_MACROCALL_NAMES = (
-    # JuliaLowering/src/syntax_macros.jl
-    "@__FUNCTION__",
-    "@ccall",
-    "@cfunction",
-    "@eval",
-    "@generated",
-    "@goto",
-    "@isdefined",
-    "@locals",
-    "@nospecialize",
-    # src/utils/jl-syntax-macros.jl
-    "@assert",
-    "@assume_effects",
-    "@inbounds",
-    "@inferred",
-    "@inline",
-    "@invoke",
-    "@invokelatest",
-    "@kwdef",
-    "@label",
-    "@noinline",
-    "@propagate_inbounds",
-    "@something",
-    "@spawn",
-    "@specialize",
-    "@test",
-    "@test_broken",
-    "@test_deprecated",
-    "@test_logs",
-    "@test_nowarn",
-    "@test_skip",
-    "@test_throws",
-    "@test_warn",
-    "@testset",
-)
-
 is_new_style_macrocall0(st0::SyntaxTreeC) =
     is_macrocall_st0(st0, NEW_STYLE_MACROCALL_NAMES...)
 

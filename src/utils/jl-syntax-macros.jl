@@ -21,6 +21,55 @@ end
 @noinline throw_macro_error(node::SyntaxTreeC, msg::AbstractString) =
     throw(JL.MacroExpansionError(node, msg))
 
+# Simple (non-qualified) macro names whose new-style implementations in this file and
+# `JuliaLowering/src/syntax_macros.jl` preserve fine-grained source provenance during
+# expansion. Unlike old-style macros — whose expansion collapses source positions to
+# line granularity and is why `_remove_macrocalls` exists — these don't need to be
+# rewritten to a `block` to keep accurate locations for scope resolution.
+# This is used by `remove_macrocalls` in ast.jl
+const NEW_STYLE_MACROCALL_NAMES = (
+    # JuliaLowering/src/syntax_macros.jl
+    "@__FUNCTION__",
+    "@ccall",
+    "@cfunction",
+    "@eval",
+    "@generated",
+    "@goto",
+    "@isdefined",
+    "@locals",
+    "@nospecialize",
+    # src/utils/jl-syntax-macros.jl
+    "@assert",
+    "@assume_effects",
+    "@debug",
+    "@error",
+    "@inbounds",
+    "@inferred",
+    "@info",
+    "@inline",
+    "@invoke",
+    "@invokelatest",
+    "@kwdef",
+    "@label",
+    "@logmsg",
+    "@noinline",
+    "@propagate_inbounds",
+    "@show",
+    "@something",
+    "@spawn",
+    "@specialize",
+    "@test",
+    "@test_broken",
+    "@test_deprecated",
+    "@test_logs",
+    "@test_nowarn",
+    "@test_skip",
+    "@test_throws",
+    "@test_warn",
+    "@testset",
+    "@warn",
+)
+
 function Base.var"@specialize"(__context__::JL.MacroContext)
     JL.@ast(__context__,
             __context__.macrocall::SyntaxTreeC,
@@ -230,6 +279,131 @@ function Base.var"@show"(__context__::JL.MacroContext, exs::SyntaxTreeC...)
     isempty(exs) && return JL.@ast(__context__, mc, nothing::JS.K"Value")
     length(exs) == 1 && return JL.@ast(__context__, mc, exs[1])
     return JL.@ast(__context__, mc, [JS.K"block" exs...])
+end
+
+# Stubs for `Base.CoreLogging.@debug` / `@info` / `@warn` / `@error` / `@logmsg`.
+# The real macros wrap the message+kwargs evaluation in try/catch, dispatch
+# through the active logger, and emit a lot of compile-time metadata
+# (`_module` / `_group` / `_id` / `_file` / `_line`); for LSP analysis we only
+# need each user-written expression to flow through with its provenance intact,
+# so we drop the logging scaffolding and route the args through a `block` whose
+# trailing `nothing::K"Value"` matches Base's "always returns `nothing`"
+# contract.
+#
+# Argument shapes accepted (mirroring Base's `process_logmsg_exs`):
+# - `key=value` kwargs (including the `_module` / `_group` / `_id` / `_file` /
+#   `_line` metadata overrides): the RHS flows through and the `K"="` wrapper
+#   is dropped so it doesn't reach later lowering passes.
+# - `xs...` splatting: the spliced expression flows through, with the `K"..."`
+#   wrapper dropped for the same reason.
+# - Bare positional arguments: passed through as-is (Base auto-converts each
+#   to `Symbol(ex) => ex` at expansion time, but for scope analysis only the
+#   value side matters).
+#
+# Duplicate kwarg names are rejected at expansion time. Base would let the
+# expansion succeed and only fail at lowering of the synthesized
+# `(; k=1, k=2)` named tuple with a generic `syntax: field name "k" repeated`
+# error; surfacing the duplicate as a `lowering/macro-expansion-error` here
+# anchors the diagnostic on the user's `@info` call site instead.
+function Base.CoreLogging.var"@debug"(
+        __context__::JL.MacroContext, message::SyntaxTreeC, exs::SyntaxTreeC...
+    )
+    return _logmsg_stub(__context__, (message, exs...), "@debug")
+end
+
+function Base.CoreLogging.var"@debug"(__context__::JL.MacroContext)
+    throw_macro_error(__context__.macrocall::SyntaxTreeC,
+        "@debug requires at least one argument: a `message`")
+end
+
+function Base.CoreLogging.var"@info"(
+        __context__::JL.MacroContext, message::SyntaxTreeC, exs::SyntaxTreeC...
+    )
+    return _logmsg_stub(__context__, (message, exs...), "@info")
+end
+
+function Base.CoreLogging.var"@info"(__context__::JL.MacroContext)
+    throw_macro_error(__context__.macrocall::SyntaxTreeC,
+        "@info requires at least one argument: a `message`")
+end
+
+function Base.CoreLogging.var"@warn"(
+        __context__::JL.MacroContext, message::SyntaxTreeC, exs::SyntaxTreeC...
+    )
+    return _logmsg_stub(__context__, (message, exs...), "@warn")
+end
+
+function Base.CoreLogging.var"@warn"(__context__::JL.MacroContext)
+    throw_macro_error(__context__.macrocall::SyntaxTreeC,
+        "@warn requires at least one argument: a `message`")
+end
+
+function Base.CoreLogging.var"@error"(
+        __context__::JL.MacroContext, message::SyntaxTreeC, exs::SyntaxTreeC...
+    )
+    return _logmsg_stub(__context__, (message, exs...), "@error")
+end
+
+function Base.CoreLogging.var"@error"(__context__::JL.MacroContext)
+    throw_macro_error(__context__.macrocall::SyntaxTreeC,
+        "@error requires at least one argument: a `message`")
+end
+
+# `@logmsg` adds a leading `level` argument. The level is a user-written
+# expression (a `LogLevel` constant or computed value), so it still needs to
+# flow through to scope resolution.
+function Base.CoreLogging.var"@logmsg"(
+        __context__::JL.MacroContext, level::SyntaxTreeC, message::SyntaxTreeC,
+        exs::SyntaxTreeC...
+    )
+    return _logmsg_stub(__context__, (level, message, exs...), "@logmsg")
+end
+
+function Base.CoreLogging.var"@logmsg"(__context__::JL.MacroContext, ::SyntaxTreeC...)
+    throw_macro_error(__context__.macrocall::SyntaxTreeC,
+        "@logmsg requires at least two arguments: a `level` and a `message`")
+end
+
+function _logmsg_stub(
+        ctx::JL.MacroContext, exs::Tuple{Vararg{SyntaxTreeC}}, name::AbstractString
+    )
+    mc = ctx.macrocall::SyntaxTreeC
+    children = SyntaxTreeC[]
+    seen_kws = Set{String}()
+    for ex in exs
+        k = JS.kind(ex)
+        if k === JS.K"="
+            kwname = _validate_logmsg_kw(ex, name)
+            if kwname !== nothing
+                kwname in seen_kws && throw_macro_error(ex,
+                    "$name: keyword `$kwname` provided more than once")
+                push!(seen_kws, kwname)
+            end
+            push!(children, ex[2])
+        elseif k === JS.K"..."
+            JS.numchildren(ex) >= 1 ||
+                throw_macro_error(ex, "$name: malformed splat argument")
+            push!(children, ex[1])
+        else
+            push!(children, ex)
+        end
+    end
+    return JL.@ast(ctx, mc, [JS.K"block" children... nothing::JS.K"Value"])
+end
+
+# Returns the kwarg name as a `String`, or `nothing` if the name isn't a
+# plain identifier. The latter case (e.g. `"foo"=val`, which Base silently
+# routes through `Symbol(k)`) is rare enough that we just skip the
+# duplicate check rather than reject it outright.
+function _validate_logmsg_kw(kw::SyntaxTreeC, name::AbstractString)
+    JS.numchildren(kw) == 2 ||
+        throw_macro_error(kw, "$name: malformed keyword argument")
+    key = kw[1]
+    if JS.kind(key) === JS.K"Identifier" && hasproperty(key, :name_val)
+        n = key.name_val
+        return n isa AbstractString ? String(n) : nothing
+    end
+    return nothing
 end
 
 # New-style implementations of `Base.@invoke` / `Base.@invokelatest`. These match Base's
