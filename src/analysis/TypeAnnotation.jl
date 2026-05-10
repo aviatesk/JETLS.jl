@@ -980,7 +980,7 @@ end
 
 """
     build_inferred_context_at(
-            st0_top::SyntaxTreeC, mod::Module, rng::UnitRange{<:Integer};
+            st0_top::SyntaxTreeC, context_module::Module, rng::UnitRange{<:Integer};
             caller::AbstractString = "build_inferred_context_at"
         ) -> ctx::InferredTreeContext | nothing
 
@@ -997,21 +997,23 @@ range lookup, [`infer_type_at_range`](@ref) is the convenience shortcut that
 also folds in step 4.
 """
 function build_inferred_context_at(
-        st0_top::SyntaxTreeC, mod::Module, rng::UnitRange{<:Integer};
+        st0_top::SyntaxTreeC, context_module::Module, rng::UnitRange{<:Integer};
         caller::AbstractString = "build_inferred_context_at"
     )
     return iterate_toplevel_tree(st0_top) do st0::SyntaxTreeC
         rng ⊆ JS.byte_range(st0) || return nothing
-        result = @something get_inferrable_tree(st0, mod; caller) return traversal_terminator
+        result = @something get_inferrable_tree(
+            st0, context_module; caller) return traversal_terminator
         (; ctx3, st3) = result
-        inferred = @something infer_toplevel_tree(ctx3, st3, mod) return traversal_terminator
+        inferred = @something infer_toplevel_tree(
+            ctx3, st3, context_module) return traversal_terminator
         return TraversalReturn(InferredTreeContext(inferred, st3); terminate=true)
     end
 end
 
 """
     infer_type_at_range(
-            st0_top::SyntaxTreeC, mod::Module, rng::UnitRange{<:Integer}
+            st0_top::SyntaxTreeC, context_module::Module, rng::UnitRange{<:Integer}
         ) -> typ | nothing
 
 Compose all four [`TypeAnnotation`](@ref) pipeline steps into a single call: run inference
@@ -1024,10 +1026,10 @@ For features that need multiple queries against the same toplevel, build the con
 [`build_inferred_context_at`](@ref) and reuse it across [`get_type_for_range`](@ref) calls.
 """
 function infer_type_at_range(
-        st0_top::SyntaxTreeC, mod::Module, rng::UnitRange{<:Integer}
+        st0_top::SyntaxTreeC, context_module::Module, rng::UnitRange{<:Integer}
     )
     ctx = @something build_inferred_context_at(
-        st0_top, mod, rng; caller="infer_type_at_range") return nothing
+        st0_top, context_module, rng; caller="infer_type_at_range") return nothing
     return get_type_for_range(ctx, rng)
 end
 
