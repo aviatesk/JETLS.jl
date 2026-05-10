@@ -142,17 +142,11 @@ end
     end
 end
 
-module lowering_module end
-get_local_hover(args...; kwargs...) = get_local_hover(lowering_module, args...; kwargs...)
-function get_local_hover(mod::Module, text::AbstractString, pos::Position; filename::AbstractString=@__FILE__)
-    fi = JETLS.FileInfo(#=version=#0, text, filename)
+function get_local_hover(text::AbstractString, pos::Position; filename::AbstractString=@__FILE__)
+    server = JETLS.Server()
     uri = filename2uri(filename)
-    st0_top = JETLS.build_syntax_tree(fi)
-    @assert JS.kind(st0_top) === JS.K"toplevel"
-    offset = JETLS.xy_to_offset(fi, pos)
-    state = JETLS.ServerState()
-    pp = JETLS.LSPostProcessor(JETLS.JET.PostProcessor())
-    return JETLS.expression_hover(state, fi, uri, st0_top, offset, mod, pp)
+    fi = JETLS.cache_file_info!(server, uri, 0, text)
+    return JETLS.expression_hover(server.state, fi, uri, pos)
 end
 
 @testset "'Hover' resolves docs through field access via inference" begin

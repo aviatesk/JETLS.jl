@@ -36,17 +36,11 @@ function handle_HoverRequest(
     end
     fi = result
 
-    st0_top = build_syntax_tree(fi)
-    offset = xy_to_offset(fi, pos)
-    (; mod, postprocessor) = get_context_info(state, uri, pos)
-    soft_scope = is_notebook_cell_uri(state, uri)
-
-    expr_hover = expression_hover(state, fi, uri, st0_top, offset, mod, postprocessor; soft_scope)
-    expr_hover === nothing || return send(server, HoverResponse(;
-        id = msg.id, result = expr_hover))
-
-    return send(server, HoverResponse(;
-        id = msg.id, result = something(keyword_hover(state, fi, uri, pos), null)))
+    expr_hover = @something expression_hover(state, fi, uri, pos) begin
+        return send(server, HoverResponse(;
+            id = msg.id, result = something(keyword_hover(state, fi, uri, pos), null)))
+    end
+    return send(server, HoverResponse(; id = msg.id, result = expr_hover))
 end
 
 # Unified hover entry. Whether the cursor is on a local binding, a global
@@ -68,12 +62,13 @@ end
 # Local bindings show a kind tag (`(argument)` / `(local)` / `(static
 # parameter)`) so the binding's role in scope is visible even when the type
 # alone wouldn't carry that information.
-function expression_hover(
-        state::ServerState, fi::FileInfo, uri::URI, st0_top::SyntaxTreeC, offset::Int,
-        mod::Module, postprocessor::LSPostProcessor;
-        soft_scope::Bool = false
-    )
-    binding_result = select_target_binding(st0_top, offset, mod; soft_scope)
+function expression_hover(state::ServerState, fi::FileInfo, uri::URI, pos::Position)
+    st0_top = build_syntax_tree(fi)
+    offset = xy_to_offset(fi, pos)
+    (; mod, postprocessor) = get_context_info(state, uri, pos)
+    context_module = mod
+    soft_scope = is_notebook_cell_uri(state, uri)
+    binding_result = select_target_binding(st0_top, offset, context_module; soft_scope)
     if binding_result !== nothing
         (; ctx3, binding) = binding_result
         binfo = JL.get_binding(ctx3, binding)
@@ -87,13 +82,20 @@ function expression_hover(
         header = JS.sourcetext(node)
     end
 
-    typ = infer_type_at_range(st0_top, mod, JS.byte_range(node))
-    type_str = hover_type_string(typ, JS.sourcetext(node))
+    rng = JS.byte_range(node)
+    ctx = build_inferred_context_at(st0_top, context_module, rng; caller="expression_hover")
+    type_str = typ = nothing
+    if ctx !== nothing
+        typ = get_type_for_range(ctx, rng)
+        if typ !== nothing
+            type_str = hover_type_string(typ, JS.sourcetext(node))
+        end
+    end
 
     docs = Markdown.MD[]
     if !is_local
-        bdoc = binfo !== nothing ?
-            doc_for_binding(mod, Symbol(binfo.name)) : lookup_binding_doc(node, st0_top, mod)
+        bdoc = binfo !== nothing ? doc_for_binding(context_module, Symbol(binfo.name)) :
+            lookup_binding_doc(node, context_module, ctx)
         bdoc === nothing || push!(docs, bdoc)
     end
     vdoc = value_based_doc(typ)
@@ -145,7 +147,6 @@ binding_kind_label(kind::Symbol) =
 # `typeof(<name>)` so the hover header announces which value the expression
 # resolves to without conflating value and type positions.
 function hover_type_string(@nospecialize(typ), source_text::AbstractString)
-    typ === nothing && return nothing
     typ isa Core.PartialOpaque && return format_partial_opaque(typ)
     widened = CC.widenconst(typ)
     widened === Union{} && return nothing
@@ -180,11 +181,13 @@ end
 # Resolve `node` to a `(parentmod, identifier)` pair and look up its binding-
 # based docstring. Returns `nothing` if the node isn't a plain identifier or a
 # dot expression whose left-hand side resolves to a `Module` value.
-function lookup_binding_doc(node::SyntaxTreeC, st0_top::SyntaxTreeC, mod::Module)
-    parentmod = mod
+function lookup_binding_doc(
+        node::SyntaxTreeC, context_module::Module, ctx::Union{Nothing,InferredTreeContext}
+    )
+    parentmod = context_module
     identifier_node = node
     if JS.kind(node) === JS.K"." && JS.numchildren(node) ≥ 2
-        parentmod = @something resolve_dot_prefix_module(node[1], st0_top, mod) return nothing
+        parentmod = @something resolve_dot_prefix_module(node[1], parentmod, ctx) return nothing
         identifier_node = node[2]
         # EST wraps the RHS of dot expressions in `K"inert"`
         if JS.kind(identifier_node) === JS.K"inert" && JS.numchildren(identifier_node) ≥ 1
@@ -198,16 +201,22 @@ end
 # Resolve a dot expression's left-hand side to a `Module` value. Tries a direct
 # `getglobal` for plain identifiers first — this covers macro-name dot prefixes
 # like `Base.@inline` whose argument-position `Base` isn't typed by inference —
-# and falls back to `infer_type_at_range` for nested chains (`Base.Compiler.…`).
-function resolve_dot_prefix_module(dotprefix::SyntaxTreeC, st0_top::SyntaxTreeC, mod::Module)
+# and falls back to a `get_type_for_range` query against the surrounding ctx
+# for nested chains (`Base.Compiler.…`). `ctx === nothing` (toplevel failed to
+# lower) skips the inference fallback and only uses the direct lookup.
+function resolve_dot_prefix_module(
+        dotprefix::SyntaxTreeC, context_module::Module,
+        ctx::Union{Nothing,InferredTreeContext}
+    )
     if JS.is_identifier(dotprefix)
         name = Symbol(dotprefix.name_val)::Symbol
-        if @invokelatest(isdefinedglobal(mod, name))
-            v = @invokelatest(getglobal(mod, name))
+        if @invokelatest(isdefinedglobal(context_module, name))
+            v = @invokelatest(getglobal(context_module, name))
             v isa Module && return v
         end
     end
-    typ = infer_type_at_range(st0_top, mod, JS.byte_range(dotprefix))
+    ctx === nothing && return nothing
+    typ = get_type_for_range(ctx, JS.byte_range(dotprefix))
     typ isa Core.Const || return nothing
     v = typ.val
     v isa Module || return nothing
