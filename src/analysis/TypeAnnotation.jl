@@ -6,6 +6,27 @@ Produces a `SyntaxTreeC` whose nodes carry `:type` attributes computed by a cust
 `CC.AbstractInterpreter`, plus a query handle ([`InferredTreeContext`](@ref)) for
 byte-range type lookups.
 
+# Exported API
+
+LSP feature code should normally only need these:
+
+- [`infer_type_at_range`](@ref) — single-shot "type at this byte range",
+  for features that issue one query per cursor position (go to type
+  definition, single hover-type, …).
+- [`build_inferred_context_at`](@ref) — build an [`InferredTreeContext`](@ref) once for a
+  toplevel and reuse it across multiple [`get_type_for_range`](@ref) calls
+  (signature help and call completion query the function head plus each argument).
+- [`get_type_for_range`](@ref) — the actual byte-range → type query;
+  call against a context returned by `build_inferred_context_at`.
+- [`InferredTreeContext`](@ref) — the query handle exported so feature
+  code can spell its type in signatures (e.g. `Union{Nothing,InferredTreeContext}`).
+
+The full pipeline below is documented because the prerequisites and
+limitations propagate to the exported API — every type the exported entries
+surface (whether through `infer_type_at_range` or through `get_type_for_range`
+on a context built by `build_inferred_context_at`) is subject to the
+constraints in "Prerequisite" and "Limitations".
+
 # Pipeline
 
 The four public pieces interlock in a fixed order — each step's output feeds the
@@ -37,10 +58,10 @@ next:
    the lowered surface kind (`K"call"`, `K"macrocall"`, `K"function"`, branching forms, …)
    and returns the inferred lattice element.
 
-For LSP feature code, the `JETLS.build_inferred_context_at` helper in
-`utils/type-annotation-utils.jl` collapses steps 1–3 into a single call,
-returning a ready-to-query `InferredTreeContext`. `JETLS.infer_type_at_range`
-further wraps that with step 4 for the common single-query case.
+For LSP feature code, [`build_inferred_context_at`](@ref) collapses steps 1–3 into a single
+call (locate the toplevel containing a byte range, run the pipeline,
+return a ready-to-query [`InferredTreeContext`](@ref)).
+[`infer_type_at_range`](@ref) further folds in step 4 for the common single-query case.
 
 # Prerequisite: full-analysis must have run first
 
@@ -110,10 +131,11 @@ module TypeAnnotation
 
 using Core.IR
 using JET: CC
-using ..JETLS: JETLS_DEBUG_LOWERING, JL, JS, SyntaxTreeC,
-    jl_lower_for_scope_resolution, rewrite_local_closures_to_opaque, traverse
+using ..JETLS: JETLS_DEBUG_LOWERING, JL, JS, SyntaxTreeC, TraversalReturn,
+    iterate_toplevel_tree, jl_lower_for_scope_resolution, rewrite_local_closures_to_opaque,
+    traversal_terminator, traverse
 
-export InferredTreeContext, get_inferrable_tree, get_type_for_range, infer_toplevel_tree
+export InferredTreeContext, build_inferred_context_at, get_type_for_range, infer_type_at_range
 
 # ASTTypeAnnotator
 # ================
@@ -954,6 +976,59 @@ function get_type_for_range(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
         return type_for_branching(ctx, rng)
     end
     return tmerge_at_range(ctx, rng)
+end
+
+"""
+    build_inferred_context_at(
+            st0_top::SyntaxTreeC, mod::Module, rng::UnitRange{<:Integer};
+            caller::AbstractString = "build_inferred_context_at"
+        ) -> ctx::InferredTreeContext | nothing
+
+Compose [`TypeAnnotation`](@ref) pipeline steps 1–3 into a single call: locate the
+top-level subtree of `st0_top` that contains `rng`, run [`get_inferrable_tree`](@ref)
+and [`infer_toplevel_tree`](@ref) on it, and wrap the result in an
+[`InferredTreeContext`](@ref). Returns `nothing` when no top-level subtree contains `rng`,
+or when lowering / inference fails.
+
+The standard entry point for LSP features that need to issue **multiple**
+[`get_type_for_range`](@ref) queries against the same toplevel — e.g. signature
+help looks up the function's type and then each argument's type. For a single
+range lookup, [`infer_type_at_range`](@ref) is the convenience shortcut that
+also folds in step 4.
+"""
+function build_inferred_context_at(
+        st0_top::SyntaxTreeC, mod::Module, rng::UnitRange{<:Integer};
+        caller::AbstractString = "build_inferred_context_at"
+    )
+    return iterate_toplevel_tree(st0_top) do st0::SyntaxTreeC
+        rng ⊆ JS.byte_range(st0) || return nothing
+        result = @something get_inferrable_tree(st0, mod; caller) return traversal_terminator
+        (; ctx3, st3) = result
+        inferred = @something infer_toplevel_tree(ctx3, st3, mod) return traversal_terminator
+        return TraversalReturn(InferredTreeContext(inferred, st3); terminate=true)
+    end
+end
+
+"""
+    infer_type_at_range(
+            st0_top::SyntaxTreeC, mod::Module, rng::UnitRange{<:Integer}
+        ) -> typ | nothing
+
+Compose all four [`TypeAnnotation`](@ref) pipeline steps into a single call: run inference
+on the top-level subtree containing `rng` and return the inferred type at `rng`.
+Returns `nothing` if lowering / inference fails, or no `:type` annotation exists at `rng`.
+
+The shared cursor-to-type bridge for LSP features that need only one query
+(go to type definition, single-shot hover-type, …).
+For features that need multiple queries against the same toplevel, build the context once with
+[`build_inferred_context_at`](@ref) and reuse it across [`get_type_for_range`](@ref) calls.
+"""
+function infer_type_at_range(
+        st0_top::SyntaxTreeC, mod::Module, rng::UnitRange{<:Integer}
+    )
+    ctx = @something build_inferred_context_at(
+        st0_top, mod, rng; caller="infer_type_at_range") return nothing
+    return get_type_for_range(ctx, rng)
 end
 
 surface_kind_at_range(ctx::InferredTreeContext, rng::UnitRange{<:Integer}) =

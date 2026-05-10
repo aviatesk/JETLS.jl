@@ -1,31 +1,4 @@
 """
-    infer_type_at_range(st0_top::SyntaxTreeC, mod::Module, rng::UnitRange{<:Integer})
-
-Run inference on the top-level subtree that contains `rng` and look up its
-inferred type via the [`TypeAnnotation`](@ref) pipeline.
-Returns `nothing` if lowering or inference fails, or no `:type` annotation
-exists at `rng`.
-
-The shared cursor-to-type bridge for LSP features (go to type definition,
-hover-type, …) — pair with [`select_target_for_type_query`](@ref) to obtain
-the right `rng` for a given cursor position.
-"""
-function infer_type_at_range(
-        st0_top::SyntaxTreeC, mod::Module, rng::UnitRange{<:Integer}
-    )
-    return iterate_toplevel_tree(st0_top) do st0::SyntaxTreeC
-        rng ⊆ JS.byte_range(st0) || return nothing
-        result = @something(
-            get_inferrable_tree(st0, mod; caller="infer_type_at_range"),
-            return traversal_terminator)
-        (; ctx3, st3) = result
-        inferred = @something infer_toplevel_tree(ctx3, st3, mod) return traversal_terminator
-        ctx = InferredTreeContext(inferred, st3)
-        return TraversalReturn(get_type_for_range(ctx, rng); terminate=true)
-    end
-end
-
-"""
     value_based_doc(@nospecialize typ) -> Union{Markdown.MD, Nothing}
 
 Look up a docstring from the *value* a lattice element resolves to. Fires when:
