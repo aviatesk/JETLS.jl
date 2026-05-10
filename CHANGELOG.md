@@ -75,6 +75,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Identifiers inside keyword arguments of `@test`, `@test_broken`, and `@test_skip` (e.g. `flag` in `@test x broken=flag`) are now picked up by scope resolution, so undef-var diagnostics and find-references work for them. Previously the keyword arguments were dropped during macro expansion.
 
+- Fixed `jetls check` failing with "could not find any files to analyze" on Windows when the current working directory's drive letter casing differed from the URI-normalized form (Closed https://github.com/aviatesk/JETLS.jl/issues/679).
+
 ## 2026-05-08
 
 - Commit: [`72cc49c`](https://github.com/aviatesk/JETLS.jl/commit/72cc49c)
