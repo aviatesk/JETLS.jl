@@ -54,6 +54,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Added support for "Go to Type Definition" (`textDocument/typeDefinition`).
   Invoking it on an expression jumps to the definition of its inferred type — e.g. landing on a binding of type `Foo` jumps to the `struct Foo` definition.
   For `Union` types the response includes one location per constituent.
+  (https://github.com/aviatesk/JETLS.jl/pull/686)
 
   <img width="1333" height="571" alt="type definition demo" src="https://github.com/user-attachments/assets/b469f0d7-73ba-47aa-86e5-7861535459fd" />
 
@@ -64,6 +65,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Binding hovers additionally carry a kind tag — `(argument)`, `(local)`, `(static parameter)`, or `(global)` — before the name, making the binding's role in scope visible.
   Closures display as function-arrow signatures like `(x::Int, y::Int) -> Int`, with argument names recovered from the body when available.
   Documentation is gathered both from the binding's own docstring and from the docstring of whatever value the expression resolves to via type inference. So e.g. given `sv = Some(sin)`, hovering on `sv.value` shows `sin`'s docstring even though `sin` doesn't appear at the cursor.
+  (https://github.com/aviatesk/JETLS.jl/pull/687)
 
   | Hover on call    | <img width="1244" height="433" alt="Hover on call demo" src="https://github.com/user-attachments/assets/18e087f4-2df2-4a2f-83c3-83ded78380bb" /> |
   | ---------------- | -------------------- |
