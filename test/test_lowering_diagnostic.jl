@@ -23,7 +23,9 @@ function get_lowered_diagnostics(
     @assert JS.kind(st0_top) === JS.K"toplevel"
     diagnostics = LSP.Diagnostic[]
     JETLS.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
-        JETLS.lowering_diagnostics!(diagnostics, uri, fi, st0, context_module, world; kwargs...)
+        JETLS.lowering_diagnostics!(diagnostics, uri, fi,
+            st0, context_module, world, #=analyzer=#nothing, JETLS.LSPostProcessor();
+            kwargs...)
     end
     return diagnostics
 end

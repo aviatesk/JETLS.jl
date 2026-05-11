@@ -23,7 +23,9 @@ function get_lowering_diagnostics(
     st0_top = JETLS.build_syntax_tree(fi)
     diagnostics = LSP.Diagnostic[]
     JETLS.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
-        JETLS.lowering_diagnostics!(diagnostics, uri, fi, st0, context_module, world; kwargs...)
+        JETLS.lowering_diagnostics!(diagnostics, uri, fi,
+            st0, context_module, world, #=analyzer=#nothing, JETLS.LSPostProcessor();
+            kwargs...)
     end
     if code !== nothing
         filter!(d -> d.code == code, diagnostics)

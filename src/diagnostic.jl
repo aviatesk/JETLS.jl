@@ -773,11 +773,11 @@ end
 #   cannot analyze cases like `Base.undefvar`, so it basically detects a subset of what
 #   full-analysis reports.
 function analyze_undefined_global_bindings!(
-        diagnostics::Vector{Diagnostic}, fi::FileInfo, ctx3::JL.VariableAnalysisContext,
-        world::UInt, binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence}},
-        reported::Set{LoweringDiagnosticKey};
-        analyzer::Union{Nothing,LSAnalyzer} = nothing,
-        postprocessor::LSPostProcessor = LSPostProcessor()
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, world::UInt,
+        analyzer::Union{Nothing,LSAnalyzer}, postprocessor::LSPostProcessor,
+        ctx3::JL.VariableAnalysisContext,
+        binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence}},
+        reported::Set{LoweringDiagnosticKey}
     )
     for (binfo, occurrences) in binding_occurrences
         bk = binfo.kind
@@ -1253,12 +1253,11 @@ function collect_gotos_labels!(
 end
 
 function analyze_lowered_code!(
-        diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo, res::NamedTuple, world::UInt;
+        diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo, res::NamedTuple,
+        world::UInt, analyzer::Union{Nothing,LSAnalyzer}, postprocessor::LSPostProcessor;
         skip_analysis_requiring_context::Bool = false,
         allow_unused_underscore::Bool = true,
-        allow_noreturn_optimization::Vector{Symbol} = Symbol[],
-        analyzer::Union{Nothing,LSAnalyzer} = nothing,
-        postprocessor::LSPostProcessor = LSPostProcessor()
+        allow_noreturn_optimization::Vector{Symbol} = Symbol[]
     )
     (; ctx3, ctx4, st0, st3) = res
     binding_occurrences = compute_binding_occurrences(ctx3, st3, is_generated0(st0);
@@ -1283,7 +1282,9 @@ function analyze_lowered_code!(
     analyze_unresolved_gotos!(diagnostics, fi, st3)
 
     if !skip_analysis_requiring_context
-        analyze_undefined_global_bindings!(diagnostics, fi, ctx3, world, binding_occurrences, reported; analyzer, postprocessor)
+        analyze_undefined_global_bindings!(
+            diagnostics, fi, world, analyzer, postprocessor,
+            ctx3, binding_occurrences, reported)
         analyze_ambiguous_soft_scope!(diagnostics, fi, ctx3, reported)
     end
 
@@ -1292,10 +1293,10 @@ end
 
 function lowering_diagnostics!(
         diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo, st0::SyntaxTreeC,
-        mod::Module, world::UInt;
+        context_module::Module, world::UInt, analyzer::Union{Nothing,LSAnalyzer}, postprocessor::LSPostProcessor;
         skip_analysis_requiring_context::Bool = false,
-        soft_scope::Bool = false,
-        kwargs...
+        allow_unused_underscore::Bool = true,
+        soft_scope::Bool = false
     )
     @assert JS.kind(st0) ∉ JS.KSet"toplevel module"
 
@@ -1303,7 +1304,7 @@ function lowering_diagnostics!(
 
     (st0, _) = desugar_main_macrocall(st0)
     res = try
-        jl_lower_for_scope_resolution(mod, st0; world,
+        jl_lower_for_scope_resolution(context_module, st0; world,
             recover_from_macro_errors=false, convert_closures=true, soft_scope)
     catch err
         if err isa JL.LoweringError
@@ -1353,7 +1354,7 @@ function lowering_diagnostics!(
 
         st0 = remove_macrocalls(without_kinds(st0, JS.KSet"error"))
         try
-            ctx1, st1 = JL.expand_forms_1(mod, st0, true, world)
+            ctx1, st1 = JL.expand_forms_1(context_module, st0, true, world)
             _jl_lower_for_scope_resolution(ctx1, st0, st1; convert_closures=true)
         catch
             # The same error has probably already been handled above
@@ -1369,14 +1370,15 @@ function lowering_diagnostics!(
         (:exit,  Base.exit),
     )
     for (name, expected) in noreturn_globals
-        if Base.invoke_in_world(world, isdefinedglobal, mod, name)::Bool &&
-                Base.invoke_in_world(world, getglobal, mod, name) === expected
+        if Base.invoke_in_world(world, isdefinedglobal, context_module, name)::Bool &&
+                Base.invoke_in_world(world, getglobal, context_module, name) === expected
             push!(allow_noreturn_optimization, name)
         end
     end
 
-    return analyze_lowered_code!(diagnostics, uri, fi, res, world;
-        skip_analysis_requiring_context, allow_noreturn_optimization, kwargs...)
+    return analyze_lowered_code!(
+        diagnostics, uri, fi, res, world, analyzer, postprocessor;
+        skip_analysis_requiring_context, allow_unused_underscore, allow_noreturn_optimization)
 end
 
 struct ImportInfo
@@ -1576,10 +1578,10 @@ function compute_lowering_diagnostics(
     iterate_toplevel_tree(st0_top) do st0::SyntaxTreeC
         is_cancelled(cancel_flag) && return traversal_terminator
         pos = offset_to_xy(file_info, JS.first_byte(st0))
-        (; mod, analyzer, world, postprocessor) = get_context_info(server.state, uri, pos; lookup_func)
-        lowering_diagnostics!(diagnostics, uri, file_info, st0, mod, world;
-            skip_analysis_requiring_context, allow_unused_underscore, soft_scope,
-            analyzer, postprocessor)
+        (; mod, world, analyzer, postprocessor) = get_context_info(server.state, uri, pos; lookup_func)
+        lowering_diagnostics!(diagnostics, uri, file_info, st0,
+            mod, world, analyzer, postprocessor;
+            skip_analysis_requiring_context, allow_unused_underscore, soft_scope)
     end
     return diagnostics
 end
