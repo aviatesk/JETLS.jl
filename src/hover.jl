@@ -36,11 +36,11 @@ function handle_HoverRequest(
     end
     fi = result
 
-    expr_hover = @something expression_hover(state, fi, uri, pos) begin
+    hover = @something get_hover(state, fi, uri, pos) begin
         return send(server, HoverResponse(;
             id = msg.id, result = something(keyword_hover(state, fi, uri, pos), null)))
     end
-    return send(server, HoverResponse(; id = msg.id, result = expr_hover))
+    return send(server, HoverResponse(; id = msg.id, result = hover))
 end
 
 # Unified hover entry. Whether the cursor is on a local binding, a global
@@ -62,11 +62,17 @@ end
 # Local bindings show a kind tag (`(argument)` / `(local)` / `(static
 # parameter)`) so the binding's role in scope is visible even when the type
 # alone wouldn't carry that information.
-function expression_hover(state::ServerState, fi::FileInfo, uri::URI, pos::Position)
+function get_hover(
+        state::ServerState, fi::FileInfo, uri::URI, pos::Position;
+        context_module::Union{Nothing,Module} = nothing
+    )
     st0_top = build_syntax_tree(fi)
     offset = xy_to_offset(fi, pos)
     (; mod, postprocessor) = get_context_info(state, uri, pos)
-    context_module = mod
+    # `context_module` kwarg overrides the analysis-derived module — exposed
+    # for tests so they can seed the lookup with a pre-populated module
+    # without running full-analysis on the test source.
+    context_module = something(context_module, mod)
     soft_scope = is_notebook_cell_uri(state, uri)
     binding_result = select_target_binding(st0_top, offset, context_module; soft_scope)
     if binding_result !== nothing
@@ -83,7 +89,7 @@ function expression_hover(state::ServerState, fi::FileInfo, uri::URI, pos::Posit
     end
 
     rng = JS.byte_range(node)
-    ctx = build_inferred_context_at(st0_top, context_module, rng; caller="expression_hover")
+    ctx = build_inferred_context_at(st0_top, context_module, rng; caller="get_hover")
     type_str = typ = nothing
     if ctx !== nothing
         typ = get_type_for_range(ctx, rng)

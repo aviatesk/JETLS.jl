@@ -51,8 +51,15 @@ end
 
 @test isnothing(JETLS.hover_type_string(Core.Const(push!), "push!"))
 
-@testset "'Hover' request/response" begin
-    @testset "documented global binding" begin
+# End-to-end sanity checks that the LSP `textDocument/hover` request/response
+# path is wired correctly (`DidOpen` → analysis → `HoverRequest` →
+# `MarkupContent`-shaped reply), covering both the `get_hover` (expression)
+# branch and the `keyword_hover` fallback that `handle_HoverRequest` reaches
+# when `get_hover` returns nothing. Other hover scenarios are covered
+# locally via `hover_test` below, which skips the LSP roundtrip and the
+# workspace full-analysis.
+@testset "'Hover' request/response sanity" begin
+    @testset "expression hover" begin
         single_hover_test("""
             \"\"\"Documented binding.\"\"\"
             const documented_binding = 42
@@ -60,155 +67,185 @@ end
         """, "Documented binding.")
     end
 
+    @testset "keyword hover" begin
+        single_hover_test("i│f true; 1; end", "performs conditional evaluation")
+    end
+end
+
+function get_hover(
+        text::AbstractString, pos::Position;
+        filename::AbstractString = @__FILE__,
+        context_module::Union{Nothing,Module} = nothing
+    )
+    server = JETLS.Server()
+    uri = filename2uri(filename)
+    fi = JETLS.cache_file_info!(server, uri, 0, text)
+    return JETLS.get_hover(server.state, fi, uri, pos; context_module)
+end
+
+# `single_hover_test`-shaped assertion that skips the LSP roundtrip — for
+# cases that don't depend on workspace full-analysis. `context_module`
+# overrides the default `Main` lookup so the test can pre-define globals
+# (with docstrings) in a side module and exercise unqualified hover paths
+# against them. `notpat` lets a caller additionally assert that some pattern
+# is *not* present in the rendered Markdown.
+function hover_test(
+        text::AbstractString, pat::Union{AbstractString, Regex, Nothing};
+        context_module::Union{Nothing,Module} = nothing,
+        notpat::Union{AbstractString, Regex, Nothing} = nothing,
+        broken::Bool = false
+    )
+    clean_text, positions = JETLS.get_text_and_positions(text)
+    @assert length(positions) == 1
+    result = get_hover(clean_text, only(positions); context_module)
+    if pat === nothing
+        @test result === nothing broken=broken
+    else
+        @test result isa Hover broken=broken
+        @test occursin(pat, result.contents.value) broken=broken
+        notpat === nothing ||
+            @test !occursin(notpat, result.contents.value) broken=broken
+    end
+end
+
+# Side modules pre-populated with the user bindings the hover tests below
+# need, so `hover_test` can resolve them without running full-analysis on
+# the test source — we pass each module as `context_module` to override the
+# default `Main` lookup. `using Base: Base as B` etc. takes effect when the
+# `module … end` block is evaluated at file-include time.
+module M_doc_binding
+    """Documented binding."""
+    const documented_binding = 42
+end
+module M_undoc_binding
+    const undocumented_binding = 42
+end
+module M_doc_func
+    """Documented method."""
+    func(x::Int) = x
+end
+module M_base_alias
+    using Base: Base as B
+end
+module M_alias_const
+    const mycos = cos
+end
+
+@testset "'hover' user-binding resolution" begin
+    @testset "documented global binding" begin
+        hover_test("documented_binding│", "Documented binding.";
+            context_module = M_doc_binding)
+    end
+
     @testset "undocumented global binding" begin
-        single_hover_test("""
-            const undocumented_binding = 42
-            undocumented_binding│
-        """, "No documentation found")
+        hover_test("undocumented_binding│", "No documentation found";
+            context_module = M_undoc_binding)
     end
 
     @testset "non-existent identifier" begin
-        single_hover_test("unexisting_binding│", "No documentation found")
+        hover_test("unexisting_binding│", "No documentation found")
     end
 
     @testset "global function with docstring" begin
-        single_hover_test("""
-            \"\"\"Documented method.\"\"\"
-            func(x::Int) = x
-            func│(42)
-        """, "Documented method.")
+        hover_test("func│(42)", "Documented method.";
+            context_module = M_doc_func)
     end
 
+    # Cross-module access: the test text qualifies through `M_doc_func`
+    # (defined above), exercising the dot-prefix module-resolution path.
     @testset "module-qualified function" begin
-        single_hover_test("""
-            module M_Doc
-                \"\"\"Documented method.\"\"\"
-                func(x::Int) = x
-            end
-            M_Doc.func│(42)
-        """, "Documented method.")
+        hover_test("M_doc_func.func│(42)", "Documented method.";
+            context_module = @__MODULE__)
     end
 
     @testset "module alias resolves through DocsBinding helper" begin
-        single_hover_test("""
-            using Base: Base as B
-            B│.sin(42)
-        """, JETLS.lsrender(@doc Base))
-    end
-
-    @testset "Core singleton (`nothing`) docstring" begin
-        single_hover_test("nothing│", JETLS.lsrender(@doc nothing))
-    end
-
-    @testset "macrocall — bare identifier" begin
-        single_hover_test("@inline│ sin(42)", JETLS.lsrender(@doc @inline))
-    end
-
-    @testset "macrocall — module-qualified" begin
-        single_hover_test("Base.@inline│ sin(42)", JETLS.lsrender(@doc @inline))
-    end
-
-    @testset "regex literal" begin
-        single_hover_test("rx = r│\"foo\"", JETLS.lsrender(@doc r""))
-    end
-
-    @testset "for-loop variable shows local kind tag" begin
-        single_hover_test("""
-            let xs = collect(1:10)
-                Any[Core.Const(x│) for x in xs]
-            end
-        """, "(local) x")
+        hover_test("B│.sin(42)", JETLS.lsrender(@doc Base);
+            context_module = M_base_alias)
     end
 
     @testset "function singleton header announces resolved value" begin
         # `mycos` is an alias to `cos`; the user can't tell from the source
         # text alone, so the header `mycos :: typeof(cos)` makes the
         # resolved value's singleton type explicit.
-        single_hover_test("""
-            const mycos = cos
-            myc│os
-        """, r"mycos :: typeof\(cos\)"; broken=true)
+        hover_test("myc│os", r"mycos :: typeof\(cos\)";
+            context_module = M_alias_const)
     end
 
-    @testset "indexing expression resolves to element function" begin
-        # `s[2]│` is a `K"ref"` (lowering to `getindex`); const-prop yields
-        # `Core.Const(cos)`, and the source `s[2]` doesn't contain "cos" so
-        # the header announces the resolved function's singleton type.
-        single_hover_test("""
-            let s = (sin, cos)
-                s[2]│
+    # `sv.value` resolves to `sin` via type inference, so hovering on
+    # `value` should surface `sin`'s docstring even though no surface-level
+    # `sin` identifier sits at the cursor.
+    @testset "docs through field access via inference" begin
+        hover_test("""
+            function func(x)
+                sv = Some(sin)
+                sv.va│lue(x)
             end
-        """, r"s\[2\] :: typeof\(cos\)")
+        """, JETLS.lsrender(@doc sin))
     end
 end
 
-function get_local_hover(text::AbstractString, pos::Position; filename::AbstractString=@__FILE__)
-    server = JETLS.Server()
-    uri = filename2uri(filename)
-    fi = JETLS.cache_file_info!(server, uri, 0, text)
-    return JETLS.expression_hover(server.state, fi, uri, pos)
-end
+@testset "'hover' Core / Base / locally-bound resolution" begin
+    @testset "Core singleton (`nothing`) docstring" begin
+        hover_test("nothing│", JETLS.lsrender(@doc nothing))
+    end
 
-@testset "'Hover' resolves docs through field access via inference" begin
-    # `sv.value` resolves to `sin` via type inference, so hovering on `value`
-    # should surface `sin`'s docstring even though there is no surface-level
-    # identifier `sin` at the cursor.
-    single_hover_test("""
-        function func(x)
-            sv = Some(sin)
-            sv.va│lue(x)
-        end
-    """, JETLS.lsrender(@doc sin))
+    @testset "macrocall — bare identifier" begin
+        hover_test("@inline│ sin(42)", JETLS.lsrender(@doc @inline))
+    end
+
+    @testset "macrocall — module-qualified" begin
+        hover_test("Base.@inline│ sin(42)", JETLS.lsrender(@doc @inline))
+    end
+
+    @testset "regex literal" begin
+        hover_test("rx = r│\"foo\"", JETLS.lsrender(@doc r""))
+    end
+
+    @testset "for-loop variable shows local kind tag" begin
+        hover_test("""
+            let xs = collect(1:10)
+                Any[Core.Const(x│) for x in xs]
+            end
+        """, "(local) x")
+    end
 end
 
 @testset "'hover' for local bindings inside a macrocall" begin
     # Regression: argument binding `xxx` introduced under `@something` must
     # still resolve to the surrounding function's parameter rather than
     # whatever the macro's expansion happens to reference.
-    clean_text, positions = JETLS.get_text_and_positions("""
+    hover_test("""
         function func(xxx, yyy)
             value = @something rand((xx│x, yyy, nothing))
             return value
         end
-    """)
-    result = get_local_hover(clean_text, only(positions))
-    @test result isa Hover
-    @test occursin("(argument) xxx", result.contents.value)
+    """, "(argument) xxx")
 end
 
 @testset "'hover' shows inferred type for local bindings" begin
     @testset "type-annotated argument" begin
-        clean_text, positions = JETLS.get_text_and_positions("""
+        hover_test("""
             function f(x::Int)
                 x│
             end
-        """)
-        result = get_local_hover(clean_text, only(positions))
-        @test result isa Hover
-        @test occursin("(argument) x :: Int", result.contents.value)
+        """, "(argument) x :: Int")
     end
 
     @testset "untyped argument falls back to Any" begin
-        clean_text, positions = JETLS.get_text_and_positions("""
+        hover_test("""
             function f(x)
                 x│
             end
-        """)
-        result = get_local_hover(clean_text, only(positions))
-        @test result isa Hover
-        @test occursin("(argument) x :: Any", result.contents.value)
+        """, "(argument) x :: Any")
     end
 
     @testset "local binding inferred from literal" begin
-        clean_text, positions = JETLS.get_text_and_positions("""
+        hover_test("""
             function f()
                 y = 42
                 y│
             end
-        """)
-        result = get_local_hover(clean_text, only(positions))
-        @test result isa Hover
-        @test occursin("(local) y :: Int", result.contents.value)
+        """, "(local) y :: Int")
     end
 
     @testset "closure values format as a function-arrow signature" begin
@@ -217,45 +254,61 @@ end
         # `Core.OpaqueClosure{...}` representation. The `PartialOpaque`
         # lattice element preserves argument names, so the hover shows `(x)`
         # rather than `(Any)`.
-        clean_text, positions = JETLS.get_text_and_positions("""
+        hover_test("""
             function f()
                 g = x -> x + 1
                 g│
             end
-        """)
-        result = get_local_hover(clean_text, only(positions))
-        @test result isa Hover
-        @test occursin("(local) g :: (x) -> Any", result.contents.value)
-        @test !occursin("OpaqueClosure", result.contents.value)
+        """, "(local) g :: (x) -> Any"; notpat="OpaqueClosure")
     end
 
     @testset "typed closure preserves argument types in signature" begin
-        clean_text, positions = JETLS.get_text_and_positions("""
+        hover_test("""
             function f()
                 g = (x::Int, y::Int) -> x + y
                 g│
             end
-        """)
-        result = get_local_hover(clean_text, only(positions))
-        @test result isa Hover
-        @test occursin("(local) g :: (x::$Int, y::$Int) -> $Int", result.contents.value)
+        """, "(local) g :: (x::$Int, y::$Int) -> $Int")
     end
 
     @testset "type at cursor should be flow sensitive" begin
         # local hover queries the type at the cursor (use site), so successive
         # assignments to the same name show the most recent type, not a merge
         # of all assignments' types.
-        clean_text, positions = JETLS.get_text_and_positions("""
+        hover_test("""
             let x = rand((rand(), nothing))
                 if x !== nothing
                     println(x│)
                 end
             end
-        """)
-        result = get_local_hover(clean_text, only(positions))
-        @test result isa Hover
-        @test occursin("(local) x :: Float64", result.contents.value)
+        """, "(local) x :: Float64")
     end
+end
+
+@testset "'hover' on call-like surfaces" begin
+    # Selector regression: `[1, 2, 3]│` (cursor right after `]`) used to miss
+    # because `K"vect"` wasn't in `select_enclosing_call`'s kind set.
+    @testset "array literal" begin
+        hover_test("[1, 2, 3]│", "Vector{$Int}")
+    end
+
+    # Exercises both the `K"typed_comprehension"` selector extension and
+    # `type_for_typed_comprehension`'s `<: Array` filter (which picks the
+    # `Array{T,N}(undef, …)` allocation out of the inlined-loop scaffolding).
+    @testset "typed comprehension" begin
+        hover_test("Int[i for i in 1:5]│", "Vector{$Int}")
+    end
+end
+
+@testset "indexing expression resolves to element function" begin
+    # `s[2]│` is a `K"ref"` (lowering to `getindex`); const-prop yields
+    # `Core.Const(cos)`, and the source `s[2]` doesn't contain "cos" so
+    # the header announces the resolved function's singleton type.
+    hover_test("""
+        let s = (sin, cos)
+            s[2]│
+        end
+    """, r"s\[2\] :: typeof\(cos\)")
 end
 
 end # module test_hover
