@@ -245,6 +245,12 @@ definitions, as well as local bindings.
 > </div>
 > ```
 
+When the cursor is on (or right after) a call site, JETLS narrows the
+result to the method dispatch picked for the inferred argument types —
+`sin│(42)` jumps to `sin(::Real)` only, not to every method of `sin`.
+Bare cursors on the function name (`sin│`) still return every
+definition.
+
 JETLS also implements go to declaration (`textDocument/declaration`),
 which jumps to declaration sites (e.g., `import`/`using`, `local x`, or
 empty `function foo end`) when distinct from the definition, and falls
