@@ -70,10 +70,11 @@ function find_type_definition(server::Server, uri::URI, fi::FileInfo, pos::Posit
 
     rng = JS.byte_range(node)
     (; mod) = get_context_info(state, uri, pos)
-    typ = @something infer_type_at_range(st0_top, mod, rng) return nothing
+    world = Base.get_world_counter()
+    typ = @something infer_type_at_range(st0_top, mod, rng; world) return nothing
 
     target_type = @something extract_target_type(typ) return nothing
-    return type_locations(state, uri, target_type), node
+    return type_locations(state, uri, target_type, world), node
 end
 
 # Convert a lattice element to a concrete `Type` whose definition the user wants
@@ -91,11 +92,13 @@ function extract_target_type(@nospecialize typ)
     end
 end
 
-function type_locations(state::ServerState, origin_uri::URI, @nospecialize(T))
+function type_locations(
+        state::ServerState, origin_uri::URI, @nospecialize(T), world::UInt
+    )
     if T isa Union
         locations = Location[]
         for sub in Base.uniontypes(T)
-            append!(locations, type_locations(state, origin_uri, sub))
+            append!(locations, type_locations(state, origin_uri, sub, world))
         end
         return locations
     end
@@ -106,7 +109,7 @@ function type_locations(state::ServerState, origin_uri::URI, @nospecialize(T))
     locations = type_locations_from_document_symbols(state, origin_uri, T)
     isempty(locations) || return locations
 
-    return type_locations_from_reflection(state, origin_uri, T)
+    return type_locations_from_reflection(state, origin_uri, T, world)
 end
 
 # Search the document symbol cache for a type-declaration symbol whose name
@@ -168,19 +171,18 @@ is_type_definition_symbol_kind(kind::SymbolKind.Ty) =
 # `T`'s constructor methods via reflection, falling back to the unwrapped
 # wrapper for parametric types like `Vector{Int}`.
 function type_locations_from_reflection(
-        state::ServerState, origin_uri::URI, @nospecialize(T)
+        state::ServerState, origin_uri::URI, @nospecialize(T), world::UInt
     )
-    candidates = try; methods(T); catch; Method[]; end
+    candidates = try; collect(methods_at_world(world, T)); catch; Method[]; end
     # Parametric types like `Vector{Int}` usually have no constructor methods
     # of their own; fall back to the unwrapped wrapper (`Vector`) to recover
     # the `struct` definition site.
     if isempty(candidates)
         Tu = Base.unwrap_unionall(T)
         if Tu isa DataType
-            candidates = try; methods(Tu.name.wrapper); catch; Method[]; end
+            candidates = try; collect(methods_at_world(world, Tu.name.wrapper)); catch; Method[]; end
         end
     end
-
     return Location[unadjust_location(state, origin_uri, Location(m))
         for m in filter(!is_location_unknown, unique(Base.updated_methodloc, candidates))]
 end

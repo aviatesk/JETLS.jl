@@ -207,6 +207,27 @@ macro tryinvokelatest(ex)
     end)
 end
 
+"""
+    methods_at_world(world::UInt, f, [t::Type=Tuple{Vararg{Any}}]; mod=nothing) ->
+        Base.MethodList
+
+`Base.methods` with the dispatch world fixed at `world` instead of resolved
+lazily from `Base.get_world_counter()`. Use this when reflection happens
+during a request that has already pinned a world (e.g. hover, type
+definition) — `Base.methods(f)` would otherwise pick up methods added by a
+concurrent analysis update mid-request.
+
+Uses `Base._methods` / `Base.matches_to_methods` internals because the
+public `methods` entry point reads `Base.get_world_counter()` itself, which
+is exactly what we're trying to avoid.
+"""
+methods_at_world(world::UInt, @nospecialize(f); mod=nothing) =
+    methods_at_world(world, f, Tuple{Vararg{Any}}; mod)
+function methods_at_world(world::UInt, @nospecialize(f), @nospecialize(t); mod=nothing)
+    ms = Base._methods(f, t, -1, world)::Vector{Any}
+    return Base.matches_to_methods(ms, typeof(f).name, mod)
+end
+
 # types that should be compared by `===` rather than `==`
 const _EGAL_TYPES_ = Any[Symbol, Core.MethodInstance, Type]
 
