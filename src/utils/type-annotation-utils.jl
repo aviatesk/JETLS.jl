@@ -1,35 +1,4 @@
 """
-    value_based_doc(@nospecialize typ) -> Union{Markdown.MD, Nothing}
-
-Look up a docstring from the *value* a lattice element resolves to. Fires when:
-- `typ isa Core.Const` (the value is `typ.val`), or
-- `typ` is a singleton `Type` (the value is `typ.instance`).
-
-Then only retrieves the docstring when the resolved value is a `Function`,
-`Module`, or `Type` — these are the kinds of values for which
-`Base.Docs.doc(v)` returns a meaningful, value-specific docstring rather
-than falling back to type-level documentation. Returns `nothing` for
-literals, struct instances, `nothing`/`missing`, etc., to avoid surfacing
-the noisy `"No documentation found.\\n# Int64\\n…"` fallback that
-`Base.Docs.doc` produces for non-documented values.
-"""
-function value_based_doc(@nospecialize typ)
-    v = if typ isa Core.Const
-        typ.val
-    elseif Base.issingletontype(typ)
-        typ.instance
-    else
-        return nothing
-    end
-    v isa Function || v isa Module || v isa Type || return nothing
-    return try
-        @invokelatest(Base.Docs.doc(v))::Markdown.MD
-    catch
-        return nothing
-    end
-end
-
-"""
     format_opaque_closure_type(@nospecialize T) -> String
 
 Format a `Core.OpaqueClosure{argt, rt}` type as `(args...) -> rt`.

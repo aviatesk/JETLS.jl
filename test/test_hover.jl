@@ -49,7 +49,21 @@ function single_hover_test(
     end
 end
 
+# Test subroutines
 @test isnothing(JETLS.hover_type_string(Core.Const(push!), "push!"))
+
+meth_concrete(::Int) = nothing
+meth_noargs() = nothing
+meth_multi(::Int, _::String) = nothing
+meth_vararg(::Int...) = nothing
+meth_two_tvars(::T, ::S) where {T,S} = nothing
+meth_with_sparam(::T) where T<:Union{Float32,Float64} = nothing
+@test JETLS.method_argtypes_sig(only(methods(meth_concrete, (Int,)))) == Tuple{Int}
+@test JETLS.method_argtypes_sig(only(methods(meth_noargs, ()))) == Tuple{}
+@test JETLS.method_argtypes_sig(only(methods(meth_multi, (Int, String)))) == Tuple{Int, String}
+@test JETLS.method_argtypes_sig(only(methods(meth_vararg, (Vararg{Int},)))) == Tuple{Vararg{Int}}
+@test JETLS.method_argtypes_sig(only(methods(meth_two_tvars, (Int, String)))) == Tuple{T, S} where {T, S}
+@test JETLS.method_argtypes_sig(only(methods(meth_with_sparam, (Float64,)))) == Tuple{<:Union{Float32,Float64}}
 
 # End-to-end sanity checks that the LSP `textDocument/hover` request/response
 # path is wired correctly (`DidOpen` → analysis → `HoverRequest` →
@@ -130,6 +144,29 @@ end
 module M_alias_const
     const mycos = cos
 end
+module M_overloaded
+    """Generic doc for `op`."""
+    op(x) = x
+    """Method-specific doc for `op(::Int)`."""
+    op(x::Int) = x + 1
+    """Method-specific doc for `op(::String)`."""
+    op(x::String) = uppercase(x)
+end
+module M_iface_overloaded
+    # `function iface end` stores its docstring at `Union{}`, and `iface` has no
+    # `Tuple{Any}`-keyed method — needed so the "no-match fallback" path is reachable
+    # (it's suppressed by any `Any`-accepting method).
+
+    """Interface-level doc for `iface`."""
+    function iface end
+    """Method-specific doc for `iface(::Int)`."""
+    iface(x::Int) = x + 1
+end
+module M_operator_dispatch
+    struct MyArr end
+    """Method-specific doc for `getindex(::MyArr, ::Int)`."""
+    Base.getindex(::MyArr, ::Int) = 42
+end
 
 @testset "'hover' user-binding resolution" begin
     @testset "documented global binding" begin
@@ -180,7 +217,72 @@ end
                 sv = Some(sin)
                 sv.va│lue(x)
             end
-        """, JETLS.lsrender(@doc sin))
+        """, "Compute sine of `x`")
+    end
+
+    @testset "method-specific doc at call dispatch site" begin
+        @testset "generic + method-specific docs (no interface decl)" begin
+            @testset "matches Int method on `op│(1)`" begin
+                hover_test("op│(1)", "Method-specific doc for `op(::Int)`.";
+                    context_module = M_overloaded,
+                    notpat = "Method-specific doc for `op(::String)`.")
+            end
+            @testset "matches String method on `op(\"x\")│`" begin
+                hover_test("op(\"x\")│", "Method-specific doc for `op(::String)`.";
+                    context_module = M_overloaded,
+                    notpat = "Method-specific doc for `op(::Int)`.")
+            end
+            @testset "non-call cursor keeps every overload's doc" begin
+                hover_test("op│", "Method-specific doc for `op(::Int)`.";
+                    context_module = M_overloaded)
+                hover_test("op│", "Method-specific doc for `op(::String)`.";
+                    context_module = M_overloaded)
+            end
+        end
+
+        @testset "interface-decl doc (`function f end`)" begin
+            @testset "interface-decl doc shown at non-call cursor" begin
+                hover_test("iface│", "Interface-level doc for `iface`.";
+                    context_module = M_iface_overloaded)
+                hover_test("iface│", "Method-specific doc for `iface(::Int)`.";
+                    context_module = M_iface_overloaded)
+            end
+            @testset "interface-decl doc dropped at narrowing call site" begin
+                hover_test("iface│(1)", "Method-specific doc for `iface(::Int)`.";
+                    context_module = M_iface_overloaded,
+                    notpat = "Interface-level doc for `iface`.")
+            end
+            @testset "no-match fallback returns every doc" begin
+                hover_test("iface│(1.0)", "Interface-level doc for `iface`.";
+                    context_module = M_iface_overloaded)
+                hover_test("iface│(1.0)", "Method-specific doc for `iface(::Int)`.";
+                    context_module = M_iface_overloaded)
+            end
+        end
+
+        @testset "multiple overloads' docs are visually separated" begin
+            clean_text, positions = JETLS.get_text_and_positions("op│")
+            result = get_hover(clean_text, only(positions); context_module = M_overloaded)
+            @test result isa Hover
+            value = result.contents.value
+            @test length(collect(eachmatch(r"^---$"m, value))) == 3
+            @test occursin(
+                r"`op\(::Int\)`\..*?\n---\n.*?`op\(::String\)`\."s, value)
+        end
+    end
+
+    # `xs[i]│`, `(a, b)│`, `[a, b]│`, … lower to a dispatched operator call (`getindex`,
+    # `Core.tuple`, `Base.vect`, …). Hover narrows to the dispatched method's doc the
+    # same way `K"call"` does — without needing the operator name to appear in source.
+    @testset "method-specific doc at operator dispatch surface" begin
+        @testset "user-defined `getindex` doc shown on `arr[1]│`" begin
+            hover_test("""
+                let arr = MyArr()
+                    arr[1]│
+                end
+            """, "Method-specific doc for `getindex(::MyArr, ::Int)`.";
+                context_module = M_operator_dispatch)
+        end
     end
 end
 

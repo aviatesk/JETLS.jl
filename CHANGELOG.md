@@ -65,11 +65,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Binding hovers additionally carry a kind tag — `(argument)`, `(local)`, `(static parameter)`, or `(global)` — before the name, making the binding's role in scope visible.
   Closures display as function-arrow signatures like `(x::Int, y::Int) -> Int`, with argument names recovered from the body when available.
   Documentation is gathered both from the binding's own docstring and from the docstring of whatever value the expression resolves to via type inference. So e.g. given `sv = Some(sin)`, hovering on `sv.value` shows `sin`'s docstring even though `sin` doesn't appear at the cursor.
+  At a method call site (`f│(args)`, `f(args)│`, `xs[i]│`, …), the docstring is narrowed to the dispatched method when dispatch resolves to a single method, rather than merging every overload's doc; non-call cursors (`f│`) still show every overload's doc.
   (https://github.com/aviatesk/JETLS.jl/pull/687)
 
-  | Hover on call    | <img width="1244" height="433" alt="Hover on call demo" src="https://github.com/user-attachments/assets/18e087f4-2df2-4a2f-83c3-83ded78380bb" /> |
-  | ---------------- | -------------------- |
-  | Hover on closure | <img width="1244" height="433" alt="Hover on closure demo" src="https://github.com/user-attachments/assets/ce273ec7-59e1-4783-91d8-86da6933f72f" /> |
+  | Hover on call    | <img width="1472" height="611" alt="Hover on call demo" src="https://github.com/user-attachments/assets/e34e1cf0-014c-4a8f-bafe-74f34bb751b0" />    |
+  | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | Hover on closure | <img width="1472" height="611" alt="Hover on closure demo" src="https://github.com/user-attachments/assets/a33860a9-4524-4260-a13a-71df1ccd504d" /> |
 
 - `textDocument/semanticTokens` now classifies type parameters declared in `struct` / `abstract type` / `primitive type` headers (and their use sites inside the type body) as `typeParameter`. Previously these identifiers were classified as plain `variable`.
 
