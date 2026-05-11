@@ -72,7 +72,7 @@ function get_hover(
     # `context_module` kwarg overrides the analysis-derived module — exposed
     # for tests so they can seed the lookup with a pre-populated module
     # without running full-analysis on the test source.
-    context_module = something(ctx_info.context_module, mod)
+    context_module = something(context_module, ctx_info.context_module)
     soft_scope = is_notebook_cell_uri(state, uri)
     binding_result = select_target_binding(st0_top, offset, context_module; soft_scope)
     if binding_result !== nothing
