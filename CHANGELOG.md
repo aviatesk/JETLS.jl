@@ -72,6 +72,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
   | Hover on closure | <img width="1086" height="418" alt="Hover on closure demo" src="https://github.com/user-attachments/assets/285de208-a704-4978-9a89-829654f561bc" /> |
 
+- `textDocument/definition` on a call site (`f(arg)│` or `f│(arg)`) now narrows to the method dispatch picked for the inferred argument types — e.g. `sin│(42)` jumps to `sin(::Real)` only, not to every method of `sin`. Bare cursors on the function name (`sin│`) still return all definitions.
+
 - `textDocument/semanticTokens` now classifies type parameters declared in `struct` / `abstract type` / `primitive type` headers (and their use sites inside the type body) as `typeParameter`. Previously these identifiers were classified as plain `variable`.
 
 ### Fixed

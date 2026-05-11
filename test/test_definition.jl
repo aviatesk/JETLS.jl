@@ -27,10 +27,10 @@ const LINE_TestModuleDefinitionRange = (@__LINE__) - 3
     @test loc.range.start.line == LINE_TestModuleDefinitionRange-1
 end
 
-# Full-analysis helper — use this only for tests that exercise the
-# reflection-based fallback (`Base` symbols, module `moduleloc`, etc.).
-# Lowering-only tests should use `with_find_definition` instead, which
-# skips the full server lifecycle and runs much faster.
+# Full-analysis helper — reserved for the single end-to-end
+# request/response sanity testset below. Every other testset in this
+# file uses the lightweight `definition_test` (which skips the LSP
+# roundtrip and the workspace full-analysis).
 function with_definition_request(tester, text::AbstractString; kwargs...)
     clean_code, positions = JETLS.get_text_and_positions(text; kwargs...)
     withscript(clean_code) do script_path
@@ -54,179 +54,320 @@ function with_definition_request(tester, text::AbstractString; kwargs...)
     end
 end
 
-# Lightweight helper that invokes `find_definition` directly. Suitable
-# for tests that only need source-level (lowering-based) binding
-# resolution.
-function with_find_definition(tester, text::AbstractString; kwargs...)
-    clean_code, positions = JETLS.get_text_and_positions(text; kwargs...)
-    filename = joinpath(@__DIR__, "testfile_$(gensym(:definition)).jl")
-    fi = JETLS.FileInfo(#=version=#0, clean_code, filename)
-    furi = filename2uri(filename)
+@testset "request/response sanity" begin
+    # Round-trip sanity check that covers DidOpen → analysis →
+    # `DefinitionRequest` → `DefinitionResponse`, exercising the full LSP
+    # path that the lightweight `definition_test` skips. Every other
+    # testset in this file uses the lightweight helpers.
+    @test with_definition_request("""
+                func(x) = 1
+                fu│nc(1.0)
+            """) do _, result, uri
+        @test result isa Vector{Location}
+        @test length(result) == 1
+        @test first(result).uri == uri
+        @test first(result).range.start.line == 0
+        return 1
+    end == 1
+end
+
+# Single-cursor `find_definition` wrapper that skips the LSP roundtrip
+# and the workspace full-analysis. `context_module` overrides the
+# analysis-derived module so the test can seed the lookup with a
+# pre-populated side module (defined as a runtime `module ... end` in
+# this file). Returns `(locations, origin_node)` like `JETLS.find_definition`.
+function find_definition(
+        text::AbstractString, pos::Position;
+        filename::AbstractString = joinpath(@__DIR__, "testfile_$(gensym(:definition)).jl"),
+        context_module::Union{Nothing,Module} = nothing
+    )
     server = JETLS.Server()
+    fi = JETLS.FileInfo(#=version=#0, text, filename)
+    furi = filename2uri(filename)
     JETLS.store!(server.state.file_cache) do cache
         Base.PersistentDict(cache, furi => fi), nothing
     end
-    cnt = 0
-    for (i, pos) in enumerate(positions)
-        locations, _ = JETLS.find_definition(server, furi, fi, pos)
-        cnt += tester(i, isempty(locations) ? null : locations, furi)
+    return JETLS.find_definition(server, furi, fi, pos; context_module)
+end
+
+# `definition_test(text, expected; ...)` — single-cursor assertion shorthand.
+# `expected === nothing`    → expects `find_definition` to return no locations.
+# `expected isa Int`        → expects exactly one location at `expected`
+#                              (0-based line). File is not checked — for
+#                              in-source jumps the URI is a gensym'd temp file,
+#                              and for fixture jumps the line uniquely
+#                              identifies the target.
+# `expected isa Vector{Int}` → expects `length(locations) == length(expected)`
+#                              with set-equal 0-based line numbers.
+function definition_test(
+        text::AbstractString, expected;
+        context_module::Union{Nothing,Module} = nothing,
+        broken::Bool = false
+    )
+    clean_text, positions = JETLS.get_text_and_positions(text)
+    @assert length(positions) == 1
+    locations, _ = find_definition(clean_text, only(positions); context_module)
+    if expected === nothing
+        @test isempty(locations) broken=broken
+    elseif expected isa Int
+        @test length(locations) == 1 broken=broken
+        if length(locations) == 1
+            @test first(locations).range.start.line == expected broken=broken
+        end
+    elseif expected isa Vector{Int}
+        @test length(locations) == length(expected) broken=broken
+        for line in expected
+            @test any(l -> l.range.start.line == line, locations) broken=broken
+        end
+    else
+        error("Unexpected `expected` type: $(typeof(expected))")
     end
-    return cnt
+end
+
+# Side modules pre-populated with fixtures the lightweight `definition_test`
+# helper consumes via `context_module = M_xxx` overrides. Each `LINE_*`
+# constant captures the (1-based) line where the preceding definition
+# lives, so tests can assert jumps without hard-coding line numbers.
+module M_call_narrowing
+    func(::Int) = 1
+    const LINE_INT = (@__LINE__) - 1
+    func(::Float64) = 2
+    const LINE_FLOAT = (@__LINE__) - 1
+end
+
+module M_target_node
+    m_func(_) = 1
+    const LINE_M_FUNC = (@__LINE__) - 1
+end
+
+module M_module_location
+    m_func(_) = 1
+end
+const LINE_M_module_location = (@__LINE__) - 3
+
+module M_function_in_module
+    m_func(_) = 1
+    const LINE_M_FUNC = (@__LINE__) - 1
 end
 
 @testset HierarchicalTestSet "'Definition' for modules and methods" begin
     @testset "function definition" begin
-        @test with_find_definition("""
-                func(x) = 1
-                fu│nc(1.0)
-                func(1.│0)
-                let; func│; end
-            """) do i, result, uri
-            if i == 1
-                @test length(result) == 1
-                @test first(result).uri == uri
-                @test first(result).range.start.line == 0
-            elseif i == 2  # cursor on argument position
-                @test result === null
-            elseif i == 3  # function in let block
-                @test length(result) == 1
-                @test first(result).uri == uri
-                @test first(result).range.start.line == 0
-            end
-            return 1
-        end == 3
+        @testset "callee identifier jumps to def" begin
+            definition_test("""
+                    func(x) = 1
+                    fu│nc(1.0)
+                """, 0)
+        end
+        @testset "cursor on argument returns null" begin
+            definition_test("""
+                    func(x) = 1
+                    func(1.│0)
+                """, nothing)
+        end
+        @testset "function reference in `let` block" begin
+            definition_test("""
+                    func(x) = 1
+                    let; func│; end
+                """, 0)
+        end
+    end
+
+    @testset "call-site dispatch narrowing" begin
+        # Cursor on a call site narrows to the method dispatch picked
+        # for the inferred argtypes, rather than falling through to the
+        # binding pass which would return every `:def` of the function.
+        @testset "narrows `func(1.0)` to `func(::Float64)`" begin
+            definition_test("fu│nc(1.0)", M_call_narrowing.LINE_FLOAT - 1;
+                context_module = M_call_narrowing)
+        end
+        @testset "narrows `func(1)` to `func(::Int)`" begin
+            definition_test("fu│nc(1)", M_call_narrowing.LINE_INT - 1;
+                context_module = M_call_narrowing)
+        end
+        @testset "bare cursor returns all `:def`s via binding pass" begin
+            definition_test("func│",
+                [M_call_narrowing.LINE_INT - 1, M_call_narrowing.LINE_FLOAT - 1];
+                context_module = M_call_narrowing)
+        end
     end
 
     @testset "Base functions" begin
         sin_cand_file_, sin_cand_line = functionloc(first(methods(sin, (Float64,))))
         sin_cand_file = JETLS.to_full_path(sin_cand_file_)
 
-        @test with_definition_request("""
-                Base.Compiler.tm│eet
-                si│n(1.0)
-                1 +│ 2
-                cos(x) = 1
-                global x::Float64 = let x = 42
-                    Base.co│s(x)
-                end
-            """) do i, result, uri
-            @test length(result) >= 1
-            if i == 2  # sin
-                @test any(result) do candidate
-                    JETLS.uri2filepath(candidate.uri) == sin_cand_file &&
-                    candidate.range.start.line == (sin_cand_line - 1)
-                end
-            elseif i == 4  # Base.cos (should point to Base, not local cos)
-                @test all(result) do candidate
-                    candidate.uri.path != uri
-                end
+        @testset "`Base.Compiler.tmeet` resolves" begin
+            text, positions = JETLS.get_text_and_positions("Base.Compiler.tm│eet")
+            locs, _ = find_definition(text, only(positions))
+            @test length(locs) >= 1
+        end
+        @testset "`sin(1.0)` jumps to `Base.sin(::Float64)`" begin
+            text, positions = JETLS.get_text_and_positions("si│n(1.0)")
+            locs, _ = find_definition(text, only(positions))
+            @test any(locs) do l
+                JETLS.uri2filepath(l.uri) == sin_cand_file &&
+                l.range.start.line == (sin_cand_line - 1)
             end
-            return 1
-        end == 4
+        end
+        @testset "`+` operator resolves" begin
+            text, positions = JETLS.get_text_and_positions("1 +│ 2")
+            locs, _ = find_definition(text, only(positions))
+            @test length(locs) >= 1
+        end
+        @testset "`Base.cos(x)` ignores local `cos(x) = 1`" begin
+            filename = joinpath(@__DIR__, "testfile_$(gensym(:definition)).jl")
+            text, positions = JETLS.get_text_and_positions("""
+                    cos(x) = 1
+                    global x::Float64 = let x = 42
+                        Base.co│s(x)
+                    end
+                """)
+            locs, _ = find_definition(text, only(positions); filename)
+            @test length(locs) >= 1
+            @test all(l -> JETLS.uri2filepath(l.uri) != filename, locs)
+        end
+    end
+
+    @testset "operator-dispatch fallback" begin
+        # Cursor on a call-like surface form (`xs[i]`, `[a, b]`, `[a; b]`,
+        # `[a for x in xs]`) that didn't surface a `Const` at Phase 3
+        # falls through to Phase 4 and jumps to the matched operator's
+        # dispatch (`getindex`, `Base.vect`, `Base.vcat`, `Base.collect`).
+        #
+        # `arr` / `i` are function parameters so inference can't concrete-eval
+        # the call to a `Const` and skip method matching — that would bypass
+        # Phase 4 entirely (no `:matches` recorded for the surface byte range).
+        getindex_cand_file_, getindex_cand_line =
+            functionloc(first(methods(getindex, (Vector{Int}, Int))))
+        getindex_cand_file = JETLS.to_full_path(getindex_cand_file_)
+
+        function operator_dispatch_locs(cursor_text::AbstractString)
+            text, positions = JETLS.get_text_and_positions("""
+                function f(arr::Vector{Int}, i::Int)
+                    $cursor_text
+                end
+            """)
+            locs, _ = find_definition(text, only(positions))
+            return locs
+        end
+
+        @testset "`arr[i]` jumps to `getindex(::Vector{Int}, ::Int)`" begin
+            locs = operator_dispatch_locs("arr[i]│")
+            @test any(locs) do l
+                JETLS.uri2filepath(l.uri) == getindex_cand_file &&
+                l.range.start.line == (getindex_cand_line - 1)
+            end
+        end
+        @testset "`[arr[1], arr[2]]` jumps to `Base.vect`" begin
+            locs = operator_dispatch_locs("[arr[1], arr[2]]│")
+            @test length(locs) >= 1
+        end
+        @testset "`[arr; arr]` jumps to `Base.vcat`" begin
+            locs = operator_dispatch_locs("[arr; arr]│")
+            @test length(locs) >= 1
+        end
+        @testset "comprehension jumps to `Base.collect`" begin
+            locs = operator_dispatch_locs("[x for x in arr]│")
+            @test length(locs) >= 1
+        end
     end
 
     @testset "function in module" begin
-        @test with_definition_request("""
-                module M
-                    m_func(x) = 1
-                    m_│func(1.0)
-                end
-                m_│func(1.0)
-                M.m_│func(1.0)
-            """) do i, result, uri
-            if i == 1
-                @test length(result) == 1
-                @test first(result).uri == uri
-                @test first(result).range.start.line == 1
-            elseif i == 2
-                @test result === null
-            elseif i == 3
-                @test length(result) == 1
-                @test first(result).uri == uri
-                @test first(result).range.start.line == 1
-            end
-            return 1
-        end == 3
+        @testset "unqualified call resolves through `context_module`" begin
+            definition_test("m_│func(1.0)",
+                M_function_in_module.LINE_M_FUNC - 1;
+                context_module = M_function_in_module)
+        end
+        @testset "undefined Main-scope reference returns null" begin
+            definition_test("m_│func(1.0)", nothing)
+        end
+        @testset "qualified call resolves to module member" begin
+            definition_test("M_function_in_module.m_│func(1.0)",
+                M_function_in_module.LINE_M_FUNC - 1;
+                context_module = @__MODULE__)
+        end
     end
 
     @testset "struct type and function aggregation" begin
-        @test with_find_definition("""
-                struct Hello
-                    who::String
-                    Hello(who::AbstractString) = new(String(who))
-                end
-                function say(h::Hel│lo)
-                    println("Hello, \$(h.who)")
-                end
-                function say_defarg(h::Hello, s = "Hello")
-                    println("\$s, \$(h.who)")
-                end
-                function say_kwarg(h::Hello; s = "Hello")
-                    println("\$s, \$(h.who)")
-                end
-                say_defar│g
-                say_kwar│g
-            """) do i, result, uri
-            @test length(result) == 1
-            @test first(result).uri == uri
-            if i == 1  # struct type in function signature
-                @test first(result).range.start.line == 0
-            elseif i == 2  # function with default arguments (aggregated)
-                @test first(result).range.start.line == 7
-            elseif i == 3  # function with keyword arguments (aggregated)
-                @test first(result).range.start.line == 10
-            end
-            return 1
-        end == 3
+        @testset "struct type at function signature" begin
+            definition_test("""
+                    struct Hello
+                        who::String
+                        Hello(who::AbstractString) = new(String(who))
+                    end
+                    function say(h::Hel│lo)
+                        println("Hello, \$(h.who)")
+                    end
+                """, 0)
+        end
+        @testset "function with default arguments aggregates" begin
+            definition_test("""
+                    struct Hello; who::String; end
+                    function say_defarg(h::Hello, s = "Hello")
+                        println("\$s, \$(h.who)")
+                    end
+                    say_defar│g
+                """, 1)
+        end
+        @testset "function with keyword arguments aggregates" begin
+            definition_test("""
+                    struct Hello; who::String; end
+                    function say_kwarg(h::Hello; s = "Hello")
+                        println("\$s, \$(h.who)")
+                    end
+                    say_kwar│g
+                """, 1)
+        end
     end
 
     @testset "target node selection" begin
-        @test with_definition_request("""
-                func(x) = 1
-                func│ # bare function
-                func│(1.0) # right edge
-                │func(1.0) # left edge
-                module M
-                    m_func(x) = 1
-                end
-                M.m_func│(1.0)
-                M.│m_func(1.0)
-            """) do i, result, uri
-            @test length(result) == 1
-            @test first(result).uri == uri
-            if i <= 3  # simple function
-                @test first(result).range.start.line == 0
-            else  # qualified function (i == 4 or 5)
-                @test first(result).range.start.line == 5
-            end
-            return 1
-        end == 5
+        # Simple in-source `func` — Main-scope binding pass.
+        @testset "bare function (no parens)" begin
+            definition_test("""
+                    func(x) = 1
+                    func│ # bare function
+                """, 0)
+        end
+        @testset "callee right edge" begin
+            definition_test("""
+                    func(x) = 1
+                    func│(1.0)
+                """, 0)
+        end
+        @testset "callee left edge" begin
+            definition_test("""
+                    func(x) = 1
+                    │func(1.0)
+                """, 0)
+        end
+        # Qualified `M_target_node.m_func` — resolved via the side-module
+        # fixture so the lightweight path doesn't need full-analysis.
+        @testset "qualified callee right edge" begin
+            definition_test("M_target_node.m_func│(1.0)",
+                M_target_node.LINE_M_FUNC - 1;
+                context_module = @__MODULE__)
+        end
+        @testset "qualified callee left edge" begin
+            definition_test("M_target_node.│m_func(1.0)",
+                M_target_node.LINE_M_FUNC - 1;
+                context_module = @__MODULE__)
+        end
     end
 
     @testset "module location" begin
-        @test with_definition_request("""
-                module M2
-                    m_func(x) = 1
-                end
-                M2│.m_func(1.0)
-                Core│.isdefined
-            """) do i, result, uri
-            if i == 1
-                @test result isa Vector{Location}
-                @test length(result) == 1
-                @test only(result).uri == uri
-                @test only(result).range.start.line == 0
-            elseif i == 2  # Core doesn't return meaningful location
-                @test result === null
-            end
-            return 1
-        end == 2
+        @testset "module reference jumps to module def" begin
+            definition_test("M_module_location│.m_func(1.0)",
+                LINE_M_module_location - 1;
+                context_module = @__MODULE__)
+        end
+        @testset "`Core` has no meaningful source location" begin
+            definition_test("Core│.isdefined", nothing)
+        end
     end
 end
 
 @testset HierarchicalTestSet "'Definition' for local bindings" begin
-    @testset "local definition" begin
-        @test with_find_definition("""
+    @testset "local definition with both branches" begin
+        definition_test("""
                 function func(x, y)
                     if rand(Bool)
                         z = x
@@ -235,106 +376,82 @@ end
                     end
                     return z│
                 end
-            """) do _, results, uri
-            @test results isa Vector{Location}
-            @test length(results) == 2
-            @test any(results) do result
-                result.uri == uri &&
-                result.range.start.line == 2
-            end
-            @test any(results) do result
-                result.uri == uri &&
-                result.range.start.line == 4
-            end
-            return 1
-        end == 1
+            """, [2, 4])
     end
 
-    @testset "local definition with docstring" begin
-        @test with_find_definition("""
+    @testset "local argument with docstring on enclosing function" begin
+        definition_test("""
                 \"\"\"Docstring\"\"\"
                 function func(xxx, yyy)
                     value = xxx│ + yyy
                     return value
                 end
-            """) do _, results, uri
-            @test results isa Vector{Location}
-            @test length(results) == 1
-            @test any(results) do result
-                result.uri == uri &&
-                result.range.start.line == 1
-            end
-            return 1
-        end == 1
+            """, 1)
     end
 
-    @testset "local definition with macrocall" begin
-        @test with_find_definition("""
+    @testset "local argument referenced inside a macrocall" begin
+        definition_test("""
                 function func(xxx, yyy)
                     value = @something rand((xxx│, yyy, nothing))
                     return value
                 end
-            """) do _, results, uri
-            @test results isa Vector{Location}
-            @test length(results) == 1
-            @test any(results) do result
-                result.uri == uri &&
-                result.range.start.line == 0
-            end
-            return 1
-        end == 1
+            """, 0)
     end
 end
 
 @testset "'Definition' for imported names" begin
     # Cursor on an imported name should NOT stop at the import site.
-    # The import site is a declaration (`:decl`), so `textDocument/definition`
-    # falls through to reflection-based lookup and jumps to the source
-    # (e.g. `sin` in Base).
+    # The import site is a declaration (`:decl`), not a `:def`, so the
+    # binding pass falls through and reflection jumps to the source
+    # (e.g. `sin` in `Base`). Wrapping `using Base: sin` and the usage
+    # in `module M_import_test ... end` keeps both in the same lowering
+    # pass (otherwise `find_definition` only processes the cursor's
+    # toplevel and never sees the `using` line).
     sin_cand_file_, sin_cand_line = functionloc(first(methods(sin, (Float64,))))
     sin_cand_file = JETLS.to_full_path(sin_cand_file_)
-    @test with_definition_request("""
-            using Base: sin
-            si│n(1.0)
-        """) do _, results, uri
-        @test results isa Vector{Location}
-        @test length(results) >= 1
-        # Jump must go outside the current file (to Base's source).
-        @test all(r -> JETLS.uri2filepath(r.uri) != JETLS.uri2filepath(uri), results)
-        @test any(results) do r
-            JETLS.uri2filepath(r.uri) == sin_cand_file &&
-            r.range.start.line == (sin_cand_line - 1)
-        end
-        return 1
-    end == 1
+    filename = joinpath(@__DIR__, "testfile_$(gensym(:definition)).jl")
+    text, positions = JETLS.get_text_and_positions("""
+            module M_import_test
+                using Base: sin
+                si│n(1.0)
+            end
+        """)
+    locs, _ = find_definition(text, only(positions); filename)
+    @test length(locs) >= 1
+    # Jump must go outside the synthetic source (to `Base`'s source).
+    @test all(l -> JETLS.uri2filepath(l.uri) != filename, locs)
+    @test any(locs) do l
+        JETLS.uri2filepath(l.uri) == sin_cand_file &&
+        l.range.start.line == (sin_cand_line - 1)
+    end
 end
 
 @testset "'Definition' for global bindings" begin
-    @test with_find_definition("""
-            GLOBAL_VAR = 42
-            const CONST_VAR = 100
-            MUTABLE_VAR = 1
-            MUTABLE_VAR = 2
-            function use_globals()
-                GLOBAL_VA│R + CONST_VA│R + MUTABLE_VA│R
-            end
-        """) do i, results, uri
-        @test results isa Vector{Location}
-        if i == 1  # GLOBAL_VAR
-            @test length(results) == 1
-            @test first(results).uri == uri
-            @test first(results).range.start.line == 0
-        elseif i == 2  # CONST_VAR
-            @test length(results) == 1
-            @test first(results).uri == uri
-            @test first(results).range.start.line == 1
-        elseif i == 3  # MUTABLE_VAR (multiple assignments)
-            @test length(results) == 2
-            @test any(r -> r.range.start.line == 2, results)
-            @test any(r -> r.range.start.line == 3, results)
-        end
-        return 1
-    end == 3
+    @testset "untyped global" begin
+        definition_test("""
+                GLOBAL_VAR = 42
+                function use_globals()
+                    GLOBAL_VA│R
+                end
+            """, 0)
+    end
+    @testset "const global" begin
+        definition_test("""
+                const CONST_VAR = 100
+                function use_globals()
+                    CONST_VA│R
+                end
+            """, 0)
+    end
+    @testset "mutable global with multiple assignments" begin
+        definition_test("""
+                MUTABLE_VAR = 1
+                MUTABLE_VAR = 2
+                function use_globals()
+                    MUTABLE_VA│R
+                end
+            """, [0, 1])
+    end
 end
 
 end # module test_definition
