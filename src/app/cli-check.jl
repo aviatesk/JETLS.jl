@@ -348,8 +348,8 @@ function run_check(args::Vector{String})
 
     uri2diagnostics = get_full_diagnostics(server)
 
-    # Lowering analysis phase (workspace/diagnostic equivalent)
-    total_uris = run_lowering_analysis!(uri2diagnostics, analysis_uris, server, root_path, progress_ctx; lookup_func)
+    # Per-file diagnostics phase (workspace/diagnostic equivalent)
+    total_uris = run_per_file_diagnostics!(uri2diagnostics, analysis_uris, server, root_path, progress_ctx; lookup_func)
 
     for (uri, diagnostics) in uri2diagnostics
         apply_diagnostic_config!(diagnostics, server.state.config_manager, uri, root_path)
@@ -412,7 +412,7 @@ mutable struct Counter
     @atomic count::Int
 end
 
-function run_lowering_analysis!(
+function run_per_file_diagnostics!(
         uri2diagnostics::Dict{URI,Vector{Diagnostic}}, analyzed_uris::Set{URI},
         server::Server, root_path::AbstractString,
         progress_ctx::ProgressContext;
@@ -426,7 +426,7 @@ function run_lowering_analysis!(
         end
 
         counter = Counter(0)
-        run_lowering_analysis_for_uri = function (uri::URI, lock::Bool)
+        run_per_file_diagnostics_for_uri = function (uri::URI, lock::Bool)
             fi = @something get_file_info(server.state, uri) begin
                 get_unsynced_file_info!(server.state, uri)
             end return
@@ -457,11 +457,11 @@ function run_lowering_analysis!(
 
         if Threads.nthreads() > 1
             map(collect(analyzed_uris)) do uri
-                Threads.@spawn :default run_lowering_analysis_for_uri(uri, false)
+                Threads.@spawn :default run_per_file_diagnostics_for_uri(uri, false)
             end |> waitall
         else
             for uri in analyzed_uris
-                run_lowering_analysis_for_uri(uri, false)
+                run_per_file_diagnostics_for_uri(uri, false)
             end
         end
 
