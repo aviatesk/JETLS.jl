@@ -492,25 +492,25 @@ function print_stats(
     end
     total_diagnostics = n_errors + n_warnings + n_info + n_hints
 
-    println(stdout, "# Analyzed $total_files files in $(format_duration(elapsed_time))")
+    println(stdout, "# Analyzed ", count_label(total_files, "file"),
+        " in $(format_duration(elapsed_time))")
     if total_diagnostics == 0
         println(stdout, "# No diagnostics found")
     else
-        if total_diagnostics == 1
-            print(stdout, "# Found 1 diagnostic")
-        else
-            print(stdout, "# Found $total_diagnostics diagnostics")
-        end
-        print(stdout, " in $files_with_diagnostics files")
+        print(stdout, "# Found ", count_label(total_diagnostics, "diagnostic"),
+            " in ", count_label(files_with_diagnostics, "file"))
         parts = String[]
-        n_errors > 0 && push!(parts, "$n_errors errors")
-        n_warnings > 0 && push!(parts, "$n_warnings warnings")
-        n_info > 0 && push!(parts, "$n_info info")
-        n_hints > 0 && push!(parts, "$n_hints hints")
+        n_errors > 0 && push!(parts, count_label(n_errors, "error"))
+        n_warnings > 0 && push!(parts, count_label(n_warnings, "warning"))
+        n_info > 0 && push!(parts, count_label(n_info, "info", "info"))
+        n_hints > 0 && push!(parts, count_label(n_hints, "hint"))
         println(stdout, " (", join(parts, ", "), ")")
         println(stdout)
     end
 end
+
+count_label(n::Int, singular::AbstractString, plural::AbstractString = singular * "s") =
+    string(n, ' ', n == 1 ? singular : plural)
 
 function print_diagnostics(
         uri2diagnostics::URI2Diagnostics, root_path::String,
