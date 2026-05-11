@@ -14,10 +14,13 @@ LSP feature code should normally only need these:
   for features that issue one query per cursor position (go to type
   definition, single hover-type, …).
 - [`build_inferred_context_at`](@ref) — build an [`InferredTreeContext`](@ref) once for a
-  toplevel and reuse it across multiple [`get_type_for_range`](@ref) calls
+  toplevel and reuse it across multiple queries on the same context
   (signature help and call completion query the function head plus each argument).
-- [`get_type_for_range`](@ref) — the actual byte-range → type query;
-  call against a context returned by `build_inferred_context_at`.
+- [`get_type_for_range`](@ref) — the byte-range → type query; call against a
+  context returned by `build_inferred_context_at`.
+- [`get_matches_for_range`](@ref) — the byte-range → `Vector{Core.MethodMatch}`
+  query. Returns the methods CC's dispatch picked at a call site, for features
+  that want narrower jumps than `methods(callee)` (go-to-method-definition).
 - [`InferredTreeContext`](@ref) — the query handle exported so feature
   code can spell its type in signatures (e.g. `Union{Nothing,InferredTreeContext}`).
 
@@ -135,7 +138,8 @@ using ..JETLS: JETLS_DEBUG_LOWERING, JL, JS, SyntaxTreeC, TraversalReturn,
     iterate_toplevel_tree, jl_lower_for_scope_resolution, rewrite_local_closures_to_opaque,
     traversal_terminator, traverse
 
-export InferredTreeContext, build_inferred_context_at, get_type_for_range, infer_type_at_range
+export InferredTreeContext, build_inferred_context_at, get_matches_for_range,
+    get_type_for_range, infer_type_at_range
 
 # ASTTypeAnnotator
 # ================
@@ -295,6 +299,34 @@ function slot_type_at(slot::SlotNumber, idx::Int, frame::CC.InferenceState)
     return entry[slot.id].typ
 end
 
+# Extract the matched methods for a call site from CC's per-stmt `CallInfo`.
+# Returns `nothing` for `CallInfo` shapes that don't expose a method-match
+# list (`InvokeCallInfo`, `OpaqueClosureCallInfo`, `ApplyCallInfo`, …): those
+# call shapes don't have a "set of dispatched methods" definition that maps
+# cleanly onto go-to-definition / sighelp queries.
+function extract_call_matches(@nospecialize info)
+    matches = Core.MethodMatch[]
+    _collect_call_matches!(matches, info)
+    return isempty(matches) ? nothing : matches
+end
+
+function _collect_call_matches!(matches::Vector{Core.MethodMatch}, @nospecialize info)
+    if info isa CC.MethodMatchInfo
+        for m in info.results.matches
+            push!(matches, m)
+        end
+    elseif info isa CC.UnionSplitInfo
+        for sub in info.split
+            _collect_call_matches!(matches, sub)
+        end
+    elseif info isa CC.ConstCallInfo
+        # `ConstCallInfo` wraps the underlying dispatch info with a
+        # const-prop'd result; the same matching methods live one level down.
+        _collect_call_matches!(matches, info.call)
+    end
+    return matches
+end
+
 function annotate_types!(citree::SyntaxTreeC, frame::CC.InferenceState)
     if length(frame.src.code) != JS.numchildren(citree)
         return @warn "ASTTypeAnnotator: Can't annotate types for " frame.linfo
@@ -330,6 +362,11 @@ function annotate_types!(citree::SyntaxTreeC, frame::CC.InferenceState)
                 stmt isa Expr || continue
                 treeref = treeref[2]
                 JS.setattr!(treeref, :type, stmttype)
+            end
+            is_call = stmt.head === :call
+            if is_call
+                matches = extract_call_matches(frame.stmt_info[i])
+                matches === nothing || JS.setattr!(treeref, :matches, matches)
             end
             for j = 1:length(stmt.args)
                 arg = stmt.args[j]
@@ -509,6 +546,7 @@ end
 prepare_type_attr(st::SyntaxTreeC) = let g = JL.syntax_graph(st)
     attrs = Dict(pairs(g.attributes))
     attrs[:type] = Dict{Int, Any}()
+    attrs[:matches] = Dict{Int, Vector{Core.MethodMatch}}()
     return SyntaxTreeC(JL.SyntaxGraph(g.edge_ranges, g.edges, attrs), st._id)
 end
 
@@ -1201,6 +1239,35 @@ function is_method_def_typeof_scaffolding(st::SyntaxTreeC)
     JS.kind(callee) === JS.K"core" || return false
     JS.hasattr(callee, :name_val) || return false
     return callee.name_val == "Typeof"
+end
+
+"""
+    get_matches_for_range(
+            ctx::InferredTreeContext, rng::UnitRange{<:Integer}
+        ) -> Vector{Core.MethodMatch} | nothing
+
+Look up the `Core.MethodMatch`es CC's dispatch produced for the call site at
+surface byte range `rng`. Returns `nothing` if no lowered `K"call"` node at
+`rng` carries a `:matches` attribute — the surface isn't a call site, the
+lookup hit a non-method-dispatch `CallInfo` (`InvokeCallInfo`, `OpaqueClosureCallInfo`,
+`ApplyCallInfo`, …), or inference couldn't see the callee at all.
+
+Mirrors [`get_type_for_range`](@ref)'s "last `K"call"` wins" semantics for
+call-shaped surface kinds: kwcall sites lower the kwargs `NamedTuple` constructor and
+`Core.tuple` builder as separate `K"call"`s sharing the user call's byte range,
+but the user's call is emitted last in preorder, so this returns matches for
+the user-visible dispatch rather than for the scaffolding.
+
+Pair with [`build_inferred_context_at`](@ref) for the context.
+"""
+function get_matches_for_range(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
+    matches = nothing
+    for st in get(ctx.by_byte_range, rng, ())
+        JS.kind(st) === JS.K"call" || continue
+        hasproperty(st, :matches) || continue
+        matches = st.matches::Vector{Core.MethodMatch}
+    end
+    return matches
 end
 
 end # module TypeAnnotation

@@ -1323,4 +1323,47 @@ end
     end
 end
 
+@testset "get_matches_for_range" begin
+    # CC's dispatch picks the `sin` method matching `Float64` for `sin(1.0)`;
+    # matches should narrow to just that one method even though `sin` has many overloads.
+    @testset "narrows to the dispatched method" begin
+        let code = "sin(1.0)"
+            _, ctx = type_annotate(code)
+            ms = get_matches_for_range(ctx, range_of(code, "sin(1.0)"))
+            @test ms isa Vector{Core.MethodMatch}
+            @test length(ms) == 1
+            m = only(ms).method
+            @test m.name === :sin
+            # The dispatched method covers `Float64`; could be a parametric
+            # `where T<:Union{Float32,Float64}` definition in Base.
+            @test Tuple{typeof(sin), Float64} <: m.sig
+        end
+    end
+
+    # `K"ref"` (`xs[i]`) lowers to a `getindex` call, so its matches expose
+    # the dispatched `getindex` method.
+    @testset "exposes operator dispatch for K\"ref\"" begin
+        let code = "let arr = Int[1, 2, 3], i = 1; arr[i]; end"
+            _, ctx = type_annotate(code)
+            ms = get_matches_for_range(ctx, range_of(code, "arr[i]"))
+            @test ms isa Vector{Core.MethodMatch}
+            @test length(ms) == 1
+            m = only(ms).method
+            @test m.name === :getindex
+            # The dispatched method covers `Float64`; could be a parametric
+            # `where T<:Union{Float32,Float64}` definition in Base.
+            @test Tuple{typeof(getindex), Vector{Int}, Int} <: m.sig
+        end
+    end
+
+    # Non-call surfaces (a local binding occurrence, an `if` expression, …) don't carry a
+    # `:matches` attribute on any `K"call"` at their byte range
+    @testset "returns nothing for non-call surfaces" begin
+        let code = "let x = 42; x; end"
+            _, ctx = type_annotate(code)
+            @test get_matches_for_range(ctx, range_of(code, "x = 42")) === nothing
+        end
+    end
+end
+
 end # module test_type_annotation
