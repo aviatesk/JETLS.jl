@@ -287,12 +287,12 @@ is_synchronized(s::ServerState, uri::URI) = haskey(load(s.file_cache), uri)
 
 """
     get_context_info(state::ServerState, uri::URI, pos::Position) ->
-        (; mod, world, analyzer, postprocessor)
+        (; context_module, world, analyzer, postprocessor)
 
 Extract context information for a given position in a file.
 
 Returns a named tuple containing:
-- `mod::Module`: The module context at the given position
+- `context_module::Module`: The module context at the given position
 - `world::UInt`: The world age to pin reflection and inference to. When an `AnalysisResult`
   is cached for this URI, this is the world at which that analysis context was produced —
   pinning to it keeps a request consistent with the cached analysis even if a concurrent
@@ -309,11 +309,11 @@ function get_context_info(state::ServerState, uri::URI, pos::Position; lookup_fu
     else
         analysis_info = get_analysis_info(state.analysis_manager, lookup_uri)
     end
-    mod = get_context_module(analysis_info, lookup_uri, pos)
+    context_module = get_context_module(analysis_info, lookup_uri, pos)
     world = get_context_world(analysis_info)
     analyzer = get_context_analyzer(analysis_info, lookup_uri)
     postprocessor = get_post_processor(analysis_info)
-    return (; mod, world, analyzer, postprocessor)
+    return (; context_module, world, analyzer, postprocessor, mod=context_module) # `mod` is temporarily preserved
 end
 
 get_context_module(::Nothing, ::URI, ::Position) = Main
