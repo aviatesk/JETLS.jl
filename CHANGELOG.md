@@ -83,6 +83,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - `jetls check` no longer rejects files outside the current working directory. Previously, paths such as `jetls check ../foo.jl` were classified as out-of-scope by the LSP-style workspace boundary guard and produced "could not find any files to analyze". The CLI now analyzes any file passed on the command line regardless of where it lives relative to the cwd.
 
+- `jetls check` now reports parse errors. Previously, files with syntax errors (e.g. an unclosed parenthesis like `f(x) = println(x`) silently produced "No diagnostics found".
+
 ## 2026-05-08
 
 - Commit: [`72cc49c`](https://github.com/aviatesk/JETLS.jl/commit/72cc49c)

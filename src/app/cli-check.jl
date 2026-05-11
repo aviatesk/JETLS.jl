@@ -430,7 +430,12 @@ function run_lowering_analysis!(
             fi = @something get_file_info(server.state, uri) begin
                 get_unsynced_file_info!(server.state, uri)
             end return
-            diagnostics = toplevel_lowering_diagnostics(server, uri, fi; lookup_func)
+            # Mirrors `compute_pull_diagnostics`: parse errors short-circuit lowering.
+            diagnostics = if isempty(fi.parsed_stream.diagnostics)
+                toplevel_lowering_diagnostics(server, uri, fi; lookup_func)
+            else
+                parsed_stream_to_diagnostics(fi)
+            end
             if !isempty(diagnostics)
                 if lock
                     @lock uri2diagnostics_lock append!(get!(Vector{Diagnostic}, uri2diagnostics, uri), diagnostics)
