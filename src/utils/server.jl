@@ -285,6 +285,11 @@ end
 
 is_synchronized(s::ServerState, uri::URI) = haskey(load(s.file_cache), uri)
 
+# TODO: also return the `world` at which the full-analysis result was cached,
+# so request handlers (hover, type definition, …) can pin reflection and
+# inference to that exact world instead of re-reading `Base.get_world_counter()`
+# at request entry — which may have advanced past the cached analysis.
+
 """
     get_context_info(state::ServerState, uri::URI, pos::Position) -> (; mod, analyzer, postprocessor)
 
