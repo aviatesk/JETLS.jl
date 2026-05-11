@@ -111,6 +111,13 @@ function get_hover(
         # (`sv.value` → `Core.Const(sin)`), not the call's return type.
         typ = display_node === node ? display_typ : get_type_for_range(ctx, JS.byte_range(node))
     end
+    # Fallback when the TypeAnnotation pipeline can't supply a type
+    if typ === nothing
+        typ = resolve_global_const(context_module, node, world)
+        if typ !== nothing && type_str === nothing && display_node === node
+            type_str = hover_type_string(typ, JS.sourcetext(display_node))
+        end
+    end
 
     sig = ctx === nothing ? nothing : call_dispatch_sig(ctx, st0_top, node)
 

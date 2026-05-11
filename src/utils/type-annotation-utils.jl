@@ -72,3 +72,44 @@ function closure_argnames(po::Core.PartialOpaque, nargs::Int)
     length(names) == nargs + 1 || return nothing
     return names[2:end]
 end
+
+"""
+    resolve_global_const(context_module::Module, node::SyntaxTreeC, world::UInt) ->
+        Core.Const | nothing
+
+Best-effort static lookup of a `K"Identifier"` or `K"."` dotted-path node as a
+`Core.Const` value by walking the dotted path against `context_module`. Used as a fallback
+for features (signature help, call completion, definition, …) when the
+[`TypeAnnotation`](@ref) pipeline can't supply a type — either because the
+surrounding toplevel failed to lower (e.g. a method definition with unused
+where-vars), or because the identifier doesn't survive lowering (most notably
+macro names after macroexpansion).
+
+Handles plain identifiers (`f`, `@m`), module-qualified macros (`Base.@show`)
+and nested module paths (`Foo.Bar.f`). Returns `nothing` for anything more
+complex (calls in node position, parametric type applications, …) — those
+inputs need real inference, which the caller already attempted.
+
+`world` pins the binding lookup so concurrent analysis updates can't make this
+fallback observe a newer world than the rest of the request.
+"""
+function resolve_global_const(context_module::Module, node::SyntaxTreeC, world::UInt)
+    if JS.kind(node) === JS.K"Identifier" && JS.hasattr(node, :name_val)
+        sym = Symbol(node.name_val)
+        Base.invoke_in_world(world, isdefinedglobal, context_module, sym) || return nothing
+        return Core.Const(Base.invoke_in_world(world, getglobal, context_module, sym))
+    elseif JS.kind(node) === JS.K"." && JS.numchildren(node) == 2
+        prefix = node[1]
+        suffix = node[2]
+        # `Base.@show` parses with the macro identifier wrapped in `K"inert"`.
+        if JS.kind(suffix) === JS.K"inert" && JS.numchildren(suffix) >= 1
+            suffix = suffix[1]
+        end
+        prefix_const = resolve_global_const(context_module, prefix, world)
+        prefix_const isa Core.Const || return nothing
+        submod = prefix_const.val
+        submod isa Module || return nothing
+        return resolve_global_const(submod, suffix, world)
+    end
+    return nothing
+end
