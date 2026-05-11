@@ -338,7 +338,10 @@ end
 # JET diagnostics
 # ===============
 
-function jet_result_to_diagnostics!(uri2diagnostics::URI2Diagnostics, result::JET.JETToplevelResult, postprocessor::JET.PostProcessor)
+function jet_result_to_diagnostics!(
+        uri2diagnostics::URI2Diagnostics, result::JET.JETToplevelResult,
+        world::UInt, postprocessor::JET.PostProcessor
+    )
     for report in result.res.toplevel_error_reports
         if report isa JET.LoweringErrorReport || report isa JET.MacroExpansionErrorReport
             # the equivalent report should have been reported by `lowering_diagnostics!`
@@ -352,7 +355,7 @@ function jet_result_to_diagnostics!(uri2diagnostics::URI2Diagnostics, result::JE
         push!(uri2diagnostics[uri], diagnostic)
     end
     displayable_reports = collect_displayable_reports(result.res.inference_error_reports, keys(uri2diagnostics))
-    jet_inference_error_reports_to_diagnostics!(uri2diagnostics, displayable_reports, postprocessor)
+    jet_inference_error_reports_to_diagnostics!(uri2diagnostics, displayable_reports, world, postprocessor)
     return uri2diagnostics
 end
 
@@ -380,10 +383,10 @@ end
 
 function jet_inference_error_reports_to_diagnostics!(
         uri2diagnostics::URI2Diagnostics, reports::Vector{JET.InferenceErrorReport},
-        postprocessor::JET.PostProcessor
+        world::UInt, postprocessor::JET.PostProcessor
     )
     for report in reports
-        diagnostic = jet_inference_error_report_to_diagnostic(report, postprocessor)
+        diagnostic = jet_inference_error_report_to_diagnostic(report, world, postprocessor)
         topframeidx = first(inference_error_report_stack(report))
         topframe = report.vst[topframeidx]
         topframe.file === :none && continue # TODO Figure out why this is necessary
@@ -393,17 +396,21 @@ function jet_inference_error_reports_to_diagnostics!(
     return uri2diagnostics
 end
 
-function jet_inference_error_report_to_diagnostic(@nospecialize(report::JET.InferenceErrorReport), postprocessor::JET.PostProcessor)
+function jet_inference_error_report_to_diagnostic(
+        @nospecialize(report::JET.InferenceErrorReport),
+        world::UInt, postprocessor::JET.PostProcessor
+    )
     rstack = inference_error_report_stack(report)
     topframe = report.vst[first(rstack)]
     message = JET.with_bufferring(:limit=>true) do io
-        JET.print_report_message(io, report)
+        Base.invoke_in_world(world, JET.print_report_message, io, report)
     end |> postprocessor
     relatedInformation = DiagnosticRelatedInformation[]
     for i = 2:length(rstack)
         frame = report.vst[rstack[i]]
         location = @something jet_frame_to_location(frame) continue
-        local message = postprocessor(sprint(JET.print_frame_sig, frame, JET.PrintConfig()))
+        local message = postprocessor(Base.invoke_in_world(world,
+            sprint, JET.print_frame_sig, frame, JET.PrintConfig())::String)
         push!(relatedInformation, DiagnosticRelatedInformation(; location, message))
     end
     code = inference_error_report_code(report)

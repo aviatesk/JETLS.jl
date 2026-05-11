@@ -86,6 +86,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - `jetls check` now reports parse errors. Previously, files with syntax errors (e.g. an unclosed parenthesis like `f(x) = println(x`) silently produced "No diagnostics found".
 
+- Fixed spurious `WARNING: Detected access to binding ... in a world prior to its definition world` messages emitted by `jetls check` and other server analyses.
+
 ## 2026-05-08
 
 - Commit: [`72cc49c`](https://github.com/aviatesk/JETLS.jl/commit/72cc49c)

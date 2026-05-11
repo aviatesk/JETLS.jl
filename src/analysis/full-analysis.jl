@@ -729,23 +729,26 @@ function new_analysis_result(interp::LSInterpreter, request::AnalysisRequest, re
         filename2uri(filepath) => analyzed_file_info
         for (filepath, analyzed_file_info) in result.res.analyzed_files)
 
+    result_world = Base.get_world_counter()
+
     uri2diagnostics = URI2Diagnostics(uri => Diagnostic[] for uri in keys(analyzed_file_infos))
     postprocessor = JET.PostProcessor(result.res.actual2virtual)
     toplevel_warning_reports_to_diagnostics!(uri2diagnostics, interp.warning_reports, interp.server, postprocessor)
-    jet_result_to_diagnostics!(uri2diagnostics, result, postprocessor)
+    jet_result_to_diagnostics!(uri2diagnostics, result, result_world, postprocessor)
 
     (; entry, prev_analysis_result) = request
     replace_analysis_result = isempty(result.res.toplevel_error_reports) || isnothing(prev_analysis_result)
     if !replace_analysis_result
-        (; actual2virtual, analyzer, analyzed_file_infos, world) = prev_analysis_result
+        (; actual2virtual, analyzer, analyzed_file_infos) = prev_analysis_result
+        cache_world = prev_analysis_result.world
     else
         actual2virtual = result.res.actual2virtual::JET.Actual2Virtual
-        world = Base.get_world_counter()
-        analyzer = update_analyzer_world(result.analyzer, world)
+        analyzer = update_analyzer_world(result.analyzer, result_world)
+        cache_world = result_world
     end
 
     analysis_result = AnalysisResult(entry, uri2diagnostics, analyzer,
-        analyzed_file_infos, actual2virtual, world)
+        analyzed_file_infos, actual2virtual, cache_world)
     return analysis_result, replace_analysis_result
 end
 
@@ -1001,15 +1004,15 @@ function analyze_package_with_revise(
     @label completed
 
     uri2diagnostics = URI2Diagnostics(uri => Diagnostic[] for uri in keys(analyzed_file_infos))
+    world = Base.get_world_counter()
     postprocessor = JET.PostProcessor()
 
     toplevel_warning_reports_to_diagnostics!(uri2diagnostics, warning_reports, server, postprocessor)
     inference_reports = collect_displayable_reports(progress.reports, keys(uri2diagnostics))
     unique!(JET.aggregation_policy(analyzer), inference_reports)
-    jet_inference_error_reports_to_diagnostics!(uri2diagnostics, inference_reports, postprocessor)
+    jet_inference_error_reports_to_diagnostics!(uri2diagnostics, inference_reports, world, postprocessor)
     actual2virtual = pkgmod => pkgmod # No virtual module for Revise-based analysis
 
-    world = Base.get_world_counter()
     newanalyzer = update_analyzer_world(analyzer, world)
     return AnalysisResult(request.entry, uri2diagnostics, newanalyzer,
         analyzed_file_infos, actual2virtual, world)

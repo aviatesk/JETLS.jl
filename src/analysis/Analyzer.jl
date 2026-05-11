@@ -559,7 +559,7 @@ function JETInterface.print_report_message(io::IO, report::MethodErrorReport)
 end
 function print_callsig(io, @nospecialize(t))
     print(io, '`')
-    @invokelatest(Base.show_tuple_as_call(io, Symbol(""), t)) # `@invokelatest` to workaround the world age warning
+    Base.show_tuple_as_call(io, Symbol(""), t)
     print(io, '`')
 end
 inference_error_report_stack_impl(r::MethodErrorReport) = length(r.vst):-1:1
