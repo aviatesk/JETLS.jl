@@ -614,6 +614,33 @@ end
         end
     end
 
+    # `(; a, b)` / `(a = x, b = y)` should surface the user-visible
+    # `@NamedTuple{…}` value, not widen with the kwargs-constructor scaffolding
+    # that lowering plants at the same byte range.
+    @testset "NamedTuple literal returns the constructor's result type" begin
+        @testset "explicit-semicolon form" begin
+            let code = "let a = 1, b = 2; (; a, b); end"
+                _, ctx = type_annotate(code)
+                typ = widenconst(get_type_for_range(ctx, range_of(code, "(; a, b)")))
+                @test typ === @NamedTuple{a::Int, b::Int}
+            end
+        end
+        @testset "implicit `key=value` form" begin
+            let code = "let x = 1; (a = x, b = 2x); end"
+                _, ctx = type_annotate(code)
+                typ = widenconst(get_type_for_range(ctx, range_of(code, "(a = x, b = 2x)")))
+                @test typ === @NamedTuple{a::Int, b::Int}
+            end
+        end
+        @testset "positional tuple unaffected" begin
+            let code = "let x = 1, y = 2.0; (x, y); end"
+                _, ctx = type_annotate(code)
+                typ = widenconst(get_type_for_range(ctx, range_of(code, "(x, y)")))
+                @test typ === Tuple{Int, Float64}
+            end
+        end
+    end
+
     # `_str` macros expand to a single Core call.
     @testset "string macro returns the expansion result type" begin
         let code = "lazy\"hello\""
@@ -658,6 +685,39 @@ end
             _, ctx = type_annotate(code)
             @test widenconst(get_type_for_range(
                 ctx, range_of(code, "@invokelatest sum(v)"))) === Any
+        end
+    end
+
+    # `T[expr for ...]` should surface the constructed `Array{T,N}` type, not
+    # widen to `Any` from the inlined loop's scaffolding calls.
+    @testset "typed comprehension returns the constructed array type" begin
+        @testset "1D with local-var iter length" begin
+            let code = "let n = 5; Int[i*2 for i in 1:n]; end"
+                _, ctx = type_annotate(code)
+                @test widenconst(get_type_for_range(
+                    ctx, range_of(code, "Int[i*2 for i in 1:n]"))) === Vector{Int}
+            end
+        end
+        @testset "1D with non-Int element" begin
+            let code = "Float64[i*2.0 for i in 1:5]"
+                _, ctx = type_annotate(code)
+                @test widenconst(get_type_for_range(
+                    ctx, range_of(code, "Float64[i*2.0 for i in 1:5]"))) === Vector{Float64}
+            end
+        end
+        @testset "2D" begin
+            let code = "Int[i*j for i in 1:3, j in 1:4]"
+                _, ctx = type_annotate(code)
+                @test widenconst(get_type_for_range(
+                    ctx, range_of(code, "Int[i*j for i in 1:3, j in 1:4]"))) === Matrix{Int}
+            end
+        end
+        @testset "untyped comprehension still works via tmerge fallback" begin
+            let code = "[i for i in 1:5]"
+                _, ctx = type_annotate(code)
+                @test widenconst(get_type_for_range(
+                    ctx, range_of(code, "[i for i in 1:5]"))) === Vector{Int}
+            end
         end
     end
 

@@ -914,70 +914,6 @@ function record_tail!(D::Dict{UnitRange{Int}, UnitRange{Int}},
     end
 end
 
-# `outer` strictly contains `inner` (proper superset): same start/stop
-# constraints as `⊆` but at least one bound is strict.
-function strictly_contains(outer::UnitRange{<:Integer}, inner::UnitRange{<:Integer})
-    return outer.start <= inner.start && inner.stop <= outer.stop &&
-           (outer.start < inner.start || inner.stop < outer.stop)
-end
-
-"""
-    get_type_for_range(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
-
-[`TypeAnnotation`](@ref) pipeline step 4: look up the inferred type at surface byte range `rng`.
-Returns `nothing` if no lowered node corresponding to `rng` carries a `:type` attribute.
-
-Build the [`InferredTreeContext`](@ref) once per inferred tree and reuse it across queries
-— see the [`TypeAnnotation`](@ref) module docstring for the full pipeline.
-
-# Dispatch
-
-Lowering routinely places multiple SSA-position nodes at the same surface byte range, so
-a naive `tmerge` of all matches would pull in synthetic helper types that the user never
-wrote. The dispatch picks a strategy based on the surface node's kind (recovered from
-`ctx.surface_kind_index`):
-
-- `K"call"` / `K"dotcall"` — returns the **last** `K"call"` lowered node at `rng`. For
-  `f(; kw=v)` kwcalls, the kwargs `NamedTuple` constructor and `Core.tuple` builder sit at
-  the same byte range as separate `K"call"`s, but the user's call is emitted last, so this
-  picks the user-visible result without `Type{NamedTuple{…}}` or `Tuple{…}` chaff.
-- `K"macrocall"` — returns the **last** `K"call"` whose first provenance is the macrocall
-  at `rng`. That tail call carries the value type of the macro expansion, while every
-  internal helper inside the expansion shares the macrocall's byte range but is not what
-  the user means by the macrocall's value.
-- `K"for"` / `K"while"` — always `Core.Const(nothing)`. Loop expressions evaluate to
-  `nothing`; this avoids `tmerge`-ing the iteration machinery (`iterate` results,
-  `=== nothing` checks, body return) that all share the loop's byte range.
-- `K"function"` / `K"macro"` — returns the method body's `tmerge`d return-statement type
-  (i.e. the value-type of `function f(…) … end`), looked up against the matching
-  `K"method"` lowered node, or `K"opaque_closure_method"` for single-method local closures
-  rewritten by `rewrite_local_closures_to_opaque`.
-- `K"comparison"` / `K"&&"` / `K"||"` / `K"if"` — branching expressions whose value is the
-  `tmerge` of each branch's value. Lowering emits a separate branch as either a contained
-  `K"return"` (tail position) or a merge-slot `K"="` whose byte range matches `rng`
-  (`r = a && b` etc.); both shapes get merged.
-- otherwise — falls back to `tmerge` of every node at `rng`. Sufficient when there is only
-  a single typed node, or when merging is genuinely the right answer (e.g. branches of a
-  conditional).
-"""
-function get_type_for_range(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
-    surface_kind = surface_kind_at_range(ctx, rng)
-    if surface_kind === JS.K"macrocall"
-        return type_for_macroexpansion(ctx, rng)
-    elseif surface_kind in JS.KSet"call dotcall"
-        return type_for_call(ctx, rng)
-    elseif surface_kind in JS.KSet"for while"
-        return Core.Const(nothing)
-    elseif surface_kind in JS.KSet"function macro"
-        return type_for_funcdef(ctx, rng)
-    elseif surface_kind in JS.KSet"comparison && || if ?"
-        # Ternary `b ? x : 0` is `K"if"` in the surface tree but `K"?"` in the
-        # inferred tree's provenance (JuliaLowering retains the parser kind).
-        return type_for_branching(ctx, rng)
-    end
-    return tmerge_at_range(ctx, rng)
-end
-
 """
     build_inferred_context_at(
             st0_top::SyntaxTreeC, context_module::Module, rng::UnitRange{<:Integer};
@@ -1033,9 +969,82 @@ function infer_type_at_range(
     return get_type_for_range(ctx, rng)
 end
 
+"""
+    get_type_for_range(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
+
+[`TypeAnnotation`](@ref) pipeline step 4: look up the inferred type at surface byte range `rng`.
+Returns `nothing` if no lowered node corresponding to `rng` carries a `:type` attribute.
+
+Build the [`InferredTreeContext`](@ref) once per inferred tree and reuse it across queries
+— see the [`TypeAnnotation`](@ref) module docstring for the full pipeline.
+
+# Dispatch
+
+Lowering routinely places multiple SSA-position nodes at the same surface byte range, so
+a naive `tmerge` of all matches would pull in synthetic helper types that the user never
+wrote. The dispatch picks a per-kind strategy that filters or summarizes the lowered
+nodes appropriately; see the source of each helper for the rationale behind its choice:
+
+| surface kind                                           | strategy                     |
+|:-------------------------------------------------------|:-----------------------------|
+| `K"call"` / `K"dotcall"` / `K"tuple"`                  | `type_for_call`              |
+| `K"macrocall"`                                         | `type_for_macroexpansion`    |
+| `K"typed_comprehension"`                               | `type_for_array_construct`   |
+| `K"function"` / `K"macro"`                             | `type_for_funcdef`           |
+| `K"comparison"` / `K"&&"` / `K"||"` / `K"if"` / `K"?"` | `type_for_branching`         |
+| `K"for"` / `K"while"`                                  | always `Core.Const(nothing)` |
+| everything else                                        | `tmerge_at_range`            |
+"""
+function get_type_for_range(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
+    surface_kind = surface_kind_at_range(ctx, rng)
+    if surface_kind === JS.K"macrocall"
+        return type_for_macroexpansion(ctx, rng)
+    elseif surface_kind in JS.KSet"call dotcall tuple"
+        return type_for_call(ctx, rng)
+    elseif surface_kind === JS.K"typed_comprehension"
+        return type_for_typed_comprehension(ctx, rng)
+    elseif surface_kind in JS.KSet"for while"
+        return Core.Const(nothing)
+    elseif surface_kind in JS.KSet"function macro"
+        return type_for_funcdef(ctx, rng)
+    elseif surface_kind in JS.KSet"comparison && || if ?"
+        # Ternary `b ? x : 0` is `K"if"` in the surface tree but `K"?"` in the
+        # inferred tree's provenance (JuliaLowering retains the parser kind).
+        return type_for_branching(ctx, rng)
+    end
+    return tmerge_at_range(ctx, rng)
+end
+
 surface_kind_at_range(ctx::InferredTreeContext, rng::UnitRange{<:Integer}) =
     get(ctx.surface_kind_index, rng, nothing)
 
+# A macrocall expansion produces many `K"call"`s whose byte ranges fall under
+# the original `K"macrocall"` source span. `macrocall_typed_calls` indexes only
+# those whose first provenance is the macrocall (skipping nodes the expansion
+# imported from elsewhere); among them, the last typed non-Const call carries
+# the value type. `Const` entries are skipped because they're usually metadata
+# the expansion baked in (line numbers, `Module`, …), not the user value.
+function type_for_macroexpansion(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
+    typ = nothing
+    for st5 in get(ctx.macrocall_typed_calls, rng, ())
+        ntyp = st5.type
+        ntyp isa Core.Const && continue
+        typ = ntyp
+    end
+    return typ
+end
+
+# Last-K"call"-wins selector used by `K"call"` / `K"dotcall"` / `K"tuple"`
+# surface kinds. The "last in preorder" K"call" is the outermost lowered
+# call, i.e. the one that produces the user-visible value:
+# - kwcall `f(; kw=v)`: `Core.tuple` (kw names) and `NamedTuple{…}` (kwargs
+#   bundling) appear before `Core.kwcall(…)` in `src.code`, so the user call
+#   wins.
+# - NamedTuple literal `(; a=1, b=2)`: lowered as four calls — names tuple,
+#   `NamedTuple{…}` type apply, values tuple, final constructor — and the
+#   constructor (which produces the NamedTuple value) is emitted last.
+# - Positional `f(args)` and `(1, 2, 3)`: a single K"call" at the range,
+#   so "last" is just that single entry.
 function type_for_call(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
     typ = nothing
     for st in get(ctx.by_byte_range, rng, ())
@@ -1046,14 +1055,28 @@ function type_for_call(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
     return typ
 end
 
-function type_for_macroexpansion(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
-    typ = nothing
-    for st5 in get(ctx.macrocall_typed_calls, rng, ())
-        ntyp = st5.type
-        ntyp isa Core.Const && continue
-        typ = ntyp
+# `T[expr for v in iter]` lowers to an inlined "allocate-then-fill" loop:
+# `Array{T,N}(undef, …)` for the result, then iterator/state/comparison
+# scaffolding calls (`LinearIndices`, `Base.iterate`, `=== nothing` checks,
+# …) — all sharing the user's byte range, so `tmerge_at_range`'s
+# tmerge-everything strategy widens to `Any` here.
+#
+# `T[…]` literal syntax is hardcoded by Julia's parser/lowering to allocate
+# `Array{T,N}`, so the user-visible value is always (a subtype of) `Array`.
+# Pick the lowered `K"call"` matching that: ordering-independent (doesn't
+# rely on the allocation being lowered first) and tight (`LinearIndices` is
+# `<: AbstractArray` but not `<: Array`, so it's filtered).
+#
+# `wt !== Union{}` excludes the loop body's speculative-unreachable path
+# (`Union{}` is `<: Array` since Bottom is a subtype of every type).
+function type_for_typed_comprehension(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
+    for st in get(ctx.by_byte_range, rng, ())
+        JS.kind(st) === JS.K"call" || continue
+        hasproperty(st, :type) || continue
+        wt = CC.widenconst(st.type)
+        wt !== Union{} && wt <: Array && return st.type
     end
-    return typ
+    return nothing
 end
 
 # `K"comparison"` / `K"&&"` / `K"||"` / `K"if"` (ternary or block-form) all
@@ -1111,6 +1134,19 @@ function type_for_branching(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
     return typ
 end
 
+# `outer` strictly contains `inner` (proper superset): same start/stop
+# constraints as `⊆` but at least one bound is strict.
+function strictly_contains(outer::UnitRange{<:Integer}, inner::UnitRange{<:Integer})
+    return outer.start <= inner.start && inner.stop <= outer.stop &&
+           (outer.start < inner.start || inner.stop < outer.stop)
+end
+
+# For `function f(…) … end` / `macro m(…) … end`, the user-visible "value" is
+# the function's return type. The matching `K"method"` (or
+# `K"opaque_closure_method"` for single-method local closures rewritten by
+# `rewrite_local_closures_to_opaque`) wraps a `K"code_info"` body whose
+# `K"return"` stmts carry the inferred return types; `tmerge` over them
+# yields the function's value type.
 function type_for_funcdef(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
     typ = nothing
     for st in get(ctx.by_byte_range, rng, ())
