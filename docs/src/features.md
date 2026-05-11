@@ -335,6 +335,10 @@ Documentation is gathered both from the binding's own docstring and
 from the docstring of whatever value the expression resolves to via
 type inference (so e.g. hovering on `some.value` can surface `sin`'s
 docstring when the field resolves to `sin`).
+At a method call site (`f│(args)`, `f(args)│`, `xs[i]│`, …), documentation
+is narrowed to the dispatched method's docstring when dispatch resolves to
+a single method, instead of merging every overload's doc into one blob.
+Non-call cursors (`f│`) still show every overload's doc.
 
 The type header is rendered as `expr :: T`, with a few specialized
 shapes:

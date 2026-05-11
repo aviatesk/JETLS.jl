@@ -98,15 +98,28 @@ function get_hover(
         end
     end
 
+    sig = ctx === nothing ? nothing : call_dispatch_sig(ctx, st0_top, node)
+
     docs = Markdown.MD[]
     if !is_local
-        bdoc = binfo !== nothing ? doc_for_binding(context_module, Symbol(binfo.name)) :
-            lookup_binding_doc(node, context_module, ctx)
-        bdoc === nothing || push!(docs, bdoc)
+        # For a `K"call"` / `K"dotcall"` node (cursor right after the call,
+        # e.g. `f(args)│`), descend into the callee so `lookup_binding_doc`
+        # — which only handles `K"Identifier"` / `K"."` — sees the
+        # function reference and returns its doc.
+        doc_node = JS.kind(node) in JS.KSet"call dotcall" && JS.numchildren(node) >= 1 ? node[1] : node
+        bdoc = binfo !== nothing ?
+            doc_for_binding(context_module, Symbol(binfo.name), sig) :
+            lookup_binding_doc(doc_node, context_module, ctx, sig)
+        if bdoc === nothing && ctx !== nothing
+            bdoc = operator_dispatch_doc(ctx, node)
+        end
+        bdoc === nothing || append!(docs, flatten_docs(bdoc))
     end
-    vdoc = value_based_doc(typ)
-    if vdoc !== nothing && !any(==(vdoc), docs)
-        push!(docs, vdoc)
+    vdoc = value_based_doc(typ, sig)
+    if vdoc !== nothing
+        for doc in flatten_docs(vdoc)
+            doc in docs || push!(docs, doc)
+        end
     end
 
     # The header line (`<expr> [:: T]` in a code block) is shown whenever the
@@ -135,6 +148,24 @@ function get_hover(
     contents = MarkupContent(; kind = MarkupKind.Markdown, value = String(take!(io)))
     range, _ = unadjust_range(state, uri, jsobj_to_range(node, fi))
     return Hover(; contents, range)
+end
+
+# Unpack an aggregate `Markdown.MD` (what `Base.Docs.doc` returns when a
+# binding has multiple stored docs — `.content` holds one `Markdown.MD` per
+# doc) into a `Vector{Markdown.MD}`, so the hover renderer can insert a
+# `\n---\n` separator between each. Single docs — whose `.content` holds
+# leaf markdown elements (`Paragraph`, `CodeBlock`, …) rather than nested
+# `Markdown.MD`s — pass through as a one-element list.
+function flatten_docs(md::Markdown.MD)
+    docs = Markdown.MD[]
+    if all(@nospecialize(d)->d isa Markdown.MD, md.content)
+        for doc in md.content
+            push!(docs, doc::Markdown.MD)
+        end
+    else
+        push!(docs, md)
+    end
+    return docs
 end
 
 binding_kind_label(kind::Symbol) =
@@ -171,14 +202,74 @@ function hover_type_string(@nospecialize(typ), source_text::AbstractString)
     return string(widened)::String
 end
 
+# Compute the call-dispatch signature applicable at the cursor's `node`, or
+# `nothing` when the cursor isn't at a call site, when no unique method
+# matched, or when the signature can't be stripped cleanly. Used to narrow
+# the hover docstring lookup from "all overloads merged" to
+# "(generic + the specific method's docs)".
+function call_dispatch_sig(
+        ctx::InferredTreeContext, st0_top::SyntaxTreeC, node::SyntaxTreeC
+    )
+    call_rng = @something call_byte_range_for_matches(st0_top, node) return nothing
+    matches = @something get_matches_for_range(ctx, call_rng) return nothing
+    # Require a single matched method — for ambiguous dispatch (union splits,
+    # multiple matching overloads) fall back to the unnarrowed lookup so we
+    # don't silently hide applicable docs.
+    length(matches) == 1 || return nothing
+    return method_argtypes_sig(only(matches).method)
+end
+
+# Doc for the dispatched operator behind a non-`K"call"` surface
+# (`xs[i]│` → `getindex`, `[1, 2]│` → `Base.vect`, …). Bails on ambiguous
+# dispatch — without an in-source identifier to fall back to, the
+# unnarrowed lookup would dump every overload's doc.
+function operator_dispatch_doc(ctx::InferredTreeContext, node::SyntaxTreeC)
+    JS.kind(node) in _OPERATOR_CALL_KINDS || return nothing
+    matches = @something get_matches_for_range(ctx, JS.byte_range(node)) return nothing
+    length(matches) == 1 || return nothing
+    m = only(matches).method
+    sig = @something method_argtypes_sig(m) return nothing
+    return doc_for_binding(m.module, m.name, sig)
+end
+
+# Args-only Tuple-type signature for `m`, stripping the leading `typeof(f)`
+# (or `Type{T}` for type constructors) so the result matches the shape
+# `Base.Docs.MultiDoc` keys with — see `MultiDoc`'s docstring. Preserves
+# the method's `UnionAll` wrappers (parametric methods like `f(x::T) where
+# T <: Real` store their docs as `Tuple{T} where T <: Real`).
+function method_argtypes_sig(m::Method)
+    vars = TypeVar[]
+    body = m.sig
+    while body isa UnionAll
+        push!(vars, body.var)
+        body = body.body
+    end
+    body isa DataType || return nothing
+    body <: Tuple || return nothing
+    length(body.parameters) >= 1 || return nothing
+    tail = Tuple{body.parameters[2:end]...}
+    while !isempty(vars)
+        v = pop!(vars)
+        tail = UnionAll(v, tail)
+    end
+    return tail
+end
+
 # Look up the docstring for `parentmod.name`. Returns `nothing` on lookup
 # failure (rather than the "No documentation found" placeholder Markdown.MD
 # `Base.Docs.doc` would otherwise return — that placeholder is preserved by
 # direct call sites that explicitly want the user-visible "No documentation
 # found" message).
-function doc_for_binding(parentmod::Module, name::Symbol)
-    return try
-        @invokelatest(Base.Docs.doc(DocsBinding(parentmod, name)))::Markdown.MD
+function doc_for_binding(parentmod::Module, name::Symbol, @nospecialize(sig=nothing))
+    try
+        binding = DocsBinding(parentmod, name)
+        # `Base.Docs.doc(binding, sig)` walks `MultiDoc.docs` and returns docs whose stored
+        # sig `msig` satisfies `sig <: msig` (so unrelated overloads drop, and
+        # `Union{}`-keyed interface-decl docs drop under narrowing).
+        # Falls back to every doc on the binding when no sig matches.
+        return (sig === nothing ?
+            @invokelatest(Base.Docs.doc(binding)) :
+            @invokelatest(Base.Docs.doc(binding, sig)))::Markdown.MD
     catch
         return nothing
     end
@@ -188,7 +279,8 @@ end
 # based docstring. Returns `nothing` if the node isn't a plain identifier or a
 # dot expression whose left-hand side resolves to a `Module` value.
 function lookup_binding_doc(
-        node::SyntaxTreeC, context_module::Module, ctx::Union{Nothing,InferredTreeContext}
+        node::SyntaxTreeC, context_module::Module, ctx::Union{Nothing,InferredTreeContext},
+        @nospecialize(sig=nothing)
     )
     parentmod = context_module
     identifier_node = node
@@ -201,7 +293,7 @@ function lookup_binding_doc(
         end
     end
     JS.is_identifier(identifier_node) || return nothing
-    return doc_for_binding(parentmod, Symbol(identifier_node.name_val)::Symbol)
+    return doc_for_binding(parentmod, Symbol(identifier_node.name_val)::Symbol, sig)
 end
 
 # Resolve a dot expression's left-hand side to a `Module` value. Tries a direct
@@ -239,6 +331,31 @@ end
         end
     end
     return Base.Docs.Binding(parentmod, identifier)
+end
+
+# Look up a docstring from the value `typ` resolves to: `typ.val` for `Core.Const`,
+# `typ.instance` for a singleton `Type`.
+# Restricted to `Function` / `Module` / `Type` values so literals, struct instances,
+# `nothing` / `missing` etc. don't surface the noisy `"No documentation found. ..."`
+# fallback `Base.Docs.doc` produces.
+# `sig` narrows the result to the matching method-specific docs — hover passes the
+# dispatched sig at a call site to avoid dumping every overload's docstring.
+function value_based_doc(@nospecialize(typ), @nospecialize(sig=nothing))
+    v = if typ isa Core.Const
+        typ.val
+    elseif Base.issingletontype(typ)
+        typ.instance
+    else
+        return nothing
+    end
+    v isa Function || v isa Module || v isa Type || return nothing
+    try
+        return (sig === nothing ?
+            @invokelatest(Base.Docs.doc(v)) :
+            @invokelatest(Base.Docs.doc(v, sig)))::Markdown.MD
+    catch
+        return nothing
+    end
 end
 
 # Returns a `Hover` for a keyword token at `pos`, or `nothing` if the cursor
