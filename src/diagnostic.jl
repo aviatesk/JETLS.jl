@@ -1370,8 +1370,8 @@ function lowering_diagnostics!(
         (:exit,  Base.exit),
     )
     for (name, expected) in noreturn_globals
-        if Base.invoke_in_world(world, isdefinedglobal, context_module, name)::Bool &&
-                Base.invoke_in_world(world, getglobal, context_module, name) === expected
+        if (Base.invoke_in_world(world, isdefinedglobal, context_module, name)::Bool &&
+            Base.invoke_in_world(world, getglobal, context_module, name) === expected)
             push!(allow_noreturn_optimization, name)
         end
     end
