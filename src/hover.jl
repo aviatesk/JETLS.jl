@@ -66,6 +66,11 @@ function get_hover(
         state::ServerState, fi::FileInfo, uri::URI, pos::Position;
         context_module::Union{Nothing,Module} = nothing
     )
+    # Pin the world at request entry and thread it through the inference
+    # pipeline and every doc-lookup / reflection call below, so the request's
+    # output reflects a single consistent program state even if a concurrent
+    # analysis update advances `get_world_counter()` mid-request.
+    world = Base.get_world_counter()
     st0_top = build_syntax_tree(fi)
     offset = xy_to_offset(fi, pos)
     (; mod, postprocessor) = get_context_info(state, uri, pos)
@@ -89,7 +94,7 @@ function get_hover(
     end
 
     rng = JS.byte_range(node)
-    ctx = build_inferred_context_at(st0_top, context_module, rng; caller="get_hover")
+    ctx = build_inferred_context_at(st0_top, context_module, rng; world, caller="get_hover")
     type_str = typ = nothing
     if ctx !== nothing
         typ = get_type_for_range(ctx, rng)
@@ -108,14 +113,14 @@ function get_hover(
         # function reference and returns its doc.
         doc_node = JS.kind(node) in JS.KSet"call dotcall" && JS.numchildren(node) >= 1 ? node[1] : node
         bdoc = binfo !== nothing ?
-            doc_for_binding(context_module, Symbol(binfo.name), sig) :
-            lookup_binding_doc(doc_node, context_module, ctx, sig)
+            doc_for_binding(context_module, Symbol(binfo.name), sig, world) :
+            lookup_binding_doc(doc_node, context_module, ctx, sig, world)
         if bdoc === nothing && ctx !== nothing
-            bdoc = operator_dispatch_doc(ctx, node)
+            bdoc = operator_dispatch_doc(ctx, node, world)
         end
         bdoc === nothing || append!(docs, flatten_docs(bdoc))
     end
-    vdoc = value_based_doc(typ, sig)
+    vdoc = value_based_doc(typ, sig, world)
     if vdoc !== nothing
         for doc in flatten_docs(vdoc)
             doc in docs || push!(docs, doc)
@@ -223,13 +228,13 @@ end
 # (`xs[i]│` → `getindex`, `[1, 2]│` → `Base.vect`, …). Bails on ambiguous
 # dispatch — without an in-source identifier to fall back to, the
 # unnarrowed lookup would dump every overload's doc.
-function operator_dispatch_doc(ctx::InferredTreeContext, node::SyntaxTreeC)
+function operator_dispatch_doc(ctx::InferredTreeContext, node::SyntaxTreeC, world::UInt)
     JS.kind(node) in _OPERATOR_CALL_KINDS || return nothing
     matches = @something get_matches_for_range(ctx, JS.byte_range(node)) return nothing
     length(matches) == 1 || return nothing
     m = only(matches).method
     sig = @something method_argtypes_sig(m) return nothing
-    return doc_for_binding(m.module, m.name, sig)
+    return doc_for_binding(m.module, m.name, sig, world)
 end
 
 # Args-only Tuple-type signature for `m`, stripping the leading `typeof(f)`
@@ -260,16 +265,18 @@ end
 # `Base.Docs.doc` would otherwise return — that placeholder is preserved by
 # direct call sites that explicitly want the user-visible "No documentation
 # found" message).
-function doc_for_binding(parentmod::Module, name::Symbol, @nospecialize(sig=nothing))
+function doc_for_binding(
+        parentmod::Module, name::Symbol, @nospecialize(sig), world::UInt
+    )
     try
-        binding = DocsBinding(parentmod, name)
+        binding = DocsBinding(parentmod, name, world)
         # `Base.Docs.doc(binding, sig)` walks `MultiDoc.docs` and returns docs whose stored
         # sig `msig` satisfies `sig <: msig` (so unrelated overloads drop, and
         # `Union{}`-keyed interface-decl docs drop under narrowing).
         # Falls back to every doc on the binding when no sig matches.
         return (sig === nothing ?
-            @invokelatest(Base.Docs.doc(binding)) :
-            @invokelatest(Base.Docs.doc(binding, sig)))::Markdown.MD
+            Base.invoke_in_world(world, Base.Docs.doc, binding) :
+            Base.invoke_in_world(world, Base.Docs.doc, binding, sig))::Markdown.MD
     catch
         return nothing
     end
@@ -280,12 +287,12 @@ end
 # dot expression whose left-hand side resolves to a `Module` value.
 function lookup_binding_doc(
         node::SyntaxTreeC, context_module::Module, ctx::Union{Nothing,InferredTreeContext},
-        @nospecialize(sig=nothing)
+        @nospecialize(sig), world::UInt
     )
     parentmod = context_module
     identifier_node = node
     if JS.kind(node) === JS.K"." && JS.numchildren(node) ≥ 2
-        parentmod = @something resolve_dot_prefix_module(node[1], parentmod, ctx) return nothing
+        parentmod = @something resolve_dot_prefix_module(node[1], parentmod, ctx, world) return nothing
         identifier_node = node[2]
         # EST wraps the RHS of dot expressions in `K"inert"`
         if JS.kind(identifier_node) === JS.K"inert" && JS.numchildren(identifier_node) ≥ 1
@@ -293,7 +300,7 @@ function lookup_binding_doc(
         end
     end
     JS.is_identifier(identifier_node) || return nothing
-    return doc_for_binding(parentmod, Symbol(identifier_node.name_val)::Symbol, sig)
+    return doc_for_binding(parentmod, Symbol(identifier_node.name_val)::Symbol, sig, world)
 end
 
 # Resolve a dot expression's left-hand side to a `Module` value. Tries a direct
@@ -304,12 +311,12 @@ end
 # lower) skips the inference fallback and only uses the direct lookup.
 function resolve_dot_prefix_module(
         dotprefix::SyntaxTreeC, context_module::Module,
-        ctx::Union{Nothing,InferredTreeContext}
+        ctx::Union{Nothing,InferredTreeContext}, world::UInt
     )
     if JS.is_identifier(dotprefix)
         name = Symbol(dotprefix.name_val)::Symbol
-        if @invokelatest(isdefinedglobal(context_module, name))
-            v = @invokelatest(getglobal(context_module, name))
+        if Base.invoke_in_world(world, isdefinedglobal, context_module, name)
+            v = Base.invoke_in_world(world, getglobal, context_module, name)
             v isa Module && return v
         end
     end
@@ -321,16 +328,16 @@ function resolve_dot_prefix_module(
     return v
 end
 
-@eval function DocsBinding(parentmod::Module, identifier::Symbol)
-    if invokelatest(isdefinedglobal, parentmod, identifier)
-        x = invokelatest(getglobal, parentmod, identifier)
+@eval function DocsBinding(parentmod::Module, identifier::Symbol, world::UInt)
+    if Base.invoke_in_world(world, isdefinedglobal, parentmod, identifier)
+        x = Base.invoke_in_world(world, getglobal, parentmod, identifier)
         if x isa Module && nameof(x) !== identifier
             # HACK: skip the binding resolution logic performed by the `Base.Docs.Binding` constructor
             # for modules that are given different names within this context
             return $(Expr(:new, Base.Docs.Binding, :parentmod, :identifier))
         end
     end
-    return Base.Docs.Binding(parentmod, identifier)
+    return Base.invoke_in_world(world, Base.Docs.Binding, parentmod, identifier)
 end
 
 # Look up a docstring from the value `typ` resolves to: `typ.val` for `Core.Const`,
@@ -340,7 +347,7 @@ end
 # fallback `Base.Docs.doc` produces.
 # `sig` narrows the result to the matching method-specific docs — hover passes the
 # dispatched sig at a call site to avoid dumping every overload's docstring.
-function value_based_doc(@nospecialize(typ), @nospecialize(sig=nothing))
+function value_based_doc(@nospecialize(typ), @nospecialize(sig), world::UInt)
     v = if typ isa Core.Const
         typ.val
     elseif Base.issingletontype(typ)
@@ -351,8 +358,8 @@ function value_based_doc(@nospecialize(typ), @nospecialize(sig=nothing))
     v isa Function || v isa Module || v isa Type || return nothing
     try
         return (sig === nothing ?
-            @invokelatest(Base.Docs.doc(v)) :
-            @invokelatest(Base.Docs.doc(v, sig)))::Markdown.MD
+            Base.invoke_in_world(world, Base.Docs.doc, v) :
+            Base.invoke_in_world(world, Base.Docs.doc, v, sig))::Markdown.MD
     catch
         return nothing
     end
