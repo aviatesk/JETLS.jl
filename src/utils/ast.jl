@@ -1113,29 +1113,29 @@ function _innermost_call_at(st0::SyntaxTreeC, offset::Integer)
 end
 
 """
-    call_byte_range_for_matches(st0::SyntaxTreeC, node::SyntaxTreeC) ->
-        UnitRange{Int} | nothing
+    enclosing_call_for_matches(st0::SyntaxTreeC, node::SyntaxTreeC) ->
+        SyntaxTreeC | nothing
 
-Byte range of the call site whose `:matches` annotation answers a query about `node`.
+Call node whose `:matches` annotation answers a query about `node`.
 Returns `nothing` when `node` isn't (and isn't the callee of) a call.
 
 Two recognized shapes:
-- `node` itself is `K"call"` / `K"dotcall"` (`func(args)│`) — returns its own byte range.
+- `node` itself is `K"call"` / `K"dotcall"` (`func(args)│`) — returns `node`.
 - `node` is the full callee of an enclosing call (`func│(args)`, `Foo.bar│(args)`) —
-  returns the enclosing call's byte range.
+  returns the enclosing call.
 
 `byte_ancestors` walks from the cursor outward; the first call whose `child[1]` byte range
 exactly matches `node`'s range is the call we want.
 The exact-match check rejects mid-callee positions like `Foo│.bar(x)` where `node` is
 `Foo` and `child[1]` is the larger `Foo.bar`.
 """
-function call_byte_range_for_matches(st0::SyntaxTreeC, node::SyntaxTreeC)
+function enclosing_call_for_matches(st0::SyntaxTreeC, node::SyntaxTreeC)
+    JS.kind(node) in JS.KSet"call dotcall" && return node
     rng = JS.byte_range(node)
-    JS.kind(node) in JS.KSet"call dotcall" && return rng
     for st in byte_ancestors(st0, first(rng))
         JS.kind(st) in JS.KSet"call dotcall" || continue
         JS.numchildren(st) >= 1 || continue
-        JS.byte_range(st[1]) == rng && return JS.byte_range(st)
+        JS.byte_range(st[1]) == rng && return st
     end
     return nothing
 end

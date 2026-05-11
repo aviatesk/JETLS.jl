@@ -195,6 +195,15 @@ end
             context_module = @__MODULE__)
     end
 
+    # Cursor on the callee identifier shows the full call expression with
+    # its return type in the header
+    @testset "callee identifier promotes header to call expression" begin
+        hover_test("func│(42)", "func(42) :: $Int";
+            context_module = M_doc_func)
+        hover_test("M_doc_func.func│(42)", "M_doc_func.func(42) :: $Int";
+            context_module = @__MODULE__)
+    end
+
     @testset "module alias resolves through DocsBinding helper" begin
         hover_test("B│.sin(42)", JETLS.lsrender(@doc Base);
             context_module = M_base_alias)
@@ -227,10 +236,15 @@ end
                     context_module = M_overloaded,
                     notpat = "Method-specific doc for `op(::String)`.")
             end
-            @testset "matches String method on `op(\"x\")│`" begin
-                hover_test("op(\"x\")│", "Method-specific doc for `op(::String)`.";
+            @testset "matches String method on `op│(\"x\")`" begin
+                hover_test("op│(\"x\")", "Method-specific doc for `op(::String)`.";
                     context_module = M_overloaded,
                     notpat = "Method-specific doc for `op(::Int)`.")
+            end
+            @testset "end-of-call cursor `op(\"x\")│` skips doc" begin
+                hover_test("op(\"x\")│", r"op\(\"x\"\) :: String";
+                    context_module = M_overloaded,
+                    notpat = "Method-specific doc")
             end
             @testset "non-call cursor keeps every overload's doc" begin
                 hover_test("op│", "Method-specific doc for `op(::Int)`.";
@@ -271,18 +285,16 @@ end
         end
     end
 
-    # `xs[i]│`, `(a, b)│`, `[a, b]│`, … lower to a dispatched operator call (`getindex`,
-    # `Core.tuple`, `Base.vect`, …). Hover narrows to the dispatched method's doc the
-    # same way `K"call"` does — without needing the operator name to appear in source.
-    @testset "method-specific doc at operator dispatch surface" begin
-        @testset "user-defined `getindex` doc shown on `arr[1]│`" begin
-            hover_test("""
-                let arr = MyArr()
-                    arr[1]│
-                end
-            """, "Method-specific doc for `getindex(::MyArr, ::Int)`.";
-                context_module = M_operator_dispatch)
-        end
+    # Cursor on an operator-dispatch surface (`xs[i]│`, `[a, b]│`, …) shows
+    # only the `expr :: T` header, not the dispatched method's doc.
+    @testset "no doc at operator-dispatch surface `arr[1]│`" begin
+        hover_test("""
+            let arr = MyArr()
+                arr[1]│
+            end
+        """, "arr[1] :: $Int";
+            context_module = M_operator_dispatch,
+            notpat = "Method-specific doc")
     end
 end
 

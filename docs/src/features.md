@@ -335,9 +335,14 @@ Documentation is gathered both from the binding's own docstring and
 from the docstring of whatever value the expression resolves to via
 type inference (so e.g. hovering on `some.value` can surface `sin`'s
 docstring when the field resolves to `sin`).
-At a method call site (`f│(args)`, `f(args)│`, `xs[i]│`, …), documentation
-is narrowed to the dispatched method's docstring when dispatch resolves to
-a single method, instead of merging every overload's doc into one blob.
+When the cursor is on the callee identifier (e.g. `sin│(rand(Int))`,
+`Base.Math.sin│(x)`), the header is promoted to the full call
+expression (`sin(rand(Int)) :: Float64`) and the docstring is narrowed
+to the dispatched method's doc when dispatch resolves to a single
+method (`sin(::Real)`).
+When the cursor sits past a call-like surface's closing punctuation
+(`f(args)│`, `xs[i]│`, `[a, b]│`, …), only the `expr :: T` header is
+shown without any docstring body.
 Non-call cursors (`f│`) still show every overload's doc.
 
 The type header is rendered as `expr :: T`, with a few specialized

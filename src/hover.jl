@@ -68,15 +68,11 @@ function get_hover(
     )
     st0_top = build_syntax_tree(fi)
     offset = xy_to_offset(fi, pos)
-    # `world` is pinned to the cached analysis (falling back to the current
-    # world counter when absent) and threaded through inference and every
-    # doc-lookup / reflection call below, so the request stays consistent
-    # with that analysis even if a concurrent update advances the world.
-    (; mod, postprocessor, world) = get_context_info(state, uri, pos)
+    (; postprocessor, world) = ctx_info = get_context_info(state, uri, pos)
     # `context_module` kwarg overrides the analysis-derived module — exposed
     # for tests so they can seed the lookup with a pre-populated module
     # without running full-analysis on the test source.
-    context_module = something(context_module, mod)
+    context_module = something(ctx_info.context_module, mod)
     soft_scope = is_notebook_cell_uri(state, uri)
     binding_result = select_target_binding(st0_top, offset, context_module; soft_scope)
     if binding_result !== nothing
@@ -84,45 +80,57 @@ function get_hover(
         binfo = JL.get_binding(ctx3, binding)
         node = binding
         is_local = is_local_binding(binfo)
-        header = "$(binding_kind_label(binfo.kind)) $(binfo.name)"
     else
         node = @something select_target_for_type_query(st0_top, offset) return nothing
         binfo = nothing
         is_local = false
+    end
+
+    # When `node` is the callee of an enclosing call (`func│(x)`, `Foo.bar│(x)`),
+    # show the full call expression in the header and query its return type —
+    # doc lookup keeps using `node` so the identifier-based resolution stays.
+    callee_call = enclosing_call_for_matches(st0_top, node)
+    display_node = (callee_call === nothing || callee_call === node) ? node : callee_call
+    if display_node !== node
+        header = JS.sourcetext(display_node)
+    elseif binfo !== nothing
+        header = "$(binding_kind_label(binfo.kind)) $(binfo.name)"
+    else
         header = JS.sourcetext(node)
     end
 
-    rng = JS.byte_range(node)
-    ctx = build_inferred_context_at(st0_top, context_module, rng; world, caller="get_hover")
+    display_rng = JS.byte_range(display_node)
+    ctx = build_inferred_context_at(st0_top, context_module, display_rng; world, caller="get_hover")
     type_str = typ = nothing
     if ctx !== nothing
-        typ = get_type_for_range(ctx, rng)
-        if typ !== nothing
-            type_str = hover_type_string(typ, JS.sourcetext(node))
+        display_typ = get_type_for_range(ctx, display_rng)
+        if display_typ !== nothing
+            type_str = hover_type_string(display_typ, JS.sourcetext(display_node))
         end
+        # Value-based doc lookup runs against the callee's type
+        # (`sv.value` → `Core.Const(sin)`), not the call's return type.
+        typ = display_node === node ? display_typ : get_type_for_range(ctx, JS.byte_range(node))
     end
 
     sig = ctx === nothing ? nothing : call_dispatch_sig(ctx, st0_top, node)
 
     docs = Markdown.MD[]
-    if !is_local
-        # For a `K"call"` / `K"dotcall"` node (cursor right after the call,
-        # e.g. `f(args)│`), descend into the callee so `lookup_binding_doc`
-        # — which only handles `K"Identifier"` / `K"."` — sees the
-        # function reference and returns its doc.
-        doc_node = JS.kind(node) in JS.KSet"call dotcall" && JS.numchildren(node) >= 1 ? node[1] : node
-        bdoc = binfo !== nothing ?
-            doc_for_binding(context_module, Symbol(binfo.name), sig, world) :
-            lookup_binding_doc(doc_node, context_module, ctx, sig, world)
-        if bdoc === nothing && ctx !== nothing
-            bdoc = operator_dispatch_doc(ctx, node, world)
+    # Cursor past the closing punctuation of a call-like surface (`f(x)│`,
+    # `xs[i]│`, `[a, b]│`) — suppress the doc body and show only the
+    # `expr :: T` header.
+    is_call_like_position = JS.kind(node) in _CALL_LIKE_KINDS
+    if !is_call_like_position
+        if !is_local
+            bdoc = binfo !== nothing ?
+                doc_for_binding(context_module, Symbol(binfo.name), sig, world) :
+                lookup_binding_doc(node, context_module, ctx, sig, world)
+            bdoc === nothing || append!(docs, flatten_docs(bdoc))
         end
-        bdoc === nothing || append!(docs, flatten_docs(bdoc))
-    end
-    vdoc = value_based_doc(typ, sig, world)
-    if vdoc !== nothing
-        for doc in flatten_docs(vdoc)
-            doc in docs || push!(docs, doc)
+        vdoc = value_based_doc(typ, sig, world)
+        if vdoc !== nothing
+            for doc in flatten_docs(vdoc)
+                doc in docs || push!(docs, doc)
+            end
         end
     end
 
@@ -150,7 +158,7 @@ function get_hover(
         end
     end
     contents = MarkupContent(; kind = MarkupKind.Markdown, value = String(take!(io)))
-    range, _ = unadjust_range(state, uri, jsobj_to_range(node, fi))
+    range, _ = unadjust_range(state, uri, jsobj_to_range(display_node, fi))
     return Hover(; contents, range)
 end
 
@@ -214,26 +222,13 @@ end
 function call_dispatch_sig(
         ctx::InferredTreeContext, st0_top::SyntaxTreeC, node::SyntaxTreeC
     )
-    call_rng = @something call_byte_range_for_matches(st0_top, node) return nothing
-    matches = @something get_matches_for_range(ctx, call_rng) return nothing
+    call_node = @something enclosing_call_for_matches(st0_top, node) return nothing
+    matches = @something get_matches_for_range(ctx, JS.byte_range(call_node)) return nothing
     # Require a single matched method — for ambiguous dispatch (union splits,
     # multiple matching overloads) fall back to the unnarrowed lookup so we
     # don't silently hide applicable docs.
     length(matches) == 1 || return nothing
     return method_argtypes_sig(only(matches).method)
-end
-
-# Doc for the dispatched operator behind a non-`K"call"` surface
-# (`xs[i]│` → `getindex`, `[1, 2]│` → `Base.vect`, …). Bails on ambiguous
-# dispatch — without an in-source identifier to fall back to, the
-# unnarrowed lookup would dump every overload's doc.
-function operator_dispatch_doc(ctx::InferredTreeContext, node::SyntaxTreeC, world::UInt)
-    JS.kind(node) in _OPERATOR_CALL_KINDS || return nothing
-    matches = @something get_matches_for_range(ctx, JS.byte_range(node)) return nothing
-    length(matches) == 1 || return nothing
-    m = only(matches).method
-    sig = @something method_argtypes_sig(m) return nothing
-    return doc_for_binding(m.module, m.name, sig, world)
 end
 
 # Args-only Tuple-type signature for `m`, stripping the leading `typeof(f)`

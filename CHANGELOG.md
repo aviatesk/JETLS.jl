@@ -65,12 +65,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Binding hovers additionally carry a kind tag — `(argument)`, `(local)`, `(static parameter)`, or `(global)` — before the name, making the binding's role in scope visible.
   Closures display as function-arrow signatures like `(x::Int, y::Int) -> Int`, with argument names recovered from the body when available.
   Documentation is gathered both from the binding's own docstring and from the docstring of whatever value the expression resolves to via type inference. So e.g. given `sv = Some(sin)`, hovering on `sv.value` shows `sin`'s docstring even though `sin` doesn't appear at the cursor.
-  At a method call site (`f│(args)`, `f(args)│`, `xs[i]│`, …), the docstring is narrowed to the dispatched method when dispatch resolves to a single method, rather than merging every overload's doc; non-call cursors (`f│`) still show every overload's doc.
+  When the cursor is on the callee identifier (e.g. `sin│(rand(Int))`, `Base.Math.sin│(x)`), the header is promoted to the full call expression (`sin(rand(Int)) :: Float64`) and the docstring is narrowed to the dispatched method's doc when dispatch resolves to a single method (`sin(::Real)`). When the cursor sits past a call-like surface's closing punctuation (`f(args)│`, `xs[i]│`, `[a, b]│`, …), only the `expr :: T` header is shown without any docstring body. Non-call cursors (`f│`) still show every overload's doc.
   (https://github.com/aviatesk/JETLS.jl/pull/687)
 
-  | Hover on call    | <img width="1472" height="611" alt="Hover on call demo" src="https://github.com/user-attachments/assets/e34e1cf0-014c-4a8f-bafe-74f34bb751b0" />    |
+  | Hover on call    | <img width="1086" height="418" alt="Hover on call demo" src="https://github.com/user-attachments/assets/cf3d2eb8-3036-44e2-b075-b3c9ca09dc35" />    |
   | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-  | Hover on closure | <img width="1472" height="611" alt="Hover on closure demo" src="https://github.com/user-attachments/assets/a33860a9-4524-4260-a13a-71df1ccd504d" /> |
+  | Hover on closure | <img width="1086" height="418" alt="Hover on closure demo" src="https://github.com/user-attachments/assets/285de208-a704-4978-9a89-829654f561bc" /> |
 
 - `textDocument/semanticTokens` now classifies type parameters declared in `struct` / `abstract type` / `primitive type` headers (and their use sites inside the type body) as `typeParameter`. Previously these identifiers were classified as plain `variable`.
 
