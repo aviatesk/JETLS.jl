@@ -32,6 +32,7 @@ end
 """
     jl_lower_for_scope_resolution(
             mod::Module, st0::SyntaxTreeC;
+            world::UInt = Base.get_world_counter(),
             trim_error_nodes::Bool = true,
             recover_from_macro_errors::Bool = true,
             convert_closures::Bool = false,
@@ -55,7 +56,8 @@ Throw if lowering fails otherwise.
 Note that ctx objects share mutable information, so we only return `ctx3`
 """
 function jl_lower_for_scope_resolution(
-        mod::Module, st0::SyntaxTreeC, world::UInt = Base.get_world_counter();
+        mod::Module, st0::SyntaxTreeC;
+        world::UInt = Base.get_world_counter(),
         trim_error_nodes::Bool = true,
         recover_from_macro_errors::Bool = true,
         convert_closures::Bool = false,

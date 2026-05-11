@@ -460,6 +460,7 @@ end
 """
     get_inferrable_tree(
             st0::SyntaxTreeC, context_module::Module;
+            world::UInt = Base.get_world_counter(),
             caller::AbstractString = "get_inferrable_tree"
         ) -> (; ctx3::JL.VariableAnalysisContext, st3::SyntaxTreeC) | nothing
 
@@ -478,10 +479,11 @@ See the [`TypeAnnotation`](@ref) module docstring for the full pipeline.
 """
 function get_inferrable_tree(
         st0::SyntaxTreeC, context_module::Module;
+        world::UInt = Base.get_world_counter(),
         caller::AbstractString = "get_inferrable_tree"
     )
     (; ctx3, st3) = try
-        jl_lower_for_scope_resolution(context_module, st0; trim_error_nodes=true, recover_from_macro_errors=false)
+        jl_lower_for_scope_resolution(context_module, st0; world, trim_error_nodes=true, recover_from_macro_errors=false)
     catch err
         JETLS_DEBUG_LOWERING && @warn "Error in lowering ($caller)" err
         JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
@@ -955,6 +957,7 @@ end
 """
     build_inferred_context_at(
             st0_top::SyntaxTreeC, context_module::Module, rng::UnitRange{<:Integer};
+            world::UInt = Base.get_world_counter(),
             caller::AbstractString = "build_inferred_context_at"
         ) -> ctx::InferredTreeContext | nothing
 
@@ -972,22 +975,24 @@ also folds in step 4.
 """
 function build_inferred_context_at(
         st0_top::SyntaxTreeC, context_module::Module, rng::UnitRange{<:Integer};
+        world::UInt = Base.get_world_counter(),
         caller::AbstractString = "build_inferred_context_at"
     )
     return iterate_toplevel_tree(st0_top) do st0::SyntaxTreeC
         rng ⊆ JS.byte_range(st0) || return nothing
         result = @something get_inferrable_tree(
-            st0, context_module; caller) return traversal_terminator
+            st0, context_module; world, caller) return traversal_terminator
         (; ctx3, st3) = result
         inferred = @something infer_toplevel_tree(
-            ctx3, st3, context_module) return traversal_terminator
+            ctx3, st3, context_module; world) return traversal_terminator
         return TraversalReturn(InferredTreeContext(inferred, st3); terminate=true)
     end
 end
 
 """
     infer_type_at_range(
-            st0_top::SyntaxTreeC, context_module::Module, rng::UnitRange{<:Integer}
+            st0_top::SyntaxTreeC, context_module::Module, rng::UnitRange{<:Integer};
+            world::UInt = Base.get_world_counter()
         ) -> typ | nothing
 
 Compose all four [`TypeAnnotation`](@ref) pipeline steps into a single call: run inference
@@ -1000,10 +1005,11 @@ For features that need multiple queries against the same toplevel, build the con
 [`build_inferred_context_at`](@ref) and reuse it across [`get_type_for_range`](@ref) calls.
 """
 function infer_type_at_range(
-        st0_top::SyntaxTreeC, context_module::Module, rng::UnitRange{<:Integer}
+        st0_top::SyntaxTreeC, context_module::Module, rng::UnitRange{<:Integer};
+        world::UInt = Base.get_world_counter(),
     )
     ctx = @something build_inferred_context_at(
-        st0_top, context_module, rng; caller="infer_type_at_range") return nothing
+        st0_top, context_module, rng; world, caller="infer_type_at_range") return nothing
     return get_type_for_range(ctx, rng)
 end
 

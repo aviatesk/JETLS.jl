@@ -17,8 +17,7 @@ jlexpand(code::AbstractString) = jlexpand(lowering_module, code)
 
 function jlresolve(mod::Module, code::AbstractString)
     st0 = jlparse(code; rule=:statement)
-    world = Base.get_world_counter()
-    return JETLS.jl_lower_for_scope_resolution(mod, st0, world;
+    return JETLS.jl_lower_for_scope_resolution(mod, st0;
         recover_from_macro_errors=false, convert_closures=true)
 end
 jlresolve(code::AbstractString) = jlresolve(lowering_module, code)

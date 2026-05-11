@@ -767,12 +767,11 @@ end
 #   full-analysis reports.
 function analyze_undefined_global_bindings!(
         diagnostics::Vector{Diagnostic}, fi::FileInfo, ctx3::JL.VariableAnalysisContext,
-        binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence}},
+        world::UInt, binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence}},
         reported::Set{LoweringDiagnosticKey};
         analyzer::Union{Nothing,LSAnalyzer} = nothing,
         postprocessor::LSPostProcessor = LSPostProcessor()
     )
-    world = Base.get_world_counter()
     for (binfo, occurrences) in binding_occurrences
         bk = binfo.kind
         bk === :global || continue
@@ -1247,7 +1246,7 @@ function collect_gotos_labels!(
 end
 
 function analyze_lowered_code!(
-        diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo, res::NamedTuple;
+        diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo, res::NamedTuple, world::UInt;
         skip_analysis_requiring_context::Bool = false,
         allow_unused_underscore::Bool = true,
         allow_noreturn_optimization::Vector{Symbol} = Symbol[],
@@ -1277,7 +1276,7 @@ function analyze_lowered_code!(
     analyze_unresolved_gotos!(diagnostics, fi, st3)
 
     if !skip_analysis_requiring_context
-        analyze_undefined_global_bindings!(diagnostics, fi, ctx3, binding_occurrences, reported; analyzer, postprocessor)
+        analyze_undefined_global_bindings!(diagnostics, fi, ctx3, world, binding_occurrences, reported; analyzer, postprocessor)
         analyze_ambiguous_soft_scope!(diagnostics, fi, ctx3, reported)
     end
 
@@ -1297,7 +1296,7 @@ function lowering_diagnostics!(
     (st0, _) = desugar_main_macrocall(st0)
     world = Base.get_world_counter()
     res = try
-        jl_lower_for_scope_resolution(mod, st0, world;
+        jl_lower_for_scope_resolution(mod, st0; world,
             recover_from_macro_errors=false, convert_closures=true, soft_scope)
     catch err
         if err isa JL.LoweringError
@@ -1369,7 +1368,7 @@ function lowering_diagnostics!(
         end
     end
 
-    return analyze_lowered_code!(diagnostics, uri, fi, res;
+    return analyze_lowered_code!(diagnostics, uri, fi, res, world;
         skip_analysis_requiring_context, allow_noreturn_optimization, kwargs...)
 end
 
