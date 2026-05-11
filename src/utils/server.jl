@@ -287,20 +287,20 @@ is_synchronized(s::ServerState, uri::URI) = haskey(load(s.file_cache), uri)
 
 """
     get_context_info(state::ServerState, uri::URI, pos::Position) ->
-        (; mod, analyzer, postprocessor, world)
+        (; mod, world, analyzer, postprocessor)
 
 Extract context information for a given position in a file.
 
 Returns a named tuple containing:
 - `mod::Module`: The module context at the given position
-- `analyzer::LSAnalyzer`: The analyzer instance for the file
-- `postprocessor::JET.PostProcessor`: The post-processor for fixing `var"..."` strings that users don't need
-  to recognize, which are caused by JET implementation details
 - `world::UInt`: The world age to pin reflection and inference to. When an `AnalysisResult`
   is cached for this URI, this is the world at which that analysis context was produced —
   pinning to it keeps a request consistent with the cached analysis even if a concurrent
   update has advanced `Base.get_world_counter()`. When there is no cached analysis (i.e.
   `Nothing` / `OutOfScope`), this falls back to the current world counter.
+- `analyzer::LSAnalyzer`: The analyzer instance for the file
+- `postprocessor::JET.PostProcessor`: The post-processor for fixing `var"..."` strings that users don't need
+  to recognize, which are caused by JET implementation details
 """
 function get_context_info(state::ServerState, uri::URI, pos::Position; lookup_func=nothing)
     lookup_uri = canonical_cache_uri(state, uri)
@@ -310,10 +310,10 @@ function get_context_info(state::ServerState, uri::URI, pos::Position; lookup_fu
         analysis_info = get_analysis_info(state.analysis_manager, lookup_uri)
     end
     mod = get_context_module(analysis_info, lookup_uri, pos)
+    world = get_context_world(analysis_info)
     analyzer = get_context_analyzer(analysis_info, lookup_uri)
     postprocessor = get_post_processor(analysis_info)
-    world = get_context_world(analysis_info)
-    return (; mod, analyzer, postprocessor, world)
+    return (; mod, world, analyzer, postprocessor)
 end
 
 get_context_module(::Nothing, ::URI, ::Position) = Main
