@@ -1053,10 +1053,21 @@ end
     select_enclosing_call(st0::SyntaxTreeC, offset::Integer) ->
         target::Union{SyntaxTreeC, Nothing}
 
-Innermost `K"call"` / `K"dotcall"` / `K"ref"` / `K"tuple"` whose byte range
-contains `offset` — that is, the surface forms whose value is the result of
-a callable application (`f(args)`, `obj.f(args)`, `arr[idx]`, all of which
-lower to a `K"call"` and so carry an inferred return type).
+Innermost surface form whose value is the result of a callable application
+whose byte range contains `offset`. Covers:
+
+- `K"call"` / `K"dotcall"` — `f(args)`, `obj.f(args)`
+- `K"ref"` — `arr[idx]`, `T[a, b, c]` (typed comma-separated literal)
+- `K"tuple"` — `(a, b, c)`
+- `K"vect"` — `[a, b, c]`
+- `K"vcat"` / `K"hcat"` — `[a; b]` / `[a b]`
+- `K"comprehension"` — `[x for y in z]`
+- `K"typed_vcat"` / `K"typed_hcat"` / `K"typed_comprehension"` — typed
+  variants of the above
+
+All of these lower to a `K"call"` (`getindex`, `Core.tuple`, `Base.vect`,
+`Base.vcat`, `Base.hcat`, `Base.collect`, …) and so carry an inferred
+return type that downstream features can query.
 
 Probes both `offset` and `offset - 1`, picking the more specific (smaller
 byte range) match when both yield a hit. This makes `func(args)│` and
@@ -1073,9 +1084,14 @@ function select_enclosing_call(st0::SyntaxTreeC, offset::Integer)
     return length(JS.byte_range(a)) <= length(JS.byte_range(b)) ? a : b
 end
 
+const _CALL_LIKE_KINDS = JS.KSet"""
+    call dotcall ref tuple vect vcat hcat comprehension
+    typed_vcat typed_hcat typed_comprehension
+    """
+
 function _innermost_call_at(st0::SyntaxTreeC, offset::Integer)
     for b in byte_ancestors(st0, offset)
-        JS.kind(b) in JS.KSet"call dotcall ref tuple" && return b
+        JS.kind(b) in _CALL_LIKE_KINDS && return b
     end
     return nothing
 end

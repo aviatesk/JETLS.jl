@@ -651,6 +651,43 @@ end
         @test JS.kind(node) === JS.K"tuple"
         @test JS.sourcetext(node) == "(1, 2)"
     end
+    # array literals and comprehensions are call-like since they lower to
+    # `Base.vect` / `Base.vcat` / `Base.hcat` / `Base.collect`.
+    let node = get_enclosing_call("[1, 2, 3]│")
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"vect"
+        @test JS.sourcetext(node) == "[1, 2, 3]"
+    end
+    let node = get_enclosing_call("[1; 2]│")
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"vcat"
+        @test JS.sourcetext(node) == "[1; 2]"
+    end
+    let node = get_enclosing_call("[1 2]│")
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"hcat"
+        @test JS.sourcetext(node) == "[1 2]"
+    end
+    let node = get_enclosing_call("[i for i in 1:3]│")
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"comprehension"
+        @test JS.sourcetext(node) == "[i for i in 1:3]"
+    end
+    let node = get_enclosing_call("Int[1; 2]│")
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"typed_vcat"
+        @test JS.sourcetext(node) == "Int[1; 2]"
+    end
+    let node = get_enclosing_call("Int[1 2]│")
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"typed_hcat"
+        @test JS.sourcetext(node) == "Int[1 2]"
+    end
+    let node = get_enclosing_call("Int[i for i in 1:3]│")
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"typed_comprehension"
+        @test JS.sourcetext(node) == "Int[i for i in 1:3]"
+    end
     # cursor not inside any call-like expression
     @test isnothing(get_enclosing_call("x = 42│"))
     @test isnothing(get_enclosing_call("│"))
@@ -687,6 +724,16 @@ end
         @test node !== nothing
         @test JS.kind(node) === JS.K"call"
         @test JS.sourcetext(node) == "Base.Pair(1, 2)"
+    end
+    # array literal / comprehension forms fall through to
+    # `select_enclosing_call` and resolve as `Vector`/`Matrix`/… surfaces.
+    let node = get_target_for_type_query("[1, 2, 3]│")
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"vect"
+    end
+    let node = get_target_for_type_query("Int[i for i in 1:3]│")
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"typed_comprehension"
     end
     # neither identifier nor enclosing call
     @test isnothing(get_target_for_type_query("x = 42│"))
