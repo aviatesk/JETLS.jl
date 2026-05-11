@@ -285,13 +285,9 @@ end
 
 is_synchronized(s::ServerState, uri::URI) = haskey(load(s.file_cache), uri)
 
-# TODO: also return the `world` at which the full-analysis result was cached,
-# so request handlers (hover, type definition, …) can pin reflection and
-# inference to that exact world instead of re-reading `Base.get_world_counter()`
-# at request entry — which may have advanced past the cached analysis.
-
 """
-    get_context_info(state::ServerState, uri::URI, pos::Position) -> (; mod, analyzer, postprocessor)
+    get_context_info(state::ServerState, uri::URI, pos::Position) ->
+        (; mod, analyzer, postprocessor, world)
 
 Extract context information for a given position in a file.
 
@@ -300,6 +296,11 @@ Returns a named tuple containing:
 - `analyzer::LSAnalyzer`: The analyzer instance for the file
 - `postprocessor::JET.PostProcessor`: The post-processor for fixing `var"..."` strings that users don't need
   to recognize, which are caused by JET implementation details
+- `world::UInt`: The world age to pin reflection and inference to. When an `AnalysisResult`
+  is cached for this URI, this is the world at which that analysis context was produced —
+  pinning to it keeps a request consistent with the cached analysis even if a concurrent
+  update has advanced `Base.get_world_counter()`. When there is no cached analysis (i.e.
+  `Nothing` / `OutOfScope`), this falls back to the current world counter.
 """
 function get_context_info(state::ServerState, uri::URI, pos::Position; lookup_func=nothing)
     lookup_uri = canonical_cache_uri(state, uri)
@@ -311,7 +312,8 @@ function get_context_info(state::ServerState, uri::URI, pos::Position; lookup_fu
     mod = get_context_module(analysis_info, lookup_uri, pos)
     analyzer = get_context_analyzer(analysis_info, lookup_uri)
     postprocessor = get_post_processor(analysis_info)
-    return (; mod, analyzer, postprocessor)
+    world = get_context_world(analysis_info)
+    return (; mod, analyzer, postprocessor, world)
 end
 
 get_context_module(::Nothing, ::URI, ::Position) = Main
@@ -349,6 +351,10 @@ get_context_analyzer(analysis_result::AnalysisResult, ::URI) = analysis_result.a
 get_post_processor(::Nothing) = LSPostProcessor(JET.PostProcessor())
 get_post_processor(::OutOfScope) = LSPostProcessor(JET.PostProcessor())
 get_post_processor(analysis_result::AnalysisResult) = LSPostProcessor(JET.PostProcessor(analysis_result.actual2virtual))
+
+get_context_world(::Nothing) = Base.get_world_counter()
+get_context_world(::OutOfScope) = Base.get_world_counter()
+get_context_world(analysis_result::AnalysisResult) = analysis_result.world
 
 function has_analyzed_context(state::ServerState, uri::URI; lookup_func=nothing)
     lookup_uri = canonical_cache_uri(state, uri)

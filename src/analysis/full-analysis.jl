@@ -717,9 +717,9 @@ function analyze_parsed_if_exist(
 end
 
 # update `AnalyzerState(analyzer).world` so that `analyzer` can infer any newly defined methods
-function update_analyzer_world(analyzer::LSAnalyzer)
+function update_analyzer_world(analyzer::LSAnalyzer, world::UInt = Base.get_world_counter())
     state = JET.AnalyzerState(analyzer)
-    newstate = JET.AnalyzerState(state; world = Base.get_world_counter())
+    newstate = JET.AnalyzerState(state; world)
     return JET.AbstractAnalyzer(analyzer, newstate)
 end
 
@@ -737,14 +737,15 @@ function new_analysis_result(interp::LSInterpreter, request::AnalysisRequest, re
     (; entry, prev_analysis_result) = request
     replace_analysis_result = isempty(result.res.toplevel_error_reports) || isnothing(prev_analysis_result)
     if !replace_analysis_result
-        (; actual2virtual, analyzer, analyzed_file_infos) = prev_analysis_result
+        (; actual2virtual, analyzer, analyzed_file_infos, world) = prev_analysis_result
     else
         actual2virtual = result.res.actual2virtual::JET.Actual2Virtual
-        analyzer = update_analyzer_world(result.analyzer)
+        world = Base.get_world_counter()
+        analyzer = update_analyzer_world(result.analyzer, world)
     end
 
     analysis_result = AnalysisResult(entry, uri2diagnostics, analyzer,
-        analyzed_file_infos, actual2virtual)
+        analyzed_file_infos, actual2virtual, world)
     return analysis_result, replace_analysis_result
 end
 
@@ -1008,7 +1009,10 @@ function analyze_package_with_revise(
     jet_inference_error_reports_to_diagnostics!(uri2diagnostics, inference_reports, postprocessor)
     actual2virtual = pkgmod => pkgmod # No virtual module for Revise-based analysis
 
-    return AnalysisResult(request.entry, uri2diagnostics, update_analyzer_world(analyzer), analyzed_file_infos, actual2virtual)
+    world = Base.get_world_counter()
+    newanalyzer = update_analyzer_world(analyzer, world)
+    return AnalysisResult(request.entry, uri2diagnostics, newanalyzer,
+        analyzed_file_infos, actual2virtual, world)
 end
 
 function collect_displayable_reports(

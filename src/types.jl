@@ -209,6 +209,7 @@ struct AnalysisResult
     analyzer::LSAnalyzer
     analyzed_file_infos::Dict{URI,JET.AnalyzedFileInfo}
     actual2virtual::JET.Actual2Virtual
+    world::UInt
 end
 
 analyzed_file_uris(analysis_result::AnalysisResult) = keys(analysis_result.analyzed_file_infos)

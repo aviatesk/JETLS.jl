@@ -10,9 +10,12 @@ include(normpath(pkgdir(JETLS), "test", "setup.jl"))
 include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
 
 module lowering_module end
-
-get_lowered_diagnostics(text::AbstractString; kwargs...) = get_lowered_diagnostics(lowering_module, text; kwargs...)
-function get_lowered_diagnostics(mod::Module, text::AbstractString; kwargs...)
+function get_lowered_diagnostics(
+        text::AbstractString;
+        context_module::Module=lowering_module,
+        world::UInt = Base.get_world_counter(),
+        kwargs...
+    )
     filename = abspath(pkgdir(JETLS), "test", "test_lowering_diagnostic.jl")
     fi = JETLS.FileInfo(#=version=#0, text, filename)
     uri = filepath2uri(filename)
@@ -20,7 +23,7 @@ function get_lowered_diagnostics(mod::Module, text::AbstractString; kwargs...)
     @assert JS.kind(st0_top) === JS.K"toplevel"
     diagnostics = LSP.Diagnostic[]
     JETLS.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
-        JETLS.lowering_diagnostics!(diagnostics, uri, fi, mod, st0; kwargs...)
+        JETLS.lowering_diagnostics!(diagnostics, uri, fi, st0, context_module, world; kwargs...)
     end
     return diagnostics
 end
@@ -512,11 +515,11 @@ length_utf16(s::AbstractString) = sum(c::Char -> codepoint(c) < 0x10000 ? 1 : 2,
     end
 
     @testset "Unused bindings within macro code" begin
-        diagnostics = get_lowered_diagnostics(@__MODULE__, """
+        diagnostics = get_lowered_diagnostics("""
         function func(x)
             return @gen_unused x
         end
-        """)
+        """; context_module=@__MODULE__)
         @test isempty(diagnostics)
     end
 
@@ -536,9 +539,9 @@ length_utf16(s::AbstractString) = sum(c::Char -> codepoint(c) < 0x10000 ? 1 : 2,
     # # This should be reported ideally, but currently JuliaLowering cannot track
     # # precise provenance for code expanded from old macros, so it gets caught by the check in analyze_unused_bindings!
     @testset "argument decl with macro" begin
-        diagnostics = get_lowered_diagnostics(@__MODULE__, """
+        diagnostics = get_lowered_diagnostics("""
         func(@just_return x) = nothing
-        """)
+        """; context_module=@__MODULE__)
         res = length(diagnostics) == 1
         @test_broken res
         if res
@@ -664,13 +667,13 @@ module EmptyModule end
 @testset "unused binding detection (before full-analysis, without macro expansion)" begin
     # `@sprintf` is not available yet for EmptyModule (simulating the lowering analysis behavior before full-analysis complete)
     # https://github.com/aviatesk/JETLS.jl/issues/522
-    diagnostics = get_lowered_diagnostics(EmptyModule, """
+    diagnostics = get_lowered_diagnostics("""
         let
             OLR = SW_in = 0.0
             @info @sprintf("OLR: %.1f W/m², SW_in: %.1f W/m², net: %.1f W/m²",
                             OLR, SW_in, SW_in - OLR)
         end
-        """; skip_analysis_requiring_context=true)
+        """; context_module=EmptyModule, skip_analysis_requiring_context=true)
     @test isempty(diagnostics)
 end
 
@@ -688,7 +691,7 @@ end
 
 @testset HierarchicalTestSet "JuliaLowering error diagnostics" begin
     @testset "lowering error diagnostics" begin
-        diagnostics = get_lowered_diagnostics(@__MODULE__, "macro foo(x, y) \$(x) end")
+        diagnostics = get_lowered_diagnostics("macro foo(x, y) \$(x) end"; context_module=@__MODULE__)
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
         @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
@@ -717,7 +720,7 @@ end
     end
 
     @testset "macro not found error diagnostics" begin
-        diagnostics = get_lowered_diagnostics(@__MODULE__, "x = @notexisting 42")
+        diagnostics = get_lowered_diagnostics("x = @notexisting 42"; context_module=@__MODULE__)
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
         @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
@@ -729,18 +732,18 @@ end
     end
 
     @testset "@. macro (aviatesk/JETLS.jl#409)" begin
-        diagnostics = get_lowered_diagnostics(@__MODULE__, """
+        diagnostics = get_lowered_diagnostics("""
         function foo()
             x = rand(10)
             y = rand(10)
             @views @. muladd(x[1:end], y[1], y[1:end])
         end
-        """)
+        """; context_module=@__MODULE__)
         @test isempty(diagnostics)
     end
 
     @testset "string macro not found error diagnostics" begin
-        diagnostics = get_lowered_diagnostics(@__MODULE__, "x = notexisting\"string\"")
+        diagnostics = get_lowered_diagnostics("x = notexisting\"string\""; context_module=@__MODULE__)
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
         @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
@@ -752,7 +755,7 @@ end
     end
 
     @testset "macro expansion error diagnostics" begin
-        diagnostics = get_lowered_diagnostics(@__MODULE__, "x = @m_throw 42")
+        diagnostics = get_lowered_diagnostics("x = @m_throw 42"; context_module=@__MODULE__)
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
         @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
@@ -764,9 +767,9 @@ end
     end
 
     @testset "nested macro expansion error diagnostics" begin
-        diagnostics = get_lowered_diagnostics(@__MODULE__, """let
+        diagnostics = get_lowered_diagnostics("""let
             @m_outer_error missing
-        end""")
+        end"""; context_module=@__MODULE__)
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
         @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
@@ -778,9 +781,9 @@ end
     end
 
     @testset "nested macro expansion error diagnostics (with JL provenance)" begin
-        diagnostics = get_lowered_diagnostics(@__MODULE__, """let
+        diagnostics = get_lowered_diagnostics("""let
             @m_outer_error_JL missing
-        end""")
+        end"""; context_module=@__MODULE__)
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
         @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
@@ -792,11 +795,11 @@ end
     end
 
     @testset "lowering error within macro expanded code" begin
-        diagnostics = get_lowered_diagnostics(@__MODULE__, """let x = 42
+        diagnostics = get_lowered_diagnostics("""let x = 42
             println(x)
             @m_gen_invalid x
         end
-        """)
+        """; context_module=@__MODULE__)
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
         @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
@@ -811,11 +814,11 @@ const myfunc = (x) -> x
 end
 
 @testset HierarchicalTestSet "Undefined global binding report" begin
-    @test isempty(get_lowered_diagnostics(@__MODULE__, "let x = 42; println(sin(x)); end"))
-    let diagnostics = get_lowered_diagnostics(@__MODULE__, """let x = 42
+    @test isempty(get_lowered_diagnostics("let x = 42; println(sin(x)); end"; context_module=@__MODULE__))
+    let diagnostics = get_lowered_diagnostics("""let x = 42
             undeffunc(x)
         end
-        """)
+        """; context_module=@__MODULE__)
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
         @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
@@ -827,11 +830,11 @@ end
         @test diagnostic.range.var"end".character == 13
     end
 
-    @test isempty(get_lowered_diagnostics(TestLoweringUndefGlobalBinding, "let x = 42; println(myfunc(x)); end"))
-    let diagnostics = get_lowered_diagnostics(TestLoweringUndefGlobalBinding, """let x = 42
+    @test isempty(get_lowered_diagnostics("let x = 42; println(myfunc(x)); end"; context_module=TestLoweringUndefGlobalBinding))
+    let diagnostics = get_lowered_diagnostics("""let x = 42
             undeffunc(x)
         end
-        """)
+        """; context_module=TestLoweringUndefGlobalBinding)
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
         @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
@@ -842,13 +845,13 @@ end
         @test diagnostic.range.var"end".character == 13
     end
 
-    @test isempty(get_lowered_diagnostics(@__MODULE__, """
+    @test isempty(get_lowered_diagnostics("""
         struct Issue492
             global function make_issue492()
                 new()
             end
         end
-    """))
+    """; context_module=@__MODULE__))
 end
 
 @testset HierarchicalTestSet "Undefined local binding report" begin
@@ -1375,12 +1378,12 @@ end
     # (e.g. a `@testset` body), the related-information range must point at the actual
     # identifier — not the entire enclosing macrocall, which for macro-expanded references
     # picks the outermost source = `@testset begin ... end` instead of `walk`).
-    let diagnostics = get_lowered_diagnostics(JETLS.JETLSTestModule, """
+    let diagnostics = get_lowered_diagnostics("""
         @testset "outer" begin
             walk(st) = walk(st-1)
             walk(5)
         end
-        """)
+        """; context_module=JETLS.JETLSTestModule)
         ds = filter(d -> d.code == JETLS.LOWERING_CAPTURED_BOXED_VARIABLE_CODE, diagnostics)
         @test length(ds) == 1
         d = only(ds)
@@ -2124,11 +2127,11 @@ module soft_scope_module
 end
 
 @testset HierarchicalTestSet "ambiguous soft scope detection" begin
-    let diagnostics = get_lowered_diagnostics(soft_scope_module, """
+    let diagnostics = get_lowered_diagnostics("""
         for _ = 1:10
             x = 2
         end
-        """)
+        """; context_module=soft_scope_module)
         ds = filter(d -> d.code == JETLS.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE, diagnostics)
         @test length(ds) == 1
         d = only(ds)
@@ -2144,65 +2147,65 @@ end
     end
 
     # No diagnostic inside a function (hard scope)
-    let diagnostics = get_lowered_diagnostics(soft_scope_module, """
+    let diagnostics = get_lowered_diagnostics("""
         function f()
             for _ = 1:10
                 x = 2
             end
         end
-        """)
+        """; context_module=soft_scope_module)
         ds = filter(d -> d.code == JETLS.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE, diagnostics)
         @test isempty(ds)
     end
 
     # No diagnostic when no global by that name exists
-    let diagnostics = get_lowered_diagnostics(soft_scope_module, """
+    let diagnostics = get_lowered_diagnostics("""
         for _ = 1:10
             y = 2
         end
-        """)
+        """; context_module=soft_scope_module)
         ds = filter(d -> d.code == JETLS.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE, diagnostics)
         @test isempty(ds)
     end
 
     # Explicit `global` suppresses the diagnostic
-    let diagnostics = get_lowered_diagnostics(soft_scope_module, """
+    let diagnostics = get_lowered_diagnostics("""
         for _ = 1:10
             global x = 2
         end
-        """)
+        """; context_module=soft_scope_module)
         ds = filter(d -> d.code == JETLS.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE, diagnostics)
         @test isempty(ds)
     end
 
     # while loop
-    let diagnostics = get_lowered_diagnostics(soft_scope_module, """
+    let diagnostics = get_lowered_diagnostics("""
         while true
             x = 2
             break
         end
-        """)
+        """; context_module=soft_scope_module)
         ds = filter(d -> d.code == JETLS.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE, diagnostics)
         @test length(ds) == 1
     end
 
     @testset "soft scope mode (notebook)" begin
         # With soft_scope=true, ambiguous soft scope diagnostic should not fire
-        let diagnostics = get_lowered_diagnostics(soft_scope_module, """
+        let diagnostics = get_lowered_diagnostics("""
             for _ = 1:10
                 x = 2
             end
-            """; soft_scope=true)
+            """; context_module=soft_scope_module, soft_scope=true)
             ds = filter(d -> d.code == JETLS.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE, diagnostics)
             @test isempty(ds)
         end
 
         # Without soft_scope, the same code should produce the diagnostic
-        let diagnostics = get_lowered_diagnostics(soft_scope_module, """
+        let diagnostics = get_lowered_diagnostics("""
             for _ = 1:10
                 x = 2
             end
-            """; soft_scope=false)
+            """; context_module=soft_scope_module, soft_scope=false)
             ds = filter(d -> d.code == JETLS.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE, diagnostics)
             @test length(ds) == 1
         end
@@ -2338,12 +2341,12 @@ end
     # Regression: when an unused `@label` is nested inside another
     # macrocall (e.g. `@testset`), the auto-fix delete range must cover
     # only the `@label name` line — not the entire enclosing macrocall.
-    let diagnostics = get_lowered_diagnostics(JETLS.JETLSTestModule, """
+    let diagnostics = get_lowered_diagnostics("""
         @testset "outer" begin
             @label spare
             return 1
         end
-        """)
+        """; context_module=JETLS.JETLSTestModule)
         ds = filter(d -> d.code == JETLS.LOWERING_UNUSED_LABEL_CODE, diagnostics)
         @test length(ds) == 1
         d = only(ds)

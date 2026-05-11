@@ -1284,7 +1284,8 @@ function analyze_lowered_code!(
 end
 
 function lowering_diagnostics!(
-        diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo, mod::Module, st0::SyntaxTreeC;
+        diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo, st0::SyntaxTreeC,
+        mod::Module, world::UInt;
         skip_analysis_requiring_context::Bool = false,
         soft_scope::Bool = false,
         kwargs...
@@ -1294,7 +1295,6 @@ function lowering_diagnostics!(
     analyze_unsorted_imports!(diagnostics, fi, st0)
 
     (st0, _) = desugar_main_macrocall(st0)
-    world = Base.get_world_counter()
     res = try
         jl_lower_for_scope_resolution(mod, st0; world,
             recover_from_macro_errors=false, convert_closures=true, soft_scope)
@@ -1569,8 +1569,8 @@ function compute_lowering_diagnostics(
     iterate_toplevel_tree(st0_top) do st0::SyntaxTreeC
         is_cancelled(cancel_flag) && return traversal_terminator
         pos = offset_to_xy(file_info, JS.first_byte(st0))
-        (; mod, analyzer, postprocessor) = get_context_info(server.state, uri, pos; lookup_func)
-        lowering_diagnostics!(diagnostics, uri, file_info, mod, st0;
+        (; mod, analyzer, world, postprocessor) = get_context_info(server.state, uri, pos; lookup_func)
+        lowering_diagnostics!(diagnostics, uri, file_info, st0, mod, world;
             skip_analysis_requiring_context, allow_unused_underscore, soft_scope,
             analyzer, postprocessor)
     end

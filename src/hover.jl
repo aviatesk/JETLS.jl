@@ -66,14 +66,13 @@ function get_hover(
         state::ServerState, fi::FileInfo, uri::URI, pos::Position;
         context_module::Union{Nothing,Module} = nothing
     )
-    # Pin the world at request entry and thread it through the inference
-    # pipeline and every doc-lookup / reflection call below, so the request's
-    # output reflects a single consistent program state even if a concurrent
-    # analysis update advances `get_world_counter()` mid-request.
-    world = Base.get_world_counter()
     st0_top = build_syntax_tree(fi)
     offset = xy_to_offset(fi, pos)
-    (; mod, postprocessor) = get_context_info(state, uri, pos)
+    # `world` is pinned to the cached analysis (falling back to the current
+    # world counter when absent) and threaded through inference and every
+    # doc-lookup / reflection call below, so the request stays consistent
+    # with that analysis even if a concurrent update advances the world.
+    (; mod, postprocessor, world) = get_context_info(state, uri, pos)
     # `context_module` kwarg overrides the analysis-derived module — exposed
     # for tests so they can seed the lookup with a pre-populated module
     # without running full-analysis on the test source.
