@@ -6,15 +6,17 @@ using JETLS: CC, JL, JS
 using JETLS.TypeAnnotation
 using JETLS.TypeAnnotation: get_inferrable_tree, infer_toplevel_tree
 
+module type_annotate_module end
+
 # Run the full TypeAnnotation pipeline through its exported driver and return
 # `(fi, ctx)` for the toplevel containing byte 1 — i.e. the *first* top-level
 # statement in `code`. The tests below either pass single-toplevel snippets
 # (the common case) or place the statement under test first. `fi` is returned
 # so tests can use `xy_to_offset` etc. against the source.
-function type_annotate(code::AbstractString, mod::Module = Main)
+function type_annotate(code::AbstractString, context_module::Module = type_annotate_module)
     fi = JETLS.FileInfo(1, code, @__FILE__)
     st0_top = JETLS.build_syntax_tree(fi)
-    ctx = build_inferred_context_at(st0_top, mod, 1:1)
+    ctx = build_inferred_context_at(st0_top, context_module, 1:1)
     @test ctx !== nothing
     return fi, ctx
 end
@@ -499,6 +501,24 @@ end
     end
 end
 
+module myfunc_module
+myfunc(x::Int) = x + 1
+end
+
+# Helper macro for the "user-defined macro injecting K\"return\"" test below:
+# the macrocall site `@return_zero` carries no `return` in its source,
+# but the macro's expansion does — so `st3` (post-macro-expansion) is the
+# only tree where the `K"return"` is visible. Walking `st0` would miss it
+# and the IR `K"return"` it produces would mis-classify as a synthetic
+# tail-position return.
+module test_return_zero_module
+macro return_zero()
+    return quote
+        return 0
+    end
+end
+end
+
 @testset "Surface-kind dispatch (get_type_for_range)" begin
     # Generic fallback: a single typed node lives at the byte range, so the
     # tmerge path collapses to that node's type.
@@ -864,17 +884,15 @@ end
         # `tmerge_at_range` filters this scaffolding so the user-visible value
         # (`Const(f)`) survives intact.
         @testset "method-def function name surfaces the value, not Union with Type{T}" begin
-            mod = Module()
-            @eval mod myfunc(x::Int) = x + 1
             let code = """
                 function myfunc(x::Int)
                     x + 1
                 end
                 """
-                _, ctx = type_annotate(code, mod)
+                _, ctx = type_annotate(code, myfunc_module)
                 typ = get_type_for_range(ctx, range_of(code, "myfunc"))
                 @test typ isa Core.Const
-                @test typ.val === mod.myfunc
+                @test typ.val === myfunc_module.myfunc
             end
         end
     end
@@ -1144,7 +1162,7 @@ end
                     """
                     _, ctx = type_annotate(code)
                     outer_rng = range_of_kind(code, JS.K"if")
-                    @test_broken widenconst(get_type_for_range(ctx, outer_rng)) === Nothing
+                    @test widenconst(get_type_for_range(ctx, outer_rng)) === Nothing
                 end
             end
         end
@@ -1176,6 +1194,27 @@ end
                     # (it's `Union{Int, Nothing}`, not `Union{Int, Nothing, String}`).
                     out_use_rng = findlast("out", code)
                     @test widenconst(get_type_for_range(ctx, out_use_rng)) === Union{Int, Nothing}
+                end
+            end
+
+            # Unlike `@something y return ...` above (where `return` is in
+            # the macrocall args and thus visible in `st0`), here the user
+            # source has no `return` token at all — only the macro's
+            # expansion emits one. `st0`-only walking would miss it.
+            @testset "user-defined macro injecting K\"return\"" begin
+                let code = """
+                    function f(cond::Bool)
+                        out = if cond
+                            @return_zero
+                        end
+                        out
+                    end
+                    """
+                    _, ctx = type_annotate(code, test_return_zero_module)
+                    outer_rng = range_of_kind(code, JS.K"if")
+                    # `Int` (from `return 0`) would leak in without st3 walking:
+                    # `Union{Int, Nothing}` would be the wrong answer.
+                    @test widenconst(get_type_for_range(ctx, outer_rng)) === Nothing
                 end
             end
         end
