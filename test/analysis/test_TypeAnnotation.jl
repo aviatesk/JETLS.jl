@@ -503,6 +503,90 @@ end
     end
 end
 
+@testset HierarchicalTestSet "Call positional arg annotation" begin
+    # At a `:call` site, both the callee identifier and each literal /
+    # `GlobalRef` arg should resolve to `Core.Const(value)` so consumers
+    # (hover, signature help, completion) can read precise types by
+    # querying at the corresponding byte range.
+
+    @testset "annotates literal args" begin
+        @testset "integer" begin
+            code = "sin(42)"
+            _, ctx = type_annotate(code)
+            @test get_type_for_range(ctx, range_of(code, "sin")) === Core.Const(sin)
+            @test get_type_for_range(ctx, range_of(code, "42")) === Core.Const(42)
+        end
+        @testset "float" begin
+            code = "sin(1.5)"
+            _, ctx = type_annotate(code)
+            @test get_type_for_range(ctx, range_of(code, "sin")) === Core.Const(sin)
+            @test get_type_for_range(ctx, range_of(code, "1.5")) === Core.Const(1.5)
+        end
+        @testset "bool" begin
+            code = "xor(true, false)"
+            _, ctx = type_annotate(code)
+            @test get_type_for_range(ctx, range_of(code, "xor")) === Core.Const(xor)
+            @test get_type_for_range(ctx, range_of(code, "true")) === Core.Const(true)
+            @test get_type_for_range(ctx, range_of(code, "false")) === Core.Const(false)
+        end
+        @testset "nothing" begin
+            code = "sin(nothing)"
+            _, ctx = type_annotate(code)
+            @test get_type_for_range(ctx, range_of(code, "sin")) === Core.Const(sin)
+            @test get_type_for_range(ctx, range_of(code, "nothing")) === Core.Const(nothing)
+        end
+        # String / Symbol / Char literals expose the value at the inner
+        # content node, not at the surrounding surface form that includes
+        # the quotes / colon.
+        @testset "string" begin
+            code = "println(\"hi\")"
+            _, ctx = type_annotate(code)
+            @test get_type_for_range(ctx, range_of(code, "println")) === Core.Const(println)
+            @test get_type_for_range(ctx, range_of(code, "hi")) === Core.Const("hi")
+        end
+        @testset "symbol" begin
+            code = "sin(:foo)"
+            _, ctx = type_annotate(code)
+            @test get_type_for_range(ctx, range_of(code, "sin")) === Core.Const(sin)
+            @test get_type_for_range(ctx, range_of(code, "foo")) === Core.Const(:foo)
+        end
+        @testset "char" begin
+            code = "sin('a')"
+            _, ctx = type_annotate(code)
+            @test get_type_for_range(ctx, range_of(code, "sin")) === Core.Const(sin)
+            @test get_type_for_range(ctx, range_of(code, "a")) === Core.Const('a')
+        end
+    end
+
+    # User-written `GlobalRef` args carry the resolved value at the
+    # identifier's narrow range — `is_synthetic_arg_leaf` filters only the
+    # *broad* synthetic refs lowering plants for scaffolding callees.
+    @testset "annotates GlobalRef args at narrow source position" begin
+        code = "convert(Int, 3.0)"
+        _, ctx = type_annotate(code)
+        @test get_type_for_range(ctx, range_of(code, "convert")) === Core.Const(convert)
+        @test get_type_for_range(ctx, range_of(code, "Int")) === Core.Const(Int)
+        @test get_type_for_range(ctx, range_of(code, "3.0")) === Core.Const(3.0)
+    end
+
+    @testset "annotates literal args in nested calls" begin
+        code = "sin(cos(0.5))"
+        _, ctx = type_annotate(code)
+        @test get_type_for_range(ctx, range_of(code, "sin")) === Core.Const(sin)
+        @test get_type_for_range(ctx, range_of(code, "cos")) === Core.Const(cos)
+        @test get_type_for_range(ctx, range_of(code, "0.5")) === Core.Const(0.5)
+    end
+
+    @testset "annotates each positional arg independently" begin
+        code = "clamp(5, 1, 10)"
+        _, ctx = type_annotate(code)
+        @test get_type_for_range(ctx, range_of(code, "clamp")) === Core.Const(clamp)
+        @test get_type_for_range(ctx, range_of(code, "5")) === Core.Const(5)
+        @test get_type_for_range(ctx, range_of(code, "1")) === Core.Const(1)
+        @test get_type_for_range(ctx, range_of(code, "10")) === Core.Const(10)
+    end
+end
+
 module myfunc_module
 myfunc(x::Int) = x + 1
 end
@@ -606,6 +690,22 @@ end
                 end
                 @test widenconst(get_type_for_range(ctx, ref_rng)) <: Core.OpaqueClosure
             end
+        end
+    end
+
+    # `[xs...]` / `T[xs...]` should surface the constructed `Vector{T}` type,
+    # not widen to a union with the synthetic `Base.vect` / `Base.getindex`
+    # callees that lowering plants at the literal's byte range.
+    @testset "array literal leaf scaffolding doesn't pollute tmerge range" begin
+        let code = "[1, 2, 3]"
+            _, ctx = type_annotate(code)
+            @test widenconst(get_type_for_range(ctx, range_of(code, "[1, 2, 3]"))) ===
+                Vector{Int}
+        end
+        let code = "Any[1, 2, 3]"
+            _, ctx = type_annotate(code)
+            @test widenconst(get_type_for_range(ctx, range_of(code, "Any[1, 2, 3]"))) ===
+                Vector{Any}
         end
     end
 

@@ -387,6 +387,16 @@ function is_synthetic_destructure_stmt(filter::SyntheticFilter, stmttree::Syntax
     return false
 end
 
+# JL inserts synthetic nodes (`Base.X` / `Core.X` call-head refs for
+# array literals / kwarg / parametric-ctor scaffolding, lowering-introduced
+# literals in destructure / generator scaffolding, …) with no natural
+# user-source position; JL attaches their `treeref` to the parent surface
+# form so they share the surrounding stmt's full byte range. Flagging by
+# that range equality skips annotating scaffolding leaves at ranges meant
+# for user-facing queries.
+is_synthetic_arg_leaf(stmttree::SyntaxTreeC, leaf::SyntaxTreeC) =
+    JS.byte_range(leaf) == JS.byte_range(stmttree)
+
 function annotate_types!(
         citree::SyntaxTreeC, frame::CC.InferenceState, filter::SyntheticFilter
     )
@@ -406,8 +416,8 @@ function annotate_types!(
         # Synthetic destructure K"="s share the user's RHS byte range, so
         # annotating them (or their inner K"call" / args, below) would shadow
         # source-range queries.
-        is_synthesized = is_synthetic_destructure_stmt(filter, stmttree)
-        is_synthesized || JS.setattr!(stmttree, :type, stmttype)
+        is_synthesized_stmt = is_synthetic_destructure_stmt(filter, stmttree)
+        is_synthesized_stmt || JS.setattr!(stmttree, :type, stmttype)
         if stmt isa Expr
             stmt.head === :meta && continue
             # TODO: properly annotate static-parameter references once CC supports
@@ -431,10 +441,10 @@ function annotate_types!(
                 stmt = stmt.args[2]
                 stmt isa Expr || continue
                 treeref = treeref[2]
-                is_synthesized || JS.setattr!(treeref, :type, stmttype)
+                is_synthesized_stmt || JS.setattr!(treeref, :type, stmttype)
             end
             is_call = stmt.head === :call
-            if is_call && !is_synthesized
+            if is_call && !is_synthesized_stmt
                 matches = extract_call_matches(frame.stmt_info[i])
                 matches === nothing || JS.setattr!(treeref, :matches, matches)
             end
@@ -442,6 +452,18 @@ function annotate_types!(
                 arg = stmt.args[j]
                 if arg isa SlotNumber && !is_internal_binding_leaf(filter, treeref[j])
                     argtyp = slot_type_at(arg, i, frame)
+                    JS.setattr!(treeref[j], :type, argtyp)
+                elseif (!is_synthesized_stmt && is_call && !(arg isa SSAValue) &&
+                        !is_synthetic_arg_leaf(treeref, treeref[j]))
+                    # `is_synthetic_arg_leaf` filters lowering-inserted leaves
+                    # (synthetic call heads like `Base.vect` for `[1,2,3]` /
+                    # `Core.apply_type` / `Core.kwcall` for kwarg calls, and
+                    # lowering-introduced literals in comprehension scaffolding).
+                    # Their `argextype` otherwise leaks through `tmerge_at_range`-dispatched
+                    # queries (`K"vect"`, `K"typed_vcat"`, …) as a union with the real type.
+                    # SSAValue args are skipped separately since the producing stmt already
+                    # annotates the value.
+                    argtyp = CC.argextype(arg, frame.src, frame.sptypes)
                     JS.setattr!(treeref[j], :type, argtyp)
                 end
             end
