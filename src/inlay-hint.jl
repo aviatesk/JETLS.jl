@@ -131,9 +131,11 @@ function get_block_keyword_label(sym::DocumentSymbol)
     return nothing
 end
 
-function syntactic_inlay_hints(fi::FileInfo, range::Range; kwargs...)
-    st0 = build_syntax_tree(fi)
-    symbols = extract_document_symbols(st0, fi)
+function syntactic_inlay_hints(
+        state::ServerState, uri::URI, fi::FileInfo, range::Range;
+        kwargs...
+    )
+    symbols = get_document_symbols!(state, uri, fi)
     inlay_hints = InlayHint[]
     syntactic_inlay_hints!(inlay_hints, symbols, fi, range; kwargs...)
     return inlay_hints
