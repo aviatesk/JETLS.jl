@@ -153,17 +153,9 @@ struct ASTTypeAnnotator <: CC.AbstractInterpreter
     inf_params::CC.InferenceParams
     opt_params::CC.OptimizationParams
     inf_cache::Vector{CC.InferenceResult}
-    # OC `Method` → its body's `K"code_info"` SyntaxTree subtree. Populated by
-    # `register_oc_body_trees!` after a thunk's `resolve_definition_effects_in_ir`
-    # has replaced `:opaque_closure_method` Exprs with concrete `Method` objects;
-    # `finishinfer!` then annotates OC body frames CC has infered.
+    # OC `Method` → body's `K"code_info"` subtree; built by `register_oc_body_trees!`.
     oc_body_trees::IdDict{Method,SyntaxTreeC}
-    # OC `Method`s that are pending body annotation — populated by the
-    # `abstract_eval_new_opaque_closure` override before the eager body
-    # inference runs, consumed by `finishinfer!` (annotate then delete). Ensures
-    # the body's citree is annotated from the eager `most_general_argtypes`
-    # specialization (signature view), not from per-call-site specializations
-    # — same model as top-level method bodies.
+    # Push site: `abstract_eval_new_opaque_closure`. Consume site: `finishinfer!`.
     oc_methods_to_annotate::Set{Method}
     function ASTTypeAnnotator(
             toptree::SyntaxTreeC,
@@ -245,14 +237,12 @@ function CC.abstract_eval_new_opaque_closure(
     po = rt_exct_effects.rt
     po isa CC.PartialOpaque || return future
     CC.call_result_unused(sv, sv.currpc) && return future
-    # Mark this OC's `Method` so the eager body inference's `finishinfer!`
-    # annotates the citree (signature view, like top-level methods). The marker
-    # is consumed (deleted) atomically in `finishinfer!` itself; per-call-site
-    # specializations of the same Method find the marker missing and skip.
-    # We can't delete in this override's wrapper `Future` continuation because
-    # that continuation can run synchronously (when the inner `abstract_call_opaque_closure`
-    # returns an immediate `Future` due to in-progress / cache-hit body inference) —
-    # before the body's `finishinfer!` has actually run.
+    # Mark this OC's `Method`; `finishinfer!` annotates the citree (signature
+    # view, like top-level methods) and atomically consumes the marker, so
+    # per-call-site specializations see it missing and skip. Deletion must
+    # happen inside `finishinfer!`, not in this override's `Future` continuation
+    # — that continuation can run synchronously (cache-hit body inference)
+    # before the body's `finishinfer!`, breaking the invariant.
     push!(interp.oc_methods_to_annotate, po.source)
     # Re-run the eager body inference the default just did; CC's specialization
     # cache absorbs the duplication and this avoids re-implementing the
@@ -393,11 +383,8 @@ function CC.finishinfer!(frame::CC.InferenceState, interp::ASTTypeAnnotator, cyc
         annotate_types!(interp.toptree[1], frame)
     else
         def = frame.linfo.def
-        # Annotate only when this is the eager body inference's `finishinfer!`
-        # (marker pushed by `abstract_eval_new_opaque_closure`); per-call-site
-        # specializations of the same Method find the marker missing and skip.
-        # The marker is consumed here (delete atomically with the annotation)
-        # so it doesn't leak into subsequent inferences in the same interp.
+        # Consume the marker atomically with the annotation — see push site
+        # at `abstract_eval_new_opaque_closure` for the discipline.
         if def isa Method && def in interp.oc_methods_to_annotate
             delete!(interp.oc_methods_to_annotate, def)
             oc_citree = get(interp.oc_body_trees, def, nothing)
@@ -408,21 +395,16 @@ function CC.finishinfer!(frame::CC.InferenceState, interp::ASTTypeAnnotator, cyc
     return ret
 end
 
-# Walk `(citree, src)` and register `is_for_opaque_closure` `Method` objects
-# (the result of `resolve_definition_effects_in_ir` replacing
-# `:opaque_closure_method` Exprs in `src.code`) against the matching
-# `K"code_info"` subtree of the corresponding `K"opaque_closure_method"` syntax
-# node. Method-keyed (not CodeInfo-keyed) because `jl_method_set_source`
+# Register `is_for_opaque_closure` `Method`s (replacements from
+# `resolve_definition_effects_in_ir`) against their `K"code_info"` syntax
+# subtree. Keyed by `Method` (not `CodeInfo`) because `jl_method_set_source`
 # compresses the body — `frame.src` is a freshly decompressed copy and won't
-# `===` the original body `CodeInfo`.
+# `===` the registered CodeInfo.
 #
-# Recurses through each newly-registered OC's body via `Base.uncompressed_ir`
-# to register nested closures up-front. Unlike regular closures (which
-# `JL.convert_closures` hoists to top-level `:method` 3-arg statements),
-# `:opaque_closure_method` stays at the construction site, so an inner OC's
-# Method lives inside its outer OC's body — not in the thunk's top-level
-# `src.code`. Without the recursion, when CC dispatches the inner OC and
-# `finishinfer!` runs for it, the lookup against `oc_body_trees` misses.
+# Recurses via `Base.uncompressed_ir` so nested OCs are registered up-front:
+# `:opaque_closure_method` stays at the construction site (unlike
+# `JL.convert_closures`-hoisted regular closures), so an inner OC's Method
+# lives inside its outer OC's body, not in the thunk's top-level `src.code`.
 function register_oc_body_trees!(
         oc_body_trees::IdDict{Method,SyntaxTreeC}, citree::SyntaxTreeC, src::CodeInfo
     )
