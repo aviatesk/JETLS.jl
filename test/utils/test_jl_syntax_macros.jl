@@ -7,22 +7,23 @@ include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
 
 module lowering_module end
 
-function jlexpand(mod::Module, code::AbstractString)
+function jlexpand(context_module::Module, code::AbstractString)
     st0 = jlparse(code; rule=:statement)
     world = Base.get_world_counter()
-    _, st1 = JL.expand_forms_1(mod, st0, true, world)
+    _, st1 = JL.expand_forms_1(context_module, st0, true, world)
     return st1
 end
 jlexpand(code::AbstractString) = jlexpand(lowering_module, code)
 
-function jlresolve(mod::Module, code::AbstractString)
+function jlresolve(context_module::Module, code::AbstractString)
     st0 = jlparse(code; rule=:statement)
-    return JETLS.jl_lower_for_scope_resolution(mod, st0;
+    return JETLS.jl_lower_for_scope_resolution(context_module, st0;
         recover_from_macro_errors=false, convert_closures=true)
 end
 jlresolve(code::AbstractString) = jlresolve(lowering_module, code)
 
-jleval(mod::Module, code::AbstractString) = JL.eval(mod, jlparse(code; rule=:statement))
+jleval(context_module::Module, code::AbstractString) =
+    JL.eval(context_module, jlparse(code; rule=:statement))
 jleval(code::AbstractString) = jleval(lowering_module, code)
 
 children_kinds(st::JS.SyntaxTree) = JS.Kind[JS.kind(c) for c in JS.children(st)]

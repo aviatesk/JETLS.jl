@@ -785,11 +785,11 @@ function analyze_undefined_global_bindings!(
         binfo.is_internal && continue
         startswith(binfo.name, '#') && continue
         any(o->o.kind===:def, occurrences) && continue
-        mod = binfo.mod
-        isnothing(mod) && continue
-        Base.invoke_in_world(world, isdefinedglobal, mod, Symbol(binfo.name))::Bool && continue
+        bmod = binfo.mod
+        isnothing(bmod) && continue
+        Base.invoke_in_world(world, isdefinedglobal, bmod, Symbol(binfo.name))::Bool && continue
         if !isnothing(analyzer)
-            bp = Base.lookup_binding_partition(world, GlobalRef(mod, Symbol(binfo.name)))
+            bp = Base.lookup_binding_partition(world, GlobalRef(bmod, Symbol(binfo.name)))
             haskey(JET.AnalyzerState(analyzer).binding_states, bp) && continue
         end
         bn = binfo.name
@@ -802,7 +802,7 @@ function analyze_undefined_global_bindings!(
         push!(diagnostics, Diagnostic(;
             range,
             severity = DiagnosticSeverity.Warning,
-            message = postprocessor("`$(mod).$(binfo.name)` is not defined"),
+            message = postprocessor("`$(bmod).$(binfo.name)` is not defined"),
             source = DIAGNOSTIC_SOURCE_LIVE,
             code,
             codeDescription = diagnostic_code_description(code)))
@@ -1407,11 +1407,11 @@ function compute_unit_used_names(
         iterate_toplevel_tree(search_st0_top) do st0::SyntaxTreeC
             binding_occurrences = @something get_binding_occurrences!(
                 state, search_uri, search_fi, st0) return
-            mod = get_context_module(state, search_uri, offset_to_xy(search_fi, JS.first_byte(st0)))
+            context_module = get_context_module(state, search_uri, offset_to_xy(search_fi, JS.first_byte(st0)))
             for (binfo_key, occurrences) in binding_occurrences
                 binfo_key.kind === :global || continue
                 if any(o -> o.kind === :use, occurrences)
-                    push!(get!(Set{String}, mod_used_names, mod), binfo_key.name)
+                    push!(get!(Set{String}, mod_used_names, context_module), binfo_key.name)
                 end
             end
         end
@@ -1438,9 +1438,9 @@ function analyze_unused_imports!(
     mod_imported_names = Dict{Module,Dict{String,Vector{ImportInfo}}}()
     traverse(st0_top) do st0::SyntaxTreeC
         JS.kind(st0) ∈ JS.KSet"import using" || return nothing
-        mod = get_context_module(state, uri, offset_to_xy(fi, JS.first_byte(st0)))
+        context_module = get_context_module(state, uri, offset_to_xy(fi, JS.first_byte(st0)))
         for (name, name_range, delete_range) in collect_explicit_import_names(st0, fi)
-            imported_names = get!(Dict{String,Vector{ImportInfo}}, mod_imported_names, mod)
+            imported_names = get!(Dict{String,Vector{ImportInfo}}, mod_imported_names, context_module)
             push!(get!(Vector{ImportInfo}, imported_names, name), ImportInfo(uri, name_range, delete_range))
         end
         return TraversalNoRecurse()
@@ -1452,8 +1452,8 @@ function analyze_unused_imports!(
         compute_unit_used_names(server, search_uris; skip_context_check)
     end
 
-    for (mod, imported_names) in mod_imported_names
-        used_names = get(mod_used_names, mod, nothing)
+    for (context_module, imported_names) in mod_imported_names
+        used_names = get(mod_used_names, context_module, nothing)
         for (name, infos) in imported_names
             used_names !== nothing && name in used_names && continue
             for info in infos
@@ -1578,9 +1578,9 @@ function compute_lowering_diagnostics(
     iterate_toplevel_tree(st0_top) do st0::SyntaxTreeC
         is_cancelled(cancel_flag) && return traversal_terminator
         pos = offset_to_xy(file_info, JS.first_byte(st0))
-        (; mod, world, analyzer, postprocessor) = get_context_info(server.state, uri, pos; lookup_func)
+        (; context_module, world, analyzer, postprocessor) = get_context_info(server.state, uri, pos; lookup_func)
         lowering_diagnostics!(diagnostics, uri, file_info, st0,
-            mod, world, analyzer, postprocessor;
+            context_module, world, analyzer, postprocessor;
             skip_analysis_requiring_context, allow_unused_underscore, soft_scope)
     end
     return diagnostics

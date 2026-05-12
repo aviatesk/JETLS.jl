@@ -13,11 +13,11 @@ module lowering_module end
 
 function get_cursor_bindings(
         fi::JETLS.FileInfo, b::Int;
-        mod::Module = lowering_module,
+        context_module::Module = lowering_module,
         soft_scope::Bool = false
     )
     st0 = JETLS.build_syntax_tree(fi)
-    cb = JETLS.cursor_bindings(st0, b, mod; soft_scope)
+    cb = JETLS.cursor_bindings(st0, b, context_module; soft_scope)
     return isnothing(cb) ? [] : cb
 end
 function get_cursor_bindings(marked_text::AbstractString; kwargs...)
@@ -321,7 +321,7 @@ end
 
 # Lightweight version of `with_completion_request` for cases where full module
 # context (populated by `request_analysis!`) isn't needed.
-# The `mod` context falls back to `Main`, so this works for tests against names defined in
+# The `context_module` context falls back to `Main`, so this works for tests against names defined in
 # `Main`/`Base`/`Core` and for purely local/keyword/latex/emoji completions.
 function with_completion_items(
         tester, text::AbstractString;
@@ -1311,14 +1311,14 @@ end
         """
         # Without soft_scope: `x` is a new local (ambiguous local)
         cbs_hard = get_cursor_bindings(marked_text;
-            mod=soft_scope_completions_module, soft_scope=false)
+            context_module=soft_scope_completions_module, soft_scope=false)
         xs_hard = filter(((bi, _, _),) -> bi.name == "x", cbs_hard)
         @test length(xs_hard) == 1
         @test xs_hard[1][1].kind === :local
 
         # With soft_scope: `x` assigns to the existing global
         cbs_soft = get_cursor_bindings(marked_text;
-            mod=soft_scope_completions_module, soft_scope=true)
+            context_module=soft_scope_completions_module, soft_scope=true)
         xs_soft = filter(((bi, _, _),) -> bi.name == "x", cbs_soft)
         @test length(xs_soft) == 1
         @test xs_soft[1][1].kind === :global

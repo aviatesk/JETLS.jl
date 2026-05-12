@@ -313,7 +313,7 @@ function get_context_info(state::ServerState, uri::URI, pos::Position; lookup_fu
     world = get_context_world(analysis_info)
     analyzer = get_context_analyzer(analysis_info, lookup_uri)
     postprocessor = get_post_processor(analysis_info)
-    return (; context_module, world, analyzer, postprocessor, mod=context_module) # `mod` is temporarily preserved
+    return (; context_module, world, analyzer, postprocessor)
 end
 
 get_context_module(::Nothing, ::URI, ::Position) = Main
