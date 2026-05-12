@@ -73,7 +73,7 @@ end
     end
 end
 
-@testset "get_inferrable_tree" begin
+@testset HierarchicalTestSet "get_inferrable_tree" begin
     # `iterate_toplevel_tree` walks each top-level expression independently;
     # `get_inferrable_tree` is invoked once per thunk. Verify it lowers all
     # of them, not just the first.
@@ -118,7 +118,7 @@ end
     end
 end
 
-@testset "Inference accuracy and robustness" begin
+@testset HierarchicalTestSet "Inference accuracy and robustness" begin
     # Method bodies are inferred as their own anonymous thunks: argtypes are
     # resolved from the lowered svec, no full-analysis-defined `Method` is
     # required for the body's user-named slots.
@@ -519,7 +519,7 @@ macro return_zero()
 end
 end
 
-@testset "Surface-kind dispatch (get_type_for_range)" begin
+@testset HierarchicalTestSet "Surface-kind dispatch (get_type_for_range)" begin
     # Generic fallback: a single typed node lives at the byte range, so the
     # tmerge path collapses to that node's type.
     @testset "generic byte-range fallback" begin
@@ -1221,7 +1221,7 @@ end
     end
 end
 
-@testset "Multi-position / composition behaviors" begin
+@testset HierarchicalTestSet "Multi-position / composition behaviors" begin
     # Tuple-destructuring assignment `a, b = sincos(x)` lowers to two slot
     # assignments via `iterate(t)` / `iterate(t, state)`. The slot positions
     # have to pick up the element type, not just `Any`, so each `a` / `b`
@@ -1308,7 +1308,7 @@ end
 
 end
 
-@testset "Pipeline-level edge cases" begin
+@testset HierarchicalTestSet "Pipeline-level edge cases" begin
     # JuliaSyntax doesn't bail on incomplete source — it produces a partial tree with
     # `K"error"` siblings around the well-formed parts. `get_inferrable_tree` strips those
     # error nodes, and JuliaLowering happily lowers what remains, so type queries on the
@@ -1362,7 +1362,7 @@ end
     end
 end
 
-@testset "get_matches_for_range" begin
+@testset HierarchicalTestSet "get_matches_for_range" begin
     # CC's dispatch picks the `sin` method matching `Float64` for `sin(1.0)`;
     # matches should narrow to just that one method even though `sin` has many overloads.
     @testset "narrows to the dispatched method" begin
