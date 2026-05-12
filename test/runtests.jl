@@ -31,7 +31,6 @@ end
     @testset "config" include("test_config.jl")
     @testset "URIs2" include("test_URIs2.jl")
     @testset "registration" include("test_registration.jl")
-    @testset "resolver" include("test_resolver.jl")
     @testset "completions" include("test_completions.jl")
     @testset "signature help" include("test_signature_help.jl")
     @testset "declaration" include("test_declaration.jl")

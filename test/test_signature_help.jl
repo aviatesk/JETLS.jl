@@ -4,18 +4,17 @@ using Test
 using JETLS
 using JETLS: JL, JS
 using JETLS.URIs2
-using JETLS.Analyzer: LSAnalyzer
 
-# siginfos(mod, code) -> siginfos
-# nsigs(mod, code) -> n
+# siginfos(context_module, code) -> siginfos
+# nsigs(context_module, code) -> n
 
-function siginfos(mod::Module, code::AbstractString; kwargs...)
+function siginfos(context_module::Module, code::AbstractString; kwargs...)
     clean_code, positions = JETLS.get_text_and_positions(code; kwargs...)
     @assert length(positions) == 1 "siginfos requires exactly one cursor marker"
     position = only(positions)
     fi = JETLS.FileInfo(0, clean_code, @__FILE__)
     b = JETLS.xy_to_offset(fi, position)
-    return JETLS.cursor_siginfos(mod, fi, b, LSAnalyzer())
+    return JETLS.cursor_siginfos(context_module, fi, b)
 end
 
 n_si(args...) = length(siginfos(args...))
@@ -361,7 +360,21 @@ end
     @test 1 == n_si(M_argtype_filtering, "kwfunc(1,kw1=nothing,2,│)")
     @test 1 == n_si(M_argtype_filtering, "kwfunc(1,2;│)")
     @test 1 == n_si(M_argtype_filtering, "kwfunc(1,2; kw1=nothing,│)")
-    @test_broken 2 == n_si(M_argtype_filtering, "let x = 1; func(x,│); end")
+    @test 2 == n_si(M_argtype_filtering, "let x = 1; func(x,│); end")
+end
+
+# Method filtering uses both local-binding types (`x :: String` from a
+# `let`-bound `x`) and literal arg types (`Core.Const(1)`) simultaneously.
+# Each alone narrows to two methods; only their intersection picks one.
+module M_context_aware_filtering
+baz(::Int, ::String) = 1
+baz(::Int, ::Int) = 2
+baz(::String, ::String) = 3
+baz(::String, ::Int) = 4
+end
+@testset "Context-aware filtering combines local and literal args" begin
+    @test 1 == n_si(M_context_aware_filtering, "let x = \"a\"; baz(1, x│); end")
+    @test 1 == n_si(M_context_aware_filtering, "let x = 1; baz(x, \"a\"│); end")
 end
 
 include("setup.jl")

@@ -190,7 +190,7 @@ struct CallArgs
 end
 
 """
-    compatible_method(m::Method, ca::CallArgs) -> Bool
+    compatible_method(m::Method, ca::CallArgs, world::UInt) -> Bool
 
 Return `false` if we can definitely rule out `f(args...|` from being a call to `m`.
 
@@ -201,8 +201,8 @@ cannot analyze the type of `xs`, it cannot perform effective method filtering, w
 this method can filter out candidates like `func(::Int,::Int)` using the information after
 the splat (`1,2,3`), making it beneficial in some cases.
 """
-function compatible_method(m::Method, ca::CallArgs)
-    msig = @something get_sig_str(m, ca) return false
+function compatible_method(m::Method, ca::CallArgs, world::UInt)
+    msig = @something get_sig_str(m, ca, world) return false
     mnode = JS.parsestmt(JS.SyntaxTree, msig; ignore_errors=true)
 
     params, kwp_i, _ = @something flatten_args(mnode) return false
@@ -239,13 +239,13 @@ end
 # TODO: (later) This should use type information from args (which we already
 # have from m's params).  For now, just parse the method signature like we
 # do in make_siginfo.
-function get_sig_str(m::Method, ca::CallArgs)
+function get_sig_str(m::Method, ca::CallArgs, world::UInt)
     @static if VERSION ≥ v"1.13.0-DEV.710"
-        msig = @invokelatest sprint(show, m; context=(:compact=>true, :print_method_signature_only=>true))
+        msig = Base.invoke_in_world(world, sprint, show, m; context=(:compact=>true, :print_method_signature_only=>true))
     else
         # methodshow prints "f(x::T) [unparseable stuff]"
         # parse the first part and put the remainder in documentation
-        mstr = @invokelatest sprint(show, m; context=(:compact=>true))
+        mstr = Base.invoke_in_world(world, sprint, show, m; context=(:compact=>true))
         msig_locinfo = split(mstr, " @ ")
         length(msig_locinfo) == 2 || return nothing
         msig = strip(msig_locinfo[1])
@@ -293,10 +293,11 @@ end
 
 # active_arg is either an argument index, or :next (available pos. arg), or :none
 function make_siginfo(
-        m::Method, ca::CallArgs, active_arg::Union{Nothing,Bool,Int}, argtypes::Vector{Any};
+        m::Method, ca::CallArgs, world::UInt,
+        active_arg::Union{Nothing,Bool,Int}, argtypes::Vector{Any};
         postprocessor::LSPostProcessor = LSPostProcessor()
     )
-    msig = @something get_sig_str(m, ca)
+    msig = @something get_sig_str(m, ca, world)
     msig = postprocessor(msig)
     mnode = JS.parsestmt(JS.SyntaxTree, msig; ignore_errors=true)
     label = String(msig)
@@ -490,41 +491,42 @@ function cursor_call(ps::JS.ParseStream, st0::SyntaxTreeC, b::Int)
 end
 
 """
-    collect_call_argtypes(analyzer::LSAnalyzer, mod::Module, ca::CallArgs) -> argtypes::Vector{Any}
+    collect_call_argtypes(ctx, ca::CallArgs) -> argtypes::Vector{Any}
 
-Infer the types of positional arguments contained in `ca` and return them as `argtypes::Vector{Any}`.
-Note that neither `ca` nor `argtypes` include the type of the function object itself.
-Also note that this function resolves the type of each argument in `ca` in the global scope,
-completely ignoring information arising from the local scope in which it is contained.
+Look up the inferred type of every positional argument in `ca` against `ctx`
+(the [`InferredTreeContext`](@ref) for the toplevel containing the call) and
+return them as `argtypes::Vector{Any}`. Neither `ca` nor `argtypes` include
+the type of the function object itself.
 
-In the future, with the integration of `SyntaxTreeC` and the full-analysis,
-this method should be replaced with a query to a cached typed-`SyntaxTreeC`.
+`ctx === nothing` means the [`TypeAnnotation`](@ref) pipeline couldn't infer
+the surrounding toplevel; every arg degrades to `Any` and the bailout below
+appends `Vararg{Any}` so `find_all_matches` returns the function's full
+overload set (the same broadening signature help wants while the user is
+still typing).
+
+For a splat `xs...`, the operand `xs` is queried directly: when its type is
+a vararg-free concrete `Tuple{...}` the elements are splayed; otherwise we
+fall through to the `Vararg{Any}` bailout below.
 """
-function collect_call_argtypes(analyzer::LSAnalyzer, mod::Module, ca::CallArgs)
+function collect_call_argtypes(ctx::Union{Nothing,InferredTreeContext}, ca::CallArgs)
     argtypes = Any[]
     for i in sort!(collect(keys(ca.pos_map)))
         arg = ca.args[i]
         if JS.kind(arg) === JS.K"..."
-            # This is a very crude and poor modeling of `abstract_apply`, and is also
-            # too conservative than necessary.
-            # This implementation that imperfectly mimics the infernece behavior should be
-            # discarded, and instead the type of this splat argument should be extracted
-            # as a query to the Typed-AST.
-            arg_expr = try
-                JL.est_to_expr(arg)
-            catch
-                @goto bailout
-            end
-            arg = Expr(:tuple, arg_expr)
-            argtype = CC.widenconst(@something resolve_type(analyzer, mod, arg) @goto bailout)
+            JS.numchildren(arg) >= 1 || @goto bailout
+            inner = arg[1]
+            argtype = CC.widenconst(@something (ctx === nothing ?
+                nothing : get_type_for_range(ctx, JS.byte_range(inner))) @goto bailout)
             argtype isa DataType || @goto bailout
             argtype.name === Tuple.name || @goto bailout
             any(Base.isvarargtype, argtype.parameters) && @goto bailout
-            for i = 1:length(argtype.parameters)
-                push!(argtypes, argtype.parameters[i])
+            for j = 1:length(argtype.parameters)
+                push!(argtypes, argtype.parameters[j])
             end
         else
-            push!(argtypes, CC.widenconst(@something resolve_type(analyzer, mod, arg) Any))
+            argtype = CC.widenconst(@something ctx === nothing ?
+                nothing : get_type_for_range(ctx, JS.byte_range(arg)) Any)
+            push!(argtypes, argtype)
         end
     end
     if !ca.has_semicolon
@@ -552,8 +554,11 @@ function find_all_matches(
     return CC._findall(atype, nothing, world, limit)
 end
 
-function cursor_siginfos(mod::Module, fi::FileInfo, b::Int, analyzer::LSAnalyzer;
-                         postprocessor::LSPostProcessor=LSPostProcessor())
+function cursor_siginfos(
+        context_module::Module, fi::FileInfo, b::Int;
+        world::UInt = Base.get_world_counter(),
+        postprocessor::LSPostProcessor = LSPostProcessor()
+    )
     st0 = build_syntax_tree(fi)
     call = cursor_call(fi.parsed_stream, st0, b)
     isnothing(call) && return empty_siginfos
@@ -562,20 +567,25 @@ function cursor_siginfos(mod::Module, fi::FileInfo, b::Int, analyzer::LSAnalyzer
         !isnothing(params_i) && b > JS.first_byte(call[params_i])
     end
 
-    # TODO: We could be calling a local variable.  If it shadows a method, our
-    # ignoring it is misleading.  We need to either know about local variables
-    # in this scope (maybe by caching completion info) or duplicate some work.
-    fntyp = @something resolve_type(analyzer, mod, call[1]) return empty_siginfos
-
+    # `ctx === nothing` covers two TypeAnnotation gaps that signature help
+    # still needs to handle:
+    # - (a) the surrounding toplevel failed to lower (e.g. method def with unused where-vars)
+    # - (b) the call's head is a macro identifier that doesn't survive macroexpansion.
+    # Both fall back to a global-binding lookup of `call[1]`.
+    ctx = build_inferred_context_at(
+        st0, context_module, JS.byte_range(call); world, caller="cursor_siginfos")
+    fntyp = ctx === nothing ? nothing : get_type_for_range(ctx, JS.byte_range(call[1]))
+    if fntyp === nothing
+        fntyp = resolve_global_const(context_module, call[1], world)
+    end
     fntyp isa Core.Const || return empty_siginfos
 
     ca = CallArgs(call, b)
 
-    argtypes = collect_call_argtypes(analyzer, mod, ca)
+    argtypes = collect_call_argtypes(ctx, ca)
     argtypes′ = copy(argtypes)
     fixup_argtypes!(argtypes, fntyp)
-    matches = find_all_matches(argtypes)
-    matches === nothing && return empty_siginfos
+    matches = @something find_all_matches(argtypes; world) return empty_siginfos
     isempty(matches) && return empty_siginfos
 
     # Influence parameter highlighting by selecting the active argument (which
@@ -598,8 +608,8 @@ function cursor_siginfos(mod::Module, fi::FileInfo, b::Int, analyzer::LSAnalyzer
     out = SignatureInformation[]
     for match in matches
         m = match.method
-        compatible_method(m, ca) || continue
-        siginfo = make_siginfo(m, ca, active_arg, argtypes′; postprocessor)
+        compatible_method(m, ca, world) || continue
+        siginfo = make_siginfo(m, ca, world, active_arg, argtypes′; postprocessor)
         if siginfo !== nothing
             push!(out, siginfo)
         end
@@ -623,11 +633,10 @@ function handle_SignatureHelpRequest(
     end
     fi = result
     pos = adjust_position(state, uri, msg.params.position)
-    (; mod, analyzer, postprocessor) = get_context_info(state, uri, pos)
+    (; context_module, world, postprocessor) = get_context_info(state, uri, pos)
     b = xy_to_offset(fi, pos)
-    signatures = cursor_siginfos(mod, fi, b, analyzer; postprocessor)
-    activeSignature = nothing
-    activeParameter = nothing
+    signatures = cursor_siginfos(context_module, fi, b; world, postprocessor)
+    activeSignature = activeParameter = nothing
     return send(server,
         SignatureHelpResponse(;
             id = msg.id,

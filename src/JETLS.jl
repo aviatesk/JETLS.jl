@@ -74,8 +74,6 @@ using .Analyzer
 Analyzer.LSAnalyzer(uri::URI, args...; kwargs...) = LSAnalyzer(ScriptAnalysisEntry(uri), args...; kwargs...)
 Analyzer.LSAnalyzer(args...; kwargs...) = LSAnalyzer(ScriptAnalysisEntry(filepath2uri(@__FILE__)), args...; kwargs...)
 
-include("analysis/resolver.jl")
-
 include("FixedSizeQueues/FixedSizeQueues.jl")
 using .FixedSizeQueues
 
