@@ -91,7 +91,7 @@ function invalidate_document_symbol_cache!(state::ServerState, uri::URI)
     end
 end
 
-function extract_document_symbols(st0_top::SyntaxTreeC, fi::FileInfo, context_module::Module=Main)
+function extract_document_symbols(st0_top::SyntaxTreeC, fi::FileInfo, context_module::Module)
     @assert JS.kind(st0_top) === JS.K"toplevel"
     symbols = DocumentSymbol[]
     extract_toplevel_symbols!(symbols, st0_top, fi, context_module)

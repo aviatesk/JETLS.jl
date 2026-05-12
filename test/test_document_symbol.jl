@@ -4,8 +4,21 @@ using Test
 using JETLS: JETLS, JL, JS
 using JETLS.LSP
 
-function make_file_info(code::AbstractString)
-    return JETLS.FileInfo(1, code, @__FILE__, PositionEncodingKind.UTF16)
+module lowering_module end
+function get_document_symbols(code::AbstractString, context_module::Module=lowering_module)
+    fi = JETLS.FileInfo(1, code, @__FILE__, PositionEncodingKind.UTF16)
+    st0 = JETLS.build_syntax_tree(fi)
+    return JETLS.extract_document_symbols(st0, fi, context_module)
+end
+
+const DUMMY_RANGE = Range(Position(0, 0), Position(0, 0))
+
+function make_test_doc_symbol(
+        name::AbstractString, detail::Union{Nothing,AbstractString}, kind::SymbolKind.Ty;
+        children::Union{Nothing,Vector{DocumentSymbol}} = nothing
+    )
+    return DocumentSymbol(; name, detail, kind,
+        range = DUMMY_RANGE, selectionRange = DUMMY_RANGE, children)
 end
 
 @testset "JETLS.extract_document_symbols" begin
@@ -16,9 +29,7 @@ end
             end
         end
         """
-        fi = make_file_info(code)
-        st0 = JETLS.build_syntax_tree(fi)
-        symbols = JETLS.extract_document_symbols(st0, fi)
+        symbols = get_document_symbols(code)
         @test length(symbols) == 1
         @test symbols[1].name == "Foo"
         @test symbols[1].kind == SymbolKind.Module
@@ -34,9 +45,7 @@ end
             return x + 1
         end
         """
-        fi = make_file_info(code)
-        st0 = JETLS.build_syntax_tree(fi)
-        symbols = JETLS.extract_document_symbols(st0, fi)
+        symbols = get_document_symbols(code)
         @test length(symbols) == 1
         @test symbols[1].name == "foo"
         @test symbols[1].kind == SymbolKind.Function
@@ -49,9 +58,7 @@ end
                 println("Hello world")
             end
             """
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+            symbols = get_document_symbols(code)
             @test length(symbols) == 1
             @test symbols[1].name == "@main"
             @test symbols[1].kind == SymbolKind.Function
@@ -60,9 +67,7 @@ end
         let code = """
             (@main)(args::Vector{String}) = println("Hello world")
             """
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+            symbols = get_document_symbols(code)
             @test length(symbols) == 1
             @test symbols[1].name == "@main"
             @test symbols[1].kind == SymbolKind.Function
@@ -74,9 +79,7 @@ end
                 println("Hello world")
             end
             """
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+            symbols = get_document_symbols(code)
             @test length(symbols) == 1
             @test symbols[1].name == "@main"
             @test symbols[1].kind == SymbolKind.Function
@@ -85,9 +88,7 @@ end
         let code = """
             @main(args::Vector{String}) = println("Hello world")
             """
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+            symbols = get_document_symbols(code)
             @test length(symbols) == 1
             @test symbols[1].name == "@main"
             @test symbols[1].kind == SymbolKind.Function
@@ -95,10 +96,7 @@ end
     end
 
     @testset "short function" begin
-        code = "f(x) = x + 1"
-        fi = make_file_info(code)
-        st0 = JETLS.build_syntax_tree(fi)
-        symbols = JETLS.extract_document_symbols(st0, fi)
+        symbols = get_document_symbols("f(x) = x + 1")
         @test length(symbols) == 1
         @test symbols[1].name == "f"
         @test symbols[1].kind == SymbolKind.Function
@@ -111,9 +109,7 @@ end
             esc(x)
         end
         """
-        fi = make_file_info(code)
-        st0 = JETLS.build_syntax_tree(fi)
-        symbols = JETLS.extract_document_symbols(st0, fi)
+        symbols = get_document_symbols(code)
         @test length(symbols) == 1
         @test symbols[1].name == "@foo"
         @test symbols[1].kind == SymbolKind.Function
@@ -127,9 +123,7 @@ end
             y::String
         end
         """
-        fi = make_file_info(code)
-        st0 = JETLS.build_syntax_tree(fi)
-        symbols = JETLS.extract_document_symbols(st0, fi)
+        symbols = get_document_symbols(code)
         @test length(symbols) == 1
         @test symbols[1].name == "Foo"
         @test symbols[1].kind == SymbolKind.Struct
@@ -150,9 +144,7 @@ end
             x::T
         end
         """
-        fi = make_file_info(code)
-        st0 = JETLS.build_syntax_tree(fi)
-        symbols = JETLS.extract_document_symbols(st0, fi)
+        symbols = get_document_symbols(code)
         @test length(symbols) == 1
         @test symbols[1].name == "Foo"
         @test symbols[1].kind == SymbolKind.Struct
@@ -160,10 +152,7 @@ end
     end
 
     @testset "abstract type" begin
-        code = "abstract type AbstractFoo end"
-        fi = make_file_info(code)
-        st0 = JETLS.build_syntax_tree(fi)
-        symbols = JETLS.extract_document_symbols(st0, fi)
+        symbols = get_document_symbols("abstract type AbstractFoo end")
         @test length(symbols) == 1
         @test symbols[1].name == "AbstractFoo"
         @test symbols[1].kind == SymbolKind.Interface
@@ -171,20 +160,15 @@ end
     end
 
     @testset "primitive type" begin
-        let code = "primitive type MyInt 32 end"
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+        let symbols = get_document_symbols("primitive type MyInt 32 end")
             @test length(symbols) == 1
             @test symbols[1].name == "MyInt"
             @test symbols[1].kind == SymbolKind.Number
             @test symbols[1].detail == "primitive type MyInt 32"
         end
 
-        let code = "primitive type MyFloat <: AbstractFloat 64 end"
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+        let symbols = get_document_symbols(
+                "primitive type MyFloat <: AbstractFloat 64 end")
             @test length(symbols) == 1
             @test symbols[1].name == "MyFloat"
             @test symbols[1].kind == SymbolKind.Number
@@ -193,14 +177,12 @@ end
     end
 
     @testset "const" begin
-        code = "const FOO = 42"
-        fi = make_file_info(code)
-        st0 = JETLS.build_syntax_tree(fi)
-        symbols = JETLS.extract_document_symbols(st0, fi)
-        @test length(symbols) == 1
-        @test symbols[1].name == "FOO"
-        @test symbols[1].kind == SymbolKind.Constant
-        @test symbols[1].detail == "const FOO = 42"
+        let symbols = get_document_symbols("const FOO = 42")
+            @test length(symbols) == 1
+            @test symbols[1].name == "FOO"
+            @test symbols[1].kind == SymbolKind.Constant
+            @test symbols[1].detail == "const FOO = 42"
+        end
 
         let code = """
             const X = begin
@@ -208,9 +190,7 @@ end
                 y + 1
             end
             """
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+            symbols = get_document_symbols(code)
             @test length(symbols) == 2
             @test symbols[1].name == "X"
             @test symbols[1].kind == SymbolKind.Constant
@@ -220,20 +200,14 @@ end
     end
 
     @testset "variable assignment" begin
-        code = "x = 10"
-        fi = make_file_info(code)
-        st0 = JETLS.build_syntax_tree(fi)
-        symbols = JETLS.extract_document_symbols(st0, fi)
+        symbols = get_document_symbols("x = 10")
         @test length(symbols) == 1
         @test symbols[1].name == "x"
         @test symbols[1].kind == SymbolKind.Variable
     end
 
     @testset "function assignment" begin
-        code = "f = (x) -> x + 1"
-        fi = make_file_info(code)
-        st0 = JETLS.build_syntax_tree(fi)
-        symbols = JETLS.extract_document_symbols(st0, fi)
+        symbols = get_document_symbols("f = (x) -> x + 1")
         @test length(symbols) == 1
         @test symbols[1].name == "f"
         @test symbols[1].kind == SymbolKind.Function
@@ -246,9 +220,7 @@ end
                 b = 2
             end
             """
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+            symbols = get_document_symbols(code)
             @test length(symbols) == 3
             names = [s.name for s in symbols]
             @test "x" in names
@@ -264,9 +236,7 @@ end
                 a + 1
             end
             """
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+            symbols = get_document_symbols(code)
             @test length(symbols) == 1
             @test symbols[1].name == "x"
             @test symbols[1].kind == SymbolKind.Variable
@@ -293,9 +263,7 @@ end
             x::Int
         end
         """
-        fi = make_file_info(code)
-        st0 = JETLS.build_syntax_tree(fi)
-        symbols = JETLS.extract_document_symbols(st0, fi)
+        symbols = get_document_symbols(code)
         @test length(symbols) == 4
         names = [s.name for s in symbols]
         @test "A" in names
@@ -311,9 +279,7 @@ end
                 b = 10
             end
             """
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+            symbols = get_document_symbols(code)
             @test length(symbols) == 2
             @test symbols[1].name == "a"
             @test symbols[1].kind == SymbolKind.Variable
@@ -323,10 +289,7 @@ end
     end
 
     @testset "@enum" begin
-        let code = "@enum Color red green blue"
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+        let symbols = get_document_symbols("@enum Color red green blue")
             @test length(symbols) == 1
             @test symbols[1].name == "Color"
             @test symbols[1].kind == SymbolKind.Enum
@@ -340,10 +303,7 @@ end
             @test symbols[1].children[3].name == "blue"
         end
 
-        let code = "@enum Fruit apple=1 orange=2"
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+        let symbols = get_document_symbols("@enum Fruit apple=1 orange=2")
             @test length(symbols) == 1
             @test symbols[1].name == "Fruit"
             @test symbols[1].kind == SymbolKind.Enum
@@ -355,10 +315,7 @@ end
             @test symbols[1].children[2].detail == "orange::Fruit"
         end
 
-        let code = "@enum Fruit::Int apple orange"
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+        let symbols = get_document_symbols("@enum Fruit::Int apple orange")
             @test length(symbols) == 1
             @test symbols[1].name == "Fruit"
             @test symbols[1].kind == SymbolKind.Enum
@@ -372,9 +329,7 @@ end
                 blue
             end
             """
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+            symbols = get_document_symbols(code)
             @test length(symbols) == 1
             @test symbols[1].name == "Color"
             @test symbols[1].kind == SymbolKind.Enum
@@ -390,10 +345,7 @@ end
 
 @testset "dotted function names" begin
     @testset "Base.show" begin
-        code = "Base.show(io::IO, x) = print(io, x)"
-        fi = make_file_info(code)
-        st0 = JETLS.build_syntax_tree(fi)
-        symbols = JETLS.extract_document_symbols(st0, fi)
+        symbols = get_document_symbols("Base.show(io::IO, x) = print(io, x)")
         @test length(symbols) == 1
         @test symbols[1].name == "Base.show"
         @test symbols[1].kind == SymbolKind.Function
@@ -405,9 +357,7 @@ end
             return row[col]
         end
         """
-        fi = make_file_info(code)
-        st0 = JETLS.build_syntax_tree(fi)
-        symbols = JETLS.extract_document_symbols(st0, fi)
+        symbols = get_document_symbols(code)
         @test length(symbols) == 1
         @test symbols[1].name == "Tables.getcolumn"
         @test symbols[1].kind == SymbolKind.Function
@@ -421,19 +371,14 @@ end
             return x
         end
         """
-        fi = make_file_info(code)
-        st0 = JETLS.build_syntax_tree(fi)
-        symbols = JETLS.extract_document_symbols(st0, fi)
+        symbols = get_document_symbols(code)
         @test length(symbols) == 1
         @test symbols[1].name == "foo"
         @test symbols[1].kind == SymbolKind.Function
     end
 
     @testset "@noinline short function" begin
-        code = "@noinline bar(x) = x + 1"
-        fi = make_file_info(code)
-        st0 = JETLS.build_syntax_tree(fi)
-        symbols = JETLS.extract_document_symbols(st0, fi)
+        symbols = get_document_symbols("@noinline bar(x) = x + 1")
         @test length(symbols) == 1
         @test symbols[1].name == "bar"
         @test symbols[1].kind == SymbolKind.Function
@@ -445,9 +390,7 @@ end
             return x[i]
         end
         """
-        fi = make_file_info(code)
-        st0 = JETLS.build_syntax_tree(fi)
-        symbols = JETLS.extract_document_symbols(st0, fi)
+        symbols = get_document_symbols(code)
         @test length(symbols) == 1
         @test symbols[1].name == "getindex"
         @test symbols[1].kind == SymbolKind.Function
@@ -460,18 +403,13 @@ end
             return x
         end
         """
-        fi = make_file_info(code)
-        st0 = JETLS.build_syntax_tree(fi)
-        symbols = JETLS.extract_document_symbols(st0, fi)
+        symbols = get_document_symbols(code)
         @test length(symbols) == 1
         @test symbols[1].name == "foo"
         @test symbols[1].kind == SymbolKind.Function
     end
 
-    let code = "bar(x)::Float64 = x + 1.0"
-        fi = make_file_info(code)
-        st0 = JETLS.build_syntax_tree(fi)
-        symbols = JETLS.extract_document_symbols(st0, fi)
+    let symbols = get_document_symbols("bar(x)::Float64 = x + 1.0")
         @test length(symbols) == 1
         @test symbols[1].name == "bar"
         @test symbols[1].kind == SymbolKind.Function
@@ -486,9 +424,7 @@ end
             AAA(a) = new(a)
         end
         """
-        fi = make_file_info(code)
-        st0 = JETLS.build_syntax_tree(fi)
-        symbols = JETLS.extract_document_symbols(st0, fi)
+        symbols = get_document_symbols(code)
         @test length(symbols) == 1
         @test symbols[1].name == "AAA"
         @test symbols[1].kind == SymbolKind.Struct
@@ -509,9 +445,7 @@ end
             Point{T}(x, y) where {T} = new{T}(x, y)
         end
         """
-        fi = make_file_info(code)
-        st0 = JETLS.build_syntax_tree(fi)
-        symbols = JETLS.extract_document_symbols(st0, fi)
+        symbols = get_document_symbols(code)
         @test length(symbols) == 1
         @test symbols[1].name == "Point"
         @test symbols[1].children !== nothing
@@ -532,9 +466,7 @@ end
             x::Int
         end
         """
-        fi = make_file_info(code)
-        st0 = JETLS.build_syntax_tree(fi)
-        symbols = JETLS.extract_document_symbols(st0, fi)
+        symbols = get_document_symbols(code)
         @test length(symbols) == 1
         @test symbols[1].name == "Foo"
         @test symbols[1].kind == SymbolKind.Struct
@@ -550,9 +482,7 @@ end
             return x
         end
         """
-        fi = make_file_info(code)
-        st0 = JETLS.build_syntax_tree(fi)
-        symbols = JETLS.extract_document_symbols(st0, fi)
+        symbols = get_document_symbols(code)
         @test length(symbols) == 1
         @test symbols[1].name == "bar"
         @test symbols[1].kind == SymbolKind.Function
@@ -560,19 +490,13 @@ end
 end
 
 @testset "global variable" begin
-    let code = "global xxx::T = nothing"
-        fi = make_file_info(code)
-        st0 = JETLS.build_syntax_tree(fi)
-        symbols = JETLS.extract_document_symbols(st0, fi)
+    let symbols = get_document_symbols("global xxx::T = nothing")
         @test length(symbols) == 1
         @test symbols[1].name == "xxx"
         @test symbols[1].kind == SymbolKind.Variable
     end
 
-    let code = "global x, y = 1, 2"
-        fi = make_file_info(code)
-        st0 = JETLS.build_syntax_tree(fi)
-        symbols = JETLS.extract_document_symbols(st0, fi)
+    let symbols = get_document_symbols("global x, y = 1, 2")
         @test length(symbols) == 2
         @test symbols[1].name == "x"
         @test symbols[1].kind == SymbolKind.Variable
@@ -580,19 +504,13 @@ end
         @test symbols[2].kind == SymbolKind.Variable
     end
 
-    let code = "global xxx"
-        fi = make_file_info(code)
-        st0 = JETLS.build_syntax_tree(fi)
-        symbols = JETLS.extract_document_symbols(st0, fi)
+    let symbols = get_document_symbols("global xxx")
         @test length(symbols) == 1
         @test symbols[1].name == "xxx"
         @test symbols[1].kind == SymbolKind.Variable
     end
 
-    let code = "global xxx::Int"
-        fi = make_file_info(code)
-        st0 = JETLS.build_syntax_tree(fi)
-        symbols = JETLS.extract_document_symbols(st0, fi)
+    let symbols = get_document_symbols("global xxx::Int")
         @test length(symbols) == 1
         @test symbols[1].name == "xxx"
         @test symbols[1].kind == SymbolKind.Variable
@@ -607,9 +525,7 @@ end
             println(x, y)
         end
         """
-        fi = make_file_info(code)
-        st0 = JETLS.build_syntax_tree(fi)
-        symbols = JETLS.extract_document_symbols(st0, fi)
+        symbols = get_document_symbols(code)
         @test length(symbols) == 1
         @test symbols[1].detail == "let x = 42"
         @test symbols[1].kind == SymbolKind.Namespace
@@ -626,9 +542,7 @@ end
             println(x, y)
         end
         """
-        fi = make_file_info(code)
-        st0 = JETLS.build_syntax_tree(fi)
-        symbols = JETLS.extract_document_symbols(st0, fi)
+        symbols = get_document_symbols(code)
         @test length(symbols) == 1
         @test symbols[1].detail == "let x = 1,\n    y = 2"
         @test symbols[1].kind == SymbolKind.Namespace
@@ -647,9 +561,7 @@ end
             break
         end
         """
-        fi = make_file_info(code)
-        st0 = JETLS.build_syntax_tree(fi)
-        symbols = JETLS.extract_document_symbols(st0, fi)
+        symbols = get_document_symbols(code)
         @test length(symbols) == 1
         @test symbols[1].detail == "while true"
         @test symbols[1].kind == SymbolKind.Namespace
@@ -665,9 +577,7 @@ end
             x = i
         end
         """
-        fi = make_file_info(code)
-        st0 = JETLS.build_syntax_tree(fi)
-        symbols = JETLS.extract_document_symbols(st0, fi)
+        symbols = get_document_symbols(code)
         @test length(symbols) == 1
         @test symbols[1].detail == "for i in 1:10"
         @test symbols[1].kind == SymbolKind.Namespace
@@ -684,9 +594,7 @@ end
             x = 1
         end
         """
-        fi = make_file_info(code)
-        st0 = JETLS.build_syntax_tree(fi)
-        symbols = JETLS.extract_document_symbols(st0, fi)
+        symbols = get_document_symbols(code)
         @test length(symbols) == 1
         @test symbols[1].detail == "if cond"
         @test symbols[1].kind == SymbolKind.Namespace
@@ -704,9 +612,7 @@ end
             c = missing
         end
         """
-        fi = make_file_info(code)
-        st0 = JETLS.build_syntax_tree(fi)
-        symbols = JETLS.extract_document_symbols(st0, fi)
+        symbols = get_document_symbols(code)
         @test length(symbols) == 1
         @test symbols[1].detail == "if cond1"
         @test symbols[1].kind == SymbolKind.Namespace
@@ -723,9 +629,7 @@ end
             foo() = 2
         end
         """
-        fi = make_file_info(code)
-        st0 = JETLS.build_syntax_tree(fi)
-        symbols = JETLS.extract_document_symbols(st0, fi)
+        symbols = get_document_symbols(code)
         @test length(symbols) == 1
         @test symbols[1].detail == "@static if VERSION >= v\"1.10\""
         @test symbols[1].kind == SymbolKind.Namespace
@@ -736,10 +640,7 @@ end
 end
 
 @testset "const tuple destructuring" begin
-    let code = "const x, y = 1, 2"
-        fi = make_file_info(code)
-        st0 = JETLS.build_syntax_tree(fi)
-        symbols = JETLS.extract_document_symbols(st0, fi)
+    let symbols = get_document_symbols("const x, y = 1, 2")
         @test length(symbols) == 2
         @test symbols[1].name == "x"
         @test symbols[1].kind == SymbolKind.Constant
@@ -747,10 +648,8 @@ end
         @test symbols[2].kind == SymbolKind.Constant
     end
 
-    let code = "const a::Int, b::String = 1, \"hello\""
-        fi = make_file_info(code)
-        st0 = JETLS.build_syntax_tree(fi)
-        symbols = JETLS.extract_document_symbols(st0, fi)
+    let symbols = get_document_symbols(
+            "const a::Int, b::String = 1, \"hello\"")
         @test length(symbols) == 2
         @test symbols[1].name == "a"
         @test symbols[1].kind == SymbolKind.Constant
@@ -766,9 +665,7 @@ end
                 return x
             end
             """
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+            symbols = get_document_symbols(code)
             @test length(symbols) == 1
             children = symbols[1].children
             @test children !== nothing
@@ -785,9 +682,7 @@ end
                 return x
             end
             """
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+            symbols = get_document_symbols(code)
             @test length(symbols) == 1
             children = symbols[1].children
             @test children !== nothing
@@ -802,9 +697,7 @@ end
                 return args
             end
             """
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+            symbols = get_document_symbols(code)
             @test length(symbols) == 1
             children = symbols[1].children
             @test children !== nothing
@@ -819,9 +712,7 @@ end
                 return typeof(arg)
             end
             """
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+            symbols = get_document_symbols(code)
             @test length(symbols) == 1
             children = symbols[1].children
             @test children !== nothing
@@ -837,9 +728,7 @@ end
                 return x
             end
             """
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+            symbols = get_document_symbols(code)
             @test length(symbols) == 1
             children = symbols[1].children
             @test children !== nothing
@@ -855,9 +744,7 @@ end
                 return x
             end
             """
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+            symbols = get_document_symbols(code)
             @test length(symbols) == 1
             children = symbols[1].children
             @test children !== nothing
@@ -875,9 +762,7 @@ end
                 return inner
             end
             """
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+            symbols = get_document_symbols(code)
             @test length(symbols) == 1
             children = symbols[1].children
             @test children !== nothing
@@ -902,9 +787,7 @@ end
                 end
             end
             """
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+            symbols = get_document_symbols(code)
             children = symbols[1].children
             inner_sym = only(filter(c -> c.name == "inner", children))
             @test any(c -> c.name == "y", inner_sym.children)
@@ -925,9 +808,7 @@ end
                 end
             end
             """
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+            symbols = get_document_symbols(code)
             children = symbols[1].children
             inner_sym = only(filter(c -> c.name == "inner", children))
             # x and y are nested under the for Namespace child
@@ -946,9 +827,7 @@ end
                 return f(x)
             end
             """
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+            symbols = get_document_symbols(code)
             children = symbols[1].children
             f_sym = only(filter(c -> c.name == "f", children))
             @test f_sym.kind == SymbolKind.Function
@@ -968,9 +847,7 @@ end
                 return f(1, 2)
             end
             """
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+            symbols = get_document_symbols(code)
             children = symbols[1].children
             f_sym = only(filter(c -> c.name == "f", children))
             @test f_sym.kind == SymbolKind.Function
@@ -986,9 +863,7 @@ end
                 return f()
             end
             """
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+            symbols = get_document_symbols(code)
             children = symbols[1].children
             f_sym = only(filter(c -> c.name == "f", children))
             @test f_sym.kind == SymbolKind.Function
@@ -1002,9 +877,7 @@ end
                 return f(1) + g(2)
             end
             """
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+            symbols = get_document_symbols(code)
             children = symbols[1].children
             f_sym = only(filter(c -> c.name == "f", children))
             g_sym = only(filter(c -> c.name == "g", children))
@@ -1025,9 +898,7 @@ end
                 return clos(x)
             end
             """
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+            symbols = get_document_symbols(code)
             @test length(symbols) == 1
             children = symbols[1].children
             @test children !== nothing
@@ -1048,9 +919,7 @@ end
                 return x
             end
             """
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+            symbols = get_document_symbols(code)
             @test length(symbols) == 1
             children = symbols[1].children
             @test children !== nothing
@@ -1070,9 +939,7 @@ end
                 return inner
             end
             """
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+            symbols = get_document_symbols(code)
             @test length(symbols) == 1
             children = symbols[1].children
             @test children !== nothing
@@ -1089,9 +956,7 @@ end
                 x = i
             end
             """
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+            symbols = get_document_symbols(code)
             @test length(symbols) == 1
             children = symbols[1].children
             @test children !== nothing
@@ -1109,9 +974,7 @@ end
                 end
             end
             """
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+            symbols = get_document_symbols(code)
             @test length(symbols) == 1
             children = symbols[1].children
             @test children !== nothing
@@ -1135,9 +998,7 @@ end
                 end
             end
             """
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+            symbols = get_document_symbols(code)
             @test length(symbols) == 1
             children = symbols[1].children
             @test children !== nothing
@@ -1162,9 +1023,7 @@ end
                 end
             end
             """
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+            symbols = get_document_symbols(code)
             @test length(symbols) == 1
             children = symbols[1].children
             @test children !== nothing
@@ -1184,9 +1043,7 @@ end
                 return x + y
             end
             """
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+            symbols = get_document_symbols(code)
             @test length(symbols) == 1
             children = symbols[1].children
             @test children !== nothing
@@ -1203,9 +1060,7 @@ end
                 x + 1
             end
             """
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+            symbols = get_document_symbols(code)
             @test length(symbols) == 1
             children = symbols[1].children
             @test children !== nothing
@@ -1221,9 +1076,7 @@ end
                 end
             end
             """
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+            symbols = get_document_symbols(code)
             @test length(symbols) == 1
             children = symbols[1].children
             @test children !== nothing
@@ -1257,9 +1110,7 @@ end
                 return y
             end
             """
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+            symbols = get_document_symbols(code)
             @test length(symbols) == 1
             func_sym = symbols[1]
             @test func_sym.name == "func"
@@ -1314,9 +1165,7 @@ end
                 return x + y
             end
             """
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+            symbols = get_document_symbols(code)
             @test length(symbols) == 1
             children = symbols[1].children
             @test children !== nothing
@@ -1337,9 +1186,7 @@ end
             return inner
         end
         """
-        fi = make_file_info(code)
-        st0 = JETLS.build_syntax_tree(fi)
-        symbols = JETLS.extract_document_symbols(st0, fi)
+        symbols = get_document_symbols(code)
         @test length(symbols) == 1
         children = symbols[1].children
         @test children !== nothing
@@ -1358,9 +1205,7 @@ end
             return inner
         end
         """
-        fi = make_file_info(code)
-        st0 = JETLS.build_syntax_tree(fi)
-        symbols = JETLS.extract_document_symbols(st0, fi)
+        symbols = get_document_symbols(code)
         @test length(symbols) == 1
         children = symbols[1].children
         @test children !== nothing
@@ -1374,10 +1219,7 @@ end
 end
 
 @testset "named tuple destructuring (global)" begin
-    let code = "(; a, b) = obj"
-        fi = make_file_info(code)
-        st0 = JETLS.build_syntax_tree(fi)
-        symbols = JETLS.extract_document_symbols(st0, fi)
+    let symbols = get_document_symbols("(; a, b) = obj")
         @test length(symbols) == 2
         a_sym = only(filter(s -> s.name == "a", symbols))
         b_sym = only(filter(s -> s.name == "b", symbols))
@@ -1395,9 +1237,7 @@ end
             x, kw
         end
         """
-        fi = make_file_info(code)
-        st0 = JETLS.build_syntax_tree(fi)
-        symbols = JETLS.extract_document_symbols(st0, fi)
+        symbols = get_document_symbols(code)
         @test length(symbols) == 1
         children = symbols[1].children
         @test children !== nothing
@@ -1406,6 +1246,8 @@ end
     end
 end
 
+module test_module; using Test; end
+
 @testset "@testset and @test" begin
     @testset "@testset" begin
         let code = """
@@ -1413,9 +1255,7 @@ end
                 @test 1 == 1
             end
             """
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+            symbols = get_document_symbols(code, test_module)
             @test length(symbols) == 1
             @test symbols[1].name == "@testset \"my tests\""
             @test symbols[1].kind == SymbolKind.Event
@@ -1432,9 +1272,7 @@ end
                 @test true
             end
             """
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+            symbols = get_document_symbols(code, test_module)
             @test length(symbols) == 1
             @test symbols[1].name == "@testset"
             @test symbols[1].kind == SymbolKind.Event
@@ -1451,9 +1289,7 @@ end
                 @test true
             end
             """
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+            symbols = get_document_symbols(code, test_module)
             @test length(symbols) == 1
             @test symbols[1].name == "@testset \"qualified\""
             @test symbols[1].kind == SymbolKind.Event
@@ -1468,9 +1304,7 @@ end
                 end
             end
             """
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+            symbols = get_document_symbols(code, test_module)
             @test length(symbols) == 1
             @test symbols[1].name == "@testset \"outer\""
             @test symbols[1].children !== nothing
@@ -1488,9 +1322,7 @@ end
                 @test length(arr) > 0
             end
             """
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+            symbols = get_document_symbols(code, test_module)
             @test length(symbols) == 1
             children = symbols[1].children
             @test children !== nothing
@@ -1514,9 +1346,7 @@ end
                 end
             end
             """
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+            symbols = get_document_symbols(code, test_module)
             @test length(symbols) == 1
             children = symbols[1].children
             @test children !== nothing
@@ -1548,9 +1378,7 @@ end
                 @test v > 0
             end
             """
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+            symbols = get_document_symbols(code, test_module)
             @test length(symbols) == 1
             @test symbols[1].name == "@testset \"test \$v\""
             @test symbols[1].kind == SymbolKind.Event
@@ -1567,9 +1395,7 @@ end
                 @test v + w > 0
             end
             """
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+            symbols = get_document_symbols(code, test_module)
             @test length(symbols) == 1
             @test symbols[1].name == "@testset \"test \$v, \$w\""
             @test symbols[1].kind == SymbolKind.Event
@@ -1577,12 +1403,7 @@ end
     end
 
     @testset "@testset function call" begin
-        let code = """
-            @testset "test" test_func()
-            """
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+        let symbols = get_document_symbols("@testset \"test\" test_func()\n", test_module)
             @test length(symbols) == 1
             @test symbols[1].name == "@testset \"test\""
             @test symbols[1].kind == SymbolKind.Event
@@ -1598,9 +1419,7 @@ end
                 @test v + w == 3
             end
             """
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+            symbols = get_document_symbols(code, test_module)
             @test length(symbols) == 1
             @test symbols[1].name == "@testset"
             @test symbols[1].kind == SymbolKind.Event
@@ -1617,9 +1436,7 @@ end
                 @test true
             end
             """
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+            symbols = get_document_symbols(code, test_module)
             @test length(symbols) == 1
             @test symbols[1].name == "@testset \"my test\""
             @test symbols[1].kind == SymbolKind.Event
@@ -1632,9 +1449,7 @@ end
                 @test true
             end
             """
-            fi = make_file_info(code)
-            st0 = JETLS.build_syntax_tree(fi)
-            symbols = JETLS.extract_document_symbols(st0, fi)
+            symbols = get_document_symbols(code, test_module)
             @test length(symbols) == 1
             @test symbols[1].name == "@testset \"with options\""
             @test symbols[1].kind == SymbolKind.Event
@@ -1643,57 +1458,33 @@ end
 end
 
 @testset "JETLS.strip_name_from_detail" begin
-    let sym = DocumentSymbol(;
-            name="foo", detail="foo(x, y) =",
-            kind=SymbolKind.Function,
-            range=Range(Position(0,0), Position(0,0)),
-            selectionRange=Range(Position(0,0), Position(0,0)))
+    let sym = make_test_doc_symbol("foo", "foo(x, y) =", SymbolKind.Function)
         result = JETLS.strip_name_from_detail(sym)
         @test result.detail == "(x, y) ="
     end
 
     # detail that does not start with name should be unchanged
-    let sym = DocumentSymbol(;
-            name="foo", detail="function foo(x)",
-            kind=SymbolKind.Function,
-            range=Range(Position(0,0), Position(0,0)),
-            selectionRange=Range(Position(0,0), Position(0,0)))
+    let sym = make_test_doc_symbol("foo", "function foo(x)", SymbolKind.Function)
         result = JETLS.strip_name_from_detail(sym)
         @test result.detail == "function foo(x)"
     end
 
     # detail that equals name exactly should become nothing
-    let sym = DocumentSymbol(;
-            name="x", detail="x",
-            kind=SymbolKind.Variable,
-            range=Range(Position(0,0), Position(0,0)),
-            selectionRange=Range(Position(0,0), Position(0,0)))
+    let sym = make_test_doc_symbol("x", "x", SymbolKind.Variable)
         result = JETLS.strip_name_from_detail(sym)
         @test result.detail === nothing
     end
 
     # nothing detail should stay nothing
-    let sym = DocumentSymbol(;
-            name="foo", detail=nothing,
-            kind=SymbolKind.Function,
-            range=Range(Position(0,0), Position(0,0)),
-            selectionRange=Range(Position(0,0), Position(0,0)))
+    let sym = make_test_doc_symbol("foo", nothing, SymbolKind.Function)
         result = JETLS.strip_name_from_detail(sym)
         @test result.detail === nothing
     end
 
     # children should be recursively processed
-    let child = DocumentSymbol(;
-            name="x", detail="x::Int",
-            kind=SymbolKind.Field,
-            range=Range(Position(0,0), Position(0,0)),
-            selectionRange=Range(Position(0,0), Position(0,0)))
-        sym = DocumentSymbol(;
-            name="Foo", detail="struct Foo",
-            kind=SymbolKind.Struct,
-            range=Range(Position(0,0), Position(0,0)),
-            selectionRange=Range(Position(0,0), Position(0,0)),
-            children=[child])
+    let child = make_test_doc_symbol("x", "x::Int", SymbolKind.Field)
+        sym = make_test_doc_symbol("Foo", "struct Foo", SymbolKind.Struct;
+            children = [child])
         result = JETLS.strip_name_from_detail(sym)
         @test result.detail == "struct Foo"
         @test result.children[1].detail == "::Int"
