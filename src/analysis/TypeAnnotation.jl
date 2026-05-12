@@ -306,23 +306,23 @@ end
 # cleanly onto go-to-definition / sighelp queries.
 function extract_call_matches(@nospecialize info)
     matches = Core.MethodMatch[]
-    _collect_call_matches!(matches, info)
+    collect_call_matches!(matches, info)
     return isempty(matches) ? nothing : matches
 end
 
-function _collect_call_matches!(matches::Vector{Core.MethodMatch}, @nospecialize info)
+function collect_call_matches!(matches::Vector{Core.MethodMatch}, @nospecialize info)
     if info isa CC.MethodMatchInfo
         for m in info.results.matches
             push!(matches, m)
         end
     elseif info isa CC.UnionSplitInfo
         for sub in info.split
-            _collect_call_matches!(matches, sub)
+            collect_call_matches!(matches, sub)
         end
     elseif info isa CC.ConstCallInfo
         # `ConstCallInfo` wraps the underlying dispatch info with a
         # const-prop'd result; the same matching methods live one level down.
-        _collect_call_matches!(matches, info.call)
+        collect_call_matches!(matches, info.call)
     end
     return matches
 end
@@ -743,11 +743,11 @@ that [`get_type_for_range`](@ref) and friends can answer in \$O(1)\$ per call (o
 \$O(log N)\$ for the branching case).
 
 `st3` (rather than the surface tree) is needed to identify byte ranges of
-*user-written* `return` values, which `type_for_branching` filters out so they
-don't pollute the value type of an enclosing branching expression. Using `st3`
-lets the analysis see through desugared `&&` / `||` / `?:` / chained
-comparisons (now `K"if"`) and through expanded macros — without it, those
-constructs would leak.
+*user-written* `K"return"` surface forms, which `type_for_branching` looks up
+to filter user returns out of the value type of an enclosing branching
+expression. Using `st3` lets the analysis see through desugared `&&` / `||` /
+`?:` / chained comparisons (now `K"if"`) and through expanded macros —
+without it, those constructs would leak.
 
 Build once per `inferred_tree` and reuse across queries — the single \$O(N)\$
 index build is amortized. Consumers should normally call [`get_type_for_range`](@ref) and
@@ -775,19 +775,10 @@ struct InferredTreeContext
     # `JS.first_byte` (so `searchsortedfirst` is valid on `return_first_bytes`).
     return_first_bytes::Vector{Int}
     return_nodes::Vector{SyntaxTreeC}
-    # Maps each tail-position byte range `R` of a user-written `return X`
-    # to the *innermost* user return value byte range that produced it
-    # (i.e. `byte_range(X)` for the closest enclosing user `return`).
-    # Computed by walking `st3` for `K"return"` nodes and descending into
-    # tail-recursing forms (`K"if"` branches, `K"block"` last child, …).
-    # `type_for_branching(rng)` filters a contained `K"return"` at `R`
-    # when `rng` *strictly* contains the recorded URV — meaning the user
-    # `return` is fully inside the queried expression, so its exit shouldn't
-    # pollute the queried value. When `rng ⊆ URV` (the queried expression
-    # is the user return value itself, or a sub-expression of it), the
-    # `K"return"` is part of the queried branching's value and isn't
-    # filtered.
-    user_return_value_ranges::Dict{UnitRange{Int}, UnitRange{Int}}
+    # Byte ranges of every user-written `K"return"` surface form in `st3`
+    # (`st3` not `st0` so macro-expansion-introduced `K"return"`s are included).
+    # Consumed by `type_for_branching`.
+    user_return_form_ranges::Vector{UnitRange{Int}}
     # For each lowered node inside the body of some OC, the byte range of that OC's
     # `K"opaque_closure_method"`. Used by `tmerge_at_range` to filter OC construction
     # scaffolding sharing a byte range with the user's yield expression: a node is kept
@@ -842,8 +833,7 @@ function InferredTreeContext(inferred_tree::SyntaxTreeC, st3::SyntaxTreeC)
     permute!(return_first_bytes, perm)
     permute!(return_nodes, perm)
 
-    user_return_value_ranges = Dict{UnitRange{Int}, UnitRange{Int}}()
-    collect_user_return_value_ranges!(user_return_value_ranges, st3)
+    user_return_form_ranges = collect_user_return_form_ranges(st3)
 
     oc_body_scope = Dict{Int,UnitRange{Int}}()
     populate_oc_body_scope!(oc_body_scope, inferred_tree, nothing)
@@ -851,7 +841,7 @@ function InferredTreeContext(inferred_tree::SyntaxTreeC, st3::SyntaxTreeC)
     return InferredTreeContext(
         inferred_tree, surface_kind_index, by_byte_range,
         macrocall_typed_calls, return_first_bytes, return_nodes,
-        user_return_value_ranges, oc_body_scope)
+        user_return_form_ranges, oc_body_scope)
 end
 
 # `K"code_info"` only marks an OC body when it's the body slot of a
@@ -880,78 +870,29 @@ function populate_oc_body_scope!(
     return
 end
 
-# Walk `st`, find every `K"return"` node, and record the byte ranges of all
-# tail-position values of its return value into `D`, mapped to the innermost
-# enclosing user return's value byte range. Operates on `st3`
-# (post-desugaring, post-macro-expansion), so `&&` / `||` / `?:` / chained
-# comparisons all show up as `K"if"` and macros are already expanded.
-function collect_user_return_value_ranges!(
-        D::Dict{UnitRange{Int}, UnitRange{Int}}, st::SyntaxTreeC
+# `st3` (not `st0`) so `K"return"`s introduced by macro expansion are picked up.
+function collect_user_return_form_ranges(st3::SyntaxTreeC)
+    ranges = UnitRange{Int}[]
+    traverse(st3) do st::SyntaxTreeC
+        JS.kind(st) === JS.K"return" && push!(ranges, JS.byte_range(st))
+        return nothing
+    end
+    return ranges
+end
+
+# Outermost (rather than innermost) so nested `return begin; return X; end`
+# yields the outer form — the form-range the strict-contains filter needs.
+function find_outermost_user_return_form(
+        user_return_form_ranges::Vector{UnitRange{Int}}, r_range::UnitRange{<:Integer}
     )
-    if JS.kind(st) === JS.K"return" && JS.numchildren(st) >= 1
-        urv = JS.byte_range(st[1])
-        record_user_return_tails!(D, st[1], urv)
-    end
-    for i = 1:JS.numchildren(st)
-        collect_user_return_value_ranges!(D, st[i])
-    end
-end
-
-# Recursively descend `value` (the RHS of a user `return`), and for every
-# tail-position leaf record `byte_range(leaf) => urv`. When a nested
-# `K"return"` is encountered, its own value becomes the innermost `urv` for
-# its sub-walk so the entries point at the closest enclosing user return —
-# `type_for_branching`'s strict-contains check then correctly distinguishes
-# "queried expression is inside the user return" from "queried expression
-# strictly contains the user return".
-function record_user_return_tails!(D::Dict{UnitRange{Int}, UnitRange{Int}},
-                                   value::SyntaxTreeC, urv::UnitRange{<:Integer})
-    k = JS.kind(value)
-    if k === JS.K"if" || k === JS.K"elseif"
-        # `K"if"` shape: cond, then, optional else.
-        n = JS.numchildren(value)
-        n >= 2 && record_user_return_tails!(D, value[2], urv)
-        if n >= 3
-            record_user_return_tails!(D, value[3], urv)
-        else
-            # No-else branch: lowering synthesizes `K"return"(nothing)` with
-            # srcref = the `K"if"` itself, so its byte range is `value`'s.
-            record_tail!(D, JS.byte_range(value), urv)
+    outermost = nothing
+    for f_range in user_return_form_ranges
+        r_range ⊆ f_range || continue
+        if outermost === nothing || first(f_range) < first(outermost)
+            outermost = f_range
         end
-    elseif k === JS.K"block" || k === JS.K"scope_block"
-        n = JS.numchildren(value)
-        if n >= 1
-            record_user_return_tails!(D, value[n], urv)
-        else
-            record_tail!(D, JS.byte_range(value), urv)
-        end
-    elseif k === JS.K"return"
-        # Nested `return` inside the value subtree: switch to its own URV so
-        # this nested return's tail SSAs trace back to *it* (innermost),
-        # not the wrapping return.
-        if JS.numchildren(value) >= 1
-            inner_urv = JS.byte_range(value[1])
-            record_user_return_tails!(D, value[1], inner_urv)
-        else
-            record_tail!(D, JS.byte_range(value), urv)
-        end
-    else
-        # Leaf or non-tail-recursing form (call, identifier, literal,
-        # `K"trycatchelse"` / `K"tryfinally"` — the last two are unhandled
-        # for now and may leak; covered by `@test_broken` in the test file).
-        record_tail!(D, JS.byte_range(value), urv)
     end
-end
-
-# Keep the smaller (more strictly-contained) URV when a tail range is
-# encountered via multiple traversal paths. Smaller URV = more innermost
-# user return = the right URV to compare the queried `rng` against.
-function record_tail!(D::Dict{UnitRange{Int}, UnitRange{Int}},
-                      R::UnitRange{<:Integer}, urv::UnitRange{<:Integer})
-    cur = get(D, R, nothing)
-    if cur === nothing || length(urv) < length(cur)
-        D[R] = urv
-    end
+    return outermost
 end
 
 """
@@ -1132,17 +1073,10 @@ end
 #   `rng`) when the surface is in tail position of a function body.
 # The expression's value type is the `tmerge` over all such branch values.
 #
-# A `K"return"` that spans exactly `rng` (synthesized when the branching
-# expression is itself the function body) lives in both `by_byte_range[rng]`
-# and the K"return" containment scan, so the explicit `continue` below skips
-# it in the second scan to avoid double-counting.
-#
-# *User-written* `K"return"` exits the function and must not contribute to
-# the enclosing expression's value (e.g. `out = if cond; return X; end` —
-# the if's value is `Nothing`, not `Union{Nothing, typeof(X)}`). They're
-# filtered via `ctx.user_return_value_ranges`, which records the byte
-# ranges of every tail-position value reachable from a user `return`'s
-# right-hand side.
+# User-written `K"return"`s strictly inside `rng` exit the function and must
+# not contribute (e.g. `out = if cond; return X; end` — the if's value is
+# `Nothing`, not `Union{Nothing, typeof(X)}`). They're filtered via
+# `ctx.user_return_form_ranges` containment.
 function type_for_branching(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
     typ = nothing
     # (1) equality match — any lowered kind, including merge-slot `K"="`.
@@ -1152,7 +1086,7 @@ function type_for_branching(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
         typ = typ === nothing ? ntyp : CC.tmerge(ntyp, typ)
     end
     # (2) containment match — `K"return"` strictly inside `rng`, excluding
-    #     user-written returns.
+    #     user-written returns whose exit doesn't contribute to `rng`'s value.
     rng_start = rng.start
     rng_stop = rng.stop
     lo = searchsortedfirst(ctx.return_first_bytes, rng_start)
@@ -1163,14 +1097,9 @@ function type_for_branching(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
         last_byte = JS.last_byte(st)
         last_byte > rng_stop && continue
         first_byte == rng_start && last_byte == rng_stop && continue # already counted
-        # Skip user-return tails when their URV is strictly contained in
-        # `rng` — i.e. the user `return` is fully inside `rng`, so its
-        # exit doesn't contribute to `rng`'s value. When `rng ⊆ URV`
-        # (queried expression IS inside the return value), the K"return"
-        # is a branch tail of `rng` itself and stays.
-        let urv = get(ctx.user_return_value_ranges, first_byte:last_byte, nothing)
-            urv !== nothing && strictly_contains(rng, urv) && continue
-        end
+        form_rng = find_outermost_user_return_form(
+            ctx.user_return_form_ranges, first_byte:last_byte)
+        form_rng !== nothing && strictly_contains(rng, form_rng) && continue
         hasproperty(st, :type) || continue
         ntyp = st.type
         typ = typ === nothing ? ntyp : CC.tmerge(ntyp, typ)
