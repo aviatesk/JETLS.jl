@@ -69,8 +69,8 @@ function find_type_definition(server::Server, uri::URI, fi::FileInfo, pos::Posit
     node = @something select_target_for_type_query(st0_top, offset) return nothing
 
     rng = JS.byte_range(node)
-    (; mod, world) = get_context_info(state, uri, pos)
-    typ = @something infer_type_at_range(st0_top, mod, rng; world) return nothing
+    (; context_module, world) = get_context_info(state, uri, pos)
+    typ = @something infer_type_at_range(st0_top, context_module, rng; world) return nothing
 
     target_type = @something extract_target_type(typ) return nothing
     return type_locations(state, uri, target_type, world), node

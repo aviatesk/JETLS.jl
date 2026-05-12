@@ -73,9 +73,9 @@ function find_declaration(
     state = server.state
     st0 = build_syntax_tree(fi)
     offset = xy_to_offset(fi, pos)
-    (; mod) = get_context_info(state, uri, pos)
+    (; context_module) = get_context_info(state, uri, pos)
 
-    binding_result = select_target_binding(st0, offset, mod; caller="find_declaration", soft_scope)
+    binding_result = select_target_binding(st0, offset, context_module; caller="find_declaration", soft_scope)
     if !isnothing(binding_result)
         (; ctx3, st3, st0, binding) = binding_result
         binfo = JL.get_binding(ctx3, binding)

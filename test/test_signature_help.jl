@@ -214,12 +214,11 @@ f(a0, a1, a2, va3...; kw4=0, kw5=0, kws6...) = 0
 f1(x, xs...) = 0
 kwfunc(; kw0, kw1, kws2...) = nothing
 end
+function active_parameter(context_module::Module, code::AbstractString; kwargs...)
+    si = siginfos(context_module, code; kwargs...)
+    Int(@something only(si).activeParameter return nothing)
+end
 @testset "Active param highlighting" begin
-    function active_parameter(mod::Module, code::AbstractString; kwargs...)
-        si = siginfos(mod, code; kwargs...)
-        Int(@something only(si).activeParameter return nothing)
-    end
-
     @test 0 == active_parameter(M_highlight, "f(│)")
     @test 0 == active_parameter(M_highlight, "f(0│)")
     @test 1 == active_parameter(M_highlight, "f(0,│)")

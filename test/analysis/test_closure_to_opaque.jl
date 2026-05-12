@@ -4,25 +4,27 @@ using Test
 using JETLS
 using JETLS: JL, JS, rewrite_local_closures_to_opaque
 
+module lowering_module end
+
 # Run the rewrite + the rest of JL lowering, then `Core.eval` the resulting
 # `:thunk` so tests can assert against the runtime value the rewritten IR
 # produces. Returns `(value, st3_oc)` — `st3_oc` is the post-rewrite tree so
 # tests can assert structural facts (e.g. an OC was actually emitted).
 function rewrite_lower_eval(code::AbstractString)
-    mod = Module()
+    context_module = lowering_module
     fi = JETLS.FileInfo(1, code, @__FILE__)
     st0_top = JETLS.build_syntax_tree(fi)
     last_value = Ref{Any}(nothing)
     last_st3_oc = Ref{Union{JETLS.SyntaxTreeC,Nothing}}(nothing)
     JETLS.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
-        result = JETLS.TypeAnnotation.get_inferrable_tree(st0, mod)
+        result = JETLS.TypeAnnotation.get_inferrable_tree(st0, context_module)
         result === nothing && error("get_inferrable_tree failed for: $code")
         (; ctx3, st3) = result
         st3_oc = rewrite_local_closures_to_opaque(ctx3, st3)
         ctx4, st4 = JL.convert_closures(ctx3, st3_oc)
         _, st5 = JL.linearize_ir(ctx4, st4)
         lwr = JL.to_lowered_expr(st5)
-        last_value[] = Core.eval(mod, lwr)
+        last_value[] = Core.eval(context_module, lwr)
         last_st3_oc[] = st3_oc
         return nothing
     end
@@ -35,12 +37,12 @@ end
 # post-rewrite tree only — sufficient for structural assertions like "the
 # rewrite did NOT fire for this shape".
 function rewrite_only(code::AbstractString)
-    mod = Module()
+    context_module = lowering_module
     fi = JETLS.FileInfo(1, code, @__FILE__)
     st0_top = JETLS.build_syntax_tree(fi)
     last_st3_oc = Ref{Union{JETLS.SyntaxTreeC,Nothing}}(nothing)
     JETLS.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
-        result = JETLS.TypeAnnotation.get_inferrable_tree(st0, mod)
+        result = JETLS.TypeAnnotation.get_inferrable_tree(st0, context_module)
         result === nothing && error("get_inferrable_tree failed for: $code")
         (; ctx3, st3) = result
         last_st3_oc[] = rewrite_local_closures_to_opaque(ctx3, st3)
