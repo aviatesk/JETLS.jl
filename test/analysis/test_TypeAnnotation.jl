@@ -94,14 +94,14 @@ end
             results = []
             JETLS.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
                 r = get_inferrable_tree(st0, Main)
-                r === nothing || push!(results, r)
+                r === nothing || push!(results, (; r..., st0))
                 return nothing
             end
             @test length(results) == 3
-            for (; ctx3, st3) in results
+            for (; ctx3, st3, st0) in results
                 @test ctx3 isa JL.VariableAnalysisContext
                 @test st3 isa JS.SyntaxTree
-                @test infer_toplevel_tree(ctx3, st3, @__MODULE__) isa JETLS.SyntaxTreeC
+                @test infer_toplevel_tree(ctx3, st3, st0, @__MODULE__) isa JETLS.SyntaxTreeC
             end
         end
     end
@@ -1223,7 +1223,7 @@ end
     end
 end
 
-@testset HierarchicalTestSet "Multi-position / composition behaviors" begin
+@testset HierarchicalTestSet "Destructure type preservation" begin
     # Tuple-destructuring assignment `a, b = sincos(x)` lowers to two slot
     # assignments via `iterate(t)` / `iterate(t, state)`. The slot positions
     # have to pick up the element type, not just `Any`, so each `a` / `b`
@@ -1243,6 +1243,91 @@ end
         end
     end
 
+    # `(a, b) = rhs` — RHS query should surface the Tuple value, and each
+    # LHS identifier its element type.
+    @testset "tuple destructure keeps user-visible types" begin
+        let code = """
+            function f(x::Float64)
+                (a, b) = sincos(x)
+                a + b
+            end
+            """
+            _, ctx = type_annotate(code)
+            rhs_rng = range_of(code, "sincos(x)")
+            @test widenconst(get_type_for_range(ctx, rhs_rng)) === Tuple{Float64, Float64}
+            a_rng = let r = range_of(code, "(a, "); (first(r)+1):(first(r)+1) end
+            b_rng = let r = range_of(code, ", b)"); (first(r)+2):(first(r)+2) end
+            @test widenconst(get_type_for_range(ctx, a_rng)) === Float64
+            @test widenconst(get_type_for_range(ctx, b_rng)) === Float64
+        end
+
+        # `a, b = rhs` (no parens) parses with the same K"tuple" LHS.
+        let code = """
+            function f(x::Float64)
+                a, b = sincos(x)
+                a + b
+            end
+            """
+            _, ctx = type_annotate(code)
+            rhs_rng = range_of(code, "sincos(x)")
+            @test widenconst(get_type_for_range(ctx, rhs_rng)) ===
+                Tuple{Float64, Float64}
+        end
+
+        # A user-written `K"="` inside a destructure RHS sits within the destructure's
+        # byte range but isn't synthetic — its type must still be annotated.
+        let code = """
+            function f()
+                (a, b) = (x = 10; (x, x+1))
+                a + b
+            end
+            """
+            _, ctx = type_annotate(code)
+            @test widenconst(get_type_for_range(ctx, range_of(code, "x = 10"))) === Int
+        end
+    end
+
+    # `(; a, b) = nt` — RHS query should surface the NamedTuple value, and
+    # each LHS identifier its field type.
+    @testset "named-tuple destructure keeps user-visible types" begin
+        let code = """
+            function f(nt::@NamedTuple{a::Int, b::UInt})
+                (; a, b) = nt
+                return nothing
+            end
+            """
+            _, ctx = type_annotate(code)
+            nt_rhs_rng = let r = range_of(code, "= nt\n")
+                (first(r) + 2):(first(r) + 3)
+            end
+            @test widenconst(get_type_for_range(ctx, nt_rhs_rng)) === @NamedTuple{a::Int, b::UInt}
+            b_lhs_rng = let r = range_of(code, ", b)")
+                (first(r) + 2):(first(r) + 2)
+            end
+            @test widenconst(get_type_for_range(ctx, b_lhs_rng)) === UInt
+        end
+    end
+
+    # `for (a, b) in iter` is also a destructure form; each LHS identifier
+    # should resolve to its element type.
+    @testset "for-loop destructure keeps user-visible types" begin
+        let code = """
+            function f(xs::Vector{Tuple{Int, Float64}})
+                for (i, x) in xs
+                    @info i x
+                end
+            end
+            """
+            _, ctx = type_annotate(code)
+            i_rng = let r = range_of(code, "(i, "); (first(r)+1):(first(r)+1) end
+            x_rng = let r = range_of(code, ", x)"); (first(r)+2):(first(r)+2) end
+            @test widenconst(get_type_for_range(ctx, i_rng)) === Int
+            @test widenconst(get_type_for_range(ctx, x_rng)) === Float64
+        end
+    end
+end
+
+@testset HierarchicalTestSet "Multi-position / composition behaviors" begin
     # Chained dotted access on a dereferenced `Ref`: `Ref(...)[].field`
     # exercises K"." → K"ref" → K"call" composition. Each link in the chain
     # has to land its own `:type` for editor features (hover / inlay) to
@@ -1307,7 +1392,6 @@ end
             @test any(t -> widenconst(t) === String, types)
         end
     end
-
 end
 
 @testset HierarchicalTestSet "Pipeline-level edge cases" begin
