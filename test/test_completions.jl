@@ -107,25 +107,25 @@ end
 
 @testset "subtree lowering within modules" begin
     code = """
-module M
-    │
-    export foo
-
-    function foo(x)
-        y = 1
-        z = 2
+    module M
         │
-    end
+        export foo
 
-    module M2
-        function foo(a)
-            b = 1
-            c = 2
+        function foo(x)
+            y = 1
+            z = 2
             │
         end
+
+        module M2
+            function foo(a)
+                b = 1
+                c = 2
+                │
+            end
+        end
     end
-end
-"""
+    """
     cnt = Ref(0)
     with_completion(code) do i, cv
         if i == 1
@@ -145,92 +145,105 @@ end
 end
 
 @testset "nested and adjacent scopes" begin
-    code = "let; let; x = 1;   end;        │ let;          end; end"; test_single_cv(code, String[], unexpected=["x"])
-    code = "let; let; x = 1;   end;          let;        │ end; end"; test_single_cv(code, String[], unexpected=["x"])
-    code = "let; let;        │ end; x = 1;   let;          end; end"; test_single_cv(code, String[], unexpected=["x"])
-    code = "let; let;          end; x = 1;   let;        │ end; end"; test_single_cv(code, ["x"])
-    code = "let; let;        │ end;          let; x = 1;   end; end"; test_single_cv(code, String[], unexpected=["x"])
-    code = "let; let;          end;        │ let; x = 1;   end; end"; test_single_cv(code, String[], unexpected=["x"])
+    let code = "let; let; x = 1;   end;        │ let;          end; end"; test_single_cv(code, String[], unexpected=["x"]); end
+    let code = "let; let; x = 1;   end;          let;        │ end; end"; test_single_cv(code, String[], unexpected=["x"]); end
+    let code = "let; let;        │ end; x = 1;   let;          end; end"; test_single_cv(code, String[], unexpected=["x"]); end
+    let code = "let; let;          end; x = 1;   let;        │ end; end"; test_single_cv(code, ["x"]); end
+    let code = "let; let;        │ end;          let; x = 1;   end; end"; test_single_cv(code, String[], unexpected=["x"]); end
+    let code = "let; let;          end;        │ let; x = 1;   end; end"; test_single_cv(code, String[], unexpected=["x"]); end
 end
 
 @testset "globals in local scope, shadowing" begin
     # global decl should be contained
-    code = "function f(g); │ let;   global g;   end;   end"; test_single_cv(code, ["g"], kind=:argument)
-    code = "function f(g);   let;   global g; │ end;   end"; test_single_cv(code, ["g"], kind=:global)
-    code = "function f(g);   let;   global g;   end; │ end"; test_single_cv(code, ["g"], kind=:argument)
+    let code = "function f(g); │ let;   global g;   end;   end"
+        test_single_cv(code, ["g"], kind=:argument)
+    end
+    let code = "function f(g);   let;   global g; │ end;   end"
+        test_single_cv(code, ["g"], kind=:global)
+    end
+    let code = "function f(g);   let;   global g;   end; │ end"
+        test_single_cv(code, ["g"], kind=:argument)
+    end
     # global doesn't follow the "before-the-cursor" rule
-    code = "function f(g);   let; │ global g;   end;   end"; test_single_cv(code, ["g"], kind=:global)
+    let code = "function f(g);   let; │ global g;   end;   end"
+        test_single_cv(code, ["g"], kind=:global)
+    end
 
     # local shadowing global
-    code = """
-function f()
-    global g = 1; │
-    let │
-        let
-            local g
-            │
-            let; │ end
+    let code = """
+        function f()
+            global g = 1; │
+            let │
+                let
+                    local g
+                    │
+                    let; │ end
+                end
+            end
         end
-    end
-end
-"""
+        """
 
-    cnt = Ref(0)
-    with_completion(code) do i, cv
-        if i == 1
-            cv_has(cv, ["g"], kind=:global)
-            cnt[] += 1
-        elseif i == 2
-            cv_has(cv, ["g"], kind=:global)
-            cnt[] += 1
-        elseif i == 3
-            cv_has(cv, ["g"], kind=:local)
-            cnt[] += 1
-        elseif i == 4
-            cv_has(cv, ["g"], kind=:local)
-            cnt[] += 1
+        cnt = Ref(0)
+        with_completion(code) do i, cv
+            if i == 1
+                cv_has(cv, ["g"], kind=:global)
+                cnt[] += 1
+            elseif i == 2
+                cv_has(cv, ["g"], kind=:global)
+                cnt[] += 1
+            elseif i == 3
+                cv_has(cv, ["g"], kind=:local)
+                cnt[] += 1
+            elseif i == 4
+                cv_has(cv, ["g"], kind=:local)
+                cnt[] += 1
+            end
         end
+        @test cnt[] == 4
     end
-    @test cnt[] == 4
 
     # global/local decl below cursor
-    code = """
-function f(x)
-    let
-        │
-        global x
-        x = 1
-        let
-            x = 2 # otherwise we would filter this completion out
-            │
-            local x
-            x
+    let code = """
+        function f(x)
+            let
+                │
+                global x
+                x = 1
+                let
+                    x = 2 # otherwise we would filter this completion out
+                    │
+                    local x
+                    x
+                end
+            end
         end
-    end
-end
-"""
-    cnt = Ref(0)
-    with_completion(code) do i, cv
-        if i == 1
-            cv_has(cv, ["x"], kind=:global)
-            cnt[] += 1
-        elseif i == 2
-            # broken. JuliaLowering bug?
-            # cv_has(cv, ["x"], kind=:local)
-            cnt[] += 1
+        """
+        cnt = Ref(0)
+        with_completion(code) do i, cv
+            if i == 1
+                cv_has(cv, ["x"], kind=:global)
+                cnt[] += 1
+            elseif i == 2
+                # broken. JuliaLowering bug?
+                # cv_has(cv, ["x"], kind=:local)
+                cnt[] += 1
+            end
         end
+        @test cnt[] == 2
     end
-    @test cnt[] == 2
 end
 
 @testset "cursor in new symbol" begin
     # Don't suggest a symbol which appears for the first time right before the cursor
-    code = "function f(); global g1; g2│; end"
-    test_single_cv(code, ["g1"], unexpected=["g2"])
-    code = "function f(); global g1; g│2; end"
-    test_single_cv(code, ["g1"], unexpected=["g", "g2"])
-    code = "function f(); global g1; │g2; end"
-    test_single_cv(code, ["g1"], unexpected=["g2"])
+    let code = "function f(); global g1; g2│; end"
+        test_single_cv(code, ["g1"], unexpected=["g2"])
+    end
+    let code = "function f(); global g1; g│2; end"
+        test_single_cv(code, ["g1"], unexpected=["g", "g2"])
+    end
+    let code = "function f(); global g1; │g2; end"
+        test_single_cv(code, ["g1"], unexpected=["g2"])
+    end
 end
 
 # completion for code including macros
@@ -897,10 +910,10 @@ end
     end
 end
 
-@testset "method signature completion" begin
-    get_newText(item::CompletionItem) =
-        (@something item.textEdit return nothing).newText
+get_newText(item::CompletionItem) =
+    (@something item.textEdit return nothing).newText
 
+@testset "method signature completion" begin
     let text = """
         sin(│
         """
@@ -951,11 +964,40 @@ end
         cnt = Ref(0)
         with_completion_items(text; context) do _, result, _
             items = result.items
-            @test_broken count(items) do item
+            @test count(items) do item
                 item.labelDetails !== nothing &&
                     item.labelDetails.description == "method" &&
                     !isnothing(get_newText(item)) &&
                     occursin("sin", item.label)
+            end == 1
+            cnt[] += 1
+        end
+        @test cnt[] == 1
+    end
+
+    # Local-binding type (`x :: String` from `let x = "a"`) and literal arg type
+    # (`Const(1)`) jointly narrow `baz` to its unique 2-arg overload. Needs full
+    # analysis to load `baz`'s methods, so route through `with_completion_request`.
+    let text = """
+        baz(::Int, ::String) = 1
+        baz(::Int, ::Int) = 2
+        baz(::String, ::String) = 3
+        baz(::String, ::Int) = 4
+        let x = "a"
+            baz(1, x,│
+        end
+        """
+        context = CompletionContext(;
+            triggerKind = CompletionTriggerKind.TriggerCharacter,
+            triggerCharacter = ",")
+        cnt = Ref(0)
+        with_completion_request(text; context) do _, result, _
+            items = result.items
+            @test count(items) do item
+                item.labelDetails !== nothing &&
+                    item.labelDetails.description == "method" &&
+                    !isnothing(get_newText(item)) &&
+                    occursin("baz", item.label)
             end == 1
             cnt[] += 1
         end
@@ -1056,7 +1098,7 @@ end
             triggerKind = CompletionTriggerKind.TriggerCharacter,
             triggerCharacter = "(")
         cnt = Ref(0)
-        with_completion_items(text; context) do _, result, _
+        with_completion_items(text; context) do _, _, _
             cnt[] = 1
         end
         @test cnt[] == 1

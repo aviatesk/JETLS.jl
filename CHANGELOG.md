@@ -74,6 +74,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - `textDocument/definition` on a call site (`f(arg)│` or `f│(arg)`) now narrows to the method dispatch picked for the inferred argument types — e.g. `sin│(42)` jumps to `sin(::Real)` only, not to every method of `sin`. Bare cursors on the function name (`sin│`) still return all definitions.
 
+- `textDocument/signatureHelp` and method-signature completion (`textDocument/completion`) now narrow overloads using the inferred type of each argument at the call site, including arbitrary local-scope expressions.
+  Previously only top-level globals and literal arguments contributed to filtering, so `let x = rand(); sin(x,│); end` showed every `sin` method;
+  with the local `x :: Float64` now folded in, only `sin(::T) where T<:Union{Float32, Float64}` is offered.
+
 - `textDocument/semanticTokens` now classifies type parameters declared in `struct` / `abstract type` / `primitive type` headers (and their use sites inside the type body) as `typeParameter`. Previously these identifiers were classified as plain `variable`.
 
 ### Fixed

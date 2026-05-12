@@ -690,12 +690,14 @@ const AnyBindingOccurrence = Union{BindingOccurrence,CachedBindingOccurrence}
 
 struct GlobalCompletionResolverInfo
     id::String
-    mod::Module
+    context_module::Module
+    world::UInt
     postprocessor::LSPostProcessor
 end
 
 struct MethodSignatureCompletionResolverInfo
     id::String
+    world::UInt
     matches::CC.MethodLookupResult
     postprocessor::LSPostProcessor
 end

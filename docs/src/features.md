@@ -120,8 +120,10 @@ resolved lazily when a candidate is selected.
 
 ### [Method signature completion](@id features/completion/method-signature)
 
-Triggered inside a function call (after `(`, `,`, or space). Compatible
-method signatures are suggested based on already-provided arguments.
+Triggered inside a function call (after `(`, `,`, or space). Compatible method
+signatures are suggested based on the inferred type of each argument at the
+call site (mirroring [Signature help](@ref features/signature-help)'s filtering
+— arbitrary local-scope expressions are included).
 Selecting a candidate inserts remaining positional arguments as snippet
 placeholders with type annotations. Inferred return type and documentation
 are resolved lazily.
@@ -211,8 +213,10 @@ REPL.
 ## [Signature help](@id features/signature-help)
 
 Method signatures are displayed as you type function arguments. Methods are
-filtered based on the inferred types of already-provided arguments — e.g.,
-typing `sin(1,` shows only methods compatible with an `Int` first argument.
+filtered based on the inferred type of each argument at the call site,
+including arbitrary local-scope expressions. For example, both `sin(1,│)`
+and `let x = rand(Int); sin(x,│); end` show only methods compatible with
+an `Int` first argument.
 
 > ```@raw html
 > <div class="display-light-only">

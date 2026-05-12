@@ -160,9 +160,9 @@ function local_completions!(
     # NOTE don't bail out even if `length(fi.parsed_stream.diagnostics) ≠ 0`
     # so that we can get some completions even for incomplete code
     st0 = build_syntax_tree(fi)
-    (; mod) = get_context_info(s, uri, pos)
+    (; context_module) = get_context_info(s, uri, pos)
     soft_scope = is_notebook_cell_uri(s, uri)
-    cbs = @something cursor_bindings(st0, xy_to_offset(fi, pos), mod; soft_scope) return nothing
+    cbs = @something cursor_bindings(st0, xy_to_offset(fi, pos), context_module; soft_scope) return nothing
     for (bi, st, dist) in cbs
         ci = to_completion(bi, st, dist, uri, fi)
         prev_ci = get(items, ci.label, nothing)
@@ -185,8 +185,7 @@ function global_completions!(
     )
     should_invoke_auto_completion(context, #=allow_macro=#true) || return nothing
 
-    (; mod, analyzer, postprocessor) = get_context_info(state, uri, pos)
-    completion_module = mod
+    (; context_module, world, postprocessor) = get_context_info(state, uri, pos)
 
     prev_token = token_before_offset(fi, pos)
     prev_kind = isnothing(prev_token) ? nothing : JS.kind(prev_token)
@@ -225,14 +224,19 @@ function global_completions!(
     offset = xy_to_offset(fi, pos)
     dotprefix = select_dotprefix_identifier(st, offset)
     if !isnothing(dotprefix)
-        prefixtyp = resolve_type(analyzer, completion_module, dotprefix)
+        rng = JS.byte_range(dotprefix)
+        ctx = build_inferred_context_at(st, context_module, rng; world, caller="global_completions!")
+        prefixtyp = ctx === nothing ? nothing : get_type_for_range(ctx, rng)
+        if prefixtyp === nothing
+            prefixtyp = resolve_global_const(context_module, dotprefix, world)
+        end
         # If dotprefix is not a module, cancel completion entirely.
         # TODO In the future, let's add property completions and such.
         enable_completions = false
         if prefixtyp isa Core.Const
             prefixval = prefixtyp.val
             if prefixval isa Module
-                completion_module = prefixval
+                context_module = prefixval
                 enable_completions = true
             end
         end
@@ -241,12 +245,13 @@ function global_completions!(
         is_completed |= true
     end
     resolver_id = String(gensym("GlobalCompletionResolverInfo_resovler_id"))
-    store!(state.completion_resolver_info, completion_module) do _, mod::Module
-        GlobalCompletionResolverInfo(resolver_id, mod, postprocessor), nothing
+    store!(state.completion_resolver_info, context_module) do _, ctx_mod::Module
+        GlobalCompletionResolverInfo(resolver_id, ctx_mod, world, postprocessor), nothing
     end
 
     prioritized_names = let s = Set{Symbol}()
-        pnames = @invokelatest(names(completion_module; all=true))::Vector{Symbol}
+        pnames = Base.invoke_in_world(
+            world, names, context_module; all=true)::Vector{Symbol}
         sizehint!(s, length(pnames))
         for name in pnames
             startswith(String(name), "#") && continue
@@ -255,7 +260,9 @@ function global_completions!(
         s
     end
 
-    for name in @invokelatest(names(completion_module; all=true, imported=true, usings=true))::Vector{Symbol}
+    all_names = Base.invoke_in_world(world, names, context_module;
+        all=true, imported=true, usings=true)::Vector{Symbol}
+    for name in all_names
         s = String(name)
         startswith(s, "#") && continue
 
@@ -609,15 +616,17 @@ function call_completions!(
 
     should_complete_method_sigs || should_complete_kwargs || return nothing
 
-    (; mod, analyzer, postprocessor) = get_context_info(state, uri, pos)
-    fntyp = @something resolve_type(analyzer, mod, call[1]) return nothing
-
+    (; context_module, world, postprocessor) = get_context_info(state, uri, pos)
+    ctx = build_inferred_context_at(st0, context_module, JS.byte_range(call); world, caller="call_completions!")
+    fntyp = ctx === nothing ? nothing : get_type_for_range(ctx, JS.byte_range(call[1]))
+    if fntyp === nothing
+        fntyp = resolve_global_const(context_module, call[1], world)
+    end
     fntyp isa Core.Const || return nothing
 
-    argtypes = collect_call_argtypes(analyzer, mod, ca)
+    argtypes = collect_call_argtypes(ctx, ca)
     fixup_argtypes!(argtypes, fntyp)
-    matches = find_all_matches(argtypes)
-    matches === nothing && return nothing
+    matches = @something find_all_matches(argtypes; world) return nothing
     isempty(matches) && return nothing
 
     num_existing_args = ca.kw_i - 1
@@ -626,7 +635,7 @@ function call_completions!(
     if should_complete_method_sigs
         local resolver_id = String(gensym("MethodSignatureCompletionResolverInfo_resovler_id"))
         store!(state.completion_resolver_info) do _
-            MethodSignatureCompletionResolverInfo(resolver_id, matches, postprocessor), nothing
+            MethodSignatureCompletionResolverInfo(resolver_id, world, matches, postprocessor), nothing
         end
         method_sig_comp_info = (;
             resolver_id,
@@ -638,15 +647,15 @@ function call_completions!(
             existing_kws = Set{String}(keys(ca.kw_map)),
             seen_kwarg_names = Set{String}(),
             insert_spaces = should_insert_spaces_around_equal(fi, ca),
-            local_bindings = has_equals ? nothing : cursor_bindings(st0, b, mod; soft_scope))
+            local_bindings = has_equals ? nothing : cursor_bindings(st0, b, context_module; soft_scope))
     end
 
     method_sig_sort_idx = 1
     for (i, match) in enumerate(matches)
         m = match.method
         startswith(String(m.name), '@') && continue
-        compatible_method(m, ca) || continue
-        msig = @something get_sig_str(m, ca) continue
+        compatible_method(m, ca, world) || continue
+        msig = @something get_sig_str(m, ca, world) continue
 
         if @isdefined(method_sig_comp_info) # i.e. should_complete_method_sigs
             local (; resolver_id, use_snippet) = method_sig_comp_info
@@ -715,14 +724,14 @@ end
 # completion resolver
 # ===================
 
-function lookup_method_documentation(match::Core.MethodMatch)
+function lookup_method_documentation(match::Core.MethodMatch, world::UInt)
     m = match.method
-    invokelatest(isdefinedglobal, m.module, m.name) || return nothing
-    mfunc = invokelatest(getglobal, m.module, m.name)
+    Base.invoke_in_world(world, isdefinedglobal, m.module, m.name) || return nothing
+    mfunc = Base.invoke_in_world(world, getglobal, m.module, m.name)
     tt = Base.unwrap_unionall(m.sig)
     tt isa DataType || return nothing
     sig = Tuple{tt.parameters[2:end]...}
-    return @invokelatest(Base.Docs.doc(mfunc, sig))::Markdown.MD
+    return Base.invoke_in_world(world, Base.Docs.doc, mfunc, sig)::Markdown.MD
 end
 
 const builtin_functions = Core.Builtin[getglobal(Core, n) for n in names(Core) if getglobal(Core, n) isa Core.Builtin]
@@ -731,87 +740,104 @@ const builtin_types = Type[getglobal(Core, n) for n in names(Core) if getglobal(
 function resolve_completion_item(state::ServerState, item::CompletionItem)
     completion_resolver_info = @something load(state.completion_resolver_info) return item
     data = item.data
-    if (data isa GlobalCompletionData && completion_resolver_info isa GlobalCompletionResolverInfo &&
+    if (data isa GlobalCompletionData &&
+        completion_resolver_info isa GlobalCompletionResolverInfo &&
         data.resolver_id == completion_resolver_info.id)
-        (; mod, postprocessor) = completion_resolver_info
-        name = Symbol(data.name)
-        docs = postprocessor(@invokelatest(Base.Docs.doc(Base.Docs.Binding(mod, name)))::Markdown.MD)
-        (; labelDetails, detail) = item
-        # This `kind` doesn't have much meaning in itself, but at least by setting `kind`,
-        # we enable tree-sitter-based highlighting of the `label` in zed-julia
-        kind = CompletionItemKind.Snippet
-        if isnothing(detail) || isnothing(kind)
-            if invokelatest(isdefinedglobal, mod, name)::Bool
-                obj = invokelatest(getglobal, mod, name)
-                if obj isa Type
-                    if obj in builtin_types
-                        detail = "[builtin type]"
-                        kind = CompletionItemKind.Constant
-                    else
-                        detail = "[type]"
-                        kind = CompletionItemKind.Struct
-                    end
-                elseif obj isa Function
-                    if obj isa Core.Builtin && obj in builtin_functions
-                        detail = "[builtin function]"
-                        kind = CompletionItemKind.Constant
-                    else
-                        detail = "[function]"
-                        kind = CompletionItemKind.Function
-                    end
-                elseif obj isa Module
-                    detail = "[module]"
-                    kind = CompletionItemKind.Module
-                elseif isconst(mod, name)
-                    detail = "[constant variable]"
-                    kind = CompletionItemKind.Constant
-                else
-                    detail = "[variable]"
-                    kind = CompletionItemKind.Variable
-                end
-            end
-        end
-        if !isnothing(detail)
-            labelDetails = CompletionItemLabelDetails(; description = "global " * detail)
-        end
-        return CompletionItem(item;
-            labelDetails, kind, detail,
-            documentation = MarkupContent(;
-                kind = MarkupKind.Markdown,
-                value = docs))
+        return resolve_global_completion_item(item, data, completion_resolver_info)
     elseif (data isa MethodSignatureCompletionData &&
             completion_resolver_info isa MethodSignatureCompletionResolverInfo &&
             data.resolver_id == completion_resolver_info.id)
-        1 ≤ data.match_idx ≤ length(completion_resolver_info.matches) || return item # just to make sure
-        match = completion_resolver_info.matches[data.match_idx]
-        doc = @something lookup_method_documentation(match) return item
-        documentation = completion_resolver_info.postprocessor(string(doc))
-        _, result = infer_match!(CC.NativeInterpreter(Base.get_world_counter()), match)
-        resulttyp = @something result.result return item
-        rettyp = CC.widenconst(resulttyp)
-        # TODO Show effects and exception type?
-        typstr = completion_resolver_info.postprocessor(string(rettyp))
-        detail = " ::" * typstr
-        prepend_inference_result = @somereal(
-            get_config(state, :completion, :method_signature, :prepend_inference_result),
-            # auto-detect based on client
-            getobjpath(state, :init_params, :clientInfo, :name) ∈ ("Zed", "Zed Dev"))
-        if prepend_inference_result
-            documentation = """
-            ```julia
-            ::$(typstr)
-            ```
-            """ * documentation
-        end
-        return CompletionItem(item;
-            labelDetails = CompletionItemLabelDetails(; detail, description = "method"),
-            detail,
-            documentation = MarkupContent(;
-                kind = MarkupKind.Markdown,
-                value = documentation))
+        return resolve_method_signature_completion_item(state, item, data, completion_resolver_info)
     else
         return item
     end
+end
+
+function resolve_global_completion_item(
+        item::CompletionItem, data::GlobalCompletionData,
+        completion_resolver_info::GlobalCompletionResolverInfo
+    )
+    (; context_module, world, postprocessor) = completion_resolver_info
+    name = Symbol(data.name)
+    docs = postprocessor(Base.invoke_in_world(world,
+        Base.Docs.doc, Base.Docs.Binding(context_module, name))::Markdown.MD)
+    (; labelDetails, detail) = item
+    # This `kind` doesn't have much meaning in itself, but at least by setting `kind`,
+    # we enable tree-sitter-based highlighting of the `label` in zed-julia
+    kind = CompletionItemKind.Snippet
+    if isnothing(detail) || isnothing(kind)
+        if Base.invoke_in_world(world, isdefinedglobal, context_module, name)::Bool
+            obj = Base.invoke_in_world(world, getglobal, context_module, name)
+            if obj isa Type
+                if obj in builtin_types
+                    detail = "[builtin type]"
+                    kind = CompletionItemKind.Constant
+                else
+                    detail = "[type]"
+                    kind = CompletionItemKind.Struct
+                end
+            elseif obj isa Function
+                if obj isa Core.Builtin && obj in builtin_functions
+                    detail = "[builtin function]"
+                    kind = CompletionItemKind.Constant
+                else
+                    detail = "[function]"
+                    kind = CompletionItemKind.Function
+                end
+            elseif obj isa Module
+                detail = "[module]"
+                kind = CompletionItemKind.Module
+            elseif Base.invoke_in_world(world, isconst, context_module, name)
+                detail = "[constant variable]"
+                kind = CompletionItemKind.Constant
+            else
+                detail = "[variable]"
+                kind = CompletionItemKind.Variable
+            end
+        end
+    end
+    if !isnothing(detail)
+        labelDetails = CompletionItemLabelDetails(; description = "global " * detail)
+    end
+    return CompletionItem(item;
+        labelDetails, kind, detail,
+        documentation = MarkupContent(;
+            kind = MarkupKind.Markdown,
+            value = docs))
+end
+
+function resolve_method_signature_completion_item(
+        state::ServerState, item::CompletionItem, data::MethodSignatureCompletionData,
+        completion_resolver_info::MethodSignatureCompletionResolverInfo
+    )
+    (; world, matches, postprocessor) = completion_resolver_info
+    1 ≤ data.match_idx ≤ length(matches) || return item # just to make sure
+    match = matches[data.match_idx]
+    doc = @something lookup_method_documentation(match, world) return item
+    documentation = postprocessor(string(doc))
+    _, result = infer_match!(CC.NativeInterpreter(world), match)
+    resulttyp = @something result.result return item
+    rettyp = CC.widenconst(resulttyp)
+    # TODO Show effects and exception type?
+    typstr = postprocessor(string(rettyp))
+    detail = " ::" * typstr
+    prepend_inference_result = @somereal(
+        get_config(state, :completion, :method_signature, :prepend_inference_result),
+        # auto-detect based on client
+        getobjpath(state, :init_params, :clientInfo, :name) ∈ ("Zed", "Zed Dev"))
+    if prepend_inference_result
+        documentation = """
+        ```julia
+        ::$(typstr)
+        ```
+        """ * documentation
+    end
+    return CompletionItem(item;
+        labelDetails = CompletionItemLabelDetails(; detail, description = "method"),
+        detail,
+        documentation = MarkupContent(;
+            kind = MarkupKind.Markdown,
+            value = documentation))
 end
 
 infer_match!(interp::CC.NativeInterpreter, match::Core.MethodMatch) =
