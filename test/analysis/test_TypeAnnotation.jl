@@ -6,6 +6,8 @@ using JETLS: CC, JL, JS
 using JETLS.TypeAnnotation
 using JETLS.TypeAnnotation: get_inferrable_tree, infer_toplevel_tree
 
+include("../HierarchicalTestSet.jl")
+
 module type_annotate_module end
 
 # Run the full TypeAnnotation pipeline through its exported driver and return
