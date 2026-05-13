@@ -709,6 +709,15 @@ function _find_greatest_local(st0::SyntaxTreeC, offset::Integer)
         return nothing
     end
     idx = Ref(first_global - 1)
+    # `@doc`-wrapped definitions don't introduce locals themselves, and macro
+    # expansion replaces the wrapper with synthetic nodes that have no source
+    # positions — leaving the macrocall as the chosen tree would exclude the
+    # cursor from every scope after lowering. Unwrap to the decorated form.
+    if is_macrocall_st0(bas[idx[]], "@doc")
+        decorated = bas[idx[]][end]
+        offset in JS.byte_range(decorated) || return nothing
+        return decorated
+    end
     while JS.kind(bas[idx[]]) === JS.K"block"
         if any(j::Int -> JS.kind(bas[idx[]][j]) === JS.K"local", 1:JS.numchildren(bas[idx[]]))
             # If this `block` contains `local`, it may introduce local bindings.

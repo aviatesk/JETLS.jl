@@ -256,6 +256,31 @@ let code = """
     test_single_cv(code, ["x"])
 end
 
+@testset "local completion for method with docstring" begin
+    let code = """
+        \"\"\"
+        docstring above
+        \"\"\"
+        function foo(x, y)
+            z = x + y
+            │
+        end
+        """
+        test_single_cv(code, ["x", "y", "z"])
+    end
+    let code = """
+        @doc \"\"\"
+        docstring above
+        \"\"\"
+        function foo(x, y)
+            z = x + y
+            │
+        end
+        """
+        test_single_cv(code, ["x", "y", "z"])
+    end
+end
+
 # completion for type declared locals
 @testset "completion for type declared locals" begin
     code = """
