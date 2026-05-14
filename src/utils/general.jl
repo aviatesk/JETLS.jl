@@ -283,6 +283,16 @@ function format_duration(duration::Float64)
     end
 end
 
+# `Base.type_limited_string_from_context` clamps width to `max(_, 120)`, which
+# is too wide for inline hints — call `type_depth_limit` directly. Two passes:
+# `maxdepth` first to cap structural depth, then `maxwidth` to cap textual
+# width. Passing `typemax(Int)` for either is the canonical "no limit".
+function truncate_typstr(str::String, maxdepth::Int, maxwidth::Int)
+    str = Base.type_depth_limit(str, 0; maxdepth)
+    str = Base.type_depth_limit(str, maxwidth)
+    return str
+end
+
 rlstrip(s::AbstractString, args...) = lstrip(rstrip(s, args...), args...)
 
 const JULIA_LIKE_LANGUAGES = [
