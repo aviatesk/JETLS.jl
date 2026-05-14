@@ -103,7 +103,7 @@ function cursor_bindings(
         st0_top::SyntaxTreeC, offset::Int, context_module::Module;
         soft_scope::Bool = false
     )
-    st0 = @something greatest_local(st0_top, offset) return nothing # nothing we can lower
+    st0 = @something lowerable_toplevel_at(st0_top, offset) return nothing
     (st0, _) = desugar_main_macrocall(st0)
     (; ctx3, st2) = try
         jl_lower_for_scope_resolution(context_module, st0; soft_scope)
@@ -245,7 +245,7 @@ function select_target_binding(
         caller::AbstractString = "select_target_binding",
         soft_scope::Bool = false
     )
-    st0 = @something greatest_local(st0_top, offset) return nothing # nothing we can lower
+    st0 = @something lowerable_toplevel_at(st0_top, offset) return nothing
 
     macrocall_result = select_macrocall_binding(st0, offset, context_module, caller; soft_scope)
     macrocall_result !== nothing && return macrocall_result
