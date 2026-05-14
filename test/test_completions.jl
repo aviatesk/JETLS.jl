@@ -246,8 +246,8 @@ end
     end
 end
 
-# completion for code including macros
-let code = """
+@testset "completion for code including macros" begin
+    code = """
     function foo(x)
         │
         return @inline typeof(x)
@@ -300,19 +300,20 @@ end
     @test cnt[] == 1
 end
 
-# local completion for incomplete code shouldn't crash
-let code = """
-    function fo│
-    """
-    @expect_jl_err test_single_cv(code, String[])
-end
-let # XXX somehow wrapping within `module A ... end` is necessary to get `xx` completion for this incomplete code
-    code = """
-    module A
-    function foo(xx, y=x│)
+@testset "local completion for incomplete code shouldn't crash" begin
+    let code = """
+        function fo│
+        """
+        @expect_jl_err test_single_cv(code, String[])
     end
-    """
-    test_single_cv(code, ["xx"], kind=:local)
+    let # XXX somehow wrapping within `module A ... end` is necessary to get `xx` completion for this incomplete code
+        code = """
+        module A
+        function foo(xx, y=x│)
+        end
+        """
+        test_single_cv(code, ["xx"], kind=:local)
+    end
 end
 
 # get_completion_items

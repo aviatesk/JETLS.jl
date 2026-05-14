@@ -120,8 +120,8 @@ include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
     end
 end
 
-@testset "greatest_local" begin
-    # Return the innermost non-toplevel/non-module node containing the cursor.
+@testset "lowerable_toplevel_at" begin
+    # Return the top-level subtree whose byte range contains the cursor.
     let code = """
         function foo(│x│)
             return │x│ + 1
@@ -131,13 +131,13 @@ end
         st = jlparse(clean_code)
         for pos in positions
             offset = JETLS.xy_to_offset(clean_code, pos, @__FILE__)
-            local_tree = JETLS.greatest_local(st, offset)
+            local_tree = JETLS.lowerable_toplevel_at(st, offset)
             @test !isnothing(local_tree)
             @test JS.kind(local_tree) === JS.K"function"
         end
     end
 
-    # Cursor inside a module but not any contained statement: no local scope.
+    # Cursor inside a module but not any contained statement: no top-level subtree to lower.
     let code = """
         module M
         │
@@ -146,19 +146,18 @@ end
         clean_code, positions = JETLS.get_text_and_positions(code)
         offset = JETLS.xy_to_offset(clean_code, only(positions), @__FILE__)
         st = jlparse(clean_code)
-        @test isnothing(JETLS.greatest_local(st, offset))
+        @test isnothing(JETLS.lowerable_toplevel_at(st, offset))
     end
 
     # Offset past the end of the source.
     let code = "x = 1\n"
         st = jlparse(code)
-        @test isnothing(JETLS.greatest_local(st, 1000))
+        @test isnothing(JETLS.lowerable_toplevel_at(st, 1000))
     end
 
-    # Fallback: when the cursor is just past the last token on a line (e.g.
-    # `export foo│\n`), the raw offset lands on whitespace owned only by
-    # `toplevel`. `greatest_local` should retry with `offset - 1` and return
-    # the enclosing statement.
+    # Fallback: when the cursor is just past the last token on a line (e.g. `export foo│\n`),
+    # the raw offset lands on whitespace owned only by `toplevel`.
+    # `lowerable_toplevel_at` should retry with `offset - 1` and return the enclosing statement.
     let code = """
         export foo
         foo(1)
@@ -167,7 +166,7 @@ end
         st = jlparse(clean_code)
         # Offset at the newline after `foo` (i.e. one past the identifier's last byte).
         offset = sizeof("export foo") + 1
-        local_tree = JETLS.greatest_local(st, offset)
+        local_tree = JETLS.lowerable_toplevel_at(st, offset)
         @test !isnothing(local_tree)
         @test JS.kind(local_tree) === JS.K"export"
     end
@@ -176,7 +175,7 @@ end
     let code = "x = 1\ny\n"
         st = jlparse(code)
         offset = sizeof("x = 1\ny") + 1  # just past `y`, on the newline
-        local_tree = JETLS.greatest_local(st, offset)
+        local_tree = JETLS.lowerable_toplevel_at(st, offset)
         @test !isnothing(local_tree)
         @test JS.kind(local_tree) === JS.K"Identifier"
         @test JS.sourcetext(local_tree) == "y"
@@ -847,28 +846,26 @@ end
 end
 
 @testset "iterate_toplevel_tree" begin
-    let cnt = 0,
-        func1 = struct1 = false
+    let cnt = Ref(0), func1 = Ref(false), struct1 = Ref(false)
         JETLS.iterate_toplevel_tree(jlparse("""
             module Module1
             func1(x) = x
             struct Struct1 end
             end
             """)) do st0
-            cnt += 1
+            cnt[] += 1
             s = JS.sourcetext(st0)
             if s == "func1(x) = x"
-                func1 = true
+                func1[] = true
             elseif s == "struct Struct1 end"
-                struct1 = true
+                struct1[] = true
             end
         end
-        @test cnt == 2
-        @test func1 && struct1
+        @test cnt[] == 2
+        @test func1[] && struct1[]
     end
 
-    let cnt = 0,
-        func1 = struct1 = false
+    let cnt = Ref(0), func1 = Ref(false), struct1 = Ref(false)
         JETLS.iterate_toplevel_tree(jlparse("""
             \"\"\"
             Docstring for `module Module1`
@@ -881,16 +878,16 @@ end
             struct Struct1 end
             end
             """)) do st0
-            cnt += 1
+            cnt[] += 1
             s = JS.sourcetext(st0)
             if s == "func1(x) = x"
-                func1 = true
+                func1[] = true
             elseif s == "struct Struct1 end"
-                struct1 = true
+                struct1[] = true
             end
         end
-        @test cnt == 2
-        @test func1 && struct1
+        @test cnt[] == 2
+        @test func1[] && struct1[]
     end
 end
 

@@ -125,6 +125,7 @@ is_new_style_macrocall0(st0::SyntaxTreeC) =
     is_macrocall_st0(st0, NEW_STYLE_MACROCALL_NAMES...)
 
 is_doc0(st0::SyntaxTreeC) = is_macrocall_st0(st0, "@doc"; from=Core)
+is_doc0_any(st0::SyntaxTreeC) = is_macrocall_st0(st0, "@doc") # Explicit `@doc` can have any module set.
 
 is_cmd0(st0::SyntaxTreeC) = is_macrocall_st0(st0, "@cmd"; from=Core)
 
@@ -628,13 +629,16 @@ function iterate_toplevel_tree(callback, st0_top::SyntaxTreeC)
                 push!(sl, st0[i])
             end
         elseif JS.kind(st0) === JS.K"module"
-            stblk = st0[end]
-            JS.kind(stblk) === JS.K"block" || continue
+            # The body `K"block"` is typically the last child, but trailing
+            # `K"error"` nodes from incomplete code can push it earlier.
+            stblk_idx = @something findlast(i::Int -> JS.kind(st0[i]) === JS.K"block",
+                1:JS.numchildren(st0)) continue
+            stblk = st0[stblk_idx]
             for i = JS.numchildren(stblk):-1:1 # reversed since we use `pop!`
                 push!(sl, stblk[i])
             end
-        elseif is_doc0(st0)
-            # Analyze only the code to which docstrings are attached
+        elseif is_doc0_any(st0)
+            # Analyze only the code to which docstrings are attached.
             push!(sl, st0[end])
         else # st0 is lowerable tree
             ret = callback(st0)
@@ -684,52 +688,24 @@ end
 byte_ancestors(flt, st::SyntaxTreeC, byte::Integer) = byte_ancestors(flt, st, byte:byte)
 
 """
-    greatest_local(st0::SyntaxTreeC, offset::Integer) -> st::Union{SyntaxTreeC, Nothing}
+    lowerable_toplevel_at(st0_top::SyntaxTreeC, offset::Integer) -> st::Union{SyntaxTreeC, Nothing}
 
-Return the largest tree that can introduce local bindings that are visible to the cursor
-(if any such tree exists).
+Return the lowerable top-level subtree of `st0_top` whose byte range contains `offset`, or
+`nothing` if no such subtree exists. Equivalent to running [`iterate_toplevel_tree`](@ref)
+and picking the first hit whose byte range contains `offset`, with an `offset - 1` retry
+for cursor positions just past the last token of a statement (e.g. `export foo│\\n`).
 """
-function greatest_local(st0::SyntaxTreeC, offset::Integer)
-    result = _find_greatest_local(st0, offset)
+function lowerable_toplevel_at(st0_top::SyntaxTreeC, offset::Integer)
+    result = _lowerable_toplevel_at(st0_top, offset)
     result !== nothing && return result
-    # When the cursor sits just past the last token of a line (e.g. `export
-    # foo│\n`), `offset` points at a byte owned only by `toplevel`, so the
-    # initial lookup yields nothing. Retry with `offset - 1` to select the
-    # node just to the left of the cursor, mirroring the offset-1 fallbacks
-    # in `_select_target_binding` / `select_macrocall_binding`.
-    return offset > 1 ? _find_greatest_local(st0, offset - 1) : nothing
+    return offset > 1 ? _lowerable_toplevel_at(st0_top, offset - 1) : nothing
 end
 
-function _find_greatest_local(st0::SyntaxTreeC, offset::Integer)
-    bas = byte_ancestors(st0, offset)
-    first_global = @something begin
-        findfirst(st::SyntaxTreeC -> JS.kind(st) in JS.KSet"toplevel module", bas)
-    end return nothing
-    if first_global == 1
-        return nothing
+function _lowerable_toplevel_at(st0_top::SyntaxTreeC, offset::Integer)
+    return iterate_toplevel_tree(st0_top) do st0::SyntaxTreeC
+        offset in JS.byte_range(st0) || return nothing
+        return TraversalReturn(st0; terminate=true)
     end
-    idx = Ref(first_global - 1)
-    # `@doc`-wrapped definitions don't introduce locals themselves, and macro
-    # expansion replaces the wrapper with synthetic nodes that have no source
-    # positions — leaving the macrocall as the chosen tree would exclude the
-    # cursor from every scope after lowering. Unwrap to the decorated form.
-    if is_macrocall_st0(bas[idx[]], "@doc")
-        decorated = bas[idx[]][end]
-        offset in JS.byte_range(decorated) || return nothing
-        return decorated
-    end
-    while JS.kind(bas[idx[]]) === JS.K"block"
-        if any(j::Int -> JS.kind(bas[idx[]][j]) === JS.K"local", 1:JS.numchildren(bas[idx[]]))
-            # If this `block` contains `local`, it may introduce local bindings.
-            # For correct scope analysis, we need to analyze this entire block
-            break
-        end
-        # `bas[i]` is a block within a global scope, so can't introduce local bindings.
-        # Shrink the tree (mostly for performance).
-        idx[] -= 1
-        idx[] < 1 && return nothing
-    end
-    return bas[idx[]]
 end
 
 """
