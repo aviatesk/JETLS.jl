@@ -67,33 +67,118 @@ function get_sort_text(offset::Int)
     return get(sort_texts, offset, max_sort_text)
 end
 
+# Per-request shared context
+# ==========================
+
+"""
+    CompletionCtx
+
+Per-request scratch space that the four completion routines (`call_completions!`,
+`global_completions!`, `local_completions!`, `add_emoji_latex_completions!`) share.
+
+Computes once and caches:
+- syntax tree (`st0`) — feeding multiple routines that each used to call
+  `build_syntax_tree(fi)` on their own.
+- `get_context_info` projection — `context_module`, `world`, `postprocessor`.
+- `offset` / `soft_scope` — derived from `pos` / `uri`.
+
+Two heavier pieces are built lazily on first request:
+- `InferredTreeContext` — shared between any routines that actually need
+  type info at the cursor (always `call_completions!`, optionally
+  `global_completions!` for dot-prefix). `build_inferred_context_at` keys
+  off the toplevel statement containing the cursor, so a single context
+  serves every routine here.
+- `cursor_bindings` result — shared between `local_completions!` and the
+  kwarg branch of `call_completions!`.
+
+A future refactor that unifies `cursor_bindings` and `build_inferred_context_at`
+at the `jl_lower_for_scope_resolution` level can replace the lazy accessors
+without disturbing call sites.
+"""
+struct CompletionCtx
+    state::ServerState
+    uri::URI
+    fi::FileInfo
+    pos::Position
+    context::Union{Nothing,CompletionContext}
+
+    # Eagerly populated by the constructor.
+    offset::Int
+    st0_top::SyntaxTreeC
+    context_module::Module
+    world::UInt
+    postprocessor::LSPostProcessor
+    soft_scope::Bool
+
+    # Lazy. `isassigned(ref)` distinguishes "not yet computed" from
+    # "computed but the underlying build returned `nothing`".
+    inferred_ctx::Base.RefValue{Union{Nothing,InferredTreeContext}}
+    cursor_bindings::Base.RefValue{Union{Nothing,Vector{Tuple{JL.BindingInfo,SyntaxTreeC,Int}}}}
+end
+
+function CompletionCtx(
+        state::ServerState, uri::URI, fi::FileInfo, pos::Position,
+        context::Union{Nothing,CompletionContext},
+    )
+    st0_top = build_syntax_tree(fi)
+    (; context_module, world, postprocessor) = get_context_info(state, uri, pos)
+    offset = xy_to_offset(fi, pos)
+    soft_scope = is_notebook_cell_uri(state, uri)
+    return CompletionCtx(state, uri, fi, pos, context,
+        offset, st0_top, context_module, world, postprocessor, soft_scope,
+        Base.RefValue{Union{Nothing,InferredTreeContext}}(),
+        Base.RefValue{Union{Nothing,Vector{Tuple{JL.BindingInfo,SyntaxTreeC,Int}}}}())
+end
+
+# Why not `build_inferred_context_at(..., offset:offset; ...)` directly:
+# It filters toplevel subtrees by `rng ⊆ JS.byte_range(toplevel)`, and the
+# cursor can sit past the toplevel's `last_byte` in incomplete code (e.g.
+# `sin(42,│\n` — parser ends the `K"call"` at byte 7, cursor at byte 8 is
+# outside). `lowerable_toplevel_at` has an `offset - 1` retry that handles
+# this, so we go through it and pass the toplevel's actual byte range.
+function get_inferred_ctx!(comp_ctx::CompletionCtx; caller::AbstractString)
+    isassigned(comp_ctx.inferred_ctx) && return comp_ctx.inferred_ctx[]
+    toplevel = lowerable_toplevel_at(comp_ctx.st0_top, comp_ctx.offset)
+    ctx = toplevel === nothing ? nothing : build_inferred_context_at(
+        comp_ctx.st0_top, comp_ctx.context_module, JS.byte_range(toplevel);
+        world=comp_ctx.world, caller)
+    return comp_ctx.inferred_ctx[] = ctx
+end
+
+function get_cursor_bindings_cached!(comp_ctx::CompletionCtx)
+    isassigned(comp_ctx.cursor_bindings) && return comp_ctx.cursor_bindings[]
+    cbs = cursor_bindings(comp_ctx.st0_top, comp_ctx.offset, comp_ctx.context_module;
+        soft_scope=comp_ctx.soft_scope)
+    return comp_ctx.cursor_bindings[] = cbs
+end
+
+# Typical completion UI
+# =====================
+
+# `to|` ->
+# ```
+#    ┌───┬──────────────────────────┬────────────────────────────┐
+#    │(1)│to_completion(2)     (3) >│(4)...                      │
+#    │(1)│to_indices(2)        (3)  │# Typical completion UI ─(5)│
+#    │(1)│touch(2)             (3)  │                          │ │
+#    └───┴──────────────────────────┤to|                       │ │
+#                                   │...                     ──┘ │
+#                                   └────────────────────────────┘
+# ```
+# - (1) Icon corresponding to CompletionItem's `ci.kind`
+# - (2) `ci.labelDetails.detail`
+# - (3) `ci.labelDetails.description`
+# - (4) `ci.detail` (possibly at (3))
+# - (5) `ci.documentation`
+#
+# Sending (4) and (5) to the client can happen eagerly in response to <TAB>
+# (textDocument/completion), or lazily, on selection in the list
+# (completionItem/resolve).  The LSP specification notes that more can be deferred
+# in later versions.
+
 # local completions
 # =================
 
-"""
-# Typical completion UI
-
-`to|` ->
-```
-   ┌───┬──────────────────────────┬────────────────────────────┐
-   │(1)│to_completion(2)     (3) >│(4)...                      │
-   │(1)│to_indices(2)        (3)  │# Typical completion UI ─(5)│
-   │(1)│touch(2)             (3)  │                          │ │
-   └───┴──────────────────────────┤to|                       │ │
-                                  │...                     ──┘ │
-                                  └────────────────────────────┘
-```
-- (1) Icon corresponding to CompletionItem's `ci.kind`
-- (2) `ci.labelDetails.detail`
-- (3) `ci.labelDetails.description`
-- (4) `ci.detail` (possibly at (3))
-- (5) `ci.documentation`
-
-Sending (4) and (5) to the client can happen eagerly in response to <TAB>
-(textDocument/completion), or lazily, on selection in the list
-(completionItem/resolve).  The LSP specification notes that more can be deferred
-in later versions.
-"""
 function to_completion(
         binding::JL.BindingInfo, st::SyntaxTreeC, sort_offset::Int,
         uri::URI, fi::FileInfo
@@ -152,19 +237,15 @@ function should_invoke_auto_completion(context::CompletionContext, allow_macro::
 end
 
 function local_completions!(
-        items::Dict{String,CompletionItem},
-        s::ServerState, uri::URI, fi::FileInfo, pos::Position, context::Union{Nothing,CompletionContext}
+        items::Dict{String,CompletionItem}, comp_ctx::CompletionCtx,
     )
-    should_invoke_auto_completion(context) || return nothing
+    should_invoke_auto_completion(comp_ctx.context) || return nothing
 
     # NOTE don't bail out even if `length(fi.parsed_stream.diagnostics) ≠ 0`
     # so that we can get some completions even for incomplete code
-    st0 = build_syntax_tree(fi)
-    (; context_module) = get_context_info(s, uri, pos)
-    soft_scope = is_notebook_cell_uri(s, uri)
-    cbs = @something cursor_bindings(st0, xy_to_offset(fi, pos), context_module; soft_scope) return nothing
+    cbs = @something get_cursor_bindings_cached!(comp_ctx) return nothing
     for (bi, st, dist) in cbs
-        ci = to_completion(bi, st, dist, uri, fi)
+        ci = to_completion(bi, st, dist, comp_ctx.uri, comp_ctx.fi)
         prev_ci = get(items, ci.label, nothing)
         # Name collisions: overrule existing global completions with our own,
         # unless our completion is also a global, in which case the existing
@@ -180,12 +261,11 @@ end
 # ==================
 
 function global_completions!(
-        items::Dict{String,CompletionItem},
-        state::ServerState, uri::URI, fi::FileInfo, pos::Position, context::Union{Nothing,CompletionContext},
+        items::Dict{String,CompletionItem}, comp_ctx::CompletionCtx,
     )
+    (; state, uri, fi, pos, context, st0, world, postprocessor) = comp_ctx
+    context_module = comp_ctx.context_module
     should_invoke_auto_completion(context, #=allow_macro=#true) || return nothing
-
-    (; context_module, world, postprocessor) = get_context_info(state, uri, pos)
 
     prev_token = token_before_offset(fi, pos)
     prev_kind = isnothing(prev_token) ? nothing : JS.kind(prev_token)
@@ -220,12 +300,10 @@ function global_completions!(
     # since macros are always defined top-level
     is_completed = is_macro_invoke
 
-    st = build_syntax_tree(fi)
-    offset = xy_to_offset(fi, pos)
-    dotprefix = select_dotprefix_identifier(st, offset)
+    dotprefix = select_dotprefix_identifier(st0, comp_ctx.offset)
     if !isnothing(dotprefix)
         rng = JS.byte_range(dotprefix)
-        ctx = build_inferred_context_at(st, context_module, rng; world, caller="global_completions!")
+        ctx = get_inferred_ctx!(comp_ctx; caller="global_completions!")
         prefixtyp = ctx === nothing ? nothing : get_type_for_range(ctx, rng)
         if prefixtyp === nothing
             prefixtyp = resolve_global_const(context_module, dotprefix, world)
@@ -373,9 +451,9 @@ end
 # Add LaTeX and emoji completions to the items dictionary and return boolean indicating
 # whether any completions were added.
 function add_emoji_latex_completions!(
-        items::Dict{String,CompletionItem},
-        state::ServerState, uri::URI, fi::FileInfo, pos::Position
+        items::Dict{String,CompletionItem}, comp_ctx::CompletionCtx,
     )
+    (; state, uri, fi, pos) = comp_ctx
     backslash_offset, emojionly = @something get_backslash_offset(fi, pos) return nothing
     backslash_pos = offset_to_xy(fi, backslash_offset)
     edit_range, _ = unadjust_range(state, uri, Range(;
@@ -461,9 +539,9 @@ end
 const var_quote_doc = get_keyword_doc(Symbol("var\"name\""))
 
 function keyword_completions!(
-        items::Dict{String,CompletionItem}, state::ServerState,
-        context::Union{Nothing,CompletionContext}
+        items::Dict{String,CompletionItem}, comp_ctx::CompletionCtx,
     )
+    (; state, context) = comp_ctx
     should_invoke_auto_completion(context) || return nothing
 
     merge!(items, KEYWORD_COMPLETIONS)
@@ -600,12 +678,10 @@ function should_insert_spaces_around_equal(fi::FileInfo, ca::CallArgs)
 end
 
 function call_completions!(
-        items::Dict{String,CompletionItem},
-        state::ServerState, uri::URI, fi::FileInfo, pos::Position,
-        context::Union{Nothing,CompletionContext}
+        items::Dict{String,CompletionItem}, comp_ctx::CompletionCtx,
     )
-    st0 = build_syntax_tree(fi)
-    b = xy_to_offset(fi, pos)
+    (; state, fi, pos, context, st0, context_module, world, postprocessor) = comp_ctx
+    b = comp_ctx.offset
     call = @something cursor_call(fi.parsed_stream, st0, b) return nothing
     ca = CallArgs(call, b)
 
@@ -616,8 +692,7 @@ function call_completions!(
 
     should_complete_method_sigs || should_complete_kwargs || return nothing
 
-    (; context_module, world, postprocessor) = get_context_info(state, uri, pos)
-    ctx = build_inferred_context_at(st0, context_module, JS.byte_range(call); world, caller="call_completions!")
+    ctx = get_inferred_ctx!(comp_ctx; caller="call_completions!")
     fntyp = ctx === nothing ? nothing : get_type_for_range(ctx, JS.byte_range(call[1]))
     if fntyp === nothing
         fntyp = resolve_global_const(context_module, call[1], world)
@@ -642,12 +717,11 @@ function call_completions!(
             use_snippet = supports(state, :textDocument, :completion, :completionItem, :snippetSupport))
     else
         @assert should_complete_kwargs
-        soft_scope = is_notebook_cell_uri(state, uri)
         kwarg_comp_info = (;
             existing_kws = Set{String}(keys(ca.kw_map)),
             seen_kwarg_names = Set{String}(),
             insert_spaces = should_insert_spaces_around_equal(fi, ca),
-            local_bindings = has_equals ? nothing : cursor_bindings(st0, b, context_module; soft_scope))
+            local_bindings = has_equals ? nothing : get_cursor_bindings_cached!(comp_ctx))
     end
 
     method_sig_sort_idx = 1
@@ -867,14 +941,15 @@ function get_completion_items(
         state::ServerState, uri::URI, fi::FileInfo,
         pos::Position, context::Union{Nothing,CompletionContext}
     )
+    comp_ctx = CompletionCtx(state, uri, fi, pos, context)
     items = Dict{String,CompletionItem}()
     # order matters; see local_completions!
     isIncomplete = @something(
-        add_emoji_latex_completions!(items, state, uri, fi, pos),
-        call_completions!(items, state, uri, fi, pos, context),
-        global_completions!(items, state, uri, fi, pos, context),
-        local_completions!(items, state, uri, fi, pos, context),
-        keyword_completions!(items, state, context),
+        add_emoji_latex_completions!(items, comp_ctx),
+        call_completions!(items, comp_ctx),
+        global_completions!(items, comp_ctx),
+        local_completions!(items, comp_ctx),
+        keyword_completions!(items, comp_ctx),
         false)
     return collect(values(items)), isIncomplete
 end
