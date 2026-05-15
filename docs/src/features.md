@@ -158,10 +158,6 @@ Selecting a candidate inserts remaining positional arguments as snippet
 placeholders with type annotations. Inferred return type and documentation
 are resolved lazily.
 
-See [`[completion.method_signature] prepend_inference_result`](@ref
-config/completion/method_signature/prepend_inference_result) for the
-configuration option that shows the inferred return type inline.
-
 > ```@raw html
 > <div class="display-light-only">
 > ```

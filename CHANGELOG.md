@@ -49,6 +49,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > The new shape adds [`inlay_hint.block_end.enabled`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint/block_end/enabled) for toggling block-end hints independently, and renames `inlay_hint.block_end_min_lines` to [`inlay_hint.block_end.min_lines`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint/block_end/min_lines).
 > Existing configs keep working for now: the legacy key is still accepted at load time and mapped onto the new key in memory (your config file is not modified automatically), with a one-shot deprecation warning. The legacy alias will be removed in releases after **June 2026**, so if you are still using `inlay_hint.block_end_min_lines`, please update your config.
 
+> [!warning]
+> The `completion.method_signature.prepend_inference_result` configuration option was removed. Inferred return types are now always shown both as `CompletionItem.detail` (` -> T` typically shown next to the candidate label) and as a leading `signature -> T` code fence at the top of the method signature completion documentation, so the previous client-specific opt-in is no longer needed.
+> Existing configs keep working for now: the removed key is still accepted at load time and silently dropped, with a one-shot deprecation warning. The legacy key will be rejected outright in releases after **June 2026**, so if you are still setting `completion.method_signature.prepend_inference_result`, please remove it from your config.
+
 ### Added
 
 - Added support for "Go to Type Definition" (`textDocument/typeDefinition`).

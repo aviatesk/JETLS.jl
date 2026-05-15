@@ -33,9 +33,6 @@ path = ""                          # string (optional), glob pattern for file pa
 [completion.latex_emoji]
 strip_prefix = false               # boolean, default: (unset) auto-detect
 
-[completion.method_signature]
-prepend_inference_result = false   # boolean, default: (unset) auto-detect
-
 [code_lens]
 references = false                 # boolean, default: false
 testrunner = true                  # boolean, default: true
@@ -61,7 +58,6 @@ executable = "testrunner"          # string, default: "testrunner" (or "testrunn
   - [`[[diagnostic.patterns]]`](@ref config/diagnostic/patterns)
 - [`[completion]`](@ref config/completion)
   - [`[completion.latex_emoji] strip_prefix`](@ref config/completion/latex_emoji/strip_prefix)
-  - [`[completion.method_signature] prepend_inference_result`](@ref config/completion/method_signature/prepend_inference_result)
 - [`[code_lens]`](@ref config/code_lens)
   - [`[code_lens] references`](@ref config/code_lens/references)
   - [`[code_lens] testrunner`](@ref config/code_lens/testrunner)
@@ -402,38 +398,6 @@ option.
 ```toml
 [completion.latex_emoji]
 strip_prefix = true  # Force prefix stripping for clients with sortText issues
-```
-
-!!! tip "Help improve auto-detection"
-    If explicitly setting this option clearly improves behavior for your client,
-    consider submitting a PR to add your client to the [auto-detection](https://github.com/aviatesk/JETLS.jl/blob/14fdc847252579c27e41cd50820aee509f8fd7bd/src/completions.jl#L386) logic.
-
-#### [`[completion.method_signature] prepend_inference_result`](@id config/completion/method_signature/prepend_inference_result)
-
-- **Type**: boolean
-- **Default**: (unset) auto-detect based on client
-
-Controls whether to prepend inferred return type information to the documentation
-of method signature completion items.
-
-In some editors (e.g., Zed), additional information like inferred return type
-displayed when an item is selected may be cut off in the UI when the method
-signature text is long.
-
-When set to `true`, JETLS prepends the return type as a code block to the
-documentation, ensuring it is always visible.
-
-When set to `false`, the return type is only shown alongside the completion item
-(as `CompletionItem.detail` in LSP terms, which may be cut off in some editors).
-
-When not set (default), JETLS auto-detects based on the client name and applies
-the appropriate behavior. Note that the auto-detection only covers a limited set
-of known clients, so if you experience issues with return type visibility, try
-explicitly setting this option.
-
-```toml
-[completion.method_signature]
-prepend_inference_result = true  # Show return type in documentation
 ```
 
 !!! tip "Help improve auto-detection"
