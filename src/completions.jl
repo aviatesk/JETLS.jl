@@ -893,7 +893,7 @@ function resolve_completion_item(state::ServerState, item::CompletionItem)
     elseif (data isa MethodSignatureCompletionData &&
             completion_resolver_info isa MethodSignatureCompletionResolverInfo &&
             data.resolver_id == completion_resolver_info.id)
-        return resolve_method_signature_completion_item(state, item, data, completion_resolver_info)
+        return resolve_method_signature_completion_item(item, data, completion_resolver_info)
     elseif (data isa PropertyCompletionData &&
             completion_resolver_info isa PropertyCompletionResolverInfo &&
             data.resolver_id == completion_resolver_info.id)
@@ -988,37 +988,34 @@ function resolve_global_completion_item(
 end
 
 function resolve_method_signature_completion_item(
-        state::ServerState, item::CompletionItem, data::MethodSignatureCompletionData,
+        item::CompletionItem, data::MethodSignatureCompletionData,
         completion_resolver_info::MethodSignatureCompletionResolverInfo
     )
     (; world, matches, postprocessor) = completion_resolver_info
     1 ≤ data.match_idx ≤ length(matches) || return item # just to make sure
     match = matches[data.match_idx]
     doc = @something lookup_method_documentation(match, world) return item
-    documentation = postprocessor(string(doc))
+    docstr = postprocessor(string(doc))
     _, result = infer_match!(world, match)
     resulttyp = @something result.result return item
     rettyp = CC.widenconst(resulttyp)
     # TODO Show effects and exception type?
-    typstr = postprocessor(string(rettyp))
-    detail = " ::" * typstr
-    prepend_inference_result = @somereal(
-        get_config(state, :completion, :method_signature, :prepend_inference_result),
-        # auto-detect based on client
-        getobjpath(state, :init_params, :clientInfo, :name) ∈ ("Zed", "Zed Dev"))
-    if prepend_inference_result
-        documentation = """
-        ```julia
-        ::$(typstr)
-        ```
-        """ * documentation
-    end
+    typstr = truncate_typstr(
+        postprocessor(sprint(show, rettyp; context = :compact => true)),
+        #=maxdepth=#3, #=maxwidth=#20)
+    detail = " -> " * typstr
+    full_typstr = postprocessor(string(rettyp))
+    value = """
+    ```julia
+    $(item.label) -> $(full_typstr)
+    ```
+    ---
+    """ * docstr
+    documentation = MarkupContent(; kind = MarkupKind.Markdown, value)
     return CompletionItem(item;
         labelDetails = CompletionItemLabelDetails(; detail, description = "method"),
         detail,
-        documentation = MarkupContent(;
-            kind = MarkupKind.Markdown,
-            value = documentation))
+        documentation)
 end
 
 # request handler

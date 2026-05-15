@@ -378,23 +378,25 @@ unmatched_key_msg(header_msg::AbstractString, path::Vector{String}) =
 # this *before* parsing. Already-migrated values win over the legacy alias.
 function migrate_deprecated_config_keys!(
         config_dict::AbstractDict,
-        deprecated_configs::Vector{Pair{Vector{String},Vector{String}}} = deprecated_configurations
+        deprecated_configs::Vector{Pair{Vector{String},Union{Nothing,Vector{String}}}} = deprecated_configurations
     )
     warnings = String[]
     for (old_path, new_path) in deprecated_configs
-        old_parent = walk_nested_dict(config_dict, @view old_path[1:end-1])
-        old_parent === nothing && continue
-        haskey(old_parent, old_path[end]) || continue
-        old_value = pop!(old_parent, old_path[end])
-
-        new_parent = ensure_nested_dict!(config_dict, @view new_path[1:end-1])
-        if new_parent !== nothing && !haskey(new_parent, new_path[end])
-            new_parent[new_path[end]] = old_value
+        popped = @something pop_nested!(config_dict, old_path) continue
+        old_value = something(popped)
+        if new_path === nothing
+            push!(warnings,
+                "`" * join(old_path, ".") * "` is deprecated and no longer has " *
+                "any effect; please remove it from your config.")
+        else
+            new_parent = ensure_nested_dict!(config_dict, @view new_path[1:end-1])
+            if new_parent !== nothing && !haskey(new_parent, new_path[end])
+                new_parent[new_path[end]] = old_value
+            end
+            push!(warnings,
+                "`" * join(old_path, ".") * "` is deprecated; " *
+                "use `" * join(new_path, ".") * "` instead.")
         end
-
-        push!(warnings,
-            "`" * join(old_path, ".") * "` is deprecated; " *
-            "use `" * join(new_path, ".") * "` instead.")
     end
     return warnings
 end
@@ -407,6 +409,22 @@ function walk_nested_dict(d::AbstractDict, path)
         d isa AbstractDict || return nothing
     end
     return d
+end
+
+# Pop `path[end]` from the nested location in `d`. Empty parent dicts along the
+# walk are pruned bottom-up so the schema doesn't reject leftover table headers
+# (e.g. an empty `[completion.method_signature]` after removing its only key).
+# Returns `Some(value)` on success, or `nothing` if any step is missing.
+function pop_nested!(d::AbstractDict, path)
+    isempty(path) && return nothing
+    if length(path) == 1
+        return haskey(d, path[1]) ? Some(pop!(d, path[1])) : nothing
+    end
+    child = get(d, path[1], nothing)
+    child isa AbstractDict || return nothing
+    result = pop_nested!(child, @view path[2:end])
+    isempty(child) && pop!(d, path[1])
+    return result
 end
 
 # Like `walk_nested_dict` but creates missing intermediate dicts.
