@@ -118,6 +118,36 @@ resolved lazily when a candidate is selected.
 > </div>
 > ```
 
+### [Property completion](@id features/completion/property)
+
+Triggered automatically by typing `.` after a typed expression (`x.│`, `r.pat│`).
+Candidate names are derived from the dot prefix's inferred type via
+`propertynames(::T)`, so general struct property names and types that define a
+custom `propertynames` overload are both handled uniformly.
+The inferred type of each property (`x.field :: T`) is resolved lazily,
+only when the client requests details for a focused item.
+
+For union-typed prefixes (`x::Union{Foo, Bar}`), the offered names are the union
+of each component's properties, and the resolved type detail merges each
+component's per-property type. The common `Union{T, Nothing}` pattern thus still
+surfaces `T`'s properties.
+
+When the dot prefix is a module (`Base.│`), the request falls through to module-member completion
+(see [Global and local completion](@ref features/completion/global-local)).
+
+> ```@raw html
+> <div class="display-light-only">
+> ```
+> ![Property completion](assets/features/completion-property.png)
+> ```@raw html
+> </div>
+> <div class="display-dark-only">
+> ```
+> ![Property completion](assets/features/completion-property-dark.png)
+> ```@raw html
+> </div>
+> ```
+
 ### [Method signature completion](@id features/completion/method-signature)
 
 Triggered inside a function call (after `(`, `,`, or space). Compatible method

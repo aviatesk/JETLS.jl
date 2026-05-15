@@ -19,6 +19,7 @@ end
         @testset "markdown" include("utils/test_markdown.jl")
         @testset "string" include("utils/test_string.jl")
         @testset "jl-syntax-macros" include("utils/test_jl_syntax_macros.jl")
+        @testset "native-inference" include("utils/test_native_inference.jl")
     end
     @testset "analysis" verbose=true begin
         @testset "occurrence" include("analysis/test_occurrence_analysis.jl")

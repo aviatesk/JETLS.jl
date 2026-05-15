@@ -518,6 +518,169 @@ end
     end
 end
 
+# Variant of `with_completion_items` for property completion tests.
+# Adds two things the plain helper doesn't currently expose:
+# - `context_module` kwarg, forwarded to `get_completion_items` so a test fixture can stay
+#   in its own module instead of leaking into `Main`.
+# - The `state` object is passed to the tester (4th positional), so tests can call
+#   `JETLS.resolve_completion_item(state, item)` to exercise the lazy detail / documentation
+#   rendering path.
+# TODO Fold this back into `with_completion_items`: thread `state` to
+# the tester (mechanical `(_, result, _)` → `(_, result, _, _)` sweep
+# across ~24 callsites) and forward `context_module` from kwargs there.
+function with_property_completion_items(
+        tester, text::AbstractString;
+        context::Union{Nothing, CompletionContext} = nothing,
+        context_module::Union{Nothing, Module} = nothing,
+        kwargs...
+    )
+    clean_code, positions = JETLS.get_text_and_positions(text; kwargs...)
+    uri = filepath2uri(@__FILE__)
+    state = JETLS.ServerState()
+    state.init_params = InitializeParams(;
+        processId = getpid(),
+        rootUri = nothing,
+        capabilities = ClientCapabilities())
+    fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
+    JETLS.store!(state.file_cache) do cache
+        Base.PersistentDict(cache, uri => fi), nothing
+    end
+    for (i, pos) in enumerate(positions)
+        items, isIncomplete = JETLS.get_completion_items(state, uri, fi, pos, context;
+            context_module)
+        tester(i, (; items, isIncomplete), state, uri)
+    end
+end
+
+# `propertynames`/`getfield` mismatch fixture for property completion tests
+module broken_props_fixture
+    struct BrokenProps end
+    Base.propertynames(::BrokenProps) = (:no_such_field,)
+end
+
+@testset "property completion" begin
+    dot_context = CompletionContext(;
+        triggerKind = CompletionTriggerKind.TriggerCharacter,
+        triggerCharacter = ".")
+
+    only_props(items) = filter(items) do it
+        ld = it.labelDetails
+        ld !== nothing && ld.description == "property"
+    end
+
+    # `r.│` on a `Regex`-typed parameter should offer `Regex`'s properties.
+    # Type detail is filled in only after a resolve request — the initial
+    # response carries `PropertyCompletionData` and no `detail`.
+    let text = """
+        function bar(r::Regex)
+            r.│
+        end
+        """
+        cnt = Ref(0)
+        with_property_completion_items(text; context=dot_context) do _, result, state, _
+            props = only_props(result.items)
+            labels = Set(it.label for it in props)
+            @test labels == Set(String.(fieldnames(Regex)))
+            for it in props
+                @test it.kind === CompletionItemKind.Property
+                @test it.labelDetails.detail === nothing
+                @test it.data isa JETLS.PropertyCompletionData
+            end
+            pattern_item = first(filter(it -> it.label == "pattern", props))
+            resolved = JETLS.resolve_completion_item(state, pattern_item)
+            @test resolved.labelDetails.detail !== nothing
+            @test occursin("String", resolved.labelDetails.detail)
+            cnt[] += 1
+        end
+        @test cnt[] == 1
+    end
+
+    # Untyped prefix: no useful type to query, so no property completions.
+    let text = """
+        function bar(x)
+            x.│
+        end
+        """
+        cnt = Ref(0)
+        with_property_completion_items(text; context=dot_context) do _, result, _, _
+            @test isempty(only_props(result.items))
+            cnt[] += 1
+        end
+        @test cnt[] == 1
+    end
+
+    # Union prefix offers the union of property names, and each property's
+    # resolved type detail is the union of its per-component types.
+    let text = """
+        function bar(p::Union{Pair{Symbol,Int}, Pair{Symbol,String}})
+            p.│
+        end
+        """
+        cnt = Ref(0)
+        with_property_completion_items(text; context=dot_context) do _, result, state, _
+            props = only_props(result.items)
+            labels = Set(it.label for it in props)
+            @test labels == Set(["first", "second"])
+            # Resolve `first` → `Symbol` (same on both sides).
+            first_item = first(filter(it -> it.label == "first", props))
+            resolved_first = JETLS.resolve_completion_item(state, first_item)
+            @test occursin("Symbol", resolved_first.labelDetails.detail)
+            # Resolve `second` → `Union{Int64,String}` (merged from both sides).
+            second_item = first(filter(it -> it.label == "second", props))
+            resolved_second = JETLS.resolve_completion_item(state, second_item)
+            @test occursin("Int64", resolved_second.labelDetails.detail)
+            @test occursin("String", resolved_second.labelDetails.detail)
+            cnt[] += 1
+        end
+        @test cnt[] == 1
+    end
+
+    # `Union{T, Nothing}`: `T`'s properties are still offered, and their
+    # resolved type detail isn't polluted by the `Nothing` side.
+    let text = """
+        function bar(r::Union{Regex, Nothing})
+            r.│
+        end
+        """
+        cnt = Ref(0)
+        with_property_completion_items(text; context=dot_context) do _, result, state, _
+            props = only_props(result.items)
+            labels = Set(it.label for it in props)
+            @test labels == Set(String.(fieldnames(Regex)))
+            pattern_item = first(filter(it -> it.label == "pattern", props))
+            resolved = JETLS.resolve_completion_item(state, pattern_item)
+            @test resolved.labelDetails.detail !== nothing
+            @test occursin("String", resolved.labelDetails.detail)
+            @test !occursin("Union{}", resolved.labelDetails.detail)
+            cnt[] += 1
+        end
+        @test cnt[] == 1
+    end
+
+    # A `propertynames` overload that name's `getproperty` can't honor:
+    # the item is still offered, and its resolved type detail surfaces as `::Union{}`.
+    let text = """
+        function bar(x::BrokenProps)
+            x.│
+        end
+        """
+        cnt = Ref(0)
+        with_property_completion_items(text;
+                context=dot_context,
+                context_module=broken_props_fixture,
+            ) do _, result, state, _
+            props = only_props(result.items)
+            @test length(props) == 1
+            @test props[1].label == "no_such_field"
+            @test props[1].labelDetails.detail === nothing
+            resolved = JETLS.resolve_completion_item(state, props[1])
+            @test resolved.labelDetails.detail == " ::Union{}"
+            cnt[] += 1
+        end
+        @test cnt[] == 1
+    end
+end
+
 @testset "macro completion" begin
     # `@`-mark should trigger completion of macro names
     let text = """
