@@ -62,6 +62,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Each candidate's inferred property type (`x.field :: T`) is resolved lazily, only when the client requests details for a focused item.
   For union-typed prefixes the offered names are the union of each component's `propertynames`, so the common `Union{T, Nothing}` pattern still surfaces `T`'s properties even though `propertynames(::Nothing) == ()`; type details merge each component's per-property type at resolve time.
 
+  https://github.com/user-attachments/assets/3f2887b4-4c1c-41f9-b091-4eea2b6128bc
+
 ### Changed
 
 - `textDocument/hover` now surfaces inferred types alongside documentation.
