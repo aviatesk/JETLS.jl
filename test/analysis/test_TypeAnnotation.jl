@@ -1589,6 +1589,13 @@ end
             @test get_matches_for_range(ctx, range_of(code, "x = 42")) === nothing
         end
     end
+
+    @testset "kwcall with unresolved callee returns nothing" begin
+        let code = "undefined_function_for_test(99; kw1=10, kw2=20)"
+            _, ctx = type_annotate(code)
+            @test get_matches_for_range(ctx, range_of(code, code)) === nothing
+        end
+    end
 end
 
 end # module test_type_annotation

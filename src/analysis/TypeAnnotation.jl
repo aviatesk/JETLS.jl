@@ -1283,21 +1283,22 @@ lookup hit a non-method-dispatch `CallInfo` (`InvokeCallInfo`, `OpaqueClosureCal
 `ApplyCallInfo`, …), or inference couldn't see the callee at all.
 
 Mirrors [`get_type_for_range`](@ref)'s "last `K"call"` wins" semantics for
-call-shaped surface kinds: kwcall sites lower the kwargs `NamedTuple` constructor and
-`Core.tuple` builder as separate `K"call"`s sharing the user call's byte range,
-but the user's call is emitted last in preorder, so this returns matches for
-the user-visible dispatch rather than for the scaffolding.
+call-shaped surface kinds: only the last `K"call"` at `rng` (the user-visible call —
+kwcall scaffolding `K"call"`s share the byte range and precede it in preorder) is
+consulted, so when its callee is unresolved this returns `nothing` rather than
+leaking the scaffolding's matches.
 
 Pair with [`build_inferred_context_at`](@ref) for the context.
 """
 function get_matches_for_range(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
-    matches = nothing
+    last_call = nothing
     for st in get(ctx.by_byte_range, rng, ())
         JS.kind(st) === JS.K"call" || continue
-        hasproperty(st, :matches) || continue
-        matches = st.matches::Vector{Core.MethodMatch}
+        last_call = st
     end
-    return matches
+    last_call === nothing && return nothing
+    hasproperty(last_call, :matches) || return nothing
+    return last_call.matches::Vector{Core.MethodMatch}
 end
 
 end # module TypeAnnotation

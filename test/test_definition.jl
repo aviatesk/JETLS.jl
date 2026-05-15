@@ -140,17 +140,12 @@ module M_target_node
     const LINE_M_FUNC = (@__LINE__) - 1
 end
 
-module M_module_location
-    m_func(_) = 1
-end
-const LINE_M_module_location = (@__LINE__) - 3
-
 module M_function_in_module
     m_func(_) = 1
     const LINE_M_FUNC = (@__LINE__) - 1
 end
 
-@testset HierarchicalTestSet "'Definition' for modules and methods" begin
+@testset HierarchicalTestSet "'Definition' for methods" begin
     @testset "function definition" begin
         @testset "callee identifier jumps to def" begin
             definition_test("""
@@ -168,6 +163,12 @@ end
             definition_test("""
                     func(x) = 1
                     let; func│; end
+                """, 0)
+        end
+        @testset "kwcall callee unresolved at Phase 1 falls through to binding pass" begin
+            definition_test("""
+                    func(x; kw=1) = x
+                    func│(42; kw=10)
                 """, 0)
         end
     end
@@ -352,16 +353,21 @@ end
                 context_module = @__MODULE__)
         end
     end
+end
 
-    @testset "module location" begin
-        @testset "module reference jumps to module def" begin
-            definition_test("M_module_location│.m_func(1.0)",
-                LINE_M_module_location - 1;
-                context_module = @__MODULE__)
-        end
-        @testset "`Core` has no meaningful source location" begin
-            definition_test("Core│.isdefined", nothing)
-        end
+module M_module_location
+    m_func(_) = 1
+end
+const LINE_M_module_location = (@__LINE__) - 3
+
+@testset HierarchicalTestSet "'Definition' for modules" begin
+    @testset "module reference jumps to module def" begin
+        definition_test("M_module_location│.m_func(1.0)",
+            LINE_M_module_location - 1;
+            context_module = @__MODULE__)
+    end
+    @testset "`Core` has no meaningful source location" begin
+        definition_test("Core│.isdefined", nothing)
     end
 end
 

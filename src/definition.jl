@@ -192,7 +192,9 @@ function find_definition(
 end
 
 # Phase 1: jump to the methods CC's dispatch picked at a call site —
-# `func│(1.0)` → `func(::Float64)` only.
+# `func│(1.0)` → `func(::Float64)` only. Returns `nothing` when the user's call
+# is unresolvable (e.g. typo, or rename without re-running full-analysis), so
+# Phase 2's binding pass takes over.
 function find_call_dispatch_definitions(
         state::ServerState, uri::URI, st0::SyntaxTreeC,
         node::SyntaxTreeC, ctx::InferredTreeContext,
