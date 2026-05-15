@@ -118,6 +118,8 @@ mutable struct SWContainer{T,Stats<:Union{Nothing,SWStats}} <: AtomicContainer
     SWContainer{SWStats}(data::T) where T = new{T,SWStats}(data, SWStats())
     SWContainer{Nothing}(data::T) where T = new{T,Nothing}(data, nothing)
     SWContainer(data::T) where T = new{T,Nothing}(data, nothing)
+    SWContainer{T,Stats}() where {T,Stats} = SWContainer{T,Stats}(T())
+    SWContainer{T}() where T = SWContainer{T,Nothing}(T())
 end
 
 load(c::SWContainer) = @atomic :acquire c.data
@@ -251,6 +253,8 @@ mutable struct LWContainer{T,Stats<:Union{Nothing,LWStats}} <: AtomicContainer
     LWContainer{LWStats}(data::T) where T = new{T,LWStats}(data, ReentrantLock(), LWStats())
     LWContainer{Nothing}(data::T) where T = new{T,Nothing}(data, ReentrantLock(), nothing)
     LWContainer(data::T) where T = new{T,Nothing}(data, ReentrantLock(), nothing)
+    LWContainer{T,Stats}() where {T,Stats} = LWContainer{T,Stats}(T())
+    LWContainer{T}() where T = LWContainer{T,Nothing}(T())
 end
 
 load(c::LWContainer) = @atomic :acquire c.data
@@ -397,6 +401,8 @@ mutable struct CASContainer{T,Stats<:Union{Nothing,CASStats}} <: AtomicContainer
     CASContainer{CASStats}(data::T) where T = new{T,CASStats}(data, CASStats())
     CASContainer{Nothing}(data::T) where T = new{T,Nothing}(data, nothing)
     CASContainer(data::T) where T = new{T,Nothing}(data, nothing)
+    CASContainer{T,Stats}() where {T,Stats} = CASContainer{T,Stats}(T())
+    CASContainer{T}() where T = CASContainer{T,Nothing}(T())
 end
 
 load(c::CASContainer) = @atomic :acquire c.data

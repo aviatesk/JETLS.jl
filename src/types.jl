@@ -199,8 +199,6 @@ struct CancellableToken{T}
     cancel_flag::CancelFlag
 end
 
-const CurrentlyHandled = Dict{MessageId, CancelFlag}
-
 const URI2Diagnostics = Dict{URI,Vector{Diagnostic}}
 
 struct AnalysisResult
@@ -264,13 +262,13 @@ struct AnalysisManager
     worker_tasks::Vector{Task}
     function AnalysisManager()
         return new(
-            AnalysisCache(Dict{URI,AnalysisInfo}()),
-            PendingAnalyses(Dict{AnalysisEntry,Union{Nothing,AnalysisRequest}}()),
+            AnalysisCache(),
+            PendingAnalyses(),
             Channel{Union{Nothing,AnalysisRequest}}(Inf),
-            CurrentGenerations(Dict{AnalysisEntry,Int}()),
-            AnalyzedGenerations(Dict{AnalysisEntry,Int}()),
-            DebouncedRequests(Dict{AnalysisEntry,Timer}()),
-            InstantiatedEnvs(Dict{String,Union{Nothing,Tuple{Base.PkgId,URI}}}()),
+            CurrentGenerations(),
+            AnalyzedGenerations(),
+            DebouncedRequests(),
+            InstantiatedEnvs(),
             Task[], # initialized by start_analysis_workers!
         )
     end
@@ -731,6 +729,7 @@ const ConfigManager = LWContainer{ConfigManagerData, LWStats}
 const UnsyncedFileCacheData = Base.PersistentDict{URI,FileInfo}
 const UnsyncedFileCache = LWContainer{UnsyncedFileCacheData, LWStats}
 
+const CurrentlyHandled = Dict{MessageId, CancelFlag}
 const HandledHistory = FixedSizeQueue{MessageId}
 
 struct HandledToken
@@ -779,21 +778,21 @@ mutable struct ServerState
     init_params::InitializeParams
     function ServerState(; suppress_notifications::Bool=false, cli_mode::Bool=false)
         return new(
-            #=file_cache=# FileCache(Base.PersistentDict{URI,FileInfo}()),
-            #=saved_file_cache=# SavedFileCache(Base.PersistentDict{URI,SavedFileInfo}()),
-            #=notebook_cache=# NotebookCache(Base.PersistentDict{URI,NotebookInfo}()),
-            #=cell_to_notebook=# CellToNotebookMap(Base.PersistentDict{URI,URI}()),
-            #=unsynced_file_cache=# UnsyncedFileCache(UnsyncedFileCacheData()),
-            #=document_symbol_cache=# DocumentSymbolCache(DocumentSymbolCacheData()),
-            #=binding_occurrences_cache=# BindingOccurrencesCache(BindingOccurrencesCacheData()),
-            #=lowering_diagnostics_cache=# LoweringDiagnosticsCache(LoweringDiagnosticsCacheData()),
+            #=file_cache=# FileCache(),
+            #=saved_file_cache=# SavedFileCache(),
+            #=notebook_cache=# NotebookCache(),
+            #=cell_to_notebook=# CellToNotebookMap(),
+            #=unsynced_file_cache=# UnsyncedFileCache(),
+            #=document_symbol_cache=# DocumentSymbolCache(),
+            #=binding_occurrences_cache=# BindingOccurrencesCache(),
+            #=lowering_diagnostics_cache=# LoweringDiagnosticsCache(),
             #=analysis_manager=# AnalysisManager(),
-            #=extra_diagnostics=# ExtraDiagnostics(ExtraDiagnosticsData()),
+            #=extra_diagnostics=# ExtraDiagnostics(),
             #=currently_handled=# CurrentlyHandled(),
             #=handled_history=# HandledHistory(128),
-            #=currently_requested=# CurrentlyRequested(Base.PersistentDict{String,RequestCaller}()),
-            #=currently_registered=# CurrentlyRegistered(Set{Registered}()),
-            #=config_manager=# ConfigManager(ConfigManagerData()),
+            #=currently_requested=# CurrentlyRequested(),
+            #=currently_registered=# CurrentlyRegistered(),
+            #=config_manager=# ConfigManager(),
             #=completion_resolver_info=# CompletionResolverInfo(nothing),
             suppress_notifications,
             cli_mode,
