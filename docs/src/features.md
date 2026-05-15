@@ -95,168 +95,6 @@ indexing, method errors, and non-boolean conditions.
 > </div>
 > ```
 
-## [Completion](@id features/completion)
-
-JETLS provides type-aware code completion with multiple modes.
-
-### [Global and local completion](@id features/completion/global-local)
-
-Completion for global symbols (functions, types, modules, constants) and
-local bindings. Global completion items include detailed kind information
-resolved lazily when a candidate is selected.
-
-> ```@raw html
-> <div class="display-light-only">
-> ```
-> ![Global and local completion](assets/features/completion-global-local.png)
-> ```@raw html
-> </div>
-> <div class="display-dark-only">
-> ```
-> ![Global and local completion](assets/features/completion-global-local-dark.png)
-> ```@raw html
-> </div>
-> ```
-
-### [Property completion](@id features/completion/property)
-
-Triggered automatically by typing `.` after a typed expression (`x.│`, `r.pat│`).
-Candidate names are derived from the dot prefix's inferred type via
-`propertynames(::T)`, so general struct property names and types that define a
-custom `propertynames` overload are both handled uniformly.
-The inferred type of each property (`x.field :: T`) is resolved lazily,
-only when the client requests details for a focused item.
-
-For union-typed prefixes (`x::Union{Foo, Bar}`), the offered names are the union
-of each component's properties, and the resolved type detail merges each
-component's per-property type. The common `Union{T, Nothing}` pattern thus still
-surfaces `T`'s properties.
-
-When the dot prefix is a module (`Base.│`), the request falls through to module-member completion
-(see [Global and local completion](@ref features/completion/global-local)).
-
-> ```@raw html
-> <div class="display-light-only">
-> ```
-> ![Property completion](assets/features/completion-property.png)
-> ```@raw html
-> </div>
-> <div class="display-dark-only">
-> ```
-> ![Property completion](assets/features/completion-property-dark.png)
-> ```@raw html
-> </div>
-> ```
-
-### [Method signature completion](@id features/completion/method-signature)
-
-Triggered inside a function call (after `(`, `,`, or space). Compatible method
-signatures are suggested based on the inferred type of each argument at the
-call site (mirroring [Signature help](@ref features/signature-help)'s filtering
-— arbitrary local-scope expressions are included).
-Selecting a candidate inserts remaining positional arguments as snippet
-placeholders with type annotations. Inferred return type and documentation
-are resolved lazily.
-
-> ```@raw html
-> <div class="display-light-only">
-> ```
-> ![Method signature completion](assets/features/completion-method.png)
-> ```@raw html
-> </div>
-> <div class="display-dark-only">
-> ```
-> ![Method signature completion](assets/features/completion-method-dark.png)
-> ```@raw html
-> </div>
-> ```
-
-### [Keyword argument completion](@id features/completion/keyword-argument)
-
-Triggered inside a function call at the keyword argument position
-(e.g. `func(; |)` or `func(k|)`). Available keyword arguments are suggested
-with `=` appended. Already-specified keywords are excluded.
-
-> ```@raw html
-> <div class="display-light-only">
-> ```
-> ![Keyword argument completion](assets/features/completion-keyword.png)
-> ```@raw html
-> </div>
-> <div class="display-dark-only">
-> ```
-> ![Keyword argument completion](assets/features/completion-keyword-dark.png)
-> ```@raw html
-> </div>
-> ```
-
-### [LaTeX and emoji completion](@id features/completion/latex-emoji)
-
-Type `\` to trigger LaTeX symbol completion (e.g. `\alpha` → `α`) or `\:`
-to trigger emoji completion (e.g. `\:smile:` → `😄`), mirroring the Julia
-REPL.
-
-```@raw html
-<table>
-  <thead>
-    <tr><th>Trigger</th><th>Example</th></tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td>LaTeX symbol (<code>\</code>)</td>
-      <td>
-        <div class="display-light-only">
-```
-![LaTeX completion](assets/features/completion-latex.png)
-```@raw html
-        </div>
-        <div class="display-dark-only">
-```
-![LaTeX completion](assets/features/completion-latex-dark.png)
-```@raw html
-        </div>
-      </td>
-    </tr>
-    <tr>
-      <td>Emoji (<code>\:</code>)</td>
-      <td>
-        <div class="display-light-only">
-```
-![Emoji completion](assets/features/completion-emoji.png)
-```@raw html
-        </div>
-        <div class="display-dark-only">
-```
-![Emoji completion](assets/features/completion-emoji-dark.png)
-```@raw html
-        </div>
-      </td>
-    </tr>
-  </tbody>
-</table>
-```
-
-## [Signature help](@id features/signature-help)
-
-Method signatures are displayed as you type function arguments. Methods are
-filtered based on the inferred type of each argument at the call site,
-including arbitrary local-scope expressions. For example, both `sin(1,│)`
-and `let x = rand(Int); sin(x,│); end` show only methods compatible with
-an `Int` first argument.
-
-> ```@raw html
-> <div class="display-light-only">
-> ```
-> ![Signature help](assets/features/signature-help.png)
-> ```@raw html
-> </div>
-> <div class="display-dark-only">
-> ```
-> ![Signature help](assets/features/signature-help-dark.png)
-> ```@raw html
-> </div>
-> ```
-
 ## [Go to definition](@id features/go-to-definition)
 
 Jump to where a symbol is defined. JETLS resolves method and module
@@ -683,6 +521,168 @@ requests are supported. Delta updates are not implemented.
     in its capabilities.
     Clients that do not declare this capability, or that explicitly set it to
     `false`, will not have JETLS's semantic tokens feature activated.
+
+## [Completion](@id features/completion)
+
+JETLS provides type-aware code completion with multiple modes.
+
+### [Global and local completion](@id features/completion/global-local)
+
+Completion for global symbols (functions, types, modules, constants) and
+local bindings. Global completion items include detailed kind information
+resolved lazily when a candidate is selected.
+
+> ```@raw html
+> <div class="display-light-only">
+> ```
+> ![Global and local completion](assets/features/completion-global-local.png)
+> ```@raw html
+> </div>
+> <div class="display-dark-only">
+> ```
+> ![Global and local completion](assets/features/completion-global-local-dark.png)
+> ```@raw html
+> </div>
+> ```
+
+### [Property completion](@id features/completion/property)
+
+Triggered automatically by typing `.` after a typed expression (`x.│`, `r.pat│`).
+Candidate names are derived from the dot prefix's inferred type via
+`propertynames(::T)`, so general struct property names and types that define a
+custom `propertynames` overload are both handled uniformly.
+The inferred type of each property (`x.field :: T`) is resolved lazily,
+only when the client requests details for a focused item.
+
+For union-typed prefixes (`x::Union{Foo, Bar}`), the offered names are the union
+of each component's properties, and the resolved type detail merges each
+component's per-property type. The common `Union{T, Nothing}` pattern thus still
+surfaces `T`'s properties.
+
+When the dot prefix is a module (`Base.│`), the request falls through to module-member completion
+(see [Global and local completion](@ref features/completion/global-local)).
+
+> ```@raw html
+> <div class="display-light-only">
+> ```
+> ![Property completion](assets/features/completion-property.png)
+> ```@raw html
+> </div>
+> <div class="display-dark-only">
+> ```
+> ![Property completion](assets/features/completion-property-dark.png)
+> ```@raw html
+> </div>
+> ```
+
+### [Method signature completion](@id features/completion/method-signature)
+
+Triggered inside a function call (after `(`, `,`, or space). Compatible method
+signatures are suggested based on the inferred type of each argument at the
+call site (mirroring [Signature help](@ref features/signature-help)'s filtering
+— arbitrary local-scope expressions are included).
+Selecting a candidate inserts remaining positional arguments as snippet
+placeholders with type annotations. Inferred return type and documentation
+are resolved lazily.
+
+> ```@raw html
+> <div class="display-light-only">
+> ```
+> ![Method signature completion](assets/features/completion-method.png)
+> ```@raw html
+> </div>
+> <div class="display-dark-only">
+> ```
+> ![Method signature completion](assets/features/completion-method-dark.png)
+> ```@raw html
+> </div>
+> ```
+
+### [Keyword argument completion](@id features/completion/keyword-argument)
+
+Triggered inside a function call at the keyword argument position
+(e.g. `func(; |)` or `func(k|)`). Available keyword arguments are suggested
+with `=` appended. Already-specified keywords are excluded.
+
+> ```@raw html
+> <div class="display-light-only">
+> ```
+> ![Keyword argument completion](assets/features/completion-keyword.png)
+> ```@raw html
+> </div>
+> <div class="display-dark-only">
+> ```
+> ![Keyword argument completion](assets/features/completion-keyword-dark.png)
+> ```@raw html
+> </div>
+> ```
+
+### [LaTeX and emoji completion](@id features/completion/latex-emoji)
+
+Type `\` to trigger LaTeX symbol completion (e.g. `\alpha` → `α`) or `\:`
+to trigger emoji completion (e.g. `\:smile:` → `😄`), mirroring the Julia
+REPL.
+
+```@raw html
+<table>
+  <thead>
+    <tr><th>Trigger</th><th>Example</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>LaTeX symbol (<code>\</code>)</td>
+      <td>
+        <div class="display-light-only">
+```
+![LaTeX completion](assets/features/completion-latex.png)
+```@raw html
+        </div>
+        <div class="display-dark-only">
+```
+![LaTeX completion](assets/features/completion-latex-dark.png)
+```@raw html
+        </div>
+      </td>
+    </tr>
+    <tr>
+      <td>Emoji (<code>\:</code>)</td>
+      <td>
+        <div class="display-light-only">
+```
+![Emoji completion](assets/features/completion-emoji.png)
+```@raw html
+        </div>
+        <div class="display-dark-only">
+```
+![Emoji completion](assets/features/completion-emoji-dark.png)
+```@raw html
+        </div>
+      </td>
+    </tr>
+  </tbody>
+</table>
+```
+
+## [Signature help](@id features/signature-help)
+
+Method signatures are displayed as you type function arguments. Methods are
+filtered based on the inferred type of each argument at the call site,
+including arbitrary local-scope expressions. For example, both `sin(1,│)`
+and `let x = rand(Int); sin(x,│); end` show only methods compatible with
+an `Int` first argument.
+
+> ```@raw html
+> <div class="display-light-only">
+> ```
+> ![Signature help](assets/features/signature-help.png)
+> ```@raw html
+> </div>
+> <div class="display-dark-only">
+> ```
+> ![Signature help](assets/features/signature-help-dark.png)
+> ```@raw html
+> </div>
+> ```
 
 ## [Rename](@id features/rename)
 
