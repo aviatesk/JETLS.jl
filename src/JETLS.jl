@@ -91,6 +91,7 @@ include("utils/ast.jl")
 include("utils/binding.jl")
 include("utils/lsp.jl")
 include("utils/server.jl")
+include("utils/native-inference.jl")
 
 include("analysis/closure-to-opaque.jl")
 using .Closure2Opaque

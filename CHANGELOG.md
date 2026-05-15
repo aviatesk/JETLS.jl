@@ -58,6 +58,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
   <img width="1333" height="571" alt="type definition demo" src="https://github.com/user-attachments/assets/b469f0d7-73ba-47aa-86e5-7861535459fd" />
 
+- Added property completion (`x.│` / `x.partial│`). Typing `.` after a typed expression now offers the properties that `propertynames(::T)` reports for the dot prefix's inferred type — both plain struct fields and types with a custom `propertynames` overload are handled uniformly.
+  Each candidate's inferred property type (`x.field :: T`) is resolved lazily, only when the client requests details for a focused item.
+  For union-typed prefixes the offered names are the union of each component's `propertynames`, so the common `Union{T, Nothing}` pattern still surfaces `T`'s properties even though `propertynames(::Nothing) == ()`; type details merge each component's per-property type at resolve time.
+
 ### Changed
 
 - `textDocument/hover` now surfaces inferred types alongside documentation.

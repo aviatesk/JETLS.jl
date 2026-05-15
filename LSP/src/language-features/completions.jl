@@ -236,7 +236,12 @@ struct MethodSignatureCompletionData
     resolver_id::String
     match_idx::Int
 end
-export GlobalCompletionData, MethodSignatureCompletionData
+struct PropertyCompletionData
+    resolver_id::String
+    label::String
+    prefix::String
+end
+export GlobalCompletionData, MethodSignatureCompletionData, PropertyCompletionData
 
 @interface CompletionItem begin
     """
@@ -419,7 +424,7 @@ export GlobalCompletionData, MethodSignatureCompletionData
     A data entry field that is preserved on a completion item between
     a completion and a completion resolve request.
     """
-    data::Union{GlobalCompletionData, MethodSignatureCompletionData, Nothing} = nothing
+    data::Union{GlobalCompletionData, MethodSignatureCompletionData, PropertyCompletionData, Nothing} = nothing
 end
 
 """
@@ -495,7 +500,7 @@ presented in the editor.
         - since - 3.17.0
         """
 
-        data::Union{GlobalCompletionData, MethodSignatureCompletionData, Nothing} = nothing
+        data::Union{GlobalCompletionData, MethodSignatureCompletionData, PropertyCompletionData, Nothing} = nothing
     end} = nothing
 
     """

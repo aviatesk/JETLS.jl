@@ -688,17 +688,29 @@ const BindingOccurrencesCacheEntry = Base.PersistentDict{UnitRange{Int},BindingO
 
 const AnyBindingOccurrence = Union{BindingOccurrence,CachedBindingOccurrence}
 
-struct GlobalCompletionResolverInfo
+abstract type AbstractCompletionResolverInfo end
+
+struct GlobalCompletionResolverInfo <: AbstractCompletionResolverInfo
     id::String
     context_module::Module
     world::UInt
     postprocessor::LSPostProcessor
 end
 
-struct MethodSignatureCompletionResolverInfo
+struct MethodSignatureCompletionResolverInfo <: AbstractCompletionResolverInfo
     id::String
     world::UInt
     matches::CC.MethodLookupResult
+    postprocessor::LSPostProcessor
+end
+
+# Lattice element of the dot prefix; held opaquely so resolver-time
+# `getproperty(::T, Core.Const(name))` abstract-calls can rebuild the type
+# detail per-item without re-running the parse / lowering pipeline.
+struct PropertyCompletionResolverInfo <: AbstractCompletionResolverInfo
+    id::String
+    prefixtyp::Any
+    world::UInt
     postprocessor::LSPostProcessor
 end
 
@@ -712,7 +724,7 @@ const CellToNotebookMap = SWContainer{Base.PersistentDict{URI,URI}, SWStats} # c
 const ExtraDiagnostics = CASContainer{ExtraDiagnosticsData, CASStats}
 const CurrentlyRequested = CASContainer{Base.PersistentDict{String,RequestCaller}, CASStats}
 const CurrentlyRegistered = CASContainer{Set{Registered}, CASStats}
-const CompletionResolverInfo = CASContainer{Union{Nothing,GlobalCompletionResolverInfo,MethodSignatureCompletionResolverInfo}, CASStats}
+const CompletionResolverInfo = CASContainer{Union{Nothing,AbstractCompletionResolverInfo}, CASStats}
 
 # Type aliases for concurrent updates using LWContainer
 const DocumentSymbolCacheData = Base.PersistentDict{URI,Vector{DocumentSymbol}}
