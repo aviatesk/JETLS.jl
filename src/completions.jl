@@ -263,7 +263,7 @@ end
 function global_completions!(
         items::Dict{String,CompletionItem}, comp_ctx::CompletionCtx,
     )
-    (; state, uri, fi, pos, context, st0, world, postprocessor) = comp_ctx
+    (; state, uri, fi, pos, context, st0_top, world, postprocessor) = comp_ctx
     context_module = comp_ctx.context_module
     should_invoke_auto_completion(context, #=allow_macro=#true) || return nothing
 
@@ -300,7 +300,7 @@ function global_completions!(
     # since macros are always defined top-level
     is_completed = is_macro_invoke
 
-    dotprefix = select_dotprefix_identifier(st0, comp_ctx.offset)
+    dotprefix = select_dotprefix_identifier(st0_top, comp_ctx.offset)
     if !isnothing(dotprefix)
         rng = JS.byte_range(dotprefix)
         ctx = get_inferred_ctx!(comp_ctx; caller="global_completions!")
@@ -680,9 +680,9 @@ end
 function call_completions!(
         items::Dict{String,CompletionItem}, comp_ctx::CompletionCtx,
     )
-    (; state, fi, pos, context, st0, context_module, world, postprocessor) = comp_ctx
+    (; state, fi, pos, context, st0_top, context_module, world, postprocessor) = comp_ctx
     b = comp_ctx.offset
-    call = @something cursor_call(fi.parsed_stream, st0, b) return nothing
+    call = @something cursor_call(fi.parsed_stream, st0_top, b) return nothing
     ca = CallArgs(call, b)
 
     equals_pos = cursor_equals_position(ca, b)
