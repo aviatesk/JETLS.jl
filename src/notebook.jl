@@ -8,7 +8,7 @@ get_notebook_uri_for_cell(state::ServerState, cell_uri::URI, default=nothing) =
     get(load(state.cell_to_notebook), cell_uri, default)
 
 # Per-file caches (`document_symbol_cache`, `binding_occurrences_cache`,
-# `lowering_diagnostics_cache`) key on a single canonical URI per logical file.
+# `per_file_diagnostics_cache`) key on a single canonical URI per logical file.
 # For notebooks, every cell URI shares the same concat-source `FileInfo`, so the
 # canonical key is the notebook URI. Cache accessors and their invalidations
 # both run input through this helper so reads, writes, and invalidations always

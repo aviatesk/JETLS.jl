@@ -90,6 +90,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - `textDocument/semanticTokens` now classifies type parameters declared in `struct` / `abstract type` / `primitive type` headers (and their use sites inside the type body) as `typeParameter`. Previously these identifiers were classified as plain `variable`.
 
+- `lowering/undef-global-var` now suppresses reports as soon as a sibling file in the same analysis unit defines the referenced name. Previously, adding `foo = ...` to one file left `foo` references in other files of the same unit flagged as undefined until the next full-analysis cycle (typically triggered on save) caught up.
+
 ### Fixed
 
 - Identifiers inside keyword arguments of `@test`, `@test_broken`, and `@test_skip` (e.g. `flag` in `@test x broken=flag`) are now picked up by scope resolution, so undef-var diagnostics and find-references work for them. Previously the keyword arguments were dropped during macro expansion.

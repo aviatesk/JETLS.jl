@@ -723,8 +723,27 @@ const DocumentSymbolCacheData = Base.PersistentDict{URI,Vector{DocumentSymbol}}
 const DocumentSymbolCache = LWContainer{DocumentSymbolCacheData, LWStats}
 const BindingOccurrencesCacheData = Base.PersistentDict{URI,BindingOccurrencesCacheEntry}
 const BindingOccurrencesCache = LWContainer{BindingOccurrencesCacheData, LWStats}
-const LoweringDiagnosticsCacheData = Base.PersistentDict{URI,Vector{Diagnostic}}
-const LoweringDiagnosticsCache = LWContainer{LoweringDiagnosticsCacheData, LWStats}
+struct LoweringDiagnosticKey
+    range::Range
+    kind::Symbol
+    name::String
+end
+# Undef-global candidate emitted by the per-file phase (with fresh `ctx3`),
+# consumed by the cross-file phase (which only does a cheap def-name lookup).
+# Everything needed for the final `Diagnostic` is pre-computed so the cache
+# carries no reference to lowering contexts.
+struct UndefGlobalCandidate
+    bmod::Module
+    name::String
+    range::Range
+    message::String
+end
+struct PerFileDiagnosticsResult
+    diagnostics::Vector{Diagnostic}
+    undef_global_candidates::Vector{UndefGlobalCandidate}
+end
+const PerFileDiagnosticsCacheData = Base.PersistentDict{URI,PerFileDiagnosticsResult}
+const PerFileDiagnosticsCache = LWContainer{PerFileDiagnosticsCacheData, LWStats}
 const ConfigManager = LWContainer{ConfigManagerData, LWStats}
 const UnsyncedFileCacheData = Base.PersistentDict{URI,FileInfo}
 const UnsyncedFileCache = LWContainer{UnsyncedFileCacheData, LWStats}
@@ -747,13 +766,13 @@ mutable struct ServerState
     # Per-file caches keyed on the canonical (notebook-aware) URI of a logical file.
     # All three are dropped together via `invalidate_per_file_caches!` on content change
     # (didChange/didOpen, notebook cell edits, watched-file events).
-    # `binding_occurrences_cache` and `lowering_diagnostics_cache` are additionally
+    # `binding_occurrences_cache` and `per_file_diagnostics_cache` are additionally
     # invalidated by `update_analysis_cache!` when full-analysis changes module context,
-    # since both embed `binfo.mod`. `lowering_diagnostics_cache` is also cleared wholesale
-    # on diagnostic-affecting config changes via `clear_lowering_diagnostics_cache!`.
+    # since both embed `binfo.mod`. `per_file_diagnostics_cache` is also cleared wholesale
+    # on diagnostic-affecting config changes via `clear_per_file_diagnostics_cache!`.
     const document_symbol_cache::DocumentSymbolCache
     const binding_occurrences_cache::BindingOccurrencesCache
-    const lowering_diagnostics_cache::LoweringDiagnosticsCache
+    const per_file_diagnostics_cache::PerFileDiagnosticsCache
     const analysis_manager::AnalysisManager
     const extra_diagnostics::ExtraDiagnostics
     const currently_handled::CurrentlyHandled
@@ -785,7 +804,7 @@ mutable struct ServerState
             #=unsynced_file_cache=# UnsyncedFileCache(),
             #=document_symbol_cache=# DocumentSymbolCache(),
             #=binding_occurrences_cache=# BindingOccurrencesCache(),
-            #=lowering_diagnostics_cache=# LoweringDiagnosticsCache(),
+            #=per_file_diagnostics_cache=# PerFileDiagnosticsCache(),
             #=analysis_manager=# AnalysisManager(),
             #=extra_diagnostics=# ExtraDiagnostics(),
             #=currently_handled=# CurrentlyHandled(),

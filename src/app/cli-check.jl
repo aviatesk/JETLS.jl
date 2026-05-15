@@ -420,6 +420,7 @@ function run_per_file_diagnostics!(
     )
     total_uris = length(analyzed_uris)
     uri2diagnostics_lock = ReentrantLock()
+    def_used_names_cache = DefUsedNamesCache()
     with_progress(progress_ctx, "Lowering analysis", "[$total_uris files]") do cancellable_token
         if cancellable_token !== nothing
             send_progress(server, cancellable_token.token, WorkDoneProgressBegin(; title="Analyzing", message="Started lowering analysis"))
@@ -432,7 +433,7 @@ function run_per_file_diagnostics!(
             end return
             # Mirrors `compute_pull_diagnostics`: parse errors short-circuit lowering.
             diagnostics = if isempty(fi.parsed_stream.diagnostics)
-                toplevel_lowering_diagnostics(server, uri, fi; lookup_func)
+                toplevel_lowering_diagnostics!(def_used_names_cache, server, uri, fi; lookup_func)
             else
                 parsed_stream_to_diagnostics(fi)
             end

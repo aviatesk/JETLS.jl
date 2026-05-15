@@ -22,9 +22,11 @@ function get_lowering_diagnostics(
     uri = filepath2uri(filename)
     st0_top = JETLS.build_syntax_tree(fi)
     diagnostics = LSP.Diagnostic[]
+    candidates = JETLS.UndefGlobalCandidate[]
     JETLS.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
-        JETLS.lowering_diagnostics!(diagnostics, uri, fi,
-            st0, context_module, world, #=analyzer=#nothing, JETLS.LSPostProcessor();
+        JETLS.per_stmt_diagnostics!(diagnostics, candidates, uri, fi,
+            st0, context_module, world,
+            #=analyzer=#nothing, JETLS.LSPostProcessor();
             kwargs...)
     end
     if code !== nothing
