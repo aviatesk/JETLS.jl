@@ -10,15 +10,18 @@ include(normpath(pkgdir(JETLS), "test", "setup.jl"))
 include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
 
 module lowering_module end
-function get_lowered_diagnostics(
+
+function get_lowering_diagnostics(
         text::AbstractString;
+        code::Union{AbstractString,Nothing} = nothing,
         context_module::Module=lowering_module,
         world::UInt = Base.get_world_counter(),
         kwargs...
     )
     filename = abspath(pkgdir(JETLS), "test", "test_lowering_diagnostic.jl")
-    fi = JETLS.FileInfo(#=version=#0, text, filename)
+    server = JETLS.Server()
     uri = filepath2uri(filename)
+    fi = JETLS.cache_file_info!(server, uri, 1, text)
     st0_top = JETLS.build_syntax_tree(fi)
     @assert JS.kind(st0_top) === JS.K"toplevel"
     diagnostics = LSP.Diagnostic[]
@@ -28,9 +31,15 @@ function get_lowered_diagnostics(
             st0, context_module, world, #=analyzer=#nothing, JETLS.LSPostProcessor();
             kwargs...)
     end
-    # Mirror the cross-file phase. The test runs in isolation so there are no sibling
-    # defs to consult; emit every collected candidate.
-    JETLS.emit_undef_global_diagnostics!(diagnostics, candidates, Dict{Module,JETLS.DefUsedNames}())
+    # Mirror the cross-file phase. `skip_context_check=true` because the test server
+    # has no populated `analysis_manager` — we want this single file to count as
+    # part of its own unit anyway.
+    per_file = JETLS.PerFileDiagnosticsResult(diagnostics, candidates)
+    JETLS.cross_file_diagnostics!(diagnostics, JETLS.DefUsedNamesCache(),
+        server, uri, fi, st0_top, per_file; skip_context_check=true)
+    if code !== nothing
+        filter!(d -> d.code == code, diagnostics)
+    end
     return diagnostics
 end
 
@@ -50,7 +59,7 @@ length_utf16(s::AbstractString) = sum(c::Char -> codepoint(c) < 0x10000 ? 1 : 2,
 module EmptyModule end
 
 @testset HierarchicalTestSet "unused binding detection" begin
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         y = let x = 42
             sin(42)
         end
@@ -64,7 +73,7 @@ module EmptyModule end
         @test diagnostic.range.var"end".character == sizeof("y = let x")
     end
 
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function foo(x, y)
             return x
         end
@@ -76,7 +85,7 @@ module EmptyModule end
         @test diagnostic.range.var"end".line == 0
     end
 
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function foo(x)
             local y
             return x
@@ -89,7 +98,7 @@ module EmptyModule end
         @test diagnostic.range.var"end".line == 1
     end
 
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function foo(x; y=nothing)
             return x
         end
@@ -101,7 +110,7 @@ module EmptyModule end
         @test diagnostic.range.var"end".line == 0
     end
 
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         \"\"\"Docstring\"\"\"
         function foo(x, y)
             return x
@@ -112,7 +121,7 @@ module EmptyModule end
         @test diagnostic.message == "Unused argument `y`"
     end
 
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function foo(x; y)
             return x, y
         end
@@ -120,7 +129,7 @@ module EmptyModule end
         @test isempty(diagnostics)
     end
 
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         let x = collect(1:10)
             ys = [x for (i, x) in enumerate(x)]
             ys
@@ -134,13 +143,13 @@ module EmptyModule end
     end
 
     @testset "Arguments that are only used within argument list" begin
-        @test isempty(get_lowered_diagnostics("hasmatch(x::RegexMatch, y::Bool=isempty(x.matches)) = y"))
+        @test isempty(get_lowering_diagnostics("hasmatch(x::RegexMatch, y::Bool=isempty(x.matches)) = y"))
         @test """
         function CompletionItem(item::CompletionItem; label::String=item.label, kind::Union{Nothing,Int}=item.kind)
             return CompletionItem(; label, kind)
         end
-        """ |> get_lowered_diagnostics |> isempty
-        let diagnostics = get_lowered_diagnostics("""
+        """ |> get_lowering_diagnostics |> isempty
+        let diagnostics = get_lowering_diagnostics("""
             hasmatch(x::RegexMatch, y::Bool=isempty(x.matches)) = nothing
             """)
             @test length(diagnostics) == 1
@@ -149,7 +158,7 @@ module EmptyModule end
             @test diagnostic.range.start.line == 0
             @test diagnostic.range.var"end".line == 0
         end
-        let diagnostics = get_lowered_diagnostics("""
+        let diagnostics = get_lowering_diagnostics("""
             hasmatch(x::RegexMatch, y::Bool=false) = nothing
             """)
             @test length(diagnostics) == 2
@@ -164,7 +173,7 @@ module EmptyModule end
                 diagnostic.range.var"end".line == 0
             end
         end
-        let diagnostics = get_lowered_diagnostics("""
+        let diagnostics = get_lowering_diagnostics("""
             hasmatch(x::RegexMatch, y::Bool=false) = x
             """)
             @test length(diagnostics) == 1
@@ -173,7 +182,7 @@ module EmptyModule end
             @test diagnostic.range.start.line == 0
             @test diagnostic.range.var"end".line == 0
         end
-        let diagnostics = get_lowered_diagnostics("""
+        let diagnostics = get_lowering_diagnostics("""
             hasmatch(x::RegexMatch, y::Bool=false) = y
             """)
             @test length(diagnostics) == 1
@@ -185,7 +194,7 @@ module EmptyModule end
     end
 
     @testset "tolerate bad syntax, broken macros" begin
-        let diagnostics = get_lowered_diagnostics("""
+        let diagnostics = get_lowering_diagnostics("""
             function foo(x)
                 local y
                 @i_do_not_exist
@@ -200,7 +209,7 @@ module EmptyModule end
             end
         end
 
-        let diagnostics = get_lowered_diagnostics("""
+        let diagnostics = get_lowering_diagnostics("""
             function foo(x)
                 local y = x
                 @r_str 1 2 3 4 # methoderror
@@ -216,7 +225,7 @@ module EmptyModule end
     end
 
     @testset "unused inner function" begin
-        diagnostics = get_lowered_diagnostics("""
+        diagnostics = get_lowering_diagnostics("""
         function foo(x)
             function inner(y)
                 x + y
@@ -232,7 +241,7 @@ module EmptyModule end
     end
 
     @testset "unused inner function (nested)" begin
-        diagnostics = get_lowered_diagnostics("""
+        diagnostics = get_lowering_diagnostics("""
         function foo(x)
             function inner(y)
                 function innernested()
@@ -256,7 +265,7 @@ module EmptyModule end
     end
 
     @testset "used inner function" begin
-        diagnostics = get_lowered_diagnostics("""
+        diagnostics = get_lowering_diagnostics("""
         function foo(x)
             function inner(y)
                 x + y
@@ -269,48 +278,48 @@ module EmptyModule end
 
     @testset "keyword function" begin
         # https://github.com/aviatesk/JETLS.jl/issues/390
-        @test isempty(get_lowered_diagnostics("func(a; kw) = a, kw"))
-        @test isempty(get_lowered_diagnostics("func(a; kw=a) = kw"))
-        @test isempty(get_lowered_diagnostics("func(a; kw1, kw2) = a, kw1, kw2"))
-        @test isempty(get_lowered_diagnostics("func(a; kws...) = a, kws"))
-        @test isempty(get_lowered_diagnostics("func(a; kw, kws...) = a, kw, kws"))
-        let diagnostics = get_lowered_diagnostics("func(a; kw) = a")
+        @test isempty(get_lowering_diagnostics("func(a; kw) = a, kw"))
+        @test isempty(get_lowering_diagnostics("func(a; kw=a) = kw"))
+        @test isempty(get_lowering_diagnostics("func(a; kw1, kw2) = a, kw1, kw2"))
+        @test isempty(get_lowering_diagnostics("func(a; kws...) = a, kws"))
+        @test isempty(get_lowering_diagnostics("func(a; kw, kws...) = a, kw, kws"))
+        let diagnostics = get_lowering_diagnostics("func(a; kw) = a")
             @test length(diagnostics) == 1
             diagnostic = only(diagnostics)
             @test diagnostic.message == "Unused argument `kw`"
             @test diagnostic.range.start.line == 0
         end
-        let diagnostics = get_lowered_diagnostics("func(a; kw) = kw")
+        let diagnostics = get_lowering_diagnostics("func(a; kw) = kw")
             @test length(diagnostics) == 1
             diagnostic = only(diagnostics)
             @test diagnostic.message == "Unused argument `a`"
             @test diagnostic.range.start.line == 0
         end
-        let diagnostics = get_lowered_diagnostics("func(a; kws...) = a")
+        let diagnostics = get_lowering_diagnostics("func(a; kws...) = a")
             @test length(diagnostics) == 1
             diagnostic = only(diagnostics)
             @test diagnostic.message == "Unused argument `kws`"
             @test diagnostic.range.start.line == 0
         end
-        let diagnostics = get_lowered_diagnostics("func(a; kw1, kw2) = kw1, kw2")
+        let diagnostics = get_lowering_diagnostics("func(a; kw1, kw2) = kw1, kw2")
             @test length(diagnostics) == 1
             diagnostic = only(diagnostics)
             @test diagnostic.message == "Unused argument `a`"
             @test diagnostic.range.start.line == 0
         end
-        let diagnostics = get_lowered_diagnostics("func(a; kw1, kw2) = a, kw2")
+        let diagnostics = get_lowering_diagnostics("func(a; kw1, kw2) = a, kw2")
             @test length(diagnostics) == 1
             diagnostic = only(diagnostics)
             @test diagnostic.message == "Unused argument `kw1`"
             @test diagnostic.range.start.line == 0
         end
-        let diagnostics = get_lowered_diagnostics("func(a; kw, kws...) = a, kw")
+        let diagnostics = get_lowering_diagnostics("func(a; kw, kws...) = a, kw")
             @test length(diagnostics) == 1
             diagnostic = only(diagnostics)
             @test diagnostic.message == "Unused argument `kws`"
             @test diagnostic.range.start.line == 0
         end
-        let diagnostics = get_lowered_diagnostics("func(a; kw) = nothing")
+        let diagnostics = get_lowering_diagnostics("func(a; kw) = nothing")
             @test length(diagnostics) == 2
             @test any(diagnostics) do diagnostic
                 diagnostic.message == "Unused argument `a`" &&
@@ -324,15 +333,15 @@ module EmptyModule end
     end
 
     @testset "macro definition" begin
-        @test isempty(get_lowered_diagnostics("macro mymacro() end"))
-        @test isempty(get_lowered_diagnostics("macro mymacro(x) x end"))
-        let diagnostics = get_lowered_diagnostics("macro mymacro(x, y) x end")
+        @test isempty(get_lowering_diagnostics("macro mymacro() end"))
+        @test isempty(get_lowering_diagnostics("macro mymacro(x) x end"))
+        let diagnostics = get_lowering_diagnostics("macro mymacro(x, y) x end")
             @test length(diagnostics) == 1
             diagnostic = only(diagnostics)
             @test diagnostic.message == "Unused argument `y`"
             @test diagnostic.range.start.line == 0
         end
-        let diagnostics = get_lowered_diagnostics("""
+        let diagnostics = get_lowering_diagnostics("""
             function foo(__module__, name)
                 getglobal(@__MODULE__, name)
             end
@@ -345,10 +354,10 @@ module EmptyModule end
     end
 
     @testset "struct definition" begin
-        @test isempty(get_lowered_diagnostics("struct A end"))
-        @test isempty(get_lowered_diagnostics("struct A; x::Int; end"))
-        @test isempty(get_lowered_diagnostics("struct A{T}; x::T; end"))
-        let diagnostics = get_lowered_diagnostics("""
+        @test isempty(get_lowering_diagnostics("struct A end"))
+        @test isempty(get_lowering_diagnostics("struct A; x::Int; end"))
+        @test isempty(get_lowering_diagnostics("struct A{T}; x::T; end"))
+        let diagnostics = get_lowering_diagnostics("""
             struct A
                 x::Int
                 A(x::Int, y::Int) = new(x)
@@ -359,7 +368,7 @@ module EmptyModule end
             @test diagnostic.message == "Unused argument `y`"
             @test diagnostic.range.start.line == 2
         end
-        let diagnostics = get_lowered_diagnostics("""
+        let diagnostics = get_lowering_diagnostics("""
             struct A{T}
                 x::T
                 A(x::T, y::Int) where T = new{T}(x)
@@ -371,7 +380,7 @@ module EmptyModule end
             @test diagnostic.range.start.line == 2
         end
         # constructor definition with keyword arguments
-        let diagnostics = get_lowered_diagnostics("""
+        let diagnostics = get_lowering_diagnostics("""
             struct A{T}
                 x::T
                 A(x::T; override::Union{Nothing,T}) where T = new{T}(@something override x)
@@ -379,7 +388,7 @@ module EmptyModule end
             """)
             @test isempty(diagnostics)
         end
-        let diagnostics = get_lowered_diagnostics("""
+        let diagnostics = get_lowering_diagnostics("""
             struct A{T}
                 x::T
                 A(x::T; override::Union{Nothing,T}) where T = new{T}(x)
@@ -395,20 +404,20 @@ module EmptyModule end
     # https://github.com/aviatesk/JETLS.jl/issues/481
     @testset "keyword argument constraining used static parameter" begin
         # keyword arg constraining a used static parameter should not be reported
-        let diagnostics = get_lowered_diagnostics("""
+        let diagnostics = get_lowering_diagnostics("""
             f(; dtype::Type{T}=Float32) where {T} = T
             """)
             @test isempty(diagnostics)
         end
         # keyword arg constraining an unused static parameter should still be reported
-        let diagnostics = get_lowered_diagnostics("""
+        let diagnostics = get_lowering_diagnostics("""
             f(; dtype::Type{T}=Float32) where {T} = 1
             """)
             @test length(diagnostics) == 1
             @test only(diagnostics).message == "Unused argument `dtype`"
         end
         # positional arg constraining a used static parameter should still be reported
-        let diagnostics = get_lowered_diagnostics("""
+        let diagnostics = get_lowering_diagnostics("""
             f(x::Type{T}) where {T} = T
             """)
             @test length(diagnostics) == 1
@@ -416,20 +425,20 @@ module EmptyModule end
         end
         # positional arg with default value constraining a used static parameter
         # should still be reported (the kwarg-sparam exception must not apply here)
-        let diagnostics = get_lowered_diagnostics("""
+        let diagnostics = get_lowering_diagnostics("""
             f(x::Type{T}=Float32) where {T} = T
             """)
             @test length(diagnostics) == 1
             @test only(diagnostics).message == "Unused argument `x`"
         end
         # keyword arg with multiple type parameters, at least one used
-        let diagnostics = get_lowered_diagnostics("""
+        let diagnostics = get_lowering_diagnostics("""
             f(; x::Pair{S,T}=1=>2) where {S,T} = S
             """)
             @test isempty(diagnostics)
         end
         # full example from the issue
-        let diagnostics = get_lowered_diagnostics("""
+        let diagnostics = get_lowering_diagnostics("""
             function compute_rotary_embedding_params(
                 head_dim::Integer,
                 max_sequence_length::Integer;
@@ -448,7 +457,7 @@ module EmptyModule end
         end
 
         # aviatesk/JETLS.jl#592
-        let diagnostics = get_lowered_diagnostics("""
+        let diagnostics = get_lowering_diagnostics("""
             function group(
                 by,
                 f,
@@ -500,7 +509,7 @@ module EmptyModule end
     end
 
     @testset "string macro support" begin
-        diagnostics = get_lowered_diagnostics("""
+        diagnostics = get_lowering_diagnostics("""
         let s = rand(Int)
             lazy"s = \$s"
         end
@@ -509,7 +518,7 @@ module EmptyModule end
     end
 
     @testset "cmdstring macro support" begin
-        diagnostics = get_lowered_diagnostics("""
+        diagnostics = get_lowering_diagnostics("""
         function testrunner_cmd(filepath::String, tcl::Int, test_env_path::Union{Nothing,String})
             testrunner_exe = Sys.which("testrunner")
             if isnothing(test_env_path)
@@ -523,7 +532,7 @@ module EmptyModule end
     end
 
     @testset "Unused bindings within macro code" begin
-        diagnostics = get_lowered_diagnostics("""
+        diagnostics = get_lowering_diagnostics("""
         function func(x)
             return @gen_unused x
         end
@@ -532,7 +541,7 @@ module EmptyModule end
     end
 
     @testset "@nospecialize macro" begin
-        diagnostics = get_lowered_diagnostics("""
+        diagnostics = get_lowering_diagnostics("""
         function kwargs_dict(@nospecialize configs)
             return ()
         end
@@ -547,7 +556,7 @@ module EmptyModule end
     # # This should be reported ideally, but currently JuliaLowering cannot track
     # # precise provenance for code expanded from old macros, so it gets caught by the check in analyze_unused_bindings!
     @testset "argument decl with macro" begin
-        diagnostics = get_lowered_diagnostics("""
+        diagnostics = get_lowering_diagnostics("""
         func(@just_return x) = nothing
         """; context_module=@__MODULE__)
         res = length(diagnostics) == 1
@@ -563,7 +572,7 @@ module EmptyModule end
     end
 
     @testset "Handle position encoding" begin
-        diagnostics = get_lowered_diagnostics("""
+        diagnostics = get_lowering_diagnostics("""
         f(😀, x) = 😀
         """)
         @test length(diagnostics) == 1
@@ -575,13 +584,13 @@ module EmptyModule end
     end
 
     @testset "comprehension" begin
-        let diagnostics = get_lowered_diagnostics("""
+        let diagnostics = get_lowering_diagnostics("""
             func(xs) = [x for x in xs]
             """)
             @test isempty(diagnostics)
         end
 
-        let diagnostics = get_lowered_diagnostics("""
+        let diagnostics = get_lowering_diagnostics("""
             func(xs) = [x for (i, x) in enumerate(xs)]
             """)
             @test length(diagnostics) == 1
@@ -593,13 +602,13 @@ module EmptyModule end
         end
 
         # aviatesk/JETLS.jl#360
-        let diagnostics = get_lowered_diagnostics("""
+        let diagnostics = get_lowering_diagnostics("""
             func(xs) = [x for (i, x) in enumerate(xs) if isodd(i)]
             """)
             @test isempty(diagnostics)
         end
 
-        let diagnostics = get_lowered_diagnostics("""
+        let diagnostics = get_lowering_diagnostics("""
             func(xs) = [x for (i, x) in xs if true]
             """)
             @test length(diagnostics) == 1
@@ -612,7 +621,7 @@ module EmptyModule end
     end
 
     @testset "allow_unused_underscore" begin
-        let diagnostics = get_lowered_diagnostics("""
+        let diagnostics = get_lowering_diagnostics("""
             function foo(_x, y)
                 return y
             end
@@ -620,7 +629,7 @@ module EmptyModule end
             @test isempty(diagnostics)
         end
 
-        let diagnostics = get_lowered_diagnostics("""
+        let diagnostics = get_lowering_diagnostics("""
             function foo(_x, y)
                 return y
             end
@@ -630,7 +639,7 @@ module EmptyModule end
             @test diagnostic.message == "Unused argument `_x`"
         end
 
-        let diagnostics = get_lowered_diagnostics("""
+        let diagnostics = get_lowering_diagnostics("""
             y = let _x = 42
                 sin(42)
             end
@@ -638,7 +647,7 @@ module EmptyModule end
             @test isempty(diagnostics)
         end
 
-        let diagnostics = get_lowered_diagnostics("""
+        let diagnostics = get_lowering_diagnostics("""
             y = let _x = 42
                 sin(42)
             end
@@ -651,7 +660,7 @@ module EmptyModule end
 
     # aviatesk/JETLS.jl#480
     @testset "@generated function" begin
-        let diagnostics = get_lowered_diagnostics("""
+        let diagnostics = get_lowering_diagnostics("""
             @generated function replicate(rng::T) where {T}
                 hasmethod(copy, (T,)) && return :(copy(rng))
                 return :(deepcopy(rng))
@@ -660,7 +669,7 @@ module EmptyModule end
             @test isempty(diagnostics)
         end
 
-        let diagnostics = get_lowered_diagnostics("""
+        let diagnostics = get_lowering_diagnostics("""
             @generated function foo(x, unused)
                 return :(x + 1)
             end
@@ -673,7 +682,7 @@ module EmptyModule end
     @testset "before full-analysis, without macro expansion" begin
         # `@sprintf` is not available yet for EmptyModule (simulating the lowering analysis behavior before full-analysis complete)
         # https://github.com/aviatesk/JETLS.jl/issues/522
-        diagnostics = get_lowered_diagnostics("""
+        diagnostics = get_lowering_diagnostics("""
             let
                 OLR = SW_in = 0.0
                 @info @sprintf("OLR: %.1f W/m², SW_in: %.1f W/m², net: %.1f W/m²",
@@ -698,7 +707,7 @@ end
 
 @testset HierarchicalTestSet "JuliaLowering error diagnostics" begin
     @testset "lowering error diagnostics" begin
-        diagnostics = get_lowered_diagnostics("macro foo(x, y) \$(x) end"; context_module=@__MODULE__)
+        diagnostics = get_lowering_diagnostics("macro foo(x, y) \$(x) end"; context_module=@__MODULE__)
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
         @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
@@ -706,7 +715,7 @@ end
     end
 
     @testset "toplevel lowering error diagnostics" begin
-        let diagnostics = get_lowered_diagnostics("""
+        let diagnostics = get_lowering_diagnostics("""
             macro foo(x, y) \$(x) end
             macro bar(x, y) \$(x) end
             """)
@@ -727,7 +736,7 @@ end
     end
 
     @testset "macro not found error diagnostics" begin
-        diagnostics = get_lowered_diagnostics("x = @notexisting 42"; context_module=@__MODULE__)
+        diagnostics = get_lowering_diagnostics("x = @notexisting 42"; context_module=@__MODULE__)
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
         @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
@@ -739,7 +748,7 @@ end
     end
 
     @testset "@. macro (aviatesk/JETLS.jl#409)" begin
-        diagnostics = get_lowered_diagnostics("""
+        diagnostics = get_lowering_diagnostics("""
         function foo()
             x = rand(10)
             y = rand(10)
@@ -750,7 +759,7 @@ end
     end
 
     @testset "string macro not found error diagnostics" begin
-        diagnostics = get_lowered_diagnostics("x = notexisting\"string\""; context_module=@__MODULE__)
+        diagnostics = get_lowering_diagnostics("x = notexisting\"string\""; context_module=@__MODULE__)
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
         @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
@@ -762,7 +771,7 @@ end
     end
 
     @testset "macro expansion error diagnostics" begin
-        diagnostics = get_lowered_diagnostics("x = @m_throw 42"; context_module=@__MODULE__)
+        diagnostics = get_lowering_diagnostics("x = @m_throw 42"; context_module=@__MODULE__)
         @test length(diagnostics) == 1
         diagnostic = only(diagnostics)
         @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
@@ -774,7 +783,7 @@ end
     end
 
     @testset "nested macro expansion error diagnostics" begin
-        diagnostics = get_lowered_diagnostics("""let
+        diagnostics = get_lowering_diagnostics("""let
             @m_outer_error missing
         end"""; context_module=@__MODULE__)
         @test length(diagnostics) == 1
@@ -788,7 +797,7 @@ end
     end
 
     @testset "nested macro expansion error diagnostics (with JL provenance)" begin
-        diagnostics = get_lowered_diagnostics("""let
+        diagnostics = get_lowering_diagnostics("""let
             @m_outer_error_JL missing
         end"""; context_module=@__MODULE__)
         @test length(diagnostics) == 1
@@ -802,7 +811,7 @@ end
     end
 
     @testset "lowering error within macro expanded code" begin
-        diagnostics = get_lowered_diagnostics("""let x = 42
+        diagnostics = get_lowering_diagnostics("""let x = 42
             println(x)
             @m_gen_invalid x
         end
@@ -821,8 +830,8 @@ const myfunc = (x) -> x
 end
 
 @testset HierarchicalTestSet "Undefined global binding report" begin
-    @test isempty(get_lowered_diagnostics("let x = 42; println(sin(x)); end"; context_module=@__MODULE__))
-    let diagnostics = get_lowered_diagnostics("""let x = 42
+    @test isempty(get_lowering_diagnostics("let x = 42; println(sin(x)); end"; context_module=@__MODULE__))
+    let diagnostics = get_lowering_diagnostics("""let x = 42
             undeffunc(x)
         end
         """; context_module=@__MODULE__)
@@ -837,8 +846,8 @@ end
         @test diagnostic.range.var"end".character == 13
     end
 
-    @test isempty(get_lowered_diagnostics("let x = 42; println(myfunc(x)); end"; context_module=TestLoweringUndefGlobalBinding))
-    let diagnostics = get_lowered_diagnostics("""let x = 42
+    @test isempty(get_lowering_diagnostics("let x = 42; println(myfunc(x)); end"; context_module=TestLoweringUndefGlobalBinding))
+    let diagnostics = get_lowering_diagnostics("""let x = 42
             undeffunc(x)
         end
         """; context_module=TestLoweringUndefGlobalBinding)
@@ -852,7 +861,7 @@ end
         @test diagnostic.range.var"end".character == 13
     end
 
-    @test isempty(get_lowered_diagnostics("""
+    @test isempty(get_lowering_diagnostics("""
         struct Issue492
             global function make_issue492()
                 new()
@@ -863,7 +872,7 @@ end
 
 @testset HierarchicalTestSet "Undefined local binding report" begin
     @testset "sequential assignment then use - no diagnostic" begin
-        @test isempty(get_lowered_diagnostics("""
+        @test isempty(get_lowering_diagnostics("""
             function f()
                 y = 1
                 println(y)
@@ -872,7 +881,7 @@ end
     end
 
     @testset "use before assignment - strict undef (Warning)" begin
-        let diagnostics = get_lowered_diagnostics("""
+        let diagnostics = get_lowering_diagnostics("""
             function f()
                 println(y)
                 y = 1
@@ -895,7 +904,7 @@ end
     end
 
     @testset "if-else both branches assign - no diagnostic" begin
-        @test isempty(get_lowered_diagnostics("""
+        @test isempty(get_lowering_diagnostics("""
             function f()
                 if rand() > 0.5
                     y = 1
@@ -908,7 +917,7 @@ end
     end
 
     @testset "if-else one branch assigns - maybe undef (Information)" begin
-        let diagnostics = get_lowered_diagnostics("""
+        let diagnostics = get_lowering_diagnostics("""
             function f()
                 if rand() > 0.5
                     y = 1
@@ -927,7 +936,7 @@ end
     end
 
     @testset "while loop - maybe undef" begin
-        let diagnostics = get_lowered_diagnostics("""
+        let diagnostics = get_lowering_diagnostics("""
             function f()
                 local y
                 while rand() > 0.5
@@ -944,7 +953,7 @@ end
     end
 
     @testset "@isdefined guard - no diagnostic" begin
-        @test isempty(get_lowered_diagnostics("""
+        @test isempty(get_lowering_diagnostics("""
             function f(x)
                 if x > 0
                     y = 42
@@ -957,7 +966,7 @@ end
     end
 
     @testset "@isdefined in && chain - no diagnostic" begin
-        @test isempty(get_lowered_diagnostics("""
+        @test isempty(get_lowering_diagnostics("""
             function f(x)
                 if x > 0
                     y = 42
@@ -970,7 +979,7 @@ end
     end
 
     @testset "@assert @isdefined hint" begin
-        @test isempty(get_lowered_diagnostics("""
+        @test isempty(get_lowering_diagnostics("""
             function f(x)
                 if x > 0
                     y = x
@@ -987,7 +996,7 @@ end
         # When a closure assigns to a captured variable, we don't know when/if
         # the closure is called, so report "may be undefined" instead of
         # "must be undefined"
-        let diagnostics = get_lowered_diagnostics("""
+        let diagnostics = get_lowering_diagnostics("""
             function func(a)
                 local x
                 function inner(y)
@@ -1007,7 +1016,7 @@ end
     end
 
     @testset "relatedInformation shows definition locations" begin
-        let diagnostics = get_lowered_diagnostics("""
+        let diagnostics = get_lowering_diagnostics("""
             function f()
                 if rand() > 0.5
                     y = 1
@@ -1026,7 +1035,7 @@ end
     end
 
     @testset "diagnostic points to the use on undef path, not the defined use" begin
-        let diagnostics = get_lowered_diagnostics("""
+        let diagnostics = get_lowering_diagnostics("""
             function f(x::Bool, y::Bool)
                 if x
                     z = "Hi"
@@ -1046,7 +1055,7 @@ end
     end
 
     @testset "multiple undef uses each get their own diagnostic" begin
-        let diagnostics = get_lowered_diagnostics("""
+        let diagnostics = get_lowering_diagnostics("""
             function f(x::Bool)
                 if x
                     z = 1
@@ -1065,7 +1074,7 @@ end
     end
 
     @testset "multiple definitions show multiple relatedInformation" begin
-        let diagnostics = get_lowered_diagnostics("""
+        let diagnostics = get_lowering_diagnostics("""
             function f()
                 if rand() > 0.5
                     y = 1
@@ -1085,7 +1094,7 @@ end
 
 @testset HierarchicalTestSet "dead store detection" begin
     @testset "assignment at end of function is dead" begin
-        let diagnostics = get_lowered_diagnostics("""
+        let diagnostics = get_lowering_diagnostics("""
             function foo(x::Bool)
                 if x
                     z = "Hi"
@@ -1106,7 +1115,7 @@ end
     end
 
     @testset "unconditional overwrite" begin
-        let diagnostics = get_lowered_diagnostics("""
+        let diagnostics = get_lowering_diagnostics("""
             function f()
                 z = "initial"
                 z = "overwrite"
@@ -1127,7 +1136,7 @@ end
     end
 
     @testset "conditional overwrite - no dead store" begin
-        @test isempty(get_lowered_diagnostics("""
+        @test isempty(get_lowering_diagnostics("""
             function f(x::Bool)
                 z = "initial"
                 if x
@@ -1139,7 +1148,7 @@ end
     end
 
     @testset "multiple dead stores" begin
-        let diagnostics = get_lowered_diagnostics("""
+        let diagnostics = get_lowering_diagnostics("""
             function f()
                 z = 1
                 z = 2
@@ -1153,7 +1162,7 @@ end
     end
 
     @testset "dead store after last use" begin
-        let diagnostics = get_lowered_diagnostics("""
+        let diagnostics = get_lowering_diagnostics("""
             function f()
                 z = 1
                 println(z)
@@ -1169,7 +1178,7 @@ end
     end
 
     @testset "lhs_eq_range for string RHS includes delimiter" begin
-        let diagnostics = get_lowered_diagnostics("""
+        let diagnostics = get_lowering_diagnostics("""
             function f()
                 z = "initial"
                 z = "overwrite"
@@ -1189,7 +1198,7 @@ end
     end
 
     @testset "underscore prefix suppresses dead store" begin
-        @test isempty(get_lowered_diagnostics("""
+        @test isempty(get_lowering_diagnostics("""
             function f()
                 _z = 1
                 _z = 2
@@ -1199,7 +1208,7 @@ end
     end
 
     @testset "closure capture - no dead store" begin
-        let diagnostics = get_lowered_diagnostics("""
+        let diagnostics = get_lowering_diagnostics("""
             function f()
                 x = 1
                 f = () -> x
@@ -1216,7 +1225,7 @@ end
 
 @testset HierarchicalTestSet "captured boxed variable detection" begin
     # Variable modified after capture -> boxed
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function foo()
             x = 1
             f = () -> x
@@ -1239,7 +1248,7 @@ end
     end
 
     # Multiple captured variables
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function bar()
             a = b = 1
             f = () -> (a, b)
@@ -1254,7 +1263,7 @@ end
     end
 
     # No capture, no modification -> no diagnostic
-    @test isempty(get_lowered_diagnostics("""
+    @test isempty(get_lowering_diagnostics("""
         function baz(x)
             y = x
             return sin(y)
@@ -1262,7 +1271,7 @@ end
         """))
 
     # Multiple closures capturing same variable
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function multi()
             x = 1
             f = () -> x
@@ -1280,7 +1289,7 @@ end
     end
 
     # Nested closure
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function nested()
             x = 1
             f = () -> begin
@@ -1299,7 +1308,7 @@ end
     end
 
     # do block capture
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function with_do()
             x = 1
             result = map([1,2,3]) do i
@@ -1315,7 +1324,7 @@ end
     end
 
     # From performance tips
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function abmult1(r::Int)
             if r < 0
                 r = -r
@@ -1328,7 +1337,7 @@ end
         diagnostic = only(diagnostics)
         @test diagnostic.message == "`r` is captured and boxed"
     end
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function abmult2(r::Int)
             if r < 0
                 r = -r
@@ -1341,7 +1350,7 @@ end
         """)
         @test isempty(diagnostics)
     end
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function abmult3(r0::Int)
             r::Int = r0
             if r < 0
@@ -1355,7 +1364,7 @@ end
         diagnostic = only(diagnostics)
         @test diagnostic.message == "`r` is captured and boxed"
     end
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function abmult4(r0::Int)
             r = Ref(r0)
             if r0 < 0
@@ -1369,7 +1378,7 @@ end
     end
 
     # https://github.com/aviatesk/JETLS.jl/issues/508
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         struct Foo{T}
             x::T
             function Foo(x)
@@ -1385,7 +1394,7 @@ end
     # (e.g. a `@testset` body), the related-information range must point at the actual
     # identifier — not the entire enclosing macrocall, which for macro-expanded references
     # picks the outermost source = `@testset begin ... end` instead of `walk`).
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         @testset "outer" begin
             walk(st) = walk(st-1)
             walk(5)
@@ -1413,8 +1422,13 @@ is_unsorted_import_names_diagnostic(diagnostic) =
     diagnostic.severity == JETLS.DiagnosticSeverity.Hint &&
     diagnostic.data isa UnsortedImportData
 
+function get_unsorted_import_diagnostics(text::AbstractString)
+    return get_lowering_diagnostics(text;
+        code = JETLS.LOWERING_UNSORTED_IMPORT_NAMES_CODE)
+end
+
 @testset "unsorted import names" begin
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_unsorted_import_diagnostics("""
         import Foo: c, a, b
         """)
         @test length(diagnostics) == 1
@@ -1423,68 +1437,68 @@ is_unsorted_import_names_diagnostic(diagnostic) =
         @test diagnostic.data.new_text == "import Foo: a, b, c"
     end
 
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_unsorted_import_diagnostics("""
         using Bar: x, y, z
         """)
         @test isempty(diagnostics)
     end
 
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_unsorted_import_diagnostics("""
         export c, a, b
         """)
         @test length(diagnostics) == 1
         @test is_unsorted_import_names_diagnostic(only(diagnostics))
     end
 
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_unsorted_import_diagnostics("""
         public z, y
         """)
         @test length(diagnostics) == 1
         @test is_unsorted_import_names_diagnostic(only(diagnostics))
     end
 
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_unsorted_import_diagnostics("""
         using Foo: bar as baz, alpha as a
         """)
         @test length(diagnostics) == 1
         @test is_unsorted_import_names_diagnostic(only(diagnostics))
     end
 
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_unsorted_import_diagnostics("""
         using Foo: alpha as a, bar as baz
         """)
         @test isempty(diagnostics)
     end
 
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_unsorted_import_diagnostics("""
         using ..Parent: b, a
         """)
         @test length(diagnostics) == 1
         @test is_unsorted_import_names_diagnostic(only(diagnostics))
     end
 
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_unsorted_import_diagnostics("""
         export foo, bar
         """)
         @test length(diagnostics) == 1
         @test is_unsorted_import_names_diagnostic(only(diagnostics))
     end
 
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_unsorted_import_diagnostics("""
         import Core, ..Base, Base
         """)
         @test length(diagnostics) == 1
         @test is_unsorted_import_names_diagnostic(only(diagnostics))
     end
 
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_unsorted_import_diagnostics("""
         using Core, Base
         """)
         @test length(diagnostics) == 1
         @test is_unsorted_import_names_diagnostic(only(diagnostics))
     end
 
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         import Base, Core
         """)
         @test isempty(diagnostics)
@@ -1492,11 +1506,9 @@ is_unsorted_import_names_diagnostic(diagnostic) =
 end
 
 function get_unused_import_diagnostics(text::AbstractString)
-    server = JETLS.Server()
-    uri = URI("file:///test_unused_imports.jl")
-    fi = JETLS.cache_file_info!(server, uri, 1, text)
-    st0_top = JETLS.build_syntax_tree(fi)
-    return JETLS.analyze_unused_imports(server, uri, fi, st0_top; skip_context_check=true)
+    return get_lowering_diagnostics(text;
+        code = JETLS.LOWERING_UNUSED_IMPORT_CODE,
+        skip_analysis_requiring_context = true)
 end
 
 @testset HierarchicalTestSet "unused imports detection" begin
@@ -1638,7 +1650,7 @@ end
 end
 
 @testset HierarchicalTestSet "unreachable code detection" begin
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function foo()
             return 1
             x = 2
@@ -1651,7 +1663,7 @@ end
     end
 
     # multiple unreachable statements should be merged into one diagnostic
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function foo()
             return 1
             x = 2
@@ -1665,7 +1677,7 @@ end
     end
 
     # noreturn optimization: code after `throw` is unreachable
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function foo()
             throw(ErrorException("error"))
             x = 2
@@ -1677,7 +1689,7 @@ end
     end
 
     # noreturn optimization: code after `error` is unreachable
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function foo()
             error("something went wrong")
             x = 2
@@ -1689,7 +1701,7 @@ end
     end
 
     # noreturn optimization: nested noreturn call in argument position
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function foo(x)
             println(error(x))
             return x
@@ -1701,7 +1713,7 @@ end
     end
 
     # noreturn optimization: assignment with noreturn RHS
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function foo(x)
             y = error(x)
             println(y)
@@ -1713,7 +1725,7 @@ end
     end
 
     # noreturn optimization: code after `rethrow` in catch is unreachable
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function foo()
             try
                 do_something()
@@ -1729,7 +1741,7 @@ end
     end
 
     # noreturn optimization: code after `exit` is unreachable
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function foo()
             exit(1)
             x = 2
@@ -1741,7 +1753,7 @@ end
     end
 
     # no diagnostic when there's no unreachable code
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function foo()
             x = 2
             return x
@@ -1752,7 +1764,7 @@ end
     end
 
     # return in a branch doesn't make subsequent code unreachable
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function foo(x)
             if x > 0
                 return 1
@@ -1765,7 +1777,7 @@ end
     end
 
     # return as the last statement in a function body: no unreachable code
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function foo()
             return 1
         end
@@ -1775,7 +1787,7 @@ end
     end
 
     # all branches return: code after if/else is unreachable
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function foo()
             if rand(Bool)
                 println("true")
@@ -1793,7 +1805,7 @@ end
     end
 
     # all branches throw: code after if/else is unreachable
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function foo(x)
             if x > 0
                 error("positive")
@@ -1809,7 +1821,7 @@ end
     end
 
     # mixed return/throw in branches: code after if/else is unreachable
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function foo(x)
             if x > 0
                 return 1
@@ -1825,7 +1837,7 @@ end
     end
 
     # only one branch returns: code after if/else is still reachable
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function foo(x)
             if x > 0
                 return 1
@@ -1840,7 +1852,7 @@ end
     end
 
     # all branches of if/elseif/else return: code after is unreachable
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function foo(x)
             if x > 0
                 return 1
@@ -1858,7 +1870,7 @@ end
     end
 
     # one elseif branch doesn't return: code after is reachable
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function foo(x)
             if x > 0
                 return 1
@@ -1875,7 +1887,7 @@ end
     end
 
     # try/catch: both branches return → unreachable
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function foo()
             try
                 return 1
@@ -1890,7 +1902,7 @@ end
     end
 
     # try/catch: only catch returns → reachable
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function foo()
             try
                 println("might throw")
@@ -1905,7 +1917,7 @@ end
     end
 
     # try/finally: try body returns → unreachable
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function foo()
             try
                 return 1
@@ -1920,7 +1932,7 @@ end
     end
 
     # try/finally: try body doesn't return → reachable
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function foo()
             try
                 println("might throw")
@@ -1935,7 +1947,7 @@ end
     end
 
     # code after `continue` in a loop is unreachable
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function foo()
             for i = 1:10
                 continue
@@ -1948,7 +1960,7 @@ end
     end
 
     # code after `break` in a loop is unreachable
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function foo()
             for i = 1:10
                 break
@@ -1961,7 +1973,7 @@ end
     end
 
     # all branches break/continue: code after if/else in loop is unreachable
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function foo()
             for i = 1:10
                 if i < 5
@@ -1978,7 +1990,7 @@ end
     end
 
     # only one branch breaks: code after if/else in loop is reachable
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function foo()
             for i = 1:10
                 if i < 5
@@ -1995,7 +2007,7 @@ end
     end
 
     # code after `break` in a while loop is unreachable
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function foo()
             while true
                 break
@@ -2008,7 +2020,7 @@ end
     end
 
     # code after `continue` in a while loop is unreachable
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function foo()
             i = 0
             while i < 10
@@ -2023,7 +2035,7 @@ end
     end
 
     # code after `return` in a while loop body is unreachable
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function foo()
             while true
                 return 1
@@ -2041,7 +2053,7 @@ end
     # diagnostic's range when iteration hits a reachable child. Otherwise the merged range
     # would extend past the label all the way to the end of the block, swallowing the
     # genuinely reachable `println("after")` into the report.
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function foo()
             @goto skip
             println("unreachable")
@@ -2064,7 +2076,7 @@ end
     # so without source-order filter `byte_range(child).start > terminator_end`,
     # `analyze_unreachable_code!` would emit a 2nd, baffling diagnostic pointing at the
     # loop header itself.
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function foo()
             for i = 1:10
                 break
@@ -2084,7 +2096,7 @@ end
     # `@goto` nested inside a `return`'s expression keeps the matching `@label` reachable:
     # control transfers via the goto edge before the surrounding `return` would execute,
     # so post-label code stays live.
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function foo(cnd::Bool)
             return cnd ? @goto(fallback) : println("Return")
             @label fallback
@@ -2099,7 +2111,7 @@ end
     # lives in the second macro argument, only evaluated when the first
     # produced `nothing`. The label is reachable via that goto edge even
     # though the surrounding `return` would otherwise terminate.
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function foo()
             return @something rand((rand(), nothing)) @goto fallback
             @label fallback
@@ -2119,7 +2131,7 @@ end
     # "macro-everything-is-unreachable" warning. The
     # `byte_range(child).start > terminator_end` filter in
     # `analyze_unreachable_code!` suppresses it.
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function find_thing(env)
             return @something parse_thing(env) return nothing
         end
@@ -2134,7 +2146,7 @@ module soft_scope_module
 end
 
 @testset HierarchicalTestSet "ambiguous soft scope detection" begin
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         for _ = 1:10
             x = 2
         end
@@ -2154,7 +2166,7 @@ end
     end
 
     # No diagnostic inside a function (hard scope)
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function f()
             for _ = 1:10
                 x = 2
@@ -2166,7 +2178,7 @@ end
     end
 
     # No diagnostic when no global by that name exists
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         for _ = 1:10
             y = 2
         end
@@ -2176,7 +2188,7 @@ end
     end
 
     # Explicit `global` suppresses the diagnostic
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         for _ = 1:10
             global x = 2
         end
@@ -2186,7 +2198,7 @@ end
     end
 
     # while loop
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         while true
             x = 2
             break
@@ -2198,7 +2210,7 @@ end
 
     @testset "soft scope mode (notebook)" begin
         # With soft_scope=true, ambiguous soft scope diagnostic should not fire
-        let diagnostics = get_lowered_diagnostics("""
+        let diagnostics = get_lowering_diagnostics("""
             for _ = 1:10
                 x = 2
             end
@@ -2208,7 +2220,7 @@ end
         end
 
         # Without soft_scope, the same code should produce the diagnostic
-        let diagnostics = get_lowered_diagnostics("""
+        let diagnostics = get_lowering_diagnostics("""
             for _ = 1:10
                 x = 2
             end
@@ -2221,7 +2233,7 @@ end
 
 @testset HierarchicalTestSet "unresolved goto detection" begin
     # forward goto with matching label — no diagnostic
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         begin
             @goto here
             println("dead")
@@ -2233,7 +2245,7 @@ end
     end
 
     # backward goto with matching label — no diagnostic
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function f()
             @label retry
             @goto retry
@@ -2243,7 +2255,7 @@ end
         @test isempty(ds)
     end
 
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         begin
             @goto nonexist
             println("foo")
@@ -2262,7 +2274,7 @@ end
 
     # `@goto` cannot cross lambda boundaries — label in outer fn,
     # goto in inner closure should be reported as unresolved
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function f()
             @label outer
             g = () -> @goto outer
@@ -2275,7 +2287,7 @@ end
     end
 
     # multiple unresolved gotos — each reported independently
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function f()
             @goto a
             @goto b
@@ -2292,7 +2304,7 @@ end
 end
 
 @testset HierarchicalTestSet "unused label detection" begin
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function f()
             @label unused
             return 1
@@ -2308,7 +2320,7 @@ end
     end
 
     # referenced label — no diagnostic
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function f()
             @label loop
             @goto loop
@@ -2319,7 +2331,7 @@ end
     end
 
     # mix — only the unreferenced one is reported
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function f()
             @label used
             @goto used
@@ -2333,7 +2345,7 @@ end
 
     # `@goto` cannot cross lambda boundaries — outer label is unused even
     # though an inner closure references the same name
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         function f()
             @label outer
             g = () -> @goto outer
@@ -2348,7 +2360,7 @@ end
     # Regression: when an unused `@label` is nested inside another
     # macrocall (e.g. `@testset`), the auto-fix delete range must cover
     # only the `@label name` line — not the entire enclosing macrocall.
-    let diagnostics = get_lowered_diagnostics("""
+    let diagnostics = get_lowering_diagnostics("""
         @testset "outer" begin
             @label spare
             return 1

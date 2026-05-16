@@ -1407,7 +1407,8 @@ struct ImportInfo
 end
 
 function compute_unit_def_used_names(
-        server::Server, search_uris::Set{URI}; skip_context_check::Bool = false
+        server::Server, search_uris::Set{URI};
+        skip_context_check::Bool = false # used by tests only
     )
     state = server.state
     mod_def_used_names = Dict{Module,DefUsedNames}()
@@ -1444,7 +1445,7 @@ end
 # `run_per_file_diagnostics!` in cli-check).
 function compute_def_used_names!(
         cache::DefUsedNamesCache, server::Server, search_uris::Set{URI};
-        skip_context_check::Bool = false
+        skip_context_check::Bool = false # used by tests only
     )
     # `Base.PersistentDict` uses `===` to compare keys (HAMT looks up via object identity),
     # so a `Set{URI}` key would never hit the cache across calls even when the elements
@@ -1471,7 +1472,7 @@ end
 function analyze_unused_imports!(
         diagnostics::Vector{Diagnostic}, def_used_names_cache::DefUsedNamesCache,
         server::Server, uri::URI, fi::FileInfo, st0_top::SyntaxTreeC;
-        skip_context_check::Bool = false # used by test only
+        skip_context_check::Bool = false # used by tests only
     )
     state = server.state
     mod_imported_names = Dict{Module,Dict{String,Vector{ImportInfo}}}()
@@ -1487,8 +1488,7 @@ function analyze_unused_imports!(
     isempty(mod_imported_names) && return diagnostics
 
     search_uris = collect_search_uris(server, uri)
-    mod_def_used_names = compute_def_used_names!(def_used_names_cache, server,
-        search_uris; skip_context_check)
+    mod_def_used_names = compute_def_used_names!(def_used_names_cache, server, search_uris; skip_context_check)
 
     for (context_module, imported_names) in mod_imported_names
         def_used_names = get(mod_def_used_names, context_module, nothing)
@@ -1510,9 +1510,6 @@ function analyze_unused_imports!(
 
     return diagnostics
 end
-
-analyze_unused_imports(args...; kwargs...) = # used by tests
-    analyze_unused_imports!(Diagnostic[], DefUsedNamesCache(), args...; kwargs...)
 
 # Returns tuples of (name, name_range, delete_range).
 # For single imports like `using M: x`, delete_range covers the entire import statement.
@@ -1652,12 +1649,13 @@ end
 function cross_file_diagnostics!(
         diagnostics::Vector{Diagnostic}, def_used_names_cache::DefUsedNamesCache,
         server::Server, uri::URI, file_info::FileInfo, st0_top::SyntaxTreeC,
-        per_file::PerFileDiagnosticsResult,
+        per_file::PerFileDiagnosticsResult;
+        skip_context_check::Bool = false # used by tests only
     )
     search_uris = collect_search_uris(server, uri)
-    mod_def_used_names = compute_def_used_names!(def_used_names_cache, server, search_uris)
+    mod_def_used_names = compute_def_used_names!(def_used_names_cache, server, search_uris; skip_context_check)
     emit_undef_global_diagnostics!(diagnostics, per_file.undef_global_candidates, mod_def_used_names)
-    analyze_unused_imports!(diagnostics, def_used_names_cache, server, uri, file_info, st0_top)
+    analyze_unused_imports!(diagnostics, def_used_names_cache, server, uri, file_info, st0_top; skip_context_check)
     return diagnostics
 end
 
