@@ -22,11 +22,15 @@ function get_lowered_diagnostics(
     st0_top = JETLS.build_syntax_tree(fi)
     @assert JS.kind(st0_top) === JS.K"toplevel"
     diagnostics = LSP.Diagnostic[]
+    candidates = JETLS.UndefGlobalCandidate[]
     JETLS.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
-        JETLS.lowering_diagnostics!(diagnostics, uri, fi,
+        JETLS.per_stmt_diagnostics!(diagnostics, candidates, uri, fi,
             st0, context_module, world, #=analyzer=#nothing, JETLS.LSPostProcessor();
             kwargs...)
     end
+    # Mirror the cross-file phase. The test runs in isolation so there are no sibling
+    # defs to consult; emit every collected candidate.
+    JETLS.emit_undef_global_diagnostics!(diagnostics, candidates, Dict{Module,JETLS.DefUsedNames}())
     return diagnostics
 end
 
@@ -42,6 +46,8 @@ macro just_return(x)
 end
 
 length_utf16(s::AbstractString) = sum(c::Char -> codepoint(c) < 0x10000 ? 1 : 2, collect(s); init=0)
+
+module EmptyModule end
 
 @testset HierarchicalTestSet "unused binding detection" begin
     let diagnostics = get_lowered_diagnostics("""
@@ -663,20 +669,19 @@ length_utf16(s::AbstractString) = sum(c::Char -> codepoint(c) < 0x10000 ? 1 : 2,
             @test only(diagnostics).message == "Unused argument `unused`"
         end
     end
-end
 
-module EmptyModule end
-@testset "unused binding detection (before full-analysis, without macro expansion)" begin
-    # `@sprintf` is not available yet for EmptyModule (simulating the lowering analysis behavior before full-analysis complete)
-    # https://github.com/aviatesk/JETLS.jl/issues/522
-    diagnostics = get_lowered_diagnostics("""
-        let
-            OLR = SW_in = 0.0
-            @info @sprintf("OLR: %.1f W/m², SW_in: %.1f W/m², net: %.1f W/m²",
-                            OLR, SW_in, SW_in - OLR)
-        end
-        """; context_module=EmptyModule, skip_analysis_requiring_context=true)
-    @test isempty(diagnostics)
+    @testset "before full-analysis, without macro expansion" begin
+        # `@sprintf` is not available yet for EmptyModule (simulating the lowering analysis behavior before full-analysis complete)
+        # https://github.com/aviatesk/JETLS.jl/issues/522
+        diagnostics = get_lowered_diagnostics("""
+            let
+                OLR = SW_in = 0.0
+                @info @sprintf("OLR: %.1f W/m², SW_in: %.1f W/m², net: %.1f W/m²",
+                                OLR, SW_in, SW_in - OLR)
+            end
+            """; context_module=EmptyModule, skip_analysis_requiring_context=true)
+        @test isempty(diagnostics)
+    end
 end
 
 macro m_throw(_)

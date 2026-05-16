@@ -12,7 +12,7 @@ end
 function invalidate_per_file_caches!(state::ServerState, uri::URI)
     invalidate_document_symbol_cache!(state, uri)
     invalidate_binding_occurrences_cache!(state, uri)
-    invalidate_lowering_diagnostics_cache!(state, uri)
+    invalidate_per_file_diagnostics_cache!(state, uri)
 end
 
 """

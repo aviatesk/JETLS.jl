@@ -344,7 +344,7 @@ function jet_result_to_diagnostics!(
     )
     for report in result.res.toplevel_error_reports
         if report isa JET.LoweringErrorReport || report isa JET.MacroExpansionErrorReport
-            # the equivalent report should have been reported by `lowering_diagnostics!`
+            # the equivalent report should have been reported by `per_stmt_diagnostics!`
             # with more precise location information
             continue
         end
@@ -593,12 +593,6 @@ function provenances_to_related_information!(relatedInformation::Vector{Diagnost
     return relatedInformation
 end
 
-struct LoweringDiagnosticKey
-    range::Range
-    kind::Symbol
-    name::String
-end
-
 # Compute a mapping from source locations to the set of identifier names found in keyword
 # argument type annotations.
 # `K"kw"` nodes are produced by JuliaSyntax for both true keyword arguments
@@ -762,6 +756,14 @@ function analyze_unused_assignments!(
     end
 end
 
+struct DefUsedNames
+    def::Set{String}
+    used::Set{String}
+    DefUsedNames() = new(Set{String}(), Set{String}())
+end
+const DefUsedNamesCacheData = Base.PersistentDict{UInt,Dict{Module,DefUsedNames}}
+const DefUsedNamesCache = LWContainer{DefUsedNamesCacheData, LWStats}
+
 # This analysis reports `lowering/undef-global-var` on a change basis, utilizing an already
 # analyzed analysis context. Full-analysis also reports similar diagnostics as
 # `inference/undef-global-var`. These two diagnostics have the following differences:
@@ -772,11 +774,14 @@ end
 #   faster. Since it's based on JuliaLowering, position information is accurate. However, it
 #   cannot analyze cases like `Base.undefvar`, so it basically detects a subset of what
 #   full-analysis reports.
-function analyze_undefined_global_bindings!(
-        diagnostics::Vector{Diagnostic}, fi::FileInfo, world::UInt,
-        analyzer::Union{Nothing,LSAnalyzer}, postprocessor::LSPostProcessor,
-        ctx3::JL.VariableAnalysisContext,
+# Per-file phase: collect undef-global candidates while `ctx3` is alive. Filters
+# against `world`/`analyzer` here so the cached candidates need no link back to
+# the lowering context. The cross-file phase consumes these via
+# `emit_undef_global_diagnostics!` with a unit-wide def-name set.
+function collect_undef_global_candidates!(
+        candidates::Vector{UndefGlobalCandidate}, fi::FileInfo, ctx3::JL.VariableAnalysisContext,
         binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence}},
+        world::UInt, analyzer::Union{Nothing,LSAnalyzer}, postprocessor::LSPostProcessor,
         reported::Set{LoweringDiagnosticKey}
     )
     for (binfo, occurrences) in binding_occurrences
@@ -798,14 +803,31 @@ function analyze_undefined_global_bindings!(
         range = jsobj_to_range(last(provs), fi)
         key = LoweringDiagnosticKey(range, bk, bn)
         key in reported ? continue : push!(reported, key)
-        code = LOWERING_UNDEF_GLOBAL_VAR_CODE
+        message = postprocessor("`$(bmod).$(bn)` is not defined")
+        push!(candidates, UndefGlobalCandidate(bmod, bn, range, message))
+    end
+end
+
+# Cross-file phase: emit a `Diagnostic` for each candidate whose name isn't defined
+# elsewhere in the analysis unit. Pure Set lookup — no re-lowering.
+function emit_undef_global_diagnostics!(
+        diagnostics::Vector{Diagnostic}, candidates::Vector{UndefGlobalCandidate},
+        mod_def_used_names::Dict{Module,DefUsedNames},
+    )
+    code = LOWERING_UNDEF_GLOBAL_VAR_CODE
+    cdesc = diagnostic_code_description(code)
+    for c in candidates
+        def_used_names = get(mod_def_used_names, c.bmod, nothing)
+        if def_used_names !== nothing && c.name in def_used_names.def
+            continue
+        end
         push!(diagnostics, Diagnostic(;
-            range,
+            range = c.range,
             severity = DiagnosticSeverity.Warning,
-            message = postprocessor("`$(bmod).$(binfo.name)` is not defined"),
+            message = c.message,
             source = DIAGNOSTIC_SOURCE_LIVE,
             code,
-            codeDescription = diagnostic_code_description(code)))
+            codeDescription = cdesc))
     end
 end
 
@@ -862,11 +884,7 @@ function analyze_undefined_local_bindings!(
     end
 end
 
-function compute_unused_variable_data(
-        st0::SyntaxTreeC,
-        prov::SyntaxTreeC,
-        fi::FileInfo
-    )
+function compute_unused_variable_data(st0::SyntaxTreeC, prov::SyntaxTreeC, fi::FileInfo)
     # Find parent K"=" node using byte_ancestors
     ancestors = byte_ancestors(st::SyntaxTreeC->JS.kind(st)===JS.K"=", st0, JS.byte_range(prov))
     isempty(ancestors) && return nothing
@@ -1253,8 +1271,9 @@ function collect_gotos_labels!(
 end
 
 function analyze_lowered_code!(
-        diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo, res::NamedTuple,
-        world::UInt, analyzer::Union{Nothing,LSAnalyzer}, postprocessor::LSPostProcessor;
+        diagnostics::Vector{Diagnostic}, candidates::Vector{UndefGlobalCandidate},
+        uri::URI, fi::FileInfo, res::NamedTuple, world::UInt,
+        analyzer::Union{Nothing,LSAnalyzer}, postprocessor::LSPostProcessor;
         skip_analysis_requiring_context::Bool = false,
         allow_unused_underscore::Bool = true,
         allow_noreturn_optimization::Vector{Symbol} = Symbol[]
@@ -1282,18 +1301,18 @@ function analyze_lowered_code!(
     analyze_unresolved_gotos!(diagnostics, fi, st3)
 
     if !skip_analysis_requiring_context
-        analyze_undefined_global_bindings!(
-            diagnostics, fi, world, analyzer, postprocessor,
-            ctx3, binding_occurrences, reported)
+        collect_undef_global_candidates!(candidates, fi, ctx3, binding_occurrences,
+            world, analyzer, postprocessor, reported)
         analyze_ambiguous_soft_scope!(diagnostics, fi, ctx3, reported)
     end
 
     return diagnostics
 end
 
-function lowering_diagnostics!(
-        diagnostics::Vector{Diagnostic}, uri::URI, fi::FileInfo, st0::SyntaxTreeC,
-        context_module::Module, world::UInt, analyzer::Union{Nothing,LSAnalyzer}, postprocessor::LSPostProcessor;
+function per_stmt_diagnostics!(
+        diagnostics::Vector{Diagnostic}, candidates::Vector{UndefGlobalCandidate},
+        uri::URI, fi::FileInfo, st0::SyntaxTreeC, context_module::Module, world::UInt,
+        analyzer::Union{Nothing,LSAnalyzer}, postprocessor::LSPostProcessor;
         skip_analysis_requiring_context::Bool = false,
         allow_unused_underscore::Bool = true,
         soft_scope::Bool = false
@@ -1377,7 +1396,7 @@ function lowering_diagnostics!(
     end
 
     return analyze_lowered_code!(
-        diagnostics, uri, fi, res, world, analyzer, postprocessor;
+        diagnostics, candidates, uri, fi, res, world, analyzer, postprocessor;
         skip_analysis_requiring_context, allow_unused_underscore, allow_noreturn_optimization)
 end
 
@@ -1387,14 +1406,11 @@ struct ImportInfo
     delete_range::Range
 end
 
-const UsedNamesByUnit = Dict{Set{URI},Dict{Module,Set{String}}}
-
-function compute_unit_used_names(
-        server::Server, search_uris::Set{URI};
-        skip_context_check::Bool = false
+function compute_unit_def_used_names(
+        server::Server, search_uris::Set{URI}; skip_context_check::Bool = false
     )
     state = server.state
-    mod_used_names = Dict{Module,Set{String}}()
+    mod_def_used_names = Dict{Module,DefUsedNames}()
     for search_uri in search_uris
         skip_context_check || has_analyzed_context(state, search_uri) || continue
         search_fi = @something begin
@@ -1411,12 +1427,36 @@ function compute_unit_used_names(
             for (binfo_key, occurrences) in binding_occurrences
                 binfo_key.kind === :global || continue
                 if any(o -> o.kind === :use, occurrences)
-                    push!(get!(Set{String}, mod_used_names, context_module), binfo_key.name)
+                    def_used_names = get!(DefUsedNames, mod_def_used_names, context_module)
+                    push!(def_used_names.used, binfo_key.name)
+                elseif any(o -> o.kind === :def, occurrences)
+                    def_used_names = get!(DefUsedNames, mod_def_used_names, context_module)
+                    push!(def_used_names.def, binfo_key.name)
                 end
             end
         end
     end
-    return mod_used_names
+    return mod_def_used_names
+end
+
+# Memoizes `compute_unit_def_used_names` per analysis-unit key. Lock-serialized writes
+# from `LWContainer` make the cache safe to share across worker threads (e.g.
+# `run_per_file_diagnostics!` in cli-check).
+function compute_def_used_names!(
+        cache::DefUsedNamesCache, server::Server, search_uris::Set{URI};
+        skip_context_check::Bool = false
+    )
+    # `Base.PersistentDict` uses `===` to compare keys (HAMT looks up via object identity),
+    # so a `Set{URI}` key would never hit the cache across calls even when the elements
+    # match. Hash the URI set up-front to get an immutable key that `===`-equates by value.
+    key = hash(search_uris)
+    return store!(cache) do data::DefUsedNamesCacheData
+        if haskey(data, key)
+            return data, data[key]
+        end
+        result = compute_unit_def_used_names(server, search_uris; skip_context_check)
+        return DefUsedNamesCacheData(data, key => result), result
+    end
 end
 
 # Detects unused imports by scanning all workspace files for usages of imported names.
@@ -1429,10 +1469,9 @@ end
 #   across every import-bearing file in the same analysis unit
 # - Unchanged file skipping in workspace/diagnostic
 function analyze_unused_imports!(
-        diagnostics::Vector{Diagnostic}, server::Server, uri::URI,
-        fi::FileInfo, st0_top::SyntaxTreeC;
-        skip_context_check::Bool = false,
-        used_names_cache::UsedNamesByUnit = UsedNamesByUnit()
+        diagnostics::Vector{Diagnostic}, def_used_names_cache::DefUsedNamesCache,
+        server::Server, uri::URI, fi::FileInfo, st0_top::SyntaxTreeC;
+        skip_context_check::Bool = false # used by test only
     )
     state = server.state
     mod_imported_names = Dict{Module,Dict{String,Vector{ImportInfo}}}()
@@ -1448,14 +1487,13 @@ function analyze_unused_imports!(
     isempty(mod_imported_names) && return diagnostics
 
     search_uris = collect_search_uris(server, uri)
-    mod_used_names = get!(used_names_cache, search_uris) do
-        compute_unit_used_names(server, search_uris; skip_context_check)
-    end
+    mod_def_used_names = compute_def_used_names!(def_used_names_cache, server,
+        search_uris; skip_context_check)
 
     for (context_module, imported_names) in mod_imported_names
-        used_names = get(mod_used_names, context_module, nothing)
+        def_used_names = get(mod_def_used_names, context_module, nothing)
         for (name, infos) in imported_names
-            used_names !== nothing && name in used_names && continue
+            def_used_names !== nothing && name in def_used_names.used && continue
             for info in infos
                 push!(diagnostics, Diagnostic(;
                     range = info.name_range,
@@ -1474,30 +1512,7 @@ function analyze_unused_imports!(
 end
 
 analyze_unused_imports(args...; kwargs...) = # used by tests
-    analyze_unused_imports!(Diagnostic[], args...; kwargs...)
-
-# Returns true if `st0_top` contains an `import`/`using` with explicit names
-# (the only shape `analyze_unused_imports!` can flag). Gates whether the
-# workspace/diagnostic `result_id` must fold in the analysis unit's state.
-function file_has_explicit_imports(st0_top::SyntaxTreeC)
-    found = traverse(st0_top) do st0::SyntaxTreeC
-        k = JS.kind(st0)
-        if k ∈ JS.KSet"import using"
-            if JS.numchildren(st0) == 1
-                child = st0[1]
-                ck = JS.kind(child)
-                if ck === JS.K":"
-                    return TraversalReturn(true; terminate=true)
-                elseif ck === JS.K"." && k === JS.K"import" && JS.numchildren(child) >= 2
-                    return TraversalReturn(true; terminate=true)
-                end
-            end
-            return TraversalNoRecurse()
-        end
-        return nothing
-    end
-    return found === true
-end
+    analyze_unused_imports!(Diagnostic[], DefUsedNamesCache(), args...; kwargs...)
 
 # Returns tuples of (name, name_range, delete_range).
 # For single imports like `using M: x`, delete_range covers the entire import statement.
@@ -1562,56 +1577,60 @@ function collect_explicit_import_names(st0::SyntaxTreeC, fi::FileInfo)
     return names
 end
 
-# Runs `lowering_diagnostics!` over every top-level statement of `file_info`,
-# returning the per-file diagnostics that depend solely on this file's content
-# and analysis context. `analyze_unused_imports!` is not included because its
-# result depends on sibling files in the analysis unit.
-function compute_lowering_diagnostics(
+# Runs `per_stmt_diagnostics!` over every top-level statement of `file_info`, returning
+# the per-file diagnostics together with the undef-global candidates collected while
+# `ctx3` is alive. `analyze_unused_imports!` and the cross-file emit step run later in
+# `toplevel_lowering_diagnostics!` because they depend on sibling files in the unit.
+function compute_per_file_diagnostics(
         server::Server, uri::URI, file_info::FileInfo, st0_top::SyntaxTreeC,
         cancel_flag::CancelFlag;
         lookup_func = nothing
     )
     diagnostics = Diagnostic[]
+    candidates = UndefGlobalCandidate[]
     skip_analysis_requiring_context = !has_analyzed_context(server.state, uri; lookup_func)
     allow_unused_underscore = get_config(server, :diagnostic, :allow_unused_underscore)
     soft_scope = is_notebook_cell_uri(server.state, uri)
     iterate_toplevel_tree(st0_top) do st0::SyntaxTreeC
         is_cancelled(cancel_flag) && return traversal_terminator
         pos = offset_to_xy(file_info, JS.first_byte(st0))
-        (; context_module, world, analyzer, postprocessor) = get_context_info(server.state, uri, pos; lookup_func)
-        lowering_diagnostics!(diagnostics, uri, file_info, st0,
+        (; context_module, world, analyzer, postprocessor) =
+            get_context_info(server.state, uri, pos; lookup_func)
+        per_stmt_diagnostics!(diagnostics, candidates, uri, file_info, st0,
             context_module, world, analyzer, postprocessor;
             skip_analysis_requiring_context, allow_unused_underscore, soft_scope)
     end
-    return diagnostics
+    return PerFileDiagnosticsResult(diagnostics, candidates)
 end
 
-# Cached accessor for the per-file lowering diagnostics. The cached `Vector` is
-# treated as read-only; callers must copy before mutating (e.g. before appending
-# `analyze_unused_imports!` results). Cache misses and cancelled computations
+# Cached accessor for the per-file `PerFileDiagnosticsResult`. The cached `diagnostics`
+# vector is treated as read-only; callers must copy before mutating (e.g. before appending
+# cross-file diagnostics). The cached `undef_global_candidates` are pre-filtered against
+# the lowering-time world + analyzer state, so the cross-file phase only needs to filter
+# them against the unit's `DefUsedNames` set. Cache misses and cancelled computations
 # both return without caching; only a fully computed result is stored.
-function get_lowering_diagnostics!(
+function get_per_file_diagnostics!(
         server::Server, uri::URI, file_info::FileInfo, st0_top::SyntaxTreeC,
         cancel_flag::CancelFlag;
         lookup_func = nothing
     )
     cache_uri = canonical_cache_uri(server.state, uri)
-    return store!(server.state.lowering_diagnostics_cache) do cache::LoweringDiagnosticsCacheData
+    return store!(server.state.per_file_diagnostics_cache) do cache::PerFileDiagnosticsCacheData
         if haskey(cache, cache_uri)
             return cache, cache[cache_uri]
         end
-        result = compute_lowering_diagnostics(server, uri, file_info, st0_top, cancel_flag;
-                                              lookup_func)
+        result = compute_per_file_diagnostics(
+            server, uri, file_info, st0_top, cancel_flag; lookup_func)
         if is_cancelled(cancel_flag)
             return cache, result
         end
-        return LoweringDiagnosticsCacheData(cache, cache_uri => result), result
+        return PerFileDiagnosticsCacheData(cache, cache_uri => result), result
     end
 end
 
-function invalidate_lowering_diagnostics_cache!(state::ServerState, uri::URI)
+function invalidate_per_file_diagnostics_cache!(state::ServerState, uri::URI)
     cache_uri = canonical_cache_uri(state, uri)
-    store!(state.lowering_diagnostics_cache) do cache::LoweringDiagnosticsCacheData
+    store!(state.per_file_diagnostics_cache) do cache::PerFileDiagnosticsCacheData
         if haskey(cache, cache_uri)
             Base.delete(cache, cache_uri), nothing
         else
@@ -1620,23 +1639,39 @@ function invalidate_lowering_diagnostics_cache!(state::ServerState, uri::URI)
     end
 end
 
-function clear_lowering_diagnostics_cache!(state::ServerState)
-    store!(state.lowering_diagnostics_cache) do _::LoweringDiagnosticsCacheData
-        LoweringDiagnosticsCacheData(), nothing
+function clear_per_file_diagnostics_cache!(state::ServerState)
+    store!(state.per_file_diagnostics_cache) do _::PerFileDiagnosticsCacheData
+        PerFileDiagnosticsCacheData(), nothing
     end
 end
 
-function toplevel_lowering_diagnostics(
-        server::Server, uri::URI, file_info::FileInfo, cancel_flag::CancelFlag=DUMMY_CANCEL_FLAG;
-        lookup_func = nothing,
-        used_names_cache::UsedNamesByUnit = UsedNamesByUnit(),
+# Runs the cross-file phase of lowering diagnostics: emits undef-global diagnostics
+# from cached candidates filtered against the unit's def names, and detects unused
+# imports against the unit's used names. Both consult `compute_def_used_names!`
+# which is memoized per-unit on `def_used_names_cache`.
+function cross_file_diagnostics!(
+        diagnostics::Vector{Diagnostic}, def_used_names_cache::DefUsedNamesCache,
+        server::Server, uri::URI, file_info::FileInfo, st0_top::SyntaxTreeC,
+        per_file::PerFileDiagnosticsResult,
+    )
+    search_uris = collect_search_uris(server, uri)
+    mod_def_used_names = compute_def_used_names!(def_used_names_cache, server, search_uris)
+    emit_undef_global_diagnostics!(diagnostics, per_file.undef_global_candidates, mod_def_used_names)
+    analyze_unused_imports!(diagnostics, def_used_names_cache, server, uri, file_info, st0_top)
+    return diagnostics
+end
+
+function toplevel_lowering_diagnostics!(
+        def_used_names_cache::DefUsedNamesCache, server::Server, uri::URI,
+        file_info::FileInfo, cancel_flag::CancelFlag=DUMMY_CANCEL_FLAG;
+        lookup_func = nothing
     )
     st0_top = build_syntax_tree(file_info)
-    cached = get_lowering_diagnostics!(server, uri, file_info, st0_top, cancel_flag; lookup_func)
-    is_cancelled(cancel_flag) && return cached
-    diagnostics = copy(cached)
+    cached = get_per_file_diagnostics!(server, uri, file_info, st0_top, cancel_flag; lookup_func)
+    is_cancelled(cancel_flag) && return cached.diagnostics
+    diagnostics = copy(cached.diagnostics)
     if has_analyzed_context(server.state, uri; lookup_func)
-        analyze_unused_imports!(diagnostics, server, uri, file_info, st0_top; used_names_cache)
+        cross_file_diagnostics!(diagnostics, def_used_names_cache, server, uri, file_info, st0_top, cached)
     end
     return diagnostics
 end
@@ -1809,14 +1844,15 @@ function handle_DocumentDiagnosticRequest(
         return send(server, DocumentDiagnosticResponse(; id = msg.id, result = nothing, error = result))
     end
     file_info = result
-    resultId = compute_diagnostic_result_id(server, uri, file_info)
+    resultId = compute_diagnostic_result_id(server, uri)
     if msg.params.previousResultId == resultId
         return send(server,
             DocumentDiagnosticResponse(;
                 id = msg.id,
                 result = RelatedUnchangedDocumentDiagnosticReport(; resultId)))
     end
-    diagnostics = compute_pull_diagnostics(server, uri, file_info, cancel_flag)
+    def_used_names_cache = DefUsedNamesCache()
+    diagnostics = compute_pull_diagnostics!(def_used_names_cache, server, uri, file_info, cancel_flag)
     if is_cancelled(cancel_flag)
         return send(server, DocumentDiagnosticResponse(; id = msg.id, result = nothing, error = request_cancelled_error()))
     end
@@ -1857,19 +1893,16 @@ function handle_WorkspaceDiagnosticRequest(
 end
 
 # Derives the `resultId` sent back for `textDocument/diagnostic` and `workspace/diagnostic`.
-# When the file has explicit imports it folds every unit member's version into the key so a
-# sibling edit invalidates this file's cached diagnostics and `analyze_unused_imports!` reruns.
-# Files without explicit imports stay keyed on their own version alone.
+# Every unit member's version is folded into the key so a sibling edit invalidates this
+# file's cached diagnostics and the cross-file analyses (`analyze_undefined_global_uses_for_file!`,
+# `analyze_unused_imports!`) rerun.
 # `ConfigManagerData.diagnostic_settings_hash` is folded in so the resultId flips when
 # `[diagnostic]` config changes — otherwise the equality check below would still match the
 # client's `previousResultId` and the `request_diagnostic_refresh!` from
 # `handle_lsp_config_change!` would be a no-op.
-function compute_diagnostic_result_id(server::Server, uri::URI, fi::FileInfo)
+function compute_diagnostic_result_id(server::Server, uri::URI)
     state = server.state
     config_hash = hash(get_config(state, :diagnostic))
-    if !file_has_explicit_imports(build_syntax_tree(fi))
-        return string(hash((fi.version, config_hash)))
-    end
     file_hash = zero(UInt)
     for search_uri in collect_search_uris(server, uri)
         search_fi = @something begin
@@ -1885,12 +1918,12 @@ end
 # Computes raw per-file diagnostics for both `textDocument/diagnostic` and
 # `workspace/diagnostic`. Falls back to parsed-stream diagnostics when the file does
 # not parse cleanly, otherwise runs the lowering-based analyses.
-function compute_pull_diagnostics(
-        server::Server, uri::URI, fi::FileInfo, cancel_flag::CancelFlag = DUMMY_CANCEL_FLAG;
-        used_names_cache::UsedNamesByUnit = UsedNamesByUnit(),
+function compute_pull_diagnostics!(
+        def_used_names_cache::DefUsedNamesCache, server::Server, uri::URI, fi::FileInfo,
+        cancel_flag::CancelFlag = DUMMY_CANCEL_FLAG;
     )
     if isempty(fi.parsed_stream.diagnostics)
-        return toplevel_lowering_diagnostics(server, uri, fi, cancel_flag; used_names_cache)
+        return toplevel_lowering_diagnostics!(def_used_names_cache, server, uri, fi, cancel_flag)
     else
         return parsed_stream_to_diagnostics(fi)
     end
@@ -1928,7 +1961,7 @@ function send_workspace_diagnostics(
     root_path = isdefined(state, :root_path) ? state.root_path : nothing
     debuginfo = nothing
     # debuginfo = (; synced = URI[], analyzed = URI[], skipped = URI[], failed = URI[])
-    used_names_cache = UsedNamesByUnit()
+    def_used_names_cache = DefUsedNamesCache()
     for uri in uris_to_search
         is_cancelled(cancel_flag) && return send(server,
             WorkspaceDiagnosticResponse(;
@@ -1946,7 +1979,7 @@ function send_workspace_diagnostics(
             continue
         end
 
-        result_id = compute_diagnostic_result_id(server, uri, fi)
+        result_id = compute_diagnostic_result_id(server, uri)
         prev_result_id = get(previous_result_ids, uri, nothing)
         if prev_result_id !== nothing && prev_result_id == result_id
             item = WorkspaceUnchangedDocumentDiagnosticReport(;
@@ -1963,7 +1996,7 @@ function send_workspace_diagnostics(
             continue
         end
 
-        diagnostics = compute_pull_diagnostics(server, uri, fi, cancel_flag; used_names_cache)
+        diagnostics = compute_pull_diagnostics!(def_used_names_cache, server, uri, fi, cancel_flag)
         is_cancelled(cancel_flag) && return send(server,
             WorkspaceDiagnosticResponse(;
                 id = msg.id,
