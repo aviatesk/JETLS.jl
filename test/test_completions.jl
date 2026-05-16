@@ -552,6 +552,24 @@ function with_property_completion_items(
     end
 end
 
+module custom_props_fixture
+    struct CustomProps
+        x::Int
+    end
+    Base.propertynames(::CustomProps) = (:x_int, :x_float32, :x_float64)
+    function Base.getproperty(cp::CustomProps, name::Symbol)
+        if name === :x_int
+            return getfield(cp, :x)
+        elseif name === :x_float32
+            return Float32(getfield(cp, :x))
+        elseif name === :x_float64
+            return Float64(getfield(cp, :x))
+        else
+            throw(ArgumentError(lazy"CustomProps does not accept property name $name"))
+        end
+    end
+end
+
 # `propertynames`/`getfield` mismatch fixture for property completion tests
 module broken_props_fixture
     struct BrokenProps end
@@ -652,6 +670,29 @@ end
             @test resolved.labelDetails.detail !== nothing
             @test occursin("String", resolved.labelDetails.detail)
             @test !occursin("Union{}", resolved.labelDetails.detail)
+            cnt[] += 1
+        end
+        @test cnt[] == 1
+    end
+
+    let text = """
+        function test_custom_props(cp::CustomProps)
+            cp.│
+        end
+        """
+        cnt = Ref(0)
+        with_property_completion_items(text;
+                context=dot_context,
+                context_module=custom_props_fixture,
+            ) do _, result, state, _
+            props = only_props(result.items)
+            labels = Set(it.label for it in props)
+            @test labels == Set(("x_int", "x_float32", "x_float64"))
+            @test all(p->isnothing(p.labelDetails.detail), props)
+            i = findfirst(p->p.label=="x_float32", props)
+            @test !isnothing(i)
+            resolved = JETLS.resolve_completion_item(state, props[i])
+            @test resolved.labelDetails.detail == " ::Float32"
             cnt[] += 1
         end
         @test cnt[] == 1
