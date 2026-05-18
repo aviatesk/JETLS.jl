@@ -865,29 +865,48 @@ end
         @test func1[] && struct1[]
     end
 
-    let cnt = Ref(0), func1 = Ref(false), struct1 = Ref(false)
+    # Doc-wrapped forms should yield the docstring and the documented expression
+    # as separate lowerable trees, with interpolated identifiers inside the
+    # docstring reachable for downstream analyses (e.g. `analyze_unused_imports!`).
+    let cnt = Ref(0), func1 = Ref(false), struct1 = Ref(false),
+        outer_doc = Ref{Union{Nothing,JS.SyntaxTree}}(nothing),
+        inner_doc = Ref{Union{Nothing,JS.SyntaxTree}}(nothing)
         JETLS.iterate_toplevel_tree(jlparse("""
             \"\"\"
             Docstring for `module Module1`
             \"\"\"
             module Module1
             \"\"\"
-            Docstring for `func1`
+            \$(SIGNATURES)
             \"\"\"
             func1(x) = x
             struct Struct1 end
             end
             """)) do st0
             cnt[] += 1
-            s = JS.sourcetext(st0)
-            if s == "func1(x) = x"
-                func1[] = true
-            elseif s == "struct Struct1 end"
-                struct1[] = true
+            k = JS.kind(st0)
+            if k === JS.K"string"
+                inner_doc[] = st0
+            elseif k === JS.K"String"
+                outer_doc[] = st0
+            else
+                s = JS.sourcetext(st0)
+                if s == "func1(x) = x"
+                    func1[] = true
+                elseif s == "struct Struct1 end"
+                    struct1[] = true
+                end
             end
         end
-        @test cnt[] == 2
+        @test cnt[] == 4
         @test func1[] && struct1[]
+        @test outer_doc[] !== nothing
+        doc = inner_doc[]
+        @test doc !== nothing
+        @test any(JS.children(doc)) do c
+            JS.kind(c) === JS.K"Identifier" &&
+                JS.hasattr(c, :name_val) && c.name_val == "SIGNATURES"
+        end
     end
 end
 
