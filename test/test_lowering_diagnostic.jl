@@ -868,6 +868,23 @@ end
             end
         end
     """; context_module=@__MODULE__))
+
+    # Undefined identifiers used as docstring interpolations should be reported
+    let diagnostics = get_lowering_diagnostics("""
+        \"\"\"
+        \$(undef_doc_interp)
+        \"\"\"
+        issue699_undef(x) = x
+        """; context_module=@__MODULE__)
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.code == JETLS.LOWERING_UNDEF_GLOBAL_VAR_CODE
+        @test diagnostic.message == "`$(@__MODULE__).undef_doc_interp` is not defined"
+        @test diagnostic.range.start.line == 1
+        @test diagnostic.range.start.character == 2
+        @test diagnostic.range.var"end".line == 1
+        @test diagnostic.range.var"end".character == 2 + length("undef_doc_interp")
+    end
 end
 
 @testset HierarchicalTestSet "Undefined local binding report" begin
@@ -1607,6 +1624,22 @@ end
         export sin
         issue586(x) = sin(x)
         end
+        """)
+        @test isempty(diagnostics)
+    end
+
+    # Imports used only as identifier interpolations inside docstrings should
+    # not be reported as unused (aviatesk/JETLS.jl#699)
+    let diagnostics = get_unused_import_diagnostics("""
+        using DocStringExtensions: TYPEDEF, TYPEDSIGNATURES
+        \"\"\"
+        \$(TYPEDEF)
+        \"\"\"
+        struct Issue699 end
+        \"\"\"
+        \$(TYPEDSIGNATURES)
+        \"\"\"
+        issue699(x) = x
         """)
         @test isempty(diagnostics)
     end

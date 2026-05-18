@@ -318,8 +318,6 @@ function _remove_macrocalls(st0::SyntaxTreeC)
             # `@main` functions are desugared by `desugar_main_macrocall` below,
             # so there's no need to remove them here
             return st0, false
-        elseif is_doc0(st0)
-            return _remove_macrocalls(st0[end])[1], true
         elseif is_cmd0(st0)
             # `` `foo` `` parses to `Core.@cmd(LineNumberNode, CmdString)` where
             # `CmdString` is an opaque leaf JuliaLowering has no rule for at
@@ -638,8 +636,21 @@ function iterate_toplevel_tree(callback, st0_top::SyntaxTreeC)
                 push!(sl, stblk[i])
             end
         elseif is_doc0_any(st0)
-            # Analyze only the code to which docstrings are attached.
-            push!(sl, st0[end])
+            # Dispatch the macro arguments of a `@doc` macrocall as their own
+            # lowerable trees:
+            # - the documented expression is reached directly, so cursor-based features and
+            #   per-statement diagnostics keep accurate source positions, which otherwise
+            #   could be lost during the expansion of `@doc` (an old-style macro)
+            # - the docstring node (a `K"string"` with interpolations as children) is
+            #   lowered too, so identifier interpolations like `$(SIGNATURES)` from
+            #   `DocStringExtensions` resolve as global `:use` occurrences
+            for i = JS.numchildren(st0):-1:3 # reversed since we use `pop!`
+                # The first two children of any macrocall are the macro name and the line
+                # node, both of which carry the macrocall's full byte range as provenance
+                # and would otherwise capture cursor-based lookups for any offset inside
+                # the doc-wrapped form; start at `i = 3` to skip them.
+                push!(sl, st0[i])
+            end
         else # st0 is lowerable tree
             ret = callback(st0)
             if ret isa TraversalReturn

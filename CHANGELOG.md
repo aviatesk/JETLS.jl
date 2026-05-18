@@ -94,10 +94,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
-- Identifiers inside keyword arguments of `@test`, `@test_broken`, and `@test_skip` (e.g. `flag` in `@test x broken=flag`) are now picked up by scope resolution, so undef-var diagnostics and find-references work for them. Previously the keyword arguments were dropped during macro expansion.
-
-- Identifiers inside `@show`, `@debug`, `@info`, `@warn`, `@error`, and `@logmsg` calls — including kwarg values (e.g. `flag` in `@info "msg" extra=flag`) and splatted operands (e.g. `kws` in `@info "msg" kws...`) — are now picked up by scope resolution, so undef-var diagnostics and find-references work for them. Previously the identifiers in these macros were silently ignored. For the logging macros, duplicate kwarg names also surface as `lowering/macro-expansion-error` anchored at the call site.
-
 - Fixed `jetls check` failing with "could not find any files to analyze" on Windows when the current working directory's drive letter casing differed from the URI-normalized form (Closed https://github.com/aviatesk/JETLS.jl/issues/679).
 
 - `jetls check` no longer rejects files outside the current working directory. Previously, paths such as `jetls check ../foo.jl` were classified as out-of-scope by the LSP-style workspace boundary guard and produced "could not find any files to analyze". The CLI now analyzes any file passed on the command line regardless of where it lives relative to the cwd.
@@ -105,6 +101,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `jetls check` now reports parse errors. Previously, files with syntax errors (e.g. an unclosed parenthesis like `f(x) = println(x`) silently produced "No diagnostics found".
 
 - Fixed spurious `WARNING: Detected access to binding ... in a world prior to its definition world` messages emitted by `jetls check` and other server analyses.
+
+- Identifiers interpolated into docstrings (e.g. `$(TYPEDEF)` / `$(TYPEDSIGNATURES)` from [DocStringExtensions.jl](https://github.com/JuliaDocs/DocStringExtensions.jl)) are now treated as real references during scope resolution. As a result, `lowering/unused-import` no longer falsely reports imports that are only used through docstring interpolations, and `lowering/undef-global-var` flags interpolations of names that aren't actually in scope. Other LSP features (hover, go-to-definition, find-references, …) also work on identifiers inside docstring interpolations. (Fixed https://github.com/aviatesk/JETLS.jl/issues/699)
+
+- Identifiers inside keyword arguments of `@test`, `@test_broken`, and `@test_skip` (e.g. `flag` in `@test x broken=flag`) are now picked up by scope resolution, so undef-var diagnostics and find-references work for them. Previously the keyword arguments were dropped during macro expansion.
+
+- Identifiers inside `@show`, `@debug`, `@info`, `@warn`, `@error`, and `@logmsg` calls — including kwarg values (e.g. `flag` in `@info "msg" extra=flag`) and splatted operands (e.g. `kws` in `@info "msg" kws...`) — are now picked up by scope resolution, so undef-var diagnostics and find-references work for them. Previously the identifiers in these macros were silently ignored. For the logging macros, duplicate kwarg names also surface as `lowering/macro-expansion-error` anchored at the call site.
 
 ## 2026-05-08
 
