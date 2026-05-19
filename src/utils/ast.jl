@@ -34,9 +34,15 @@ else
 end
 
 """
-Return a tree where all nodes of `kinds` are removed.  Should not modify any
-nodes, and should not create new nodes unnecessarily.
+    trim_error_nodes(st0::SyntaxTreeC) -> SyntaxTreeC
+
+Strip parser-recovery (`K"error"`) nodes from `st0` and fix the structural shapes that
+the strip would otherwise leave malformed for JuliaLowering — i.e. [`without_kinds`](@ref)
+and [`repair_after_trim`](@ref) in sequence. Apply this to a surface AST before handing it
+to a lowering pass that needs to tolerate incomplete user input.
 """
+trim_error_nodes(st0::SyntaxTreeC) = repair_after_trim(without_kinds(st0, JS.KSet"error"))
+
 function _without_kinds(st::SyntaxTreeC, kinds::Tuple{Vararg{JS.Kind}})
     if JS.kind(st) in kinds
         return (nothing, true)
@@ -50,18 +56,94 @@ function _without_kinds(st::SyntaxTreeC, kinds::Tuple{Vararg{JS.Kind}})
         changed |= cc
         isnothing(nc) || push!(new_children, nc)
     end
-    k = JS.kind(st)
-    new_node = changed ?
-        JL.@ast(JS.syntax_graph(st), st, [k new_children...]) : st
+    # `mknode` copies all attrs (kind, syntax_flags, value, ...) from `st`, so
+    # we don't lose the parser's infix/prefix tagging that downstream repair
+    # passes need to disambiguate trimmed `(:: x)` from anonymous `(:: T)`.
+    new_node = changed ? JS.mknode(st, new_children) : st
     return (new_node, changed)
 end
 
+"""
+    without_kinds(st::SyntaxTreeC, kinds::Tuple{Vararg{JS.Kind}}) -> trimmed::SyntaxTreeC
+
+Return a tree where all nodes of `kinds` are trimmed.
+Should not modify any nodes, and should not create new nodes unnecessarily.
+"""
 function without_kinds(st::SyntaxTreeC, kinds::Tuple{Vararg{JS.Kind}})
     ensure_jl_source_attr!(JS.syntax_graph(st))
     return (JS.kind(st) in kinds ?
         JL.@ast(JS.syntax_graph(st), st, [JS.K"TOMBSTONE"]) :
         _without_kinds(st, kinds)[1])::SyntaxTreeC
 end
+
+"""
+    repair_after_trim(st0::SyntaxTreeC) -> SyntaxTreeC
+
+Walk `st0` and fix structural shapes that JuliaLowering would reject after
+[`without_kinds`](@ref) has trimmed parser-recovery (`K"error"`) nodes. Each
+repair rule replaces a now-malformed parent with a substitute (typically one
+of its surviving children) so that downstream passes can keep processing the
+surrounding tree.
+
+Currently handled:
+
+- `K"."` — `lhs.│` parses as `(. lhs (inert (error)))`; after trim the empty
+  `K"inert"` makes JuliaLowering reject the dot as "invalid `.` syntax", so
+  the node is collapsed to `lhs`.
+- `K"&&"` / `K"||"` — short-circuit nodes that always carry ≥ 2 operands in valid parses.
+  A single-child residue (e.g. `(&& a)` from `a &&│`) trips a `numchildren > 1` assertion
+  in JuliaLowering, so the node is collapsed to its surviving operand.
+- `K"::"` — collapses 1-child residue to its lhs only for the infix form (`value::│`);
+  the anonymous prefix form (`f(::T)`) keeps its lone child intact.
+
+Not yet handled because the malformed shape needs more than a child-collapse:
+
+- `K"->"`, `K"if"`, `K"for"`, compound-assignment `K"op="` — either a
+  structural rewrite or context-aware reasoning is required.
+
+Add new branches in [`_repair_node`](@ref) when these cause downstream
+breakage in practice.
+"""
+function repair_after_trim(st0::SyntaxTreeC)
+    ensure_jl_source_attr!(JS.syntax_graph(st0))
+    return _repair_after_trim(st0)::SyntaxTreeC
+end
+
+function _repair_after_trim(st0::SyntaxTreeC)
+    JS.is_leaf(st0) && return st0
+    new_children = JS.SyntaxList(JS.syntax_graph(st0))
+    changed = false
+    for c in JS.children(st0)
+        nc = _repair_after_trim(c)
+        push!(new_children, nc)
+        changed |= nc !== c
+    end
+    repaired = _repair_node(st0, new_children)
+    repaired !== nothing && return repaired
+    return changed ? JS.mknode(st0, new_children) : st0
+end
+
+# Per-kind repair rules. Each rule returns the replacement node when it applies,
+# or `nothing` to fall through to the default reconstruction.
+function _repair_node(st0::SyntaxTreeC, new_children::JS.SyntaxList)
+    k = JS.kind(st0)
+    if k === JS.K"." && length(new_children) == 2 && _is_empty_non_leaf(new_children[2])
+        return new_children[1]
+    end
+    if k in JS.KSet"&& ||" && length(new_children) == 1
+        return new_children[1]
+    end
+    # `(:: x)` can mean either a trimmed `value::│` (infix, the user was typing
+    # a type annotation) or an anonymous `::T` (prefix, valid as a function
+    # arg slot). The parser's infix/prefix flag — preserved through trimming
+    # by `JS.mknode` — disambiguates them, so we only collapse the infix case.
+    if k === JS.K"::" && length(new_children) == 1 && JS.is_infix_op_call(st0)
+        return new_children[1]
+    end
+    return nothing
+end
+
+_is_empty_non_leaf(st0::SyntaxTreeC) = !JS.is_leaf(st0) && JS.numchildren(st0) == 0
 
 """
 Return a tree where `K"\$"` interpolation nodes are replaced by their content.

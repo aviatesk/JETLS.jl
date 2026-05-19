@@ -910,4 +910,78 @@ end
     end
 end
 
+# Find the first descendant (or `st` itself) whose kind matches `k`.
+function find_first_kind(st::JS.SyntaxTree, k::JS.Kind)
+    JS.kind(st) === k && return st
+    JS.is_leaf(st) && return nothing
+    for c in JS.children(st)
+        r = find_first_kind(c, k)
+        r === nothing || return r
+    end
+    return nothing
+end
+
+@testset "`trim_error_nodes`" begin
+    # The repaired tree must be acceptable to scope-resolution lowering;
+    # otherwise the repair didn't achieve its purpose.
+    lowers_ok(st) = try
+        JETLS.jl_lower_for_scope_resolution(@__MODULE__, st;
+            trim_error_nodes=false, recover_from_macro_errors=false)
+        return true
+    catch
+        return false
+    end
+
+    # `K"."`: `(. lhs (inert (error)))` collapses to `lhs` so the surrounding
+    # tree stays usable for downstream lowering / type queries.
+    let st = jlparse("function f(binfo); g(binfo.); end")
+        trimmed = JETLS.trim_error_nodes(st)
+        @test find_first_kind(trimmed, JS.K"error") === nothing
+        @test find_first_kind(trimmed, JS.K".") === nothing
+        call = find_first_kind(trimmed, JS.K"call")
+        @test call !== nothing
+        # `g(binfo)` after repair → `(call g binfo)`.
+        @test JS.numchildren(call) == 2
+        @test JS.kind(call[2]) === JS.K"Identifier"
+        @test call[2].name_val == "binfo"
+        @test lowers_ok(trimmed)
+    end
+
+    # `K"&&"` / `K"||"`: 1-child residue collapses to the surviving operand.
+    let st = jlparse("function f(a); g(a && ); end")
+        trimmed = JETLS.trim_error_nodes(st)
+        @test find_first_kind(trimmed, JS.K"&&") === nothing
+        @test lowers_ok(trimmed)
+    end
+    let st = jlparse("function f(a); g(a || ); end")
+        trimmed = JETLS.trim_error_nodes(st)
+        @test find_first_kind(trimmed, JS.K"||") === nothing
+        @test lowers_ok(trimmed)
+    end
+
+    # `K"::"`: the infix form `value::│` collapses to `value`; the anonymous
+    # prefix form `f(::T)` is preserved. Disambiguation uses the parser's
+    # infix/prefix flag, which `JS.mknode` carries through the trim.
+    let st = jlparse("function f(); g(binfo::); end")
+        trimmed = JETLS.trim_error_nodes(st)
+        @test find_first_kind(trimmed, JS.K"::") === nothing
+        @test lowers_ok(trimmed)
+    end
+    let st = jlparse("f(::Int) = 1")
+        trimmed = JETLS.trim_error_nodes(st)
+        ascription = find_first_kind(trimmed, JS.K"::")
+        @test ascription !== nothing
+        @test JS.is_prefix_op_call(ascription)
+        @test JS.numchildren(ascription) == 1
+        @test JS.kind(ascription[1]) === JS.K"Identifier"
+        @test ascription[1].name_val == "Int"
+        @test lowers_ok(trimmed)
+    end
+
+    # No-op on well-formed input: every legitimate shape passes through unchanged.
+    let st = jlparse("function f(a::Int, b); a.x + (a && b) || a; end")
+        @test JETLS.trim_error_nodes(st) === st
+    end
+end
+
 end # module test_ast

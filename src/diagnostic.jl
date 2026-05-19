@@ -1371,7 +1371,7 @@ function per_stmt_diagnostics!(
             JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
         end
 
-        st0 = remove_macrocalls(without_kinds(st0, JS.KSet"error"))
+        st0 = remove_macrocalls(trim_error_nodes(st0))
         try
             ctx1, st1 = JL.expand_forms_1(context_module, st0, true, world)
             _jl_lower_for_scope_resolution(ctx1, st0, st1; convert_closures=true)

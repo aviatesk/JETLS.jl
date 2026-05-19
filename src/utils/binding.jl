@@ -64,7 +64,7 @@ function jl_lower_for_scope_resolution(
         soft_scope::Bool = false,
     )
     if trim_error_nodes
-        st0 = without_kinds(st0, JS.KSet"error")
+        st0 = JETLS.trim_error_nodes(st0)
     end
     ctx1, st1 = try
         JL.expand_forms_1(context_module, st0, true, world)

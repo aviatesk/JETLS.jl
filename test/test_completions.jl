@@ -596,6 +596,23 @@ end
         @test cnt[] == 1
     end
 
+    # `r.│` sitting inside a call's argument list (parser inserts an error
+    # in the property-name slot, so the dot subtree must be repaired before
+    # lowering can resolve `r`'s type).
+    let text = """
+        function bar(r::Regex)
+            g(r.pattern, r.│)
+        end
+        """
+        cnt = Ref(0)
+        with_completion_items(text; context=dot_context) do (; result)
+            labels = Set(it.label for it in only_props(result.items))
+            @test labels == Set(String.(fieldnames(Regex)))
+            cnt[] += 1
+        end
+        @test cnt[] == 1
+    end
+
     # Union prefix offers the union of property names, and each property's
     # resolved type detail is the union of its per-component types.
     let text = """
