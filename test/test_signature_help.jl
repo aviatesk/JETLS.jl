@@ -376,6 +376,10 @@ end
     @test 1 == n_si(M_context_aware_filtering, "let x = 1; baz(x, \"a\"│); end")
 end
 
+@testset "Tolerate invalid calls with `Union{}`-inferred call argument types" begin
+    @test 0 == n_si(@__MODULE__, "sin(throw(),│)")
+end
+
 include("setup.jl")
 
 function with_signature_help_request(tester, text::AbstractString; kwargs...)

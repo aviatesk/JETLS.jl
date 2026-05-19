@@ -1302,6 +1302,20 @@ get_newText(item::CompletionItem) =
         end
         @test cnt[] == 1
     end
+
+    @testset "Tolerate invalid calls with `Union{}`-inferred call argument types" begin
+        text = """
+        sin(throw(),│)
+        """
+        context = CompletionContext(;
+            triggerKind = CompletionTriggerKind.TriggerCharacter,
+            triggerCharacter = ",")
+        cnt = Ref(0)
+        with_completion_items(text; context) do _
+            cnt[] = 1
+        end
+        @test cnt[] == 1
+    end
 end
 
 # keyword argument completion

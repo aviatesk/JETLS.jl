@@ -771,7 +771,7 @@ function call_completions!(
     end
     fntyp isa Core.Const || return nothing
 
-    argtypes = collect_call_argtypes(ctx, ca)
+    argtypes = @something collect_call_argtypes(ctx, ca) return nothing
     fixup_argtypes!(argtypes, fntyp)
     matches = @something find_all_matches(argtypes; world) return nothing
     isempty(matches) && return nothing

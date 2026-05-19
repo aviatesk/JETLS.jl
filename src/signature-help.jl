@@ -491,7 +491,7 @@ function cursor_call(ps::JS.ParseStream, st0::SyntaxTreeC, b::Int)
 end
 
 """
-    collect_call_argtypes(ctx, ca::CallArgs) -> argtypes::Vector{Any}
+    collect_call_argtypes(ctx, ca::CallArgs) -> argtypes::Union{Vector{Any},Nothing}
 
 Look up the inferred type of every positional argument in `ca` against `ctx`
 (the [`InferredTreeContext`](@ref) for the toplevel containing the call) and
@@ -507,6 +507,10 @@ still typing).
 For a splat `xs...`, the operand `xs` is queried directly: when its type is
 a vararg-free concrete `Tuple{...}` the elements are splayed; otherwise we
 fall through to the `Vararg{Any}` bailout below.
+
+Returns `nothing` when a positional argument is inferred as `Union{}`
+(e.g. `f(throw(), …)`): such a call doesn't fit the "find a call target"
+context, so callers should treat `nothing` as "skip this call".
 """
 function collect_call_argtypes(ctx::Union{Nothing,InferredTreeContext}, ca::CallArgs)
     argtypes = Any[]
@@ -517,6 +521,7 @@ function collect_call_argtypes(ctx::Union{Nothing,InferredTreeContext}, ca::Call
             inner = arg[1]
             argtype = CC.widenconst(@something (ctx === nothing ?
                 nothing : get_type_for_range(ctx, JS.byte_range(inner))) @goto bailout)
+            argtype === Union{} && return nothing
             argtype isa DataType || @goto bailout
             argtype.name === Tuple.name || @goto bailout
             any(Base.isvarargtype, argtype.parameters) && @goto bailout
@@ -526,6 +531,7 @@ function collect_call_argtypes(ctx::Union{Nothing,InferredTreeContext}, ca::Call
         else
             argtype = CC.widenconst(@something ctx === nothing ?
                 nothing : get_type_for_range(ctx, JS.byte_range(arg)) Any)
+            argtype === Union{} && return nothing
             push!(argtypes, argtype)
         end
     end
@@ -582,7 +588,7 @@ function cursor_siginfos(
 
     ca = CallArgs(call, b)
 
-    argtypes = collect_call_argtypes(ctx, ca)
+    argtypes = @something collect_call_argtypes(ctx, ca) return empty_siginfos
     argtypes′ = copy(argtypes)
     fixup_argtypes!(argtypes, fntyp)
     matches = @something find_all_matches(argtypes; world) return empty_siginfos
