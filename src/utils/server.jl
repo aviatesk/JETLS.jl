@@ -259,6 +259,13 @@ function _store_unsynced_file_info!(state::ServerState, uri::URI; force::Bool=fa
             return cache, cache[uri]
         end
         version = time_ns() % Int
+        # Notebook URIs can reach this path during the race window in
+        # `handle_DidCloseNotebookDocumentNotification` between clearing `file_cache`
+        # and `cleanup_analysis_state!` evicting `analysis_manager.cache`, when
+        # a concurrent workspace iteration still has the URI in its `uris_to_search`.
+        # Reading the raw `.ipynb` as Julia would otherwise parse the JSON literal
+        # and emit bogus `lowering/error` diagnostics (aviatesk/JETLS.jl#703).
+        is_notebook_uri(uri) && return cache, nothing
         filename = uri2filename(uri)
         isfile(filename) || return cache, nothing
         parsed_stream = try
