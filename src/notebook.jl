@@ -230,6 +230,11 @@ function handle_DidCloseNotebookDocumentNotification(
     store!(state.saved_file_cache) do cache
         Base.delete(cache, notebook_uri), nothing
     end
+    clear_cell_push_diagnostics!(server, msg.params.cellTextDocuments)
+    # Disk content isn't analyzable as Julia, so keeping the analysis cache around
+    # would only enable the JSON-as-Julia bug guarded against in `_store_unsynced_file_info!`.
+    cleanup_analysis_state!(server, notebook_uri)
+    request_diagnostic_refresh!(server)
     nothing
 end
 
@@ -239,6 +244,9 @@ end
 is_notebook_uri(state::ServerState, uri::URI) = haskey(load(state.notebook_cache), uri)
 
 is_notebook_cell_uri(state::ServerState, uri::URI) = haskey(load(state.cell_to_notebook), uri)
+
+# URI-only check: does this URI point to a Jupyter notebook (`.ipynb`) file on disk?
+is_notebook_uri(uri::URI) = uri.scheme == "file" && endswith(uri.path, ".ipynb")
 
 function localize_notebook_diagnostics!(uri2diagnostics::URI2Diagnostics, state::ServerState)
     notebook_uris_to_delete = URI[]
@@ -354,6 +362,16 @@ function _localize_notebook_diagnostics(
         push!(result, cell_diag)
     end
     return result
+end
+
+# Push diagnostics aren't auto-cleared on close; republish empty for each cell.
+function clear_cell_push_diagnostics!(server::Server, cells::Vector{TextDocumentIdentifier})
+    for cell in cells
+        send(server, PublishDiagnosticsNotification(;
+            params = PublishDiagnosticsParams(;
+                uri = cell.uri,
+                diagnostics = empty_diagnostics)))
+    end
 end
 
 # Document symbol
