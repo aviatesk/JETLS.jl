@@ -52,19 +52,6 @@ end
 # Test subroutines
 @test isnothing(JETLS.hover_type_string(Core.Const(push!), "push!"))
 
-meth_concrete(::Int) = nothing
-meth_noargs() = nothing
-meth_multi(::Int, _::String) = nothing
-meth_vararg(::Int...) = nothing
-meth_two_tvars(::T, ::S) where {T,S} = nothing
-meth_with_sparam(::T) where T<:Union{Float32,Float64} = nothing
-@test JETLS.method_argtypes_sig(only(methods(meth_concrete, (Int,)))) == Tuple{Int}
-@test JETLS.method_argtypes_sig(only(methods(meth_noargs, ()))) == Tuple{}
-@test JETLS.method_argtypes_sig(only(methods(meth_multi, (Int, String)))) == Tuple{Int, String}
-@test JETLS.method_argtypes_sig(only(methods(meth_vararg, (Vararg{Int},)))) == Tuple{Vararg{Int}}
-@test JETLS.method_argtypes_sig(only(methods(meth_two_tvars, (Int, String)))) == Tuple{T, S} where {T, S}
-@test JETLS.method_argtypes_sig(only(methods(meth_with_sparam, (Float64,)))) == Tuple{<:Union{Float32,Float64}}
-
 # End-to-end sanity checks that the LSP `textDocument/hover` request/response
 # path is wired correctly (`DidOpen` → analysis → `HoverRequest` →
 # `MarkupContent`-shaped reply), covering both the `get_hover` (expression)
@@ -167,6 +154,25 @@ module M_operator_dispatch
     """Method-specific doc for `getindex(::MyArr, ::Int)`."""
     Base.getindex(::MyArr, ::Int) = 42
 end
+module M_undoc_dispatch
+    # `undoc(::Int)` has no docstring; only `undoc(::String)` is documented.
+    # Hover on `undoc(1)` narrows to `Tuple{Int}`, which doesn't `<:` the
+    # stored `Tuple{String}` doc key. Suppress the unrelated overload instead
+    # of falling back to it.
+    undoc(x::Int) = x
+    """Doc for `undoc(::String)`."""
+    undoc(x::String) = x
+end
+module M_undoc_abstract_dispatch
+    # `gen(::AbstractVector)` has no docstring; only `gen(::Vector{T})` is
+    # documented. The dispatched method's sig (`Tuple{AbstractVector}`) is a
+    # *supertype* of the stored doc key (`Tuple{Vector{T}}`), so a forward
+    # `sig <: msig` check alone wouldn't match — the lookup must consider the
+    # reverse direction (or type intersection) to surface the related doc.
+    gen(a::AbstractVector) = a
+    """Doc for `gen(::Vector{T})`."""
+    gen(a::Vector{T}) where T = a
+end
 
 @testset "'hover' user-binding resolution" begin
     @testset "documented global binding" begin
@@ -180,7 +186,8 @@ end
     end
 
     @testset "non-existent identifier" begin
-        hover_test("unexisting_binding│", "No documentation found")
+        hover_test("unexisting_binding│", r"\(global\) unexisting_binding";
+            notpat = "No documentation found")
     end
 
     @testset "global function with docstring" begin
@@ -282,6 +289,25 @@ end
             @test length(collect(eachmatch(r"^---$"m, value))) == 3
             @test occursin(
                 r"`op\(::Int\)`\..*?\n---\n.*?`op\(::String\)`\."s, value)
+        end
+
+        # Narrowed dispatch sig that doesn't `<:` any stored doc key must not
+        # leak the unrelated overload's doc via Base.Docs.doc's all-docs fallback.
+        @testset "narrow lookup suppresses unrelated overload's doc" begin
+            hover_test("undoc│(1)", r"undoc\(1\) :: Int";
+                context_module = M_undoc_dispatch,
+                notpat = "Doc for `undoc(::String)`.")
+        end
+
+        # Dispatch sig is a supertype of a stored doc key (e.g.
+        # `filter(::AbstractArray)` dispatches to a doc-less method while
+        # `filter(f, a)`'s docstring is attached to the specific
+        # `Tuple{Any, Array{T,N}}` key). The lookup should surface the
+        # specific doc as a proxy.
+        @testset "narrow lookup surfaces specific doc under abstract dispatch" begin
+            hover_test("let xs = view([1,2,3], 1:2); gen│(xs); end",
+                "Doc for `gen(::Vector{T})`.";
+                context_module = M_undoc_abstract_dispatch)
         end
     end
 

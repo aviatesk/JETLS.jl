@@ -870,14 +870,12 @@ end
 # completion resolver
 # ===================
 
-function lookup_method_documentation(match::Core.MethodMatch, world::UInt)
+function lookup_doc_for_match(match::Core.MethodMatch, world::UInt)
     m = match.method
     Base.invoke_in_world(world, isdefinedglobal, m.module, m.name) || return nothing
     mfunc = Base.invoke_in_world(world, getglobal, m.module, m.name)
-    tt = Base.unwrap_unionall(m.sig)
-    tt isa DataType || return nothing
-    sig = Tuple{tt.parameters[2:end]...}
-    return Base.invoke_in_world(world, Base.Docs.doc, mfunc, sig)::Markdown.MD
+    sig = @something method_doc_sig(m) return nothing
+    return lookup_doc_for_value(mfunc, sig, world)
 end
 
 const builtin_functions = Core.Builtin[getglobal(Core, n) for n in names(Core) if getglobal(Core, n) isa Core.Builtin]
@@ -994,7 +992,7 @@ function resolve_method_signature_completion_item(
     (; world, matches, postprocessor) = completion_resolver_info
     1 ≤ data.match_idx ≤ length(matches) || return item # just to make sure
     match = matches[data.match_idx]
-    doc = @something lookup_method_documentation(match, world) return item
+    doc = @something lookup_doc_for_match(match, world) return item
     docstr = postprocessor(string(doc))
     _, result = infer_match!(world, match)
     resulttyp = @something result.result return item
