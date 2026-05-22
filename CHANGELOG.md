@@ -92,10 +92,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - `lowering/undef-global-var` now suppresses reports as soon as a sibling file in the same analysis unit defines the referenced name. Previously, adding `foo = ...` to one file left `foo` references in other files of the same unit flagged as undefined until the next full-analysis cycle (typically triggered on save) caught up.
 
-- `lowering/macro-expansion-error` no longer aborts analysis of the enclosing top-level form when an issue can be reported in place.
-  Previously, a single bad `Threads.@spawn :badname …`, `@info "msg" id=1 id=2`, `@test x skip=true broken=true`, or `Base.@assume_effects :badname …` in a function body would propagate a `MacroExpansionError` and remove the entire macrocall from analysis — every other LSP feature (hover, inlay, signature help, undef-var, references, …) for the *enclosing* function went dark, not just for the bad macrocall.
-  The error is still reported with `Error` severity (matching what Base does at expansion or runtime), but the macrocall body now flows through to scope and type analysis.
-  Additionally, `@testset` cases that Base accepts silently or only deprecates — multiple descriptions, multiple testset types, duplicate options — surface as `Warning` severity under the same diagnostic code.
+- `lowering/macro-expansion-error` no longer aborts analysis of the enclosing top-level form. Any misuse JETLS's stubs for `Base` macros detect — invalid threadpool literal in `Threads.@spawn`, duplicate kwarg in `@info`/`@warn`/…, `@test` with `skip` + `broken`, wrong argument count in `@assert`/`@invoke`/`@kwdef`/`@assume_effects`/…, non-call shape passed to `@invoke`, malformed `@testset` body, and so on — is now reported in place while the macrocall body still flows through to scope and type analysis.
+  Previously any of these would propagate a `MacroExpansionError`, remove the entire macrocall from analysis, and take every other LSP feature requiring full lowering of the enclosing function (hover, inlay, signature help, undef-var, references, …) down with it.
+  Reports come with `Error` severity when Base would reject the misuse and `Warning` severity when Base accepts it silently or only deprecates.
 
 ### Fixed
 
