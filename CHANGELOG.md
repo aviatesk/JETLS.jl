@@ -96,6 +96,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Previously any of these would propagate a `MacroExpansionError`, remove the entire macrocall from analysis, and take every other LSP feature requiring full lowering of the enclosing function (hover, inlay, signature help, undef-var, references, …) down with it.
   Reports come with `Error` severity when Base would reject the misuse and `Warning` severity when Base accepts it silently or only deprecates.
 
+- Documenter admonitions (`!!! note`, `!!! tip`, `!!! warning`, `!!! danger`, `!!! info`, `!!! compat`) in docstrings now render as Markdown blockquotes with a category-emoji header (e.g. `> **💡 Tip**`) wherever JETLS surfaces docstrings (hover, completion documentation, signature help).
+  Previously the `!!!` block leaked through verbatim, leaving the editor's Markdown view to render it in unintended ways.
+
 ### Fixed
 
 - Fixed spurious diagnostics like `` `{ }` outside of `where` is reserved for future use `` falsely appearing on Jupyter notebook (`.ipynb`) files in VS Code. (Fixed https://github.com/aviatesk/JETLS.jl/issues/703)
