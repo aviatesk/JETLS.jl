@@ -1546,6 +1546,29 @@ end
             @test widenconst(get_type_for_range(ctx, range_of(code, "sin(1.0)"))) === Float64
         end
     end
+
+    # `get_inferrable_tree` does not bind `MACRO_DIAGNOSTIC_SINK`, so stubs that call
+    # `push_macro_error!` (e.g. `Threads.@spawn` on an unsupported threadpool literal)
+    # become no-ops and the macrocall still expands. Without this, a single such invalid
+    # macrocall in a function body would propagate a `MacroExpansionError` out of
+    # `expand_forms_1`, `get_inferrable_tree` would return `nothing`, and every
+    # `hover` / `inlay` / `signature-help` in the enclosing toplevel would go dark.
+    @testset "recoverable macro stub error keeps enclosing toplevel inferrable" begin
+        let code = """
+            function f(xs::Vector{Float64})
+                s = sum(xs)
+                t = Threads.@spawn :badname sin(s)
+                fetch(t)
+            end
+            """
+            fi, ctx = type_annotate(code)
+            # Surface lookup for the macro body's `sin(s)` returns `Float64`.
+            @test widenconst(get_type_for_range(ctx, range_of(code, "sin(s)"))) === Float64
+            # Every `s` reference is annotated as `Float64`.
+            s_types = query_all_types(fi, ctx, "s")
+            @test count(t -> widenconst(t) === Float64, s_types) == 2
+        end
+    end
 end
 
 @testset HierarchicalTestSet "get_matches_for_range" begin

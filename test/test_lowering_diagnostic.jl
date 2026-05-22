@@ -823,6 +823,47 @@ end
         @test diagnostic.range.start.line == 2
         @test diagnostic.range.var"end".line == 2
     end
+
+    @testset "macro expansion warning diagnostics" begin
+        # `@testset` with multiple descriptions should surface as a Warning
+        # diagnostic (mirroring Base's `depwarn`), not abort the expansion.
+        # Reuses the macro-expansion-error code with `Warning` severity.
+        # Use `Test` as the context so `@testset` resolves.
+        diagnostics = get_lowering_diagnostics(
+            """@testset "a" "b" begin end""";
+            context_module = Test,
+            code = JETLS.LOWERING_MACRO_EXPANSION_ERROR_CODE)
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.severity == LSP.DiagnosticSeverity.Warning
+        @test diagnostic.source == JETLS.DIAGNOSTIC_SOURCE_LIVE
+        @test occursin("Multiple descriptions provided to @testset", diagnostic.message)
+        # The diagnostic anchors on the redundant `"b"` argument (the `K"String"`
+        # node's byte range covers just the inner content).
+        @test diagnostic.range.start.character == sizeof("""@testset "a" \"""")
+        @test diagnostic.range.var"end".character == sizeof("""@testset "a" "b""")
+    end
+
+    # A macro-expansion-error reported via the sink (here: `Threads.@spawn` with an
+    # unsupported threadpool literal) must not suppress other lowering diagnostics in
+    # the same top-level form.
+    @testset "macro expansion error does not suppress sibling lowering diagnostics" begin
+        diagnostics = get_lowering_diagnostics("""
+            function f()
+                Threads.@spawn :badname undef_a
+                undef_b
+            end
+            """; context_module = @__MODULE__)
+        @test count(diagnostics) do d
+            d.code == JETLS.LOWERING_MACRO_EXPANSION_ERROR_CODE &&
+                d.severity == LSP.DiagnosticSeverity.Error
+        end == 1
+        undef_msgs = String[d.message for d in diagnostics
+                            if d.code == JETLS.LOWERING_UNDEF_GLOBAL_VAR_CODE]
+        @test length(undef_msgs) == 2
+        @test any(m -> occursin("undef_a", m), undef_msgs)
+        @test any(m -> occursin("undef_b", m), undef_msgs)
+    end
 end
 
 module TestLoweringUndefGlobalBinding

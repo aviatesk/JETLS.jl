@@ -18,8 +18,96 @@ function mapchildren(f, ctx, ex::SyntaxTreeC, indices::UnitRange{<:Integer})
     end
 end
 
+const macro_issue_contract = """
+# Macro issue contract
+
+When a stub detects a problem, pick the helper that minimizes loss of downstream
+analysis while still surfacing the issue with the severity Base would assign:
+
+| helper                        | when                                                                                     | examples                                                                                 |
+|:------------------------------|:-----------------------------------------------------------------------------------------|:-----------------------------------------------------------------------------------------|
+| [`throw_macro_error`](@ref)   | Base rejects, **and** the stub cannot produce a valid recovery expansion                 | `@assert` with zero args, `@invoke` whose argument is not a call, `@kwdef` on non-struct |
+| [`push_macro_error!`](@ref)   | Base rejects, **but** the stub can recover (typically: keep the body, drop the bad part) | `@spawn :badname body`, `@info` with dup kwargs, `@test` with `skip` + `broken`          |
+| [`push_macro_warning!`](@ref) | Base accepts silently or only emits `depwarn`                                            | `@testset` with multiple descriptions/types or duplicate options                         |
+
+The push helpers feed [`MACRO_DIAGNOSTIC_SINK`](@ref); see its docstring for the
+producer/consumer contract.
+"""
+
+"""
+    throw_macro_error(node::SyntaxTreeC, msg::AbstractString)
+
+Throw a `JL.MacroExpansionError` anchored on `node`, aborting the current macro
+expansion. In the LSP analysis pipeline this triggers a fallback through
+`remove_macrocalls` for the *whole* enclosing top-level form, so identifier-level
+analysis (undef-var, references, [`TypeAnnotation`](@ref) for hover / inlay /
+signature-help, …) is lost across that form, not just at the bad macrocall.
+
+$macro_issue_contract
+"""
 @noinline throw_macro_error(node::SyntaxTreeC, msg::AbstractString) =
     throw(JL.MacroExpansionError(node, msg))
+
+"""
+    MACRO_DIAGNOSTIC_SINK :: ScopedValue{Union{Nothing,Vector{MacroDiagnostic}}}
+
+Side channel that lets macro stubs surface issues as LSP diagnostics without
+aborting expansion — the producer/consumer contract for [`push_macro_error!`](@ref)
+and [`push_macro_warning!`](@ref).
+
+Consumers bind this to a vector via `Base.ScopedValues.@with` around their lowering
+call and drain it afterwards. Currently only `per_stmt_diagnostics!` does that; the
+other lowering consumers (`get_inferrable_tree`, `cursor_bindings`,
+`occurrence-analysis`, `document-symbol`) leave the sink unbound, so the push helpers
+become no-ops and those consumers simply see the recovered expansion without emitting
+diagnostics — which is exactly what makes `TypeAnnotation` etc. keep working across
+recoverable macro errors.
+
+Concurrency-safe by construction: `ScopedValue` binds per task and propagates to
+child tasks, so the concurrent `per_stmt_diagnostics!` workers spawned under
+workspace diagnostic each get their own sink without cross-talk or locking.
+
+See also: [`throw_macro_error`](@ref), [`push_macro_error!`], [`push_macro_warning!`]
+"""
+struct MacroDiagnostic
+    node::SyntaxTreeC
+    msg::String
+    severity::DiagnosticSeverity.Ty
+end
+
+const MACRO_DIAGNOSTIC_SINK =
+    Base.ScopedValues.ScopedValue{Union{Nothing,Vector{MacroDiagnostic}}}(nothing)
+
+@noinline function push_macro_diagnostic!(
+        node::SyntaxTreeC, msg::AbstractString, severity::DiagnosticSeverity.Ty
+    )
+    sink = MACRO_DIAGNOSTIC_SINK[]
+    sink === nothing && return
+    push!(sink, MacroDiagnostic(node, String(msg), severity))
+    return
+end
+
+"""
+    push_macro_warning!(node::SyntaxTreeC, msg::AbstractString)
+
+Push a `DiagnosticSeverity.Warning` entry anchored on `node` into
+[`MACRO_DIAGNOSTIC_SINK`](@ref) (no-op if the sink is unbound).
+
+$macro_issue_contract
+"""
+push_macro_warning!(node::SyntaxTreeC, msg::AbstractString) =
+    push_macro_diagnostic!(node, msg, DiagnosticSeverity.Warning)
+
+"""
+    push_macro_error!(node::SyntaxTreeC, msg::AbstractString)
+
+Push a `DiagnosticSeverity.Error` entry anchored on `node` into
+[`MACRO_DIAGNOSTIC_SINK`](@ref) (no-op if the sink is unbound).
+
+$macro_issue_contract
+"""
+push_macro_error!(node::SyntaxTreeC, msg::AbstractString) =
+    push_macro_diagnostic!(node, msg, DiagnosticSeverity.Error)
 
 # Simple (non-qualified) macro names whose new-style implementations in this file and
 # `JuliaLowering/src/syntax_macros.jl` preserve fine-grained source provenance during
@@ -177,12 +265,17 @@ function _validate_spawn_threadpool(threadpool::SyntaxTreeC)
             name = inner.name_val
             if name isa AbstractString
                 name in _SPAWN_THREADPOOLS && return
-                throw_macro_error(threadpool, "unsupported threadpool in @spawn: $name")
+                # Base defers the threadpool check to runtime; flag it statically as an
+                # error but keep expanding so the body (and threadpool identifier, if any)
+                # still reaches scope analysis.
+                push_macro_error!(threadpool, "unsupported threadpool in @spawn: $name")
+                return
             end
         end
     end
-    throw_macro_error(threadpool,
+    push_macro_error!(threadpool,
         "threadpool argument in @spawn must be `:default`, `:interactive`, `:samepool`, or a bare variable")
+    nothing
 end
 
 function Base.Threads.var"@spawn"(__context__::JL.MacroContext, ::SyntaxTreeC...)
@@ -375,9 +468,14 @@ function _logmsg_stub(
         if k === JS.K"="
             kwname = _validate_logmsg_kw(ex, name)
             if kwname !== nothing
-                kwname in seen_kws && throw_macro_error(ex,
-                    "$name: keyword `$kwname` provided more than once")
-                push!(seen_kws, kwname)
+                if kwname in seen_kws
+                    # Base would let the synthesized `(; k=…, k=…)` named tuple fail
+                    # lowering; flag the dup here but keep the RHS in `children` so
+                    # any identifier inside still gets scope-resolved.
+                    push_macro_error!(ex, "$name: keyword `$kwname` provided more than once")
+                else
+                    push!(seen_kws, kwname)
+                end
             end
             push!(children, ex[2])
         elseif k === JS.K"..."
@@ -701,25 +799,28 @@ function Test.var"@test"(__context__::JL.MacroContext, ex::SyntaxTreeC, kws::Syn
     mc = __context__.macrocall::SyntaxTreeC
     seen_broken = seen_skip = seen_context = nothing
     rhss = SyntaxTreeC[]
+    # Base `extract_broken_skip_kws` hard-errors on dup or `skip`+`broken`; we report
+    # as Error but keep every RHS in the block so identifiers inside (e.g. dup values)
+    # still reach scope analysis.
     for kw in kws
         name = _validate_test_kw(kw)
         push!(rhss, kw[2])
         if name == "broken"
-            seen_broken === nothing || throw_macro_error(kw,
+            seen_broken === nothing || push_macro_error!(kw,
                 "invalid test macro call: cannot set `broken` keyword multiple times")
             seen_broken = kw
         elseif name == "skip"
-            seen_skip === nothing || throw_macro_error(kw,
+            seen_skip === nothing || push_macro_error!(kw,
                 "invalid test macro call: cannot set `skip` keyword multiple times")
             seen_skip = kw
         elseif name == "context"
-            seen_context === nothing || throw_macro_error(kw,
+            seen_context === nothing || push_macro_error!(kw,
                 "invalid test macro call: cannot set `context` keyword multiple times")
             seen_context = kw
         end
     end
     if seen_skip !== nothing && seen_broken !== nothing
-        throw_macro_error(mc,
+        push_macro_error!(mc,
             "invalid test macro call: cannot set both `skip` and `broken` keywords")
     end
     isempty(rhss) && return JL.@ast(__context__, mc, ex)
@@ -852,18 +953,24 @@ function Test.var"@testset"(__context__::JL.MacroContext, args::SyntaxTreeC...)
         arg = args[i]
         k = JS.kind(arg)
         if k === JS.K"Identifier" || k === JS.K"."
-            testsettype === nothing ||
-                throw_macro_error(arg, "@testset: multiple testset types provided")
+            # Mirror `Base.@testset`'s `depwarn` on extra testset types — the last one wins.
+            testsettype === nothing || push_macro_warning!(arg,
+                "Multiple testset types provided to @testset. This is deprecated and may error in the future.")
             testsettype = arg
         elseif k === JS.K"String" || k === JS.K"string"
-            desc === nothing ||
-                throw_macro_error(arg, "@testset: multiple descriptions provided")
+            desc === nothing || push_macro_warning!(arg,
+                "Multiple descriptions provided to @testset. This is deprecated and may error in the future.")
             desc = arg
         elseif k === JS.K"="
+            # Base's `parse_testset_args` silently appends duplicate options to the
+            # `Dict` literal and lets last-wins absorb them; warn instead of erroring
+            # so we still flag the redundancy without aborting expansion.
             name = _validate_testset_option(arg)
-            name in seen_options &&
-                throw_macro_error(arg, "@testset: option `$name` already provided")
-            push!(seen_options, name)
+            if name in seen_options
+                push_macro_warning!(arg, "@testset: option `$name` provided more than once")
+            else
+                push!(seen_options, name)
+            end
         else
             throw_macro_error(arg, "@testset: unexpected argument")
         end
@@ -928,12 +1035,15 @@ function Base.var"@assume_effects"(
 end
 
 function _validate_assume_effect_setting(setting::SyntaxTreeC)
+    # Base hard-errors on either of these via `compute_assumed_setting`; we report as
+    # Error but let the body still flow through, since the setting only affects effect
+    # metadata which the LSP analyses don't consume.
     name = _extract_assume_effect_setting_name(setting)
     if name === nothing
-        throw_macro_error(setting,
+        push_macro_error!(setting,
             "@assume_effects: expected an effect setting (e.g. `:consistent`, `!:nothrow`)")
     elseif name ∉ _ASSUME_EFFECTS_SETTINGS
-        throw_macro_error(setting,
+        push_macro_error!(setting,
             "@assume_effects: unrecognized effect setting `:$name`")
     end
     return nothing
