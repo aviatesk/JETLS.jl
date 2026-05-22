@@ -14,6 +14,7 @@ end
         @testset "general" include("utils/test_general.jl")
         @testset "ast" include("utils/test_ast.jl")
         @testset "binding" include("utils/test_binding.jl")
+        @testset "docs" include("utils/test_docs.jl")
         @testset "lsp" include("utils/test_lsp.jl")
         @testset "path" include("utils/test_path.jl")
         @testset "markdown" include("utils/test_markdown.jl")

@@ -119,7 +119,7 @@ function get_hover(
         end
     end
 
-    sig = ctx === nothing ? nothing : call_dispatch_sig(ctx, st0_top, node)
+    sig = ctx === nothing ? nothing : call_doc_sig(ctx, st0_top, node)
 
     docs = Markdown.MD[]
     # Cursor past the closing punctuation of a call-like surface (`f(x)│`,
@@ -129,11 +129,11 @@ function get_hover(
     if !is_call_like_position
         if !is_local
             bdoc = binfo !== nothing ?
-                doc_for_binding(context_module, Symbol(binfo.name), sig, world) :
-                lookup_binding_doc(node, context_module, ctx, sig, world)
+                lookup_doc_for_binding(binfo, sig, world) :
+                lookup_doc_for_identifier(node, context_module, ctx, sig, world)
             bdoc === nothing || append!(docs, flatten_docs(bdoc))
         end
-        vdoc = value_based_doc(typ, sig, world)
+        vdoc = lookup_doc_for_inferred_value(typ, sig, world)
         if vdoc !== nothing
             for doc in flatten_docs(vdoc)
                 doc in docs || push!(docs, doc)
@@ -226,67 +226,20 @@ end
 # matched, or when the signature can't be stripped cleanly. Used to narrow
 # the hover docstring lookup from "all overloads merged" to
 # "(generic + the specific method's docs)".
-function call_dispatch_sig(
-        ctx::InferredTreeContext, st0_top::SyntaxTreeC, node::SyntaxTreeC
-    )
+function call_doc_sig(ctx::InferredTreeContext, st0_top::SyntaxTreeC, node::SyntaxTreeC)
     call_node = @something enclosing_call_for_matches(st0_top, node) return nothing
     matches = @something get_matches_for_range(ctx, JS.byte_range(call_node)) return nothing
     # Require a single matched method — for ambiguous dispatch (union splits,
     # multiple matching overloads) fall back to the unnarrowed lookup so we
     # don't silently hide applicable docs.
     length(matches) == 1 || return nothing
-    return method_argtypes_sig(only(matches).method)
-end
-
-# Args-only Tuple-type signature for `m`, stripping the leading `typeof(f)`
-# (or `Type{T}` for type constructors) so the result matches the shape
-# `Base.Docs.MultiDoc` keys with — see `MultiDoc`'s docstring. Preserves
-# the method's `UnionAll` wrappers (parametric methods like `f(x::T) where
-# T <: Real` store their docs as `Tuple{T} where T <: Real`).
-function method_argtypes_sig(m::Method)
-    vars = TypeVar[]
-    body = m.sig
-    while body isa UnionAll
-        push!(vars, body.var)
-        body = body.body
-    end
-    body isa DataType || return nothing
-    body <: Tuple || return nothing
-    length(body.parameters) >= 1 || return nothing
-    tail = Tuple{body.parameters[2:end]...}
-    while !isempty(vars)
-        v = pop!(vars)
-        tail = UnionAll(v, tail)
-    end
-    return tail
-end
-
-# Look up the docstring for `parentmod.name`. Returns `nothing` on lookup
-# failure (rather than the "No documentation found" placeholder Markdown.MD
-# `Base.Docs.doc` would otherwise return — that placeholder is preserved by
-# direct call sites that explicitly want the user-visible "No documentation
-# found" message).
-function doc_for_binding(
-        parentmod::Module, name::Symbol, @nospecialize(sig), world::UInt
-    )
-    try
-        binding = DocsBinding(parentmod, name, world)
-        # `Base.Docs.doc(binding, sig)` walks `MultiDoc.docs` and returns docs whose stored
-        # sig `msig` satisfies `sig <: msig` (so unrelated overloads drop, and
-        # `Union{}`-keyed interface-decl docs drop under narrowing).
-        # Falls back to every doc on the binding when no sig matches.
-        return (sig === nothing ?
-            Base.invoke_in_world(world, Base.Docs.doc, binding) :
-            Base.invoke_in_world(world, Base.Docs.doc, binding, sig))::Markdown.MD
-    catch
-        return nothing
-    end
+    return method_doc_sig(only(matches).method)
 end
 
 # Resolve `node` to a `(parentmod, identifier)` pair and look up its binding-
 # based docstring. Returns `nothing` if the node isn't a plain identifier or a
 # dot expression whose left-hand side resolves to a `Module` value.
-function lookup_binding_doc(
+function lookup_doc_for_identifier(
         node::SyntaxTreeC, context_module::Module, ctx::Union{Nothing,InferredTreeContext},
         @nospecialize(sig), world::UInt
     )
@@ -301,7 +254,7 @@ function lookup_binding_doc(
         end
     end
     JS.is_identifier(identifier_node) || return nothing
-    return doc_for_binding(parentmod, Symbol(identifier_node.name_val)::Symbol, sig, world)
+    return lookup_doc_for_binding(parentmod, Symbol(identifier_node.name_val)::Symbol, sig, world)
 end
 
 # Resolve a dot expression's left-hand side to a `Module` value. Tries a direct
@@ -329,26 +282,11 @@ function resolve_dot_prefix_module(
     return v
 end
 
-@eval function DocsBinding(parentmod::Module, identifier::Symbol, world::UInt)
-    if Base.invoke_in_world(world, isdefinedglobal, parentmod, identifier)
-        x = Base.invoke_in_world(world, getglobal, parentmod, identifier)
-        if x isa Module && nameof(x) !== identifier
-            # HACK: skip the binding resolution logic performed by the `Base.Docs.Binding` constructor
-            # for modules that are given different names within this context
-            return $(Expr(:new, Base.Docs.Binding, :parentmod, :identifier))
-        end
-    end
-    return Base.invoke_in_world(world, Base.Docs.Binding, parentmod, identifier)
-end
-
-# Look up a docstring from the value `typ` resolves to: `typ.val` for `Core.Const`,
-# `typ.instance` for a singleton `Type`.
-# Restricted to `Function` / `Module` / `Type` values so literals, struct instances,
-# `nothing` / `missing` etc. don't surface the noisy `"No documentation found. ..."`
-# fallback `Base.Docs.doc` produces.
-# `sig` narrows the result to the matching method-specific docs — hover passes the
-# dispatched sig at a call site to avoid dumping every overload's docstring.
-function value_based_doc(@nospecialize(typ), @nospecialize(sig), world::UInt)
+# Unpack a lattice element to its underlying value and look up that value's
+# narrowed docs. `typ.val` for `Core.Const`, `typ.instance` for a singleton
+# `Type`. Restricted to `Function` / `Module` / `Type` values via
+# [`lookup_value_doc`](@ref).
+function lookup_doc_for_inferred_value(@nospecialize(typ), @nospecialize(sig), world::UInt)
     v = if typ isa Core.Const
         typ.val
     elseif Base.issingletontype(typ)
@@ -356,14 +294,7 @@ function value_based_doc(@nospecialize(typ), @nospecialize(sig), world::UInt)
     else
         return nothing
     end
-    v isa Function || v isa Module || v isa Type || return nothing
-    try
-        return (sig === nothing ?
-            Base.invoke_in_world(world, Base.Docs.doc, v) :
-            Base.invoke_in_world(world, Base.Docs.doc, v, sig))::Markdown.MD
-    catch
-        return nothing
-    end
+    return lookup_doc_for_value(v, sig, world)
 end
 
 # Returns a `Hover` for a keyword token at `pos`, or `nothing` if the cursor
