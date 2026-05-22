@@ -154,7 +154,7 @@ function get_hover(
     io = IOBuffer()
     if show_header
         println(io, "```julia")
-        type_str === nothing ? println(io, header) : println(io, header, " :: ", type_str)
+        type_str === nothing ? println(io, header) : println(io, header, " :: ", postprocessor(type_str))
         println(io, "```")
     end
     if !isempty(docs)
