@@ -92,4 +92,37 @@ using JETLS: JL, JS, Markdown
     end
 end
 
+@testset "Documenter @ref links stripped" begin
+    # `[label](@ref)` → bare `label`
+    let md = Markdown.parse("See [foo](@ref) for details.")
+        @test JETLS.lsrender(md) == "See foo for details.\n"
+    end
+
+    # `[label](@ref target)` with explicit target also stripped
+    let md = Markdown.parse("Refer to [Foo](@ref bar) instead.")
+        @test JETLS.lsrender(md) == "Refer to Foo instead.\n"
+    end
+
+    # Code-formatted labels preserve their backticks
+    let md = Markdown.parse("Use [`f`](@ref) and [`g`](@ref baz) here.")
+        @test JETLS.lsrender(md) == "Use `f` and `g` here.\n"
+    end
+
+    # Multiple refs on the same line
+    let md = Markdown.parse("[a](@ref), [b](@ref), and [c](@ref).")
+        @test JETLS.lsrender(md) == "a, b, and c.\n"
+    end
+
+    # Non-@ref links are left untouched
+    let md = Markdown.parse("See [the docs](https://example.com) and [`f`](@ref).")
+        @test JETLS.lsrender(md) ==
+            "See [the docs](https://example.com) and `f`.\n"
+    end
+
+    # `@reference` (not a Documenter ref) must not be stripped
+    let md = Markdown.parse("[link](@reference)")
+        @test JETLS.lsrender(md) == "[link](@reference)\n"
+    end
+end
+
 end # module test_markdown

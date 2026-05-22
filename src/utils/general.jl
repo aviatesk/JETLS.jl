@@ -301,15 +301,24 @@ const JULIA_LIKE_LANGUAGES = [
     "jldoctest"
 ]
 
+# Documenter cross-reference links — `[label](@ref)` / `[label](@ref target)` —
+# get reduced to bare `label` text in LSP output. The target isn't a navigable
+# URL, so clients either pop a "can't open this URI" prompt or silently drop the
+# click; showing the label as plain text is the least surprising fallback until
+# a proper resolver lands.
+const REF_LINK_REGEX = r"\[([^\]]+)\]\(@ref(?:\s[^)]*)?\)"
+strip_ref_links(s::AbstractString) = replace(s, REF_LINK_REGEX => s"\1")
+
 """
     lsrender(md) -> String
 
 Render Markdown for LSP display with the following conversions:
 - Code blocks with Julia-like languages (see `JULIA_LIKE_LANGUAGES`) normalized to "julia"
+- Documenter `@ref` cross-reference links flattened to their label text
 
-TODO: Handle `@ref` correctly
+TODO: Resolve `@ref` targets to actual definitions rather than stripping the link.
 """
-lsrender(md::Union{Markdown.MarkdownElement, Markdown.MD}) = sprint(lsrender, md)
+lsrender(md::Union{Markdown.MarkdownElement, Markdown.MD}) = strip_ref_links(sprint(lsrender, md))
 lsrender(io::IO, md::Markdown.MarkdownElement) = Markdown.plain(io, md)
 
 function lsrender(io::IO, md::Markdown.MD)
