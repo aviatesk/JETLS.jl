@@ -337,6 +337,35 @@ function lsrender(io::IO, code::Markdown.Code)
     println(io, "`" ^ n)
 end
 
+function admonition_marker(category::AbstractString)
+    cat = lowercase(category)
+    cat == "note"    && return "📝"
+    cat == "info"    && return "ℹ️"
+    cat == "tip"     && return "💡"
+    cat == "warning" && return "⚠️"
+    cat == "danger"  && return "🚨"
+    cat == "compat"  && return "⬆️"
+    return "💬"
+end
+
+function lsrender(io::IO, ad::Markdown.Admonition)
+    marker = admonition_marker(ad.category)
+    title = isempty(ad.title) ? uppercasefirst(ad.category) : ad.title
+    println(io, "> **", marker, " ", title, "**")
+    isempty(ad.content) && return
+    body = sprint() do bio
+        for i = 1:(length(ad.content)-1)
+            lsrender(bio, ad.content[i])
+            println(bio)
+        end
+        lsrender(bio, ad.content[end])
+    end
+    println(io, ">")
+    for line in eachsplit(rstrip(body), '\n')
+        isempty(line) ? println(io, ">") : println(io, "> ", line)
+    end
+end
+
 @static if VERSION < v"1.13.0-DEV.823" # JuliaLang/julia#58916
 lsrender(io::IO, table::Markdown.Table) = Markdown.plain(io, table)
 lsrender(io::IO, latex::Markdown.LaTeX) = Markdown.plain(io, latex)
