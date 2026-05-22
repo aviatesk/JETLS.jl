@@ -566,6 +566,22 @@ function stacktrace_to_related_information(stacktrace::Vector{Base.StackTraces.S
     return relatedInformation
 end
 
+function emit_macro_diagnostics!(
+        diagnostics::Vector{Diagnostic}, fi::FileInfo, macro_diags::Vector{MacroDiagnostic}
+    )
+    isempty(macro_diags) && return diagnostics
+    for d in macro_diags
+        push!(diagnostics, Diagnostic(;
+            range = jsobj_to_range(d.node, fi),
+            severity = d.severity,
+            message = d.msg,
+            source = DIAGNOSTIC_SOURCE_LIVE,
+            code = LOWERING_MACRO_EXPANSION_ERROR_CODE,
+            codeDescription = diagnostic_code_description(LOWERING_MACRO_EXPANSION_ERROR_CODE)))
+    end
+    return diagnostics
+end
+
 # TODO Use actual file cache (with proper character encoding)
 function provenances_to_related_information!(relatedInformation::Vector{DiagnosticRelatedInformation}, provs, msg)
     for prov in provs
@@ -1322,7 +1338,8 @@ function per_stmt_diagnostics!(
     analyze_unsorted_imports!(diagnostics, fi, st0)
 
     (st0, _) = desugar_main_macrocall(st0)
-    res = try
+    macro_diags = MacroDiagnostic[]
+    res = Base.ScopedValues.@with MACRO_DIAGNOSTIC_SINK => macro_diags try
         jl_lower_for_scope_resolution(context_module, st0; world,
             recover_from_macro_errors=false, convert_closures=true, soft_scope)
     catch err
@@ -1370,13 +1387,21 @@ function per_stmt_diagnostics!(
             JETLS_DEBUG_LOWERING && showerror(stderr, err)
             JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
         end
+        nothing # signal primary-attempt failure to the fallback path
+    end
+    emit_macro_diagnostics!(diagnostics, fi, macro_diags)
 
-        st0 = remove_macrocalls(trim_error_nodes(st0))
-        try
-            ctx1, st1 = JL.expand_forms_1(context_module, st0, true, world)
-            _jl_lower_for_scope_resolution(ctx1, st0, st1; convert_closures=true)
+    if res === nothing
+        # Fallback expansion runs *outside* the sink scope: `remove_macrocalls`
+        # only strips old-style macrocalls, so any new-style stub that reported via
+        # the sink during the primary attempt would push the same entry again here
+        # — emitting twice. With the sink unbound, those `push_macro_*!` calls
+        # become no-ops, and stubs that genuinely throw simply re-throw and we bail.
+        st0 = remove_macrocalls(st0)
+        res = try
+            jl_lower_for_scope_resolution(context_module, st0; world,
+                recover_from_macro_errors=false, convert_closures=true, soft_scope)
         catch
-            # The same error has probably already been handled above
             return diagnostics
         end
     end

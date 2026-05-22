@@ -64,6 +64,17 @@ function assert_no_binding(res, kind::Symbol, name::AbstractString)
     @test !found
 end
 
+# Run `f()` (typically a macro-expand call) with `MACRO_DIAGNOSTIC_SINK` bound to
+# a fresh vector, then return that vector so tests can inspect the collected
+# `MacroDiagnostic` entries.
+function collect_macro_diagnostics(f)
+    sink = JETLS.MacroDiagnostic[]
+    Base.ScopedValues.@with JETLS.MACRO_DIAGNOSTIC_SINK => sink begin
+        f()
+    end
+    return sink
+end
+
 @testset "@kwdef" begin
     @testset "macro expansion" begin
         # parametric with defaults
@@ -230,19 +241,20 @@ end
     end
 
     @testset "error cases" begin
-        # Unsupported literal threadpool is rejected at expansion time, with the
-        # same message as the runtime `Base.Threads.@spawn` check.
-        let err = try
+        # Unsupported literal threadpool surfaces as an Error diagnostic via the
+        # sink — Base defers this check to runtime, but we flag it statically.
+        # Expansion still succeeds.
+        let diags = collect_macro_diagnostics() do
                 jlexpand("Threads.@spawn :foo 1+1")
-                nothing
-            catch err
-                err
             end
-            @test err isa JL.MacroExpansionError
-            @test occursin("unsupported threadpool in @spawn: foo", err.msg)
+            @test length(diags) == 1
+            d = only(diags)
+            @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+            @test occursin("unsupported threadpool in @spawn: foo", d.msg)
         end
 
-        # Zero arguments and 3+ arguments both fall through to the variadic fallback method.
+        # Zero arguments and 3+ arguments both fall through to the variadic fallback
+        # method (truly unrecoverable, so this stays a hard `MacroExpansionError`).
         for code in ("Threads.@spawn", "Threads.@spawn :default :foo 1+1")
             let err = try
                     jlexpand(code)
@@ -256,9 +268,8 @@ end
         end
 
         # Anything other than `:default`/`:interactive`/`:samepool` literals or
-        # a bare identifier is rejected. The original macro defers most of
-        # these to a runtime `_spawn_set_thrpool(::Symbol)` MethodError; we
-        # catch them at expansion time so the user gets immediate feedback.
+        # a bare identifier is flagged via the sink (Error severity). Expansion
+        # still completes so the body reaches scope analysis.
         for code in (
                 "Threads.@spawn 42 body",          # numeric literal
                 "Threads.@spawn 1.0 body",         # float literal
@@ -269,14 +280,13 @@ end
                 "Threads.@spawn M.pool body",      # qualified access
                 "Threads.@spawn :(foo()) body",    # quoted non-symbol expression
             )
-            let err = try
+            let diags = collect_macro_diagnostics() do
                     jlexpand(code)
-                    nothing
-                catch err
-                    err
                 end
-                @test err isa JL.MacroExpansionError
-                @test occursin("threadpool argument in @spawn must be", err.msg)
+                @test length(diags) == 1
+                d = only(diags)
+                @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+                @test occursin("threadpool argument in @spawn must be", d.msg)
             end
         end
     end
@@ -494,22 +504,21 @@ logging_resolve(code::AbstractString) = jlresolve(logging_module, code)
             end
         end
 
-        # Duplicate kwarg names are flagged at expansion time; without this,
-        # they'd surface only as a generic `syntax: field name "k" repeated`
-        # error from lowering the synthesized `(; k=1, k=2)` named tuple.
-        # Metadata keys (`_module`, `_group`, ...) are checked the same way,
-        # even though Base silently overwrites them.
+        # Duplicate kwarg names are flagged via the sink at expansion time; without
+        # this, they'd surface only as a generic `syntax: field name "k" repeated`
+        # error from lowering the synthesized `(; k=1, k=2)` named tuple. Metadata
+        # keys (`_module`, `_group`, ...) are checked the same way. Expansion still
+        # completes so the kwarg RHS reaches scope analysis.
         for name in ("@debug", "@info", "@warn", "@error")
             for code in ("$name \"msg\" k=1 k=2",
                          "$name \"msg\" _module=a _module=b")
-                let err = try
+                let diags = collect_macro_diagnostics() do
                         logging_expand(code)
-                        nothing
-                    catch err
-                        err
                     end
-                    @test err isa JL.MacroExpansionError
-                    @test occursin("provided more than once", err.msg)
+                    @test length(diags) == 1
+                    d = only(diags)
+                    @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+                    @test occursin("provided more than once", d.msg)
                 end
             end
         end
@@ -560,15 +569,14 @@ end
         end
 
         # Duplicate kwargs are flagged the same way as for the level-implicit
-        # logging macros.
-        let err = try
+        # logging macros: Error severity via sink, expansion still completes.
+        let diags = collect_macro_diagnostics() do
                 logging_expand("@logmsg lvl \"msg\" foo=1 foo=2")
-                nothing
-            catch err
-                err
             end
-            @test err isa JL.MacroExpansionError
-            @test occursin("provided more than once", err.msg)
+            @test length(diags) == 1
+            d = only(diags)
+            @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+            @test occursin("provided more than once", d.msg)
         end
     end
 
@@ -753,31 +761,32 @@ test_macro_lower(code::AbstractString) = jlresolve(test_lowering_module, code)
     end
 
     @testset "validation" begin
-        # `broken`/`skip`/`context` may each appear at most once.
+        # `broken`/`skip`/`context` may each appear at most once. Base hard-errors;
+        # we report as Error severity via the sink but keep expansion going so the
+        # RHS values still reach scope analysis.
         for kw in ("broken", "skip", "context")
-            let err = try
+            let diags = collect_macro_diagnostics() do
                     test_macro_expand("@test x $(kw)=true $(kw)=false")
-                    nothing
-                catch err
-                    err
                 end
-                @test err isa JL.MacroExpansionError
-                @test occursin("cannot set `$kw` keyword multiple times", err.msg)
+                @test length(diags) == 1
+                d = only(diags)
+                @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+                @test occursin("cannot set `$kw` keyword multiple times", d.msg)
             end
         end
 
-        # `skip` and `broken` are mutually exclusive.
-        let err = try
+        # `skip` and `broken` are mutually exclusive — Error severity, recovery
+        # keeps both RHS in the block.
+        let diags = collect_macro_diagnostics() do
                 test_macro_expand("@test x skip=true broken=true")
-                nothing
-            catch err
-                err
             end
-            @test err isa JL.MacroExpansionError
-            @test occursin("cannot set both `skip` and `broken`", err.msg)
+            @test length(diags) == 1
+            d = only(diags)
+            @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+            @test occursin("cannot set both `skip` and `broken`", d.msg)
         end
 
-        # Non-`key=value` positional arguments are rejected.
+        # Non-`key=value` positional arguments are rejected (unrecoverable AST shape).
         let err = try
                 test_macro_expand("@test x foo")
                 nothing
@@ -868,35 +877,38 @@ end
             end
         end
 
-        # Multiple descriptions / testset types are rejected.
-        let err = try
+        # Multiple descriptions / testset types are surfaced via the macro-diagnostic
+        # sink (mirroring `Base.@testset`'s `depwarn`); expansion still succeeds with
+        # the last value winning.
+        let diags = collect_macro_diagnostics() do
                 test_macro_expand("@testset \"a\" \"b\" begin end")
-                nothing
-            catch err
-                err
             end
-            @test err isa JL.MacroExpansionError
-            @test occursin("multiple descriptions", err.msg)
+            @test length(diags) == 1
+            d = only(diags)
+            @test d.severity == JETLS.LSP.DiagnosticSeverity.Warning
+            @test occursin("Multiple descriptions provided to @testset", d.msg)
+            @test JS.sourcetext(d.node) == "b"
         end
-        let err = try
+        let diags = collect_macro_diagnostics() do
                 test_macro_expand("@testset Foo Bar begin end")
-                nothing
-            catch err
-                err
             end
-            @test err isa JL.MacroExpansionError
-            @test occursin("multiple testset types", err.msg)
+            @test length(diags) == 1
+            d = only(diags)
+            @test d.severity == JETLS.LSP.DiagnosticSeverity.Warning
+            @test occursin("Multiple testset types provided to @testset", d.msg)
+            @test JS.sourcetext(d.node) == "Bar"
         end
 
-        # Duplicate options are rejected.
-        let err = try
+        # Duplicate options surface as warnings (Base accepts them silently); expansion
+        # still succeeds with the last value winning, mirroring Base's `Dict` semantics.
+        let diags = collect_macro_diagnostics() do
                 test_macro_expand("@testset verbose=true verbose=false begin end")
-                nothing
-            catch err
-                err
             end
-            @test err isa JL.MacroExpansionError
-            @test occursin("option `verbose` already provided", err.msg)
+            @test length(diags) == 1
+            d = only(diags)
+            @test d.severity == JETLS.LSP.DiagnosticSeverity.Warning
+            @test occursin("option `verbose` provided more than once", d.msg)
+            @test strip(JS.sourcetext(d.node)) == "verbose=false"
         end
 
         # Unexpected leading arguments (e.g. integer literals) are rejected.
@@ -1181,41 +1193,40 @@ end
             @test occursin("at least one argument is required", err.msg)
         end
 
-        # Unknown setting name (in non-final position) is rejected.
-        let err = try
+        # Unknown setting name (in non-final position) surfaces as Error severity
+        # via the sink. Effects metadata doesn't affect LSP analyses, so the body
+        # still expands normally.
+        let diags = collect_macro_diagnostics() do
                 jlexpand("Base.@assume_effects :badname foo()")
-                nothing
-            catch err
-                err
             end
-            @test err isa JL.MacroExpansionError
-            @test occursin("unrecognized effect setting `:badname`", err.msg)
+            @test length(diags) == 1
+            d = only(diags)
+            @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+            @test occursin("unrecognized effect setting `:badname`", d.msg)
         end
 
-        # Setting in non-final position must look like a setting form.
+        # Setting in non-final position must look like a setting form — Error via sink.
         for bad in ("42", "\"foldable\"", "foo()")
-            let err = try
+            let diags = collect_macro_diagnostics() do
                     jlexpand("Base.@assume_effects $bad foo()")
-                    nothing
-                catch err
-                    err
                 end
-                @test err isa JL.MacroExpansionError
-                @test occursin("expected an effect setting", err.msg)
+                @test length(diags) == 1
+                d = only(diags)
+                @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+                @test occursin("expected an effect setting", d.msg)
             end
         end
 
         # `:nortcall` and `:consistent_overlay` are not accepted as standalone
         # inputs — they're internal-only (set via shortcuts).
         for setting in (":nortcall", ":consistent_overlay")
-            let err = try
+            let diags = collect_macro_diagnostics() do
                     jlexpand("Base.@assume_effects $setting foo()")
-                    nothing
-                catch err
-                    err
                 end
-                @test err isa JL.MacroExpansionError
-                @test occursin("unrecognized effect setting", err.msg)
+                @test length(diags) == 1
+                d = only(diags)
+                @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+                @test occursin("unrecognized effect setting", d.msg)
             end
         end
 
