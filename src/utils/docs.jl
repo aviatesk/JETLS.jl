@@ -34,26 +34,24 @@ end
 """
     DocsBinding(parentmod::Module, identifier::Symbol, world::UInt) -> Base.Docs.Binding
 
-Construct a `Base.Docs.Binding` for `parentmod.identifier`, working around
-an upstream bug in `Base.Docs.Binding`'s alias resolution for renamed
-imports — `using X: X as Y` makes the stock constructor produce a binding
-to a non-existent `X.Y`, so doc lookup fails (see JuliaLang/julia#55119).
+Construct a `Base.Docs.Binding` for `parentmod.identifier`, working around an upstream bug
+in `Base.Docs.Binding`'s alias resolution for renamed imports — `using X: y as z` /
+`import X: y as z` make the stock constructor produce a binding to a non-existent `X.z`,
+so doc lookup fails (see JuliaLang/julia#61869).
 
-This wrapper bypasses that resolution when `identifier` resolves to a
-renamed `Module` (`nameof(x) !== identifier`), keeping the binding tied
-to `parentmod.identifier` so doc lookup can find the actual value's docs.
-Function-rename (`using Base: cos as mycos`) hits the same upstream bug
-but isn't handled here — hover routes those through
-[`lookup_doc_for_value`](@ref) instead.
+When `identifier`'s binding partition is an explicit by-name import — the only kinds
+(`PARTITION_KIND_EXPLICIT` / `PARTITION_KIND_IMPORTED`) where `as`-rename is syntactically
+possible — resolve to the canonical `(mod, name)` via the partition's restriction and feed
+that to the stock `Base.Docs.Binding`. Other kinds fall through to the stock constructor
+unchanged.
 """
-function DocsBinding end
-@eval function DocsBinding(parentmod::Module, identifier::Symbol, world::UInt)
+function DocsBinding(parentmod::Module, identifier::Symbol, world::UInt)
     if Base.invoke_in_world(world, isdefinedglobal, parentmod, identifier)
-        x = Base.invoke_in_world(world, getglobal, parentmod, identifier)
-        if x isa Module && nameof(x) !== identifier
-            # Bypass `Base.Docs.Binding`'s buggy alias resolution for
-            # renamed-module imports — see docstring above.
-            return $(Expr(:new, Base.Docs.Binding, :parentmod, :identifier))
+        bpart = Base.lookup_binding_partition(world, GlobalRef(parentmod, identifier))
+        if Base.is_some_explicit_imported(Base.binding_kind(bpart))
+            imported = Base.partition_restriction(bpart)::Core.Binding
+            return Base.invoke_in_world(
+                world, Base.Docs.Binding, imported.globalref.mod, imported.globalref.name)
         end
     end
     return Base.invoke_in_world(world, Base.Docs.Binding, parentmod, identifier)

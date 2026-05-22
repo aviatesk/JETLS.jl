@@ -22,6 +22,16 @@ meth_with_sparam(::T) where T<:Union{Float32,Float64} = nothing
         Tuple{<:Union{Float32,Float64}}
 end
 
+# Fixtures for renamed-import handling in `DocsBinding`. Each module uses
+# `using Base: ... as ...` so the local symbol differs from the canonical
+# name — the case JuliaLang/julia#55119 fails on without the workaround.
+module M_module_rename
+    using Base: Base as B
+end
+module M_function_rename
+    using Base: sum as mysum
+end
+
 # Sample bindings exercised across the lookup tests.
 module M_docs_sample
     """Generic doc for `op`."""
@@ -47,6 +57,19 @@ end
 # calls in `lookup_doc_for_*` reach a world that can see them (avoids
 # Julia 1.12+ "access to binding in a world prior to its definition world").
 const world = Base.get_world_counter()
+
+@testset "DocsBinding resolves `as`-renamed imports" begin
+    # Module rename: `B === Base`, canonical binding is the Base module's
+    # self-reference (normalised to `(Main, :Base)` by Binding's module-symbol
+    # rule), not the non-existent `Base.B`.
+    b = JETLS.DocsBinding(M_module_rename, :B, world)
+    @test b.var === :Base
+
+    # Function rename: canonical is `Base.sum`, not the non-existent `Base.mysum`.
+    b = JETLS.DocsBinding(M_function_rename, :mysum, world)
+    @test b.mod === Base
+    @test b.var === :sum
+end
 
 @testset "narrow_doc_lookup" begin
     b_op = Base.Docs.Binding(M_docs_sample, :op)
