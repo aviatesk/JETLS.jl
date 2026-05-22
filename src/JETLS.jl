@@ -80,6 +80,7 @@ Analyzer.LSAnalyzer(args...; kwargs...) = LSAnalyzer(ScriptAnalysisEntry(filepat
 include("FixedSizeQueues/FixedSizeQueues.jl")
 using .FixedSizeQueues
 
+include("utils/markdown.jl")
 include("utils/general.jl")
 
 include("testrunner/testrunner-types.jl")
