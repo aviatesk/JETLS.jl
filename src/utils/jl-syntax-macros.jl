@@ -21,32 +21,31 @@ end
 const macro_issue_contract = """
 # Macro issue contract
 
-When a stub detects a problem, pick the helper that minimizes loss of downstream
-analysis while still surfacing the issue with the severity Base would assign:
+When a stub detects a problem, *never throw* — produce a valid recovery expansion so
+lowering of the enclosing top-level form (function body, let, etc.) keeps succeeding,
+and surface the issue via the sink with the severity Base would assign. A throw would
+abort that lowering and take every lowering-based analysis (undef-var, references,
+[`TypeAnnotation`](@ref) for hover / inlay / signature-help, …) for the whole
+enclosing form down with it.
 
-| helper                        | when                                                                                     | examples                                                                                 |
-|:------------------------------|:-----------------------------------------------------------------------------------------|:-----------------------------------------------------------------------------------------|
-| [`throw_macro_error`](@ref)   | Base rejects, **and** the stub cannot produce a valid recovery expansion                 | `@assert` with zero args, `@invoke` whose argument is not a call, `@kwdef` on non-struct |
-| [`push_macro_error!`](@ref)   | Base rejects, **but** the stub can recover (typically: keep the body, drop the bad part) | `@spawn :badname body`, `@info` with dup kwargs, `@test` with `skip` + `broken`          |
-| [`push_macro_warning!`](@ref) | Base accepts silently or only emits `depwarn`                                            | `@testset` with multiple descriptions/types or duplicate options                         |
+| helper                        | when                                                  |
+|:------------------------------|:------------------------------------------------------|
+| [`push_macro_error!`](@ref)   | Base also rejects                                     |
+| [`push_macro_warning!`](@ref) | Base accepts silently or only emits `depwarn`         |
 
-The push helpers feed [`MACRO_DIAGNOSTIC_SINK`](@ref); see its docstring for the
-producer/consumer contract.
+Common recovery shapes:
+
+- 0-arg / unrecoverable single arg → `nothing::K"Value"`
+- variadic with potentially analyzable args → `[block args...]` (with a trailing
+  `nothing::K"Value"` if the original macro returned `nothing`)
+- single-arg shape error → flow the arg through unchanged
+
+The helpers feed [`MACRO_DIAGNOSTIC_SINK`](@ref); see its docstring for the
+producer/consumer contract. By contrast, when `JL.MacroExpansionError` is thrown directly
+(which JuliaLowering itself does on e.g. macro-not-found), `per_stmt_diagnostics!` falls
+back to re-lowering the enclosing form with macrocalls stripped — a much coarser recovery
+than the sink path.
 """
-
-"""
-    throw_macro_error(node::SyntaxTreeC, msg::AbstractString)
-
-Throw a `JL.MacroExpansionError` anchored on `node`, aborting the current macro
-expansion. In the LSP analysis pipeline this triggers a fallback through
-`remove_macrocalls` for the *whole* enclosing top-level form, so identifier-level
-analysis (undef-var, references, [`TypeAnnotation`](@ref) for hover / inlay /
-signature-help, …) is lost across that form, not just at the bad macrocall.
-
-$macro_issue_contract
-"""
-@noinline throw_macro_error(node::SyntaxTreeC, msg::AbstractString) =
-    throw(JL.MacroExpansionError(node, msg))
 
 """
     MACRO_DIAGNOSTIC_SINK :: ScopedValue{Union{Nothing,Vector{MacroDiagnostic}}}
@@ -67,7 +66,7 @@ Concurrency-safe by construction: `ScopedValue` binds per task and propagates to
 child tasks, so the concurrent `per_stmt_diagnostics!` workers spawned under
 workspace diagnostic each get their own sink without cross-talk or locking.
 
-See also: [`throw_macro_error`](@ref), [`push_macro_error!`], [`push_macro_warning!`]
+See also: [`push_macro_error!`](@ref), [`push_macro_warning!`](@ref)
 """
 struct MacroDiagnostic
     node::SyntaxTreeC
@@ -278,9 +277,13 @@ function _validate_spawn_threadpool(threadpool::SyntaxTreeC)
     nothing
 end
 
-function Base.Threads.var"@spawn"(__context__::JL.MacroContext, ::SyntaxTreeC...)
-    throw_macro_error(__context__.macrocall::SyntaxTreeC,
-        "wrong number of arguments in @spawn")
+function Base.Threads.var"@spawn"(__context__::JL.MacroContext, args::SyntaxTreeC...)
+    mc = __context__.macrocall::SyntaxTreeC
+    push_macro_error!(mc, "wrong number of arguments in @spawn")
+    # Recovery: flow whatever the user wrote through scope analysis. 0-arg →
+    # `nothing`, ≥3-arg → a block of every arg so identifiers inside stay visible.
+    isempty(args) && return JL.@ast(__context__, mc, nothing::JS.K"Value")
+    return JL.@ast(__context__, mc, [JS.K"block" args... nothing::JS.K"Value"])
 end
 
 # New-style implementation of `Base.@label`. Mirrors `Base.@goto` in
@@ -291,14 +294,21 @@ end
 # expr`) are intentionally not supported here — the goto-target form is the
 # common case and the only one needed for most LSP analyses.
 function Base.var"@label"(__context__::JL.MacroContext, ex::SyntaxTreeC)
-    JS.kind(ex) === JS.K"Identifier" ||
-        throw_macro_error(ex, "@label requires an identifier")
+    if JS.kind(ex) !== JS.K"Identifier"
+        push_macro_error!(ex, "@label requires an identifier")
+        # Recovery: let the expression flow through so any identifier inside still
+        # reaches scope analysis. Goto-target semantics are lost.
+        return JL.@ast(__context__, __context__.macrocall::SyntaxTreeC, ex)
+    end
     return JL.@ast(__context__, ex, [JS.K"symboliclabel" ex])
 end
 
-function Base.var"@label"(__context__::JL.MacroContext, ::SyntaxTreeC...)
-    throw_macro_error(__context__.macrocall::SyntaxTreeC,
+function Base.var"@label"(__context__::JL.MacroContext, args::SyntaxTreeC...)
+    mc = __context__.macrocall::SyntaxTreeC
+    push_macro_error!(mc,
         "@label currently only supports the `@label name` form")
+    isempty(args) && return JL.@ast(__context__, mc, nothing::JS.K"Value")
+    return JL.@ast(__context__, mc, [JS.K"block" args...])
 end
 
 # New-style implementation of `Base.@something`. The macro is sometimes called with arguments
@@ -341,8 +351,9 @@ end
 # we mirror that leniency, but route extras through a leading `block` so identifiers
 # inside (e.g. an interpolated `"got $y"`) still get scope-resolved.
 function Base.var"@assert"(__context__::JL.MacroContext)
-    throw_macro_error(__context__.macrocall::SyntaxTreeC,
-        "@assert: at least one argument is required")
+    mc = __context__.macrocall::SyntaxTreeC
+    push_macro_error!(mc, "@assert: at least one argument is required")
+    return JL.@ast(__context__, mc, nothing::JS.K"Value")
 end
 
 function Base.var"@assert"(
@@ -405,8 +416,9 @@ function Base.CoreLogging.var"@debug"(
 end
 
 function Base.CoreLogging.var"@debug"(__context__::JL.MacroContext)
-    throw_macro_error(__context__.macrocall::SyntaxTreeC,
-        "@debug requires at least one argument: a `message`")
+    mc = __context__.macrocall::SyntaxTreeC
+    push_macro_error!(mc, "@debug requires at least one argument: a `message`")
+    return JL.@ast(__context__, mc, nothing::JS.K"Value")
 end
 
 function Base.CoreLogging.var"@info"(
@@ -416,8 +428,9 @@ function Base.CoreLogging.var"@info"(
 end
 
 function Base.CoreLogging.var"@info"(__context__::JL.MacroContext)
-    throw_macro_error(__context__.macrocall::SyntaxTreeC,
-        "@info requires at least one argument: a `message`")
+    mc = __context__.macrocall::SyntaxTreeC
+    push_macro_error!(mc, "@info requires at least one argument: a `message`")
+    return JL.@ast(__context__, mc, nothing::JS.K"Value")
 end
 
 function Base.CoreLogging.var"@warn"(
@@ -427,8 +440,9 @@ function Base.CoreLogging.var"@warn"(
 end
 
 function Base.CoreLogging.var"@warn"(__context__::JL.MacroContext)
-    throw_macro_error(__context__.macrocall::SyntaxTreeC,
-        "@warn requires at least one argument: a `message`")
+    mc = __context__.macrocall::SyntaxTreeC
+    push_macro_error!(mc, "@warn requires at least one argument: a `message`")
+    return JL.@ast(__context__, mc, nothing::JS.K"Value")
 end
 
 function Base.CoreLogging.var"@error"(
@@ -438,8 +452,9 @@ function Base.CoreLogging.var"@error"(
 end
 
 function Base.CoreLogging.var"@error"(__context__::JL.MacroContext)
-    throw_macro_error(__context__.macrocall::SyntaxTreeC,
-        "@error requires at least one argument: a `message`")
+    mc = __context__.macrocall::SyntaxTreeC
+    push_macro_error!(mc, "@error requires at least one argument: a `message`")
+    return JL.@ast(__context__, mc, nothing::JS.K"Value")
 end
 
 # `@logmsg` adds a leading `level` argument. The level is a user-written
@@ -452,9 +467,12 @@ function Base.CoreLogging.var"@logmsg"(
     return _logmsg_stub(__context__, (level, message, exs...), "@logmsg")
 end
 
-function Base.CoreLogging.var"@logmsg"(__context__::JL.MacroContext, ::SyntaxTreeC...)
-    throw_macro_error(__context__.macrocall::SyntaxTreeC,
+function Base.CoreLogging.var"@logmsg"(__context__::JL.MacroContext, args::SyntaxTreeC...)
+    mc = __context__.macrocall::SyntaxTreeC
+    push_macro_error!(mc,
         "@logmsg requires at least two arguments: a `level` and a `message`")
+    isempty(args) && return JL.@ast(__context__, mc, nothing::JS.K"Value")
+    return JL.@ast(__context__, mc, [JS.K"block" args... nothing::JS.K"Value"])
 end
 
 function _logmsg_stub(
@@ -466,7 +484,11 @@ function _logmsg_stub(
     for ex in exs
         k = JS.kind(ex)
         if k === JS.K"="
-            kwname = _validate_logmsg_kw(ex, name)
+            if JS.numchildren(ex) != 2
+                push_macro_error!(ex, "$name: malformed keyword argument")
+                continue
+            end
+            kwname = _validate_logmsg_kw(ex)
             if kwname !== nothing
                 if kwname in seen_kws
                     # Base would let the synthesized `(; k=…, k=…)` named tuple fail
@@ -479,9 +501,11 @@ function _logmsg_stub(
             end
             push!(children, ex[2])
         elseif k === JS.K"..."
-            JS.numchildren(ex) >= 1 ||
-                throw_macro_error(ex, "$name: malformed splat argument")
-            push!(children, ex[1])
+            if JS.numchildren(ex) >= 1
+                push!(children, ex[1])
+            else
+                push_macro_error!(ex, "$name: malformed splat argument")
+            end
         else
             push!(children, ex)
         end
@@ -492,10 +516,9 @@ end
 # Returns the kwarg name as a `String`, or `nothing` if the name isn't a
 # plain identifier. The latter case (e.g. `"foo"=val`, which Base silently
 # routes through `Symbol(k)`) is rare enough that we just skip the
-# duplicate check rather than reject it outright.
-function _validate_logmsg_kw(kw::SyntaxTreeC, name::AbstractString)
-    JS.numchildren(kw) == 2 ||
-        throw_macro_error(kw, "$name: malformed keyword argument")
+# duplicate check rather than reject it outright. Assumes `JS.numchildren(kw) == 2`
+# (the caller pre-validates the shape so it can safely access `kw[2]`).
+function _validate_logmsg_kw(kw::SyntaxTreeC)
     key = kw[1]
     if JS.kind(key) === JS.K"Identifier" && hasproperty(key, :name_val)
         n = key.name_val
@@ -512,29 +535,43 @@ end
 # accepted (`f(args...; kwargs...)`, `x.f`, `xs[i]`, `x.f = v`, `xs[i] = v`); other shapes
 # are rejected at expansion time with a clear message.
 function Base.var"@invoke"(__context__::JL.MacroContext, ex::SyntaxTreeC)
-    f, args, kwargs = _destructure_invoke_callex(__context__, ex, "@invoke")
+    destructured = _destructure_invoke_callex(__context__, ex, "@invoke")
+    destructured === nothing &&
+        return JL.@ast(__context__, __context__.macrocall::SyntaxTreeC, ex)
+    f, args, kwargs = destructured
     return _build_invoke_call(__context__, ex, f, args, kwargs)
 end
 
-function Base.var"@invoke"(__context__::JL.MacroContext, ::SyntaxTreeC...)
-    throw_macro_error(__context__.macrocall::SyntaxTreeC,
+function Base.var"@invoke"(__context__::JL.MacroContext, args::SyntaxTreeC...)
+    mc = __context__.macrocall::SyntaxTreeC
+    push_macro_error!(mc,
         "@invoke expects exactly one argument: `f(args...; kwargs...)` (or one of `x.f`, `xs[i]`, `x.f = v`, `xs[i] = v`)")
+    isempty(args) && return JL.@ast(__context__, mc, nothing::JS.K"Value")
+    return JL.@ast(__context__, mc, [JS.K"block" args...])
 end
 
 function Base.var"@invokelatest"(__context__::JL.MacroContext, ex::SyntaxTreeC)
-    f, args, kwargs = _destructure_invoke_callex(__context__, ex, "@invokelatest")
+    destructured = _destructure_invoke_callex(__context__, ex, "@invokelatest")
+    destructured === nothing &&
+        return JL.@ast(__context__, __context__.macrocall::SyntaxTreeC, ex)
+    f, args, kwargs = destructured
     return _build_invokelatest_call(__context__, f, args, kwargs)
 end
 
-function Base.var"@invokelatest"(__context__::JL.MacroContext, ::SyntaxTreeC...)
-    throw_macro_error(__context__.macrocall::SyntaxTreeC,
+function Base.var"@invokelatest"(__context__::JL.MacroContext, args::SyntaxTreeC...)
+    mc = __context__.macrocall::SyntaxTreeC
+    push_macro_error!(mc,
         "@invokelatest expects exactly one argument: `f(args...; kwargs...)` (or one of `x.f`, `xs[i]`, `x.f = v`, `xs[i] = v`)")
+    isempty(args) && return JL.@ast(__context__, mc, nothing::JS.K"Value")
+    return JL.@ast(__context__, mc, [JS.K"block" args...])
 end
 
 # Mirror of Base's `destructure_callex` for EST: returns `(f, args, kwargs)` where
 # `f` is the function (already a `K"top"` reference for the synthesized `getproperty`,
 # `setindex!`, etc. forms), `args` are the positional arguments, and `kwargs` are the
 # raw `K"kw"` nodes (collected from both bare-`kw` children and `K"parameters"` blocks).
+# Returns `nothing` when `ex` doesn't match any accepted shape; the caller is
+# responsible for falling back to a recovery expansion.
 function _destructure_invoke_callex(
         ctx::JL.MacroContext, ex::SyntaxTreeC, m::AbstractString
     )
@@ -582,11 +619,13 @@ function _destructure_invoke_callex(
             f = JL.@ast(ctx, ex, [JS.K"top" "setindex!"::JS.K"Identifier"])
             return f, args, SyntaxTreeC[]
         end
-        throw_macro_error(ex,
+        push_macro_error!(ex,
             "$m: expected a `setproperty!` expression `x.f = v` or `setindex!` expression `x[i] = v`")
+        return nothing
     end
-    throw_macro_error(ex,
+    push_macro_error!(ex,
         "$m: expected a `:call` expression `f(args...; kwargs...)`")
+    return nothing
 end
 
 # Build `Core.invoke(f, Tuple{T1, ...}, x, ...)`, mirroring Base's expansion. Each `x::T`
@@ -651,8 +690,12 @@ end
 # This strips default values from struct fields and generates keyword constructors,
 # matching the semantics of Base.@kwdef.
 function Base.var"@kwdef"(__context__::JL.MacroContext, ex::SyntaxTreeC)
-    JS.kind(ex) === JS.K"struct" ||
-        throw_macro_error(ex, "Invalid usage of @kwdef")
+    if JS.kind(ex) !== JS.K"struct"
+        push_macro_error!(ex, "Invalid usage of @kwdef")
+        # Recovery: let the argument flow through unchanged so e.g. a half-typed
+        # struct or an accidentally-decorated function still reaches scope analysis.
+        return JL.@ast(__context__, __context__.macrocall::SyntaxTreeC, ex)
+    end
 
     # EST struct children: [Value(is_mutable), type_sig, body]
     type_sig = ex[2]
@@ -781,7 +824,10 @@ function _kwdef_make_constructors(
 
         return SyntaxTreeC[def1, def2]
     else
-        throw_macro_error(type_sig, "Invalid type signature for @kwdef")
+        # Recovery: emit no constructors. The bare (stripped) struct definition
+        # still reaches downstream lowering.
+        push_macro_error!(type_sig, "Invalid type signature for @kwdef")
+        return SyntaxTreeC[]
     end
 end
 
@@ -804,6 +850,7 @@ function Test.var"@test"(__context__::JL.MacroContext, ex::SyntaxTreeC, kws::Syn
     # still reach scope analysis.
     for kw in kws
         name = _validate_test_kw(kw)
+        name === nothing && continue # malformed kw already reported via sink
         push!(rhss, kw[2])
         if name == "broken"
             seen_broken === nothing || push_macro_error!(kw,
@@ -833,7 +880,7 @@ function Test.var"@test_broken"(
     mc = __context__.macrocall::SyntaxTreeC
     rhss = SyntaxTreeC[]
     for kw in kws
-        _validate_test_kw(kw)
+        _validate_test_kw(kw) === nothing && continue
         push!(rhss, kw[2])
     end
     isempty(rhss) && return JL.@ast(__context__, mc, ex)
@@ -846,7 +893,7 @@ function Test.var"@test_skip"(
     mc = __context__.macrocall::SyntaxTreeC
     rhss = SyntaxTreeC[]
     for kw in kws
-        _validate_test_kw(kw)
+        _validate_test_kw(kw) === nothing && continue
         push!(rhss, kw[2])
     end
     isempty(rhss) && return JL.@ast(__context__, mc, ex)
@@ -860,9 +907,12 @@ function Test.var"@test_throws"(
         [JS.K"block" extype ex])
 end
 
-function Test.var"@test_throws"(__context__::JL.MacroContext, ::SyntaxTreeC...)
-    throw_macro_error(__context__.macrocall::SyntaxTreeC,
+function Test.var"@test_throws"(__context__::JL.MacroContext, args::SyntaxTreeC...)
+    mc = __context__.macrocall::SyntaxTreeC
+    push_macro_error!(mc,
         "@test_throws expects exactly two arguments: `extype` and `ex`")
+    isempty(args) && return JL.@ast(__context__, mc, nothing::JS.K"Value")
+    return JL.@ast(__context__, mc, [JS.K"block" args...])
 end
 
 function Test.var"@test_warn"(
@@ -878,13 +928,16 @@ end
 
 function Test.var"@test_logs"(__context__::JL.MacroContext, args::SyntaxTreeC...)
     mc = __context__.macrocall::SyntaxTreeC
-    isempty(args) && throw_macro_error(mc, "@test_logs needs at least one argument")
+    if isempty(args)
+        push_macro_error!(mc, "@test_logs needs at least one argument")
+        return JL.@ast(__context__, mc, nothing::JS.K"Value")
+    end
     body = last(args)
     block_children = SyntaxTreeC[]
     for i in 1:length(args)-1
         arg = args[i]
         if JS.kind(arg) === JS.K"="
-            _validate_test_kw(arg)
+            _validate_test_kw(arg) === nothing && continue
             push!(block_children, arg[2])
         else
             push!(block_children, arg)
@@ -905,9 +958,12 @@ function Test.var"@test_deprecated"(
         [JS.K"block" pattern ex])
 end
 
-function Test.var"@test_deprecated"(__context__::JL.MacroContext, ::SyntaxTreeC...)
-    throw_macro_error(__context__.macrocall::SyntaxTreeC,
+function Test.var"@test_deprecated"(__context__::JL.MacroContext, args::SyntaxTreeC...)
+    mc = __context__.macrocall::SyntaxTreeC
+    push_macro_error!(mc,
         "@test_deprecated expects one or two arguments: `[pattern] expr`")
+    isempty(args) && return JL.@ast(__context__, mc, nothing::JS.K"Value")
+    return JL.@ast(__context__, mc, [JS.K"block" args...])
 end
 
 function Test.var"@inferred"(__context__::JL.MacroContext, ex::SyntaxTreeC)
@@ -921,29 +977,42 @@ function Test.var"@inferred"(
         [JS.K"block" allow ex])
 end
 
-function Test.var"@inferred"(__context__::JL.MacroContext, ::SyntaxTreeC...)
-    throw_macro_error(__context__.macrocall::SyntaxTreeC,
-        "@inferred expects one or two arguments: `[allow] ex`")
+function Test.var"@inferred"(__context__::JL.MacroContext, args::SyntaxTreeC...)
+    mc = __context__.macrocall::SyntaxTreeC
+    push_macro_error!(mc, "@inferred expects one or two arguments: `[allow] ex`")
+    isempty(args) && return JL.@ast(__context__, mc, nothing::JS.K"Value")
+    return JL.@ast(__context__, mc, [JS.K"block" args...])
 end
 
 function _validate_test_kw(kw::SyntaxTreeC)
-    JS.kind(kw) === JS.K"=" ||
-        throw_macro_error(kw, "invalid test macro call: expected `keyword=value`")
-    JS.numchildren(kw) == 2 ||
-        throw_macro_error(kw, "invalid test macro call: malformed keyword argument")
+    if JS.kind(kw) !== JS.K"="
+        push_macro_error!(kw, "invalid test macro call: expected `keyword=value`")
+        return nothing
+    end
+    if JS.numchildren(kw) != 2
+        push_macro_error!(kw, "invalid test macro call: malformed keyword argument")
+        return nothing
+    end
     name = kw[1]
-    (JS.kind(name) === JS.K"Identifier" && hasproperty(name, :name_val)) ||
-        throw_macro_error(name, "invalid test macro call: keyword name must be an identifier")
+    if !(JS.kind(name) === JS.K"Identifier" && hasproperty(name, :name_val))
+        push_macro_error!(name, "invalid test macro call: keyword name must be an identifier")
+        return nothing
+    end
     return name.name_val::String
 end
 
 function Test.var"@testset"(__context__::JL.MacroContext, args::SyntaxTreeC...)
     mc = __context__.macrocall::SyntaxTreeC
-    isempty(args) && throw_macro_error(mc, "No arguments to @testset")
+    if isempty(args)
+        push_macro_error!(mc, "No arguments to @testset")
+        return JL.@ast(__context__, mc, nothing::JS.K"Value")
+    end
 
     body = last(args)
     if JS.kind(body) ∉ JS.KSet"for block call let"
-        throw_macro_error(body,
+        # Recovery: let the body flow through anyway. Wrapped in `let` below so its
+        # bindings still get the testset-local scope treatment.
+        push_macro_error!(body,
             "@testset: body argument must be a `for`, `begin`/`end`, function call, or `let` expression")
     end
 
@@ -966,13 +1035,17 @@ function Test.var"@testset"(__context__::JL.MacroContext, args::SyntaxTreeC...)
             # `Dict` literal and lets last-wins absorb them; warn instead of erroring
             # so we still flag the redundancy without aborting expansion.
             name = _validate_testset_option(arg)
-            if name in seen_options
+            if name === nothing
+                continue # malformed option already reported via sink
+            elseif name in seen_options
                 push_macro_warning!(arg, "@testset: option `$name` provided more than once")
             else
                 push!(seen_options, name)
             end
         else
-            throw_macro_error(arg, "@testset: unexpected argument")
+            # Recovery: skip the unrecognized arg — Base would error here but we
+            # prefer to keep the testset's body analyzable.
+            push_macro_error!(arg, "@testset: unexpected argument")
         end
     end
 
@@ -986,11 +1059,15 @@ function Test.var"@testset"(__context__::JL.MacroContext, args::SyntaxTreeC...)
 end
 
 function _validate_testset_option(arg::SyntaxTreeC)
-    JS.numchildren(arg) == 2 ||
-        throw_macro_error(arg, "@testset: malformed option")
+    if JS.numchildren(arg) != 2
+        push_macro_error!(arg, "@testset: malformed option")
+        return nothing
+    end
     name = arg[1]
-    (JS.kind(name) === JS.K"Identifier" && hasproperty(name, :name_val)) ||
-        throw_macro_error(name, "@testset: option name must be an identifier")
+    if !(JS.kind(name) === JS.K"Identifier" && hasproperty(name, :name_val))
+        push_macro_error!(name, "@testset: option name must be an identifier")
+        return nothing
+    end
     return name.name_val::String
 end
 
@@ -1009,8 +1086,9 @@ const _ASSUME_EFFECTS_SETTINGS = (
 )
 
 function Base.var"@assume_effects"(__context__::JL.MacroContext)
-    throw_macro_error(__context__.macrocall::SyntaxTreeC,
-        "@assume_effects: at least one argument is required")
+    mc = __context__.macrocall::SyntaxTreeC
+    push_macro_error!(mc, "@assume_effects: at least one argument is required")
+    return JL.@ast(__context__, mc, nothing::JS.K"Value")
 end
 
 function Base.var"@assume_effects"(

@@ -69,9 +69,7 @@ end
 # `MacroDiagnostic` entries.
 function collect_macro_diagnostics(f)
     sink = JETLS.MacroDiagnostic[]
-    Base.ScopedValues.@with JETLS.MACRO_DIAGNOSTIC_SINK => sink begin
-        f()
-    end
+    Base.ScopedValues.@with JETLS.MACRO_DIAGNOSTIC_SINK => sink f()
     return sink
 end
 
@@ -254,16 +252,16 @@ end
         end
 
         # Zero arguments and 3+ arguments both fall through to the variadic fallback
-        # method (truly unrecoverable, so this stays a hard `MacroExpansionError`).
+        # method: report via the sink and wrap the args (if any) in a block so they
+        # still reach scope analysis.
         for code in ("Threads.@spawn", "Threads.@spawn :default :foo 1+1")
-            let err = try
+            let diags = collect_macro_diagnostics() do
                     jlexpand(code)
-                    nothing
-                catch err
-                    err
                 end
-                @test err isa JL.MacroExpansionError
-                @test occursin("wrong number of arguments in @spawn", err.msg)
+                @test length(diags) == 1
+                d = only(diags)
+                @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+                @test occursin("wrong number of arguments in @spawn", d.msg)
             end
         end
 
@@ -304,28 +302,25 @@ end
 end
 
 @testset "@label" begin
-    # Non-identifier argument is rejected.
-    let err = try
+    # Non-identifier argument: report via sink, let the expression flow through.
+    let diags = collect_macro_diagnostics() do
             jlexpand("@label 42")
-            nothing
-        catch err
-            err
         end
-        @test err isa JL.MacroExpansionError
-        @test occursin("requires an identifier", err.msg)
+        @test length(diags) == 1
+        d = only(diags)
+        @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+        @test occursin("requires an identifier", d.msg)
     end
 
     # The block forms (`@label expr`, `@label name expr`) are intentionally not
-    # supported; the variadic fallback gives a clear message instead of a
-    # `MethodError`.
-    let err = try
+    # supported; the variadic fallback reports via sink and wraps args in a block.
+    let diags = collect_macro_diagnostics() do
             jlexpand("@label foo body")
-            nothing
-        catch err
-            err
         end
-        @test err isa JL.MacroExpansionError
-        @test occursin("only supports the `@label name` form", err.msg)
+        @test length(diags) == 1
+        d = only(diags)
+        @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+        @test occursin("only supports the `@label name` form", d.msg)
     end
 
     # Full lowering succeeds when paired with `@goto`.
@@ -401,15 +396,14 @@ end
     end
 
     @testset "validation" begin
-        # Zero-argument form rejected.
-        let err = try
+        # Zero-argument form: report via sink, recover with `nothing`.
+        let diags = collect_macro_diagnostics() do
                 jlexpand("@assert")
-                nothing
-            catch err
-                err
             end
-            @test err isa JL.MacroExpansionError
-            @test occursin("at least one argument is required", err.msg)
+            @test length(diags) == 1
+            d = only(diags)
+            @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+            @test occursin("at least one argument is required", d.msg)
         end
     end
 
@@ -491,16 +485,15 @@ logging_resolve(code::AbstractString) = jlresolve(logging_module, code)
     end
 
     @testset "validation" begin
-        # Zero-arg form rejected for each macro.
+        # Zero-arg form for each macro: report via sink, recover with `nothing`.
         for name in ("@debug", "@info", "@warn", "@error")
-            let err = try
+            let diags = collect_macro_diagnostics() do
                     logging_expand(name)
-                    nothing
-                catch err
-                    err
                 end
-                @test err isa JL.MacroExpansionError
-                @test occursin("$name requires at least one argument", err.msg)
+                @test length(diags) == 1
+                d = only(diags)
+                @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+                @test occursin("$name requires at least one argument", d.msg)
             end
         end
 
@@ -557,14 +550,13 @@ end
         # 0 and 1 arg both fall through to the variadic fallback, since
         # `@logmsg` requires both a `level` and a `message`.
         for code in ("@logmsg", "@logmsg lvl")
-            let err = try
+            let diags = collect_macro_diagnostics() do
                     logging_expand(code)
-                    nothing
-                catch err
-                    err
                 end
-                @test err isa JL.MacroExpansionError
-                @test occursin("@logmsg requires at least two arguments", err.msg)
+                @test length(diags) == 1
+                d = only(diags)
+                @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+                @test occursin("@logmsg requires at least two arguments", d.msg)
             end
         end
 
@@ -679,41 +671,40 @@ end
 
     @testset "validation" begin
         for name in ("@invoke", "@invokelatest")
-            # Zero / multiple arguments fall through to the variadic fallback.
+            # Zero / multiple arguments fall through to the variadic fallback,
+            # reported via sink. Args (if any) are wrapped in a block.
             for code in ("$name", "$name f(x) g(y)")
-                let err = try
+                let diags = collect_macro_diagnostics() do
                         jlexpand(code)
-                        nothing
-                    catch err
-                        err
                     end
-                    @test err isa JL.MacroExpansionError
-                    @test occursin("expects exactly one argument", err.msg)
+                    @test length(diags) == 1
+                    d = only(diags)
+                    @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+                    @test occursin("expects exactly one argument", d.msg)
                 end
             end
 
-            # Bare identifier / literal isn't one of the allowed call shapes.
+            # Bare identifier / literal isn't one of the allowed call shapes;
+            # the `ex` flows through as-is so identifiers reach scope analysis.
             for code in ("$name 42", "$name foo")
-                let err = try
+                let diags = collect_macro_diagnostics() do
                         jlexpand(code)
-                        nothing
-                    catch err
-                        err
                     end
-                    @test err isa JL.MacroExpansionError
-                    @test occursin("expected a `:call` expression", err.msg)
+                    @test length(diags) == 1
+                    d = only(diags)
+                    @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+                    @test occursin("expected a `:call` expression", d.msg)
                 end
             end
 
             # `=` form requires the LHS to be `x.f` or `xs[i]`.
-            let err = try
+            let diags = collect_macro_diagnostics() do
                     jlexpand("$name a = b")
-                    nothing
-                catch err
-                    err
                 end
-                @test err isa JL.MacroExpansionError
-                @test occursin("setproperty!", err.msg)
+                @test length(diags) == 1
+                d = only(diags)
+                @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+                @test occursin("setproperty!", d.msg)
             end
         end
     end
@@ -786,15 +777,15 @@ test_macro_lower(code::AbstractString) = jlresolve(test_lowering_module, code)
             @test occursin("cannot set both `skip` and `broken`", d.msg)
         end
 
-        # Non-`key=value` positional arguments are rejected (unrecoverable AST shape).
-        let err = try
+        # Non-`key=value` positional arguments are reported via sink; the malformed
+        # kw is skipped, the test body still expands.
+        let diags = collect_macro_diagnostics() do
                 test_macro_expand("@test x foo")
-                nothing
-            catch err
-                err
             end
-            @test err isa JL.MacroExpansionError
-            @test occursin("expected `keyword=value`", err.msg)
+            @test length(diags) == 1
+            d = only(diags)
+            @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+            @test occursin("expected `keyword=value`", d.msg)
         end
     end
 
@@ -853,27 +844,26 @@ end
     end
 
     @testset "validation" begin
-        # No-argument form rejected.
-        let err = try
+        # No-argument form: report via sink, recover with `nothing`.
+        let diags = collect_macro_diagnostics() do
                 test_macro_expand("@testset")
-                nothing
-            catch err
-                err
             end
-            @test err isa JL.MacroExpansionError
-            @test occursin("No arguments to @testset", err.msg)
+            @test length(diags) == 1
+            d = only(diags)
+            @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+            @test occursin("No arguments to @testset", d.msg)
         end
 
-        # Body argument must be a `for`/`begin`/`call`/`let`.
+        # Body argument that's not `for`/`begin`/`call`/`let`: reported via sink,
+        # the body still flows through the `let` wrapper so identifiers reach scope.
         for body in ("42", "\"x\"", "x = 1")
-            let err = try
+            let diags = collect_macro_diagnostics() do
                     test_macro_expand("@testset \"name\" $body")
-                    nothing
-                catch err
-                    err
                 end
-                @test err isa JL.MacroExpansionError
-                @test occursin("body argument must be", err.msg)
+                @test length(diags) == 1
+                d = only(diags)
+                @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+                @test occursin("body argument must be", d.msg)
             end
         end
 
@@ -911,15 +901,15 @@ end
             @test strip(JS.sourcetext(d.node)) == "verbose=false"
         end
 
-        # Unexpected leading arguments (e.g. integer literals) are rejected.
-        let err = try
+        # Unexpected leading arguments (e.g. integer literals) are reported via
+        # sink and skipped; the testset body still expands.
+        let diags = collect_macro_diagnostics() do
                 test_macro_expand("@testset 42 begin end")
-                nothing
-            catch err
-                err
             end
-            @test err isa JL.MacroExpansionError
-            @test occursin("unexpected argument", err.msg)
+            @test length(diags) == 1
+            d = only(diags)
+            @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+            @test occursin("unexpected argument", d.msg)
         end
 
         # Qualified testset types (e.g. `Test.DefaultTestSet`) are accepted.
@@ -966,17 +956,17 @@ end
     end
 
     @testset "validation" begin
-        # `@test_throws` strictly requires two positional arguments.
+        # `@test_throws` strictly requires two positional arguments; other shapes
+        # report via sink and wrap (or drop) the args.
         for code in ("@test_throws", "@test_throws BoundsError",
                      "@test_throws BoundsError xxx yyy")
-            let err = try
+            let diags = collect_macro_diagnostics() do
                     test_macro_expand(code)
-                    nothing
-                catch err
-                    err
                 end
-                @test err isa JL.MacroExpansionError
-                @test occursin("@test_throws expects exactly two arguments", err.msg)
+                @test length(diags) == 1
+                d = only(diags)
+                @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+                @test occursin("@test_throws expects exactly two arguments", d.msg)
             end
         end
     end
@@ -1005,16 +995,16 @@ end
     end
 
     @testset "validation" begin
-        # Non-`key=value` positional arguments are rejected.
+        # Non-`key=value` positional arguments are reported via sink; the
+        # malformed kw is skipped, the body still expands.
         for name in ("@test_broken", "@test_skip")
-            let err = try
+            let diags = collect_macro_diagnostics() do
                     test_macro_expand("$name xxx foo")
-                    nothing
-                catch err
-                    err
                 end
-                @test err isa JL.MacroExpansionError
-                @test occursin("expected `keyword=value`", err.msg)
+                @test length(diags) == 1
+                d = only(diags)
+                @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+                @test occursin("expected `keyword=value`", d.msg)
             end
         end
     end
@@ -1069,14 +1059,13 @@ end
     end
 
     @testset "validation" begin
-        let err = try
+        let diags = collect_macro_diagnostics() do
                 test_macro_expand("@test_logs")
-                nothing
-            catch err
-                err
             end
-            @test err isa JL.MacroExpansionError
-            @test occursin("@test_logs needs at least one argument", err.msg)
+            @test length(diags) == 1
+            d = only(diags)
+            @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+            @test occursin("@test_logs needs at least one argument", d.msg)
         end
     end
 
@@ -1103,14 +1092,13 @@ end
 
     @testset "validation" begin
         for code in ("@test_deprecated", "@test_deprecated a b c")
-            let err = try
+            let diags = collect_macro_diagnostics() do
                     test_macro_expand(code)
-                    nothing
-                catch err
-                    err
                 end
-                @test err isa JL.MacroExpansionError
-                @test occursin("@test_deprecated expects one or two arguments", err.msg)
+                @test length(diags) == 1
+                d = only(diags)
+                @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+                @test occursin("@test_deprecated expects one or two arguments", d.msg)
             end
         end
     end
@@ -1129,14 +1117,13 @@ end
 
     @testset "validation" begin
         for code in ("@inferred", "@inferred Int foo(x) extra")
-            let err = try
+            let diags = collect_macro_diagnostics() do
                     test_macro_expand(code)
-                    nothing
-                catch err
-                    err
                 end
-                @test err isa JL.MacroExpansionError
-                @test occursin("@inferred expects one or two arguments", err.msg)
+                @test length(diags) == 1
+                d = only(diags)
+                @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+                @test occursin("@inferred expects one or two arguments", d.msg)
             end
         end
     end
@@ -1182,15 +1169,14 @@ end
     end
 
     @testset "validation" begin
-        # Zero-argument form rejected.
-        let err = try
+        # Zero-argument form: report via sink, recover with `nothing`.
+        let diags = collect_macro_diagnostics() do
                 jlexpand("Base.@assume_effects")
-                nothing
-            catch err
-                err
             end
-            @test err isa JL.MacroExpansionError
-            @test occursin("at least one argument is required", err.msg)
+            @test length(diags) == 1
+            d = only(diags)
+            @test d.severity == JETLS.LSP.DiagnosticSeverity.Error
+            @test occursin("at least one argument is required", d.msg)
         end
 
         # Unknown setting name (in non-final position) surfaces as Error severity
