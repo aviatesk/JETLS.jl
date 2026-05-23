@@ -82,7 +82,7 @@ function lookup_doc_stripped(@nospecialize(object), world::UInt)
 end
 
 """
-    narrow_doc_lookup(binding::Base.Docs.Binding, sig) -> Markdown.MD | Nothing
+    narrow_doc_lookup(binding::Base.Docs.Binding, sig, world::UInt) -> Markdown.MD | Nothing
 
 Narrowed sig-aware variant of `Base.Docs.doc(binding, sig)`.
 The Base implementation falls back to *all* docs from *all* loaded modules
@@ -110,11 +110,12 @@ variables — those scaffolding `Tuple{T}` / `Tuple{N}` parts break direct
 Method-specific matches win when available; otherwise interface docs serve
 as fallback. Returns `nothing` when neither category produces a match.
 """
-function narrow_doc_lookup(binding::Base.Docs.Binding, @nospecialize(sig))
+function narrow_doc_lookup(binding::Base.Docs.Binding, @nospecialize(sig), world::UInt)
     matched = Base.Docs.DocStr[]
     interface = Base.Docs.DocStr[]
     for mod in Base.Docs.modules
-        dict = @something Base.Docs.meta(mod; autoinit=false) continue
+        dict = @something Base.invoke_in_world(world, Base.Docs.meta, mod;
+            autoinit=false)::Union{Nothing,IdDict{Any,Any}} continue
         haskey(dict, binding) || continue
         multidoc = dict[binding]::Base.Docs.MultiDoc
         for msig in multidoc.order
@@ -127,7 +128,7 @@ function narrow_doc_lookup(binding::Base.Docs.Binding, @nospecialize(sig))
     end
     results = isempty(matched) ? interface : matched
     isempty(results) && return nothing
-    md = Base.Docs.catdoc(map(Base.Docs.parsedoc, results)...)
+    md = Base.invoke_in_world(world, Base.Docs.catdoc, map(Base.Docs.parsedoc, results)...)
     md isa Markdown.MD || return nothing
     md.meta[:results] = results
     md.meta[:binding] = binding
@@ -159,7 +160,7 @@ function lookup_doc_for_binding(
         if sig === nothing
             return lookup_doc_stripped(binding, world)
         end
-        return Base.invoke_in_world(world, narrow_doc_lookup, binding, sig)::Union{Nothing,Markdown.MD}
+        return narrow_doc_lookup(binding, sig, world)
     catch
         return nothing
     end
@@ -191,7 +192,7 @@ function lookup_doc_for_value(@nospecialize(v), @nospecialize(sig), world::UInt)
         end
         binding = Base.invoke_in_world(world, Base.Docs.aliasof, v, typeof(v))
         binding isa Base.Docs.Binding || return nothing
-        return Base.invoke_in_world(world, narrow_doc_lookup, binding, sig)::Union{Nothing,Markdown.MD}
+        return narrow_doc_lookup(binding, sig, world)
     catch
         return nothing
     end

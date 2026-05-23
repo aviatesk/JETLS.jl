@@ -77,7 +77,7 @@ end
     b_op = Base.Docs.Binding(M_docs_sample, :op)
 
     @testset "method-specific match wins, generic doc still surfaced via intersect" begin
-        md = JETLS.narrow_doc_lookup(b_op, Tuple{Int})
+        md = JETLS.narrow_doc_lookup(b_op, Tuple{Int}, world)
         @test md isa Markdown.MD
         s = string(md)
         # Both `op(x)` generic (Tuple{Any}, intersects with Tuple{Int}) and
@@ -88,7 +88,7 @@ end
 
     @testset "unrelated overload suppressed" begin
         # Tuple{String} matches the String overload only; Int's doc dropped.
-        md = JETLS.narrow_doc_lookup(b_op, Tuple{String})
+        md = JETLS.narrow_doc_lookup(b_op, Tuple{String}, world)
         @test md isa Markdown.MD
         s = string(md)
         @test occursin("Generic doc for `op`.", s)  # generic still covers it
@@ -97,7 +97,7 @@ end
 
     @testset "interface-decl doc dropped when method-specific match found" begin
         b_iface = Base.Docs.Binding(M_docs_sample, :iface)
-        md = JETLS.narrow_doc_lookup(b_iface, Tuple{Int})
+        md = JETLS.narrow_doc_lookup(b_iface, Tuple{Int}, world)
         @test md isa Markdown.MD
         s = string(md)
         @test occursin("Method-specific doc for `iface(::Int)`.", s)
@@ -108,7 +108,7 @@ end
         b_iface = Base.Docs.Binding(M_docs_sample, :iface)
         # `Tuple{Float64}` doesn't intersect with `Tuple{Int}` — only `Union{}`
         # interface declaration survives.
-        md = JETLS.narrow_doc_lookup(b_iface, Tuple{Float64})
+        md = JETLS.narrow_doc_lookup(b_iface, Tuple{Float64}, world)
         @test md isa Markdown.MD
         s = string(md)
         @test occursin("Interface-level doc for `iface`.", s)
@@ -119,7 +119,7 @@ end
         b_undoc = Base.Docs.Binding(M_docs_sample, :undoc)
         # Dispatch on `Tuple{Int}` lands on the doc-less `undoc(::Int)` method;
         # the only stored key is `Tuple{String}` which doesn't intersect.
-        md = JETLS.narrow_doc_lookup(b_undoc, Tuple{Int})
+        md = JETLS.narrow_doc_lookup(b_undoc, Tuple{Int}, world)
         @test md === nothing
     end
 
@@ -128,7 +128,7 @@ end
         # Dispatch sig is `Tuple{AbstractVector}` (the doc-less method).
         # Stored key is `Tuple{Vector{T}} where T` — `<:` fails in the forward
         # direction, but intersection picks up `Vector{T}` as a useful proxy.
-        md = JETLS.narrow_doc_lookup(b_gen, Tuple{AbstractVector})
+        md = JETLS.narrow_doc_lookup(b_gen, Tuple{AbstractVector}, world)
         @test md isa Markdown.MD
         @test occursin("Doc for `gen(::Vector{T})`.", string(md))
     end
@@ -138,18 +138,18 @@ end
 
         # `filter(f, a::Array{T,N})`'s docstring is keyed on `Tuple{Any, Array{T,N}}`
         # in its docsystem-mangled union form. `Tuple{Any, Vector{Int}}` intersects.
-        md = JETLS.narrow_doc_lookup(b_filter, Tuple{Any, Vector{Int}})
+        md = JETLS.narrow_doc_lookup(b_filter, Tuple{Any, Vector{Int}}, world)
         @test md isa Markdown.MD
         @test occursin("filter(f, a)", string(md))
 
         # `Tuple{Any, AbstractArray}` doesn't `<:` the Array-keyed doc, but
         # intersection (= `Vector` etc.) still surfaces the generic doc.
-        md = JETLS.narrow_doc_lookup(b_filter, Tuple{Any, AbstractArray})
+        md = JETLS.narrow_doc_lookup(b_filter, Tuple{Any, AbstractArray}, world)
         @test md isa Markdown.MD
         @test occursin("filter(f, a)", string(md))
 
         # `Dict` intersects with `Tuple{Any, AbstractDict}` only.
-        md = JETLS.narrow_doc_lookup(b_filter, Tuple{Any, Dict{Int,String}})
+        md = JETLS.narrow_doc_lookup(b_filter, Tuple{Any, Dict{Int,String}}, world)
         @test md isa Markdown.MD
         s = string(md)
         @test occursin("filter(f, d::AbstractDict)", s)
@@ -164,7 +164,7 @@ end
         # keeps only the Base interface doc since EA's `Tuple{IntDisjointSet}`
         # key has empty intersection with `Tuple{Vector{Int}, Int}`.
         b_push = Base.Docs.Binding(Base, :push!)
-        md = JETLS.narrow_doc_lookup(b_push, Tuple{Vector{Int}, Int})
+        md = JETLS.narrow_doc_lookup(b_push, Tuple{Vector{Int}, Int}, world)
         @test md isa Markdown.MD
         s = string(md)
         @test occursin("push!(collection, items...)", s)  # Base interface doc kept
