@@ -99,6 +99,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Documenter admonitions (`!!! note`, `!!! tip`, `!!! warning`, `!!! danger`, `!!! info`, `!!! compat`) in docstrings now render as Markdown blockquotes with a category-emoji header (e.g. `> **💡 Tip**`) wherever JETLS surfaces docstrings (hover, completion documentation, signature help).
   Previously the `!!!` block leaked through verbatim, leaving the editor's Markdown view to render it in unintended ways.
 
+- Hover and method-signature completion documentation no longer surface Base's "No documentation found for ..." placeholder paragraph for bindings that exist but carry no docstring. The auto-generated method / type summary that follows the placeholder is still shown, so the hover stays informative without the placeholder noise.
+
 ### Fixed
 
 - Fixed spurious diagnostics like `` `{ }` outside of `where` is reserved for future use `` falsely appearing on Jupyter notebook (`.ipynb`) files in VS Code. (Fixed https://github.com/aviatesk/JETLS.jl/issues/703)

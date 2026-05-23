@@ -51,6 +51,8 @@ module M_docs_sample
     undoc(x::Int) = x  # no doc
     """Doc for `undoc(::String)`."""
     undoc(x::String) = x
+
+    nodoc(x) = x  # binding with no docstring on any method
 end
 
 # Captured after the fixture modules above are defined so `invoke_in_world`
@@ -190,6 +192,16 @@ end
     @testset "non-existent binding returns nothing" begin
         @test JETLS.lookup_doc_for_binding(M_docs_sample, :nonexistent, nothing, world) === nothing
         @test JETLS.lookup_doc_for_binding(M_docs_sample, :nonexistent, Tuple{Int}, world) === nothing
+    end
+
+    @testset "undocumented binding strips the 'No documentation found' placeholder" begin
+        md = JETLS.lookup_doc_for_binding(M_docs_sample, :nodoc, nothing, world)
+        @test md isa Markdown.MD
+        s = string(md)
+        @test !occursin("No documentation found", s)
+        # The auto-generated summary that follows the placeholder should
+        # survive so the hover surface still has something informative.
+        @test occursin("nodoc", s)
     end
 end
 

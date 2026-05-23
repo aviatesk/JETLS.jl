@@ -59,7 +59,7 @@ end
 # when `get_hover` returns nothing. Other hover scenarios are covered
 # locally via `hover_test` below, which skips the LSP roundtrip and the
 # workspace full-analysis.
-@testset "'Hover' request/response sanity" begin
+@testset HierarchicalTestSet "'Hover' request/response sanity" begin
     @testset "expression hover" begin
         single_hover_test("""
             \"\"\"Documented binding.\"\"\"
@@ -174,20 +174,20 @@ module M_undoc_abstract_dispatch
     gen(a::Vector{T}) where T = a
 end
 
-@testset "'hover' user-binding resolution" begin
+@testset HierarchicalTestSet "'hover' user-binding resolution" begin
     @testset "documented global binding" begin
         hover_test("documented_binding│", "Documented binding.";
             context_module = M_doc_binding)
     end
 
     @testset "undocumented global binding" begin
-        hover_test("undocumented_binding│", "No documentation found";
-            context_module = M_undoc_binding)
+        hover_test("undocumented_binding│", "undocumented_binding";
+            context_module = M_undoc_binding,
+            notpat = "No documentation found")
     end
 
     @testset "non-existent identifier" begin
-        hover_test("unexisting_binding│", r"\(global\) unexisting_binding";
-            notpat = "No documentation found")
+        hover_test("unexisting_binding│", r"\(global\) unexisting_binding")
     end
 
     @testset "global function with docstring" begin
@@ -324,7 +324,7 @@ end
     end
 end
 
-@testset "'hover' Core / Base / locally-bound resolution" begin
+@testset HierarchicalTestSet "'hover' Core / Base / locally-bound resolution" begin
     @testset "Core singleton (`nothing`) docstring" begin
         hover_test("nothing│", JETLS.lsrender(@doc nothing))
     end
@@ -350,7 +350,7 @@ end
     end
 end
 
-@testset "'hover' for local bindings inside a macrocall" begin
+@testset HierarchicalTestSet "'hover' for local bindings inside a macrocall" begin
     # Regression: argument binding `xxx` introduced under `@something` must
     # still resolve to the surrounding function's parameter rather than
     # whatever the macro's expansion happens to reference.
@@ -362,7 +362,7 @@ end
     """, "(argument) xxx")
 end
 
-@testset "'hover' shows inferred type for local bindings" begin
+@testset HierarchicalTestSet "'hover' shows inferred type for local bindings" begin
     @testset "type-annotated argument" begin
         hover_test("""
             function f(x::Int)
@@ -425,7 +425,7 @@ end
     end
 end
 
-@testset "'hover' on call-like surfaces" begin
+@testset HierarchicalTestSet "'hover' on call-like surfaces" begin
     # Selector regression: `[1, 2, 3]│` (cursor right after `]`) used to miss
     # because `K"vect"` wasn't in `select_enclosing_call`'s kind set.
     @testset "array literal" begin
