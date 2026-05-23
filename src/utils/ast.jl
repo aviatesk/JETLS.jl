@@ -146,7 +146,7 @@ end
 _is_empty_non_leaf(st0::SyntaxTreeC) = !JS.is_leaf(st0) && JS.numchildren(st0) == 0
 
 """
-Return a tree where `K"\$"` interpolation nodes are replaced by their content.
+Return a tree where `JS.K"\$"` interpolation nodes are replaced by their content.
 Unlike `without_kinds` which removes nodes entirely, this preserves the child
 so that parent nodes (e.g. dot expressions like `x.\$name`) remain well-formed.
 """
@@ -1038,7 +1038,7 @@ function find_nontrivia(prev_or_next::Bool, ps::JS.ParseStream, b::Integer; pass
 end
 
 function is_trivia(tc::TokenCursor, pass_newlines::Bool)
-    k = kind(tc)
+    k = JS.kind(tc)
     JS.is_whitespace(k) && (pass_newlines || k !== JS.K"NewlineWs")
 end
 
@@ -1070,7 +1070,7 @@ end
 # show signature help
 is_special_macrocall(st0::SyntaxTreeC) =
     JS.kind(st0) === JS.K"macrocall" && JS.numchildren(st0) >= 1 &&
-    let mname = kind(st0[1]) === JS.K"." && JS.numchildren(st0[1]) === 2 ? st0[1][2] : st0[1]
+    let mname = JS.kind(st0[1]) === JS.K"." && JS.numchildren(st0[1]) === 2 ? st0[1][2] : st0[1]
         mname_s = hasproperty(mname, :name_val) ? mname.name_val : ""
         endswith(mname_s, "_str") || endswith(mname_s, "_cmd")
     end

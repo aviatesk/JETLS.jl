@@ -1,6 +1,3 @@
-using .JS
-using .JL
-
 # initialization
 # ==============
 
@@ -41,18 +38,18 @@ Ignore function name and `K"error"` (e.g. missing closing paren).
 `has_semicolon` is true if the call contains a `K"parameters"` node (explicit semicolon).
 """
 function flatten_args(call::SyntaxTreeC)
-    while kind(call) === K"where"
+    while JS.kind(call) === JS.K"where"
         call = call[1]
     end
-    if !(kind(call) in CALL_KINDS)
+    if !(JS.kind(call) in CALL_KINDS)
         # Operator-like methods (e.g. `<:`, `>:`) parse as their own kind rather
         # than `K"call"`, skip them for now
         return nothing
     end
-    usable = (arg::SyntaxTreeC) -> kind(arg) ∉ JS.KSet"error Value"
+    usable = (arg::SyntaxTreeC) -> JS.kind(arg) ∉ JS.KSet"error Value"
     # In new EST, dotcall `f.(args)` is represented as `K"."` with children
     # `[func, tuple(args...)]`, so we unwrap the tuple to get the actual args.
-    if kind(call) === K"." && JS.numchildren(call) ≥ 2 && kind(call[2]) === K"tuple"
+    if JS.kind(call) === JS.K"." && JS.numchildren(call) ≥ 2 && JS.kind(call[2]) === JS.K"tuple"
         orig = filter(usable, JS.children(call[2]))
     else
         orig = filter(usable, JS.children(call)[2:end])
@@ -62,7 +59,7 @@ function flatten_args(call::SyntaxTreeC)
     kw_children = JS.SyntaxList(orig.graph)
     has_semicolon = false
     for i in eachindex(orig)
-        if kind(orig[i]) === K"parameters"
+        if JS.kind(orig[i]) === JS.K"parameters"
             has_semicolon = true
             for p in filter(usable, JS.children(orig[i]))
                 push!(kw_children, p)
@@ -79,38 +76,40 @@ function flatten_args(call::SyntaxTreeC)
 end
 
 """
-Get K"Identifier" tree from a kwarg tree (child of K"call" or K"parameters").
+Get `K"Identifier"` tree from a kwarg tree (child of `K"call"` or `K"parameters"`).
 `sig`: treat this as a signature rather than a call
+```
                a => a
          (= a 1) => a
         (kw a 1) => a
   (= (:: a T) 1) => a  # only when sig=true
  (kw (:: a T) 1) => a  # only when sig=true
+```
 """
-function extract_kwarg_name(a::SyntaxTreeC; sig::Bool=false)
-    ret = identitifier_like(a)
+function extract_kwarg_name(arg::SyntaxTreeC; sig::Bool=false)
+    ret = identifier_like(arg)
     isnothing(ret) || return ret
-    if kind(a) === K"=" || kind(a) === K"kw"
-        a1 = a[1]
-        ret = identitifier_like(a1)
+    if JS.kind(arg) === JS.K"=" || JS.kind(arg) === JS.K"kw"
+        arg1 = arg[1]
+        ret = identifier_like(arg1)
         isnothing(ret) || return ret
-        if sig && kind(a1) === K"::"
-            ret = identitifier_like(a1[1])
+        if sig && JS.kind(arg1) === JS.K"::"
+            ret = identifier_like(arg1[1])
             isnothing(ret) || return ret
         end
-    elseif kind(a) === K"..."
+    elseif JS.kind(arg) === JS.K"..."
         return nothing
     end
-    JETLS_DEBUG_LOWERING && @info "Unknown kwarg form" a
+    JETLS_DEBUG_LOWERING && @info "Unknown kwarg form" arg
     return nothing
 end
 
-function identitifier_like(st::SyntaxTreeC)
-    if kind(st) === K"Identifier"
+function identifier_like(st::SyntaxTreeC)
+    if JS.kind(st) === JS.K"Identifier"
         return st
-    elseif kind(st) === K"var"
+    elseif JS.kind(st) === JS.K"var"
         inner = st[1]
-        if kind(inner) === K"Identifier"
+        if JS.kind(inner) === JS.K"Identifier"
             return inner
         end
     end
@@ -133,7 +132,7 @@ expansion, but signature help is only used on unexpanded code.
 function find_kws(args::SyntaxListC, kw_i::Int; sig=false, cursor::Int=-1)
     out = Dict{String, Int}()
     for i in (sig ? (kw_i:lastindex(args)) : eachindex(args))
-        kind(args[i]) ∉ JS.KSet"= kw" && i < kw_i && continue
+        JS.kind(args[i]) ∉ JS.KSet"= kw" && i < kw_i && continue
         n = extract_kwarg_name(args[i]; sig)
         if !isnothing(n) && !(JS.first_byte(n) <= cursor <= JS.last_byte(n) + 1)
             out[n.name_val] = i
@@ -175,17 +174,17 @@ struct CallArgs
         pos_map = Dict{Int, Tuple{Int, Union{Int, Nothing}}}()
         lb = 0; ub = 0
         for i in eachindex(args[1:kw_i-1])
-            if kind(args[i]) === K"..."
+            if JS.kind(args[i]) === JS.K"..."
                 ub = nothing
                 pos_map[i] = (lb + 1, ub)
-            elseif kind(args[i]) ∉ JS.KSet"= kw"
+            elseif JS.kind(args[i]) ∉ JS.KSet"= kw"
                 lb += 1
                 !isnothing(ub) && (ub += 1)
                 pos_map[i] = (lb, ub)
             end
         end
         kw_map = find_kws(args, kw_i; sig=false, cursor)
-        new(args, kw_i, pos_map, lb, ub, kw_map, has_semicolon, kind(st0))
+        new(args, kw_i, pos_map, lb, ub, kw_map, has_semicolon, JS.kind(st0))
     end
 end
 
@@ -206,8 +205,8 @@ function compatible_method(m::Method, ca::CallArgs, world::UInt)
     mnode = JS.parsestmt(JS.SyntaxTree, msig; ignore_errors=true)
 
     params, kwp_i, _ = @something flatten_args(mnode) return false
-    has_var_params = kwp_i > 1 && kind(params[kwp_i - 1]) === K"..."
-    has_var_kwp = kwp_i <= length(params) && kind(params[end]) === K"..."
+    has_var_params = kwp_i > 1 && JS.kind(params[kwp_i - 1]) === JS.K"..."
+    has_var_kwp = kwp_i <= length(params) && JS.kind(params[end]) === JS.K"..."
 
     kwp_map = find_kws(params, kwp_i; sig=true)
 
@@ -217,7 +216,7 @@ function compatible_method(m::Method, ca::CallArgs, world::UInt)
         # Filter out methods where user hasn't provided enough positional args
         # e.g., g(42;│) should not match g(x, y) which requires 2 positional args
         if !has_var_params
-            required_pos_args = count(i::Int->kind(params[i]) ∉ JS.KSet"= kw ...", 1:kwp_i-1)
+            required_pos_args = count(i::Int->JS.kind(params[i]) ∉ JS.KSet"= kw ...", 1:kwp_i-1)
             !isnothing(ca.pos_args_ub) && ca.pos_args_ub < required_pos_args && return false
         end
     end
@@ -256,7 +255,7 @@ function get_sig_str(m::Method, ca::CallArgs, world::UInt)
             msig = replace(msig, rep)
         end
     end
-    if ca.kind === K"macrocall" # hack. TODO delete
+    if ca.kind === JS.K"macrocall" # hack. TODO delete
         msig = replace(msig, "__source__::LineNumberNode, __module__::Module, "=>"",
                        "__source__::LineNumberNode, __module__::Module"=>""; count=1)
     end
@@ -321,9 +320,9 @@ function make_siginfo(
         println(stderr, JS.sourcetext(mnode))
         error("make_siginfo: Expected mnode that can be flattened")
     end
-    maybe_var_params = kwp_i > 1 && kind(params[kwp_i - 1]) === K"..." ?
+    maybe_var_params = kwp_i > 1 && JS.kind(params[kwp_i - 1]) === JS.K"..." ?
         kwp_i - 1 : nothing
-    maybe_var_kwp = kwp_i <= length(params) && kind(params[end]) === K"..." ?
+    maybe_var_kwp = kwp_i <= length(params) && JS.kind(params[end]) === JS.K"..." ?
         lastindex(params) : nothing
     kwp_map = find_kws(params, kwp_i; sig=true)
 
@@ -361,10 +360,10 @@ function make_siginfo(
             else
                 lb == ub ? lb : nothing
             end
-        elseif kind(ca.args[active_arg]) === K"..."
+        elseif JS.kind(ca.args[active_arg]) === JS.K"..."
             # splat after semicolon
             maybe_var_kwp
-        elseif kind(ca.args[active_arg]) in JS.KSet"= kw" || active_arg >= ca.kw_i
+        elseif JS.kind(ca.args[active_arg]) in JS.KSet"= kw" || active_arg >= ca.kw_i
             kwname = extract_kwarg_name(ca.args[active_arg])
             # `extract_kwarg_name` returns `nothing` for unrecognized forms like `a.b=`
             if isnothing(kwname)
@@ -393,25 +392,25 @@ end
 const empty_siginfos = SignatureInformation[]
 
 function is_relevant_call(call::SyntaxTreeC)
-    kind(call) in CALL_KINDS &&
+    JS.kind(call) in CALL_KINDS &&
         # don't show help for a+b, M', etc., where call[1] isn't the function
         !(JS.is_infix_op_call(call) || JS.is_postfix_op_call(call)) &&
         # K"." is also used for member access (Base.sin) — only treat it as a
         # call when the second child is K"tuple" (i.e. broadcasting f.(args))
-        !(kind(call) === K"." && (JS.numchildren(call) < 2 || kind(call[2]) !== K"tuple"))
+        !(JS.kind(call) === JS.K"." && (JS.numchildren(call) < 2 || JS.kind(call[2]) !== JS.K"tuple"))
 end
 
 # If parents of our call are like (macro/function (where (where... (call |) ...))),
 # we're actually in a declaration, and shouldn't show signature help.
 function call_is_decl(_bas::SyntaxListC, i::Int, _basᵢ::SyntaxTreeC = _bas[i])
-    kind(_basᵢ) != JS.K"call" && return false
+    JS.kind(_basᵢ) != JS.K"call" && return false
     j = i + 1
-    while j <= lastindex(_bas) && kind(_bas[j]) === JS.K"where"
+    while j <= lastindex(_bas) && JS.kind(_bas[j]) === JS.K"where"
         j += 1
     end
     return j <= lastindex(_bas) &&
         # `=` covers short-form function definitions like `f(x) = 1`
-        kind(_bas[j]) in JS.KSet"macro function =" &&
+        JS.kind(_bas[j]) in JS.KSet"macro function =" &&
         _bas[j-1]._id == _bas[j][1]._id
 end
 
@@ -436,7 +435,7 @@ cursor would be descendents of it.
 function cursor_call(ps::JS.ParseStream, st0::SyntaxTreeC, b::Int)
     # disable signature help if invoked within comment scope
     tc = token_before_offset(ps, b)
-    if !isnothing(tc) && JS.kind(tc) === K"Comment"
+    if !isnothing(tc) && JS.kind(tc) === JS.K"Comment"
         return nothing
     end
 
@@ -569,7 +568,7 @@ function cursor_siginfos(
     call = cursor_call(fi.parsed_stream, st0, b)
     isnothing(call) && return empty_siginfos
     after_semicolon = let
-        params_i = findfirst(st::SyntaxTreeC -> kind(st) === K"parameters", JS.children(call))
+        params_i = findfirst(st::SyntaxTreeC -> JS.kind(st) === JS.K"parameters", JS.children(call))
         !isnothing(params_i) && b > JS.first_byte(call[params_i])
     end
 
