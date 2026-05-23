@@ -58,6 +58,30 @@ function DocsBinding(parentmod::Module, identifier::Symbol, world::UInt)
 end
 
 """
+    lookup_doc_stripped(object, world::UInt) -> Markdown.MD
+
+`Base.Docs.doc(object)` with the leading "No documentation found for ..."
+placeholder paragraph stripped, so hover/completion surfaces don't show that
+noise text for undocumented bindings while still keeping the auto-generated
+method/type summary that follows it.
+"""
+function lookup_doc_stripped(@nospecialize(object), world::UInt)
+    md = Base.invoke_in_world(world, Base.Docs.doc, object)::Markdown.MD
+    # Tied to Base's exact placeholder phrasing (`Base.Docs.summarize` /
+    # `bindingsummary`) — if upstream ever changes that wording, this filter
+    # silently stops working.
+    filtered = filter(md.content) do @nospecialize(m)
+        m isa Markdown.Paragraph || return true
+        content = m.content
+        (content isa Vector{Any} && !isempty(content)) || return true
+        content1 = content[1]
+        content1 isa String || return true
+        return !startswith(content1, "No documentation found for")
+    end
+    return Markdown.MD(filtered, md.meta)
+end
+
+"""
     narrow_doc_lookup(binding::Base.Docs.Binding, sig) -> Markdown.MD | Nothing
 
 Narrowed sig-aware variant of `Base.Docs.doc(binding, sig)`.
@@ -117,10 +141,12 @@ end
 
 Look up the docstring for `parentmod.name`, narrowed by `sig` when provided
 (via [`narrow_doc_lookup`](@ref); no narrowing when `sig === nothing`).
-Returns `nothing` on lookup failure rather than the "No documentation found"
-placeholder `Markdown.MD` that `Base.Docs.doc` would otherwise return — that
-placeholder is preserved by direct call sites that explicitly want the
-user-visible "No documentation found" message.
+Returns `nothing` when the binding is undefined or when lookup throws.
+
+When the binding exists but has no docstring, [`lookup_doc_stripped`](@ref) strips
+the "No documentation found for ..." placeholder paragraph so the
+auto-generated method/type summary still surfaces without the placeholder
+noise.
 """
 function lookup_doc_for_binding(
         parentmod::Module, name::Symbol, @nospecialize(sig), world::UInt
@@ -131,9 +157,9 @@ function lookup_doc_for_binding(
     end
     try
         if sig === nothing
-            return Base.invoke_in_world(world, Base.Docs.doc, binding)::Markdown.MD
+            return lookup_doc_stripped(binding, world)
         end
-        return Base.invoke_in_world(world, narrow_doc_lookup, binding, sig)
+        return Base.invoke_in_world(world, narrow_doc_lookup, binding, sig)::Union{Nothing,Markdown.MD}
     catch
         return nothing
     end
@@ -148,22 +174,24 @@ end
 
 Look up sig-narrowed docs for a `Function` / `Module` / `Type` value `v`,
 resolving its canonical `Base.Docs.Binding` via `aliasof` so cross-module
-`using`-aliases land on the actual owner's `MultiDoc`. Returns the full
-`Base.Docs.doc` result when `sig === nothing` (no narrowing requested).
+`using`-aliases land on the actual owner's `MultiDoc`. When `sig === nothing`,
+returns the [`lookup_doc_stripped`](@ref) result as a fallback.
 
-Restricting to `Function`/`Module`/`Type` keeps literals, struct instances,
-`nothing` / `missing` etc. from surfacing the "No documentation found"
-placeholder that `Base.Docs.doc` produces for arbitrary values.
+The `Function`/`Module`/`Type` restriction skips lookup entirely for
+literals, struct instances, `nothing` / `missing` etc. — values whose
+`Base.Docs.doc` output is *only* the placeholder with no useful summary
+to keep. For documentable values that nonetheless carry no docstring,
+[`lookup_doc_stripped`](@ref) handles the placeholder removal.
 """
 function lookup_doc_for_value(@nospecialize(v), @nospecialize(sig), world::UInt)
     v isa Function || v isa Module || v isa Type || return nothing
     try
         if sig === nothing
-            return Base.invoke_in_world(world, Base.Docs.doc, v)::Markdown.MD
+            return lookup_doc_stripped(v, world)
         end
         binding = Base.invoke_in_world(world, Base.Docs.aliasof, v, typeof(v))
         binding isa Base.Docs.Binding || return nothing
-        return Base.invoke_in_world(world, narrow_doc_lookup, binding, sig)
+        return Base.invoke_in_world(world, narrow_doc_lookup, binding, sig)::Union{Nothing,Markdown.MD}
     catch
         return nothing
     end
