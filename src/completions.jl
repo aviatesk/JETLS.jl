@@ -928,7 +928,7 @@ function resolve_property_completion_item(
     supports_labelDetails = supports_completion_item_resolve(state, "labelDetails")
     supports_detail = supports_completion_item_resolve(state, "detail")
     supports_documentation = supports_completion_item_resolve(state, "documentation")
-    (supports_labelDetails || supports_detail || supports_documentation) || return item
+    supports_labelDetails || supports_detail || supports_documentation || return item
 
     (; prefixtyp, world, postprocessor) = completion_resolver_info
 
