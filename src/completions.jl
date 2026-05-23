@@ -881,30 +881,55 @@ end
 const builtin_functions = Core.Builtin[getglobal(Core, n) for n in names(Core) if getglobal(Core, n) isa Core.Builtin]
 const builtin_types = Type[getglobal(Core, n) for n in names(Core) if getglobal(Core, n) isa Type]
 
+# Spec quirks around lazy-resolvable properties (see aviatesk/JETLS.jl#711):
+# - 3.16.0+ with `resolveSupport.properties` declared: the list is exhaustive —
+#   any property not in it cannot be resolved lazily (the resolved value is
+#   silently dropped or even mis-rendered).
+# - Pre-3.16.0 (no `resolveSupport`): only `documentation` and `detail` are
+#   lazy-resolvable. We honor this for backward compatibility.
+function supports_completion_item_resolve(state::ServerState, property::AbstractString)
+    if getobjpath(state, :init_params, :clientInfo, :name) ∈ ("Zed", "Zed Dev")
+        # Special case: Zed under-declares `resolveSupport` but actually applies lazy
+        # updates for every non-`label` field, so opt it into the full set unconditionally.
+        return true
+    end
+    properties = getcapability(state, :textDocument, :completion, :completionItem,
+        :resolveSupport, :properties)
+    if properties !== nothing
+        return property in properties
+    end
+    return property in ("documentation", "detail")
+end
+
 function resolve_completion_item(state::ServerState, item::CompletionItem)
     completion_resolver_info = @something load(state.completion_resolver_info) return item
     data = item.data
     if (data isa GlobalCompletionData &&
         completion_resolver_info isa GlobalCompletionResolverInfo &&
         data.resolver_id == completion_resolver_info.id)
-        return resolve_global_completion_item(item, data, completion_resolver_info)
+        return resolve_global_completion_item(state, item, data, completion_resolver_info)
     elseif (data isa MethodSignatureCompletionData &&
             completion_resolver_info isa MethodSignatureCompletionResolverInfo &&
             data.resolver_id == completion_resolver_info.id)
-        return resolve_method_signature_completion_item(item, data, completion_resolver_info)
+        return resolve_method_signature_completion_item(state, item, data, completion_resolver_info)
     elseif (data isa PropertyCompletionData &&
             completion_resolver_info isa PropertyCompletionResolverInfo &&
             data.resolver_id == completion_resolver_info.id)
-        return resolve_property_completion_item(item, data, completion_resolver_info)
+        return resolve_property_completion_item(state, item, data, completion_resolver_info)
     else
         return item
     end
 end
 
 function resolve_property_completion_item(
-        item::CompletionItem, data::PropertyCompletionData,
+        state::ServerState, item::CompletionItem, data::PropertyCompletionData,
         completion_resolver_info::PropertyCompletionResolverInfo,
     )
+    supports_labelDetails = supports_completion_item_resolve(state, "labelDetails")
+    supports_detail = supports_completion_item_resolve(state, "detail")
+    supports_documentation = supports_completion_item_resolve(state, "documentation")
+    (supports_labelDetails || supports_detail || supports_documentation) || return item
+
     (; prefixtyp, world, postprocessor) = completion_resolver_info
 
     # `Union` (tmerge) the per-component `getproperty(::T, Core.Const(name))` result, so a
@@ -915,27 +940,35 @@ function resolve_property_completion_item(
         gp_rt = @something abstract_call_const(getproperty, Any[comp, name], world) continue
         rawtyp = CC.tmerge(rawtyp, gp_rt)
     end
-
     typstr = truncate_typstr(
         postprocessor(sprint(show, rawtyp; context = :compact => true)),
         #=maxdepth=#3, #=maxwidth=#20)
     detail = " ::" * typstr
-    labelDetails = CompletionItemLabelDetails(; detail, description = "property")
     full_typstr = postprocessor(string(rawtyp))
     value = """
     ```julia
     $(data.prefix).$(data.label) :: $(full_typstr)
     ```
     """
-    documentation = MarkupContent(; kind = MarkupKind.Markdown, value)
 
+    labelDetails = supports_labelDetails ?
+        CompletionItemLabelDetails(; detail, description = "property") : item.labelDetails
+    detail = supports_detail ? detail : item.detail
+    documentation = supports_documentation ?
+        MarkupContent(; kind = MarkupKind.Markdown, value) : item.documentation
     return CompletionItem(item; labelDetails, detail, documentation)
 end
 
 function resolve_global_completion_item(
-        item::CompletionItem, data::GlobalCompletionData,
+        state::ServerState, item::CompletionItem, data::GlobalCompletionData,
         completion_resolver_info::GlobalCompletionResolverInfo
     )
+    supports_labelDetails = supports_completion_item_resolve(state, "labelDetails")
+    supports_kind = supports_completion_item_resolve(state, "kind")
+    supports_detail = supports_completion_item_resolve(state, "detail")
+    supports_documentation = supports_completion_item_resolve(state, "documentation")
+    supports_labelDetails || supports_kind || supports_detail || supports_documentation || return item
+
     (; context_module, world, postprocessor) = completion_resolver_info
     name = Symbol(data.name)
     docs = postprocessor(Base.invoke_in_world(world,
@@ -975,20 +1008,27 @@ function resolve_global_completion_item(
             end
         end
     end
-    if !isnothing(detail)
+
+    if !isnothing(detail) && supports_labelDetails
         labelDetails = CompletionItemLabelDetails(; description = "global " * detail)
     end
-    return CompletionItem(item;
-        labelDetails, kind, detail,
-        documentation = MarkupContent(;
-            kind = MarkupKind.Markdown,
-            value = docs))
+    supports_kind || (kind = item.kind)
+    supports_detail || (detail = item.detail)
+    documentation = supports_documentation ?
+        MarkupContent(; kind = MarkupKind.Markdown, value = docs) : item.documentation
+
+    return CompletionItem(item; labelDetails, kind, detail, documentation)
 end
 
 function resolve_method_signature_completion_item(
-        item::CompletionItem, data::MethodSignatureCompletionData,
+        state::ServerState, item::CompletionItem, data::MethodSignatureCompletionData,
         completion_resolver_info::MethodSignatureCompletionResolverInfo
     )
+    supports_labelDetails = supports_completion_item_resolve(state, "labelDetails")
+    supports_detail = supports_completion_item_resolve(state, "detail")
+    supports_documentation = supports_completion_item_resolve(state, "documentation")
+    supports_labelDetails || supports_detail || supports_documentation || return item
+
     (; world, matches, postprocessor) = completion_resolver_info
     1 ≤ data.match_idx ≤ length(matches) || return item # just to make sure
     match = matches[data.match_idx]
@@ -1009,11 +1049,14 @@ function resolve_method_signature_completion_item(
     ```
     ---
     """ * docstr
-    documentation = MarkupContent(; kind = MarkupKind.Markdown, value)
-    return CompletionItem(item;
-        labelDetails = CompletionItemLabelDetails(; detail, description = "method"),
-        detail,
-        documentation)
+
+    labelDetails = supports_labelDetails ?
+        CompletionItemLabelDetails(; detail, description = "method") : item.labelDetails
+    detail = supports_detail ? detail : item.detail
+    documentation = supports_documentation ?
+        MarkupContent(; kind = MarkupKind.Markdown, value) : item.documentation
+
+    return CompletionItem(item; labelDetails, detail, documentation)
 end
 
 # request handler
