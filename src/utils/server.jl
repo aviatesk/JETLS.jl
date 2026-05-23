@@ -150,8 +150,8 @@ getcapability(state, :general, :positionEncodings)
 """
 getcapability(server::Server, paths::Symbol...) = getcapability(server.state, paths...)
 function getcapability(state::ServerState, paths::Symbol...)
-    return isdefined(state, :init_params) &&
-        getobjpath(state.init_params.capabilities, paths...)
+    isdefined(state, :init_params) || return nothing
+    return getobjpath(state.init_params.capabilities, paths...)
 end
 
 """

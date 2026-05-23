@@ -119,6 +119,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Identifiers inside `@show`, `@debug`, `@info`, `@warn`, `@error`, and `@logmsg` calls — including kwarg values (e.g. `flag` in `@info "msg" extra=flag`) and splatted operands (e.g. `kws` in `@info "msg" kws...`) — are now picked up by scope resolution, so undef-var diagnostics and find-references work for them. Previously the identifiers in these macros were silently ignored. For the logging macros, duplicate kwarg names also surface as `lowering/macro-expansion-error` anchored at the call site.
 
+- Fixed completion items to honor the client's `completionItem.resolveSupport.properties` capability. Previously, properties such as `kind` and `labelDetails` were updated during `completionItem/resolve` regardless of whether the client advertised lazy support for them, which caused visible glitches in some clients (e.g. flickering completion lists in [cmp-nvim-lsp](https://github.com/hrsh7th/cmp-nvim-lsp)). (Closed https://github.com/aviatesk/JETLS.jl/issues/711)
+
 ## 2026-05-08
 
 - Commit: [`72cc49c`](https://github.com/aviatesk/JETLS.jl/commit/72cc49c)

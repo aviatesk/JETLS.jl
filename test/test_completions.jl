@@ -362,7 +362,13 @@ function with_completion_items(
     state.init_params = InitializeParams(;
         processId = getpid(),
         rootUri = nothing,
-        capabilities = ClientCapabilities())
+        capabilities = ClientCapabilities(;
+            textDocument = TextDocumentClientCapabilities(;
+                completion = CompletionClientCapabilities(;
+                    completionItem = (;
+                        resolveSupport = (;
+                            properties = ["documentation", "detail", "kind", "labelDetails"])
+                    )))))
     fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
     JETLS.store!(state.file_cache) do cache
         Base.PersistentDict(cache, uri => fi), nothing
