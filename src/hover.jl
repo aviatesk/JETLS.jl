@@ -237,24 +237,37 @@ function call_doc_sig(ctx::InferredTreeContext, st0_top::SyntaxTreeC, node::Synt
 end
 
 # Resolve `node` to a `(parentmod, identifier)` pair and look up its binding-
-# based docstring. Returns `nothing` if the node isn't a plain identifier or a
-# dot expression whose left-hand side resolves to a `Module` value.
+# based docstring. For a dot expression whose left-hand side is a `Module`
+# value, looks up the RHS as a member of that module. For a dot expression
+# whose left-hand side is an instance, looks up the per-field docstring on
+# the LHS's inferred type via [`lookup_field_doc`](@ref).
 function lookup_doc_for_identifier(
         node::SyntaxTreeC, context_module::Module, ctx::Union{Nothing,InferredTreeContext},
         @nospecialize(sig), world::UInt
     )
-    parentmod = context_module
-    identifier_node = node
     if JS.kind(node) === JS.K"." && JS.numchildren(node) ≥ 2
-        parentmod = @something resolve_dot_prefix_module(node[1], parentmod, ctx, world) return nothing
+        prefix_node = node[1]
         identifier_node = node[2]
         # EST wraps the RHS of dot expressions in `K"inert"`
         if JS.kind(identifier_node) === JS.K"inert" && JS.numchildren(identifier_node) ≥ 1
             identifier_node = identifier_node[1]
         end
+        JS.is_identifier(identifier_node) || return nothing
+        field = Symbol(identifier_node.name_val)::Symbol
+        mod = resolve_dot_prefix_module(prefix_node, context_module, ctx, world)
+        if mod !== nothing
+            return lookup_doc_for_binding(mod, field, sig, world)
+        end
+        # Instance field access: surface the per-field doc attached to the
+        # LHS's inferred type, mirroring `REPL.fielddoc` but without REPL's
+        # `T has fields …` fallback.
+        ctx === nothing && return nothing
+        prefix_typ = get_type_for_range(ctx, JS.byte_range(prefix_node))
+        prefix_typ === nothing && return nothing
+        return lookup_field_doc(prefix_typ, field, world)
     end
-    JS.is_identifier(identifier_node) || return nothing
-    return lookup_doc_for_binding(parentmod, Symbol(identifier_node.name_val)::Symbol, sig, world)
+    JS.is_identifier(node) || return nothing
+    return lookup_doc_for_binding(context_module, Symbol(node.name_val)::Symbol, sig, world)
 end
 
 # Resolve a dot expression's left-hand side to a `Module` value. Tries a direct

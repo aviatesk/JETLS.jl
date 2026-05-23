@@ -205,19 +205,25 @@ result (`func(args)│`), or indexing position (`xs[i]│`), and the type
 is queried at the cursor's byte range so flow-sensitive narrowing is
 reflected.
 
-Documentation is gathered both from the binding's own docstring and
-from the docstring of whatever value the expression resolves to via
-type inference (so e.g. hovering on `some.value` can surface `sin`'s
-docstring when the field resolves to `sin`).
-When the cursor is on the callee identifier (e.g. `sin│(rand(Int))`,
-`Base.Math.sin│(x)`), the header is promoted to the full call
-expression (`sin(rand(Int)) :: Float64`) and the docstring is narrowed
-to the dispatched method's doc when dispatch resolves to a single
-method (`sin(::Real)`).
-When the cursor sits past a call-like surface's closing punctuation
-(`f(args)│`, `xs[i]│`, `[a, b]│`, …), only the `expr :: T` header is
-shown without any docstring body.
-Non-call cursors (`f│`) still show every overload's doc.
+Documentation displayed alongside the header depends on the cursor
+position:
+
+- Default: the binding's own docstring is shown together with the
+  docstring of whatever value the expression resolves to via type
+  inference (so e.g. hovering on `some.value` surfaces `sin`'s
+  docstring when the field resolves to `sin`).
+- Dot expressions whose left-hand side is a struct instance (`x.y│`)
+  surface the per-field docstring attached to `y` in its struct
+  definition when the field is documented.
+- Callee identifiers in a call (`sin│(rand(Int))`,
+  `Base.Math.sin│(x)`) promote the header to the full call expression
+  (`sin(rand(Int)) :: Float64`) and narrow the docstring to the
+  dispatched method (`sin(::Real)`) when dispatch resolves to a single
+  method.
+- Cursors past a call-like surface's closing punctuation (`f(args)│`,
+  `xs[i]│`, `[a, b]│`, …) show only the `expr :: T` header without
+  any docstring body.
+- Non-call cursors (`f│`) still show every overload's doc.
 
 The type header is rendered as `expr :: T`, with a few specialized
 shapes:
@@ -292,6 +298,21 @@ shapes:
         <div class="display-dark-only">
 ```
 ![Hover on a closure](assets/features/hover-closure-dark.png)
+```@raw html
+        </div>
+      </td>
+    </tr>
+    <tr>
+      <td>Field access</td>
+      <td>
+        <div class="display-light-only">
+```
+![Hover on a struct field access](assets/features/hover-field.png)
+```@raw html
+        </div>
+        <div class="display-dark-only">
+```
+![Hover on a struct field access](assets/features/hover-field-dark.png)
 ```@raw html
         </div>
       </td>
@@ -553,6 +574,8 @@ Candidate names are derived from the dot prefix's inferred type via
 custom `propertynames` overload are both handled uniformly.
 The inferred type of each property (`x.field :: T`) is resolved lazily,
 only when the client requests details for a focused item.
+The resolved documentation panel additionally includes the per-field docstring
+attached to that field in its struct definition when one is present.
 
 For union-typed prefixes (`x::Union{Foo, Bar}`), the offered names are the union
 of each component's properties, and the resolved type detail merges each

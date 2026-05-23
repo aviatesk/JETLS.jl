@@ -173,6 +173,16 @@ module M_undoc_abstract_dispatch
     """Doc for `gen(::Vector{T})`."""
     gen(a::Vector{T}) where T = a
 end
+module M_field_hover
+    """Documented field-level struct."""
+    struct DocStruct
+        """The x field — an integer."""
+        x::Int
+        """The y field — a string."""
+        y::String
+        z::Float64  # no field doc
+    end
+end
 
 @testset HierarchicalTestSet "'hover' user-binding resolution" begin
     @testset "documented global binding" begin
@@ -321,6 +331,27 @@ end
         """, "arr[1] :: $Int";
             context_module = M_operator_dispatch,
             notpat = "Method-specific doc")
+    end
+
+    @testset "instance field access surfaces field-level doc" begin
+        @testset "documented field on `s.x│`" begin
+            hover_test("""
+                let s = DocStruct(1, "a", 0.0)
+                    s.x│
+                end
+            """, "The x field";
+                context_module = M_field_hover)
+        end
+
+        @testset "undocumented field on `s.z│` shows no doc body" begin
+            hover_test("""
+                let s = DocStruct(1, "a", 0.0)
+                    s.z│
+                end
+            """, "s.z :: Float64";
+                context_module = M_field_hover,
+                notpat = "The x field")
+        end
     end
 end
 
