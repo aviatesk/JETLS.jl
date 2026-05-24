@@ -21,7 +21,7 @@ function with_find_type_definition(tester, text::AbstractString; kwargs...)
     cnt = 0
     for (i, pos) in enumerate(positions)
         ret = JETLS.find_type_definition(server, furi, fi, pos)
-        if ret === nothing || isempty(ret[1])
+        if ret === nothing
             cnt += tester(i, null, furi)
         else
             cnt += tester(i, ret[1], furi)
