@@ -63,7 +63,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   <img width="1333" height="571" alt="type definition demo" src="https://github.com/user-attachments/assets/b469f0d7-73ba-47aa-86e5-7861535459fd" />
 
 - Added property completion (`x.│` / `x.partial│`). Typing `.` after a typed expression now offers the properties that `propertynames(::T)` reports for the dot prefix's inferred type — both plain struct fields and types with a custom `propertynames` overload are handled uniformly.
-  Each candidate's inferred property type (`x.field :: T`) is resolved lazily, only when the client requests details for a focused item.
+  Each candidate's inferred property type (`x.field :: T`) is resolved lazily, only when the client requests details for a focused item. The resolved documentation also includes the per-field docstring attached to that field in its struct definition, when present.
   For union-typed prefixes the offered names are the union of each component's `propertynames`, so the common `Union{T, Nothing}` pattern still surfaces `T`'s properties even though `propertynames(::Nothing) == ()`; type details merge each component's per-property type at resolve time.
 
   https://github.com/user-attachments/assets/3f2887b4-4c1c-41f9-b091-4eea2b6128bc
@@ -74,7 +74,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Any identifier, dot expression, call result, or indexing position can be queried — `func(x) :: Int`, `s[2] :: Float64`, `Base.Pair :: typeof(Pair)`, etc. — and the type is queried at the cursor's byte range so flow-sensitive type narrowing is reflected.
   Binding hovers additionally carry a kind tag — `(argument)`, `(local)`, `(static parameter)`, or `(global)` — before the name, making the binding's role in scope visible.
   Closures display as function-arrow signatures like `(x::Int, y::Int) -> Int`, with argument names recovered from the body when available.
-  Documentation is gathered both from the binding's own docstring and from the docstring of whatever value the expression resolves to via type inference. So e.g. given `sv = Some(sin)`, hovering on `sv.value` shows `sin`'s docstring even though `sin` doesn't appear at the cursor.
+  Documentation is gathered both from the binding's own docstring and from the docstring of whatever value the expression resolves to via type inference. So e.g. given `sv = Some(sin)`, hovering on `sv.value` shows `sin`'s docstring even though `sin` doesn't appear at the cursor. For dot expressions whose LHS is a struct instance (`x.y│`), the per-field docstring attached to `y` in its struct definition is also surfaced when present.
   When the cursor is on the callee identifier (e.g. `sin│(rand(Int))`, `Base.Math.sin│(x)`), the header is promoted to the full call expression (`sin(rand(Int)) :: Float64`) and the docstring is narrowed to the dispatched method's doc when dispatch resolves to a single method (`sin(::Real)`). When the cursor sits past a call-like surface's closing punctuation (`f(args)│`, `xs[i]│`, `[a, b]│`, …), only the `expr :: T` header is shown without any docstring body. Non-call cursors (`f│`) still show every overload's doc.
   (https://github.com/aviatesk/JETLS.jl/pull/687)
 

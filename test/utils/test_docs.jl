@@ -55,6 +55,22 @@ module M_docs_sample
     nodoc(x) = x  # binding with no docstring on any method
 end
 
+module M_field_doc_sample
+    """Documented struct with per-field docstrings."""
+    struct DocStruct
+        """The x field — an integer."""
+        x::Int
+        """The y field — a string."""
+        y::String
+        z::Float64  # no field doc
+    end
+
+    struct NoFieldDocs
+        a::Int
+        b::String
+    end
+end
+
 # Captured after the fixture modules above are defined so `invoke_in_world`
 # calls in `lookup_doc_for_*` reach a world that can see them (avoids
 # Julia 1.12+ "access to binding in a world prior to its definition world").
@@ -231,6 +247,39 @@ end
     @testset "Module value with sig=nothing returns full Base.Docs.doc" begin
         md = JETLS.lookup_doc_for_value(Base, nothing, world)
         @test md isa Markdown.MD
+    end
+end
+
+@testset "lookup_field_doc" begin
+    DocStruct = M_field_doc_sample.DocStruct
+    NoFieldDocs = M_field_doc_sample.NoFieldDocs
+
+    @testset "documented field returns its docstring" begin
+        md = JETLS.lookup_field_doc(DocStruct, :x, world)
+        @test md isa Markdown.MD
+        @test occursin("The x field", string(md))
+    end
+
+    @testset "undocumented field returns nothing (no `T has fields ...` fallback)" begin
+        @test JETLS.lookup_field_doc(DocStruct, :z, world) === nothing
+    end
+
+    @testset "nonexistent field returns nothing" begin
+        @test JETLS.lookup_field_doc(DocStruct, :nonexistent, world) === nothing
+    end
+
+    @testset "struct without any field docs returns nothing" begin
+        @test JETLS.lookup_field_doc(NoFieldDocs, :a, world) === nothing
+    end
+
+    @testset "Union prefix surfaces the documented side" begin
+        md = JETLS.lookup_field_doc(Union{DocStruct,Nothing}, :y, world)
+        @test md isa Markdown.MD
+        @test occursin("The y field", string(md))
+    end
+
+    @testset "non-struct types return nothing" begin
+        @test JETLS.lookup_field_doc(Int, :x, world) === nothing
     end
 end
 

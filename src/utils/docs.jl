@@ -197,3 +197,41 @@ function lookup_doc_for_value(@nospecialize(v), @nospecialize(sig), world::UInt)
         return nothing
     end
 end
+
+"""
+    lookup_field_doc(typ, field::Symbol, world::UInt) -> Markdown.MD | Nothing
+
+Look up the per-field docstring stored on `typ`'s struct binding under
+`multidoc.docs[Union{}].data[:fields][field]`. Mirrors `REPL.fielddoc` but
+returns `nothing` when no doc exists for `field` (whether the field is
+undocumented or absent) instead of REPL's `` `T` has fields ... `` fallback,
+which is noisy filler in hover/completion surfaces.
+
+`Union` components are scanned in order and the first hit wins, so a
+`Union{Foo, Bar}` prefix surfaces a field doc as long as one side
+documents the named field.
+"""
+function lookup_field_doc(@nospecialize(typ), field::Symbol, world::UInt)
+    widened = CC.widenconst(typ)
+    components = widened isa Union ? Base.uniontypes(widened) : Any[widened]
+    for comp in components
+        t = Base.unwrap_unionall(comp)
+        t isa DataType || continue
+        binding = Base.invoke_in_world(world, Base.Docs.aliasof, t, Type{t})
+        binding isa Base.Docs.Binding || continue
+        for mod in Base.Docs.modules
+            # NOTE `Base.Docs.meta` internally always uses `invokelatest`, so `invoke_in_world` is not necessary here
+            dict = @something Base.Docs.meta(mod; autoinit=false) continue
+            multidoc = @something get(dict, binding, nothing) continue
+            multidoc isa Base.Docs.MultiDoc || continue
+            structdoc = @something get(multidoc.docs, Union{}, nothing) continue
+            structdoc isa Base.Docs.DocStr || continue
+            fieldsdoc = @something get(structdoc.data, :fields, nothing) continue
+            fieldsdoc isa Dict{Symbol,Any} || continue
+            fielddoc = @something get(fieldsdoc, field, nothing) continue
+            return fielddoc isa Markdown.MD ? fielddoc :
+                   fielddoc isa AbstractString ? Markdown.parse(fielddoc) : nothing
+        end
+    end
+    return nothing
+end

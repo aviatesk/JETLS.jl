@@ -945,11 +945,13 @@ function resolve_property_completion_item(
         #=maxdepth=#3, #=maxwidth=#20)
     detail = " ::" * typstr
     full_typstr = postprocessor(string(rawtyp))
-    value = """
-    ```julia
-    $(data.prefix).$(data.label) :: $(full_typstr)
-    ```
-    """
+    io = IOBuffer()
+    print(io, "```julia\n", data.prefix, ".", data.label, " :: ", full_typstr, "\n```")
+    fdoc = lookup_field_doc(prefixtyp, Symbol(data.label), world)
+    if fdoc isa Markdown.MD
+        print(io, "\n\n---\n\n", postprocessor(fdoc))
+    end
+    value = String(take!(io))
 
     labelDetails = supports_labelDetails ?
         CompletionItemLabelDetails(; detail, description = "property") : item.labelDetails

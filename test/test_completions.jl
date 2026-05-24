@@ -551,6 +551,18 @@ module broken_props_fixture
     Base.propertynames(::BrokenProps) = (:no_such_field,)
 end
 
+# Per-field docstring fixture for property-completion field-doc tests.
+module field_doc_props_fixture
+    """Documented struct with per-field docstrings."""
+    struct DocStruct
+        """The x field — an integer."""
+        x::Int
+        """The y field — a string."""
+        y::String
+        z::Float64  # no field doc
+    end
+end
+
 @testset "property completion" begin
     dot_context = CompletionContext(;
         triggerKind = CompletionTriggerKind.TriggerCharacter,
@@ -708,6 +720,36 @@ end
             @test props[1].labelDetails.detail === nothing
             resolved = JETLS.resolve_completion_item(state, props[1])
             @test resolved.labelDetails.detail == " ::Union{}"
+            cnt[] += 1
+        end
+        @test cnt[] == 1
+    end
+
+    # Resolved completion documentation includes the per-field docstring
+    # for fields that carry one, and stays at the bare type-signature code
+    # fence for undocumented fields.
+    let text = """
+        function bar(s::DocStruct)
+            s.│
+        end
+        """
+        cnt = Ref(0)
+        with_completion_items(text;
+                context=dot_context,
+                context_module=field_doc_props_fixture,
+            ) do (; result, state)
+            props = only_props(result.items)
+            x_item = first(filter(it -> it.label == "x", props))
+            resolved_x = JETLS.resolve_completion_item(state, x_item)
+            x_value = resolved_x.documentation.value
+            @test occursin("s.x :: $Int", x_value)
+            @test occursin("The x field", x_value)
+
+            z_item = first(filter(it -> it.label == "z", props))
+            resolved_z = JETLS.resolve_completion_item(state, z_item)
+            z_value = resolved_z.documentation.value
+            @test occursin("s.z :: Float64", z_value)
+            @test !occursin("---", z_value)  # no doc section appended
             cnt[] += 1
         end
         @test cnt[] == 1
