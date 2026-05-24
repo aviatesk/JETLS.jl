@@ -63,7 +63,7 @@ function do_workspace_symbol(
     if symbols isa ResponseError
         return send(server, WorkspaceSymbolResponse(; id = msg_id, result = nothing, error = request_cancelled_error()))
     else
-        return send(server, WorkspaceSymbolResponse(; id = msg_id, result = symbols))
+        return send(server, WorkspaceSymbolResponse(; id = msg_id, result = @somereal symbols null))
     end
 end
 
