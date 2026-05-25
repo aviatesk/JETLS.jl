@@ -71,11 +71,10 @@ end
     end == 1
 end
 
-# Single-cursor `find_definition` wrapper that skips the LSP roundtrip
-# and the workspace full-analysis. `context_module` overrides the
-# analysis-derived module so the test can seed the lookup with a
-# pre-populated side module (defined as a runtime `module ... end` in
-# this file). Returns `(locations, origin_node)` like `JETLS.find_definition`.
+# Single-cursor `find_definition` wrapper that skips the LSP roundtrip and the workspace
+# full-analysis. `context_module` overrides the analysis-derived module so the test can
+# seed the lookup with a pre-populated side module (defined as a runtime `module ... end`
+# in this file).
 function find_definition(
         text::AbstractString, pos::Position;
         filename::AbstractString = joinpath(@__DIR__, "testfile_$(gensym(:definition)).jl"),
@@ -91,7 +90,7 @@ function find_definition(
 end
 
 # `definition_test(text, expected; ...)` — single-cursor assertion shorthand.
-# `expected === nothing`    → expects `find_definition` to return no locations.
+# `expected === nothing`    → expects `find_definition` to return `nothing`.
 # `expected isa Int`        → expects exactly one location at `expected`
 #                              (0-based line). File is not checked — for
 #                              in-source jumps the URI is a gensym'd temp file,
@@ -106,10 +105,12 @@ function definition_test(
     )
     clean_text, positions = JETLS.get_text_and_positions(text)
     @assert length(positions) == 1
-    locations, _ = find_definition(clean_text, only(positions); context_module)
+    result = find_definition(clean_text, only(positions); context_module)
     if expected === nothing
-        @test isempty(locations) broken=broken
-    elseif expected isa Int
+        return @test result === nothing broken=broken
+    end
+    locations, _ = @something result
+    if expected isa Int
         @test length(locations) == 1 broken=broken
         if length(locations) == 1
             @test first(locations).range.start.line == expected broken=broken
@@ -198,12 +199,12 @@ end
 
         @testset "`Base.Compiler.tmeet` resolves" begin
             text, positions = JETLS.get_text_and_positions("Base.Compiler.tm│eet")
-            locs, _ = find_definition(text, only(positions))
+            locs, _ = @something find_definition(text, only(positions)) error("expected result")
             @test length(locs) >= 1
         end
         @testset "`sin(1.0)` jumps to `Base.sin(::Float64)`" begin
             text, positions = JETLS.get_text_and_positions("si│n(1.0)")
-            locs, _ = find_definition(text, only(positions))
+            locs, _ = @something find_definition(text, only(positions)) error("expected result")
             @test any(locs) do l
                 JETLS.uri2filepath(l.uri) == sin_cand_file &&
                 l.range.start.line == (sin_cand_line - 1)
@@ -211,7 +212,7 @@ end
         end
         @testset "`+` operator resolves" begin
             text, positions = JETLS.get_text_and_positions("1 +│ 2")
-            locs, _ = find_definition(text, only(positions))
+            locs, _ = @something find_definition(text, only(positions)) error("expected result")
             @test length(locs) >= 1
         end
         @testset "`Base.cos(x)` ignores local `cos(x) = 1`" begin
@@ -222,7 +223,7 @@ end
                         Base.co│s(x)
                     end
                 """)
-            locs, _ = find_definition(text, only(positions); filename)
+            locs, _ = @something find_definition(text, only(positions); filename) error("expected result")
             @test length(locs) >= 1
             @test all(l -> JETLS.uri2filepath(l.uri) != filename, locs)
         end
@@ -247,7 +248,7 @@ end
                     $cursor_text
                 end
             """)
-            locs, _ = find_definition(text, only(positions))
+            locs, _ = @something find_definition(text, only(positions)) error("expected result")
             return locs
         end
 
@@ -422,7 +423,7 @@ end
                 si│n(1.0)
             end
         """)
-    locs, _ = find_definition(text, only(positions); filename)
+    locs, _ = @something find_definition(text, only(positions); filename) error("expected result")
     @test length(locs) >= 1
     # Jump must go outside the synthetic source (to `Base`'s source).
     @test all(l -> JETLS.uri2filepath(l.uri) != filename, locs)

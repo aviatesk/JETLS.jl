@@ -73,9 +73,7 @@ function find_type_definition(server::Server, uri::URI, fi::FileInfo, pos::Posit
     typ = @something infer_type_at_range(st0_top, context_module, rng; world) return nothing
 
     target_type = @something extract_target_type(typ) return nothing
-    locations = type_locations(state, uri, target_type, world)
-    isempty(locations) && return nothing
-    return locations, node
+    return type_locations(state, uri, target_type, world), node
 end
 
 # Convert a lattice element to a concrete `Type` whose definition the user wants

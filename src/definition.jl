@@ -89,8 +89,7 @@ function handle_DefinitionRequest(
     end
     fi = result
 
-    locations, origin_node = find_definition(server, uri, fi, origin_position)
-    if origin_node === nothing || isempty(locations)
+    locations, origin_node = @something find_definition(server, uri, fi, origin_position) begin
         return send(server, DefinitionResponse(; id = msg.id, result = null))
     end
     if supports(server, :textDocument, :definition, :linkSupport)
@@ -105,15 +104,13 @@ end
 
 """
     find_definition(server, uri, fi, pos; soft_scope) ->
-        (locations::Vector{Location}, origin_node::Union{SyntaxTreeC,Nothing})
+        Union{Tuple{Vector{Location}, SyntaxTreeC}, Nothing}
 
-Core routine behind `textDocument/definition`. Returns the definition locations for
-the symbol at `pos` together with the syntax-tree node that represents the cursor's
-origin (used by callers to compute `LocationLink.originSelectionRange`).
-An empty `locations` paired with a non-`nothing` `origin_node` means
-"a binding/identifier was found, but no definition location could be produced" — callers
-can treat this the same as "no result".
-`isnothing(origin_node)` means we could not even identify a target node at `pos`.
+Core routine behind `textDocument/definition`. On success returns
+`(locations, origin_node)` where `origin_node` is the syntax-tree node that
+represents the cursor's origin (used by callers to compute
+`LocationLink.originSelectionRange`).
+Returns `nothing` when no definition could be produced at `pos`.
 
 Lookup order:
 1. Call-site matches via the [`TypeAnnotation`](@ref) pipeline: when the cursor is on
@@ -170,7 +167,8 @@ function find_definition(
     binding_jump = find_binding_definitions(server, uri, fi, st0, offset, context_module, soft_scope)
     binding_jump === nothing || return binding_jump
 
-    (node === nothing || rng === nothing) && return Location[], nothing
+    node === nothing && return nothing
+    rng === nothing && return nothing
 
     # Phase 3: value-based fallback (Module → `moduleloc`, callable → all method `functionloc`s).
     # For K"call" surfaces this is reached only when Phase 1's matches narrowing didn't
@@ -188,7 +186,7 @@ function find_definition(
         op_locations === nothing || return op_locations, node
     end
 
-    return Location[], node
+    return nothing
 end
 
 # Phase 1: jump to the methods CC's dispatch picked at a call site —
@@ -265,10 +263,7 @@ function find_global_binding_definitions(
 end
 
 # Phase 3: resolve `node` to a `Core.Const` and surface its definition.
-# - Module value → `Base.moduleloc`. Returns `Location[]` (rather than
-#   `nothing`) when the location is unknown so the caller short-circuits;
-#   Module surfaces aren't in `_OPERATOR_CALL_KINDS`, so Phase 4 wouldn't
-#   fire anyway, but the explicit short-circuit makes the intent clear.
+# - Module value → `Base.moduleloc`. Returns `nothing` when the location is unknown.
 # - Other value → all methods' `functionloc`s. Returns `nothing` when no
 #   resolvable methods remain, letting Phase 4 try the operator dispatch
 #   for call-like surfaces.
@@ -285,8 +280,8 @@ function find_value_definitions(
     objtyp isa Core.Const || return nothing
     objval = objtyp.val
     if objval isa Module
-        is_location_unknown(objval) && return Location[]
-        return [unadjust_location(state, uri, Location(objval))]
+        is_location_unknown(objval) && return nothing
+        return Location[unadjust_location(state, uri, Location(objval))]
     end
     target_methods = filter(!is_location_unknown,
         unique(Base.updated_methodloc, methods_at_world(world, objval)))

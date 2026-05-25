@@ -38,7 +38,7 @@ function handle_DocumentLinkRequest(
     return send(server,
         DocumentLinkResponse(;
             id = msg.id,
-            result = @somereal links null))
+            result = links))
 end
 
 function collect_include_document_links!(

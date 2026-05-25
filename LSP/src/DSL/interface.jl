@@ -163,16 +163,13 @@ function process_interface_def!(toplevelblk::Expr, structbody::Expr,
     push!(toplevelblk.args, kwdef)
     if !isempty(omittable_fields)
         omitempties = Tuple(omittable_fields)
-        if Name === :InitializeParams
-            # HACK: In the write->read roundtrip of `InitializationRequest` in the
-            # `withserver` test, empty `workspaceFolders` needs to be serialized without
-            # being omitted. So override the `omitempties` for `InitializeParams`.
-            # In the normal lifecycle of a language server, `InitializeParams` is never
-            # serialized, so adding this hack doesn't affect the language server's behavior
-            # (except in the tests)
-            omitempties = ()
-        end
         push!(toplevelblk.args, :(StructTypes.omitempties(::Type{$Name}) = $omitempties))
+        # Restrict the omitempties check to `=== nothing`. StructTypes' default
+        # `isempty` also drops empty `Vector`/`String`/`Dict`, which would erase a
+        # legitimate `result = T[]` from a response and produce a JSON object with
+        # neither `result` nor `error` — VSCode rejects that shape.
+        push!(toplevelblk.args,
+            :(@inline StructTypes.isempty(::Type{$Name}, x) = x === nothing))
     end
     if is_anon
         push!(toplevelblk.args, :(Base.convert(::Type{$Name}, nt::NamedTuple) = $Name(; nt...)))

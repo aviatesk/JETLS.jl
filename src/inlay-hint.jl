@@ -47,7 +47,7 @@ function handle_InlayHintRequest(
 
     return send(server, InlayHintResponse(;
         id = msg.id,
-        result = @somereal localize_inlay_hints(state, uri, inlay_hints) null))
+        result = localize_inlay_hints(state, uri, inlay_hints)))
 end
 
 const INLAY_HINT_MIN_LINES = 25
