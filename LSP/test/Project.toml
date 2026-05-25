@@ -1,5 +1,6 @@
 [deps]
 LSP = "880dcf91-6fde-4251-87fc-bfd84012291a"
+REPL = "3fa0cd96-eef1-5676-8a61-b3b8758bbffb"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [sources]
