@@ -1,5 +1,105 @@
 const _interface_defs_ = Dict{Symbol,Expr}()
 
+# Register a fallback docstring (with field docs) for `name`, unless a top-level docstring
+# is already registered (e.g. via an outer `@doc`). Without it an `@interface` carrying
+# only field docstrings produces no `MultiDoc` entry at all, so `REPL.fielddoc(T, field)`
+# and JETLS's `lookup_field_doc` — which both read field docs out of
+# `MultiDoc.docs[Union{}].data[:fields]` — can't surface them, and `REPL.fielddoc` falls
+# back to the noisy `` `T` has fields ... `` placeholder.
+# The body roughly mirrors `REPL.summarize` so `?T` keeps producing a Julia-base-like summary.
+#
+# `fielddocs` is typed `Dict{Symbol,Any}` to match Julia base's docsystem convention
+# (`Base.Docs.fielddocs` itself builds `:fields` as `Dict{Symbol,Any}).
+function attach_fallback_doc!(__module__::Module, name::Symbol,
+                              fielddocs::Dict{Symbol,Any},
+                              linenumber::Int, path::AbstractString)
+    binding = Base.Docs.Binding(__module__, name)
+    md = Base.Docs.meta(__module__)
+    if haskey(md, binding) && !isempty(md[binding].docs)
+        return nothing
+    end
+    data = Dict{Symbol,Any}(
+        :module => __module__,
+        :linenumber => linenumber,
+        :path => path,
+        :binding => binding,
+        :typesig => Union{},
+        :fields => fielddocs,
+    )
+    summary = build_struct_summary(__module__, name)
+    str = Base.Docs.docstr(Core.svec(summary), data)
+    Base.Docs.doc!(__module__, binding, str, Union{})
+    return nothing
+end
+
+function build_struct_summary(__module__::Module, name::Symbol)
+    isdefinedglobal(__module__, name) || return ""
+    T = getglobal(__module__, name)
+    T isa DataType || return ""
+    io = IOBuffer()
+    println(io, "# Summary")
+    println(io, "```")
+    print(io, Base.isabstracttype(T) ? "abstract type " :
+              Base.ismutabletype(T)  ? "mutable struct " :
+              Base.isstructtype(T)   ? "struct " : "primitive type ")
+    println(io, T)
+    println(io, "```")
+    if !Base.isabstracttype(T) && !isempty(fieldnames(T))
+        println(io, "# Fields")
+        println(io, "```")
+        pad = maximum(length(string(f)) for f in fieldnames(T))
+        for (f, t) in zip(fieldnames(T), fieldtypes(T))
+            println(io, rpad(f, pad), " :: ", t)
+        end
+        println(io, "```")
+    end
+    if supertype(T) !== Any
+        println(io, "# Supertype Hierarchy")
+        println(io, "```")
+        Base.show_supertypes(io, T)
+        println(io)
+        println(io, "```")
+    end
+    return String(take!(io))
+end
+
+function collect_field_docs(structbody::Expr)
+    fielddocs = Dict{Symbol,Any}()
+    last_doc = nothing
+    for arg in structbody.args
+        if arg isa String
+            last_doc = arg
+        elseif arg isa LineNumberNode
+            continue
+        else
+            fname = extract_fieldname(arg)
+            if fname !== nothing && last_doc !== nothing
+                fielddocs[fname] = last_doc
+                last_doc = nothing
+            end
+        end
+    end
+    return fielddocs
+end
+
+function extract_fieldname(@nospecialize(arg))
+    if arg isa Symbol
+        return arg
+    elseif Meta.isexpr(arg, :(::))
+        cand = arg.args[1]
+        cand isa Symbol && return cand
+    elseif Meta.isexpr(arg, :(=))
+        decl = arg.args[1]
+        if decl isa Symbol
+            return decl
+        elseif Meta.isexpr(decl, :(::))
+            cand = decl.args[1]
+            cand isa Symbol && return cand
+        end
+    end
+    return nothing
+end
+
 """
     @interface InterfaceName [@extends ParentInterface] begin
         field::Type
@@ -161,6 +261,18 @@ function process_interface_def!(toplevelblk::Expr, structbody::Expr,
     structdef = Expr(:struct, false, Name, structbody)
     kwdef = Expr(:macrocall, GlobalRef(Base, Symbol("@kwdef")), __source__, structdef) # `@kwdef` will attach `Core.__doc__` automatically
     push!(toplevelblk.args, kwdef)
+    fielddocs = collect_field_docs(structbody)
+    if !isempty(fielddocs)
+        fielddocs_ex = Expr(:call, :($Dict{$Symbol,$Any}))
+        for (k, v) in fielddocs
+            push!(fielddocs_ex.args, :($(QuoteNode(k)) => $v))
+        end
+        srcfile = string(something(__source__.file, "none"))
+        push!(toplevelblk.args,
+            :($(GlobalRef(@__MODULE__, :attach_fallback_doc!))(
+                @__MODULE__, $(QuoteNode(Name)), $fielddocs_ex,
+                $(__source__.line), $srcfile)))
+    end
     if !isempty(omittable_fields)
         omitempties = Tuple(omittable_fields)
         push!(toplevelblk.args, :(StructTypes.omitempties(::Type{$Name}) = $omitempties))
