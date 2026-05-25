@@ -41,8 +41,7 @@ function handle_DocumentHighlightRequest(
     document_highlights!(highlights, state, uri, fi, pos)
     return send(server, DocumentHighlightResponse(;
         id = msg.id,
-        result = @somereal highlights null
-    ))
+        result = highlights))
 end
 
 function document_highlights!(

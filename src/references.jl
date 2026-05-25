@@ -74,7 +74,7 @@ function do_find_references(
     if result isa ResponseError
         return send(server, ReferencesResponse(; id = msg_id, result = nothing, error = result))
     else
-        return send(server, ReferencesResponse(; id = msg_id, result = @somereal result null))
+        return send(server, ReferencesResponse(; id = msg_id, result))
     end
 end
 

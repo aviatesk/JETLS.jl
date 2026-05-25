@@ -645,10 +645,9 @@ function handle_SignatureHelpRequest(
     return send(server,
         SignatureHelpResponse(;
             id = msg.id,
-            result = isempty(signatures) ?
-              null
-            : SignatureHelp(;
-                  signatures,
-                  activeSignature,
-                  activeParameter)))
+            result = isempty(signatures) ? null :
+                SignatureHelp(;
+                    signatures,
+                    activeSignature,
+                    activeParameter)))
 end

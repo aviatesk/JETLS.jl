@@ -35,9 +35,8 @@ function handle_DeclarationRequest(
     end
     fi = result
 
-    locations, origin_node =
-        find_declaration(server, uri, fi, origin_position; fallback_to_definition=true)
-    if origin_node === nothing || isempty(locations)
+    locations, origin_node = @something find_declaration(
+            server, uri, fi, origin_position; fallback_to_definition=true) begin
         return send(server, DeclarationResponse(; id = msg.id, result = null))
     end
     if supports(server, :textDocument, :declaration, :linkSupport)
@@ -51,19 +50,20 @@ end
 
 """
     find_declaration(server, uri, fi, pos; soft_scope, fallback_to_definition=false) ->
-        (locations::Vector{Location}, origin_node::Union{SyntaxTreeC,Nothing})
+        Union{Tuple{Vector{Location}, SyntaxTreeC}, Nothing}
 
-Core routine behind `textDocument/declaration`. Returns the declaration
-locations for the symbol at `pos` (source-level `:decl` occurrences —
-`import`/`using` sites, `local x`, empty `function foo end`) together
-with the syntax-tree node representing the cursor's origin.
+Core routine behind `textDocument/declaration`. On success returns the
+declaration locations for the symbol at `pos` (source-level `:decl`
+occurrences — `import`/`using` sites, `local x`, empty `function foo end`)
+together with the syntax-tree node representing the cursor's origin.
+Returns `nothing` when no declaration could be located.
 
 With `fallback_to_definition=true`, an empty result falls through to
-[`find_definition`](@ref) so the caller never returns an empty
-response for a resolvable symbol. This mirrors rust-analyzer's
-behavior where "go to declaration" defers to "go to definition" for
-languages that don't have a distinct declaration concept for every
-binding.
+[`find_definition`](@ref), giving the caller a definition site to fall
+back on when a symbol has no distinct declaration. This mirrors
+rust-analyzer's behavior where "go to declaration" defers to "go to
+definition" for languages that don't have a distinct declaration
+concept for every binding.
 """
 function find_declaration(
         server::Server, uri::URI, fi::FileInfo, pos::Position;
@@ -87,7 +87,7 @@ function find_declaration(
         end
         isempty(locations) || return locations, binding
     end
-    fallback_to_definition || return Location[], nothing
+    fallback_to_definition || return nothing
     return find_definition(server, uri, fi, pos; soft_scope)
 end
 

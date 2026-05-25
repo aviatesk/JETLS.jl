@@ -59,15 +59,15 @@ end
 function do_workspace_symbol(
         server::Server, msg_id::MessageId, params::WorkspaceSymbolParams;
         kwargs...)
-    symbols = workspace_symbol(server, params; kwargs...)
+    symbols = workspace_symbols(server, params; kwargs...)
     if symbols isa ResponseError
         return send(server, WorkspaceSymbolResponse(; id = msg_id, result = nothing, error = request_cancelled_error()))
     else
-        return send(server, WorkspaceSymbolResponse(; id = msg_id, result = @somereal symbols null))
+        return send(server, WorkspaceSymbolResponse(; id = msg_id, result = symbols))
     end
 end
 
-function workspace_symbol(
+function workspace_symbols(
         server::Server, params::WorkspaceSymbolParams;
         token::Union{Nothing,ProgressToken} = nothing,
         kwargs...
