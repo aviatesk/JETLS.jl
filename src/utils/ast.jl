@@ -1083,16 +1083,14 @@ noparen_macrocall(st0::SyntaxTreeC) =
 """
     select_target_identifier(st0::SyntaxTreeC, offset::Integer) -> target::Union{SyntaxTreeC,Nothing}
 
-Determines the node that the user most likely intends to navigate to.
-Returns `nothing` if no suitable one is found.
-Currently `st0` needs to be a `SyntaxTree` before lowering.
+Determine the identifier node that the user most likely intends to navigate to,
+or `nothing` if no suitable one is found. `st0` must be a `SyntaxTree` before
+lowering.
 
-Currently, it simply checks the ancestors of the node located at the given offset.
-
-TODO: Apply a heuristic similar to rust-analyzer
-refs:
-- https://github.com/rust-lang/rust-analyzer/blob/6acff6c1f8306a0a1d29be8fd1ffa63cff1ad598/crates/ide/src/goto_definition.rs#L47-L62
-- https://github.com/aviatesk/JETLS.jl/pull/61#discussion_r2134707773
+For dot expressions, walks up through `K"."` to pick the larger dotted prefix
+(`Base.Compi│ler.tmeet` → `Base.Compiler`). Cursor positions at token boundaries
+like `var│` or `func│(5)` are handled by [`select_target_node`](@ref)'s
+`offset - 1` fallback.
 """
 function select_target_identifier(st0::SyntaxTreeC, offset::Integer)
     filter = function (bas)
