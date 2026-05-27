@@ -8,6 +8,7 @@ const COMPLETION_TRIGGER_CHARACTERS = [
     "\\", # LaTeX completion
     ":",  # emoji completion
     ";",  # keyword argument completion
+    ".",  # property / module-member completion
     METHOD_COMPLETION_TRIGGER_CHARACTERS...,
     NUMERIC_CHARACTERS..., # allow these characters to be recognized by `CompletionContext.triggerCharacter`
 ]
@@ -67,33 +68,120 @@ function get_sort_text(offset::Int)
     return get(sort_texts, offset, max_sort_text)
 end
 
+# Per-request shared context
+# ==========================
+
+"""
+    CompletionCtx
+
+Per-request scratch space that the four completion routines (`call_completions!`,
+`global_completions!`, `local_completions!`, `add_emoji_latex_completions!`) share.
+
+Computes once and caches:
+- syntax tree (`st0`) — feeding multiple routines that each used to call
+  `build_syntax_tree(fi)` on their own.
+- `get_context_info` projection — `context_module`, `world`, `postprocessor`.
+- `offset` / `soft_scope` — derived from `pos` / `uri`.
+
+Two heavier pieces are built lazily on first request:
+- `InferredTreeContext` — shared between any routines that actually need
+  type info at the cursor (always `call_completions!`, optionally
+  `global_completions!` for dot-prefix). `build_inferred_context_at` keys
+  off the toplevel statement containing the cursor, so a single context
+  serves every routine here.
+- `cursor_bindings` result — shared between `local_completions!` and the
+  kwarg branch of `call_completions!`.
+
+A future refactor that unifies `cursor_bindings` and `build_inferred_context_at`
+at the `jl_lower_for_scope_resolution` level can replace the lazy accessors
+without disturbing call sites.
+"""
+struct CompletionCtx
+    state::ServerState
+    uri::URI
+    fi::FileInfo
+    pos::Position
+    context::Union{Nothing,CompletionContext}
+
+    # Eagerly populated by the constructor.
+    offset::Int
+    st0_top::SyntaxTreeC
+    context_module::Module
+    world::UInt
+    postprocessor::LSPostProcessor
+    soft_scope::Bool
+
+    # Lazy. `isassigned(ref)` distinguishes "not yet computed" from
+    # "computed but the underlying build returned `nothing`".
+    inferred_ctx::Base.RefValue{Union{Nothing,InferredTreeContext}}
+    cursor_bindings::Base.RefValue{Union{Nothing,Vector{Tuple{JL.BindingInfo,SyntaxTreeC,Int}}}}
+end
+
+function CompletionCtx(
+        state::ServerState, uri::URI, fi::FileInfo, pos::Position,
+        context::Union{Nothing,CompletionContext};
+        context_module::Union{Nothing,Module} = nothing
+    )
+    st0_top = build_syntax_tree(fi)
+    info = get_context_info(state, uri, pos)
+    context_mod = something(context_module, info.context_module)
+    offset = xy_to_offset(fi, pos)
+    soft_scope = is_notebook_cell_uri(state, uri)
+    return CompletionCtx(state, uri, fi, pos, context,
+        offset, st0_top, context_mod, info.world, info.postprocessor, soft_scope,
+        Base.RefValue{Union{Nothing,InferredTreeContext}}(),
+        Base.RefValue{Union{Nothing,Vector{Tuple{JL.BindingInfo,SyntaxTreeC,Int}}}}())
+end
+
+# Why not `build_inferred_context_at(..., offset:offset; ...)` directly:
+# It filters toplevel subtrees by `rng ⊆ JS.byte_range(toplevel)`, and the
+# cursor can sit past the toplevel's `last_byte` in incomplete code (e.g.
+# `sin(42,│\n` — parser ends the `K"call"` at byte 7, cursor at byte 8 is
+# outside). `lowerable_toplevel_at` has an `offset - 1` retry that handles
+# this, so we go through it and pass the toplevel's actual byte range.
+function get_inferred_ctx!(comp_ctx::CompletionCtx; caller::AbstractString)
+    isassigned(comp_ctx.inferred_ctx) && return comp_ctx.inferred_ctx[]
+    toplevel = lowerable_toplevel_at(comp_ctx.st0_top, comp_ctx.offset)
+    ctx = toplevel === nothing ? nothing : build_inferred_context_at(
+        comp_ctx.st0_top, comp_ctx.context_module, JS.byte_range(toplevel);
+        world=comp_ctx.world, caller)
+    return comp_ctx.inferred_ctx[] = ctx
+end
+
+function get_cursor_bindings_cached!(comp_ctx::CompletionCtx)
+    isassigned(comp_ctx.cursor_bindings) && return comp_ctx.cursor_bindings[]
+    cbs = cursor_bindings(comp_ctx.st0_top, comp_ctx.offset, comp_ctx.context_module;
+        soft_scope=comp_ctx.soft_scope)
+    return comp_ctx.cursor_bindings[] = cbs
+end
+
+# Typical completion UI
+# =====================
+
+# `to|` ->
+# ```
+#    ┌───┬──────────────────────────┬────────────────────────────┐
+#    │(1)│to_completion(2)     (3) >│(4)...                      │
+#    │(1)│to_indices(2)        (3)  │# Typical completion UI ─(5)│
+#    │(1)│touch(2)             (3)  │                          │ │
+#    └───┴──────────────────────────┤to|                       │ │
+#                                   │...                     ──┘ │
+#                                   └────────────────────────────┘
+# ```
+# - (1) Icon corresponding to CompletionItem's `ci.kind`
+# - (2) `ci.labelDetails.detail`
+# - (3) `ci.labelDetails.description`
+# - (4) `ci.detail` (possibly at (3))
+# - (5) `ci.documentation`
+#
+# Sending (4) and (5) to the client can happen eagerly in response to <TAB>
+# (textDocument/completion), or lazily, on selection in the list
+# (completionItem/resolve).  The LSP specification notes that more can be deferred
+# in later versions.
+
 # local completions
 # =================
 
-"""
-# Typical completion UI
-
-`to|` ->
-```
-   ┌───┬──────────────────────────┬────────────────────────────┐
-   │(1)│to_completion(2)     (3) >│(4)...                      │
-   │(1)│to_indices(2)        (3)  │# Typical completion UI ─(5)│
-   │(1)│touch(2)             (3)  │                          │ │
-   └───┴──────────────────────────┤to|                       │ │
-                                  │...                     ──┘ │
-                                  └────────────────────────────┘
-```
-- (1) Icon corresponding to CompletionItem's `ci.kind`
-- (2) `ci.labelDetails.detail`
-- (3) `ci.labelDetails.description`
-- (4) `ci.detail` (possibly at (3))
-- (5) `ci.documentation`
-
-Sending (4) and (5) to the client can happen eagerly in response to <TAB>
-(textDocument/completion), or lazily, on selection in the list
-(completionItem/resolve).  The LSP specification notes that more can be deferred
-in later versions.
-"""
 function to_completion(
         binding::JL.BindingInfo, st::SyntaxTreeC, sort_offset::Int,
         uri::URI, fi::FileInfo
@@ -140,31 +228,29 @@ function to_completion(
         sortText = get_sort_text(sort_offset))
 end
 
-should_invoke_auto_completion(::Nothing, ::Bool=false) = true
-function should_invoke_auto_completion(context::CompletionContext, allow_macro::Bool=false)
-    if !allow_macro || context.triggerCharacter != "@"
-        # Don't trigger completion just by typing a numeric character, etc.
-        if context.triggerKind != CompletionTriggerKind.Invoked
-            return false
-        end
-    end
-    return true
+# Returns `true` when the request was explicitly invoked
+# (`Ctrl+Space`-style), or when it was auto-triggered by a character the
+# caller has opted into (`@` for macros, `.` for property/module-member).
+# Numeric / whitespace trigger characters etc. don't fire auto-completion.
+function should_invoke_auto_completion(context::CompletionContext;
+        allow_macro::Bool=false, allow_dot::Bool=false)
+    context.triggerKind == CompletionTriggerKind.Invoked && return true
+    allow_macro && context.triggerCharacter == "@" && return true
+    allow_dot && context.triggerCharacter == "." && return true
+    return false
 end
+should_invoke_auto_completion(::Nothing; _kwargs...) = true
 
 function local_completions!(
-        items::Dict{String,CompletionItem},
-        s::ServerState, uri::URI, fi::FileInfo, pos::Position, context::Union{Nothing,CompletionContext}
+        items::Dict{String,CompletionItem}, comp_ctx::CompletionCtx,
     )
-    should_invoke_auto_completion(context) || return nothing
+    should_invoke_auto_completion(comp_ctx.context) || return nothing
 
     # NOTE don't bail out even if `length(fi.parsed_stream.diagnostics) ≠ 0`
     # so that we can get some completions even for incomplete code
-    st0 = build_syntax_tree(fi)
-    (; mod) = get_context_info(s, uri, pos)
-    soft_scope = is_notebook_cell_uri(s, uri)
-    cbs = @something cursor_bindings(st0, xy_to_offset(fi, pos), mod; soft_scope) return nothing
+    cbs = @something get_cursor_bindings_cached!(comp_ctx) return nothing
     for (bi, st, dist) in cbs
-        ci = to_completion(bi, st, dist, uri, fi)
+        ci = to_completion(bi, st, dist, comp_ctx.uri, comp_ctx.fi)
         prev_ci = get(items, ci.label, nothing)
         # Name collisions: overrule existing global completions with our own,
         # unless our completion is also a global, in which case the existing
@@ -180,13 +266,11 @@ end
 # ==================
 
 function global_completions!(
-        items::Dict{String,CompletionItem},
-        state::ServerState, uri::URI, fi::FileInfo, pos::Position, context::Union{Nothing,CompletionContext},
+        items::Dict{String,CompletionItem}, comp_ctx::CompletionCtx,
     )
-    should_invoke_auto_completion(context, #=allow_macro=#true) || return nothing
-
-    (; mod, analyzer, postprocessor) = get_context_info(state, uri, pos)
-    completion_module = mod
+    (; state, uri, fi, pos, context, st0_top, world, postprocessor) = comp_ctx
+    context_module = comp_ctx.context_module
+    should_invoke_auto_completion(context; allow_macro=true, allow_dot=true) || return nothing
 
     prev_token = token_before_offset(fi, pos)
     prev_kind = isnothing(prev_token) ? nothing : JS.kind(prev_token)
@@ -221,32 +305,37 @@ function global_completions!(
     # since macros are always defined top-level
     is_completed = is_macro_invoke
 
-    st = build_syntax_tree(fi)
-    offset = xy_to_offset(fi, pos)
-    dotprefix = select_dotprefix_identifier(st, offset)
+    dotprefix = select_dotprefix_identifier(st0_top, comp_ctx.offset)
     if !isnothing(dotprefix)
-        prefixtyp = resolve_type(analyzer, completion_module, dotprefix)
-        # If dotprefix is not a module, cancel completion entirely.
-        # TODO In the future, let's add property completions and such.
-        enable_completions = false
-        if prefixtyp isa Core.Const
-            prefixval = prefixtyp.val
-            if prefixval isa Module
-                completion_module = prefixval
-                enable_completions = true
-            end
+        rng = JS.byte_range(dotprefix)
+        ctx = get_inferred_ctx!(comp_ctx; caller="global_completions!")
+        prefixtyp = ctx === nothing ? nothing : get_type_for_range(ctx, rng)
+        if prefixtyp === nothing
+            prefixtyp = resolve_global_const(context_module, dotprefix, world)
         end
-        enable_completions || return #=isIncomplete=#false
-        # disable local completions for dot-prefixed code for now
-        is_completed |= true
+        # Module prefix → enumerate that module's globals below.
+        # Otherwise → property completion (abstract-call
+        # `propertynames` / `getproperty` on the prefix's type).
+        if prefixtyp isa Core.Const && prefixtyp.val isa Module
+            context_module = prefixtyp.val::Module
+            # disable local completions for dot-prefixed code
+            is_completed |= true
+        else
+            if prefixtyp !== nothing
+                prefix = JS.sourcetext(dotprefix)
+                add_property_completions!(items, comp_ctx, prefixtyp, prefix)
+            end
+            return #=isIncomplete=#false
+        end
     end
     resolver_id = String(gensym("GlobalCompletionResolverInfo_resovler_id"))
-    store!(state.completion_resolver_info, completion_module) do _, mod::Module
-        GlobalCompletionResolverInfo(resolver_id, mod, postprocessor), nothing
+    store!(state.completion_resolver_info, context_module) do _, ctx_mod::Module
+        GlobalCompletionResolverInfo(resolver_id, ctx_mod, world, postprocessor), nothing
     end
 
     prioritized_names = let s = Set{Symbol}()
-        pnames = @invokelatest(names(completion_module; all=true))::Vector{Symbol}
+        pnames = Base.invoke_in_world(
+            world, names, context_module; all=true)::Vector{Symbol}
         sizehint!(s, length(pnames))
         for name in pnames
             startswith(String(name), "#") && continue
@@ -255,7 +344,9 @@ function global_completions!(
         s
     end
 
-    for name in @invokelatest(names(completion_module; all=true, imported=true, usings=true))::Vector{Symbol}
+    all_names = Base.invoke_in_world(world, names, context_module;
+        all=true, imported=true, usings=true)::Vector{Symbol}
+    for name in all_names
         s = String(name)
         startswith(s, "#") && continue
 
@@ -319,6 +410,72 @@ function global_completions!(
     return is_completed ? #=isIncomplete=#false : nothing
 end
 
+# Property completions
+# ====================
+
+# Try property completion for `prefix.│` / `prefix.partial│`. Asks inference
+# what `propertynames(::T)` returns for the dot prefix's inferred type `T`;
+# if that's a `Core.Const(::Tuple{Vararg{Symbol}})`, those are the property
+# names. This subsumes both the default `fieldnames` path and `propertynames`
+# overrides (e.g. `Regex` returning `(:pattern, :compile_options, …)`) —
+# inference handles both uniformly.
+#
+# Each name's type detail (`getproperty(::T, Core.Const(:name))`) is deferred
+# to `resolve_property_completion_item` so the abstract-call only fires for
+# the property the user actually focuses, not all of them up front.
+function add_property_completions!(
+        items::Dict{String,CompletionItem}, comp_ctx::CompletionCtx,
+        @nospecialize(prefixtyp), prefix::AbstractString
+    )
+    # Union of `propertynames(::T)` across union components. Intersection would be safer in
+    # theory ("only properties available on every side"), but it falls flat on the very
+    # common `Union{T, Nothing}` case — `propertynames(::Nothing)` is empty, so the
+    # intersection vanishes. Names that exist only on a subset of components are kept;
+    # if the user accesses one when the value happens to be the other side it'll error
+    # at runtime, which is the same trade-off Julia itself accepts.
+    #
+    # `ordered` preserves source declaration order (each component's `propertynames` is
+    # appended in its own order, with `seen` dropping duplicates), so the `sortText` below
+    # renders the completion list in the order the user wrote the fields.
+    ordered = Symbol[]
+    seen = Set{Symbol}()
+    for typ in union_components(prefixtyp)
+        rt = abstract_call_const(propertynames, Any[typ], comp_ctx.world)
+        rt isa Core.Const || continue
+        names = rt.val
+        names isa Tuple{Vararg{Symbol}} || continue
+        for n in names
+            n in seen && continue
+            push!(seen, n)
+            push!(ordered, n)
+        end
+    end
+    isempty(ordered) && return false
+
+    resolver_id = String(gensym("PropertyCompletionResolverInfo_resovler_id"))
+    store!(comp_ctx.state.completion_resolver_info) do _
+        resolver_info = PropertyCompletionResolverInfo(
+            resolver_id, prefixtyp, comp_ctx.world, comp_ctx.postprocessor)
+        resolver_info, nothing
+    end
+
+    for (i, name) in enumerate(ordered)
+        label = String(name)
+        items[label] = CompletionItem(;
+            label,
+            labelDetails = CompletionItemLabelDetails(; description = "property"),
+            kind = CompletionItemKind.Property,
+            sortText = get_sort_text(i),
+            data = PropertyCompletionData(resolver_id, label, prefix))
+    end
+    return true
+end
+
+function union_components(@nospecialize(prefixtyp))
+    typ = CC.widenconst(prefixtyp)
+    return typ isa Union ? Base.uniontypes(typ) : Any[typ]
+end
+
 # LaTeX and emoji completions
 # ===========================
 
@@ -366,9 +523,9 @@ end
 # Add LaTeX and emoji completions to the items dictionary and return boolean indicating
 # whether any completions were added.
 function add_emoji_latex_completions!(
-        items::Dict{String,CompletionItem},
-        state::ServerState, uri::URI, fi::FileInfo, pos::Position
+        items::Dict{String,CompletionItem}, comp_ctx::CompletionCtx,
     )
+    (; state, uri, fi, pos) = comp_ctx
     backslash_offset, emojionly = @something get_backslash_offset(fi, pos) return nothing
     backslash_pos = offset_to_xy(fi, backslash_offset)
     edit_range, _ = unadjust_range(state, uri, Range(;
@@ -454,9 +611,9 @@ end
 const var_quote_doc = get_keyword_doc(Symbol("var\"name\""))
 
 function keyword_completions!(
-        items::Dict{String,CompletionItem}, state::ServerState,
-        context::Union{Nothing,CompletionContext}
+        items::Dict{String,CompletionItem}, comp_ctx::CompletionCtx,
     )
+    (; state, context) = comp_ctx
     should_invoke_auto_completion(context) || return nothing
 
     merge!(items, KEYWORD_COMPLETIONS)
@@ -593,13 +750,11 @@ function should_insert_spaces_around_equal(fi::FileInfo, ca::CallArgs)
 end
 
 function call_completions!(
-        items::Dict{String,CompletionItem},
-        state::ServerState, uri::URI, fi::FileInfo, pos::Position,
-        context::Union{Nothing,CompletionContext}
+        items::Dict{String,CompletionItem}, comp_ctx::CompletionCtx,
     )
-    st0 = build_syntax_tree(fi)
-    b = xy_to_offset(fi, pos)
-    call = @something cursor_call(fi.parsed_stream, st0, b) return nothing
+    (; state, fi, pos, context, st0_top, context_module, world, postprocessor) = comp_ctx
+    b = comp_ctx.offset
+    call = @something cursor_call(fi.parsed_stream, st0_top, b) return nothing
     ca = CallArgs(call, b)
 
     equals_pos = cursor_equals_position(ca, b)
@@ -609,14 +764,16 @@ function call_completions!(
 
     should_complete_method_sigs || should_complete_kwargs || return nothing
 
-    (; mod, analyzer, postprocessor) = get_context_info(state, uri, pos)
-    fntyp = @something resolve_type(analyzer, mod, call[1]) return nothing
-
+    ctx = get_inferred_ctx!(comp_ctx; caller="call_completions!")
+    fntyp = ctx === nothing ? nothing : get_type_for_range(ctx, JS.byte_range(call[1]))
+    if fntyp === nothing
+        fntyp = resolve_global_const(context_module, call[1], world)
+    end
     fntyp isa Core.Const || return nothing
 
-    argtypes = collect_call_argtypes(analyzer, mod, ca)
+    argtypes = @something collect_call_argtypes(ctx, ca) return nothing
     fixup_argtypes!(argtypes, fntyp)
-    matches = find_all_matches(argtypes)
+    matches = @something find_all_matches(argtypes; world) return nothing
     isempty(matches) && return nothing
 
     num_existing_args = ca.kw_i - 1
@@ -625,27 +782,26 @@ function call_completions!(
     if should_complete_method_sigs
         local resolver_id = String(gensym("MethodSignatureCompletionResolverInfo_resovler_id"))
         store!(state.completion_resolver_info) do _
-            MethodSignatureCompletionResolverInfo(resolver_id, matches, postprocessor), nothing
+            MethodSignatureCompletionResolverInfo(resolver_id, world, matches, postprocessor), nothing
         end
         method_sig_comp_info = (;
             resolver_id,
             use_snippet = supports(state, :textDocument, :completion, :completionItem, :snippetSupport))
     else
         @assert should_complete_kwargs
-        soft_scope = is_notebook_cell_uri(state, uri)
         kwarg_comp_info = (;
             existing_kws = Set{String}(keys(ca.kw_map)),
             seen_kwarg_names = Set{String}(),
             insert_spaces = should_insert_spaces_around_equal(fi, ca),
-            local_bindings = has_equals ? nothing : cursor_bindings(st0, b, mod; soft_scope))
+            local_bindings = has_equals ? nothing : get_cursor_bindings_cached!(comp_ctx))
     end
 
     method_sig_sort_idx = 1
     for (i, match) in enumerate(matches)
         m = match.method
         startswith(String(m.name), '@') && continue
-        compatible_method(m, ca) || continue
-        msig = @something get_sig_str(m, ca) continue
+        compatible_method(m, ca, world) || continue
+        msig = @something get_sig_str(m, ca, world) continue
 
         if @isdefined(method_sig_comp_info) # i.e. should_complete_method_sigs
             local (; resolver_id, use_snippet) = method_sig_comp_info
@@ -714,123 +870,195 @@ end
 # completion resolver
 # ===================
 
-function lookup_method_documentation(match::Core.MethodMatch)
+function lookup_doc_for_match(match::Core.MethodMatch, world::UInt)
     m = match.method
-    invokelatest(isdefinedglobal, m.module, m.name) || return nothing
-    mfunc = invokelatest(getglobal, m.module, m.name)
-    tt = Base.unwrap_unionall(m.sig)
-    tt isa DataType || return nothing
-    sig = Tuple{tt.parameters[2:end]...}
-    return @invokelatest(Base.Docs.doc(mfunc, sig))::Markdown.MD
+    Base.invoke_in_world(world, isdefinedglobal, m.module, m.name) || return nothing
+    mfunc = Base.invoke_in_world(world, getglobal, m.module, m.name)
+    sig = @something method_doc_sig(m) return nothing
+    return lookup_doc_for_value(mfunc, sig, world)
 end
 
 const builtin_functions = Core.Builtin[getglobal(Core, n) for n in names(Core) if getglobal(Core, n) isa Core.Builtin]
 const builtin_types = Type[getglobal(Core, n) for n in names(Core) if getglobal(Core, n) isa Type]
 
+# Spec quirks around lazy-resolvable properties (see aviatesk/JETLS.jl#711):
+# - 3.16.0+ with `resolveSupport.properties` declared: the list is exhaustive —
+#   any property not in it cannot be resolved lazily (the resolved value is
+#   silently dropped or even mis-rendered).
+# - Pre-3.16.0 (no `resolveSupport`): only `documentation` and `detail` are
+#   lazy-resolvable. We honor this for backward compatibility.
+function supports_completion_item_resolve(state::ServerState, property::AbstractString)
+    if getobjpath(state, :init_params, :clientInfo, :name) ∈ ("Zed", "Zed Dev")
+        # Special case: Zed under-declares `resolveSupport` but actually applies lazy
+        # updates for every non-`label` field, so opt it into the full set unconditionally.
+        return true
+    end
+    properties = getcapability(state, :textDocument, :completion, :completionItem,
+        :resolveSupport, :properties)
+    if properties !== nothing
+        return property in properties
+    end
+    return property in ("documentation", "detail")
+end
+
 function resolve_completion_item(state::ServerState, item::CompletionItem)
     completion_resolver_info = @something load(state.completion_resolver_info) return item
     data = item.data
-    if (data isa GlobalCompletionData && completion_resolver_info isa GlobalCompletionResolverInfo &&
+    if (data isa GlobalCompletionData &&
+        completion_resolver_info isa GlobalCompletionResolverInfo &&
         data.resolver_id == completion_resolver_info.id)
-        (; mod, postprocessor) = completion_resolver_info
-        name = Symbol(data.name)
-        docs = postprocessor(@invokelatest(Base.Docs.doc(Base.Docs.Binding(mod, name)))::Markdown.MD)
-        (; labelDetails, detail) = item
-        # This `kind` doesn't have much meaning in itself, but at least by setting `kind`,
-        # we enable tree-sitter-based highlighting of the `label` in zed-julia
-        kind = CompletionItemKind.Snippet
-        if isnothing(detail) || isnothing(kind)
-            if invokelatest(isdefinedglobal, mod, name)::Bool
-                obj = invokelatest(getglobal, mod, name)
-                if obj isa Type
-                    if obj in builtin_types
-                        detail = "[builtin type]"
-                        kind = CompletionItemKind.Constant
-                    else
-                        detail = "[type]"
-                        kind = CompletionItemKind.Struct
-                    end
-                elseif obj isa Function
-                    if obj isa Core.Builtin && obj in builtin_functions
-                        detail = "[builtin function]"
-                        kind = CompletionItemKind.Constant
-                    else
-                        detail = "[function]"
-                        kind = CompletionItemKind.Function
-                    end
-                elseif obj isa Module
-                    detail = "[module]"
-                    kind = CompletionItemKind.Module
-                elseif isconst(mod, name)
-                    detail = "[constant variable]"
-                    kind = CompletionItemKind.Constant
-                else
-                    detail = "[variable]"
-                    kind = CompletionItemKind.Variable
-                end
-            end
-        end
-        if !isnothing(detail)
-            labelDetails = CompletionItemLabelDetails(; description = "global " * detail)
-        end
-        return CompletionItem(item;
-            labelDetails, kind, detail,
-            documentation = MarkupContent(;
-                kind = MarkupKind.Markdown,
-                value = docs))
+        return resolve_global_completion_item(state, item, data, completion_resolver_info)
     elseif (data isa MethodSignatureCompletionData &&
             completion_resolver_info isa MethodSignatureCompletionResolverInfo &&
             data.resolver_id == completion_resolver_info.id)
-        1 ≤ data.match_idx ≤ length(completion_resolver_info.matches) || return item # just to make sure
-        match = completion_resolver_info.matches[data.match_idx]
-        doc = @something lookup_method_documentation(match) return item
-        documentation = completion_resolver_info.postprocessor(string(doc))
-        _, result = infer_match!(CC.NativeInterpreter(Base.get_world_counter()), match)
-        resulttyp = @something result.result return item
-        rettyp = CC.widenconst(resulttyp)
-        # TODO Show effects and exception type?
-        typstr = completion_resolver_info.postprocessor(string(rettyp))
-        detail = " ::" * typstr
-        prepend_inference_result = @somereal(
-            get_config(state, :completion, :method_signature, :prepend_inference_result),
-            # auto-detect based on client
-            getobjpath(state, :init_params, :clientInfo, :name) ∈ ("Zed", "Zed Dev"))
-        if prepend_inference_result
-            documentation = """
-            ```julia
-            ::$(typstr)
-            ```
-            """ * documentation
-        end
-        return CompletionItem(item;
-            labelDetails = CompletionItemLabelDetails(; detail, description = "method"),
-            detail,
-            documentation = MarkupContent(;
-                kind = MarkupKind.Markdown,
-                value = documentation))
+        return resolve_method_signature_completion_item(state, item, data, completion_resolver_info)
+    elseif (data isa PropertyCompletionData &&
+            completion_resolver_info isa PropertyCompletionResolverInfo &&
+            data.resolver_id == completion_resolver_info.id)
+        return resolve_property_completion_item(state, item, data, completion_resolver_info)
     else
         return item
     end
 end
 
-infer_match!(interp::CC.NativeInterpreter, match::Core.MethodMatch) =
-    infer_method_instance!(interp, CC.specialize_method(match))
+function resolve_property_completion_item(
+        state::ServerState, item::CompletionItem, data::PropertyCompletionData,
+        completion_resolver_info::PropertyCompletionResolverInfo,
+    )
+    supports_labelDetails = supports_completion_item_resolve(state, "labelDetails")
+    supports_detail = supports_completion_item_resolve(state, "detail")
+    supports_documentation = supports_completion_item_resolve(state, "documentation")
+    supports_labelDetails || supports_detail || supports_documentation || return item
 
-function infer_method_instance!(interp::CC.NativeInterpreter, mi::Core.MethodInstance)
-    result = CC.InferenceResult(mi)
-    frame = CC.InferenceState(result, #=cache_mode=#:no, interp)
-    isnothing(frame) && return interp, result
-    return infer_frame!(interp, frame)
+    (; prefixtyp, world, postprocessor) = completion_resolver_info
+
+    # `Union` (tmerge) the per-component `getproperty(::T, Core.Const(name))` result, so a
+    # `Union{Foo, Bar}` prefix shows the union of field types rather than just one side's.
+    name = Core.Const(Symbol(data.label))
+    rawtyp = Union{}
+    for comp in union_components(prefixtyp)
+        gp_rt = @something abstract_call_const(getproperty, Any[comp, name], world) continue
+        rawtyp = CC.tmerge(rawtyp, gp_rt)
+    end
+    typstr = truncate_typstr(
+        postprocessor(sprint(show, rawtyp; context = :compact => true)),
+        #=maxdepth=#3, #=maxwidth=#20)
+    detail = " ::" * typstr
+    full_typstr = postprocessor(string(rawtyp))
+    io = IOBuffer()
+    print(io, "```julia\n", data.prefix, ".", data.label, " :: ", full_typstr, "\n```")
+    fdoc = lookup_field_doc(prefixtyp, Symbol(data.label), world)
+    if fdoc isa Markdown.MD
+        print(io, "\n\n---\n\n", postprocessor(fdoc))
+    end
+    value = String(take!(io))
+
+    labelDetails = supports_labelDetails ?
+        CompletionItemLabelDetails(; detail, description = "property") : item.labelDetails
+    detail = supports_detail ? detail : item.detail
+    documentation = supports_documentation ?
+        MarkupContent(; kind = MarkupKind.Markdown, value) : item.documentation
+    return CompletionItem(item; labelDetails, detail, documentation)
 end
 
-function infer_frame!(interp::CC.NativeInterpreter, frame::CC.InferenceState)
-    Base.invoke_in_world(RT_INF_WORLD[], CC.typeinf, interp, frame)
-    return interp, frame.result
+function resolve_global_completion_item(
+        state::ServerState, item::CompletionItem, data::GlobalCompletionData,
+        completion_resolver_info::GlobalCompletionResolverInfo
+    )
+    supports_labelDetails = supports_completion_item_resolve(state, "labelDetails")
+    supports_kind = supports_completion_item_resolve(state, "kind")
+    supports_detail = supports_completion_item_resolve(state, "detail")
+    supports_documentation = supports_completion_item_resolve(state, "documentation")
+    supports_labelDetails || supports_kind || supports_detail || supports_documentation || return item
+
+    (; context_module, world, postprocessor) = completion_resolver_info
+    name = Symbol(data.name)
+    docs = postprocessor(Base.invoke_in_world(world,
+        Base.Docs.doc, Base.Docs.Binding(context_module, name))::Markdown.MD)
+    (; labelDetails, detail) = item
+    # This `kind` doesn't have much meaning in itself, but at least by setting `kind`,
+    # we enable tree-sitter-based highlighting of the `label` in zed-julia
+    kind = CompletionItemKind.Snippet
+    if isnothing(detail) || isnothing(kind)
+        if Base.invoke_in_world(world, isdefinedglobal, context_module, name)::Bool
+            obj = Base.invoke_in_world(world, getglobal, context_module, name)
+            if obj isa Type
+                if obj in builtin_types
+                    detail = "[builtin type]"
+                    kind = CompletionItemKind.Constant
+                else
+                    detail = "[type]"
+                    kind = CompletionItemKind.Struct
+                end
+            elseif obj isa Function
+                if obj isa Core.Builtin && obj in builtin_functions
+                    detail = "[builtin function]"
+                    kind = CompletionItemKind.Constant
+                else
+                    detail = "[function]"
+                    kind = CompletionItemKind.Function
+                end
+            elseif obj isa Module
+                detail = "[module]"
+                kind = CompletionItemKind.Module
+            elseif Base.invoke_in_world(world, isconst, context_module, name)
+                detail = "[constant variable]"
+                kind = CompletionItemKind.Constant
+            else
+                detail = "[variable]"
+                kind = CompletionItemKind.Variable
+            end
+        end
+    end
+
+    if !isnothing(detail) && supports_labelDetails
+        labelDetails = CompletionItemLabelDetails(; description = "global " * detail)
+    end
+    supports_kind || (kind = item.kind)
+    supports_detail || (detail = item.detail)
+    documentation = supports_documentation ?
+        MarkupContent(; kind = MarkupKind.Markdown, value = docs) : item.documentation
+
+    return CompletionItem(item; labelDetails, kind, detail, documentation)
 end
 
-const RT_INF_WORLD = Ref{UInt}(typemax(UInt))
-push_init_hook!() do
-    RT_INF_WORLD[] = Base.get_world_counter()
+function resolve_method_signature_completion_item(
+        state::ServerState, item::CompletionItem, data::MethodSignatureCompletionData,
+        completion_resolver_info::MethodSignatureCompletionResolverInfo
+    )
+    supports_labelDetails = supports_completion_item_resolve(state, "labelDetails")
+    supports_detail = supports_completion_item_resolve(state, "detail")
+    supports_documentation = supports_completion_item_resolve(state, "documentation")
+    supports_labelDetails || supports_detail || supports_documentation || return item
+
+    (; world, matches, postprocessor) = completion_resolver_info
+    1 ≤ data.match_idx ≤ length(matches) || return item # just to make sure
+    match = matches[data.match_idx]
+    doc = @something lookup_doc_for_match(match, world) return item
+    docstr = postprocessor(string(doc))
+    _, result = infer_match!(world, match)
+    resulttyp = @something result.result return item
+    rettyp = CC.widenconst(resulttyp)
+    # TODO Show effects and exception type?
+    typstr = truncate_typstr(
+        postprocessor(sprint(show, rettyp; context = :compact => true)),
+        #=maxdepth=#3, #=maxwidth=#20)
+    detail = " -> " * typstr
+    full_typstr = postprocessor(string(rettyp))
+    value = """
+    ```julia
+    $(item.label) -> $(full_typstr)
+    ```
+    ---
+    """ * docstr
+
+    labelDetails = supports_labelDetails ?
+        CompletionItemLabelDetails(; detail, description = "method") : item.labelDetails
+    detail = supports_detail ? detail : item.detail
+    documentation = supports_documentation ?
+        MarkupContent(; kind = MarkupKind.Markdown, value) : item.documentation
+
+    return CompletionItem(item; labelDetails, detail, documentation)
 end
 
 # request handler
@@ -838,16 +1066,18 @@ end
 
 function get_completion_items(
         state::ServerState, uri::URI, fi::FileInfo,
-        pos::Position, context::Union{Nothing,CompletionContext}
+        pos::Position, context::Union{Nothing,CompletionContext};
+        context_module::Union{Nothing,Module} = nothing,
     )
+    comp_ctx = CompletionCtx(state, uri, fi, pos, context; context_module)
     items = Dict{String,CompletionItem}()
     # order matters; see local_completions!
     isIncomplete = @something(
-        add_emoji_latex_completions!(items, state, uri, fi, pos),
-        call_completions!(items, state, uri, fi, pos, context),
-        global_completions!(items, state, uri, fi, pos, context),
-        local_completions!(items, state, uri, fi, pos, context),
-        keyword_completions!(items, state, context),
+        add_emoji_latex_completions!(items, comp_ctx),
+        call_completions!(items, comp_ctx),
+        global_completions!(items, comp_ctx),
+        local_completions!(items, comp_ctx),
+        keyword_completions!(items, comp_ctx),
         false)
     return collect(values(items)), isIncomplete
 end

@@ -225,6 +225,17 @@ end
     end
 end
 
+@testset "parse errors" begin
+    mktempdir() do dir
+        filepath = write_test_file(dir, "test.jl", "f(x) = println(x\n")
+        result = run_jetls_check([filepath]; root=dir)
+        @test result.exitcode == 1
+        @test occursin("syntax/parse-error", result.stdout)
+        @test occursin("test.jl", result.stdout)
+        @test occursin("Found 1 diagnostic in 1 file", result.stdout)
+    end
+end
+
 @testset "invalid arguments" begin
     let result = run_jetls_check(["/nonexistent/path/file.jl"])
         @test result.exitcode == 1 || occursin("error", lowercase(result.stderr))

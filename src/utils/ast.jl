@@ -34,9 +34,15 @@ else
 end
 
 """
-Return a tree where all nodes of `kinds` are removed.  Should not modify any
-nodes, and should not create new nodes unnecessarily.
+    trim_error_nodes(st0::SyntaxTreeC) -> SyntaxTreeC
+
+Strip parser-recovery (`K"error"`) nodes from `st0` and fix the structural shapes that
+the strip would otherwise leave malformed for JuliaLowering — i.e. [`without_kinds`](@ref)
+and [`repair_after_trim`](@ref) in sequence. Apply this to a surface AST before handing it
+to a lowering pass that needs to tolerate incomplete user input.
 """
+trim_error_nodes(st0::SyntaxTreeC) = repair_after_trim(without_kinds(st0, JS.KSet"error"))
+
 function _without_kinds(st::SyntaxTreeC, kinds::Tuple{Vararg{JS.Kind}})
     if JS.kind(st) in kinds
         return (nothing, true)
@@ -50,12 +56,19 @@ function _without_kinds(st::SyntaxTreeC, kinds::Tuple{Vararg{JS.Kind}})
         changed |= cc
         isnothing(nc) || push!(new_children, nc)
     end
-    k = JS.kind(st)
-    new_node = changed ?
-        JL.@ast(JS.syntax_graph(st), st, [k new_children...]) : st
+    # `mknode` copies all attrs (kind, syntax_flags, value, ...) from `st`, so
+    # we don't lose the parser's infix/prefix tagging that downstream repair
+    # passes need to disambiguate trimmed `(:: x)` from anonymous `(:: T)`.
+    new_node = changed ? JS.mknode(st, new_children) : st
     return (new_node, changed)
 end
 
+"""
+    without_kinds(st::SyntaxTreeC, kinds::Tuple{Vararg{JS.Kind}}) -> trimmed::SyntaxTreeC
+
+Return a tree where all nodes of `kinds` are trimmed.
+Should not modify any nodes, and should not create new nodes unnecessarily.
+"""
 function without_kinds(st::SyntaxTreeC, kinds::Tuple{Vararg{JS.Kind}})
     ensure_jl_source_attr!(JS.syntax_graph(st))
     return (JS.kind(st) in kinds ?
@@ -64,7 +77,76 @@ function without_kinds(st::SyntaxTreeC, kinds::Tuple{Vararg{JS.Kind}})
 end
 
 """
-Return a tree where `K"\$"` interpolation nodes are replaced by their content.
+    repair_after_trim(st0::SyntaxTreeC) -> SyntaxTreeC
+
+Walk `st0` and fix structural shapes that JuliaLowering would reject after
+[`without_kinds`](@ref) has trimmed parser-recovery (`K"error"`) nodes. Each
+repair rule replaces a now-malformed parent with a substitute (typically one
+of its surviving children) so that downstream passes can keep processing the
+surrounding tree.
+
+Currently handled:
+
+- `K"."` — `lhs.│` parses as `(. lhs (inert (error)))`; after trim the empty
+  `K"inert"` makes JuliaLowering reject the dot as "invalid `.` syntax", so
+  the node is collapsed to `lhs`.
+- `K"&&"` / `K"||"` — short-circuit nodes that always carry ≥ 2 operands in valid parses.
+  A single-child residue (e.g. `(&& a)` from `a &&│`) trips a `numchildren > 1` assertion
+  in JuliaLowering, so the node is collapsed to its surviving operand.
+- `K"::"` — collapses 1-child residue to its lhs only for the infix form (`value::│`);
+  the anonymous prefix form (`f(::T)`) keeps its lone child intact.
+
+Not yet handled because the malformed shape needs more than a child-collapse:
+
+- `K"->"`, `K"if"`, `K"for"`, compound-assignment `K"op="` — either a
+  structural rewrite or context-aware reasoning is required.
+
+Add new branches in [`_repair_node`](@ref) when these cause downstream
+breakage in practice.
+"""
+function repair_after_trim(st0::SyntaxTreeC)
+    ensure_jl_source_attr!(JS.syntax_graph(st0))
+    return _repair_after_trim(st0)::SyntaxTreeC
+end
+
+function _repair_after_trim(st0::SyntaxTreeC)
+    JS.is_leaf(st0) && return st0
+    new_children = JS.SyntaxList(JS.syntax_graph(st0))
+    changed = false
+    for c in JS.children(st0)
+        nc = _repair_after_trim(c)
+        push!(new_children, nc)
+        changed |= nc !== c
+    end
+    repaired = _repair_node(st0, new_children)
+    repaired !== nothing && return repaired
+    return changed ? JS.mknode(st0, new_children) : st0
+end
+
+# Per-kind repair rules. Each rule returns the replacement node when it applies,
+# or `nothing` to fall through to the default reconstruction.
+function _repair_node(st0::SyntaxTreeC, new_children::JS.SyntaxList)
+    k = JS.kind(st0)
+    if k === JS.K"." && length(new_children) == 2 && _is_empty_non_leaf(new_children[2])
+        return new_children[1]
+    end
+    if k in JS.KSet"&& ||" && length(new_children) == 1
+        return new_children[1]
+    end
+    # `(:: x)` can mean either a trimmed `value::│` (infix, the user was typing
+    # a type annotation) or an anonymous `::T` (prefix, valid as a function
+    # arg slot). The parser's infix/prefix flag — preserved through trimming
+    # by `JS.mknode` — disambiguates them, so we only collapse the infix case.
+    if k === JS.K"::" && length(new_children) == 1 && JS.is_infix_op_call(st0)
+        return new_children[1]
+    end
+    return nothing
+end
+
+_is_empty_non_leaf(st0::SyntaxTreeC) = !JS.is_leaf(st0) && JS.numchildren(st0) == 0
+
+"""
+Return a tree where `JS.K"\$"` interpolation nodes are replaced by their content.
 Unlike `without_kinds` which removes nodes entirely, this preserves the child
 so that parent nodes (e.g. dot expressions like `x.\$name`) remain well-formed.
 """
@@ -121,50 +203,11 @@ is_generated0(st0::SyntaxTreeC) = is_macrocall_st0(st0, "@generated")
 
 is_macro0(st0::SyntaxTreeC) = JS.kind(st0) === JS.K"macro"
 
-# Simple (non-qualified) macro names whose new-style implementations in
-# `JuliaLowering/src/syntax_macros.jl` and `src/utils/jl-syntax-macros.jl`
-# preserve fine-grained source provenance during expansion. Unlike old-style
-# macros — whose expansion collapses source positions to line granularity and
-# is why `_remove_macrocalls` exists — these don't need to be rewritten to a
-# `block` to keep accurate locations for scope resolution.
-const NEW_STYLE_MACROCALL_NAMES = (
-    # JuliaLowering/src/syntax_macros.jl
-    "@__FUNCTION__",
-    "@ccall",
-    "@cfunction",
-    "@eval",
-    "@generated",
-    "@goto",
-    "@isdefined",
-    "@locals",
-    "@nospecialize",
-    # src/utils/jl-syntax-macros.jl
-    "@assume_effects",
-    "@inbounds",
-    "@inferred",
-    "@inline",
-    "@kwdef",
-    "@label",
-    "@noinline",
-    "@propagate_inbounds",
-    "@something",
-    "@spawn",
-    "@specialize",
-    "@test",
-    "@test_broken",
-    "@test_deprecated",
-    "@test_logs",
-    "@test_nowarn",
-    "@test_skip",
-    "@test_throws",
-    "@test_warn",
-    "@testset",
-)
-
 is_new_style_macrocall0(st0::SyntaxTreeC) =
     is_macrocall_st0(st0, NEW_STYLE_MACROCALL_NAMES...)
 
 is_doc0(st0::SyntaxTreeC) = is_macrocall_st0(st0, "@doc"; from=Core)
+is_doc0_any(st0::SyntaxTreeC) = is_macrocall_st0(st0, "@doc") # Explicit `@doc` can have any module set.
 
 is_cmd0(st0::SyntaxTreeC) = is_macrocall_st0(st0, "@cmd"; from=Core)
 
@@ -357,8 +400,6 @@ function _remove_macrocalls(st0::SyntaxTreeC)
             # `@main` functions are desugared by `desugar_main_macrocall` below,
             # so there's no need to remove them here
             return st0, false
-        elseif is_doc0(st0)
-            return _remove_macrocalls(st0[end])[1], true
         elseif is_cmd0(st0)
             # `` `foo` `` parses to `Core.@cmd(LineNumberNode, CmdString)` where
             # `CmdString` is an opaque leaf JuliaLowering has no rule for at
@@ -643,7 +684,23 @@ end
 
 # TODO use something like `JuliaInterpreter.ExprSplitter`
 
+"""
+    iterate_toplevel_tree(callback, st0_top::SyntaxTreeC)
+
+Walk each lowerable top-level subtree of `st0_top` (descending into `K"toplevel"`,
+`K"module"`, and docstring wrappers) and invoke `callback(st0)` on every leaf.
+
+The `callback` can control iteration by returning one of:
+- `traversal_terminator`: stop iteration immediately.
+- `TraversalReturn(val)`: store `val` as the return value and continue.
+- `TraversalReturn(val; terminate=true)`: store `val` and stop immediately.
+- anything else: continue.
+
+The stored value from the last `TraversalReturn` is returned (or `nothing` if no
+`TraversalReturn` was used).
+"""
 function iterate_toplevel_tree(callback, st0_top::SyntaxTreeC)
+    retval = nothing
     sl = JS.SyntaxList(st0_top)
     while !isempty(sl)
         st0 = pop!(sl)
@@ -652,19 +709,40 @@ function iterate_toplevel_tree(callback, st0_top::SyntaxTreeC)
                 push!(sl, st0[i])
             end
         elseif JS.kind(st0) === JS.K"module"
-            stblk = st0[end]
-            JS.kind(stblk) === JS.K"block" || continue
+            # The body `K"block"` is typically the last child, but trailing
+            # `K"error"` nodes from incomplete code can push it earlier.
+            stblk_idx = @something findlast(i::Int -> JS.kind(st0[i]) === JS.K"block",
+                1:JS.numchildren(st0)) continue
+            stblk = st0[stblk_idx]
             for i = JS.numchildren(stblk):-1:1 # reversed since we use `pop!`
                 push!(sl, stblk[i])
             end
-        elseif is_doc0(st0)
-            # Analyze only the code to which docstrings are attached
-            push!(sl, st0[end])
+        elseif is_doc0_any(st0)
+            # Dispatch the macro arguments of a `@doc` macrocall as their own
+            # lowerable trees:
+            # - the documented expression is reached directly, so cursor-based features and
+            #   per-statement diagnostics keep accurate source positions, which otherwise
+            #   could be lost during the expansion of `@doc` (an old-style macro)
+            # - the docstring node (a `K"string"` with interpolations as children) is
+            #   lowered too, so identifier interpolations like `$(SIGNATURES)` from
+            #   `DocStringExtensions` resolve as global `:use` occurrences
+            for i = JS.numchildren(st0):-1:3 # reversed since we use `pop!`
+                # The first two children of any macrocall are the macro name and the line
+                # node, both of which carry the macrocall's full byte range as provenance
+                # and would otherwise capture cursor-based lookups for any offset inside
+                # the doc-wrapped form; start at `i = 3` to skip them.
+                push!(sl, st0[i])
+            end
         else # st0 is lowerable tree
             ret = callback(st0)
+            if ret isa TraversalReturn
+                retval = ret.val
+                ret.terminate ? break : continue
+            end
             ret === traversal_terminator && break
         end
     end
+    return retval
 end
 
 """
@@ -703,43 +781,24 @@ end
 byte_ancestors(flt, st::SyntaxTreeC, byte::Integer) = byte_ancestors(flt, st, byte:byte)
 
 """
-    greatest_local(st0::SyntaxTreeC, offset::Integer) -> st::Union{SyntaxTreeC, Nothing}
+    lowerable_toplevel_at(st0_top::SyntaxTreeC, offset::Integer) -> st::Union{SyntaxTreeC, Nothing}
 
-Return the largest tree that can introduce local bindings that are visible to the cursor
-(if any such tree exists).
+Return the lowerable top-level subtree of `st0_top` whose byte range contains `offset`, or
+`nothing` if no such subtree exists. Equivalent to running [`iterate_toplevel_tree`](@ref)
+and picking the first hit whose byte range contains `offset`, with an `offset - 1` retry
+for cursor positions just past the last token of a statement (e.g. `export foo│\\n`).
 """
-function greatest_local(st0::SyntaxTreeC, offset::Integer)
-    result = _find_greatest_local(st0, offset)
+function lowerable_toplevel_at(st0_top::SyntaxTreeC, offset::Integer)
+    result = _lowerable_toplevel_at(st0_top, offset)
     result !== nothing && return result
-    # When the cursor sits just past the last token of a line (e.g. `export
-    # foo│\n`), `offset` points at a byte owned only by `toplevel`, so the
-    # initial lookup yields nothing. Retry with `offset - 1` to select the
-    # node just to the left of the cursor, mirroring the offset-1 fallbacks
-    # in `_select_target_binding` / `select_macrocall_binding`.
-    return offset > 1 ? _find_greatest_local(st0, offset - 1) : nothing
+    return offset > 1 ? _lowerable_toplevel_at(st0_top, offset - 1) : nothing
 end
 
-function _find_greatest_local(st0::SyntaxTreeC, offset::Integer)
-    bas = byte_ancestors(st0, offset)
-    first_global = @something begin
-        findfirst(st::SyntaxTreeC -> JS.kind(st) in JS.KSet"toplevel module", bas)
-    end return nothing
-    if first_global == 1
-        return nothing
+function _lowerable_toplevel_at(st0_top::SyntaxTreeC, offset::Integer)
+    return iterate_toplevel_tree(st0_top) do st0::SyntaxTreeC
+        offset in JS.byte_range(st0) || return nothing
+        return TraversalReturn(st0; terminate=true)
     end
-    idx = Ref(first_global - 1)
-    while JS.kind(bas[idx[]]) === JS.K"block"
-        if any(j::Int -> JS.kind(bas[idx[]][j]) === JS.K"local", 1:JS.numchildren(bas[idx[]]))
-            # If this `block` contains `local`, it may introduce local bindings.
-            # For correct scope analysis, we need to analyze this entire block
-            break
-        end
-        # `bas[i]` is a block within a global scope, so can't introduce local bindings.
-        # Shrink the tree (mostly for performance).
-        idx[] -= 1
-        idx[] < 1 && return nothing
-    end
-    return bas[idx[]]
 end
 
 """
@@ -979,7 +1038,7 @@ function find_nontrivia(prev_or_next::Bool, ps::JS.ParseStream, b::Integer; pass
 end
 
 function is_trivia(tc::TokenCursor, pass_newlines::Bool)
-    k = kind(tc)
+    k = JS.kind(tc)
     JS.is_whitespace(k) && (pass_newlines || k !== JS.K"NewlineWs")
 end
 
@@ -1011,7 +1070,7 @@ end
 # show signature help
 is_special_macrocall(st0::SyntaxTreeC) =
     JS.kind(st0) === JS.K"macrocall" && JS.numchildren(st0) >= 1 &&
-    let mname = kind(st0[1]) === JS.K"." && JS.numchildren(st0[1]) === 2 ? st0[1][2] : st0[1]
+    let mname = JS.kind(st0[1]) === JS.K"." && JS.numchildren(st0[1]) === 2 ? st0[1][2] : st0[1]
         mname_s = hasproperty(mname, :name_val) ? mname.name_val : ""
         endswith(mname_s, "_str") || endswith(mname_s, "_cmd")
     end
@@ -1024,16 +1083,14 @@ noparen_macrocall(st0::SyntaxTreeC) =
 """
     select_target_identifier(st0::SyntaxTreeC, offset::Integer) -> target::Union{SyntaxTreeC,Nothing}
 
-Determines the node that the user most likely intends to navigate to.
-Returns `nothing` if no suitable one is found.
-Currently `st0` needs to be a `SyntaxTree` before lowering.
+Determine the identifier node that the user most likely intends to navigate to,
+or `nothing` if no suitable one is found. `st0` must be a `SyntaxTree` before
+lowering.
 
-Currently, it simply checks the ancestors of the node located at the given offset.
-
-TODO: Apply a heuristic similar to rust-analyzer
-refs:
-- https://github.com/rust-lang/rust-analyzer/blob/6acff6c1f8306a0a1d29be8fd1ffa63cff1ad598/crates/ide/src/goto_definition.rs#L47-L62
-- https://github.com/aviatesk/JETLS.jl/pull/61#discussion_r2134707773
+For dot expressions, walks up through `K"."` to pick the larger dotted prefix
+(`Base.Compi│ler.tmeet` → `Base.Compiler`). Cursor positions at token boundaries
+like `var│` or `func│(5)` are handled by [`select_target_node`](@ref)'s
+`offset - 1` fallback.
 """
 function select_target_identifier(st0::SyntaxTreeC, offset::Integer)
     filter = function (bas)
@@ -1067,6 +1124,118 @@ function select_target_string(st0::SyntaxTreeC, offset::Integer)
     end
     return select_target_node(filter, selector, st0, offset)
 end
+
+"""
+    select_enclosing_call(st0::SyntaxTreeC, offset::Integer) ->
+        target::Union{SyntaxTreeC, Nothing}
+
+Innermost surface form whose value is the result of a callable application
+whose byte range contains `offset`. Covers:
+
+- `K"call"` / `K"dotcall"` — `f(args)`, `obj.f(args)`
+- `K"ref"` — `arr[idx]`, `T[a, b, c]` (typed comma-separated literal)
+- `K"tuple"` — `(a, b, c)`
+- `K"vect"` — `[a, b, c]`
+- `K"vcat"` / `K"hcat"` — `[a; b]` / `[a b]`
+- `K"comprehension"` — `[x for y in z]`
+- `K"typed_vcat"` / `K"typed_hcat"` / `K"typed_comprehension"` — typed
+  variants of the above
+
+All of these lower to a `K"call"` (`getindex`, `Core.tuple`, `Base.vect`,
+`Base.vcat`, `Base.hcat`, `Base.collect`, …) and so carry an inferred
+return type that downstream features can query.
+
+Probes both `offset` and `offset - 1`, picking the more specific (smaller
+byte range) match when both yield a hit. This makes `func(args)│` and
+`outer(inner(x)│)` symmetric — both resolve to the form that just closed
+at the cursor, rather than to whichever enclosing form also happens to
+span that byte.
+"""
+function select_enclosing_call(st0::SyntaxTreeC, offset::Integer)
+    a = _innermost_call_at(st0, offset)
+    offset > 0 || return a
+    b = _innermost_call_at(st0, offset - 1)
+    a === nothing && return b
+    b === nothing && return a
+    return length(JS.byte_range(a)) <= length(JS.byte_range(b)) ? a : b
+end
+
+"""
+    _OPERATOR_CALL_KINDS
+
+Non-`K"call"` / `K"dotcall"` surface kinds whose lowered form is a single
+dispatched operator: `xs[i]│` → `getindex`, `(a, b)│` → `Core.tuple`,
+`[a, b]│` → `Base.vect`, `[a; b]│` → `Base.vcat`, `[a for x in xs]│` →
+`Base.collect`, etc. Used by features that want to look up the dispatched
+method directly from the surface (go-to-definition Phase 4, hover
+operator-dispatch doc, …) — the surface's own byte range maps to the
+lowered call's `:matches` annotation without any walk-up.
+"""
+const _OPERATOR_CALL_KINDS = JS.KSet"""
+    ref tuple vect vcat hcat comprehension
+    typed_vcat typed_hcat typed_comprehension
+    """
+
+const _CALL_LIKE_KINDS = JS.KSet"""
+    call dotcall ref tuple vect vcat hcat comprehension
+    typed_vcat typed_hcat typed_comprehension
+    """
+
+function _innermost_call_at(st0::SyntaxTreeC, offset::Integer)
+    for b in byte_ancestors(st0, offset)
+        JS.kind(b) in _CALL_LIKE_KINDS && return b
+    end
+    return nothing
+end
+
+"""
+    enclosing_call_for_matches(st0::SyntaxTreeC, node::SyntaxTreeC) ->
+        SyntaxTreeC | nothing
+
+Call node whose `:matches` annotation answers a query about `node`.
+Returns `nothing` when `node` isn't (and isn't the callee of) a call.
+
+Two recognized shapes:
+- `node` itself is `K"call"` / `K"dotcall"` (`func(args)│`) — returns `node`.
+- `node` is the full callee of an enclosing call (`func│(args)`, `Foo.bar│(args)`) —
+  returns the enclosing call.
+
+`byte_ancestors` walks from the cursor outward; the first call whose `child[1]` byte range
+exactly matches `node`'s range is the call we want.
+The exact-match check rejects mid-callee positions like `Foo│.bar(x)` where `node` is
+`Foo` and `child[1]` is the larger `Foo.bar`.
+"""
+function enclosing_call_for_matches(st0::SyntaxTreeC, node::SyntaxTreeC)
+    JS.kind(node) in JS.KSet"call dotcall" && return node
+    rng = JS.byte_range(node)
+    for st in byte_ancestors(st0, first(rng))
+        JS.kind(st) in JS.KSet"call dotcall" || continue
+        JS.numchildren(st) >= 1 || continue
+        JS.byte_range(st[1]) == rng && return st
+    end
+    return nothing
+end
+
+"""
+    select_target_for_type_query(st0::SyntaxTreeC, offset::Integer) ->
+        target::Union{SyntaxTreeC, Nothing}
+
+Pick the AST node whose `JS.byte_range` should be passed to `get_type_for_range` for the
+cursor at `offset`. Falls back through:
+
+1. [`select_target_identifier`](@ref) — handles identifiers and dot-chain expressions
+   (`Base.Compi│ler.tmeet` → `Base.Compiler`).
+2. [`select_enclosing_call`](@ref) — handles cursor positions that aren't on an identifier
+   but are inside (or right after) a call expression (`func(args)│` → the `func(args)` call,
+   whose type is the call's return type).
+
+Intended as the canonical cursor → AST resolver for TypeAnnotation-based features
+(type definition, hover-type, etc.).
+"""
+select_target_for_type_query(st0::SyntaxTreeC, offset::Integer) =
+    @something(
+        select_target_identifier(st0, offset),
+        return select_enclosing_call(st0, offset))
 
 """
     resolve_path_string_literal(string_node::SyntaxTreeC, basedir::AbstractString)

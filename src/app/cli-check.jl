@@ -348,8 +348,8 @@ function run_check(args::Vector{String})
 
     uri2diagnostics = get_full_diagnostics(server)
 
-    # Lowering analysis phase (workspace/diagnostic equivalent)
-    total_uris = run_lowering_analysis!(uri2diagnostics, analysis_uris, server, root_path, progress_ctx; lookup_func)
+    # Per-file diagnostics phase (workspace/diagnostic equivalent)
+    total_uris = run_per_file_diagnostics!(uri2diagnostics, analysis_uris, server, root_path, progress_ctx; lookup_func)
 
     for (uri, diagnostics) in uri2diagnostics
         apply_diagnostic_config!(diagnostics, server.state.config_manager, uri, root_path)
@@ -366,10 +366,16 @@ function run_check(args::Vector{String})
 end
 
 function start_cli_server(root_path::AbstractString)
-    server = Server(; suppress_notifications=true)
+    server = Server(; suppress_notifications=true, cli_mode=true)
 
+    # Normalize via URI round-trip so the casing of `state.root_path` matches
+    # paths reconstructed from URIs (lowercase drive letter on Windows).
+    # Required for path comparisons elsewhere — e.g. `relpath` for display,
+    # `startswith` in the `analysis_overrides` matcher.
+    root_uri = filepath2uri(root_path)
+    root_path = uri2filepath(root_uri)::String
     server.state.root_path = root_path
-    server.state.workspaceFolders = URI[filepath2uri(root_path)]
+    server.state.workspaceFolders = URI[root_uri]
     env_path = find_env_path(root_path)
     if env_path !== nothing
         server.state.root_env_path = env_path
@@ -406,7 +412,7 @@ mutable struct Counter
     @atomic count::Int
 end
 
-function run_lowering_analysis!(
+function run_per_file_diagnostics!(
         uri2diagnostics::Dict{URI,Vector{Diagnostic}}, analyzed_uris::Set{URI},
         server::Server, root_path::AbstractString,
         progress_ctx::ProgressContext;
@@ -414,17 +420,23 @@ function run_lowering_analysis!(
     )
     total_uris = length(analyzed_uris)
     uri2diagnostics_lock = ReentrantLock()
+    def_used_names_cache = DefUsedNamesCache()
     with_progress(progress_ctx, "Lowering analysis", "[$total_uris files]") do cancellable_token
         if cancellable_token !== nothing
             send_progress(server, cancellable_token.token, WorkDoneProgressBegin(; title="Analyzing", message="Started lowering analysis"))
         end
 
         counter = Counter(0)
-        run_lowering_analysis_for_uri = function (uri::URI, lock::Bool)
+        run_per_file_diagnostics_for_uri = function (uri::URI, lock::Bool)
             fi = @something get_file_info(server.state, uri) begin
                 get_unsynced_file_info!(server.state, uri)
             end return
-            diagnostics = toplevel_lowering_diagnostics(server, uri, fi; lookup_func)
+            # Mirrors `compute_pull_diagnostics`: parse errors short-circuit lowering.
+            diagnostics = if isempty(fi.parsed_stream.diagnostics)
+                toplevel_lowering_diagnostics!(def_used_names_cache, server, uri, fi; lookup_func)
+            else
+                parsed_stream_to_diagnostics(fi)
+            end
             if !isempty(diagnostics)
                 if lock
                     @lock uri2diagnostics_lock append!(get!(Vector{Diagnostic}, uri2diagnostics, uri), diagnostics)
@@ -446,11 +458,11 @@ function run_lowering_analysis!(
 
         if Threads.nthreads() > 1
             map(collect(analyzed_uris)) do uri
-                Threads.@spawn :default run_lowering_analysis_for_uri(uri, false)
+                Threads.@spawn :default run_per_file_diagnostics_for_uri(uri, false)
             end |> waitall
         else
             for uri in analyzed_uris
-                run_lowering_analysis_for_uri(uri, false)
+                run_per_file_diagnostics_for_uri(uri, false)
             end
         end
 
@@ -486,25 +498,25 @@ function print_stats(
     end
     total_diagnostics = n_errors + n_warnings + n_info + n_hints
 
-    println(stdout, "# Analyzed $total_files files in $(format_duration(elapsed_time))")
+    println(stdout, "# Analyzed ", count_label(total_files, "file"),
+        " in $(format_duration(elapsed_time))")
     if total_diagnostics == 0
         println(stdout, "# No diagnostics found")
     else
-        if total_diagnostics == 1
-            print(stdout, "# Found 1 diagnostic")
-        else
-            print(stdout, "# Found $total_diagnostics diagnostics")
-        end
-        print(stdout, " in $files_with_diagnostics files")
+        print(stdout, "# Found ", count_label(total_diagnostics, "diagnostic"),
+            " in ", count_label(files_with_diagnostics, "file"))
         parts = String[]
-        n_errors > 0 && push!(parts, "$n_errors errors")
-        n_warnings > 0 && push!(parts, "$n_warnings warnings")
-        n_info > 0 && push!(parts, "$n_info info")
-        n_hints > 0 && push!(parts, "$n_hints hints")
+        n_errors > 0 && push!(parts, count_label(n_errors, "error"))
+        n_warnings > 0 && push!(parts, count_label(n_warnings, "warning"))
+        n_info > 0 && push!(parts, count_label(n_info, "info", "info"))
+        n_hints > 0 && push!(parts, count_label(n_hints, "hint"))
         println(stdout, " (", join(parts, ", "), ")")
         println(stdout)
     end
 end
+
+count_label(n::Int, singular::AbstractString, plural::AbstractString = singular * "s") =
+    string(n, ' ', n == 1 ? singular : plural)
 
 function print_diagnostics(
         uri2diagnostics::URI2Diagnostics, root_path::String,

@@ -1,6 +1,7 @@
 using LSP
 using LSP.URIs2
-using LSP: to_lsp_json, test_roundtrip
+using LSP: test_roundtrip, to_lsp_json
+using REPL: REPL
 using Test
 
 @testset "LSP" begin
@@ -231,5 +232,21 @@ using Test
         error_res_s = to_lsp_json(error_res)
         @test !occursin("\"result\"", error_res_s)
         @test occursin("\"error\"", error_res_s)
+    end
+
+    @testset "@interface field docs" begin
+        # `ResponseError` has no top-level docstring; its field docs only
+        # surface via the `MultiDoc` registered by `attach_fallback_doc!`.
+        @test occursin("A number indicating the error type that occurred.",
+                       string(REPL.fielddoc(ResponseError, :code)))
+        @test occursin("A string providing a short description of the error.",
+                       string(REPL.fielddoc(ResponseError, :message)))
+
+        # `Position` carries a top-level docstring, so field docs flow through
+        # `@kwdef` + `@doc` directly; the fallback should leave them untouched.
+        @test occursin("Line position in a document",
+                       string(REPL.fielddoc(Position, :line)))
+        @test occursin("Character offset on a line",
+                       string(REPL.fielddoc(Position, :character)))
     end
 end

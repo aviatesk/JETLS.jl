@@ -101,6 +101,15 @@ end
         @test JETLS.issubdir("/home/user/project/", "/home/user/")
     end
 
+    if Sys.iswindows()
+        # Drive-letter casing must not affect the comparison: URI round-trip
+        # lowercases the drive letter while `pwd()` preserves the original case.
+        @test JETLS.issubdir("c:\\Users\\foo\\bar", "C:\\Users\\foo")
+        @test JETLS.issubdir("C:\\Users\\foo\\bar", "c:\\Users\\foo")
+        @test JETLS.issubdir("C:\\Users\\Foo", "c:\\users\\foo")
+        @test !JETLS.issubdir("C:\\Users\\other", "c:\\Users\\foo")
+    end
+
     # Test with relative paths using temporary directories
     mktempdir() do temp_root
         parent = joinpath(temp_root, "parent")

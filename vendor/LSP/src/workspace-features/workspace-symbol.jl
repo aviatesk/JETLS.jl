@@ -141,7 +141,7 @@ advertise support for it via the `workspace.symbol.resolveSupport` capability.
 end
 
 @interface WorkspaceSymbolResponse @extends ResponseMessage begin
-    result::Union{Nothing, Vector{SymbolInformation}, Vector{WorkspaceSymbol}}
+    result::Union{Nothing, Vector{SymbolInformation}, Vector{WorkspaceSymbol}, Null}
 end
 
 """

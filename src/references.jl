@@ -74,7 +74,7 @@ function do_find_references(
     if result isa ResponseError
         return send(server, ReferencesResponse(; id = msg_id, result = nothing, error = result))
     else
-        return send(server, ReferencesResponse(; id = msg_id, result = @somereal result null))
+        return send(server, ReferencesResponse(; id = msg_id, result))
     end
 end
 
@@ -84,12 +84,12 @@ function find_references(
     )
     st0_top = build_syntax_tree(fi)
     offset = xy_to_offset(fi, pos)
-    (; mod) = get_context_info(server.state, uri, pos)
+    (; context_module) = get_context_info(server.state, uri, pos)
     soft_scope = is_notebook_cell_uri(server.state, uri)
     locations = Location[]
 
     (; ctx3, st3, st0, binding) = @something begin
-        select_target_binding(st0_top, offset, mod; caller="find_references", soft_scope)
+        select_target_binding(st0_top, offset, context_module; caller="find_references", soft_scope)
     end return locations
 
     binfo = JL.get_binding(ctx3, binding)

@@ -105,7 +105,7 @@ Here is a summary table of the diagnostics explained in this section:
 | ------------------------------------------------------------------------------------------------ | --------------------- | ------------- | -------------------------------------------------- |
 | [`syntax/parse-error`](@ref diagnostic/reference/syntax/parse-error)                             | `Error`               | `JETLS/live`  | Syntax parsing errors detected by JuliaSyntax.jl   |
 | [`lowering/error`](@ref diagnostic/reference/lowering/error)                                     | `Error`               | `JETLS/live`  | General lowering errors                            |
-| [`lowering/macro-expansion-error`](@ref diagnostic/reference/lowering/macro-expansion-error)     | `Error`               | `JETLS/live`  | Errors during macro expansion                      |
+| [`lowering/macro-expansion-error`](@ref diagnostic/reference/lowering/macro-expansion-error)     | `Error/Warning`       | `JETLS/live`  | Issues detected during macro expansion             |
 | [`lowering/undef-global-var`](@ref diagnostic/reference/lowering/undef-global-var)               | `Warning`             | `JETLS/live`  | References to undefined global variables           |
 | [`lowering/undef-local-var`](@ref diagnostic/reference/lowering/undef-local-var)                 | `Warning/Information` | `JETLS/live`  | References to undefined local variables            |
 | [`lowering/ambiguous-soft-scope`](@ref diagnostic/reference/lowering/ambiguous-soft-scope)       | `Warning`             | `JETLS/live`  | Assignment in soft scope shadows a global variable |
@@ -170,19 +170,16 @@ end
 
 #### [Macro expansion error (`lowering/macro-expansion-error`)](@id diagnostic/reference/lowering/macro-expansion-error)
 
-**Default severity**: `Error`
+**Default severity**: `Error` or `Warning` (see below)
 
-Errors that occur when expanding macros during the lowering phase.
-
-Example:
+Issues detected during macro expansion. The macro name being unresolved
+or a macro body throwing surfaces as `Error` severity:
 
 ```julia
 function macro_expand_error()
     @undefined_macro ex  # Macro name `@undefined_macro` not found (JETLS lowering/macro-expansion-error)
 end
 ```
-
-Errors that occur during actual macro expansion are also reported:
 
 ```julia
 macro myinline(ex)
@@ -191,6 +188,36 @@ macro myinline(ex)
 end
 @myinline callsin(x) = sin(x)  # Error expanding macro
                                # Expected long function definition (JETLS lowering/macro-expansion-error)
+```
+
+For a subset of Base macros (`@spawn`, `@test`, `@info`, `@testset`, ...),
+JETLS provides new-style stubs that validate arguments at expansion time
+and report problems via a side channel *without* aborting expansion, so
+downstream analyses (undef-var, references, hover, signature help, ...)
+keep running on the rest of the macrocall. The severity mirrors what
+Base would do — `Error` for cases Base rejects, `Warning` for cases Base
+accepts silently or only deprecates:
+
+```julia
+# Error: Base also rejects.
+Threads.@spawn :badname body   # unsupported threadpool in @spawn: badname
+                               # (JETLS lowering/macro-expansion-error)
+
+@info "msg" k=1 k=2            # @info: keyword `k` provided more than once
+                               # (JETLS lowering/macro-expansion-error)
+
+@test x skip=true broken=true  # invalid test macro call: cannot set both
+                               # `skip` and `broken` keywords
+                               # (JETLS lowering/macro-expansion-error)
+
+# Warning: Base accepts silently or only deprecates.
+@testset "a" "b" begin end     # Multiple descriptions provided to @testset.
+                               # This is deprecated and may error in the future.
+                               # (JETLS lowering/macro-expansion-error)
+
+@testset verbose=true verbose=false begin end
+                               # @testset: option `verbose` provided more than once
+                               # (JETLS lowering/macro-expansion-error)
 ```
 
 #### [Undefined global variable (`lowering/undef-global-var`)](@id diagnostic/reference/lowering/undef-global-var)

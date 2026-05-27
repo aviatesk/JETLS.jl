@@ -3,6 +3,7 @@ module test_inlay_hint
 using Test
 using JETLS
 using JETLS.LSP
+using JETLS.URIs2
 
 include(normpath(pkgdir(JETLS), "test", "setup.jl"))
 include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
@@ -42,14 +43,19 @@ function get_syntactic_inlay_hints(
         range::Union{Range,Nothing} = nothing,
         min_lines::Int = 0,
     )
+    server = JETLS.Server()
+    uri = URI("file:///test.jl")
     fi = JETLS.FileInfo(1, code, @__FILE__)
+    JETLS.store!(server.state.file_cache) do cache
+        Base.PersistentDict(cache, uri => fi), nothing
+    end
     if range === nothing
         n_lines = count(==('\n'), code)
         range = Range(;
             start = Position(; line = 0, character = 0),
             var"end" = Position(; line = n_lines, character = 0))
     end
-    return JETLS.syntactic_inlay_hints(fi, range; min_lines)
+    return JETLS.syntactic_inlay_hints(server.state, uri, fi, range; min_lines)
 end
 
 @testset "block end hints" begin

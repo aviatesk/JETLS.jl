@@ -187,18 +187,6 @@
                   },
                   "required": [],
                   "type": "object"
-                },
-                "method_signature": {
-                  "additionalProperties": false,
-                  "markdownDescription": "Method signature completion configuration. See [documentation](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/completion/method_signature/prepend_inference_result).",
-                  "properties": {
-                    "prepend_inference_result": {
-                      "markdownDescription": "When true, prepends inferred return type to completion documentation, ensuring visibility in editors where `CompletionItem.detail` may be cut off (e.g., Zed). Auto-detected by default based on client name; set explicitly if return types are not visible.",
-                      "type": "boolean"
-                    }
-                  },
-                  "required": [],
-                  "type": "object"
                 }
               },
               "required": [],
@@ -413,7 +401,7 @@
   },
   "dependencies": {
     "glob": "^11.0.0",
-    "vscode-languageclient": "^10.0.0-next.18"
+    "vscode-languageclient": "^10.0.0-next.21"
   },
   "devDependencies": {
     "@eslint/js": "^9.13.0",

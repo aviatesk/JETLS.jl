@@ -34,6 +34,44 @@ using JETLS
     @test JETLS.format_duration(119.99) == "1m 60.0s" # 119.99s = 1m 59.99s, rounds to 60.0s
 end
 
+@testset "type string truncation" begin
+    # `maxdepth=3, maxwidth=20` are the production defaults. Verify the two
+    # passes cooperate: `maxdepth` clips deep nesting first, `maxwidth` then
+    # handles wide-but-shallow types.
+
+    @testset "maxdepth caps nesting" begin
+        # `SyntaxTree{Dict{Symbol, Dict{Int64, Any}}}` — depth 3 inner contents.
+        let s = "SyntaxTree{Dict{Symbol, Dict{Int64, Any}}}"
+            @test JETLS.truncate_typstr(s, 3, typemax(Int)) ==
+            "SyntaxTree{Dict{Symbol, Dict{…}}}"
+            @test JETLS.truncate_typstr(s, 2, typemax(Int)) == "SyntaxTree{Dict{…}}"
+            @test JETLS.truncate_typstr(s, 1, typemax(Int)) == "SyntaxTree{…}"
+        end
+    end
+
+    @testset "maxwidth caps wide flat types" begin
+        let s = "Tuple{Int64, Int64, Int64, Int64, Int64}"  # 40 chars, depth 1
+            # Depth cap can't help — there's no nested level to cut. Width pass
+            # collapses the outermost `{...}`.
+            @test JETLS.truncate_typstr(s, typemax(Int), 20) == "Tuple{…}"
+        end
+    end
+
+    @testset "passes compose" begin
+        # Deep + wide: depth pass shrinks first, width pass either accepts
+        # the shrunk result or further trims it.
+        let s = "SyntaxTree{Dict{Symbol, Dict{Int64, Any}}}"
+            @test JETLS.truncate_typstr(s, 3, 20) == "SyntaxTree{Dict{…}}"
+        end
+    end
+
+    @testset "can be no-op" begin
+        let s = "Tuple{Float64, Float64, Float64, Float64, Float64, Float64, Float64}"
+            @test JETLS.truncate_typstr(s, typemax(Int), typemax(Int)) == s
+        end
+    end
+end
+
 @testset "is_abstract_fieldtype" begin
     @test !JETLS.is_abstract_fieldtype(Int)
     @test !JETLS.is_abstract_fieldtype(Vector{Int})
@@ -49,46 +87,45 @@ maybenothing(c::Bool, x) = c ? x : nothing
 maybemissing(c::Bool, x) = c ? x : missing
 
 @testset "@somereal" begin
-    @test_throws "No values present" JETLS.@somereal
-    let cnt = 0
-        nonreal(x) = (cnt += x; nothing)
+    let cnt = Ref(0)
+        nonreal(x) = (cnt[] += x; nothing)
         a = 3
         @test 3 == JETLS.@somereal a nonreal(1) nonreal(2)
-        @test cnt == 0
+        @test cnt[] == 0
         @test 3 == JETLS.@somereal a nonreal(1) nonreal(2) error("Unable to find default for `a`")
-        @test cnt == 0
+        @test cnt[] == 0
         @test 3 == JETLS.@somereal nonreal(1) nonreal(2) a
-        @test cnt == 3
+        @test cnt[] == 3
         @test 3 == JETLS.@somereal nonreal(1) nonreal(2) a error("Unable to find default for `a`")
-        @test cnt == 6
+        @test cnt[] == 6
         @test nothing == JETLS.@somereal nonreal(1) nonreal(2) Some(nothing)
-        @test cnt == 9
+        @test cnt[] == 9
     end
-    let cnt = 0
-        nonreal(x) = (cnt += x; nothing)
+    let cnt = Ref(0)
+        nonreal(x) = (cnt[] += x; nothing)
         a = missing
         @test_throws "Unable to find default for `a`" JETLS.@somereal a nonreal(1) nonreal(2) error("Unable to find default for `a`")
-        @test cnt == 3
+        @test cnt[] == 3
         @test_throws "No values present" JETLS.@somereal a nonreal(1) nonreal(2)
-        @test cnt == 6
+        @test cnt[] == 6
         @test_throws "Unable to find default for `a`" JETLS.@somereal nonreal(1) nonreal(2) a error("Unable to find default for `a`")
-        @test cnt == 9
+        @test cnt[] == 9
         @test_throws "No values present" JETLS.@somereal nonreal(1) nonreal(2) a
-        @test cnt == 12
+        @test cnt[] == 12
         @test nothing == JETLS.@somereal nonreal(1) nonreal(2) a Some(nothing)
-        @test cnt == 15
+        @test cnt[] == 15
     end
-    let cnt = 0
-        nonreal(x) = (cnt += x; nothing)
+    let cnt = Ref(0)
+        nonreal(x) = (cnt[] += x; nothing)
         a = Int[]
         @test [1,2] == JETLS.@somereal a [1,2] nonreal(1)
-        @test cnt == 0
+        @test cnt[] == 0
         @test [1,2] == JETLS.@somereal a nonreal(1) [1,2]
-        @test cnt == 1
+        @test cnt[] == 1
         @test_throws "No values present" JETLS.@somereal a nonreal(1)
-        @test cnt == 2
+        @test cnt[] == 2
         @test [] == JETLS.@somereal a nonreal(1) Some([])
-        @test cnt == 3
+        @test cnt[] == 3
     end
 
     @test Int == Base.infer_return_type((Int,)) do x
@@ -121,6 +158,8 @@ maybemissing(c::Bool, x) = c ? x : missing
     @test Base.infer_effects((Bool,Int,)) do c, x
         JETLS.@somereal maybemissing(c, x) Some(missing)
     end |> Base.Compiler.is_nothrow
+
+    @test_throws "No values present" JETLS.@somereal
 end
 
 end # module test_general

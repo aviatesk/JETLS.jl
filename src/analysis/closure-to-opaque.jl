@@ -75,24 +75,40 @@ function rewrite_closure_block(
     return JL.@ast ctx blk [JS.K"block" new_children...]
 end
 
-# Collect `var_id`s that have more than one `K"method_defs"` anywhere in `ex`.
-# JL wraps each method definition in its own inner block, so `rewrite_closure_block`'s
-# sibling-only view can't tell a single-method binding apart from one method of a
-# multi-method binding. A whole-tree pre-pass disambiguates them. We track only the
-# "seen at least once" / "seen at least twice" distinction (no need for full counts).
+# Collect `var_id`s that resolve to more than one method, plus any helper closure
+# bindings reachable from those multi-method wrappers.
+#
+# Multi-method detection counts `K"method"` nodes per `var_id` across the whole
+# tree. JL has two ways to express multi-method bindings — multiple sibling
+# `K"method_defs"` (e.g. kwarg wrappers, `f(::T1)` + `f(::T2)`) or a single
+# `K"method_defs"` packing multiple methods (e.g. default-positional-arg) — and
+# both reduce to the same `K"method"` count once flattened. `K"method"` is JL-
+# specific to method-definition bodies, so a whole-tree count is unambiguous;
+# nested closures' methods are tagged under their own (inner) `var_id` and don't
+# bleed into outer counts.
+#
+# The reachability propagation handles kwarg closures: JL splits `f = (x; kw=1) -> ...`
+# into a multi-method wrapper `f` (positional dispatch + kwsorter) plus a single-method
+# inner body helper that the wrapper's methods call. Rewriting the helper alone to an
+# OC breaks the wrapper's later synthetic-struct lowering (the wrapper's `function_type`
+# reference can no longer find the helper). Tagging any closure binding called from a
+# multi-method wrapper's bodies forces the helper through the same path as its wrapper.
 function collect_multi_method_bindings(ex::SyntaxTreeC)
-    seen = Set{Int}()
+    method_defs_by_vid = Dict{Int,Vector{SyntaxTreeC}}()
+    methods_per_vid = Dict{Int,Int}()
     multis = Set{Int}()
     stack = SyntaxTreeC[ex]
     while !isempty(stack)
         node = pop!(stack)
-        if JS.kind(node) === JS.K"method_defs" && JS.numchildren(node) >= 1 &&
-                JS.kind(node[1]) === JS.K"BindingId"
+        k = JS.kind(node)
+        if ((k === JS.K"method" || k === JS.K"method_defs") &&
+            JS.numchildren(node) >= 1 && JS.kind(node[1]) === JS.K"BindingId")
             vid = node[1].var_id
-            if vid in seen
-                push!(multis, vid) # idempotent if already known multi
+            if k === JS.K"method"
+                n = (methods_per_vid[vid] = get(methods_per_vid, vid, 0) + 1)
+                n == 2 && push!(multis, vid) # fires exactly once per binding
             else
-                push!(seen, vid)
+                push!(get!(() -> SyntaxTreeC[], method_defs_by_vid, vid), node)
             end
         end
         if !JS.is_leaf(node)
@@ -101,7 +117,37 @@ function collect_multi_method_bindings(ex::SyntaxTreeC)
             end
         end
     end
+    worklist = collect(multis)
+    while !isempty(worklist)
+        vid = pop!(worklist)
+        for md in method_defs_by_vid[vid]
+            collect_referenced_closures!(md, multis, worklist, method_defs_by_vid)
+        end
+    end
     return multis
+end
+
+function collect_referenced_closures!(
+        root::SyntaxTreeC, multis::Set{Int}, worklist::Vector{Int},
+        method_defs_by_vid::Dict{Int,Vector{SyntaxTreeC}}
+    )
+    stack = SyntaxTreeC[root]
+    while !isempty(stack)
+        node = pop!(stack)
+        if JS.kind(node) === JS.K"BindingId"
+            id = node.var_id
+            if id ∉ multis && haskey(method_defs_by_vid, id)
+                push!(multis, id)
+                push!(worklist, id)
+            end
+        end
+        if !JS.is_leaf(node)
+            for c in JS.children(node)
+                push!(stack, c)
+            end
+        end
+    end
+    return nothing
 end
 
 function is_local_closure_decl(ctx::JL.VariableAnalysisContext, fd::SyntaxTreeC)

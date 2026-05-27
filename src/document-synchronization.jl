@@ -12,7 +12,7 @@ end
 function invalidate_per_file_caches!(state::ServerState, uri::URI)
     invalidate_document_symbol_cache!(state, uri)
     invalidate_binding_occurrences_cache!(state, uri)
-    invalidate_lowering_diagnostics_cache!(state, uri)
+    invalidate_per_file_diagnostics_cache!(state, uri)
 end
 
 """
@@ -127,12 +127,12 @@ function handle_DidCloseTextDocumentNotification(server::Server, msg::DidCloseTe
     clear_extra_diagnostics!(server, uri)
     # Republish textDocument/publishDiagnostics for cases with `diagnostic.all_files === false`,
     # where diagnostics for this file must be suppressed.
-    # This must run before `cleanup_unsaved_analysis!` below, since the suppression
+    # This must run before `cleanup_analysis_state!` below, since the suppression
     # branch in `notify_diagnostics!` only emits the clearing notification when the
     # analysis cache still reports non-empty diagnostics for this URI.
     notify_diagnostics!(server; ensure_cleared=uri)
     if isunsaveduri(uri)
-        cleanup_unsaved_analysis!(server, uri)
+        cleanup_analysis_state!(server, uri)
     end
     # Retrigger workspace/diagnostic to recalculate diagnostics for this closed file
     request_diagnostic_refresh!(server)

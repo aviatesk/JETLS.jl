@@ -150,8 +150,8 @@ getcapability(state, :general, :positionEncodings)
 """
 getcapability(server::Server, paths::Symbol...) = getcapability(server.state, paths...)
 function getcapability(state::ServerState, paths::Symbol...)
-    return isdefined(state, :init_params) &&
-        getobjpath(state.init_params.capabilities, paths...)
+    isdefined(state, :init_params) || return nothing
+    return getobjpath(state.init_params.capabilities, paths...)
 end
 
 """
@@ -259,6 +259,13 @@ function _store_unsynced_file_info!(state::ServerState, uri::URI; force::Bool=fa
             return cache, cache[uri]
         end
         version = time_ns() % Int
+        # Notebook URIs can reach this path during the race window in
+        # `handle_DidCloseNotebookDocumentNotification` between clearing `file_cache`
+        # and `cleanup_analysis_state!` evicting `analysis_manager.cache`, when
+        # a concurrent workspace iteration still has the URI in its `uris_to_search`.
+        # Reading the raw `.ipynb` as Julia would otherwise parse the JSON literal
+        # and emit bogus `lowering/error` diagnostics (aviatesk/JETLS.jl#703).
+        is_notebook_uri(uri) && return cache, nothing
         filename = uri2filename(uri)
         isfile(filename) || return cache, nothing
         parsed_stream = try
@@ -286,12 +293,18 @@ end
 is_synchronized(s::ServerState, uri::URI) = haskey(load(s.file_cache), uri)
 
 """
-    get_context_info(state::ServerState, uri::URI, pos::Position) -> (; mod, analyzer, postprocessor)
+    get_context_info(state::ServerState, uri::URI, pos::Position) ->
+        (; context_module, world, analyzer, postprocessor)
 
 Extract context information for a given position in a file.
 
 Returns a named tuple containing:
-- `mod::Module`: The module context at the given position
+- `context_module::Module`: The module context at the given position
+- `world::UInt`: The world age to pin reflection and inference to. When an `AnalysisResult`
+  is cached for this URI, this is the world at which that analysis context was produced —
+  pinning to it keeps a request consistent with the cached analysis even if a concurrent
+  update has advanced `Base.get_world_counter()`. When there is no cached analysis (i.e.
+  `Nothing` / `OutOfScope`), this falls back to the current world counter.
 - `analyzer::LSAnalyzer`: The analyzer instance for the file
 - `postprocessor::JET.PostProcessor`: The post-processor for fixing `var"..."` strings that users don't need
   to recognize, which are caused by JET implementation details
@@ -303,10 +316,11 @@ function get_context_info(state::ServerState, uri::URI, pos::Position; lookup_fu
     else
         analysis_info = get_analysis_info(state.analysis_manager, lookup_uri)
     end
-    mod = get_context_module(analysis_info, lookup_uri, pos)
+    context_module = get_context_module(analysis_info, lookup_uri, pos)
+    world = get_context_world(analysis_info)
     analyzer = get_context_analyzer(analysis_info, lookup_uri)
     postprocessor = get_post_processor(analysis_info)
-    return (; mod, analyzer, postprocessor)
+    return (; context_module, world, analyzer, postprocessor)
 end
 
 get_context_module(::Nothing, ::URI, ::Position) = Main
@@ -344,6 +358,10 @@ get_context_analyzer(analysis_result::AnalysisResult, ::URI) = analysis_result.a
 get_post_processor(::Nothing) = LSPostProcessor(JET.PostProcessor())
 get_post_processor(::OutOfScope) = LSPostProcessor(JET.PostProcessor())
 get_post_processor(analysis_result::AnalysisResult) = LSPostProcessor(JET.PostProcessor(analysis_result.actual2virtual))
+
+get_context_world(::Nothing) = Base.get_world_counter()
+get_context_world(::OutOfScope) = Base.get_world_counter()
+get_context_world(analysis_result::AnalysisResult) = analysis_result.world
 
 function has_analyzed_context(state::ServerState, uri::URI; lookup_func=nothing)
     lookup_uri = canonical_cache_uri(state, uri)

@@ -19,7 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`732c537...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/732c537...HEAD)
+- Diff: [`72cc49c...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/72cc49c...HEAD)
 
 ### Announcement
 
@@ -48,6 +48,87 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > The `inlay_hint` configuration was reorganized into nested sub-tables so each hint kind has its own `enabled` toggle alongside its options.
 > The new shape adds [`inlay_hint.block_end.enabled`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint/block_end/enabled) for toggling block-end hints independently, and renames `inlay_hint.block_end_min_lines` to [`inlay_hint.block_end.min_lines`](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/inlay_hint/block_end/min_lines).
 > Existing configs keep working for now: the legacy key is still accepted at load time and mapped onto the new key in memory (your config file is not modified automatically), with a one-shot deprecation warning. The legacy alias will be removed in releases after **June 2026**, so if you are still using `inlay_hint.block_end_min_lines`, please update your config.
+
+> [!warning]
+> The `completion.method_signature.prepend_inference_result` configuration option was removed. Inferred return types are now always shown both as `CompletionItem.detail` (` -> T` typically shown next to the candidate label) and as a leading `signature -> T` code fence at the top of the method signature completion documentation, so the previous client-specific opt-in is no longer needed.
+> Existing configs keep working for now: the removed key is still accepted at load time and silently dropped, with a one-shot deprecation warning. The legacy key will be rejected outright in releases after **June 2026**, so if you are still setting `completion.method_signature.prepend_inference_result`, please remove it from your config.
+
+### Added
+
+- Added support for "Go to Type Definition" (`textDocument/typeDefinition`).
+  Invoking it on an expression jumps to the definition of its inferred type — e.g. landing on a binding of type `Foo` jumps to the `struct Foo` definition.
+  For `Union` types the response includes one location per constituent.
+  (https://github.com/aviatesk/JETLS.jl/pull/686)
+
+  <img width="1333" height="571" alt="type definition demo" src="https://github.com/user-attachments/assets/b469f0d7-73ba-47aa-86e5-7861535459fd" />
+
+- Added property completion (`x.│` / `x.partial│`). Typing `.` after a typed expression now offers the properties that `propertynames(::T)` reports for the dot prefix's inferred type — both plain struct fields and types with a custom `propertynames` overload are handled uniformly.
+  Each candidate's inferred property type (`x.field :: T`) is resolved lazily, only when the client requests details for a focused item. The resolved documentation also includes the per-field docstring attached to that field in its struct definition, when present.
+  For union-typed prefixes the offered names are the union of each component's `propertynames`, so the common `Union{T, Nothing}` pattern still surfaces `T`'s properties even though `propertynames(::Nothing) == ()`; type details merge each component's per-property type at resolve time.
+
+  https://github.com/user-attachments/assets/3f2887b4-4c1c-41f9-b091-4eea2b6128bc
+
+### Changed
+
+- `textDocument/hover` now surfaces inferred types alongside documentation.
+  Any identifier, dot expression, call result, or indexing position can be queried — `func(x) :: Int`, `s[2] :: Float64`, `Base.Pair :: typeof(Pair)`, etc. — and the type is queried at the cursor's byte range so flow-sensitive type narrowing is reflected.
+  Binding hovers additionally carry a kind tag — `(argument)`, `(local)`, `(static parameter)`, or `(global)` — before the name, making the binding's role in scope visible.
+  Closures display as function-arrow signatures like `(x::Int, y::Int) -> Int`, with argument names recovered from the body when available.
+  Documentation is gathered both from the binding's own docstring and from the docstring of whatever value the expression resolves to via type inference. So e.g. given `sv = Some(sin)`, hovering on `sv.value` shows `sin`'s docstring even though `sin` doesn't appear at the cursor. For dot expressions whose LHS is a struct instance (`x.y│`), the per-field docstring attached to `y` in its struct definition is also surfaced when present.
+  When the cursor is on the callee identifier (e.g. `sin│(rand(Int))`, `Base.Math.sin│(x)`), the header is promoted to the full call expression (`sin(rand(Int)) :: Float64`) and the docstring is narrowed to the dispatched method's doc when dispatch resolves to a single method (`sin(::Real)`). When the cursor sits past a call-like surface's closing punctuation (`f(args)│`, `xs[i]│`, `[a, b]│`, …), only the `expr :: T` header is shown without any docstring body. Non-call cursors (`f│`) still show every overload's doc.
+  (https://github.com/aviatesk/JETLS.jl/pull/687)
+
+  | Hover on call    | <img width="1086" height="418" alt="Hover on call demo" src="https://github.com/user-attachments/assets/cf3d2eb8-3036-44e2-b075-b3c9ca09dc35" />    |
+  | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | Hover on closure | <img width="1086" height="418" alt="Hover on closure demo" src="https://github.com/user-attachments/assets/285de208-a704-4978-9a89-829654f561bc" /> |
+
+- `textDocument/definition` on a call site (`f(arg)│` or `f│(arg)`) now narrows to the method dispatch picked for the inferred argument types — e.g. `sin│(42)` jumps to `sin(::Real)` only, not to every method of `sin`. Bare cursors on the function name (`sin│`) still return all definitions.
+
+- `textDocument/signatureHelp` and method-signature completion (`textDocument/completion`) now narrow overloads using the inferred type of each argument at the call site, including arbitrary local-scope expressions.
+  Previously only top-level globals and literal arguments contributed to filtering, so `let x = rand(); sin(x,│); end` showed every `sin` method;
+  with the local `x :: Float64` now folded in, only `sin(::T) where T<:Union{Float32, Float64}` is offered.
+
+- `textDocument/semanticTokens` now classifies type parameters declared in `struct` / `abstract type` / `primitive type` headers (and their use sites inside the type body) as `typeParameter`. Previously these identifiers were classified as plain `variable`.
+
+- `lowering/undef-global-var` now suppresses reports as soon as a sibling file in the same analysis unit defines the referenced name. Previously, adding `foo = ...` to one file left `foo` references in other files of the same unit flagged as undefined until the next full-analysis cycle (typically triggered on save) caught up.
+
+- `lowering/macro-expansion-error` no longer aborts analysis of the enclosing top-level form. Any misuse JETLS's stubs for `Base` macros detect — invalid threadpool literal in `Threads.@spawn`, duplicate kwarg in `@info`/`@warn`/…, `@test` with `skip` + `broken`, wrong argument count in `@assert`/`@invoke`/`@kwdef`/`@assume_effects`/…, non-call shape passed to `@invoke`, malformed `@testset` body, and so on — is now reported in place while the macrocall body still flows through to scope and type analysis.
+  Previously any of these would propagate a `MacroExpansionError`, remove the entire macrocall from analysis, and take every other LSP feature requiring full lowering of the enclosing function (hover, inlay, signature help, undef-var, references, …) down with it.
+  Reports come with `Error` severity when Base would reject the misuse and `Warning` severity when Base accepts it silently or only deprecates.
+
+- Documenter admonitions (`!!! note`, `!!! tip`, `!!! warning`, `!!! danger`, `!!! info`, `!!! compat`) in docstrings now render as Markdown blockquotes with a category-emoji header (e.g. `> **💡 Tip**`) wherever JETLS surfaces docstrings (hover, completion documentation, signature help).
+  Previously the `!!!` block leaked through verbatim, leaving the editor's Markdown view to render it in unintended ways.
+
+- Hover and method-signature completion documentation no longer surface Base's "No documentation found for ..." placeholder paragraph for bindings that exist but carry no docstring. The auto-generated method / type summary that follows the placeholder is still shown, so the hover stays informative without the placeholder noise.
+
+### Fixed
+
+- Fixed spurious diagnostics like `` `{ }` outside of `where` is reserved for future use `` falsely appearing on Jupyter notebook (`.ipynb`) files in VS Code. (Fixed https://github.com/aviatesk/JETLS.jl/issues/703)
+
+- Fixed `jetls check` failing with "could not find any files to analyze" on Windows when the current working directory's drive letter casing differed from the URI-normalized form (Closed https://github.com/aviatesk/JETLS.jl/issues/679).
+
+- `jetls check` no longer rejects files outside the current working directory. Previously, paths such as `jetls check ../foo.jl` were classified as out-of-scope by the LSP-style workspace boundary guard and produced "could not find any files to analyze". The CLI now analyzes any file passed on the command line regardless of where it lives relative to the cwd.
+
+- `jetls check` now reports parse errors. Previously, files with syntax errors (e.g. an unclosed parenthesis like `f(x) = println(x`) silently produced "No diagnostics found".
+
+- Fixed spurious `WARNING: Detected access to binding ... in a world prior to its definition world` messages emitted by `jetls check` and other server analyses.
+
+- Identifiers interpolated into docstrings (e.g. `$(TYPEDEF)` / `$(TYPEDSIGNATURES)` from [DocStringExtensions.jl](https://github.com/JuliaDocs/DocStringExtensions.jl)) are now treated as real references during scope resolution. As a result, `lowering/unused-import` no longer falsely reports imports that are only used through docstring interpolations, and `lowering/undef-global-var` flags interpolations of names that aren't actually in scope. Other LSP features (hover, go-to-definition, find-references, …) also work on identifiers inside docstring interpolations. (Fixed https://github.com/aviatesk/JETLS.jl/issues/699)
+
+- Identifiers inside keyword arguments of `@test`, `@test_broken`, and `@test_skip` (e.g. `flag` in `@test x broken=flag`) are now picked up by scope resolution, so undef-var diagnostics and find-references work for them. Previously the keyword arguments were dropped during macro expansion.
+
+- Identifiers inside `@show`, `@debug`, `@info`, `@warn`, `@error`, and `@logmsg` calls — including kwarg values (e.g. `flag` in `@info "msg" extra=flag`) and splatted operands (e.g. `kws` in `@info "msg" kws...`) — are now picked up by scope resolution, so undef-var diagnostics and find-references work for them. Previously the identifiers in these macros were silently ignored. For the logging macros, duplicate kwarg names also surface as `lowering/macro-expansion-error` anchored at the call site.
+
+- Fixed completion items to honor the client's `completionItem.resolveSupport.properties` capability. Previously, properties such as `kind` and `labelDetails` were updated during `completionItem/resolve` regardless of whether the client advertised lazy support for them, which caused visible glitches in some clients (e.g. flickering completion lists in [cmp-nvim-lsp](https://github.com/hrsh7th/cmp-nvim-lsp)). (Closed https://github.com/aviatesk/JETLS.jl/issues/711)
+
+## 2026-05-08
+
+- Commit: [`72cc49c`](https://github.com/aviatesk/JETLS.jl/commit/72cc49c)
+- Diff: [`732c537...72cc49c`](https://github.com/aviatesk/JETLS.jl/compare/732c537...72cc49c)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-05-08")'
+  ```
 
 ### Fixed
 

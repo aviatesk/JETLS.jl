@@ -360,16 +360,34 @@ end
 end
 
 @testset "parse_config_dict accepts legacy `block_end_min_lines`" begin
-    deprecations = [
+    deprecations = Pair{Vector{String},Union{Nothing,Vector{String}}}[
         ["inlay_hint", "block_end_min_lines"] => ["inlay_hint", "block_end", "min_lines"]
     ]
     d = Dict{String,Any}(
         "inlay_hint" => Dict{String,Any}(
             "block_end_min_lines" => 7))
-    JETLS.migrate_deprecated_config_keys!(d, deprecations)
+    warnings = JETLS.migrate_deprecated_config_keys!(d, deprecations)
+    @test length(warnings) == 1
+    @test occursin("`inlay_hint.block_end_min_lines` is deprecated", warnings[1])
     config = JETLS.parse_config_dict(d)
     @test config isa JETLS.JETLSConfig
     @test config.inlay_hint.block_end.min_lines == 7
+end
+
+@testset "parse_config_dict drops removed `prepend_inference_result`" begin
+    deprecations = Pair{Vector{String},Union{Nothing,Vector{String}}}[
+        ["completion", "method_signature", "prepend_inference_result"] => nothing
+    ]
+    d = Dict{String,Any}(
+        "completion" => Dict{String,Any}(
+            "method_signature" => Dict{String,Any}(
+                "prepend_inference_result" => true)))
+    warnings = JETLS.migrate_deprecated_config_keys!(d, deprecations)
+    @test length(warnings) == 1
+    @test occursin("`completion.method_signature.prepend_inference_result` is deprecated", warnings[1])
+    @test !haskey(d, "completion")
+    config = JETLS.parse_config_dict(d)
+    @test config isa JETLS.JETLSConfig
 end
 
 end # test_config

@@ -12,17 +12,30 @@ include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
 module lowering_module end
 
 function get_lowering_diagnostics(
-        text::AbstractString, code::Union{AbstractString,Nothing} = nothing;
-        mod::Module = lowering_module, kwargs...
+        text::AbstractString;
+        code::Union{AbstractString,Nothing} = nothing,
+        context_module::Module = lowering_module,
+        world::UInt = Base.get_world_counter(),
+        kwargs...
     )
     filename = abspath(pkgdir(JETLS), "test", "test_code_action.jl")
-    fi = JETLS.FileInfo(#=version=#0, text, filename)
+    server = JETLS.Server()
     uri = filepath2uri(filename)
+    fi = JETLS.cache_file_info!(server, uri, 1, text)
     st0_top = JETLS.build_syntax_tree(fi)
     diagnostics = LSP.Diagnostic[]
+    candidates = JETLS.UndefGlobalCandidate[]
     JETLS.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
-        JETLS.lowering_diagnostics!(diagnostics, uri, fi, mod, st0; kwargs...)
+        JETLS.per_stmt_diagnostics!(diagnostics, candidates, uri, fi,
+            st0, context_module, world, #=analyzer=#nothing, JETLS.LSPostProcessor();
+            kwargs...)
     end
+    # Mirror the cross-file phase. `skip_context_check=true` because the test server
+    # has no populated `analysis_manager` — we want this single file to count as
+    # part of its own unit anyway.
+    per_file = JETLS.PerFileDiagnosticsResult(diagnostics, candidates)
+    JETLS.cross_file_diagnostics!(diagnostics, JETLS.DefUsedNamesCache(),
+        server, uri, fi, st0_top, per_file; skip_context_check=true)
     if code !== nothing
         filter!(d -> d.code == code, diagnostics)
     end
@@ -148,7 +161,8 @@ end
 end
 
 function get_sort_imports_code_actions(text::AbstractString)
-    diagnostics, uri = get_lowering_diagnostics(text, JETLS.LOWERING_UNSORTED_IMPORT_NAMES_CODE)
+    diagnostics, uri = get_lowering_diagnostics(text;
+        code = JETLS.LOWERING_UNSORTED_IMPORT_NAMES_CODE)
     code_actions = Union{CodeAction,Command}[]
     JETLS.sort_imports_code_actions!(code_actions, uri, diagnostics)
     return code_actions, uri
@@ -219,12 +233,9 @@ end
 
 function get_unused_import_code_actions(marked_text::AbstractString)
     text, positions = JETLS.get_text_and_positions(marked_text)
-    server = JETLS.Server()
-    uri = URI("file:///test_unused_imports.jl")
-    fi = JETLS.cache_file_info!(server, uri, 1, text)
-    st0_top = JETLS.build_syntax_tree(fi)
-    diagnostics = JETLS.analyze_unused_imports(server, uri, fi, st0_top;
-        skip_context_check=true)
+    diagnostics, uri = get_lowering_diagnostics(text;
+        code = JETLS.LOWERING_UNUSED_IMPORT_CODE,
+        skip_analysis_requiring_context = true)
     code_actions = Union{CodeAction,Command}[]
     JETLS.delete_range_code_actions!(code_actions, uri, diagnostics)
     return code_actions, uri, positions
@@ -297,7 +308,8 @@ end
 
 function get_unreachable_code_actions(marked_text::AbstractString)
     text, positions = JETLS.get_text_and_positions(marked_text)
-    diagnostics, uri = get_lowering_diagnostics(text, JETLS.LOWERING_UNREACHABLE_CODE)
+    diagnostics, uri = get_lowering_diagnostics(text;
+        code = JETLS.LOWERING_UNREACHABLE_CODE)
     code_actions = Union{CodeAction,Command}[]
     JETLS.delete_range_code_actions!(code_actions, uri, diagnostics)
     return code_actions, uri, positions
@@ -349,7 +361,8 @@ end
 
 function get_unused_label_code_actions(marked_text::AbstractString)
     text, positions = JETLS.get_text_and_positions(marked_text)
-    diagnostics, uri = get_lowering_diagnostics(text, JETLS.LOWERING_UNUSED_LABEL_CODE)
+    diagnostics, uri = get_lowering_diagnostics(text;
+        code = JETLS.LOWERING_UNUSED_LABEL_CODE)
     code_actions = Union{CodeAction,Command}[]
     JETLS.delete_range_code_actions!(code_actions, uri, diagnostics)
     return code_actions, uri, positions
@@ -392,8 +405,9 @@ end
 
 function get_ambiguous_soft_scope_code_actions(marked_text::AbstractString)
     text, positions = JETLS.get_text_and_positions(marked_text)
-    diagnostics, uri = get_lowering_diagnostics(
-        text, JETLS.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE; mod = soft_scope_module)
+    diagnostics, uri = get_lowering_diagnostics(text;
+        code = JETLS.LOWERING_AMBIGUOUS_SOFT_SCOPE_CODE,
+        context_module = soft_scope_module)
     code_actions = Union{CodeAction,Command}[]
     JETLS.ambiguous_soft_scope_code_actions!(code_actions, uri, diagnostics)
     return code_actions, uri, positions
