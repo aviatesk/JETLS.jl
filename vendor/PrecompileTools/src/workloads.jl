@@ -1,12 +1,9 @@
 const newly_inferred = Core.CodeInstance[]   # only used to support verbose[]
 
 function workload_enabled(mod::Module)
+    enabled || return false
     try
-        if load_preference(@__MODULE__, "precompile_workloads", true)
-            return load_preference(mod, "precompile_workload", true)
-        else
-            return false
-        end
+        return load_preference(mod, "precompile_workload", true)::Bool
     catch
         true
     end

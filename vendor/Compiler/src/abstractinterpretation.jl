@@ -107,6 +107,9 @@ mutable struct CallInferenceState
     end
 end
 
+widen_call_result(::AbstractInterpreter, si::StmtInfo, state::CallInferenceState, ::AbsIntState) =
+    call_result_unused(si) && !(state.rettype === Bottom)
+
 function abstract_call_gf_by_type(interp::AbstractInterpreter, @nospecialize(func),
                                   arginfo::ArgInfo, si::StmtInfo, @nospecialize(atype),
                                   sv::AbsIntState, max_methods::Int)
@@ -275,14 +278,13 @@ function abstract_call_gf_by_type(interp::AbstractInterpreter, @nospecialize(fun
                 state.slotrefinements = collect_slot_refinements(𝕃ᵢ, applicable, argtypes, fargs, sv)
             end
             state.rettype = from_interprocedural!(interp, state.rettype, sv, arginfo, state.conditionals)
-            if call_result_unused(si) && !(state.rettype === Bottom)
-                add_remark!(interp, sv, "Call result type was widened because the return value is unused")
-                # We're mainly only here because the optimizer might want this code,
-                # but we ourselves locally don't typically care about it locally
-                # (beyond checking if it always throws).
-                # So avoid adding an edge, since we don't want to bother attempting
-                # to improve our result even if it does change (to always throw),
-                # and avoid keeping track of a more complex result type.
+            if widen_call_result(interp, si, state, sv)
+                add_remark!(interp, sv, "Call result type was widened")
+                # Encode the decision as a local `Any` in `state.rettype`, which flows into
+                # `ssavaluetypes[pc]` of the enclosing frame. Downstream `=== Any` gates
+                # (most notably the cycle backedge revisit filter in `update_cycle_worklists!`)
+                # then treat this call site as needing no further refinement. By default
+                # `Bottom` is excluded so that "always throws" remains observable.
                 state.rettype = Any
             end
             # if from_interprocedural added any pclimitations to the set inherited from the arguments,
@@ -3103,12 +3105,16 @@ function abstract_eval_new(interp::AbstractInterpreter, e::Expr, sstate::Stateme
         else
             consistent = ALWAYS_TRUE # immutable allocation is consistent
         end
-        if isconcretedispatch(rt)
-            nothrow = true
-            @assert fcount !== nothing && fcount ≥ nargs "malformed :new expression" # syntactically enforced by the front-end
+        # `:new` can carry `PartialStruct` even when `rt` isn't isconcretedispatch` —
+        # partially-instantiated parametric types (e.g. `Generator{Vector{Int}, F<:OC{Tuple{Int}, T} where T}`) still
+        # have well-defined field count, and field-level extended lattice elements carry
+        # information beyond the declared type.
+        if fcount !== nothing
+            nothrow = isconcretedispatch(rt)
+            @assert nargs ≤ fcount "malformed :new expression" # syntactically enforced by the front-end
             ats = Vector{Any}(undef, nargs)
             local anyrefine = false
-            local allconst = true
+            local allconst = isconcretedispatch(rt)
             for i = 1:nargs
                 at = widenslotwrapper(abstract_eval_value(interp, e.args[i+1], sstate, sv))
                 ft = fieldtype(rt, i)
@@ -3126,7 +3132,7 @@ function abstract_eval_new(interp::AbstractInterpreter, e::Expr, sstate::Stateme
                 end
                 ats[i] = at
             end
-            if fcount == nargs && consistent === ALWAYS_TRUE && allconst
+            if allconst && fcount == nargs && consistent === ALWAYS_TRUE
                 argvals = Vector{Any}(undef, nargs)
                 for j in 1:nargs
                     argvals[j] = (ats[j]::Const).val
@@ -3138,6 +3144,8 @@ function abstract_eval_new(interp::AbstractInterpreter, e::Expr, sstate::Stateme
                 # - `nargs` is greater than `n_initialized` derived from the struct type
                 #   information alone
                 rt = PartialStruct(𝕃ᵢ, rt, ats)
+            else
+                rt = refine_partial_type(rt)
             end
         else
             rt = refine_partial_type(rt)

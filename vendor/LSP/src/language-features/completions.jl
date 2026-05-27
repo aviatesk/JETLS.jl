@@ -59,13 +59,16 @@ end
 
 "How a completion was triggered"
 @namespace CompletionTriggerKind::Int begin
-    "Completion was triggered by typing an identifier (24x7 code
-    complete), manual invocation (e.g Ctrl+Space) or via API."
+    """
+    Completion was triggered by typing an identifier (24x7 code complete),
+    manual invocation (e.g Ctrl+Space) or via API.
+    """
     Invoked = 1
 
-    "Completion was triggered by a trigger character specified by
-    the `triggerCharacters` properties of the
-    `CompletionRegistrationOptions`."
+    """
+    Completion was triggered by a trigger character specified by the `triggerCharacters`
+    properties of the `CompletionRegistrationOptions`.
+    """
     TriggerCharacter = 2
 
     "Completion was re-triggered as the current completion list is incomplete."
@@ -80,9 +83,10 @@ request is triggered.
     "How the completion was triggered."
     triggerKind::CompletionTriggerKind.Ty
 
-    "The trigger character (a single character) that has trigger code
-    complete. Is undefined if
-    `triggerKind !== CompletionTriggerKind.TriggerCharacter`"
+    """
+    The trigger character (a single character) that has trigger code complete.
+    Is undefined if `triggerKind !== CompletionTriggerKind.TriggerCharacter`
+    """
     triggerCharacter::Union{String, Nothing} = nothing
 end
 
@@ -236,7 +240,12 @@ struct MethodSignatureCompletionData
     resolver_id::String
     match_idx::Int
 end
-export GlobalCompletionData, MethodSignatureCompletionData
+struct PropertyCompletionData
+    resolver_id::String
+    label::String
+    prefix::String
+end
+export GlobalCompletionData, MethodSignatureCompletionData, PropertyCompletionData
 
 @interface CompletionItem begin
     """
@@ -419,7 +428,7 @@ export GlobalCompletionData, MethodSignatureCompletionData
     A data entry field that is preserved on a completion item between
     a completion and a completion resolve request.
     """
-    data::Union{GlobalCompletionData, MethodSignatureCompletionData, Nothing} = nothing
+    data::Union{GlobalCompletionData, MethodSignatureCompletionData, PropertyCompletionData, Nothing} = nothing
 end
 
 """
@@ -495,7 +504,7 @@ presented in the editor.
         - since - 3.17.0
         """
 
-        data::Union{GlobalCompletionData, MethodSignatureCompletionData, Nothing} = nothing
+        data::Union{GlobalCompletionData, MethodSignatureCompletionData, PropertyCompletionData, Nothing} = nothing
     end} = nothing
 
     """
