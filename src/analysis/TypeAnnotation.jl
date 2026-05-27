@@ -215,6 +215,19 @@ CC.transform_result_for_cache(::ASTTypeAnnotator, ::CC.InferenceResult, ::Core.S
 # we'd otherwise have. Override to never bail.
 CC.bail_out_toplevel_call(::ASTTypeAnnotator, ::CC.InferenceState) = false
 
+# Keep precise unused call results for frames that `finishinfer!` annotates.
+function CC.widen_call_result(
+        interp::ASTTypeAnnotator, si::CC.StmtInfo, state::CC.CallInferenceState,
+        sv::CC.InferenceState
+    )
+    interp.topmi === sv.linfo && return false
+    def = sv.linfo.def
+    def isa Method && def in interp.oc_methods_to_annotate && return false
+    return @invoke CC.widen_call_result(
+        interp::CC.AbstractInterpreter, si::CC.StmtInfo, state::CC.CallInferenceState,
+        sv::CC.InferenceState)
+end
+
 function CC.concrete_eval_eligible(
         interp::ASTTypeAnnotator, @nospecialize(f), result::CC.MethodCallResult,
         arginfo::CC.ArgInfo, sv::CC.InferenceState

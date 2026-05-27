@@ -1541,10 +1541,9 @@ end
     # infer as `Any`; `strip_latestworld!` neutralizes the directive
     # before inference so the RHS keeps a precise `Float64`.
     @testset "top-level bare assignment RHS" begin
-        let code = "global x = sin(1.0)"
-            _, ctx = type_annotate(code)
-            @test widenconst(get_type_for_range(ctx, range_of(code, "sin(1.0)"))) === Float64
-        end
+        code = "global x = sin(1.0)"
+        _, ctx = type_annotate(code)
+        @test widenconst(get_type_for_range(ctx, range_of(code, "sin(1.0)"))) === Float64
     end
 
     # `get_inferrable_tree` does not bind `MACRO_DIAGNOSTIC_SINK`, so stubs that call
@@ -1554,19 +1553,60 @@ end
     # `expand_forms_1`, `get_inferrable_tree` would return `nothing`, and every
     # `hover` / `inlay` / `signature-help` in the enclosing toplevel would go dark.
     @testset "recoverable macro stub error keeps enclosing toplevel inferrable" begin
+        code = """
+        function f(xs::Vector{Float64})
+            s = sum(xs)
+            t = Threads.@spawn :badname sin(s)
+            fetch(t)
+        end
+        """
+        fi, ctx = type_annotate(code)
+        # Surface lookup for the macro body's `sin(s)` returns `Float64`.
+        @test widenconst(get_type_for_range(ctx, range_of(code, "sin(s)"))) === Float64
+        # Every `s` reference is annotated as `Float64`.
+        s_types = query_all_types(fi, ctx, "s")
+        @test count(t -> widenconst(t) === Float64, s_types) == 2
+    end
+
+    @testset "type annotation for calls whose result is unused" begin
         let code = """
-            function f(xs::Vector{Float64})
-                s = sum(xs)
-                t = Threads.@spawn :badname sin(s)
-                fetch(t)
+            function f(x::Float64)
+                sin(x)
+                return cos(x)
             end
             """
-            fi, ctx = type_annotate(code)
-            # Surface lookup for the macro body's `sin(s)` returns `Float64`.
-            @test widenconst(get_type_for_range(ctx, range_of(code, "sin(s)"))) === Float64
-            # Every `s` reference is annotated as `Float64`.
-            s_types = query_all_types(fi, ctx, "s")
-            @test count(t -> widenconst(t) === Float64, s_types) == 2
+            _, ctx = type_annotate(code)
+            @test widenconst(get_type_for_range(ctx, range_of(code, "sin(x)"))) === Float64
+            @test widenconst(get_type_for_range(ctx, range_of(code, "cos(x)"))) === Float64
+        end
+
+        let code = """
+            function f()
+                g(x::Float64) = begin
+                    sin(x)
+                    cos(x)
+                end
+                return g(1.0)
+            end
+            """
+            _, ctx = type_annotate(code)
+            @test widenconst(get_type_for_range(ctx, range_of(code, "sin(x)"))) === Float64
+            @test widenconst(get_type_for_range(ctx, range_of(code, "cos(x)"))) === Float64
+        end
+
+        let code = """
+            function f(xs::Vector{Float64})
+                map(xs) do x::Float64
+                    sin(x)
+                    cos(x)
+                end
+            end
+            """
+            _, ctx = type_annotate(code)
+            @test widenconst(get_type_for_range(ctx, range_of(code, "sin(x)"))) === Float64
+            @test widenconst(get_type_for_range(ctx, range_of(code, "cos(x)"))) === Float64
+            map_call = range_of(code, "map(xs) do x::Float64\n        sin(x)\n        cos(x)\n    end")
+            @test widenconst(get_type_for_range(ctx, map_call)) === Vector{Float64}
         end
     end
 end
