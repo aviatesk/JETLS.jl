@@ -19,7 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Unreleased
 
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
-- Diff: [`72cc49c...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/72cc49c...HEAD)
+- Diff: [`0b038c7...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/0b038c7...HEAD)
 
 ### Announcement
 
@@ -52,6 +52,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > [!warning]
 > The `completion.method_signature.prepend_inference_result` configuration option was removed. Inferred return types are now always shown both as `CompletionItem.detail` (` -> T` typically shown next to the candidate label) and as a leading `signature -> T` code fence at the top of the method signature completion documentation, so the previous client-specific opt-in is no longer needed.
 > Existing configs keep working for now: the removed key is still accepted at load time and silently dropped, with a one-shot deprecation warning. The legacy key will be rejected outright in releases after **June 2026**, so if you are still setting `completion.method_signature.prepend_inference_result`, please remove it from your config.
+
+## 2026-05-27
+
+- Commit: [`0b038c7`](https://github.com/aviatesk/JETLS.jl/commit/0b038c7)
+- Diff: [`72cc49c...0b038c7`](https://github.com/aviatesk/JETLS.jl/compare/72cc49c...0b038c7)
+- Installation:
+  ```bash
+  julia -e 'using Pkg; Pkg.Apps.add(; url="https://github.com/aviatesk/JETLS.jl", rev="2026-05-27")'
+  ```
 
 ### Added
 
