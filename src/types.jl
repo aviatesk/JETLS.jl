@@ -62,6 +62,9 @@ struct FileInfo
     filename::String
     encoding::LSP.PositionEncodingKind.Ty
     testsetinfos::Vector{TestsetInfo}
+    # Optional pruned `st0` cache, currently used for unsynced workspace files
+    # whose trees are scanned repeatedly by diagnostics and global occurrence search.
+    # Access through `build_syntax_tree`, which returns a copy safe for lowering.
     syntax_tree0::Union{Nothing,SyntaxTreeC}
     # Cached line-starts index for the current `parsed_stream.textbuf`. `offset_to_xy`
     # / `xy_to_offset` are called heavily by every LSP feature, so amortizing the
