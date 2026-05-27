@@ -76,13 +76,10 @@ struct FileInfo
             version::Int, parsed_stream::JS.ParseStream, filename::AbstractString,
             encoding::LSP.PositionEncodingKind.Ty = LSP.PositionEncodingKind.UTF16,
             testsetinfos::Vector{TestsetInfo} = EMPTY_TESTSETINFOS;
-            cache_tree::Union{Nothing,Bool} = nothing
+            cache_tree::Bool = false
         )
-        if cache_tree isa Bool
-            syntax_tree0 = JS.build_tree(JS.SyntaxTree, parsed_stream; filename)
-            if cache_tree
-                syntax_tree0 = JS.prune(syntax_tree0)
-            end
+        if cache_tree
+            syntax_tree0 = JS.prune(JS.build_tree(JS.SyntaxTree, parsed_stream; filename))
         else
             syntax_tree0 = nothing
         end
