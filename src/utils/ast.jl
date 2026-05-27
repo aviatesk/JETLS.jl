@@ -12,14 +12,9 @@ function copy_syntax_tree(st::SyntaxTreeC)
 end
 
 function build_syntax_tree(fi::FileInfo)
-    cached = fi.syntax_tree0
-    if isnothing(cached)
-        return JS.build_tree(JS.SyntaxTree, fi.parsed_stream; filename = fi.filename)
-    else
-        # The lowering pipeline modifies the internal state of `st0`,
-        # so we need to create a copy for each read to avoid race conditions
-        return copy_syntax_tree(cached)
-    end
+    # The lowering pipeline modifies the internal state of `st0`,
+    # so we need to create a copy for each read to avoid race conditions.
+    return copy_syntax_tree(fi.syntax_tree0)
 end
 
 @static if JL.DEBUG
@@ -200,6 +195,9 @@ end
 is_mainfunc0(st0::SyntaxTreeC) = is_macrocall_st0(st0, "@main")
 
 is_generated0(st0::SyntaxTreeC) = is_macrocall_st0(st0, "@generated")
+
+is_nospecialize_or_specialize_macrocall0(st0::SyntaxTreeC) =
+    is_macrocall_st0(st0, "@nospecialize", "@specialize")
 
 is_macro0(st0::SyntaxTreeC) = JS.kind(st0) === JS.K"macro"
 

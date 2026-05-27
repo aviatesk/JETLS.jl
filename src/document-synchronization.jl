@@ -36,7 +36,8 @@ function cache_file_info!(
     st0 = JS.build_tree(JS.SyntaxTree, parsed_stream; filename)
     testsetinfos, any_deleted = compute_testsetinfos!(server, st0, prev_testsetinfos)
 
-    fi = FileInfo(version, parsed_stream, filename, state.encoding, testsetinfos)
+    fi = FileInfo(version, parsed_stream, filename, state.encoding, testsetinfos;
+        syntax_tree0=st0)
     store!(state.file_cache) do cache
         Base.PersistentDict(cache, uri => fi), nothing
     end

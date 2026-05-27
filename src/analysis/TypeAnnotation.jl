@@ -1099,6 +1099,12 @@ function get_type_for_range(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
         return Core.Const(nothing)
     elseif surface_kind in JS.KSet"function macro"
         return type_for_funcdef(ctx, rng)
+    elseif surface_kind === JS.K"="
+        # Pruned `st0` can collapse short-form function-definition provenance from
+        # `K"function"` to the surface `K"="`. The inferred tree still carries the
+        # method-like lowered node, so use that as the authoritative signal.
+        typ = type_for_funcdef(ctx, rng)
+        typ === nothing || return typ
     elseif surface_kind in JS.KSet"comparison && || if ?"
         # Ternary `b ? x : 0` is `K"if"` in the surface tree but `K"?"` in the
         # inferred tree's provenance (JuliaLowering retains the parser kind).
