@@ -19,4 +19,6 @@ julia = "1"
 test = ["Test", "FileWatching", "Markdown", "REPL"]
 
 [sources.JuliaSyntax]
-path = "../JuliaSyntax"
+subdir = "vendor/JuliaSyntax"
+rev = "e2106c0ecd50136784f603123e1ca7bc0cc4c477"
+url = "https://github.com/aviatesk/JETLS.jl"
