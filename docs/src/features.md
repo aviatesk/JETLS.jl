@@ -95,138 +95,6 @@ indexing, method errors, and non-boolean conditions.
 > </div>
 > ```
 
-## [Completion](@id features/completion)
-
-JETLS provides type-aware code completion with multiple modes.
-
-### [Global and local completion](@id features/completion/global-local)
-
-Completion for global symbols (functions, types, modules, constants) and
-local bindings. Global completion items include detailed kind information
-resolved lazily when a candidate is selected.
-
-> ```@raw html
-> <div class="display-light-only">
-> ```
-> ![Global and local completion](assets/features/completion-global-local.png)
-> ```@raw html
-> </div>
-> <div class="display-dark-only">
-> ```
-> ![Global and local completion](assets/features/completion-global-local-dark.png)
-> ```@raw html
-> </div>
-> ```
-
-### [Method signature completion](@id features/completion/method-signature)
-
-Triggered inside a function call (after `(`, `,`, or space). Compatible
-method signatures are suggested based on already-provided arguments.
-Selecting a candidate inserts remaining positional arguments as snippet
-placeholders with type annotations. Inferred return type and documentation
-are resolved lazily.
-
-See [`[completion.method_signature] prepend_inference_result`](@ref
-config/completion/method_signature/prepend_inference_result) for the
-configuration option that shows the inferred return type inline.
-
-> ```@raw html
-> <div class="display-light-only">
-> ```
-> ![Method signature completion](assets/features/completion-method.png)
-> ```@raw html
-> </div>
-> <div class="display-dark-only">
-> ```
-> ![Method signature completion](assets/features/completion-method-dark.png)
-> ```@raw html
-> </div>
-> ```
-
-### [Keyword argument completion](@id features/completion/keyword-argument)
-
-Triggered inside a function call at the keyword argument position
-(e.g. `func(; |)` or `func(k|)`). Available keyword arguments are suggested
-with `=` appended. Already-specified keywords are excluded.
-
-> ```@raw html
-> <div class="display-light-only">
-> ```
-> ![Keyword argument completion](assets/features/completion-keyword.png)
-> ```@raw html
-> </div>
-> <div class="display-dark-only">
-> ```
-> ![Keyword argument completion](assets/features/completion-keyword-dark.png)
-> ```@raw html
-> </div>
-> ```
-
-### [LaTeX and emoji completion](@id features/completion/latex-emoji)
-
-Type `\` to trigger LaTeX symbol completion (e.g. `\alpha` → `α`) or `\:`
-to trigger emoji completion (e.g. `\:smile:` → `😄`), mirroring the Julia
-REPL.
-
-```@raw html
-<table>
-<thead>
-<tr><th>Trigger</th><th>Example</th></tr>
-</thead>
-<tbody>
-<tr>
-<td>LaTeX symbol (<code>\</code>)</td>
-<td>
-<div class="display-light-only">
-```
-![LaTeX completion](assets/features/completion-latex.png)
-```@raw html
-</div>
-<div class="display-dark-only">
-```
-![LaTeX completion](assets/features/completion-latex-dark.png)
-```@raw html
-</div>
-</td>
-</tr>
-<tr>
-<td>Emoji (<code>\:</code>)</td>
-<td>
-<div class="display-light-only">
-```
-![Emoji completion](assets/features/completion-emoji.png)
-```@raw html
-</div>
-<div class="display-dark-only">
-```
-![Emoji completion](assets/features/completion-emoji-dark.png)
-```@raw html
-</div>
-</td>
-</tr>
-</tbody>
-</table>
-```
-
-## [Signature help](@id features/signature-help)
-
-Method signatures are displayed as you type function arguments. Methods are
-filtered based on the inferred types of already-provided arguments — e.g.,
-typing `sin(1,` shows only methods compatible with an `Int` first argument.
-
-> ```@raw html
-> <div class="display-light-only">
-> ```
-> ![Signature help](assets/features/signature-help.png)
-> ```@raw html
-> </div>
-> <div class="display-dark-only">
-> ```
-> ![Signature help](assets/features/signature-help-dark.png)
-> ```@raw html
-> </div>
-> ```
-
 ## [Go to definition](@id features/go-to-definition)
 
 Jump to where a symbol is defined. JETLS resolves method and module
@@ -245,10 +113,49 @@ definitions, as well as local bindings.
 > </div>
 > ```
 
+When the cursor is on (or right after) a call site, JETLS narrows the
+result to the method dispatch picked for the inferred argument types —
+`sin│(42)` jumps to `sin(::Real)` only, not to every method of `sin`.
+Bare cursors on the function name (`sin│`) still return every
+definition.
+
 JETLS also implements go to declaration (`textDocument/declaration`),
 which jumps to declaration sites (e.g., `import`/`using`, `local x`, or
 empty `function foo end`) when distinct from the definition, and falls
 back to go to definition otherwise.
+
+## [Go to type definition](@id features/go-to-type-definition)
+
+Jump to the definition of an expression's *type* rather than the expression
+itself, e.g. with the cursor on a binding of type `Foo`, JETLS navigates to the
+`struct Foo` definition; for a `Vector{Int}`-typed value, it lands on `Vector`'s
+definition.
+
+> ```@raw html
+> <div class="display-light-only">
+> ```
+> ![Go to type definition](assets/features/type-definition.png)
+> ```@raw html
+> </div>
+> <div class="display-dark-only">
+> ```
+> ![Go to type definition](assets/features/type-definition-dark.png)
+> ```@raw html
+> </div>
+> ```
+
+The cursor can be on:
+
+- An identifier (local binding, parameter, type name, etc.). The
+  inferred type at that position is resolved.
+- A dot-chain expression (`Base.Pa│ir`). The full chain is treated as
+  the target.
+- A call expression. Placing the cursor right after `)` (e.g.
+  `sin(1.0)│`) resolves to the call's return type. `do`-block calls
+  work the same way — `func() do ... end│` resolves to the call's
+  return type.
+
+For `Union` types, one location is returned per constituent.
 
 ## [Document link](@id features/document-link)
 
@@ -292,47 +199,125 @@ definitions of the target are excluded.
 
 ## [Hover](@id features/hover)
 
-Hover over symbols to see documentation and source locations.
+Hover surfaces the inferred type and documentation at the cursor. It
+works on any identifier, dot expression (`Base.Compi│ler.tmeet`), call
+result (`func(args)│`), or indexing position (`xs[i]│`), and the type
+is queried at the cursor's byte range so flow-sensitive narrowing is
+reflected.
+
+Documentation displayed alongside the header depends on the cursor
+position:
+
+- Default: the binding's own docstring is shown together with the
+  docstring of whatever value the expression resolves to via type
+  inference (so e.g. hovering on `some.value` surfaces `sin`'s
+  docstring when the field resolves to `sin`).
+- Dot expressions whose left-hand side is a struct instance (`x.y│`)
+  surface the per-field docstring attached to `y` in its struct
+  definition when the field is documented.
+- Callee identifiers in a call (`sin│(rand(Int))`,
+  `Base.Math.sin│(x)`) promote the header to the full call expression
+  (`sin(rand(Int)) :: Float64`) and narrow the docstring to the
+  dispatched method (`sin(::Real)`) when dispatch resolves to a single
+  method.
+- Cursors past a call-like surface's closing punctuation (`f(args)│`,
+  `xs[i]│`, `[a, b]│`, …) show only the `expr :: T` header without
+  any docstring body.
+- Non-call cursors (`f│`) still show every overload's doc.
+
+The type header is rendered as `expr :: T`, with a few specialized
+shapes:
+
+- Bindings carry a kind tag — `(argument)`, `(local)`,
+  `(static parameter)`, or `(global)` — before the name.
+- Closures are displayed as `(args::T...) -> rt`, with argument names recovered
+  from the body method when available.
+- Function singletons render as `typeof(<name>)` only when the source
+  text doesn't already mention the name, avoiding noise like
+  `sin :: typeof(sin)`.
 
 ```@raw html
 <table>
-<thead>
-<tr><th>Binding kind</th><th>Description</th><th>Example</th></tr>
-</thead>
-<tbody>
-<tr>
-<td>Global binding</td>
-<td>Shows documentation from the binding's docstring along with its source location.</td>
-<td>
-<div class="display-light-only">
+  <thead>
+    <tr><th>Target</th><th>Example</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Global binding</td>
+      <td>
+        <div class="display-light-only">
 ```
-![Hover on global binding](assets/features/hover-global-binding.png)
+![Hover on a global binding](assets/features/hover-global.png)
 ```@raw html
-</div>
-<div class="display-dark-only">
+        </div>
+        <div class="display-dark-only">
 ```
-![Hover on global binding](assets/features/hover-global-binding-dark.png)
+![Hover on a global binding](assets/features/hover-global-dark.png)
 ```@raw html
-</div>
-</td>
-</tr>
-<tr>
-<td>Local binding</td>
-<td>Shows the binding's definition location within the enclosing scope.</td>
-<td>
-<div class="display-light-only">
+        </div>
+      </td>
+    </tr>
+    <tr>
+      <td>Local binding</td>
+      <td>
+        <div class="display-light-only">
 ```
-![Hover on local binding](assets/features/hover-local-binding.png)
+![Hover on a local binding](assets/features/hover-local.png)
 ```@raw html
-</div>
-<div class="display-dark-only">
+        </div>
+        <div class="display-dark-only">
 ```
-![Hover on local binding](assets/features/hover-local-binding-dark.png)
+![Hover on a local binding](assets/features/hover-local-dark.png)
 ```@raw html
-</div>
-</td>
-</tr>
-</tbody>
+        </div>
+      </td>
+    </tr>
+    <tr>
+      <td>Call</td>
+      <td>
+        <div class="display-light-only">
+```
+![Hover on a call expression](assets/features/hover-call.png)
+```@raw html
+        </div>
+        <div class="display-dark-only">
+```
+![Hover on a call expression](assets/features/hover-call-dark.png)
+```@raw html
+        </div>
+      </td>
+    </tr>
+    <tr>
+      <td>Closure</td>
+      <td>
+        <div class="display-light-only">
+```
+![Hover on a closure](assets/features/hover-closure.png)
+```@raw html
+        </div>
+        <div class="display-dark-only">
+```
+![Hover on a closure](assets/features/hover-closure-dark.png)
+```@raw html
+        </div>
+      </td>
+    </tr>
+    <tr>
+      <td>Field access</td>
+      <td>
+        <div class="display-light-only">
+```
+![Hover on a struct field access](assets/features/hover-field.png)
+```@raw html
+        </div>
+        <div class="display-dark-only">
+```
+![Hover on a struct field access](assets/features/hover-field-dark.png)
+```@raw html
+        </div>
+      </td>
+    </tr>
+  </tbody>
 </table>
 ```
 
@@ -359,43 +344,43 @@ file, distinguishing between writes (definitions, assignments) and reads
 
 ```@raw html
 <table>
-<thead>
-<tr><th>Symbol scope</th><th>Description</th><th>Example</th></tr>
-</thead>
-<tbody>
-<tr>
-<td>Document symbol</td>
-<td>An outline view of the current file, listing modules, functions, methods, structs, constants, etc.</td>
-<td>
-<div class="display-light-only">
+  <thead>
+    <tr><th>Symbol scope</th><th>Description</th><th>Example</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Document symbol</td>
+      <td>An outline view of the current file, listing modules, functions, methods, structs, constants, etc.</td>
+      <td>
+        <div class="display-light-only">
 ```
 ![Document symbol](assets/features/document-symbol.png)
 ```@raw html
-</div>
-<div class="display-dark-only">
+        </div>
+        <div class="display-dark-only">
 ```
 ![Document symbol](assets/features/document-symbol-dark.png)
 ```@raw html
-</div>
-</td>
-</tr>
-<tr>
-<td>Workspace symbol</td>
-<td>Fuzzy-search across symbols in the whole workspace.</td>
-<td>
-<div class="display-light-only">
+        </div>
+      </td>
+    </tr>
+    <tr>
+      <td>Workspace symbol</td>
+      <td>Fuzzy-search across symbols in the whole workspace.</td>
+      <td>
+        <div class="display-light-only">
 ```
 ![Workspace symbol](assets/features/workspace-symbol.png)
 ```@raw html
-</div>
-<div class="display-dark-only">
+        </div>
+        <div class="display-dark-only">
 ```
 ![Workspace symbol](assets/features/workspace-symbol-dark.png)
 ```@raw html
-</div>
-</td>
-</tr>
-</tbody>
+        </div>
+      </td>
+    </tr>
+  </tbody>
 </table>
 ```
 
@@ -558,6 +543,170 @@ requests are supported. Delta updates are not implemented.
     Clients that do not declare this capability, or that explicitly set it to
     `false`, will not have JETLS's semantic tokens feature activated.
 
+## [Completion](@id features/completion)
+
+JETLS provides type-aware code completion with multiple modes.
+
+### [Global and local completion](@id features/completion/global-local)
+
+Completion for global symbols (functions, types, modules, constants) and
+local bindings. Global completion items include detailed kind information
+resolved lazily when a candidate is selected.
+
+> ```@raw html
+> <div class="display-light-only">
+> ```
+> ![Global and local completion](assets/features/completion-global-local.png)
+> ```@raw html
+> </div>
+> <div class="display-dark-only">
+> ```
+> ![Global and local completion](assets/features/completion-global-local-dark.png)
+> ```@raw html
+> </div>
+> ```
+
+### [Property completion](@id features/completion/property)
+
+Triggered automatically by typing `.` after a typed expression (`x.│`, `r.pat│`).
+Candidate names are derived from the dot prefix's inferred type via
+`propertynames(::T)`, so general struct property names and types that define a
+custom `propertynames` overload are both handled uniformly.
+The inferred type of each property (`x.field :: T`) is resolved lazily,
+only when the client requests details for a focused item.
+The resolved documentation panel additionally includes the per-field docstring
+attached to that field in its struct definition when one is present.
+
+For union-typed prefixes (`x::Union{Foo, Bar}`), the offered names are the union
+of each component's properties, and the resolved type detail merges each
+component's per-property type. The common `Union{T, Nothing}` pattern thus still
+surfaces `T`'s properties.
+
+When the dot prefix is a module (`Base.│`), the request falls through to module-member completion
+(see [Global and local completion](@ref features/completion/global-local)).
+
+> ```@raw html
+> <div class="display-light-only">
+> ```
+> ![Property completion](assets/features/completion-property.png)
+> ```@raw html
+> </div>
+> <div class="display-dark-only">
+> ```
+> ![Property completion](assets/features/completion-property-dark.png)
+> ```@raw html
+> </div>
+> ```
+
+### [Method signature completion](@id features/completion/method-signature)
+
+Triggered inside a function call (after `(`, `,`, or space). Compatible method
+signatures are suggested based on the inferred type of each argument at the
+call site (mirroring [Signature help](@ref features/signature-help)'s filtering
+— arbitrary local-scope expressions are included).
+Selecting a candidate inserts remaining positional arguments as snippet
+placeholders with type annotations. Inferred return type and documentation
+are resolved lazily.
+
+> ```@raw html
+> <div class="display-light-only">
+> ```
+> ![Method signature completion](assets/features/completion-method.png)
+> ```@raw html
+> </div>
+> <div class="display-dark-only">
+> ```
+> ![Method signature completion](assets/features/completion-method-dark.png)
+> ```@raw html
+> </div>
+> ```
+
+### [Keyword argument completion](@id features/completion/keyword-argument)
+
+Triggered inside a function call at the keyword argument position
+(e.g. `func(; |)` or `func(k|)`). Available keyword arguments are suggested
+with `=` appended. Already-specified keywords are excluded.
+
+> ```@raw html
+> <div class="display-light-only">
+> ```
+> ![Keyword argument completion](assets/features/completion-keyword.png)
+> ```@raw html
+> </div>
+> <div class="display-dark-only">
+> ```
+> ![Keyword argument completion](assets/features/completion-keyword-dark.png)
+> ```@raw html
+> </div>
+> ```
+
+### [LaTeX and emoji completion](@id features/completion/latex-emoji)
+
+Type `\` to trigger LaTeX symbol completion (e.g. `\alpha` → `α`) or `\:`
+to trigger emoji completion (e.g. `\:smile:` → `😄`), mirroring the Julia
+REPL.
+
+```@raw html
+<table>
+  <thead>
+    <tr><th>Trigger</th><th>Example</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>LaTeX symbol (<code>\</code>)</td>
+      <td>
+        <div class="display-light-only">
+```
+![LaTeX completion](assets/features/completion-latex.png)
+```@raw html
+        </div>
+        <div class="display-dark-only">
+```
+![LaTeX completion](assets/features/completion-latex-dark.png)
+```@raw html
+        </div>
+      </td>
+    </tr>
+    <tr>
+      <td>Emoji (<code>\:</code>)</td>
+      <td>
+        <div class="display-light-only">
+```
+![Emoji completion](assets/features/completion-emoji.png)
+```@raw html
+        </div>
+        <div class="display-dark-only">
+```
+![Emoji completion](assets/features/completion-emoji-dark.png)
+```@raw html
+        </div>
+      </td>
+    </tr>
+  </tbody>
+</table>
+```
+
+## [Signature help](@id features/signature-help)
+
+Method signatures are displayed as you type function arguments. Methods are
+filtered based on the inferred type of each argument at the call site,
+including arbitrary local-scope expressions. For example, both `sin(1,│)`
+and `let x = rand(Int); sin(x,│); end` show only methods compatible with
+an `Int` first argument.
+
+> ```@raw html
+> <div class="display-light-only">
+> ```
+> ![Signature help](assets/features/signature-help.png)
+> ```@raw html
+> </div>
+> <div class="display-dark-only">
+> ```
+> ![Signature help](assets/features/signature-help-dark.png)
+> ```@raw html
+> </div>
+> ```
+
 ## [Rename](@id features/rename)
 
 Rename local or global bindings across files analyzed together (e.g., a
@@ -608,71 +757,71 @@ A few representative examples:
 
 ```@raw html
 <table>
-<thead>
-<tr><th>Code action</th><th>Triggered by</th><th>Example</th></tr>
-</thead>
-<tbody>
-<tr>
-<td>Prefix unused variable with <code>_</code></td>
-<td>
+  <thead>
+    <tr><th>Code action</th><th>Triggered by</th><th>Example</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Prefix unused variable with <code>_</code></td>
+      <td>
 ```
 [`lowering/unused-argument`](@ref diagnostic/reference/lowering/unused-argument)
 ```@raw html
-</td>
-<td>
-<div class="display-light-only">
+      </td>
+      <td>
+        <div class="display-light-only">
 ```
 ![Prefix unused argument with underscore](assets/features/code-actions-unused-arg.png)
 ```@raw html
-</div>
-<div class="display-dark-only">
+        </div>
+        <div class="display-dark-only">
 ```
 ![Prefix unused argument with underscore](assets/features/code-actions-unused-arg-dark.png)
 ```@raw html
-</div>
-</td>
-</tr>
-<tr>
-<td>Insert <code>global</code> / <code>local</code> declaration</td>
-<td>
+        </div>
+      </td>
+    </tr>
+    <tr>
+      <td>Insert <code>global</code> / <code>local</code> declaration</td>
+      <td>
 ```
 [`lowering/ambiguous-soft-scope`](@ref diagnostic/reference/lowering/ambiguous-soft-scope)
 ```@raw html
-</td>
-<td>
-<div class="display-light-only">
+      </td>
+      <td>
+        <div class="display-light-only">
 ```
 ![Insert global/local declaration](assets/features/code-actions-soft-scope.png)
 ```@raw html
-</div>
-<div class="display-dark-only">
+        </div>
+        <div class="display-dark-only">
 ```
 ![Insert global/local declaration](assets/features/code-actions-soft-scope-dark.png)
 ```@raw html
-</div>
-</td>
-</tr>
-<tr>
-<td>Sort import names</td>
-<td>
+        </div>
+      </td>
+    </tr>
+    <tr>
+      <td>Sort import names</td>
+      <td>
 ```
 [`lowering/unsorted-import-names`](@ref diagnostic/reference/lowering/unsorted-import-names)
 ```@raw html
-</td>
-<td>
-<div class="display-light-only">
+      </td>
+      <td>
+        <div class="display-light-only">
 ```
 ![Sort import names](assets/features/code-actions-sort-imports.png)
 ```@raw html
-</div>
-<div class="display-dark-only">
+        </div>
+        <div class="display-dark-only">
 ```
 ![Sort import names](assets/features/code-actions-sort-imports-dark.png)
 ```@raw html
-</div>
-</td>
-</tr>
-</tbody>
+        </div>
+      </td>
+    </tr>
+  </tbody>
 </table>
 ```
 

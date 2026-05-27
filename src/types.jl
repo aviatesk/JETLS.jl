@@ -199,8 +199,6 @@ struct CancellableToken{T}
     cancel_flag::CancelFlag
 end
 
-const CurrentlyHandled = Dict{MessageId, CancelFlag}
-
 const URI2Diagnostics = Dict{URI,Vector{Diagnostic}}
 
 struct AnalysisResult
@@ -209,6 +207,7 @@ struct AnalysisResult
     analyzer::LSAnalyzer
     analyzed_file_infos::Dict{URI,JET.AnalyzedFileInfo}
     actual2virtual::JET.Actual2Virtual
+    world::UInt
 end
 
 analyzed_file_uris(analysis_result::AnalysisResult) = keys(analysis_result.analyzed_file_infos)
@@ -263,13 +262,13 @@ struct AnalysisManager
     worker_tasks::Vector{Task}
     function AnalysisManager()
         return new(
-            AnalysisCache(Dict{URI,AnalysisInfo}()),
-            PendingAnalyses(Dict{AnalysisEntry,Union{Nothing,AnalysisRequest}}()),
+            AnalysisCache(),
+            PendingAnalyses(),
             Channel{Union{Nothing,AnalysisRequest}}(Inf),
-            CurrentGenerations(Dict{AnalysisEntry,Int}()),
-            AnalyzedGenerations(Dict{AnalysisEntry,Int}()),
-            DebouncedRequests(Dict{AnalysisEntry,Timer}()),
-            InstantiatedEnvs(Dict{String,Union{Nothing,Tuple{Base.PkgId,URI}}}()),
+            CurrentGenerations(),
+            AnalyzedGenerations(),
+            DebouncedRequests(),
+            InstantiatedEnvs(),
             Task[], # initialized by start_analysis_workers!
         )
     end
@@ -524,14 +523,8 @@ const DEFAULT_INIT_OPTIONS = InitOptions(; n_analysis_workers=1, analysis_overri
 end
 @define_eq_overloads LaTeXEmojiConfig
 
-@kwdef struct MethodSignatureConfig <: ConfigSection
-    prepend_inference_result::Maybe{Union{Missing,Bool}} = nothing # missing is used as sentinel for default setting value
-end
-@define_eq_overloads MethodSignatureConfig
-
 @kwdef struct CompletionConfig <: ConfigSection
     latex_emoji::Maybe{LaTeXEmojiConfig} = nothing
-    method_signature::Maybe{MethodSignatureConfig} = nothing
 end
 @define_eq_overloads CompletionConfig
 
@@ -573,7 +566,7 @@ const DEFAULT_CONFIG = JETLSConfig(;
     full_analysis = FullAnalysisConfig(@static(JETLS_TEST_MODE ? 0.0 : 1.0), true),
     testrunner = TestRunnerConfig(@static Sys.iswindows() ? "testrunner.bat" : "testrunner"),
     formatter = "Runic",
-    completion = CompletionConfig(LaTeXEmojiConfig(missing), MethodSignatureConfig(missing)),
+    completion = CompletionConfig(LaTeXEmojiConfig(missing)),
     code_lens = CodeLensConfig(false, true),
     inlay_hint = InlayHintConfig(
         InlayHintBlockEndConfig(true, 25)),
@@ -687,15 +680,29 @@ const BindingOccurrencesCacheEntry = Base.PersistentDict{UnitRange{Int},BindingO
 
 const AnyBindingOccurrence = Union{BindingOccurrence,CachedBindingOccurrence}
 
-struct GlobalCompletionResolverInfo
+abstract type AbstractCompletionResolverInfo end
+
+struct GlobalCompletionResolverInfo <: AbstractCompletionResolverInfo
     id::String
-    mod::Module
+    context_module::Module
+    world::UInt
     postprocessor::LSPostProcessor
 end
 
-struct MethodSignatureCompletionResolverInfo
+struct MethodSignatureCompletionResolverInfo <: AbstractCompletionResolverInfo
     id::String
+    world::UInt
     matches::CC.MethodLookupResult
+    postprocessor::LSPostProcessor
+end
+
+# Lattice element of the dot prefix; held opaquely so resolver-time
+# `getproperty(::T, Core.Const(name))` abstract-calls can rebuild the type
+# detail per-item without re-running the parse / lowering pipeline.
+struct PropertyCompletionResolverInfo <: AbstractCompletionResolverInfo
+    id::String
+    prefixtyp::Any
+    world::UInt
     postprocessor::LSPostProcessor
 end
 
@@ -709,19 +716,39 @@ const CellToNotebookMap = SWContainer{Base.PersistentDict{URI,URI}, SWStats} # c
 const ExtraDiagnostics = CASContainer{ExtraDiagnosticsData, CASStats}
 const CurrentlyRequested = CASContainer{Base.PersistentDict{String,RequestCaller}, CASStats}
 const CurrentlyRegistered = CASContainer{Set{Registered}, CASStats}
-const CompletionResolverInfo = CASContainer{Union{Nothing,GlobalCompletionResolverInfo,MethodSignatureCompletionResolverInfo}, CASStats}
+const CompletionResolverInfo = CASContainer{Union{Nothing,AbstractCompletionResolverInfo}, CASStats}
 
 # Type aliases for concurrent updates using LWContainer
 const DocumentSymbolCacheData = Base.PersistentDict{URI,Vector{DocumentSymbol}}
 const DocumentSymbolCache = LWContainer{DocumentSymbolCacheData, LWStats}
 const BindingOccurrencesCacheData = Base.PersistentDict{URI,BindingOccurrencesCacheEntry}
 const BindingOccurrencesCache = LWContainer{BindingOccurrencesCacheData, LWStats}
-const LoweringDiagnosticsCacheData = Base.PersistentDict{URI,Vector{Diagnostic}}
-const LoweringDiagnosticsCache = LWContainer{LoweringDiagnosticsCacheData, LWStats}
+struct LoweringDiagnosticKey
+    range::Range
+    kind::Symbol
+    name::String
+end
+# Undef-global candidate emitted by the per-file phase (with fresh `ctx3`),
+# consumed by the cross-file phase (which only does a cheap def-name lookup).
+# Everything needed for the final `Diagnostic` is pre-computed so the cache
+# carries no reference to lowering contexts.
+struct UndefGlobalCandidate
+    bmod::Module
+    name::String
+    range::Range
+    message::String
+end
+struct PerFileDiagnosticsResult
+    diagnostics::Vector{Diagnostic}
+    undef_global_candidates::Vector{UndefGlobalCandidate}
+end
+const PerFileDiagnosticsCacheData = Base.PersistentDict{URI,PerFileDiagnosticsResult}
+const PerFileDiagnosticsCache = LWContainer{PerFileDiagnosticsCacheData, LWStats}
 const ConfigManager = LWContainer{ConfigManagerData, LWStats}
 const UnsyncedFileCacheData = Base.PersistentDict{URI,FileInfo}
 const UnsyncedFileCache = LWContainer{UnsyncedFileCacheData, LWStats}
 
+const CurrentlyHandled = Dict{MessageId, CancelFlag}
 const HandledHistory = FixedSizeQueue{MessageId}
 
 struct HandledToken
@@ -739,13 +766,13 @@ mutable struct ServerState
     # Per-file caches keyed on the canonical (notebook-aware) URI of a logical file.
     # All three are dropped together via `invalidate_per_file_caches!` on content change
     # (didChange/didOpen, notebook cell edits, watched-file events).
-    # `binding_occurrences_cache` and `lowering_diagnostics_cache` are additionally
+    # `binding_occurrences_cache` and `per_file_diagnostics_cache` are additionally
     # invalidated by `update_analysis_cache!` when full-analysis changes module context,
-    # since both embed `binfo.mod`. `lowering_diagnostics_cache` is also cleared wholesale
-    # on diagnostic-affecting config changes via `clear_lowering_diagnostics_cache!`.
+    # since both embed `binfo.mod`. `per_file_diagnostics_cache` is also cleared wholesale
+    # on diagnostic-affecting config changes via `clear_per_file_diagnostics_cache!`.
     const document_symbol_cache::DocumentSymbolCache
     const binding_occurrences_cache::BindingOccurrencesCache
-    const lowering_diagnostics_cache::LoweringDiagnosticsCache
+    const per_file_diagnostics_cache::PerFileDiagnosticsCache
     const analysis_manager::AnalysisManager
     const extra_diagnostics::ExtraDiagnostics
     const currently_handled::CurrentlyHandled
@@ -755,6 +782,11 @@ mutable struct ServerState
     const config_manager::ConfigManager
     const completion_resolver_info::CompletionResolverInfo
     const suppress_notifications::Bool
+    # When true, skip workspace-boundary guards intended for the LSP flow.
+    # Files in CLI mode are explicitly named on the command line, so the
+    # `state.root_path`-based "is this file inside the workspace?" check in
+    # `find_analysis_env_path` would wrongly classify them as `OutOfScope`.
+    const cli_mode::Bool
 
     # Lifecycle fields (set after initialization request)
     encoding::PositionEncodingKind.Ty
@@ -763,25 +795,26 @@ mutable struct ServerState
     root_path::String
     root_env_path::String
     init_params::InitializeParams
-    function ServerState(; suppress_notifications::Bool=false)
+    function ServerState(; suppress_notifications::Bool=false, cli_mode::Bool=false)
         return new(
-            #=file_cache=# FileCache(Base.PersistentDict{URI,FileInfo}()),
-            #=saved_file_cache=# SavedFileCache(Base.PersistentDict{URI,SavedFileInfo}()),
-            #=notebook_cache=# NotebookCache(Base.PersistentDict{URI,NotebookInfo}()),
-            #=cell_to_notebook=# CellToNotebookMap(Base.PersistentDict{URI,URI}()),
-            #=unsynced_file_cache=# UnsyncedFileCache(UnsyncedFileCacheData()),
-            #=document_symbol_cache=# DocumentSymbolCache(DocumentSymbolCacheData()),
-            #=binding_occurrences_cache=# BindingOccurrencesCache(BindingOccurrencesCacheData()),
-            #=lowering_diagnostics_cache=# LoweringDiagnosticsCache(LoweringDiagnosticsCacheData()),
+            #=file_cache=# FileCache(),
+            #=saved_file_cache=# SavedFileCache(),
+            #=notebook_cache=# NotebookCache(),
+            #=cell_to_notebook=# CellToNotebookMap(),
+            #=unsynced_file_cache=# UnsyncedFileCache(),
+            #=document_symbol_cache=# DocumentSymbolCache(),
+            #=binding_occurrences_cache=# BindingOccurrencesCache(),
+            #=per_file_diagnostics_cache=# PerFileDiagnosticsCache(),
             #=analysis_manager=# AnalysisManager(),
-            #=extra_diagnostics=# ExtraDiagnostics(ExtraDiagnosticsData()),
+            #=extra_diagnostics=# ExtraDiagnostics(),
             #=currently_handled=# CurrentlyHandled(),
             #=handled_history=# HandledHistory(128),
-            #=currently_requested=# CurrentlyRequested(Base.PersistentDict{String,RequestCaller}()),
-            #=currently_registered=# CurrentlyRegistered(Set{Registered}()),
-            #=config_manager=# ConfigManager(ConfigManagerData()),
+            #=currently_requested=# CurrentlyRequested(),
+            #=currently_registered=# CurrentlyRegistered(),
+            #=config_manager=# ConfigManager(),
             #=completion_resolver_info=# CompletionResolverInfo(nothing),
             suppress_notifications,
+            cli_mode,
             #=encoding=# PositionEncodingKind.UTF16, # initialize with UTF16 (for tests)
             #=init_options=# DEFAULT_INIT_OPTIONS, # initialize with defaults
         )
@@ -793,13 +826,16 @@ struct Server{Callback}
     callback::Callback
     state::ServerState
     message_queue::Channel{Any}
-    function Server(callback::Callback, endpoint::Endpoint; suppress_notifications::Bool=false) where Callback
+    function Server(
+            callback::Callback, endpoint::Endpoint;
+            suppress_notifications::Bool=false, cli_mode::Bool=false
+        ) where Callback
         return new{Callback}(
             endpoint,
             callback,
-            ServerState(; suppress_notifications),
+            ServerState(; suppress_notifications, cli_mode),
             Channel{Any}(Inf))
     end
 end
-Server(; suppress_notifications::Bool=true) = # used for tests
-    Server(Returns(nothing), Endpoint(IOBuffer(), IOBuffer()); suppress_notifications)
+Server(; suppress_notifications::Bool=true, cli_mode::Bool=false) = # used for tests
+    Server(Returns(nothing), Endpoint(IOBuffer(), IOBuffer()); suppress_notifications, cli_mode)

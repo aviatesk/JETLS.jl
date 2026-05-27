@@ -7,11 +7,14 @@ const JETLS_VERSION = let
     isfile(version_file) ? strip(read(version_file, String)) : "unknown"
 end
 
-# Append `old_path => new_path` pairs to register a key migration.
+# Append `old_path => new_path` pairs to register a key migration, or
+# `old_path => nothing` to deprecate a key without a replacement.
 # Each path is a list of nested keys; `migrate_deprecated_config_keys!` consults this
 # table and rewrites raw user config dicts before parsing.
-const deprecated_configurations = Pair{Vector{String},Vector{String}}[
+const deprecated_configurations = Pair{Vector{String},Union{Nothing,Vector{String}}}[
+    # 2026 June
     ["inlay_hint", "block_end_min_lines"] => ["inlay_hint", "block_end", "min_lines"],
+    ["completion", "method_signature", "prepend_inference_result"] => nothing,
 ]
 
 const __init__hooks__ = Any[]
@@ -74,11 +77,10 @@ using .Analyzer
 Analyzer.LSAnalyzer(uri::URI, args...; kwargs...) = LSAnalyzer(ScriptAnalysisEntry(uri), args...; kwargs...)
 Analyzer.LSAnalyzer(args...; kwargs...) = LSAnalyzer(ScriptAnalysisEntry(filepath2uri(@__FILE__)), args...; kwargs...)
 
-include("analysis/resolver.jl")
-
 include("FixedSizeQueues/FixedSizeQueues.jl")
 using .FixedSizeQueues
 
+include("utils/markdown.jl")
 include("utils/general.jl")
 
 include("testrunner/testrunner-types.jl")
@@ -91,14 +93,18 @@ include("utils/pkg.jl")
 include("utils/JETLSTestModule.jl")
 include("utils/ast.jl")
 include("utils/binding.jl")
+include("utils/docs.jl")
 include("utils/lsp.jl")
 include("utils/server.jl")
+include("utils/native-inference.jl")
 
 include("analysis/closure-to-opaque.jl")
 using .Closure2Opaque
 
 include("analysis/TypeAnnotation.jl")
 using .TypeAnnotation
+
+include("utils/type-annotation-utils.jl")
 
 include("init-options.jl")
 include("config.jl")
@@ -122,6 +128,7 @@ include("signature-help.jl")
 include("completions.jl")
 include("declaration.jl")
 include("definition.jl")
+include("type-definition.jl")
 include("references.jl")
 include("hover.jl")
 include("document-highlight.jl")
@@ -450,6 +457,8 @@ function handle_request_message(server::Server, @nospecialize(msg), cancel_flag:
         handle_DeclarationRequest(server, msg, cancel_flag)
     elseif msg isa DefinitionRequest
         handle_DefinitionRequest(server, msg, cancel_flag)
+    elseif msg isa TypeDefinitionRequest
+        handle_TypeDefinitionRequest(server, msg, cancel_flag)
     elseif msg isa ReferencesRequest
         handle_ReferencesRequest(server, msg, cancel_flag)
     elseif msg isa HoverRequest

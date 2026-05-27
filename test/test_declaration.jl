@@ -21,8 +21,8 @@ function declaration_testcase(
     end
     return server, fi, positions, furi
 end
-find_declaration_locations(server, furi, fi, pos) =
-    first(JETLS.find_declaration(server, furi, fi, pos))
+find_declaration_locations(server, furi, fi, pos; kwargs...) =
+    first(@something JETLS.find_declaration(server, furi, fi, pos; kwargs...) return nothing)
 
 @testset "declaration for imported names" begin
     let code = """
@@ -84,8 +84,7 @@ end
         """
         server, fi, positions, furi = declaration_testcase(code, 4)
         for pos in positions
-            locations = find_declaration_locations(server, furi, fi, pos)
-            @test isempty(locations)
+            @test isnothing(find_declaration_locations(server, furi, fi, pos))
         end
     end
 end
@@ -99,7 +98,7 @@ end
         """
         server, fi, positions, furi = declaration_testcase(code, 4)
         for pos in positions
-            locations, _ = JETLS.find_declaration(
+            locations = find_declaration_locations(
                 server, furi, fi, pos; fallback_to_definition=true)
             @test length(locations) == 1
             @test only(locations).uri == furi
@@ -115,7 +114,7 @@ end
         """
         server, fi, positions, furi = declaration_testcase(code, 4)
         for pos in positions
-            locations, _ = JETLS.find_declaration(
+            locations = find_declaration_locations(
                 server, furi, fi, pos; fallback_to_definition=true)
             @test length(locations) == 1
             @test only(locations).uri == furi

@@ -41,7 +41,7 @@ function handle_CodeLensRequest(server::Server, msg::CodeLensRequest, cancel_fla
     return send(server,
         CodeLensResponse(;
             id = msg.id,
-            result = @somereal code_lenses null))
+            result = code_lenses))
 end
 
 const REFERENCES_CODE_LENS_SYMBOL_KINDS = (

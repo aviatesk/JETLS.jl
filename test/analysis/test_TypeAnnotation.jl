@@ -2,33 +2,25 @@ module test_type_annotation
 
 using Test
 using JETLS
-using JETLS: JL, JS
+using JETLS: CC, JL, JS
 using JETLS.TypeAnnotation
-using JETLS.JET: CC
+using JETLS.TypeAnnotation: get_inferrable_tree, infer_toplevel_tree
 
-# Run the full pipeline a typical caller would: parse → lower → infer, then
-# wrap the thunk's inferred tree (and `st3`, used to identify user-written
-# return values) in an `InferredTreeContext` ready for byte-range queries.
-# Returns `(fi, ctx)` so the test can also access `fi` for `xy_to_offset` etc.
-function type_annotate(code::AbstractString, mod::Module = Main; expect_degrade::Bool=false)
+include("../HierarchicalTestSet.jl")
+
+module type_annotate_module end
+
+# Run the full TypeAnnotation pipeline through its exported driver and return
+# `(fi, ctx)` for the toplevel containing byte 1 — i.e. the *first* top-level
+# statement in `code`. The tests below either pass single-toplevel snippets
+# (the common case) or place the statement under test first. `fi` is returned
+# so tests can use `xy_to_offset` etc. against the source.
+function type_annotate(code::AbstractString, context_module::Module = type_annotate_module)
     fi = JETLS.FileInfo(1, code, @__FILE__)
     st0_top = JETLS.build_syntax_tree(fi)
-    st3_ref = Ref{JETLS.SyntaxTreeC}()
-    inferred = Ref{JETLS.SyntaxTreeC}()
-    JETLS.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
-        result = @something get_inferrable_tree(st0, mod) return nothing
-        (; ctx3, st3) = result
-        st3_ref[] = st3
-        inferred[] = infer_toplevel_tree(ctx3, st3, mod)
-        return nothing
-    end
-    if expect_degrade
-        @test !isassigned(inferred)
-        return nothing
-    else
-        @test isassigned(inferred)
-    end
-    return fi, InferredTreeContext(inferred[], st3_ref[])
+    ctx = build_inferred_context_at(st0_top, context_module, 1:1)
+    @test ctx !== nothing
+    return fi, ctx
 end
 
 # Byte range of the literal substring `s` inside `code`, in `JS.byte_range`
@@ -58,9 +50,7 @@ widenconst(typ) = CC.widenconst(@something typ return nothing)
 # source text matches `text`, and return the resulting types. Use this to
 # assert that **every** occurrence of an identifier (or expression) gets
 # an annotation, not just the first one.
-function query_all_types(
-        fi::JETLS.FileInfo, ctx::InferredTreeContext, text::AbstractString
-    )
+function query_all_types(fi::JETLS.FileInfo, ctx::InferredTreeContext, text::AbstractString)
     st0_top = JETLS.build_syntax_tree(fi)
     types = Any[]
     JETLS.traverse(st0_top) do node::JS.SyntaxTree
@@ -72,7 +62,20 @@ function query_all_types(
     return types
 end
 
-@testset "get_inferrable_tree" begin
+# Smoke-test for the single-shot driver — the rest of the file exercises the
+# composed `build_inferred_context_at` + `get_type_for_range` form via
+# `type_annotate`, so this just verifies the convenience wrapper composes the
+# same answer for one query.
+@testset "infer_type_at_range" begin
+    let code = "sin(1.0)"
+        fi = JETLS.FileInfo(1, code, @__FILE__)
+        st0_top = JETLS.build_syntax_tree(fi)
+        typ = infer_type_at_range(st0_top, Main, range_of(code, "sin(1.0)"))
+        @test typ === Core.Const(sin(1.0))
+    end
+end
+
+@testset HierarchicalTestSet "get_inferrable_tree" begin
     # `iterate_toplevel_tree` walks each top-level expression independently;
     # `get_inferrable_tree` is invoked once per thunk. Verify it lowers all
     # of them, not just the first.
@@ -91,14 +94,14 @@ end
             results = []
             JETLS.iterate_toplevel_tree(st0_top) do st0::JS.SyntaxTree
                 r = get_inferrable_tree(st0, Main)
-                r === nothing || push!(results, r)
+                r === nothing || push!(results, (; r..., st0))
                 return nothing
             end
             @test length(results) == 3
-            for (; ctx3, st3) in results
+            for (; ctx3, st3, st0) in results
                 @test ctx3 isa JL.VariableAnalysisContext
                 @test st3 isa JS.SyntaxTree
-                @test infer_toplevel_tree(ctx3, st3, @__MODULE__) isa JETLS.SyntaxTreeC
+                @test infer_toplevel_tree(ctx3, st3, st0, @__MODULE__) isa JETLS.SyntaxTreeC
             end
         end
     end
@@ -117,7 +120,7 @@ end
     end
 end
 
-@testset "Inference robustness across method shapes" begin
+@testset HierarchicalTestSet "Inference accuracy and robustness" begin
     # Method bodies are inferred as their own anonymous thunks: argtypes are
     # resolved from the lowered svec, no full-analysis-defined `Method` is
     # required for the body's user-named slots.
@@ -442,6 +445,27 @@ end
         end
     end
 
+    # `MustAliasesLattice` / `InterMustAliasesLattice` overrides on
+    # `ASTTypeAnnotator` propagate branch-narrowed types back to subsequent
+    # reads of the same `slot.field` on immutable, concretely-typed objects
+    # — without them, each `getfield` call on a Union-typed field returns
+    # the unrefined Union even inside the guarded branch.
+    @testset "MustAlias narrowing on field accesses" begin
+        let code = """
+            function f(s::Some{Union{Nothing,Int}})
+                if !isnothing(s.value)
+                    s.value
+                else
+                    0
+                end
+            end
+            """
+            fi, ctx = type_annotate(code)
+            types = query_all_types(fi, ctx, "s.value")
+            @test any(t -> widenconst(t) === Int, types)
+        end
+    end
+
     # `(::Type{NamedTuple{names}})(::Tuple{Union{T1,T2}})` and similar constructor calls
     # have a method whose `spec_types` carries free type vars
     # (`(NT::Type{NamedTuple{names}})(args::Tuple) where names`); for thunk-MI inference,
@@ -479,7 +503,109 @@ end
     end
 end
 
-@testset "Surface-kind dispatch (get_type_for_range)" begin
+@testset HierarchicalTestSet "Call positional arg annotation" begin
+    # At a `:call` site, both the callee identifier and each literal /
+    # `GlobalRef` arg should resolve to `Core.Const(value)` so consumers
+    # (hover, signature help, completion) can read precise types by
+    # querying at the corresponding byte range.
+
+    @testset "annotates literal args" begin
+        @testset "integer" begin
+            code = "sin(42)"
+            _, ctx = type_annotate(code)
+            @test get_type_for_range(ctx, range_of(code, "sin")) === Core.Const(sin)
+            @test get_type_for_range(ctx, range_of(code, "42")) === Core.Const(42)
+        end
+        @testset "float" begin
+            code = "sin(1.5)"
+            _, ctx = type_annotate(code)
+            @test get_type_for_range(ctx, range_of(code, "sin")) === Core.Const(sin)
+            @test get_type_for_range(ctx, range_of(code, "1.5")) === Core.Const(1.5)
+        end
+        @testset "bool" begin
+            code = "xor(true, false)"
+            _, ctx = type_annotate(code)
+            @test get_type_for_range(ctx, range_of(code, "xor")) === Core.Const(xor)
+            @test get_type_for_range(ctx, range_of(code, "true")) === Core.Const(true)
+            @test get_type_for_range(ctx, range_of(code, "false")) === Core.Const(false)
+        end
+        @testset "nothing" begin
+            code = "sin(nothing)"
+            _, ctx = type_annotate(code)
+            @test get_type_for_range(ctx, range_of(code, "sin")) === Core.Const(sin)
+            @test get_type_for_range(ctx, range_of(code, "nothing")) === Core.Const(nothing)
+        end
+        # String / Symbol / Char literals expose the value at the inner
+        # content node, not at the surrounding surface form that includes
+        # the quotes / colon.
+        @testset "string" begin
+            code = "println(\"hi\")"
+            _, ctx = type_annotate(code)
+            @test get_type_for_range(ctx, range_of(code, "println")) === Core.Const(println)
+            @test get_type_for_range(ctx, range_of(code, "hi")) === Core.Const("hi")
+        end
+        @testset "symbol" begin
+            code = "sin(:foo)"
+            _, ctx = type_annotate(code)
+            @test get_type_for_range(ctx, range_of(code, "sin")) === Core.Const(sin)
+            @test get_type_for_range(ctx, range_of(code, "foo")) === Core.Const(:foo)
+        end
+        @testset "char" begin
+            code = "sin('a')"
+            _, ctx = type_annotate(code)
+            @test get_type_for_range(ctx, range_of(code, "sin")) === Core.Const(sin)
+            @test get_type_for_range(ctx, range_of(code, "a")) === Core.Const('a')
+        end
+    end
+
+    # User-written `GlobalRef` args carry the resolved value at the
+    # identifier's narrow range — `is_synthetic_arg_leaf` filters only the
+    # *broad* synthetic refs lowering plants for scaffolding callees.
+    @testset "annotates GlobalRef args at narrow source position" begin
+        code = "convert(Int, 3.0)"
+        _, ctx = type_annotate(code)
+        @test get_type_for_range(ctx, range_of(code, "convert")) === Core.Const(convert)
+        @test get_type_for_range(ctx, range_of(code, "Int")) === Core.Const(Int)
+        @test get_type_for_range(ctx, range_of(code, "3.0")) === Core.Const(3.0)
+    end
+
+    @testset "annotates literal args in nested calls" begin
+        code = "sin(cos(0.5))"
+        _, ctx = type_annotate(code)
+        @test get_type_for_range(ctx, range_of(code, "sin")) === Core.Const(sin)
+        @test get_type_for_range(ctx, range_of(code, "cos")) === Core.Const(cos)
+        @test get_type_for_range(ctx, range_of(code, "0.5")) === Core.Const(0.5)
+    end
+
+    @testset "annotates each positional arg independently" begin
+        code = "clamp(5, 1, 10)"
+        _, ctx = type_annotate(code)
+        @test get_type_for_range(ctx, range_of(code, "clamp")) === Core.Const(clamp)
+        @test get_type_for_range(ctx, range_of(code, "5")) === Core.Const(5)
+        @test get_type_for_range(ctx, range_of(code, "1")) === Core.Const(1)
+        @test get_type_for_range(ctx, range_of(code, "10")) === Core.Const(10)
+    end
+end
+
+module myfunc_module
+myfunc(x::Int) = x + 1
+end
+
+# Helper macro for the "user-defined macro injecting K\"return\"" test below:
+# the macrocall site `@return_zero` carries no `return` in its source,
+# but the macro's expansion does — so `st3` (post-macro-expansion) is the
+# only tree where the `K"return"` is visible. Walking `st0` would miss it
+# and the IR `K"return"` it produces would mis-classify as a synthetic
+# tail-position return.
+module test_return_zero_module
+macro return_zero()
+    return quote
+        return 0
+    end
+end
+end
+
+@testset HierarchicalTestSet "Surface-kind dispatch (get_type_for_range)" begin
     # Generic fallback: a single typed node lives at the byte range, so the
     # tmerge path collapses to that node's type.
     @testset "generic byte-range fallback" begin
@@ -567,6 +693,22 @@ end
         end
     end
 
+    # `[xs...]` / `T[xs...]` should surface the constructed `Vector{T}` type,
+    # not widen to a union with the synthetic `Base.vect` / `Base.getindex`
+    # callees that lowering plants at the literal's byte range.
+    @testset "array literal leaf scaffolding doesn't pollute tmerge range" begin
+        let code = "[1, 2, 3]"
+            _, ctx = type_annotate(code)
+            @test widenconst(get_type_for_range(ctx, range_of(code, "[1, 2, 3]"))) ===
+                Vector{Int}
+        end
+        let code = "Any[1, 2, 3]"
+            _, ctx = type_annotate(code)
+            @test widenconst(get_type_for_range(ctx, range_of(code, "Any[1, 2, 3]"))) ===
+                Vector{Any}
+        end
+    end
+
     @testset "regular call dispatches to the user's call result" begin
         let code = "let v = [1.0, 2.0]; sum(v); end"
             _, ctx = type_annotate(code)
@@ -594,6 +736,33 @@ end
         end
     end
 
+    # `(; a, b)` / `(a = x, b = y)` should surface the user-visible
+    # `@NamedTuple{…}` value, not widen with the kwargs-constructor scaffolding
+    # that lowering plants at the same byte range.
+    @testset "NamedTuple literal returns the constructor's result type" begin
+        @testset "explicit-semicolon form" begin
+            let code = "let a = 1, b = 2; (; a, b); end"
+                _, ctx = type_annotate(code)
+                typ = widenconst(get_type_for_range(ctx, range_of(code, "(; a, b)")))
+                @test typ === @NamedTuple{a::Int, b::Int}
+            end
+        end
+        @testset "implicit `key=value` form" begin
+            let code = "let x = 1; (a = x, b = 2x); end"
+                _, ctx = type_annotate(code)
+                typ = widenconst(get_type_for_range(ctx, range_of(code, "(a = x, b = 2x)")))
+                @test typ === @NamedTuple{a::Int, b::Int}
+            end
+        end
+        @testset "positional tuple unaffected" begin
+            let code = "let x = 1, y = 2.0; (x, y); end"
+                _, ctx = type_annotate(code)
+                typ = widenconst(get_type_for_range(ctx, range_of(code, "(x, y)")))
+                @test typ === Tuple{Int, Float64}
+            end
+        end
+    end
+
     # `_str` macros expand to a single Core call.
     @testset "string macro returns the expansion result type" begin
         let code = "lazy\"hello\""
@@ -616,6 +785,61 @@ end
             _, ctx = type_annotate(code)
             @test widenconst(get_type_for_range(
                 ctx, range_of(code, "@something x return false"))) === Int
+        end
+    end
+
+    # `@invoke` / `@invokelatest` lower to `Core.invoke(f, Tuple{...}, args...)`
+    # and `Base.invokelatest(f, args...)` respectively. Both calls must dispatch
+    # to the user-visible result, not to internal scaffolding.
+    @testset "@invoke dispatches via Core.invoke and surfaces its result type" begin
+        let code = "let xs = [1, 2, 3]; @invoke length(xs::AbstractArray); end"
+            _, ctx = type_annotate(code)
+            @test widenconst(get_type_for_range(
+                ctx, range_of(code, "@invoke length(xs::AbstractArray)"))) === Int
+        end
+    end
+
+    # `Base.invokelatest` is opaque to inference (the dispatched method may live
+    # in a future world), so the result type is `Any`. This still confirms the
+    # macro lowered to a real call rather than degrading inference entirely.
+    @testset "@invokelatest surfaces a call type (Any) without degrading inference" begin
+        let code = "let v = [1.0, 2.0]; @invokelatest sum(v); end"
+            _, ctx = type_annotate(code)
+            @test widenconst(get_type_for_range(
+                ctx, range_of(code, "@invokelatest sum(v)"))) === Any
+        end
+    end
+
+    # `T[expr for ...]` should surface the constructed `Array{T,N}` type, not
+    # widen to `Any` from the inlined loop's scaffolding calls.
+    @testset "typed comprehension returns the constructed array type" begin
+        @testset "1D with local-var iter length" begin
+            let code = "let n = 5; Int[i*2 for i in 1:n]; end"
+                _, ctx = type_annotate(code)
+                @test widenconst(get_type_for_range(
+                    ctx, range_of(code, "Int[i*2 for i in 1:n]"))) === Vector{Int}
+            end
+        end
+        @testset "1D with non-Int element" begin
+            let code = "Float64[i*2.0 for i in 1:5]"
+                _, ctx = type_annotate(code)
+                @test widenconst(get_type_for_range(
+                    ctx, range_of(code, "Float64[i*2.0 for i in 1:5]"))) === Vector{Float64}
+            end
+        end
+        @testset "2D" begin
+            let code = "Int[i*j for i in 1:3, j in 1:4]"
+                _, ctx = type_annotate(code)
+                @test widenconst(get_type_for_range(
+                    ctx, range_of(code, "Int[i*j for i in 1:3, j in 1:4]"))) === Matrix{Int}
+            end
+        end
+        @testset "untyped comprehension still works via tmerge fallback" begin
+            let code = "[i for i in 1:5]"
+                _, ctx = type_annotate(code)
+                @test widenconst(get_type_for_range(
+                    ctx, range_of(code, "[i for i in 1:5]"))) === Vector{Int}
+            end
         end
     end
 
@@ -753,6 +977,24 @@ end
                 _, ctx = type_annotate(code)
                 @test widenconst(get_type_for_range(ctx, range_of_kind(code, JS.K"="))) === Int
                 @test get_type_for_range(ctx, range_of_kind(code, JS.K"macrocall")) !== nothing
+            end
+        end
+
+        # Querying just the function name's byte range at the def site used to
+        # return `Union{typeof(f), Type{typeof(f)}}` because the method's
+        # argtypes svec lowers to a `core.Typeof(f)` call sharing that range.
+        # `tmerge_at_range` filters this scaffolding so the user-visible value
+        # (`Const(f)`) survives intact.
+        @testset "method-def function name surfaces the value, not Union with Type{T}" begin
+            let code = """
+                function myfunc(x::Int)
+                    x + 1
+                end
+                """
+                _, ctx = type_annotate(code, myfunc_module)
+                typ = get_type_for_range(ctx, range_of(code, "myfunc"))
+                @test typ isa Core.Const
+                @test typ.val === myfunc_module.myfunc
             end
         end
     end
@@ -1022,7 +1264,7 @@ end
                     """
                     _, ctx = type_annotate(code)
                     outer_rng = range_of_kind(code, JS.K"if")
-                    @test_broken widenconst(get_type_for_range(ctx, outer_rng)) === Nothing
+                    @test widenconst(get_type_for_range(ctx, outer_rng)) === Nothing
                 end
             end
         end
@@ -1056,11 +1298,32 @@ end
                     @test widenconst(get_type_for_range(ctx, out_use_rng)) === Union{Int, Nothing}
                 end
             end
+
+            # Unlike `@something y return ...` above (where `return` is in
+            # the macrocall args and thus visible in `st0`), here the user
+            # source has no `return` token at all — only the macro's
+            # expansion emits one. `st0`-only walking would miss it.
+            @testset "user-defined macro injecting K\"return\"" begin
+                let code = """
+                    function f(cond::Bool)
+                        out = if cond
+                            @return_zero
+                        end
+                        out
+                    end
+                    """
+                    _, ctx = type_annotate(code, test_return_zero_module)
+                    outer_rng = range_of_kind(code, JS.K"if")
+                    # `Int` (from `return 0`) would leak in without st3 walking:
+                    # `Union{Int, Nothing}` would be the wrong answer.
+                    @test widenconst(get_type_for_range(ctx, outer_rng)) === Nothing
+                end
+            end
         end
     end
 end
 
-@testset "Multi-position / composition behaviors" begin
+@testset HierarchicalTestSet "Destructure type preservation" begin
     # Tuple-destructuring assignment `a, b = sincos(x)` lowers to two slot
     # assignments via `iterate(t)` / `iterate(t, state)`. The slot positions
     # have to pick up the element type, not just `Any`, so each `a` / `b`
@@ -1080,6 +1343,91 @@ end
         end
     end
 
+    # `(a, b) = rhs` — RHS query should surface the Tuple value, and each
+    # LHS identifier its element type.
+    @testset "tuple destructure keeps user-visible types" begin
+        let code = """
+            function f(x::Float64)
+                (a, b) = sincos(x)
+                a + b
+            end
+            """
+            _, ctx = type_annotate(code)
+            rhs_rng = range_of(code, "sincos(x)")
+            @test widenconst(get_type_for_range(ctx, rhs_rng)) === Tuple{Float64, Float64}
+            a_rng = let r = range_of(code, "(a, "); (first(r)+1):(first(r)+1) end
+            b_rng = let r = range_of(code, ", b)"); (first(r)+2):(first(r)+2) end
+            @test widenconst(get_type_for_range(ctx, a_rng)) === Float64
+            @test widenconst(get_type_for_range(ctx, b_rng)) === Float64
+        end
+
+        # `a, b = rhs` (no parens) parses with the same K"tuple" LHS.
+        let code = """
+            function f(x::Float64)
+                a, b = sincos(x)
+                a + b
+            end
+            """
+            _, ctx = type_annotate(code)
+            rhs_rng = range_of(code, "sincos(x)")
+            @test widenconst(get_type_for_range(ctx, rhs_rng)) ===
+                Tuple{Float64, Float64}
+        end
+
+        # A user-written `K"="` inside a destructure RHS sits within the destructure's
+        # byte range but isn't synthetic — its type must still be annotated.
+        let code = """
+            function f()
+                (a, b) = (x = 10; (x, x+1))
+                a + b
+            end
+            """
+            _, ctx = type_annotate(code)
+            @test widenconst(get_type_for_range(ctx, range_of(code, "x = 10"))) === Int
+        end
+    end
+
+    # `(; a, b) = nt` — RHS query should surface the NamedTuple value, and
+    # each LHS identifier its field type.
+    @testset "named-tuple destructure keeps user-visible types" begin
+        let code = """
+            function f(nt::@NamedTuple{a::Int, b::UInt})
+                (; a, b) = nt
+                return nothing
+            end
+            """
+            _, ctx = type_annotate(code)
+            nt_rhs_rng = let r = range_of(code, "= nt\n")
+                (first(r) + 2):(first(r) + 3)
+            end
+            @test widenconst(get_type_for_range(ctx, nt_rhs_rng)) === @NamedTuple{a::Int, b::UInt}
+            b_lhs_rng = let r = range_of(code, ", b)")
+                (first(r) + 2):(first(r) + 2)
+            end
+            @test widenconst(get_type_for_range(ctx, b_lhs_rng)) === UInt
+        end
+    end
+
+    # `for (a, b) in iter` is also a destructure form; each LHS identifier
+    # should resolve to its element type.
+    @testset "for-loop destructure keeps user-visible types" begin
+        let code = """
+            function f(xs::Vector{Tuple{Int, Float64}})
+                for (i, x) in xs
+                    @info i x
+                end
+            end
+            """
+            _, ctx = type_annotate(code)
+            i_rng = let r = range_of(code, "(i, "); (first(r)+1):(first(r)+1) end
+            x_rng = let r = range_of(code, ", x)"); (first(r)+2):(first(r)+2) end
+            @test widenconst(get_type_for_range(ctx, i_rng)) === Int
+            @test widenconst(get_type_for_range(ctx, x_rng)) === Float64
+        end
+    end
+end
+
+@testset HierarchicalTestSet "Multi-position / composition behaviors" begin
     # Chained dotted access on a dereferenced `Ref`: `Ref(...)[].field`
     # exercises K"." → K"ref" → K"call" composition. Each link in the chain
     # has to land its own `:type` for editor features (hover / inlay) to
@@ -1146,7 +1494,7 @@ end
     end
 end
 
-@testset "Pipeline-level edge cases" begin
+@testset HierarchicalTestSet "Pipeline-level edge cases" begin
     # JuliaSyntax doesn't bail on incomplete source — it produces a partial tree with
     # `K"error"` siblings around the well-formed parts. `get_inferrable_tree` strips those
     # error nodes, and JuliaLowering happily lowers what remains, so type queries on the
@@ -1193,9 +1541,122 @@ end
     # infer as `Any`; `strip_latestworld!` neutralizes the directive
     # before inference so the RHS keeps a precise `Float64`.
     @testset "top-level bare assignment RHS" begin
-        let code = "global x = sin(1.0)"
+        code = "global x = sin(1.0)"
+        _, ctx = type_annotate(code)
+        @test widenconst(get_type_for_range(ctx, range_of(code, "sin(1.0)"))) === Float64
+    end
+
+    # `get_inferrable_tree` does not bind `MACRO_DIAGNOSTIC_SINK`, so stubs that call
+    # `push_macro_error!` (e.g. `Threads.@spawn` on an unsupported threadpool literal)
+    # become no-ops and the macrocall still expands. Without this, a single such invalid
+    # macrocall in a function body would propagate a `MacroExpansionError` out of
+    # `expand_forms_1`, `get_inferrable_tree` would return `nothing`, and every
+    # `hover` / `inlay` / `signature-help` in the enclosing toplevel would go dark.
+    @testset "recoverable macro stub error keeps enclosing toplevel inferrable" begin
+        code = """
+        function f(xs::Vector{Float64})
+            s = sum(xs)
+            t = Threads.@spawn :badname sin(s)
+            fetch(t)
+        end
+        """
+        fi, ctx = type_annotate(code)
+        # Surface lookup for the macro body's `sin(s)` returns `Float64`.
+        @test widenconst(get_type_for_range(ctx, range_of(code, "sin(s)"))) === Float64
+        # Every `s` reference is annotated as `Float64`.
+        s_types = query_all_types(fi, ctx, "s")
+        @test count(t -> widenconst(t) === Float64, s_types) == 2
+    end
+
+    @testset "type annotation for calls whose result is unused" begin
+        let code = """
+            function f(x::Float64)
+                sin(x)
+                return cos(x)
+            end
+            """
             _, ctx = type_annotate(code)
-            @test widenconst(get_type_for_range(ctx, range_of(code, "sin(1.0)"))) === Float64
+            @test widenconst(get_type_for_range(ctx, range_of(code, "sin(x)"))) === Float64
+            @test widenconst(get_type_for_range(ctx, range_of(code, "cos(x)"))) === Float64
+        end
+
+        let code = """
+            function f()
+                g(x::Float64) = begin
+                    sin(x)
+                    cos(x)
+                end
+                return g(1.0)
+            end
+            """
+            _, ctx = type_annotate(code)
+            @test widenconst(get_type_for_range(ctx, range_of(code, "sin(x)"))) === Float64
+            @test widenconst(get_type_for_range(ctx, range_of(code, "cos(x)"))) === Float64
+        end
+
+        let code = """
+            function f(xs::Vector{Float64})
+                map(xs) do x::Float64
+                    sin(x)
+                    cos(x)
+                end
+            end
+            """
+            _, ctx = type_annotate(code)
+            @test widenconst(get_type_for_range(ctx, range_of(code, "sin(x)"))) === Float64
+            @test widenconst(get_type_for_range(ctx, range_of(code, "cos(x)"))) === Float64
+            map_call = range_of(code, "map(xs) do x::Float64\n        sin(x)\n        cos(x)\n    end")
+            @test widenconst(get_type_for_range(ctx, map_call)) === Vector{Float64}
+        end
+    end
+end
+
+@testset HierarchicalTestSet "get_matches_for_range" begin
+    # CC's dispatch picks the `sin` method matching `Float64` for `sin(1.0)`;
+    # matches should narrow to just that one method even though `sin` has many overloads.
+    @testset "narrows to the dispatched method" begin
+        let code = "sin(1.0)"
+            _, ctx = type_annotate(code)
+            ms = get_matches_for_range(ctx, range_of(code, "sin(1.0)"))
+            @test ms isa Vector{Core.MethodMatch}
+            @test length(ms) == 1
+            m = only(ms).method
+            @test m.name === :sin
+            # The dispatched method covers `Float64`; could be a parametric
+            # `where T<:Union{Float32,Float64}` definition in Base.
+            @test Tuple{typeof(sin), Float64} <: m.sig
+        end
+    end
+
+    # `K"ref"` (`xs[i]`) lowers to a `getindex` call, so its matches expose
+    # the dispatched `getindex` method.
+    @testset "exposes operator dispatch for K\"ref\"" begin
+        let code = "let arr = Int[1, 2, 3], i = 1; arr[i]; end"
+            _, ctx = type_annotate(code)
+            ms = get_matches_for_range(ctx, range_of(code, "arr[i]"))
+            @test ms isa Vector{Core.MethodMatch}
+            @test length(ms) == 1
+            m = only(ms).method
+            @test m.name === :getindex
+            # The dispatched method covers `Float64`; could be a parametric
+            # `where T<:Union{Float32,Float64}` definition in Base.
+            @test Tuple{typeof(getindex), Vector{Int}, Int} <: m.sig
+        end
+    end
+
+    # Non-call surfaces (a local binding occurrence, an `if` expression, …) don't carry a
+    # `:matches` attribute on any `K"call"` at their byte range
+    @testset "returns nothing for non-call surfaces" begin
+        let code = "let x = 42; x; end"
+            _, ctx = type_annotate(code)
+            @test get_matches_for_range(ctx, range_of(code, "x = 42")) === nothing
+        end
+    end
+
+    @testset "kwcall with unresolved callee returns nothing" begin
+        let code = "undefined_function_for_test(99; kw1=10, kw2=20)"
+            _, ctx = type_annotate(code)
+            @test get_matches_for_range(ctx, range_of(code, code)) === nothing
         end
     end
 end

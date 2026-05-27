@@ -13,11 +13,11 @@ module lowering_module end
 
 function get_cursor_bindings(
         fi::JETLS.FileInfo, b::Int;
-        mod::Module = lowering_module,
+        context_module::Module = lowering_module,
         soft_scope::Bool = false
     )
     st0 = JETLS.build_syntax_tree(fi)
-    cb = JETLS.cursor_bindings(st0, b, mod; soft_scope)
+    cb = JETLS.cursor_bindings(st0, b, context_module; soft_scope)
     return isnothing(cb) ? [] : cb
 end
 function get_cursor_bindings(marked_text::AbstractString; kwargs...)
@@ -107,25 +107,25 @@ end
 
 @testset "subtree lowering within modules" begin
     code = """
-module M
-    │
-    export foo
-
-    function foo(x)
-        y = 1
-        z = 2
+    module M
         │
-    end
+        export foo
 
-    module M2
-        function foo(a)
-            b = 1
-            c = 2
+        function foo(x)
+            y = 1
+            z = 2
             │
         end
+
+        module M2
+            function foo(a)
+                b = 1
+                c = 2
+                │
+            end
+        end
     end
-end
-"""
+    """
     cnt = Ref(0)
     with_completion(code) do i, cv
         if i == 1
@@ -145,102 +145,140 @@ end
 end
 
 @testset "nested and adjacent scopes" begin
-    code = "let; let; x = 1;   end;        │ let;          end; end"; test_single_cv(code, String[], unexpected=["x"])
-    code = "let; let; x = 1;   end;          let;        │ end; end"; test_single_cv(code, String[], unexpected=["x"])
-    code = "let; let;        │ end; x = 1;   let;          end; end"; test_single_cv(code, String[], unexpected=["x"])
-    code = "let; let;          end; x = 1;   let;        │ end; end"; test_single_cv(code, ["x"])
-    code = "let; let;        │ end;          let; x = 1;   end; end"; test_single_cv(code, String[], unexpected=["x"])
-    code = "let; let;          end;        │ let; x = 1;   end; end"; test_single_cv(code, String[], unexpected=["x"])
+    let code = "let; let; x = 1;   end;        │ let;          end; end"; test_single_cv(code, String[], unexpected=["x"]); end
+    let code = "let; let; x = 1;   end;          let;        │ end; end"; test_single_cv(code, String[], unexpected=["x"]); end
+    let code = "let; let;        │ end; x = 1;   let;          end; end"; test_single_cv(code, String[], unexpected=["x"]); end
+    let code = "let; let;          end; x = 1;   let;        │ end; end"; test_single_cv(code, ["x"]); end
+    let code = "let; let;        │ end;          let; x = 1;   end; end"; test_single_cv(code, String[], unexpected=["x"]); end
+    let code = "let; let;          end;        │ let; x = 1;   end; end"; test_single_cv(code, String[], unexpected=["x"]); end
 end
 
 @testset "globals in local scope, shadowing" begin
     # global decl should be contained
-    code = "function f(g); │ let;   global g;   end;   end"; test_single_cv(code, ["g"], kind=:argument)
-    code = "function f(g);   let;   global g; │ end;   end"; test_single_cv(code, ["g"], kind=:global)
-    code = "function f(g);   let;   global g;   end; │ end"; test_single_cv(code, ["g"], kind=:argument)
+    let code = "function f(g); │ let;   global g;   end;   end"
+        test_single_cv(code, ["g"], kind=:argument)
+    end
+    let code = "function f(g);   let;   global g; │ end;   end"
+        test_single_cv(code, ["g"], kind=:global)
+    end
+    let code = "function f(g);   let;   global g;   end; │ end"
+        test_single_cv(code, ["g"], kind=:argument)
+    end
     # global doesn't follow the "before-the-cursor" rule
-    code = "function f(g);   let; │ global g;   end;   end"; test_single_cv(code, ["g"], kind=:global)
+    let code = "function f(g);   let; │ global g;   end;   end"
+        test_single_cv(code, ["g"], kind=:global)
+    end
 
     # local shadowing global
-    code = """
-function f()
-    global g = 1; │
-    let │
-        let
-            local g
-            │
-            let; │ end
+    let code = """
+        function f()
+            global g = 1; │
+            let │
+                let
+                    local g
+                    │
+                    let; │ end
+                end
+            end
         end
-    end
-end
-"""
+        """
 
-    cnt = Ref(0)
-    with_completion(code) do i, cv
-        if i == 1
-            cv_has(cv, ["g"], kind=:global)
-            cnt[] += 1
-        elseif i == 2
-            cv_has(cv, ["g"], kind=:global)
-            cnt[] += 1
-        elseif i == 3
-            cv_has(cv, ["g"], kind=:local)
-            cnt[] += 1
-        elseif i == 4
-            cv_has(cv, ["g"], kind=:local)
-            cnt[] += 1
+        cnt = Ref(0)
+        with_completion(code) do i, cv
+            if i == 1
+                cv_has(cv, ["g"], kind=:global)
+                cnt[] += 1
+            elseif i == 2
+                cv_has(cv, ["g"], kind=:global)
+                cnt[] += 1
+            elseif i == 3
+                cv_has(cv, ["g"], kind=:local)
+                cnt[] += 1
+            elseif i == 4
+                cv_has(cv, ["g"], kind=:local)
+                cnt[] += 1
+            end
         end
+        @test cnt[] == 4
     end
-    @test cnt[] == 4
 
     # global/local decl below cursor
-    code = """
-function f(x)
-    let
-        │
-        global x
-        x = 1
-        let
-            x = 2 # otherwise we would filter this completion out
-            │
-            local x
-            x
+    let code = """
+        function f(x)
+            let
+                │
+                global x
+                x = 1
+                let
+                    x = 2 # otherwise we would filter this completion out
+                    │
+                    local x
+                    x
+                end
+            end
         end
-    end
-end
-"""
-    cnt = Ref(0)
-    with_completion(code) do i, cv
-        if i == 1
-            cv_has(cv, ["x"], kind=:global)
-            cnt[] += 1
-        elseif i == 2
-            # broken. JuliaLowering bug?
-            # cv_has(cv, ["x"], kind=:local)
-            cnt[] += 1
+        """
+        cnt = Ref(0)
+        with_completion(code) do i, cv
+            if i == 1
+                cv_has(cv, ["x"], kind=:global)
+                cnt[] += 1
+            elseif i == 2
+                # broken. JuliaLowering bug?
+                # cv_has(cv, ["x"], kind=:local)
+                cnt[] += 1
+            end
         end
+        @test cnt[] == 2
     end
-    @test cnt[] == 2
 end
 
 @testset "cursor in new symbol" begin
     # Don't suggest a symbol which appears for the first time right before the cursor
-    code = "function f(); global g1; g2│; end"
-    test_single_cv(code, ["g1"], unexpected=["g2"])
-    code = "function f(); global g1; g│2; end"
-    test_single_cv(code, ["g1"], unexpected=["g", "g2"])
-    code = "function f(); global g1; │g2; end"
-    test_single_cv(code, ["g1"], unexpected=["g2"])
+    let code = "function f(); global g1; g2│; end"
+        test_single_cv(code, ["g1"], unexpected=["g2"])
+    end
+    let code = "function f(); global g1; g│2; end"
+        test_single_cv(code, ["g1"], unexpected=["g", "g2"])
+    end
+    let code = "function f(); global g1; │g2; end"
+        test_single_cv(code, ["g1"], unexpected=["g2"])
+    end
 end
 
-# completion for code including macros
-let code = """
+@testset "completion for code including macros" begin
+    code = """
     function foo(x)
         │
         return @inline typeof(x)
     end
     """
     test_single_cv(code, ["x"])
+end
+
+@testset "local completion for method with docstring" begin
+    let code = """
+        \"\"\"
+        docstring above
+        \"\"\"
+        function foo(x, y)
+            z = x + y
+            │
+        end
+        """
+        test_single_cv(code, ["x", "y", "z"])
+    end
+    let code = """
+        @doc \"\"\"
+        docstring above
+        \"\"\"
+        function foo(x, y)
+            z = x + y
+            │
+        end
+        """
+        test_single_cv(code, ["x", "y", "z"])
+    end
 end
 
 # completion for type declared locals
@@ -262,19 +300,20 @@ end
     @test cnt[] == 1
 end
 
-# local completion for incomplete code shouldn't crash
-let code = """
-    function fo│
-    """
-    @expect_jl_err test_single_cv(code, String[])
-end
-let # XXX somehow wrapping within `module A ... end` is necessary to get `xx` completion for this incomplete code
-    code = """
-    module A
-    function foo(xx, y=x│)
+@testset "local completion for incomplete code shouldn't crash" begin
+    let code = """
+        function fo│
+        """
+        @expect_jl_err test_single_cv(code, String[])
     end
-    """
-    test_single_cv(code, ["xx"], kind=:local)
+    let # XXX somehow wrapping within `module A ... end` is necessary to get `xx` completion for this incomplete code
+        code = """
+        module A
+        function foo(xx, y=x│)
+        end
+        """
+        test_single_cv(code, ["xx"], kind=:local)
+    end
 end
 
 # get_completion_items
@@ -306,13 +345,15 @@ function with_completion_request(
     end
 end
 
-# Lightweight version of `with_completion_request` for cases where full module
-# context (populated by `request_analysis!`) isn't needed.
-# The `mod` context falls back to `Main`, so this works for tests against names defined in
-# `Main`/`Base`/`Core` and for purely local/keyword/latex/emoji completions.
+# Lightweight alternative to `with_completion_request`: skips the full
+# `request_analysis!` setup, so it works for tests against names from
+# `Main`/`Base`/`Core` and for local/keyword/latex/emoji completions.
+# Pass a `context_module` to keep test bindings out of `Main`; the `state`
+# threaded into the tester lets tests exercise `resolve_completion_item`.
 function with_completion_items(
         tester, text::AbstractString;
         context::Union{Nothing, CompletionContext} = nothing,
+        context_module::Union{Nothing, Module} = nothing,
         kwargs...
     )
     clean_code, positions = JETLS.get_text_and_positions(text; kwargs...)
@@ -321,14 +362,21 @@ function with_completion_items(
     state.init_params = InitializeParams(;
         processId = getpid(),
         rootUri = nothing,
-        capabilities = ClientCapabilities())
+        capabilities = ClientCapabilities(;
+            textDocument = TextDocumentClientCapabilities(;
+                completion = CompletionClientCapabilities(;
+                    completionItem = (;
+                        resolveSupport = (;
+                            properties = ["documentation", "detail", "kind", "labelDetails"])
+                    )))))
     fi = JETLS.FileInfo(#=version=#0, clean_code, @__FILE__)
     JETLS.store!(state.file_cache) do cache
         Base.PersistentDict(cache, uri => fi), nothing
     end
-    for (i, pos) in enumerate(positions)
-        items, isIncomplete = JETLS.get_completion_items(state, uri, fi, pos, context)
-        tester(i, (; items, isIncomplete), uri)
+    for pos in positions
+        items, isIncomplete = JETLS.get_completion_items(state, uri, fi, pos, context;
+            context_module)
+        tester((; result = (; items, isIncomplete), state, uri))
     end
 end
 
@@ -444,7 +492,7 @@ end
 
     context = CompletionContext(; triggerKind = CompletionTriggerKind.Invoked)
     cnt = Ref(0)
-    with_completion_items(text; context) do _, result, _
+    with_completion_items(text; context) do (; result)
         items = result.items
         @test any(items) do item
             item.label == "yyy"
@@ -458,7 +506,7 @@ end
 @testset "empty completion" begin
     let text = "│"
         cnt = Ref(0)
-        with_completion_items(text) do _, result, _
+        with_completion_items(text) do (; result)
             items = result.items
             # should not crash and return something
             @test length(items) > 0
@@ -469,10 +517,239 @@ end
 
     let text = "\n\n\n│"
         cnt = Ref(0)
-        with_completion_items(text) do _, result, _
+        with_completion_items(text) do (; result)
             items = result.items
             # should not crash and return something
             @test length(items) > 0
+            cnt[] += 1
+        end
+        @test cnt[] == 1
+    end
+end
+
+module custom_props_fixture
+    struct CustomProps
+        x::Int
+    end
+    Base.propertynames(::CustomProps) = (:x_int, :x_float32, :x_float64)
+    function Base.getproperty(cp::CustomProps, name::Symbol)
+        if name === :x_int
+            return getfield(cp, :x)
+        elseif name === :x_float32
+            return Float32(getfield(cp, :x))
+        elseif name === :x_float64
+            return Float64(getfield(cp, :x))
+        else
+            throw(ArgumentError(lazy"CustomProps does not accept property name $name"))
+        end
+    end
+end
+
+# `propertynames`/`getfield` mismatch fixture for property completion tests
+module broken_props_fixture
+    struct BrokenProps end
+    Base.propertynames(::BrokenProps) = (:no_such_field,)
+end
+
+# Per-field docstring fixture for property-completion field-doc tests.
+module field_doc_props_fixture
+    """Documented struct with per-field docstrings."""
+    struct DocStruct
+        """The x field — an integer."""
+        x::Int
+        """The y field — a string."""
+        y::String
+        z::Float64  # no field doc
+    end
+end
+
+@testset "property completion" begin
+    dot_context = CompletionContext(;
+        triggerKind = CompletionTriggerKind.TriggerCharacter,
+        triggerCharacter = ".")
+
+    only_props(items) = filter(items) do it
+        ld = it.labelDetails
+        ld !== nothing && ld.description == "property"
+    end
+
+    # `r.│` on a `Regex`-typed parameter should offer `Regex`'s properties.
+    # Type detail is filled in only after a resolve request — the initial
+    # response carries `PropertyCompletionData` and no `detail`.
+    let text = """
+        function bar(r::Regex)
+            r.│
+        end
+        """
+        cnt = Ref(0)
+        with_completion_items(text; context=dot_context) do (; result, state)
+            props = only_props(result.items)
+            labels = Set(it.label for it in props)
+            @test labels == Set(String.(fieldnames(Regex)))
+            for it in props
+                @test it.kind === CompletionItemKind.Property
+                @test it.labelDetails.detail === nothing
+                @test it.data isa JETLS.PropertyCompletionData
+            end
+            pattern_item = first(filter(it -> it.label == "pattern", props))
+            resolved = JETLS.resolve_completion_item(state, pattern_item)
+            @test resolved.labelDetails.detail !== nothing
+            @test occursin("String", resolved.labelDetails.detail)
+            cnt[] += 1
+        end
+        @test cnt[] == 1
+    end
+
+    # Untyped prefix: no useful type to query, so no property completions.
+    let text = """
+        function bar(x)
+            x.│
+        end
+        """
+        cnt = Ref(0)
+        with_completion_items(text; context=dot_context) do (; result)
+            @test isempty(only_props(result.items))
+            cnt[] += 1
+        end
+        @test cnt[] == 1
+    end
+
+    # `r.│` sitting inside a call's argument list (parser inserts an error
+    # in the property-name slot, so the dot subtree must be repaired before
+    # lowering can resolve `r`'s type).
+    let text = """
+        function bar(r::Regex)
+            g(r.pattern, r.│)
+        end
+        """
+        cnt = Ref(0)
+        with_completion_items(text; context=dot_context) do (; result)
+            labels = Set(it.label for it in only_props(result.items))
+            @test labels == Set(String.(fieldnames(Regex)))
+            cnt[] += 1
+        end
+        @test cnt[] == 1
+    end
+
+    # Union prefix offers the union of property names, and each property's
+    # resolved type detail is the union of its per-component types.
+    let text = """
+        function bar(p::Union{Pair{Symbol,Int}, Pair{Symbol,String}})
+            p.│
+        end
+        """
+        cnt = Ref(0)
+        with_completion_items(text; context=dot_context) do (; result, state)
+            props = only_props(result.items)
+            labels = Set(it.label for it in props)
+            @test labels == Set(["first", "second"])
+            # Resolve `first` → `Symbol` (same on both sides).
+            first_item = first(filter(it -> it.label == "first", props))
+            resolved_first = JETLS.resolve_completion_item(state, first_item)
+            @test occursin("Symbol", resolved_first.labelDetails.detail)
+            # Resolve `second` → `Union{Int64,String}` (merged from both sides).
+            second_item = first(filter(it -> it.label == "second", props))
+            resolved_second = JETLS.resolve_completion_item(state, second_item)
+            @test occursin("Int64", resolved_second.labelDetails.detail)
+            @test occursin("String", resolved_second.labelDetails.detail)
+            cnt[] += 1
+        end
+        @test cnt[] == 1
+    end
+
+    # `Union{T, Nothing}`: `T`'s properties are still offered, and their
+    # resolved type detail isn't polluted by the `Nothing` side.
+    let text = """
+        function bar(r::Union{Regex, Nothing})
+            r.│
+        end
+        """
+        cnt = Ref(0)
+        with_completion_items(text; context=dot_context) do (; result, state)
+            props = only_props(result.items)
+            labels = Set(it.label for it in props)
+            @test labels == Set(String.(fieldnames(Regex)))
+            pattern_item = first(filter(it -> it.label == "pattern", props))
+            resolved = JETLS.resolve_completion_item(state, pattern_item)
+            @test resolved.labelDetails.detail !== nothing
+            @test occursin("String", resolved.labelDetails.detail)
+            @test !occursin("Union{}", resolved.labelDetails.detail)
+            cnt[] += 1
+        end
+        @test cnt[] == 1
+    end
+
+    let text = """
+        function test_custom_props(cp::CustomProps)
+            cp.│
+        end
+        """
+        cnt = Ref(0)
+        with_completion_items(text;
+                context=dot_context,
+                context_module=custom_props_fixture,
+            ) do (; result, state)
+            props = only_props(result.items)
+            labels = Set(it.label for it in props)
+            @test labels == Set(("x_int", "x_float32", "x_float64"))
+            @test all(p->isnothing(p.labelDetails.detail), props)
+            i = findfirst(p->p.label=="x_float32", props)
+            @test !isnothing(i)
+            resolved = JETLS.resolve_completion_item(state, props[i])
+            @test resolved.labelDetails.detail == " ::Float32"
+            cnt[] += 1
+        end
+        @test cnt[] == 1
+    end
+
+    # A `propertynames` overload that name's `getproperty` can't honor:
+    # the item is still offered, and its resolved type detail surfaces as `::Union{}`.
+    let text = """
+        function bar(x::BrokenProps)
+            x.│
+        end
+        """
+        cnt = Ref(0)
+        with_completion_items(text;
+                context=dot_context,
+                context_module=broken_props_fixture,
+            ) do (; result, state)
+            props = only_props(result.items)
+            @test length(props) == 1
+            @test props[1].label == "no_such_field"
+            @test props[1].labelDetails.detail === nothing
+            resolved = JETLS.resolve_completion_item(state, props[1])
+            @test resolved.labelDetails.detail == " ::Union{}"
+            cnt[] += 1
+        end
+        @test cnt[] == 1
+    end
+
+    # Resolved completion documentation includes the per-field docstring
+    # for fields that carry one, and stays at the bare type-signature code
+    # fence for undocumented fields.
+    let text = """
+        function bar(s::DocStruct)
+            s.│
+        end
+        """
+        cnt = Ref(0)
+        with_completion_items(text;
+                context=dot_context,
+                context_module=field_doc_props_fixture,
+            ) do (; result, state)
+            props = only_props(result.items)
+            x_item = first(filter(it -> it.label == "x", props))
+            resolved_x = JETLS.resolve_completion_item(state, x_item)
+            x_value = resolved_x.documentation.value
+            @test occursin("s.x :: $Int", x_value)
+            @test occursin("The x field", x_value)
+
+            z_item = first(filter(it -> it.label == "z", props))
+            resolved_z = JETLS.resolve_completion_item(state, z_item)
+            z_value = resolved_z.documentation.value
+            @test occursin("s.z :: Float64", z_value)
+            @test !occursin("---", z_value)  # no doc section appended
             cnt[] += 1
         end
         @test cnt[] == 1
@@ -490,7 +767,7 @@ end
             triggerKind = CompletionTriggerKind.TriggerCharacter,
             triggerCharacter = "@")
         cnt = Ref(0)
-        with_completion_items(text; context) do _, result, _
+        with_completion_items(text; context) do (; result)
             items = result.items
             @test any(items) do item
                 item.label == "@nospecialize" &&
@@ -516,7 +793,7 @@ end
         """
         context = CompletionContext(; triggerKind = CompletionTriggerKind.Invoked)
         cnt = Ref(0)
-        with_completion_items(text; context) do _, result, _
+        with_completion_items(text; context) do (; result)
             items = result.items
             @test any(items) do item
                 item.label == "@nospecialize" &&
@@ -538,7 +815,7 @@ end
         """
         context = CompletionContext(; triggerKind = CompletionTriggerKind.Invoked)
         cnt = Ref(0)
-        with_completion_items(text; context) do _, result, _
+        with_completion_items(text; context) do (; result)
             items = result.items
             @test any(items) do item
                 item.label == "yyy"
@@ -556,7 +833,7 @@ end
         """
         context = CompletionContext(; triggerKind = CompletionTriggerKind.Invoked)
         cnt = Ref(0)
-        with_completion_items(text; context) do _, result, _
+        with_completion_items(text; context) do (; result)
             items = result.items
             @test any(items) do item
                 item.label == "@nospecialize" &&
@@ -773,7 +1050,7 @@ end
             triggerKind = CompletionTriggerKind.TriggerCharacter,
             triggerCharacter = "\\")
         cnt = Ref(0)
-        with_completion_items(text; context) do _, result, _
+        with_completion_items(text; context) do (; result)
             items = result.items
             @test any(items) do item
                 item.label == "\\alpha"
@@ -800,7 +1077,7 @@ end
             triggerKind = CompletionTriggerKind.TriggerCharacter,
             triggerCharacter = ":")
         cnt = Ref(0)
-        with_completion_items(text; context) do _, result, _
+        with_completion_items(text; context) do (; result)
             items = result.items
             @test any(items) do item
                 item.label == "\\:pizza:"
@@ -897,10 +1174,10 @@ end
     end
 end
 
-@testset "method signature completion" begin
-    get_newText(item::CompletionItem) =
-        (@something item.textEdit return nothing).newText
+get_newText(item::CompletionItem) =
+    (@something item.textEdit return nothing).newText
 
+@testset "method signature completion" begin
     let text = """
         sin(│
         """
@@ -908,7 +1185,7 @@ end
             triggerKind = CompletionTriggerKind.TriggerCharacter,
             triggerCharacter = "(")
         cnt = Ref(0)
-        with_completion_items(text; context) do _, result, _
+        with_completion_items(text; context) do (; result)
             items = result.items
             @test count(items) do item
                 item.labelDetails !== nothing &&
@@ -929,7 +1206,7 @@ end
             triggerKind = CompletionTriggerKind.TriggerCharacter,
             triggerCharacter = ",")
         cnt = Ref(0)
-        with_completion_items(text; context) do _, result, _
+        with_completion_items(text; context) do (; result)
             items = result.items
             @test count(items) do item
                 item.labelDetails !== nothing &&
@@ -949,13 +1226,42 @@ end
             triggerKind = CompletionTriggerKind.TriggerCharacter,
             triggerCharacter = ",")
         cnt = Ref(0)
-        with_completion_items(text; context) do _, result, _
+        with_completion_items(text; context) do (; result)
             items = result.items
-            @test_broken count(items) do item
+            @test count(items) do item
                 item.labelDetails !== nothing &&
                     item.labelDetails.description == "method" &&
                     !isnothing(get_newText(item)) &&
                     occursin("sin", item.label)
+            end == 1
+            cnt[] += 1
+        end
+        @test cnt[] == 1
+    end
+
+    # Local-binding type (`x :: String` from `let x = "a"`) and literal arg type
+    # (`Const(1)`) jointly narrow `baz` to its unique 2-arg overload. Needs full
+    # analysis to load `baz`'s methods, so route through `with_completion_request`.
+    let text = """
+        baz(::Int, ::String) = 1
+        baz(::Int, ::Int) = 2
+        baz(::String, ::String) = 3
+        baz(::String, ::Int) = 4
+        let x = "a"
+            baz(1, x,│
+        end
+        """
+        context = CompletionContext(;
+            triggerKind = CompletionTriggerKind.TriggerCharacter,
+            triggerCharacter = ",")
+        cnt = Ref(0)
+        with_completion_request(text; context) do _, result, _
+            items = result.items
+            @test count(items) do item
+                item.labelDetails !== nothing &&
+                    item.labelDetails.description == "method" &&
+                    !isnothing(get_newText(item)) &&
+                    occursin("baz", item.label)
             end == 1
             cnt[] += 1
         end
@@ -969,7 +1275,7 @@ end
             triggerKind = CompletionTriggerKind.TriggerCharacter,
             triggerCharacter = ",")
         cnt = Ref(0)
-        with_completion_items(text; context) do _, result, _
+        with_completion_items(text; context) do (; result)
             items = result.items
             @test all(items) do item
                 newText = get_newText(item)
@@ -990,7 +1296,7 @@ end
             triggerKind = CompletionTriggerKind.TriggerCharacter,
             triggerCharacter = " ")
         cnt = Ref(0)
-        with_completion_items(text; context) do _, result, _
+        with_completion_items(text; context) do (; result)
             items = result.items
             @test all(items) do item
                 newText = get_newText(item)
@@ -1013,7 +1319,7 @@ end
             triggerKind = CompletionTriggerKind.TriggerCharacter,
             triggerCharacter = " ")
         cnt = Ref(0)
-        with_completion_items(text; context) do _, result, _
+        with_completion_items(text; context) do (; result)
             items = result.items
             method_items = filter(items) do item
                 item.labelDetails !== nothing &&
@@ -1036,7 +1342,7 @@ end
             triggerKind = CompletionTriggerKind.TriggerCharacter,
             triggerCharacter = ",")
         cnt = Ref(0)
-        with_completion_items(text; context) do _, result, _
+        with_completion_items(text; context) do (; result)
             items = result.items
             @test all(items) do item
                 newText = get_newText(item)
@@ -1056,7 +1362,21 @@ end
             triggerKind = CompletionTriggerKind.TriggerCharacter,
             triggerCharacter = "(")
         cnt = Ref(0)
-        with_completion_items(text; context) do _, result, _
+        with_completion_items(text; context) do _
+            cnt[] = 1
+        end
+        @test cnt[] == 1
+    end
+
+    @testset "Tolerate invalid calls with `Union{}`-inferred call argument types" begin
+        text = """
+        sin(throw(),│)
+        """
+        context = CompletionContext(;
+            triggerKind = CompletionTriggerKind.TriggerCharacter,
+            triggerCharacter = ",")
+        cnt = Ref(0)
+        with_completion_items(text; context) do _
             cnt[] = 1
         end
         @test cnt[] == 1
@@ -1074,7 +1394,7 @@ end
             triggerKind = CompletionTriggerKind.TriggerCharacter,
             triggerCharacter = ";")
         cnt = Ref(0)
-        with_completion_items(text; context) do _, result, _
+        with_completion_items(text; context) do (; result)
             items = result.items
             keyword_items = filter(items) do item
                 item.labelDetails !== nothing &&
@@ -1099,7 +1419,7 @@ end
             triggerKind = CompletionTriggerKind.TriggerCharacter,
             triggerCharacter = " ")
         cnt = Ref(0)
-        with_completion_items(text; context) do _, result, _
+        with_completion_items(text; context) do (; result)
             items = result.items
             keyword_items = filter(items) do item
                 item.labelDetails !== nothing &&
@@ -1121,7 +1441,7 @@ end
             triggerKind = CompletionTriggerKind.TriggerCharacter,
             triggerCharacter = "=")
         cnt = Ref(0)
-        with_completion_items(text; context) do _, result, _
+        with_completion_items(text; context) do (; result)
             items = result.items
             keyword_items = filter(items) do item
                 item.labelDetails !== nothing &&
@@ -1143,7 +1463,7 @@ end
             triggerKind = CompletionTriggerKind.TriggerCharacter,
             triggerCharacter = " ")
         cnt = Ref(0)
-        with_completion_items(text; context) do _, result, _
+        with_completion_items(text; context) do (; result)
             items = result.items
             keyword_items = filter(items) do item
                 item.labelDetails !== nothing &&
@@ -1163,7 +1483,7 @@ end
         """
         context = CompletionContext(; triggerKind = CompletionTriggerKind.Invoked)
         cnt = Ref(0)
-        with_completion_items(text; context) do _, result, _
+        with_completion_items(text; context) do (; result)
             items = result.items
             keyword_items = filter(items) do item
                 item.labelDetails !== nothing &&
@@ -1269,14 +1589,14 @@ end
         """
         # Without soft_scope: `x` is a new local (ambiguous local)
         cbs_hard = get_cursor_bindings(marked_text;
-            mod=soft_scope_completions_module, soft_scope=false)
+            context_module=soft_scope_completions_module, soft_scope=false)
         xs_hard = filter(((bi, _, _),) -> bi.name == "x", cbs_hard)
         @test length(xs_hard) == 1
         @test xs_hard[1][1].kind === :local
 
         # With soft_scope: `x` assigns to the existing global
         cbs_soft = get_cursor_bindings(marked_text;
-            mod=soft_scope_completions_module, soft_scope=true)
+            context_module=soft_scope_completions_module, soft_scope=true)
         xs_soft = filter(((bi, _, _),) -> bi.name == "x", cbs_soft)
         @test length(xs_soft) == 1
         @test xs_soft[1][1].kind === :global

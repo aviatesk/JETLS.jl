@@ -42,13 +42,9 @@ module_name = "Optional module name to associate with the matched files. When sp
 
 [CompletionConfig]
 latex_emoji = "LaTeX and emoji completion configuration. See [documentation](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/completion/latex_emoji/strip_prefix)."
-method_signature = "Method signature completion configuration. See [documentation](https://aviatesk.github.io/JETLS.jl/release/configuration/#config/completion/method_signature/prepend_inference_result)."
 
 [LaTeXEmojiConfig]
 strip_prefix = "Controls whether to strip `\\` or `:` prefix from LaTeX/emoji completion labels. Some editors (e.g., Zed) have sorting issues with backslash in `sortText`. Auto-detected by default; set explicitly if completions appear in wrong order."
-
-[MethodSignatureConfig]
-prepend_inference_result = "When true, prepends inferred return type to completion documentation, ensuring visibility in editors where `CompletionItem.detail` may be cut off (e.g., Zed). Auto-detected by default based on client name; set explicitly if return types are not visible."
 
 [CodeLensConfig]
 references = "Show reference counts above top-level symbols (functions, structs, constants, etc.). Click to open references panel."

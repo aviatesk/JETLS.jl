@@ -92,4 +92,172 @@ using JETLS: JL, JS, Markdown
     end
 end
 
+@testset "Documenter admonitions rendered as blockquotes" begin
+    # Default category title → emoji + capitalized category
+    let input = """
+        !!! tip
+            Body text.
+        """
+        expected = """
+        > **💡 Tip**
+        >
+        > Body text.
+        """
+        @test JETLS.lsrender(Markdown.parse(input)) == expected
+    end
+
+    # Custom title overrides the default
+    let input = """
+        !!! warning "Watch out"
+            Be careful.
+        """
+        expected = """
+        > **⚠️ Watch out**
+        >
+        > Be careful.
+        """
+        @test JETLS.lsrender(Markdown.parse(input)) == expected
+    end
+
+    # Multiple paragraphs are separated by `>` lines
+    let input = """
+        !!! info
+            First.
+
+            Second.
+        """
+        expected = """
+        > **ℹ️ Info**
+        >
+        > First.
+        >
+        > Second.
+        """
+        @test JETLS.lsrender(Markdown.parse(input)) == expected
+    end
+
+    # Code block nested in an admonition stays a fenced block under `>`
+    let input = """
+        !!! note
+            See:
+
+            ```julia
+            x = 1
+            ```
+        """
+        expected = """
+        > **📝 Note**
+        >
+        > See:
+        >
+        > ```julia
+        > x = 1
+        > ```
+        """
+        @test JETLS.lsrender(Markdown.parse(input)) == expected
+    end
+
+    # `jldoctest` inside an admonition is also normalized to `julia`
+    let input = """
+        !!! note
+            ```jldoctest
+            julia> 1 + 1
+            2
+            ```
+        """
+        expected = """
+        > **📝 Note**
+        >
+        > ```julia
+        > julia> 1 + 1
+        > 2
+        > ```
+        """
+        @test JETLS.lsrender(Markdown.parse(input)) == expected
+    end
+
+    # Unknown category falls back to the generic marker
+    let input = """
+        !!! custom "My Admonition"
+            Body.
+        """
+        expected = """
+        > **💬 My Admonition**
+        >
+        > Body.
+        """
+        @test JETLS.lsrender(Markdown.parse(input)) == expected
+    end
+
+    # Admonition mixed with surrounding content
+    let input = """
+        Hello.
+
+        !!! danger "!!"
+            Boom.
+
+        After.
+        """
+        expected = """
+        Hello.
+
+        > **🚨 !!**
+        >
+        > Boom.
+
+        After.
+        """
+        @test JETLS.lsrender(Markdown.parse(input)) == expected
+    end
+
+    # All known categories resolve to their dedicated marker
+    let categories = [
+            ("note",    "📝"),
+            ("info",    "ℹ️"),
+            ("tip",     "💡"),
+            ("warning", "⚠️"),
+            ("danger",  "🚨"),
+            ("compat",  "⬆️"),
+        ]
+        for (cat, marker) in categories
+            @test JETLS.admonition_marker(cat) == marker
+            @test JETLS.admonition_marker(uppercase(cat)) == marker
+        end
+        @test JETLS.admonition_marker("something-else") == "💬"
+    end
+end
+
+@testset "Documenter @ref links stripped" begin
+    # `[label](@ref)` → bare `label`
+    let md = Markdown.parse("See [foo](@ref) for details.")
+        @test JETLS.lsrender(md) == "See foo for details.\n"
+    end
+
+    # `[label](@ref target)` with explicit target also stripped
+    let md = Markdown.parse("Refer to [Foo](@ref bar) instead.")
+        @test JETLS.lsrender(md) == "Refer to Foo instead.\n"
+    end
+
+    # Code-formatted labels preserve their backticks
+    let md = Markdown.parse("Use [`f`](@ref) and [`g`](@ref baz) here.")
+        @test JETLS.lsrender(md) == "Use `f` and `g` here.\n"
+    end
+
+    # Multiple refs on the same line
+    let md = Markdown.parse("[a](@ref), [b](@ref), and [c](@ref).")
+        @test JETLS.lsrender(md) == "a, b, and c.\n"
+    end
+
+    # Non-@ref links are left untouched
+    let md = Markdown.parse("See [the docs](https://example.com) and [`f`](@ref).")
+        @test JETLS.lsrender(md) ==
+            "See [the docs](https://example.com) and `f`.\n"
+    end
+
+    # `@reference` (not a Documenter ref) must not be stripped
+    let md = Markdown.parse("[link](@reference)")
+        @test JETLS.lsrender(md) == "[link](@reference)\n"
+    end
+end
+
 end # module test_markdown

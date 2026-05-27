@@ -381,8 +381,8 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
         @goto next_request
     end
 
-    if is_abandoned_unsaved_buffer(server, request.uri)
-        JETLS_DEV_MODE && @info "Skipped analysis for closed unsaved buffer" entry=progress_title(request.entry) uri=request.uri
+    if is_abandoned_request(server, request)
+        JETLS_DEV_MODE && @info "Skipped analysis for closed editor-managed document" entry=progress_title(request.entry) uri=request.uri
         @goto next_request
     end
 
@@ -423,12 +423,13 @@ function resolve_analysis_request(server::Server, request::AnalysisRequest)
     tm = round(time() - s, digits=2)
     JETLS_DEV_MODE && @info "Analysis completed in $tm seconds:" entry=progress_title(request.entry) uri=request.uri generation=get_generation(manager,request.entry)
 
-    if is_abandoned_unsaved_buffer(server, request.uri)
-        # Buffer was closed mid-analysis. `file_cache` becoming empty means didClose
-        # already ran (or is racing with us) and `cleanup_unsaved_analysis!` is taking care
-        # of `manager.cache`/generations/debounced + the OLD prev_result's methods.
+    if is_abandoned_request(server, request)
+        # Document was closed mid-analysis. `file_cache`/`notebook_cache`
+        # becoming empty means didClose already ran (or is racing with us) and
+        # `cleanup_analysis_state!` is taking care of
+        # `manager.cache`/generations/debounced + the OLD prev_result's methods.
         # We just need to drop the methods this analysis just defined and skip the cache write.
-        JETLS_DEV_MODE && @info "Discarding analysis result for closed unsaved buffer" entry=progress_title(request.entry) uri=request.uri
+        JETLS_DEV_MODE && @info "Discarding analysis result for closed editor-managed document" entry=progress_title(request.entry) uri=request.uri
         cleanup_prev_methods(analysis_result)
         @goto next_request
     end
@@ -523,26 +524,57 @@ function cleanup_prev_methods(prev_result::AnalysisResult)
     end
 end
 
-# An unsaved (`untitled:`/`buffer:`) URI is "abandoned" once `file_cache` no
-# longer holds it: didClose has already cleared the buffer and the URI is
-# unique per session, so any remaining analysis work for it would only leak.
-is_abandoned_unsaved_buffer(server::Server, uri::URI) =
-    isunsaveduri(uri) && get_file_info(server.state, uri) === nothing
+# An analysis request is "abandoned" once the document it targets is no longer
+# editor-managed: `file_cache` empty for an unsaved (`untitled:`/`buffer:`) URI,
+# or `notebook_cache` empty for a notebook entry. In either case the prior
+# analysis state was already evicted by `cleanup_analysis_state!`, so any
+# remaining work would only re-populate caches we just cleaned up.
+function is_abandoned_request(server::Server, request::AnalysisRequest)
+    state = server.state
+    uri = request.uri
+    if isunsaveduri(uri)
+        return get_file_info(state, uri) === nothing
+    end
+    entry = request.entry
+    if ((entry isa ScriptAnalysisEntry || entry isa ScriptInEnvAnalysisEntry) &&
+        entry.isnotebook)
+        return !is_notebook_uri(state, uri)
+    end
+    return false
+end
 
 """
-    cleanup_unsaved_analysis!(server::Server, uri::URI)
+    cleanup_analysis_state!(server::Server, uri::URI)
 
-Drop the analysis state for an unsaved URI when its buffer is closed.
-Untitled URIs are unique per session, so leaving state behind would leak both
-the cache and the methods registered in `Core.methodtable` by previous
-analyses (otherwise visible as ghost entries in completions/signature help).
+Drop the analysis state for `uri` when its editor-managed lifecycle ends —
+unsaved (`untitled:`/`buffer:`) buffers and notebooks. These share two
+properties that make cleanup both safe and necessary:
+
+1. The analysis unit is a single file (`analyzed_file_uris(prev_result)` is
+   `[uri]`), so removing it from `manager.cache` does not affect any sibling
+   file's analysis.
+2. Methods defined during analysis live in gensym'd virtual modules, so
+   `cleanup_prev_methods` can safely `delete_method` them; otherwise they
+   leak as ghost entries in completions/signature help.
+
+For notebooks there is the additional motivation that the on-disk `.ipynb` JSON
+is not directly analyzable as Julia source, so leaving the cache entry would
+let `workspace/diagnostic` fall through and emit spurious diagnostics for the
+raw JSON.
+
+Saved `.jl` files are intentionally NOT cleaned up here. They violate both
+properties: a `PackageSourceAnalysisEntry` covers every file in the package
+(removing one would tear out siblings' cached analysis), and Revise-based
+package analysis registers `module_range_infos` against the user's real
+modules, so `cleanup_prev_methods` would delete the user's live methods.
+Keeping the cache also lets `workspace/diagnostic` keep reporting disk-based
+diagnostics after close.
 
 This only handles state already in the caches. Any in-flight or queued analysis
-for this entry is short-circuited separately by `is_abandoned_unsaved_buffer`
-checks in `resolve_analysis_request`.
+for this entry is short-circuited separately by `is_abandoned_request` checks
+in `resolve_analysis_request`.
 """
-function cleanup_unsaved_analysis!(server::Server, uri::URI)
-    @assert isunsaveduri(uri)
+function cleanup_analysis_state!(server::Server, uri::URI)
     manager = server.state.analysis_manager
     prev_result = get_analysis_info(manager, uri)
     if prev_result isa AnalysisResult
@@ -607,7 +639,7 @@ function update_analysis_cache!(state::ServerState, analysis_result::AnalysisRes
             continue
         end
         invalidate_binding_occurrences_cache!(state, uri)
-        invalidate_lowering_diagnostics_cache!(state, uri)
+        invalidate_per_file_diagnostics_cache!(state, uri)
     end
 end
 
@@ -717,9 +749,9 @@ function analyze_parsed_if_exist(
 end
 
 # update `AnalyzerState(analyzer).world` so that `analyzer` can infer any newly defined methods
-function update_analyzer_world(analyzer::LSAnalyzer)
+function update_analyzer_world(analyzer::LSAnalyzer, world::UInt = Base.get_world_counter())
     state = JET.AnalyzerState(analyzer)
-    newstate = JET.AnalyzerState(state; world = Base.get_world_counter())
+    newstate = JET.AnalyzerState(state; world)
     return JET.AbstractAnalyzer(analyzer, newstate)
 end
 
@@ -729,22 +761,26 @@ function new_analysis_result(interp::LSInterpreter, request::AnalysisRequest, re
         filename2uri(filepath) => analyzed_file_info
         for (filepath, analyzed_file_info) in result.res.analyzed_files)
 
+    result_world = Base.get_world_counter()
+
     uri2diagnostics = URI2Diagnostics(uri => Diagnostic[] for uri in keys(analyzed_file_infos))
     postprocessor = JET.PostProcessor(result.res.actual2virtual)
     toplevel_warning_reports_to_diagnostics!(uri2diagnostics, interp.warning_reports, interp.server, postprocessor)
-    jet_result_to_diagnostics!(uri2diagnostics, result, postprocessor)
+    jet_result_to_diagnostics!(uri2diagnostics, result, result_world, postprocessor)
 
     (; entry, prev_analysis_result) = request
     replace_analysis_result = isempty(result.res.toplevel_error_reports) || isnothing(prev_analysis_result)
     if !replace_analysis_result
         (; actual2virtual, analyzer, analyzed_file_infos) = prev_analysis_result
+        cache_world = prev_analysis_result.world
     else
         actual2virtual = result.res.actual2virtual::JET.Actual2Virtual
-        analyzer = update_analyzer_world(result.analyzer)
+        analyzer = update_analyzer_world(result.analyzer, result_world)
+        cache_world = result_world
     end
 
     analysis_result = AnalysisResult(entry, uri2diagnostics, analyzer,
-        analyzed_file_infos, actual2virtual)
+        analyzed_file_infos, actual2virtual, cache_world)
     return analysis_result, replace_analysis_result
 end
 
@@ -1000,15 +1036,18 @@ function analyze_package_with_revise(
     @label completed
 
     uri2diagnostics = URI2Diagnostics(uri => Diagnostic[] for uri in keys(analyzed_file_infos))
+    world = Base.get_world_counter()
     postprocessor = JET.PostProcessor()
 
     toplevel_warning_reports_to_diagnostics!(uri2diagnostics, warning_reports, server, postprocessor)
     inference_reports = collect_displayable_reports(progress.reports, keys(uri2diagnostics))
     unique!(JET.aggregation_policy(analyzer), inference_reports)
-    jet_inference_error_reports_to_diagnostics!(uri2diagnostics, inference_reports, postprocessor)
+    jet_inference_error_reports_to_diagnostics!(uri2diagnostics, inference_reports, world, postprocessor)
     actual2virtual = pkgmod => pkgmod # No virtual module for Revise-based analysis
 
-    return AnalysisResult(request.entry, uri2diagnostics, update_analyzer_world(analyzer), analyzed_file_infos, actual2virtual)
+    newanalyzer = update_analyzer_world(analyzer, world)
+    return AnalysisResult(request.entry, uri2diagnostics, newanalyzer,
+        analyzed_file_infos, actual2virtual, world)
 end
 
 function collect_displayable_reports(

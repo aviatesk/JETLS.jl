@@ -11,14 +11,16 @@ module lowering_module end
 
 with_binding_occurrences(callback, code::AbstractString; kwargs...) =
     with_binding_occurrences(callback, lowering_module, code; kwargs...)
-function with_binding_occurrences(callback, mod::Module, code::AbstractString;
-                                  remove_macrocalls::Bool = false,
-                                  is_generated::Bool = false)
+function with_binding_occurrences(
+        callback, context_module::Module, code::AbstractString;
+        remove_macrocalls::Bool = false,
+        is_generated::Bool = false
+    )
     st0 = jlparse(code; rule=:statement)
     if remove_macrocalls
         st0 = JETLS.remove_macrocalls(st0)
     end
-    (; ctx3, st3) = JETLS.jl_lower_for_scope_resolution(mod, st0)
+    (; ctx3, st3) = JETLS.jl_lower_for_scope_resolution(context_module, st0)
     binding_occurrences = JETLS.compute_binding_occurrences(ctx3, st3, is_generated)
     callback(binding_occurrences)
 end

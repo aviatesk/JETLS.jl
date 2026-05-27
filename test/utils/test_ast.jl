@@ -120,8 +120,8 @@ include(normpath(pkgdir(JETLS), "test", "jsjl-utils.jl"))
     end
 end
 
-@testset "greatest_local" begin
-    # Return the innermost non-toplevel/non-module node containing the cursor.
+@testset "lowerable_toplevel_at" begin
+    # Return the top-level subtree whose byte range contains the cursor.
     let code = """
         function foo(│x│)
             return │x│ + 1
@@ -131,13 +131,13 @@ end
         st = jlparse(clean_code)
         for pos in positions
             offset = JETLS.xy_to_offset(clean_code, pos, @__FILE__)
-            local_tree = JETLS.greatest_local(st, offset)
+            local_tree = JETLS.lowerable_toplevel_at(st, offset)
             @test !isnothing(local_tree)
             @test JS.kind(local_tree) === JS.K"function"
         end
     end
 
-    # Cursor inside a module but not any contained statement: no local scope.
+    # Cursor inside a module but not any contained statement: no top-level subtree to lower.
     let code = """
         module M
         │
@@ -146,19 +146,18 @@ end
         clean_code, positions = JETLS.get_text_and_positions(code)
         offset = JETLS.xy_to_offset(clean_code, only(positions), @__FILE__)
         st = jlparse(clean_code)
-        @test isnothing(JETLS.greatest_local(st, offset))
+        @test isnothing(JETLS.lowerable_toplevel_at(st, offset))
     end
 
     # Offset past the end of the source.
     let code = "x = 1\n"
         st = jlparse(code)
-        @test isnothing(JETLS.greatest_local(st, 1000))
+        @test isnothing(JETLS.lowerable_toplevel_at(st, 1000))
     end
 
-    # Fallback: when the cursor is just past the last token on a line (e.g.
-    # `export foo│\n`), the raw offset lands on whitespace owned only by
-    # `toplevel`. `greatest_local` should retry with `offset - 1` and return
-    # the enclosing statement.
+    # Fallback: when the cursor is just past the last token on a line (e.g. `export foo│\n`),
+    # the raw offset lands on whitespace owned only by `toplevel`.
+    # `lowerable_toplevel_at` should retry with `offset - 1` and return the enclosing statement.
     let code = """
         export foo
         foo(1)
@@ -167,7 +166,7 @@ end
         st = jlparse(clean_code)
         # Offset at the newline after `foo` (i.e. one past the identifier's last byte).
         offset = sizeof("export foo") + 1
-        local_tree = JETLS.greatest_local(st, offset)
+        local_tree = JETLS.lowerable_toplevel_at(st, offset)
         @test !isnothing(local_tree)
         @test JS.kind(local_tree) === JS.K"export"
     end
@@ -176,7 +175,7 @@ end
     let code = "x = 1\ny\n"
         st = jlparse(code)
         offset = sizeof("x = 1\ny") + 1  # just past `y`, on the newline
-        local_tree = JETLS.greatest_local(st, offset)
+        local_tree = JETLS.lowerable_toplevel_at(st, offset)
         @test !isnothing(local_tree)
         @test JS.kind(local_tree) === JS.K"Identifier"
         @test JS.sourcetext(local_tree) == "y"
@@ -600,6 +599,146 @@ end
     @test isnothing(get_target_string("foo│()"))
 end
 
+select_enclosing_call(code::AbstractString, pos::Int) = JETLS.select_enclosing_call(jlparse(code), pos)
+function get_enclosing_call(code::AbstractString; kwargs...)
+    clean_code, positions = JETLS.get_text_and_positions(code; kwargs...)
+    @assert length(positions) == 1
+    fi = JETLS.FileInfo(1, clean_code, @__FILE__)
+    return select_enclosing_call(clean_code, JETLS.xy_to_offset(fi, positions[1]))
+end
+@testset "`select_enclosing_call`" begin
+    # cursor right after `)` resolves via the `offset - 1` retry
+    let node = get_enclosing_call("foo(1, 2)│")
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"call"
+        @test JS.sourcetext(node) == "foo(1, 2)"
+    end
+    # cursor inside the call's argument list
+    let node = get_enclosing_call("foo(1, │2)")
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"call"
+        @test JS.sourcetext(node) == "foo(1, 2)"
+    end
+    # innermost call wins when cursor sits inside both
+    let node = get_enclosing_call("outer(inner(│x))")
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"call"
+        @test JS.sourcetext(node) == "inner(x)"
+    end
+    # right after the inner `)` the more specific (inner) call wins over the
+    # outer call that also spans the cursor — symmetric with `func(args)│`
+    let node = get_enclosing_call("outer(inner(x)│)")
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"call"
+        @test JS.sourcetext(node) == "inner(x)"
+    end
+    # method call (dot-call expression)
+    let node = get_enclosing_call("obj.method(x)│")
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"call"
+        @test JS.sourcetext(node) == "obj.method(x)"
+    end
+    # `K"ref"` (indexing) is treated as call-like since it lowers to `getindex`
+    let node = get_enclosing_call("xs[2]│")
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"ref"
+        @test JS.sourcetext(node) == "xs[2]"
+    end
+    # `K"tuple"` is treated as call-like
+    let node = get_enclosing_call("(1, 2)│")
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"tuple"
+        @test JS.sourcetext(node) == "(1, 2)"
+    end
+    # array literals and comprehensions are call-like since they lower to
+    # `Base.vect` / `Base.vcat` / `Base.hcat` / `Base.collect`.
+    let node = get_enclosing_call("[1, 2, 3]│")
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"vect"
+        @test JS.sourcetext(node) == "[1, 2, 3]"
+    end
+    let node = get_enclosing_call("[1; 2]│")
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"vcat"
+        @test JS.sourcetext(node) == "[1; 2]"
+    end
+    let node = get_enclosing_call("[1 2]│")
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"hcat"
+        @test JS.sourcetext(node) == "[1 2]"
+    end
+    let node = get_enclosing_call("[i for i in 1:3]│")
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"comprehension"
+        @test JS.sourcetext(node) == "[i for i in 1:3]"
+    end
+    let node = get_enclosing_call("Int[1; 2]│")
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"typed_vcat"
+        @test JS.sourcetext(node) == "Int[1; 2]"
+    end
+    let node = get_enclosing_call("Int[1 2]│")
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"typed_hcat"
+        @test JS.sourcetext(node) == "Int[1 2]"
+    end
+    let node = get_enclosing_call("Int[i for i in 1:3]│")
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"typed_comprehension"
+        @test JS.sourcetext(node) == "Int[i for i in 1:3]"
+    end
+    # cursor not inside any call-like expression
+    @test isnothing(get_enclosing_call("x = 42│"))
+    @test isnothing(get_enclosing_call("│"))
+end
+
+select_target_for_type_query(code::AbstractString, pos::Int) =
+    JETLS.select_target_for_type_query(jlparse(code), pos)
+function get_target_for_type_query(code::AbstractString; kwargs...)
+    clean_code, positions = JETLS.get_text_and_positions(code; kwargs...)
+    @assert length(positions) == 1
+    fi = JETLS.FileInfo(1, clean_code, @__FILE__)
+    return select_target_for_type_query(clean_code, JETLS.xy_to_offset(fi, positions[1]))
+end
+@testset "`select_target_for_type_query`" begin
+    # identifier path mirrors `select_target_identifier`
+    let node = get_target_for_type_query("f│oo(x)")
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"Identifier"
+        @test JS.sourcetext(node) == "foo"
+    end
+    # dot-chain path: walk up through `K"."` like `select_target_identifier`
+    let node = get_target_for_type_query("Base.Pa│ir(1, 2)")
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"."
+        @test JS.sourcetext(node) == "Base.Pair"
+    end
+    # call fallback when there is no identifier at the cursor
+    let node = get_target_for_type_query("foo(1, 2)│")
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"call"
+        @test JS.sourcetext(node) == "foo(1, 2)"
+    end
+    let node = get_target_for_type_query("Base.Pair(1, 2)│")
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"call"
+        @test JS.sourcetext(node) == "Base.Pair(1, 2)"
+    end
+    # array literal / comprehension forms fall through to
+    # `select_enclosing_call` and resolve as `Vector`/`Matrix`/… surfaces.
+    let node = get_target_for_type_query("[1, 2, 3]│")
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"vect"
+    end
+    let node = get_target_for_type_query("Int[i for i in 1:3]│")
+        @test node !== nothing
+        @test JS.kind(node) === JS.K"typed_comprehension"
+    end
+    # neither identifier nor enclosing call
+    @test isnothing(get_target_for_type_query("x = 42│"))
+    @test isnothing(get_target_for_type_query("│"))
+end
+
 get_dotprefix_identifier(code::AbstractString, pos::Int) = JETLS.select_dotprefix_identifier(jlparse(code), pos)
 function get_dotprefix_identifier(code::AbstractString; kwargs...)
     clean_code, positions = JETLS.get_text_and_positions(code; kwargs...)
@@ -707,50 +846,141 @@ end
 end
 
 @testset "iterate_toplevel_tree" begin
-    let cnt = 0,
-        func1 = struct1 = false
+    let cnt = Ref(0), func1 = Ref(false), struct1 = Ref(false)
         JETLS.iterate_toplevel_tree(jlparse("""
             module Module1
             func1(x) = x
             struct Struct1 end
             end
             """)) do st0
-            cnt += 1
+            cnt[] += 1
             s = JS.sourcetext(st0)
             if s == "func1(x) = x"
-                func1 = true
+                func1[] = true
             elseif s == "struct Struct1 end"
-                struct1 = true
+                struct1[] = true
             end
         end
-        @test cnt == 2
-        @test func1 && struct1
+        @test cnt[] == 2
+        @test func1[] && struct1[]
     end
 
-    let cnt = 0,
-        func1 = struct1 = false
+    # Doc-wrapped forms should yield the docstring and the documented expression
+    # as separate lowerable trees, with interpolated identifiers inside the
+    # docstring reachable for downstream analyses (e.g. `analyze_unused_imports!`).
+    let cnt = Ref(0), func1 = Ref(false), struct1 = Ref(false),
+        outer_doc = Ref{Union{Nothing,JS.SyntaxTree}}(nothing),
+        inner_doc = Ref{Union{Nothing,JS.SyntaxTree}}(nothing)
         JETLS.iterate_toplevel_tree(jlparse("""
             \"\"\"
             Docstring for `module Module1`
             \"\"\"
             module Module1
             \"\"\"
-            Docstring for `func1`
+            \$(SIGNATURES)
             \"\"\"
             func1(x) = x
             struct Struct1 end
             end
             """)) do st0
-            cnt += 1
-            s = JS.sourcetext(st0)
-            if s == "func1(x) = x"
-                func1 = true
-            elseif s == "struct Struct1 end"
-                struct1 = true
+            cnt[] += 1
+            k = JS.kind(st0)
+            if k === JS.K"string"
+                inner_doc[] = st0
+            elseif k === JS.K"String"
+                outer_doc[] = st0
+            else
+                s = JS.sourcetext(st0)
+                if s == "func1(x) = x"
+                    func1[] = true
+                elseif s == "struct Struct1 end"
+                    struct1[] = true
+                end
             end
         end
-        @test cnt == 2
-        @test func1 && struct1
+        @test cnt[] == 4
+        @test func1[] && struct1[]
+        @test outer_doc[] !== nothing
+        doc = inner_doc[]
+        @test doc !== nothing
+        @test any(JS.children(doc)) do c
+            JS.kind(c) === JS.K"Identifier" &&
+                JS.hasattr(c, :name_val) && c.name_val == "SIGNATURES"
+        end
+    end
+end
+
+# Find the first descendant (or `st` itself) whose kind matches `k`.
+function find_first_kind(st::JS.SyntaxTree, k::JS.Kind)
+    JS.kind(st) === k && return st
+    JS.is_leaf(st) && return nothing
+    for c in JS.children(st)
+        r = find_first_kind(c, k)
+        r === nothing || return r
+    end
+    return nothing
+end
+
+@testset "`trim_error_nodes`" begin
+    # The repaired tree must be acceptable to scope-resolution lowering;
+    # otherwise the repair didn't achieve its purpose.
+    lowers_ok(st) = try
+        JETLS.jl_lower_for_scope_resolution(@__MODULE__, st;
+            trim_error_nodes=false, recover_from_macro_errors=false)
+        return true
+    catch
+        return false
+    end
+
+    # `K"."`: `(. lhs (inert (error)))` collapses to `lhs` so the surrounding
+    # tree stays usable for downstream lowering / type queries.
+    let st = jlparse("function f(binfo); g(binfo.); end")
+        trimmed = JETLS.trim_error_nodes(st)
+        @test find_first_kind(trimmed, JS.K"error") === nothing
+        @test find_first_kind(trimmed, JS.K".") === nothing
+        call = find_first_kind(trimmed, JS.K"call")
+        @test call !== nothing
+        # `g(binfo)` after repair → `(call g binfo)`.
+        @test JS.numchildren(call) == 2
+        @test JS.kind(call[2]) === JS.K"Identifier"
+        @test call[2].name_val == "binfo"
+        @test lowers_ok(trimmed)
+    end
+
+    # `K"&&"` / `K"||"`: 1-child residue collapses to the surviving operand.
+    let st = jlparse("function f(a); g(a && ); end")
+        trimmed = JETLS.trim_error_nodes(st)
+        @test find_first_kind(trimmed, JS.K"&&") === nothing
+        @test lowers_ok(trimmed)
+    end
+    let st = jlparse("function f(a); g(a || ); end")
+        trimmed = JETLS.trim_error_nodes(st)
+        @test find_first_kind(trimmed, JS.K"||") === nothing
+        @test lowers_ok(trimmed)
+    end
+
+    # `K"::"`: the infix form `value::│` collapses to `value`; the anonymous
+    # prefix form `f(::T)` is preserved. Disambiguation uses the parser's
+    # infix/prefix flag, which `JS.mknode` carries through the trim.
+    let st = jlparse("function f(); g(binfo::); end")
+        trimmed = JETLS.trim_error_nodes(st)
+        @test find_first_kind(trimmed, JS.K"::") === nothing
+        @test lowers_ok(trimmed)
+    end
+    let st = jlparse("f(::Int) = 1")
+        trimmed = JETLS.trim_error_nodes(st)
+        ascription = find_first_kind(trimmed, JS.K"::")
+        @test ascription !== nothing
+        @test JS.is_prefix_op_call(ascription)
+        @test JS.numchildren(ascription) == 1
+        @test JS.kind(ascription[1]) === JS.K"Identifier"
+        @test ascription[1].name_val == "Int"
+        @test lowers_ok(trimmed)
+    end
+
+    # No-op on well-formed input: every legitimate shape passes through unchanged.
+    let st = jlparse("function f(a::Int, b); a.x + (a && b) || a; end")
+        @test JETLS.trim_error_nodes(st) === st
     end
 end
 

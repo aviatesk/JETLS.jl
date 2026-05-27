@@ -207,6 +207,27 @@ macro tryinvokelatest(ex)
     end)
 end
 
+"""
+    methods_at_world(world::UInt, f, [t::Type=Tuple{Vararg{Any}}]; mod=nothing) ->
+        Base.MethodList
+
+`Base.methods` with the dispatch world fixed at `world` instead of resolved
+lazily from `Base.get_world_counter()`. Use this when reflection happens
+during a request that has already pinned a world (e.g. hover, type
+definition) — `Base.methods(f)` would otherwise pick up methods added by a
+concurrent analysis update mid-request.
+
+Uses `Base._methods` / `Base.matches_to_methods` internals because the
+public `methods` entry point reads `Base.get_world_counter()` itself, which
+is exactly what we're trying to avoid.
+"""
+methods_at_world(world::UInt, @nospecialize(f); mod=nothing) =
+    methods_at_world(world, f, Tuple{Vararg{Any}}; mod)
+function methods_at_world(world::UInt, @nospecialize(f), @nospecialize(t); mod=nothing)
+    ms = Base._methods(f, t, -1, world)::Vector{Any}
+    return Base.matches_to_methods(ms, typeof(f).name, mod)
+end
+
 # types that should be compared by `===` rather than `==`
 const _EGAL_TYPES_ = Any[Symbol, Core.MethodInstance, Type]
 
@@ -262,45 +283,17 @@ function format_duration(duration::Float64)
     end
 end
 
+# `Base.type_limited_string_from_context` clamps width to `max(_, 120)`, which
+# is too wide for inline hints — call `type_depth_limit` directly. Two passes:
+# `maxdepth` first to cap structural depth, then `maxwidth` to cap textual
+# width. Passing `typemax(Int)` for either is the canonical "no limit".
+function truncate_typstr(str::String, maxdepth::Int, maxwidth::Int)
+    str = Base.type_depth_limit(str, 0; maxdepth)
+    str = Base.type_depth_limit(str, maxwidth)
+    return str
+end
+
 rlstrip(s::AbstractString, args...) = lstrip(rstrip(s, args...), args...)
-
-const JULIA_LIKE_LANGUAGES = [
-    "julia",
-    "julia-repl",
-    "jldoctest"
-]
-
-"""
-    lsrender(md) -> String
-
-Render Markdown for LSP display with the following conversions:
-- Code blocks with Julia-like languages (see `JULIA_LIKE_LANGUAGES`) normalized to "julia"
-
-TODO: Handle `@ref` correctly
-"""
-lsrender(md::Union{Markdown.MarkdownElement, Markdown.MD}) = sprint(lsrender, md)
-lsrender(io::IO, md::Markdown.MarkdownElement) = Markdown.plain(io, md)
-
-function lsrender(io::IO, md::Markdown.MD)
-    isempty(md.content) && return
-    for md in md.content[1:end-1]
-        lsrender(io, md)
-        println(io)
-    end
-    lsrender(io, md.content[end])
-end
-
-function lsrender(io::IO, code::Markdown.Code)
-    n = mapreduce(m -> length(m.match), max, eachmatch(r"^`+"m, code.code); init=2) + 1
-    println(io, "`" ^ n, code.language in JULIA_LIKE_LANGUAGES ? "julia" : code.language)
-    println(io, code.code)
-    println(io, "`" ^ n)
-end
-
-@static if VERSION < v"1.13.0-DEV.823" # JuliaLang/julia#58916
-lsrender(io::IO, table::Markdown.Table) = Markdown.plain(io, table)
-lsrender(io::IO, latex::Markdown.LaTeX) = Markdown.plain(io, latex)
-end
 
 struct LSPostProcessor
     inner::JET.PostProcessor

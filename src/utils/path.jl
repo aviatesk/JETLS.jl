@@ -30,7 +30,16 @@ end
 function issubdir(dir1::AbstractString, dir2::AbstractString)
     dir1 = rstrip(dir1, '/')
     dir2 = rstrip(dir2, '/')
+    @static if Sys.iswindows()
+        # Windows file systems are case-insensitive, and paths reaching here
+        # may have come from different sources (e.g. `pwd()` vs URI round-trip)
+        # whose drive letter casing differs. Normalize before comparison.
+        dir2 = lowercase(dir2)
+    end
     something(traverse_dir(dir1) do dir
+        @static if Sys.iswindows()
+            dir = lowercase(dir)
+        end
         if dir == dir2
             return true
         end

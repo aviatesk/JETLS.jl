@@ -383,7 +383,7 @@ function compute_full_binding_occurrences(
         # unit using `collect_search_uris`, the notebook URI is used instead, and its
         # lowering requires `soft_scope`.
         is_notebook_uri(state, uri)
-    (; mod) = get_context_info(state, uri, offset_to_xy(fi, JS.first_byte(st0)); lookup_func)
+    (; context_module) = get_context_info(state, uri, offset_to_xy(fi, JS.first_byte(st0)); lookup_func)
 
     # Lowering `export`/`public`/`import`/`using` statements collapses their listed
     # identifiers into opaque `K"Value"` nodes and records no `BindingInfo` for them,
@@ -395,11 +395,11 @@ function compute_full_binding_occurrences(
     k0 = JS.kind(st0)
     if k0 in JS.KSet"export public"
         binding_occurrences = Dict{JL.BindingInfo,Set{BindingOccurrence}}()
-        collect_export_public_occurrences!(binding_occurrences, st0, mod)
+        collect_export_public_occurrences!(binding_occurrences, st0, context_module)
         return binding_occurrences
     elseif k0 in JS.KSet"import using"
         binding_occurrences = Dict{JL.BindingInfo,Set{BindingOccurrence}}()
-        collect_import_using_occurrences!(binding_occurrences, st0, mod)
+        collect_import_using_occurrences!(binding_occurrences, st0, context_module)
         return binding_occurrences
     end
 
@@ -407,7 +407,7 @@ function compute_full_binding_occurrences(
         # Remove macros to preserve precise source locations.
         # TODO: This won't be necessary once JuliaLowering can preserve precise
         # source locations for old macro-expanded code.
-        jl_lower_for_scope_resolution(mod, remove_macrocalls(st0); soft_scope)
+        jl_lower_for_scope_resolution(context_module, remove_macrocalls(st0); soft_scope)
     catch
         return nothing
     end
@@ -415,19 +415,19 @@ function compute_full_binding_occurrences(
     binding_occurrences = compute_binding_occurrences(ctx3, st3, is_generated;
         include_global_bindings = true)
 
-    collect_macrocall_occurrences!(binding_occurrences, mod, st0; soft_scope)
+    collect_macrocall_occurrences!(binding_occurrences, context_module, st0; soft_scope)
     # Global bindings used inside inert nodes (quoted expressions) are not
     # resolved by scope analysis. This applies to `@generated` functions,
     # macro definitions, and any function that constructs quoted expressions.
     # Run independent scope resolution on inert content to collect them.
-    collect_inert_global_occurrences!(binding_occurrences, ctx3, st3, mod; soft_scope)
+    collect_inert_global_occurrences!(binding_occurrences, ctx3, st3, context_module; soft_scope)
 
     return binding_occurrences
 end
 
 function collect_export_public_occurrences!(
         occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence}},
-        st0::SyntaxTreeC, mod::Module
+        st0::SyntaxTreeC, context_module::Module
     )
     JS.kind(st0) in JS.KSet"export public" || return occurrences
     for i = 1:JS.numchildren(st0)
@@ -435,7 +435,7 @@ function collect_export_public_occurrences!(
         JS.kind(child) === JS.K"Identifier" || continue
         name = get(child, :name_val, nothing)
         name isa AbstractString || continue
-        binfo = JL.BindingInfo(0, name, :global, 0; mod)
+        binfo = JL.BindingInfo(0, name, :global, 0; mod=context_module)
         target_set = get!(Set{BindingOccurrence}, occurrences, binfo)
         push!(target_set, BindingOccurrence(child, :use))
     end
@@ -444,12 +444,12 @@ end
 
 function collect_import_using_occurrences!(
         occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence}},
-        st0::SyntaxTreeC, mod::Module
+        st0::SyntaxTreeC, context_module::Module
     )
     foreach_local_import_identifier(st0) do id_st::SyntaxTreeC
         name = get(id_st, :name_val, nothing)
         name isa AbstractString || return
-        binfo = JL.BindingInfo(0, name, :global, 0; mod)
+        binfo = JL.BindingInfo(0, name, :global, 0; mod=context_module)
         target_set = get!(Set{BindingOccurrence}, occurrences, binfo)
         push!(target_set, BindingOccurrence(id_st, :decl))
         return
@@ -459,7 +459,7 @@ end
 
 function collect_macrocall_occurrences!(
         occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence}},
-        mod::Module, st0::SyntaxTreeC;
+        context_module::Module, st0::SyntaxTreeC;
         soft_scope::Bool = false
     )
     traverse(st0) do st::SyntaxTreeC
@@ -467,7 +467,7 @@ function collect_macrocall_occurrences!(
         JS.numchildren(st) ≥ 1 || return nothing
         macrocall_name = st[1]
         (; ctx3) = try
-            jl_lower_for_scope_resolution(mod, macrocall_name; soft_scope)
+            jl_lower_for_scope_resolution(context_module, macrocall_name; soft_scope)
         catch
             return traversal_no_recurse
         end
@@ -488,7 +488,7 @@ end
 Collect global bindings used inside `K"inert"` nodes by running independent
 scope resolution on each inert subtree and recording any non-internal
 `:global` bindings it finds as `:use` occurrences. The inert subtree is
-lowered with `mod` — the enclosing module at the inert's position — as
+lowered with `context_module` — the enclosing module at the inert's position — as
 the resolution module.
 
 # Approximation
@@ -505,15 +505,13 @@ there:
   inside thus resolve in that module.
 
 The approximation breaks down whenever the inert content is ultimately
-evaluated somewhere other than `mod`. Detecting these cases would
+evaluated somewhere other than `context_module`. Detecting these cases would
 require cross-function / whole-program analysis that we don't currently
 perform:
 
-- The inert content is spliced into another quote that introduces a
-  new local scope — e.g. a builder that returns
-  `quote function f(x); \$body; end end`, where identifiers inside
-  `body` are meant to resolve against `f`'s arguments, not globals in
-  `mod`.
+- The inert content is spliced into another quote that introduces a new local scope —  e.g.
+  a builder that returns `quote function f(x); \$body; end end`, where identifiers inside
+  `body` are meant to resolve against `f`'s arguments, not globals in `context_module`.
 - The resulting `Expr`/`SyntaxTree` is handed off to `Core.eval` in a
   different module — e.g. `g() = :(foo())` later called as
   `Core.eval(SomeOtherModule, g())`, so `foo` resolves in
@@ -545,7 +543,7 @@ function/macro argument name are filtered out to avoid false
 """
 function collect_inert_global_occurrences!(
         occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence}},
-        ctx3::JL.VariableAnalysisContext, st3::SyntaxTreeC, mod::Module;
+        ctx3::JL.VariableAnalysisContext, st3::SyntaxTreeC, context_module::Module;
         soft_scope::Bool = false
     )
     arg_names = Set{String}()
@@ -565,14 +563,14 @@ function collect_inert_global_occurrences!(
             # Unwrap `$` nodes (replace with their content) instead of removing
             # them, so that parent nodes like dot expressions (`x.$name`)
             # remain well-formed and non-interpolated identifiers are resolved.
-            jl_lower_for_scope_resolution(mod, unwrap_interpolations(st3′[1]); soft_scope)
+            jl_lower_for_scope_resolution(context_module, unwrap_interpolations(st3′[1]); soft_scope)
         catch
             return nothing
         end
         for binfo in ires.ctx3.bindings.info
             if binfo.kind === :global && !binfo.is_internal && !(binfo.name in arg_names)
                 # Use the inert ctx's BindingInfo as key; when cached via
-                # BindingInfoKey(mod, name, :global) it matches the import.
+                # BindingInfoKey(context_module, name, :global) it matches the import.
                 occ_set = get!(Set{BindingOccurrence}, occurrences, binfo)
                 push!(occ_set, BindingOccurrence(
                     JL.binding_ex(ires.ctx3, binfo.id), :use))

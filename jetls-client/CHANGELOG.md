@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Commit: [`HEAD`](https://github.com/aviatesk/JETLS.jl/commit/HEAD)
 - Diff: [`916a7a84...HEAD`](https://github.com/aviatesk/JETLS.jl/compare/916a7a84...HEAD)
 
+### Removed
+
+- The `completion.method_signature.prepend_inference_result` setting was removed. Inferred return types are now always shown both as `CompletionItem.detail` (` -> T` next to the candidate label) and as a leading `signature -> T` code fence at the top of the method signature completion documentation, so the previous client-specific opt-in is no longer needed.
+  Existing configs keep working for now: the removed key is still accepted at load time and silently dropped, with a one-shot deprecation warning. The legacy key will be rejected outright in releases after June 2026, so if you are still setting `completion.method_signature.prepend_inference_result`, please remove it from your config.
+
 ## v0.4.0
 
 - Commit: [`916a7a84`](https://github.com/aviatesk/JETLS.jl/commit/916a7a84)

@@ -132,7 +132,7 @@ function compute_semantic_tokens(
             return
         end
         occs = get_binding_occurrences!(state, uri, fi, st0)
-        collect_semantic_tokens_for_occurrences!(raw, state, uri, fi, occs)
+        collect_semantic_tokens_for_occurrences!(raw, state, uri, fi, occs, st0)
     end
     sort!(raw)
     merge_overlapping_tokens!(raw)
@@ -183,27 +183,61 @@ end
 
 function collect_semantic_tokens_for_occurrences!(
         raw::Vector{SemanticTokenTuple}, state::ServerState, uri::URI, fi::FileInfo,
-        occs::BindingOccurrencesResult,
+        occs::BindingOccurrencesResult, st0::SyntaxTreeC,
     )
-    # `:static_parameter` bindings often coexist with same-named `:local`
-    # aliases produced by `where`-clause scope blocks, sharing the same
-    # occurrence set. Emitting both classifies one identifier as both
-    # `typeParameter` and `variable`. Drop the `:local` aliases.
-    static_param_names = Set{String}()
+    # `:local` aliases for type parameters cover a superset of the corresponding
+    # `:static_parameter`'s occurrences — and for plain `struct A{T}; ...; end` are
+    # the only signal at all.
+    # Collect names from both and reclassify matching `:local`s as `typeParameter`.
+    type_param_names = Set{String}()
     for binfo_key in keys(occs)
         if binfo_key.kind === :static_parameter
-            push!(static_param_names, binfo_key.name)
+            push!(type_param_names, binfo_key.name)
         end
     end
+    collect_type_param_names_from_tree!(type_param_names, st0)
     for (binfo_key, occurrences) in occs
-        binfo_key.kind === :local && binfo_key.name in static_param_names && continue
-        ttype = classify_token_type(binfo_key.kind)
+        if binfo_key.name in type_param_names
+            ttype = SEMANTIC_TOKEN_TYPE_TYPE_PARAMETER
+        else
+            ttype = classify_token_type(binfo_key.kind)
+        end
         name_bytes = sizeof(binfo_key.name)
         for occurrence in occurrences
             push_semantic_token!(raw, state, uri, fi, occurrence, ttype, name_bytes)
         end
     end
     return raw
+end
+
+function collect_type_param_names_from_tree!(names::Set{String}, st0::SyntaxTreeC)
+    traverse(st0) do node
+        k = JS.kind(node)
+        if k === JS.K"struct" && JS.numchildren(node) >= 2
+            sig = node[2]
+        elseif k in JS.KSet"abstract primitive" && JS.numchildren(node) >= 1
+            sig = node[1]
+        else
+            return
+        end
+        if JS.kind(sig) === JS.K"<:" && JS.numchildren(sig) >= 1
+            sig = sig[1]
+        end
+        if JS.kind(sig) === JS.K"curly"
+            for i = 2:JS.numchildren(sig)
+                param = sig[i]
+                if JS.kind(param) === JS.K"<:" && JS.numchildren(param) >= 1
+                    param = param[1]
+                end
+                name = @something extract_name_val(param) continue
+                push!(names, name)
+            end
+        end
+        # Bodies host no nested type defs; inner-ctor `where` params
+        # already surface as `:static_parameter`.
+        return traversal_no_recurse
+    end
+    return names
 end
 
 function push_semantic_token!(

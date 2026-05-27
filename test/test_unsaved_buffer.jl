@@ -71,8 +71,8 @@ const SETTINGS = Dict{String,Any}(
         # didClose must publish an empty `PublishDiagnosticsNotification` to
         # clear the previously published `unused-argument` diagnostic, and
         # then drop the per-entry analysis state. This exercises the ordering
-        # of `notify_diagnostics!` before `cleanup_unsaved_analysis!` in
-        # `handle_DidCloseTextDocumentNotification`: if `cleanup_unsaved_analysis!`
+        # of `notify_diagnostics!` before `cleanup_analysis_state!` in
+        # `handle_DidCloseTextDocumentNotification`: if `cleanup_analysis_state!`
         # ran first the clearing notification path in `notify_diagnostics!`
         # would have nothing to publish under `all_files=false`.
         let (; raw_res) = writereadmsg(make_DidCloseTextDocumentNotification(untitled_uri))
