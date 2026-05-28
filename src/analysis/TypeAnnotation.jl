@@ -10,30 +10,25 @@ byte-range type lookups.
 
 LSP feature code should normally only need these:
 
-- [`infer_type_at_range`](@ref) — single-shot "type at this byte range",
-  for features that issue one query per cursor position (go to type
-  definition, single hover-type, …).
-- [`build_inferred_context_at`](@ref) — build an [`InferredTreeContext`](@ref) once for a
-  toplevel and reuse it across multiple queries on the same context
-  (signature help and call completion query the function head plus each argument).
-- [`get_type_for_range`](@ref) — the byte-range → type query; call against a
-  context returned by `build_inferred_context_at`.
-- [`get_matches_for_range`](@ref) — the byte-range → `Vector{Core.MethodMatch}`
-  query. Returns the methods CC's dispatch picked at a call site, for features
-  that want narrower jumps than `methods(callee)` (go-to-method-definition).
-- [`InferredTreeContext`](@ref) — the query handle exported so feature
-  code can spell its type in signatures (e.g. `Union{Nothing,InferredTreeContext}`).
+- [`build_inferred_context_for_range`](@ref) locates the top-level tree containing a
+  byte range and returns an [`InferredTreeContext`](@ref). Pass `cache` when the
+  caller can reuse inferred contexts for the same document version.
+- [`get_type_for_range`](@ref) queries the inferred type at a surface byte range
+  from an [`InferredTreeContext`](@ref).
+- [`get_matches_for_range`](@ref) queries the `Vector{Core.MethodMatch}` that
+  CC's dispatch picked at a call site, for features that want narrower jumps
+  than `methods(callee)` (go-to-method-definition).
+- [`InferredTreeContext`](@ref) is exported so feature code can spell its type
+  in signatures (e.g. `Union{Nothing,InferredTreeContext}`).
 
-The full pipeline below is documented because the prerequisites and
-limitations propagate to the exported API — every type the exported entries
-surface (whether through `infer_type_at_range` or through `get_type_for_range`
-on a context built by `build_inferred_context_at`) is subject to the
-constraints in "Prerequisite" and "Limitations".
+The lower-level pipeline is documented because its prerequisites and
+limitations determine what the exported API can return. In particular, every
+type surfaced through [`get_type_for_range`](@ref) is subject to the constraints
+in "Prerequisite" and "Limitations".
 
 # Pipeline
 
-The four public pieces interlock in a fixed order — each step's output feeds the
-next:
+The pipeline has four steps. Each step's output feeds the next:
 
 1. **Lower for scope resolution**:
    [`get_inferrable_tree(st0::SyntaxTreeC, context_module::Module) -> (; ctx3::JL.VariableAnalysisContext, st3::SyntaxTreeC) | nothing`](@ref get_inferrable_tree)
@@ -50,10 +45,10 @@ next:
    toplevel and inside method bodies — carry per-statement types.
 
 3. **Build query indexes**:
-   [`InferredTreeContext(inferred_tree::SyntaxTreeC, st3::SyntaxTreeC) -> ctx::InferredTreeContext`](@ref InferredTreeContext)
-   wraps the annotated tree with \$O(N)\$-built indexes (`by_byte_range`, `surface_kind_index`,
-   OC body scope, …) so downstream queries are \$O(1)\$ per call.
-   Build once per inferred tree, reuse across many queries.
+   [`build_inferred_context_for_range`](@ref) wraps the annotated tree with
+   \$O(N)\$-built indexes (`by_byte_range`, `surface_kind_index`, OC body scope,
+   …) so downstream queries are \$O(1)\$ per call. Build once per inferred tree,
+   reuse across many queries.
 
 4. **Query**:
    [`get_type_for_range(ctx::InferredTreeContext, rng::UnitRange{<:Integer}) -> typ`](@ref get_type_for_range)
@@ -61,10 +56,9 @@ next:
    the lowered surface kind (`K"call"`, `K"macrocall"`, `K"function"`, branching forms, …)
    and returns the inferred lattice element.
 
-For LSP feature code, [`build_inferred_context_at`](@ref) collapses steps 1–3 into a single
-call (locate the toplevel containing a byte range, run the pipeline,
-return a ready-to-query [`InferredTreeContext`](@ref)).
-[`infer_type_at_range`](@ref) further folds in step 4 for the common single-query case.
+For LSP feature code, [`build_inferred_context_for_range`](@ref) collapses steps 1–3 into
+a single call (locate the toplevel containing a byte range, run the pipeline, return a
+ready-to-query [`InferredTreeContext`](@ref), optionally through a per-document-version cache).
 
 # Prerequisite: full-analysis must have run first
 
@@ -134,12 +128,13 @@ module TypeAnnotation
 
 using Core.IR
 using JET: CC
-using ..JETLS: JETLS_DEBUG_LOWERING, JL, JS, SyntaxTreeC, TraversalReturn,
-    iterate_toplevel_tree, jl_lower_for_scope_resolution, rewrite_local_closures_to_opaque,
-    traversal_terminator, traverse
+using ..JETLS: InferredContextCache, InferredContextCacheData, JETLS_DEBUG_LOWERING,
+    JL, JS, SyntaxTreeC, TraversalReturn, iterate_toplevel_tree,
+    jl_lower_for_scope_resolution, load, rewrite_local_closures_to_opaque, store!, traverse
+import ..JETLS: InferredTreeContext
 
-export InferredTreeContext, build_inferred_context_at, get_matches_for_range,
-    get_type_for_range, infer_type_at_range
+export InferredTreeContext, build_inferred_context_for_range, get_matches_for_range,
+    get_type_for_range
 
 # ASTTypeAnnotator
 # ================
@@ -838,14 +833,16 @@ end
 
 """
     InferredTreeContext(
-            inferred_tree::SyntaxTreeC, st3::SyntaxTreeC
+            inferred_tree::SyntaxTreeC, st3::SyntaxTreeC,
+            surface_kind_index::Dict{UnitRange{Int},JS.Kind},
+            macrocall_types::Dict{UnitRange{Int},Vector{Any}}
         ) -> ctx::InferredTreeContext
 
 [`TypeAnnotation`](@ref) pipeline step 3: wrap an annotated `inferred_tree` (from
 [`infer_toplevel_tree`](@ref)) plus the post-scope-resolution `st3` (from
-[`get_inferrable_tree`](@ref)) with prebuilt indexes, yielding a query handle
-that [`get_type_for_range`](@ref) and friends can answer in \$O(1)\$ per call (or
-\$O(log N)\$ for the branching case).
+[`get_inferrable_tree`](@ref)) and provenance indexes built before pruning,
+yielding a query handle that [`get_type_for_range`](@ref) and friends can answer
+in \$O(1)\$ per call (or \$O(log N)\$ for the branching case).
 
 `st3` (rather than the surface tree) is needed to identify byte ranges of
 *user-written* `K"return"` surface forms, which `type_for_branching` looks up
@@ -861,76 +858,24 @@ as new queries demand different indexes.
 
 See the [`TypeAnnotation`](@ref) module docstring for the full pipeline.
 """
-struct InferredTreeContext
-    inferred_tree::SyntaxTreeC
-    # `byte_range => kind` for the surface node each lowered node was lowered
-    # from (first element of `JS.flattened_provenance`). First-write-wins,
-    # mirroring a `traverse`-then-pick-first lookup.
-    surface_kind_index::Dict{UnitRange{Int}, JS.Kind}
-    # Every lowered node keyed by its own `byte_range`, in preorder. The
-    # preorder property is load-bearing for the "last `K"call"` wins"
-    # semantics in `type_for_call`.
-    by_byte_range::Dict{UnitRange{Int}, Vector{SyntaxTreeC}}
-    # Typed `K"call"` nodes whose first provenance is a `K"macrocall"`, keyed
-    # by the **macrocall's** `byte_range` (not the lowered call's own range —
-    # string macros lower to a `K"call"` with a smaller span than the
-    # macrocall, so we key by the surface span the user wrote).
-    macrocall_typed_calls::Dict{UnitRange{Int}, Vector{SyntaxTreeC}}
-    # Every `K"return"` node, in two parallel `Vector`s sorted by
-    # `JS.first_byte` (so `searchsortedfirst` is valid on `return_first_bytes`).
-    # User-vs-synthetic classification is derived per-query from
-    # `user_return_form_ranges` below — @mlechu's idea.
-    return_first_bytes::Vector{Int}
-    return_nodes::Vector{SyntaxTreeC}
-    # Byte ranges of every user-written `K"return"` surface form in `st3`
-    # (`st3` not `st0` so macro-expansion-introduced `K"return"`s are included).
-    # Consumed by `type_for_branching`.
-    user_return_form_ranges::Vector{UnitRange{Int}}
-    # For each lowered node inside the body of some OC, the byte range of that OC's
-    # `K"opaque_closure_method"`. Used by `tmerge_at_range` to filter OC construction
-    # scaffolding sharing a byte range with the user's yield expression: a node is kept
-    # only when the OC whose body it's in has the queried byte range — so inner-OC noise
-    # inside an outer OC body (e.g. multi-`for` comprehension, closure-of-closure) is
-    # filtered when querying at the inner OC's range.
-    oc_body_scope::Dict{Int,UnitRange{Int}}
-end
-
-function InferredTreeContext(inferred_tree::SyntaxTreeC, st3::SyntaxTreeC)
-    surface_kind_index = Dict{UnitRange{Int}, JS.Kind}()
+function InferredTreeContext(
+        inferred_tree::SyntaxTreeC, st3::SyntaxTreeC,
+        surface_kind_index::Dict{UnitRange{Int},JS.Kind},
+        macrocall_types::Dict{UnitRange{Int},Vector{Any}}
+    )
     by_byte_range = Dict{UnitRange{Int}, Vector{SyntaxTreeC}}()
-    macrocall_typed_calls = Dict{UnitRange{Int}, Vector{SyntaxTreeC}}()
     return_first_bytes = Int[]
     return_nodes = SyntaxTreeC[]
 
+    # These indexes retain tree nodes, so they must be built from the pruned tree;
+    # otherwise the context would keep the unpruned graph alive.
     traverse(inferred_tree) do st::SyntaxTreeC
         rng = JS.byte_range(st)
         push!(get!(Vector{SyntaxTreeC}, by_byte_range, rng), st)
-
-        provs = JS.flattened_provenance(st)
-        if !isempty(provs)
-            fprov = first(provs)
-            fprov_rng = JS.byte_range(fprov)
-            # Register *every* provenance entry, not just `first(provs)`. For
-            # macro-wrapped surface forms — `@inline f(x) = body` whose chain is
-            # `[macrocall, function]` — this makes the inner funcdef's span queryable
-            # in addition to the macrocall's outer span.
-            for prov in provs
-                prov_rng = JS.byte_range(prov)
-                haskey(surface_kind_index, prov_rng) ||
-                    (surface_kind_index[prov_rng] = JS.kind(prov))
-            end
-
-            if JS.kind(st) === JS.K"call" && hasproperty(st, :type) &&
-                    length(provs) >= 2 && JS.kind(fprov) === JS.K"macrocall"
-                push!(get!(Vector{SyntaxTreeC}, macrocall_typed_calls, fprov_rng), st)
-            end
-        end
-
         if JS.kind(st) === JS.K"return"
             push!(return_first_bytes, JS.first_byte(st))
             push!(return_nodes, st)
         end
-
         return nothing
     end
 
@@ -947,8 +892,33 @@ function InferredTreeContext(inferred_tree::SyntaxTreeC, st3::SyntaxTreeC)
 
     return InferredTreeContext(
         inferred_tree, surface_kind_index, by_byte_range,
-        macrocall_typed_calls, return_first_bytes, return_nodes,
+        macrocall_types, return_first_bytes, return_nodes,
         user_return_form_ranges, oc_body_scope)
+end
+
+function collect_provenance_indexes(inferred_tree::SyntaxTreeC)
+    surface_kind_index = Dict{UnitRange{Int},JS.Kind}()
+    macrocall_types = Dict{UnitRange{Int},Vector{Any}}()
+    traverse(inferred_tree) do st::SyntaxTreeC
+        provs = JS.flattened_provenance(st)
+        if !isempty(provs)
+            # Register *every* provenance entry, not just `first(provs)`. For
+            # macro-wrapped surface forms — `@inline f(x) = body` whose chain is
+            # `[macrocall, function]` — this makes the inner funcdef's span queryable
+            # in addition to the macrocall's outer span.
+            for prov in provs
+                prov_rng = JS.byte_range(prov)
+                haskey(surface_kind_index, prov_rng) ||
+                    (surface_kind_index[prov_rng] = JS.kind(prov))
+            end
+        end
+        if JS.kind(st) === JS.K"call" && hasproperty(st, :type) &&
+                length(provs) >= 2 && JS.kind(first(provs)) === JS.K"macrocall"
+            push!(get!(Vector{Any}, macrocall_types, JS.byte_range(first(provs))), st.type)
+        end
+        return nothing
+    end
+    return surface_kind_index, macrocall_types
 end
 
 # `K"code_info"` only marks an OC body when it's the body slot of a
@@ -1003,62 +973,70 @@ function find_outermost_user_return_form(
 end
 
 """
-    build_inferred_context_at(
+    build_inferred_context_for_range(
             st0_top::SyntaxTreeC, context_module::Module, rng::UnitRange{<:Integer};
             world::UInt = Base.get_world_counter(),
-            caller::AbstractString = "build_inferred_context_at"
+            caller::AbstractString = "build_inferred_context_for_range",
+            cache::Union{Nothing,InferredContextCache} = nothing
         ) -> ctx::InferredTreeContext | nothing
 
 Compose [`TypeAnnotation`](@ref) pipeline steps 1–3 into a single call: locate the
 top-level subtree of `st0_top` that contains `rng`, run [`get_inferrable_tree`](@ref)
 and [`infer_toplevel_tree`](@ref) on it, and wrap the result in an
-[`InferredTreeContext`](@ref). Returns `nothing` when no top-level subtree contains `rng`,
-or when lowering / inference fails.
+[`InferredTreeContext`](@ref).
+Returns `nothing` when no top-level subtree contains `rng`, or when lowering / inference fails.
 
-The standard entry point for LSP features that need to issue **multiple**
-[`get_type_for_range`](@ref) queries against the same toplevel — e.g. signature
-help looks up the function's type and then each argument's type. For a single
-range lookup, [`infer_type_at_range`](@ref) is the convenience shortcut that
-also folds in step 4.
+This is the standard entry point for LSP features that need TypeAnnotation queries.
+Callers can then issue one or more [`get_type_for_range`](@ref) /
+[`get_matches_for_range`](@ref) queries against the returned context.
+When `cache` is provided, inferred contexts are reused by `(context_module, world,
+top-level range)`, allowing repeated requests for the same synced document version to skip
+lowering and inference.
+
+Cache misses build outside the cache lock. Racing requests may duplicate inference for the
+same key, but unrelated cache hits/misses are not blocked.
 """
-function build_inferred_context_at(
+function build_inferred_context_for_range(
         st0_top::SyntaxTreeC, context_module::Module, rng::UnitRange{<:Integer};
         world::UInt = Base.get_world_counter(),
-        caller::AbstractString = "build_inferred_context_at"
+        caller::AbstractString = "build_inferred_context_for_range",
+        cache::Union{Nothing,InferredContextCache} = nothing
     )
     return iterate_toplevel_tree(st0_top) do st0::SyntaxTreeC
-        rng ⊆ JS.byte_range(st0) || return nothing
-        result = @something get_inferrable_tree(
-            st0, context_module; world, caller) return traversal_terminator
-        (; ctx3, st3) = result
-        inferred = @something infer_toplevel_tree(
-            ctx3, st3, st0, context_module; world) return traversal_terminator
-        return TraversalReturn(InferredTreeContext(inferred, st3); terminate=true)
+        top_rng = JS.byte_range(st0)
+        rng ⊆ top_rng || return nothing
+        if cache === nothing
+            ctx = build_inferred_context(st0, context_module; world, caller)
+            return TraversalReturn(ctx; terminate=true)
+        end
+        key = (context_module, world, top_rng)
+        entries = load(cache)
+        if haskey(entries, key)
+            return TraversalReturn(entries[key]; terminate=true)
+        end
+        # Build outside the cache lock: racing requests may duplicate inference
+        # for the same key, but they don't block unrelated cache hits/misses.
+        new_ctx = build_inferred_context(st0, context_module; world, caller)
+        ctx = store!(cache) do entries
+            if haskey(entries, key)
+                return entries, entries[key]
+            end
+            return InferredContextCacheData(entries, key => new_ctx), new_ctx
+        end
+        return TraversalReturn(ctx; terminate=true)
     end
 end
 
-"""
-    infer_type_at_range(
-            st0_top::SyntaxTreeC, context_module::Module, rng::UnitRange{<:Integer};
-            world::UInt = Base.get_world_counter()
-        ) -> typ | nothing
-
-Compose all four [`TypeAnnotation`](@ref) pipeline steps into a single call: run inference
-on the top-level subtree containing `rng` and return the inferred type at `rng`.
-Returns `nothing` if lowering / inference fails, or no `:type` annotation exists at `rng`.
-
-The shared cursor-to-type bridge for LSP features that need only one query
-(go to type definition, single-shot hover-type, …).
-For features that need multiple queries against the same toplevel, build the context once with
-[`build_inferred_context_at`](@ref) and reuse it across [`get_type_for_range`](@ref) calls.
-"""
-function infer_type_at_range(
-        st0_top::SyntaxTreeC, context_module::Module, rng::UnitRange{<:Integer};
+function build_inferred_context(
+        st0::SyntaxTreeC, context_module::Module;
         world::UInt = Base.get_world_counter(),
+        caller::AbstractString = "build_inferred_context"
     )
-    ctx = @something build_inferred_context_at(
-        st0_top, context_module, rng; world, caller="infer_type_at_range") return nothing
-    return get_type_for_range(ctx, rng)
+    (; ctx3, st3) = @something get_inferrable_tree(st0, context_module; world, caller) return nothing
+    inferred = @something infer_toplevel_tree(ctx3, st3, st0, context_module; world) return nothing
+    # `JS.prune` minimizes provenance, so collect query-dispatch indexes first.
+    surface_kind_index, macrocall_types = collect_provenance_indexes(inferred)
+    return InferredTreeContext(JS.prune(inferred), st3, surface_kind_index, macrocall_types)
 end
 
 """
@@ -1117,15 +1095,14 @@ surface_kind_at_range(ctx::InferredTreeContext, rng::UnitRange{<:Integer}) =
     get(ctx.surface_kind_index, rng, nothing)
 
 # A macrocall expansion produces many `K"call"`s whose byte ranges fall under
-# the original `K"macrocall"` source span. `macrocall_typed_calls` indexes only
-# those whose first provenance is the macrocall (skipping nodes the expansion
-# imported from elsewhere); among them, the last typed non-Const call carries
-# the value type. `Const` entries are skipped because they're usually metadata
-# the expansion baked in (line numbers, `Module`, …), not the user value.
+# the original `K"macrocall"` source span. `macrocall_types` indexes only calls
+# whose first provenance is the macrocall (skipping nodes the expansion imported
+# from elsewhere); among them, the last non-Const type carries the value type.
+# `Const` entries are skipped because they're usually metadata the expansion
+# baked in (line numbers, `Module`, ...), not the user value.
 function type_for_macroexpansion(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
     typ = nothing
-    for st5 in get(ctx.macrocall_typed_calls, rng, ())
-        ntyp = st5.type
+    for ntyp in get(ctx.macrocall_types, rng, ())
         ntyp isa Core.Const && continue
         typ = ntyp
     end
@@ -1307,7 +1284,7 @@ kwcall scaffolding `K"call"`s share the byte range and precede it in preorder) i
 consulted, so when its callee is unresolved this returns `nothing` rather than
 leaking the scaffolding's matches.
 
-Pair with [`build_inferred_context_at`](@ref) for the context.
+Pair with [`build_inferred_context_for_range`](@ref) for the context.
 """
 function get_matches_for_range(ctx::InferredTreeContext, rng::UnitRange{<:Integer})
     last_call = nothing

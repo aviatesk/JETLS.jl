@@ -152,7 +152,8 @@ function find_definition(
         rng = ctx = nothing
     else
         rng = JS.byte_range(node)
-        ctx = build_inferred_context_at(st0, context_module, rng; world, caller="find_definition")
+        ctx = build_inferred_context_for_range(st0, context_module, rng;
+            world, caller="find_definition", cache=fi.inferred_context_cache)
     end
 
     # Phase 1: matches-narrowing. Runs *before* the binding pass so

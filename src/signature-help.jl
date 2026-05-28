@@ -560,7 +560,7 @@ function find_all_matches(
 end
 
 function cursor_siginfos(
-        context_module::Module, fi::FileInfo, b::Int;
+        fi::FileInfo, b::Int, context_module::Module;
         world::UInt = Base.get_world_counter(),
         postprocessor::LSPostProcessor = LSPostProcessor()
     )
@@ -577,8 +577,8 @@ function cursor_siginfos(
     # - (a) the surrounding toplevel failed to lower (e.g. method def with unused where-vars)
     # - (b) the call's head is a macro identifier that doesn't survive macroexpansion.
     # Both fall back to a global-binding lookup of `call[1]`.
-    ctx = build_inferred_context_at(
-        st0, context_module, JS.byte_range(call); world, caller="cursor_siginfos")
+    ctx = build_inferred_context_for_range(st0, context_module, JS.byte_range(call);
+        world, caller="cursor_siginfos", cache=fi.inferred_context_cache)
     fntyp = ctx === nothing ? nothing : get_type_for_range(ctx, JS.byte_range(call[1]))
     if fntyp === nothing
         fntyp = resolve_global_const(context_module, call[1], world)
@@ -640,7 +640,7 @@ function handle_SignatureHelpRequest(
     pos = adjust_position(state, uri, msg.params.position)
     (; context_module, world, postprocessor) = get_context_info(state, uri, pos)
     b = xy_to_offset(fi, pos)
-    signatures = cursor_siginfos(context_module, fi, b; world, postprocessor)
+    signatures = cursor_siginfos(fi, b, context_module; world, postprocessor)
     activeSignature = activeParameter = nothing
     return send(server,
         SignatureHelpResponse(;

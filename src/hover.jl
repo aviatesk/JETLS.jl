@@ -100,7 +100,8 @@ function get_hover(
     end
 
     display_rng = JS.byte_range(display_node)
-    ctx = build_inferred_context_at(st0_top, context_module, display_rng; world, caller="get_hover")
+    ctx = build_inferred_context_for_range(st0_top, context_module, display_rng;
+        world, caller="get_hover", cache=fi.inferred_context_cache)
     type_str = typ = nothing
     if ctx !== nothing
         display_typ = get_type_for_range(ctx, display_rng)
@@ -192,16 +193,14 @@ binding_kind_label(kind::Symbol) =
     kind === :static_parameter ? "(static parameter)" :
     kind === :local ? "(local)" : "(global)"
 
-# Convert a lattice element returned by `infer_type_at_range` into a string
-# suitable for display in a hover. Returns `nothing` for "implementation
-# detail" lattice elements that the user shouldn't see — `Type{T}` (the value
-# is itself a type), and function singletons whose name already appears in
-# `source_text` as a whole word (e.g. hovering on `sin│` would otherwise show
-# `sin :: typeof(sin)`, which is just noise). For function singletons whose
-# name is *not* visible in the source — `s[2]│` resolving to `cos`, or
-# `mycos│` aliased from `cos` — the singleton type is returned as
-# `typeof(<name>)` so the hover header announces which value the expression
-# resolves to without conflating value and type positions.
+# Convert a lattice element from `get_type_for_range` into a string suitable for display
+# in a hover. Returns `nothing` for implementation-detail lattice elements that the user
+# shouldn't see: `Type{T}` (the value is itself a type), and function singletons whose
+# name already appears in `source_text` as a whole word (e.g. hovering on `sin│` would
+# otherwise show `sin :: typeof(sin)`, which is just noise). For function singletons whose
+# name is not visible in the source — `s[2]│` resolving to `cos`, or `mycos│` aliased from
+# `cos` — the singleton type is returned as `typeof(<name>)` so the hover header announces
+# which value the expression resolves to without conflating value and type positions.
 function hover_type_string(@nospecialize(typ), source_text::AbstractString)
     typ isa Core.PartialOpaque && return format_partial_opaque(typ)
     widened = CC.widenconst(typ)
