@@ -33,7 +33,8 @@ end
 function cache_notebook_file_info!(server::Server, notebook_uri::URI, notebook_info::NotebookInfo)
     state = server.state
     parsed_stream = ParseStream!(notebook_info.concat.source)
-    fi = FileInfo(notebook_info.version, parsed_stream, notebook_uri, notebook_info.encoding)
+    fi = FileInfo(notebook_info.version, parsed_stream, notebook_uri, notebook_info.encoding;
+        inferred_context_cache=InferredContextCache())
     store!(state.file_cache) do cache
         Base.PersistentDict(cache, notebook_uri => fi), fi
     end

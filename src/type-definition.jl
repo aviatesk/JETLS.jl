@@ -70,7 +70,9 @@ function find_type_definition(server::Server, uri::URI, fi::FileInfo, pos::Posit
 
     rng = JS.byte_range(node)
     (; context_module, world) = get_context_info(state, uri, pos)
-    typ = @something infer_type_at_range(st0_top, context_module, rng; world) return nothing
+    ctx = @something build_inferred_context_for_range(st0_top, context_module, rng;
+        world, caller="find_type_definition", cache=fi.inferred_context_cache) return nothing
+    typ = @something get_type_for_range(ctx, rng) return nothing
 
     target_type = @something extract_target_type(typ) return nothing
     return type_locations(state, uri, target_type, world), node

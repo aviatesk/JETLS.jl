@@ -635,6 +635,7 @@ function update_analysis_cache!(state::ServerState, analysis_result::AnalysisRes
     # Revise-based analysis keeps module identity stable across runs, so we
     # skip invalidation when `module_range_infos` is unchanged.
     for uri in analyzed_uris
+        clear_inferred_context_cache!(state, uri)
         if module_range_infos_unchanged(prev_cache, analysis_result, uri)
             continue
         end
