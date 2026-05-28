@@ -53,19 +53,17 @@ function build_line_starts(textbuf::Vector{UInt8})
     return starts
 end
 
-# Primary file cache for document synchronization.
-# Created on `textDocument/didOpen` and updated on `textDocument/didChange`.
-# Contains the current editor state, including unsaved edits.
+# Current text snapshot for both synchronized documents and on-demand unsynced workspace
+# files, plus per-version caches derived from the parsed stream.
 struct FileInfo
     version::Int
     parsed_stream::JS.ParseStream
     filename::String
     encoding::LSP.PositionEncodingKind.Ty
     testsetinfos::Vector{TestsetInfo}
-    # Optional pruned `st0` cache, currently used for unsynced workspace files
-    # whose trees are scanned repeatedly by diagnostics and global occurrence search.
-    # Access through `build_syntax_tree`, which returns a copy safe for lowering.
-    syntax_tree0::Union{Nothing,SyntaxTreeC}
+    # Pruned `st0` cache. Access through `build_syntax_tree`, which returns a copy
+    # safe for lowering.
+    syntax_tree0::SyntaxTreeC
     # Cached line-starts index for the current `parsed_stream.textbuf`. `offset_to_xy`
     # / `xy_to_offset` are called heavily by every LSP feature, so amortizing the
     # O(N) line scan once per FileInfo (constructed on didOpen / didChange) is a
@@ -76,13 +74,14 @@ struct FileInfo
             version::Int, parsed_stream::JS.ParseStream, filename::AbstractString,
             encoding::LSP.PositionEncodingKind.Ty = LSP.PositionEncodingKind.UTF16,
             testsetinfos::Vector{TestsetInfo} = EMPTY_TESTSETINFOS;
-            cache_tree::Bool = false
+            syntax_tree0::Union{Nothing,SyntaxTreeC} = nothing
         )
-        if cache_tree
-            syntax_tree0 = JS.prune(JS.build_tree(JS.SyntaxTree, parsed_stream; filename))
+        syntax_tree0 = if syntax_tree0 === nothing
+            JS.build_tree(JS.SyntaxTree, parsed_stream; filename)
         else
-            syntax_tree0 = nothing
+            syntax_tree0
         end
+        syntax_tree0 = JS.prune(syntax_tree0)
         line_starts = build_line_starts(parsed_stream.textbuf)
         new(version, parsed_stream, filename, encoding, testsetinfos, syntax_tree0, line_starts)
     end

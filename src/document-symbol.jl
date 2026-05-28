@@ -958,7 +958,9 @@ function extract_local_scope_bindings!(
             # `func(x) = (@asis y = 42; x + y)` using `macro asis(x); :($(esc(x))); end`,
             # we might want `y` to appear in the outline.
             if length(prov) > 1
-                if !is_nospecialize_or_specialize_macrocall3(source_node)
+                if !(is_nospecialize_or_specialize_macrocall3(source_node) ||
+                     # After pruning st0 the `@nospecialize` textref can survive in st0 macrocall shape.
+                     is_nospecialize_or_specialize_macrocall0(source_node))
                     continue
                 end
             end
