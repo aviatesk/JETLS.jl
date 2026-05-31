@@ -77,13 +77,13 @@ function find_declaration(
 
     binding_result = select_target_binding(st0, offset, context_module; caller="find_declaration", soft_scope)
     if !isnothing(binding_result)
-        (; ctx3, st3, st0, binding) = binding_result
+        (; ctx3, st3, binding) = binding_result
         binfo = JL.get_binding(ctx3, binding)
         if binfo.kind === :global
             locations = find_global_binding_declarations(server, uri, binfo)
         else
             locations = find_local_binding_declarations(
-                state, uri, fi, ctx3, st3, binfo; is_generated=is_generated0(st0))
+                state, uri, fi, ctx3, st3, binfo)
         end
         isempty(locations) || return locations, binding
     end
@@ -120,11 +120,10 @@ end
 
 function find_local_binding_declarations(
         state::ServerState, uri::URI, fi::FileInfo,
-        ctx3, st3, binfo::JL.BindingInfo;
-        is_generated::Bool = false,
+        ctx3, st3, binfo::JL.BindingInfo,
     )
     locations = Location[]
-    binding_occurrences = compute_binding_occurrences(ctx3, st3, is_generated)
+    binding_occurrences = compute_binding_occurrences(ctx3, st3)
     haskey(binding_occurrences, binfo) || return locations
     seen_locations = Set{Tuple{URI,Range}}()
     for occurrence in binding_occurrences[binfo]

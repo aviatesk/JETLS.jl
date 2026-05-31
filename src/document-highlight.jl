@@ -53,7 +53,7 @@ function document_highlights!(
     (; context_module) = get_context_info(state, uri, pos)
     soft_scope = is_notebook_cell_uri(state, uri)
 
-    (; ctx3, st3, st0, binding) = @something begin
+    (; ctx3, st3, binding) = @something begin
         select_target_binding(st0_top, offset, context_module; caller="document_highlights!", soft_scope)
     end return highlights
 
@@ -63,8 +63,7 @@ function document_highlights!(
     if binfo.kind === :global
         global_document_highlights!(highlights′, state, uri, fi, st0_top, binfo)
     else
-        local_document_highlights!(highlights′, state, uri, fi, ctx3, st3, binfo;
-            is_generated=is_generated0(st0))
+        local_document_highlights!(highlights′, state, uri, fi, ctx3, st3, binfo)
     end
 
     for (range, kind) in highlights′
@@ -101,10 +100,9 @@ end
 
 function local_document_highlights!(
         highlights′::Dict{Range,DocumentHighlightKind.Ty},
-        state::ServerState, uri::URI, fi::FileInfo, ctx3, st3, binfo::JL.BindingInfo;
-        is_generated::Bool = false,
+        state::ServerState, uri::URI, fi::FileInfo, ctx3, st3, binfo::JL.BindingInfo,
     )
-    binding_occurrences = compute_binding_occurrences(ctx3, st3, is_generated)
+    binding_occurrences = compute_binding_occurrences(ctx3, st3)
     if haskey(binding_occurrences, binfo)
         for occurrence in binding_occurrences[binfo]
             add_highlight_for_occurrence!(highlights′, state, uri, fi, occurrence)

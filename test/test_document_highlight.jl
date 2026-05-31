@@ -439,6 +439,29 @@ end
                 end
             end
 
+            let code = """
+                struct Test722
+                    x::Int
+                    @generated function Test722(│x│)
+                        return Expr(:new, :(Test722), :│x│)
+                    end
+                end
+                """
+                fi, positions = highlight_testcase(code, 4)
+                for pos in positions
+                    highlights = JETLS.document_highlights(fi, pos)
+                    @test length(highlights) == 2
+                    @test count(highlights) do highlight
+                        highlight.range.start == positions[1] &&
+                        highlight.range.var"end" == positions[2]
+                    end == 1
+                    @test count(highlights) do highlight
+                        highlight.range.start == positions[3] &&
+                        highlight.range.var"end" == positions[4]
+                    end == 1
+                end
+            end
+
             # Static parameter merging: `T` in argument annotation, `where` clause,
             # and body should all be unified.
             let code = """

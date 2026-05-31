@@ -1295,7 +1295,7 @@ function analyze_lowered_code!(
         allow_noreturn_optimization::Vector{Symbol} = Symbol[]
     )
     (; ctx3, ctx4, st0, st3) = res
-    binding_occurrences = compute_binding_occurrences(ctx3, st3, is_generated0(st0);
+    binding_occurrences = compute_binding_occurrences(ctx3, st3;
         include_global_bindings=true)
 
     reported = Set{LoweringDiagnosticKey}() # to prevent duplicate reports for unused default or keyword arguments
