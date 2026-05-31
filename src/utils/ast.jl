@@ -12,6 +12,10 @@ function copy_syntax_tree(st::SyntaxTreeC)
 end
 
 function build_syntax_tree(fi::FileInfo)
+    if fi.syntax_tree0 === nothing
+        st0 = JS.build_tree(JS.SyntaxTree, fi.parsed_stream; filename=fi.filename)
+        return JS.prune(st0)
+    end
     # The lowering pipeline modifies the internal state of `st0`,
     # so we need to create a copy for each read to avoid race conditions.
     return copy_syntax_tree(fi.syntax_tree0)

@@ -92,7 +92,7 @@ function global_document_highlights!(
         state::ServerState, uri::URI, fi::FileInfo, st0_top::SyntaxTreeC,
         binfo::JL.BindingInfo,
     )
-    for occurrence in find_global_binding_occurrences!(state, uri, fi, st0_top, binfo)
+    for occurrence in find_global_binding_occurrences_from_tree!(state, uri, fi, st0_top, binfo)
         add_highlight_for_occurrence!(highlights′, state, uri, fi, occurrence)
     end
     return highlights′

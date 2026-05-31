@@ -47,8 +47,7 @@ function LSP.Location(m::Method)
     if file === nothing
         file = String(m.file) # method defined in unsaved buffer
     else
-        file = file::String
-        file = to_full_path(file)
+        file = to_full_path(file::String)
     end
     return Location(;
         uri = filename2uri(file),
@@ -249,8 +248,7 @@ function find_global_binding_definitions(
         end begin
             get_unsynced_file_info!(state, search_uri)
         end continue
-        search_st0_top = build_syntax_tree(fi)
-        for occurrence in find_global_binding_occurrences!(state, search_uri, fi, search_st0_top, binfo)
+        for occurrence in find_global_binding_occurrences!(state, search_uri, fi, binfo)
             if occurrence.kind === :def
                 range, adjusted_uri = unadjust_range(state, search_uri, jsobj_to_range(occurrence.tree, fi))
                 push!(seen_locations, (adjusted_uri, range))

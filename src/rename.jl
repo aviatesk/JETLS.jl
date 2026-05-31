@@ -381,7 +381,7 @@ function collect_global_rename_edits_in_file!(
         st0_top::SyntaxTreeC, binfo::JL.BindingInfo, newName::String
     )
     ismacro = startswith(binfo.name, '@')
-    for occurrence in find_global_binding_occurrences!(state, uri, fi, st0_top, binfo)
+    for occurrence in find_global_binding_occurrences_from_tree!(state, uri, fi, st0_top, binfo)
         id_byte_range = JS.byte_range(occurrence.tree)
         classification = classify_import_rename(st0_top, id_byte_range, occurrence.kind)
         if classification === :needs_as
