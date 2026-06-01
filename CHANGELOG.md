@@ -53,6 +53,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > The `completion.method_signature.prepend_inference_result` configuration option was removed. Inferred return types are now always shown both as `CompletionItem.detail` (` -> T` typically shown next to the candidate label) and as a leading `signature -> T` code fence at the top of the method signature completion documentation, so the previous client-specific opt-in is no longer needed.
 > Existing configs keep working for now: the removed key is still accepted at load time and silently dropped, with a one-shot deprecation warning. The legacy key will be rejected outright in releases after **June 2026**, so if you are still setting `completion.method_signature.prepend_inference_result`, please remove it from your config.
 
+### Changed
+
+- Updated JuliaSyntax.jl and JuliaLowering.jl dependency versions to latest.
+
 ## 2026-05-27
 
 - Commit: [`0b038c7`](https://github.com/aviatesk/JETLS.jl/commit/0b038c7)
