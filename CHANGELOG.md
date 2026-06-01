@@ -55,6 +55,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Updated JuliaSyntax.jl and JuliaLowering.jl dependency versions to latest.
 
+- Improved responsiveness for repeated requests against the same document version. After an edit, follow-up features such as diagnostics, document links, document highlights, semantic tokens, code actions, hover, definition, and document symbols now reuse the current file's prepared syntax tree instead of rebuilding it for each request.
+
+- Improved performance of type-aware features on open files. Repeated hover, definition, type definition, signature help, and completion requests in the same top-level expression can now reuse prior analysis results instead of rerunning inference each time.
+
 ### Fixed
 
 - Fixed false `lowering/unused-argument` reports — and missed argument occurrences for find-references / document-highlight / rename — on `@generated` functions nested inside another construct (e.g. as an inner constructor in a `struct` body). (Closed https://github.com/aviatesk/JETLS.jl/issues/722)
