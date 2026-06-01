@@ -301,6 +301,29 @@ end
                 end
             end
         end
+
+        # aviatesk/JETLS.jl#722: a `@generated` function nested inside a
+        # `struct` body must still attribute its argument's inert uses.
+        let code = """
+            struct Test722
+                x::Int
+                @generated function Test722(│x│)
+                    return Expr(:new, :(Test722), :│x│)
+                end
+            end
+            """
+            fi, positions, furi = rename_testcase(code, 4)
+            for pos in positions
+                (; result, error) = JETLS.local_binding_rename(
+                    server, furi, fi, pos, @__MODULE__, "y")
+                @test result isa WorkspaceEdit && isnothing(error)
+                for (uri, edits) in result.changes
+                    @test furi == uri
+                    @test length(edits) == 2
+                    @test all(edit -> edit.newText == "y", edits)
+                end
+            end
+        end
     end
 end
 

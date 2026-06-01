@@ -163,6 +163,24 @@ end
             end
         end
 
+        # aviatesk/JETLS.jl#722: a `@generated` function nested inside a
+        # `struct` body must still attribute its argument's inert uses.
+        let code = """
+            struct Test722
+                x::Int
+                @generated function Test722(│x│)
+                    return Expr(:new, :(Test722), :│x│)
+                end
+            end
+            """
+            clean_code, positions = JETLS.get_text_and_positions(code)
+            @test length(positions) == 4
+            for pos in positions
+                refs = find_references(clean_code, pos)
+                @test length(refs) == 2
+            end
+        end
+
         # Regression test for `is_matching_global_binding` + occurrence remap:
         # a `@generated` argument whose name coincides with a module-level
         # `global` must NOT be linked to that global. In earlier implementations

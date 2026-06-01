@@ -439,6 +439,8 @@ end
                 end
             end
 
+            # aviatesk/JETLS.jl#722: a `@generated` function nested inside a
+            # `struct` body must still attribute its argument's inert uses.
             let code = """
                 struct Test722
                     x::Int
