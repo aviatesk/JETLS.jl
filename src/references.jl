@@ -88,7 +88,7 @@ function find_references(
     soft_scope = is_notebook_cell_uri(server.state, uri)
     locations = Location[]
 
-    (; ctx3, st3, st0, binding) = @something begin
+    (; ctx3, st3, binding) = @something begin
         select_target_binding(st0_top, offset, context_module; caller="find_references", soft_scope)
     end return locations
 
@@ -98,7 +98,7 @@ function find_references(
         error !== nothing && return error
     else
         find_local_references!(locations, server, uri, fi, ctx3, st3, binfo;
-            include_declaration, is_generated=is_generated0(st0))
+            include_declaration)
     end
 
     return locations
@@ -195,10 +195,9 @@ function find_local_references!(
         locations::Vector{Location}, server::Server, uri::URI, fi::FileInfo,
         ctx3, st3, binfo::JL.BindingInfo;
         include_declaration::Bool = true,
-        is_generated::Bool = false,
     )
     seen_locations = Set{Tuple{URI,Range}}()
-    binding_occurrences = compute_binding_occurrences(ctx3, st3, is_generated)
+    binding_occurrences = compute_binding_occurrences(ctx3, st3)
     if haskey(binding_occurrences, binfo)
         for occurrence in binding_occurrences[binfo]
             if include_declaration || occurrence.kind === :use

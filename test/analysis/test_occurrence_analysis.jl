@@ -13,15 +13,14 @@ with_binding_occurrences(callback, code::AbstractString; kwargs...) =
     with_binding_occurrences(callback, lowering_module, code; kwargs...)
 function with_binding_occurrences(
         callback, context_module::Module, code::AbstractString;
-        remove_macrocalls::Bool = false,
-        is_generated::Bool = false
+        remove_macrocalls::Bool = false
     )
     st0 = jlparse(code; rule=:statement)
     if remove_macrocalls
         st0 = JETLS.remove_macrocalls(st0)
     end
     (; ctx3, st3) = JETLS.jl_lower_for_scope_resolution(context_module, st0)
-    binding_occurrences = JETLS.compute_binding_occurrences(ctx3, st3, is_generated)
+    binding_occurrences = JETLS.compute_binding_occurrences(ctx3, st3)
     callback(binding_occurrences)
 end
 
@@ -414,7 +413,7 @@ end
                 hasmethod(copy, (T,)) && return :(copy(rng))
                 return :(deepcopy(rng))
             end
-            """; is_generated=true) do binding_occurrences
+            """) do binding_occurrences
             @test any(binding_occurrences) do (binding, occurrences)
                 binding.name == "rng" && binding.kind === :argument &&
                 any(occurrences) do o
@@ -427,7 +426,7 @@ end
             @generated function foo(x, unused)
                 return :(x + 1)
             end
-            """; is_generated=true) do binding_occurrences
+            """) do binding_occurrences
             @test any(binding_occurrences) do (binding, occurrences)
                 binding.name == "x" && binding.kind === :argument &&
                 any(o -> o.kind === :use, occurrences)
@@ -435,6 +434,22 @@ end
             @test !any(binding_occurrences) do (binding, occurrences)
                 binding.name == "unused" && binding.kind === :argument &&
                 any(o -> o.kind === :use, occurrences)
+            end
+        end
+
+        # aviatesk/JETLS.jl#722: a `@generated` function nested inside a
+        # `struct` body must still attribute its argument's inert uses.
+        with_binding_occurrences("""
+            struct Test722
+                x::Int
+                @generated function Test722(x)
+                    return Expr(:new, :(Test722), :x)
+                end
+            end
+            """) do binding_occurrences
+            @test any(binding_occurrences) do (binding, occurrences)
+                binding.name == "x" && binding.kind === :argument &&
+                any(o -> o.kind === :use && JS.source_line(o.tree) == 4, occurrences)
             end
         end
     end

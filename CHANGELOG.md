@@ -55,6 +55,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Updated JuliaSyntax.jl and JuliaLowering.jl dependency versions to latest.
 
+### Fixed
+
+- Fixed false `lowering/unused-argument` reports — and missed argument occurrences for find-references / document-highlight / rename — on `@generated` functions nested inside another construct (e.g. as an inner constructor in a `struct` body). (Closed https://github.com/aviatesk/JETLS.jl/issues/722)
+
 ## 2026-05-27
 
 - Commit: [`0b038c7`](https://github.com/aviatesk/JETLS.jl/commit/0b038c7)

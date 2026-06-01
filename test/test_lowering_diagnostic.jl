@@ -399,6 +399,16 @@ module EmptyModule end
             @test diagnostic.message == "Unused argument `override`"
             @test diagnostic.range.start.line == 2
         end
+        let diagnostics = get_lowering_diagnostics("""
+            struct Test722
+                x::Int
+                @generated function Test722(x)
+                    return Expr(:new, :(Test722), :x)
+                end
+            end
+            """)
+            @test isempty(diagnostics)
+        end
     end
 
     # https://github.com/aviatesk/JETLS.jl/issues/481

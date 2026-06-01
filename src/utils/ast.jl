@@ -185,10 +185,12 @@ function is_macrocall_st0(st0::SyntaxTreeC, names::AbstractString...; from::Unio
     JS.kind(st0) === JS.K"macrocall" || return false
     JS.numchildren(st0) >= 1 || return false
     macro_name = st0[1]
-    JS.kind(macro_name) === JS.K"Identifier" || return false
-    hasproperty(macro_name, :name_val) || return false
-    name_val = macro_name.name_val
-    name_val isa String || return false
+    name_val = if hasproperty(macro_name, :name_val)
+        macro_name.name_val
+    else
+        JS.sourcetext(macro_name)
+    end
+    name_val isa AbstractString || return false
     return name_val in names && (isnothing(from) || (JS.hasattr(macro_name, :mod) && macro_name.mod === from))
 end
 
@@ -359,19 +361,24 @@ function foreach_inert_identifier(@specialize(callback), node::SyntaxTreeC)
     return res !== false
 end
 
-function find_inert_identifier_name(st::SyntaxTreeC, offset::Integer)
-    name = Ref{Union{Nothing,String}}(nothing)
+function find_inert_identifier(st::SyntaxTreeC, offset::Integer)
+    found = Ref{Union{Nothing,SyntaxTreeC}}(nothing)
     foreach_inert_identifier(st) do id_node::SyntaxTreeC
         if offset in JS.byte_range(id_node)
-            JS.hasattr(id_node, :name_val) || return true
-            name_val = id_node.name_val
-            name_val isa AbstractString || return true
-            name[] = name_val
+            found[] = id_node
             return false
         end
         return true
     end
-    return name[]
+    return found[]
+end
+
+function find_inert_identifier_name(st::SyntaxTreeC, offset::Integer)
+    id_node = @something find_inert_identifier(st, offset) return nothing
+    JS.hasattr(id_node, :name_val) || return nothing
+    name_val = id_node.name_val
+    name_val isa AbstractString || return nothing
+    return name_val
 end
 
 function is_nospecialize_or_specialize_macrocall3(st3::SyntaxTreeC)

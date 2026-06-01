@@ -219,13 +219,13 @@ function is_kwcall_lambda(ctx3::JL.VariableAnalysisContext, st3::SyntaxTreeC)
 end
 
 function _select_target_binding(
-        ctx3::JL.VariableAnalysisContext, st3::SyntaxTreeC, offset::Int;
-        is_generated::Bool = false)
+        ctx3::JL.VariableAnalysisContext, st3::SyntaxTreeC, offset::Int
+    )
     return @something(
         find_target_binding(ctx3, st3, offset),
         find_target_binding(ctx3, st3, offset-1), # Support cases like `var│`, `func│(5)`
-        is_generated ? find_inert_target_binding(ctx3, st3, offset) : nothing,
-        is_generated ? find_inert_target_binding(ctx3, st3, offset-1) : nothing,
+        find_inert_target_binding(ctx3, st3, offset),
+        find_inert_target_binding(ctx3, st3, offset-1),
         return nothing)
 end
 
@@ -264,7 +264,7 @@ function select_target_binding(
         JETLS_DEBUG_LOWERING && Base.show_backtrace(stderr, catch_backtrace())
         return nothing
     end
-    primary = _select_target_binding(ctx3, st3, offset; is_generated=is_generated0(st0))
+    primary = _select_target_binding(ctx3, st3, offset)
     if primary !== nothing
         binding = normalize_local_alias_to_global(ctx3, primary)
         return (; ctx3, st3, st0, binding)
@@ -279,10 +279,15 @@ end
 
 function find_inert_target_binding(
         ctx3::JL.VariableAnalysisContext, st3::SyntaxTreeC, offset::Int)
-    name = @something find_inert_identifier_name(st3, offset) return nothing
+    id_node = @something find_inert_identifier(st3, offset) return nothing
+    JS.hasattr(id_node, :name_val) || return nothing
+    name = id_node.name_val
+    name isa AbstractString || return nothing
+    generated_range = @something enclosing_generated_range(id_node) return nothing
     for binfo in ctx3.bindings.info
         binfo.kind === :argument || continue
         binfo.name == name || continue
+        enclosing_generated_range(JL.binding_ex(ctx3, binfo.id)) == generated_range || continue
         return JL.binding_ex(ctx3, binfo.id)
     end
     return nothing
