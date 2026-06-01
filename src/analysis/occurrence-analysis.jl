@@ -117,13 +117,14 @@ function collect_inert_identifiers(st3::SyntaxTreeC)
     return result
 end
 
-function innermost_generated_range(node::SyntaxTreeC)
-    provs = JS.flattened_provenance(node)
-    for i = length(provs):-1:1
-        prov = provs[i]
-        is_generated0(prov) && return JS.byte_range(prov)
+function enclosing_generated_range(node::SyntaxTreeC)
+    s = node
+    while true
+        ms = JS.macro_prov(s)
+        isnothing(ms) && return nothing
+        is_generated0(ms) && return JS.byte_range(ms)
+        s = ms
     end
-    return nothing
 end
 
 function record_generated_inert_argument_uses!(
@@ -134,7 +135,7 @@ function record_generated_inert_argument_uses!(
     for (binfo, _) in occurrences
         binfo.kind === :argument || continue
         binding_ex = JL.binding_ex(ctx3, binfo.id)
-        generated_range = @something innermost_generated_range(binding_ex) continue
+        generated_range = @something enclosing_generated_range(binding_ex) continue
         ids = if inert_ids === nothing
             inert_ids = collect_inert_identifiers(st3)
         else
@@ -142,7 +143,7 @@ function record_generated_inert_argument_uses!(
         end
         id_nodes = @something get(ids, binfo.name, nothing) continue
         for id_node in id_nodes
-            innermost_generated_range(id_node) == generated_range || continue
+            enclosing_generated_range(id_node) == generated_range || continue
             push!(occurrences[binfo], BindingOccurrence(id_node, :use))
         end
     end

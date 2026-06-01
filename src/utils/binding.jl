@@ -283,11 +283,11 @@ function find_inert_target_binding(
     JS.hasattr(id_node, :name_val) || return nothing
     name = id_node.name_val
     name isa AbstractString || return nothing
-    generated_range = @something innermost_generated_range(id_node) return nothing
+    generated_range = @something enclosing_generated_range(id_node) return nothing
     for binfo in ctx3.bindings.info
         binfo.kind === :argument || continue
         binfo.name == name || continue
-        innermost_generated_range(JL.binding_ex(ctx3, binfo.id)) == generated_range || continue
+        enclosing_generated_range(JL.binding_ex(ctx3, binfo.id)) == generated_range || continue
         return JL.binding_ex(ctx3, binfo.id)
     end
     return nothing
