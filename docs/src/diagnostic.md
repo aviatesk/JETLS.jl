@@ -555,9 +555,23 @@ function unused_local()
 end
 ```
 
+When an unused local is introduced by an assignment expression that is
+returned from tail position, the diagnostic explains that the local binding
+is not read. For example, the function below returns the assignment
+expression's value by Julia's implicit return rule, but the binding `s`
+itself is not read after the assignment:
+
+```julia
+function wrapped(x)
+    s = "($x)"  # consider `return s` to return the binding explicitly
+end
+```
+
 !!! tip "Code action available"
     Several code actions are available for this diagnostic:
     - "Prefix with '_'" to indicate the variable is intentionally unused
+    - "Insert explicit return" for simple tail assignments where the
+      assigned binding should be returned explicitly
     - "Delete assignment" to remove only the left-hand side (keeping the
       right-hand side expression)
     - "Delete statement" to remove the entire assignment statement
@@ -597,8 +611,25 @@ function g()
 end
 ```
 
+When the unused assignment expression is returned from tail position, the
+diagnostic explains that the value is returned directly. For example, the
+final assignment below returns the assignment expression's value, but the
+binding `s` itself is not read after that assignment:
+
+```julia
+function build_string(xs)
+    s = "("
+    for x in xs
+        s *= x
+    end
+    s *= ")"  # consider `return s` to return the binding explicitly
+end
+```
+
 !!! tip "Code action available"
-    Two code actions are available for this diagnostic:
+    Several code actions are available for this diagnostic:
+    - "Insert explicit return" for simple tail assignments where the
+      assigned binding should be returned explicitly
     - "Delete assignment" to remove only the left-hand side (keeping the
       right-hand side expression)
     - "Delete statement" to remove the entire assignment statement

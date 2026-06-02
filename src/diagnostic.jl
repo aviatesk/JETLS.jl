@@ -676,6 +676,88 @@ function has_matching_argument_binding(
     return false
 end
 
+function is_assignment_expression(st::SyntaxTreeC)
+    k = JS.kind(st)
+    k === JS.K"=" && return true
+    if k === JS.K"unknown_head" && hasproperty(st, :name_val)
+        name = st.name_val
+        return name isa AbstractString && endswith(name, "=")
+    end
+    return false
+end
+
+same_syntax_range(a::SyntaxTreeC, b::SyntaxTreeC) =
+    JS.kind(a) === JS.kind(b) && JS.byte_range(a) == JS.byte_range(b)
+
+function is_last_child(parent::SyntaxTreeC, child::SyntaxTreeC)
+    n = JS.numchildren(parent)
+    n == 0 && return false
+    return same_syntax_range(parent[n], child)
+end
+
+function is_tail_branch_child(parent::SyntaxTreeC, child::SyntaxTreeC)
+    for i in 2:JS.numchildren(parent)
+        same_syntax_range(parent[i], child) && return true
+    end
+    return false
+end
+
+function assignment_expression_for_prov(st0::SyntaxTreeC, prov::SyntaxTreeC)
+    assignments = byte_ancestors(is_assignment_expression, st0, JS.byte_range(prov))
+    isempty(assignments) && return nothing
+    return first(assignments)
+end
+
+function tail_returned_assignment_kind(
+        st0::SyntaxTreeC, assignment::Union{Nothing,SyntaxTreeC}
+    )
+    isnothing(assignment) && return :none
+    ancestors = byte_ancestors(st0, JS.byte_range(assignment))
+    simple = true
+    for i in 1:length(ancestors)-1
+        child = ancestors[i]
+        parent = ancestors[i+1]
+        pk = JS.kind(parent)
+        if pk === JS.K"return"
+            return :tail
+        elseif pk === JS.K"block"
+            is_last_child(parent, child) || return :none
+        elseif pk === JS.K"function"
+            is_last_child(parent, child) || return :none
+            return simple ? :simple : :tail
+        elseif pk === JS.K"if" || pk === JS.K"elseif" || pk === JS.K"?"
+            is_tail_branch_child(parent, child) || return :none
+            simple = false
+        else
+            return :none
+        end
+    end
+    return :none
+end
+
+function unused_local_binding_message(bn::String, tail_kind::Symbol)
+    if tail_kind !== :none
+        return "Local binding `$bn` is not read; consider `return $bn` to return it explicitly"
+    end
+    return "Unused local binding `$bn`"
+end
+
+function unused_assignment_message(bn::String, tail_kind::Symbol)
+    if tail_kind !== :none
+        return "Value assigned to `$bn` is returned directly; consider `return $bn` to return the binding explicitly"
+    end
+    return "Value assigned to `$bn` is never used"
+end
+
+function return_insert_data(
+        assignment::SyntaxTreeC, fi::FileInfo, bn::String, tail_kind::Symbol
+    )
+    tail_kind === :simple || return nothing, nothing
+    range = jsobj_to_range(assignment, fi)
+    indent = get_line_indent(fi, range.start.line)
+    return range.var"end", "\n$(indent)return $bn"
+end
+
 function analyze_unused_bindings!(
         diagnostics::Vector{Diagnostic}, fi::FileInfo, st0::SyntaxTreeC, ctx3::JL.VariableAnalysisContext,
         binding_occurrences::Dict{JL.BindingInfo,Set{BindingOccurrence}},
@@ -721,9 +803,12 @@ function analyze_unused_bindings!(
             code = LOWERING_UNUSED_ARGUMENT_CODE
             data = UnusedArgumentData(prov_loc in kwarg_locations)
         else
-            message = "Unused local binding `$bn`"
+            assignment = assignment_expression_for_prov(st0, prov)
+            tail_kind = tail_returned_assignment_kind(st0, assignment)
+            message = unused_local_binding_message(bn, tail_kind)
             code = LOWERING_UNUSED_LOCAL_CODE
-            data = compute_unused_variable_data(st0, prov, fi)
+            data = assignment === nothing ? nothing :
+                compute_unused_variable_data(assignment, fi, bn, tail_kind)
         end
         push!(diagnostics, Diagnostic(;
             range,
@@ -758,16 +843,19 @@ function analyze_unused_assignments!(
             range = jsobj_to_range(prov, fi)
             key = LoweringDiagnosticKey(range, binfo.kind, bn)
             key in reported ? continue : push!(reported, key)
+            assignment = assignment_expression_for_prov(st0, prov)
+            tail_kind = tail_returned_assignment_kind(st0, assignment)
             push!(diagnostics, Diagnostic(;
                 range,
                 severity = DiagnosticSeverity.Information,
-                message = "Value assigned to `$bn` is never used",
+                message = unused_assignment_message(bn, tail_kind),
                 source = DIAGNOSTIC_SOURCE_LIVE,
                 code = LOWERING_UNUSED_ASSIGNMENT_CODE,
                 codeDescription = diagnostic_code_description(
                     LOWERING_UNUSED_ASSIGNMENT_CODE),
                 tags = DiagnosticTag.Ty[DiagnosticTag.Unnecessary],
-                data = compute_unused_variable_data(st0, prov, fi)))
+                data = assignment === nothing ? nothing :
+                    compute_unused_variable_data(assignment, fi, bn, tail_kind)))
         end
     end
 end
@@ -900,12 +988,9 @@ function analyze_undefined_local_bindings!(
     end
 end
 
-function compute_unused_variable_data(st0::SyntaxTreeC, prov::SyntaxTreeC, fi::FileInfo)
-    # Find parent K"=" node using byte_ancestors
-    ancestors = byte_ancestors(st::SyntaxTreeC->JS.kind(st)===JS.K"=", st0, JS.byte_range(prov))
-    isempty(ancestors) && return nothing
-
-    assignment = first(ancestors)
+function compute_unused_variable_data(
+        assignment::SyntaxTreeC, fi::FileInfo, bn::String, tail_kind::Symbol
+    )
     JS.numchildren(assignment) ≥ 2 || return nothing
 
     lhs = assignment[1]
@@ -913,7 +998,7 @@ function compute_unused_variable_data(st0::SyntaxTreeC, prov::SyntaxTreeC, fi::F
     # Check for destructuring patterns (tuple unpacking)
     is_tuple = JS.kind(lhs) === JS.K"tuple"
     if is_tuple
-        return UnusedVariableData(true, nothing, nothing)
+        return UnusedVariableData(true, nothing, nothing, nothing, nothing)
     end
 
     # lhs_eq_range: from LHS start to actual RHS start in source (exclusive).
@@ -922,16 +1007,23 @@ function compute_unused_variable_data(st0::SyntaxTreeC, prov::SyntaxTreeC, fi::F
     # K"String") have a byte range that excludes delimiters, so
     # `first_byte(rhs)` may point past the opening delimiter.
     assignment_range = jsobj_to_range(assignment, fi)
-    lhs_start = offset_to_xy(fi, JS.first_byte(lhs))
-    textbuf = fi.parsed_stream.textbuf
-    eq_byte = @something findnext(==(UInt8('=')), textbuf, JS.last_byte(lhs) + 1) return nothing
-    rhs_byte = eq_byte + 1
-    while rhs_byte ≤ length(textbuf) && textbuf[rhs_byte] in (UInt8(' '), UInt8('\t'))
-        rhs_byte += 1
+    lhs_eq_range = if JS.kind(assignment) === JS.K"="
+        lhs_start = offset_to_xy(fi, JS.first_byte(lhs))
+        textbuf = fi.parsed_stream.textbuf
+        eq_byte = @something findnext(==(UInt8('=')), textbuf, JS.last_byte(lhs) + 1) return nothing
+        rhs_byte = eq_byte + 1
+        while rhs_byte ≤ length(textbuf) && textbuf[rhs_byte] in (UInt8(' '), UInt8('\t'))
+            rhs_byte += 1
+        end
+        rhs_start = offset_to_xy(fi, rhs_byte)
+        Range(; start=lhs_start, var"end"=rhs_start)
+    else
+        nothing
     end
-    rhs_start = offset_to_xy(fi, rhs_byte)
-    lhs_eq_range = Range(; start=lhs_start, var"end"=rhs_start)
-    return UnusedVariableData(false, assignment_range, lhs_eq_range)
+    return_insert_position, return_insert_text = return_insert_data(
+        assignment, fi, bn, tail_kind)
+    return UnusedVariableData(
+        false, assignment_range, lhs_eq_range, return_insert_position, return_insert_text)
 end
 
 function analyze_captured_boxes!(

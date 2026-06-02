@@ -316,8 +316,15 @@ function localize_diagnostic_data(@nospecialize(data), concat::ConcatenatedNoteb
         if lhs_eq_range !== nothing
             lhs_eq_range = localize_range(lhs_eq_range, concat)
         end
+        return_insert_position = data.return_insert_position
+        if return_insert_position !== nothing
+            _, local_position = @something global_to_cell_position(
+                concat, return_insert_position) return data
+            return_insert_position = local_position
+        end
         return UnusedVariableData(
-            data.is_tuple_unpacking, assignment_range, lhs_eq_range)
+            data.is_tuple_unpacking, assignment_range, lhs_eq_range,
+            return_insert_position, data.return_insert_text)
     end
     return data
 end

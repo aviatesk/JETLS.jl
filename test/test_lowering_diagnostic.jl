@@ -99,6 +99,19 @@ module EmptyModule end
     end
 
     let diagnostics = get_lowering_diagnostics("""
+        function foo(x)
+            str = "(\$x)"
+        end
+        """)
+        @test length(diagnostics) == 1
+        diagnostic = only(diagnostics)
+        @test diagnostic.code == JETLS.LOWERING_UNUSED_LOCAL_CODE
+        @test diagnostic.message ==
+            "Local binding `str` is not read; consider `return str` to return it explicitly"
+        @test diagnostic.severity == DiagnosticSeverity.Information
+    end
+
+    let diagnostics = get_lowering_diagnostics("""
         function foo(x; y=nothing)
             return x
         end
@@ -966,7 +979,8 @@ end
                 d -> d.code == JETLS.LOWERING_UNUSED_ASSIGNMENT_CODE,
                 diagnostics)]
             @test dead_store_diag.severity == DiagnosticSeverity.Information
-            @test dead_store_diag.message == "Value assigned to `y` is never used"
+            @test dead_store_diag.message ==
+                "Value assigned to `y` is returned directly; consider `return y` to return the binding explicitly"
             @test dead_store_diag.range.start.line == 2
         end
     end
@@ -1177,7 +1191,8 @@ end
             diagnostic = only(diagnostics)
             @test diagnostic.code == JETLS.LOWERING_UNUSED_ASSIGNMENT_CODE
             @test diagnostic.severity == DiagnosticSeverity.Information
-            @test diagnostic.message == "Value assigned to `z` is never used"
+            @test diagnostic.message ==
+                "Value assigned to `z` is returned directly; consider `return z` to return the binding explicitly"
             @test diagnostic.range.start.line == 6
         end
     end
@@ -1242,6 +1257,26 @@ end
             diagnostic = only(diagnostics)
             @test diagnostic.message == "Value assigned to `z` is never used"
             @test diagnostic.range.start.line == 3
+        end
+    end
+
+    @testset "tail assignment value returned" begin
+        let diagnostics = get_lowering_diagnostics("""
+            function f(xs)
+                str = "("
+                for x in xs
+                    str *= x
+                    str *= ","
+                end
+                str *= ")"
+            end
+            """; code=JETLS.LOWERING_UNUSED_ASSIGNMENT_CODE)
+            @test length(diagnostics) == 1
+            diagnostic = only(diagnostics)
+            @test diagnostic.message ==
+                "Value assigned to `str` is returned directly; consider `return str` to return the binding explicitly"
+            @test diagnostic.severity == DiagnosticSeverity.Information
+            @test diagnostic.range.start.line == 6
         end
     end
 
